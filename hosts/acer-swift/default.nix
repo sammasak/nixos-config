@@ -2,22 +2,24 @@
 {
   imports = [
     ./hardware-configuration.nix
-    ../../modules/nixos/hyprland.nix
-    ../../modules/nixos/laptop.nix
   ];
 
+  # Networking
   networking.hostName = hostName;
 
+  # User configuration
   users.users.${user} = {
     isNormalUser = true;
     extraGroups = ["wheel" "networkmanager" "video" "audio" ];
   };
 
-  nix.settings.experimental-features = [ "nix-command" "flakes" ];
-
+  # Boot loader
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
 
+  # Intel thermal management
+  services.thermald.enable = true;
 
-  system.stateVersion = "25.11";  
+  # NixOS state version (do not change after installation)
+  system.stateVersion = "25.11";
 }

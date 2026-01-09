@@ -1,39 +1,206 @@
-{
-  config,
-  pkgs,
-  ...
-}:
-let
-  term = "alacritty";
-  menu = "wofi --show drun";
-in
-{
-  home.packages = with pkgs; [
-    alacritty
-    waybar
-    wofi
-    grim
-    slurp
-  ];
+# Enhanced Hyprland Configuration
+# Based on best practices with master-stack layout, animations, and comprehensive keybindings
 
-
+{config, pkgs, ...}:
+{
   wayland.windowManager.hyprland = {
     enable = true;
 
+    # Use system-provided Hyprland
     package = null;
     portalPackage = null;
-  };
 
-  wayland.windowManager.hyprland.settings = {
-    "$mod" = "SUPER";
+    settings = {
+      # Modifier key
+      "$mod" = "SUPER";
 
-    bind = [
-      "$mod, RETURN, exec, alacritty"
-      "$mod, D, exec, wofi --show drun"
-      "$mod, Q, killactive,";
-    ];
-    input = {
-      kb_layout = "se"; 
+      # Master layout configuration
+      master = {
+        new_is_master = false;
+        new_on_top = false;
+        mfact = 0.5;
+      };
+
+      # General window settings
+      general = {
+        gaps_in = 0;
+        gaps_out = 0;
+        border_size = 2;
+        "col.active_border" = "rgba(33ccffee) rgba(00ff99ee) 45deg";
+        "col.inactive_border" = "rgba(595959aa)";
+        layout = "master";
+        resize_on_border = true;
+      };
+
+      # Decoration settings
+      decoration = {
+        rounding = 0;
+
+        shadow = {
+          enabled = true;
+          range = 20;
+          render_power = 2;
+          color = "rgba(1a1a1aee)";
+        };
+
+        blur = {
+          enabled = true;
+          size = 5;
+          passes = 2;
+        };
+      };
+
+      # Animation settings
+      animations = {
+        enabled = true;
+        bezier = [
+          "wind, 0.05, 0.9, 0.1, 1.05"
+          "winIn, 0.1, 1.1, 0.1, 1.1"
+          "winOut, 0.3, -0.3, 0, 1"
+          "liner, 1, 1, 1, 1"
+        ];
+
+        animation = [
+          "windows, 1, 6, wind, slide"
+          "windowsIn, 1, 6, winIn, slide"
+          "windowsOut, 1, 5, winOut, slide"
+          "windowsMove, 1, 5, wind, slide"
+          "border, 1, 1, liner"
+          "borderangle, 1, 30, liner, loop"
+          "fade, 1, 10, default"
+          "workspaces, 1, 5, wind"
+        ];
+      };
+
+      # Input configuration
+      input = {
+        kb_layout = "se";
+        follow_mouse = 1;
+        sensitivity = 0;  # -1.0 to 1.0, 0 means no modification
+        accel_profile = "flat";
+
+        touchpad = {
+          natural_scroll = true;
+          disable_while_typing = true;
+          tap-to-click = true;
+        };
+
+        # Keyboard repeat rate
+        repeat_rate = 50;
+        repeat_delay = 240;
+      };
+
+      # Gestures
+      gestures = {
+        workspace_swipe = true;
+        workspace_swipe_fingers = 3;
+      };
+
+      # Misc settings
+      misc = {
+        disable_hyprland_logo = true;
+        disable_splash_rendering = true;
+        mouse_move_enables_dpms = true;
+        key_press_enables_dpms = true;
+        vrr = 0;
+      };
+
+      # Key bindings
+      bind = [
+        # Application launchers
+        "$mod, Return, exec, kitty"
+        "$mod SHIFT, Return, exec, kitty"
+        "$mod, D, exec, rofi -show drun"
+        "$mod, E, exec, thunar"
+        "$mod, B, exec, firefox"
+
+        # Window management
+        "$mod, Q, killactive,"
+        "$mod, M, exit,"
+        "$mod, F, fullscreen,"
+        "$mod, Space, togglefloating,"
+        "$mod, P, pseudo,"  # dwindle
+
+        # Focus movement
+        "$mod, H, movefocus, l"
+        "$mod, L, movefocus, r"
+        "$mod, K, movefocus, u"
+        "$mod, J, movefocus, d"
+
+        # Window movement
+        "$mod SHIFT, H, movewindow, l"
+        "$mod SHIFT, L, movewindow, r"
+        "$mod SHIFT, K, movewindow, u"
+        "$mod SHIFT, J, movewindow, d"
+
+        # Master layout specific
+        "$mod, I, layoutmsg, addmaster"
+        "$mod, O, layoutmsg, removemaster"
+        "$mod CTRL, Return, layoutmsg, swapwithmaster"
+
+        # Workspace switching
+        "$mod, 1, workspace, 1"
+        "$mod, 2, workspace, 2"
+        "$mod, 3, workspace, 3"
+        "$mod, 4, workspace, 4"
+        "$mod, 5, workspace, 5"
+        "$mod, 6, workspace, 6"
+        "$mod, 7, workspace, 7"
+        "$mod, 8, workspace, 8"
+        "$mod, 9, workspace, 9"
+        "$mod, 0, workspace, 10"
+
+        # Move window to workspace
+        "$mod SHIFT, 1, movetoworkspace, 1"
+        "$mod SHIFT, 2, movetoworkspace, 2"
+        "$mod SHIFT, 3, movetoworkspace, 3"
+        "$mod SHIFT, 4, movetoworkspace, 4"
+        "$mod SHIFT, 5, movetoworkspace, 5"
+        "$mod SHIFT, 6, movetoworkspace, 6"
+        "$mod SHIFT, 7, movetoworkspace, 7"
+        "$mod SHIFT, 8, movetoworkspace, 8"
+        "$mod SHIFT, 9, movetoworkspace, 9"
+        "$mod SHIFT, 0, movetoworkspace, 10"
+
+        # Scroll through workspaces
+        "$mod, mouse_down, workspace, e+1"
+        "$mod, mouse_up, workspace, e-1"
+
+        # Screenshot
+        ", Print, exec, grim -g \"$(slurp)\" - | wl-copy"
+        "SHIFT, Print, exec, grim - | wl-copy"
+
+        # Lock screen
+        "$mod, escape, exec, hyprlock"
+      ];
+
+      # Mouse bindings
+      bindm = [
+        "$mod, mouse:272, movewindow"
+        "$mod, mouse:273, resizewindow"
+      ];
+
+      # Media keys
+      bindl = [
+        ", XF86AudioPlay, exec, playerctl play-pause"
+        ", XF86AudioPrev, exec, playerctl previous"
+        ", XF86AudioNext, exec, playerctl next"
+      ];
+
+      bindle = [
+        ", XF86AudioRaiseVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"
+        ", XF86AudioLowerVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"
+        ", XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
+        ", XF86MonBrightnessUp, exec, brightnessctl set 5%+"
+        ", XF86MonBrightnessDown, exec, brightnessctl set 5%-"
+      ];
+
+      # Window rules
+      windowrulev2 = [
+        "float,class:^(pavucontrol)$"
+        "float,class:^(thunar)$,title:^(File Operation Progress)$"
+        "opacity 0.95 0.95,class:^(kitty)$"
+      ];
     };
   };
 }
