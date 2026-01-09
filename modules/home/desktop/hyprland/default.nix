@@ -16,7 +16,6 @@
 
       # Master layout configuration
       master = {
-        new_is_master = false;
         new_on_top = false;
         mfact = 0.5;
       };
@@ -26,8 +25,6 @@
         gaps_in = 0;
         gaps_out = 0;
         border_size = 2;
-        "col.active_border" = "rgba(33ccffee) rgba(00ff99ee) 45deg";
-        "col.inactive_border" = "rgba(595959aa)";
         layout = "master";
         resize_on_border = true;
       };
@@ -40,7 +37,6 @@
           enabled = true;
           range = 20;
           render_power = 2;
-          color = "rgba(1a1a1aee)";
         };
 
         blur = {
@@ -90,12 +86,6 @@
         repeat_delay = 240;
       };
 
-      # Gestures
-      gestures = {
-        workspace_swipe = true;
-        workspace_swipe_fingers = 3;
-      };
-
       # Misc settings
       misc = {
         disable_hyprland_logo = true;
@@ -104,6 +94,13 @@
         key_press_enables_dpms = true;
         vrr = 0;
       };
+
+      # Autostart applications
+      exec-once = [
+        "waybar"
+        "nwg-dock-hyprland"
+        "dunst"
+      ];
 
       # Key bindings
       bind = [
@@ -172,6 +169,9 @@
 
         # Lock screen
         "$mod, escape, exec, hyprlock"
+
+        # Alt-Tab for window switching
+        "ALT, TAB, cyclenext"
       ];
 
       # Mouse bindings

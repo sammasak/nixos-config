@@ -25,7 +25,5 @@
         "toolkit.telemetry.enabled" = false; # Another telemetry toggle
         "network.predictor.enabled" = false; # Disable network prediction
     };
-    # Add extensions declaratively (use extension ID/GUID)
-    extensions = [ { id = "uBlock0@raymondhill.net"; } ]; # Example: uBlock Origin
     };
 }

@@ -7,8 +7,14 @@
   services.power-profiles-daemon.enable = true;
 
   # Lid switch handling
-  services.logind.lidSwitch = "suspend";
-  services.logind.lidSwitchExternalPower = "suspend";
+  services.logind = {
+    settings = {
+      Login = {
+        HandleLidSwitch = "suspend";
+        HandleLidSwitchExternalPower = "suspend";
+      };
+    };
+  };
 
   # Touchpad support
   services.libinput.enable = true;

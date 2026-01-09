@@ -7,7 +7,7 @@
     # Icon fonts (needed for status bar, launcher icons)
     font-awesome
     material-design-icons
-    (nerdfonts.override { fonts = [ "JetBrainsMono" ]; })
+    nerd-fonts.jetbrains-mono
   ];
 
   # Font rendering tweaks
