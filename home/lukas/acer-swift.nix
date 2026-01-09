@@ -11,7 +11,7 @@
     ../../modules/home/dunst.nix
     ../../modules/home/hyprlock.nix
     ../../modules/home/hypridle.nix
-    ../../modules/home/ironbar.nix
+    ../../modules/home/waybar.nix
     ../../modules/home/gtk.nix
   ];
 

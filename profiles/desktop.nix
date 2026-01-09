@@ -8,7 +8,6 @@
     ../modules/nixos/stylix.nix
     ../modules/programs/firefox.nix
     ../modules/programs/vscode.nix
-    ../modules/home/waybar.nix
   ];
 
   # Display manager (SDDM with Wayland)
