@@ -10,6 +10,8 @@
   # Waybar configuration
   xdg.configFile."waybar/config".text = builtins.toJSON {
     layer = "top";
+    position = "top";
+    height = 8;
     margin-top = 0;
     margin-bottom = 0;
     margin-left = 0;
@@ -86,7 +88,7 @@
     };
 
     tray = {
-      icon-size = 21;
+      icon-size = 16;
       spacing = 10;
     };
 
@@ -100,7 +102,7 @@
   xdg.configFile."waybar/style.css".text = ''
     * {
       font-family: "JetBrains Mono", "Font Awesome 6 Free", Roboto, sans-serif;
-      font-size: 14px;
+      font-size: 10px;
       border: none;
       border-radius: 0px;
     }
@@ -114,7 +116,7 @@
       border-radius: 12px;
       opacity: 0.8;
       padding: 0px;
-      margin: 10px;
+      margin: 2px;
     }
 
     .modules-right {
@@ -122,34 +124,34 @@
       border-radius: 12px;
       opacity: 0.8;
       padding: 0px;
-      margin: 10px;
+      margin: 2px;
     }
 
     .modules-center {
       background-color: rgba(0, 0, 0, 0.8);
       border-radius: 12px;
       opacity: 0.8;
-      margin: 10px;
+      margin: 2px;
     }
 
     #workspaces {
-      padding: 5px 3px 5px 3px;
-      min-width: 176px;
+      padding: 1px 1px 1px 1px;
+      min-width: 140px;
     }
 
     #workspaces button {
       color: #ffffff;
       border-radius: 3px;
-      padding: 0px 5px 0px 5px;
-      margin: 0px 2px 0px 2px;
+      padding: 0px 3px 0px 3px;
+      margin: 0px 1px 0px 1px;
       transition: all 0.3s ease-in-out;
       border: 1px solid transparent;
     }
 
     #workspaces button.active {
-      background: rgba(255, 255, 255, 0.2);
-      min-width: 30px;
-      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      min-width: 20px;
+      border-radius: 4px;
     }
 
     #workspaces button:hover {
@@ -158,12 +160,12 @@
     }
 
     #clock {
-      margin-left: 12px;
-      margin-right: 12px;
+      margin-left: 8px;
+      margin-right: 8px;
     }
 
     #pulseaudio, #network, #battery {
-      margin: 0px 8px;
+      margin: 0px 5px;
     }
 
     #tray {

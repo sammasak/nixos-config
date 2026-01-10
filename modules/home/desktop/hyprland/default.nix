@@ -98,7 +98,7 @@
       # Autostart applications
       exec-once = [
         "waybar"
-        "nwg-dock-hyprland"
+        "nwg-dock-hyprland -d -i 16"
         "dunst"
       ];
 
@@ -168,7 +168,7 @@
         "SHIFT, Print, exec, grim - | wl-copy"
 
         # Lock screen
-        "$mod, escape, exec, hyprlock"
+        "$mod, escape, exec, bash -c 'pkill waybar; hyprlock; waybar &'"
 
         # Alt-Tab for window switching
         "ALT, TAB, cyclenext"
@@ -202,5 +202,28 @@
         "opacity 0.95 0.95,class:^(kitty)$"
       ];
     };
+  };
+  xdg.configFile."nwg-dock-hyprland/config".text = builtins.toJSON {
+    alignment = "center";
+    layer = "bottom";
+    output = "";
+    margin-top = 0;
+    margin-bottom = 10;
+    margin-left = 0;
+    margin-right = 0;
+    icon-size = 24;
+    padding = 4;
+    spacing = 4;
+    background-col = "rgba(0, 0, 0, 0.8)";
+    background-radius = 12;
+    hover-radius = 8;
+    autohide = true;
+    hover-delay = 2000;
+    hover-margin = 10;
+    grid = false;
+    favorites = true;
+    resident = false;
+    exclusive = true;
+    override-exclusive = false;
   };
 }

@@ -30,5 +30,13 @@
         homeModule = ./home/lukas/acer-swift.nix;
       };
     };
+
+    homeConfigurations = {
+      "lukas@acer-swift" = home-manager.lib.homeManagerConfiguration {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+        modules = [ ./home/lukas/acer-swift.nix ];
+        extraSpecialArgs = { hostName = "acer-swift"; user = "lukas"; };
+      };
+    };
   };
 }
