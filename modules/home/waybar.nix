@@ -15,9 +15,10 @@
         passthrough = false;
         fixed-center = true;
         ipc = true;
-        margin-top = 3;
-        margin-left = 4;
-        margin-right = 4;
+        margin-top = 2;
+        margin-left = 2;
+        margin-right = 2;
+        height = 24;
 
         modules-left = [
           "hyprland/workspaces"
@@ -220,11 +221,10 @@
         font-family: "JetBrainsMono Nerd Font";
         font-weight: bold;
         min-height: 0;
-        font-size: 100%;
+        font-size: 11px;
         font-feature-settings: '"zero", "ss01", "ss02", "ss03", "ss04", "ss05", "cv31"';
         padding: 0px;
-        margin-top: 1px;
-        margin-bottom: 1px;
+        margin: 0px;
       }
 
       window#waybar {
@@ -237,13 +237,13 @@
 
       tooltip {
         background: #24273A;
-        border-radius: 8px;
+        border-radius: 6px;
+        font-size: 11px;
       }
 
       tooltip label {
         color: #cad3f5;
-        margin-right: 5px;
-        margin-left: 5px;
+        margin: 2px 4px;
       }
 
       .modules-right,
@@ -251,18 +251,19 @@
       .modules-left {
         background-color: rgba(24, 25, 38, 0.7);
         border: 0px solid #b4befe;
-        border-radius: 8px;
+        border-radius: 6px;
+        padding: 0px 2px;
       }
 
       #workspaces button {
-        padding: 2px;
+        padding: 0px 4px;
         color: #6e738d;
-        margin-right: 5px;
+        margin-right: 2px;
       }
 
       #workspaces button.active {
         color: #dfdfdf;
-        border-radius: 3px 3px 3px 3px;
+        border-radius: 3px;
       }
 
       #workspaces button.focused {
@@ -271,7 +272,7 @@
 
       #workspaces button.urgent {
         color: #ed8796;
-        border-radius: 8px;
+        border-radius: 6px;
       }
 
       #workspaces button:hover {
@@ -293,8 +294,8 @@
       #tray,
       #workspaces {
         color: #dfdfdf;
-        padding: 0px 10px;
-        border-radius: 8px;
+        padding: 0px 6px;
+        border-radius: 6px;
       }
 
       #temperature.critical {

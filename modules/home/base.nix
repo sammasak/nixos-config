@@ -2,6 +2,7 @@
 {
   home.packages = with pkgs; [
     ripgrep
+    neofetch
   ];
 
   programs.git = {
@@ -16,7 +17,20 @@
     };
   };
 
-  programs.nushell.enable = true;
+  programs.nushell = {
+    enable = true;
+    configFile.text = ''
+      $env.config = {
+        show_banner: false
+      }
+    '';
+    extraConfig = ''
+      # Run neofetch on interactive shell startup
+      if $nu.is-interactive {
+        neofetch
+      }
+    '';
+  };
 
   programs.starship = {
     enable = true;
