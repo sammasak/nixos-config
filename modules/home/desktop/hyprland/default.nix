@@ -112,10 +112,12 @@
 
         # Window management
         "$mod, Q, killactive,"
-        "$mod, M, exit,"
+        "$mod SHIFT, Q, exit,"
         "$mod, F, fullscreen,"
         "$mod, Space, togglefloating,"
-        "$mod, P, pseudo,"  # dwindle
+        "$mod, C, centerwindow,"
+        "$mod, Y, pin,"
+        "$mod SHIFT, Space, swapnext,"
 
         # Focus movement
         "$mod, H, movefocus, l"
@@ -129,10 +131,25 @@
         "$mod SHIFT, K, movewindow, u"
         "$mod SHIFT, J, movewindow, d"
 
+        # Window resizing (keyboard)
+        "$mod CTRL, H, resizeactive, -50 0"
+        "$mod CTRL, L, resizeactive, 50 0"
+        "$mod CTRL, K, resizeactive, 0 -50"
+        "$mod CTRL, J, resizeactive, 0 50"
+
         # Master layout specific
         "$mod, I, layoutmsg, addmaster"
         "$mod, O, layoutmsg, removemaster"
         "$mod CTRL, Return, layoutmsg, swapwithmaster"
+
+        # Window grouping (tabs)
+        "$mod, G, togglegroup,"
+        "$mod, Tab, changegroupactive, f"
+        "$mod SHIFT, Tab, changegroupactive, b"
+
+        # Minimize to special workspace
+        "$mod, N, movetoworkspacesilent, special:minimized"
+        "$mod SHIFT, N, togglespecialworkspace, minimized"
 
         # Workspace switching
         "$mod, 1, workspace, 1"
@@ -158,6 +175,18 @@
         "$mod SHIFT, 9, movetoworkspace, 9"
         "$mod SHIFT, 0, movetoworkspace, 10"
 
+        # Move window to workspace (silent - don't follow)
+        "$mod CTRL, 1, movetoworkspacesilent, 1"
+        "$mod CTRL, 2, movetoworkspacesilent, 2"
+        "$mod CTRL, 3, movetoworkspacesilent, 3"
+        "$mod CTRL, 4, movetoworkspacesilent, 4"
+        "$mod CTRL, 5, movetoworkspacesilent, 5"
+        "$mod CTRL, 6, movetoworkspacesilent, 6"
+        "$mod CTRL, 7, movetoworkspacesilent, 7"
+        "$mod CTRL, 8, movetoworkspacesilent, 8"
+        "$mod CTRL, 9, movetoworkspacesilent, 9"
+        "$mod CTRL, 0, movetoworkspacesilent, 10"
+
         # Scroll through workspaces
         "$mod, mouse_down, workspace, e+1"
         "$mod, mouse_up, workspace, e-1"
@@ -165,12 +194,20 @@
         # Screenshot
         ", Print, exec, grim -g \"$(slurp)\" - | wl-copy"
         "SHIFT, Print, exec, grim - | wl-copy"
+        "$mod SHIFT, S, exec, grim -g \"$(slurp)\" - | wl-copy"
+
+        # Notifications
+        "$mod, W, exec, swaync-client -t -sw"
+
+        # Color picker
+        "$mod SHIFT, C, exec, hyprpicker -a"
 
         # Lock screen
         "$mod, escape, exec, hyprlock"
 
         # Alt-Tab for window switching
-        "ALT, TAB, cyclenext"
+        "ALT, TAB, cyclenext,"
+        "ALT SHIFT, TAB, cyclenext, prev"
       ];
 
       # Mouse bindings

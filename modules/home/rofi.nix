@@ -17,6 +17,15 @@
       display-run = " Run";
       display-window = " Window";
       sidebar-mode = true;
+
+      # Navigation
+      kb-mode-next = "Tab,Control+l";
+      kb-mode-previous = "ISO_Left_Tab,Control+h";
+      kb-row-up = "Control+k,Up";
+      kb-row-down = "Control+j,Down";
+      kb-accept-entry = "Return,KP_Enter";
+      kb-remove-to-eol = "";
+      kb-remove-char-back = "BackSpace";
     };
   };
 }

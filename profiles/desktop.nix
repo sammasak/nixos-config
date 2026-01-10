@@ -54,5 +54,6 @@
     pavucontrol
     playerctl
     nwg-dock-hyprland
+    hyprpicker
   ];
 }
