@@ -24,8 +24,4 @@
       gtk-decoration-layout = "menu:";
     };
   };
-
-  home.packages = with pkgs; [
-    papirus-icon-theme
-  ];
 }

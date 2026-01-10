@@ -1,183 +1,335 @@
 # Waybar - Status Bar for Hyprland
-# Based on mylinuxforwork/dotfiles ml4w-glass theme
+# Based on AlexNabokikh/nix-config
 
 {pkgs, ...}:
 {
-  home.packages = with pkgs; [
-    waybar
-  ];
+  programs.waybar = {
+    enable = true;
+    systemd.enable = true;
 
-  # Waybar configuration
-  xdg.configFile."waybar/config".text = builtins.toJSON {
-    layer = "top";
-    position = "top";
-    height = 8;
-    margin-top = 0;
-    margin-bottom = 0;
-    margin-left = 0;
-    margin-right = 0;
-    spacing = 0;
+    settings = {
+      mainBar = {
+        layer = "top";
+        position = "top";
+        exclusive = true;
+        passthrough = false;
+        fixed-center = true;
+        ipc = true;
+        margin-top = 3;
+        margin-left = 4;
+        margin-right = 4;
 
-    modules-left = [
-      "custom/appmenu"
-      "hyprland/workspaces"
-    ];
+        modules-left = [
+          "hyprland/workspaces"
+          "cpu"
+          "temperature"
+          "memory"
+          "backlight"
+        ];
 
-    modules-center = [
-      "clock"
-    ];
+        modules-center = [
+          "clock"
+          "custom/notification"
+        ];
 
-    modules-right = [
-      "pulseaudio"
-      "network"
-      "battery"
-      "tray"
-    ];
+        modules-right = [
+          "privacy"
+          "hyprland/language"
+          "tray"
+          "bluetooth"
+          "pulseaudio"
+          "pulseaudio#microphone"
+          "battery"
+        ];
 
-    "hyprland/workspaces" = {
-      on-scroll-up = "hyprctl dispatch workspace r-1";
-      on-scroll-down = "hyprctl dispatch workspace r+1";
-      on-click = "activate";
-      active-only = false;
-      all-outputs = true;
-      format = "{}";
-      format-icons = {
-        urgent = "";
-        active = "";
-        default = "";
+        backlight = {
+          interval = 2;
+          align = 0;
+          rotate = 0;
+          format = "{icon} {percent}%";
+          format-icons = [
+            "󰃞"
+            "󰃟"
+            "󰃝"
+            "󰃠"
+          ];
+          icon-size = 10;
+          on-scroll-up = "brightnessctl set +5%";
+          on-scroll-down = "brightnessctl set 5%-";
+          smooth-scrolling-threshold = 1;
+        };
+
+        battery = {
+          interval = 60;
+          align = 0;
+          rotate = 0;
+          full-at = 100;
+          design-capacity = false;
+          states = {
+            good = 95;
+            warning = 30;
+            critical = 20;
+          };
+          format = "<big>{icon}</big>  {capacity}%";
+          format-charging = " {capacity}%";
+          format-plugged = " {capacity}%";
+          format-full = "{icon} Full";
+          format-alt = "{icon} {time}";
+          format-icons = [
+            ""
+            ""
+            ""
+            ""
+            ""
+          ];
+          format-time = "{H}h {M}min";
+          tooltip = true;
+          tooltip-format = "{timeTo} {power}w";
+        };
+
+        bluetooth = {
+          format = "";
+          format-connected = " {num_connections}";
+          tooltip-format = " {device_alias}";
+          tooltip-format-connected = "{device_enumerate}";
+          tooltip-format-enumerate-connected = "Name: {device_alias}\nBattery: {device_battery_percentage}%";
+          on-click = "blueman-manager";
+        };
+
+        clock = {
+          format = "{:%b %d %H:%M}";
+          format-alt = " {:%H:%M   %Y, %d %B, %A}";
+          tooltip-format = "<tt><small>{calendar}</small></tt>";
+          calendar = {
+            mode = "year";
+            mode-mon-col = 3;
+            weeks-pos = "right";
+            on-scroll = 1;
+            format = {
+              months = "<span color='#f5a97f'><b>{}</b></span>";
+              days = "<span color='#a5adce'><b>{}</b></span>";
+              weeks = "<span color='#8087a2'><b>W{}</b></span>";
+              weekdays = "<span color='#b7bdf8'><b>{}</b></span>";
+              today = "<span color='#ed8796'><b><u>{}</u></b></span>";
+            };
+          };
+        };
+
+        cpu = {
+          format = "󰍛 {usage}%";
+          interval = 1;
+        };
+
+        "hyprland/language" = {
+          format = "{short}";
+        };
+
+        "hyprland/workspaces" = {
+          all-outputs = true;
+          format = "{name}";
+          on-click = "activate";
+          show-special = false;
+          sort-by-number = true;
+        };
+
+        memory = {
+          interval = 10;
+          format = "󰾆 {used:0.1f}G";
+          format-alt = "󰾆 {percentage}%";
+          format-alt-click = "click";
+          tooltip = true;
+          tooltip-format = "{used:0.1f}GB/{total:0.1f}G";
+          on-click-right = "kitty --title btop sh -c 'btop'";
+        };
+
+        privacy = {
+          icon-size = 14;
+          modules = [
+            {
+              type = "screenshare";
+              tooltip = true;
+            }
+          ];
+        };
+
+        pulseaudio = {
+          format = "{icon} {volume}%";
+          format-muted = "";
+          format-icons = {
+            default = [
+              ""
+              ""
+              " "
+            ];
+          };
+          on-click = "pavucontrol";
+          on-scroll-up = "pamixer -i 5";
+          on-scroll-down = "pamixer -d 5";
+          scroll-step = 5;
+          on-click-right = "pamixer -t";
+          smooth-scrolling-threshold = 1;
+        };
+
+        "pulseaudio#microphone" = {
+          format = "{format_source}";
+          format-source = " {volume}%";
+          format-source-muted = "";
+          on-click = "pavucontrol";
+          on-click-right = "pamixer --default-source -t";
+          on-scroll-up = "pamixer --default-source -i 5";
+          on-scroll-down = "pamixer --default-source -d 5";
+        };
+
+        temperature = {
+          interval = 10;
+          tooltip = false;
+          critical-threshold = 82;
+          format-critical = "{icon} {temperatureC}°C";
+          format = "󰈸 {temperatureC}°C";
+        };
+
+        tray = {
+          spacing = 20;
+        };
+
+        "custom/notification" = {
+          tooltip = false;
+          format = "{icon}";
+          format-icons = {
+            notification = "<span foreground='red'><sup></sup></span>";
+            none = "";
+            dnd-notification = "<span foreground='red'><sup></sup></span>";
+            dnd-none = "";
+            inhibited-notification = "<span foreground='red'><sup></sup></span>";
+            inhibited-none = "";
+            dnd-inhibited-notification = "<span foreground='red'><sup></sup></span>";
+            dnd-inhibited-none = "";
+          };
+          return-type = "json";
+          exec-if = "which swaync-client";
+          exec = "swaync-client -swb";
+          on-click = "swaync-client -t -sw";
+          on-click-right = "swaync-client -d -sw";
+          escape = true;
+        };
       };
-      persistent-workspaces = {
-        "*" = 5;
-      };
     };
 
-    clock = {
-      format = "{:%H:%M %a}";
-      tooltip = false;
-    };
+    style = ''
+      * {
+        font-family: "JetBrainsMono Nerd Font";
+        font-weight: bold;
+        min-height: 0;
+        font-size: 100%;
+        font-feature-settings: '"zero", "ss01", "ss02", "ss03", "ss04", "ss05", "cv31"';
+        padding: 0px;
+        margin-top: 1px;
+        margin-bottom: 1px;
+      }
 
-    pulseaudio = {
-      format = "{icon} {volume}%";
-      format-muted = "";
-      format-icons = {
-        default = ["" ""];
-      };
-      on-click = "pavucontrol";
-    };
+      window#waybar {
+        background: rgba(0, 0, 0, 0);
+      }
 
-    network = {
-      format-wifi = " {signalStrength}%";
-      format-ethernet = " {ifname}";
-      format-disconnected = "Disconnected ⚠";
-      tooltip-format-wifi = " {ifname} @ {essid}\nStrength: {signalStrength}%";
-      tooltip-format-ethernet = " {ifname}";
-      tooltip-format-disconnected = "Disconnected";
-      max-length = 50;
-    };
+      window#waybar.hidden {
+        opacity: 0.5;
+      }
 
-    battery = {
-      interval = 1;
-      states = {
-        warning = 30;
-        critical = 15;
-      };
-      format = "{icon} {capacity}%";
-      format-charging = " {capacity}%";
-      format-plugged = " {capacity}%";
-      format-icons = ["" "" "" "" ""];
-    };
+      tooltip {
+        background: #24273A;
+        border-radius: 8px;
+      }
 
-    tray = {
-      icon-size = 16;
-      spacing = 10;
-    };
+      tooltip label {
+        color: #cad3f5;
+        margin-right: 5px;
+        margin-left: 5px;
+      }
 
-    "custom/appmenu" = {
-      format = "Apps";
-      on-click = "rofi -show drun";
-      tooltip-format = "Open application launcher";
-    };
+      .modules-right,
+      .modules-center,
+      .modules-left {
+        background-color: rgba(24, 25, 38, 0.7);
+        border: 0px solid #b4befe;
+        border-radius: 8px;
+      }
+
+      #workspaces button {
+        padding: 2px;
+        color: #6e738d;
+        margin-right: 5px;
+      }
+
+      #workspaces button.active {
+        color: #dfdfdf;
+        border-radius: 3px 3px 3px 3px;
+      }
+
+      #workspaces button.focused {
+        color: #d8dee9;
+      }
+
+      #workspaces button.urgent {
+        color: #ed8796;
+        border-radius: 8px;
+      }
+
+      #workspaces button:hover {
+        color: #dfdfdf;
+        border-radius: 3px;
+      }
+
+      #backlight,
+      #battery,
+      #bluetooth,
+      #clock,
+      #cpu,
+      #custom-notification,
+      #language,
+      #memory,
+      #privacy,
+      #pulseaudio,
+      #temperature,
+      #tray,
+      #workspaces {
+        color: #dfdfdf;
+        padding: 0px 10px;
+        border-radius: 8px;
+      }
+
+      #temperature.critical {
+        background-color: #ff0000;
+      }
+
+      @keyframes blink {
+        to {
+          color: #000000;
+        }
+      }
+
+      #taskbar button.active {
+        background-color: #7f849c;
+      }
+
+      #battery.critical:not(.charging) {
+        color: #f53c3c;
+        animation-name: blink;
+        animation-duration: 0.5s;
+        animation-timing-function: linear;
+        animation-iteration-count: infinite;
+        animation-direction: alternate;
+      }
+
+      #privacy {
+        color: #f5a97f;
+      }
+    '';
   };
 
-  xdg.configFile."waybar/style.css".text = ''
-    * {
-      font-family: "JetBrains Mono", "Font Awesome 6 Free", Roboto, sans-serif;
-      font-size: 10px;
-      border: none;
-      border-radius: 0px;
-    }
-
-    window#waybar {
-      background: transparent;
-    }
-
-    .modules-left {
-      background-color: rgba(0, 0, 0, 0.8);
-      border-radius: 12px;
-      opacity: 0.8;
-      padding: 0px;
-      margin: 2px;
-    }
-
-    .modules-right {
-      background-color: rgba(0, 0, 0, 0.8);
-      border-radius: 12px;
-      opacity: 0.8;
-      padding: 0px;
-      margin: 2px;
-    }
-
-    .modules-center {
-      background-color: rgba(0, 0, 0, 0.8);
-      border-radius: 12px;
-      opacity: 0.8;
-      margin: 2px;
-    }
-
-    #workspaces {
-      padding: 1px 1px 1px 1px;
-      min-width: 140px;
-    }
-
-    #workspaces button {
-      color: #ffffff;
-      border-radius: 3px;
-      padding: 0px 3px 0px 3px;
-      margin: 0px 1px 0px 1px;
-      transition: all 0.3s ease-in-out;
-      border: 1px solid transparent;
-    }
-
-    #workspaces button.active {
-      background: rgba(255, 255, 255, 0.1);
-      min-width: 20px;
-      border-radius: 4px;
-    }
-
-    #workspaces button:hover {
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 15px;
-    }
-
-    #clock {
-      margin-left: 8px;
-      margin-right: 8px;
-    }
-
-    #pulseaudio, #network, #battery {
-      margin: 0px 5px;
-    }
-
-    #tray {
-      padding: 0px 5px 0px 10px;
-    }
-
-    #tray > .passive {
-      -gtk-icon-effect: dim;
-    }
-
-    #tray > .needs-attention {
-      -gtk-icon-effect: highlight;
-    }
-  '';
+  # Additional packages needed for waybar modules
+  home.packages = with pkgs; [
+    pamixer
+    blueman
+    btop
+  ];
 }

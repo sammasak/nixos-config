@@ -8,10 +8,11 @@
     ../../modules/home/desktop/hyprland
     ../../modules/home/kitty.nix
     ../../modules/home/rofi.nix
-    ../../modules/home/dunst.nix
+    ../../modules/home/swaync.nix
     ../../modules/home/hyprlock.nix
     ../../modules/home/hypridle.nix
     ../../modules/home/waybar.nix
+    ../../modules/home/hyprpaper.nix
     ../../modules/home/gtk.nix
   ];
 

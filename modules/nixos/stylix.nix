@@ -6,6 +6,9 @@
   stylix = {
     enable = true;
 
+    # Wallpaper (required by Stylix)
+    image = ../home/wallpapers/wallpaper.jpg;
+
     base16Scheme = "${pkgs.base16-schemes}/share/themes/selenized-black.yaml";
 
     # Font configuration

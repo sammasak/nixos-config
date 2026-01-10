@@ -53,7 +53,6 @@
     brightnessctl
     pavucontrol
     playerctl
-    waybar
     nwg-dock-hyprland
   ];
 }

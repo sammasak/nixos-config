@@ -22,9 +22,4 @@
     enable = true;
     enableNushellIntegration = true;
   };
-
-  # Dotfiles (raw configs symlinked to ~/.config/)
-  # xdg.configFile."nushell/config.nu".source = ../../dotfiles/nushell/config.nu;
-  # xdg.configFile."nushell/env.nu".source = ../../dotfiles/nushell/env.nu;
-  # xdg.configFile."starship.toml".source = ../../dotfiles/starship/starship.toml;
 }
