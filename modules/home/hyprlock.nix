@@ -2,6 +2,9 @@
 # Secure and beautiful lock screen
 
 {pkgs, lib, ...}:
+let
+  wallpaper = ./wallpapers/wallpaper.jpg;
+in
 {
   programs.hyprlock = {
     enable = true;
@@ -17,7 +20,7 @@
       background = lib.mkForce [
         {
           monitor = "";
-          path = "${pkgs.nixos-artwork.wallpapers.nineish-dark-gray.gnomeFilePath}";
+          path = "${wallpaper}";
           blur_passes = 3;
           blur_size = 8;
         }
