@@ -24,9 +24,10 @@
       general = {
         gaps_in = 0;
         gaps_out = 0;
-        border_size = 2;
+        border_size = 1;
         layout = "master";
         resize_on_border = true;
+        # Border colors managed by Stylix
       };
 
       # Decoration settings

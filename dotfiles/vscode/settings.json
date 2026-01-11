@@ -1,0 +1,16 @@
+{
+  "editor.fontFamily": "'JetBrains Mono', 'monospace', monospace",
+  "editor.fontSize": 13,
+  "editor.tabSize": 2,
+  "editor.formatOnSave": true,
+  "editor.minimap.enabled": false,
+  "editor.renderWhitespace": "selection",
+  "editor.cursorBlinking": "smooth",
+  "editor.smoothScrolling": true,
+  "workbench.startupEditor": "none",
+  "terminal.integrated.fontFamily": "'JetBrainsMono Nerd Font'",
+  "terminal.integrated.fontSize": 12,
+  "files.autoSave": "onFocusChange",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true
+}

@@ -37,10 +37,10 @@ in
       };
 
       sizes = {
-        terminal = 11;
-        applications = 11;
-        desktop = 11;
-        popups = 11;
+        terminal = 10;
+        applications = 10;
+        desktop = 10;
+        popups = 9;
       };
     };
 
@@ -48,7 +48,7 @@ in
     cursor = {
       package = pkgs.phinger-cursors;
       name = "phinger-cursors";
-      size = 24;
+      size = 20;
     };
 
     # Opacity settings

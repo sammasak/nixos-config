@@ -1,52 +1,51 @@
 {
-  description = "NixOS config with Hyprland desktop";
+  description = "NixOS + nix-darwin + Home Manager";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    home-manager = {
-      url = "github:nix-community/home-manager";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    stylix = {
-      url = "github:danth/stylix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    home-manager.url = "github:nix-community/home-manager";
+    home-manager.inputs.nixpkgs.follows = "nixpkgs";
+    nix-darwin.url = "github:nix-darwin/nix-darwin";
+    nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
+    stylix.url = "github:danth/stylix";
+    stylix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { nixpkgs, home-manager, stylix, ... }:
+  outputs = { nixpkgs, home-manager, nix-darwin, stylix, ... }:
   let
     users = import ./lib/users.nix;
-  in
-  {
+    mkHome = { user, desktop ? false }: {
+      home-manager.useGlobalPkgs = true;
+      home-manager.useUserPackages = true;
+      home-manager.backupFileExtension = "backup";
+      home-manager.extraSpecialArgs = { userConfig = users.${user}; inherit desktop; };
+      home-manager.users.${user} = import ./home/${user}.nix;
+    };
+  in {
     nixosConfigurations = {
       acer-swift = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-
-        specialArgs = {
-          hostName = "acer-swift";
-          user = "lukas";
-        };
-
+        specialArgs = { hostName = "acer-swift"; user = "lukas"; };
         modules = [
-          # Core
-          ./profiles/base.nix
-          home-manager.nixosModules.home-manager
-          stylix.nixosModules.stylix
-          {
-            home-manager.useGlobalPkgs = true;
-            home-manager.useUserPackages = true;
-            home-manager.backupFileExtension = "backup";  # Backup conflicting files instead of failing
-            home-manager.extraSpecialArgs = { userConfig = users.lukas; };
-          }
-
-          # Machine type (includes both system + user config)
-          ./profiles/desktop.nix
-          ./profiles/laptop.nix
-
-          # Hardware
+          ./nixos/common.nix
+          ./nixos/desktop.nix
+          ./nixos/laptop.nix
           ./hosts/acer-swift
+          stylix.nixosModules.stylix
+          home-manager.nixosModules.home-manager
+          (mkHome { user = "lukas"; desktop = true; })
+        ];
+      };
+    };
+
+    darwinConfigurations = {
+      work-mac = nix-darwin.lib.darwinSystem {
+        system = "aarch64-darwin";
+        specialArgs = { user = "lukas"; };
+        modules = [
+          ./darwin/common.nix
+          home-manager.darwinModules.home-manager
+          (mkHome { user = "lukas"; desktop = false; })
         ];
       };
     };

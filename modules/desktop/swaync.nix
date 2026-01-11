@@ -13,13 +13,13 @@ in
     settings = {
       positionX = "right";
       positionY = "top";
-      control-center-height = 800;
-      control-center-width = 400;
-      notification-window-width = 350;
-      notification-icon-size = 32;
+      control-center-height = 600;
+      control-center-width = 320;
+      notification-window-width = 280;
+      notification-icon-size = 24;
       fit-to-screen = false;
-      notification-body-image-height = 100;
-      notification-body-image-width = 200;
+      notification-body-image-height = 80;
+      notification-body-image-width = 160;
       hide-on-clear = true;
       hide-on-action = true;
       keyboard-shortcuts = true;
@@ -117,7 +117,7 @@ in
       }
 
       .summary {
-        font-size: 14px;
+        font-size: 12px;
         font-weight: bold;
         background: transparent;
         color: ${colors.base05};
@@ -125,16 +125,16 @@ in
       }
 
       .time {
-        font-size: 12px;
+        font-size: 10px;
         font-weight: bold;
         background: transparent;
         color: ${colors.base04};
         text-shadow: none;
-        margin-right: 18px;
+        margin-right: 12px;
       }
 
       .body {
-        font-size: 13px;
+        font-size: 11px;
         font-weight: normal;
         background: transparent;
         color: ${colors.base04};
