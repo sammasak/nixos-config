@@ -37,6 +37,7 @@
           {
             home-manager.useGlobalPkgs = true;
             home-manager.useUserPackages = true;
+            home-manager.backupFileExtension = "backup";  # Backup conflicting files instead of failing
             home-manager.extraSpecialArgs = { userConfig = users.lukas; };
           }
 
