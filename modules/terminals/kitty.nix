@@ -1,15 +1,17 @@
 # Kitty Terminal Configuration
 # Modern, GPU-accelerated terminal emulator for Wayland
 
-{pkgs, ...}:
+{ pkgs, ... }:
+let
+  theme = import ../../lib/theme.nix;
+in
 {
   programs.kitty = {
     enable = true;
 
-    # Kitty settings
     settings = {
-      # Font
-      font_family = "JetBrains Mono";
+      # Font - uses shared theme config
+      font_family = theme.fonts.mono;
       bold_font = "auto";
       italic_font = "auto";
       bold_italic_font = "auto";
@@ -61,7 +63,6 @@
       confirm_os_window_close = 0;
     };
 
-    # Keybindings
     keybindings = {
       "ctrl+shift+c" = "copy_to_clipboard";
       "ctrl+shift+v" = "paste_from_clipboard";

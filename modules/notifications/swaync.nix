@@ -1,7 +1,11 @@
 # SwayNC - Notification Center for Wayland
-# Based on AlexNabokikh/nix-config
+# Uses Stylix colors for consistent theming
 
-{pkgs, ...}:
+{ pkgs, config, ... }:
+let
+  theme = import ../../lib/theme.nix;
+  colors = config.lib.stylix.colors.withHashtag;
+in
 {
   services.swaync = {
     enable = true;
@@ -46,7 +50,7 @@
 
     style = ''
       * {
-        font-family: "JetBrainsMono Nerd Font";
+        font-family: "${theme.fonts.monoNerd}";
         font-weight: bold;
       }
 
@@ -67,14 +71,14 @@
       }
 
       .notification-content {
-        background: #24273A;
+        background: ${colors.base00};
         padding: 8px;
         border-radius: 8px;
       }
 
       .close-button {
-        background: #363a4f;
-        color: #cad3f5;
+        background: ${colors.base02};
+        color: ${colors.base05};
         text-shadow: none;
         padding: 0;
         border-radius: 100%;
@@ -88,7 +92,7 @@
 
       .close-button:hover {
         box-shadow: none;
-        background: #494d64;
+        background: ${colors.base03};
         transition: all 0.15s ease-in-out;
         border: none;
       }
@@ -100,7 +104,7 @@
         box-shadow: none;
         background: transparent;
         border: none;
-        color: #cad3f5;
+        color: ${colors.base05};
       }
 
       .notification-default-action:hover,
@@ -116,7 +120,7 @@
         font-size: 14px;
         font-weight: bold;
         background: transparent;
-        color: #cad3f5;
+        color: ${colors.base05};
         text-shadow: none;
       }
 
@@ -124,7 +128,7 @@
         font-size: 12px;
         font-weight: bold;
         background: transparent;
-        color: #8087a2;
+        color: ${colors.base04};
         text-shadow: none;
         margin-right: 18px;
       }
@@ -133,12 +137,12 @@
         font-size: 13px;
         font-weight: normal;
         background: transparent;
-        color: #a5adce;
+        color: ${colors.base04};
         text-shadow: none;
       }
 
       .control-center {
-        background: rgba(24, 25, 38, 0.9);
+        background: alpha(${colors.base00}, 0.9);
         border-radius: 8px;
         margin: 6px;
         box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 1px 3px 1px rgba(0, 0, 0, 0.7);
@@ -163,64 +167,64 @@
       .widget-title {
         margin: 8px;
         font-size: 1.2em;
-        color: #cad3f5;
+        color: ${colors.base05};
       }
 
       .widget-title > button {
         font-size: initial;
-        color: #cad3f5;
+        color: ${colors.base05};
         text-shadow: none;
-        background: #363a4f;
+        background: ${colors.base02};
         border: none;
         box-shadow: none;
         border-radius: 8px;
       }
 
       .widget-title > button:hover {
-        background: #494d64;
+        background: ${colors.base03};
       }
 
       .widget-dnd {
         margin: 8px;
         font-size: 1.1em;
-        color: #cad3f5;
+        color: ${colors.base05};
       }
 
       .widget-dnd > switch {
         font-size: initial;
         border-radius: 8px;
-        background: #363a4f;
+        background: ${colors.base02};
         border: none;
         box-shadow: none;
       }
 
       .widget-dnd > switch:checked {
-        background: #8aadf4;
+        background: ${colors.base0D};
       }
 
       .widget-dnd > switch slider {
-        background: #cad3f5;
+        background: ${colors.base05};
         border-radius: 8px;
       }
 
       .widget-inhibitors {
         margin: 8px;
         font-size: 1em;
-        color: #cad3f5;
+        color: ${colors.base05};
       }
 
       .widget-inhibitors > button {
         font-size: initial;
-        color: #cad3f5;
+        color: ${colors.base05};
         text-shadow: none;
-        background: #363a4f;
+        background: ${colors.base02};
         border: none;
         box-shadow: none;
         border-radius: 8px;
       }
 
       .widget-inhibitors > button:hover {
-        background: #494d64;
+        background: ${colors.base03};
       }
     '';
   };

@@ -1,7 +1,11 @@
 # Waybar - Status Bar for Hyprland
-# Based on AlexNabokikh/nix-config
+# Uses Stylix colors for consistent theming
 
-{pkgs, ...}:
+{ pkgs, config, ... }:
+let
+  theme = import ../../lib/theme.nix;
+  colors = config.lib.stylix.colors.withHashtag;
+in
 {
   programs.waybar = {
     enable = true;
@@ -48,12 +52,7 @@
           align = 0;
           rotate = 0;
           format = "{icon} {percent}%";
-          format-icons = [
-            "󰃞"
-            "󰃟"
-            "󰃝"
-            "󰃠"
-          ];
+          format-icons = [ "󰃞" "󰃟" "󰃝" "󰃠" ];
           icon-size = 10;
           on-scroll-up = "brightnessctl set +5%";
           on-scroll-down = "brightnessctl set 5%-";
@@ -76,13 +75,7 @@
           format-plugged = " {capacity}%";
           format-full = "{icon} Full";
           format-alt = "{icon} {time}";
-          format-icons = [
-            ""
-            ""
-            ""
-            ""
-            ""
-          ];
+          format-icons = [ "" "" "" "" "" ];
           format-time = "{H}h {M}min";
           tooltip = true;
           tooltip-format = "{timeTo} {power}w";
@@ -107,11 +100,11 @@
             weeks-pos = "right";
             on-scroll = 1;
             format = {
-              months = "<span color='#f5a97f'><b>{}</b></span>";
-              days = "<span color='#a5adce'><b>{}</b></span>";
-              weeks = "<span color='#8087a2'><b>W{}</b></span>";
-              weekdays = "<span color='#b7bdf8'><b>{}</b></span>";
-              today = "<span color='#ed8796'><b><u>{}</u></b></span>";
+              months = "<span color='${colors.base09}'><b>{}</b></span>";
+              days = "<span color='${colors.base05}'><b>{}</b></span>";
+              weeks = "<span color='${colors.base04}'><b>W{}</b></span>";
+              weekdays = "<span color='${colors.base0D}'><b>{}</b></span>";
+              today = "<span color='${colors.base08}'><b><u>{}</u></b></span>";
             };
           };
         };
@@ -157,11 +150,7 @@
           format = "{icon} {volume}%";
           format-muted = "";
           format-icons = {
-            default = [
-              ""
-              ""
-              " "
-            ];
+            default = [ "" "" " " ];
           };
           on-click = "pavucontrol";
           on-scroll-up = "pamixer -i 5";
@@ -197,13 +186,13 @@
           tooltip = false;
           format = "{icon}";
           format-icons = {
-            notification = "<span foreground='red'><sup></sup></span>";
+            notification = "<span foreground='${colors.base08}'><sup></sup></span>";
             none = "";
-            dnd-notification = "<span foreground='red'><sup></sup></span>";
+            dnd-notification = "<span foreground='${colors.base08}'><sup></sup></span>";
             dnd-none = "";
-            inhibited-notification = "<span foreground='red'><sup></sup></span>";
+            inhibited-notification = "<span foreground='${colors.base08}'><sup></sup></span>";
             inhibited-none = "";
-            dnd-inhibited-notification = "<span foreground='red'><sup></sup></span>";
+            dnd-inhibited-notification = "<span foreground='${colors.base08}'><sup></sup></span>";
             dnd-inhibited-none = "";
           };
           return-type = "json";
@@ -218,7 +207,7 @@
 
     style = ''
       * {
-        font-family: "JetBrainsMono Nerd Font";
+        font-family: "${theme.fonts.monoNerd}";
         font-weight: bold;
         min-height: 0;
         font-size: 11px;
@@ -236,47 +225,47 @@
       }
 
       tooltip {
-        background: #24273A;
+        background: ${colors.base00};
         border-radius: 6px;
         font-size: 11px;
       }
 
       tooltip label {
-        color: #cad3f5;
+        color: ${colors.base05};
         margin: 2px 4px;
       }
 
       .modules-right,
       .modules-center,
       .modules-left {
-        background-color: rgba(24, 25, 38, 0.7);
-        border: 0px solid #b4befe;
+        background-color: alpha(${colors.base00}, 0.7);
+        border: 0px solid ${colors.base0D};
         border-radius: 6px;
         padding: 0px 2px;
       }
 
       #workspaces button {
         padding: 0px 4px;
-        color: #6e738d;
+        color: ${colors.base04};
         margin-right: 2px;
       }
 
       #workspaces button.active {
-        color: #dfdfdf;
+        color: ${colors.base05};
         border-radius: 3px;
       }
 
       #workspaces button.focused {
-        color: #d8dee9;
+        color: ${colors.base05};
       }
 
       #workspaces button.urgent {
-        color: #ed8796;
+        color: ${colors.base08};
         border-radius: 6px;
       }
 
       #workspaces button:hover {
-        color: #dfdfdf;
+        color: ${colors.base05};
         border-radius: 3px;
       }
 
@@ -293,27 +282,27 @@
       #temperature,
       #tray,
       #workspaces {
-        color: #dfdfdf;
+        color: ${colors.base05};
         padding: 0px 6px;
         border-radius: 6px;
       }
 
       #temperature.critical {
-        background-color: #ff0000;
+        background-color: ${colors.base08};
       }
 
       @keyframes blink {
         to {
-          color: #000000;
+          color: ${colors.base00};
         }
       }
 
       #taskbar button.active {
-        background-color: #7f849c;
+        background-color: ${colors.base04};
       }
 
       #battery.critical:not(.charging) {
-        color: #f53c3c;
+        color: ${colors.base08};
         animation-name: blink;
         animation-duration: 0.5s;
         animation-timing-function: linear;
@@ -322,12 +311,11 @@
       }
 
       #privacy {
-        color: #f5a97f;
+        color: ${colors.base09};
       }
     '';
   };
 
-  # Additional packages needed for waybar modules
   home.packages = with pkgs; [
     pamixer
     blueman

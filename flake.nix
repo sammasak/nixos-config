@@ -1,5 +1,5 @@
 {
-  description = "multi host, nixos, home-manager flake";
+  description = "NixOS config with Hyprland desktop";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -15,27 +15,38 @@
     };
   };
 
-  outputs = {self, nixpkgs, home-manager, stylix, ...}:
+  outputs = { nixpkgs, home-manager, stylix, ... }:
   let
-    mkHost = import ./lib/mkHost.nix {inherit nixpkgs home-manager stylix; };
+    users = import ./lib/users.nix;
   in
   {
     nixosConfigurations = {
-      acer-swift = mkHost {
-        hostName = "acer-swift";
+      acer-swift = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-        user = "lukas";
-        profiles = [ "desktop" "laptop" ];
-        hostModule = ./hosts/acer-swift/default.nix;
-        homeModule = ./home/lukas/acer-swift.nix;
-      };
-    };
 
-    homeConfigurations = {
-      "lukas@acer-swift" = home-manager.lib.homeManagerConfiguration {
-        pkgs = nixpkgs.legacyPackages.x86_64-linux;
-        modules = [ ./home/lukas/acer-swift.nix ];
-        extraSpecialArgs = { hostName = "acer-swift"; user = "lukas"; };
+        specialArgs = {
+          hostName = "acer-swift";
+          user = "lukas";
+        };
+
+        modules = [
+          # Core
+          ./profiles/base.nix
+          home-manager.nixosModules.home-manager
+          stylix.nixosModules.stylix
+          {
+            home-manager.useGlobalPkgs = true;
+            home-manager.useUserPackages = true;
+            home-manager.extraSpecialArgs = { userConfig = users.lukas; };
+          }
+
+          # Machine type (includes both system + user config)
+          ./profiles/desktop.nix
+          ./profiles/laptop.nix
+
+          # Hardware
+          ./hosts/acer-swift
+        ];
       };
     };
   };

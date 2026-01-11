@@ -1,18 +1,24 @@
-# Desktop profile - Graphical desktop environment with Hyprland
-# Use this for workstations and laptops with GUI
+# Desktop profile - Complete Hyprland desktop environment
+# Includes both system-level (drivers, audio) and user-level (apps, dotfiles)
+#
+# System: Hyprland, PipeWire, SDDM, fonts, Stylix
+# User: kitty, waybar, rofi, swaync, firefox, vscode, shell tools
 
-{pkgs, ...}:
+{ pkgs, user, ... }:
 {
   imports = [
-    ../modules/nixos/fonts.nix
-    ../modules/nixos/stylix.nix
-    ../modules/programs/firefox.nix
-    ../modules/programs/vscode.nix
+    ../modules/fonts.nix
+    ../modules/stylix.nix
   ];
 
-  # Display manager (SDDM with Wayland)
-  services.displayManager.sddm.enable = true;
-  services.displayManager.sddm.wayland.enable = true;
+  # === SYSTEM-LEVEL ===
+
+  # Display manager
+  services.displayManager.sddm = {
+    enable = true;
+    wayland.enable = true;
+    theme = "sugar-dark";
+  };
 
   # Hyprland window manager
   programs.hyprland.enable = true;
@@ -40,8 +46,6 @@
   # File management
   programs.thunar.enable = true;
   programs.xfconf.enable = true;
-
-  # GVFS for mounting
   services.gvfs.enable = true;
 
   # Desktop utilities
@@ -55,5 +59,37 @@
     playerctl
     nwg-dock-hyprland
     hyprpicker
+    sddm-sugar-dark  # Login screen theme
   ];
+
+  # === USER-LEVEL (home-manager) ===
+
+  home-manager.users.${user} = {
+    home.username = user;
+    home.homeDirectory = "/home/${user}";
+    home.stateVersion = "25.11";
+
+    imports = [
+      # Shell (shared with server profile)
+      ../modules/shell/nushell.nix
+      ../modules/shell/starship.nix
+      ../modules/shell/git.nix
+      ../modules/shell/cli-tools.nix
+
+      # Desktop environment
+      ../modules/desktop/hyprland
+      ../modules/desktop/hyprlock.nix
+      ../modules/desktop/hypridle.nix
+      ../modules/desktop/hyprpaper.nix
+      ../modules/desktop/gtk.nix
+
+      # Apps (swappable)
+      ../modules/terminals/kitty.nix
+      ../modules/bars/waybar.nix
+      ../modules/launchers/rofi.nix
+      ../modules/notifications/swaync.nix
+      ../modules/browsers/firefox.nix
+      ../modules/editors/vscode.nix
+    ];
+  };
 }

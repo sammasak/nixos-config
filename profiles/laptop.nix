@@ -3,6 +3,9 @@
 
 {pkgs, ...}:
 {
+  # WiFi GUI (system tray applet)
+  programs.nm-applet.enable = true;
+
   # Power management
   services.power-profiles-daemon.enable = true;
 

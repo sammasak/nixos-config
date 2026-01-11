@@ -1,43 +1,41 @@
 # Stylix - Unified theming system
 # Provides consistent colors, fonts, and styling across all applications
 
-{pkgs, ...}:
+{ pkgs, ... }:
+let
+  theme = import ../lib/theme.nix;
+in
 {
   stylix = {
     enable = true;
 
-    # Wallpaper (required by Stylix)
-    image = ../home/wallpapers/wallpaper.jpg;
+    # Wallpaper (from shared theme config)
+    image = theme.wallpaper;
 
     base16Scheme = "${pkgs.base16-schemes}/share/themes/selenized-black.yaml";
 
     # Font configuration
     fonts = {
-      # Monospace font for terminals and code editors
       monospace = {
         package = pkgs.jetbrains-mono;
-        name = "JetBrains Mono";
+        name = theme.fonts.mono;
       };
 
-      # Sans-serif font for UI elements
       sansSerif = {
         package = pkgs.noto-fonts;
-        name = "Noto Sans";
+        name = theme.fonts.sans;
       };
 
-      # Serif font for documents
       serif = {
         package = pkgs.noto-fonts;
         name = "Noto Serif";
       };
 
-      # Emoji font
       emoji = {
         package = pkgs.noto-fonts-color-emoji;
         name = "Noto Color Emoji";
       };
 
-      # Base font size
       sizes = {
         terminal = 11;
         applications = 11;
