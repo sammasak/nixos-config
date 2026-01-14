@@ -21,6 +21,12 @@
           on-resume = "brightnessctl -r";
         }
         {
+          # Dim keyboard backlight after 2.5 minutes
+          timeout = 150;
+          on-timeout = "brightnessctl -sd tpacpi::kbd_backlight set 0";
+          on-resume = "brightnessctl -rd tpacpi::kbd_backlight";
+        }
+        {
           # Lock session after 5 minutes
           timeout = 300;
           on-timeout = "loginctl lock-session";

@@ -2,7 +2,7 @@
 # Stylix handles: theme, cursor, fonts
 # This module: icon theme and GTK-specific settings
 
-{pkgs, ...}:
+{pkgs, lib, ...}:
 {
   gtk = {
     enable = true;
@@ -23,5 +23,18 @@
       gtk-application-prefer-dark-theme = true;
       gtk-decoration-layout = "menu:";
     };
+  };
+
+  # Set system color scheme to dark (override Stylix)
+  dconf.settings = {
+    "org/gnome/desktop/interface" = {
+      color-scheme = lib.mkForce "prefer-dark";
+    };
+  };
+
+  # Qt theme configuration - let Stylix handle qt.style, but set platform theme
+  qt = {
+    enable = true;
+    platformTheme.name = lib.mkForce "gtk3";
   };
 }

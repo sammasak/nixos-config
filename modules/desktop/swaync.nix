@@ -14,9 +14,9 @@ in
       positionX = "right";
       positionY = "top";
       control-center-height = 600;
-      control-center-width = 320;
-      notification-window-width = 280;
-      notification-icon-size = 24;
+      control-center-width = 280;
+      notification-window-width = 240;
+      notification-icon-size = 20;
       fit-to-screen = false;
       notification-body-image-height = 80;
       notification-body-image-width = 160;
@@ -117,7 +117,7 @@ in
       }
 
       .summary {
-        font-size: 12px;
+        font-size: 11px;
         font-weight: bold;
         background: transparent;
         color: ${colors.base05};
@@ -134,7 +134,7 @@ in
       }
 
       .body {
-        font-size: 11px;
+        font-size: 10px;
         font-weight: normal;
         background: transparent;
         color: ${colors.base04};

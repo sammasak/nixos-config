@@ -12,5 +12,6 @@
   "terminal.integrated.fontSize": 12,
   "files.autoSave": "onFocusChange",
   "files.trimTrailingWhitespace": true,
-  "files.insertFinalNewline": true
+  "files.insertFinalNewline": true,
+  "claudeCode.preferredLocation": "panel"
 }

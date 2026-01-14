@@ -14,6 +14,7 @@ Personal NixOS + nix-darwin + Home Manager configuration. A work in progress as 
 | Machine | Type | Status |
 |---------|------|--------|
 | `acer-swift` | Linux laptop (Hyprland) | Active |
+| `lenovo-21CB001PMX` | Linux laptop (Hyprland) | Active |
 | `work-mac` | macOS (CLI only) | Planned |
 
 ## Structure
@@ -23,7 +24,8 @@ flake.nix              # Entry point, machine definitions
 ├── nixos/             # NixOS system configuration
 │   ├── common.nix     # Base Linux (nix settings, user, locale)
 │   ├── desktop.nix    # GUI environment (Hyprland, PipeWire)
-│   └── laptop.nix     # Laptop-specific (power, touchpad)
+│   ├── laptop.nix     # Laptop-specific (power, touchpad)
+│   └── automation.nix # Auto-updates, garbage collection
 ├── darwin/            # macOS system configuration
 │   └── common.nix     # System preferences (Dock, Finder)
 ├── home/              # Home Manager user configuration
@@ -66,7 +68,14 @@ darwin-rebuild switch --flake .#work-mac
 
 # Rollback if something breaks
 sudo nixos-rebuild switch --rollback
+
+# Garbage collection (manual)
+nix-collect-garbage -d
 ```
+
+## Automation
+
+System automatically updates weekly (Sunday 3 AM), cleans old backups (7 days), and garbage collects monthly (30 days). Configured in [nixos/automation.nix](nixos/automation.nix).
 
 ## Fresh Install (New Laptop)
 

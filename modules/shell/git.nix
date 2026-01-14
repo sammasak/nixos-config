@@ -9,9 +9,9 @@ in
 {
   programs.git = {
     enable = true;
-    userName = gitUserName;
-    userEmail = gitEmail;
-    extraConfig = {
+    settings = {
+      user.name = gitUserName;
+      user.email = gitEmail;
       init.defaultBranch = "main";
       pull.rebase = true;
     };

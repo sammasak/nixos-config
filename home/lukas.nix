@@ -1,7 +1,12 @@
 # Home configuration for lukas
-{ lib, desktop ? false, ... }:
+{ lib, pkgs, desktop ? false, ... }:
 {
   home.stateVersion = "25.11";
+
+  # Install custom scripts
+  home.packages = lib.optionals desktop [
+    (pkgs.writeShellScriptBin "hyprland-window-switcher" (builtins.readFile ../scripts/window-switcher.sh))
+  ];
 
   imports = [
     ../modules/shell/nushell.nix

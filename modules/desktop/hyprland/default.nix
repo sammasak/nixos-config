@@ -11,6 +11,15 @@
     portalPackage = null;
 
     settings = {
+      # Monitor configuration
+      monitor = [
+        ",preferred,auto,1"  # Auto-detect monitor, use preferred resolution, 1.25x scale
+      ];
+
+      xwayland = {
+        force_zero_scaling = true;
+      };
+
       # Modifier key
       "$mod" = "SUPER";
 
@@ -206,9 +215,8 @@
         # Lock screen
         "$mod, escape, exec, hyprlock"
 
-        # Alt-Tab for window switching
-        "ALT, TAB, cyclenext,"
-        "ALT SHIFT, TAB, cyclenext, prev"
+        # Alt-Tab for window switching (custom script with rofi)
+        "ALT, TAB, exec, hyprland-window-switcher"
       ];
 
       # Mouse bindings

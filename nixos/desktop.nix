@@ -6,7 +6,8 @@
   services.displayManager.sddm = {
     enable = true;
     wayland.enable = true;
-    theme = "sugar-dark";
+    theme = "catppuccin-mocha-mauve";
+    package = pkgs.kdePackages.sddm;
   };
 
   programs.hyprland.enable = true;
@@ -31,6 +32,13 @@
 
   environment.systemPackages = with pkgs; [
     xdg-utils wl-clipboard grim slurp brightnessctl
-    pavucontrol playerctl nwg-dock-hyprland hyprpicker sddm-sugar-dark
+    pavucontrol playerctl nwg-dock-hyprland hyprpicker
+    (catppuccin-sddm.override {
+      flavor = "mocha";
+      font = "JetBrainsMono Nerd Font";  # Match hyprlock's mono font
+      fontSize = "12";
+      background = "${../assets/wallpapers/wallpaper.jpg}";
+      loginBackground = true;  # Add background panel like hyprlock's input field
+    })
   ];
 }

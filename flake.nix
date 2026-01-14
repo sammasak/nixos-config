@@ -30,7 +30,22 @@
           ./nixos/common.nix
           ./nixos/desktop.nix
           ./nixos/laptop.nix
+          ./nixos/automation.nix
           ./hosts/acer-swift
+          stylix.nixosModules.stylix
+          home-manager.nixosModules.home-manager
+          (mkHome { user = "lukas"; desktop = true; })
+        ];
+      };
+      lenovo = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        specialArgs = { hostName = "lenovo-21CB001PMX"; user = "lukas"; };
+        modules = [
+          ./nixos/common.nix
+          ./nixos/desktop.nix
+          ./nixos/laptop.nix
+          ./nixos/automation.nix
+          ./hosts/lenovo-21CB001PMX
           stylix.nixosModules.stylix
           home-manager.nixosModules.home-manager
           (mkHome { user = "lukas"; desktop = true; })

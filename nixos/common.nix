@@ -4,6 +4,8 @@
   nixpkgs.config.allowUnfree = true;
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
+  programs.nix-ld.enable = true;
+
   time.timeZone = "Europe/Stockholm";
   services.xserver.xkb.layout = "se";
   networking.networkmanager.enable = true;

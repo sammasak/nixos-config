@@ -3,6 +3,9 @@
 
 { pkgs, ... }:
 {
+  # Tell Stylix which Firefox profiles to theme
+  stylix.targets.firefox.profileNames = [ "default" ];
+
   programs.firefox = {
     enable = true;
 
@@ -33,6 +36,12 @@
         # Disable Firefox Suggest sponsored content
         "browser.urlbar.suggest.quicksuggest.sponsored" = false;
         "browser.urlbar.suggest.quicksuggest.nonsponsored" = false;
+
+        # Force dark mode
+        "ui.systemUsesDarkTheme" = 1;
+        "widget.content.preferred-color-scheme" = 0;  # 0 = dark, 1 = light
+        "browser.theme.content-theme" = 0;
+        "browser.theme.toolbar-theme" = 0;
       };
     };
   };
