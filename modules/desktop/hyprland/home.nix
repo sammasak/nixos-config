@@ -171,8 +171,15 @@ in
 
         # Window grouping
         "$mod, G, togglegroup,"
-        "$mod, Tab, changegroupactive, f"
-        "$mod SHIFT, Tab, changegroupactive, b"
+
+        # Window cycling with visual selector (like macOS Command+Tab)
+        "$mod, Tab, exec, rofi -show window"
+
+        # Simple window cycling (current workspace only)
+        "$mod CTRL, Tab, cyclenext,"
+        "$mod CTRL, Tab, bringactivetotop,"
+        "$mod CTRL SHIFT, Tab, cyclenext, prev"
+        "$mod CTRL SHIFT, Tab, bringactivetotop,"
 
         # Minimize
         "$mod, N, movetoworkspacesilent, special:minimized"
@@ -248,8 +255,8 @@ in
         # Lock screen
         "$mod, escape, exec, hyprlock"
 
-        # Alt-Tab
-        "ALT, TAB, exec, hyprland-window-switcher"
+        # Alt-Tab (simple focus cycling)
+        "ALT, Tab, movefocus, d"
       ];
 
       bindm = [
