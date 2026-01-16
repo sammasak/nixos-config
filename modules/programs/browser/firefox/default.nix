@@ -33,11 +33,13 @@
         "browser.urlbar.suggest.quicksuggest.sponsored" = false;
         "browser.urlbar.suggest.quicksuggest.nonsponsored" = false;
 
-        # Force dark mode
+        # Force dark mode for UI and content
         "ui.systemUsesDarkTheme" = 1;
-        "widget.content.preferred-color-scheme" = 0;
-        "browser.theme.content-theme" = 0;
-        "browser.theme.toolbar-theme" = 0;
+        "layout.css.prefers-color-scheme.content-override" = 0; # 0 = dark, 1 = light, 2 = system
+        "browser.theme.content-theme" = 0; # Dark
+        "browser.theme.toolbar-theme" = 0; # Dark
+        "browser.in-content.dark-mode" = true;
+        "extensions.activeThemeID" = "firefox-compact-dark@mozilla.org";
       };
     };
   };

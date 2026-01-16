@@ -26,6 +26,11 @@
     };
   };
 
+  # Set environment variables for consistent dark mode detection
+  home.sessionVariables = {
+    GTK_THEME = "Adwaita:dark";
+  };
+
   qt = {
     enable = true;
     platformTheme.name = lib.mkForce "gtk3";
