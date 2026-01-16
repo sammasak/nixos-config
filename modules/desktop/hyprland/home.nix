@@ -110,6 +110,14 @@ in
         repeat_delay = 240;
       };
 
+      # Touchpad gestures (new syntax for Hyprland 0.51+)
+      gesture = [
+        # 3-finger horizontal swipe = switch workspaces
+        "3, horizontal, workspace"
+      ];
+
+
+
       misc = {
         disable_hyprland_logo = true;
         disable_splash_rendering = true;
