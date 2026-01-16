@@ -20,39 +20,57 @@ Personal NixOS + nix-darwin + Home Manager configuration. A work in progress as 
 ## Structure
 
 ```
-flake.nix              # Entry point, machine definitions
-├── nixos/             # NixOS system configuration
-│   ├── common.nix     # Base Linux (nix settings, user, locale)
-│   ├── desktop.nix    # GUI environment (Hyprland, PipeWire)
-│   ├── laptop.nix     # Laptop-specific (power, touchpad)
-│   └── automation.nix # Auto-updates, garbage collection
-├── darwin/            # macOS system configuration
-│   └── common.nix     # System preferences (Dock, Finder)
-├── home/              # Home Manager user configuration
-│   └── lukas.nix      # My user config (adapts via desktop flag)
-├── modules/           # Reusable configuration modules
-│   ├── shell/         # CLI: nushell, starship, git, cli-tools
-│   ├── dev/           # Development: vscode
-│   ├── desktop/       # GUI: hyprland, kitty, waybar, etc.
-│   ├── fonts.nix      # Font packages
-│   └── stylix.nix     # Theme configuration
-├── hosts/             # Per-machine hardware configuration
-├── lib/               # Helper files (users.nix, theme.nix)
-├── assets/            # Wallpapers and other assets
-└── dotfiles/          # Plain config files (symlinked)
+flake.nix                # Entry point, host definitions
+├── hosts/               # Per-machine configs
+│   ├── acer-swift/
+│   │   ├── configuration.nix
+│   │   ├── hardware-configuration.nix
+│   │   ├── home.nix
+│   │   └── variables.nix
+│   └── lenovo-21CB001PMX/
+│       ├── configuration.nix
+│       ├── hardware-configuration.nix
+│       ├── home.nix
+│       └── variables.nix
+├── modules/             # Reusable modules
+│   ├── core/            # System baseline (nix, users, services, fonts)
+│   ├── desktop/         # Desktop stacks (Hyprland)
+│   ├── hardware/        # Hardware drivers
+│   ├── programs/        # Home Manager program modules
+│   ├── roles/           # Base/desktop/laptop composition
+│   └── themes/          # Theme definitions
+├── darwin/              # macOS system configuration
+│   └── common.nix
+├── home/                # Home Manager entrypoints
+│   └── lukas.nix        # darwin CLI profile
+├── lib/                 # Shared helpers (users, theme)
+├── assets/              # Wallpapers and other assets
+├── dotfiles/            # Plain config files (symlinked)
+├── secrets/             # Secrets (handled out-of-band)
+└── tmp/                 # Local comparison/scratch (gitignored)
 ```
 
 ## How It Works
 
-The `mkHome` helper in [flake.nix](flake.nix) passes a `desktop` flag to the user config. When `desktop = true`, GUI modules (Hyprland, kitty, waybar, etc.) are included. When `false`, only CLI tools are loaded.
+Each host lives in `hosts/<name>/` and provides:
 
-This keeps one user config file that works on desktops, servers, and macOS.
+- `variables.nix`: choices for desktop, theme, apps, hardware
+- `configuration.nix`: system modules for that host
+- `home.nix`: Home Manager modules for that host
+
+[flake.nix](flake.nix) wires `mkHost` to load those files, pass `host`/`user` to modules, and share common building blocks in `modules/`. macOS uses `darwin/common.nix` plus the `home/lukas.nix` CLI profile.
+
+Roles are driven by `variables.nix`:
+
+- `roles = [ "base" "laptop" "desktop" ]` for laptops
+- Drop `"desktop"` for headless machines to keep the same shell/CLI baseline without a GUI
 
 ## Commands
 
 ```bash
 # Build and switch (Linux)
 sudo nixos-rebuild switch --flake .#acer-swift
+sudo nixos-rebuild switch --flake .#lenovo
 
 # Test build without applying
 sudo nixos-rebuild build --flake .#acer-swift
@@ -75,7 +93,7 @@ nix-collect-garbage -d
 
 ## Automation
 
-System automatically updates weekly (Sunday 3 AM), cleans old backups (7 days), and garbage collects monthly (30 days). Configured in [nixos/automation.nix](nixos/automation.nix).
+System auto-updates weekly (Sunday 3 AM), runs garbage collection monthly, and optimizes the store weekly. Configured in `modules/core/automation.nix`.
 
 ## Fresh Install (New Laptop)
 
@@ -88,26 +106,25 @@ git clone <repo-url> /mnt/home/nixos-config && cd /mnt/home/nixos-config
 # Create host config (copy from existing machine)
 mkdir -p hosts/<name>
 cp /mnt/etc/nixos/hardware-configuration.nix hosts/<name>/
-cp hosts/acer-swift/default.nix hosts/<name>/  # edit stateVersion
-# Add machine to flake.nix (copy acer-swift block, change name)
+cp hosts/acer-swift/{configuration.nix,home.nix,variables.nix} hosts/<name>/
+# Edit variables.nix + configuration.nix, then add the host to flake.nix
 ```
 
 ## Adding a New Machine
 
-1. Create `hosts/<name>/default.nix` with hardware configuration
-2. Add entry to [flake.nix](flake.nix):
-   - **Linux desktop**: Include `nixos/common.nix`, `nixos/desktop.nix`, and `mkHome { desktop = true; }`
-   - **Linux server**: Include `nixos/common.nix` and `mkHome { desktop = false; }`
-   - **macOS**: Include `darwin/common.nix` and `mkHome { desktop = false; }`
+1. Create `hosts/<name>/` by copying an existing host
+2. Update `variables.nix` (apps, desktop, hardware)
+3. Update `configuration.nix` if the hardware/roles differ
+4. Add the host entry in [flake.nix](flake.nix)
 
-See existing configurations in `flake.nix` for examples.
+Use `hosts/acer-swift` and `hosts/lenovo-21CB001PMX` as examples.
 
 ## Customization
 
 | What | Where |
 |------|-------|
-| Theme & colors | [modules/stylix.nix](modules/stylix.nix) |
-| Wallpaper | `assets/wallpapers/wallpaper.jpg` |
+| Theme & colors | [modules/themes/Catppuccin/default.nix](modules/themes/Catppuccin/default.nix) |
+| Wallpaper | `assets/wallpapers/` |
 | Git credentials | [lib/users.nix](lib/users.nix) |
 | VSCode settings | [dotfiles/vscode/](dotfiles/vscode/) |
 | Hyprland keybinds | [modules/desktop/hyprland/](modules/desktop/hyprland/) |
@@ -123,3 +140,6 @@ These have been helpful in understanding Nix:
 - [Stylix](https://github.com/danth/stylix) (theming)
 - [Hyprland Wiki](https://wiki.hyprland.org/)
 
+## Inspiration
+
+This setup is inspired by [Sly-Harvey/NixOS](https://github.com/Sly-Harvey/NixOS). Thanks for sharing a clean, modular reference repo.

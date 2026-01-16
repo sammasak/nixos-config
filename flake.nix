@@ -11,46 +11,59 @@
     stylix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { nixpkgs, home-manager, nix-darwin, stylix, ... }:
+  outputs = { self, nixpkgs, home-manager, nix-darwin, stylix, ... }@inputs:
   let
     users = import ./lib/users.nix;
-    mkHome = { user, desktop ? false }: {
+
+    # Helper function to create NixOS hosts
+    mkHost = { hostDir, system ? "x86_64-linux" }:
+    let
+      vars = import ./hosts/${hostDir}/variables.nix;
+    in
+    nixpkgs.lib.nixosSystem {
+      inherit system;
+      specialArgs = {
+        inherit inputs;
+        host = hostDir;
+        user = vars.username;
+      };
+      modules = [
+        # Host-specific configuration
+        ./hosts/${hostDir}/configuration.nix
+
+        # Stylix theming
+        stylix.nixosModules.stylix
+
+        # Home Manager
+        home-manager.nixosModules.home-manager
+        {
+          home-manager = {
+            useGlobalPkgs = true;
+            useUserPackages = true;
+            backupFileExtension = "backup";
+            extraSpecialArgs = {
+              inherit inputs;
+              host = hostDir;
+              userConfig = users.${vars.username} or {};
+            };
+            users.${vars.username} = import ./hosts/${hostDir}/home.nix;
+          };
+        }
+      ];
+    };
+
+    # Darwin helper (unchanged for now)
+    mkDarwin = { user }: {
       home-manager.useGlobalPkgs = true;
       home-manager.useUserPackages = true;
       home-manager.backupFileExtension = "backup";
-      home-manager.extraSpecialArgs = { userConfig = users.${user}; inherit desktop; };
+      home-manager.extraSpecialArgs = { userConfig = users.${user}; desktop = false; };
       home-manager.users.${user} = import ./home/${user}.nix;
     };
   in {
     nixosConfigurations = {
-      acer-swift = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        specialArgs = { hostName = "acer-swift"; user = "lukas"; };
-        modules = [
-          ./nixos/common.nix
-          ./nixos/desktop.nix
-          ./nixos/laptop.nix
-          ./nixos/automation.nix
-          ./hosts/acer-swift
-          stylix.nixosModules.stylix
-          home-manager.nixosModules.home-manager
-          (mkHome { user = "lukas"; desktop = true; })
-        ];
-      };
-      lenovo = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        specialArgs = { hostName = "lenovo-21CB001PMX"; user = "lukas"; };
-        modules = [
-          ./nixos/common.nix
-          ./nixos/desktop.nix
-          ./nixos/laptop.nix
-          ./nixos/automation.nix
-          ./hosts/lenovo-21CB001PMX
-          stylix.nixosModules.stylix
-          home-manager.nixosModules.home-manager
-          (mkHome { user = "lukas"; desktop = true; })
-        ];
-      };
+      acer-swift = mkHost { hostDir = "acer-swift"; };
+      lenovo = mkHost { hostDir = "lenovo-21CB001PMX"; };
     };
 
     darwinConfigurations = {
@@ -60,7 +73,7 @@
         modules = [
           ./darwin/common.nix
           home-manager.darwinModules.home-manager
-          (mkHome { user = "lukas"; desktop = false; })
+          (mkDarwin { user = "lukas"; })
         ];
       };
     };
