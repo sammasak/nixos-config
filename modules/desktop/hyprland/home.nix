@@ -22,9 +22,8 @@ in
     portalPackage = null;
 
     settings = {
-      monitor = [
-        "DP-1,3840x2160@60,1920x0,1.5"
-        "eDP-1,1920x1200@60,2186x1440,1"
+      monitor = vars.monitors or [
+        "preferred,auto,1"
       ];
 
       xwayland = {

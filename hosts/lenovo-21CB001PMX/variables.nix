@@ -25,6 +25,12 @@
   # Hardware
   videoDriver = "intel";
 
+  # Monitor configuration
+  monitors = [
+    "DP-1,3840x2160@60,1920x0,1.5"
+    "eDP-1,preferred,2186x1440,1"
+  ];
+
   # Features
   laptop = true;
   games = false;
