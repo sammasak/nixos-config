@@ -9,6 +9,9 @@
       }
     '';
     extraConfig = ''
+      # Shell aliases
+      alias gco = git checkout
+
       # Run neofetch on interactive shell startup
       if $nu.is-interactive {
         neofetch

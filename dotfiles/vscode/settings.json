@@ -10,6 +10,7 @@
   "workbench.startupEditor": "none",
   "terminal.integrated.fontFamily": "'JetBrainsMono Nerd Font'",
   "terminal.integrated.fontSize": 12,
+  "terminal.integrated.sendKeybindingsToShell": false,
   "files.autoSave": "onFocusChange",
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true,
