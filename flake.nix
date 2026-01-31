@@ -9,9 +9,11 @@
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
     stylix.url = "github:danth/stylix";
     stylix.inputs.nixpkgs.follows = "nixpkgs";
+    sops-nix.url = "github:Mic92/sops-nix";
+    sops-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, home-manager, nix-darwin, stylix, ... }@inputs:
+  outputs = { self, nixpkgs, home-manager, nix-darwin, stylix, sops-nix, ... }@inputs:
   let
     users = import ./lib/users.nix;
 
@@ -33,6 +35,9 @@
 
         # Stylix theming
         stylix.nixosModules.stylix
+
+        # Secrets management
+        sops-nix.nixosModules.sops
 
         # Home Manager
         home-manager.nixosModules.home-manager
