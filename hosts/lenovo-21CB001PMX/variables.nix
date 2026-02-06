@@ -3,6 +3,8 @@
   # System
   username = "lukas";
   hostname = "lenovo-21CB001PMX";
+  deployHost = "lenovo-21cb001pmx.local";
+  deployUser = "lukas";
   timezone = "Europe/Stockholm";
   locale = "en_US.UTF-8";
   kbdLayout = "se";

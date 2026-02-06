@@ -96,15 +96,15 @@ nix-collect-garbage -d
 From Lenovo, you can deploy both NixOS hosts via the root `colmena.nix` hive:
 
 ```bash
-# One-time install in current shell
-nix shell nixpkgs#colmena
+# Always use the pinned Colmena version from this flake
+nix run .#colmena -- apply --impure --on acer-swift
 
 # Deploy one host
-colmena apply --on acer-swift
-colmena apply --on lenovo
+nix run .#colmena -- apply --impure --on acer-swift
+nix run .#colmena -- apply --impure --on lenovo
 
 # Deploy all hosts
-colmena apply
+nix run .#colmena -- apply --impure
 ```
 
 ## Automation
