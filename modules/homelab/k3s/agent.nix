@@ -14,7 +14,7 @@ in
     # The default.nix handles most settings
 
     # Optional: node labels for scheduling
-    services.k3s.extraFlags = toString [
+    homelab.k3s.extraFlags = [
       "--node-label=node-role.kubernetes.io/worker=true"
     ];
   };
