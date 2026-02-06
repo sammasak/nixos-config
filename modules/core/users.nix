@@ -1,12 +1,14 @@
 # User configuration with home-manager
 { pkgs, inputs, host, lib, ... }:
 let
-  inherit (import ../../hosts/${host}/variables.nix)
+  vars = import ../../hosts/${host}/variables.nix;
+  inherit (vars)
     username
     terminal
     browser
     shell
     ;
+  sshAuthorizedKeys = vars.sshAuthorizedKeys or [ ];
 in
 {
   imports = [ inputs.home-manager.nixosModules.home-manager ];
@@ -51,8 +53,12 @@ in
       ];
       shell = pkgs.${shell};
       ignoreShellProgramCheck = true;
+      openssh.authorizedKeys.keys = sshAuthorizedKeys;
     };
   };
 
-  nix.settings.allowed-users = [ "${username}" ];
+  nix.settings = {
+    allowed-users = [ "${username}" ];
+    trusted-users = [ "root" "${username}" ];
+  };
 }

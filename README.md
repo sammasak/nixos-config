@@ -91,6 +91,33 @@ sudo nixos-rebuild switch --rollback
 nix-collect-garbage -d
 ```
 
+## Remote Deploys (SSH)
+
+From one Linux host, deploy to another host over SSH:
+
+```bash
+# Example: deploy acer-swift from lenovo
+nixos-rebuild switch \
+  --flake .#acer-swift \
+  --target-host lukas@192.168.10.124 \
+  --sudo \
+  --ask-sudo-password
+```
+
+Notes:
+
+- `--use-remote-sudo` is deprecated; use `--sudo`.
+- Use `--ask-sudo-password` when remote sudo requires a password.
+- If hostnames are flaky, target by IP.
+
+Common failure:
+
+```text
+sudo: a terminal is required to read the password
+```
+
+Fix: rerun with `--ask-sudo-password`.
+
 ## Automation
 
 System auto-updates weekly (Sunday 3 AM), runs garbage collection monthly, and optimizes the store weekly. Configured in `modules/core/automation.nix`.

@@ -1,5 +1,9 @@
 # Core services (audio, bluetooth, etc.)
-{ ... }:
+{ host, ... }:
+let
+  vars = import ../../hosts/${host}/variables.nix;
+  username = vars.username;
+in
 {
   services = {
     libinput.enable = true;
@@ -12,12 +16,13 @@
       enable = true;
       ports = [ 22 ];
       settings = {
-        PasswordAuthentication = true;
-        KbdInteractiveAuthentication = true;
-        AllowUsers = null;
-        UseDns = true;
+        PasswordAuthentication = false;
+        KbdInteractiveAuthentication = false;
+        AllowUsers = [ username ];
+        UseDns = false;
         X11Forwarding = false;
-        PermitRootLogin = "prohibit-password";
+        PermitRootLogin = "no";
+        PubkeyAuthentication = true;
       };
     };
 
