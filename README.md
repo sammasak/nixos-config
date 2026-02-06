@@ -119,6 +119,42 @@ cp hosts/acer-swift/{configuration.nix,home.nix,variables.nix} hosts/<name>/
 
 Use `hosts/acer-swift` and `hosts/lenovo-21CB001PMX` as examples.
 
+## Recommended New Host Workflow (Home Setup)
+
+1. Install base NixOS from USB on the new host and ensure network + `sshd` are up.
+2. From Lenovo, fetch the host SSH key and convert to age recipient:
+   ```bash
+   nix shell nixpkgs#ssh-to-age nixpkgs#openssh -c sh -c 'ssh-keyscan -t ed25519 <new-hostname-or-ip> 2>/dev/null | ssh-to-age'
+   ```
+3. Add that `age1...` recipient to `secrets/.sops.yaml` under `homelab/.*\.yaml$`.
+4. Re-encrypt homelab secrets:
+   ```bash
+   cd secrets
+   sops updatekeys -y homelab/k3s.yaml homelab/cloudflare.yaml
+   ```
+5. Commit secret recipient updates:
+   ```bash
+   cd ..
+   git add secrets/.sops.yaml secrets/homelab/k3s.yaml secrets/homelab/cloudflare.yaml
+   git commit -m "Add <new-host> SOPS recipient"
+   ```
+6. Add host files:
+   - `hosts/<new-host>/variables.nix`
+   - `hosts/<new-host>/configuration.nix`
+   - `hosts/<new-host>/home.nix`
+   - `hosts/<new-host>/hardware-configuration.nix`
+7. Register host in `flake.nix` (`nixosConfigurations`).
+8. Apply on the new host:
+   ```bash
+   sudo nixos-rebuild switch --flake .#<flake-host-name>
+   ```
+9. Verify decryption:
+   ```bash
+   sudo journalctl -u sops-nix -b --no-pager | tail -n 40
+   ```
+
+Only add secret-dependent roles (`homelab-server` / `homelab-agent`) after step 4 is done.
+
 ## Customization
 
 | What | Where |
