@@ -25,6 +25,9 @@ in
     gitPath = "clusters/homelab";
   };
 
+  # Keep control-plane focused on cluster management.
+  homelab.k3s.taintControlPlane = true;
+
   # DNS server with encrypted DNS (DoT/DoH) for sammasak.dev
   homelab.dns = {
     enable = true;

@@ -18,6 +18,9 @@ in
 
   # k3s agent configuration
   homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
+  homelab.k3s.extraFlags = [
+    "--node-label=node-pool=workers"
+  ];
 
   # Thermal management - Intel thermald for automatic fan control
   # Monitors CPU/GPU temps and adjusts fan speeds automatically

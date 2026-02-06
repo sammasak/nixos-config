@@ -65,6 +65,63 @@
       home-manager.extraSpecialArgs = { userConfig = users.${user}; desktop = false; };
       home-manager.users.${user} = import ./home/${user}.nix;
     };
+
+    mkColmenaNode = { hostDir, targetHost, targetUser ? "lukas", system ? "x86_64-linux" }: { ... }:
+    let
+      vars = import ./hosts/${hostDir}/variables.nix;
+    in
+    {
+      deployment = {
+        inherit targetHost targetUser;
+      };
+
+      nixpkgs.system = system;
+
+      _module.args = {
+        inherit inputs;
+        host = hostDir;
+        user = vars.username;
+      };
+
+      imports = [
+        ./hosts/${hostDir}/configuration.nix
+
+        stylix.nixosModules.stylix
+        sops-nix.nixosModules.sops
+
+        home-manager.nixosModules.home-manager
+        {
+          home-manager = {
+            useGlobalPkgs = true;
+            useUserPackages = true;
+            backupFileExtension = "backup";
+            extraSpecialArgs = {
+              inherit inputs;
+              host = hostDir;
+              userConfig = users.${vars.username} or {};
+            };
+            users.${vars.username} = import ./hosts/${hostDir}/home.nix;
+          };
+        }
+      ];
+    };
+
+    colmenaHive = {
+      meta = {
+        nixpkgs = import nixpkgs { system = "x86_64-linux"; };
+        specialArgs = { inherit inputs; };
+      };
+
+      acer-swift = mkColmenaNode {
+        hostDir = "acer-swift";
+        targetHost = "acer-swift";
+      };
+
+      lenovo = mkColmenaNode {
+        hostDir = "lenovo-21CB001PMX";
+        targetHost = "lenovo-21CB001PMX";
+      };
+    };
   in {
     nixosConfigurations = {
       acer-swift = mkHost { hostDir = "acer-swift"; };
@@ -82,5 +139,9 @@
         ];
       };
     };
+
+    # Colmena flake output (some versions use `colmena`, others `colmenaHive`)
+    colmena = colmenaHive;
+    colmenaHive = colmenaHive;
   };
 }
