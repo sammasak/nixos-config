@@ -31,6 +31,12 @@
           on-timeout = "hyprctl dispatch dpms off";
           on-resume = "hyprctl dispatch dpms on";
         }
+        {
+          # Tear down the desktop session when idle for 30 minutes.
+          # This frees GUI resources while keeping system services (k3s, etc.) running.
+          timeout = 1800;
+          on-timeout = "hyprctl dispatch exit";
+        }
       ];
     };
   };

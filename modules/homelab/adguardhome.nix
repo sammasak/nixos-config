@@ -1,5 +1,4 @@
-# AdGuard Home DNS server with wildcard DNS for homelab
-# Supports optional TLS for DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH)
+# AdGuard Home DNS server with encrypted DNS support (DoT/DoH)
 { config, lib, ... }:
 let
   cfg = config.homelab.dns;
@@ -8,18 +7,6 @@ in
 {
   options.homelab.dns = {
     enable = mkEnableOption "AdGuard Home DNS server";
-
-    ingressIP = mkOption {
-      type = types.str;
-      description = "IP address for wildcard DNS rewrites";
-      example = "192.168.10.154";
-    };
-
-    domain = mkOption {
-      type = types.str;
-      default = "homelab.lan";
-      description = "Domain suffix for wildcard DNS (avoid .local - reserved for mDNS)";
-    };
 
     upstreamDNS = mkOption {
       type = types.listOf types.str;
@@ -68,8 +55,8 @@ in
       };
     };
 
-    # Additional DNS rewrites beyond the default homelab.lan
-    extraRewrites = mkOption {
+    # DNS rewrites (wildcards supported)
+    rewrites = mkOption {
       type = types.listOf (types.submodule {
         options = {
           domain = mkOption {
@@ -83,10 +70,10 @@ in
         };
       });
       default = [ ];
-      description = "Additional DNS rewrites for external domains";
+      description = "DNS rewrites for internal domain resolution";
       example = [
-        { domain = "*.sammasak.dev"; answer = "192.168.10.154"; }
-        { domain = "sammasak.dev"; answer = "192.168.10.154"; }
+        { domain = "*.sammasak.dev"; answer = "192.168.10.200"; }
+        { domain = "dns.sammasak.dev"; answer = "192.168.10.154"; }
       ];
     };
   };
@@ -122,15 +109,11 @@ in
         filtering = {
           filtering_enabled = cfg.adBlocking;
           protection_enabled = cfg.adBlocking;
-          # Combine default homelab.lan rewrites with extraRewrites
-          rewrites = [
-            { domain = "*.${cfg.domain}"; answer = cfg.ingressIP; enabled = true; }
-            { domain = cfg.domain; answer = cfg.ingressIP; enabled = true; }
-          ] ++ (map (r: {
+          rewrites = map (r: {
             domain = r.domain;
             answer = r.answer;
             enabled = true;
-          }) cfg.extraRewrites);
+          }) cfg.rewrites;
         };
       };
     };

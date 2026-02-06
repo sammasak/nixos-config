@@ -10,10 +10,10 @@ in
   options.homelab.acme = {
     enable = mkEnableOption "ACME certificate management";
 
-    domain = mkOption {
+    email = mkOption {
       type = types.str;
-      default = "sammasak.dev";
-      description = "Base domain for certificates";
+      default = "admin@sammasak.dev";
+      description = "Email for Let's Encrypt registration";
     };
 
     dnsDomain = mkOption {
@@ -26,9 +26,7 @@ in
   config = mkIf cfg.enable {
     security.acme = {
       acceptTerms = true;
-      # Placeholder email - actual email loaded via LEGO_EMAIL env var at runtime
-      # from sops-encrypted /run/secrets/acme-env
-      defaults.email = "placeholder@example.com";
+      defaults.email = cfg.email;
 
       certs."${cfg.dnsDomain}" = {
         # DNS-01 validation via Cloudflare (no public exposure needed)
@@ -39,9 +37,6 @@ in
           "CLOUDFLARE_DNS_API_TOKEN_FILE" = "/run/secrets/cloudflare-api-token";
         };
 
-        # Also request wildcard for future HTTPS services
-        extraDomainNames = [ "*.${cfg.domain}" ];
-
         # Reload AdGuard Home when certificate is renewed
         reloadServices = [ "adguardhome.service" ];
 
@@ -50,15 +45,8 @@ in
       };
     };
 
-    # Override ACME services to load email from sops-encrypted environment file
-    # The order-renew service is the one that actually runs lego
+    # Ensure ACME services wait for secrets (Cloudflare token)
     systemd.services."acme-order-renew-${cfg.dnsDomain}" = {
-      after = [ "sops-nix.service" ];
-      wants = [ "sops-nix.service" ];
-      serviceConfig.EnvironmentFile = "/run/secrets/acme-env";
-    };
-
-    systemd.services."acme-${cfg.dnsDomain}" = {
       after = [ "sops-nix.service" ];
       wants = [ "sops-nix.service" ];
     };

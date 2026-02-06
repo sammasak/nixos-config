@@ -56,15 +56,15 @@ in
       # level 0 = fan off, 7 = max, "level auto" = BIOS control
       levels =
         if cfg.profile == "quiet" then [
-          # Quiet profile: keeps fan off longer, ramps up slowly
-          [ 0     0   55 ]   # Fan off up to 55°C
-          [ 1    52   60 ]   # Level 1: 52-60°C
-          [ 2    57   65 ]   # Level 2: 57-65°C
-          [ 3    62   70 ]   # Level 3: 62-70°C
-          [ 4    67   75 ]   # Level 4: 67-75°C
-          [ 5    72   80 ]   # Level 5: 72-80°C
-          [ 6    77   85 ]   # Level 6: 77-85°C
-          [ 7    83   95 ]   # Level 7: 83-95°C (max)
+          # Quiet profile: fan stays off below 60C, then ramps gradually.
+          [ 0     0   60 ]   # Fan off up to 60°C
+          [ 1    57   65 ]   # Level 1: 57-65°C
+          [ 2    62   70 ]   # Level 2: 62-70°C
+          [ 3    67   75 ]   # Level 3: 67-75°C
+          [ 4    72   80 ]   # Level 4: 72-80°C
+          [ 5    77   85 ]   # Level 5: 77-85°C
+          [ 6    82   90 ]   # Level 6: 82-90°C
+          [ 7    87   95 ]   # Level 7: 87-95°C (max)
           [ "level full-speed" 93 32767 ]  # Emergency
         ]
         else if cfg.profile == "balanced" then [

@@ -25,12 +25,14 @@ For Kubernetes workloads and GitOps configuration, see [homelab-gitops](https://
 │                     nixos-config (this repo)                         │
 │                                                                      │
 │  modules/homelab/                                                    │
-│  ├── k3s/                                                           │
+│  ├── k3s/               # Kubernetes cluster                         │
 │  │   ├── default.nix    # Common k3s configuration                  │
 │  │   ├── server.nix     # Control plane settings                    │
 │  │   └── agent.nix      # Worker node settings                      │
-│  ├── sops.nix           # Secret decryption (token, flux keys)      │
-│  └── flux.nix           # Automated Flux bootstrap                  │
+│  ├── sops.nix           # Secret decryption (token, flux, cloudflare)│
+│  ├── flux.nix           # Automated Flux bootstrap                  │
+│  ├── adguardhome.nix    # DNS server with DoT/DoH                   │
+│  └── acme.nix           # Let's Encrypt certificates                │
 │                                                                      │
 │  modules/roles/                                                      │
 │  ├── homelab-server.nix # Role for control plane nodes              │
@@ -44,9 +46,37 @@ For Kubernetes workloads and GitOps configuration, see [homelab-gitops](https://
 │                                                                      │
 │  clusters/homelab/                                                   │
 │  ├── flux-system/       # GitOps controller                         │
-│  ├── infra/            # Platform services (ingress, observability)│
+│  ├── infra/             # Platform services                         │
+│  │   ├── metallb        # LoadBalancer (192.168.10.200-210)         │
+│  │   ├── ingress-nginx  # Ingress controller                        │
+│  │   ├── cert-manager   # TLS certificates for K8s                  │
+│  │   └── observability  # Prometheus/Grafana stack                  │
 │  └── apps/              # Application workloads                     │
 └─────────────────────────────────────────────────────────────────────┘
+```
+
+### Network Flow
+
+```
+Internet/LAN
+     │
+     ▼
+┌────────────────────────────────────────────────────────┐
+│ AdGuard Home (192.168.10.154)                          │
+│ ├── DNS:53      - Plain DNS                            │
+│ ├── DoT:853     - DNS-over-TLS (Android Private DNS)   │
+│ └── DoH:443     - DNS-over-HTTPS                       │
+│     Certificate: Let's Encrypt (dns.sammasak.dev)      │
+└────────────────────────────────────────────────────────┘
+     │
+     │ *.sammasak.dev → 192.168.10.200 (MetalLB)
+     ▼
+┌────────────────────────────────────────────────────────┐
+│ ingress-nginx (192.168.10.200 via MetalLB)             │
+│ └── TLS terminated by cert-manager certificates        │
+│     ├── grafana.sammasak.dev → Grafana                 │
+│     └── hello.sammasak.dev   → Hello app               │
+└────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -76,6 +106,7 @@ SOPS-based secrets management.
 homelab.secrets = {
   enable = true;
   sopsFile = ../../secrets/homelab/k3s.yaml;
+  cloudflareSecretsFile = ../../secrets/homelab/cloudflare.yaml;
 };
 ```
 
@@ -91,6 +122,39 @@ homelab.flux = {
   gitPath = "clusters/homelab";
 };
 ```
+
+### `homelab.dns`
+
+AdGuard Home DNS server with encrypted DNS (DoT/DoH).
+
+```nix
+homelab.dns = {
+  enable = true;
+  tls = {
+    enable = true;
+    domain = "dns.sammasak.dev";
+    dohPort = 443;
+  };
+  rewrites = [
+    { domain = "*.sammasak.dev"; answer = "192.168.10.200"; }
+    { domain = "dns.sammasak.dev"; answer = "192.168.10.154"; }
+  ];
+};
+```
+
+### `homelab.acme`
+
+ACME certificate management for DNS-over-TLS/HTTPS.
+
+```nix
+homelab.acme = {
+  enable = true;
+  email = "admin@sammasak.dev";
+  dnsDomain = "dns.sammasak.dev";
+};
+```
+
+Uses Cloudflare DNS-01 validation (no public exposure required).
 
 When enabled, a systemd service automatically:
 1. Waits for k3s to be ready

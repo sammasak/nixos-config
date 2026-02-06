@@ -64,20 +64,6 @@ in
         sopsFile = cfg.cloudflareSecretsFile;
         path = "/run/secrets/cloudflare-api-token";
       };
-
-      # ACME email (encrypted to keep out of git)
-      secrets."acme/email" = {
-        sopsFile = cfg.cloudflareSecretsFile;
-        path = "/run/secrets/acme-email";
-      };
-
-      # Environment file for ACME with interpolated email
-      templates."acme-env" = {
-        content = ''
-          LEGO_EMAIL=${config.sops.placeholder."acme/email"}
-        '';
-        path = "/run/secrets/acme-env";
-      };
     };
   };
 }
