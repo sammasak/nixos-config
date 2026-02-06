@@ -118,6 +118,61 @@ sudo: a terminal is required to read the password
 
 Fix: rerun with `--ask-sudo-password`.
 
+## SSH Hardening (Modular)
+
+SSH security is centralized in reusable modules, with host-specific values in `hosts/<name>/variables.nix`.
+
+- `modules/core/services.nix`
+- `modules/core/network.nix`
+- `modules/core/users.nix`
+
+Current policy:
+
+- Key-only SSH auth (`PasswordAuthentication = false`)
+- No root SSH login (`PermitRootLogin = "no"`)
+- Allowed SSH users are explicit (`AllowUsers = [ username ]`)
+- SSH firewall policy allows only LAN CIDR + loopback
+- Authorized keys come from host variables (`sshAuthorizedKeys`)
+
+Per-host required variables:
+
+```nix
+# hosts/<name>/variables.nix
+{
+  username = "lukas";
+}
+```
+
+Default source of SSH keys is `lib/users.nix`:
+
+```nix
+# lib/users.nix
+{
+  lukas.sshKeys = [
+    "ssh-ed25519 AAAA... controller-key"
+  ];
+}
+```
+
+Optional per-host override (only when needed):
+
+```nix
+# hosts/<name>/variables.nix
+{
+  sshAuthorizedKeys = [
+    "ssh-ed25519 AAAA... override-for-this-host-only"
+  ];
+  # Optional LAN override (default: 192.168.10.0/24)
+  lanCidr = "192.168.20.0/24";
+}
+```
+
+After changing SSH policy, always apply locally first on the target machine to avoid lockout:
+
+```bash
+sudo nixos-rebuild switch --flake .#<host>
+```
+
 ## Automation
 
 System auto-updates weekly (Sunday 3 AM), runs garbage collection monthly, and optimizes the store weekly. Configured in `modules/core/automation.nix`.
@@ -140,11 +195,51 @@ cp hosts/acer-swift/{configuration.nix,home.nix,variables.nix} hosts/<name>/
 ## Adding a New Machine
 
 1. Create `hosts/<name>/` by copying an existing host
-2. Update `variables.nix` (apps, desktop, hardware)
+2. Update `variables.nix` (apps, desktop, hardware, SSH hardening vars)
 3. Update `configuration.nix` if the hardware/roles differ
 4. Add the host entry in [flake.nix](flake.nix)
 
 Use `hosts/acer-swift` and `hosts/lenovo-21CB001PMX` as examples.
+
+Minimum secure defaults for new hosts:
+
+```nix
+{
+  username = "lukas";
+  # hostname, desktop, hardware, roles...
+}
+```
+
+SSH keys are inherited from `lib/users.nix` by default.
+
+## Adding a New Service (Modular)
+
+Use modules + roles, not ad-hoc host edits.
+
+1. Create a reusable service module in `modules/<domain>/<service>.nix`.
+2. Expose an option and guard config with `mkIf`:
+   - Example: `options.homelab.<service>.enable = mkEnableOption "...";`
+3. Add required ports/rules in the module itself (firewall stays close to service).
+4. Attach module via a role (`modules/roles/*.nix`) if shared by multiple hosts.
+5. Enable that role (or service option) in `hosts/<name>/configuration.nix`.
+6. Build/apply locally, then remote deploy if needed.
+
+Template:
+
+```nix
+{ config, lib, ... }:
+with lib;
+let
+  cfg = config.homelab.myservice;
+in
+{
+  options.homelab.myservice.enable = mkEnableOption "My service";
+
+  config = mkIf cfg.enable {
+    # service config
+  };
+}
+```
 
 ## Recommended New Host Workflow (Home Setup)
 

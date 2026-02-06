@@ -2,13 +2,15 @@
 { pkgs, inputs, host, lib, ... }:
 let
   vars = import ../../hosts/${host}/variables.nix;
+  userDefs = import ../../lib/users.nix;
   inherit (vars)
     username
     terminal
     browser
     shell
     ;
-  sshAuthorizedKeys = vars.sshAuthorizedKeys or [ ];
+  defaultSshKeys = (userDefs.${username}.sshKeys or [ ]);
+  sshAuthorizedKeys = vars.sshAuthorizedKeys or defaultSshKeys;
 in
 {
   imports = [ inputs.home-manager.nixosModules.home-manager ];
@@ -56,6 +58,13 @@ in
       openssh.authorizedKeys.keys = sshAuthorizedKeys;
     };
   };
+
+  assertions = [
+    {
+      assertion = sshAuthorizedKeys != [ ];
+      message = "No SSH authorized keys configured for `${username}`. Set `lib/users.nix` (${username}.sshKeys) or `hosts/${host}/variables.nix` (sshAuthorizedKeys).";
+    }
+  ];
 
   nix.settings = {
     allowed-users = [ "${username}" ];
