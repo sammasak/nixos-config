@@ -92,7 +92,7 @@ in
         ++ optionals (cfg.role == "server" && cfg.taintControlPlane) [
           "--node-taint=node-role.kubernetes.io/control-plane:NoSchedule"
         ]
-        ++ map (c: "--disable=${c}") cfg.disableComponents
+        ++ optionals (cfg.role == "server") (map (c: "--disable=${c}") cfg.disableComponents)
       );
     };
 
