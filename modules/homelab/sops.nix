@@ -15,6 +15,12 @@ in
       default = ../../secrets/homelab/k3s.yaml;
       description = "Path to the sops-encrypted secrets file";
     };
+
+    cloudflareSecretsFile = mkOption {
+      type = types.path;
+      default = ../../secrets/homelab/cloudflare.yaml;
+      description = "Path to the sops-encrypted Cloudflare secrets file";
+    };
   };
 
   config = mkIf cfg.enable {
@@ -51,6 +57,26 @@ in
       secrets."flux/age_key" = {
         path = "/run/secrets/flux-age-key";
         restartUnits = [ "flux-bootstrap.service" ];
+      };
+
+      # Cloudflare API token for ACME DNS-01 validation
+      secrets."cloudflare/api_token" = {
+        sopsFile = cfg.cloudflareSecretsFile;
+        path = "/run/secrets/cloudflare-api-token";
+      };
+
+      # ACME email (encrypted to keep out of git)
+      secrets."acme/email" = {
+        sopsFile = cfg.cloudflareSecretsFile;
+        path = "/run/secrets/acme-email";
+      };
+
+      # Environment file for ACME with interpolated email
+      templates."acme-env" = {
+        content = ''
+          LEGO_EMAIL=${config.sops.placeholder."acme/email"}
+        '';
+        path = "/run/secrets/acme-env";
       };
     };
   };

@@ -54,6 +54,12 @@ in
       default = [ "traefik" "servicelb" ];
       description = "Built-in k3s components to disable";
     };
+
+    taintControlPlane = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Taint control plane to prevent regular workloads from scheduling (enable when workers are available)";
+    };
   };
 
   config = mkIf cfg.enable {
@@ -82,6 +88,9 @@ in
         ++ optionals (cfg.role == "server") [
           "--flannel-backend=${cfg.flannel.backend}"
           "--write-kubeconfig-mode=644"
+        ]
+        ++ optionals (cfg.role == "server" && cfg.taintControlPlane) [
+          "--node-taint=node-role.kubernetes.io/control-plane:NoSchedule"
         ]
         ++ map (c: "--disable=${c}") cfg.disableComponents
       );

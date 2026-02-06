@@ -178,10 +178,14 @@
 
         temperature = {
           interval = 10;
-          tooltip = false;
-          critical-threshold = 82;
-          format-critical = "{icon} {temperatureC}°C";
-          format = "󰈸 {temperatureC}°C";
+          tooltip = true;
+          tooltip-format = "CPU Package: {temperatureC}°C";
+          critical-threshold = 85;
+          format-critical = " {temperatureC}°C";
+          format = " {temperatureC}°C";
+          # Use coretemp CPU package sensor (stable path across reboots)
+          hwmon-path-abs = "/sys/devices/platform/coretemp.0/hwmon";
+          input-filename = "temp1_input";  # Package temp
         };
 
         tray = {
