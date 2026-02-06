@@ -13,7 +13,11 @@ in
   ]
   ++ lib.optionals (builtins.elem "base" roles) [ ../../modules/roles/base.nix ]
   ++ lib.optionals (builtins.elem "desktop" roles) [ ../../modules/roles/desktop.nix ]
-  ++ lib.optionals (builtins.elem "laptop" roles) [ ../../modules/roles/laptop.nix ];
+  ++ lib.optionals (builtins.elem "laptop" roles) [ ../../modules/roles/laptop.nix ]
+  ++ lib.optionals (builtins.elem "homelab-agent" roles) [ ../../modules/roles/homelab-agent.nix ];
+
+  # k3s agent configuration
+  homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
 
   # Intel thermal management
   services.thermald.enable = true;

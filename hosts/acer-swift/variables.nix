@@ -36,5 +36,5 @@
   games = false;
 
   # Roles
-  roles = [ "base" "laptop" "desktop" ];
+  roles = [ "base" "laptop" "desktop" "homelab-agent" ];
 }
