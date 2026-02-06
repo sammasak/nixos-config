@@ -91,22 +91,6 @@ sudo nixos-rebuild switch --rollback
 nix-collect-garbage -d
 ```
 
-## Colmena (Multi-Machine Deploys)
-
-From Lenovo, you can deploy both NixOS hosts via the root `colmena.nix` hive:
-
-```bash
-# Always use the pinned Colmena version from this flake
-nix run .#colmena -- apply --impure --on acer-swift
-
-# Deploy one host
-nix run .#colmena -- apply --impure --on acer-swift
-nix run .#colmena -- apply --impure --on lenovo
-
-# Deploy all hosts
-nix run .#colmena -- apply --impure
-```
-
 ## Automation
 
 System auto-updates weekly (Sunday 3 AM), runs garbage collection monthly, and optimizes the store weekly. Configured in `modules/core/automation.nix`.

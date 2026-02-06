@@ -19,13 +19,6 @@ in
     };
   };
 
-  # Hostname-based LAN discovery without router DNS/static leases.
-  services.avahi = {
-    enable = true;
-    nssmdns4 = true;
-    openFirewall = true;
-  };
-
   environment.systemPackages = with pkgs; [
     networkmanagerapplet
   ];

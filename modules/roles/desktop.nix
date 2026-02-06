@@ -1,18 +1,12 @@
 # Desktop role (display manager + theme + desktop stack)
-{ pkgs, inputs, ... }:
+{ host, ... }:
 let
-  colmenaPkg =
-    if inputs.colmena.packages.${pkgs.system} ? colmena
-    then inputs.colmena.packages.${pkgs.system}.colmena
-    else inputs.colmena.packages.${pkgs.system}.default;
+  vars = import ../../hosts/${host}/variables.nix;
 in
 {
   imports = [
     ../core/sddm.nix
     ../themes/Catppuccin
-    ../desktop/hyprland
+    ../desktop/${vars.desktop}
   ];
-
-  # Let any desktop machine act as a Colmena controller.
-  environment.systemPackages = [ colmenaPkg ];
 }

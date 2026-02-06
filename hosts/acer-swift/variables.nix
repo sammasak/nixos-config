@@ -3,8 +3,6 @@
   # System
   username = "lukas";
   hostname = "acer-swift";
-  deployHost = "acer-swift.local";
-  deployUser = "lukas";
   timezone = "Europe/Stockholm";
   locale = "en_US.UTF-8";
   kbdLayout = "se";

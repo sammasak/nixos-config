@@ -3,8 +3,6 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    colmena.url = "github:zhaofengli/colmena";
-    colmena.inputs.nixpkgs.follows = "nixpkgs";
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nix-darwin.url = "github:nix-darwin/nix-darwin";
@@ -18,10 +16,6 @@
   outputs = { self, nixpkgs, home-manager, nix-darwin, stylix, sops-nix, ... }@inputs:
   let
     users = import ./lib/users.nix;
-    colmenaPackageFor = system:
-      if inputs.colmena.packages.${system} ? colmena
-      then inputs.colmena.packages.${system}.colmena
-      else inputs.colmena.packages.${system}.default;
 
     # Helper function to create NixOS hosts
     mkHost = { hostDir, system ? "x86_64-linux" }:
@@ -71,64 +65,6 @@
       home-manager.extraSpecialArgs = { userConfig = users.${user}; desktop = false; };
       home-manager.users.${user} = import ./home/${user}.nix;
     };
-
-    mkColmenaNode = { hostDir, targetHost ? null, targetUser ? null, system ? "x86_64-linux" }: { ... }:
-    let
-      vars = import ./hosts/${hostDir}/variables.nix;
-      deployHost = if targetHost != null then targetHost else (vars.deployHost or vars.hostname);
-      deployUser = if targetUser != null then targetUser else (vars.deployUser or vars.username);
-    in
-    {
-      deployment = {
-        targetHost = deployHost;
-        targetUser = deployUser;
-      };
-
-      nixpkgs.system = system;
-
-      _module.args = {
-        inherit inputs;
-        host = hostDir;
-        user = vars.username;
-      };
-
-      imports = [
-        ./hosts/${hostDir}/configuration.nix
-
-        stylix.nixosModules.stylix
-        sops-nix.nixosModules.sops
-
-        home-manager.nixosModules.home-manager
-        {
-          home-manager = {
-            useGlobalPkgs = true;
-            useUserPackages = true;
-            backupFileExtension = "backup";
-            extraSpecialArgs = {
-              inherit inputs;
-              host = hostDir;
-              userConfig = users.${vars.username} or {};
-            };
-            users.${vars.username} = import ./hosts/${hostDir}/home.nix;
-          };
-        }
-      ];
-    };
-
-    colmenaConfig = {
-      meta = {
-        nixpkgs = import nixpkgs { system = "x86_64-linux"; };
-        specialArgs = { inherit inputs; };
-      };
-
-      acer-swift = mkColmenaNode {
-        hostDir = "acer-swift";
-      };
-
-      lenovo = mkColmenaNode {
-        hostDir = "lenovo-21CB001PMX";
-      };
-    };
   in {
     nixosConfigurations = {
       acer-swift = mkHost { hostDir = "acer-swift"; };
@@ -145,16 +81,6 @@
           (mkDarwin { user = "lukas"; })
         ];
       };
-    };
-
-    # Colmena flake output (some versions use `colmena`, others `colmenaHive`)
-    colmena = colmenaConfig;
-    colmenaHive = inputs.colmena.lib.makeHive colmenaConfig;
-
-    packages.x86_64-linux.colmena = colmenaPackageFor "x86_64-linux";
-    apps.x86_64-linux.colmena = {
-      type = "app";
-      program = "${colmenaPackageFor "x86_64-linux"}/bin/colmena";
     };
   };
 }
