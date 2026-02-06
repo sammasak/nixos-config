@@ -19,7 +19,9 @@ in
   # k3s agent configuration
   homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
 
-  # Intel thermal management
+  # Thermal management - Intel thermald for automatic fan control
+  # Monitors CPU/GPU temps and adjusts fan speeds automatically
+  # For Acer laptops, this relies on BIOS fan tables (no custom curves like ThinkPad)
   services.thermald.enable = true;
 
   # Keep laptop always on - never sleep on lid close (override laptop defaults)
