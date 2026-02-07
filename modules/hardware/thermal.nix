@@ -11,7 +11,7 @@ in
 
     platform = lib.mkOption {
       type = lib.types.enum [ "thinkpad" "generic" ];
-      default = "thinkpad";
+      default = "generic";
       description = "Hardware platform for fan control";
     };
 
@@ -23,8 +23,9 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Intel thermal daemon as safety fallback
-    services.thermald.enable = true;
+    # thermald is useful on generic Intel laptops, but on ThinkPad platforms
+    # it often exits early due to platform checks and provides no control.
+    services.thermald.enable = lib.mkIf (cfg.platform == "generic") true;
 
     # ThinkPad-specific fan control
     boot.extraModprobeConfig = lib.mkIf (cfg.platform == "thinkpad") ''

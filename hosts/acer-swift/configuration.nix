@@ -22,10 +22,11 @@ in
     "--node-label=node-pool=workers"
   ];
 
-  # Thermal management - Intel thermald for automatic fan control
-  # Monitors CPU/GPU temps and adjusts fan speeds automatically
-  # For Acer laptops, this relies on BIOS fan tables (no custom curves like ThinkPad)
-  services.thermald.enable = true;
+  # Acer laptop: use generic thermal policy (BIOS/EC fan tables + thermald).
+  hardware.thermal = {
+    platform = "generic";
+    profile = "balanced";
+  };
 
   # Keep laptop always on - never sleep on lid close (override laptop defaults)
   services.logind.settings.Login = {

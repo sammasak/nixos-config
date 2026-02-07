@@ -1,5 +1,5 @@
 # Host configuration for lenovo-21CB001PMX
-{ lib, host, ... }:
+{ lib, host, pkgs, ... }:
 let
   vars = import ./variables.nix;
   roles = vars.roles or [ "base" "desktop" "laptop" ];
@@ -27,6 +27,23 @@ in
 
   # Keep control-plane focused on cluster management.
   homelab.k3s.taintControlPlane = true;
+
+  # ThinkPad-class laptop: use thinkfan + thermald with a less heat-prone curve.
+  hardware.thermal = {
+    platform = "thinkpad";
+    profile = "quiet";
+  };
+
+  # Avoid unnecessary heat from an always-on performance profile.
+  systemd.services.set-default-power-profile = {
+    description = "Set default power profile to balanced";
+    after = [ "power-profiles-daemon.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.power-profiles-daemon}/bin/powerprofilesctl set balanced";
+    };
+  };
 
   # DNS server with encrypted DNS (DoT/DoH) for sammasak.dev
   homelab.dns = {

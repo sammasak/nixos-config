@@ -32,10 +32,9 @@
           on-resume = "hyprctl dispatch dpms on";
         }
         {
-          # Tear down the desktop session when idle for 30 minutes.
-          # This frees GUI resources while keeping system services (k3s, etc.) running.
+          # After 30m idle: keep display dark, then end the user session to return to SDDM.
           timeout = 1800;
-          on-timeout = "hyprctl dispatch exit";
+          on-timeout = "hyprctl dispatch dpms off && sleep 1 && loginctl terminate-user \"$USER\"";
         }
       ];
     };
