@@ -17,7 +17,7 @@
         gtk-layer-shell = true;
         fixed-center = true;
         ipc = true;
-        margin-top = 10;
+        margin-top = 6;
         margin-left = 10;
         margin-right = 10;
         margin-bottom = 0;
@@ -256,10 +256,20 @@
       @define-color flamingo  #f2cdcd;
       @define-color rosewater #f5e0dc;
 
-      window#waybar {
+      window#waybar,
+      window#waybar.background,
+      window#waybar > box,
+      window#waybar > box.horizontal,
+      .background {
         transition-property: background-color;
         transition-duration: 0.5s;
-        background: transparent;
+        background-color: rgba(0, 0, 0, 0);
+        background-image: none;
+        border: none;
+        box-shadow: none;
+      }
+
+      window#waybar {
         border-radius: 10px;
       }
 

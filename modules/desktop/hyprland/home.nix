@@ -122,8 +122,6 @@ in
         "3, horizontal, workspace"
       ];
 
-
-
       misc = {
         disable_hyprland_logo = true;
         disable_splash_rendering = true;
@@ -135,6 +133,8 @@ in
       };
 
       exec-once = [
+        # Ensure status bar is present after any new Hyprland session (including post-SDDM relogin).
+        "systemctl --user restart waybar.service"
         "wallpaper-init"
         "wl-paste --type text --watch cliphist store"
         "wl-paste --type image --watch cliphist store"
