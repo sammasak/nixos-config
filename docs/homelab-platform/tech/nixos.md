@@ -95,13 +95,15 @@ Modern way to structure Nix projects. Provides:
 ```nix
 # flake.nix
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-  outputs = { nixpkgs, ... }: {
-    nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
-      modules = [ ./configuration.nix ];
-    };
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-parts.url = "github:hercules-ci/flake-parts";
   };
+
+  outputs = inputs@{ flake-parts, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [ ./flake-modules/my-host.nix ];
+    };
 }
 ```
 
@@ -124,14 +126,27 @@ Reusable configuration units. Define options, set defaults, compose together.
 ## How We Use It
 
 Our homelab uses NixOS with:
-- **Flakes** for reproducible builds and lock files
-- **Custom modules** for k3s, sops, and Flux
-- **Host-specific configs** in `hosts/<hostname>/`
-- **Role-based composition** (server, agent, desktop)
+- **flake-parts** to structure flake outputs and system definitions
+- A **minimal `flake.nix` entrypoint** that auto-imports top-level flake modules from `flake-modules/`
+- **flake-parts modules registry** (`flake-parts.flakeModules.modules`) for typed `deferredModule` exports
+- A **dendritic module registry** under `flake.modules.<class>.<moduleName>`, auto-generated from `modules/roles`, `hosts/*/home.nix`, `home/*.nix`, and `darwin/*.nix`
+- **Typed distribution declarations** (`configurations.nixos.*`, `configurations.darwin.*`) mapped to flake outputs
+- **Typed host/user options** (`sam.profile`, `sam.userConfig`) instead of host-specific `specialArgs`
+- **Standard public outputs only** (internal typed registry, no exported custom `modules` output)
+- **Role-based composition** (server, agent, desktop) selected per host from `variables.nix`
+- **Custom service modules** for k3s, sops, and Flux
 
 The entire cluster configuration lives in Git. A fresh machine can join the cluster with just:
 ```bash
 nixos-rebuild switch --flake github:sammasak/nixos-config#hostname
+```
+
+Validation commands used in this repo:
+
+```bash
+nix flake check --all-systems --no-write-lock-file
+nix build .#nixosConfigurations.<host>.config.system.build.toplevel --no-link
+nix eval --json .#darwinConfigurations.<name>.config.sam.darwin.user
 ```
 
 ## Further Reading
@@ -139,3 +154,7 @@ nixos-rebuild switch --flake github:sammasak/nixos-config#hostname
 - [NixOS Manual](https://nixos.org/manual/nixos/stable/) - Official documentation
 - [Nix Pills](https://nixos.org/guides/nix-pills/) - Deep dive into how Nix works
 - [Zero to Nix](https://zero-to-nix.com/) - Modern introduction to Nix
+- [flake-parts](https://github.com/hercules-ci/flake-parts) - Flake composition framework
+- [flake-parts modules option](https://flake.parts/options/flake-parts-modules.html) - `flake.modules` typed `deferredModule` registry
+- [The Dendritic Pattern](https://github.com/mightyiam/dendritic) - Top-level module architecture pattern
+- [Dendrix discussion](https://discourse.nixos.org/t/dendrix-dendritic-nix-configurations-distribution/65853) - Distribution-centric dendritic usage

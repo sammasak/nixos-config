@@ -247,16 +247,23 @@ flux get kustomizations
 
 ## Accessing Services
 
-After Flux deploys the infrastructure, services are accessible via ingress-nginx on NodePort:
+After Flux deploys the infrastructure, services are exposed through ingress-nginx as a `LoadBalancer` service via MetalLB.
 
-| Port | Protocol |
-|------|----------|
-| 30080 | HTTP |
-| 30443 | HTTPS |
+Current flow:
+
+1. AdGuard Home resolves `*.sammasak.dev` to the ingress external IP (for example `192.168.10.200`).
+2. MetalLB advertises that IP on LAN.
+3. ingress-nginx routes by host header to cluster services.
+
+Validate ingress external IP:
+
+```bash
+kubectl -n ingress-nginx get svc ingress-nginx-ingress-nginx-controller -o wide
+```
 
 ### Grafana
 
-Access Grafana at `http://grafana.localhost:30080` (requires hosts entry or use node IP directly).
+Access Grafana at `https://grafana.sammasak.dev` from LAN clients that use AdGuard DNS.
 
 Credentials are stored encrypted in the GitOps repo. To view them:
 

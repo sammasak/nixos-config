@@ -20,7 +20,15 @@ Personal NixOS + nix-darwin + Home Manager configuration. A work in progress as 
 ## Structure
 
 ```
-flake.nix                # Entry point, host definitions
+flake.nix                # Minimal flake-parts entrypoint (auto-imports flake modules)
+├── flake-modules/       # Top-level flake modules (dendritic trunk)
+│   ├── 00-flake-parts-modules.nix
+│   ├── 10-systems.nix
+│   ├── 20-module-registry.nix
+│   ├── 30-configurations-options.nix
+│   ├── 40-outputs-nixos.nix
+│   ├── 41-outputs-darwin.nix
+│   └── hosts/           # Distribution declarations
 ├── hosts/               # Per-machine configs
 │   ├── acer-swift/
 │   │   ├── configuration.nix
@@ -58,7 +66,19 @@ Each host lives in `hosts/<name>/` and provides:
 - `configuration.nix`: system modules for that host
 - `home.nix`: Home Manager modules for that host
 
-[flake.nix](flake.nix) wires `mkHost` to load those files, pass `host`/`user` to modules, and share common building blocks in `modules/`. macOS uses `darwin/common.nix` plus the `home/lukas.nix` CLI profile.
+[flake.nix](flake.nix) now uses **flake-parts** with `flake-parts.flakeModules.modules` (the `deferredModule` registry):
+
+- Every file under `flake-modules/` is imported as a top-level flake module
+- `flake.modules.nixos.role-*` is auto-generated from `modules/roles/*.nix`
+- `flake.modules.homeManager.host-*` is auto-generated from `hosts/*/home.nix`
+- `flake.modules.homeManager.darwin-*` is auto-generated from `home/*.nix`
+- `flake.modules.darwin.*` is auto-generated from `darwin/*.nix`
+- `configurations.nixos.*` and `configurations.darwin.*` are typed distribution declarations converted into flake outputs
+
+This establishes a dendritic-style flake trunk for top-level composition: typed, classed module registries with no lower-level `specialArgs` pass-through.
+`flake.nix` keeps `flake.modules` internal to evaluation and removes the public `modules` flake output so `nix flake check` stays warning-free.
+
+Host distributions are composed from typed options (`sam.profile`, `sam.userConfig`) and role aspects from `variables.nix`, rather than passing host-specific `specialArgs` into reusable modules.
 
 Roles are driven by `variables.nix`:
 
@@ -90,6 +110,36 @@ sudo nixos-rebuild switch --rollback
 # Garbage collection (manual)
 nix-collect-garbage -d
 ```
+
+## Validation
+
+Use direct toplevel builds to validate host composition:
+
+```bash
+nix flake check --all-systems --no-write-lock-file
+nix build .#nixosConfigurations.acer-swift.config.system.build.toplevel --no-link
+nix build .#nixosConfigurations.lenovo.config.system.build.toplevel --no-link
+nix eval --json .#darwinConfigurations.work-mac.config.sam.darwin.user
+```
+
+## Forking For Your Setup
+
+Use this sequence to reproduce the same pattern in your own repo:
+
+1. Fork/clone and rename host directories under `hosts/` for your machines.
+2. Update identity defaults in `lib/users.nix` (git name/email, SSH keys).
+3. Copy a host template (`hosts/acer-swift/` or `hosts/lenovo-21CB001PMX/`) and edit `variables.nix`, `configuration.nix`, `home.nix`.
+4. Add one distribution declaration per host in `flake-modules/hosts/<name>.nix`.
+5. Keep reusable behavior in `modules/roles/*.nix` and `modules/core/*.nix`; avoid host-specific `specialArgs`.
+6. If using secrets, update recipients in `secrets/.sops.yaml` and re-encrypt with `sops updatekeys`.
+7. Run the validation commands above before every push.
+
+## Pattern References
+
+- https://github.com/hercules-ci/flake-parts
+- https://flake.parts/options/flake-parts-modules.html
+- https://github.com/mightyiam/dendritic
+- https://discourse.nixos.org/t/dendrix-dendritic-nix-configurations-distribution/65853
 
 ## Remote Deploys (SSH)
 
@@ -132,7 +182,7 @@ Current policy:
 - No root SSH login (`PermitRootLogin = "no"`)
 - Allowed SSH users are explicit (`AllowUsers = [ username ]`)
 - SSH firewall policy allows only LAN CIDR + loopback
-- Authorized keys come from host variables (`sshAuthorizedKeys`)
+- Authorized keys come from `lib/users.nix` by default, with optional host override (`sshAuthorizedKeys`)
 
 Per-host required variables:
 
@@ -189,7 +239,7 @@ git clone <repo-url> /mnt/home/nixos-config && cd /mnt/home/nixos-config
 mkdir -p hosts/<name>
 cp /mnt/etc/nixos/hardware-configuration.nix hosts/<name>/
 cp hosts/acer-swift/{configuration.nix,home.nix,variables.nix} hosts/<name>/
-# Edit variables.nix + configuration.nix, then add the host to flake.nix
+# Edit variables.nix + configuration.nix, then add a host declaration under flake-modules/hosts/
 ```
 
 ## Adding a New Machine
@@ -197,7 +247,8 @@ cp hosts/acer-swift/{configuration.nix,home.nix,variables.nix} hosts/<name>/
 1. Create `hosts/<name>/` by copying an existing host
 2. Update `variables.nix` (apps, desktop, hardware, SSH hardening vars)
 3. Update `configuration.nix` if the hardware/roles differ
-4. Add the host entry in [flake.nix](flake.nix)
+4. Add `flake-modules/hosts/<name>.nix` with `configurations.nixos.<flake-name>`
+5. No registry edits are needed for Home Manager modules if `hosts/<name>/home.nix` exists (auto-discovered by `flake-modules/20-module-registry.nix`)
 
 Use `hosts/acer-swift` and `hosts/lenovo-21CB001PMX` as examples.
 
@@ -265,7 +316,7 @@ in
    - `hosts/<new-host>/configuration.nix`
    - `hosts/<new-host>/home.nix`
    - `hosts/<new-host>/hardware-configuration.nix`
-7. Register host in `flake.nix` (`nixosConfigurations`).
+7. Register host in `flake-modules/hosts/<flake-host-name>.nix`.
 8. Apply on the new host:
    ```bash
    sudo nixos-rebuild switch --flake .#<flake-host-name>

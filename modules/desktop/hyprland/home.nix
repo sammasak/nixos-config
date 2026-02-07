@@ -1,9 +1,17 @@
 # Hyprland Desktop Environment
 # Imports all hyprland-related programs and scripts
-{ config, pkgs, lib, host, ... }:
+{ config, pkgs, lib, osConfig ? null, ... }:
 let
   mkForce = lib.mkForce;
-  vars = import ../../../hosts/${host}/variables.nix;
+  profile =
+    if osConfig != null && osConfig ? sam && osConfig.sam ? profile
+    then osConfig.sam.profile
+    else {
+      monitors = [ "preferred,auto,1" ];
+      kbdLayout = "se";
+      terminal = "kitty";
+      browser = "firefox";
+    };
 in
 {
   imports = [
@@ -22,9 +30,7 @@ in
     portalPackage = null;
 
     settings = {
-      monitor = vars.monitors or [
-        "preferred,auto,1"
-      ];
+      monitor = profile.monitors;
 
       xwayland = {
         force_zero_scaling = true;
@@ -97,7 +103,7 @@ in
       };
 
       input = {
-        kb_layout = vars.kbdLayout or "se";
+        kb_layout = profile.kbdLayout;
         follow_mouse = 1;
         sensitivity = 0;
         accel_profile = "flat";
@@ -137,13 +143,13 @@ in
 
       bind = [
         # Application launchers
-        "$mod, Return, exec, ${vars.terminal or "kitty"}"
-        "$mod SHIFT, Return, exec, ${vars.terminal or "kitty"}"
+        "$mod, Return, exec, ${profile.terminal}"
+        "$mod SHIFT, Return, exec, ${profile.terminal}"
         "$mod, D, exec, rofi -show drun"
         "$mod, A, exec, rofi -show drun"
         "$mod, Space, exec, rofi -show drun"
         "$mod, E, exec, thunar"
-        "$mod, B, exec, ${vars.browser or "firefox"}"
+        "$mod, B, exec, ${profile.browser}"
 
         # Window management
         "$mod, Q, killactive,"

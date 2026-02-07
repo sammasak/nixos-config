@@ -1,13 +1,11 @@
 # Network configuration
-{ host, pkgs, ... }:
+{ config, pkgs, ... }:
 let
-  vars = import ../../hosts/${host}/variables.nix;
-  inherit (vars) hostname;
-  lanCidr = vars.lanCidr or "192.168.10.0/24";
+  profile = config.sam.profile;
 in
 {
   networking = {
-    hostName = "${hostname}";
+    hostName = profile.hostname;
     networkmanager.enable = true;
 
     firewall = {
@@ -20,7 +18,7 @@ in
       extraInputRules = ''
         # Allow SSH only from LAN subnet and loopback.
         iifname "lo" tcp dport 22 accept
-        ip saddr ${lanCidr} tcp dport 22 accept
+        ip saddr ${profile.lanCidr} tcp dport 22 accept
         tcp dport 22 drop
       '';
     };

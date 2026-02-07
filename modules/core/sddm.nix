@@ -1,7 +1,7 @@
 # SDDM display manager
-{ pkgs, lib, host, ... }:
+{ config, pkgs, lib, ... }:
 let
-  inherit (import ../../hosts/${host}/variables.nix) sddmTheme;
+  sddmTheme = config.sam.profile.sddmTheme;
   sddm-astronaut = pkgs.sddm-astronaut.override {
     embeddedTheme = "${sddmTheme}";
     themeConfig = {

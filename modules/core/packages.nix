@@ -12,6 +12,7 @@
     wget
     curl
     htop
+    tmux
     killall
     lm_sensors
     gnome-disk-utility

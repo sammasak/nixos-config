@@ -32,8 +32,8 @@
           on-resume = "hyprctl dispatch dpms on";
         }
         {
-          # After 30m idle: keep display dark, then end the user session to return to SDDM.
-          timeout = 1800;
+          # After 60m idle: keep display dark, then end the user session to return to SDDM.
+          timeout = 3600;
           on-timeout = "hyprctl dispatch dpms off && sleep 1 && loginctl terminate-user \"$USER\"";
         }
       ];

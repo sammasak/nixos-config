@@ -1,8 +1,7 @@
 # Automation for system updates and cleanup
-{ config, pkgs, host, ... }:
+{ config, pkgs, ... }:
 let
-  vars = import ../../hosts/${host}/variables.nix;
-  username = vars.username;
+  username = config.sam.profile.username;
   uid = toString config.users.users.${username}.uid;
   notifyScript = pkgs.writeShellScript "nixos-upgrade-notify" ''
     status="$1"
@@ -49,7 +48,7 @@ in
     description = "Clean up old home-manager backup files";
     serviceConfig = {
       Type = "oneshot";
-      User = "lukas";
+      User = username;
     };
     script = ''
       ${pkgs.findutils}/bin/find $HOME -name "*.backup" -type f -mtime +7 -delete

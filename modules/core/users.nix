@@ -1,20 +1,15 @@
 # User configuration with home-manager
-{ pkgs, inputs, host, lib, ... }:
+{ config, pkgs, lib, ... }:
 let
-  vars = import ../../hosts/${host}/variables.nix;
-  userDefs = import ../../lib/users.nix;
-  inherit (vars)
-    username
-    terminal
-    browser
-    shell
-    ;
-  defaultSshKeys = (userDefs.${username}.sshKeys or [ ]);
-  sshAuthorizedKeys = vars.sshAuthorizedKeys or defaultSshKeys;
+  profile = config.sam.profile;
+  inherit (profile) username terminal browser shell;
+  defaultSshKeys = config.sam.userConfig.sshKeys or [ ];
+  sshAuthorizedKeys =
+    if profile.sshAuthorizedKeys != [ ]
+    then profile.sshAuthorizedKeys
+    else defaultSshKeys;
 in
 {
-  imports = [ inputs.home-manager.nixosModules.home-manager ];
-
   programs.dconf.enable = true;
 
   home-manager = {
@@ -27,12 +22,12 @@ in
       xdg.enable = true;
 
       home = {
-        username = "${username}";
+        username = username;
         homeDirectory = "/home/${username}";
         stateVersion = "25.11";
         sessionVariables = {
-          BROWSER = "${browser}";
-          TERMINAL = "${terminal}";
+          BROWSER = browser;
+          TERMINAL = terminal;
         };
       };
     };
@@ -62,12 +57,12 @@ in
   assertions = [
     {
       assertion = sshAuthorizedKeys != [ ];
-      message = "No SSH authorized keys configured for `${username}`. Set `lib/users.nix` (${username}.sshKeys) or `hosts/${host}/variables.nix` (sshAuthorizedKeys).";
+      message = "No SSH authorized keys configured for `${username}`. Set `lib/users.nix` (${username}.sshKeys) or `sam.profile.sshAuthorizedKeys`.";
     }
   ];
 
   nix.settings = {
-    allowed-users = [ "${username}" ];
+    allowed-users = [ username ];
     trusted-users = [ "root" "${username}" ];
   };
 }

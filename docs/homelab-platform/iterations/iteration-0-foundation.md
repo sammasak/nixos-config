@@ -4,6 +4,8 @@
 >
 > **Status:** ⬜ Not Started
 
+> **Note:** This iteration document is a historical planning draft. Current repo implementation uses `flake-parts` with auto-imported top-level flake modules (`flake-modules/`), a typed module registry (`flake.modules`), and typed options (`sam.profile`, `sam.userConfig`) instead of `specialArgs`-centric examples shown below.
+
 ---
 
 ## Overview
@@ -416,4 +418,3 @@ After this iteration, continue in [homelab-gitops](../../../../homelab-gitops):
 
 Or continue NixOS work:
 - [Iteration 3: Ephemeral Nodes](iteration-3-ephemeral-nodes.md) - Idle machine compute
-

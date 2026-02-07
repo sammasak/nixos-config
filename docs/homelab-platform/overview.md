@@ -13,6 +13,17 @@ This repo (`nixos-config`) owns:
 - SOPS/age secret decryption on hosts
 - Flux bootstrap wiring
 
+Implementation pattern in this repo:
+- `flake-parts` for flake composition and output structure
+- `flake.nix` is a minimal entrypoint that auto-imports `flake-modules/`
+- `flake-parts.flakeModules.modules` for a typed internal `flake.modules` registry (`deferredModule`)
+- top-level flake modules under `flake-modules/` (dendritic trunk)
+- module registry under `flake.modules.<class>.<moduleName>` auto-discovered from repo directories
+- typed distribution declarations under `configurations.nixos` and `configurations.darwin`
+- typed host/user contract via `sam.profile` and `sam.userConfig`
+- no lower-level `specialArgs` pass-through to reusable NixOS/Home modules
+- public flake outputs kept standard (no exposed custom `modules` output)
+
 `homelab-gitops` owns:
 - Kubernetes manifests/Helm releases
 - In-cluster platform services (ingress, MetalLB, observability, cert-manager)
@@ -76,6 +87,13 @@ flowchart TB
 
 ```text
 nixos-config/
+├── flake.nix                 # minimal flake-parts entrypoint
+├── flake-modules/            # top-level flake modules (dendritic trunk)
+│   ├── 20-module-registry.nix
+│   ├── 30-configurations-options.nix
+│   ├── 40-outputs-nixos.nix
+│   ├── 41-outputs-darwin.nix
+│   └── hosts/                # per-distribution declarations
 ├── modules/
 │   ├── core/                 # users, ssh, security baseline
 │   ├── homelab/              # k3s, flux bootstrap, secrets
@@ -94,6 +112,19 @@ clusters/homelab/
 │   └── jarvis/               # shared platform dependencies
 └── apps/                     # app workloads
 ```
+
+---
+
+## Replication Checklist
+
+For your own fork/adaptation:
+- create your host directory at `hosts/<name>/` with `variables.nix`, `configuration.nix`, and `home.nix`
+- add one distribution declaration under `flake-modules/hosts/<name>.nix`
+- set user identity defaults in `lib/users.nix`
+- update secrets recipients in `secrets/.sops.yaml`
+- validate Linux builds with `nix build .#nixosConfigurations.<flake-host>.config.system.build.toplevel --no-link`
+- validate darwin wiring with `nix eval --json .#darwinConfigurations.<name>.config.sam.darwin.user`
+- run cross-platform checks with `nix flake check --all-systems --no-write-lock-file`
 
 ---
 

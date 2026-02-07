@@ -1,8 +1,8 @@
 # Home Manager configuration for acer-swift
-{ lib, host, userConfig ? {}, ... }:
+{ lib, osConfig, ... }:
 let
-  vars = import ./variables.nix;
-  roles = vars.roles or [ "base" "desktop" "laptop" ];
+  profile = osConfig.sam.profile;
+  roles = profile.roles;
   hasDesktop = builtins.elem "desktop" roles;
   baseImports = [
     ../../modules/core/nushell.nix
@@ -11,10 +11,10 @@ let
     ../../modules/programs/cli/cli-tools
   ];
   desktopImports = lib.optionals hasDesktop [
-    ../../modules/desktop/${vars.desktop}/home.nix
-    ../../modules/programs/terminal/${vars.terminal}
-    ../../modules/programs/browser/${vars.browser}
-    ../../modules/programs/editor/${vars.editor}
+    ../../modules/desktop/${profile.desktop}/home.nix
+    ../../modules/programs/terminal/${profile.terminal}
+    ../../modules/programs/browser/${profile.browser}
+    ../../modules/programs/editor/${profile.editor}
   ];
 in
 {

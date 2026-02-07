@@ -1,12 +1,16 @@
 # Desktop role (display manager + theme + desktop stack)
-{ host, ... }:
-let
-  vars = import ../../hosts/${host}/variables.nix;
-in
+{ config, ... }:
 {
+  assertions = [
+    {
+      assertion = config.sam.profile.desktop == "hyprland";
+      message = "Unsupported desktop `${config.sam.profile.desktop}`. Add a matching desktop role aspect before enabling it.";
+    }
+  ];
+
   imports = [
     ../core/sddm.nix
     ../themes/Catppuccin
-    ../desktop/${vars.desktop}
+    ../desktop/hyprland
   ];
 }

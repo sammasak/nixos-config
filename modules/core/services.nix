@@ -1,8 +1,7 @@
 # Core services (audio, bluetooth, etc.)
-{ host, ... }:
+{ config, ... }:
 let
-  vars = import ../../hosts/${host}/variables.nix;
-  username = vars.username;
+  username = config.sam.profile.username;
 in
 {
   services = {
