@@ -28,6 +28,7 @@
     fd
     ripgrep
     tldr
+    claude-code
 
     # Nix tools
     nix-prefetch-scripts
