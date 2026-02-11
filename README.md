@@ -122,6 +122,21 @@ nix build .#nixosConfigurations.lenovo.config.system.build.toplevel --no-link
 nix eval --json .#darwinConfigurations.work-mac.config.sam.darwin.user
 ```
 
+## Workstation Image Builds (KubeVirt)
+
+Use the workstation template host profile to build reusable VM images:
+
+```bash
+./scripts/build-workstation-image.sh workstation-template kubevirt
+./scripts/build-workstation-image.sh workstation-template qcow
+```
+
+Related files:
+
+- `hosts/workstation-template/`
+- `modules/homelab/workstation-image.nix`
+- `docs/homelab-platform/tech/workstation-images.md`
+
 ## Forking For Your Setup
 
 Use this sequence to reproduce the same pattern in your own repo:

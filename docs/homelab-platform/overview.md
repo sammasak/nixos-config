@@ -154,4 +154,8 @@ For your own fork/adaptation:
 - `docs/homelab-platform/BOOTSTRAP.md`
 - `docs/homelab-platform/tech/k3s.md`
 - `docs/homelab-platform/tech/flux.md`
+- `docs/homelab-platform/tech/workstation-images.md`
+- `https://github.com/sammasak/homelab-gitops/blob/main/docs/tech/workstation-fleet.md`
+- `https://github.com/sammasak/homelab-gitops/blob/main/docs/tech/workstation-fleet-scope.md`
+- `https://github.com/sammasak/homelab-gitops/blob/main/docs/tech/workstation-fleet-verification.md`
 - `https://github.com/sammasak/homelab-gitops`
