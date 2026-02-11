@@ -38,6 +38,7 @@
         modules-right = [
           "backlight"
           "pulseaudio"
+          "pulseaudio#microphone"
           "network"
           "bluetooth"
           "tray"
@@ -54,8 +55,7 @@
 
         backlight = {
           interval = 2;
-          format = "{icon} {percent}%";
-          format-icons = [ "" "" "" "" "" "" "" "" "" ];
+          format = "󰃠 {percent}%";
           on-scroll-up = "brightnessctl set +5%";
           on-scroll-down = "brightnessctl set 5%-";
         };
@@ -157,20 +157,20 @@
           tooltip-format = "{icon} {desc} // {volume}%";
           scroll-step = 5;
           format-icons = {
-            headphone = "";
-            hands-free = "";
-            headset = "";
-            phone = "";
-            portable = "";
-            car = "";
-            default = [ "" "" "" ];
+            headphone = "󰋋";
+            hands-free = "󰋎";
+            headset = "󰋎";
+            phone = "󰏲";
+            portable = "󰄝";
+            car = "󰄋";
+            default = [ "󰕿" "󰖀" "󰕾" ];
           };
         };
 
         "pulseaudio#microphone" = {
           format = "{format_source}";
-          format-source = " {volume}%";
-          format-source-muted = "";
+          format-source = "󰍬 {volume}%";
+          format-source-muted = "󰍭 muted";
           on-click = "pavucontrol -t 4";
           tooltip-format = "{format_source} {source_desc} // {source_volume}%";
           scroll-step = 5;
