@@ -50,6 +50,11 @@ in
       dohPort = 443;
     };
     rewrites = [
+      # Workstation SSH endpoints (generated from homelab-gitops service IPs).
+      { domain = "ws-01.sammasak.dev"; answer = "192.168.10.206"; }
+      { domain = "ws-02.sammasak.dev"; answer = "192.168.10.207"; }
+      { domain = "rocket.sammasak.dev"; answer = "192.168.10.208"; }
+
       { domain = "*.sammasak.dev"; answer = "192.168.10.200"; }  # K8s services via MetalLB
       { domain = "sammasak.dev"; answer = "192.168.10.200"; }
       { domain = "dns.sammasak.dev"; answer = "192.168.10.154"; }  # AdGuard Home on host
