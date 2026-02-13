@@ -1,18 +1,37 @@
 # Workstation Images (KubeVirt)
 
-> Build and publish a reusable NixOS workstation image for the Kubernetes workstation fleet.
+> Build and publish reusable NixOS workstation images for the Kubernetes workstation fleet.
 
 ## Purpose
 
 This doc defines the `nixos-config` side of the workstation architecture:
 
-1. one reusable workstation template configuration
-2. one repeatable image build command
-3. one versioning flow to update VM fleets in `homelab-gitops`
+1. One reusable workstation template configuration
+2. One repeatable image build command
+3. One publish command to push OCI containerDisk images to Harbor
+4. One versioning flow to update VM fleets in `homelab-gitops`
+
+## Quick Start
+
+```bash
+# Build the NixOS qcow2 image
+just build
+
+# Publish as OCI containerDisk to Harbor
+just publish
+
+# Or both in one step:
+just release
+
+# Check the published image
+just image-info
+```
+
+> **Prerequisite:** First-time Harbor login: `just harbor-login`
 
 ## Implemented Template
 
-The repository now includes:
+The repository includes:
 
 - `hosts/workstation-template/configuration.nix`
 - `hosts/workstation-template/variables.nix`
@@ -20,15 +39,30 @@ The repository now includes:
 - `modules/homelab/workstation-image.nix`
 - `flake-modules/hosts/workstation-template.nix`
 - `scripts/build-workstation-image.sh`
+- `Justfile` (build, publish, release recipes)
 
 `workstation-template` is a headless base-role host profile with:
 
 - SSH enabled and key-based auth via existing user module flow
 - cloud-init enabled (for KubeVirt bootstrap userdata)
 - qemu guest service enabled
-- desktop/audio daemons forced off to reduce VM overhead
+- Desktop/audio daemons forced off to reduce VM overhead
 
 ## Build Commands
+
+### Using Justfile (recommended)
+
+```bash
+just build                    # Build qcow2 image
+just publish                  # Publish to Harbor (tags with YYYYMMDD + latest)
+just publish v1.2.3           # Publish with custom tag
+just release                  # Build + publish in one step
+just harbor-login             # Login to Harbor registry
+just image-info               # Show image metadata in Harbor
+just image-info 20260213      # Inspect a specific tag
+```
+
+### Direct commands (without Justfile)
 
 Build KubeVirt image:
 
@@ -42,7 +76,7 @@ Build QCOW2 image:
 ./scripts/build-workstation-image.sh workstation-template qcow
 ```
 
-Direct command (without wrapper script):
+Direct nix command:
 
 ```bash
 nix run github:nix-community/nixos-generators -- \
@@ -53,30 +87,59 @@ nix run github:nix-community/nixos-generators -- \
 
 `path:.#...` ensures local uncommitted changes are included while iterating.
 
-## Suggested Versioning
+## OCI ContainerDisk Publish Pipeline
 
-Use image tags tied to date + short git SHA:
+The `just publish` recipe converts the qcow2 into an OCI container image suitable for KubeVirt's [containerDisk](https://kubevirt.io/user-guide/storage/disks_and_volumes/#containerdisk) volume type.
 
-- `2026-02-11-<sha>`
+### What happens under the hood
 
-Recommended release flow:
+1. Finds the qcow2 in `result-workstation-template-kubevirt/`
+2. Creates a tar layer with the qcow2 at `/disk/disk.qcow2` (owned by `107:107` — the qemu user)
+3. Builds a minimal OCI image layout with proper `rootfs.diff_ids` in the config
+4. Pushes to Harbor via `skopeo copy oci:<dir> docker://<registry>/<project>/<image>:<tag>`
+5. Also tags as `latest`
 
-1. Build image from `workstation-template`.
-2. Publish to registry/artifact store.
-3. Update `spec.imageURL` in WorkspaceClaim YAML files under `homelab-gitops/apps/workstations/claims/`.
-4. Delete rootdisk DataVolumes to trigger re-import, then commit and let Flux + workspace-controller roll out.
+### Why not Docker/Podman/Buildah?
 
-## Centralized Module Update Model
+The OCI image spec is just JSON metadata + content-addressed blobs. We construct it directly with standard tools (`tar`, `sha256sum`, `jq`) and push with `skopeo` via `nix shell`. This avoids installing container build tooling on the NixOS host — keeping the dependency footprint minimal.
+
+> **Advanced:** The OCI config must include `rootfs.diff_ids` matching the layer digests. Without this, containerd rejects the image with "layers and diffIDs don't match". See the [OCI Image Specification](https://github.com/opencontainers/image-spec) for the full format.
+
+### Harbor setup
+
+Images are stored in the `workstations` project on Harbor:
+
+```
+registry.sammasak.dev/workstations/nixos-workstation:latest
+registry.sammasak.dev/workstations/nixos-workstation:20260213
+```
+
+The project is public — no `imagePullSecrets` needed in KubeVirt VM specs.
+
+## Versioning
+
+Images are tagged with the publish date (`YYYYMMDD`) and also `latest`:
+
+```
+registry.sammasak.dev/workstations/nixos-workstation:20260213
+registry.sammasak.dev/workstations/nixos-workstation:latest
+```
+
+Custom tags are supported: `just publish v1.2.3`
+
+## Update Workflow (Centralized)
 
 For fleet consistency, treat workstation updates as immutable image releases:
 
 1. Update shared Nix modules (`modules/homelab/workstation-image.nix`, `modules/core/*`, selected program modules).
-2. Rebuild `workstation-template` image.
-3. Publish new image tag.
-4. Update all workstation VM manifests to the same tag in `homelab-gitops`.
-5. Roll the fleet.
+2. Build and publish: `just release`
+3. In `homelab-gitops`:
+   - If claims use `:latest`: `just ws-restart rocket` (picks up new image on restart)
+   - If claims use pinned tags: `just image-update rocket registry.sammasak.dev/workstations/nixos-workstation:<new-tag>`
 
 Avoid per-workstation ad-hoc `nixos-rebuild` changes inside running VMs. Keep drift at zero by making Git + image the only mutation path.
+
+> **Why immutable images?** NixOS's strength is reproducibility — the system state is fully determined by the configuration. Running `nixos-rebuild` inside a VM bypasses Git and creates drift between workstations. By treating images as artifacts (built once, deployed everywhere), we maintain the same NixOS guarantee across the entire fleet.
 
 ## AdGuard DNS Integration
 
@@ -88,7 +151,7 @@ Keep this list in sync with workstation service IPs declared in `homelab-gitops`
 
 ```bash
 cd ../homelab-gitops
-kubectl -n workstations get workspaceclaims -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.loadBalancerIP}{"\n"}{end}'
+just fleet-status
 ```
 
 After updating rewrites, deploy NixOS config on the AdGuard host:
@@ -97,30 +160,24 @@ After updating rewrites, deploy NixOS config on the AdGuard host:
 sudo nixos-rebuild switch --flake .#lenovo
 ```
 
-## Required Customization Before Production
-
-1. Add/adjust dev tooling in `modules/homelab/workstation-image.nix`.
-2. Decide if workstation images are:
-- immutable + ephemeral root disk
-- or persistent root (via DataVolume/PVC import strategy)
-3. Confirm cloud-init behavior in the chosen image format.
-4. Keep authorized user public keys current in `lib/users.nix` (or per-host overrides).
-
 ## Validation
 
 ```bash
 # Validate image build path end-to-end
-./scripts/build-workstation-image.sh workstation-template kubevirt
+just build
 
 # Validate full flake
 nix flake check --all-systems --no-write-lock-file
+
+# Verify published image
+just image-info
 ```
 
 ## Related
 
 - `../homelab-gitops/docs/tech/workstation-fleet.md`
+- `../homelab-gitops/docs/tech/kubevirt-image-import-pattern.md`
 - `../homelab-gitops/docs/tech/workstation-fleet-scope.md`
-- `../homelab-gitops/docs/tech/workstation-fleet-verification.md`
 - `../homelab-gitops/apps/workstations/`
 - `hosts/lenovo-21CB001PMX/configuration.nix`
 
@@ -128,3 +185,7 @@ Upstream references:
 
 - https://github.com/nix-community/nixos-generators
 - https://github.com/nix-community/nixos-generators#supported-formats
+- https://kubevirt.io/user-guide/storage/disks_and_volumes/#containerdisk
+- https://github.com/opencontainers/image-spec
+- https://github.com/containers/skopeo
+- https://github.com/casey/just

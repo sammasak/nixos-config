@@ -124,7 +124,17 @@ nix eval --json .#darwinConfigurations.work-mac.config.sam.darwin.user
 
 ## Workstation Image Builds (KubeVirt)
 
-Use the workstation template host profile to build reusable VM images:
+Build and publish NixOS workstation images as OCI containerDisk artifacts to Harbor:
+
+```bash
+just build              # Build qcow2 image
+just publish            # Publish as OCI containerDisk to Harbor
+just release            # Build + publish in one step
+just harbor-login       # First-time Harbor login
+just image-info         # Show published image metadata
+```
+
+Or using the build script directly:
 
 ```bash
 ./scripts/build-workstation-image.sh workstation-template kubevirt
@@ -135,6 +145,7 @@ Related files:
 
 - `hosts/workstation-template/`
 - `modules/homelab/workstation-image.nix`
+- `Justfile`
 - `docs/homelab-platform/tech/workstation-images.md`
 
 ## Forking For Your Setup
