@@ -112,7 +112,8 @@ in
     };
   };
 
-  # Bash: source agent-env and otel-env if present
+  # Bash: enable and source agent-env and otel-env
+  programs.bash.enable = true;
   programs.bash.initExtra = lib.mkAfter ''
     [ -f /etc/workstation/agent-env ] && set -a && . /etc/workstation/agent-env && set +a
     [ -f /etc/workstation/otel-env ] && set -a && . /etc/workstation/otel-env && set +a
