@@ -54,6 +54,9 @@ in
       ripgrep
       fd
       just
+      kubectl
+      direnv
+      nix-direnv
     ];
   };
 }
