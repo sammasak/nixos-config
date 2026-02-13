@@ -24,7 +24,7 @@ in
       shell = pkgs.nushell;
     };
 
-    environment.systemPackages = with pkgs; [ vim wget curl htop ];
+    environment.systemPackages = with pkgs; [ vim wget curl htop gh ];
 
     # macOS system preferences
     system.defaults.dock.autohide = true;

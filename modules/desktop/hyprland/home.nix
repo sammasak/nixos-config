@@ -292,13 +292,38 @@ in
         ", XF86MonBrightnessDown, exec, brightnessctl set 5%-"
       ];
 
-      windowrulev2 = [
-        "float,class:^(pavucontrol)$"
-        "float,class:^(thunar)$,title:^(File Operation Progress)$"
-        "float,class:^(yad)$"
-        "float,title:^(Picture-in-Picture)$"
-        "pin,title:^(Picture-in-Picture)$"
-        "opacity 0.95 0.95,class:^(kitty)$"
+      windowrule = [
+        {
+          name = "float-pavucontrol";
+          "match:class" = "^(pavucontrol)$";
+          float = true;
+        }
+        {
+          name = "float-thunar-progress";
+          "match:class" = "^(thunar)$";
+          "match:title" = "^(File Operation Progress)$";
+          float = true;
+        }
+        {
+          name = "float-yad";
+          "match:class" = "^(yad)$";
+          float = true;
+        }
+        {
+          name = "float-pip";
+          "match:title" = "^(Picture-in-Picture)$";
+          float = true;
+        }
+        {
+          name = "pin-pip";
+          "match:title" = "^(Picture-in-Picture)$";
+          pin = true;
+        }
+        {
+          name = "kitty-opacity";
+          "match:class" = "^(kitty)$";
+          opacity = "0.95 0.95";
+        }
       ];
     };
   };
