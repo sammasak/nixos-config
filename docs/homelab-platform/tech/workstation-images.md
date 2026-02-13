@@ -63,8 +63,8 @@ Recommended release flow:
 
 1. Build image from `workstation-template`.
 2. Publish to registry/artifact store.
-3. Update workstation VM image reference in `homelab-gitops/apps/workstations/fleet/*/vm.yaml`.
-4. Roll VMs in controlled batches.
+3. Update `spec.imageURL` in WorkspaceClaim YAML files under `homelab-gitops/apps/workstations/claims/`.
+4. Delete rootdisk DataVolumes to trigger re-import, then commit and let Flux + workspace-controller roll out.
 
 ## Centralized Module Update Model
 
@@ -88,7 +88,7 @@ Keep this list in sync with workstation service IPs declared in `homelab-gitops`
 
 ```bash
 cd ../homelab-gitops
-scripts/workstations/fleetctl.sh render-adguard
+kubectl -n workstations get workspaceclaims -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.loadBalancerIP}{"\n"}{end}'
 ```
 
 After updating rewrites, deploy NixOS config on the AdGuard host:
