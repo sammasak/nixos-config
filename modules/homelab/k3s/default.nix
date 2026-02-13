@@ -96,6 +96,14 @@ in
       );
     };
 
+    # During switch, network services can restart before k3s. Wait for a
+    # default route so k3s doesn't fail fast with "no default routes found".
+    systemd.services.k3s = {
+      serviceConfig.ExecStartPre = [
+        "${pkgs.bash}/bin/bash -euc 'for i in {1..60}; do if ${pkgs.iproute2}/bin/ip route show default | ${pkgs.gnugrep}/bin/grep -q \"^default\"; then exit 0; fi; sleep 1; done; echo \"k3s: no default route after waiting 60s\" >&2; exit 1'"
+      ];
+    };
+
     # Common packages for all k3s nodes
     environment.systemPackages = with pkgs; [
       kubectl
