@@ -48,10 +48,14 @@ in
 
     set shell := ["bash", "-euo", "pipefail", "-c"]
 
+    # Source workstation env files (API keys, OTEL config)
+    _source-env := "[ -f /etc/workstation/agent-env ] && set -a && . /etc/workstation/agent-env && set +a; [ -f /etc/workstation/otel-env ] && set -a && . /etc/workstation/otel-env && set +a"
+
     # Run a headless Claude Code agent session (foreground, blocks until done)
     agent +prompt:
         #!/usr/bin/env bash
         set -euo pipefail
+        {{ _source-env }}
         trap 'systemctl --user stop agent-heartbeat 2>/dev/null || true' EXIT
         systemctl --user start agent-heartbeat 2>/dev/null || true
         claude -p "{{prompt}}" --output-format json
@@ -60,6 +64,7 @@ in
     agent-bg +prompt:
         #!/usr/bin/env bash
         set -euo pipefail
+        {{ _source-env }}
         if tmux has-session -t agent 2>/dev/null; then
             echo "Error: agent session already running. Use 'just agent-stop' first."
             exit 1
@@ -67,7 +72,7 @@ in
         systemctl --user start agent-heartbeat 2>/dev/null || true
         printf '%s\n' "{{prompt}}" > /tmp/.agent-prompt
         tmux new-session -d -s agent \
-            'claude -p "$(cat /tmp/.agent-prompt)" --output-format json; rm -f /tmp/.agent-prompt; systemctl --user stop agent-heartbeat 2>/dev/null || true'
+            "bash -c '{{ _source-env }}; claude -p \"\$(cat /tmp/.agent-prompt)\" --output-format json; rm -f /tmp/.agent-prompt; systemctl --user stop agent-heartbeat 2>/dev/null || true'"
         echo "Agent started in tmux session"
         echo "  attach:  tmux attach -t agent"
         echo "  stop:    just agent-stop"
@@ -112,9 +117,9 @@ in
     };
   };
 
-  # Bash: enable and source agent-env and otel-env
+  # Bash: enable and source agent-env and otel-env in login profile
   programs.bash.enable = true;
-  programs.bash.initExtra = lib.mkAfter ''
+  programs.bash.profileExtra = lib.mkAfter ''
     [ -f /etc/workstation/agent-env ] && set -a && . /etc/workstation/agent-env && set +a
     [ -f /etc/workstation/otel-env ] && set -a && . /etc/workstation/otel-env && set +a
   '';
