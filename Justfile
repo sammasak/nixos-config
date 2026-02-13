@@ -40,8 +40,15 @@ publish tag=`date +%Y%m%d`:
     mkdir -p "$ocidir/blobs/sha256"
     cp "$layertar" "$ocidir/blobs/sha256/$layer_sha"
 
-    # Config (empty config for containerDisk)
-    config='{"architecture":"amd64","os":"linux"}'
+    # Config (must include rootfs.diff_ids matching the layer)
+    config=$(jq -n --arg layer_sha "$layer_sha" '{
+      architecture: "amd64",
+      os: "linux",
+      rootfs: {
+        type: "layers",
+        diff_ids: [("sha256:" + $layer_sha)]
+      }
+    }')
     config_sha=$(echo -n "$config" | sha256sum | awk '{print $1}')
     config_size=${#config}
     echo -n "$config" > "$ocidir/blobs/sha256/$config_sha"
