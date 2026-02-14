@@ -31,4 +31,11 @@
     # Kepler / GTX 600-700 (non-Maxwell+) uses legacy 470xx.
     package = config.boot.kernelPackages.nvidiaPackages.legacy_470;
   };
+
+  # Hyprland on legacy NVIDIA drivers (470xx) can crash when EGL/GBM modifiers
+  # are enabled. This disables them for Hyprland sessions.
+  #
+  # If you later switch this host to a modern NVIDIA GPU/driver, we can revisit
+  # and potentially drop this.
+  environment.sessionVariables.HYPRLAND_EGL_NO_MODIFIERS = "1";
 }

@@ -58,9 +58,15 @@ in
     hardware.i2c.enable = true;
     users.users.${profile.username}.extraGroups = lib.mkAfter [ config.hardware.i2c.group ];
 
+    # Some desktop boards reserve Super-I/O registers for ACPI, which prevents
+    # hwmon drivers (nct6775/it87) from binding and exposing PWM fan controls.
+    # This relaxes that restriction so we can manage fans from Linux.
+    boot.kernelParams = lib.mkAfter [ "acpi_enforce_resources=lax" ];
+
     boot.kernelModules = lib.mkAfter (
       [
         "nct6775"
+        "it87"
       ]
       ++ lib.optionals config.hardware.cpu.intel.updateMicrocode [ "i2c-i801" ]
       ++ lib.optionals config.hardware.cpu.amd.updateMicrocode [ "i2c-piix4" ]
