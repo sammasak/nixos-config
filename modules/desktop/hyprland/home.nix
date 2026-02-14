@@ -7,7 +7,7 @@ let
     if osConfig != null && osConfig ? sam && osConfig.sam ? profile
     then osConfig.sam.profile
     else {
-      monitors = [ "preferred,auto,1" ];
+      monitors = [ ",preferred,auto,1" ];
       kbdLayout = "se";
       terminal = "kitty";
       browser = "firefox";

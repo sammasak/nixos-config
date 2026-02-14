@@ -22,6 +22,11 @@
   shell = "nushell";
   tuiFileManager = "yazi";
 
+  # Monitor configuration (Hyprland): apply defaults to all monitors.
+  monitors = [
+    ",preferred,auto,1"
+  ];
+
   # Features
   laptop = false;
   games = true;

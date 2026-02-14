@@ -112,7 +112,9 @@ in
 
           monitors = mkOption {
             type = types.listOf types.str;
-            default = [ "preferred,auto,1" ];
+            # Hyprland monitor rules are `name,resolution,position,scale`.
+            # A leading comma means "all monitors".
+            default = [ ",preferred,auto,1" ];
             description = "Hyprland monitor definitions.";
           };
 

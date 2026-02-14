@@ -24,6 +24,17 @@ in
   boot.loader.grub.copyKernels = false;
   boot.loader.grub.configurationLimit = 5;
 
+  # Windows entry for GRUB (works when booted in UEFI mode).
+  boot.loader.grub.extraEntries = ''
+    menuentry "Windows Boot Manager" {
+      insmod part_gpt
+      insmod fat
+      insmod chain
+      search --no-floppy --file --set=root /EFI/Microsoft/Boot/bootmgfw.efi
+      chainloader /EFI/Microsoft/Boot/bootmgfw.efi
+    }
+  '';
+
   # Desktop tower: no automatic suspend/hibernate behavior.
   services.logind.settings.Login = {
     IdleAction = "ignore";
