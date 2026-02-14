@@ -17,7 +17,9 @@
     ];
     loader = {
       efi.canTouchEfiVariables = true;
-      efi.efiSysMountPoint = "/boot";
+      # Default ESP mountpoint. Some hosts mount ESP at /boot/efi to keep /boot on
+      # the root filesystem (useful when sharing a small Windows ESP).
+      efi.efiSysMountPoint = lib.mkDefault "/boot";
       timeout = 3;
       grub = {
         enable = true;
