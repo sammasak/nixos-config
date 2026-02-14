@@ -10,6 +10,10 @@ in
 
   sam.profile = vars;
 
+  # Keep /boot on the root filesystem and mount the (shared) Windows ESP at /boot/efi.
+  # The Windows ESP is only 100 MiB and cannot hold multiple NixOS kernel+initrd pairs.
+  boot.loader.efi.efiSysMountPoint = "/boot/efi";
+
   # Shared Windows ESP is only 100 MiB; keep kernels/initrds on root FS.
   boot.loader.grub.copyKernels = false;
   boot.loader.grub.configurationLimit = 5;
