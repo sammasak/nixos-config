@@ -38,4 +38,10 @@
   # If you later switch this host to a modern NVIDIA GPU/driver, we can revisit
   # and potentially drop this.
   environment.sessionVariables.HYPRLAND_EGL_NO_MODIFIERS = "1";
+
+  # Aquamarine (Hyprland's DRM backend) tends to be unstable on 470xx when using
+  # atomic KMS + modifiers. Symptoms include black/garbled screen regions or
+  # shifted output after login. Disable both for stability.
+  environment.sessionVariables.AQ_NO_ATOMIC = "1";
+  environment.sessionVariables.AQ_NO_MODIFIERS = "1";
 }
