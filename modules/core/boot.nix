@@ -16,7 +16,9 @@
       "preempt=full"
     ];
     loader = {
-      efi.canTouchEfiVariables = true;
+      # Default: manage NVRAM boot entries. Some environments (legacy/CSM boot,
+      # restricted firmware) can't access EFI variables, so allow host override.
+      efi.canTouchEfiVariables = lib.mkDefault true;
       # Default ESP mountpoint. Some hosts mount ESP at /boot/efi to keep /boot on
       # the root filesystem (useful when sharing a small Windows ESP).
       efi.efiSysMountPoint = lib.mkDefault "/boot";
