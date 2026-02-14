@@ -13,6 +13,12 @@ in
 
   sam.profile = vars;
 
+  # Hyprland (Aquamarine) can incorrectly pick the firmware framebuffer
+  # (simpledrm) as the primary KMS device on this host, which creates a ghost
+  # "Unknown-1" output and can manifest as a black screen after SDDM login.
+  # Force Aquamarine to use the NVIDIA DRM device (GTX 680 @ 0000:01:00.0).
+  environment.sessionVariables.AQ_DRM_DEVICES = "/dev/dri/by-path/pci-0000:01:00.0-card";
+
   # Keep /boot on the root filesystem and mount the (shared) Windows ESP at /boot/efi.
   # The Windows ESP is only 100 MiB and cannot hold multiple NixOS kernel+initrd pairs.
   boot.loader.efi.efiSysMountPoint = "/boot/efi";
