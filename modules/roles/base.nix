@@ -10,5 +10,6 @@
     ../core/services.nix
     ../core/packages.nix
     ../core/fonts.nix
+    ../core/gaming-specialisation.nix
   ];
 }

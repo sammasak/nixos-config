@@ -2,6 +2,7 @@
 { pkgs, lib, ... }:
 {
   programs.hyprland.enable = true;
+  programs.hyprland.xwayland.enable = true;
   xdg.portal.enable = true;
   xdg.portal.extraPortals = [ pkgs.xdg-desktop-portal-hyprland ];
   services.displayManager.defaultSession = lib.mkDefault "hyprland";

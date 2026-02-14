@@ -22,6 +22,10 @@
   shell = "nushell";
   tuiFileManager = "yazi";
 
+  # Hardware
+  # Discrete GPU: NVIDIA GeForce GTX 680 (Kepler) -> legacy 470 driver.
+  videoDriver = "nvidia-kepler";
+
   # Monitor configuration (Hyprland): apply defaults to all monitors.
   monitors = [
     ",preferred,auto,1"
@@ -32,5 +36,5 @@
   games = true;
 
   # Roles
-  roles = [ "base" "desktop" ];
+  roles = [ "base" "desktop" "homelab-agent" ];
 }

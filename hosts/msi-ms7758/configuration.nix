@@ -6,6 +6,9 @@ in
 {
   imports = [
     ./hardware-configuration.nix
+
+    # Hardware
+    ../../modules/hardware/video/${vars.videoDriver}.nix
   ];
 
   sam.profile = vars;
@@ -40,4 +43,10 @@ in
     IdleAction = "ignore";
     HandlePowerKey = "poweroff";
   };
+
+  # k3s agent configuration (worker node by default)
+  homelab.k3s.serverAddr = "https://192.168.10.154:6443"; # k3s server on lenovo-21CB001PMX
+  homelab.k3s.extraFlags = [
+    "--node-label=node-pool=workers"
+  ];
 }
