@@ -10,6 +10,10 @@ in
 
   sam.profile = vars;
 
+  # Shared Windows ESP is only 100 MiB; keep kernels/initrds on root FS.
+  boot.loader.grub.copyKernels = false;
+  boot.loader.grub.configurationLimit = 5;
+
   # Desktop tower: no automatic suspend/hibernate behavior.
   services.logind.settings.Login = {
     IdleAction = "ignore";
