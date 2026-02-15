@@ -1,5 +1,5 @@
 # Host configuration for msi-ms7758
-{ lib, pkgs, ... }:
+{ ... }:
 let
   vars = import ./variables.nix;
 in
