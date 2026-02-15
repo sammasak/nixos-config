@@ -1,7 +1,8 @@
 # Network configuration
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 let
   profile = config.sam.profile;
+  hasDesktop = builtins.elem "desktop" (profile.roles or [ ]);
 in
 {
   networking = {
@@ -25,6 +26,7 @@ in
   };
 
   environment.systemPackages = with pkgs; [
+  ] ++ lib.optionals hasDesktop [
     networkmanagerapplet
   ];
 }

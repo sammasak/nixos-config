@@ -186,3 +186,4 @@ For a homelab, a single server is usually fine. If it dies, you rebuild it from 
 - [k3s Documentation](https://docs.k3s.io/) - Official docs
 - [k3s GitHub](https://github.com/k3s-io/k3s) - Source code
 - [k3s Architecture](https://docs.k3s.io/architecture) - How it works
+- [Inference Notes](inference.md) - GPU/CDI notes for running inference on k3s

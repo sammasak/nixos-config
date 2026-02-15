@@ -1,7 +1,8 @@
 # `msi-ms7758` (MSI MS-7758 / Z77A-G43)
 
-Legacy desktop tower running NixOS as a **headless k3s worker** with a legacy NVIDIA GPU used for local inference (Ollama).
-Windows remains the primary gaming OS on this machine (dual-boot via GRUB).
+Legacy desktop tower running NixOS as a **headless k3s worker**. This host is used as a
+best-effort GPU inference node (legacy NVIDIA Kepler) and a generic worker for the homelab.
+Windows remains the gaming OS on this machine (dual-boot via GRUB).
 
 ## Boot
 
@@ -14,7 +15,27 @@ Windows remains the primary gaming OS on this machine (dual-boot via GRUB).
 - GPU: NVIDIA Kepler (GeForce GTX 680, `10de:1180`)
 - Driver: legacy 470xx series (for example `470.256.02`)
 
-This generation is problematic for modern Wayland compositors and is not a target for Hyprland on this host.
+Notes:
+
+- This generation is problematic for modern Wayland compositors and is not a target for Hyprland on this host.
+- Many modern CUDA containers and inference stacks assume newer drivers and newer GPU compute capability. Treat this node as “legacy GPU / maybe Vulkan” and expect trial-and-error.
+
+## Kubernetes GPU Prereqs
+
+We aim for a Kubernetes-friendly setup where the OS provides:
+
+- NVIDIA drivers
+- NVIDIA Container Toolkit CDI spec generation
+- containerd (k3s) configured with CDI enabled
+- a node label for scheduling (`gpu=nvidia`)
+
+This repo configures CDI for k3s via `services.k3s.containerdConfigTemplate` and enables
+`hardware.nvidia-container-toolkit` so `/var/run/cdi/nvidia-container-toolkit.json` is generated at boot.
+
+Cluster-side components (to be done in `homelab-gitops`):
+
+- Deploy NVIDIA device plugin (DaemonSet), preferably in a CDI-aware mode (`cdi-annotations`).
+- Schedule inference workloads to this node via `nodeSelector: { gpu: nvidia }`.
 
 ## Fan Control (Important)
 
@@ -69,12 +90,13 @@ BIOS Smart Fan). There is no `fancontrol.service` shipped by this configuration.
 - Interface: `enp3s0`
 - MAC: `d4:3d:7e:4a:f9:3d`
 
-The system enables WoL via `ethtool` at boot. You may also need firmware options enabled:
+WoL is intentionally not managed by NixOS for this host (the dual-boot setup is sensitive).
+If you enable it manually, you may need firmware options enabled:
 
 - “Wake on PCI-E” / “Resume by PCI-E device” (naming varies by BIOS)
 - Disable “ErP” / “EuP” / “Deep Sleep” options that cut power to PCI-E in soft-off (naming varies)
 
-Verify on the host:
+Verify on the host (after installing `ethtool` if needed):
 
 ```bash
 sudo ethtool enp3s0 | grep -Ei 'supports wake-on|wake-on'
@@ -87,4 +109,4 @@ This host supports an **optional** RTC-wake based schedule:
 - At a configured time, the system runs `rtcwake -m off ...`, which both powers off and programs the next wake alarm.
 - This requires motherboard support for RTC wake from soft-off (S5) and may require enabling BIOS options.
 
-Configuration lives in `hosts/msi-ms7758/configuration.nix` under `autoPower`.
+Not managed by NixOS for this host.

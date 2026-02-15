@@ -1,15 +1,13 @@
 # Core services (audio, bluetooth, etc.)
-{ config, ... }:
+{ config, lib, ... }:
 let
   username = config.sam.profile.username;
+  roles = config.sam.profile.roles or [ ];
+  hasDesktop = builtins.elem "desktop" roles;
 in
 {
   services = {
-    libinput.enable = true;
     fstrim.enable = true;
-    devmon.enable = true;
-    gvfs.enable = true;
-    udisks2.enable = true;
 
     openssh = {
       enable = true;
@@ -24,6 +22,12 @@ in
         PubkeyAuthentication = true;
       };
     };
+
+  } // lib.optionalAttrs hasDesktop {
+    libinput.enable = true;
+    devmon.enable = true;
+    gvfs.enable = true;
+    udisks2.enable = true;
 
     blueman.enable = true;
     tumbler.enable = true;
@@ -46,5 +50,5 @@ in
     };
   };
 
-  security.rtkit.enable = true;
+  security.rtkit.enable = lib.mkDefault hasDesktop;
 }

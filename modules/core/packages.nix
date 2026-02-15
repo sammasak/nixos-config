@@ -1,5 +1,10 @@
 # Base system packages
 { config, pkgs, lib, ... }:
+let
+  roles = config.sam.profile.roles or [ ];
+  hasDesktop = builtins.elem "desktop" roles;
+  isHyprland = config.sam.profile.desktop == "hyprland";
+in
 {
   programs = {
     fuse.userAllowOther = true;
@@ -17,7 +22,6 @@
     tmux
     killall
     lm_sensors
-    gnome-disk-utility
 
     # File handling
     unrar
@@ -36,17 +40,19 @@
     # Nix tools
     nix-prefetch-scripts
     appimage-run
-
-    # Desktop utilities
-    xdg-utils
-    brightnessctl
-    pavucontrol
-    playerctl
-    libnotify
-    yad
     gawk
     ]
-    ++ lib.optionals (config.sam.profile.desktop == "hyprland") [
+    ++ lib.optionals hasDesktop [
+      # Desktop utilities
+      xdg-utils
+      gnome-disk-utility
+      brightnessctl
+      pavucontrol
+      playerctl
+      libnotify
+      yad
+    ]
+    ++ lib.optionals (hasDesktop && isHyprland) [
       wl-clipboard
       grim
       slurp

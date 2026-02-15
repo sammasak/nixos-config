@@ -3,7 +3,12 @@
 # Notes:
 # - Kepler GPUs are only supported by the legacy 470xx driver series.
 # - Newer kernels regularly break legacy NVIDIA branches; use an LTS kernel.
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
+let
+  profile = config.sam.profile or { };
+  hasDesktop = builtins.elem "desktop" (profile.roles or [ ]);
+  wants32Bit = profile.games or false;
+in
 {
   # Required by recent nixpkgs to build/install NVIDIA drivers.
   nixpkgs.config.nvidia.acceptLicense = true;
@@ -16,7 +21,8 @@
 
   hardware.graphics = {
     enable = true;
-    enable32Bit = true; # Steam/Proton needs 32-bit graphics libs
+    # 32-bit GL/Vulkan libs are mainly needed for Steam/Proton.
+    enable32Bit = lib.mkDefault wants32Bit;
   };
 
   hardware.nvidia = {
@@ -27,7 +33,7 @@
     # The open kernel module does not apply to 470xx.
     open = false;
 
-    nvidiaSettings = true;
+    nvidiaSettings = lib.mkDefault hasDesktop;
 
     # Kepler / GTX 600-700 (non-Maxwell+) uses legacy 470xx.
     package = config.boot.kernelPackages.nvidiaPackages.legacy_470;

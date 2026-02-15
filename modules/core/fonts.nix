@@ -1,6 +1,10 @@
 # Font configuration
-{ pkgs, ... }:
-{
+{ config, pkgs, lib, ... }:
+let
+  roles = config.sam.profile.roles or [ ];
+  hasDesktop = builtins.elem "desktop" roles;
+in
+lib.mkIf hasDesktop {
   fonts = {
     fontDir.enable = true;
     packages = with pkgs; [
