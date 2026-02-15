@@ -175,6 +175,10 @@ Use this sequence to reproduce the same pattern in your own repo:
 - https://github.com/mightyiam/dendritic
 - https://discourse.nixos.org/t/dendrix-dendritic-nix-configurations-distribution/65853
 
+## Host Notes
+
+- `docs/hosts/msi-ms7758.md`
+
 ## Remote Deploys (SSH)
 
 From one Linux host, deploy to another host over SSH:

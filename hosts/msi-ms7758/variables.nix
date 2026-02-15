@@ -22,6 +22,10 @@
   laptop = false;
   games = false;
   hardwareControl = true;
+  # Let the MSI BIOS "Smart Fan" control the CPU fan. We keep the
+  # `fancontrol-worker.conf` file around for reference/testing, but do not
+  # override firmware by default on this legacy box.
+  fancontrol = false;
   hwmonModules = [
     # Z77A-G43 (MS-7758) uses a Fintek Super I/O (fan/PWM + temps).
     "f71882fg"

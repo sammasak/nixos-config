@@ -142,6 +142,12 @@ in
             description = "Whether hardware control extras (fan/RGB/thermals) are enabled.";
           };
 
+          fancontrol = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Whether to enable software fan control (lm_sensors fancontrol) when a host fancontrol config file exists.";
+          };
+
           hwmonModules = mkOption {
             type = types.listOf types.str;
             default = [ ];

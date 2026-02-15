@@ -32,8 +32,9 @@ let
     else
       resolvedFancontrolWorkerFile;
 
-  hasFancontrolWorker = resolvedFancontrolWorkerFile != null;
-  hasFancontrolGaming = resolvedFancontrolGamingFile != null;
+  wantsSoftwareFancontrol = profile.fancontrol or true;
+  hasFancontrolWorker = wantsSoftwareFancontrol && (resolvedFancontrolWorkerFile != null);
+  hasFancontrolGaming = wantsSoftwareFancontrol && (resolvedFancontrolGamingFile != null);
 
   openrgbOff = pkgs.writeShellApplication {
     name = "openrgb-off";
