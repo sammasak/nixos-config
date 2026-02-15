@@ -44,4 +44,8 @@
   # shifted output after login. Disable both for stability.
   environment.sessionVariables.AQ_NO_ATOMIC = "1";
   environment.sessionVariables.AQ_NO_MODIFIERS = "1";
+
+  # Some 470xx + GBM setups appear to produce scanout corruption unless we force
+  # a linear blit path for the final KMS buffer.
+  environment.sessionVariables.AQ_FORCE_LINEAR_BLIT = "1";
 }
