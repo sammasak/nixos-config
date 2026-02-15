@@ -9,6 +9,9 @@ in
 
     # Hardware
     ../../modules/hardware/video/${vars.videoDriver}.nix
+
+    # Keep GRUB theming consistent with the other machines (Stylix).
+    ../../modules/themes/Catppuccin
   ];
 
   sam.profile = vars;
