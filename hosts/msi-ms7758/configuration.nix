@@ -26,6 +26,12 @@ in
   # Shared Windows ESP is only 100 MiB; keep the GRUB menu short.
   boot.loader.grub.configurationLimit = 5;
 
+  # This machine has a tiny ESP (mounted at /boot). Copying kernels/initrds
+  # into /boot quickly exhausts space and breaks rebuilds.
+  #
+  # Root is ext4, so GRUB can load kernel+initrd directly from /nix/store.
+  boot.loader.grub.copyKernels = false;
+
   # Windows entry for GRUB (works when booted in UEFI mode).
   boot.loader.grub.extraEntries = ''
     menuentry "Windows Boot Manager" {
