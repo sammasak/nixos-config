@@ -13,15 +13,6 @@ in
 
   sam.profile = vars;
 
-  # Hyprland (Aquamarine) can incorrectly pick the firmware framebuffer
-  # (simpledrm) as the primary KMS device on this host, which creates a ghost
-  # "Unknown-1" output and can manifest as a black screen after SDDM login.
-  #
-  # Aquamarine parses `AQ_DRM_DEVICES` as a `:`-separated list, so we cannot use
-  # `/dev/dri/by-path/pci-0000:01:00.0-card` (it contains `:`). Use the stable
-  # card node for this host instead.
-  environment.sessionVariables.AQ_DRM_DEVICES = "/dev/dri/card1";
-
   # The legacy NVIDIA 470xx stack can coexist poorly with the firmware-provided
   # simpledrm framebuffer (it shows up as /dev/dri/card0 with a fake "Unknown-1"
   # connector and can remain "enabled" while the real NVIDIA connector stays
