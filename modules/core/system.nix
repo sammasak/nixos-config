@@ -142,6 +142,12 @@ in
             description = "Whether hardware control extras (fan/RGB/thermals) are enabled.";
           };
 
+          hwmonModules = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = "Extra hwmon kernel modules to load (for fan/PWM sensors).";
+          };
+
           roles = mkOption {
             type = types.listOf types.str;
             default = [ "base" ];

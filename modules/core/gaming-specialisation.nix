@@ -67,10 +67,7 @@ in
       boot.kernelParams = lib.mkAfter [ "acpi_enforce_resources=lax" ];
 
       boot.kernelModules = lib.mkAfter (
-        [
-          "nct6775"
-          "it87"
-        ]
+        profile.hwmonModules
         ++ lib.optionals config.hardware.cpu.intel.updateMicrocode [ "i2c-i801" ]
         ++ lib.optionals config.hardware.cpu.amd.updateMicrocode [ "i2c-piix4" ]
       );

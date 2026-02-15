@@ -52,6 +52,10 @@ If you want `fancontrol`, generate a config on the host:
 sudo pwmconfig
 ```
 
+Note: you may need to load a motherboard-specific `hwmon` kernel module before
+`pwmconfig` can see PWM controls. In this repo, that is configured via
+`sam.profile.hwmonModules` (see `hosts/<host>/variables.nix`).
+
 Then commit the resulting `/etc/fancontrol` as one of:
 
 - `hosts/<hostname>/fancontrol-worker.conf` (default/worker curve)
@@ -71,4 +75,3 @@ ls -la /run/current-system/specialisation
 # default boot should be active; gaming boot should be inactive
 systemctl status k3s
 ```
-

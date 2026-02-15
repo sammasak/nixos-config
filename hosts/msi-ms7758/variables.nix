@@ -22,6 +22,11 @@
   laptop = false;
   games = false;
   hardwareControl = true;
+  hwmonModules = [
+    # Z77A-G43 (MS-7758) uses a Fintek Super I/O (fan/PWM + temps).
+    "f71882fg"
+    "lm78"
+  ];
 
   # Roles
   roles = [ "base" "homelab-agent" ];
