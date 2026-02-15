@@ -54,17 +54,8 @@ for i in {1..20}; do
 done
 ```
 
-If you temporarily want Linux to take over fan control:
-
-```bash
-sudo systemctl start fancontrol
-```
-
-and then disable again:
-
-```bash
-sudo systemctl stop fancontrol
-```
+Note: this host intentionally does **not** enable Linux `fancontrol` (we rely on
+BIOS Smart Fan). There is no `fancontrol.service` shipped by this configuration.
 
 ### Practical Options To Reduce Noise
 
@@ -81,6 +72,13 @@ sudo systemctl stop fancontrol
 The system enables WoL via `ethtool` at boot. You may also need firmware options enabled:
 
 - “Wake on PCI-E” / “Resume by PCI-E device” (naming varies by BIOS)
+- Disable “ErP” / “EuP” / “Deep Sleep” options that cut power to PCI-E in soft-off (naming varies)
+
+Verify on the host:
+
+```bash
+sudo ethtool enp3s0 | grep -Ei 'supports wake-on|wake-on'
+```
 
 ## Scheduled Power Off/On
 
