@@ -19,6 +19,7 @@ Notes:
 
 - This generation is problematic for modern Wayland compositors and is not a target for Hyprland on this host.
 - Many modern CUDA containers and inference stacks assume newer drivers and newer GPU compute capability. Treat this node as “legacy GPU / maybe Vulkan” and expect trial-and-error.
+- Ollama's NVIDIA backend generally won't work on Kepler/470xx; plan for CPU or Vulkan backends.
 
 ## Kubernetes GPU Prereqs
 

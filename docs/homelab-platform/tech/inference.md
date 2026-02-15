@@ -81,7 +81,7 @@ Minimal scheduling pattern:
 Legacy NVIDIA GPUs (Kepler, driver 470xx) are often the limiting factor:
 
 - Many current CUDA images assume newer drivers (CUDA 12+, newer compute capability)
+- Ollama's NVIDIA backend requires newer GPUs/drivers, so expect CPU or Vulkan-based backends on Kepler-era cards
 - Expect trial-and-error; Vulkan-based backends may be a better fit than CUDA on this class of hardware
 
 For legacy hardware, consider starting with the “Node Service” pattern and only move inference into K8s once you verify the container path works.
-
