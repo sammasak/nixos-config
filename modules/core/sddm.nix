@@ -1,6 +1,7 @@
 # SDDM display manager
 { config, pkgs, lib, ... }:
 let
+  desktop = config.sam.profile.desktop;
   sddmTheme = config.sam.profile.sddmTheme;
   sddm-astronaut = pkgs.sddm-astronaut.override {
     embeddedTheme = "${sddmTheme}";
@@ -19,7 +20,8 @@ in
 {
   services.displayManager.sddm = {
     enable = true;
-    wayland.enable = true;
+    # i3 is X11-only; keep the greeter on X11 for stability on legacy GPUs.
+    wayland.enable = lib.mkDefault (desktop == "hyprland");
     enableHidpi = true;
     autoNumlock = true;
     package = lib.mkForce pkgs.kdePackages.sddm;

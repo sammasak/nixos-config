@@ -170,7 +170,7 @@ in
     };
 
     services.xserver = {
-      enable = false;
+      enable = lib.mkDefault false;
       xkb = {
         layout = profile.kbdLayout;
         variant = profile.kbdVariant;
@@ -215,13 +215,17 @@ in
 
     nixpkgs.config.allowUnfree = true;
 
-    environment.variables = {
-      NIXOS_OZONE_WL = "1";
-      XDG_CACHE_HOME = "$HOME/.cache";
-      XDG_CONFIG_HOME = "$HOME/.config";
-      XDG_DATA_HOME = "$HOME/.local/share";
-      XDG_BIN_HOME = "$HOME/.local/bin";
-    };
+    environment.variables =
+      {
+        XDG_CACHE_HOME = "$HOME/.cache";
+        XDG_CONFIG_HOME = "$HOME/.config";
+        XDG_DATA_HOME = "$HOME/.local/share";
+        XDG_BIN_HOME = "$HOME/.local/bin";
+      }
+      // lib.optionalAttrs (profile.desktop == "hyprland") {
+        # Makes Nixpkgs-wrapped Electron apps prefer Wayland in Wayland sessions.
+        NIXOS_OZONE_WL = "1";
+      };
 
     system.stateVersion = "25.11";
   };

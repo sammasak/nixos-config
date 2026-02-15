@@ -1,10 +1,14 @@
 # Desktop role (display manager + theme + desktop stack)
 { config, ... }:
+let
+  desktop = config.sam.profile.desktop;
+  supported = [ "hyprland" "i3" ];
+in
 {
   assertions = [
     {
-      assertion = config.sam.profile.desktop == "hyprland";
-      message = "Unsupported desktop `${config.sam.profile.desktop}`. Add a matching desktop role aspect before enabling it.";
+      assertion = builtins.elem desktop supported;
+      message = "Unsupported desktop `${desktop}`. Supported: ${builtins.concatStringsSep ", " supported}.";
     }
   ];
 
@@ -12,5 +16,6 @@
     ../core/sddm.nix
     ../themes/Catppuccin
     ../desktop/hyprland
+    ../desktop/i3
   ];
 }

@@ -12,8 +12,6 @@ let
       terminal = "kitty";
       browser = "firefox";
     };
-  isKeplerNvidia =
-    (profile ? videoDriver) && profile.videoDriver == "nvidia-kepler";
 in
 {
   imports = [
@@ -116,12 +114,6 @@ in
         };
         repeat_rate = 50;
         repeat_delay = 240;
-      };
-
-      # NVIDIA Kepler (legacy 470xx) has shown cursor plane corruption on some
-      # outputs. Use software cursors for stability.
-      cursor = {
-        no_hardware_cursors = isKeplerNvidia;
       };
 
       # Touchpad gestures (new syntax for Hyprland 0.51+)
