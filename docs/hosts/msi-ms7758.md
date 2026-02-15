@@ -7,9 +7,12 @@ Windows remains the gaming OS on this machine (dual-boot via GRUB).
 ## Boot
 
 - Shared Windows ESP is mounted at `/boot` (VFAT).
-- ESP size is very small (~100 MiB). We **do not** copy kernels/initrds into `/boot`
-  on this host (`boot.loader.grub.copyKernels = false`), otherwise `/boot` fills up
-  and `nixos-rebuild switch` fails.
+- ESP size is very small (~100 MiB). NixOS's GRUB installer will try to copy
+  kernels/initrds into the GRUB "boot directory" when it's on a different
+  filesystem than `/nix/store` (to be safe across filesystems).
+- To avoid filling the ESP and breaking `nixos-rebuild`, we keep EFI files on
+  `/boot` (ESP) but store GRUB's directory/config on the root filesystem at
+  `/boot-nix` via `boot.loader.grub.mirroredBoots`.
 - GRUB theme is provided via Stylix (matches the other hosts).
 - The GRUB menu includes a `Windows Boot Manager` chainloader entry.
 
@@ -18,12 +21,12 @@ Windows remains the gaming OS on this machine (dual-boot via GRUB).
 Rules:
 
 - Never delete anything under `/boot/EFI/Microsoft`.
-- Prefer deleting only NixOS-generated kernel copies under `/boot/kernels` (legacy from before `copyKernels=false`).
+- Prefer deleting only NixOS-generated kernel copies under `/boot/kernels` (if present).
 
-After a successful rebuild with `copyKernels=false`, confirm GRUB is no longer using `/boot/kernels`:
+After a successful rebuild, confirm GRUB is no longer using `/boot/kernels`:
 
 ```bash
-sudo rg -n "/boot/kernels" /boot/grub/grub.cfg || echo "ok: GRUB not using /boot/kernels"
+sudo rg -n "/boot/kernels" /boot-nix/grub/grub.cfg || echo "ok: GRUB not using /boot/kernels"
 ```
 
 Then you can remove the old copies:

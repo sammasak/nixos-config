@@ -1,5 +1,5 @@
 # Host configuration for msi-ms7758
-{ ... }:
+{ lib, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -26,11 +26,21 @@ in
   # Shared Windows ESP is only 100 MiB; keep the GRUB menu short.
   boot.loader.grub.configurationLimit = 5;
 
-  # This machine has a tiny ESP (mounted at /boot). Copying kernels/initrds
-  # into /boot quickly exhausts space and breaks rebuilds.
+  # This machine has a tiny Windows ESP mounted at /boot (~100 MiB).
   #
-  # Root is ext4, so GRUB can load kernel+initrd directly from /nix/store.
-  boot.loader.grub.copyKernels = false;
+  # NixOS's GRUB installer forces copying kernels/initrds when the GRUB "boot
+  # directory" is on a different filesystem than /nix/store. Since /boot is
+  # VFAT on a separate partition, that would fill /boot and break rebuilds.
+  #
+  # Fix: keep EFI files on /boot (ESP) but store GRUB's directory (and config)
+  # on the root filesystem, where space isn't constrained.
+  boot.loader.grub.mirroredBoots = lib.mkForce [
+    {
+      path = "/boot-nix";
+      efiSysMountPoint = "/boot";
+      devices = [ "nodev" ];
+    }
+  ];
 
   # Windows entry for GRUB (works when booted in UEFI mode).
   boot.loader.grub.extraEntries = ''
