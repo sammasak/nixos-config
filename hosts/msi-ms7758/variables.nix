@@ -13,6 +13,7 @@
   desktop = "i3";
   waybarTheme = "minimal";
   sddmTheme = "astronaut";
+  displayManager = "lightdm";
   defaultWallpaper = "train-sideview.webp";
 
   # Applications

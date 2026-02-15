@@ -68,6 +68,12 @@ in
             description = "SDDM theme name.";
           };
 
+          displayManager = mkOption {
+            type = types.str;
+            default = "sddm";
+            description = "Display manager to use (for example: sddm, lightdm).";
+          };
+
           defaultWallpaper = mkOption {
             type = types.str;
             default = "wallpaper.jpg";

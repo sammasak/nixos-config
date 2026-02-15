@@ -1,12 +1,14 @@
 # Base system packages
-{ pkgs, ... }:
+{ config, pkgs, lib, ... }:
 {
   programs = {
     fuse.userAllowOther = true;
     mtr.enable = true;
   };
 
-  environment.systemPackages = with pkgs; [
+  environment.systemPackages =
+    with pkgs;
+    [
     # Core utilities
     vim
     wget
@@ -37,20 +39,22 @@
 
     # Desktop utilities
     xdg-utils
-    wl-clipboard
-    grim
-    slurp
     brightnessctl
     pavucontrol
     playerctl
-    hyprpicker
-    grimblast
-    swappy
-    wf-recorder
-    cliphist
     libnotify
     yad
     gawk
-    swww
-  ];
+    ]
+    ++ lib.optionals (config.sam.profile.desktop == "hyprland") [
+      wl-clipboard
+      grim
+      slurp
+      hyprpicker
+      grimblast
+      swappy
+      wf-recorder
+      cliphist
+      swww
+    ];
 }

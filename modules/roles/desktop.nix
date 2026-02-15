@@ -14,6 +14,7 @@ in
 
   imports = [
     ../core/sddm.nix
+    ../core/lightdm.nix
     ../themes/Catppuccin
     ../desktop/hyprland
     ../desktop/i3
