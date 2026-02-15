@@ -22,6 +22,15 @@ in
   # card node for this host instead.
   environment.sessionVariables.AQ_DRM_DEVICES = "/dev/dri/card1";
 
+  # The legacy NVIDIA 470xx stack can coexist poorly with the firmware-provided
+  # simpledrm framebuffer (it shows up as /dev/dri/card0 with a fake "Unknown-1"
+  # connector and can remain "enabled" while the real NVIDIA connector stays
+  # disabled). This can manifest as shifted/garbled output or an apparent black
+  # screen after login.
+  #
+  # Blacklist simpledrm's platform init so nvidia-drm is the only KMS device.
+  boot.kernelParams = [ "initcall_blacklist=simpledrm_platform_driver_init" ];
+
   # Keep /boot on the root filesystem and mount the (shared) Windows ESP at /boot/efi.
   # The Windows ESP is only 100 MiB and cannot hold multiple NixOS kernel+initrd pairs.
   boot.loader.efi.efiSysMountPoint = "/boot/efi";
