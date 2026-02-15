@@ -59,6 +59,7 @@ flowchart LR
 |------|----------|-----------------|--------|-------|
 | `lenovo-21cb001pmx` | control-plane host | `control-plane` | default + control-plane labels | kept relatively light |
 | `acer-swift` | worker host | worker | `node-pool=workers` | primary workload node |
+| `msi-ms7758` | worker host (desktop) | worker | `node-pool=workers` | legacy NVIDIA (Kepler/470xx), X11 desktop |
 
 ```mermaid
 flowchart TB
@@ -152,6 +153,7 @@ For your own fork/adaptation:
 ## Related Docs
 
 - `docs/homelab-platform/BOOTSTRAP.md`
+- `docs/homelab-platform/tech/desktop.md`
 - `docs/homelab-platform/tech/k3s.md`
 - `docs/homelab-platform/tech/flux.md`
 - `docs/homelab-platform/tech/workstation-images.md`

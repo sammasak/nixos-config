@@ -15,6 +15,7 @@ Personal NixOS + nix-darwin + Home Manager configuration. A work in progress as 
 |---------|------|--------|
 | `acer-swift` | Linux laptop (Hyprland) | Active |
 | `lenovo-21CB001PMX` | Linux laptop (Hyprland) | Active |
+| `msi-ms7758` | Linux desktop tower (i3, LightDM, legacy NVIDIA) | Active |
 | `work-mac` | macOS (CLI only) | Planned |
 
 ## Structure
@@ -35,14 +36,19 @@ flake.nix                # Minimal flake-parts entrypoint (auto-imports flake mo
 │   │   ├── hardware-configuration.nix
 │   │   ├── home.nix
 │   │   └── variables.nix
-│   └── lenovo-21CB001PMX/
+│   ├── lenovo-21CB001PMX/
+│       ├── configuration.nix
+│       ├── hardware-configuration.nix
+│       ├── home.nix
+│       └── variables.nix
+│   └── msi-ms7758/
 │       ├── configuration.nix
 │       ├── hardware-configuration.nix
 │       ├── home.nix
 │       └── variables.nix
 ├── modules/             # Reusable modules
 │   ├── core/            # System baseline (nix, users, services, fonts)
-│   ├── desktop/         # Desktop stacks (Hyprland)
+│   ├── desktop/         # Desktop stacks (Hyprland, i3)
 │   ├── hardware/        # Hardware drivers
 │   ├── programs/        # Home Manager program modules
 │   ├── roles/           # Base/desktop/laptop composition
@@ -91,6 +97,7 @@ Roles are driven by `variables.nix`:
 # Build and switch (Linux)
 sudo nixos-rebuild switch --flake .#acer-swift
 sudo nixos-rebuild switch --flake .#lenovo
+sudo nixos-rebuild switch --flake .#msi-ms7758
 
 # Test build without applying
 sudo nixos-rebuild build --flake .#acer-swift
@@ -119,6 +126,7 @@ Use direct toplevel builds to validate host composition:
 nix flake check --all-systems --no-write-lock-file
 nix build .#nixosConfigurations.acer-swift.config.system.build.toplevel --no-link
 nix build .#nixosConfigurations.lenovo.config.system.build.toplevel --no-link
+nix build .#nixosConfigurations.msi-ms7758.config.system.build.toplevel --no-link
 nix eval --json .#darwinConfigurations.work-mac.config.sam.darwin.user
 ```
 
@@ -363,6 +371,8 @@ Only add secret-dependent roles (`homelab-server` / `homelab-agent`) after step 
 | Git credentials | [lib/users.nix](lib/users.nix) |
 | VSCode settings | [dotfiles/vscode/](dotfiles/vscode/) |
 | Hyprland keybinds | [modules/desktop/hyprland/](modules/desktop/hyprland/) |
+| i3 keybinds | [modules/desktop/i3/home.nix](modules/desktop/i3/home.nix) |
+| Desktop stacks | [docs/homelab-platform/tech/desktop.md](docs/homelab-platform/tech/desktop.md) |
 
 ## Learning Resources
 
