@@ -1,5 +1,5 @@
 # Host configuration for msi-ms7758
-{ ... }:
+{ lib, pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -12,6 +12,28 @@ in
   ];
 
   sam.profile = vars;
+
+  # NVIDIA 470xx + Kepler is not reliable enough for Wayland compositors/greeters
+  # in practice (visual corruption / hangs). Keep Hyprland installed as an
+  # option, but make an X11 session the default so the machine stays usable.
+  services.xserver = {
+    enable = lib.mkForce true;
+    windowManager.i3 = {
+      enable = true;
+      extraPackages = with pkgs; [
+        dmenu
+        i3status
+        i3lock
+        xterm
+      ];
+    };
+  };
+
+  # Run SDDM on X11 (more stable with legacy NVIDIA).
+  services.displayManager.sddm.wayland.enable = lib.mkForce false;
+
+  # Default session: i3 (X11). Hyprland remains selectable from SDDM.
+  services.displayManager.defaultSession = "none+i3";
 
   # The legacy NVIDIA 470xx stack can coexist poorly with the firmware-provided
   # simpledrm framebuffer (it shows up as /dev/dri/card0 with a fake "Unknown-1"
