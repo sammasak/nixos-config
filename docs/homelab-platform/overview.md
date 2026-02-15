@@ -59,7 +59,7 @@ flowchart LR
 |------|----------|-----------------|--------|-------|
 | `lenovo-21cb001pmx` | control-plane host | `control-plane` | default + control-plane labels | kept relatively light |
 | `acer-swift` | worker host | worker | `node-pool=workers` | primary workload node |
-| `msi-ms7758` | worker host (desktop) | worker | `node-pool=workers` | legacy NVIDIA (Kepler/470xx), X11 desktop |
+| `msi-ms7758` | worker host (GPU) | worker | `node-pool=workers` | legacy NVIDIA (Kepler/470xx), headless; Windows is the gaming OS |
 
 ```mermaid
 flowchart TB

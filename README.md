@@ -15,7 +15,7 @@ Personal NixOS + nix-darwin + Home Manager configuration. A work in progress as 
 |---------|------|--------|
 | `acer-swift` | Linux laptop (Hyprland) | Active |
 | `lenovo-21CB001PMX` | Linux laptop (Hyprland) | Active |
-| `msi-ms7758` | Linux desktop tower (i3, LightDM, legacy NVIDIA) | Active |
+| `msi-ms7758` | Headless k3s worker node (legacy NVIDIA GPU for Ollama); Windows dual-boot for gaming | Active |
 | `work-mac` | macOS (CLI only) | Planned |
 
 ## Structure

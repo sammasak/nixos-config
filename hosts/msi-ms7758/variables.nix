@@ -9,17 +9,8 @@
   kbdVariant = "";
   consoleKeymap = "sv-latin1";
 
-  # Desktop
-  desktop = "i3";
-  waybarTheme = "minimal";
-  sddmTheme = "astronaut";
-  displayManager = "lightdm";
-  defaultWallpaper = "train-sideview.webp";
-
-  # Applications
-  terminal = "kitty";
-  browser = "firefox";
-  editor = "vscode";
+  # Headless NixOS: Windows is the gaming OS on this box.
+  desktop = "i3"; # keep non-hyprland defaults so Wayland-only utils aren't pulled in
   shell = "nushell";
   tuiFileManager = "yazi";
 
@@ -29,8 +20,9 @@
 
   # Features
   laptop = false;
-  games = true;
+  games = false;
+  hardwareControl = true;
 
   # Roles
-  roles = [ "base" "desktop" "homelab-agent" ];
+  roles = [ "base" "homelab-agent" ];
 }

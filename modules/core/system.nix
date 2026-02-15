@@ -136,6 +136,12 @@ in
             description = "Whether gaming extras are enabled.";
           };
 
+          hardwareControl = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Whether hardware control extras (fan/RGB/thermals) are enabled.";
+          };
+
           roles = mkOption {
             type = types.listOf types.str;
             default = [ "base" ];

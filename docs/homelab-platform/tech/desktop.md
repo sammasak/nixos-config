@@ -22,12 +22,18 @@ Notes:
 Example host selection:
 
 ```nix
-# hosts/msi-ms7758/variables.nix
+# hosts/acer-swift/variables.nix
 {
-  desktop = "i3";
-  displayManager = "lightdm";
+  roles = [ "base" "laptop" "desktop" "homelab-agent" ];
+  desktop = "hyprland";
+  displayManager = "sddm"; # default (optional)
 }
 ```
+
+Headless hosts:
+
+- Omit the `desktop` role entirely (no greeter, no GUI). The `desktop` and
+  `displayManager` profile knobs become effectively irrelevant.
 
 ## Desktop Stacks
 
@@ -84,6 +90,11 @@ Repo stance:
 - If the host is Kepler/470xx and you want “it just works”, use `desktop = "i3"`.
 - Keep Wayland (Hyprland) for newer GPUs/drivers.
 
+## Gaming Specialisation
+
+See `docs/homelab-platform/tech/specialisations.md` for how this repo uses a
+`specialisation.gaming` boot entry to disable k3s and enable Steam/GameMode.
+
 ## Applying Changes
 
 ```bash
@@ -99,4 +110,3 @@ reboot
    host HM entrypoints (already wired via `hosts/<host>/home.nix`).
 3. Add `<name>` to the supported list in `modules/roles/desktop.nix`.
 4. Document it here.
-
