@@ -35,6 +35,10 @@ in
 
     font pango:monospace 10
 
+    # Avoid inheriting SDDM's root background pixmap (which can look like you're
+    # still on the login screen).
+    exec --no-startup-id xsetroot -solid "#111111"
+
     # Basics
     bindsym $mod+Return exec $term
     bindsym $mod+Shift+Return exec $term
