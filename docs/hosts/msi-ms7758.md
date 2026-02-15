@@ -25,21 +25,20 @@ This motherboard exposes fan/PWM via the Fintek Super I/O:
 
 ### Verified Behavior
 
-Both BIOS control and Linux PWM control clamp to a hardware minimum:
+We tried both BIOS Smart Fan and Linux `fancontrol` (manual PWM), and both clamp
+to a hardware minimum:
 
 - Lowest observed `fan1_input`: ~`952 RPM`
-- Even with manual PWM writes (`pwm1=0..40`) the fan stays ~`952 RPM`
-- BIOS Smart Fan shows `pwm1_enable=2` (auto) but still keeps `pwm1≈32/255` at idle and `fan1≈952 RPM`
+- Even with manual PWM writes (`pwm1=0..40`), the fan stays ~`952 RPM`
+- BIOS Smart Fan (`pwm1_enable=2`) still keeps `pwm1≈32/255` at idle and `fan1≈952 RPM`
 
 Conclusion: **“dead silent” idle is not achievable on this box purely via software**, unless the physical fan/cooler is replaced.
 
 ### Policy In This Repo
 
-We default to **BIOS Smart Fan** on this host:
+We default to **BIOS Smart Fan** on this host and do not ship a `fancontrol.service`:
 
 - `sam.profile.fancontrol = false` in `hosts/msi-ms7758/variables.nix`
-
-We keep `hosts/msi-ms7758/fancontrol-worker.conf` in the repo for reference/testing, but do not enable `hardware.fancontrol` by default because it overrides firmware fan control.
 
 ### How To Re-Test
 
@@ -74,3 +73,20 @@ sudo systemctl stop fancontrol
 - Disable OC/OC Genie and prefer ECO/balanced firmware settings.
 - Case/PSU/GPU fans may still be audible; only fans connected to motherboard headers are controllable.
 
+## Wake-on-LAN (WoL)
+
+- Interface: `enp3s0`
+- MAC: `d4:3d:7e:4a:f9:3d`
+
+The system enables WoL via `ethtool` at boot. You may also need firmware options enabled:
+
+- “Wake on PCI-E” / “Resume by PCI-E device” (naming varies by BIOS)
+
+## Scheduled Power Off/On
+
+This host supports an **optional** RTC-wake based schedule:
+
+- At a configured time, the system runs `rtcwake -m off ...`, which both powers off and programs the next wake alarm.
+- This requires motherboard support for RTC wake from soft-off (S5) and may require enabling BIOS options.
+
+Configuration lives in `hosts/msi-ms7758/configuration.nix` under `autoPower`.
