@@ -36,6 +36,8 @@ in
     ripgrep
     tldr
     claude-code
+    nodejs
+    chromium
 
     # Nix tools
     nix-prefetch-scripts

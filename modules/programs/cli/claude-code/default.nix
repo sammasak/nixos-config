@@ -23,21 +23,19 @@ in
 {
   home.packages = [ heartbeatScript ];
 
-  # Default agent permissions for headless operation
-  home.file.".claude/settings.json".text = builtins.toJSON {
-    permissions = {
-      allow = [
-        "Read"
-        "Write"
-        "Edit"
-        "Bash"
-        "Glob"
-        "Grep"
-        "WebFetch"
-        "WebSearch"
-      ];
-      deny = [ ];
-    };
+  # Headless agent: auto-approve all tool permissions (merged with shared settings)
+  programs.claude-code.settings.permissions = {
+    allow = [
+      "Read"
+      "Write"
+      "Edit"
+      "Bash"
+      "Glob"
+      "Grep"
+      "WebFetch"
+      "WebSearch"
+    ];
+    deny = [ ];
   };
 
   # Agent operations via Justfile

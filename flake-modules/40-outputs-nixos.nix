@@ -43,6 +43,9 @@ let
               useGlobalPkgs = true;
               useUserPackages = true;
               backupFileExtension = "backup";
+              sharedModules = [
+                ../modules/programs/cli/claude-code/mcp.nix
+              ];
               users.${username} =
                 config.flake.modules.homeManager."host-${hostDir}"
                 or (throw "Missing home-manager host module for `${hostDir}`");
