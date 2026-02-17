@@ -6,7 +6,7 @@
 {
   programs.claude-code = {
     enable = true;
-    package = null; # installed system-wide via modules/core/packages.nix
+    package = pkgs.claude-code; # needed for MCP wrapper; also in system packages
 
     settings = {
       env = {

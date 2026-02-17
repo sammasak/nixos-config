@@ -109,8 +109,7 @@ nixos-config/
 clusters/homelab/
 ├── flux-system/              # Flux controllers + bootstrap artifacts
 ├── infra/                    # cluster platform services
-│   ├── cluster-policies/     # quotas, limits, priority classes
-│   └── jarvis/               # shared platform dependencies
+│   └── cluster-policies/     # quotas, limits, priority classes
 └── apps/                     # app workloads
 ```
 

@@ -1,5 +1,5 @@
 # System configuration (host profile schema + locale/time/nix settings)
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 let
   inherit (lib) mkOption types;
   profile = config.sam.profile;
@@ -186,6 +186,30 @@ in
   config = {
     programs = {
       nix-ld.enable = true;
+      nix-ld.libraries = with pkgs; [
+        glib
+        nss
+        nspr
+        atk
+        cups
+        dbus
+        expat
+        libdrm
+        libxkbcommon
+        pango
+        cairo
+        alsa-lib
+        at-spi2-atk
+        at-spi2-core
+        libx11
+        libxcomposite
+        libxdamage
+        libxext
+        libxfixes
+        libxrandr
+        libxcb
+        mesa
+      ];
       gnupg.agent = {
         enable = true;
         enableSSHSupport = true;
@@ -245,6 +269,7 @@ in
         XDG_CONFIG_HOME = "$HOME/.config";
         XDG_DATA_HOME = "$HOME/.local/share";
         XDG_BIN_HOME = "$HOME/.local/bin";
+        PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
       }
       // lib.optionalAttrs (profile.desktop == "hyprland") {
         # Makes Nixpkgs-wrapped Electron apps prefer Wayland in Wayland sessions.
