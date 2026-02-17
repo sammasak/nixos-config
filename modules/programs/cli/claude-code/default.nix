@@ -23,6 +23,28 @@ in
 {
   home.packages = [ heartbeatScript ];
 
+  # Seed ~/.claude.json on first boot so the interactive setup wizard is skipped.
+  home.activation.seedClaudeState =
+    let
+      script = pkgs.writeShellScript "seed-claude-state" ''
+        stateFile="$HOME/.claude.json"
+        [ -f "$stateFile" ] && exit 0
+        cat > "$stateFile" <<'SEED'
+        {
+          "firstStartTime": "1970-01-01T00:00:00.000Z",
+          "sonnet45MigrationComplete": true,
+          "opus45MigrationComplete": true,
+          "opusProMigrationComplete": true,
+          "thinkingMigrationComplete": true
+        }
+        SEED
+        chmod 600 "$stateFile"
+      '';
+    in
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run ${script}
+    '';
+
   # Headless agent: auto-approve all tool permissions (merged with shared settings)
   programs.claude-code.settings.permissions = {
     allow = [
