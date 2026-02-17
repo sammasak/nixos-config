@@ -9,6 +9,7 @@
     package = pkgs.claude-code; # needed for MCP wrapper; also in system packages
 
     settings = {
+      theme = "dark";
       env = {
         DISABLE_TELEMETRY = "1";
         DISABLE_ERROR_REPORTING = "1";

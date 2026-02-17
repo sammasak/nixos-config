@@ -31,11 +31,16 @@ in
         [ -f "$stateFile" ] && exit 0
         cat > "$stateFile" <<'SEED'
         {
+          "numStartups": 1,
           "firstStartTime": "1970-01-01T00:00:00.000Z",
+          "hasCompletedOnboarding": true,
+          "lastOnboardingVersion": "2.0.0",
           "sonnet45MigrationComplete": true,
           "opus45MigrationComplete": true,
           "opusProMigrationComplete": true,
-          "thinkingMigrationComplete": true
+          "thinkingMigrationComplete": true,
+          "hasShownOpus45Notice": {},
+          "hasShownOpus46Notice": {}
         }
         SEED
         chmod 600 "$stateFile"
