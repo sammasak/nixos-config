@@ -11,5 +11,6 @@
     ../core/packages.nix
     ../core/fonts.nix
     ../core/gaming-specialisation.nix
+    ../core/sops.nix
   ];
 }

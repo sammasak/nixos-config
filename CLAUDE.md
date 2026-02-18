@@ -99,11 +99,51 @@ modules/
 
 ### Secrets
 
-SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at boot to `/run/secrets/`. Used for k3s cluster tokens, Cloudflare API keys, etc.
+SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at boot to `/run/secrets/`.
+
+Two SOPS modules:
+- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`) — k3s cluster tokens, Flux deploy keys, Cloudflare API token. Encrypted to all host keys + Flux age key.
+- **`modules/core/sops.nix`** (`sam.secrets.enable`) — shared secrets for all physical hosts (Claude Code OAuth token). Uses `mkDefault` for age config to avoid conflicts with the homelab module.
+
+Secret scopes in `secrets/.sops.yaml`:
+
+| Path pattern | Recipients | Purpose |
+|--------------|-----------|---------|
+| `homelab/*.yaml` | Personal + 3 hosts + Flux | k3s, Cloudflare, Flux keys |
+| `claude/*.yaml` | Personal + 3 hosts | Claude Code OAuth token |
+
+The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in shell init (bash + nushell) via `modules/programs/cli/claude-code/mcp.nix`. The workstation-template VM is unaffected — it receives its token via cloud-init at `/etc/workstation/agent-env`.
+
+### Claude Code
+
+Configuration lives in `modules/programs/cli/claude-code/`:
+
+| File | Scope | Purpose |
+|------|-------|---------|
+| `mcp.nix` | All NixOS hosts (shared HM module) | Settings, plugins, MCP servers, shebang fixes, SOPS token sourcing |
+| `default.nix` | `workstation-template` only | Headless agent config, Justfile, heartbeat service, cloud-init env sourcing |
+| `skills.nix` | All NixOS hosts (shared HM module) | Symlinks skills and agents from the `claude-code-skills` flake input |
+
+**Plugin configuration** (`mcp.nix`): Declares `enabledPlugins` (superpowers, ralph-loop, playwright, superpowers-lab) and MCP servers (playwright/chromium) in `programs.claude-code.settings`.
+
+**Personal skills and agents** are managed via the [`sammasak/claude-code-skills`](https://github.com/sammasak/claude-code-skills) repo, added as a non-flake input (`flake = false`). The `skills.nix` module auto-discovers all directories in `skills/` and `.md` files in `agents/` from that input and creates Home Manager symlinks:
+
+- `skills/<name>/SKILL.md` → `~/.claude/skills/<name>/SKILL.md`
+- `agents/<name>.md` → `~/.claude/agents/<name>.md`
+
+These are available across all projects without manual `/plugin install`.
+
+**Update workflow**:
+```bash
+# In ~/claude-code-skills: add/edit skills or agents, push to GitHub
+# In ~/nixos-config:
+nix flake update claude-code-skills
+sudo nixos-rebuild switch --flake .#<hostname>
+```
 
 ### Key Inputs
 
-nixpkgs (unstable), flake-parts, home-manager, nix-darwin, stylix, sops-nix — all following nixpkgs.
+nixpkgs (unstable), flake-parts, home-manager, nix-darwin, stylix, sops-nix, claude-code-skills — all following nixpkgs (except claude-code-skills which is a plain source input).
 
 ## Conventions
 

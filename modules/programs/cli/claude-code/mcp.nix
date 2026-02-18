@@ -6,7 +6,7 @@
 {
   programs.claude-code = {
     enable = true;
-    package = pkgs.claude-code; # needed for MCP wrapper; also in system packages
+    package = pkgs.claude-code;
 
     settings = {
       theme = "dark";
@@ -20,18 +20,33 @@
         "playwright@claude-plugins-official" = true;
         "superpowers-lab@superpowers-marketplace" = true;
       };
-    };
-
-    mcpServers = {
-      playwright = {
-        command = "sh";
-        args = [
-          "-c"
-          ''exec npx @playwright/mcp@latest --browser chromium --executable-path "$(which chromium)"''
-        ];
+      # MCP servers declared in settings.json instead of the top-level
+      # mcpServers option, which generates a --mcp-config CLI wrapper that
+      # breaks subcommands like `claude setup-token`.
+      mcpServers = {
+        playwright = {
+          command = "sh";
+          args = [
+            "-c"
+            ''exec npx @playwright/mcp@latest --browser chromium --executable-path "$(which chromium)"''
+          ];
+        };
       };
     };
   };
+
+  # ── SOPS token sourcing ─────────────────────────────────────────────
+  # Export the Claude Code OAuth token from the SOPS-decrypted secret.
+  # No-op when the file is absent (e.g. workstation-template, macOS).
+  programs.bash.initExtra = lib.mkAfter ''
+    [ -f /run/secrets/claude_oauth_token ] && export CLAUDE_CODE_OAUTH_TOKEN="$(cat /run/secrets/claude_oauth_token)"
+  '';
+
+  programs.nushell.extraEnv = lib.mkAfter ''
+    if ("/run/secrets/claude_oauth_token" | path exists) {
+      { CLAUDE_CODE_OAUTH_TOKEN: (open /run/secrets/claude_oauth_token | str trim) } | load-env
+    }
+  '';
 
   # ── NixOS shebang fixes ──────────────────────────────────────────────
   # Patches #!/bin/bash → #!/usr/bin/env bash in plugin cache.
@@ -42,7 +57,7 @@
         pluginDir="$HOME/.claude/plugins/cache"
         [ -d "$pluginDir" ] || exit 0
         find "$pluginDir" -name '*.sh' -type f | while read -r f; do
-          head -1 "$f" | grep -q '^#!/bin/bash' && ${pkgs.gnused}/bin/sed -i '1s|^#!/bin/bash|#!/usr/bin/env bash|' "$f"
+          head -1 "$f" | grep -qF '#!/bin/bash' && ${pkgs.gnused}/bin/sed -i '1s|^#!/bin/bash|#!/usr/bin/env bash|' "$f" || true
         done
       '';
     in

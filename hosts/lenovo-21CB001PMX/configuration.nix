@@ -12,6 +12,7 @@ in
   ];
 
   sam.profile = vars;
+  sam.secrets.enable = true;
 
   # Flux
   homelab.flux = {

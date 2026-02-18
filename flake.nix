@@ -17,6 +17,9 @@
 
     sops-nix.url = "github:Mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
+
+    claude-code-skills.url = "github:sammasak/claude-code-skills";
+    claude-code-skills.flake = false;
   };
 
   outputs =

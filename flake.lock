@@ -68,6 +68,22 @@
         "type": "github"
       }
     },
+    "claude-code-skills": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1771410257,
+        "narHash": "sha256-lPRek77NnM01kvN6qMpYwHHJinbgIwkj7czEXhI2XAc=",
+        "owner": "sammasak",
+        "repo": "claude-code-skills",
+        "rev": "6089e10f91e3d0b8e3e53bc4feb081ae10fc2d2f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "sammasak",
+        "repo": "claude-code-skills",
+        "type": "github"
+      }
+    },
     "firefox-gnome-theme": {
       "flake": false,
       "locked": {
@@ -256,6 +272,7 @@
     },
     "root": {
       "inputs": {
+        "claude-code-skills": "claude-code-skills",
         "flake-parts": "flake-parts",
         "home-manager": "home-manager",
         "nix-darwin": "nix-darwin",

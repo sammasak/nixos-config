@@ -15,6 +15,7 @@ in
   ];
 
   sam.profile = vars;
+  sam.secrets.enable = true;
 
   # GPU worker: prepare NVIDIA for container workloads.
   #

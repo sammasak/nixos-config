@@ -45,6 +45,7 @@ let
               backupFileExtension = "backup";
               sharedModules = [
                 ../modules/programs/cli/claude-code/mcp.nix
+                (import ../modules/programs/cli/claude-code/skills.nix inputs.claude-code-skills)
               ];
               users.${username} =
                 config.flake.modules.homeManager."host-${hostDir}"
