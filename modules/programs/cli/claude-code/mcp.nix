@@ -28,21 +28,30 @@
           command = "sh";
           args = [
             "-c"
-            ''exec npx @playwright/mcp@latest --browser chromium --executable-path "$(which chromium)"''
+            ''exec npx @playwright/mcp@latest --headless --browser chromium --executable-path "$(which chromium)"''
           ];
         };
       };
     };
   };
 
-  # ── SOPS token sourcing ─────────────────────────────────────────────
-  # Export the Claude Code OAuth token from the SOPS-decrypted secret.
-  # No-op when the file is absent (e.g. workstation-template, macOS).
+  # ── OAuth token sourcing ────────────────────────────────────────────
+  # Priority: SOPS secret (physical hosts) > ~/.env (workstation VMs).
+  # VMs receive CLAUDE_CODE_OAUTH_TOKEN via cloud-init writing ~/.env.
+  # Physical hosts get it from SOPS-decrypted /run/secrets/claude_oauth_token.
   programs.bash.initExtra = lib.mkAfter ''
+    [ -f "$HOME/.env" ] && grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.env" 2>/dev/null && \
+      export CLAUDE_CODE_OAUTH_TOKEN="$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.env" | cut -d= -f2-)"
     [ -f /run/secrets/claude_oauth_token ] && export CLAUDE_CODE_OAUTH_TOKEN="$(cat /run/secrets/claude_oauth_token)"
   '';
 
   programs.nushell.extraEnv = lib.mkAfter ''
+    if ($"($env.HOME)/.env" | path exists) {
+      let token_line = (open $"($env.HOME)/.env" | lines | where { |l| $l | str starts-with "CLAUDE_CODE_OAUTH_TOKEN=" } | first?)
+      if ($token_line != null) {
+        { CLAUDE_CODE_OAUTH_TOKEN: ($token_line | str replace "CLAUDE_CODE_OAUTH_TOKEN=" "") } | load-env
+      }
+    }
     if ("/run/secrets/claude_oauth_token" | path exists) {
       { CLAUDE_CODE_OAUTH_TOKEN: (open /run/secrets/claude_oauth_token | str trim) } | load-env
     }

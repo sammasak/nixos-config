@@ -40,7 +40,14 @@ in
           "opusProMigrationComplete": true,
           "thinkingMigrationComplete": true,
           "hasShownOpus45Notice": {},
-          "hasShownOpus46Notice": {}
+          "hasShownOpus46Notice": {},
+          "projects": {
+            "/home/lukas": {
+              "hasTrustDialogAccepted": true,
+              "projectOnboardingSeenCount": 1,
+              "hasCompletedProjectOnboarding": true
+            }
+          }
         }
         SEED
         chmod 600 "$stateFile"
@@ -142,20 +149,25 @@ in
     };
   };
 
-  # Bash: enable and source agent-env and otel-env in login profile
+  # Bash: enable and source agent-env and otel-env in login profile.
+  # ANTHROPIC_API_KEY is unset after sourcing: it is only for headless `just agent`
+  # sessions (sourced again there via _source-env). Interactive Claude Code sessions
+  # authenticate via CLAUDE_CODE_OAUTH_TOKEN instead.
   programs.bash.enable = true;
   programs.bash.profileExtra = lib.mkAfter ''
     [ -f /etc/workstation/agent-env ] && set -a && . /etc/workstation/agent-env && set +a
     [ -f /etc/workstation/otel-env ] && set -a && . /etc/workstation/otel-env && set +a
+    unset ANTHROPIC_API_KEY
   '';
 
-  # Nushell: load the same env files via load-env
+  # Nushell: load the same env files via load-env.
+  # ANTHROPIC_API_KEY is excluded: only for headless agent sessions.
   programs.nushell.extraEnv = ''
     for file in ["/etc/workstation/agent-env" "/etc/workstation/otel-env"] {
       if ($file | path exists) {
         open $file
           | lines
-          | where { |line| ($line | str trim | str length) > 0 and not ($line | str starts-with "#") }
+          | where { |line| ($line | str trim | str length) > 0 and not ($line | str starts-with "#") and not ($line | str starts-with "ANTHROPIC_API_KEY") }
           | each { |line|
             let parts = ($line | split column "=" key value)
             { ($parts.0.key | str trim): ($parts.0.value | str trim) }
