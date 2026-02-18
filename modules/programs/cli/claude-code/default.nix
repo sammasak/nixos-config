@@ -159,22 +159,4 @@ in
     [ -f /etc/workstation/otel-env ] && set -a && . /etc/workstation/otel-env && set +a
     unset ANTHROPIC_API_KEY
   '';
-
-  # Nushell: load the same env files via load-env.
-  # ANTHROPIC_API_KEY is excluded: only for headless agent sessions.
-  programs.nushell.extraEnv = ''
-    for file in ["/etc/workstation/agent-env" "/etc/workstation/otel-env"] {
-      if ($file | path exists) {
-        open $file
-          | lines
-          | where { |line| ($line | str trim | str length) > 0 and not ($line | str starts-with "#") and not ($line | str starts-with "ANTHROPIC_API_KEY") }
-          | each { |line|
-            let parts = ($line | split column "=" key value)
-            { ($parts.0.key | str trim): ($parts.0.value | str trim) }
-          }
-          | reduce --fold {} { |it, acc| $acc | merge $it }
-          | load-env
-      }
-    }
-  '';
 }
