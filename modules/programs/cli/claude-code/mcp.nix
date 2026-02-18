@@ -36,9 +36,8 @@
   };
 
   # ── OAuth token sourcing ────────────────────────────────────────────
-  # Priority: SOPS secret (physical hosts) > ~/.env (workstation VMs).
-  # VMs receive CLAUDE_CODE_OAUTH_TOKEN via cloud-init writing ~/.env.
-  # Physical hosts get it from SOPS-decrypted /run/secrets/claude_oauth_token.
+  # All hosts (physical + VM golden image) get the token from sops-nix at
+  # /run/secrets/claude_oauth_token. ~/.env is a manual fallback only.
   programs.bash.initExtra = lib.mkAfter ''
     [ -f "$HOME/.env" ] && grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.env" 2>/dev/null && \
       export CLAUDE_CODE_OAUTH_TOKEN="$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.env" | cut -d= -f2-)"
