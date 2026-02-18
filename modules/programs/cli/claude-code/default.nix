@@ -80,8 +80,8 @@ in
 
     set shell := ["bash", "-euo", "pipefail", "-c"]
 
-    # Source workstation env files (API keys, OTEL config)
-    _source-env := "[ -f /etc/workstation/agent-env ] && set -a && . /etc/workstation/agent-env && set +a; [ -f /etc/workstation/otel-env ] && set -a && . /etc/workstation/otel-env && set +a"
+    # Source workstation env files (API keys, OTEL config) and GitHub token
+    _source-env := "[ -f /etc/workstation/agent-env ] && set -a && . /etc/workstation/agent-env && set +a; [ -f /etc/workstation/otel-env ] && set -a && . /etc/workstation/otel-env && set +a; _tf=\"''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/github-token\"; [ -f \"$_tf\" ] && export GH_TOKEN=\"$(cat \"$_tf\")\""
 
     # Run a headless Claude Code agent session (foreground, blocks until done)
     agent +prompt:
