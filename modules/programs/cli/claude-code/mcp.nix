@@ -44,18 +44,6 @@
     [ -f /run/secrets/claude_oauth_token ] && export CLAUDE_CODE_OAUTH_TOKEN="$(cat /run/secrets/claude_oauth_token)"
   '';
 
-  programs.nushell.extraEnv = lib.mkAfter ''
-    if ($"($env.HOME)/.env" | path exists) {
-      let token_line = (open $"($env.HOME)/.env" | lines | where { |l| $l | str starts-with "CLAUDE_CODE_OAUTH_TOKEN=" } | first?)
-      if ($token_line != null) {
-        { CLAUDE_CODE_OAUTH_TOKEN: ($token_line | str replace "CLAUDE_CODE_OAUTH_TOKEN=" "") } | load-env
-      }
-    }
-    if ("/run/secrets/claude_oauth_token" | path exists) {
-      { CLAUDE_CODE_OAUTH_TOKEN: (open /run/secrets/claude_oauth_token | str trim) } | load-env
-    }
-  '';
-
   # ── NixOS shebang fixes ──────────────────────────────────────────────
   # Patches #!/bin/bash → #!/usr/bin/env bash in plugin cache.
   # NixOS doesn't have /bin/bash; re-runs on rebuild to fix new/updated plugins.
