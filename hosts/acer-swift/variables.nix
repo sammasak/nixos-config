@@ -19,7 +19,6 @@
   terminal = "kitty";
   browser = "firefox";
   editor = "vscode";
-  shell = "nushell";
   tuiFileManager = "yazi";
 
   # Hardware

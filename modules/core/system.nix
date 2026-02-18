@@ -100,7 +100,7 @@ in
 
           shell = mkOption {
             type = types.str;
-            default = "nushell";
+            default = "bash";
             description = "User shell package attribute name.";
           };
 

@@ -11,7 +11,6 @@
 
   # Headless NixOS: Windows is the gaming OS on this box.
   desktop = "i3"; # keep non-hyprland defaults so Wayland-only utils aren't pulled in
-  shell = "nushell";
   tuiFileManager = "yazi";
 
   # Hardware
