@@ -57,6 +57,8 @@ in
       kubectl
       direnv
       nix-direnv
+      openssl
+      curl
     ];
   };
 }
