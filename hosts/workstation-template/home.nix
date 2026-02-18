@@ -3,8 +3,13 @@
 {
   home.stateVersion = "25.11";
 
-  # Chromium for headless Playwright MCP use in Claude Code
-  home.packages = [ pkgs.chromium ];
+  home.packages = [
+    # Chromium for headless Playwright MCP use in Claude Code
+    pkgs.chromium
+    # Stub for the VS Code CLI — silences Claude Code's IDE detection check
+    # (`which: no code in ...`) on headless VMs that have no VS Code installed.
+    (pkgs.writeShellScriptBin "code" "exit 1")
+  ];
 
   imports = [
     ../../modules/core/nushell.nix
@@ -13,5 +18,6 @@
     ../../modules/programs/cli/cli-tools
     ../../modules/programs/cli/direnv
     ../../modules/programs/cli/claude-code
+    ../../modules/programs/cli/github-app-auth
   ];
 }
