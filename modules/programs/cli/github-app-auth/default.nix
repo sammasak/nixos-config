@@ -119,17 +119,6 @@ in
     fi
   '';
 
-  # Nushell: export GH_TOKEN when the token file is present
-  programs.nushell.extraEnv = lib.mkAfter ''
-    if ("/etc/workstation/github-app-env" | path exists) {
-      let _rt_dir = ($env | get --ignore-errors XDG_RUNTIME_DIR | default $"/run/user/(^id -u | str trim)")
-      let _tf = $"($_rt_dir)/github-token"
-      if ($"($_tf)" | path exists) {
-        $env.GH_TOKEN = (open --raw $"($_tf)" | str trim)
-      }
-    }
-  '';
-
   # Git: use GH_TOKEN for HTTPS authentication to github.com
   programs.git.extraConfig = {
     credential."https://github.com".helper =
