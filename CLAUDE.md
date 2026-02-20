@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A NixOS + Home Manager configuration repository using **flake-parts** with a dendritic auto-discovery pattern. Manages Linux desktops, laptops, headless servers, and KubeVirt workstation images from a single flake.
+A NixOS + Home Manager configuration repository using **flake-parts** with a dendritic auto-discovery pattern. Manages Linux servers, laptops, and KubeVirt workstation images from a single flake.
 
 ## Build & Deploy Commands
 
@@ -57,22 +57,60 @@ Each host follows a 3–4 file pattern in `hosts/<name>/`:
 
 | File | Purpose |
 |------|---------|
-| `variables.nix` | Plain attrset of host-specific choices (username, roles, desktop, videoDriver, monitors, etc.) |
+| `variables.nix` | Plain attrset of host-specific choices (username, roles, videoDriver, monitors, etc.) |
 | `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
-| `home.nix` | Home Manager config — conditionally imports modules based on roles |
+| `home.nix` | Home Manager config — imports CLI programs and optionally GUI programs |
 | `hardware-configuration.nix` | Auto-generated hardware scan (physical machines only; omitted for virtual/image targets like `workstation-template`) |
 
 The wiring: `flake-modules/hosts/<name>.nix` reads `variables.nix` and creates a typed `configurations.nixos.<name>` declaration. Then `40-outputs-nixos.nix` resolves roles to modules, injects Stylix/SOPS/Home Manager, and produces the final `nixosConfigurations.<name>`.
 
+### Desktop Specialisation
+
+All hosts boot into **server mode** by default (optimized headless environment with full CLI tooling).
+
+Hosts with compatible GPUs (Intel iGPU) have a **desktop specialisation** - an optional boot menu entry that adds:
+- Hyprland Wayland compositor
+- SDDM display manager
+- Waybar, Rofi, theming
+- GUI applications (Firefox, VS Code, Kitty)
+
+**Boot menu:**
+```
+NixOS (default)  ← Server mode (always available)
+NixOS (desktop)  ← GUI mode (Intel GPU hosts only)
+```
+
+**Hosts with desktop specialisation:**
+- acer-swift
+- lenovo-21CB001PMX
+
+**Headless-only hosts:**
+- msi-ms7758 (legacy NVIDIA Kepler GPU)
+- workstation-template (VM image)
+
 ### Profile System (`sam.profile`)
 
-Defined in `modules/core/system.nix`. All host metadata lives in `config.sam.profile` — a typed NixOS option submodule. Modules read this instead of using `specialArgs`. Key fields: `username`, `hostname`, `desktop`, `videoDriver`, `monitors`, `roles`, `laptop`, `games`, `lanCidr`, `sshAuthorizedKeys`.
+Defined in `modules/core/system.nix`. All host metadata lives in `config.sam.profile` — a typed NixOS option submodule. Modules read this instead of using `specialArgs`.
+
+**Available fields:**
+- `username` (str) — Primary user account
+- `hostname` (str) — System hostname
+- `videoDriver` (str) — GPU driver: "intel", "nvidia-kepler", "nvidia-modern", "amd", or null
+- `monitors` (list of attrset) — Monitor configuration for Hyprland (name, width, height, refreshRate, x, y, scale)
+- `roles` (list of str) — Enabled roles from `modules/roles/`
+- `laptop` (bool) — Laptop-specific settings enabled
+- `games` (bool) — Gaming packages enabled
+- `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
+- `sshAuthorizedKeys` (list of str) — Authorized SSH public keys
+- `guiPrograms` (bool) — GUI applications enabled (set via specialisation)
+- `hyprlandMonitors` (list of str) — Generated Hyprland monitor config strings
+- `homeManagerBackpackGlobs` (list of str) — Backpack file patterns for Home Manager
+- `homeManagerModules` (list of module) — Additional Home Manager modules to import
 
 ### Roles (`modules/roles/`)
 
 Composable role modules assigned per-host via `variables.nix`:
 - **base** — required on every host (enforced by assertion); imports all `modules/core/`
-- **desktop** — Hyprland or i3 stack + Catppuccin theme (reads `sam.profile.desktop`)
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node; disables sleep/suspend
 - **homelab-server** — k3s control plane
@@ -82,7 +120,7 @@ Composable role modules assigned per-host via `variables.nix`:
 ```
 modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
-├── desktop/      # Desktop stacks: hyprland/ (Wayland), i3/ (X11)
+├── desktop/      # Desktop stack: hyprland/ (Wayland compositor)
 ├── hardware/     # GPU drivers (intel, nvidia-kepler, nvidia-modern, amd), thermal
 ├── homelab/      # k3s (agent/server), sops, flux, workstation-image
 ├── programs/     # Home Manager programs: cli/, browser/, editor/, terminal/
@@ -105,7 +143,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/*.yaml` | Personal + 3 hosts + Flux | k3s, Cloudflare, Flux keys |
 | `claude/*.yaml` | Personal + 3 hosts | Claude Code OAuth token |
 
-The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in shell init (bash) via `modules/programs/cli/claude-code/mcp.nix`. The workstation-template VM is unaffected — it receives its token via cloud-init at `/etc/workstation/agent-env`.
+The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in bash shell init via `modules/programs/cli/claude-code/mcp.nix`. The workstation-template VM is unaffected — it receives its token via cloud-init at `/etc/workstation/agent-env`.
 
 ### Claude Code
 
@@ -141,8 +179,7 @@ nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-ski
 ## Conventions
 
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.
-- **Desktop polymorphism**: `sam.profile.desktop` drives which desktop stack loads. Hyprland for modern hardware, i3 for legacy.
-- **Program selection**: `sam.profile.terminal`, `.browser`, `.editor`, `.shell` select which program modules to import in `home.nix`.
+- **Desktop via specialisation**: Hosts with Intel GPUs get an optional desktop boot entry; all hosts boot to server mode by default.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
 - **Firewall**: LAN CIDR defaults to `192.168.10.0/24` (override via `sam.profile.lanCidr`). SSH is key-only, no root login.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
