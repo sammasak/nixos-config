@@ -24,13 +24,19 @@
     };
 
     initExtra = ''
-      # Simple up/down arrow history search with prefix matching
-      # Type "ssh " then press up arrow → shows last "ssh " command
-      bind '"\e[A": history-search-backward'
-      bind '"\e[B": history-search-forward'
-
       neofetch
     '';
+  };
+
+  # McFly - intelligent shell history with inline suggestions
+  # Shows gray text hints as you type, press → or Tab to accept
+  programs.mcfly = {
+    enable = true;
+    enableBashIntegration = true;
+    keyScheme = "vim";  # Or "emacs" if you prefer
+
+    # Inline suggestions like fish/nushell
+    # Type "ssh " and see "ssh lukas@192.168.10.124" in gray
   };
 
   # fzf fuzzy finder with bash integration
