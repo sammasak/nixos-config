@@ -49,10 +49,14 @@
   # ── OAuth token sourcing ────────────────────────────────────────────
   # All hosts (physical + VM golden image) get the token from sops-nix at
   # /run/secrets/claude_oauth_token. ~/.env is a manual fallback only.
-  programs.bash.initExtra = lib.mkAfter ''
-    [ -f "$HOME/.env" ] && grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.env" 2>/dev/null && \
-      export CLAUDE_CODE_OAUTH_TOKEN="$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.env" | cut -d= -f2-)"
-    [ -f /run/secrets/claude_oauth_token ] && export CLAUDE_CODE_OAUTH_TOKEN="$(cat /run/secrets/claude_oauth_token)"
+  programs.fish.interactiveShellInit = lib.mkAfter ''
+    if test -f "$HOME/.env"
+      and grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.env" 2>/dev/null
+      set -gx CLAUDE_CODE_OAUTH_TOKEN (grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.env" | cut -d= -f2-)
+    end
+    if test -f /run/secrets/claude_oauth_token
+      set -gx CLAUDE_CODE_OAUTH_TOKEN (cat /run/secrets/claude_oauth_token)
+    end
   '';
 
   # ── NixOS shebang fixes ──────────────────────────────────────────────

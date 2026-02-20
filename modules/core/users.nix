@@ -48,7 +48,7 @@ in
         "docker"
         "disk"
       ];
-      shell = pkgs.bash;
+      shell = pkgs.fish;
       ignoreShellProgramCheck = true;
       openssh.authorizedKeys.keys = sshAuthorizedKeys;
     };

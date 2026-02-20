@@ -149,14 +149,26 @@ in
     };
   };
 
-  # Bash: enable and source agent-env and otel-env in login profile.
+  # Fish: enable and source agent-env and otel-env in login profile.
   # ANTHROPIC_API_KEY is unset after sourcing: it is only for headless `just agent`
   # sessions (sourced again there via _source-env). Interactive Claude Code sessions
   # authenticate via CLAUDE_CODE_OAUTH_TOKEN instead.
-  programs.bash.enable = true;
-  programs.bash.profileExtra = lib.mkAfter ''
-    [ -f /etc/workstation/agent-env ] && set -a && . /etc/workstation/agent-env && set +a
-    [ -f /etc/workstation/otel-env ] && set -a && . /etc/workstation/otel-env && set +a
-    unset ANTHROPIC_API_KEY
+  programs.fish.enable = true;
+  programs.fish.loginShellInit = lib.mkAfter ''
+    if test -f /etc/workstation/agent-env
+      for line in (cat /etc/workstation/agent-env)
+        if not string match -q '#*' $line
+          and not string match -q 'ANTHROPIC_API_KEY=*' $line
+          set -gx (string split -m 1 = $line)
+        end
+      end
+    end
+    if test -f /etc/workstation/otel-env
+      for line in (cat /etc/workstation/otel-env)
+        if not string match -q '#*' $line
+          set -gx (string split -m 1 = $line)
+        end
+      end
+    end
   '';
 }

@@ -4,8 +4,7 @@ let
   profile = osConfig.sam.profile;
   isDesktopMode = osConfig.programs.hyprland.enable or false;
   baseImports = [
-    ../core/bash.nix
-    ../core/starship.nix
+    ../core/fish.nix
     ../programs/cli/git
     ../programs/cli/cli-tools
   ];
