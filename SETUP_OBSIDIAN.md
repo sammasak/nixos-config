@@ -10,7 +10,16 @@ This guide will set up your Obsidian knowledge vault with MCP integration across
 ✅ **Sync script** to copy docs from repos to vault
 ✅ **Git-based vault** synced across all hosts
 
-## Step 1: Deploy Configuration
+## Step 1: Clone Vault Repository
+
+The vault is a separate GitHub repository that must be cloned:
+
+```bash
+# Clone the knowledge vault
+gh repo clone sammasak/knowledge-vault ~/Documents/knowledge-vault
+```
+
+## Step 2: Deploy NixOS Configuration
 
 On your current host (lenovo-21CB001PMX):
 
@@ -20,28 +29,9 @@ sudo nixos-rebuild switch --flake .#$(hostname)
 ```
 
 This will:
-- Create vault structure at `~/Documents/knowledge-vault/`
-- Configure Obsidian MCP server in Claude Code
+- Configure Obsidian MCP server in Claude Code (points to ~/Documents/knowledge-vault)
 - Install Obsidian GUI (you're on a desktop host)
-- Deploy the `documentation-to-obsidian` skill
-
-## Step 2: Initialize Vault Repository
-
-```bash
-# Navigate to vault (created by NixOS config)
-cd ~/Documents/knowledge-vault
-
-# Initialize git repo
-git init
-git add .
-git commit -m "Initial vault structure from NixOS config"
-
-# Create private GitHub repo
-gh repo create knowledge-vault-private --private --source=. --remote=origin
-
-# Push to GitHub
-git push -u origin main
-```
+- Deploy vault-related skills
 
 ## Step 3: Sync Documentation from Repos
 
@@ -94,12 +84,12 @@ Claude should:
 On each other host (acer-swift, msi-ms7758, servers):
 
 ```bash
-# Deploy NixOS config (sets up MCP)
+# Clone vault first
+gh repo clone sammasak/knowledge-vault ~/Documents/knowledge-vault
+
+# Then deploy NixOS config (sets up MCP)
 cd ~/nixos-config
 sudo nixos-rebuild switch --flake .#$(hostname)
-
-# Clone vault
-git clone git@github.com:YOUR_USERNAME/knowledge-vault-private.git ~/Documents/knowledge-vault
 ```
 
 Now all hosts can query documentation via Claude Code!

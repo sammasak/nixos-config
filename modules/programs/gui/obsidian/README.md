@@ -84,8 +84,10 @@ Declarative Obsidian configuration with filesystem-based MCP integration for LLM
    - No Obsidian plugins required for LLM access
    - Faster and simpler than API-based MCP
 
-3. **Fully Declarative**: Everything managed via NixOS config
-   - Vault structure defined in `default.nix`
+3. **Vault as Separate Git Repo**: Vault content managed independently
+   - Vault is a separate GitHub repository: `sammasak/knowledge-vault`
+   - Must be cloned manually to `~/Documents/knowledge-vault`
+   - Obsidian settings configured via `default.nix`
    - Plugins (when enabled) packaged as Nix derivations
    - MCP configuration in `claude-code/mcp.nix`
 
@@ -195,23 +197,11 @@ To enable:
 
 ## Initial Setup
 
-### 1. Create Vault Repository (Dev Machine)
+### 1. Clone Vault Repository
 
 ```bash
-# Build config to create initial vault structure
-sudo nixos-rebuild switch --flake .#$(hostname)
-
-# Navigate to vault
-cd ~/Documents/knowledge-vault
-
-# Initialize git repo
-git init
-git add .
-git commit -m "Initial vault structure from NixOS config"
-
-# Create private GitHub repo and push
-git remote add origin git@github.com:sammasak/knowledge-vault-private.git
-git push -u origin main
+# Clone the vault repository
+gh repo clone sammasak/knowledge-vault ~/Documents/knowledge-vault
 ```
 
 ### 2. Sync Documentation from Repos (Dev Machine)
@@ -233,11 +223,8 @@ git push
 On each other host (servers, laptop, etc.):
 
 ```bash
-# Build config (creates MCP server)
-sudo nixos-rebuild switch --flake .#$(hostname)
-
 # Clone vault
-git clone git@github.com:sammasak/knowledge-vault-private.git ~/Documents/knowledge-vault
+gh repo clone sammasak/knowledge-vault ~/Documents/knowledge-vault
 ```
 
 Now all hosts have access to all documentation via MCP, without needing to clone any project repos!
