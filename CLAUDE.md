@@ -105,7 +105,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/*.yaml` | Personal + 3 hosts + Flux | k3s, Cloudflare, Flux keys |
 | `claude/*.yaml` | Personal + 3 hosts | Claude Code OAuth token |
 
-The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in shell init (bash + nushell) via `modules/programs/cli/claude-code/mcp.nix`. The workstation-template VM is unaffected — it receives its token via cloud-init at `/etc/workstation/agent-env`.
+The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in shell init (bash) via `modules/programs/cli/claude-code/mcp.nix`. The workstation-template VM is unaffected — it receives its token via cloud-init at `/etc/workstation/agent-env`.
 
 ### Claude Code
 
