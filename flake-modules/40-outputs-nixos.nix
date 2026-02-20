@@ -48,8 +48,8 @@ let
                 (import ../modules/programs/cli/claude-code/skills.nix inputs.claude-code-skills)
               ];
               users.${username} =
-                config.flake.modules.homeManager."host-${hostDir}"
-                or (throw "Missing home-manager host module for `${hostDir}`");
+                config.flake.modules.homeManager.default
+                or (throw "Missing shared home-manager module at modules/home/default.nix");
             };
           }
         ];

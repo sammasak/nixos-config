@@ -32,16 +32,12 @@ let
   stripNixSuffix = name: builtins.replaceStrings [ ".nix" ] [ "" ] name;
 
   roleFiles = listRegularNixFiles ../modules/roles;
-  hostDirs = listDirectories ../hosts;
-
-  hostDirsWithHome = builtins.filter (
-    host: builtins.pathExists (../hosts + "/${host}/home.nix")
-  ) hostDirs;
+  homeFiles = listRegularNixFiles ../modules/home;
 in
 {
   flake.modules = {
     nixos = mkAttrs roleFiles (file: "role-${stripNixSuffix file}") (file: ../modules/roles + "/${file}");
 
-    homeManager = mkAttrs hostDirsWithHome (host: "host-${host}") (host: ../hosts + "/${host}/home.nix");
+    homeManager = mkAttrs homeFiles stripNixSuffix (file: ../modules/home + "/${file}");
   };
 }

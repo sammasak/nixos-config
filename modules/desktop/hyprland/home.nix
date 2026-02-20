@@ -3,15 +3,17 @@
 { config, pkgs, lib, osConfig ? null, ... }:
 let
   mkForce = lib.mkForce;
-  profile =
+  baseProfile =
     if osConfig != null && osConfig ? sam && osConfig.sam ? profile
     then osConfig.sam.profile
-    else {
-      monitors = [ ",preferred,auto,1" ];
-      kbdLayout = "se";
-      terminal = "kitty";
-      browser = "firefox";
-    };
+    else { };
+  # Merge base profile with hardcoded defaults for removed fields
+  profile = baseProfile // {
+    monitors = baseProfile.monitors or [ ",preferred,auto,1" ];
+    kbdLayout = baseProfile.kbdLayout or "se";
+    terminal = "kitty";
+    browser = "firefox";
+  };
 in
 {
   imports = [

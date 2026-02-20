@@ -3,7 +3,6 @@
 let
   roles = config.sam.profile.roles or [ ];
   hasDesktop = builtins.elem "desktop" roles;
-  isHyprland = config.sam.profile.desktop == "hyprland";
 in
 {
   programs = {
@@ -54,7 +53,7 @@ in
       libnotify
       yad
     ]
-    ++ lib.optionals (hasDesktop && isHyprland) [
+    ++ lib.optionals hasDesktop [
       wl-clipboard
       grim
       slurp

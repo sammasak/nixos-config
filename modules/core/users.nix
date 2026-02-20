@@ -2,7 +2,7 @@
 { config, pkgs, lib, ... }:
 let
   profile = config.sam.profile;
-  inherit (profile) username terminal browser shell;
+  inherit (profile) username;
   defaultSshKeys = config.sam.userConfig.sshKeys or [ ];
   sshAuthorizedKeys =
     if profile.sshAuthorizedKeys != [ ]
@@ -26,8 +26,8 @@ in
         homeDirectory = "/home/${username}";
         stateVersion = "25.11";
         sessionVariables = {
-          BROWSER = browser;
-          TERMINAL = terminal;
+          BROWSER = "firefox";
+          TERMINAL = "kitty";
         };
       };
     };
@@ -48,7 +48,7 @@ in
         "docker"
         "disk"
       ];
-      shell = pkgs.${shell};
+      shell = pkgs.bash;
       ignoreShellProgramCheck = true;
       openssh.authorizedKeys.keys = sshAuthorizedKeys;
     };
