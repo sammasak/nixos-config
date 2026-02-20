@@ -22,7 +22,7 @@ in
   config = lib.mkIf (displayManager == "sddm") {
     services.displayManager.sddm = {
       enable = true;
-      # i3 is X11-only; keep the greeter on X11 for stability on legacy GPUs.
+      # Keep the greeter on X11 for stability on legacy GPUs.
       wayland.enable = lib.mkDefault (desktop == "hyprland");
       enableHidpi = true;
       autoNumlock = true;
