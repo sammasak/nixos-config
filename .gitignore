@@ -2,3 +2,4 @@ tmp/
 result
 result-*
 .playwright-mcp/
+.worktrees/
