@@ -36,6 +36,7 @@ in
     claude-code
     nodejs
     chromium
+    just
 
     # Nix tools
     nix-prefetch-scripts
