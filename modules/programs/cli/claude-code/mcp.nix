@@ -20,28 +20,27 @@
         "playwright@claude-plugins-official" = true;
         "superpowers-lab@superpowers-marketplace" = true;
       };
-      # MCP servers declared in settings.json instead of the top-level
-      # mcpServers option, which generates a --mcp-config CLI wrapper that
-      # breaks subcommands like `claude setup-token`.
-      mcpServers = {
-        playwright = {
-          command = "sh";
-          args = [
-            "-c"
-            ''exec npx @playwright/mcp@latest --headless --browser chromium --executable-path "$(which chromium)"''
-          ];
-        };
+    };
 
-        # Obsidian filesystem MCP - works without Obsidian app running
-        # Provides read/write access to vault + all symlinked repos
-        obsidian = {
-          command = "npx";
-          args = [
-            "-y"
-            "@mauricio.wolff/mcp-obsidian@latest"
-            "${config.home.homeDirectory}/Documents/knowledge-vault"
-          ];
-        };
+    # MCP servers at top-level for auto-discovery
+    mcpServers = {
+      playwright = {
+        command = "sh";
+        args = [
+          "-c"
+          ''exec npx @playwright/mcp@latest --headless --browser chromium --executable-path "$(which chromium)"''
+        ];
+      };
+
+      # Obsidian filesystem MCP - works without Obsidian app running
+      # Provides read/write access to vault
+      obsidian = {
+        command = "npx";
+        args = [
+          "-y"
+          "@mauricio.wolff/mcp-obsidian@latest"
+          "${config.home.homeDirectory}/Documents/knowledge-vault"
+        ];
       };
     };
   };

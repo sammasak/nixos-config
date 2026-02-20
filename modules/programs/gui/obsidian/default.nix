@@ -56,7 +56,7 @@ in
 
   # Vault content files (use home.file for vault root, not .obsidian/)
   home.file = {
-    # Templates
+    # Templates - Existing
     "Documents/knowledge-vault/Meta/templates/daily.md".text = ''
       ---
       date: {{date}}
@@ -68,21 +68,6 @@ in
       - [ ]
 
       ## Notes
-    '';
-
-    "Documents/knowledge-vault/Meta/templates/concept.md".text = ''
-      ---
-      type: concept
-      tags: []
-      related: []
-      ---
-      # {{title}}
-
-      ## Overview
-
-      ## Related Concepts
-
-      ## References
     '';
 
     "Documents/knowledge-vault/Meta/templates/tech-note.md".text = ''
@@ -102,6 +87,112 @@ in
       ## Related
     '';
 
+    # Templates - New domain-driven
+    "Documents/knowledge-vault/Meta/templates/concept.md".text = ''
+      ---
+      type: concept
+      domain: # Infrastructure | Homelab | Development
+      tags: []
+      related: []
+      ---
+      # {{title}}
+
+      ## Overview
+
+      ## Key Points
+
+      ## Related Concepts
+
+      ## References
+    '';
+
+    "Documents/knowledge-vault/Meta/templates/architecture.md".text = ''
+      ---
+      type: architecture
+      domain: # Infrastructure | Homelab | Development
+      tags: []
+      status: # draft | active | deprecated
+      ---
+      # {{title}}
+
+      ## Context
+
+      ## Components
+
+      ## Data Flow
+
+      ## Decisions
+
+      ## References
+    '';
+
+    "Documents/knowledge-vault/Meta/templates/runbook.md".text = ''
+      ---
+      type: runbook
+      domain: # Infrastructure | Homelab | Development
+      tags: []
+      ---
+      # {{title}}
+
+      ## Purpose
+
+      ## Prerequisites
+
+      ## Steps
+
+      ## Verification
+
+      ## Rollback
+
+      ## References
+    '';
+
+    "Documents/knowledge-vault/Meta/templates/plan.md".text = ''
+      ---
+      type: plan
+      domain: # Infrastructure | Homelab | Development
+      tags: []
+      status: # planning | in-progress | completed | cancelled
+      started: {{date}}
+      ---
+      # {{title}}
+
+      ## Objectives
+
+      ## Context
+
+      ## Tasks
+
+      ## Timeline
+
+      ## Success Criteria
+
+      ## Notes
+    '';
+
+    "Documents/knowledge-vault/Meta/templates/decision.md".text = ''
+      ---
+      type: decision
+      domain: # Infrastructure | Homelab | Development
+      tags: []
+      status: # proposed | accepted | rejected | superseded
+      date: {{date}}
+      ---
+      # {{title}}
+
+      ## Context
+
+      ## Decision
+
+      ## Rationale
+
+      ## Consequences
+
+      ## Alternatives Considered
+
+      ## References
+    '';
+
     # Sync script
     "Documents/knowledge-vault/Meta/scripts/sync-from-repos.sh" = {
       source = ./sync-script.sh;
@@ -112,7 +203,18 @@ in
     "Documents/knowledge-vault/Home.md".text = ''
       # Knowledge Vault
 
-      ## Projects
+      ## Domains
+
+      - [[Infrastructure/index|Infrastructure]] - Core platform and foundational services
+      - [[Homelab/index|Homelab]] - Personal infrastructure and automation
+      - [[Development/index|Development]] - Software projects and workflows
+
+      ## Working Areas
+
+      - [[Drafts/index|Drafts]] - Work in progress documentation
+      - [[Archive/index|Archive]] - Historical documentation
+
+      ## Legacy Projects
       Human-readable documentation from all my projects.
 
       - [[Projects/nixos-config/index|NixOS Configuration]]
@@ -123,17 +225,42 @@ in
       > **Note**: CLAUDE.md files (AI agent instructions) live in the actual repositories.
       > This vault contains human-readable documentation only.
 
-      ## Concepts
-      Shared knowledge across projects (flake-parts, SOPS, specialisations, etc.)
+      ## Legacy Areas
 
-      ## Technologies
-      Deep dives into tech stack (NixOS, Kubernetes, Rust, Python, etc.)
+      - [[Concepts/index|Concepts]] - Shared knowledge across projects
+      - [[Technologies/index|Technologies]] - Deep dives into tech stack
 
       ## Meta
       Vault templates and configuration
     '';
 
-    # Folder structure
+    # Domain structure - Infrastructure
+    "Documents/knowledge-vault/Infrastructure/.gitkeep".text = "";
+    "Documents/knowledge-vault/Infrastructure/Concepts/.gitkeep".text = "";
+    "Documents/knowledge-vault/Infrastructure/Architecture/.gitkeep".text = "";
+    "Documents/knowledge-vault/Infrastructure/Runbooks/.gitkeep".text = "";
+    "Documents/knowledge-vault/Infrastructure/Projects/.gitkeep".text = "";
+
+    # Domain structure - Homelab
+    "Documents/knowledge-vault/Homelab/.gitkeep".text = "";
+    "Documents/knowledge-vault/Homelab/Concepts/.gitkeep".text = "";
+    "Documents/knowledge-vault/Homelab/Architecture/.gitkeep".text = "";
+    "Documents/knowledge-vault/Homelab/Runbooks/.gitkeep".text = "";
+    "Documents/knowledge-vault/Homelab/Projects/.gitkeep".text = "";
+
+    # Domain structure - Development
+    "Documents/knowledge-vault/Development/.gitkeep".text = "";
+    "Documents/knowledge-vault/Development/Concepts/.gitkeep".text = "";
+    "Documents/knowledge-vault/Development/Workflows/.gitkeep".text = "";
+    "Documents/knowledge-vault/Development/Projects/.gitkeep".text = "";
+
+    # Working areas
+    "Documents/knowledge-vault/Drafts/.gitkeep".text = "";
+    "Documents/knowledge-vault/Drafts/orphaned/.gitkeep".text = "";
+    "Documents/knowledge-vault/Archive/.gitkeep".text = "";
+    "Documents/knowledge-vault/Archive/2026/.gitkeep".text = "";
+
+    # Legacy folder structure
     "Documents/knowledge-vault/Projects/.gitkeep".text = "";
     "Documents/knowledge-vault/Concepts/.gitkeep".text = "";
     "Documents/knowledge-vault/Technologies/.gitkeep".text = "";
