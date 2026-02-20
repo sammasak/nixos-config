@@ -189,3 +189,24 @@ nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-ski
 1. Create `hosts/<name>/` with `variables.nix`, `configuration.nix`, `home.nix`, `hardware-configuration.nix`
 2. Create `flake-modules/hosts/<name>.nix` declaring `configurations.nixos.<name>` (reads variables, sets system/username/roles)
 3. The module registry auto-discovers the rest
+
+See [[Infrastructure/Runbooks/add-new-host]] in knowledge-vault for detailed instructions.
+
+## Further Documentation
+
+Additional documentation is maintained in the knowledge-vault (~/Documents/knowledge-vault):
+
+**Infrastructure Concepts:**
+- [[Infrastructure/Concepts/nixos-modules]] - NixOS declarative configuration
+- [[Infrastructure/Concepts/nix-specialisations]] - Boot-time system variants
+- [[Infrastructure/Concepts/k3s-nixos]] - Lightweight Kubernetes on NixOS
+- [[Infrastructure/Concepts/flux-gitops]] - GitOps continuous deployment
+- [[Infrastructure/Concepts/sops-nixos]] - Secrets management with SOPS
+- [[Infrastructure/Concepts/age-encryption]] - Modern encryption with age
+
+**Infrastructure Runbooks:**
+- [[Infrastructure/Runbooks/bootstrap-homelab]] - Complete cluster bootstrap guide
+- [[Infrastructure/Runbooks/add-new-host]] - Adding new NixOS hosts
+
+**Architecture Overviews:**
+- [[Infrastructure/Architecture/homelab-platform-overview]] - Homelab platform architecture

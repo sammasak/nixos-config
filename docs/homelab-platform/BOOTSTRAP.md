@@ -451,10 +451,10 @@ curl -k https://192.168.1.10:6443/version
 
 ## Further Reading
 
-Learn more about the technologies used:
+Learn more about the technologies used (see ~/Documents/knowledge-vault):
 
-- [NixOS](tech/nixos.md) - Declarative OS configuration
-- [age](tech/age.md) - Modern encryption
-- [SOPS](tech/sops.md) - Secrets in Git
-- [k3s](tech/k3s.md) - Lightweight Kubernetes
-- [FluxCD](tech/flux.md) - GitOps for Kubernetes
+- [[Infrastructure/Concepts/nixos-modules]] - NixOS declarative OS configuration
+- [[Infrastructure/Concepts/age-encryption]] - Modern encryption with age
+- [[Infrastructure/Concepts/sops-nixos]] - Secrets in Git with SOPS
+- [[Infrastructure/Concepts/k3s-nixos]] - Lightweight Kubernetes
+- [[Infrastructure/Concepts/flux-gitops]] - GitOps for Kubernetes with FluxCD

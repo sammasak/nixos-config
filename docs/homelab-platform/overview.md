@@ -149,12 +149,25 @@ For your own fork/adaptation:
 
 ## Related Docs
 
+### Project-specific docs (this repo)
 - `docs/homelab-platform/BOOTSTRAP.md`
 - `docs/homelab-platform/tech/desktop.md`
-- `docs/homelab-platform/tech/k3s.md`
-- `docs/homelab-platform/tech/flux.md`
 - `docs/homelab-platform/tech/workstation-images.md`
+- `docs/homelab-platform/tech/agent-golden-image.md`
+- `docs/homelab-platform/tech/specialisations.md`
+- `docs/homelab-platform/tech/inference.md`
+
+### General infrastructure concepts (knowledge-vault)
+For general infrastructure knowledge and runbooks, see ~/Documents/knowledge-vault:
+- [[Infrastructure/Concepts/nixos-modules]] - NixOS declarative configuration
+- [[Infrastructure/Concepts/k3s-nixos]] - Lightweight Kubernetes
+- [[Infrastructure/Concepts/flux-gitops]] - GitOps with FluxCD
+- [[Infrastructure/Concepts/sops-nixos]] - Secrets management
+- [[Infrastructure/Concepts/age-encryption]] - Modern encryption
+- [[Infrastructure/Runbooks/bootstrap-homelab]] - Complete bootstrap guide
+
+### Related repos
+- `https://github.com/sammasak/homelab-gitops` - Kubernetes manifests and GitOps
 - `https://github.com/sammasak/homelab-gitops/blob/main/docs/tech/workstation-fleet.md`
 - `https://github.com/sammasak/homelab-gitops/blob/main/docs/tech/workstation-fleet-scope.md`
 - `https://github.com/sammasak/homelab-gitops/blob/main/docs/tech/workstation-fleet-verification.md`
-- `https://github.com/sammasak/homelab-gitops`
