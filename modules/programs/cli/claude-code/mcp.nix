@@ -2,7 +2,7 @@
 #
 # Injected into every host via home-manager.sharedModules in 40-outputs-nixos.nix.
 # Uses the upstream programs.claude-code Home Manager module.
-{ pkgs, lib, ... }:
+{ pkgs, lib, config, ... }:
 {
   programs.claude-code = {
     enable = true;
@@ -29,6 +29,17 @@
           args = [
             "-c"
             ''exec npx @playwright/mcp@latest --headless --browser chromium --executable-path "$(which chromium)"''
+          ];
+        };
+
+        # Obsidian filesystem MCP - works without Obsidian app running
+        # Provides read/write access to vault + all symlinked repos
+        obsidian = {
+          command = "npx";
+          args = [
+            "-y"
+            "@mauricio.wolff/mcp-obsidian@latest"
+            "${config.home.homeDirectory}/Documents/knowledge-vault"
           ];
         };
       };

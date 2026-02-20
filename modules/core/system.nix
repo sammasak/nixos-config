@@ -178,6 +178,9 @@ in
     console.keyMap = profile.consoleKeymap;
 
     nixpkgs.config.allowUnfree = true;
+    nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
+      "obsidian"
+    ];
 
     environment.variables = {
       XDG_CACHE_HOME = "$HOME/.cache";

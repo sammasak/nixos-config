@@ -14,6 +14,7 @@ let
     ../programs/terminal/kitty
     ../programs/browser/firefox
     ../programs/editor/vscode
+    ../programs/gui/obsidian
   ];
 in
 {
