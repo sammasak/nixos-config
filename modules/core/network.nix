@@ -2,7 +2,7 @@
 { config, pkgs, lib, ... }:
 let
   profile = config.sam.profile;
-  hasDesktop = builtins.elem "desktop" (profile.roles or [ ]);
+  hasDesktop = config.programs.hyprland.enable or false;
 in
 {
   networking = {

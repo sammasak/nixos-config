@@ -1,8 +1,7 @@
 # Font configuration
 { config, pkgs, lib, ... }:
 let
-  roles = config.sam.profile.roles or [ ];
-  hasDesktop = builtins.elem "desktop" roles;
+  hasDesktop = config.programs.hyprland.enable or false;
 in
 lib.mkIf hasDesktop {
   fonts = {

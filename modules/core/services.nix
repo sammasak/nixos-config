@@ -2,8 +2,7 @@
 { config, lib, ... }:
 let
   username = config.sam.profile.username;
-  roles = config.sam.profile.roles or [ ];
-  hasDesktop = builtins.elem "desktop" roles;
+  hasDesktop = config.programs.hyprland.enable or false;
 in
 {
   services = {
