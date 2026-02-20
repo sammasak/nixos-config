@@ -1,7 +1,7 @@
 # Hyprland desktop (system-wide)
 { config, pkgs, lib, ... }:
 {
-  config = lib.mkIf (config.sam.profile.desktop == "hyprland") {
+  config = {
     programs.hyprland.enable = true;
     programs.hyprland.xwayland.enable = true;
     xdg.portal.enable = true;
