@@ -71,7 +71,7 @@ in
           displayManager = mkOption {
             type = types.str;
             default = "sddm";
-            description = "Display manager to use (for example: sddm, lightdm).";
+            description = "Display manager to use.";
           };
 
           defaultWallpaper = mkOption {
