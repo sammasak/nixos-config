@@ -50,66 +50,6 @@ in
             description = "Virtual console keymap.";
           };
 
-          desktop = mkOption {
-            type = types.str;
-            default = "hyprland";
-            description = "Desktop stack identifier.";
-          };
-
-          waybarTheme = mkOption {
-            type = types.str;
-            default = "minimal";
-            description = "Waybar theme name.";
-          };
-
-          sddmTheme = mkOption {
-            type = types.str;
-            default = "astronaut";
-            description = "SDDM theme name.";
-          };
-
-          displayManager = mkOption {
-            type = types.str;
-            default = "sddm";
-            description = "Display manager to use.";
-          };
-
-          defaultWallpaper = mkOption {
-            type = types.str;
-            default = "wallpaper.jpg";
-            description = "Default wallpaper asset file name.";
-          };
-
-          terminal = mkOption {
-            type = types.str;
-            default = "kitty";
-            description = "Default terminal program id.";
-          };
-
-          browser = mkOption {
-            type = types.str;
-            default = "firefox";
-            description = "Default browser program id.";
-          };
-
-          editor = mkOption {
-            type = types.str;
-            default = "vscode";
-            description = "Default editor program id.";
-          };
-
-          shell = mkOption {
-            type = types.str;
-            default = "bash";
-            description = "User shell package attribute name.";
-          };
-
-          tuiFileManager = mkOption {
-            type = types.str;
-            default = "yazi";
-            description = "Default terminal file manager id.";
-          };
-
           videoDriver = mkOption {
             type = types.str;
             default = "intel";
@@ -128,30 +68,6 @@ in
             type = types.bool;
             default = false;
             description = "Whether this host is a laptop.";
-          };
-
-          games = mkOption {
-            type = types.bool;
-            default = false;
-            description = "Whether gaming extras are enabled.";
-          };
-
-          hardwareControl = mkOption {
-            type = types.bool;
-            default = false;
-            description = "Whether hardware control extras (fan/RGB/thermals) are enabled.";
-          };
-
-          fancontrol = mkOption {
-            type = types.bool;
-            default = true;
-            description = "Whether to enable software fan control (lm_sensors fancontrol) when a host fancontrol config file exists.";
-          };
-
-          hwmonModules = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-            description = "Extra hwmon kernel modules to load (for fan/PWM sensors).";
           };
 
           roles = mkOption {
@@ -263,18 +179,15 @@ in
 
     nixpkgs.config.allowUnfree = true;
 
-    environment.variables =
-      {
-        XDG_CACHE_HOME = "$HOME/.cache";
-        XDG_CONFIG_HOME = "$HOME/.config";
-        XDG_DATA_HOME = "$HOME/.local/share";
-        XDG_BIN_HOME = "$HOME/.local/bin";
-        PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
-      }
-      // lib.optionalAttrs (profile.desktop == "hyprland") {
-        # Makes Nixpkgs-wrapped Electron apps prefer Wayland in Wayland sessions.
-        NIXOS_OZONE_WL = "1";
-      };
+    environment.variables = {
+      XDG_CACHE_HOME = "$HOME/.cache";
+      XDG_CONFIG_HOME = "$HOME/.config";
+      XDG_DATA_HOME = "$HOME/.local/share";
+      XDG_BIN_HOME = "$HOME/.local/bin";
+      PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+      # Makes Nixpkgs-wrapped Electron apps prefer Wayland in Wayland sessions.
+      NIXOS_OZONE_WL = "1";
+    };
 
     system.stateVersion = "25.11";
   };
