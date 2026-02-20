@@ -19,7 +19,7 @@ Implementation pattern in this repo:
 - `flake-parts.flakeModules.modules` for a typed internal `flake.modules` registry (`deferredModule`)
 - top-level flake modules under `flake-modules/` (dendritic trunk)
 - module registry under `flake.modules.<class>.<moduleName>` auto-discovered from repo directories
-- typed distribution declarations under `configurations.nixos` and `configurations.darwin`
+- typed distribution declarations under `configurations.nixos`
 - typed host/user contract via `sam.profile` and `sam.userConfig`
 - no lower-level `specialArgs` pass-through to reusable NixOS/Home modules
 - public flake outputs kept standard (no exposed custom `modules` output)
@@ -93,7 +93,6 @@ nixos-config/
 │   ├── 20-module-registry.nix
 │   ├── 30-configurations-options.nix
 │   ├── 40-outputs-nixos.nix
-│   ├── 41-outputs-darwin.nix
 │   └── hosts/                # per-distribution declarations
 ├── modules/
 │   ├── core/                 # users, ssh, security baseline
@@ -122,9 +121,8 @@ For your own fork/adaptation:
 - add one distribution declaration under `flake-modules/hosts/<name>.nix`
 - set user identity defaults in `lib/users.nix`
 - update secrets recipients in `secrets/.sops.yaml`
-- validate Linux builds with `nix build .#nixosConfigurations.<flake-host>.config.system.build.toplevel --no-link`
-- validate darwin wiring with `nix eval --json .#darwinConfigurations.<name>.config.sam.darwin.user`
-- run cross-platform checks with `nix flake check --all-systems --no-write-lock-file`
+- validate builds with `nix build .#nixosConfigurations.<flake-host>.config.system.build.toplevel --no-link`
+- run checks with `nix flake check --all-systems --no-write-lock-file`
 
 ---
 

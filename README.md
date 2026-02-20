@@ -1,10 +1,10 @@
 # NixOS Configuration
 
-Personal NixOS + nix-darwin + Home Manager configuration. A work in progress as I learn the Nix ecosystem.
+Personal NixOS + Home Manager configuration. A work in progress as I learn the Nix ecosystem.
 
 ## Goals
 
-- Unified config across Linux desktops, servers, and macOS
+- Unified config across Linux desktops and servers
 - Single user config that adapts to each machine type
 - Reproducible, declarative system management
 - Learn Nix patterns and best practices along the way
@@ -17,7 +17,6 @@ Personal NixOS + nix-darwin + Home Manager configuration. A work in progress as 
 | `lenovo-21CB001PMX` | Linux laptop (Hyprland) | Active |
 | `msi-ms7758` | Headless k3s worker node (legacy NVIDIA GPU for Ollama); Windows dual-boot for gaming | Active |
 | `workstation-template` | KubeVirt workstation image | Active |
-| `work-mac` | macOS (CLI only) | Planned |
 
 ## Structure
 
@@ -29,7 +28,6 @@ flake.nix                # Minimal flake-parts entrypoint (auto-imports flake mo
 │   ├── 20-module-registry.nix
 │   ├── 30-configurations-options.nix
 │   ├── 40-outputs-nixos.nix
-│   ├── 41-outputs-darwin.nix
 │   └── hosts/           # Distribution declarations
 ├── hosts/               # Per-machine configs
 │   ├── acer-swift/
@@ -54,10 +52,6 @@ flake.nix                # Minimal flake-parts entrypoint (auto-imports flake mo
 │   ├── programs/        # Home Manager program modules
 │   ├── roles/           # Base/desktop/laptop composition
 │   └── themes/          # Theme definitions
-├── darwin/              # macOS system configuration
-│   └── common.nix
-├── home/                # Home Manager entrypoints
-│   └── lukas.nix        # darwin CLI profile
 ├── lib/                 # Shared helpers (users, theme)
 ├── assets/              # Wallpapers and other assets
 ├── dotfiles/            # Plain config files (symlinked)
@@ -78,9 +72,7 @@ Each host lives in `hosts/<name>/` and provides:
 - Every file under `flake-modules/` is imported as a top-level flake module
 - `flake.modules.nixos.role-*` is auto-generated from `modules/roles/*.nix`
 - `flake.modules.homeManager.host-*` is auto-generated from `hosts/*/home.nix`
-- `flake.modules.homeManager.darwin-*` is auto-generated from `home/*.nix`
-- `flake.modules.darwin.*` is auto-generated from `darwin/*.nix`
-- `configurations.nixos.*` and `configurations.darwin.*` are typed distribution declarations converted into flake outputs
+- `configurations.nixos.*` are typed distribution declarations converted into flake outputs
 
 This establishes a dendritic-style flake trunk for top-level composition: typed, classed module registries with no lower-level `specialArgs` pass-through.
 `flake.nix` keeps `flake.modules` internal to evaluation and removes the public `modules` flake output so `nix flake check` stays warning-free.
@@ -106,12 +98,6 @@ sudo nixos-rebuild build --flake .#acer-swift
 # Update all inputs
 nix flake update
 
-# macOS (first time - installs nix-darwin)
-nix run nix-darwin -- switch --flake .#work-mac
-
-# macOS (subsequent)
-darwin-rebuild switch --flake .#work-mac
-
 # Rollback if something breaks
 sudo nixos-rebuild switch --rollback
 
@@ -128,7 +114,6 @@ nix flake check --all-systems --no-write-lock-file
 nix build .#nixosConfigurations.acer-swift.config.system.build.toplevel --no-link
 nix build .#nixosConfigurations.lenovo.config.system.build.toplevel --no-link
 nix build .#nixosConfigurations.msi-ms7758.config.system.build.toplevel --no-link
-nix eval --json .#darwinConfigurations.work-mac.config.sam.darwin.user
 ```
 
 ## Workstation Image Builds (KubeVirt)
@@ -385,7 +370,6 @@ These have been helpful in understanding Nix:
 
 - [NixOS Manual](https://nixos.org/manual/nixos/stable/)
 - [Home Manager Manual](https://nix-community.github.io/home-manager/)
-- [nix-darwin](https://github.com/nix-darwin/nix-darwin)
 - [Nix Pills](https://nixos.org/guides/nix-pills/) (language fundamentals)
 - [Stylix](https://github.com/danth/stylix) (theming)
 - [Hyprland Wiki](https://wiki.hyprland.org/)

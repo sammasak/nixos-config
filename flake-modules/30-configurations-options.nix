@@ -32,26 +32,5 @@
         }
       );
     };
-
-    darwin = lib.mkOption {
-      description = "nix-darwin distribution declarations.";
-      default = { };
-      type = lib.types.lazyAttrsOf (
-        lib.types.submodule {
-          options = {
-            user = lib.mkOption {
-              type = lib.types.str;
-              description = "Primary macOS user.";
-            };
-
-            system = lib.mkOption {
-              type = lib.types.str;
-              default = "aarch64-darwin";
-              description = "Target platform string for nix-darwin.";
-            };
-          };
-        }
-      );
-    };
   };
 }

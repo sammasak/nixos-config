@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A NixOS + nix-darwin + Home Manager configuration repository using **flake-parts** with a dendritic auto-discovery pattern. Manages Linux desktops, laptops, headless servers, macOS machines, and KubeVirt workstation images from a single flake.
+A NixOS + Home Manager configuration repository using **flake-parts** with a dendritic auto-discovery pattern. Manages Linux desktops, laptops, headless servers, and KubeVirt workstation images from a single flake.
 
 ## Build & Deploy Commands
 
@@ -23,10 +23,6 @@ nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-lin
 
 # Remote deploy via SSH
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
-
-# macOS (nix-darwin)
-nix run nix-darwin -- switch --flake .#work-mac   # first time
-darwin-rebuild switch --flake .#work-mac           # subsequent
 
 # Workstation images (Justfile)
 just build                    # Build qcow2 image
@@ -47,7 +43,6 @@ Current hostnames: `acer-swift`, `lenovo-21CB001PMX`, `msi-ms7758`, `workstation
 - `20-module-registry.nix` — auto-generates module registries from filesystem
 - `30-configurations-options.nix` — typed host declaration options
 - `40-outputs-nixos.nix` — transforms declarations into `nixosConfigurations`
-- `41-outputs-darwin.nix` — transforms declarations into `darwinConfigurations`
 - `hosts/<name>.nix` — per-host distribution declarations
 
 ### Module Registry (`20-module-registry.nix`)
@@ -55,8 +50,6 @@ Current hostnames: `acer-swift`, `lenovo-21CB001PMX`, `msi-ms7758`, `workstation
 Automatically generates `flake.modules` from filesystem conventions:
 - `modules/roles/*.nix` → `flake.modules.nixos.role-<name>`
 - `hosts/*/home.nix` → `flake.modules.homeManager.host-<dir>`
-- `darwin/*.nix` → `flake.modules.darwin.<name>`
-- `home/*.nix` → `flake.modules.homeManager.darwin-<name>`
 
 ### Host Configuration Flow
 
@@ -143,7 +136,7 @@ sudo nixos-rebuild switch --flake .#<hostname>
 
 ### Key Inputs
 
-nixpkgs (unstable), flake-parts, home-manager, nix-darwin, stylix, sops-nix, claude-code-skills — all following nixpkgs (except claude-code-skills which is a plain source input).
+nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-skills — all following nixpkgs (except claude-code-skills which is a plain source input).
 
 ## Conventions
 

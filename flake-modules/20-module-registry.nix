@@ -33,8 +33,6 @@ let
 
   roleFiles = listRegularNixFiles ../modules/roles;
   hostDirs = listDirectories ../hosts;
-  darwinHomeFiles = listRegularNixFiles ../home;
-  darwinFiles = listRegularNixFiles ../darwin;
 
   hostDirsWithHome = builtins.filter (
     host: builtins.pathExists (../hosts + "/${host}/home.nix")
@@ -44,10 +42,6 @@ in
   flake.modules = {
     nixos = mkAttrs roleFiles (file: "role-${stripNixSuffix file}") (file: ../modules/roles + "/${file}");
 
-    homeManager =
-      mkAttrs hostDirsWithHome (host: "host-${host}") (host: ../hosts + "/${host}/home.nix")
-      // mkAttrs darwinHomeFiles (file: "darwin-${stripNixSuffix file}") (file: ../home + "/${file}");
-
-    darwin = mkAttrs darwinFiles stripNixSuffix (file: ../darwin + "/${file}");
+    homeManager = mkAttrs hostDirsWithHome (host: "host-${host}") (host: ../hosts + "/${host}/home.nix");
   };
 }

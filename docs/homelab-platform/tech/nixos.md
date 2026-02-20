@@ -129,8 +129,8 @@ Our homelab uses NixOS with:
 - **flake-parts** to structure flake outputs and system definitions
 - A **minimal `flake.nix` entrypoint** that auto-imports top-level flake modules from `flake-modules/`
 - **flake-parts modules registry** (`flake-parts.flakeModules.modules`) for typed `deferredModule` exports
-- A **dendritic module registry** under `flake.modules.<class>.<moduleName>`, auto-generated from `modules/roles`, `hosts/*/home.nix`, `home/*.nix`, and `darwin/*.nix`
-- **Typed distribution declarations** (`configurations.nixos.*`, `configurations.darwin.*`) mapped to flake outputs
+- A **dendritic module registry** under `flake.modules.<class>.<moduleName>`, auto-generated from `modules/roles` and `hosts/*/home.nix`
+- **Typed distribution declarations** (`configurations.nixos.*`) mapped to flake outputs
 - **Typed host/user options** (`sam.profile`, `sam.userConfig`) instead of host-specific `specialArgs`
 - **Standard public outputs only** (internal typed registry, no exported custom `modules` output)
 - **Role-based composition** (server, agent, desktop) selected per host from `variables.nix`
@@ -146,7 +146,6 @@ Validation commands used in this repo:
 ```bash
 nix flake check --all-systems --no-write-lock-file
 nix build .#nixosConfigurations.<host>.config.system.build.toplevel --no-link
-nix eval --json .#darwinConfigurations.<name>.config.sam.darwin.user
 ```
 
 ## Further Reading
