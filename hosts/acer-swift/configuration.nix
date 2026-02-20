@@ -9,14 +9,17 @@ in
 
     # Hardware
     ../../modules/hardware/video/${vars.videoDriver}.nix
+
+    # Desktop mode (default boot)
+    ../../modules/specialisations/desktop.nix
   ];
 
   sam.profile = vars;
   sam.secrets.enable = true;
 
-  # Desktop specialisation (boot menu option for GUI mode)
-  specialisation.desktop.configuration = {
-    imports = [ ../../modules/specialisations/desktop.nix ];
+  # Server specialisation (boot menu option for headless mode)
+  specialisation.server.configuration = {
+    imports = [ ../../modules/specialisations/server.nix ];
   };
 
   # k3s agent configuration

@@ -12,5 +12,6 @@
     ../core/fonts.nix
     ../core/gaming-specialisation.nix
     ../core/sops.nix
+    ../themes/Catppuccin  # Always apply theming (includes GRUB)
   ];
 }

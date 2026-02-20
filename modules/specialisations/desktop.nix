@@ -1,20 +1,17 @@
-# Desktop specialisation (boot-time GUI mode)
-# Adds Hyprland, SDDM, themes, and GUI applications to base server config.
+# Desktop configuration (now the default boot mode)
+# Adds Hyprland, SDDM, and GUI applications
 { pkgs, ... }:
 {
   imports = [
     ../desktop/hyprland
     ../core/sddm.nix
-    ../themes/Catppuccin
+    # Catppuccin theme now in base role for GRUB theming
   ];
-
-  # Specialisation metadata
-  specialisation.desktop.inheritParentConfig = true;
 
   # Enable X server for compatibility (some apps need it)
   services.xserver.enable = true;
 
-  # GUI applications (installed only in desktop mode)
+  # GUI applications (installed in desktop mode)
   environment.systemPackages = with pkgs; [
     # These will be moved from core packages later
   ];
