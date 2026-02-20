@@ -14,6 +14,11 @@ in
   sam.profile = vars;
   sam.secrets.enable = true;
 
+  # Desktop specialisation (boot menu option for GUI mode)
+  specialisation.desktop.configuration = {
+    imports = [ ../../modules/specialisations/desktop.nix ];
+  };
+
   # k3s agent configuration
   homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
   homelab.k3s.extraFlags = [

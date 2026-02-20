@@ -14,6 +14,11 @@ in
   sam.profile = vars;
   sam.secrets.enable = true;
 
+  # Desktop specialisation (boot menu option for GUI mode)
+  specialisation.desktop.configuration = {
+    imports = [ ../../modules/specialisations/desktop.nix ];
+  };
+
   # Flux
   homelab.flux = {
     enable = true;

@@ -22,5 +22,5 @@
   laptop = true;
 
   # Roles
-  roles = [ "base" "laptop" "desktop" "homelab-agent" ];
+  roles = [ "base" "laptop" "homelab-agent" ];
 }
