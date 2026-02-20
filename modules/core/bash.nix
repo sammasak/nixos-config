@@ -24,35 +24,13 @@
     };
 
     initExtra = ''
+      # Simple up/down arrow history search with prefix matching
+      # Type "ssh " then press up arrow → shows last "ssh " command
+      bind '"\e[A": history-search-backward'
+      bind '"\e[B": history-search-forward'
+
       neofetch
     '';
-  };
-
-  # Atuin - magical shell history with inline suggestions
-  # Like nushell's built-in autosuggestions
-  programs.atuin = {
-    enable = true;
-    enableBashIntegration = true;
-
-    settings = {
-      # Inline suggestions as you type (like nushell!)
-      inline_height = 12;
-      show_preview = true;
-
-      # Search behavior
-      search_mode = "fuzzy";
-      filter_mode_shell_up_key_binding = "directory";
-
-      # UI
-      style = "compact";
-
-      # Don't sync to cloud (keep history local)
-      auto_sync = false;
-      sync_address = "";
-
-      # Keybindings (Ctrl+R for search, up arrow handled by atuin)
-      keymap_mode = "auto";
-    };
   };
 
   # fzf fuzzy finder with bash integration
