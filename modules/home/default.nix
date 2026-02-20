@@ -2,15 +2,14 @@
 { lib, osConfig, ... }:
 let
   profile = osConfig.sam.profile;
-  roles = profile.roles;
-  hasDesktop = builtins.elem "desktop" roles;
+  isDesktopMode = osConfig.programs.hyprland.enable or false;
   baseImports = [
     ../core/bash.nix
     ../core/starship.nix
     ../programs/cli/git
     ../programs/cli/cli-tools
   ];
-  desktopImports = lib.optionals hasDesktop [
+  desktopImports = lib.optionals isDesktopMode [
     ../desktop/hyprland/home.nix
     ../programs/terminal/kitty
     ../programs/browser/firefox
