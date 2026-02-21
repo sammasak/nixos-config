@@ -13,13 +13,13 @@ Declarative Obsidian configuration with filesystem-based MCP integration for LLM
 │  │ Obsidian MCP Server (claude-code/mcp.nix)      │   │
 │  │ - Filesystem-based access                       │   │
 │  │ - Works WITHOUT Obsidian app                    │   │
-│  │ - Points to ~/Documents/knowledge-vault         │   │
+│  │ - Points to ~/knowledge-vault         │   │
 │  │ - Available on ALL hosts                        │   │
 │  └─────────────────────────────────────────────────┘   │
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐   │
 │  │ Vault (Git Repo)                                │   │
-│  │ ~/Documents/knowledge-vault/                    │   │
+│  │ ~/knowledge-vault/                    │   │
 │  │   ├── Projects/ (COPIES from repos)            │   │
 │  │   │   ├── nixos-config/CLAUDE.md               │   │
 │  │   │   ├── homelab-gitops/CLAUDE.md             │   │
@@ -55,7 +55,7 @@ Declarative Obsidian configuration with filesystem-based MCP integration for LLM
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐   │
 │  │ Sync Script                                     │   │
-│  │ ~/Documents/knowledge-vault/Meta/scripts/       │   │
+│  │ ~/knowledge-vault/Meta/scripts/       │   │
 │  │   sync-from-repos.sh                            │   │
 │  │                                                  │   │
 │  │ Copies CLAUDE.md + docs/ from:                  │   │
@@ -84,10 +84,8 @@ Declarative Obsidian configuration with filesystem-based MCP integration for LLM
    - No Obsidian plugins required for LLM access
    - Faster and simpler than API-based MCP
 
-3. **Vault as Separate Git Repo**: Vault content managed independently
-   - Vault is a separate GitHub repository: `sammasak/knowledge-vault`
-   - Must be cloned manually to `~/Documents/knowledge-vault`
-   - Obsidian settings configured via `default.nix`
+3. **Fully Declarative**: Everything managed via NixOS config
+   - Vault structure defined in `default.nix`
    - Plugins (when enabled) packaged as Nix derivations
    - MCP configuration in `claude-code/mcp.nix`
 
@@ -129,7 +127,7 @@ The MCP server provides tools:
 On hosts with Hyprland enabled (acer-swift, lenovo-21CB001PMX):
 
 1. Open Obsidian application
-2. Vault auto-discovered at `~/Documents/knowledge-vault`
+2. Vault auto-discovered at `~/knowledge-vault`
 3. Browse notes, edit, use graph view
 4. All project CLAUDE.md files accessible via `Projects/` folder
 
@@ -145,8 +143,8 @@ On hosts with Hyprland enabled (acer-swift, lenovo-21CB001PMX):
 
 2. **Run sync on dev machine**:
    ```bash
-   ~/Documents/knowledge-vault/Meta/scripts/sync-from-repos.sh
-   cd ~/Documents/knowledge-vault
+   ~/knowledge-vault/Meta/scripts/sync-from-repos.sh
+   cd ~/knowledge-vault
    git add Projects/new-repo/
    git commit -m "Add new-repo documentation"
    git push
@@ -154,7 +152,7 @@ On hosts with Hyprland enabled (acer-swift, lenovo-21CB001PMX):
 
 3. **Pull on other hosts**:
    ```bash
-   cd ~/Documents/knowledge-vault
+   cd ~/knowledge-vault
    git pull
    ```
 
@@ -197,21 +195,33 @@ To enable:
 
 ## Initial Setup
 
-### 1. Clone Vault Repository
+### 1. Create Vault Repository (Dev Machine)
 
 ```bash
-# Clone the vault repository
-gh repo clone sammasak/knowledge-vault ~/Documents/knowledge-vault
+# Build config to create initial vault structure
+sudo nixos-rebuild switch --flake .#$(hostname)
+
+# Navigate to vault
+cd ~/knowledge-vault
+
+# Initialize git repo
+git init
+git add .
+git commit -m "Initial vault structure from NixOS config"
+
+# Create private GitHub repo and push
+git remote add origin git@github.com:sammasak/knowledge-vault-private.git
+git push -u origin main
 ```
 
 ### 2. Sync Documentation from Repos (Dev Machine)
 
 ```bash
 # Run sync script
-~/Documents/knowledge-vault/Meta/scripts/sync-from-repos.sh
+~/knowledge-vault/Meta/scripts/sync-from-repos.sh
 
 # Review and commit changes
-cd ~/Documents/knowledge-vault
+cd ~/knowledge-vault
 git status
 git add .
 git commit -m "Initial sync from project repos"
@@ -223,8 +233,11 @@ git push
 On each other host (servers, laptop, etc.):
 
 ```bash
+# Build config (creates MCP server)
+sudo nixos-rebuild switch --flake .#$(hostname)
+
 # Clone vault
-gh repo clone sammasak/knowledge-vault ~/Documents/knowledge-vault
+git clone git@github.com:sammasak/knowledge-vault-private.git ~/knowledge-vault
 ```
 
 Now all hosts have access to all documentation via MCP, without needing to clone any project repos!
@@ -233,21 +246,21 @@ Now all hosts have access to all documentation via MCP, without needing to clone
 
 **On dev machine (when you update CLAUDE.md files):**
 ```bash
-~/Documents/knowledge-vault/Meta/scripts/sync-from-repos.sh
-cd ~/Documents/knowledge-vault
+~/knowledge-vault/Meta/scripts/sync-from-repos.sh
+cd ~/knowledge-vault
 git add . && git commit -m "Sync latest docs" && git push
 ```
 
 **On other hosts:**
 ```bash
-cd ~/Documents/knowledge-vault && git pull
+cd ~/knowledge-vault && git pull
 ```
 
 **Optional: Automate with systemd timer** (add to NixOS config):
 ```nix
 systemd.user.services.vault-sync = {
   script = ''
-    cd ~/Documents/knowledge-vault
+    cd ~/knowledge-vault
     git pull --rebase
   '';
 };
@@ -267,7 +280,7 @@ systemd.user.timers.vault-sync = {
 
 ```bash
 # Test MCP server manually
-npx -y @mauricio.wolff/mcp-obsidian@latest ~/Documents/knowledge-vault
+npx -y @mauricio.wolff/mcp-obsidian@latest ~/knowledge-vault
 
 # Check Claude Code MCP config
 cat ~/.config/claude-code/settings.json | jq '.mcpServers.obsidian'
@@ -277,20 +290,20 @@ cat ~/.config/claude-code/settings.json | jq '.mcpServers.obsidian'
 
 ```bash
 # Check vault path
-ls ~/Documents/knowledge-vault
+ls ~/knowledge-vault
 
 # Check if vault is git repo
-cd ~/Documents/knowledge-vault && git status
+cd ~/knowledge-vault && git status
 ```
 
 ### Documentation out of date
 
 ```bash
 # On dev machine, re-sync
-~/Documents/knowledge-vault/Meta/scripts/sync-from-repos.sh
+~/knowledge-vault/Meta/scripts/sync-from-repos.sh
 
 # On other hosts, pull
-cd ~/Documents/knowledge-vault && git pull
+cd ~/knowledge-vault && git pull
 ```
 
 ## Architecture Benefits
