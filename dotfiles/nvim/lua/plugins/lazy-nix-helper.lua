@@ -1,4 +1,29 @@
--- Configure Nix-installed plugins directly (no lazy.nvim plugin management)
+-- lazy.nvim setup for Nix-installed plugins
+-- lazy.nvim will load plugins from runtimepath (Nix store)
+
+require("lazy").setup({
+  -- Just tell lazy about the plugins so it loads them
+  -- They're already installed by Nix, lazy just needs to know they exist
+  { "nvim-treesitter/nvim-treesitter" },
+  { "nvim-telescope/telescope.nvim" },
+  { "nvim-tree/nvim-tree.lua" },
+  { "lewis6991/gitsigns.nvim" },
+}, {
+  performance = {
+    reset_packpath = false,  -- Don't reset, we need Nix paths
+    rtp = {
+      reset = false,  -- Don't reset runtime path
+    },
+  },
+  install = {
+    missing = false,  -- Don't try to install, they're from Nix
+  },
+  ui = {
+    border = "rounded",
+  },
+})
+
+-- Now configure each plugin after lazy has loaded them
 
 -- Treesitter configuration
 require("nvim-treesitter.configs").setup({
