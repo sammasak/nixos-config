@@ -8,9 +8,8 @@
     vimAlias = true;
 
     plugins = with pkgs.vimPlugins; [
-      # Plugin manager and bridge
+      # Plugin manager
       lazy-nvim
-      lazy-nix-helper-nvim
 
       # Treesitter for syntax highlighting
       nvim-treesitter.withAllGrammars

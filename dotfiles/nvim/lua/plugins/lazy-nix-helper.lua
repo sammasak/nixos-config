@@ -1,5 +1,5 @@
--- lazy-nix-helper: Bridge between Nix-installed plugins and lazy.nvim
-local lazy_nix_helper = require("lazy-nix-helper")
+-- lazy.nvim setup for Nix-installed plugins
+-- No lazy-nix-helper needed - we configure lazy to work with Nix directly
 
 -- Setup lazy.nvim with Nix-installed plugins
 require("lazy").setup({
@@ -9,15 +9,12 @@ require("lazy").setup({
   { import = "plugins.nvim-tree" },
   { import = "plugins.gitsigns" },
 }, {
-  -- Use Nix-installed plugins
+  -- Use Nix-installed plugins (don't reset packpath or runtimepath)
   performance = {
     reset_packpath = false,
     rtp = {
       reset = false,
     },
-  },
-  dev = {
-    path = lazy_nix_helper.pluginPath,
   },
   install = {
     -- Don't install plugins, they're from Nix
