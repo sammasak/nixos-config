@@ -31,17 +31,6 @@
           ''exec npx @playwright/mcp@latest --headless --browser chromium --executable-path "$(which chromium)"''
         ];
       };
-
-      # Obsidian filesystem MCP - works without Obsidian app running
-      # Provides read/write access to vault
-      obsidian = {
-        command = "npx";
-        args = [
-          "-y"
-          "@mauricio.wolff/mcp-obsidian@latest"
-          "${config.home.homeDirectory}/Documents/knowledge-vault"
-        ];
-      };
     };
   };
 
