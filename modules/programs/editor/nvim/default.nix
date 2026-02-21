@@ -9,7 +9,9 @@
 
     plugins = with pkgs.vimPlugins; [
       # Treesitter for syntax highlighting
-      nvim-treesitter.withAllGrammars
+      (nvim-treesitter.withPlugins (p: [
+        p.nix p.python p.rust p.markdown p.yaml p.json p.lua p.bash
+      ]))
 
       # Fuzzy finder
       telescope-nvim
