@@ -1,6 +1,47 @@
 # Neovim with lazy.nvim + lazy-nix-helper
 { pkgs, ... }:
 {
-  # Placeholder - will be implemented in next task
-  programs.neovim.enable = true;
+  programs.neovim = {
+    enable = true;
+    defaultEditor = true;
+    viAlias = true;
+    vimAlias = true;
+
+    plugins = with pkgs.vimPlugins; [
+      # Plugin manager and bridge
+      lazy-nvim
+      lazy-nix-helper-nvim
+
+      # Treesitter for syntax highlighting
+      nvim-treesitter.withAllGrammars
+
+      # Fuzzy finder
+      telescope-nvim
+      telescope-fzf-native-nvim
+      plenary-nvim
+
+      # File explorer
+      nvim-tree-lua
+      nvim-web-devicons
+
+      # Git integration
+      gitsigns-nvim
+
+      # Catppuccin theme (already available via Stylix)
+      catppuccin-nvim
+    ];
+
+    extraPackages = with pkgs; [
+      # Treesitter dependencies
+      gcc
+      tree-sitter
+
+      # Telescope dependencies
+      ripgrep
+      fd
+    ];
+  };
+
+  # Symlink Neovim config from dotfiles
+  xdg.configFile."nvim".source = ../../../../dotfiles/nvim;
 }
