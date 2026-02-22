@@ -140,7 +140,7 @@ Related files:
 - `hosts/workstation-template/`
 - `modules/homelab/workstation-image.nix`
 - `Justfile`
-- `docs/homelab-platform/tech/workstation-images.md`
+- See knowledge-vault: `~/knowledge-vault/Infrastructure/Concepts/workstation-images.md`
 
 ## Forking For Your Setup
 
@@ -362,7 +362,7 @@ Only add secret-dependent roles (`homelab-server` / `homelab-agent`) after step 
 | VSCode settings | [dotfiles/vscode/](dotfiles/vscode/) |
 | Hyprland keybinds | [modules/desktop/hyprland/](modules/desktop/hyprland/) |
 | i3 keybinds | [modules/desktop/i3/home.nix](modules/desktop/i3/home.nix) |
-| Desktop stacks | [docs/homelab-platform/tech/desktop.md](docs/homelab-platform/tech/desktop.md) |
+| Desktop stacks | See knowledge-vault: `~/knowledge-vault/Infrastructure/Concepts/desktop-specialisation.md` |
 
 ## Learning Resources
 
