@@ -1,15 +1,9 @@
--- Neovim init.lua  
--- Bootstrap and load configuration
+-- Neovim init.lua
+-- Plugin configurations are handled inline by Nix module
 
--- Load basic options first
+-- Load basic options and keymaps
 require("config.options")
 require("config.keymaps")
-
--- Load plugin configurations directly (no lazy.nvim needed)
-require("plugins.treesitter")
-require("plugins.telescope")
-require("plugins.nvim-tree")
-require("plugins.gitsigns")
 
 -- Set colorscheme (catppuccin from Stylix)
 vim.cmd.colorscheme("catppuccin")
