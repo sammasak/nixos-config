@@ -21,6 +21,12 @@ in
       default = ../../secrets/homelab/cloudflare.yaml;
       description = "Path to the sops-encrypted Cloudflare secrets file";
     };
+
+    tailscaleSecretsFile = mkOption {
+      type = types.path;
+      default = ../../secrets/homelab/tailscale.yaml;
+      description = "Path to the sops-encrypted Tailscale secrets file";
+    };
   };
 
   config = mkIf cfg.enable {
@@ -63,6 +69,14 @@ in
       secrets."cloudflare/api_token" = {
         sopsFile = cfg.cloudflareSecretsFile;
         path = "/run/secrets/cloudflare-api-token";
+      };
+
+      # Tailscale authkey for subnet router
+      secrets."tailscale/authkey" = {
+        sopsFile = cfg.tailscaleSecretsFile;
+        path = "/run/secrets/tailscale-authkey";
+        owner = "root";
+        mode = "0400";
       };
     };
   };

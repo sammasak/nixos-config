@@ -7,6 +7,7 @@
     ../homelab/k3s/server.nix
     ../homelab/adguardhome.nix
     ../homelab/acme.nix
+    ../homelab/tailscale.nix
   ];
 
   # Server role defaults
@@ -14,6 +15,9 @@
     enable = true;
     role = "server";
   };
+
+  # Tailscale subnet router for control plane node
+  homelab.tailscale.enable = true;
 
   # Keep server always on - never sleep on lid close (override laptop defaults)
   services.logind.settings.Login = {
