@@ -122,7 +122,7 @@ modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
 ├── desktop/      # Desktop stack: hyprland/ (Wayland compositor)
 ├── hardware/     # GPU drivers (intel, nvidia-kepler, nvidia-modern, amd), thermal
-├── homelab/      # k3s (agent/server), sops, flux, workstation-image
+├── homelab/      # k3s (agent/server), sops, flux, tailscale, workstation-image
 ├── programs/     # Home Manager programs: cli/, browser/, editor/, terminal/
 ├── roles/        # Composition roles (see above)
 └── themes/       # Catppuccin via Stylix
@@ -140,7 +140,7 @@ Secret scopes in `secrets/.sops.yaml`:
 
 | Path pattern | Recipients | Purpose |
 |--------------|-----------|---------|
-| `homelab/*.yaml` | Personal + 3 hosts + Flux | k3s, Cloudflare, Flux keys |
+| `homelab/*.yaml` | Personal + 3 hosts + Flux | k3s, Cloudflare, Flux keys, Tailscale authkey |
 | `claude/*.yaml` | Personal + 3 hosts | Claude Code OAuth token |
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in bash shell init via `modules/programs/cli/claude-code/mcp.nix`. The workstation-template VM is unaffected — it receives its token via cloud-init at `/etc/workstation/agent-env`.
@@ -171,6 +171,45 @@ These are available across all projects without manual `/plugin install`.
 nix flake update claude-code-skills
 sudo nixos-rebuild switch --flake .#<hostname>
 ```
+
+### Tailscale Remote Access
+
+**Purpose:** Secure remote access to homelab LAN (192.168.10.0/24) from anywhere via Tailscale VPN subnet routing.
+
+**Configuration:** `modules/homelab/tailscale.nix`
+
+**Enabled on:** Control-plane node (`lenovo-21CB001PMX`) via `homelab-server` role
+
+**Key features:**
+- **Subnet routing** — Advertises 192.168.10.0/24 to the Tailscale network
+- **MagicDNS integration** — Uses AdGuard Home (192.168.10.154) for `*.sammasak.dev` DNS resolution
+- **SOPS-encrypted authkey** — Stored in `secrets/homelab/tailscale.yaml`
+- **IP forwarding** — Enables kernel forwarding for subnet routes
+- **Firewall integration** — Trusts `tailscale0` interface
+
+**Module options** (`homelab.tailscale.*`):
+- `enable` (bool) — Enable Tailscale subnet router
+- `subnetRoutes` (list of str) — Subnets to advertise (defaults to `sam.profile.lanCidr`)
+- `authKeyFile` (path) — Path to SOPS-decrypted authkey (default: `/run/secrets/tailscale-authkey`)
+
+**How it works:**
+1. `tailscaled.service` starts at boot
+2. `tailscale-subnet-router.service` runs once to configure:
+   - Authenticates using authkey from SOPS
+   - Advertises subnet routes
+   - Enables SSH access via Tailscale
+3. Admin must approve subnet routes in Tailscale admin console
+4. Tailscale clients can access homelab LAN IPs and services
+
+**DNS flow:**
+- Client queries `grafana.sammasak.dev`
+- Tailscale MagicDNS forwards to AdGuard Home (192.168.10.154)
+- AdGuard returns internal IP (e.g., 192.168.10.200)
+- Traffic routes through control-plane subnet router
+
+**Documentation:**
+- Setup checklist: `~/knowledge-vault/Homelab/Projects/tailscale-integration/HUMAN_ACTION_REQUIRED.md`
+- Operations runbook: `~/knowledge-vault/Homelab/Runbooks/tailscale-operations.md`
 
 ### Key Inputs
 
