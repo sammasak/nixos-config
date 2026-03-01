@@ -9,22 +9,25 @@ A NixOS + Home Manager configuration repository using **flake-parts** with a den
 ## Build & Deploy Commands
 
 ```bash
+# ── Verification (run before deploying) ────────────────────────────
+just verify                   # Verify all physical hosts build successfully
+just verify-all               # Verify all hosts including VM images
+just check                    # Run flake checks (comprehensive validation)
+
+# Or manually verify specific host:
+nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
+
+# ── Deployment ─────────────────────────────────────────────────────
 # Build and apply locally (NixOS)
 sudo nixos-rebuild switch --flake .#<hostname>
 
 # Build without applying (dry run)
 sudo nixos-rebuild build --flake .#<hostname>
 
-# Validate flake
-nix flake check --all-systems --no-write-lock-file
-
-# Build a specific host config (no root needed)
-nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
-
 # Remote deploy via SSH
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
 
-# Workstation images (Justfile)
+# ── Workstation Images ─────────────────────────────────────────────
 just build                    # Build qcow2 image
 just publish [tag]            # Publish OCI containerDisk to Harbor
 just release [tag]            # Build + publish

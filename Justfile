@@ -5,6 +5,22 @@ project := "workstations"
 image := "nixos-workstation"
 host := "workstation-template"
 
+# ── Configuration Verification ────────────────────────────────────────
+
+# Verify all physical host configurations build successfully
+verify:
+    bash scripts/verify-all-hosts.sh
+
+# Verify all hosts including VM images
+verify-all:
+    bash scripts/verify-all-hosts.sh --all
+
+# Run flake checks (includes all configurations)
+check:
+    nix flake check --all-systems --no-write-lock-file
+
+# ── Workstation Image Management ──────────────────────────────────────
+
 # Build NixOS qcow2 image
 build host=host:
     bash scripts/build-workstation-image.sh {{host}}
