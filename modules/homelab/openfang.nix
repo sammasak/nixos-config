@@ -170,8 +170,8 @@ in
         Type = "simple";
         User = username;
         Group = "users";
-        # CLI format: openfang --config <path>
-        ExecStart = "${openfang}/bin/openfang --config ${cfg.configFile}";
+        # CLI format: openfang start --config <path>
+        ExecStart = "${openfang}/bin/openfang start --config ${cfg.configFile}";
         Restart = "always";
         RestartSec = 5;
         StateDirectory = "openfang";
