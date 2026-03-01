@@ -1,6 +1,6 @@
 # Homelab k3s server role
 # Use this role for control plane nodes
-{ lib, ... }:
+{ lib, pkgs, ... }:
 {
   imports = [
     ./base.nix
@@ -9,6 +9,9 @@
     ../homelab/acme.nix
     ../homelab/tailscale.nix
   ];
+
+  # OpenFang CLI tool for managing agents
+  environment.systemPackages = [ pkgs.openfang-ctl ];
 
   # Server role defaults
   homelab.k3s = {

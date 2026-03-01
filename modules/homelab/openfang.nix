@@ -141,6 +141,12 @@ in
         };
       };
     };
+
+    installCli = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Whether to install the openfang-ctl CLI tool.";
+    };
   };
 
   config = mkIf cfg.enable {
@@ -150,7 +156,9 @@ in
     }];
 
     # Make binaries available system-wide
-    environment.systemPackages = [ openfang ] ++ mcpPackages;
+    environment.systemPackages = [ openfang ]
+      ++ mcpPackages
+      ++ optional cfg.installCli pkgs.openfang-ctl;
 
     # ── Systemd service ─────────────────────────────────────────────
     systemd.services.openfang = {

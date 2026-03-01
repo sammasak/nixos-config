@@ -1,11 +1,14 @@
 # Homelab k3s agent role
 # Use this role for worker nodes
-{ lib, ... }:
+{ lib, pkgs, ... }:
 {
   imports = [
     ./base.nix
     ../homelab/k3s/agent.nix
   ];
+
+  # OpenFang CLI tool for managing agents
+  environment.systemPackages = [ pkgs.openfang-ctl ];
 
   # Agent role defaults
   homelab.k3s = {
