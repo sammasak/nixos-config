@@ -170,6 +170,8 @@ in
         Type = "simple";
         User = username;
         Group = "users";
+        WorkingDirectory = "/var/lib/openfang";
+        EnvironmentFile = "/var/lib/openfang/.env";
         # CLI format: openfang start --config <path>
         ExecStart = "${openfang}/bin/openfang start --config ${cfg.configFile}";
         Restart = "always";
