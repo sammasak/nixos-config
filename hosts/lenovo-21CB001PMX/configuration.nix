@@ -60,11 +60,11 @@ in
       dohPort = 443;
     };
     rewrites = [
-      # Workstation SSH endpoints (generated from homelab-gitops service IPs).
-      # openfang-central.sammasak.dev now routes via ingress (wildcard *.sammasak.dev)
-      { domain = "rocket.sammasak.dev"; answer = "192.168.10.208"; }
-
-      { domain = "*.sammasak.dev"; answer = "192.168.10.200"; }  # K8s services via MetalLB
+      # Wildcard for all K8s ingress-based services via MetalLB ingress IP.
+      # Workstation SSH endpoints (openfang-central, rocket, etc.) are managed
+      # by External-DNS running in the k3s cluster and written as AdGuard filtering
+      # rules (not rewrites). With mutableSettings=true, those filtering rules persist.
+      { domain = "*.sammasak.dev"; answer = "192.168.10.200"; }
       { domain = "sammasak.dev"; answer = "192.168.10.200"; }
       { domain = "dns.sammasak.dev"; answer = "192.168.10.154"; }  # AdGuard Home on host
     ];

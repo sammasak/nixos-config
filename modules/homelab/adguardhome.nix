@@ -84,7 +84,11 @@ in
       host = "0.0.0.0";
       port = 3003;
       openFirewall = true;
-      mutableSettings = false;
+      # mutableSettings = true allows External-DNS (running in k3s) to write
+      # filtering rules via the AdGuard API and have them persist across restarts.
+      # NixOS-declared rewrites and settings are merged in on startup (taking precedence)
+      # but runtime changes (External-DNS filtering rules) are preserved.
+      mutableSettings = true;
 
       settings = {
         dns = {
