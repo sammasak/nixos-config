@@ -13,7 +13,7 @@ let
 
     src = pkgs.fetchurl {
       url = "https://github.com/RightNow-AI/openfang/releases/download/v${version}/openfang-x86_64-unknown-linux-gnu.tar.gz";
-      sha256 = "0716rrg84mf01sg7lv2z9p0fam5jzafzn0h5rg3767llys5m1s5g";
+      sha256 = "1qqs9hx5z75pl4mfw6vazkb13h29k0hxihsmgwk52f20hhf8syhc";
     };
 
     sourceRoot = ".";
@@ -56,7 +56,7 @@ let
 
     src = pkgs.fetchurl {
       url = "https://github.com/grafana/mcp-grafana/releases/download/v${version}/${pname}_Linux_x86_64.tar.gz";
-      sha256 = "0diwmwdyiv6spsjw4a6lzp4vnagz4ps1skhga2drycim37b34rkq";
+      sha256 = "1l3a3839fy5wp8cw89ahw3gihcm6jisj03q9pfzj2f8gflfhlzns";
     };
 
     sourceRoot = ".";
@@ -78,7 +78,7 @@ let
 
     src = pkgs.fetchurl {
       url = "https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v${version}/${pname}_${version}_linux_amd64.tar.gz";
-      sha256 = "0v499gmga0fphhg1rqrgi0108zvyy9gzf80rckp3pnl8jgh8cawa";
+      sha256 = "09fyfzah1r8kbbm4izk26b5z8wk846aq9f2zh42zky3q0ksf7czd";
     };
 
     sourceRoot = ".";
