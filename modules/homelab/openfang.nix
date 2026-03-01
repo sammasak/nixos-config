@@ -162,6 +162,7 @@ in
       environment = {
         OPENFANG_LISTEN = cfg.listenAddress;
         OPENFANG_HOME = "/var/lib/openfang";
+        HOME = "/var/lib/openfang";  # Override HOME to prevent /home/lukas access
       };
 
       path = mcpPackages;
