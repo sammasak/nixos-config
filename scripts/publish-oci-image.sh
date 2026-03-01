@@ -10,7 +10,7 @@ project="$3"
 image="$4"
 tag="$5"
 
-qcow2=$(find "$result_dir" -name '*.qcow2' | head -1)
+qcow2=$(ls "$result_dir"/*.qcow2 2>/dev/null | head -1)
 if [[ -z "$qcow2" ]]; then
   echo "ERROR: no qcow2 found in $result_dir"
   exit 1
@@ -94,10 +94,17 @@ echo '{"imageLayoutVersion":"1.0.0"}' > "$ocidir/oci-layout"
 
 # Push to Harbor
 dest="$registry/$project/$image"
+# Harbor credentials (read from ~/.env or use defaults)
+harbor_user="${HARBOR_ADMIN_USER:-admin}"
+harbor_pass="${HARBOR_ADMIN_PASSWORD:-Harbor12345}"
+
 echo "Pushing to $dest:$tag ..."
 nix shell nixpkgs#skopeo -c skopeo copy \
+  --dest-creds "$harbor_user:$harbor_pass" \
   "oci:$ocidir" "docker://$dest:$tag"
 echo "Tagging as latest..."
 nix shell nixpkgs#skopeo -c skopeo copy \
+  --src-creds "$harbor_user:$harbor_pass" \
+  --dest-creds "$harbor_user:$harbor_pass" \
   "docker://$dest:$tag" "docker://$dest:latest"
 echo "Done: $dest:$tag (also tagged latest)"
