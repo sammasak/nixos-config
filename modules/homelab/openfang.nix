@@ -20,7 +20,7 @@ let
     dontBuild = true;
 
     nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-    buildInputs = [ pkgs.stdenv.cc.cc.lib ];
+    buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.openssl ];
 
     installPhase = ''
       runHook preInstall
