@@ -40,15 +40,16 @@ in
   };
 
   # Avoid unnecessary heat from an always-on performance profile.
-  systemd.services.set-default-power-profile = {
-    description = "Set default power profile to balanced";
-    after = [ "power-profiles-daemon.service" ];
-    wantedBy = [ "multi-user.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      ExecStart = "${pkgs.power-profiles-daemon}/bin/powerprofilesctl set balanced";
-    };
-  };
+  # Note: power-profiles-daemon defaults to balanced automatically; explicit setting removed to avoid systemd ordering cycle
+  # systemd.services.set-default-power-profile = {
+  #   description = "Set default power profile to balanced";
+  #   after = [ "power-profiles-daemon.service" "multi-user.target" ];
+  #   wantedBy = [ "default.target" ];
+  #   serviceConfig = {
+  #     Type = "oneshot";
+  #     ExecStart = "${pkgs.power-profiles-daemon}/bin/powerprofilesctl set balanced";
+  #   };
+  # };
 
   # DNS server with encrypted DNS (DoT/DoH) for sammasak.dev
   homelab.dns = {
