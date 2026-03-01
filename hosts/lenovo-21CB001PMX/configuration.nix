@@ -60,6 +60,7 @@ in
     };
     rewrites = [
       # Workstation SSH endpoints (generated from homelab-gitops service IPs).
+      { domain = "openfang-central.sammasak.dev"; answer = "192.168.10.207"; }
       { domain = "rocket.sammasak.dev"; answer = "192.168.10.208"; }
 
       { domain = "*.sammasak.dev"; answer = "192.168.10.200"; }  # K8s services via MetalLB
