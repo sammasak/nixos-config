@@ -155,6 +155,8 @@ in
       message = "homelab.openfang.configFile must be set when openfang is enabled";
     }];
 
+    networking.firewall.allowedTCPPorts = [ 4200 ];
+
     # Make binaries available system-wide
     environment.systemPackages = [ openfang ]
       ++ mcpPackages
