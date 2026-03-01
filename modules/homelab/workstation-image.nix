@@ -59,6 +59,10 @@ in
       nix-direnv
       openssl
       curl
+      fluxcd
+      sops
+      age
+      yq-go
     ];
   };
 }
