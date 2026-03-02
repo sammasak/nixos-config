@@ -175,7 +175,21 @@ in
         HOME = "/var/lib/openfang";  # Override HOME to prevent /home/lukas access
       };
 
-      path = mcpPackages;
+      # Shell tools needed for shell_exec (bash provides sh) + homelab agent tools
+      path = mcpPackages ++ (with pkgs; [
+        bash        # shell_exec uses sh -c; must be in PATH
+        coreutils
+        git
+        gh
+        curl
+        jq
+        kubectl
+        fluxcd
+        sops
+        age
+        yq-go
+        nix         # nix develop for project-specific tool envs
+      ]);
 
       serviceConfig = {
         Type = "simple";
