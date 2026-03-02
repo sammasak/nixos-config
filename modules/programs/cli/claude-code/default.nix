@@ -24,6 +24,8 @@ in
   home.packages = [ heartbeatScript ];
 
   # Seed ~/.claude.json on first boot so the interactive setup wizard is skipped.
+  # NOTE: the project path "/home/lukas" is hardcoded in the JSON — this module
+  # is only used on workstation-template which always has username = "lukas".
   home.activation.seedClaudeState =
     let
       script = pkgs.writeShellScript "seed-claude-state" ''
@@ -34,6 +36,7 @@ in
           "numStartups": 1,
           "firstStartTime": "1970-01-01T00:00:00.000Z",
           "hasCompletedOnboarding": true,
+          "bypassPermissionsModeAccepted": true,
           "lastOnboardingVersion": "2.0.0",
           "sonnet45MigrationComplete": true,
           "opus45MigrationComplete": true,

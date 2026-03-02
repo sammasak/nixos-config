@@ -47,6 +47,32 @@
     end
   '';
 
+  # ── Claude state: suppress interactive startup dialogs ──────────────
+  # 1. bypassPermissionsModeAccepted — skips the "WARNING: Bypass Permissions
+  #    mode" dialog shown on every `claude --dangerously-skip-permissions` launch.
+  # 2. projects[$HOME].hasTrustDialogAccepted — skips the "Is this a project
+  #    you trust?" dialog for $HOME and all subdirectories (tree-walk in Ew()).
+  home.activation.acceptClaudeStartupDialogs =
+    let
+      script = pkgs.writeShellScript "accept-claude-startup-dialogs" ''
+        stateFile="$HOME/.claude.json"
+        if [ ! -f "$stateFile" ]; then
+          echo '{}' > "$stateFile"
+          chmod 600 "$stateFile"
+        fi
+        tmp=$(mktemp)
+        trap 'rm -f "$tmp"' EXIT
+        chmod 600 "$tmp"
+        ${pkgs.jq}/bin/jq \
+          --arg home "$HOME" \
+          '.bypassPermissionsModeAccepted = true | .projects[$home].hasTrustDialogAccepted = true' \
+          "$stateFile" > "$tmp" && mv "$tmp" "$stateFile"
+      '';
+    in
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run ${script}
+    '';
+
   # ── NixOS shebang fixes ──────────────────────────────────────────────
   # Patches #!/bin/bash → #!/usr/bin/env bash in plugin cache.
   # NixOS doesn't have /bin/bash; re-runs on rebuild to fix new/updated plugins.
