@@ -13,7 +13,7 @@ let
 
     src = pkgs.fetchurl {
       url = "https://github.com/RightNow-AI/openfang/releases/download/v${version}/openfang-x86_64-unknown-linux-gnu.tar.gz";
-      sha256 = "07w5znwsnvvqhggbzx6g8j2dwjrl1nax53487zlrqajxprqw2g6i";
+      sha256 = "01ap3k0g89ssc33pf5vxr7w0f79hpn216i55pkflsl7c1sdmvbmg";
     };
 
     sourceRoot = ".";
