@@ -173,11 +173,11 @@ in
         OPENFANG_LISTEN = cfg.listenAddress;
         OPENFANG_HOME = "/var/lib/openfang";
         HOME = "/var/lib/openfang";  # Override HOME to prevent /home/lukas access
-        PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+        XDG_DATA_HOME = "/var/lib/openfang/.local/share";  # Redirect buildah storage to workspace PVC
       };
 
       # Shell tools needed for shell_exec (bash provides sh) + homelab agent tools
-      path = mcpPackages ++ (with pkgs; [
+      path = mcpPackages ++ [ "/run/wrappers" ] ++ (with pkgs; [
         bash        # shell_exec uses sh -c; must be in PATH
         coreutils
         git
@@ -191,7 +191,6 @@ in
         yq-go
         nix         # nix develop for project-specific tool envs
         python3     # coding tasks and scripting
-        playwright-driver.browsers  # browser automation via Playwright
         buildah     # rootless container builds
       ]);
 
