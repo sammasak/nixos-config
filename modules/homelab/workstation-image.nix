@@ -63,6 +63,8 @@ in
       sops
       age
       yq-go
+      buildah  # rootless container builds
+      shadow   # provides newuidmap/newgidmap for user namespaces
     ];
   };
 }

@@ -30,6 +30,15 @@ in
     };
   };
 
+  # Enable containers subsystem (sets up /etc/containers/ for buildah/podman)
+  virtualisation.containers.enable = true;
+
+  # Grant lukas user namespace ranges required for rootless buildah
+  users.users.${vars.username} = {
+    subUidRanges = [{ startUid = 100000; count = 65536; }];
+    subGidRanges = [{ startGid = 100000; count = 65536; }];
+  };
+
   # Home Manager configuration for agent image template
   home-manager.users.${vars.username} = {
     home.stateVersion = "25.11";

@@ -192,6 +192,7 @@ in
         nix         # nix develop for project-specific tool envs
         python3     # coding tasks and scripting
         playwright-driver.browsers  # browser automation via Playwright
+        buildah     # rootless container builds
       ]);
 
       serviceConfig = {
@@ -210,7 +211,7 @@ in
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = "read-only";
-        PrivateDevices = true;
+        PrivateDevices = false;  # buildah needs /dev/fuse for rootless overlay storage
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectKernelLogs = true;
