@@ -9,11 +9,11 @@ let
   # ── OpenFang binary ───────────────────────────────────────────────
   openfang = pkgs.stdenv.mkDerivation rec {
     pname = "openfang";
-    version = "0.3.2";
+    version = "0.3.4";
 
     src = pkgs.fetchurl {
       url = "https://github.com/RightNow-AI/openfang/releases/download/v${version}/openfang-x86_64-unknown-linux-gnu.tar.gz";
-      sha256 = "01ap3k0g89ssc33pf5vxr7w0f79hpn216i55pkflsl7c1sdmvbmg";
+      sha256 = "16i8ki151q8ihrd12253zpvh1884chi7w9m9ya6qzxfwkjv9ir2v";
     };
 
     sourceRoot = ".";
