@@ -1,5 +1,5 @@
 # OpenFang agent image template (used for KubeVirt image builds).
-{ ... }:
+{ lib, pkgs, config, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -38,6 +38,18 @@ in
     subUidRanges = [{ startUid = 100000; count = 65536; }];
     subGidRanges = [{ startGid = 100000; count = 65536; }];
   };
+
+  # Increase disk image size beyond the default 512M additional space.
+  # The nixos kubevirt format auto-sizes to closure + additionalSpace; the
+  # default 512M leaves agents with no room for cargo/nix builds at runtime.
+  # 30GiB of headroom: enough for nix store (~8GB baked) + cargo (~5GB) +
+  # nix develop installs (~5GB) with comfortable margin.
+  system.build.kubevirtImage = lib.mkForce (import "${toString pkgs.path}/nixos/lib/make-disk-image.nix" {
+    inherit lib config pkgs;
+    inherit (config.image) baseName;
+    format = "qcow2";
+    additionalSpace = "22000M";  # ~22GB extra on top of baked nix store → ~30GB total
+  });
 
   # Home Manager configuration for agent image template
   home-manager.users.${vars.username} = {
