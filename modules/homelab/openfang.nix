@@ -9,11 +9,11 @@ let
   # ── OpenFang binary ───────────────────────────────────────────────
   openfang = pkgs.stdenv.mkDerivation rec {
     pname = "openfang";
-    version = "0.3.4";
+    version = "0.3.5";
 
     src = pkgs.fetchurl {
       url = "https://github.com/RightNow-AI/openfang/releases/download/v${version}/openfang-x86_64-unknown-linux-gnu.tar.gz";
-      sha256 = "16i8ki151q8ihrd12253zpvh1884chi7w9m9ya6qzxfwkjv9ir2v";
+      sha256 = "0jnm0qgxrw9kq6vhqwc2zjw05b2qb2phw6xff7ag7xpx4v8jhv64";
     };
 
     sourceRoot = ".";
@@ -189,6 +189,7 @@ in
         age
         yq-go
         nix         # nix develop for project-specific tool envs
+        python3     # coding tasks and scripting
       ]);
 
       serviceConfig = {
@@ -206,7 +207,7 @@ in
         NoNewPrivileges = true;
         PrivateTmp = true;
         ProtectSystem = "strict";
-        ProtectHome = true;
+        ProtectHome = "read-only";
         PrivateDevices = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
@@ -214,7 +215,7 @@ in
         ProtectControlGroups = true;
         RestrictSUIDSGID = true;
         LockPersonality = true;
-        ReadWritePaths = [ "/var/lib/openfang" ];
+        ReadWritePaths = [ "/var/lib/openfang" "/tmp" ];
         DynamicUser = false;  # explicit: needs shell access as user
       };
     };
