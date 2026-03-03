@@ -173,6 +173,7 @@ in
         OPENFANG_LISTEN = cfg.listenAddress;
         OPENFANG_HOME = "/var/lib/openfang";
         HOME = "/var/lib/openfang";  # Override HOME to prevent /home/lukas access
+        PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
       };
 
       # Shell tools needed for shell_exec (bash provides sh) + homelab agent tools
@@ -190,6 +191,7 @@ in
         yq-go
         nix         # nix develop for project-specific tool envs
         python3     # coding tasks and scripting
+        playwright-driver.browsers  # browser automation via Playwright
       ]);
 
       serviceConfig = {
