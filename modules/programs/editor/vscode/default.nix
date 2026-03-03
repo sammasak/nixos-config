@@ -1,5 +1,5 @@
 # Visual Studio Code
-{ pkgs, ... }:
+{ pkgs, config, ... }:
 let
   configDir = if pkgs.stdenv.isDarwin
     then "Library/Application Support/Code/User"
@@ -8,12 +8,13 @@ let
     system = pkgs.stdenv.hostPlatform.system;
     config.allowUnfree = true;
   };
+  repoRoot = "/home/lukas/nixos-config";
 in
 {
   home.packages = [ vscodePkgs.vscode ];
 
   home.file = {
-    "${configDir}/settings.json".source = ../../../../dotfiles/vscode/settings.json;
-    "${configDir}/keybindings.json".source = ../../../../dotfiles/vscode/keybindings.json;
+    "${configDir}/settings.json".source = config.lib.file.mkOutOfStoreSymlink "${repoRoot}/dotfiles/vscode/settings.json";
+    "${configDir}/keybindings.json".source = config.lib.file.mkOutOfStoreSymlink "${repoRoot}/dotfiles/vscode/keybindings.json";
   };
 }
