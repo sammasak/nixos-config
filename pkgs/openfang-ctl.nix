@@ -2,13 +2,13 @@
 
 rustPlatform.buildRustPackage rec {
   pname = "openfang-ctl";
-  version = "0.5.2";
+  version = "0.5.3";
 
   src = fetchFromGitHub {
     owner = "sammasak";
     repo = "openfang-ctl";
     rev = "v${version}";
-    sha256 = "1zcnki9skjy5kxvphl4p2s6srdi3ijdnk84723k34mq5af9b5632";
+    sha256 = "1r5r8k9mqhyiy9rch6hz3jramdkxn7whxz3wj48yq6mb2i74qpmq";
   };
 
   cargoHash = "sha256-C95u5eOkoTludJ88IhGFd3QkDj8teWCdHianwYHzQL0=";
