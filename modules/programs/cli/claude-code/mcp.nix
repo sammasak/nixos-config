@@ -26,11 +26,8 @@
       mcpServers = {
         playwright = {
           type = "stdio";
-          command = "sh";
-          args = [
-            "-c"
-            ''exec npx @playwright/mcp@latest --headless --browser chromium --executable-path "$(which chromium)"''
-          ];
+          command = "${pkgs.playwright-mcp}/bin/mcp-server-playwright";
+          args = [];
         };
       };
     };
