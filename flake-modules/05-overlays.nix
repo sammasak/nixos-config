@@ -1,11 +1,14 @@
 { inputs, ... }:
+let
+  overlay = import ../pkgs { claude-ctl-src = inputs.claude-ctl; };
+in
 {
   perSystem = { system, ... }: {
     _module.args.pkgs = import inputs.nixpkgs {
       inherit system;
-      overlays = [ (import ../pkgs) ];
+      overlays = [ overlay ];
     };
   };
 
-  flake.overlays.default = import ../pkgs;
+  flake.overlays.default = overlay;
 }

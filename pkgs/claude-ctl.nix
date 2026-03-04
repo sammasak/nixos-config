@@ -1,12 +1,12 @@
-{ lib, rustPlatform, pkg-config, openssl }:
+{ lib, rustPlatform, pkg-config, openssl, src }:
 
 rustPlatform.buildRustPackage {
   pname = "claude-ctl";
-  version = "0.1.0";
+  version = "0.0.1";
 
-  src = /home/lukas/claude-ctl;
+  inherit src;
 
-  cargoLock.lockFile = /home/lukas/claude-ctl/Cargo.lock;
+  cargoLock.lockFile = "${src}/Cargo.lock";
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [ openssl ];
