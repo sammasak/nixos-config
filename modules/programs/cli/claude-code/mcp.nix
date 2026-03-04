@@ -20,16 +20,18 @@
         "playwright@claude-plugins-official" = true;
         "superpowers-lab@superpowers-marketplace" = true;
       };
-    };
-
-    # MCP servers at top-level for auto-discovery
-    mcpServers = {
-      playwright = {
-        command = "sh";
-        args = [
-          "-c"
-          ''exec npx @playwright/mcp@latest --headless --browser chromium --executable-path "$(which chromium)"''
-        ];
+      # MCP servers in settings.json instead of the top-level mcpServers option,
+      # which creates a wrapper that appends --mcp-config to every invocation and
+      # breaks subcommands like `claude setup-token`.
+      mcpServers = {
+        playwright = {
+          type = "stdio";
+          command = "sh";
+          args = [
+            "-c"
+            ''exec npx @playwright/mcp@latest --headless --browser chromium --executable-path "$(which chromium)"''
+          ];
+        };
       };
     };
   };
