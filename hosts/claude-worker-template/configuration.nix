@@ -39,7 +39,6 @@ in
       ../../modules/programs/cli/git
       ../../modules/programs/cli/cli-tools
       ../../modules/programs/cli/claude-code/default.nix
-      ../../modules/programs/cli/claude-code/skills.nix
     ];
   };
 }
