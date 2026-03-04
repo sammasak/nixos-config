@@ -1,4 +1,4 @@
 # Custom packages overlay
 final: prev: {
-  openfang-ctl = final.callPackage ./openfang-ctl.nix { };
+  claude-ctl = final.callPackage ./claude-ctl.nix { };
 }

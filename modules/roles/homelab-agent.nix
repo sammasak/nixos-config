@@ -7,8 +7,8 @@
     ../homelab/k3s/agent.nix
   ];
 
-  # OpenFang CLI tool for managing agents
-  environment.systemPackages = [ pkgs.openfang-ctl ];
+  # claude-ctl CLI tool for managing agents
+  environment.systemPackages = [ pkgs.claude-ctl ];
 
   # Agent role defaults
   homelab.k3s = {
