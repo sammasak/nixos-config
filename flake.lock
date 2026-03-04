@@ -89,16 +89,16 @@
       "locked": {
         "lastModified": 1772617419,
         "narHash": "sha256-Op6kKdkaK+lwBs23dpkQNk+hShgScg4czueNbbVUZo4=",
-        "ref": "refs/tags/v0.0.1",
+        "owner": "sammasak",
+        "repo": "claude-ctl",
         "rev": "113e3ec1c9a6f76be4166c535cd02cbfdff17cff",
-        "revCount": 10,
-        "type": "git",
-        "url": "ssh://git@github.com/sammasak/claude-ctl"
+        "type": "github"
       },
       "original": {
-        "ref": "refs/tags/v0.0.1",
-        "type": "git",
-        "url": "ssh://git@github.com/sammasak/claude-ctl"
+        "owner": "sammasak",
+        "ref": "v0.0.1",
+        "repo": "claude-ctl",
+        "type": "github"
       }
     },
     "firefox-gnome-theme": {

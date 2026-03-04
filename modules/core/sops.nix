@@ -23,6 +23,19 @@ in
         owner = username;
         mode = "0400";
       };
+
+      # GitHub access token for nix to fetch private flake inputs.
+      # Decrypted to /run/secrets/nix-access-token, included by nix.conf at runtime.
+      secrets."nix_access_token" = {
+        sopsFile = ../../secrets/homelab/github-access-token.yaml;
+        owner = "root";
+        mode = "0400";
+      };
     };
+
+    # Soft-include so nix doesn't fail before sops activates on first boot.
+    nix.extraOptions = ''
+      !include /run/secrets/nix_access_token
+    '';
   };
 }
