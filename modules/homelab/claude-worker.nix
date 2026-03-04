@@ -44,6 +44,59 @@ in
 
     environment.systemPackages = [ claude-worker ];
 
+    # ── Promtail — ship claude-worker logs to Loki ───────────────────────
+    services.promtail = {
+      enable = true;
+      configuration = {
+        server = {
+          http_listen_port = 9080;
+          grpc_listen_port = 0;
+        };
+        positions = {
+          filename = "/var/lib/promtail/positions.yaml";
+        };
+        clients = [
+          { url = "http://monitoring-loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"; }
+        ];
+        scrape_configs = [
+          {
+            job_name = "claude-worker";
+            static_configs = [
+              {
+                targets = [ "localhost" ];
+                labels = {
+                  job = "claude-worker";
+                  vm = config.networking.hostName;
+                  __path__ = "${cfg.workerHome}/logs/current.log";
+                };
+              }
+            ];
+            pipeline_stages = [
+              {
+                json = {
+                  expressions = {
+                    type = "type";
+                    session_id = "session_id";
+                  };
+                };
+              }
+              {
+                labels = {
+                  type = null;
+                  session_id = null;
+                };
+              }
+            ];
+          }
+        ];
+      };
+    };
+
+    systemd.services.promtail = {
+      after = [ "claude-worker.service" ];
+      wants = [ "claude-worker.service" ];
+    };
+
     # ── Systemd service ─────────────────────────────────────────────────
     systemd.services.claude-worker = {
       description = "Claude Worker agent runtime";
