@@ -12,25 +12,9 @@ in
 
   homelab.workstation.enable = true;
 
-  # Embed static age identity so sops-nix can decrypt shared secrets at boot.
-  # All VM instances share this key (accepted tradeoff for shared golden image).
-  environment.etc."age/workstation-identity.key" = {
-    source = ./age-identity.key;
-    mode = "0400";
-  };
-
-  sops = {
-    age = {
-      sshKeyPaths = [];  # VMs have ephemeral SSH host keys; use embedded age key instead
-      keyFile = "/etc/age/workstation-identity.key";
-      generateKey = false;
-    };
-    secrets."claude_oauth_token" = {
-      sopsFile = ../../secrets/claude/oauth.yaml;
-      owner = vars.username;
-      mode = "0400";
-    };
-  };
+  # The Claude OAuth token is delivered to VM instances at boot via cloud-init
+  # (/etc/workstation/agent-env), sourced in the fish login shell by
+  # modules/programs/cli/claude-code/default.nix. No static age key is embedded.
 
   # Home Manager configuration for workstation image template
   home-manager.users.${vars.username} = {

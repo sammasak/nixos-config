@@ -92,7 +92,7 @@ async fn main() {
     }
 
     let api_key = env::var("CLAUDE_WORKER_API_KEY")
-        .unwrap_or_else(|_| "a72a0859ceb97abfd1dac2ef6a890f79386974e6a133455b1cbbe9ca643f08ea".into());
+        .expect("CLAUDE_WORKER_API_KEY must be set — refusing to start with no authentication");
 
     let (log_tx, _) = broadcast::channel::<String>(1024);
 
@@ -112,7 +112,7 @@ async fn main() {
         .route("/goals/:id/stream", get(stream_goal))
         .with_state(state);
 
-    let addr = env::var("CLAUDE_WORKER_LISTEN").unwrap_or_else(|_| "0.0.0.0:4200".into());
+    let addr = env::var("CLAUDE_WORKER_LISTEN").unwrap_or_else(|_| "127.0.0.1:4200".into());
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
     eprintln!("claude-worker listening on {}", addr);
     axum::serve(listener, app).await.expect("serve");

@@ -24,8 +24,8 @@ in
 
     listenAddress = mkOption {
       type = types.str;
-      default = "0.0.0.0:4200";
-      description = "Address and port for the HTTP listener.";
+      default = "127.0.0.1:4200";
+      description = "Address and port for the HTTP listener. Override to 0.0.0.0:4200 only when cluster-external access is required.";
     };
 
     workerHome = mkOption {
@@ -36,7 +36,8 @@ in
   };
 
   config = mkIf cfg.enable {
-    networking.firewall.allowedTCPPorts = [ 4200 ];
+    # Only open the firewall when explicitly binding to a non-loopback address.
+    networking.firewall.allowedTCPPorts = lib.mkIf (lib.hasPrefix "0.0.0.0" cfg.listenAddress) [ 4200 ];
 
     environment.systemPackages = [ claude-worker ];
 

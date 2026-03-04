@@ -18,7 +18,9 @@ in
   homelab.workstation.enable = true;
 
   # Claude Worker agent runtime.
+  # Bind to all interfaces so workspace-api can submit goals from the cluster network.
   homelab.claudeWorker.enable = true;
+  homelab.claudeWorker.listenAddress = "0.0.0.0:4200";
 
   # Enable containers subsystem (sets up /etc/containers/ for buildah/podman)
   virtualisation.containers.enable = true;
