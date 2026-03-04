@@ -236,6 +236,7 @@ async fn run_claude(state: Arc<AppState>) {
         .arg("-p")
         .arg(startup_prompt)
         .arg("--dangerously-skip-permissions")
+        .arg("--verbose")
         .arg("--output-format")
         .arg("stream-json")
         .current_dir(&state.workspace_dir)
