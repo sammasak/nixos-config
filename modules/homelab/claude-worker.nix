@@ -55,6 +55,7 @@ in
         CLAUDE_WORKER_HOME = cfg.workerHome;
         CLAUDE_WORKER_LISTEN = cfg.listenAddress;
         HOME = cfg.workerHome;
+        SHELL = "${pkgs.bash}/bin/bash";
         XDG_DATA_HOME = "${cfg.workerHome}/.local/share";
       };
 
