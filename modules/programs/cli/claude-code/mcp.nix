@@ -35,8 +35,10 @@
   };
 
   # ── OAuth token sourcing ────────────────────────────────────────────
-  # All hosts (physical + VM golden image) get the token from sops-nix at
-  # /run/secrets/claude_oauth_token. ~/.env is a manual fallback only.
+  # Physical hosts: sops-nix decrypts the token to /run/secrets/claude_oauth_token at boot.
+  # VM golden images: token delivered via cloud-init (/etc/workstation/agent-env),
+  #   sourced in fish loginShellInit by modules/programs/cli/claude-code/default.nix.
+  # ~/.env: local development override only.
   programs.fish.interactiveShellInit = lib.mkAfter ''
     if test -f "$HOME/.env"
       and grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$HOME/.env" 2>/dev/null

@@ -5,6 +5,9 @@
 let
   inherit (lib) mkEnableOption mkIf mkOption optional types;
   cfg = config.homelab.claudeWorker;
+  # Parse port from listenAddress (e.g. "0.0.0.0:4200" → 4200)
+  listenPort = lib.toInt (lib.last (lib.splitString ":" cfg.listenAddress));
+  isPublic = !(lib.hasPrefix "127." cfg.listenAddress) && !(lib.hasPrefix "::1" cfg.listenAddress);
   username = config.sam.profile.username;
 
   # ── Build claude-worker binary from source ────────────────────────────
@@ -36,8 +39,8 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Only open the firewall when explicitly binding to a non-loopback address.
-    networking.firewall.allowedTCPPorts = lib.mkIf (lib.hasPrefix "0.0.0.0" cfg.listenAddress) [ 4200 ];
+    # Only open the firewall when binding to a non-loopback address.
+    networking.firewall.allowedTCPPorts = lib.mkIf isPublic [ listenPort ];
 
     environment.systemPackages = [ claude-worker ];
 
