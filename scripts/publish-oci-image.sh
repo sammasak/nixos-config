@@ -94,9 +94,9 @@ echo '{"imageLayoutVersion":"1.0.0"}' > "$ocidir/oci-layout"
 
 # Push to Harbor
 dest="$registry/$project/$image"
-# Harbor credentials (read from ~/.env or use defaults)
-harbor_user="${HARBOR_ADMIN_USER:-admin}"
-harbor_pass="${HARBOR_ADMIN_PASSWORD:-Harbor12345}"
+# Harbor credentials — must be set in environment (no defaults to prevent accidental auth with wrong creds)
+harbor_user="${HARBOR_ADMIN_USER:?HARBOR_ADMIN_USER must be set}"
+harbor_pass="${HARBOR_ADMIN_PASSWORD:?HARBOR_ADMIN_PASSWORD must be set}"
 
 echo "Pushing to $dest:$tag ..."
 nix shell nixpkgs#skopeo -c skopeo copy \
