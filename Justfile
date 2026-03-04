@@ -42,13 +42,13 @@ harbor-login:
 image-info tag="latest":
     nix shell nixpkgs#skopeo -c skopeo inspect "docker://{{registry}}/{{project}}/{{image}}:{{tag}}"
 
-# ── OpenFang agent image ──────────────────────────────────────────────
+# ── Claude Worker agent image ─────────────────────────────────────────
 
 agent_project := "agents"
-agent_image := "openfang-agent"
-agent_host := "openfang-agent-template"
+agent_image := "claude-worker"
+agent_host := "claude-worker-template"
 
-# Build OpenFang agent qcow2 image
+# Build Claude Worker agent qcow2 image
 build-agent host=agent_host:
     bash scripts/build-workstation-image.sh {{host}}
 
