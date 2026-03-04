@@ -257,7 +257,7 @@ async fn run_claude(state: Arc<AppState>) {
     let log_tx = state.log_tx.clone();
     let log_path = log_file_path.clone();
 
-    tokio::spawn(async move {
+    let stdout_done = tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
         let mut log_file = fs::OpenOptions::new()
             .create(true)
@@ -294,11 +294,13 @@ async fn run_claude(state: Arc<AppState>) {
         }
     });
 
-    // Wait for claude to finish
+    // Wait for claude to finish, then drain stdout before signalling watchers
     match child.wait().await {
         Ok(status) => eprintln!("claude exited with status: {}", status),
         Err(e) => eprintln!("claude wait error: {}", e),
     }
+    let _ = stdout_done.await;
+    let _ = state.log_tx.send("[DONE]".to_string());
 
     *state.claude_running.lock().await = false;
 }
