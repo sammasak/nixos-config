@@ -45,7 +45,7 @@ let
               useUserPackages = true;
               backupFileExtension = "backup";
               sharedModules = [
-                ../modules/programs/cli/claude-code/mcp.nix
+                (import ../modules/programs/cli/claude-code/mcp.nix inputs.claude-code-skills)
                 (import ../modules/programs/cli/claude-code/skills.nix inputs.claude-code-skills)
               ];
               users.${username} =

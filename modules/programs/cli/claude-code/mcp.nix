@@ -2,6 +2,13 @@
 #
 # Injected into every host via home-manager.sharedModules in 40-outputs-nixos.nix.
 # Uses the upstream programs.claude-code Home Manager module.
+#
+# Usage (in 40-outputs-nixos.nix):
+#   (import ../modules/programs/cli/claude-code/mcp.nix inputs.claude-code-skills)
+#
+# Hooks are wired via Nix store paths so they are available on all hosts,
+# including claude-worker VMs where HOME=/var/lib/claude-worker.
+skillsSrc:
 { pkgs, lib, config, ... }:
 {
   programs.claude-code = {
@@ -29,6 +36,33 @@
           command = "${pkgs.playwright-mcp}/bin/mcp-server-playwright";
           args = [];
         };
+      };
+      # Hooks are wired from the claude-code-skills Nix store path so they are
+      # available everywhere: physical hosts, workstation VMs, and claude-worker VMs.
+      # check-goals.sh no-ops on physical hosts (goals.json absent).
+      # validate-bash.sh has a VM guard for agent-specific rules.
+      # validate-manifest.sh works on all hosts.
+      hooks = {
+        Stop = [{
+          hooks = [{
+            type = "command";
+            command = "${skillsSrc}/hooks/check-goals.sh";
+          }];
+        }];
+        PreToolUse = [{
+          matcher = "Bash";
+          hooks = [{
+            type = "command";
+            command = "${skillsSrc}/hooks/validate-bash.sh";
+          }];
+        }];
+        PostToolUse = [{
+          matcher = "Write|Edit";
+          hooks = [{
+            type = "command";
+            command = "${skillsSrc}/hooks/validate-manifest.sh";
+          }];
+        }];
       };
     };
   };
