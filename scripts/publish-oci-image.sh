@@ -94,9 +94,21 @@ echo '{"imageLayoutVersion":"1.0.0"}' > "$ocidir/oci-layout"
 
 # Push to Harbor
 dest="$registry/$project/$image"
-# Harbor credentials — must be set in environment (no defaults to prevent accidental auth with wrong creds)
-harbor_user="${HARBOR_ADMIN_USER:?HARBOR_ADMIN_USER must be set}"
-harbor_pass="${HARBOR_ADMIN_PASSWORD:?HARBOR_ADMIN_PASSWORD must be set}"
+# Harbor credentials — prefer env vars; fall back to ~/.config/containers/auth.json
+if [[ -n "${HARBOR_ADMIN_USER:-}" ]]; then
+  harbor_user="$HARBOR_ADMIN_USER"
+  harbor_pass="${HARBOR_ADMIN_PASSWORD:?HARBOR_ADMIN_PASSWORD must be set when HARBOR_ADMIN_USER is set}"
+else
+  auth_file="${XDG_CONFIG_HOME:-$HOME/.config}/containers/auth.json"
+  auth_encoded=$(jq -r --arg reg "$registry" '.auths[$reg].auth // empty' "$auth_file" 2>/dev/null || true)
+  if [[ -n "$auth_encoded" ]]; then
+    harbor_user=$(echo "$auth_encoded" | base64 -d | cut -d: -f1)
+    harbor_pass=$(echo "$auth_encoded" | base64 -d | cut -d: -f2-)
+  else
+    echo "ERROR: no credentials for $registry. Set HARBOR_ADMIN_USER/HARBOR_ADMIN_PASSWORD or run: skopeo login $registry"
+    exit 1
+  fi
+fi
 
 echo "Pushing to $dest:$tag ..."
 nix shell nixpkgs#skopeo -c skopeo copy \
