@@ -100,8 +100,8 @@ in
     # ── Systemd service ─────────────────────────────────────────────────
     systemd.services.claude-worker = {
       description = "Claude Worker agent runtime";
-      after = [ "network-online.target" "cloud-init.service" "cloud-final.service" ];
-      wants = [ "network-online.target" "cloud-init.service" "cloud-final.service" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 
       environment = {
