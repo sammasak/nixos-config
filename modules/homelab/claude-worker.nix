@@ -100,8 +100,8 @@ in
     # ── Systemd service ─────────────────────────────────────────────────
     systemd.services.claude-worker = {
       description = "Claude Worker agent runtime";
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
+      after = [ "network-online.target" "cloud-init.service" "cloud-final.service" ];
+      wants = [ "network-online.target" "cloud-init.service" "cloud-final.service" ];
       wantedBy = [ "multi-user.target" ];
 
       environment = {
@@ -137,9 +137,23 @@ in
         Group = "users";
         WorkingDirectory = cfg.workerHome;
         EnvironmentFile = "${cfg.workerHome}/.env";
+        ExecStartPre = let
+          waitForEnv = pkgs.writeShellScript "wait-for-env" ''
+            env_file="${cfg.workerHome}/.env"
+            for i in $(seq 1 60); do
+              [ -f "$env_file" ] && exit 0
+              echo "Waiting for $env_file (attempt $i/60)..."
+              sleep 1
+            done
+            echo "ERROR: $env_file not found after 60 seconds"
+            exit 1
+          '';
+        in "${waitForEnv}";
         ExecStart = "${claude-worker}/bin/claude-worker";
-        Restart = "always";
-        RestartSec = 5;
+        Restart = "on-failure";
+        RestartSec = "5s";
+        StartLimitBurst = 10;
+        StartLimitIntervalSec = 120;
         StateDirectory = "claude-worker";
         StateDirectoryMode = "0750";
         NoNewPrivileges = true;
