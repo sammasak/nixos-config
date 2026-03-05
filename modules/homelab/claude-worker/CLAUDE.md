@@ -50,15 +50,27 @@ jq --arg id "abc123" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg result "Dep
 
 ## Definition of Done
 
-A task is NOT done until the outcome is live and verified end-to-end. For web applications:
+A task is NOT done until ALL of the following are verified in order:
 
-1. **Code written** — compiles/runs without errors
-2. **Containerized** — built with nix develop, packaged into alpine:3, pushed to `registry.sammasak.dev/lab/<appname>:latest`
-3. **Deployed via GitOps** — manifests committed to `homelab-gitops` repo, pushed to main
-4. **Flux reconciled** — `flux reconcile kustomization flux-system --with-source` and `kubectl rollout status` confirm pods running
-5. **Accessible at public URL** — `curl -sf https://<appname>.sammasak.dev` returns HTTP 200
+1. **Source code in GitHub** — Before containerizing, create a repo and push:
+   ```bash
+   gh repo create sammasak/<appname> --private --source . --push
+   ```
+   Record the repo URL in the goal result. Source lost when the VM shuts down is unrecoverable.
 
-Do not mark a goal `done` until step 5 is verified.
+2. **Compiles and runs** — No errors, basic smoke test passes
+
+3. **Containerized** — Multi-stage build, pushed to `registry.sammasak.dev/lab/<appname>:latest`
+
+4. **Deployed via GitOps** — Manifests committed to `homelab-gitops` repo, pushed, Flux reconciled
+
+5. **Pod running** — `kubectl rollout status` confirms healthy
+
+6. **Public URL accessible** — `curl -sf https://<appname>.sammasak.dev` returns HTTP 200
+
+7. **Application logic correct** — For monitoring/aggregator apps: verify a known-UP service is classified UP AND that a 4xx response is classified DOWN — HTTP 200 on the page itself does not mean the logic is correct
+
+Do not mark a goal `done` until step 7 is verified.
 
 ## Working Environment
 
@@ -187,6 +199,46 @@ flux reconcile kustomization flux-system --with-source
 kubectl rollout status deployment/<appname> -n <appname> --timeout=120s
 ```
 
+## Skills Update Workflow
+
+If you add or modify skills in `claude-code-skills` before building the VM image, you MUST update the flake lock first — the image build is hermetic and uses the locked revision:
+
+```bash
+# 1. Push skills to GitHub first
+cd ~/claude-code-skills && git push
+
+# 2. Update the lock to the new commit
+cd ~/nixos-config && nix flake update claude-code-skills
+
+# 3. Commit the updated lock
+git add flake.lock && git commit -m "chore: update claude-code-skills flake input"
+git push origin homelab
+
+# 4. THEN build the image
+just release-agent latest
+```
+
+Skipping step 2 means the built image uses the old skills. `just release-agent` builds from `flake.lock` — pushing to GitHub does NOT automatically update the lock.
+
+## Homelab Service Inventory
+
+These are the ONLY services deployed in this homelab. Do not reference any service not on this list.
+
+| Service | Public URL | Health endpoint | Healthy response |
+|---------|-----------|----------------|-----------------|
+| Grafana | https://grafana.sammasak.dev | /api/health | JSON with `"database":"ok"` |
+| Harbor | https://registry.sammasak.dev | /api/v2.0/ping | Body: `Pong` |
+| Status page | https://status.sammasak.dev | / | HTTP 200 |
+| Loki | internal only | — | Not publicly accessible |
+| Prometheus | internal only | — | Not publicly accessible |
+| AdGuard | internal only | — | Not publicly accessible |
+
+**No Gitea. No Forgejo. No Nextcloud. No Jellyfin.** If you are unsure whether a service exists — it does not exist. Do not invent services to fill out a status page or monitoring dashboard.
+
+When building a status page or health aggregator:
+- Use the dedicated health endpoint from this table, not the homepage URL
+- Only HTTP 2xx = UP; any 4xx, 5xx, timeout, or connection error = DOWN
+
 ## Homelab Infrastructure
 
 **Container registry:** `registry.sammasak.dev`
@@ -264,6 +316,20 @@ resources:
 ```
 
 **Image pull policy:** Always set `imagePullPolicy: Always` with `:latest` tags.
+
+## Health Polling — Correct Implementation
+
+When writing health-check, uptime-monitor, or status-page code:
+
+```rust
+// CORRECT — only 2xx is UP
+let is_up = response.status().is_success();
+
+// WRONG — 404 from nginx treated as UP
+let is_up = response.status().as_u16() < 500;
+```
+
+Always use the dedicated health endpoint (see Service Inventory), never the homepage URL. Homepage URLs return HTML 200 even when the backend database is down.
 
 ## Behavioral Principles
 
