@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse,
@@ -63,7 +63,6 @@ struct UpdateGoal {
 // ── App state ───────────────────────────────────────────────────────────────
 
 struct AppState {
-    api_key: String,
     goals_file: PathBuf,
     workspace_dir: PathBuf,
     logs_dir: PathBuf,
@@ -92,13 +91,9 @@ async fn main() {
         fs::write(&goals_file, "[]").await.expect("init goals.json");
     }
 
-    let api_key = env::var("CLAUDE_WORKER_API_KEY")
-        .expect("CLAUDE_WORKER_API_KEY must be set — refusing to start with no authentication");
-
     let (log_tx, _) = broadcast::channel::<String>(1024);
 
     let state = Arc::new(AppState {
-        api_key,
         goals_file,
         workspace_dir,
         logs_dir,
@@ -137,20 +132,15 @@ async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn list_goals(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<Vec<Goal>>, StatusCode> {
-    require_auth(&headers, &state.api_key)?;
+) -> Json<Vec<Goal>> {
     let goals = read_goals(&state.goals_file).await;
-    Ok(Json(goals))
+    Json(goals)
 }
 
 async fn create_goal(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(payload): Json<CreateGoal>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    require_auth(&headers, &state.api_key)?;
-
     let goal = Goal {
         id: Uuid::new_v4().to_string(),
         goal: payload.goal,
@@ -179,11 +169,8 @@ async fn create_goal(
 async fn update_goal(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    headers: HeaderMap,
     Json(payload): Json<UpdateGoal>,
 ) -> Result<Json<Goal>, StatusCode> {
-    require_auth(&headers, &state.api_key)?;
-
     let _lock = state.goals_lock.lock().await;
     let mut goals = read_goals(&state.goals_file).await;
     let goal = goals.iter_mut().find(|g| g.id == id).ok_or(StatusCode::NOT_FOUND)?;
@@ -214,10 +201,7 @@ async fn update_goal(
 async fn stream_goal(
     State(state): State<Arc<AppState>>,
     Path(_id): Path<String>,
-    headers: HeaderMap,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, StatusCode> {
-    require_auth(&headers, &state.api_key)?;
-
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = state.log_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|msg| {
         futures_util::future::ready(match msg {
@@ -226,7 +210,7 @@ async fn stream_goal(
         })
     });
 
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
 // ── Claude spawning ───────────────────────────────────────────────────────────
@@ -359,19 +343,4 @@ async fn write_goals(path: &PathBuf, goals: &[Goal]) -> Result<(), std::io::Erro
     fs::write(&tmp, &content).await?;
     fs::rename(&tmp, path).await?;
     Ok(())
-}
-
-// ── Auth helper ───────────────────────────────────────────────────────────────
-
-fn require_auth(headers: &HeaderMap, api_key: &str) -> Result<(), StatusCode> {
-    let expected = format!("Bearer {}", api_key);
-    let provided = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if provided == expected {
-        Ok(())
-    } else {
-        Err(StatusCode::UNAUTHORIZED)
-    }
 }
