@@ -5,7 +5,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse,
     },
-    routing::{get, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use chrono::Utc;
@@ -109,6 +109,7 @@ async fn main() {
         .route("/goals", get(list_goals).post(create_goal))
         .route("/goals/:id", put(update_goal))
         .route("/goals/:id/stream", get(stream_goal))
+        .route("/events", post(post_event))
         .with_state(state);
 
     let addr = env::var("CLAUDE_WORKER_LISTEN").unwrap_or_else(|_| "127.0.0.1:4200".into());
@@ -208,12 +209,25 @@ async fn stream_goal(
     let rx = state.log_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|msg| {
         futures_util::future::ready(match msg {
+            Ok(line) if line.starts_with("HOOK:") => {
+                let data = line["HOOK:".len()..].to_string();
+                Some(Ok(Event::default().event("hook").data(data)))
+            }
             Ok(line) => Some(Ok(Event::default().data(line))),
             Err(_) => None,
         })
     });
 
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+}
+
+async fn post_event(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> StatusCode {
+    let json = serde_json::to_string(&body).unwrap_or_default();
+    let _ = state.log_tx.send(format!("HOOK:{}", json));
+    StatusCode::NO_CONTENT
 }
 
 // ── Claude spawning ───────────────────────────────────────────────────────────
