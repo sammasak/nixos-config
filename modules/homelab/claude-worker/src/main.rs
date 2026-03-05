@@ -46,6 +46,8 @@ struct Goal {
     created_at: String,
     started_at: Option<String>,
     completed_at: Option<String>,
+    #[serde(default)]
+    reviewed_at: Option<String>,
     result: Option<String>,
 }
 
@@ -148,6 +150,7 @@ async fn create_goal(
         created_at: Utc::now().to_rfc3339(),
         started_at: None,
         completed_at: None,
+        reviewed_at: None,
         result: None,
     };
 
