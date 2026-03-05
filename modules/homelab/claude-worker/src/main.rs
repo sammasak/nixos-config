@@ -69,6 +69,7 @@ struct AppState {
     logs_dir: PathBuf,
     claude_running: Mutex<bool>,
     log_tx: broadcast::Sender<String>,
+    goals_lock: Mutex<()>,
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ async fn main() {
         logs_dir,
         claude_running: Mutex::new(false),
         log_tx,
+        goals_lock: Mutex::new(()),
     });
 
     let app = Router::new()
@@ -120,8 +122,17 @@ async fn main() {
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
-async fn health() -> &'static str {
-    "OK"
+async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let goals = read_goals(&state.goals_file).await;
+    let pending = goals.iter().filter(|g| g.status == GoalStatus::Pending).count();
+    let in_progress = goals.iter().filter(|g| g.status == GoalStatus::InProgress).count();
+    let claude_running = *state.claude_running.lock().await;
+    Json(serde_json::json!({
+        "status": "ok",
+        "claude_running": claude_running,
+        "pending_goals": pending,
+        "in_progress_goals": in_progress,
+    }))
 }
 
 async fn list_goals(
@@ -150,9 +161,14 @@ async fn create_goal(
         result: None,
     };
 
+    let _lock = state.goals_lock.lock().await;
     let mut goals = read_goals(&state.goals_file).await;
     goals.push(goal.clone());
-    write_goals(&state.goals_file, &goals).await;
+    if let Err(e) = write_goals(&state.goals_file, &goals).await {
+        eprintln!("Failed to write goals.json: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    drop(_lock);
 
     // Spawn claude if not already running
     maybe_spawn_claude(Arc::clone(&state)).await;
@@ -168,6 +184,7 @@ async fn update_goal(
 ) -> Result<Json<Goal>, StatusCode> {
     require_auth(&headers, &state.api_key)?;
 
+    let _lock = state.goals_lock.lock().await;
     let mut goals = read_goals(&state.goals_file).await;
     let goal = goals.iter_mut().find(|g| g.id == id).ok_or(StatusCode::NOT_FOUND)?;
 
@@ -185,7 +202,11 @@ async fn update_goal(
     }
 
     let updated = goal.clone();
-    write_goals(&state.goals_file, &goals).await;
+    if let Err(e) = write_goals(&state.goals_file, &goals).await {
+        eprintln!("Failed to write goals.json: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    drop(_lock);
 
     Ok(Json(updated))
 }
@@ -227,10 +248,14 @@ async fn maybe_spawn_claude(state: Arc<AppState>) {
 async fn run_claude(state: Arc<AppState>) {
     let log_file_path = state.logs_dir.join("current.log");
 
-    let startup_prompt = "Begin autonomous work session. \
-        Read /var/lib/claude-worker/goals.json, find the first pending goal, \
-        update its status to in_progress, and work on it until done. \
-        Follow all instructions in your CLAUDE.md.";
+    let goals_path = state.goals_file.display().to_string();
+    let startup_prompt = format!(
+        "Begin autonomous work session. Check {goals_path} for any in_progress goal \
+        first (resume it if found), otherwise find the first pending goal, mark it \
+        in_progress using `jq`, and work on it until complete. \
+        Follow all instructions in your CLAUDE.md.",
+        goals_path = goals_path
+    );
 
     let mut child = match tokio::process::Command::new("claude")
         .arg("-p")
@@ -296,12 +321,23 @@ async fn run_claude(state: Arc<AppState>) {
     });
 
     // Wait for claude to finish, then drain stdout before signalling watchers
-    match child.wait().await {
-        Ok(status) => eprintln!("claude exited with status: {}", status),
-        Err(e) => eprintln!("claude wait error: {}", e),
-    }
+    let exit_status = child.wait().await;
+    let done_msg = match exit_status {
+        Ok(status) if status.success() => {
+            eprintln!("claude exited successfully");
+            "[DONE]".to_string()
+        }
+        Ok(status) => {
+            eprintln!("claude exited with status: {}", status);
+            format!("[FAILED:{}]", status.code().unwrap_or(-1))
+        }
+        Err(e) => {
+            eprintln!("claude wait error: {}", e);
+            format!("[FAILED:{}]", e)
+        }
+    };
     let _ = stdout_done.await;
-    let _ = state.log_tx.send("[DONE]".to_string());
+    let _ = state.log_tx.send(done_msg);
 
     *state.claude_running.lock().await = false;
 }
@@ -315,9 +351,14 @@ async fn read_goals(path: &PathBuf) -> Vec<Goal> {
     }
 }
 
-async fn write_goals(path: &PathBuf, goals: &[Goal]) {
-    let content = serde_json::to_string_pretty(goals).expect("serialize goals");
-    fs::write(path, content).await.expect("write goals.json");
+async fn write_goals(path: &PathBuf, goals: &[Goal]) -> Result<(), std::io::Error> {
+    let content = serde_json::to_string_pretty(goals).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+    })?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &content).await?;
+    fs::rename(&tmp, path).await?;
+    Ok(())
 }
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
