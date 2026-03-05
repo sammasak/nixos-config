@@ -136,7 +136,10 @@ in
         User = username;
         Group = "users";
         WorkingDirectory = cfg.workerHome;
-        EnvironmentFile = "${cfg.workerHome}/.env";
+        # EnvironmentFile is NOT used here because systemd loads it before
+        # ExecStartPre runs — if .env doesn't exist yet, the service fails
+        # immediately with 'resources' before the wait loop can help.
+        # Instead, the start wrapper below sources .env after ExecStartPre waits.
         ExecStartPre = let
           waitForEnv = pkgs.writeShellScript "wait-for-env" ''
             env_file="${cfg.workerHome}/.env"
@@ -165,7 +168,15 @@ in
             done
           '';
         in [ "${waitForEnv}" "${linkClaudeDirs}" ];
-        ExecStart = "${claude-worker}/bin/claude-worker";
+        ExecStart = let
+          startWrapper = pkgs.writeShellScript "claude-worker-start" ''
+            # Source .env after ExecStartPre has confirmed the file exists
+            set -a
+            . "${cfg.workerHome}/.env"
+            set +a
+            exec ${claude-worker}/bin/claude-worker
+          '';
+        in "${startWrapper}";
         Restart = "on-failure";
         RestartSec = "5s";
         StartLimitBurst = 10;
