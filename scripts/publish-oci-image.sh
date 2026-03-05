@@ -105,8 +105,13 @@ else
     harbor_user=$(echo "$auth_encoded" | base64 -d | cut -d: -f1)
     harbor_pass=$(echo "$auth_encoded" | base64 -d | cut -d: -f2-)
   else
-    echo "ERROR: no credentials for $registry. Set HARBOR_ADMIN_USER/HARBOR_ADMIN_PASSWORD or run: skopeo login $registry"
-    exit 1
+    # Fall back to separate username/password fields (non-standard but common)
+    harbor_user=$(jq -r --arg reg "$registry" '.auths[$reg].username // empty' "$auth_file" 2>/dev/null || true)
+    harbor_pass=$(jq -r --arg reg "$registry" '.auths[$reg].password // empty' "$auth_file" 2>/dev/null || true)
+    if [[ -z "$harbor_user" ]]; then
+      echo "ERROR: no credentials for $registry. Set HARBOR_ADMIN_USER/HARBOR_ADMIN_PASSWORD or run: skopeo login $registry"
+      exit 1
+    fi
   fi
 fi
 
