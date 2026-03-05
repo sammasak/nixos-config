@@ -152,9 +152,9 @@ in
             exit 1
           '';
           linkClaudeDirs = pkgs.writeShellScript "link-claude-dirs" ''
-            # Symlink skills and agents from the Home Manager-managed user home
+            # Symlink skills, agents, and settings.json from the Home Manager-managed user home
             # into the workerHome so the claude process (HOME=${cfg.workerHome})
-            # can discover them via ~/.claude/skills and ~/.claude/agents.
+            # can discover them via ~/.claude/skills, ~/.claude/agents, and ~/.claude/settings.json.
             user_claude="/home/${username}/.claude"
             worker_claude="${cfg.workerHome}/.claude"
             mkdir -p "$worker_claude"
@@ -166,6 +166,15 @@ in
                 echo "Linked $dst -> $src"
               fi
             done
+            # Symlink settings.json so hooks and plugin config from Home Manager take effect.
+            # The workerHome settings.json (only skipDangerousModePermissionPrompt) is replaced
+            # by the full Home Manager-managed settings that include hooks and MCP servers.
+            src="$user_claude/settings.json"
+            dst="$worker_claude/settings.json"
+            if [ -f "$src" ] && [ ! -L "$dst" ]; then
+              ln -sfn "$src" "$dst"
+              echo "Linked $dst -> $src"
+            fi
           '';
         in [ "${waitForEnv}" "${linkClaudeDirs}" ];
         ExecStart = let
