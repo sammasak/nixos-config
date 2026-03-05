@@ -148,7 +148,23 @@ in
             echo "ERROR: $env_file not found after 60 seconds"
             exit 1
           '';
-        in "${waitForEnv}";
+          linkClaudeDirs = pkgs.writeShellScript "link-claude-dirs" ''
+            # Symlink skills and agents from the Home Manager-managed user home
+            # into the workerHome so the claude process (HOME=${cfg.workerHome})
+            # can discover them via ~/.claude/skills and ~/.claude/agents.
+            user_claude="/home/${username}/.claude"
+            worker_claude="${cfg.workerHome}/.claude"
+            mkdir -p "$worker_claude"
+            for dir in skills agents; do
+              src="$user_claude/$dir"
+              dst="$worker_claude/$dir"
+              if [ -d "$src" ] && [ ! -L "$dst" ]; then
+                ln -sfn "$src" "$dst"
+                echo "Linked $dst -> $src"
+              fi
+            done
+          '';
+        in [ "${waitForEnv}" "${linkClaudeDirs}" ];
         ExecStart = "${claude-worker}/bin/claude-worker";
         Restart = "on-failure";
         RestartSec = "5s";
