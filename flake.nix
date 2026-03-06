@@ -18,7 +18,7 @@
     claude-code-skills.url = "github:sammasak/claude-code-skills";
     claude-code-skills.flake = false;
 
-    claude-ctl.url = "git+ssh://git@github.com/sammasak/claude-ctl?ref=v0.0.2&rev=d6b43d7ea95e182aa26a0c398c350e5d02af18e4";
+    claude-ctl.url = "git+ssh://git@github.com/sammasak/claude-ctl?ref=v0.0.3&rev=ecdc7883977c45fb369e3250a6c82705fb02f09e";
     claude-ctl.flake = false;
   };
 
