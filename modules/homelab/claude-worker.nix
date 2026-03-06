@@ -158,14 +158,31 @@ in
             user_claude="/home/${username}/.claude"
             worker_claude="${cfg.workerHome}/.claude"
             mkdir -p "$worker_claude"
-            for dir in skills agents; do
-              src="$user_claude/$dir"
-              dst="$worker_claude/$dir"
-              if [ -d "$src" ] && [ ! -L "$dst" ]; then
-                ln -sfn "$src" "$dst"
-                echo "Linked $dst -> $src"
+
+            # Skills: link each subdirectory individually, skipping those with a vm-exclude marker.
+            src_skills="$user_claude/skills"
+            dst_skills="$worker_claude/skills"
+            mkdir -p "$dst_skills"
+            for skill_dir in "$src_skills"/*/; do
+              [ -d "$skill_dir" ] || continue
+              skill_name=$(basename "$skill_dir")
+              if [ -f "$skill_dir/vm-exclude" ]; then
+                echo "Skipping VM-excluded skill: $skill_name"
+                continue
               fi
+              dst="$dst_skills/$skill_name"
+              [ -L "$dst" ] || ln -sfn "$skill_dir" "$dst"
+              echo "Linked skill $skill_name"
             done
+
+            # Agents: symlink the whole directory (no per-agent exclusion needed).
+            src="$user_claude/agents"
+            dst="$worker_claude/agents"
+            if [ -d "$src" ] && [ ! -L "$dst" ]; then
+              ln -sfn "$src" "$dst"
+              echo "Linked $dst -> $src"
+            fi
+
             # Symlink settings.json so hooks and plugin config from Home Manager take effect.
             # The workerHome settings.json (only skipDangerousModePermissionPrompt) is replaced
             # by the full Home Manager-managed settings that include hooks and MCP servers.
