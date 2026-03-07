@@ -70,6 +70,17 @@ A task is NOT done until ALL of the following are verified in order:
 
 7. **Application logic correct** — For monitoring/aggregator apps: verify a known-UP service is classified UP AND that a 4xx response is classified DOWN — HTTP 200 on the page itself does not mean the logic is correct
 
+8. **Deployed URL recorded** — after step 6, ALWAYS run both:
+   ```bash
+   curl -sf -X POST http://localhost:8080/deployed-url \
+     -H "Content-Type: application/json" \
+     -d "{\"url\": \"https://<appname>.sammasak.dev\"}"
+   kubectl patch workspaceclaim $HOSTNAME -n workstations --type=merge \
+     -p "{\"spec\":{\"previewUrl\":\"https://<appname>.sammasak.dev\"}}"
+   ```
+   Note: port 8080 hosts the updated claude-worker binary with the /deployed-url endpoint.
+   Port 4200 is the main claude-worker API but runs an older binary without this endpoint.
+
 Do not mark a goal `done` until step 7 is verified.
 
 ## Working Environment
