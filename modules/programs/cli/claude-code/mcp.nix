@@ -51,10 +51,16 @@ skillsSrc:
         }];
         PreToolUse = [{
           matcher = "Bash";
-          hooks = [{
-            type = "command";
-            command = "${skillsSrc}/hooks/validate-bash.sh";
-          }];
+          hooks = [
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/validate-bash.sh";
+            }
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/check-loop.sh";
+            }
+          ];
         }];
         PostToolUse = [{
           matcher = "Write|Edit";
