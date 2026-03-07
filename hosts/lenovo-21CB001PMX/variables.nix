@@ -9,19 +9,6 @@
   kbdVariant = "";
   consoleKeymap = "sv-latin1";
 
-  # Desktop
-  desktop = "hyprland";
-  waybarTheme = "minimal";
-  sddmTheme = "astronaut";
-  defaultWallpaper = "train-sideview.webp";
-
-  # Applications
-  terminal = "kitty";
-  browser = "firefox";
-  editor = "vscode";
-  shell = "nushell";
-  tuiFileManager = "yazi";
-
   # Hardware
   videoDriver = "intel";
 
@@ -33,8 +20,7 @@
 
   # Features
   laptop = true;
-  games = false;
 
   # Roles
-  roles = [ "base" "laptop" "desktop" ];
+  roles = [ "base" "laptop" "homelab-server" ];
 }

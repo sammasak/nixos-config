@@ -11,13 +11,17 @@
       "btrfs"
     ];
     tmp.cleanOnBoot = true;
-    kernelPackages = pkgs.linuxPackages_latest;
+    kernelPackages = lib.mkDefault pkgs.linuxPackages_latest;
     kernelParams = [
       "preempt=full"
     ];
     loader = {
-      efi.canTouchEfiVariables = true;
-      efi.efiSysMountPoint = "/boot";
+      # Default: manage NVRAM boot entries. Some environments (legacy/CSM boot,
+      # restricted firmware) can't access EFI variables, so allow host override.
+      efi.canTouchEfiVariables = lib.mkDefault true;
+      # Default ESP mountpoint. Some hosts mount ESP at /boot/efi to keep /boot on
+      # the root filesystem (useful when sharing a small Windows ESP).
+      efi.efiSysMountPoint = lib.mkDefault "/boot";
       timeout = 3;
       grub = {
         enable = true;

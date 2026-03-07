@@ -31,6 +31,12 @@
           on-timeout = "hyprctl dispatch dpms off";
           on-resume = "hyprctl dispatch dpms on";
         }
+        {
+          # After 60m idle: lock, turn displays off, then cleanly logout to SDDM.
+          # Keep terminate-user as a fallback if the compositor exit command fails.
+          timeout = 3600;
+          on-timeout = "loginctl lock-session && hyprctl dispatch dpms off && sleep 1 && hyprctl dispatch exit || loginctl terminate-user \"$USER\"";
+        }
       ];
     };
   };

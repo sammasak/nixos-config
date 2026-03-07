@@ -1,20 +1,25 @@
 # Base system packages
-{ pkgs, ... }:
+{ config, pkgs, lib, ... }:
+let
+  hasDesktop = config.programs.hyprland.enable or false;
+in
 {
   programs = {
     fuse.userAllowOther = true;
     mtr.enable = true;
   };
 
-  environment.systemPackages = with pkgs; [
+  environment.systemPackages =
+    with pkgs;
+    [
     # Core utilities
     vim
     wget
     curl
     htop
+    tmux
     killall
     lm_sensors
-    gnome-disk-utility
 
     # File handling
     unrar
@@ -28,27 +33,35 @@
     fd
     ripgrep
     tldr
+    claude-code
+    nodejs
+    chromium
+    just
 
     # Nix tools
     nix-prefetch-scripts
     appimage-run
-
-    # Desktop utilities
-    xdg-utils
-    wl-clipboard
-    grim
-    slurp
-    brightnessctl
-    pavucontrol
-    playerctl
-    hyprpicker
-    grimblast
-    swappy
-    wf-recorder
-    cliphist
-    libnotify
-    yad
     gawk
-    swww
-  ];
+    ]
+    ++ lib.optionals hasDesktop [
+      # Desktop utilities
+      xdg-utils
+      gnome-disk-utility
+      brightnessctl
+      pavucontrol
+      playerctl
+      libnotify
+      yad
+    ]
+    ++ lib.optionals hasDesktop [
+      wl-clipboard
+      grim
+      slurp
+      hyprpicker
+      grimblast
+      swappy
+      wf-recorder
+      cliphist
+      swww
+    ];
 }

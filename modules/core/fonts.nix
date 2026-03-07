@@ -1,6 +1,9 @@
 # Font configuration
-{ pkgs, ... }:
-{
+{ config, pkgs, lib, ... }:
+let
+  hasDesktop = config.programs.hyprland.enable or false;
+in
+lib.mkIf hasDesktop {
   fonts = {
     fontDir.enable = true;
     packages = with pkgs; [

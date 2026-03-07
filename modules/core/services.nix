@@ -1,25 +1,32 @@
 # Core services (audio, bluetooth, etc.)
-{ ... }:
+{ config, lib, ... }:
+let
+  username = config.sam.profile.username;
+  hasDesktop = config.programs.hyprland.enable or false;
+in
 {
   services = {
-    libinput.enable = true;
     fstrim.enable = true;
-    devmon.enable = true;
-    gvfs.enable = true;
-    udisks2.enable = true;
 
     openssh = {
       enable = true;
       ports = [ 22 ];
       settings = {
-        PasswordAuthentication = true;
-        KbdInteractiveAuthentication = true;
-        AllowUsers = null;
-        UseDns = true;
+        PasswordAuthentication = false;
+        KbdInteractiveAuthentication = false;
+        AllowUsers = [ username ];
+        UseDns = false;
         X11Forwarding = false;
-        PermitRootLogin = "prohibit-password";
+        PermitRootLogin = "no";
+        PubkeyAuthentication = true;
       };
     };
+
+  } // lib.optionalAttrs hasDesktop {
+    libinput.enable = true;
+    devmon.enable = true;
+    gvfs.enable = true;
+    udisks2.enable = true;
 
     blueman.enable = true;
     tumbler.enable = true;
@@ -42,5 +49,5 @@
     };
   };
 
-  security.rtkit.enable = true;
+  security.rtkit.enable = lib.mkDefault hasDesktop;
 }

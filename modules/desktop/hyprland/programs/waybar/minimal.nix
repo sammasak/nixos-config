@@ -17,7 +17,7 @@
         gtk-layer-shell = true;
         fixed-center = true;
         ipc = true;
-        margin-top = 10;
+        margin-top = 6;
         margin-left = 10;
         margin-right = 10;
         margin-bottom = 0;
@@ -38,6 +38,7 @@
         modules-right = [
           "backlight"
           "pulseaudio"
+          "pulseaudio#microphone"
           "network"
           "bluetooth"
           "tray"
@@ -54,8 +55,7 @@
 
         backlight = {
           interval = 2;
-          format = "{icon} {percent}%";
-          format-icons = [ "" "" "" "" "" "" "" "" "" ];
+          format = "󰃠 {percent}%";
           on-scroll-up = "brightnessctl set +5%";
           on-scroll-down = "brightnessctl set 5%-";
         };
@@ -157,20 +157,20 @@
           tooltip-format = "{icon} {desc} // {volume}%";
           scroll-step = 5;
           format-icons = {
-            headphone = "";
-            hands-free = "";
-            headset = "";
-            phone = "";
-            portable = "";
-            car = "";
-            default = [ "" "" "" ];
+            headphone = "󰋋";
+            hands-free = "󰋎";
+            headset = "󰋎";
+            phone = "󰏲";
+            portable = "󰄝";
+            car = "󰄋";
+            default = [ "󰕿" "󰖀" "󰕾" ];
           };
         };
 
         "pulseaudio#microphone" = {
           format = "{format_source}";
-          format-source = " {volume}%";
-          format-source-muted = "";
+          format-source = "󰍬 {volume}%";
+          format-source-muted = "󰍭 muted";
           on-click = "pavucontrol -t 4";
           tooltip-format = "{format_source} {source_desc} // {source_volume}%";
           scroll-step = 5;
@@ -178,10 +178,14 @@
 
         temperature = {
           interval = 10;
-          tooltip = false;
-          critical-threshold = 82;
-          format-critical = "{icon} {temperatureC}°C";
-          format = "󰈸 {temperatureC}°C";
+          tooltip = true;
+          tooltip-format = "CPU Package: {temperatureC}°C";
+          critical-threshold = 85;
+          format-critical = " {temperatureC}°C";
+          format = " {temperatureC}°C";
+          # Use coretemp CPU package sensor (stable path across reboots)
+          hwmon-path-abs = "/sys/devices/platform/coretemp.0/hwmon";
+          input-filename = "temp1_input";  # Package temp
         };
 
         tray = {
@@ -252,10 +256,20 @@
       @define-color flamingo  #f2cdcd;
       @define-color rosewater #f5e0dc;
 
-      window#waybar {
+      window#waybar,
+      window#waybar.background,
+      window#waybar > box,
+      window#waybar > box.horizontal,
+      .background {
         transition-property: background-color;
         transition-duration: 0.5s;
-        background: transparent;
+        background-color: rgba(0, 0, 0, 0);
+        background-image: none;
+        border: none;
+        box-shadow: none;
+      }
+
+      window#waybar {
         border-radius: 10px;
       }
 

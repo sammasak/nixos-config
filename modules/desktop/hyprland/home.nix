@@ -1,9 +1,19 @@
 # Hyprland Desktop Environment
 # Imports all hyprland-related programs and scripts
-{ config, pkgs, lib, host, ... }:
+{ config, pkgs, lib, osConfig ? null, ... }:
 let
   mkForce = lib.mkForce;
-  vars = import ../../../hosts/${host}/variables.nix;
+  baseProfile =
+    if osConfig != null && osConfig ? sam && osConfig.sam ? profile
+    then osConfig.sam.profile
+    else { };
+  # Merge base profile with hardcoded defaults for removed fields
+  profile = baseProfile // {
+    monitors = baseProfile.monitors or [ ",preferred,auto,1" ];
+    kbdLayout = baseProfile.kbdLayout or "se";
+    terminal = "kitty";
+    browser = "firefox";
+  };
 in
 {
   imports = [
@@ -22,9 +32,7 @@ in
     portalPackage = null;
 
     settings = {
-      monitor = vars.monitors or [
-        "preferred,auto,1"
-      ];
+      monitor = profile.monitors;
 
       xwayland = {
         force_zero_scaling = true;
@@ -97,7 +105,7 @@ in
       };
 
       input = {
-        kb_layout = vars.kbdLayout or "se";
+        kb_layout = profile.kbdLayout;
         follow_mouse = 1;
         sensitivity = 0;
         accel_profile = "flat";
@@ -116,8 +124,6 @@ in
         "3, horizontal, workspace"
       ];
 
-
-
       misc = {
         disable_hyprland_logo = true;
         disable_splash_rendering = true;
@@ -129,6 +135,8 @@ in
       };
 
       exec-once = [
+        # Ensure status bar is present after any new Hyprland session (including post-SDDM relogin).
+        "systemctl --user restart waybar.service"
         "wallpaper-init"
         "wl-paste --type text --watch cliphist store"
         "wl-paste --type image --watch cliphist store"
@@ -137,13 +145,13 @@ in
 
       bind = [
         # Application launchers
-        "$mod, Return, exec, ${vars.terminal or "kitty"}"
-        "$mod SHIFT, Return, exec, ${vars.terminal or "kitty"}"
+        "$mod, Return, exec, ${profile.terminal}"
+        "$mod SHIFT, Return, exec, ${profile.terminal}"
         "$mod, D, exec, rofi -show drun"
         "$mod, A, exec, rofi -show drun"
         "$mod, Space, exec, rofi -show drun"
         "$mod, E, exec, thunar"
-        "$mod, B, exec, ${vars.browser or "firefox"}"
+        "$mod, B, exec, ${profile.browser}"
 
         # Window management
         "$mod, Q, killactive,"
@@ -286,13 +294,38 @@ in
         ", XF86MonBrightnessDown, exec, brightnessctl set 5%-"
       ];
 
-      windowrulev2 = [
-        "float,class:^(pavucontrol)$"
-        "float,class:^(thunar)$,title:^(File Operation Progress)$"
-        "float,class:^(yad)$"
-        "float,title:^(Picture-in-Picture)$"
-        "pin,title:^(Picture-in-Picture)$"
-        "opacity 0.95 0.95,class:^(kitty)$"
+      windowrule = [
+        {
+          name = "float-pavucontrol";
+          "match:class" = "^(pavucontrol)$";
+          float = true;
+        }
+        {
+          name = "float-thunar-progress";
+          "match:class" = "^(thunar)$";
+          "match:title" = "^(File Operation Progress)$";
+          float = true;
+        }
+        {
+          name = "float-yad";
+          "match:class" = "^(yad)$";
+          float = true;
+        }
+        {
+          name = "float-pip";
+          "match:title" = "^(Picture-in-Picture)$";
+          float = true;
+        }
+        {
+          name = "pin-pip";
+          "match:title" = "^(Picture-in-Picture)$";
+          pin = true;
+        }
+        {
+          name = "kitty-opacity";
+          "match:class" = "^(kitty)$";
+          opacity = "0.95 0.95";
+        }
       ];
     };
   };

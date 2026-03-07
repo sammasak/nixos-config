@@ -1,9 +1,9 @@
 # SDDM display manager
-{ pkgs, lib, host, ... }:
+{ pkgs, ... }:
 let
-  inherit (import ../../hosts/${host}/variables.nix) sddmTheme;
+  sddmTheme = "astronaut";
   sddm-astronaut = pkgs.sddm-astronaut.override {
-    embeddedTheme = "${sddmTheme}";
+    embeddedTheme = sddmTheme;
     themeConfig = {
       PartialBlur = "false";
       FormPosition = "center";
@@ -22,7 +22,7 @@ in
     wayland.enable = true;
     enableHidpi = true;
     autoNumlock = true;
-    package = lib.mkForce pkgs.kdePackages.sddm;
+    package = pkgs.kdePackages.sddm;
     extraPackages = sddmDependencies;
     settings.Theme.CursorTheme = "Bibata-Modern-Classic";
     theme = "sddm-astronaut-theme";
