@@ -87,14 +87,17 @@
     "claude-ctl": {
       "flake": false,
       "locked": {
-        "lastModified": 1772893064,
-        "narHash": "sha256-HpH6E1EUBz7oPKRm6cy8Tsbx6lzVBTyFQz+df4hh1Pk=",
-        "path": "/home/lukas/claude-ctl",
-        "type": "path"
+        "lastModified": 1772892883,
+        "narHash": "sha256-aY0xGz5erfsCytcYG7vieeO7HdCmJ6f2MKPHHmS0QJ8=",
+        "ref": "refs/heads/main",
+        "rev": "e06c0009e919ae259e83cbfa9d22ec773ec206f8",
+        "revCount": 18,
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/claude-ctl"
       },
       "original": {
-        "path": "/home/lukas/claude-ctl",
-        "type": "path"
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/claude-ctl"
       }
     },
     "firefox-gnome-theme": {

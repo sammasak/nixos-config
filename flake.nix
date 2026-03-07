@@ -18,7 +18,7 @@
     claude-code-skills.url = "github:sammasak/claude-code-skills";
     claude-code-skills.flake = false;
 
-    claude-ctl.url = "path:/home/lukas/claude-ctl";
+    claude-ctl.url = "git+ssh://git@github.com/sammasak/claude-ctl";
     claude-ctl.flake = false;
   };
 
