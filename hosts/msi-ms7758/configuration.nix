@@ -54,6 +54,9 @@ in
     }
   '';
 
+  # Wake on LAN — magic packet on the onboard NIC.
+  networking.interfaces.enp3s0.wakeOnLan.enable = true;
+
   # Desktop tower: no automatic suspend/hibernate behavior.
   services.logind.settings.Login = {
     IdleAction = "ignore";
