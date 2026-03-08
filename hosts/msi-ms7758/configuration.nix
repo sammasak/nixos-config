@@ -1,5 +1,5 @@
 # Host configuration for msi-ms7758
-{ lib, ... }:
+{ lib, pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -55,7 +55,21 @@ in
   '';
 
   # Wake on LAN — magic packet on the onboard NIC.
+  # The .link file (via wakeOnLan.enable) is processed by udev at boot.
+  # The explicit service ensures WoL is set via ethtool after every boot,
+  # regardless of udev timing, so the NIC is always ready to receive magic packets.
   networking.interfaces.enp3s0.wakeOnLan.enable = true;
+
+  systemd.services.wol-enp3s0 = {
+    description = "Enable Wake on LAN for enp3s0";
+    after = [ "network-addresses-enp3s0.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.ethtool}/sbin/ethtool -s enp3s0 wol g";
+    };
+  };
 
   # Desktop tower: no automatic suspend/hibernate behavior.
   services.logind.settings.Login = {
