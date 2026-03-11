@@ -42,6 +42,14 @@ in
     # Only open the firewall when binding to a non-loopback address.
     networking.firewall.allowedTCPPorts = lib.mkIf isPublic [ listenPort ];
 
+    # Expose the kubeconfig at /etc/workstation/kubeconfig so that scripts and
+    # verification checks can use the conventional workstation path regardless of
+    # where the actual kubeconfig lives (workerHome/.kube/config).
+    systemd.tmpfiles.rules = [
+      "d /etc/workstation 0755 root root -"
+      "L /etc/workstation/kubeconfig - - - - ${cfg.workerHome}/.kube/config"
+    ];
+
     environment.systemPackages = [ claude-worker ];
 
     # ── Promtail — ship claude-worker logs to Loki ───────────────────────
