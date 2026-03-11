@@ -36,7 +36,15 @@ skillsSrc:
           command = "${pkgs.playwright-mcp}/bin/mcp-server-playwright";
           # /tmp/playwright-mcp-profile: nix store is read-only so the MCP
           # server cannot create its chromium user-data-dir there.
-          args = [ "--user-data-dir" "/tmp/playwright-mcp-profile" ];
+          # --executable-path: bypasses mcp-chromium channel download logic;
+          # uses nix-packaged chromium directly from the store.
+          # --headless/--no-sandbox: required in server/VM contexts.
+          args = [
+            "--user-data-dir" "/tmp/playwright-mcp-profile"
+            "--executable-path" "${pkgs.chromium}/bin/chromium"
+            "--headless"
+            "--no-sandbox"
+          ];
         };
       };
       # Hooks are wired from the claude-code-skills Nix store path so they are
