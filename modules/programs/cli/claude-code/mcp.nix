@@ -24,7 +24,6 @@ skillsSrc:
       enabledPlugins = {
         "ralph-loop@claude-plugins-official" = true;
         "superpowers@claude-plugins-official" = true;
-        "playwright@claude-plugins-official" = true;
         "superpowers-lab@superpowers-marketplace" = true;
       };
       # MCP servers in settings.json instead of the top-level mcpServers option,
