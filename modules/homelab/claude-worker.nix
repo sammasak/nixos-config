@@ -209,7 +209,7 @@ in
         StartLimitIntervalSec = 120;
         StateDirectory = "claude-worker";
         StateDirectoryMode = "0750";
-        NoNewPrivileges = true;
+        NoNewPrivileges = false;      # must be false: rootless buildah needs newuidmap/newgidmap (setuid binaries)
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = "read-only";
@@ -218,7 +218,7 @@ in
         ProtectKernelModules = true;
         ProtectKernelLogs = true;
         ProtectControlGroups = true;
-        RestrictSUIDSGID = true;
+        RestrictSUIDSGID = false;     # must be false: allow setuid/setgid execution for newuidmap/newgidmap
         LockPersonality = true;
         ReadWritePaths = [ cfg.workerHome "/tmp" ];
         DynamicUser = false;
