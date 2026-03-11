@@ -258,18 +258,27 @@ async fn run_claude(state: Arc<AppState>) {
         goals_path = goals_path
     );
 
-    let mut child = match tokio::process::Command::new("claude")
-        .arg("-p")
-        .arg(startup_prompt)
+    // Pass playwright MCP config explicitly — SDK mode (claude -p) skips
+    // settings.json mcpServers; --mcp-config is the only way to inject stdio servers.
+    let mcp_config_path = "/etc/workstation/mcp-config.json";
+    let has_mcp_config = std::path::Path::new(mcp_config_path).exists();
+
+    let mut cmd = tokio::process::Command::new("claude");
+    cmd.arg("-p")
+        .arg(&startup_prompt)
         .arg("--dangerously-skip-permissions")
         .arg("--verbose")
         .arg("--output-format")
-        .arg("stream-json")
-        .current_dir(&state.workspace_dir)
+        .arg("stream-json");
+    if has_mcp_config {
+        cmd.arg("--mcp-config").arg(mcp_config_path);
+    }
+    cmd.current_dir(&state.workspace_dir)
         .env("HOME", state.workspace_dir.parent().unwrap_or(&state.workspace_dir))
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+
+    let mut child = match cmd.spawn()
     {
         Ok(child) => child,
         Err(e) => {

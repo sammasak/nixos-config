@@ -42,6 +42,21 @@ in
     # Only open the firewall when binding to a non-loopback address.
     networking.firewall.allowedTCPPorts = lib.mkIf isPublic [ listenPort ];
 
+    # Generate an MCP config for the playwright stdio server so that
+    # `claude -p --mcp-config` can load it in SDK mode.  SDK mode skips
+    # settings.json mcpServers entirely — only explicit --mcp-config works.
+    environment.etc."workstation/mcp-config.json".text = builtins.toJSON {
+      mcpServers.playwright = {
+        command = "${pkgs.playwright-mcp}/bin/mcp-server-playwright";
+        args = [
+          "--user-data-dir" "/tmp/playwright-mcp-profile"
+          "--executable-path" "${pkgs.chromium}/bin/chromium"
+          "--headless"
+          "--no-sandbox"
+        ];
+      };
+    };
+
     # Expose the kubeconfig at /etc/workstation/kubeconfig so that scripts and
     # verification checks can use the conventional workstation path regardless of
     # where the actual kubeconfig lives (workerHome/.kube/config).
