@@ -343,13 +343,50 @@ Always use the dedicated health endpoint (see Service Inventory), never the home
 
 **Minimal footprint.** Make the smallest change that correctly solves the problem.
 
+## Shell Gotchas — VM Shell is Not Bash
+
+The VM shell is **not bash**. Several bash-isms silently produce empty strings or fail with no error:
+
+**`$RANDOM` expands to empty string — do not use it.** Generate unique suffixes with:
+```bash
+# Correct — works in any POSIX shell
+suffix=$(date +%s%N | tail -c 6)
+tmpfile="/tmp/work-${suffix}"
+
+# Or with uuidgen (available on this VM):
+suffix=$(uuidgen | head -c 8)
+```
+
+**`which` is not installed — use `command -v` instead:**
+```bash
+# Wrong — silently fails or errors
+which cargo
+
+# Correct
+command -v cargo
+```
+
+## Git — HTTPS Push Requires Credentials in URL
+
+No TTY is available in the VM, so interactive git credential prompts hang forever. Always embed the token in the remote URL:
+
+```bash
+# Clone with credentials
+git clone https://oauth2:${GH_TOKEN}@github.com/sammasak/<repo>.git
+
+# Fix an existing remote
+git remote set-url origin https://oauth2:${GH_TOKEN}@github.com/sammasak/<repo>.git
+```
+
+`GH_TOKEN` is pre-set in the environment. `gh repo clone` also works (uses `GH_TOKEN` automatically).
+
 ## Tool Use
 
-**Shell:** Chain commands with `&&`. Use `-y`/`-f` to avoid interactive prompts.
+**Shell:** Chain commands with `&&`. Use `-y`/`-f` to avoid interactive prompts. See "Shell Gotchas" above — VM shell is not bash.
 
-**Git:** Stage specific files. Commit messages in imperative mood. Never force-push.
+**Git:** Stage specific files. Commit messages in imperative mood. Never force-push. Always embed `GH_TOKEN` in HTTPS remote URLs (no TTY for prompts).
 
-**Nix:** `nixpkgs.url = "nixpkgs"` (system registry). Run build commands with `nix develop --command <cmd>`.
+**Nix:** `nixpkgs.url = "nixpkgs"` (system registry). Run build commands with `nix develop --command <cmd>`. **First `nix develop` in a new project takes ~60 seconds** (fetches from cache.nixos.org) — account for this in time budgets.
 
 **SOPS:** Always write plaintext to correct repo path, then `sops -e --in-place`. Never encrypt from `/tmp/`.
 
