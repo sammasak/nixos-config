@@ -84,19 +84,15 @@ in
     "--node-label=gpu=nvidia"
   ];
 
-  # Enable CDI support in k3s's embedded containerd so GPU devices can be
-  # injected using CDI (for example via NVIDIA device plugin `cdi-annotations`).
+  # Note: CDI (Container Device Interface) enablement via containerdConfigTemplate
+  # is NOT possible with the standard {{ template "base" . }} approach because the
+  # base template already defines [plugins."io.containerd.grpc.v1.cri"], and TOML
+  # forbids duplicate table definitions. Adding another [plugins."io.containerd.grpc.v1.cri"]
+  # section causes containerd 2.x to exit with status 1.
   #
-  # See:
-  # - https://docs.k3s.io/advanced#configuring-containerd
-  # - https://github.com/cncf-tags/container-device-interface
-  services.k3s.containerdConfigTemplate = ''
-    {{ template "base" . }}
-
-    [plugins."io.containerd.grpc.v1.cri"]
-      enable_cdi = true
-      cdi_spec_dirs = ["/etc/cdi", "/var/run/cdi"]
-  '';
+  # GPU workloads can use the nvidia runtime class approach instead:
+  # [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.nvidia]
+  # See ~/nixos-config/pkgs/applications/networking/cluster/k3s/docs/examples/NVIDIA.md
 
   # Best-effort ordering: generate CDI spec before k3s starts.
   systemd.services.k3s = {

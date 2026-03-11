@@ -34,7 +34,9 @@ skillsSrc:
         playwright = {
           type = "stdio";
           command = "${pkgs.playwright-mcp}/bin/mcp-server-playwright";
-          args = [];
+          # /tmp/playwright-mcp-profile: nix store is read-only so the MCP
+          # server cannot create its chromium user-data-dir there.
+          args = [ "--user-data-dir" "/tmp/playwright-mcp-profile" ];
         };
       };
       # Hooks are wired from the claude-code-skills Nix store path so they are
