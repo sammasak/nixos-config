@@ -77,7 +77,7 @@ Do not mark a goal `done` until step 7 is verified.
 - **Host:** NixOS VM (x86_64-linux)
 - **Working directory:** `/var/lib/claude-worker/workspace/` — run all project work here
 - **Projects:** `/var/lib/claude-worker/projects/` — clone repos here
-- **Tools in PATH:** `kubectl`, `flux`, `git`, `gh`, `curl`, `jq`, `sops`, `age`, `yq`, `nix`, `buildah`
+- **Tools in PATH:** `kubectl`, `helm`, `flux`, `git`, `gh`, `curl`, `jq`, `sops`, `age`, `yq`, `nix`, `buildah`, `skopeo`, `shellcheck`, `hadolint`, `yamllint`, `dnsutils` (dig/nslookup), `socat`, `nixfmt`
 - **Build toolchains (cargo, go, python):** NOT globally installed. Every project MUST have a `flake.nix`. Run ALL build commands inside `nix develop`.
 - **Kubernetes:** cluster reachable via `kubectl` and `flux`
 - **Secrets:** encrypted with SOPS+age; decrypt with `sops -d <file>`
@@ -197,6 +197,24 @@ git push origin main
 
 flux reconcile kustomization flux-system --with-source
 kubectl rollout status deployment/<appname> -n <appname> --timeout=120s
+```
+
+**Kubeconfig:** `kubectl` reads from `/etc/workstation/kubeconfig` (symlinked to `~/.kube/config`). Always set `KUBECONFIG=/etc/workstation/kubeconfig` if tools don't pick it up automatically:
+```bash
+export KUBECONFIG=/etc/workstation/kubeconfig
+helm ls --all-namespaces
+```
+
+**Linting before committing manifests:**
+```bash
+# Validate YAML syntax
+yamllint apps/<appname>/
+
+# Lint shell scripts
+shellcheck scripts/*.sh
+
+# Lint Dockerfile before buildah build
+hadolint Dockerfile
 ```
 
 ## Skills Update Workflow
@@ -331,21 +349,40 @@ let is_up = response.status().as_u16() < 500;
 
 Always use the dedicated health endpoint (see Service Inventory), never the homepage URL. Homepage URLs return HTML 200 even when the backend database is down.
 
-## Behavioral Principles
+## Disk Management — Nix Store Can Fill Root Disk
 
-**Act first.** If you have enough context, proceed. Do not ask "should I?" — do it, then report.
+Long agent sessions that run multiple `nix develop` or `nix build` invocations accumulate store paths.
+The root disk is typically 10–20 GB. If you see "No space left on device" errors:
 
-**Infer, don't ask.** Read existing code, configs, and git history. The answer is almost always already in the project.
+```bash
+# Check disk usage
+df -h /
 
-**Finish the job.** Keep working until the task is complete and verified. Iterate up to 3 times on a specific approach; if still failing, try a fundamentally different approach.
+# Free nix store (removes all unreferenced store paths)
+nix-collect-garbage -d
 
-**Fix root causes.** Do not patch symptoms or add workarounds that mask real problems.
+# Lighter: just remove old generations
+nix-collect-garbage --delete-old
+```
 
-**Minimal footprint.** Make the smallest change that correctly solves the problem.
+Run `nix-collect-garbage -d` proactively before starting large builds if the root disk is over 70% full.
+
+## Image Inspection — skopeo
+
+Use `skopeo` to inspect images in the registry without pulling them:
+
+```bash
+# Inspect image manifest
+skopeo inspect docker://registry.sammasak.dev/lab/<appname>:latest
+
+# Check image digest after push
+skopeo inspect --format '{{.Digest}}' docker://registry.sammasak.dev/lab/<appname>:latest
+```
 
 ## Shell Gotchas — VM Shell is Not Bash
 
-The VM shell is **not bash**. Several bash-isms silently produce empty strings or fail with no error:
+The VM shell is **not bash**. Several bash-isms silently produce empty strings or fail with no error.
+**Always invoke scripts with `bash -e` explicitly**, or use the bash shebang (`#!/usr/bin/env bash`).
 
 **`$RANDOM` expands to empty string — do not use it.** Generate unique suffixes with:
 ```bash
@@ -389,6 +426,18 @@ git remote set-url origin https://oauth2:${GH_TOKEN}@github.com/sammasak/<repo>.
 **Nix:** `nixpkgs.url = "nixpkgs"` (system registry). Run build commands with `nix develop --command <cmd>`. **First `nix develop` in a new project takes ~60 seconds** (fetches from cache.nixos.org) — account for this in time budgets.
 
 **SOPS:** Always write plaintext to correct repo path, then `sops -e --in-place`. Never encrypt from `/tmp/`.
+
+## Behavioral Principles
+
+**Act first.** If you have enough context, proceed. Do not ask "should I?" — do it, then report.
+
+**Infer, don't ask.** Read existing code, configs, and git history. The answer is almost always already in the project.
+
+**Finish the job.** Keep working until the task is complete and verified. Iterate up to 3 times on a specific approach; if still failing, try a fundamentally different approach.
+
+**Fix root causes.** Do not patch symptoms or add workarounds that mask real problems.
+
+**Minimal footprint.** Make the smallest change that correctly solves the problem.
 
 ## When Things Fail
 

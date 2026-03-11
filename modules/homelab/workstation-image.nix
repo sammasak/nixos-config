@@ -45,26 +45,61 @@ in
     };
 
     environment.systemPackages = with pkgs; [
+      # VCS
       git
       git-lfs
+
+      # Shell and core utilities
+      bash          # explicit bash (SHELL env on claude-worker points here; avoids $RANDOM / bash-ism issues)
       openssh
       rsync
       tmux
+      coreutils
+      util-linux    # provides uuidgen (safe unique suffix generation instead of $RANDOM)
+      file          # file type detection
+      tree
+      socat         # TCP debugging and port-forward scripting (also covers netcat use cases)
+
+      # Data and search tools
       jq
+      yq-go
       ripgrep
       fd
+
+      # Build / task runner
       just
+
+      # Kubernetes / GitOps
       kubectl
+      kubernetes-helm  # helm chart management
+      fluxcd
+
+      # Nix tooling
       direnv
       nix-direnv
+      nixfmt-rfc-style  # format .nix files in-place
+
+      # TLS / crypto
       openssl
+
+      # Network
       curl
-      fluxcd
+      wget
+      dnsutils     # dig, nslookup for DNS debugging
+
+      # Secrets
       sops
       age
-      yq-go
-      buildah  # rootless container builds
-      shadow   # provides newuidmap/newgidmap for user namespaces
+
+      # Containers
+      buildah      # rootless container builds
+      skopeo       # inspect / copy / tag OCI images without a daemon
+      shadow       # provides newuidmap/newgidmap for user namespaces
+
+      # Code quality / linting (global — no nix develop needed for CI-style checks)
+      shellcheck   # shell script linting
+      hadolint     # Dockerfile linting
+      yamllint     # YAML linting (complements yq-based validate-manifest hook)
     ];
   };
 }
