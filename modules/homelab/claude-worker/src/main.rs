@@ -246,6 +246,49 @@ async fn maybe_spawn_claude(state: Arc<AppState>) {
     });
 }
 
+/// Filter a single line from claude's stdout before broadcasting to SSE clients.
+/// Returns None to suppress, Some(line) to broadcast.
+fn filter_claude_line(line: &str) -> Option<String> {
+    // Always pass through terminal signals
+    if line == "[DONE]" || line.starts_with("[FAILED:") {
+        return Some(line.to_string());
+    }
+
+    // Try to parse as JSON
+    let Ok(mut val) = serde_json::from_str::<serde_json::Value>(line) else {
+        // Non-JSON line (stderr noise, blank lines) — suppress
+        return None;
+    };
+
+    // For assistant messages: keep only non-MCP tool_use blocks; suppress text blocks
+    if val.get("type").and_then(|t| t.as_str()) == Some("assistant") {
+        let has_content = val.pointer("/message/content").is_some();
+        if !has_content {
+            return None;
+        }
+        if let Some(content) = val
+            .pointer_mut("/message/content")
+            .and_then(|c| c.as_array_mut())
+        {
+            content.retain(|block| {
+                block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                    && !block
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .starts_with("mcp__")
+            });
+            if content.is_empty() {
+                return None; // No tool_use blocks worth showing — suppress
+            }
+        }
+        return Some(serde_json::to_string(&val).unwrap_or_else(|_| line.to_string()));
+    }
+
+    // Pass through all other event types (result, system, tool, etc.)
+    Some(serde_json::to_string(&val).unwrap_or_else(|_| line.to_string()))
+}
+
 async fn run_claude(state: Arc<AppState>) {
     let log_file_path = state.logs_dir.join("current.log");
 
@@ -304,9 +347,13 @@ async fn run_claude(state: Arc<AppState>) {
 
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
+            // Always log the raw line for debugging
             let _ = log_file.write_all(line.as_bytes()).await;
             let _ = log_file.write_all(b"\n").await;
-            let _ = log_tx.send(line);
+            // Only broadcast filtered output to SSE clients
+            if let Some(filtered) = filter_claude_line(&line) {
+                let _ = log_tx.send(filtered);
+            }
         }
     });
 
