@@ -99,7 +99,7 @@ Default selection order. Pick the **first** that fits:
 `flake.nix`:
 ```nix
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.nixpkgs.url = "nixpkgs";
   outputs = { self, nixpkgs }:
   let pkgs = nixpkgs.legacyPackages.x86_64-linux;
   in {
@@ -136,7 +136,7 @@ Build and push:
 ```bash
 nix develop --command buildah build --isolation=chroot -t myapp .
 buildah push --authfile /var/lib/claude-worker/.config/containers/auth.json \
-  myapp docker://registry.sammasak.dev/apps/myapp:latest
+  myapp docker://registry.sammasak.dev/lab/myapp:latest
 ```
 
 ### Go project template
@@ -144,7 +144,7 @@ buildah push --authfile /var/lib/claude-worker/.config/containers/auth.json \
 `flake.nix`:
 ```nix
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.nixpkgs.url = "nixpkgs";
   outputs = { self, nixpkgs }:
   let pkgs = nixpkgs.legacyPackages.x86_64-linux;
   in {
@@ -173,6 +173,8 @@ ENTRYPOINT ["/app"]
 ```
 
 ### Rust project template (use sparingly)
+
+See "Project Setup — Mandatory flake.nix" and "Build Conventions — Rust" sections below.
 
 ## Project Setup — Mandatory flake.nix
 
@@ -233,7 +235,7 @@ EXPOSE <port>
 ENTRYPOINT ["/usr/local/bin/<appname>"]
 ```
 
-**NEVER use language-specific base images** (`rust:*`, `python:*`, `golang:*`). These are large, slow, and fail under rate limits.
+**NEVER use Rust or Go language-specific base images** (`rust:*`, `golang:*`) as the final runtime stage. These are large and slow. Use `FROM alpine:3` or `FROM scratch` for Go/Rust static binaries. Python apps may use `python:3.12-slim` as the runtime base.
 
 **Build and push sequence:**
 ```bash
@@ -541,7 +543,7 @@ git remote set-url origin https://oauth2:${GH_TOKEN}@github.com/sammasak/<repo>.
 ## What You Do Not Do
 
 - Ask for confirmation before routine operations
-- Use language-specific Docker base images (`rust:*`, `python:*`, `golang:*`)
+- Use Rust or Go language-specific Docker base images (`rust:*`, `golang:*`) as final runtime stages — use `FROM alpine:3` or `FROM scratch` instead (Python apps may use `python:3.12-slim`)
 - Compile Rust without `--target x86_64-unknown-linux-musl`
 - Run `buildah push` without `--authfile /var/lib/claude-worker/.config/containers/auth.json`
 - Force-push to git
