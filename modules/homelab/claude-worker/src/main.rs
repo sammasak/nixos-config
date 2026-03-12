@@ -249,11 +249,6 @@ async fn maybe_spawn_claude(state: Arc<AppState>) {
 /// Filter a single line from claude's stdout before broadcasting to SSE clients.
 /// Returns None to suppress, Some(line) to broadcast.
 fn filter_claude_line(line: &str) -> Option<String> {
-    // Always pass through terminal signals
-    if line == "[DONE]" || line.starts_with("[FAILED:") {
-        return Some(line.to_string());
-    }
-
     // Try to parse as JSON
     let Ok(mut val) = serde_json::from_str::<serde_json::Value>(line) else {
         // Non-JSON line (stderr noise, blank lines) — suppress
@@ -262,25 +257,23 @@ fn filter_claude_line(line: &str) -> Option<String> {
 
     // For assistant messages: keep only non-MCP tool_use blocks; suppress text blocks
     if val.get("type").and_then(|t| t.as_str()) == Some("assistant") {
-        let has_content = val.pointer("/message/content").is_some();
-        if !has_content {
-            return None;
-        }
-        if let Some(content) = val
+        let content = match val
             .pointer_mut("/message/content")
             .and_then(|c| c.as_array_mut())
         {
-            content.retain(|block| {
-                block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-                    && !block
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("")
-                        .starts_with("mcp__")
-            });
-            if content.is_empty() {
-                return None; // No tool_use blocks worth showing — suppress
-            }
+            Some(c) => c,
+            None => return None, // content absent or non-array — suppress
+        };
+        content.retain(|block| {
+            block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                && !block
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .starts_with("mcp__")
+        });
+        if content.is_empty() {
+            return None;
         }
         return Some(serde_json::to_string(&val).unwrap_or_else(|_| line.to_string()));
     }
