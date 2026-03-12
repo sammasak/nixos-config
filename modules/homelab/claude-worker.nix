@@ -133,6 +133,7 @@ in
         HOME = cfg.workerHome;
         SHELL = "${pkgs.bash}/bin/bash";
         XDG_DATA_HOME = "${cfg.workerHome}/.local/share";
+        CARGO_HOME = "${cfg.workerHome}/.cargo";
       };
 
       # Tools needed by claude CLI and hook scripts
