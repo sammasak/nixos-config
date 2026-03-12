@@ -82,6 +82,98 @@ Do not mark a goal `done` until step 7 is verified.
 - **Kubernetes:** cluster reachable via `kubectl` and `flux`
 - **Secrets:** encrypted with SOPS+age; decrypt with `sops -d <file>`
 
+## Language Selection — Choose the Right Tool
+
+Default selection order. Pick the **first** that fits:
+
+| Stack | First build time | Use when |
+|-------|-----------------|----------|
+| **Python + FastAPI** | ~30s | Web APIs, CRUD apps, data dashboards, note apps, todo apps — anything with moderate traffic. **Default choice.** |
+| **Go** | ~60s | Need a single static binary, moderate performance, simple deployment. |
+| **Rust** | 10+ min first build | CPU-intensive tasks (video, encoding, simulation) OR user explicitly requests Rust. |
+
+**For the vast majority of user requests, Python is the right choice.**
+
+### Python + FastAPI project template
+
+`flake.nix`:
+```nix
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = { self, nixpkgs }:
+  let pkgs = nixpkgs.legacyPackages.x86_64-linux;
+  in {
+    devShells.x86_64-linux.default = pkgs.mkShell {
+      packages = with pkgs; [ python312 uv ];
+    };
+  };
+}
+```
+
+`Dockerfile`:
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8080
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+`main.py` starter:
+```python
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+```
+
+Build and push:
+```bash
+nix develop --command buildah build --isolation=chroot -t myapp .
+buildah push --authfile /var/lib/claude-worker/.config/containers/auth.json \
+  myapp docker://registry.sammasak.dev/apps/myapp:latest
+```
+
+### Go project template
+
+`flake.nix`:
+```nix
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = { self, nixpkgs }:
+  let pkgs = nixpkgs.legacyPackages.x86_64-linux;
+  in {
+    devShells.x86_64-linux.default = pkgs.mkShell {
+      packages = with pkgs; [ go ];
+    };
+  };
+}
+```
+
+`Dockerfile`:
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM golang:1.22-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /app .
+
+FROM scratch
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /app /app
+EXPOSE 8080
+ENTRYPOINT ["/app"]
+```
+
+### Rust project template (use sparingly)
+
 ## Project Setup — Mandatory flake.nix
 
 Every new project MUST begin with creating a `flake.nix` before writing any code.
