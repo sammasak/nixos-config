@@ -80,7 +80,13 @@ A task is NOT done until ALL of the following are verified in order:
 
 9. **Test data cleaned up** — If you seeded any sample/test data into the database to verify functionality, remove it before marking done. Users should see a clean empty state when they first open the app, not leftover test records.
 
-Do not mark a goal `done` until step 9 is verified.
+10. **Result message** — When marking done, set `result` to a friendly, user-facing message:
+    ```
+    "Your <appname> app is live at https://<appname>.sammasak.dev"
+    ```
+    **Do NOT include** Kubernetes details ("Pod running 1/1"), namespace names, registry URLs, or technical implementation details in the result. The result is shown directly to the user.
+
+Do not mark a goal `done` until step 10 is verified.
 
 ## Working Environment
 
@@ -141,9 +147,9 @@ def health():
     return {"status": "ok"}
 ```
 
-Build and push:
+Build and push (run buildah directly — it is in PATH, no nix develop wrapper needed):
 ```bash
-nix develop --command buildah build --isolation=chroot -t myapp .
+buildah build --isolation=chroot -t myapp .
 buildah push --authfile /var/lib/claude-worker/.config/containers/auth.json \
   myapp docker://registry.sammasak.dev/lab/myapp:latest
 ```
@@ -155,6 +161,29 @@ Every new project MUST begin with creating a `flake.nix` before writing any code
 Use the Python + FastAPI template from the "Language Selection" section above.
 
 **CRITICAL: Always use `nixpkgs.url = "nixpkgs"` (NOT github:NixOS/nixpkgs). The system registry maps "nixpkgs" to a path already in the nix store — zero network downloads.**
+
+## Dev Preview — Show the User Before Deploying
+
+After the code is written and passes a basic smoke test, **start the app on port 8080 first** so the user sees it immediately — before the container build. The doable UI detects port 8080 automatically and activates a live preview.
+
+```bash
+# Start the app for immediate dev preview (runs in background)
+cd /var/lib/claude-worker/projects/<appname>
+nix develop --command bash -c "
+  pip install -r requirements.txt -q
+  uvicorn main:app --host 0.0.0.0 --port 8080
+" &
+
+# Wait up to 30s for it to respond
+for i in $(seq 1 30); do
+  curl -sf http://localhost:8080/ 2>/dev/null && echo "Dev preview live on port 8080" && break
+  sleep 1
+done
+```
+
+Once port 8080 responds, **continue immediately** with the container build and GitOps deploy — don't wait for user feedback. The preview stays live while you build and deploy in the background.
+
+**Port 8080 is the fixed dev preview port. Do not use a different port.**
 
 ## Container Build Pattern
 
@@ -278,8 +307,15 @@ When building a status page or health aggregator:
 
 **Kubernetes cluster:** k3s, reachable via `kubectl`
 - Ingress: nginx ingress class
-- TLS: cert-manager with `letsencrypt-prod` ClusterIssuer
+- TLS: shared wildcard `*.sammasak.dev` cert in `shared-tls` namespace — copy to each app namespace, instant (no issuance delay)
 - DNS: `*.sammasak.dev` resolves to cluster ingress
+
+**Copy wildcard TLS cert before creating ingress** (do this once, when setting up the namespace):
+```bash
+kubectl get secret wildcard-sammasak-dev-tls -n shared-tls -o json \
+  | jq '.metadata = {"name": "wildcard-sammasak-dev-tls", "namespace": "<appname>"}' \
+  | kubectl apply -f -
+```
 
 **Ingress pattern:**
 ```yaml
@@ -288,13 +324,12 @@ kind: Ingress
 metadata:
   name: <appname>
   namespace: <appname>
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+  # No cert-manager annotation — using shared wildcard cert (no TLS issuance delay)
 spec:
   ingressClassName: nginx
   tls:
   - hosts: [<appname>.sammasak.dev]
-    secretName: <appname>-tls
+    secretName: wildcard-sammasak-dev-tls
   rules:
   - host: <appname>.sammasak.dev
     http:
