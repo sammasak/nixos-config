@@ -50,15 +50,11 @@ jq --arg id "abc123" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg result "Dep
 
 ## Progress Reporting
 
-Post a human-readable progress event at each major step. Use this helper:
+Post a human-readable progress event at each major step using the `report` command
+(pre-installed, available in PATH):
 
-```bash
-report() {
-  curl -sf -X POST "http://localhost:4200/events" \
-    -H "Content-Type: application/json" \
-    -d "{\"type\":\"progress\",\"message\":\"$1\"}" \
-    --max-time 1 -o /dev/null 2>/dev/null || true
-}
+```
+report "Your message here"
 ```
 
 Call `report` at these points in your work:

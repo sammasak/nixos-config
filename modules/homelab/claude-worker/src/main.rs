@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     convert::Infallible,
     env,
+    os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::Stdio,
     sync::Arc,
@@ -287,6 +288,24 @@ async fn run_claude(state: Arc<AppState>) {
         Follow all instructions in your CLAUDE.md.",
         goals_path = goals_path
     );
+
+    // Write /usr/local/bin/report so Claude can call it from any subshell without
+    // re-defining a bash function. Uses jq for safe JSON construction (handles
+    // quotes, backslashes, and other special characters in the message).
+    const REPORT_SCRIPT: &str = "#!/bin/sh\n\
+msg=$(printf '%s' \"$1\" | jq -Rs .)\n\
+curl -sf -X POST \"http://localhost:4200/events\" \\\n\
+  -H \"Content-Type: application/json\" \\\n\
+  -d \"{\\\"type\\\":\\\"progress\\\",\\\"message\\\":${msg}}\" \\\n\
+  --max-time 1 -o /dev/null 2>/dev/null || true\n";
+    if let Err(e) = fs::write("/usr/local/bin/report", REPORT_SCRIPT).await {
+        eprintln!("Warning: failed to write /usr/local/bin/report: {}", e);
+    } else {
+        let perms = std::fs::Permissions::from_mode(0o755);
+        if let Err(e) = fs::set_permissions("/usr/local/bin/report", perms).await {
+            eprintln!("Warning: failed to chmod /usr/local/bin/report: {}", e);
+        }
+    }
 
     // Pass playwright MCP config explicitly — SDK mode (claude -p) skips
     // settings.json mcpServers; --mcp-config is the only way to inject stdio servers.
