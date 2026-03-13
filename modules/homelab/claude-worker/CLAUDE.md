@@ -70,7 +70,15 @@ A task is NOT done until ALL of the following are verified in order:
 
 7. **Application logic correct** — For monitoring/aggregator apps: verify a known-UP service is classified UP AND that a 4xx response is classified DOWN — HTTP 200 on the page itself does not mean the logic is correct
 
-Do not mark a goal `done` until step 7 is verified.
+8. **Preview URL recorded** — Patch the WorkspaceClaim with the deployed URL so the live preview appears in the UI:
+   ```bash
+   APP_URL="https://<appname>.sammasak.dev"
+   kubectl patch workspaceclaim $HOSTNAME -n workstations --type=merge \
+     -p "{\"spec\":{\"previewUrl\":\"${APP_URL}\"}}"
+   ```
+   Replace `<appname>` with the actual deployed app hostname.
+
+Do not mark a goal `done` until step 8 is verified.
 
 ## Working Environment
 
