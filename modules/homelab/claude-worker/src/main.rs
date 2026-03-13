@@ -298,6 +298,7 @@ curl -sf -X POST \"http://localhost:4200/events\" \\\n\
   -H \"Content-Type: application/json\" \\\n\
   -d \"{\\\"type\\\":\\\"progress\\\",\\\"message\\\":${msg}}\" \\\n\
   --max-time 1 -o /dev/null 2>/dev/null || true\n";
+    fs::create_dir_all("/usr/local/bin").await.ok();
     if let Err(e) = fs::write("/usr/local/bin/report", REPORT_SCRIPT).await {
         eprintln!("Warning: failed to write /usr/local/bin/report: {}", e);
     } else {
@@ -324,6 +325,7 @@ curl -sf -X POST \"http://localhost:4200/events\" \\\n\
     }
     cmd.current_dir(&state.workspace_dir)
         .env("HOME", state.workspace_dir.parent().unwrap_or(&state.workspace_dir))
+        .env("PATH", format!("/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
