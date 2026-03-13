@@ -120,6 +120,51 @@ in
       wants = [ "claude-worker.service" ];
     };
 
+    # ── SvelteKit template dev server ───────────────────────────────────
+    systemd.services.template-dev = {
+      description = "SvelteKit template dev server";
+      after = [ "network.target" "postgresql.service" "claude-worker.service" ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig = {
+        Type = "simple";
+        User = username;
+        Group = "users";
+        WorkingDirectory = "${cfg.workerHome}/workspace";
+
+        ExecStartPre = [
+          # Copy template from Nix store if workspace has no package.json yet
+          ''+${pkgs.bash}/bin/bash -c 'if [ ! -f "${cfg.workerHome}/workspace/package.json" ]; then cp -r ${./claude-worker-template}/. ${cfg.workerHome}/workspace/ && chmod -R u+w ${cfg.workerHome}/workspace/; fi' ''
+          # Run npm install if node_modules is missing (first boot after template copy)
+          ''+${pkgs.bash}/bin/bash -c 'if [ ! -d "${cfg.workerHome}/workspace/node_modules" ]; then cd ${cfg.workerHome}/workspace && ${pkgs.nodejs_22}/bin/npm install; fi' ''
+          # Run schema.sql against PostgreSQL if it exists
+          ''+${pkgs.bash}/bin/bash -c 'if [ -f "${cfg.workerHome}/workspace/schema.sql" ] && command -v psql; then psql postgresql://claude@localhost/claude -f ${cfg.workerHome}/workspace/schema.sql 2>/dev/null || true; fi' ''
+        ];
+
+        # Use vite from node_modules installed by npm install above
+        ExecStart = "${pkgs.nodejs_22}/bin/node ${cfg.workerHome}/workspace/node_modules/.bin/vite dev --port 8080 --host 0.0.0.0";
+
+        Restart = "on-failure";
+        RestartSec = "3s";
+
+        Environment = [
+          "NODE_ENV=development"
+          "HOME=${cfg.workerHome}"
+        ];
+
+        ReadWritePaths = [ cfg.workerHome "/tmp" ];
+        ProtectSystem = "strict";
+        ProtectHome = "read-only";
+        PrivateTmp = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        LockPersonality = true;
+        DynamicUser = false;
+      };
+    };
+
     # ── Systemd service ─────────────────────────────────────────────────
     systemd.services.claude-worker = {
       description = "Claude Worker agent runtime";
