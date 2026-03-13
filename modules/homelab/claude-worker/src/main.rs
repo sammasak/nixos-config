@@ -247,7 +247,16 @@ async fn post_event(
     Json(body): Json<serde_json::Value>,
 ) -> StatusCode {
     let json = serde_json::to_string(&body).unwrap_or_default();
-    let _ = state.log_tx.send(format!("HOOK:{}", json));
+    let msg = format!("HOOK:{}", json);
+    // Push to replay buffer so late-joining SSE clients get progress history
+    {
+        let mut buf = state.replay_buffer.lock().await;
+        if buf.len() >= REPLAY_BUFFER_SIZE {
+            buf.pop_front();
+        }
+        buf.push_back(msg.clone());
+    }
+    let _ = state.log_tx.send(msg);
     StatusCode::NO_CONTENT
 }
 
@@ -265,42 +274,6 @@ async fn maybe_spawn_claude(state: Arc<AppState>) {
     tokio::spawn(async move {
         run_claude(state_clone).await;
     });
-}
-
-/// Filter a single line from claude's stdout before broadcasting to SSE clients.
-/// Returns None to suppress, Some(line) to broadcast.
-fn filter_claude_line(line: &str) -> Option<String> {
-    // Try to parse as JSON
-    let Ok(mut val) = serde_json::from_str::<serde_json::Value>(line) else {
-        // Non-JSON line (stderr noise, blank lines) — suppress
-        return None;
-    };
-
-    // For assistant messages: keep only non-MCP tool_use blocks; suppress text blocks
-    if val.get("type").and_then(|t| t.as_str()) == Some("assistant") {
-        let content = match val
-            .pointer_mut("/message/content")
-            .and_then(|c| c.as_array_mut())
-        {
-            Some(c) => c,
-            None => return None, // content absent or non-array — suppress
-        };
-        content.retain(|block| {
-            block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-                && !block
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("")
-                    .starts_with("mcp__")
-        });
-        if content.is_empty() {
-            return None;
-        }
-        return Some(serde_json::to_string(&val).unwrap_or_else(|_| line.to_string()));
-    }
-
-    // Pass through all other event types (result, system, tool, etc.)
-    Some(serde_json::to_string(&val).unwrap_or_else(|_| line.to_string()))
 }
 
 async fn run_claude(state: Arc<AppState>) {
@@ -345,11 +318,9 @@ async fn run_claude(state: Arc<AppState>) {
         }
     };
 
-    // Stream stdout to log file + broadcast channel
+    // Stream stdout to log file only — progress events come via POST /events
     let stdout = child.stdout.take().expect("piped stdout");
-    let log_tx = state.log_tx.clone();
     let log_path = log_file_path.clone();
-    let replay_buf = Arc::clone(&state);
 
     let stdout_done = tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
@@ -362,20 +333,8 @@ async fn run_claude(state: Arc<AppState>) {
 
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            // Always log the raw line for debugging
             let _ = log_file.write_all(line.as_bytes()).await;
             let _ = log_file.write_all(b"\n").await;
-            // Only broadcast filtered output to SSE clients
-            if let Some(filtered) = filter_claude_line(&line) {
-                // Push to replay buffer so late-joining clients get history
-                let mut buf = replay_buf.replay_buffer.lock().await;
-                if buf.len() >= REPLAY_BUFFER_SIZE {
-                    buf.pop_front();
-                }
-                buf.push_back(filtered.clone());
-                drop(buf);
-                let _ = log_tx.send(filtered);
-            }
         }
     });
 
