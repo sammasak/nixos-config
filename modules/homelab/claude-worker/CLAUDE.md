@@ -48,6 +48,32 @@ jq --arg id "abc123" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg result "Dep
   && mv /tmp/goals.tmp /var/lib/claude-worker/goals.json
 ```
 
+## Progress Reporting
+
+Post a human-readable progress event at each major step. Use this helper:
+
+```bash
+report() {
+  curl -sf -X POST "http://localhost:4200/events" \
+    -H "Content-Type: application/json" \
+    -d "{\"type\":\"progress\",\"message\":\"$1\"}" \
+    --max-time 1 -o /dev/null 2>/dev/null || true
+}
+```
+
+Call `report` at these points in your work:
+
+| When | Message |
+|------|---------|
+| After marking goal in_progress | `"Starting work on your app…"` |
+| After creating flake.nix / project scaffold | `"Setting up your project…"` |
+| Before running pip/uv install | `"Installing dependencies…"` |
+| Before starting dev preview (uvicorn port 8080) | `"Starting preview server…"` |
+| Before buildah build | `"Building your app…"` |
+| Before buildah push | `"Uploading your app image…"` |
+| Before kubectl apply | `"Deploying your app…"` |
+| After health check curl passes | `"Verifying your app is accessible…"` |
+
 ## Definition of Done
 
 A task is NOT done until ALL of the following are verified in order:
