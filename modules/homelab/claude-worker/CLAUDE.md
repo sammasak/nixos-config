@@ -99,15 +99,9 @@ Do not mark a goal `done` until step 9 is verified.
 This is a hard rule, not a suggestion. Rust first-builds take 15+ minutes on this hardware
 and ruin the user experience. Python builds complete in under 2 minutes.
 
-| Stack | First build time | Use when |
-|-------|-----------------|----------|
-| **Python + FastAPI** | ~90s | **ALL web apps, APIs, CRUD, dashboards, trackers, tools.** This is your ONLY choice. |
-| **Go** | ~60s | Binary CLI tools (no web UI). |
-| **Rust** | 15+ min | ONLY if user explicitly says "build this in Rust" or "I want Rust". NEVER choose Rust on your own. |
+**Decision rule: web app → Python. Always. No deliberation needed.**
 
-**Decision rule: if the user wants a web app → Python. Always. No deliberation needed.**
-
-If you find yourself writing `Cargo.toml` for a web app, STOP and use Python instead.
+If you find yourself writing `Cargo.toml` or `go.mod` for a web app, STOP and use Python instead.
 
 ### Python + FastAPI project template
 
@@ -152,39 +146,6 @@ Build and push:
 nix develop --command buildah build --isolation=chroot -t myapp .
 buildah push --authfile /var/lib/claude-worker/.config/containers/auth.json \
   myapp docker://registry.sammasak.dev/lab/myapp:latest
-```
-
-### Go project template
-
-`flake.nix`:
-```nix
-{
-  inputs.nixpkgs.url = "nixpkgs";
-  outputs = { self, nixpkgs }:
-  let pkgs = nixpkgs.legacyPackages.x86_64-linux;
-  in {
-    devShells.x86_64-linux.default = pkgs.mkShell {
-      packages = with pkgs; [ go ];
-    };
-  };
-}
-```
-
-`Dockerfile`:
-```dockerfile
-# syntax=docker/dockerfile:1
-FROM golang:1.22-alpine AS builder
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -o /app .
-
-FROM scratch
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /app /app
-EXPOSE 8080
-ENTRYPOINT ["/app"]
 ```
 
 ## Project Setup — Mandatory flake.nix
