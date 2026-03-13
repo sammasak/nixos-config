@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use std::collections::VecDeque;
 use tokio::{
     fs,
     io::{AsyncBufReadExt, BufReader},
@@ -64,6 +65,8 @@ struct UpdateGoal {
 
 // ── App state ───────────────────────────────────────────────────────────────
 
+const REPLAY_BUFFER_SIZE: usize = 200;
+
 struct AppState {
     goals_file: PathBuf,
     workspace_dir: PathBuf,
@@ -71,6 +74,8 @@ struct AppState {
     claude_running: Mutex<bool>,
     log_tx: broadcast::Sender<String>,
     goals_lock: Mutex<()>,
+    /// Rolling buffer of recent broadcast events for replay to late-joining SSE clients.
+    replay_buffer: Mutex<VecDeque<String>>,
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -102,6 +107,7 @@ async fn main() {
         claude_running: Mutex::new(false),
         log_tx,
         goals_lock: Mutex::new(()),
+        replay_buffer: Mutex::new(VecDeque::with_capacity(REPLAY_BUFFER_SIZE)),
     });
 
     let app = Router::new()
@@ -206,19 +212,34 @@ async fn stream_goal(
     State(state): State<Arc<AppState>>,
     Path(_id): Path<String>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // Snapshot the replay buffer so late-joining clients get history
+    let buffered: Vec<String> = {
+        let buf = state.replay_buffer.lock().await;
+        buf.iter().cloned().collect()
+    };
     let rx = state.log_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|msg| {
+
+    fn line_to_event(line: String) -> Option<Result<Event, Infallible>> {
+        if line.starts_with("HOOK:") {
+            let data = line["HOOK:".len()..].to_string();
+            Some(Ok(Event::default().event("hook").data(data)))
+        } else {
+            Some(Ok(Event::default().data(line)))
+        }
+    }
+
+    let replay_stream = futures_util::stream::iter(
+        buffered.into_iter().filter_map(line_to_event)
+    );
+    let live_stream = BroadcastStream::new(rx).filter_map(|msg| {
         futures_util::future::ready(match msg {
-            Ok(line) if line.starts_with("HOOK:") => {
-                let data = line["HOOK:".len()..].to_string();
-                Some(Ok(Event::default().event("hook").data(data)))
-            }
-            Ok(line) => Some(Ok(Event::default().data(line))),
+            Ok(line) => line_to_event(line),
             Err(_) => None,
         })
     });
+    let combined = replay_stream.chain(live_stream);
 
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+    Sse::new(combined).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
 async fn post_event(
@@ -328,6 +349,7 @@ async fn run_claude(state: Arc<AppState>) {
     let stdout = child.stdout.take().expect("piped stdout");
     let log_tx = state.log_tx.clone();
     let log_path = log_file_path.clone();
+    let replay_buf = Arc::clone(&state);
 
     let stdout_done = tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
@@ -345,6 +367,13 @@ async fn run_claude(state: Arc<AppState>) {
             let _ = log_file.write_all(b"\n").await;
             // Only broadcast filtered output to SSE clients
             if let Some(filtered) = filter_claude_line(&line) {
+                // Push to replay buffer so late-joining clients get history
+                let mut buf = replay_buf.replay_buffer.lock().await;
+                if buf.len() >= REPLAY_BUFFER_SIZE {
+                    buf.pop_front();
+                }
+                buf.push_back(filtered.clone());
+                drop(buf);
                 let _ = log_tx.send(filtered);
             }
         }
@@ -387,6 +416,14 @@ async fn run_claude(state: Arc<AppState>) {
         }
     };
     let _ = stdout_done.await;
+    // Push done signal to replay buffer so page reloads after completion see it
+    {
+        let mut buf = state.replay_buffer.lock().await;
+        if buf.len() >= REPLAY_BUFFER_SIZE {
+            buf.pop_front();
+        }
+        buf.push_back(done_msg.clone());
+    }
     let _ = state.log_tx.send(done_msg);
 
     *state.claude_running.lock().await = false;
