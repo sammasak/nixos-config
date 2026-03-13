@@ -78,7 +78,9 @@ A task is NOT done until ALL of the following are verified in order:
    ```
    Replace `<appname>` with the actual deployed app hostname.
 
-Do not mark a goal `done` until step 8 is verified.
+9. **Test data cleaned up** — If you seeded any sample/test data into the database to verify functionality, remove it before marking done. Users should see a clean empty state when they first open the app, not leftover test records.
+
+Do not mark a goal `done` until step 9 is verified.
 
 ## Working Environment
 
@@ -185,87 +187,29 @@ EXPOSE 8080
 ENTRYPOINT ["/app"]
 ```
 
-### Rust project template (use sparingly)
-
-See "Project Setup — Mandatory flake.nix" and "Build Conventions — Rust" sections below.
-
 ## Project Setup — Mandatory flake.nix
 
 Every new project MUST begin with creating a `flake.nix` before writing any code.
 
-**Rust project flake.nix template (with musl support):**
-```nix
-{
-  inputs.nixpkgs.url = "nixpkgs";
-  # ^ "nixpkgs" resolves from system registry — already in /nix/store, NO DOWNLOAD
-  outputs = { self, nixpkgs }:
-  let
-    pkgs = nixpkgs.legacyPackages.x86_64-linux;
-  in {
-    devShells.x86_64-linux.default = pkgs.mkShell {
-      packages = with pkgs; [
-        rustc cargo pkg-config openssl.dev
-        pkgsStatic.stdenv.cc   # musl cross-compiler
-        musl                   # musl libc
-      ];
-      CARGO_TARGET_DIR = "/var/lib/claude-worker/.cargo/target";
-      # ^ build artifacts go to vdb (92GB free), not root disk
-    };
-  };
-}
-```
+Use the Python + FastAPI template from the "Language Selection" section above.
 
 **CRITICAL: Always use `nixpkgs.url = "nixpkgs"` (NOT github:NixOS/nixpkgs). The system registry maps "nixpkgs" to a path already in the nix store — zero network downloads.**
 
-## Build Conventions — Rust (musl static binary)
-
-Always compile Rust for static musl to produce a portable binary that works in any container:
-
-```bash
-cd /var/lib/claude-worker/projects/<appname>
-
-# Add musl target (once per project)
-nix develop --command rustup target add x86_64-unknown-linux-musl 2>/dev/null || true
-
-# Build static binary
-nix develop --command cargo build --release --target x86_64-unknown-linux-musl
-
-# Binary is at:
-cp /var/lib/claude-worker/.cargo/target/x86_64-unknown-linux-musl/release/<appname> dist/<appname>
-```
-
-**Why musl?** The resulting binary links statically against musl libc, so it runs in `FROM alpine:3` or `FROM scratch` containers without any system libraries.
-
 ## Container Build Pattern
 
-**For Rust/Go musl binaries — use `FROM alpine:3`:**
-```dockerfile
-FROM alpine:3
-RUN apk add --no-cache ca-certificates
-COPY dist/<appname> /usr/local/bin/<appname>
-RUN chmod +x /usr/local/bin/<appname>
-EXPOSE <port>
-ENTRYPOINT ["/usr/local/bin/<appname>"]
-```
-
-**NEVER use Rust or Go language-specific base images** (`rust:*`, `golang:*`) as the final runtime stage. These are large and slow. Use `FROM alpine:3` or `FROM scratch` for Go/Rust static binaries. Python apps may use `python:3.12-slim` as the runtime base.
-
-**Build and push sequence:**
+**For Python apps — standard sequence:**
 ```bash
 cd /var/lib/claude-worker/projects/<appname>
-mkdir -p dist
 
-# 1. Build static binary
-nix develop --command cargo build --release --target x86_64-unknown-linux-musl
-cp /var/lib/claude-worker/.cargo/target/x86_64-unknown-linux-musl/release/<appname> dist/<appname>
-
-# 2. Build container (--isolation=chroot required for buildah build only)
+# 1. Build container (--isolation=chroot required)
 buildah build --isolation=chroot -t <appname>:latest .
 
-# 3. Push to Harbor (auth pre-configured — do NOT run buildah login)
+# 2. Push to Harbor (auth pre-configured — do NOT run buildah login)
 buildah push --authfile /var/lib/claude-worker/.config/containers/auth.json \
   <appname>:latest docker://registry.sammasak.dev/lab/<appname>:latest
 ```
+
+**NEVER use language-specific base images** (`rust:*`, `golang:*`) as the final runtime stage. Python apps use `python:3.12-slim`.
 
 ## GitOps Deployment Workflow
 
