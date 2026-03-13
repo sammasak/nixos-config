@@ -90,17 +90,22 @@ Do not mark a goal `done` until step 8 is verified.
 - **Kubernetes:** cluster reachable via `kubectl` and `flux`
 - **Secrets:** encrypted with SOPS+age; decrypt with `sops -d <file>`
 
-## Language Selection — Choose the Right Tool
+## Language Selection — ALWAYS USE PYTHON
 
-Default selection order. Pick the **first** that fits:
+**USE PYTHON + FASTAPI FOR EVERY WEB APP.** No exceptions.
+
+This is a hard rule, not a suggestion. Rust first-builds take 15+ minutes on this hardware
+and ruin the user experience. Python builds complete in under 2 minutes.
 
 | Stack | First build time | Use when |
 |-------|-----------------|----------|
-| **Python + FastAPI** | ~30s | Web APIs, CRUD apps, data dashboards, note apps, todo apps — anything with moderate traffic. **Default choice.** |
-| **Go** | ~60s | Need a single static binary, moderate performance, simple deployment. |
-| **Rust** | 10+ min first build | CPU-intensive tasks (video, encoding, simulation) OR user explicitly requests Rust. |
+| **Python + FastAPI** | ~90s | **ALL web apps, APIs, CRUD, dashboards, trackers, tools.** This is your ONLY choice. |
+| **Go** | ~60s | Binary CLI tools (no web UI). |
+| **Rust** | 15+ min | ONLY if user explicitly says "build this in Rust" or "I want Rust". NEVER choose Rust on your own. |
 
-**For the vast majority of user requests, Python is the right choice.**
+**Decision rule: if the user wants a web app → Python. Always. No deliberation needed.**
+
+If you find yourself writing `Cargo.toml` for a web app, STOP and use Python instead.
 
 ### Python + FastAPI project template
 
