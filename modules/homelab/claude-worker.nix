@@ -10,6 +10,16 @@ let
   isPublic = !(lib.hasPrefix "127." cfg.listenAddress) && !(lib.hasPrefix "::1" cfg.listenAddress);
   username = config.sam.profile.username;
 
+  # ── template-dev start script (conditional Vite launcher) ────────────
+  templateDevStart = pkgs.writeShellScript "template-dev-start" ''
+    WORKSPACE="${cfg.workerHome}/workspace"
+    if [ -f "$WORKSPACE/package.json" ] && grep -q '"vite"' "$WORKSPACE/package.json" 2>/dev/null; then
+      exec ${pkgs.nodejs_22}/bin/node "$WORKSPACE/node_modules/.bin/vite" dev --port 8080 --host 0.0.0.0
+    else
+      exec sleep infinity
+    fi
+  '';
+
   # ── Build claude-worker binary from source ────────────────────────────
   claude-worker = pkgs.rustPlatform.buildRustPackage {
     pname = "claude-worker";
@@ -141,8 +151,8 @@ in
           ''+${pkgs.bash}/bin/bash -c 'if [ -f "${cfg.workerHome}/workspace/schema.sql" ] && command -v psql; then psql postgresql://claude@localhost/claude -f ${cfg.workerHome}/workspace/schema.sql 2>/dev/null || true; fi' ''
         ];
 
-        # Use vite from node_modules installed by npm install above
-        ExecStart = "${pkgs.nodejs_22}/bin/node ${cfg.workerHome}/workspace/node_modules/.bin/vite dev --port 8080 --host 0.0.0.0";
+        # Use vite from node_modules if this is a Vite project; otherwise sleep infinity
+        ExecStart = "${templateDevStart}";
 
         Restart = "on-failure";
         RestartSec = "3s";
