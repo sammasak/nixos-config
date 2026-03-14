@@ -96,10 +96,37 @@ in
       skopeo       # inspect / copy / tag OCI images without a daemon
       shadow       # provides newuidmap/newgidmap for user namespaces
 
+      # Node.js
+      nodejs_22    # Node.js 22 LTS
+
+      # Rust
+      rustup       # Rust toolchain manager (rustup default stable / cargo)
+      cargo-watch  # watch Rust files and auto-rebuild
+
+      # PostgreSQL client tools
+      postgresql_16  # psql, createdb, pg_dump, etc.
+
       # Code quality / linting (global — no nix develop needed for CI-style checks)
       shellcheck   # shell script linting
       hadolint     # Dockerfile linting
       yamllint     # YAML linting (complements yq-based validate-manifest hook)
     ];
+
+    # PostgreSQL 16 system service — available to all claude-worker VMs.
+    # Auth is fully open on loopback (trust) so Claude can connect without a password.
+    services.postgresql = {
+      enable = true;
+      package = pkgs.postgresql_16;
+      ensureDatabases = [ "claude" ];
+      ensureUsers = [{
+        name = "claude";
+        ensureDBOwnership = true;
+      }];
+      authentication = lib.mkOverride 10 ''
+        local all all trust
+        host all all 127.0.0.1/32 trust
+        host all all ::1/128 trust
+      '';
+    };
   };
 }
