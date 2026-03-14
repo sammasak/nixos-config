@@ -14,7 +14,6 @@ let
   templateDevStart = pkgs.writeShellScript "template-dev-start" ''
     WORKSPACE="${cfg.workerHome}/workspace"
     if [ -f "$WORKSPACE/package.json" ] && \
-       grep -qE '"vite"\s*:' "$WORKSPACE/package.json" 2>/dev/null && \
        [ -f "$WORKSPACE/node_modules/.bin/vite" ]; then
       exec ${pkgs.nodejs_22}/bin/node "$WORKSPACE/node_modules/.bin/vite" dev --port 8080 --host 0.0.0.0
     else
@@ -150,7 +149,7 @@ in
           # Run npm install if node_modules is missing, then fix ownership (npm installs as root)
           ''+${pkgs.bash}/bin/bash -c 'if [ ! -d "${cfg.workerHome}/workspace/node_modules" ]; then cd ${cfg.workerHome}/workspace && PATH=/bin:/run/current-system/sw/bin:${pkgs.nodejs_22}/bin ${pkgs.nodejs_22}/bin/npm install && chown -R ${username}:users node_modules; fi' ''
           # Run schema.sql against PostgreSQL if it exists
-          ''+${pkgs.bash}/bin/bash -c 'if [ -f "${cfg.workerHome}/workspace/schema.sql" ] && command -v psql; then psql postgresql://claude@localhost/claude -f ${cfg.workerHome}/workspace/schema.sql 2>/dev/null || true; fi' ''
+          ''+${pkgs.bash}/bin/bash -c 'if [ -f "${cfg.workerHome}/workspace/schema.sql" ] && command -v psql; then psql postgresql://claude@localhost/claude -f ${cfg.workerHome}/workspace/schema.sql || true; fi' ''
         ];
 
         # Use vite from node_modules if this is a Vite project; otherwise sleep infinity
