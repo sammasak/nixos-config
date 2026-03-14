@@ -146,8 +146,8 @@ in
         ExecStartPre = [
           # Copy template from Nix store if workspace has no package.json yet
           ''+${pkgs.bash}/bin/bash -c 'if [ ! -f "${cfg.workerHome}/workspace/package.json" ]; then cp -r ${./claude-worker-template}/. ${cfg.workerHome}/workspace/ && chmod -R u+w ${cfg.workerHome}/workspace/ && chown -R ${username}:users ${cfg.workerHome}/workspace/; fi' ''
-          # Run npm install if node_modules is missing, then fix ownership (npm installs as root)
-          ''+${pkgs.bash}/bin/bash -c 'if [ ! -d "${cfg.workerHome}/workspace/node_modules" ]; then cd ${cfg.workerHome}/workspace && PATH=/bin:/run/current-system/sw/bin:${pkgs.nodejs_22}/bin ${pkgs.nodejs_22}/bin/npm install && chown -R ${username}:users node_modules; fi' ''
+          # Run npm install if vite binary is missing, then fix ownership (npm installs as root)
+          ''+${pkgs.bash}/bin/bash -c 'if [ ! -f "${cfg.workerHome}/workspace/node_modules/.bin/vite" ]; then cd ${cfg.workerHome}/workspace && PATH=/bin:/run/current-system/sw/bin:${pkgs.nodejs_22}/bin ${pkgs.nodejs_22}/bin/npm install && chown -R ${username}:users node_modules; fi' ''
           # Run schema.sql against PostgreSQL if it exists
           ''+${pkgs.bash}/bin/bash -c 'if [ -f "${cfg.workerHome}/workspace/schema.sql" ] && command -v psql; then psql postgresql://claude@localhost/claude -f ${cfg.workerHome}/workspace/schema.sql || true; fi' ''
         ];
