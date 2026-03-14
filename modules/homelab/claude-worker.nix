@@ -13,7 +13,9 @@ let
   # ── template-dev start script (conditional Vite launcher) ────────────
   templateDevStart = pkgs.writeShellScript "template-dev-start" ''
     WORKSPACE="${cfg.workerHome}/workspace"
-    if [ -f "$WORKSPACE/package.json" ] && grep -q '"vite"' "$WORKSPACE/package.json" 2>/dev/null; then
+    if [ -f "$WORKSPACE/package.json" ] && \
+       grep -qE '"vite"\s*:' "$WORKSPACE/package.json" 2>/dev/null && \
+       [ -f "$WORKSPACE/node_modules/.bin/vite" ]; then
       exec ${pkgs.nodejs_22}/bin/node "$WORKSPACE/node_modules/.bin/vite" dev --port 8080 --host 0.0.0.0
     else
       exec sleep infinity
