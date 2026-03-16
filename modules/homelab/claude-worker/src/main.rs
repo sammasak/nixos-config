@@ -339,10 +339,10 @@ curl -sf -X POST \"http://localhost:4200/events\" \\\n\
         }
     };
 
-    // Stream stdout: write every line to the log file and forward allowed
-    // tool_use events (Write/Edit/Bash/etc.) to the SSE broadcast channel so
-    // the doable frontend receives rich activity without relying solely on
-    // manual `report` calls.
+    // Stream stdout: write every line to the log file.
+    // Activity reporting is handled exclusively by the PreToolUse report-activity.sh
+    // hook via POST /events — forwarding raw tool_use JSON here would produce
+    // duplicate, lower-quality items alongside the hook's authoritative messages.
     let stdout = child.stdout.take().expect("piped stdout");
     let log_path = log_file_path.clone();
     let stdout_tx = state.log_tx.clone();
@@ -362,11 +362,8 @@ curl -sf -X POST \"http://localhost:4200/events\" \\\n\
             let _ = log_file.write_all(line.as_bytes()).await;
             let _ = log_file.write_all(b"\n").await;
 
-            // Tool events are handled by the PreToolUse report-activity.sh hook,
-            // which emits human-readable progress messages via POST /events.
-            // Forwarding raw tool_use JSON here would produce duplicate, lower-quality
-            // activity items alongside the hook's authoritative messages.
-            let _ = &stdout_tx; // referenced to avoid unused variable warning
+            let _ = &stdout_tx;        // keep sender alive until loop exits
+            let _ = &stdout_replay;    // keep Arc alive for potential future reuse
         }
     });
 
@@ -432,6 +429,7 @@ curl -sf -X POST \"http://localhost:4200/events\" \\\n\
 /// - Everything else (e.g. `result`, `message_start`) → suppress
 ///
 /// Returns `Some(line)` if the line should be broadcast, `None` to suppress.
+#[allow(dead_code)]
 fn filter_claude_line(line: &str) -> Option<String> {
     // Fast path: must start with '{' to be a JSON object worth parsing
     let trimmed = line.trim();
