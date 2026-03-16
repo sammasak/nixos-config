@@ -50,11 +50,15 @@ jq --arg id "abc123" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg result "Dep
 
 ## Progress Reporting
 
+IMPORTANT: These report calls are mandatory. The user watches a live activity feed
+and will see nothing but placeholder messages if you skip them. Call report at every
+checkpoint listed below — the user is waiting and needs to know their app is being built.
+
 Post a human-readable progress event at each major step using the `report` command
 (pre-installed, available in PATH):
 
-```
-report "Your message here"
+```bash
+report "Your message here" || echo "WARN: progress report failed"
 ```
 
 Call `report` at these points in your work:
@@ -63,11 +67,14 @@ Call `report` at these points in your work:
 |------|---------|
 | After marking goal in_progress | `"Starting work on your app…"` |
 | After creating flake.nix / project scaffold | `"Setting up your project…"` |
+| After writing the first real source file | `"Writing your app's code…"` |
 | Before running pip/uv install | `"Installing dependencies…"` |
 | Before starting dev preview (uvicorn port 8080) | `"Starting preview server…"` |
 | Before buildah build | `"Building your app…"` |
 | Before buildah push | `"Uploading your app image…"` |
+| After git push (source to GitHub) | `"Saving your code to GitHub…"` |
 | Before kubectl apply | `"Deploying your app…"` |
+| After flux reconcile completes | `"Almost there — checking your app is running…"` |
 | After health check curl passes | `"Verifying your app is accessible…"` |
 
 ## Definition of Done
