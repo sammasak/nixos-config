@@ -96,6 +96,13 @@ in
       skopeo       # inspect / copy / tag OCI images without a daemon
       shadow       # provides newuidmap/newgidmap for user namespaces
 
+      # Python (global — agents can run uv/pip directly, no nix develop cold start)
+      python312
+      uv           # fast Python package manager
+
+      # Go (global — 5-10s compile, fast iteration for API/CLI projects)
+      go
+
       # Node.js
       nodejs_22    # Node.js 22 LTS
 
