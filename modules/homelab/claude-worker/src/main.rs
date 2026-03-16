@@ -362,17 +362,11 @@ curl -sf -X POST \"http://localhost:4200/events\" \\\n\
             let _ = log_file.write_all(line.as_bytes()).await;
             let _ = log_file.write_all(b"\n").await;
 
-            // Forward allowed tool events to SSE clients
-            if let Some(allowed) = filter_claude_line(&line) {
-                {
-                    let mut buf = stdout_replay.replay_buffer.lock().await;
-                    if buf.len() >= REPLAY_BUFFER_SIZE {
-                        buf.pop_front();
-                    }
-                    buf.push_back(allowed.clone());
-                }
-                let _ = stdout_tx.send(allowed);
-            }
+            // Tool events are handled by the PreToolUse report-activity.sh hook,
+            // which emits human-readable progress messages via POST /events.
+            // Forwarding raw tool_use JSON here would produce duplicate, lower-quality
+            // activity items alongside the hook's authoritative messages.
+            let _ = &stdout_tx; // referenced to avoid unused variable warning
         }
     });
 

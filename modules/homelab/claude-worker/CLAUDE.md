@@ -74,7 +74,7 @@ Call `report` at these points in your work:
 | Before buildah push | `"Uploading your app image…"` |
 | After git push (source to GitHub) | `"Saving your code to GitHub…"` |
 | Before kubectl apply | `"Deploying your app…"` |
-| After flux reconcile completes | `"Almost there — checking your app is running…"` |
+| After flux reconcile completes | `"Checking your app is running…"` |
 | After health check curl passes | `"Verifying your app is accessible…"` |
 
 ## Definition of Done
