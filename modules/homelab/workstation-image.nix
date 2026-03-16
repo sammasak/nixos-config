@@ -28,6 +28,9 @@ in
     services.pipewire.enable = lib.mkForce false;
     security.rtkit.enable = lib.mkForce false;
 
+    # Agent VMs are headless — documentation is unnecessary and adds build time.
+    documentation.enable = false;
+
     # Keep VM always available for task execution.
     services.logind.settings.Login = {
       HandleLidSwitch = lib.mkForce "ignore";
