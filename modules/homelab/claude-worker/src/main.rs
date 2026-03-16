@@ -297,7 +297,7 @@ msg=$(printf '%s' \"$1\" | jq -Rs .)\n\
 curl -sf -X POST \"http://localhost:4200/events\" \\\n\
   -H \"Content-Type: application/json\" \\\n\
   -d \"{\\\"type\\\":\\\"progress\\\",\\\"message\\\":${msg}}\" \\\n\
-  --max-time 1 -o /dev/null 2>/dev/null || true\n";
+  --max-time 5 -o /dev/null 2>/dev/null || echo \"WARN: report failed - activity not visible to user\" >&2\n";
     fs::create_dir_all("/usr/local/bin").await.ok();
     if let Err(e) = fs::write("/usr/local/bin/report", REPORT_SCRIPT).await {
         eprintln!("Warning: failed to write /usr/local/bin/report: {}", e);
@@ -339,9 +339,14 @@ curl -sf -X POST \"http://localhost:4200/events\" \\\n\
         }
     };
 
-    // Stream stdout to log file only — progress events come via POST /events
+    // Stream stdout: write every line to the log file and forward allowed
+    // tool_use events (Write/Edit/Bash/etc.) to the SSE broadcast channel so
+    // the doable frontend receives rich activity without relying solely on
+    // manual `report` calls.
     let stdout = child.stdout.take().expect("piped stdout");
     let log_path = log_file_path.clone();
+    let stdout_tx = state.log_tx.clone();
+    let stdout_replay = Arc::clone(&state);
 
     let stdout_done = tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
@@ -356,6 +361,18 @@ curl -sf -X POST \"http://localhost:4200/events\" \\\n\
         while let Ok(Some(line)) = reader.next_line().await {
             let _ = log_file.write_all(line.as_bytes()).await;
             let _ = log_file.write_all(b"\n").await;
+
+            // Forward allowed tool events to SSE clients
+            if let Some(allowed) = filter_claude_line(&line) {
+                {
+                    let mut buf = stdout_replay.replay_buffer.lock().await;
+                    if buf.len() >= REPLAY_BUFFER_SIZE {
+                        buf.pop_front();
+                    }
+                    buf.push_back(allowed.clone());
+                }
+                let _ = stdout_tx.send(allowed);
+            }
         }
     });
 
@@ -407,6 +424,44 @@ curl -sf -X POST \"http://localhost:4200/events\" \\\n\
     let _ = state.log_tx.send(done_msg);
 
     *state.claude_running.lock().await = false;
+}
+
+// ── Claude stream filter ─────────────────────────────────────────────────────
+
+/// Decide whether a line from Claude's stream-json stdout should be forwarded
+/// to SSE clients.
+///
+/// Rules:
+/// - `tool_use` events for Write / Edit / MultiEdit / NotebookEdit / Bash → allow
+/// - All other `tool_use` events (MCP tools, etc.) → suppress
+/// - Text / thinking content blocks → suppress
+/// - Everything else (e.g. `result`, `message_start`) → suppress
+///
+/// Returns `Some(line)` if the line should be broadcast, `None` to suppress.
+fn filter_claude_line(line: &str) -> Option<String> {
+    // Fast path: must start with '{' to be a JSON object worth parsing
+    let trimmed = line.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+
+    // Parse the JSON — if it fails, drop the line
+    let v: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+
+    // Only forward tool_use events for the allowed set of tools
+    if v.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+        const ALLOWED: &[&str] = &["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"];
+        let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if ALLOWED.contains(&name) {
+            return Some(line.to_string());
+        }
+    }
+
+    // Everything else is suppressed
+    None
 }
 
 // ── Goals file helpers ────────────────────────────────────────────────────────
