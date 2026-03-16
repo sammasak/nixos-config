@@ -58,19 +58,28 @@ skillsSrc:
             command = "${skillsSrc}/hooks/check-goals.sh";
           }];
         }];
-        PreToolUse = [{
-          matcher = "Bash";
-          hooks = [
-            {
+        PreToolUse = [
+          {
+            matcher = "Bash|Write|Edit|MultiEdit";
+            hooks = [{
               type = "command";
-              command = "${skillsSrc}/hooks/validate-bash.sh";
-            }
-            {
-              type = "command";
-              command = "${skillsSrc}/hooks/check-loop.sh";
-            }
-          ];
-        }];
+              command = "${skillsSrc}/hooks/report-activity.sh";
+            }];
+          }
+          {
+            matcher = "Bash";
+            hooks = [
+              {
+                type = "command";
+                command = "${skillsSrc}/hooks/validate-bash.sh";
+              }
+              {
+                type = "command";
+                command = "${skillsSrc}/hooks/check-loop.sh";
+              }
+            ];
+          }
+        ];
         PostToolUse = [{
           matcher = "Write|Edit";
           hooks = [{
