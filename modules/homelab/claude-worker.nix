@@ -21,6 +21,19 @@ let
     fi
   '';
 
+  # ── Pre-baked node_modules for the SvelteKit template ──────────────
+  templateNodeModules = pkgs.buildNpmPackage {
+    pname = "claude-worker-template-deps";
+    version = "1.0.0";
+    src = ./claude-worker-template;
+    npmDepsHash = "sha256-Cddz3OK3zFeOk4u19heTFJLnLv2dvbYXo0lO9EVQAEE=";
+    dontBuild = true;
+    installPhase = ''
+      mkdir -p $out
+      cp -r node_modules $out/node_modules
+    '';
+  };
+
   # ── Build claude-worker binary from source ────────────────────────────
   claude-worker = pkgs.rustPlatform.buildRustPackage {
     pname = "claude-worker";
@@ -146,8 +159,8 @@ in
         ExecStartPre = [
           # Copy template from Nix store if workspace has no package.json yet
           ''+${pkgs.bash}/bin/bash -c 'if [ ! -f "${cfg.workerHome}/workspace/package.json" ]; then cp -r ${./claude-worker-template}/. ${cfg.workerHome}/workspace/ && chmod -R u+w ${cfg.workerHome}/workspace/ && chown -R ${username}:users ${cfg.workerHome}/workspace/; fi' ''
-          # Run npm install if vite binary is missing, then fix ownership (npm installs as root)
-          ''+${pkgs.bash}/bin/bash -c 'if [ ! -f "${cfg.workerHome}/workspace/node_modules/.bin/vite" ]; then cd ${cfg.workerHome}/workspace && PATH=/bin:/run/current-system/sw/bin:${pkgs.nodejs_22}/bin ${pkgs.nodejs_22}/bin/npm install && chown -R ${username}:users node_modules; fi' ''
+          # Copy pre-baked node_modules from Nix store if missing (instant, no npm install)
+          ''+${pkgs.bash}/bin/bash -c 'if [ ! -f "${cfg.workerHome}/workspace/node_modules/.bin/vite" ]; then cp -r ${templateNodeModules}/node_modules ${cfg.workerHome}/workspace/ && chown -R ${username}:users ${cfg.workerHome}/workspace/node_modules; fi' ''
           # Run schema.sql against PostgreSQL if it exists
           ''+${pkgs.bash}/bin/bash -c 'if [ -f "${cfg.workerHome}/workspace/schema.sql" ] && command -v psql; then psql postgresql://claude@localhost/claude -f ${cfg.workerHome}/workspace/schema.sql || true; fi' ''
         ];
