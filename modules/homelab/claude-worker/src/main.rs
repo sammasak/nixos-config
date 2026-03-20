@@ -1,3 +1,5 @@
+mod metrics;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -10,6 +12,7 @@ use axum::{
 };
 use chrono::Utc;
 use futures_util::{stream::Stream, StreamExt};
+use metrics::WorkerMetrics;
 use serde::{Deserialize, Serialize};
 use std::{
     convert::Infallible,
@@ -77,6 +80,8 @@ struct AppState {
     goals_lock: Mutex<()>,
     /// Rolling buffer of recent broadcast events for replay to late-joining SSE clients.
     replay_buffer: Mutex<VecDeque<String>>,
+    metrics: Arc<WorkerMetrics>,
+    queue_depth: Arc<Mutex<u64>>,
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -101,6 +106,30 @@ async fn main() {
 
     let (log_tx, _) = broadcast::channel::<String>(1024);
 
+    // Initialise OTLP metrics
+    let otel_endpoint = env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://192.168.10.204:4318".into());
+    let _metrics_provider = crate::metrics::init(&otel_endpoint);
+    let worker_metrics = Arc::new(crate::metrics::create_metrics());
+
+    // Shared queue depth counter — updated on every goal write and observed by gauge
+    let queue_depth = Arc::new(Mutex::new(0u64));
+
+    // Register observable gauge for queue depth
+    {
+        let meter = opentelemetry::global::meter("claude-worker");
+        let gauge_queue = Arc::clone(&queue_depth);
+        meter
+            .u64_observable_gauge("claude_worker_goal_queue_depth")
+            .with_description("Number of goals currently pending")
+            .with_callback(move |observer| {
+                if let Ok(val) = gauge_queue.try_lock() {
+                    observer.observe(*val, &[]);
+                }
+            })
+            .build();
+    }
+
     let state = Arc::new(AppState {
         goals_file,
         workspace_dir,
@@ -109,6 +138,8 @@ async fn main() {
         log_tx,
         goals_lock: Mutex::new(()),
         replay_buffer: Mutex::new(VecDeque::with_capacity(REPLAY_BUFFER_SIZE)),
+        metrics: worker_metrics,
+        queue_depth,
     });
 
     let app = Router::new()
@@ -169,7 +200,9 @@ async fn create_goal(
         eprintln!("Failed to write goals.json: {}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+    let pending = goals.iter().filter(|g| g.status == GoalStatus::Pending).count();
     drop(_lock);
+    *state.queue_depth.lock().await = pending as u64;
 
     // Spawn claude if not already running
     maybe_spawn_claude(Arc::clone(&state)).await;
@@ -186,11 +219,24 @@ async fn update_goal(
     let mut goals = read_goals(&state.goals_file).await;
     let goal = goals.iter_mut().find(|g| g.id == id).ok_or(StatusCode::NOT_FOUND)?;
 
+    let mut record_done = false;
+    let mut record_failed = false;
+    let mut started_at_snapshot: Option<String> = None;
+
     if let Some(status) = payload.status {
         let now = Utc::now().to_rfc3339();
         match &status {
             GoalStatus::InProgress => goal.started_at = Some(now),
-            GoalStatus::Done | GoalStatus::Failed => goal.completed_at = Some(now),
+            GoalStatus::Done => {
+                goal.completed_at = Some(now);
+                record_done = true;
+                started_at_snapshot = goal.started_at.clone();
+            }
+            GoalStatus::Failed => {
+                goal.completed_at = Some(now);
+                record_failed = true;
+                started_at_snapshot = goal.started_at.clone();
+            }
             _ => {}
         }
         goal.status = status;
@@ -204,15 +250,48 @@ async fn update_goal(
         eprintln!("Failed to write goals.json: {}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+    let pending = goals.iter().filter(|g| g.status == GoalStatus::Pending).count();
     drop(_lock);
+    *state.queue_depth.lock().await = pending as u64;
+
+    // Record metrics for terminal state transitions
+    if record_done || record_failed {
+        let elapsed = started_at_snapshot
+            .as_deref()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|start| {
+                (Utc::now() - start.with_timezone(&Utc))
+                    .num_milliseconds() as f64 / 1000.0
+            })
+            .unwrap_or(0.0);
+
+        state.metrics.goal_duration_seconds.record(elapsed, &[]);
+        if record_done {
+            state.metrics.goals_completed_total.add(1, &[]);
+        } else {
+            state.metrics.goals_failed_total.add(1, &[]);
+        }
+    }
 
     Ok(Json(updated))
+}
+
+/// RAII guard that decrements the SSE active connections counter on drop.
+struct SseGuard(Arc<AppState>);
+impl Drop for SseGuard {
+    fn drop(&mut self) {
+        self.0.metrics.sse_connections_active.add(-1, &[]);
+    }
 }
 
 async fn stream_goal(
     State(state): State<Arc<AppState>>,
     Path(_id): Path<String>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // Track active SSE connections — guard decrements when stream is dropped
+    state.metrics.sse_connections_active.add(1, &[]);
+    let guard = SseGuard(Arc::clone(&state));
+
     // Snapshot the replay buffer so late-joining clients get history
     let buffered: Vec<String> = {
         let buf = state.replay_buffer.lock().await;
@@ -232,7 +311,9 @@ async fn stream_goal(
     let replay_stream = futures_util::stream::iter(
         buffered.into_iter().filter_map(line_to_event)
     );
-    let live_stream = BroadcastStream::new(rx).filter_map(|msg| {
+    // Move the guard into the live stream closure so it lives until the stream is dropped.
+    let live_stream = BroadcastStream::new(rx).filter_map(move |msg| {
+        let _guard = &guard; // keep guard alive in this closure
         futures_util::future::ready(match msg {
             Ok(line) => line_to_event(line),
             Err(_) => None,

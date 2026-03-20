@@ -203,6 +203,7 @@ in
         SHELL = "${pkgs.bash}/bin/bash";
         XDG_DATA_HOME = "${cfg.workerHome}/.local/share";
         CARGO_HOME = "${cfg.workerHome}/.cargo";
+        OTEL_EXPORTER_OTLP_ENDPOINT = "http://192.168.10.204:4318";
       };
 
       # Tools needed by claude CLI and hook scripts
