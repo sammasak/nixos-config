@@ -53,10 +53,20 @@ skillsSrc:
       # validate-manifest.sh works on all hosts.
       hooks = {
         Stop = [{
-          hooks = [{
-            type = "command";
-            command = "${skillsSrc}/hooks/check-goals.sh";
-          }];
+          hooks = [
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/check-goals.sh";
+            }
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/extract-instincts.sh";
+            }
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/write-session-state.sh";
+            }
+          ];
         }];
         PreToolUse = [
           {
@@ -82,10 +92,16 @@ skillsSrc:
         ];
         PostToolUse = [{
           matcher = "Write|Edit";
-          hooks = [{
-            type = "command";
-            command = "${skillsSrc}/hooks/validate-manifest.sh";
-          }];
+          hooks = [
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/validate-manifest.sh";
+            }
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/validate-rust.sh";
+            }
+          ];
         }];
       };
     };
