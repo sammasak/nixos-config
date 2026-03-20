@@ -20,7 +20,10 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::Stdio,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use std::collections::VecDeque;
@@ -81,7 +84,7 @@ struct AppState {
     /// Rolling buffer of recent broadcast events for replay to late-joining SSE clients.
     replay_buffer: Mutex<VecDeque<String>>,
     metrics: Arc<WorkerMetrics>,
-    queue_depth: Arc<Mutex<u64>>,
+    queue_depth: Arc<AtomicU64>,
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -109,11 +112,12 @@ async fn main() {
     // Initialise OTLP metrics
     let otel_endpoint = env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://192.168.10.204:4318".into());
-    let _metrics_provider = crate::metrics::init(&otel_endpoint);
+    // Keep alive for the duration of main() — dropping shuts down OTLP export.
+    let metrics_provider = crate::metrics::init(&otel_endpoint);
     let worker_metrics = Arc::new(crate::metrics::create_metrics());
 
     // Shared queue depth counter — updated on every goal write and observed by gauge
-    let queue_depth = Arc::new(Mutex::new(0u64));
+    let queue_depth = Arc::new(AtomicU64::new(0));
 
     // Register observable gauge for queue depth
     {
@@ -123,9 +127,7 @@ async fn main() {
             .u64_observable_gauge("claude_worker_goal_queue_depth")
             .with_description("Number of goals currently pending")
             .with_callback(move |observer| {
-                if let Ok(val) = gauge_queue.try_lock() {
-                    observer.observe(*val, &[]);
-                }
+                observer.observe(gauge_queue.load(Ordering::Relaxed), &[]);
             })
             .build();
     }
@@ -154,6 +156,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
     eprintln!("claude-worker listening on {}", addr);
     axum::serve(listener, app).await.expect("serve");
+    drop(metrics_provider);
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -202,7 +205,7 @@ async fn create_goal(
     }
     let pending = goals.iter().filter(|g| g.status == GoalStatus::Pending).count();
     drop(_lock);
-    *state.queue_depth.lock().await = pending as u64;
+    state.queue_depth.store(pending as u64, Ordering::Relaxed);
 
     // Spawn claude if not already running
     maybe_spawn_claude(Arc::clone(&state)).await;
@@ -252,20 +255,22 @@ async fn update_goal(
     }
     let pending = goals.iter().filter(|g| g.status == GoalStatus::Pending).count();
     drop(_lock);
-    *state.queue_depth.lock().await = pending as u64;
+    state.queue_depth.store(pending as u64, Ordering::Relaxed);
 
     // Record metrics for terminal state transitions
     if record_done || record_failed {
-        let elapsed = started_at_snapshot
+        if let Some(elapsed) = started_at_snapshot
             .as_deref()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|start| {
                 (Utc::now() - start.with_timezone(&Utc))
-                    .num_milliseconds() as f64 / 1000.0
+                    .num_milliseconds()
+                    .max(0) as f64
+                    / 1000.0
             })
-            .unwrap_or(0.0);
-
-        state.metrics.goal_duration_seconds.record(elapsed, &[]);
+        {
+            state.metrics.goal_duration_seconds.record(elapsed, &[]);
+        }
         if record_done {
             state.metrics.goals_completed_total.add(1, &[]);
         } else {
