@@ -14,14 +14,21 @@ pub struct WorkerMetrics {
 }
 
 /// Initialise the OTLP metrics provider. Returns the provider (must be kept alive).
+/// Non-fatal: if the exporter fails to build, returns a no-op provider and logs a warning.
 pub fn init(otel_endpoint: &str) -> SdkMeterProvider {
-    let exporter = opentelemetry_otlp::MetricExporter::builder()
+    let exporter = match opentelemetry_otlp::MetricExporter::builder()
         .with_http()
         .with_protocol(Protocol::HttpBinary)
         .with_endpoint(format!("{}/v1/metrics", otel_endpoint))
         .with_timeout(Duration::from_secs(5))
         .build()
-        .expect("failed to build OTLP metric exporter");
+    {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("WARN: failed to build OTLP metric exporter: {e} — metrics disabled");
+            return SdkMeterProvider::default();
+        }
+    };
 
     let resource = Resource::builder()
         .with_attribute(KeyValue::new("service.name", "claude-worker"))
