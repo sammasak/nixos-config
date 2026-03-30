@@ -52,11 +52,22 @@ skillsSrc:
       # validate-bash.sh has a VM guard for agent-specific rules.
       # validate-manifest.sh works on all hosts.
       hooks = {
+        UserPromptSubmit = [{
+          hooks = [{
+            type = "command";
+            command = "${skillsSrc}/hooks/retrieve-context.sh";
+            timeout = 8;
+          }];
+        }];
         Stop = [{
           hooks = [
             {
               type = "command";
               command = "${skillsSrc}/hooks/check-goals.sh";
+            }
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/persist-session.sh";
             }
             {
               type = "command";
