@@ -63,15 +63,15 @@ skillsSrc:
           hooks = [
             {
               type = "command";
-              command = "${skillsSrc}/hooks/check-goals.sh";
-            }
-            {
-              type = "command";
               command = "${skillsSrc}/hooks/persist-session.sh";
             }
             {
               type = "command";
               command = "${skillsSrc}/hooks/extract-instincts.sh";
+            }
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/check-goals.sh";
             }
             {
               type = "command";
