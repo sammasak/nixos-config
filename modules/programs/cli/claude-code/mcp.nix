@@ -56,7 +56,7 @@ skillsSrc:
           hooks = [{
             type = "command";
             command = "${skillsSrc}/hooks/retrieve-context.sh";
-            timeout = 8;
+            timeout = 15;
           }];
         }];
         Stop = [{
