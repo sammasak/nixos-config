@@ -45,8 +45,14 @@ let
               useUserPackages = true;
               backupFileExtension = "backup";
               sharedModules = [
+                (import ../modules/programs/cli/workspace/default.nix inputs.workspace)
+                ../modules/programs/cli/claude-code/default.nix
                 (import ../modules/programs/cli/claude-code/mcp.nix inputs.claude-code-skills)
                 (import ../modules/programs/cli/claude-code/skills.nix inputs.claude-code-skills)
+                (import ../modules/programs/cli/codex/default.nix {
+                  skillsSrc = inputs.claude-code-skills;
+                  workspaceSrc = inputs.workspace;
+                })
               ];
               users.${username} =
                 config.flake.modules.homeManager.default

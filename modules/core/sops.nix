@@ -18,19 +18,29 @@ in
         generateKey = lib.mkDefault true;
       };
 
-      secrets."claude_oauth_token" = {
-        sopsFile = ../../secrets/claude/oauth.yaml;
-        owner = username;
-        mode = "0400";
-      };
+      secrets =
+        {
+          "claude_oauth_token" = {
+            sopsFile = ../../secrets/claude/oauth.yaml;
+            owner = username;
+            mode = "0400";
+          };
 
-      # GitHub access token for nix to fetch private flake inputs.
-      # Decrypted to /run/secrets/nix-access-token, included by nix.conf at runtime.
-      secrets."nix_access_token" = {
-        sopsFile = ../../secrets/homelab/github-access-token.yaml;
-        owner = "root";
-        mode = "0400";
-      };
+          # GitHub access token for nix to fetch private flake inputs.
+          # Decrypted to /run/secrets/nix-access-token, included by nix.conf at runtime.
+          "nix_access_token" = {
+            sopsFile = ../../secrets/homelab/github-access-token.yaml;
+            owner = "root";
+            mode = "0400";
+          };
+        }
+        // lib.optionalAttrs (builtins.pathExists ../../secrets/openai/api-key.yaml) {
+          "openai_api_key" = {
+            sopsFile = ../../secrets/openai/api-key.yaml;
+            owner = username;
+            mode = "0400";
+          };
+        };
     };
 
     # Soft-include so nix doesn't fail before sops activates on first boot.

@@ -274,7 +274,8 @@
         "home-manager": "home-manager",
         "nixpkgs": "nixpkgs",
         "sops-nix": "sops-nix",
-        "stylix": "stylix"
+        "stylix": "stylix",
+        "workspace": "workspace"
       }
     },
     "sops-nix": {
@@ -425,6 +426,22 @@
         "owner": "tinted-theming",
         "repo": "base16-zed",
         "type": "github"
+      }
+    },
+    "workspace": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1775023923,
+        "narHash": "sha256-au6yvURdR4UuRkxf+7nYQEnEFF762k5TP6u3bTk6pCg=",
+        "ref": "refs/heads/main",
+        "rev": "5ad46e461bd0bb894c18df8ff43c763ab86096cc",
+        "revCount": 56,
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/workspace.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/workspace.git"
       }
     }
   },

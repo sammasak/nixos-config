@@ -64,10 +64,12 @@ skillsSrc:
             {
               type = "command";
               command = "${skillsSrc}/hooks/persist-session.sh";
+              timeout = 45;
             }
             {
               type = "command";
               command = "${skillsSrc}/hooks/extract-instincts.sh";
+              timeout = 45;
             }
             {
               type = "command";
@@ -76,6 +78,7 @@ skillsSrc:
             {
               type = "command";
               command = "${skillsSrc}/hooks/write-session-state.sh";
+              timeout = 45;
             }
           ];
         }];
