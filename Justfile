@@ -58,10 +58,11 @@ publish-agent tag=`date +%Y%m%d`:
     bash scripts/publish-oci-image.sh "result-{{agent_host}}-kubevirt" "{{registry}}" "{{agent_project}}" "{{agent_image}}" "{{tag}}"
     just scan {{registry}}/{{agent_project}}/{{agent_image}}:{{tag}}
 
-# Build + publish agent in one step
+# Build + publish agent in one step; signs image after publish
 release-agent tag=`date +%Y%m%d`:
     just build-agent
     just publish-agent {{tag}}
+    just sign {{registry}}/{{agent_project}}/{{agent_image}}:{{tag}}
 
 # Show current agent image in Harbor
 agent-info tag="latest":
@@ -73,3 +74,13 @@ agent-info tag="latest":
 # Fails if any CRITICAL severity CVEs are found
 scan IMAGE:
     nix shell nixpkgs#trivy -c trivy image --exit-code 1 --severity CRITICAL {{IMAGE}}
+
+# Sign image with Cosign after publishing
+# Requires SOPS-encrypted cosign.key in secrets/
+sign IMAGE:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TMPKEY=$(mktemp)
+    trap "rm -f $TMPKEY" EXIT
+    cd secrets && sops --decrypt cosign.key > "$TMPKEY"
+    nix shell nixpkgs#cosign -c cosign sign --key "$TMPKEY" --yes {{IMAGE}}
