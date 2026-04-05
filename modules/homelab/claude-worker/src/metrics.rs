@@ -25,7 +25,9 @@ pub fn init(otel_endpoint: &str) -> SdkMeterProvider {
     {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("WARN: failed to build OTLP metric exporter: {e} — metrics disabled");
+            // Use eprintln here since tracing may not be initialized yet when metrics::init is called
+            // after tracing init, so this is safe — but we also emit to both
+            tracing::warn!(error = %e, "Failed to build OTLP metric exporter — metrics disabled");
             return SdkMeterProvider::default();
         }
     };
