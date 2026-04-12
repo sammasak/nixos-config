@@ -80,6 +80,11 @@ skillsSrc:
               command = "${skillsSrc}/hooks/write-session-state.sh";
               timeout = 45;
             }
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/agent-telemetry.sh";
+              timeout = 60;
+            }
           ];
         }];
         PreToolUse = [
