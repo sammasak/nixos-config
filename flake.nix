@@ -21,8 +21,6 @@
     claude-ctl.url = "github:sammasak/claude-ctl";
     claude-ctl.flake = false;
 
-    workspace.url = "git+ssh://git@github.com/sammasak/workspace.git";
-    workspace.flake = false;
   };
 
   outputs =

@@ -1,4 +1,3 @@
-workspaceSrc:
 { lib, pkgs, ... }:
 let
   workspaceRepo = "git@github.com:sammasak/workspace.git";
@@ -28,16 +27,9 @@ let
       exit 0
     fi
 
-    echo "workspace bootstrap: git clone failed, seeding from the flake snapshot" >&2
-    rm -rf "$workspace_dir"
-    mkdir -p "$workspace_dir"
-    cp -r ${workspaceSrc}/. "$workspace_dir/"
-    chmod -R u+w "$workspace_dir"
-
+    echo "workspace bootstrap: git clone failed, initialising empty repo" >&2
     ${pkgs.git}/bin/git -C "$workspace_dir" init -b main >/dev/null
     ${pkgs.git}/bin/git -C "$workspace_dir" remote add origin "${workspaceRepo}" >/dev/null 2>&1 || true
-    ${pkgs.git}/bin/git -C "$workspace_dir" add -A >/dev/null 2>&1 || true
-    ${pkgs.git}/bin/git -C "$workspace_dir" commit -m "Seed workspace from nix snapshot" >/dev/null 2>&1 || true
   '';
 in
 {

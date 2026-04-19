@@ -1,4 +1,4 @@
-{ skillsSrc, workspaceSrc }:
+skillsSrc:
 { lib, pkgs, ... }:
 let
   portableSkillNames = [
