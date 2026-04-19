@@ -4,10 +4,74 @@
   # Install crun binary
   environment.systemPackages = [ pkgs.crun ];
 
-  # Write k3s containerd config template that registers crun as an additional runtime.
-  # k3s reads this file at startup instead of generating its own config.toml.
-  # We keep 'runc' as the default so existing workloads are unaffected.
-  # Sandbox Jobs select 'crun' explicitly via RuntimeClass.
+  # Write k3s containerd config template using an activation script so it runs
+  # on every nixos-rebuild switch (not just at k3s start). This ensures the
+  # template is always up-to-date on disk before k3s next reads it.
+  #
+  # k3s reads config.toml.tmpl instead of generating its default config.toml.
+  # The template uses containerd v3 format (k3s >= 1.32 / containerd >= 2.0).
+  # runc remains the default runtime; crun is added for RuntimeClass "crun".
+  system.activationScripts.k3s-containerd-crun = {
+    text = let
+      crunBin = "${pkgs.crun}/bin/crun";
+    in ''
+      mkdir -p /var/lib/rancher/k3s/agent/etc/containerd
+      cat > /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl << 'TOML'
+version = 3
+root = "/var/lib/rancher/k3s/agent/containerd"
+state = "/run/k3s/containerd"
+
+[grpc]
+  address = "/run/k3s/containerd/containerd.sock"
+
+[plugins.'io.containerd.internal.v1.opt']
+  path = "/var/lib/rancher/k3s/agent/containerd"
+
+[plugins.'io.containerd.grpc.v1.cri']
+  stream_server_address = "127.0.0.1"
+  stream_server_port = "10010"
+
+[plugins.'io.containerd.cri.v1.runtime']
+  enable_selinux = false
+  enable_unprivileged_ports = true
+  enable_unprivileged_icmp = true
+  device_ownership_from_security_context = false
+
+[plugins.'io.containerd.cri.v1.images']
+  snapshotter = "overlayfs"
+  disable_snapshot_annotations = true
+  use_local_image_pull = true
+
+[plugins.'io.containerd.cri.v1.images'.pinned_images]
+  sandbox = "rancher/mirrored-pause:3.6"
+
+[plugins.'io.containerd.cri.v1.runtime'.cni]
+  bin_dirs = ["/var/lib/rancher/k3s/data/cni"]
+  conf_dir = "/var/lib/rancher/k3s/agent/etc/cni/net.d"
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc]
+  runtime_type = "io.containerd.runc.v2"
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
+  SystemdCgroup = true
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.crun]
+  runtime_type = "io.containerd.runc.v2"
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.crun.options]
+  BinaryName = "${crunBin}"
+  SystemdCgroup = true
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runhcs-wcow-process]
+  runtime_type = "io.containerd.runhcs.v1"
+
+[plugins.'io.containerd.cri.v1.images'.registry]
+  config_path = "/var/lib/rancher/k3s/agent/etc/containerd/certs.d"
+TOML
+    '';
+  };
+
+  # Backwards-compatible no-op service (activation script replaced this).
   systemd.services.k3s-containerd-config = {
     description = "Write k3s containerd runtime config template";
     wantedBy = [ "k3s.service" ];
@@ -16,29 +80,8 @@
       Type = "oneshot";
       RemainAfterExit = true;
     };
-    script = let
-      crunBin = "${pkgs.crun}/bin/crun";
-    in ''
-      mkdir -p /var/lib/rancher/k3s/agent/etc/containerd
-      cat > /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl << 'TOML'
-version = 2
-
-[plugins."io.containerd.grpc.v1.cri".containerd]
-  default_runtime_name = "runc"
-
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
-  runtime_type = "io.containerd.runc.v2"
-
-  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
-    SystemdCgroup = true
-
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.crun]
-  runtime_type = "io.containerd.runc.v2"
-
-  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.crun.options]
-    BinaryName = "${crunBin}"
-    SystemdCgroup = true
-TOML
+    script = ''
+      echo "k3s containerd config written by NixOS activation script"
     '';
   };
 }
