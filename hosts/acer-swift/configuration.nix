@@ -12,6 +12,9 @@ in
 
     # Desktop mode (default boot)
     ../../modules/specialisations/desktop.nix
+
+    # Register crun as additional containerd runtime for k3s
+    ../../modules/homelab/k3s/containerd-crun.nix
   ];
 
   sam.profile = vars;
