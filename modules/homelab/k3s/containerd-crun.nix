@@ -1,8 +1,13 @@
 { config, pkgs, lib, ... }:
 
 {
-  # Install crun binary
-  environment.systemPackages = [ pkgs.crun ];
+  # Install crun and gVisor (runsc) binaries
+  environment.systemPackages = [ pkgs.crun pkgs.gvisor ];
+
+  # Symlink containerd-shim-runsc-v1 so k3s's bundled containerd can discover it
+  systemd.tmpfiles.rules = [
+    "L+ /usr/local/sbin/containerd-shim-runsc-v1 - - - - ${pkgs.gvisor}/bin/containerd-shim-runsc-v1"
+  ];
 
   # CRIU for container checkpoint/restore (Sprint 2)
   programs.criu.enable = true;
@@ -64,6 +69,9 @@ state = "/run/k3s/containerd"
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.crun.options]
   BinaryName = "${crunBin}"
   SystemdCgroup = true
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.gvisor]
+  runtime_type = "io.containerd.runsc.v1"
 
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runhcs-wcow-process]
   runtime_type = "io.containerd.runhcs.v1"
