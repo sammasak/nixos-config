@@ -4,6 +4,9 @@
   # Install crun binary
   environment.systemPackages = [ pkgs.crun ];
 
+  # CRIU for container checkpoint/restore (Sprint 2)
+  programs.criu.enable = true;
+
   # Write k3s containerd config template using an activation script so it runs
   # on every nixos-rebuild switch (not just at k3s start). This ensures the
   # template is always up-to-date on disk before k3s next reads it.
