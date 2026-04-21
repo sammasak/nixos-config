@@ -4,9 +4,12 @@
   # Install crun and gVisor (runsc) binaries
   environment.systemPackages = [ pkgs.crun pkgs.gvisor ];
 
-  # Symlink containerd-shim-runsc-v1 so k3s's bundled containerd can discover it
+  # Symlink containerd-shim-runsc-v1 so k3s's bundled containerd can discover it.
+  # Symlink criu into /var/lib/rancher/k3s/data/cni/ which is in k3s's constructed
+  # PATH for containerd/shim processes, allowing crun to find criu for checkpointing.
   systemd.tmpfiles.rules = [
     "L+ /usr/local/sbin/containerd-shim-runsc-v1 - - - - ${pkgs.gvisor}/bin/containerd-shim-runsc-v1"
+    "L+ /var/lib/rancher/k3s/data/cni/criu - - - - ${pkgs.criu}/bin/criu"
   ];
 
   # CRIU for container checkpoint/restore (Sprint 2)
