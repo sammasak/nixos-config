@@ -13,4 +13,8 @@ final: prev: {
       ./patches/criu-so-passcred-kernel-6.16.patch
     ];
   });
+
+  # crun links against libcriu.so.2 at build time. Override to use the
+  # patched criu above so CRIU checkpoints succeed on kernel 6.16+.
+  crun = prev.crun.override { criu = final.criu; };
 }
