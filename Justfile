@@ -53,10 +53,11 @@ build-agent host=agent_host:
     bash scripts/build-workstation-image.sh {{host}}
 
 # Publish agent qcow2 as OCI containerDisk to Harbor
-# Scans the published image for CRITICAL vulnerabilities before completing
+# Note: trivy scan is not run here — KubeVirt disk images (raw qcow2) cause
+# trivy to time out walking the full disk. Use `just scan` separately on
+# container images, not disk images.
 publish-agent tag=`date +%Y%m%d`:
     bash scripts/publish-oci-image.sh "result-{{agent_host}}-kubevirt" "{{registry}}" "{{agent_project}}" "{{agent_image}}" "{{tag}}"
-    just scan {{registry}}/{{agent_project}}/{{agent_image}}:{{tag}}
 
 # Build + publish agent in one step; signs image and attests SBOM after publish
 release-agent tag=`date +%Y%m%d`:
