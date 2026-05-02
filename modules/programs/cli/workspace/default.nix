@@ -7,6 +7,8 @@ let
     workspace_dir="$HOME/workspace"
 
     if [ -d "$workspace_dir/.git" ]; then
+      ${pkgs.git}/bin/git -C "$workspace_dir" pull --ff-only 2>/dev/null \
+        || echo "workspace bootstrap: pull skipped (offline or local changes ahead)" >&2
       exit 0
     fi
 
