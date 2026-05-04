@@ -21,14 +21,10 @@ in
 {
   system.autoUpgrade = {
     enable = true;
-    flake = "/home/lukas/nixos-config";
-    flags = [
-      "--update-input"
-      "nixpkgs"
-      "--commit-lock-file"
-      "--print-build-logs"
-    ];
+    flake = "github:sammasak/nixos-config/homelab";
+    flags = [ "--print-build-logs" ];
     dates = "Sun 03:00";
+    randomizedDelaySec = "45min";
     allowReboot = false;
   };
 

@@ -1,5 +1,5 @@
 # Host configuration for lenovo-21CB001PMX
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -21,6 +21,10 @@ in
   specialisation.server.configuration = {
     imports = [ ../../modules/specialisations/server.nix ];
   };
+
+  # Lenovo is the source of truth — rebuilds run manually before pushing to the
+  # homelab branch. Other hosts pick up changes via system.autoUpgrade from GitHub.
+  system.autoUpgrade.enable = lib.mkForce false;
 
   # Flux
   homelab.flux = {
