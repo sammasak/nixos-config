@@ -32,9 +32,14 @@ in
   ];
 
   # Acer laptop: use generic thermal policy (BIOS/EC fan tables + thermald).
+  # Turbo boost disabled: keeps idle package temp ~10-15°C lower (below the 63°C fan trigger).
+  # EPP balance_power: biases HWP toward lower voltage/frequency at idle.
   hardware.thermal = {
+    enable = true;
     platform = "generic";
     profile = "balanced";
+    disableTurboBoost = true;
+    energyPerformancePreference = "balance_power";
   };
 
   # Keep laptop always on - never sleep on lid close (override laptop defaults)

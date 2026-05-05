@@ -20,12 +20,43 @@ in
       default = "quiet";
       description = "Fan curve profile";
     };
+
+    disableTurboBoost = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Disable Intel turbo boost via intel_pstate. Caps CPU to base frequency,
+        reducing idle package temperature by ~10-15°C. Recommended for always-on
+        server workloads where peak single-core performance is not needed.
+      '';
+    };
+
+    energyPerformancePreference = lib.mkOption {
+      type = lib.types.enum [ "default" "performance" "balance_performance" "balance_power" "power" ];
+      default = "default";
+      description = ''
+        Intel HWP Energy Performance Preference (EPP). Controls the bias between
+        performance and power savings within the current governor constraints.
+        "balance_power" reduces idle frequency further without impacting throughput.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
     # thermald is useful on generic Intel laptops, but on ThinkPad platforms
     # it often exits early due to platform checks and provides no control.
     services.thermald.enable = lib.mkIf (cfg.platform == "generic") true;
+
+    # Apply CPU frequency tuning at boot and after wakeup from sleep.
+    powerManagement.powerUpCommands = lib.mkIf (cfg.disableTurboBoost || cfg.energyPerformancePreference != "default") (
+      lib.concatStringsSep "\n" (lib.optional cfg.disableTurboBoost ''
+        echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo
+      '' ++ lib.optional (cfg.energyPerformancePreference != "default") ''
+        for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+          echo ${cfg.energyPerformancePreference} > "$f"
+        done
+      '')
+    );
 
     # ThinkPad-specific fan control
     boot.extraModprobeConfig = lib.mkIf (cfg.platform == "thinkpad") ''
