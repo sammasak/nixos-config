@@ -1,6 +1,9 @@
 # Homelab k3s server role
 # Use this role for control plane nodes
-{ lib, pkgs, ... }:
+{ lib, pkgs, config, ... }:
+let
+  username = config.sam.profile.username;
+in
 {
   imports = [
     ./base.nix
@@ -8,6 +11,12 @@
     ../homelab/adguardhome.nix
     ../homelab/acme.nix
     ../homelab/tailscale.nix
+  ];
+
+  # Homelab improvement loop: all systemd user services, timers, and path units
+  # that run the kanban board agents. Managed here so they survive nixos-rebuild.
+  home-manager.users.${username}.imports = [
+    ../homelab/improvement-loop.nix
   ];
 
   # claude-ctl CLI tool for managing agents
