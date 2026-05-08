@@ -88,6 +88,7 @@ in
         ++ optionals (cfg.role == "server") [
           "--flannel-backend=${cfg.flannel.backend}"
           "--write-kubeconfig-mode=644"
+          "--secrets-encryption"
         ]
         ++ optionals (cfg.role == "server" && cfg.taintControlPlane) [
           "--node-taint=node-role.kubernetes.io/control-plane:NoSchedule"
