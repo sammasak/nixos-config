@@ -90,8 +90,8 @@ in
       extraTimer.OnBootSec = "60s";  # guaranteed early-boot trigger
     };
     board-analyst = mkTimer {
-      description = "Homelab Board Analyst — every 4 hours";
-      onCalendar = "0/4:00:30";
+      description = "Homelab Board Analyst — every 4 hours, offset to 06:05 post rate-limit reset";
+      onCalendar = "*-*-* 2/4:05:00";
     };
     oncall-monitor = mkTimer {
       description = "Homelab On-Call Monitor — every 30 min";
@@ -106,8 +106,8 @@ in
       onCalendar = "*:20:00";
     };
     progress-reviewer = mkTimer {
-      description = "Homelab Progress Reviewer — every 4 hours";
-      onCalendar = "*-*-* 00/4:02:00";
+      description = "Homelab Progress Reviewer — every 4 hours, offset to 06:15 post rate-limit reset";
+      onCalendar = "*-*-* 2/4:15:00";
     };
     infra-monitor = mkTimer {
       description = "Homelab Infra Monitor — daily";
