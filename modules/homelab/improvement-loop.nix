@@ -21,6 +21,7 @@ let
       ExecStart = "${runAgent} ${goalPath}";
       StandardOutput = "journal";
       StandardError = "journal";
+      TimeoutStopSec = 10;
     } // extraService;
   };
 
@@ -29,7 +30,7 @@ let
     Timer = {
       OnCalendar = onCalendar;
       AccuracySec = "1s";
-      Persistent = true;
+      Persistent = false;
     } // extraTimer;
     Install.WantedBy = [ "timers.target" ];
   };
@@ -39,6 +40,11 @@ in
     scrum-master = mkService {
       description = "Homelab Scrum Master";
       goalPath = "${loop}/scrum-master/GOAL.md";
+      extraService = {
+        TimeoutStartSec = 900;
+        Restart = "on-failure";
+        RestartSec = "10";
+      };
     };
     board-analyst = mkService {
       description = "Homelab Board Analyst";
@@ -87,11 +93,12 @@ in
     scrum-master = mkTimer {
       description = "Homelab Scrum Master — every 30 min";
       onCalendar = "*:0/30:00";
-      extraTimer.OnBootSec = "60s";  # guaranteed early-boot trigger
+      extraTimer = { OnBootSec = "60s"; Persistent = true; };
     };
     board-analyst = mkTimer {
       description = "Homelab Board Analyst — every 4 hours, offset to 06:05 post rate-limit reset";
       onCalendar = "*-*-* 2/4:05:00";
+      extraTimer.Persistent = true;
     };
     oncall-monitor = mkTimer {
       description = "Homelab On-Call Monitor — every 30 min";
