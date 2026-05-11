@@ -21,6 +21,7 @@ let
       ExecStart = "${runAgent} ${goalPath}";
       StandardOutput = "journal";
       StandardError = "journal";
+      TimeoutStartSec = 900;
       TimeoutStopSec = 10;
     } // extraService;
   };
