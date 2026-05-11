@@ -102,16 +102,16 @@ in
       extraTimer.Persistent = true;
     };
     oncall-monitor = mkTimer {
-      description = "Homelab On-Call Monitor — every 30 min";
-      onCalendar = "*:5/30";
+      description = "Homelab On-Call Monitor — hourly";
+      onCalendar = "*:05:00";
     };
     gitops-reviewer = mkTimer {
-      description = "Homelab GitOps PR Reviewer — every 30 min";
-      onCalendar = "*:12/30";
+      description = "Homelab GitOps PR Reviewer — hourly";
+      onCalendar = "*:12:00";
     };
     conflict-resolver = mkTimer {
-      description = "Homelab PR Conflict Resolver — hourly";
-      onCalendar = "*:20:00";
+      description = "Homelab PR Conflict Resolver — every 2 hours";
+      onCalendar = "*-*-* 0/2:20:00";
     };
     progress-reviewer = mkTimer {
       description = "Homelab Progress Reviewer — every 4 hours, offset to 06:15 post rate-limit reset";
@@ -140,14 +140,9 @@ in
   };
 
   systemd.user.paths = {
-    board-changed = {
-      Unit.Description = "Trigger scrum master on any kanban board commit";
-      Path = {
-        PathModified = "${home}/knowledge-vault/.git/COMMIT_EDITMSG";
-        Unit = "scrum-master.service";
-      };
-      Install.WantedBy = [ "default.target" ];
-    };
+    # board-changed path watcher removed: fired on every worker board-commit
+    # causing cascading scrum-master triggers all caught by debounce anyway.
+    # The 30-min timer is sufficient for human-triggered board changes.
     scrum-master-trigger = {
       Unit.Description = "Trigger scrum master immediately when a worker exits";
       Path = {
