@@ -88,6 +88,23 @@ in
       description = "Homelab Product Monitor";
       goalPath = "${loop}/monitors/product/GOAL.md";
     };
+    event-dispatcher = {
+      Unit = {
+        Description = "ntfy Event Dispatcher — routes events to improvement-loop runners";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+      };
+      Service = {
+        Environment = pathEnv;
+        Type = "simple";
+        ExecStart = "${loop}/event-dispatcher.sh";
+        Restart = "always";
+        RestartSec = "10";
+        StandardOutput = "journal";
+        StandardError = "journal";
+      };
+      Install.WantedBy = [ "default.target" ];
+    };
   };
 
   systemd.user.timers = {
@@ -97,25 +114,25 @@ in
       extraTimer = { OnBootSec = "60s"; Persistent = true; };
     };
     board-analyst = mkTimer {
-      description = "Homelab Board Analyst — every 4 hours, offset to 06:05 post rate-limit reset";
-      onCalendar = "*-*-* 2/4:05:00";
+      description = "Homelab Board Analyst — 2x daily at 06:05 and 18:05";
+      onCalendar = "*-*-* 6/12:05:00";
       extraTimer.Persistent = true;
     };
     oncall-monitor = mkTimer {
-      description = "Homelab On-Call Monitor — hourly";
-      onCalendar = "*:05:00";
+      description = "Homelab On-Call Monitor — every 4h fallback";
+      onCalendar = "*-*-* 0/4:05:00";
     };
     gitops-reviewer = mkTimer {
-      description = "Homelab GitOps PR Reviewer — hourly";
-      onCalendar = "*:12:00";
+      description = "Homelab GitOps PR Reviewer — every 4h fallback";
+      onCalendar = "*-*-* 0/4:12:00";
     };
     conflict-resolver = mkTimer {
-      description = "Homelab PR Conflict Resolver — every 2 hours";
-      onCalendar = "*-*-* 0/2:20:00";
+      description = "Homelab PR Conflict Resolver — every 12h fallback";
+      onCalendar = "*-*-* 0/12:20:00";
     };
     progress-reviewer = mkTimer {
-      description = "Homelab Progress Reviewer — every 4 hours, offset to 06:15 post rate-limit reset";
-      onCalendar = "*-*-* 2/4:15:00";
+      description = "Homelab Progress Reviewer — every 8 hours";
+      onCalendar = "*-*-* 0/8:15:00";
     };
     infra-monitor = mkTimer {
       description = "Homelab Infra Monitor — daily";
