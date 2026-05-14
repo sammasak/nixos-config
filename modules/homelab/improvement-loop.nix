@@ -131,8 +131,8 @@ in
       onCalendar = "*-*-* 0/12:20:00";
     };
     progress-reviewer = mkTimer {
-      description = "Homelab Progress Reviewer — every 8 hours";
-      onCalendar = "*-*-* 0/8:15:00";
+      description = "Homelab Progress Reviewer — every 4 hours";
+      onCalendar = "*-*-* 0/4:15:00";
     };
     infra-monitor = mkTimer {
       description = "Homelab Infra Monitor — daily";
