@@ -1,8 +1,33 @@
 # AdGuard Home DNS server with encrypted DNS support (DoT/DoH)
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 let
   cfg = config.homelab.dns;
   inherit (lib) mkEnableOption mkOption mkIf types optionals;
+
+  # Override adguardhome to v0.107.74 (schema_version 34).
+  # The nixpkgs pin ships v0.107.71 (schema_version 32), which cannot parse a
+  # config file written by v0.107.74. Pinning the package here keeps the nixpkgs
+  # lock stable while unblocking the schema mismatch crash loop.
+  adguardhome-v74 = pkgs.adguardhome.overrideAttrs (old: rec {
+    version = "0.107.74";
+    src = pkgs.fetchFromGitHub {
+      owner = "AdguardTeam";
+      repo = "AdGuardHome";
+      tag = "v${version}";
+      hash = "sha256-cAuthACY/rBVRTSv/UIarhScm+EoTUhnkQ0RUtvhAFg=";
+    };
+    vendorHash = "sha256-o4hpiqQEt8gkYFeAkxPDisvLWbi7WOBZ7xMXrPt6Cdo=";
+    dashboard = old.dashboard.overrideAttrs (_: {
+      inherit version src;
+      npmDepsHash = "sha256-SOHmXvGLpjs8h0X+AJ6/jAYpxzoizhwRjIzx4SqJOCo=";
+    });
+    ldflags = [
+      "-s"
+      "-w"
+      "-X github.com/AdguardTeam/AdGuardHome/internal/version.version=${version}"
+    ];
+    passthru = (old.passthru or { }) // { schema_version = 34; };
+  });
 in
 {
   options.homelab.dns = {
@@ -81,6 +106,7 @@ in
   config = mkIf cfg.enable {
     services.adguardhome = {
       enable = true;
+      package = adguardhome-v74;
       host = "0.0.0.0";
       port = 3003;
       openFirewall = true;

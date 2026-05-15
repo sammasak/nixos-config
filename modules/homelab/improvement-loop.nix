@@ -21,6 +21,8 @@ let
       ExecStart = "${runAgent} ${goalPath}";
       StandardOutput = "journal";
       StandardError = "journal";
+      TimeoutStartSec = 900;
+      TimeoutStopSec = 10;
     } // extraService;
   };
 
@@ -29,7 +31,7 @@ let
     Timer = {
       OnCalendar = onCalendar;
       AccuracySec = "1s";
-      Persistent = true;
+      Persistent = false;
     } // extraTimer;
     Install.WantedBy = [ "timers.target" ];
   };
@@ -39,6 +41,11 @@ in
     scrum-master = mkService {
       description = "Homelab Scrum Master";
       goalPath = "${loop}/scrum-master/GOAL.md";
+      extraService = {
+        TimeoutStartSec = 900;
+        Restart = "on-failure";
+        RestartSec = "10";
+      };
     };
     board-analyst = mkService {
       description = "Homelab Board Analyst";
@@ -81,33 +88,51 @@ in
       description = "Homelab Product Monitor";
       goalPath = "${loop}/monitors/product/GOAL.md";
     };
+    event-dispatcher = {
+      Unit = {
+        Description = "ntfy Event Dispatcher — routes events to improvement-loop runners";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+      };
+      Service = {
+        Environment = pathEnv;
+        Type = "simple";
+        ExecStart = "${loop}/event-dispatcher.sh";
+        Restart = "always";
+        RestartSec = "10";
+        StandardOutput = "journal";
+        StandardError = "journal";
+      };
+      Install.WantedBy = [ "default.target" ];
+    };
   };
 
   systemd.user.timers = {
     scrum-master = mkTimer {
       description = "Homelab Scrum Master — every 30 min";
       onCalendar = "*:0/30:00";
-      extraTimer.OnBootSec = "60s";  # guaranteed early-boot trigger
+      extraTimer = { OnBootSec = "60s"; Persistent = true; };
     };
     board-analyst = mkTimer {
-      description = "Homelab Board Analyst — every 4 hours";
-      onCalendar = "0/4:00:30";
+      description = "Homelab Board Analyst — 2x daily at 06:05 and 18:05";
+      onCalendar = "*-*-* 6/12:05:00";
+      extraTimer.Persistent = true;
     };
     oncall-monitor = mkTimer {
-      description = "Homelab On-Call Monitor — every 30 min";
-      onCalendar = "*:5/30";
+      description = "Homelab On-Call Monitor — every 4h fallback";
+      onCalendar = "*-*-* 0/4:05:00";
     };
     gitops-reviewer = mkTimer {
-      description = "Homelab GitOps PR Reviewer — every 30 min";
-      onCalendar = "*:12/30";
+      description = "Homelab GitOps PR Reviewer — every 4h fallback";
+      onCalendar = "*-*-* 0/4:12:00";
     };
     conflict-resolver = mkTimer {
-      description = "Homelab PR Conflict Resolver — hourly";
-      onCalendar = "*:20:00";
+      description = "Homelab PR Conflict Resolver — every 12h fallback";
+      onCalendar = "*-*-* 0/12:20:00";
     };
     progress-reviewer = mkTimer {
       description = "Homelab Progress Reviewer — every 4 hours";
-      onCalendar = "*-*-* 00/4:02:00";
+      onCalendar = "*-*-* 0/4:15:00";
     };
     infra-monitor = mkTimer {
       description = "Homelab Infra Monitor — daily";
@@ -132,14 +157,9 @@ in
   };
 
   systemd.user.paths = {
-    board-changed = {
-      Unit.Description = "Trigger scrum master on any kanban board commit";
-      Path = {
-        PathModified = "${home}/knowledge-vault/.git/COMMIT_EDITMSG";
-        Unit = "scrum-master.service";
-      };
-      Install.WantedBy = [ "default.target" ];
-    };
+    # board-changed path watcher removed: fired on every worker board-commit
+    # causing cascading scrum-master triggers all caught by debounce anyway.
+    # The 30-min timer is sufficient for human-triggered board changes.
     scrum-master-trigger = {
       Unit.Description = "Trigger scrum master immediately when a worker exits";
       Path = {
