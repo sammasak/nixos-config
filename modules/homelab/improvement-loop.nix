@@ -38,14 +38,29 @@ let
 in
 {
   systemd.user.services = {
-    scrum-master = mkService {
-      description = "Homelab Scrum Master";
-      goalPath = "${loop}/scrum-master/GOAL.md";
-      extraService = {
-        TimeoutStartSec = 900;
-        Restart = "on-failure";
-        RestartSec = "10";
+    board-daemon = {
+      Unit = {
+        Description = "Board Daemon — watches knowledge-vault Board and dispatches ntfy events";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
       };
+      Service = {
+        Environment = [
+          pathEnv
+          "BOARD_DIR=${home}/knowledge-vault/Board"
+          "KNOWLEDGE_VAULT_DIR=${home}/knowledge-vault"
+          "NTFY_URL=http://ntfy.ntfy.svc.cluster.local/homelab-alerts"
+          "WEBHOOK_PORT=8765"
+          "RUST_LOG=board_daemon=info"
+        ];
+        Type = "simple";
+        ExecStart = "${home}/board-daemon/target/release/board-daemon";
+        Restart = "always";
+        RestartSec = "5";
+        StandardOutput = "journal";
+        StandardError = "journal";
+      };
+      Install.WantedBy = [ "default.target" ];
     };
     board-analyst = mkService {
       description = "Homelab Board Analyst";
@@ -88,31 +103,9 @@ in
       description = "Homelab Product Monitor";
       goalPath = "${loop}/monitors/product/GOAL.md";
     };
-    event-dispatcher = {
-      Unit = {
-        Description = "ntfy Event Dispatcher — routes events to improvement-loop runners";
-        After = [ "network-online.target" ];
-        Wants = [ "network-online.target" ];
-      };
-      Service = {
-        Environment = pathEnv;
-        Type = "simple";
-        ExecStart = "${loop}/event-dispatcher.sh";
-        Restart = "always";
-        RestartSec = "10";
-        StandardOutput = "journal";
-        StandardError = "journal";
-      };
-      Install.WantedBy = [ "default.target" ];
-    };
   };
 
   systemd.user.timers = {
-    scrum-master = mkTimer {
-      description = "Homelab Scrum Master — every 30 min";
-      onCalendar = "*:0/30:00";
-      extraTimer = { OnBootSec = "60s"; Persistent = true; };
-    };
     board-analyst = mkTimer {
       description = "Homelab Board Analyst — 2x daily at 06:05 and 18:05";
       onCalendar = "*-*-* 6/12:05:00";
@@ -153,20 +146,6 @@ in
     product-monitor = mkTimer {
       description = "Homelab Product Monitor — weekly Thursday";
       onCalendar = "Thu *-*-* 21:00:00";
-    };
-  };
-
-  systemd.user.paths = {
-    # board-changed path watcher removed: fired on every worker board-commit
-    # causing cascading scrum-master triggers all caught by debounce anyway.
-    # The 30-min timer is sufficient for human-triggered board changes.
-    scrum-master-trigger = {
-      Unit.Description = "Trigger scrum master immediately when a worker exits";
-      Path = {
-        PathModified = "/tmp/scrum-wakeup";
-        Unit = "scrum-master.service";
-      };
-      Install.WantedBy = [ "default.target" ];
     };
   };
 }
