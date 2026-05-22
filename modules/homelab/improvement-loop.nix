@@ -52,6 +52,8 @@ in
           "NTFY_URL=http://ntfy.ntfy.svc.cluster.local/homelab-alerts"
           "WEBHOOK_PORT=8765"
           "RUST_LOG=board_daemon=info"
+          "IMPROVEMENT_LOOP_DIR=${home}/homelab-improvement-loop"
+          "CLAUDE_BIN=${profile}/bin/claude"
         ];
         Type = "simple";
         ExecStart = "${home}/board-daemon/target/release/board-daemon";
@@ -62,13 +64,10 @@ in
       };
       Install.WantedBy = [ "default.target" ];
     };
+
     board-analyst = mkService {
       description = "Homelab Board Analyst";
       goalPath = "${loop}/board-analyst/GOAL.md";
-    };
-    oncall-monitor = mkService {
-      description = "Homelab On-Call Monitor";
-      goalPath = "${loop}/monitors/oncall/GOAL.md";
     };
     gitops-reviewer = mkService {
       description = "Homelab GitOps PR Reviewer";
@@ -82,70 +81,94 @@ in
       description = "Homelab Progress Reviewer";
       goalPath = "${loop}/progress-reviewer/GOAL.md";
     };
-    infra-monitor = mkService {
-      description = "Homelab Infra Monitor";
-      goalPath = "${loop}/monitors/infra/GOAL.md";
-    };
     e2e-tester = mkService {
       description = "Homelab E2E Tester";
       goalPath = "${loop}/e2e-tester/test-monitor/GOAL.md";
       extraService.TimeoutStartSec = 1800;
     };
-    devex-monitor = mkService {
-      description = "Homelab DevEx Monitor";
-      goalPath = "${loop}/monitors/devex/GOAL.md";
+
+    check-infra = {
+      Unit = {
+        Description = "Infra health check — posts to board-daemon on issues";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+      };
+      Service = {
+        Environment = pathEnv;
+        Type = "oneshot";
+        ExecStart = "${loop}/checks/check-infra.sh";
+        StandardOutput = "journal";
+        StandardError = "journal";
+        TimeoutStartSec = 60;
+      };
     };
-    secrets-monitor = mkService {
-      description = "Homelab Secrets Monitor";
-      goalPath = "${loop}/monitors/secrets/GOAL.md";
+    check-product = {
+      Unit = {
+        Description = "Product health check — posts to board-daemon on issues";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+      };
+      Service = {
+        Environment = pathEnv;
+        Type = "oneshot";
+        ExecStart = "${loop}/checks/check-product.sh";
+        StandardOutput = "journal";
+        StandardError = "journal";
+        TimeoutStartSec = 60;
+      };
     };
-    product-monitor = mkService {
-      description = "Homelab Product Monitor";
-      goalPath = "${loop}/monitors/product/GOAL.md";
+    check-secrets = {
+      Unit = {
+        Description = "Secrets/cert expiry check — posts to board-daemon on issues";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+      };
+      Service = {
+        Environment = pathEnv;
+        Type = "oneshot";
+        ExecStart = "${loop}/checks/check-secrets.sh";
+        StandardOutput = "journal";
+        StandardError = "journal";
+        TimeoutStartSec = 60;
+      };
+    };
+    check-devex = {
+      Unit = {
+        Description = "DevEx stale PR/ticket check — posts to board-daemon on issues";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+      };
+      Service = {
+        Environment = pathEnv;
+        Type = "oneshot";
+        ExecStart = "${loop}/checks/check-devex.sh";
+        StandardOutput = "journal";
+        StandardError = "journal";
+        TimeoutStartSec = 60;
+      };
     };
   };
 
   systemd.user.timers = {
-    board-analyst = mkTimer {
-      description = "Homelab Board Analyst — 2x daily at 06:05 and 18:05";
-      onCalendar = "*-*-* 6/12:05:00";
-      extraTimer.Persistent = true;
-    };
-    oncall-monitor = mkTimer {
-      description = "Homelab On-Call Monitor — every 4h fallback";
-      onCalendar = "*-*-* 0/4:05:00";
-    };
-    gitops-reviewer = mkTimer {
-      description = "Homelab GitOps PR Reviewer — every 4h fallback";
-      onCalendar = "*-*-* 0/4:12:00";
-    };
-    conflict-resolver = mkTimer {
-      description = "Homelab PR Conflict Resolver — every 12h fallback";
-      onCalendar = "*-*-* 0/12:20:00";
-    };
-    progress-reviewer = mkTimer {
-      description = "Homelab Progress Reviewer — every 4 hours";
-      onCalendar = "*-*-* 0/4:15:00";
-    };
-    infra-monitor = mkTimer {
-      description = "Homelab Infra Monitor — daily";
-      onCalendar = "*-*-* 22:00:00";
-    };
     e2e-tester = mkTimer {
       description = "Homelab E2E Tester — daily";
       onCalendar = "*-*-* 03:00:00";
     };
-    devex-monitor = mkTimer {
-      description = "Homelab DevEx Monitor — weekly Monday";
-      onCalendar = "Mon *-*-* 21:00:00";
+    check-infra = mkTimer {
+      description = "Infra health check — every 5 min";
+      onCalendar = "*:0/5:00";
     };
-    secrets-monitor = mkTimer {
-      description = "Homelab Secrets Monitor — weekly Tuesday";
-      onCalendar = "Tue *-*-* 21:00:00";
+    check-product = mkTimer {
+      description = "Product health check — every 5 min";
+      onCalendar = "*:0/5:00";
     };
-    product-monitor = mkTimer {
-      description = "Homelab Product Monitor — weekly Thursday";
-      onCalendar = "Thu *-*-* 21:00:00";
+    check-secrets = mkTimer {
+      description = "Secrets/cert expiry check — every 6h";
+      onCalendar = "*-*-* 0/6:00:00";
+    };
+    check-devex = mkTimer {
+      description = "DevEx stale PR/ticket check — daily";
+      onCalendar = "*-*-* 09:00:00";
     };
   };
 }
