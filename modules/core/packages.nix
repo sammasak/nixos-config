@@ -62,6 +62,6 @@ in
       swappy
       wf-recorder
       cliphist
-      swww
+      awww
     ];
 }

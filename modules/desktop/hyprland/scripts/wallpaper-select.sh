@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Wallpaper selector using rofi and swww
+# Wallpaper selector using rofi and awww
 
-# Ensure swww daemon is running
-if ! swww query &> /dev/null; then
-  swww init &> /dev/null
+# Ensure awww daemon is running
+if ! awww query &> /dev/null; then
+  awww init &> /dev/null
 fi
 
 # Check multiple locations for wallpapers
@@ -48,6 +48,6 @@ fi
 wallpaper_path=$(fd -e jpg -e jpeg -e png -e gif -e webp "^${selected}$" "$WALLPAPER_DIR" 2>/dev/null | head -n1)
 
 if [ -n "$wallpaper_path" ]; then
-  swww img "$wallpaper_path" --transition-type wipe --transition-duration 2
+  awww img "$wallpaper_path" --transition-type wipe --transition-duration 2
   notify-send "Wallpaper" "Set to $selected"
 fi
