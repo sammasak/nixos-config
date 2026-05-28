@@ -58,4 +58,13 @@ in
     hibernate.enable = false;
     hybrid-sleep.enable = false;
   };
+
+  # Disable Wi-Fi power-save on the iwlwifi adapter (wlp0s20f3).
+  # This node has no wired ethernet, so the k3s agent->server remotedialer
+  # tunnel and all pod traffic to kubernetes.default both ride wlp0s20f3.
+  # With powersave on (the iwlwifi default), the radio periodically dozes
+  # between frames and drops the WebSocket with close code 1006, which
+  # causes every leader-elected pod on the node to lose its lease and
+  # crash simultaneously. Investigated in TICKET-2026-05-23-infra-002.
+  networking.networkmanager.wifi.powersave = false;
 }
