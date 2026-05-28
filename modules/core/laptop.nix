@@ -15,7 +15,7 @@
   programs.nm-applet.enable = true;
   services.power-profiles-daemon.enable = true;
   services.upower.enable = true;
-  programs.light.enable = true;
+  hardware.acpilight.enable = true;
 
   services.logind.settings.Login = {
     HandleLidSwitch = "suspend";
