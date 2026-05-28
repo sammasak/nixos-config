@@ -4,20 +4,20 @@ let
   defaultWallpaper = ../../../../assets/wallpapers/train-sideview.webp;
 
   wallpaper-init = pkgs.writeShellScriptBin "wallpaper-init" ''
-    if ! swww query &> /dev/null; then
-      swww init &> /dev/null
+    if ! awww query &> /dev/null; then
+      awww init &> /dev/null
     fi
 
-    swww restore &> /dev/null
-    if ! swww query | grep -q "image:" &> /dev/null; then
-      swww img "${defaultWallpaper}"
+    awww restore &> /dev/null
+    if ! awww query | grep -q "image:" &> /dev/null; then
+      awww img "${defaultWallpaper}"
     fi
   '';
 
   window-switcher = pkgs.writeShellScriptBin "hyprland-window-switcher" (builtins.readFile ./window-switcher.sh);
 in
 {
-  services.swww.enable = true;
+  services.awww.enable = true;
 
   home.packages = [
     wallpaper-init

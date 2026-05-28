@@ -30,6 +30,7 @@ in
     enable = true;
     package = null;
     portalPackage = null;
+    configType = "hyprlang";
 
     settings = {
       monitor = profile.monitors;
