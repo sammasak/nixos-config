@@ -47,8 +47,8 @@ in
       Service = {
         Environment = [
           pathEnv
-          "BOARD_DIR=${home}/knowledge-vault/Board"
-          "KNOWLEDGE_VAULT_DIR=${home}/knowledge-vault"
+          "BOARD_DIR=${home}/workspace/Board"
+          "KNOWLEDGE_VAULT_DIR=${home}/workspace"
           "NTFY_URL=http://ntfy.ntfy.svc.cluster.local/homelab-alerts"
           "WEBHOOK_PORT=8765"
           "RUST_LOG=board_daemon=info"
@@ -147,6 +147,22 @@ in
         TimeoutStartSec = 60;
       };
     };
+
+    meta-watchdog = {
+      Unit = {
+        Description = "Meta-Watchdog: non-Claude agent health monitor";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+      };
+      Service = {
+        Environment = pathEnv;
+        Type = "oneshot";
+        ExecStart = "${loop}/meta-watchdog.sh";
+        StandardOutput = "journal";
+        StandardError = "journal";
+        TimeoutStartSec = 60;
+      };
+    };
   };
 
   systemd.user.timers = {
@@ -169,6 +185,15 @@ in
     check-devex = mkTimer {
       description = "DevEx stale PR/ticket check — daily";
       onCalendar = "*-*-* 09:00:00";
+    };
+    meta-watchdog = mkTimer {
+      description = "Meta-Watchdog — every 30 min";
+      onCalendar = "*:0/30:00";
+      extraTimer = {
+        OnBootSec = "5min";
+        RandomizedDelaySec = "60";
+        Persistent = true;
+      };
     };
   };
 }
