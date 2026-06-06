@@ -34,6 +34,18 @@ in
     profile = "balanced";
   };
 
+  # Disable WiFi power management to prevent brief link flaps.
+  # iwlwifi power_save + NetworkManager defaults allow the NIC to enter deep
+  # power states, causing ~300-500 ms drops that break k3s virt-handler API
+  # watches ("no route to host" on 10.43.0.1:443, clean Exit Code 0).
+  # acer-swift sees ~3.3 virt-handler restarts/day vs msi-ms7758's ~0.16/day,
+  # consistent with a laptop-specific WiFi instability (msi-ms7758 is wired).
+  # See: TICKET-2026-06-06-infra-043.
+  networking.networkmanager.wifi.powersave = false;
+  boot.extraModprobeConfig = ''
+    options iwlwifi power_save=0 d0i3_disable=1
+  '';
+
   # Keep laptop always on - never sleep on lid close (override laptop defaults)
   services.logind.settings.Login = {
     HandleLidSwitch = lib.mkForce "ignore";
