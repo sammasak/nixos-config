@@ -116,6 +116,24 @@ nix build .#nixosConfigurations.lenovo.config.system.build.toplevel --no-link
 nix build .#nixosConfigurations.msi-ms7758.config.system.build.toplevel --no-link
 ```
 
+## Codex
+
+Codex is configured through `modules/programs/cli/codex/`.
+
+- `~/.agents/skills/` receives the shared portable subset from the `claude-code-skills` input
+- `~/.codex/skills/` mirrors that portable subset
+- Home Manager activation then regenerates a Codex-local overlay from:
+  - `~/workspace/workflows/*/CONTEXT.md`
+  - `~/claude-code-skills/skills/*/SKILL.md` entries not already present in the portable subset
+
+That means a normal rebuild is enough to make new workspace workflows and Codex-compatible repo skills available:
+
+```bash
+sudo nixos-rebuild switch --flake .#<hostname>
+```
+
+No separate manual Codex sync step is required.
+
 ## Workstation Image Builds (KubeVirt)
 
 Build and publish NixOS workstation images as OCI containerDisk artifacts to Harbor:

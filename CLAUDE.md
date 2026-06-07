@@ -175,6 +175,27 @@ nix flake update claude-code-skills
 sudo nixos-rebuild switch --flake .#<hostname>
 ```
 
+### Codex
+
+Configuration lives in `modules/programs/cli/codex/`:
+
+| File | Scope | Purpose |
+|------|-------|---------|
+| `default.nix` | All NixOS hosts (shared HM module) | Codex config, hooks, shared skill links, activation-time skill sync |
+| `context-hook.sh` | All NixOS hosts | Injects workspace routing hints for `~/workspace`, workflows, and `claude-code-skills` |
+| `validate-bash.sh` | All NixOS hosts | Blocks force pushes and other unsafe bash patterns |
+| `sync-codex-skills.sh` | All NixOS hosts | Regenerates Codex-local workflow/repo skill wrappers after each activation |
+| `workspace-routing/` | All NixOS hosts | Base Codex skill for ICM workspace routing |
+
+**Skill delivery model**:
+- `~/.agents/skills/` holds the shared portable subset from the `claude-code-skills` flake input
+- `~/.codex/skills/` mirrors that portable subset for compatibility
+- `sync-codex-skills.sh` then overlays Codex-local wrappers for:
+  - canonical workspace workflows from `~/workspace/workflows/*/CONTEXT.md`
+  - repo-only skills from `~/claude-code-skills/skills/*/SKILL.md` that are not already in the shared portable subset
+
+The overlay is regenerated automatically by Home Manager activation on every rebuild. No manual Codex skill sync step is required after `nixos-rebuild switch`.
+
 ### Tailscale Remote Access
 
 **Purpose:** Secure remote access to homelab LAN (192.168.10.0/24) from anywhere via Tailscale VPN subnet routing.
