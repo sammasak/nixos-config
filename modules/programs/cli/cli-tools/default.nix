@@ -3,7 +3,7 @@
 {
   home.packages = with pkgs; [
     ripgrep
-    neofetch
+    fastfetch
     fd
     jq
     tree

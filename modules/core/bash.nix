@@ -24,7 +24,7 @@
     };
 
     initExtra = ''
-      neofetch
+      fastfetch
     '';
   };
 
