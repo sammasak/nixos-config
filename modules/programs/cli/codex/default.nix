@@ -32,6 +32,17 @@ let
     recursive = true;
   };
 
+  codexSkillSync = pkgs.writeShellApplication {
+    name = "codex-sync-skills";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.gawk
+      pkgs.gnugrep
+    ];
+    text = builtins.readFile ./sync-codex-skills.sh;
+  };
+
   codexContextHook = pkgs.writeShellApplication {
     name = "codex-workspace-context-hook";
     runtimeInputs = [ pkgs.jq pkgs.gawk pkgs.coreutils ];
@@ -137,14 +148,19 @@ in
         # Personal Codex Defaults
 
         - Treat `~/workspace` as the active knowledge graph and route through `~/workspace/CLAUDE.md` when a task references your projects or rooms.
-        - Prefer the installed skills from `~/.agents/skills` for recurring engineering work instead of re-deriving workflows each time.
+        - Prefer the shared skills in `~/.agents/skills`, then the Codex-local overlay in `~/.codex/skills` for workspace workflows and Codex-compatible projections of `~/claude-code-skills/skills`.
         - When working inside `~/workspace`, load the nearest room `CONTEXT.md`; use `INDEX.md` only when `CONTEXT.md` is absent.
+        - When a task names a workflow or `claude-code-skills`, route through `~/workspace/CLAUDE.md` and load the owning room `CONTEXT.md`.
         - Keep Codex and Claude aligned on bash safety: avoid force pushes, avoid encrypting SOPS payloads from `/tmp`, and follow the workspace guardrails.
       '';
     };
 
   home.activation.seedCodexAuth = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     run ${seedCodexAuth}
+  '';
+
+  home.activation.syncCodexSkills = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run ${codexSkillSync}/bin/codex-sync-skills
   '';
 
   programs.bash.enable = true;
@@ -167,6 +183,7 @@ in
 
   home.activation.cleanCodexSkills = lib.hm.dag.entryBefore [ "writeBoundary" ] ''
     skill_dir="$HOME/.codex/skills"
+    manifest_file="$skill_dir/.codex-generated.manifest"
     set -e
     mkdir -p "$skill_dir"
     for name in ${lib.concatStringsSep " " portableSkillNames}; do
@@ -175,5 +192,14 @@ in
         rm -rf "$target"
       fi
     done
+    if [ -f "$manifest_file" ]; then
+      while IFS= read -r name; do
+        target="$skill_dir/$name"
+        if [ -d "$target" ] && [ ! -L "$target" ]; then
+          rm -rf "$target"
+        fi
+      done < "$manifest_file"
+      rm -f "$manifest_file"
+    fi
   '';
 }

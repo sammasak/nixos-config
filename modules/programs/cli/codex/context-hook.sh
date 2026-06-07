@@ -22,7 +22,7 @@ fi
 
 if [ "$under_workspace" = false ]; then
   case "$(printf '%s' "$PROMPT" | tr '[:upper:]' '[:lower:]')" in
-    *workspace*|*homelab*|*doable*|*claude-ctl*|*forge*|*jarvis*|*learn-platform*|*component-store*|*system-prompts*|*arrow-js*)
+    *workspace*|*workflows*|*workflow*|*knowledge-vault*|*knowledge*vault*|*claude-code-skills*|*skills*repo*|*homelab*|*doable*|*claude-ctl*|*forge*|*jarvis*|*learn-platform*|*component-store*|*system-prompts*|*arrow-js*|*deploy-service*|*provision-vm*|*release-nixos*|*audit-docs*|*recursive-review*|*recursive*review*|*job-application*|*diagnose*|*grill-with-docs*|*grill*with*docs*|*grill-me*|*grill*me*|*tdd*|*improve-codebase-architecture*|*improve*codebase*architecture*|*triage*|*to-prd*|*to*prd*|*to-issues*|*to*issues*|*kanban-adr-to-tickets*|*kanban*adr*to*tickets*|*kanban-groom-ticket*|*kanban*groom*ticket*|*kanban-draft-adr*|*kanban*draft*adr*|*kanban-status*|*kanban*status*)
       ;;
     *)
       exit 0
