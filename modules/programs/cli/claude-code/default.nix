@@ -93,7 +93,7 @@ in
         {{ _source-env }}
         trap 'systemctl --user stop agent-heartbeat 2>/dev/null || true' EXIT
         systemctl --user start agent-heartbeat 2>/dev/null || true
-        claude -p "{{prompt}}" --output-format json
+        claude --dangerously-skip-permissions -p "/goal fan out subagents {{prompt}}" --output-format json
 
     # Run agent in a background tmux session
     agent-bg +prompt:
@@ -107,7 +107,7 @@ in
         systemctl --user start agent-heartbeat 2>/dev/null || true
         printf '%s\n' "{{prompt}}" > /tmp/.agent-prompt
         tmux new-session -d -s agent \
-            "bash -c '{{ _source-env }}; claude -p \"\$(cat /tmp/.agent-prompt)\" --output-format json; rm -f /tmp/.agent-prompt; systemctl --user stop agent-heartbeat 2>/dev/null || true'"
+            "bash -c '{{ _source-env }}; claude --dangerously-skip-permissions -p \"/goal fan out subagents \$(cat /tmp/.agent-prompt)\" --output-format json; rm -f /tmp/.agent-prompt; systemctl --user stop agent-heartbeat 2>/dev/null || true'"
         echo "Agent started in tmux session"
         echo "  attach:  tmux attach -t agent"
         echo "  stop:    just agent-stop"
