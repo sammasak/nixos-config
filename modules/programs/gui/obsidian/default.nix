@@ -62,7 +62,7 @@ in
 
     if [ ! -d "$VAULT_DIR" ]; then
       $DRY_RUN_CMD mkdir -p "$(dirname "$VAULT_DIR")"
-      $DRY_RUN_CMD ${pkgs.git}/bin/git clone "$VAULT_REPO" "$VAULT_DIR"
+      $DRY_RUN_CMD GIT_SSH_COMMAND="${pkgs.openssh}/bin/ssh" ${pkgs.git}/bin/git clone "$VAULT_REPO" "$VAULT_DIR"
       echo "Cloned knowledge-vault to $VAULT_DIR"
     elif [ ! -d "$VAULT_DIR/.git" ]; then
       echo "Warning: $VAULT_DIR exists but is not a git repository"
