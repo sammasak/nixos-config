@@ -13,29 +13,23 @@
 
       listener = [
         {
-          timeout = 150;
+          timeout = 300;
           on-timeout = "brightnessctl -s set 10%";
           on-resume = "brightnessctl -r";
         }
         {
-          timeout = 150;
+          timeout = 300;
           on-timeout = "brightnessctl -sd tpacpi::kbd_backlight set 0";
           on-resume = "brightnessctl -rd tpacpi::kbd_backlight";
         }
         {
-          timeout = 300;
+          timeout = 600;
           on-timeout = "loginctl lock-session";
         }
         {
-          timeout = 380;
+          timeout = 760;
           on-timeout = "hyprctl dispatch dpms off";
           on-resume = "hyprctl dispatch dpms on";
-        }
-        {
-          # After 60m idle: lock, turn displays off, then cleanly logout to SDDM.
-          # Keep terminate-user as a fallback if the compositor exit command fails.
-          timeout = 3600;
-          on-timeout = "loginctl lock-session && hyprctl dispatch dpms off && sleep 1 && hyprctl dispatch exit || loginctl terminate-user \"$USER\"";
         }
       ];
     };
