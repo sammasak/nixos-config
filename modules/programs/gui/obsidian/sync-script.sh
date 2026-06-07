@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VAULT_ROOT="${VAULT_ROOT:-$HOME/knowledge-vault}"
+VAULT_ROOT="${VAULT_ROOT:-$HOME/knowledge}"
 PROJECTS_DIR="$VAULT_ROOT/Projects"
 
 # Repository locations (customize per host)
