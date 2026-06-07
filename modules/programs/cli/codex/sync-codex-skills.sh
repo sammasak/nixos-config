@@ -4,7 +4,7 @@ set -euo pipefail
 codex_skills_dir="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
 shared_skills_dir="${SHARED_SKILLS_DIR:-$HOME/.agents/skills}"
 repo_skills_dir="${REPO_SKILLS_DIR:-$HOME/claude-code-skills/skills}"
-workflows_dir="${WORKFLOWS_DIR:-$HOME/workspace/workflows}"
+workflows_dir="${WORKFLOWS_DIR:-$HOME/knowledge/workflows}"
 manifest_file="$codex_skills_dir/.codex-generated.manifest"
 
 mkdir -p "$codex_skills_dir"
@@ -95,7 +95,7 @@ Canonical source: \`$source_path\`
 - The upstream instructions below are the source of truth for this workflow or skill.
 - If the upstream text mentions Claude-specific tooling, the Task tool, or automatic subagent dispatch, translate that to Codex equivalents and only delegate when the user explicitly requested delegation.
 - For browser automation, use the current \`mcp__playwright__browser_*\` tools even if the upstream text names an older Playwright tool prefix.
-- Inside \`~/workspace\`, \`CLAUDE.md\` is the router and \`CONTEXT.md\` is the canonical room payload.
+- Inside \`~/knowledge\`, \`CLAUDE.md\` is the router and \`CONTEXT.md\` is the canonical room payload.
 
 ## Upstream Content
 

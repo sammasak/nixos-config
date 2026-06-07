@@ -182,7 +182,7 @@ Configuration lives in `modules/programs/cli/codex/`:
 | File | Scope | Purpose |
 |------|-------|---------|
 | `default.nix` | All NixOS hosts (shared HM module) | Codex config, hooks, shared skill links, activation-time skill sync |
-| `context-hook.sh` | All NixOS hosts | Injects workspace routing hints for `~/workspace`, workflows, and `claude-code-skills` |
+| `context-hook.sh` | All NixOS hosts | Injects workspace routing hints for `~/knowledge`, workflows, and `claude-code-skills` |
 | `validate-bash.sh` | All NixOS hosts | Blocks force pushes and other unsafe bash patterns |
 | `sync-codex-skills.sh` | All NixOS hosts | Regenerates Codex-local workflow/repo skill wrappers after each activation |
 | `workspace-routing/` | All NixOS hosts | Base Codex skill for ICM workspace routing |
@@ -191,7 +191,7 @@ Configuration lives in `modules/programs/cli/codex/`:
 - `~/.agents/skills/` holds the shared portable subset from the `claude-code-skills` flake input
 - `~/.codex/skills/` mirrors that portable subset for compatibility
 - `sync-codex-skills.sh` then overlays Codex-local wrappers for:
-  - canonical workspace workflows from `~/workspace/workflows/*/CONTEXT.md`
+  - canonical workspace workflows from `~/knowledge/workflows/*/CONTEXT.md`
   - repo-only skills from `~/claude-code-skills/skills/*/SKILL.md` that are not already in the shared portable subset
 
 The overlay is regenerated automatically by Home Manager activation on every rebuild. No manual Codex skill sync step is required after `nixos-rebuild switch`.
@@ -232,8 +232,8 @@ The overlay is regenerated automatically by Home Manager activation on every reb
 - Traffic routes through control-plane subnet router
 
 **Documentation:**
-- Setup checklist: `~/knowledge-vault/Homelab/Projects/tailscale-integration/HUMAN_ACTION_REQUIRED.md`
-- Operations runbook: `~/knowledge-vault/Homelab/Runbooks/tailscale-operations.md`
+- Setup checklist: `~/knowledge/Homelab/Projects/tailscale-integration/HUMAN_ACTION_REQUIRED.md`
+- Operations runbook: `~/knowledge/Homelab/Runbooks/tailscale-operations.md`
 
 ### Key Inputs
 
@@ -253,11 +253,11 @@ nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-ski
 2. Create `flake-modules/hosts/<name>.nix` declaring `configurations.nixos.<name>` (reads variables, sets system/username/roles)
 3. The module registry auto-discovers the rest
 
-See [[Infrastructure/Runbooks/add-new-host]] in knowledge-vault for detailed instructions.
+See [[Infrastructure/Runbooks/add-new-host]] in knowledge for detailed instructions.
 
 ## Further Documentation
 
-Additional documentation is maintained in the knowledge-vault (~/Documents/knowledge-vault):
+Additional documentation is maintained in the knowledge (~/knowledge):
 
 **Infrastructure Concepts:**
 - [[Infrastructure/Concepts/nixos-modules]] - NixOS declarative configuration

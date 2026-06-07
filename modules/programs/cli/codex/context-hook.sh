@@ -6,7 +6,7 @@ EVENT_NAME=$(echo "$INPUT" | jq -r '.hook_event_name // empty')
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty')
 
-WORKSPACE_ROOT="${WORKSPACE_ROOT:-$HOME/workspace}"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$HOME/knowledge}"
 ROUTER_FILE="$WORKSPACE_ROOT/CLAUDE.md"
 
 if [ ! -f "$ROUTER_FILE" ]; then
@@ -63,7 +63,7 @@ else
   context_lines+=("The prompt appears to reference your workspace; consult the relevant room CONTEXT.md files after routing through CLAUDE.md.")
 fi
 
-context_lines+=("Inside ~/workspace, use INDEX.md only as a fallback signal. CONTEXT.md is the main room payload.")
+context_lines+=("Inside ~/knowledge, use INDEX.md only as a fallback signal. CONTEXT.md is the main room payload.")
 
 context=$(printf '%s\n' "${context_lines[@]}" | awk '!seen[$0]++' | paste -sd ' ' -)
 

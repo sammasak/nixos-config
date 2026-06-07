@@ -147,11 +147,11 @@ in
       ".codex/AGENTS.md".text = ''
         # Personal Codex Defaults
 
-        - Treat `~/workspace` as the active knowledge graph and route through `~/workspace/CLAUDE.md` when a task references your projects or rooms.
-        - Prefer the shared skills in `~/.agents/skills`, then the Codex-local overlay in `~/.codex/skills` for workspace workflows and Codex-compatible projections of `~/claude-code-skills/skills`.
-        - When working inside `~/workspace`, load the nearest room `CONTEXT.md`; use `INDEX.md` only when `CONTEXT.md` is absent.
-        - When a task names a workflow or `claude-code-skills`, route through `~/workspace/CLAUDE.md` and load the owning room `CONTEXT.md`.
-        - Keep Codex and Claude aligned on bash safety: avoid force pushes, avoid encrypting SOPS payloads from `/tmp`, and follow the workspace guardrails.
+        - Treat `~/knowledge` as the active knowledge graph and route through `~/knowledge/CLAUDE.md` when a task references your projects or rooms.
+        - Prefer the shared skills in `~/.agents/skills`, then the Codex-local overlay in `~/.codex/skills` for knowledge workflows and Codex-compatible projections of `~/claude-code-skills/skills`.
+        - When working inside `~/knowledge`, load the nearest room `CONTEXT.md`; use `INDEX.md` only when `CONTEXT.md` is absent.
+        - When a task names a workflow or `claude-code-skills`, route through `~/knowledge/CLAUDE.md` and load the owning room `CONTEXT.md`.
+        - Keep Codex and Claude aligned on bash safety: avoid force pushes, avoid encrypting SOPS payloads from `/tmp`, and follow the knowledge guardrails.
       '';
     };
 

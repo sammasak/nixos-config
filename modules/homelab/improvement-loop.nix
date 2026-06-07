@@ -40,7 +40,7 @@ in
   systemd.user.services = {
     board-daemon = {
       Unit = {
-        Description = "Board Daemon — watches knowledge-vault Board and dispatches ntfy events";
+        Description = "Board Daemon — watches knowledge Board and dispatches ntfy events";
         After = [ "network-online.target" ];
         Wants = [ "network-online.target" ];
       };

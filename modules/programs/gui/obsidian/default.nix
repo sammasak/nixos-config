@@ -13,7 +13,7 @@ in
 
     vaults.main = {
       enable = true;
-      target = "knowledge-vault";
+      target = "knowledge";
 
       settings = {
         app = {
@@ -54,24 +54,24 @@ in
     };
   };
 
-  # Clone knowledge-vault repository if it doesn't exist
+  # Clone knowledge repository if it doesn't exist
   # This ensures all hosts have a proper git repository, not symlinked files
   home.activation.cloneKnowledgeVault = lib.hm.dag.entryAfter ["writeBoundary"] ''
-    VAULT_DIR="$HOME/knowledge-vault"
-    VAULT_REPO="git@github.com:sammasak/knowledge-vault.git"
+    VAULT_DIR="$HOME/knowledge"
+    VAULT_REPO="git@github.com:sammasak/knowledge.git"
 
     if [ ! -d "$VAULT_DIR" ]; then
       $DRY_RUN_CMD mkdir -p "$(dirname "$VAULT_DIR")"
       export GIT_SSH_COMMAND="${pkgs.openssh}/bin/ssh"
       $DRY_RUN_CMD ${pkgs.git}/bin/git clone "$VAULT_REPO" "$VAULT_DIR"
       unset GIT_SSH_COMMAND
-      echo "Cloned knowledge-vault to $VAULT_DIR"
+      echo "Cloned knowledge to $VAULT_DIR"
     elif [ ! -d "$VAULT_DIR/.git" ]; then
       echo "Warning: $VAULT_DIR exists but is not a git repository"
       echo "Please backup and remove $VAULT_DIR, then rebuild to clone properly"
     else
       # Clean up old Home Manager symlinks that point to /nix/store
-      echo "Cleaning up old Home Manager symlinks in knowledge-vault..."
+      echo "Cleaning up old Home Manager symlinks in knowledge..."
       $DRY_RUN_CMD ${pkgs.findutils}/bin/find "$VAULT_DIR" -type l | while read -r link; do
         if ${pkgs.coreutils}/bin/readlink "$link" | ${pkgs.gnugrep}/bin/grep -q "^/nix/store"; then
           $DRY_RUN_CMD rm "$link"
