@@ -65,6 +65,10 @@ in
       Install.WantedBy = [ "default.target" ];
     };
 
+    scrum-master = mkService {
+      description = "Homelab Scrum Master — board management";
+      goalPath = "${loop}/scrum-master/GOAL.md";
+    };
     board-analyst = mkService {
       description = "Homelab Board Analyst";
       goalPath = "${loop}/board-analyst/GOAL.md";
@@ -166,6 +170,14 @@ in
   };
 
   systemd.user.timers = {
+    scrum-master = mkTimer {
+      description = "Homelab Scrum Master — every 15 min";
+      onCalendar = "*:0/15:00";
+    };
+    board-analyst = mkTimer {
+      description = "Homelab Board Analyst — daily at 21:00";
+      onCalendar = "*-*-* 21:00:00";
+    };
     e2e-tester = mkTimer {
       description = "Homelab E2E Tester — daily";
       onCalendar = "*-*-* 03:00:00";
