@@ -47,8 +47,8 @@ in
       Service = {
         Environment = [
           pathEnv
-          "BOARD_DIR=${home}/workspace/Board"
-          "KNOWLEDGE_VAULT_DIR=${home}/workspace"
+          "BOARD_DIR=${home}/knowledge/Board"
+          "KNOWLEDGE_VAULT_DIR=${home}/knowledge"
           "NTFY_URL=http://ntfy.ntfy.svc.cluster.local/homelab-alerts"
           "WEBHOOK_PORT=8765"
           "RUST_LOG=board_daemon=info"
