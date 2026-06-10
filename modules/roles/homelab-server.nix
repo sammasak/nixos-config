@@ -11,6 +11,8 @@ in
     ../homelab/adguardhome.nix
     ../homelab/acme.nix
     ../homelab/tailscale.nix
+    ../homelab/ntfy.nix
+    ../homelab/cluster-watchdog.nix
   ];
 
   # Homelab improvement loop: all systemd user services, timers, and path units

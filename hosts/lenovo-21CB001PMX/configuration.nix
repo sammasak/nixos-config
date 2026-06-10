@@ -79,4 +79,14 @@ in
     enable = true;
     dnsDomain = "dns.sammasak.dev";
   };
+
+  # ntfy push notification server — runs outside k8s, survives worker outages.
+  # Subscribe on mobile: http://192.168.10.154:2586 (LAN) or via Tailscale IP.
+  homelab.ntfy = {
+    enable = true;
+    baseUrl = "http://192.168.10.154:2586";
+  };
+
+  # Cluster health watchdog — checks node readiness + monitoring stack every 10 min.
+  homelab.clusterWatchdog.enable = true;
 }
