@@ -22,7 +22,7 @@
       # Disable fish greeting
       set fish_greeting
 
-      # Run fastfetch on shell start
+      # Run neofetch on shell start
       fastfetch
     '';
   };
