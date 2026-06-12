@@ -87,11 +87,11 @@
     "claude-ctl": {
       "flake": false,
       "locked": {
-        "lastModified": 1772892883,
-        "narHash": "sha256-aY0xGz5erfsCytcYG7vieeO7HdCmJ6f2MKPHHmS0QJ8=",
+        "lastModified": 1778095711,
+        "narHash": "sha256-sxND6RYATpU3H8OVHdDXq3P/tpQKIwVoLZ9/Y5+2pDM=",
         "owner": "sammasak",
         "repo": "claude-ctl",
-        "rev": "e06c0009e919ae259e83cbfa9d22ec773ec206f8",
+        "rev": "f81cfbe03bd5a2ee0384ec65f9945a18af8731d4",
         "type": "github"
       },
       "original": {
