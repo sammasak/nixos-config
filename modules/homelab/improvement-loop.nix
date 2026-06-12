@@ -175,8 +175,10 @@ in
       onCalendar = "*:0/15:00";
     };
     board-analyst = mkTimer {
-      description = "Homelab Board Analyst — daily at 21:00";
-      onCalendar = "*-*-* 21:00:00";
+      # Fires at :05 to avoid racing scrum-master.timer (every 15m starting :00)
+      # on ~/knowledge/.git/index.lock (ticket-2026-06-12-devex-051).
+      description = "Homelab Board Analyst — daily at 21:05";
+      onCalendar = "*-*-* 21:05:00";
     };
     e2e-tester = mkTimer {
       description = "Homelab E2E Tester — daily";
