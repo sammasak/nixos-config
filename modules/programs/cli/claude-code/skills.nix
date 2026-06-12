@@ -18,6 +18,9 @@ let
 in
 {
   home.file =
+    # ~/.claude/CLAUDE.md → nix store
+    { ".claude/CLAUDE.md".source = "${skillsSrc}/CLAUDE.md"; }
+    //
     # ~/.claude/skills/<name>/ → nix store
     (lib.mapAttrs' (name: _:
       lib.nameValuePair ".claude/skills/${name}" {
