@@ -45,7 +45,7 @@ in
         # Prevent a hung curl/kubectl from blocking the next run.
         TimeoutStartSec = "90";
       };
-      path = [ pkgs.kubectl pkgs.curl pkgs.gawk ];
+      path = [ pkgs.kubectl pkgs.curl pkgs.gawk pkgs.inetutils ];
       script = ''
         failures=""
 

@@ -30,28 +30,28 @@ in
     ];
 
     # Override two bundled addons with versions that have explicit resource
-    # limits, so kube-system stays within the cluster's resource accounting
-    # rules. The .skip files tell k3s not to write its bundled copy on startup
-    # (per https://docs.k3s.io/installation/packaged-components#disabling-manifests).
-    # The replacement manifests are then picked up by k3s' deploy controller.
-    services.k3s.manifests = {
-      local-storage-skip = {
-        target = "local-storage.yaml.skip";
-        source = pkgs.writeText "local-storage-skip" "# bundled manifest skipped; see local-storage.yaml override\n";
-      };
-      local-storage = {
-        target = "local-storage.yaml";
-        source = ./manifests/local-storage.yaml;
-      };
-      metrics-server-deployment-skip = {
-        target = "metrics-server/metrics-server-deployment.yaml.skip";
-        source = pkgs.writeText "metrics-server-deployment-skip" "# bundled manifest skipped; see metrics-server-deployment.yaml override\n";
-      };
-      metrics-server-deployment = {
-        target = "metrics-server/metrics-server-deployment.yaml";
-        source = ./manifests/metrics-server-deployment.yaml;
-      };
-    };
+    # limits. k3s ≥1.35 (NixOS 26.11) opens each manifest for writing during
+    # the "stage files" phase at startup. services.k3s.manifests populates the
+    # manifests directory via systemd tmpfiles symlinks into the read-only
+    # /nix/store, causing EROFS on every start. Copy real files before k3s
+    # starts instead. The .skip files prevent k3s from staging its own bundled
+    # copy; our replacement manifests are then applied by the deploy controller.
+    systemd.services.k3s.preStart = let
+      localStorageSkip = pkgs.writeText "local-storage-skip"
+        "# bundled manifest skipped; see local-storage.yaml override\n";
+      metricsSkip = pkgs.writeText "metrics-server-deployment-skip"
+        "# bundled manifest skipped; see metrics-server-deployment.yaml override\n";
+    in ''
+      mkdir -p /var/lib/rancher/k3s/server/manifests/metrics-server
+      rm -f /var/lib/rancher/k3s/server/manifests/local-storage.yaml.skip
+      rm -f /var/lib/rancher/k3s/server/manifests/local-storage.yaml
+      rm -f /var/lib/rancher/k3s/server/manifests/metrics-server/metrics-server-deployment.yaml.skip
+      rm -f /var/lib/rancher/k3s/server/manifests/metrics-server/metrics-server-deployment.yaml
+      install -m 0644 ${localStorageSkip} /var/lib/rancher/k3s/server/manifests/local-storage.yaml.skip
+      install -m 0644 ${./manifests/local-storage.yaml} /var/lib/rancher/k3s/server/manifests/local-storage.yaml
+      install -m 0644 ${metricsSkip} /var/lib/rancher/k3s/server/manifests/metrics-server/metrics-server-deployment.yaml.skip
+      install -m 0644 ${./manifests/metrics-server-deployment.yaml} /var/lib/rancher/k3s/server/manifests/metrics-server/metrics-server-deployment.yaml
+    '';
 
     # Create kubeconfig symlink for easier access
     system.activationScripts.k3sKubeconfig = stringAfter [ "users" ] ''
