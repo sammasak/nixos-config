@@ -25,7 +25,7 @@ in
     flags = [ "--print-build-logs" ];
     dates = "Sun 03:00";
     randomizedDelaySec = "45min";
-    allowReboot = false;
+    allowReboot = true;
   };
 
   nix.gc = {
