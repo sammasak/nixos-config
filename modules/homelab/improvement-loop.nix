@@ -85,6 +85,10 @@ in
       description = "Homelab Progress Reviewer";
       goalPath = "${loop}/progress-reviewer/GOAL.md";
     };
+    oncall-monitor = mkService {
+      description = "Homelab On-Call Monitor";
+      goalPath = "${loop}/oncall-monitor/GOAL.md";
+    };
     e2e-tester = mkService {
       description = "Homelab E2E Tester";
       goalPath = "${loop}/e2e-tester/test-monitor/GOAL.md";
@@ -179,6 +183,25 @@ in
       # on ~/knowledge/.git/index.lock (ticket-2026-06-12-devex-051).
       description = "Homelab Board Analyst — daily at 21:05";
       onCalendar = "*-*-* 21:05:00";
+    };
+    # Staggered onto distinct minutes (never a :00/:15/:30/:45 tick) to avoid
+    # racing scrum-master.timer / board-analyst.timer on ~/knowledge/.git/index.lock
+    # (devex-048; same index.lock race class as devex-051). RandomizedDelaySec adds
+    # a further jitter window. Persistent = false matches this module's mkTimer default.
+    oncall-monitor = mkTimer {
+      description = "Homelab On-Call Monitor — every 4h at :10";
+      onCalendar = "*-*-* 0/4:10:00";
+      extraTimer.RandomizedDelaySec = "60";
+    };
+    progress-reviewer = mkTimer {
+      description = "Homelab Progress Reviewer — hourly at :20";
+      onCalendar = "*-*-* *:20:00";
+      extraTimer.RandomizedDelaySec = "60";
+    };
+    gitops-reviewer = mkTimer {
+      description = "Homelab GitOps PR Reviewer — daily at 21:35";
+      onCalendar = "*-*-* 21:35:00";
+      extraTimer.RandomizedDelaySec = "60";
     };
     e2e-tester = mkTimer {
       description = "Homelab E2E Tester — daily";
