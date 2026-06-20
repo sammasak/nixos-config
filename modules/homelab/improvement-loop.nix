@@ -38,32 +38,12 @@ let
 in
 {
   systemd.user.services = {
-    board-daemon = {
-      Unit = {
-        Description = "Board Daemon — watches knowledge Board and dispatches ntfy events";
-        After = [ "network-online.target" ];
-        Wants = [ "network-online.target" ];
-      };
-      Service = {
-        Environment = [
-          pathEnv
-          "BOARD_DIR=${home}/knowledge/Board"
-          "KNOWLEDGE_VAULT_DIR=${home}/knowledge"
-          "NTFY_URL=http://ntfy.ntfy.svc.cluster.local/homelab-alerts"
-          "WEBHOOK_PORT=8765"
-          "RUST_LOG=board_daemon=info"
-          "IMPROVEMENT_LOOP_DIR=${home}/homelab-improvement-loop"
-          "CLAUDE_BIN=${profile}/bin/claude"
-        ];
-        Type = "simple";
-        ExecStart = "${home}/board-daemon/target/release/board-daemon";
-        Restart = "always";
-        RestartSec = "5";
-        StandardOutput = "journal";
-        StandardError = "journal";
-      };
-      Install.WantedBy = [ "default.target" ];
-    };
+    # board-daemon retired from the host: the canonical board-daemon now runs as a
+    # Flux-managed Kubernetes Deployment in the `kanban` namespace (ingress
+    # kanban.sammasak.dev, GitHub webhooks, board-daemon-secrets). Running a second
+    # copy here made both instances fight over the same ~/knowledge/Board git repo
+    # (index.lock contention). The timer-agents below remain — they perform periodic
+    # passes and defer mutations to the live daemon.
 
     scrum-master = mkService {
       description = "Homelab Scrum Master — board management";
@@ -171,13 +151,31 @@ in
         TimeoutStartSec = 60;
       };
     };
+
+    board-health = {
+      Unit = {
+        Description = "Board health watchdog — k8s board-daemon, auth, gh-drift, duplicate daemon";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+      };
+      Service = {
+        Environment = [ pathEnv "KUBECONFIG=/etc/rancher/k3s/k3s.yaml" ];
+        Type = "oneshot";
+        ExecStart = "${loop}/board-health.sh";
+        StandardOutput = "journal";
+        StandardError = "journal";
+        TimeoutStartSec = 120;
+      };
+    };
   };
 
   systemd.user.timers = {
-    scrum-master = mkTimer {
-      description = "Homelab Scrum Master — every 15 min";
-      onCalendar = "*:0/15:00";
-    };
+    # scrum-master.timer intentionally disabled: board-daemon is the authoritative
+    # orchestrator (dispatch, transitions, backlog promotion, PR-merge poll). The
+    # timer-driven scrum-master agent detects the live daemon and stands down every
+    # run, so the timer only burned a no-op `claude` call every 15 min. The
+    # scrum-master.service definition is kept for manual/ad-hoc runs. Re-add this
+    # mkTimer block to restore the 15-min cadence.
     board-analyst = mkTimer {
       # Fires at :05 to avoid racing scrum-master.timer (every 15m starting :00)
       # on ~/knowledge/.git/index.lock (ticket-2026-06-12-devex-051).
@@ -229,6 +227,14 @@ in
       extraTimer = {
         OnBootSec = "5min";
         RandomizedDelaySec = "60";
+        Persistent = true;
+      };
+    };
+    board-health = mkTimer {
+      description = "Board health watchdog — every 2h";
+      onCalendar = "*-*-* 0/2:00:00";
+      extraTimer = {
+        OnBootSec = "3min";
         Persistent = true;
       };
     };
