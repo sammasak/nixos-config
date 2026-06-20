@@ -76,9 +76,12 @@ in
     dnsDomain = "dns.sammasak.dev";
   };
 
-  # Non-interactive nixos-rebuild trigger for the homelab board worker.
-  # Allows improvement-loop agents (bubblewrap-sandboxed) and the board worker VM
-  # (via SSH) to kick off a nixos-rebuild switch without sudo or polkit.
-  # See modules/homelab/nixos-rebuild-trigger.nix for invocation instructions.
+  # Non-interactive, health-gated nixos-rebuild trigger for the homelab board
+  # worker. Rebuilds from a PINNED git SHA fetched fresh from
+  # github:sammasak/nixos-config (NOT the agent-writable local clone), under a
+  # deploy lock, with k3s/sshd/DNS health checks and automatic rollback.
+  # Enabling this grants non-interactive control-plane deploy - a deliberate
+  # trust choice. See modules/homelab/nixos-rebuild-trigger.nix for the full
+  # security model and invocation instructions.
   homelab.nixosRebuildTrigger.enable = true;
 }

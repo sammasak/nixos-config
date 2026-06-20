@@ -1,14 +1,48 @@
-# Non-interactive nixos-rebuild switch trigger for the homelab board worker.
+# Non-interactive nixos-rebuild trigger for the homelab board worker.
 #
 # Problem: the improvement-loop agents run Claude Code inside a bubblewrap sandbox
-# where setuid is stripped, so `sudo nixos-rebuild` fails even with a NOPASSWD rule.
+# where setuid is stripped, so `sudo nixos-rebuild` fails even with a NOPASSWD
+# rule. Polkit has the same limitation. They need a non-interactive way to deploy
+# a config change to the lenovo control plane.
 #
-# Solution: a root-level path-activated service that fires when the lukas user
-# (or the board worker VM via SSH) writes a trigger file.  No setuid, no polkit —
-# just a group-writable directory the unprivileged user can write to.
+# SECURITY MODEL (devex-052 rework):
+#   This grants the trigger principal NON-INTERACTIVE CONTROL-PLANE DEPLOY. That
+#   is a deliberate trust choice. The hardening below removes the arbitrary-root
+#   execution hole and adds deploy safety, but it cannot remove the underlying
+#   trust: anyone who can write the request file can deploy any committed,
+#   pushed revision of sammasak/nixos-config to lenovo. Gate the first uses
+#   behind human approval.
+#
+#   1. PINNED, INTEGRITY-CHECKED SOURCE. The rebuild does NOT read the
+#      agent-writable local clone (/home/lukas/nixos-config). It rebuilds from
+#      `github:sammasak/nixos-config/<rev>#lenovo`, where <rev> is a 40-char git
+#      SHA supplied in the request. nix fetches that exact immutable commit fresh
+#      from the remote and verifies it; the triggering agent cannot mutate the
+#      Nix that runs as root. A floating ref (branch name) is rejected - only a
+#      full commit SHA is accepted, so the deployed tree is reproducible and
+#      auditable. The private repo is fetched using root's existing nix.conf
+#      `access-tokens` line (sourced from SOPS at /run/secrets/nix_access_token);
+#      no token is hardcoded here.
+#
+#   2. HEALTH-GATED with AUTOMATIC ROLLBACK. We `nixos-rebuild boot` the new
+#      generation (staged as the next-boot default but NOT activated), then
+#      activate it live with `switch-to-configuration switch`. A post-activation
+#      health gate checks: k3s API on :6443, sshd listening on :22, and DNS
+#      resolution. If any check fails within the timeout, we automatically roll
+#      back: re-activate the previous generation and reset it as the boot
+#      default. No bare `switch` without recovery is ever used.
+#
+#   3. DEPLOY LOCK. A flock on a persistent lockfile serializes deploys so two
+#      triggers (or a deploy racing other Nix work) cannot overlap. A concurrent
+#      request is rejected rather than queued.
+#
+#   4. APPEND-ONLY AUDIT LOG outside /run, at /var/log/nixos-rebuild-trigger.log
+#      (root-owned, 0640). Each line records timestamp, requester, resolved rev,
+#      and result. /run/.../result remains as a transient status file for pollers.
 #
 # Trigger (from improvement-loop agent or board worker SSH):
-#   echo "requester=board-worker" > /run/nixos-rebuild-trigger/request
+#   printf 'requester=board-worker\nrev=<40-char-git-sha>\n' \
+#     > /run/nixos-rebuild-trigger/request
 #
 # Poll result (blocks until status= appears):
 #   grep -m1 'status=' /run/nixos-rebuild-trigger/result
@@ -20,17 +54,38 @@ let
   triggerDir = "/run/nixos-rebuild-trigger";
   triggerFile = "${triggerDir}/request";
   resultFile = "${triggerDir}/result";
+  auditLog = "/var/log/nixos-rebuild-trigger.log";
+  lockFile = "/var/lib/nixos-rebuild-trigger/deploy.lock";
 in
 {
   options.homelab.nixosRebuildTrigger = {
-    enable = mkEnableOption "path-activated nixos-rebuild switch for board worker";
+    enable = mkEnableOption "path-activated, health-gated nixos-rebuild for board worker";
 
-    flakePath = mkOption {
+    flakeRef = mkOption {
       type = types.str;
-      default = "/home/${username}/nixos-config";
+      default = "github:sammasak/nixos-config";
       description = ''
-        Absolute path to the nixos-config flake on this host.
-        Only local paths are accepted — no URI schemes or remote refs.
+        Remote flake reference (without revision) the rebuild is pinned to.
+        A full git SHA supplied in the request is appended as `/<rev>`. The local
+        writable clone is deliberately NOT used - the source is always fetched
+        fresh and integrity-checked from this remote so the triggering agent
+        cannot inject Nix that runs as root.
+      '';
+    };
+
+    hostAttr = mkOption {
+      type = types.str;
+      default = "lenovo";
+      description = "nixosConfigurations attribute to build (flake#<hostAttr>).";
+    };
+
+    healthTimeoutSec = mkOption {
+      type = types.int;
+      default = 120;
+      description = ''
+        Seconds to wait for post-activation health checks (k3s API :6443, sshd,
+        DNS) to pass before triggering an automatic rollback to the previous
+        generation.
       '';
     };
   };
@@ -38,52 +93,153 @@ in
   config = mkIf cfg.enable {
     # Trigger directory: writable by the primary user so bubblewrap agents and
     # the board worker (via SSH) can write the request file without sudo.
+    #
+    # WHO CAN TRIGGER: any member of the `${username}` group. This is the
+    # documented trust boundary for devex-052. Tightening to a dedicated,
+    # narrowly-scoped service identity (e.g. a `board-deploy` group with only the
+    # board worker's SSH key) is recommended as a follow-up; doing so only
+    # requires changing the group on the tmpfiles rule below.
     systemd.tmpfiles.rules = [
       "d ${triggerDir} 0770 root ${username} -"
+      # Persistent state dir for the deploy lock (survives reboots, outside /run).
+      "d /var/lib/nixos-rebuild-trigger 0700 root root -"
     ];
 
     # Arm when request file exists; activate the rebuild service.
     systemd.paths.nixos-rebuild-trigger = {
-      description = "Board-worker nixos-rebuild switch trigger (path watch)";
+      description = "Board-worker nixos-rebuild trigger (path watch)";
       wantedBy = [ "multi-user.target" ];
       pathConfig.PathExists = triggerFile;
     };
 
-    # Privileged oneshot: removes the trigger, runs nixos-rebuild, writes result.
-    # Audit trail: journald (identifier nixos-rebuild-trigger) + resultFile per run.
-    # Privilege surface: root only for this one command; no shell access granted.
+    # Privileged oneshot: validates the request, rebuilds from a PINNED remote
+    # rev under a deploy lock, health-gates the activation, and auto-rolls-back
+    # on failure. Audit trail: append-only ${auditLog} + journald + resultFile.
     systemd.services.nixos-rebuild-trigger = {
-      description = "Non-interactive nixos-rebuild switch (board-worker trigger)";
-      after = [ "nix-daemon.service" ];
-      wants = [ "nix-daemon.service" ];
+      description = "Pinned, health-gated nixos-rebuild (board-worker trigger)";
+      after = [ "nix-daemon.service" "network-online.target" ];
+      wants = [ "nix-daemon.service" "network-online.target" ];
       serviceConfig = {
         Type = "oneshot";
         User = "root";
         SyslogIdentifier = "nixos-rebuild-trigger";
-        TimeoutStartSec = 1800;
+        TimeoutStartSec = 3600;
         StandardOutput = "journal";
         StandardError = "journal";
       };
-      path = [ "/run/current-system/sw/bin" ] ++ (with pkgs; [ git openssh ]);
+      path =
+        [ "/run/current-system/sw/bin" ]
+        ++ (with pkgs; [ nixos-rebuild git openssh util-linux iproute2 curl coreutils ]);
       script = ''
         set -euo pipefail
-        FLAKE="${cfg.flakePath}#${config.networking.hostName}"
 
-        # Snapshot and remove trigger before rebuilding to prevent re-arm loop.
-        REQUESTER=$(cat "${triggerFile}" 2>/dev/null | head -1 | tr -dc '[:print:]' | cut -c1-128 || echo "unknown")
+        # --- Snapshot and consume the request first (prevents re-arm loop) ----
+        REQUEST_RAW="$(cat "${triggerFile}" 2>/dev/null || true)"
         rm -f "${triggerFile}"
 
-        echo "start=$(date -Iseconds) flake=$FLAKE requester=$REQUESTER status=running" > "${resultFile}"
-        echo "nixos-rebuild-trigger: starting rebuild of $FLAKE (requester: $REQUESTER)"
+        REQUESTER="$(printf '%s\n' "$REQUEST_RAW" | sed -n 's/^requester=//p' | head -1 | tr -dc '[:alnum:]._-' | cut -c1-128)"
+        REV="$(printf '%s\n' "$REQUEST_RAW" | sed -n 's/^rev=//p' | head -1 | tr -dc '[:alnum:]' | cut -c1-64)"
+        : "''${REQUESTER:=unknown}"
+        TS="$(date -Iseconds)"
 
-        if nixos-rebuild switch --flake "$FLAKE"; then
-          echo "start=$(date -Iseconds) flake=$FLAKE requester=$REQUESTER status=success" > "${resultFile}"
-          echo "nixos-rebuild-trigger: rebuild succeeded"
+        audit() {
+          # Append-only audit log outside /run.
+          printf '%s requester=%s rev=%s %s\n' "$(date -Iseconds)" "$REQUESTER" "''${REV:-none}" "$1" >> "${auditLog}"
+        }
+        result() {
+          printf 'start=%s requester=%s rev=%s status=%s\n' "$TS" "$REQUESTER" "''${REV:-none}" "$1" > "${resultFile}"
+        }
+
+        # --- Validate the pinned revision: must be a full 40-char git SHA. -----
+        # A floating ref (branch/tag) is REJECTED so the deployed tree is
+        # immutable, reproducible, and auditable.
+        if ! printf '%s' "$REV" | grep -Eq '^[0-9a-f]{40}$'; then
+          result rejected-bad-rev
+          audit "result=rejected-bad-rev detail=rev-must-be-40-hex-sha"
+          echo "nixos-rebuild-trigger: REJECTED - 'rev' must be a full 40-char git SHA (got: '$REV')" >&2
+          exit 1
+        fi
+
+        FLAKE="${cfg.flakeRef}/$REV#${cfg.hostAttr}"
+        result running
+        audit "result=running flake=$FLAKE"
+        echo "nixos-rebuild-trigger: requester=$REQUESTER rebuilding PINNED $FLAKE"
+
+        # --- Deploy lock: serialize deploys; reject if one is already running. -
+        exec 9>"${lockFile}"
+        if ! flock -n 9; then
+          result rejected-locked
+          audit "result=rejected-locked detail=another-deploy-in-progress"
+          echo "nixos-rebuild-trigger: REJECTED - another deploy holds the lock" >&2
+          exit 1
+        fi
+
+        # Record the current generation so we can roll back to it precisely.
+        PREV_SYSTEM="$(readlink -f /run/current-system)"
+        echo "nixos-rebuild-trigger: current generation = $PREV_SYSTEM"
+
+        # --- Health gate ------------------------------------------------------
+        # Checks, all must pass within ${toString cfg.healthTimeoutSec}s:
+        #   1. k3s API server   - TCP/HTTPS reachable on 127.0.0.1:6443
+        #   2. sshd             - listening on TCP :22 (don't lock ourselves out)
+        #   3. DNS resolution   - resolve a public name (control-plane runs DNS)
+        health_check() {
+          local deadline=$(( $(date +%s) + ${toString cfg.healthTimeoutSec} ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            local ok=1
+            # 1. k3s API: 401/403/200 over TLS all mean "answering".
+            curl -sk --max-time 5 -o /dev/null https://127.0.0.1:6443/healthz \
+              || curl -sk --max-time 5 -o /dev/null https://127.0.0.1:6443/ || ok=0
+            # 2. sshd listening on :22.
+            ss -ltn 2>/dev/null | grep -Eq ':22\b' || ok=0
+            # 3. DNS resolves (this host serves DNS for the cluster).
+            getent hosts github.com >/dev/null 2>&1 || ok=0
+            if [ "$ok" -eq 1 ]; then return 0; fi
+            sleep 5
+          done
+          return 1
+        }
+
+        rollback() {
+          echo "nixos-rebuild-trigger: ROLLING BACK to $PREV_SYSTEM" >&2
+          # Re-activate the previous generation live...
+          "$PREV_SYSTEM/bin/switch-to-configuration" switch || true
+          # ...and reset it as the boot default.
+          nixos-rebuild boot --rollback || true
+        }
+
+        # --- Build + stage as boot default (does NOT activate live yet) -------
+        if ! nixos-rebuild boot --flake "$FLAKE"; then
+          result failed-build
+          audit "result=failed-build flake=$FLAKE"
+          echo "nixos-rebuild-trigger: build/boot staging FAILED" >&2
+          exit 1
+        fi
+
+        # The staged generation is now the boot default; its store path is the
+        # newest system profile generation. Activate it live.
+        NEW_SYSTEM="$(readlink -f /nix/var/nix/profiles/system)"
+        echo "nixos-rebuild-trigger: activating $NEW_SYSTEM"
+        if ! "$NEW_SYSTEM/bin/switch-to-configuration" switch; then
+          result failed-activate-rolledback
+          audit "result=failed-activate-rolledback new=$NEW_SYSTEM prev=$PREV_SYSTEM"
+          rollback
+          echo "nixos-rebuild-trigger: activation FAILED - rolled back" >&2
+          exit 1
+        fi
+
+        # --- Post-activation health gate; rollback on failure -----------------
+        if health_check; then
+          result success
+          audit "result=success new=$NEW_SYSTEM"
+          echo "nixos-rebuild-trigger: rebuild succeeded and health checks passed"
           # Best-effort: prompt the user session to reload new Home Manager units.
           systemctl --machine=${username}@ --user daemon-reload 2>/dev/null || true
         else
-          echo "start=$(date -Iseconds) flake=$FLAKE requester=$REQUESTER status=failed" > "${resultFile}"
-          echo "nixos-rebuild-trigger: rebuild FAILED" >&2
+          result failed-health-rolledback
+          audit "result=failed-health-rolledback new=$NEW_SYSTEM prev=$PREV_SYSTEM"
+          rollback
+          echo "nixos-rebuild-trigger: health checks FAILED - rolled back to previous generation" >&2
           exit 1
         fi
       '';

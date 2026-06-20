@@ -8,6 +8,7 @@
     ../homelab/adguardhome.nix
     ../homelab/acme.nix
     ../homelab/tailscale.nix
+    ../homelab/nixos-rebuild-trigger.nix
   ];
 
   # claude-ctl CLI tool for managing agents
