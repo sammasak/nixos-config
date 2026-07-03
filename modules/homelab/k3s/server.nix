@@ -29,27 +29,26 @@ in
       age           # Encryption for sops
     ];
 
-    # Override two bundled addons with versions that have explicit resource
-    # limits, so kube-system stays within the cluster's resource accounting
-    # rules. The .skip files tell k3s not to write its bundled copy on startup
-    # (per https://docs.k3s.io/installation/packaged-components#disabling-manifests).
-    # The replacement manifests are then picked up by k3s' deploy controller.
-    services.k3s.manifests = {
-      local-storage-skip = {
-        target = "local-storage.yaml.skip";
-        source = pkgs.writeText "local-storage-skip" "# bundled manifest skipped; see local-storage.yaml override\n";
-      };
-      local-storage = {
-        target = "local-storage.yaml";
-        source = ./manifests/local-storage.yaml;
-      };
-      metrics-server-deployment-skip = {
-        target = "metrics-server/metrics-server-deployment.yaml.skip";
-        source = pkgs.writeText "metrics-server-deployment-skip" "# bundled manifest skipped; see metrics-server-deployment.yaml override\n";
-      };
-      metrics-server-deployment = {
-        target = "metrics-server/metrics-server-deployment.yaml";
-        source = ./manifests/metrics-server-deployment.yaml;
+    # Disable bundled local-storage and metrics-server; custom versions are
+    # deployed via k3s-manifests.service below.
+    homelab.k3s.disableComponents = [ "traefik" "servicelb" "local-storage" "metrics-server" ];
+
+    # k3s 1.35 added a staging step that tries to write bundled manifests to
+    # the manifests dir. The NixOS k3s module creates L+ symlinks (Nix store,
+    # read-only) there, so the write fails. Fix: copy real files before k3s
+    # starts instead of relying on symlinks.
+    systemd.services.k3s-manifests = {
+      description = "Copy k3s custom manifests (writable, not symlinks)";
+      wantedBy = [ "k3s.service" ];
+      before = [ "k3s.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = pkgs.writeShellScript "k3s-manifests-copy" ''
+          mkdir -p /var/lib/rancher/k3s/server/manifests/metrics-server
+          cp --remove-destination ${./manifests/local-storage.yaml} /var/lib/rancher/k3s/server/manifests/local-storage.yaml
+          cp --remove-destination ${./manifests/metrics-server-deployment.yaml} /var/lib/rancher/k3s/server/manifests/metrics-server/metrics-server-deployment.yaml
+        '';
       };
     };
 
