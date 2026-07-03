@@ -17,6 +17,7 @@ skillsSrc:
 
     settings = {
       theme = "dark";
+      model = "claude-opus-4-8";
       env = {
         DISABLE_TELEMETRY = "1";
         DISABLE_ERROR_REPORTING = "1";
