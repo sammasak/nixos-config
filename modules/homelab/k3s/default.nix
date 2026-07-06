@@ -159,6 +159,17 @@ in
 
     # Common firewall rules
     networking.firewall = {
+      # Cilium owns pod connectivity on its own datapath interfaces. The NixOS
+      # host firewall must NOT filter traffic on them, or host<->pod packets
+      # (e.g. kubelet liveness/readiness probes) are dropped and every pod flaps.
+      # Flannel got this implicitly via k3s' own rules; Cilium needs it explicit.
+      trustedInterfaces = optionals (cfg.cni == "cilium") [
+        "cilium_host"
+        "cilium_net"
+        "cilium_vxlan"
+        "cilium_health"
+        "lxc+"
+      ];
       allowedTCPPorts = [ 10250 ] # Kubelet API
         ++ optionals (cfg.cni == "cilium") [
           4240 # Cilium agent health check (cilium-health, node-to-node)
