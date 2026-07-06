@@ -10,9 +10,6 @@ in
     # Hardware
     ../../modules/hardware/video/${vars.videoDriver}.nix
 
-    # Desktop mode (default boot)
-    ../../modules/specialisations/desktop.nix
-
     # Register crun as additional containerd runtime for k3s
     ../../modules/homelab/k3s/containerd-crun.nix
   ];
@@ -20,9 +17,11 @@ in
   sam.profile = vars;
   sam.secrets.enable = true;
 
-  # Server specialisation (boot menu option for headless mode)
-  specialisation.server.configuration = {
-    imports = [ ../../modules/specialisations/server.nix ];
+  # Headless (server) mode is now the DEFAULT boot — acer-swift is a k3s worker
+  # and normally runs without a GUI (matches msi-ms7758). Desktop is kept as an
+  # optional boot-menu entry ("NixOS (desktop)") for occasional interactive use.
+  specialisation.desktop.configuration = {
+    imports = [ ../../modules/specialisations/desktop.nix ];
   };
 
   # k3s agent configuration
