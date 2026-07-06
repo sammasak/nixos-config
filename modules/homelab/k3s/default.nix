@@ -122,10 +122,9 @@ in
             ]
           )
         )
-        ++ optionals (cfg.role == "agent" && cfg.cni == "cilium") [
-          # kube-proxy runs per-node, so agents must also opt out for Cilium KPR.
-          "--disable-kube-proxy"
-        ]
+        # NOTE: --disable-kube-proxy is a SERVER-ONLY flag; the k3s agent binary
+        # rejects it ("flag provided but not defined") and fatals. kube-proxy is
+        # disabled cluster-wide by the server flag above, so agents must NOT set it.
         ++ optionals (cfg.role == "server" && cfg.taintControlPlane) [
           "--node-taint=node-role.kubernetes.io/control-plane:NoSchedule"
         ]
