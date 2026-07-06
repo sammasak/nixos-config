@@ -45,8 +45,27 @@ in
       backend = mkOption {
         type = types.enum [ "vxlan" "host-gw" "wireguard-native" "none" ];
         default = "host-gw";
-        description = "Flannel backend for pod networking";
+        description = "Flannel backend for pod networking (only used when cni = \"flannel\")";
       };
+    };
+
+    cni = mkOption {
+      type = types.enum [ "flannel" "cilium" ];
+      default = "flannel";
+      description = ''
+        CNI provider for the cluster.
+
+        "flannel" (default) uses the bundled k3s flannel + embedded kube-proxy +
+        embedded network-policy controller.
+
+        "cilium" disables all three on the k3s side (--flannel-backend=none,
+        --disable-kube-proxy, --disable-network-policy) so Cilium can be installed
+        as the sole CNI with eBPF kube-proxy replacement and Hubble observability.
+        Cilium itself is deployed out-of-band (helm) then managed via Flux.
+
+        Must be set consistently on every node (server + all agents), since
+        --disable-kube-proxy is a per-node flag.
+      '';
     };
 
     disableComponents = mkOption {
@@ -85,10 +104,27 @@ in
       serverAddr = mkIf (cfg.role == "agent") cfg.serverAddr;
       extraFlags = toString (
         cfg.extraFlags
-        ++ optionals (cfg.role == "server") [
-          "--flannel-backend=${cfg.flannel.backend}"
-          "--write-kubeconfig-mode=644"
-          "--secrets-encryption"
+        ++ optionals (cfg.role == "server") (
+          [
+            "--write-kubeconfig-mode=644"
+            "--secrets-encryption"
+          ]
+          ++ (
+            if cfg.cni == "cilium" then [
+              # Cilium becomes the sole CNI: disable bundled flannel, the embedded
+              # network-policy controller, and kube-proxy so Cilium's eBPF datapath
+              # (kube-proxy replacement + native NetworkPolicy) can take over.
+              "--flannel-backend=none"
+              "--disable-network-policy"
+              "--disable-kube-proxy"
+            ] else [
+              "--flannel-backend=${cfg.flannel.backend}"
+            ]
+          )
+        )
+        ++ optionals (cfg.role == "agent" && cfg.cni == "cilium") [
+          # kube-proxy runs per-node, so agents must also opt out for Cilium KPR.
+          "--disable-kube-proxy"
         ]
         ++ optionals (cfg.role == "server" && cfg.taintControlPlane) [
           "--node-taint=node-role.kubernetes.io/control-plane:NoSchedule"
@@ -124,8 +160,20 @@ in
 
     # Common firewall rules
     networking.firewall = {
-      allowedTCPPorts = [ 10250 ]; # Kubelet API
-      allowedUDPPorts = mkIf (cfg.flannel.backend == "vxlan") [ 8472 ]; # Flannel VXLAN
+      allowedTCPPorts = [ 10250 ] # Kubelet API
+        ++ optionals (cfg.cni == "cilium") [
+          4240 # Cilium agent health check (cilium-health, node-to-node)
+          4244 # Hubble server on the agent (Hubble Relay connects here)
+          9962 # Cilium agent Prometheus metrics
+          9963 # Cilium operator Prometheus metrics
+          9964 # Cilium Envoy proxy Prometheus metrics
+          9965 # Hubble Prometheus metrics
+        ];
+      # VXLAN tunnel: flannel uses 8472 when its backend is vxlan; Cilium's
+      # default tunnel mode also uses 8472. Open it for either.
+      allowedUDPPorts =
+        optionals (cfg.cni == "flannel" && cfg.flannel.backend == "vxlan") [ 8472 ]
+        ++ optionals (cfg.cni == "cilium") [ 8472 ];
     };
   };
 }

@@ -37,6 +37,10 @@ in
   # Keep control-plane focused on cluster management.
   homelab.k3s.taintControlPlane = true;
 
+  # Cilium is the cluster CNI: k3s drops bundled flannel, kube-proxy, and the
+  # network-policy controller so Cilium's eBPF datapath + Hubble take over.
+  homelab.k3s.cni = "cilium";
+
   # ThinkPad-class laptop: use thinkfan + thermald with a less heat-prone curve.
   hardware.thermal = {
     platform = "thinkpad";
