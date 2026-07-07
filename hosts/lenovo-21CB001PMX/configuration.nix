@@ -12,6 +12,12 @@ in
 
     # Desktop mode (default boot)
     ../../modules/specialisations/desktop.nix
+
+    # Custom containerd config (v3-format CNI section with explicit bin/conf dirs).
+    # Required for Cilium CNI: stock k3s containerd on the server never initializes
+    # the Cilium CNI plugin ("cni plugin not initialized"); acer works because it
+    # imports this. Also registers crun/gvisor runtimes (harmless on control-plane).
+    ../../modules/homelab/k3s/containerd-crun.nix
   ];
 
   sam.profile = vars;
