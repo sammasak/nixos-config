@@ -12,6 +12,12 @@ in
 
     # Keep GRUB theming consistent with the other machines (Stylix).
     ../../modules/themes/Catppuccin
+
+    # Required for homelab.k3s.cni = "cilium" (below): writes the containerd v3
+    # CNI config so containerd loads cilium-cni. Without it a Cilium node comes up
+    # NotReady ("cni plugin not initialized") — see ADR-023 gotcha #6. acer + lenovo
+    # import this too; msi must match or it will not converge on boot.
+    ../../modules/homelab/k3s/containerd-crun.nix
   ];
 
   sam.profile = vars;
