@@ -49,6 +49,7 @@ in
       secrets."k3s/cluster_token" = {
         # The secret will be available at this path
         path = "/run/secrets/k3s-cluster-token";
+        mode = "0400";
         # Restart k3s when the secret changes
         restartUnits = [ "k3s.service" ];
       };
@@ -56,12 +57,14 @@ in
       # Flux GitOps secrets
       secrets."flux/deploy_key" = {
         path = "/run/secrets/flux-deploy-key";
+        mode = "0400";
         # Restart flux-bootstrap when the secret changes
         restartUnits = [ "flux-bootstrap.service" ];
       };
 
       secrets."flux/age_key" = {
         path = "/run/secrets/flux-age-key";
+        mode = "0400";
         restartUnits = [ "flux-bootstrap.service" ];
       };
 
@@ -69,6 +72,7 @@ in
       secrets."cloudflare/api_token" = {
         sopsFile = cfg.cloudflareSecretsFile;
         path = "/run/secrets/cloudflare-api-token";
+        mode = "0400";
       };
 
       # Tailscale authkey for subnet router

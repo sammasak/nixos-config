@@ -3,3 +3,5 @@ result
 result-*
 .playwright-mcp/
 .worktrees/
+target/
+**/target/
