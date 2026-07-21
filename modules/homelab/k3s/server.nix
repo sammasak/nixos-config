@@ -29,8 +29,13 @@ in
       age           # Encryption for sops
     ];
 
-    # Disable bundled local-storage and metrics-server; custom versions are
-    # deployed via k3s-manifests.service below.
+    # Disable bundled local-storage (a custom, resource-limited version is
+    # deployed via k3s-manifests.service below) and metrics-server.
+    #
+    # metrics-server is intentionally NOT run on this cluster: nothing depends on
+    # metrics.k8s.io. All autoscaling goes through KEDA (external.metrics.k8s.io),
+    # and no HPA uses Resource (cpu/memory) metrics. The bundled addon stays
+    # disabled here and no override manifest is shipped for it. See infra-042.
     homelab.k3s.disableComponents = [ "traefik" "servicelb" "local-storage" "metrics-server" ];
 
     # k3s 1.35 added a staging step that tries to write bundled manifests to
@@ -45,9 +50,10 @@ in
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = pkgs.writeShellScript "k3s-manifests-copy" ''
-          mkdir -p /var/lib/rancher/k3s/server/manifests/metrics-server
           cp --remove-destination ${./manifests/local-storage.yaml} /var/lib/rancher/k3s/server/manifests/local-storage.yaml
-          cp --remove-destination ${./manifests/metrics-server-deployment.yaml} /var/lib/rancher/k3s/server/manifests/metrics-server/metrics-server-deployment.yaml
+          # infra-042: remove the stale metrics-server override left by earlier
+          # deploys. metrics-server is disabled and no longer shipped as a manifest.
+          rm -rf /var/lib/rancher/k3s/server/manifests/metrics-server
         '';
       };
     };
