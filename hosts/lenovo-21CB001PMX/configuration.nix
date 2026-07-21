@@ -99,4 +99,13 @@ in
 
   # Cluster health watchdog — checks node readiness + monitoring stack every 10 min.
   homelab.clusterWatchdog.enable = true;
+
+  # Non-interactive, health-gated nixos-rebuild trigger for the homelab board
+  # worker. Rebuilds from a PINNED git SHA fetched fresh from
+  # github:sammasak/nixos-config (NOT the agent-writable local clone), under a
+  # deploy lock, with k3s/sshd/DNS health checks and automatic rollback.
+  # Enabling this grants non-interactive control-plane deploy - a deliberate
+  # trust choice. See modules/homelab/nixos-rebuild-trigger.nix for the full
+  # security model and invocation instructions.
+  homelab.nixosRebuildTrigger.enable = true;
 }

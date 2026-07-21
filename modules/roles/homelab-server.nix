@@ -13,6 +13,7 @@ in
     ../homelab/tailscale.nix
     ../homelab/ntfy.nix
     ../homelab/cluster-watchdog.nix
+    ../homelab/nixos-rebuild-trigger.nix
   ];
 
   # Homelab improvement loop: all systemd user services, timers, and path units
