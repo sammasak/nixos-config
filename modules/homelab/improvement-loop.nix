@@ -67,7 +67,13 @@ in
     };
     oncall-monitor = mkService {
       description = "Homelab On-Call Monitor";
-      goalPath = "${loop}/oncall-monitor/GOAL.md";
+      # Canonical GOAL lives under monitors/oncall/ (matches the monitors/<name>/
+      # detection layout: infra, product, secrets, devex all live there too).
+      # The old oncall-monitor/GOAL.md path never existed in-tree; the loop had a
+      # compensating symlink band-aid (oncall-monitor/GOAL.md -> ../monitors/oncall/
+      # GOAL.md). Point straight at the real file so the unit no longer depends on
+      # that symlink surviving (ticket-2026-06-19-devex-057).
+      goalPath = "${loop}/monitors/oncall/GOAL.md";
     };
     e2e-tester = mkService {
       description = "Homelab E2E Tester";
