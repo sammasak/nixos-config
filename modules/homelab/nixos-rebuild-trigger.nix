@@ -24,17 +24,38 @@
 #      `access-tokens` line (sourced from SOPS at /run/secrets/nix_access_token);
 #      no token is hardcoded here.
 #
-#   2. HEALTH-GATED with AUTOMATIC ROLLBACK. We `nixos-rebuild boot` the new
-#      generation (staged as the next-boot default but NOT activated), then
-#      activate it live with `switch-to-configuration switch`. A post-activation
-#      health gate checks: k3s API on :6443, sshd listening on :22, and DNS
-#      resolution. If any check fails within the timeout, we automatically roll
-#      back: re-activate the previous generation and reset it as the boot
-#      default. No bare `switch` without recovery is ever used.
+#   2. HEALTH-GATED with AUTOMATIC ROLLBACK, RUN OUT-OF-BAND. We `nixos-rebuild
+#      boot` the new generation (staged as the next-boot default but NOT
+#      activated), then activate it live with `switch-to-configuration switch`.
+#      A post-activation health gate checks: k3s API on :6443, sshd listening on
+#      :22, and DNS resolution. If any check fails within the timeout, we
+#      automatically roll back: re-activate the previous generation and reset it
+#      as the boot default. No bare `switch` without recovery is ever used.
+#
+#      CRITICAL: the activation tail does NOT run inside this service.
+#      `switch-to-configuration` stops every unit whose definition changed — and
+#      nixos-rebuild-trigger.service is itself part of the configuration being
+#      activated. Running the switch inline meant the switch SIGTERM'd the shell
+#      that was running it, mid-stop-phase. Observed 2026-08-26: the deployed rev
+#      changed this very unit, so the stop phase listed
+#      "k3s.service, nixos-rebuild-trigger.service, polkit.service", killed the
+#      switch (status=15/TERM), and activation aborted AFTER stopping units and
+#      BEFORE the start phase. k3s stayed down; no result was ever written; the
+#      health gate and rollback never ran. The deploy safety net was itself
+#      destroyed by the deploy.
+#
+#      So once the build succeeds, this service hands the remaining work to a
+#      DETACHED transient unit (`systemd-run --unit=nixos-rebuild-activation`)
+#      and exits. A transient unit lives in /run/systemd/transient and is not
+#      part of any generation's unit set, so switch-to-configuration neither
+#      knows nor cares about it and can never stop it. The trigger service
+#      records `staged-and-activating`; the transient unit writes the final
+#      result.
 #
 #   3. DEPLOY LOCK. A flock on a persistent lockfile serializes deploys so two
 #      triggers (or a deploy racing other Nix work) cannot overlap. A concurrent
-#      request is rejected rather than queued.
+#      request is rejected rather than queued. The lock is re-acquired by the
+#      activation unit across the handoff - see the comment there.
 #
 #   4. APPEND-ONLY AUDIT LOG outside /run, at /var/log/nixos-rebuild-trigger.log
 #      (root-owned, 0640). Each line records timestamp, requester, resolved rev,
@@ -44,8 +65,14 @@
 #   printf 'requester=board-worker\nrev=<40-char-git-sha>\n' \
 #     > /run/nixos-rebuild-trigger/request
 #
-# Poll result (blocks until status= appears):
+# Poll result. NOTE: `status=staged-and-activating` is NOT terminal - it means
+# the build is done and the detached activation unit has taken over. Poll until
+# the status is one of: success, failed-build, failed-activate-rolledback,
+# failed-health-rolledback, failed-activation-lock, rejected-bad-rev,
+# rejected-locked, rejected-activating.
 #   grep -m1 'status=' /run/nixos-rebuild-trigger/result
+#   systemctl status nixos-rebuild-activation.service   # while it runs
+#   journalctl -t nixos-rebuild-activation
 { config, lib, pkgs, ... }:
 let
   inherit (lib) mkEnableOption mkIf mkOption types;
@@ -61,6 +88,135 @@ let
   resultFile = "${triggerDir}/result";
   auditLog = "/var/log/nixos-rebuild-trigger.log";
   lockFile = "/var/lib/nixos-rebuild-trigger/deploy.lock";
+  activationUnit = "nixos-rebuild-activation";
+
+  # Tools needed by both the trigger service and the detached activation script.
+  # The activation script runs under a transient unit with no inherited PATH, so
+  # it cannot rely on the service's `path =` list and sets its own from this.
+  runtimePkgs = with pkgs; [
+    nixos-rebuild
+    git
+    openssh
+    util-linux
+    iproute2
+    curl
+    coreutils
+    gnugrep
+    gnused
+    systemd
+  ];
+
+  # ── The activation tail, extracted so it can run OUT OF BAND ──────────────
+  # Everything from "activate the staged generation" onwards lives here:
+  # switch-to-configuration, the post-activation health gate, rollback, and the
+  # result/audit writes for those phases.
+  #
+  # This is deliberately NOT part of the trigger service's script. See note 2 in
+  # the header: switch-to-configuration stops units whose definitions changed,
+  # the trigger service is one of them, and running the switch inline meant the
+  # switch killed itself mid-stop-phase and left the machine half-activated.
+  # Launched via `systemd-run` it lives in a transient unit that no generation
+  # owns, so the switch cannot stop it.
+  #
+  # Args: PREV_SYSTEM REQUESTER REV TS
+  activationScript = pkgs.writeShellScript "nixos-rebuild-activate" ''
+    set -euo pipefail
+
+    export PATH=${lib.makeBinPath runtimePkgs}:/run/current-system/sw/bin
+
+    PREV_SYSTEM="$1"
+    REQUESTER="$2"
+    REV="$3"
+    TS="$4"
+
+    # Same formats as the trigger service - a poller or log reader cannot tell
+    # which of the two units wrote a given line, and should not need to.
+    audit() {
+      printf '%s requester=%s rev=%s %s\n' "$(date -Iseconds)" "$REQUESTER" "''${REV:-none}" "$1" >> "${auditLog}"
+    }
+    result() {
+      printf 'start=%s requester=%s rev=%s status=%s\n' "$TS" "$REQUESTER" "''${REV:-none}" "$1" > "${resultFile}"
+    }
+
+    # --- Deploy lock across the handoff -------------------------------------
+    # DESIGN CHOICE: the lock is re-acquired here rather than inherited. flock
+    # is held via an open fd, and a transient unit is forked by PID 1 rather
+    # than by us, so the trigger service's fd 9 cannot be passed across. We wait
+    # for the lock instead of failing fast: at this point the trigger service
+    # is exiting and about to release it, so the expected wait is milliseconds.
+    #
+    # This leaves a brief window in which neither unit holds the lock. A request
+    # arriving exactly then could win the flock race and start a build while
+    # this activation is still running. The trigger service closes that window
+    # separately by rejecting any request while ${activationUnit}.service is
+    # active, so the flock is a backstop rather than the only guard.
+    exec 9>"${lockFile}"
+    if ! flock -w 300 9; then
+      result failed-activation-lock
+      audit "result=failed-activation-lock detail=could-not-acquire-lock-within-300s prev=$PREV_SYSTEM"
+      echo "nixos-rebuild-activation: could not acquire the deploy lock; staged generation NOT activated" >&2
+      exit 1
+    fi
+
+    # The staged generation is the newest system profile generation. Re-read it
+    # here rather than trusting a value computed before the handoff.
+    NEW_SYSTEM="$(readlink -f /nix/var/nix/profiles/system)"
+
+    # --- Health gate --------------------------------------------------------
+    # Checks, all must pass within ${toString cfg.healthTimeoutSec}s:
+    #   1. k3s API server   - TCP/HTTPS reachable on 127.0.0.1:6443
+    #   2. sshd             - listening on TCP :22 (don't lock ourselves out)
+    #   3. DNS resolution   - resolve a public name (control-plane runs DNS)
+    health_check() {
+      local deadline=$(( $(date +%s) + ${toString cfg.healthTimeoutSec} ))
+      while [ "$(date +%s)" -lt "$deadline" ]; do
+        local ok=1
+        # 1. k3s API: 401/403/200 over TLS all mean "answering".
+        curl -sk --max-time 5 -o /dev/null https://127.0.0.1:6443/healthz \
+          || curl -sk --max-time 5 -o /dev/null https://127.0.0.1:6443/ || ok=0
+        # 2. sshd listening on :22.
+        ss -ltn 2>/dev/null | grep -Eq ':22\b' || ok=0
+        # 3. DNS resolves (this host serves DNS for the cluster).
+        getent hosts github.com >/dev/null 2>&1 || ok=0
+        if [ "$ok" -eq 1 ]; then return 0; fi
+        sleep 5
+      done
+      return 1
+    }
+
+    rollback() {
+      echo "nixos-rebuild-activation: ROLLING BACK to $PREV_SYSTEM" >&2
+      # Re-activate the previous generation live...
+      "$PREV_SYSTEM/bin/switch-to-configuration" switch || true
+      # ...and reset it as the boot default.
+      nixos-rebuild boot --rollback || true
+    }
+
+    # --- Activate the staged generation live --------------------------------
+    echo "nixos-rebuild-activation: activating $NEW_SYSTEM (prev=$PREV_SYSTEM)"
+    if ! "$NEW_SYSTEM/bin/switch-to-configuration" switch; then
+      result failed-activate-rolledback
+      audit "result=failed-activate-rolledback new=$NEW_SYSTEM prev=$PREV_SYSTEM"
+      rollback
+      echo "nixos-rebuild-activation: activation FAILED - rolled back" >&2
+      exit 1
+    fi
+
+    # --- Post-activation health gate; rollback on failure -------------------
+    if health_check; then
+      result success
+      audit "result=success new=$NEW_SYSTEM"
+      echo "nixos-rebuild-activation: rebuild succeeded and health checks passed"
+      # Best-effort: prompt the user session to reload new Home Manager units.
+      systemctl --machine=${username}@ --user daemon-reload 2>/dev/null || true
+    else
+      result failed-health-rolledback
+      audit "result=failed-health-rolledback new=$NEW_SYSTEM prev=$PREV_SYSTEM"
+      rollback
+      echo "nixos-rebuild-activation: health checks FAILED - rolled back to previous generation" >&2
+      exit 1
+    fi
+  '';
 in
 {
   options.homelab.nixosRebuildTrigger = {
@@ -163,9 +319,7 @@ in
         StandardOutput = "journal";
         StandardError = "journal";
       };
-      path =
-        [ "/run/current-system/sw/bin" ]
-        ++ (with pkgs; [ nixos-rebuild git openssh util-linux iproute2 curl coreutils ]);
+      path = [ "/run/current-system/sw/bin" ] ++ runtimePkgs;
       script = ''
         set -euo pipefail
 
@@ -218,39 +372,20 @@ in
           exit 1
         fi
 
-        # Record the current generation so we can roll back to it precisely.
+        # The lock alone does not cover the window between this unit exiting and
+        # the activation unit re-acquiring it (see the comment in the activation
+        # script). Reject outright while an activation is in flight.
+        if systemctl is-active --quiet ${activationUnit}.service; then
+          result rejected-activating
+          audit "result=rejected-activating detail=activation-already-in-flight"
+          echo "nixos-rebuild-trigger: REJECTED - ${activationUnit}.service is still activating a previous deploy" >&2
+          exit 1
+        fi
+
+        # Record the current generation so the activation unit can roll back to
+        # it precisely. It must be captured HERE, before anything is activated.
         PREV_SYSTEM="$(readlink -f /run/current-system)"
         echo "nixos-rebuild-trigger: current generation = $PREV_SYSTEM"
-
-        # --- Health gate ------------------------------------------------------
-        # Checks, all must pass within ${toString cfg.healthTimeoutSec}s:
-        #   1. k3s API server   - TCP/HTTPS reachable on 127.0.0.1:6443
-        #   2. sshd             - listening on TCP :22 (don't lock ourselves out)
-        #   3. DNS resolution   - resolve a public name (control-plane runs DNS)
-        health_check() {
-          local deadline=$(( $(date +%s) + ${toString cfg.healthTimeoutSec} ))
-          while [ "$(date +%s)" -lt "$deadline" ]; do
-            local ok=1
-            # 1. k3s API: 401/403/200 over TLS all mean "answering".
-            curl -sk --max-time 5 -o /dev/null https://127.0.0.1:6443/healthz \
-              || curl -sk --max-time 5 -o /dev/null https://127.0.0.1:6443/ || ok=0
-            # 2. sshd listening on :22.
-            ss -ltn 2>/dev/null | grep -Eq ':22\b' || ok=0
-            # 3. DNS resolves (this host serves DNS for the cluster).
-            getent hosts github.com >/dev/null 2>&1 || ok=0
-            if [ "$ok" -eq 1 ]; then return 0; fi
-            sleep 5
-          done
-          return 1
-        }
-
-        rollback() {
-          echo "nixos-rebuild-trigger: ROLLING BACK to $PREV_SYSTEM" >&2
-          # Re-activate the previous generation live...
-          "$PREV_SYSTEM/bin/switch-to-configuration" switch || true
-          # ...and reset it as the boot default.
-          nixos-rebuild boot --rollback || true
-        }
 
         # --- Build + stage as boot default (does NOT activate live yet) -------
         if ! nixos-rebuild boot --flake "$FLAKE"; then
@@ -260,32 +395,32 @@ in
           exit 1
         fi
 
-        # The staged generation is now the boot default; its store path is the
-        # newest system profile generation. Activate it live.
         NEW_SYSTEM="$(readlink -f /nix/var/nix/profiles/system)"
-        echo "nixos-rebuild-trigger: activating $NEW_SYSTEM"
-        if ! "$NEW_SYSTEM/bin/switch-to-configuration" switch; then
-          result failed-activate-rolledback
-          audit "result=failed-activate-rolledback new=$NEW_SYSTEM prev=$PREV_SYSTEM"
-          rollback
-          echo "nixos-rebuild-trigger: activation FAILED - rolled back" >&2
-          exit 1
-        fi
 
-        # --- Post-activation health gate; rollback on failure -----------------
-        if health_check; then
-          result success
-          audit "result=success new=$NEW_SYSTEM"
-          echo "nixos-rebuild-trigger: rebuild succeeded and health checks passed"
-          # Best-effort: prompt the user session to reload new Home Manager units.
-          systemctl --machine=${username}@ --user daemon-reload 2>/dev/null || true
-        else
-          result failed-health-rolledback
-          audit "result=failed-health-rolledback new=$NEW_SYSTEM prev=$PREV_SYSTEM"
-          rollback
-          echo "nixos-rebuild-trigger: health checks FAILED - rolled back to previous generation" >&2
-          exit 1
-        fi
+        # --- Hand the activation tail off to a DETACHED transient unit --------
+        # This unit is part of the configuration being activated, so it cannot
+        # run the switch itself: switch-to-configuration's stop phase would
+        # SIGTERM this very script mid-switch, leaving units stopped and the
+        # health gate and rollback unreachable (see note 2 in the header for the
+        # 2026-08-26 incident that established this).
+        #
+        # `systemd-run` asks PID 1 to fork the activation, so it does not live
+        # in this unit's cgroup and does not die with it. A transient unit is
+        # not part of any generation's unit set, so the switch never stops it.
+        # --collect reaps the unit once it finishes, success or failure.
+        echo "nixos-rebuild-trigger: handing activation of $NEW_SYSTEM to ${activationUnit}.service"
+        systemd-run \
+          --collect \
+          --unit=${activationUnit} \
+          --quiet \
+          --description="Detached activation + health gate for a board-worker nixos-rebuild" \
+          --property=SyslogIdentifier=${activationUnit} \
+          ${activationScript} "$PREV_SYSTEM" "$REQUESTER" "$REV" "$TS"
+
+        # NOT a terminal state: the transient unit writes the final result.
+        result staged-and-activating
+        audit "result=staged-and-activating new=$NEW_SYSTEM prev=$PREV_SYSTEM handoff=${activationUnit}.service"
+        echo "nixos-rebuild-trigger: build staged; ${activationUnit}.service owns the switch, health gate and rollback from here"
       '';
     };
   };
