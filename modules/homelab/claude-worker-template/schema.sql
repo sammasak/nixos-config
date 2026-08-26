@@ -1,0 +1,12 @@
+-- schema.sql
+-- Define your database tables here.
+-- Applied automatically on VM startup: psql postgresql://claude@localhost/claude -f schema.sql
+-- Run manually after editing: psql postgresql://claude@localhost/claude -f schema.sql
+-- Use CREATE TABLE IF NOT EXISTS for idempotency (safe to re-run).
+
+-- Example table (uncomment and adapt, or delete and write your own):
+-- CREATE TABLE IF NOT EXISTS items (
+--   id         SERIAL PRIMARY KEY,
+--   name       TEXT NOT NULL,
+--   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+-- );
