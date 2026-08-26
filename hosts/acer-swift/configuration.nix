@@ -58,8 +58,10 @@ in
   # consistent with a laptop-specific WiFi instability (msi-ms7758 is wired).
   # See: TICKET-2026-06-06-infra-043.
   networking.networkmanager.wifi.powersave = false;
+  # d0i3_disable was dropped from iwlwifi upstream (~kernel 6.19); passing it is
+  # silently inert, so only power_save=0 remains.
   boot.extraModprobeConfig = ''
-    options iwlwifi power_save=0 d0i3_disable=1
+    options iwlwifi power_save=0
   '';
 
   # WiFi self-heal for a HEADLESS sole-worker node.
