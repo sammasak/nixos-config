@@ -1,3 +1,7 @@
+> **SUPERSEDED 2026-08-26.** Describes the retired doable / claude-worker VM
+> platform, not the current state of this repo. Kept for history only.
+> Current documentation lives in `~/knowledge`.
+
 # Pre-Baked SvelteKit Template — Design Document
 
 > **Status:** Implemented (2026-03-14)

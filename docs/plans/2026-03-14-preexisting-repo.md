@@ -1,3 +1,7 @@
+> **SUPERSEDED 2026-08-26.** Describes the retired doable / claude-worker VM
+> platform, not the current state of this repo. Kept for history only.
+> Current documentation lives in `~/knowledge`.
+
 # Pre-existing Repo Support Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
