@@ -1,9 +1,8 @@
 # Common k3s configuration shared between server and agent
 { config, lib, pkgs, ... }:
 
-with lib;
-
 let
+  inherit (lib) mkEnableOption mkIf mkOption optionals types;
   cfg = config.homelab.k3s;
 in
 {

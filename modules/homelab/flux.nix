@@ -1,9 +1,8 @@
 # Flux GitOps bootstrap module
 { config, lib, pkgs, ... }:
 
-with lib;
-
 let
+  inherit (lib) mkEnableOption mkIf mkOption types;
   cfg = config.homelab.flux;
 in
 {

@@ -1,9 +1,8 @@
 # k3s server (control plane) module
 { config, lib, pkgs, ... }:
 
-with lib;
-
 let
+  inherit (lib) concatMapStrings concatMapStringsSep concatStrings concatStringsSep mkIf optionalString stringAfter;
   cfg = config.homelab.k3s;
 
   # Control-plane management ports. 2379/2380 have no listener on this cluster

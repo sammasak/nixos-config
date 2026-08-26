@@ -20,9 +20,8 @@
 #       - no --ssh: sshd and its hardening stay the only shell boundary.
 { config, lib, pkgs, ... }:
 
-with lib;
-
 let
+  inherit (lib) concatStringsSep escapeShellArgs mkDefault mkEnableOption mkIf mkOption types;
   cfg = config.homelab.tailscale;
   isSubnetRouter = cfg.mode == "subnet-router";
 

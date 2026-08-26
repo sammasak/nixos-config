@@ -7,9 +7,8 @@
 # Runs outside k8s so it survives worker node outages.
 { config, lib, pkgs, ... }:
 
-with lib;
-
 let
+  inherit (lib) mkEnableOption mkIf mkOption types;
   cfg = config.homelab.clusterWatchdog;
 in
 {

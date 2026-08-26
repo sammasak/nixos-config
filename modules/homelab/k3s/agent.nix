@@ -1,9 +1,8 @@
 # k3s agent (worker) module
 { config, lib, pkgs, ... }:
 
-with lib;
-
 let
+  inherit (lib) mkIf;
   cfg = config.homelab.k3s;
 in
 {

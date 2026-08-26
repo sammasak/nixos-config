@@ -3,9 +3,8 @@
 # Accessible on the LAN and via Tailscale for push notifications to the mobile app.
 { config, lib, ... }:
 
-with lib;
-
 let
+  inherit (lib) mkEnableOption mkIf mkOption types;
   cfg = config.homelab.ntfy;
 in
 {
