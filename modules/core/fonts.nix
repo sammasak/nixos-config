@@ -1,7 +1,7 @@
 # Font configuration
 { config, pkgs, lib, ... }:
 let
-  hasDesktop = config.programs.hyprland.enable or false;
+  hasDesktop = config.sam.desktop.enable;
 in
 lib.mkIf hasDesktop {
   fonts = {

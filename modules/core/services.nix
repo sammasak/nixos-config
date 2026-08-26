@@ -2,7 +2,7 @@
 { config, lib, ... }:
 let
   username = config.sam.profile.username;
-  hasDesktop = config.programs.hyprland.enable or false;
+  hasDesktop = config.sam.desktop.enable;
 in
 {
   services = {

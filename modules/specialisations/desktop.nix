@@ -8,6 +8,9 @@
     # Catppuccin theme now in base role for GRUB theming
   ];
 
+  # The GUI signal every desktop-gated module reads (compositor-agnostic).
+  sam.desktop.enable = true;
+
   # Enable X server for compatibility (some apps need it)
   services.xserver.enable = true;
 

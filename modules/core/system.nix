@@ -97,6 +97,21 @@ in
       default = { };
       description = "User identity data (for example git profile and SSH keys).";
     };
+
+    # The single "is this a GUI desktop?" signal. Modules used to probe
+    # `programs.hyprland.enable`, which silently tied every desktop gate to one
+    # compositor — a second compositor (niri) would have evaluated as headless.
+    desktop.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Whether this configuration runs a GUI desktop session (default boot or
+        specialisation). Set by `modules/specialisations/desktop.nix` and
+        cleared by `modules/specialisations/server.nix`. Modules must key
+        desktop-only packages, fonts, services and Home Manager imports off
+        this option rather than off a compositor's own enable flag.
+      '';
+    };
   };
 
   config = {

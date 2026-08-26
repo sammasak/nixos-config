@@ -2,7 +2,7 @@
 { lib, osConfig, ... }:
 let
   profile = osConfig.sam.profile;
-  isDesktopMode = osConfig.programs.hyprland.enable or false;
+  isDesktopMode = osConfig.sam.desktop.enable or false;
   baseImports = [
     ../core/fish.nix
     ../programs/cli/git

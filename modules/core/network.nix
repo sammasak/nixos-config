@@ -2,7 +2,7 @@
 { config, pkgs, lib, ... }:
 let
   profile = config.sam.profile;
-  hasDesktop = config.programs.hyprland.enable or false;
+  hasDesktop = config.sam.desktop.enable;
 in
 {
   networking = {
