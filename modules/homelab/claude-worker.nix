@@ -91,55 +91,50 @@ in
 
     environment.systemPackages = [ claude-worker ];
 
-    # ── Promtail — ship claude-worker logs to Loki ───────────────────────
-    services.promtail = {
-      enable = true;
-      configuration = {
-        server = {
-          http_listen_port = 9080;
-          grpc_listen_port = 0;
-        };
-        positions = {
-          filename = "/var/lib/promtail/positions.yaml";
-        };
-        clients = [
-          { url = "http://monitoring-loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"; }
-        ];
-        scrape_configs = [
-          {
-            job_name = "claude-worker";
-            static_configs = [
-              {
-                targets = [ "localhost" ];
-                labels = {
-                  job = "claude-worker";
-                  vm = config.networking.hostName;
-                  __path__ = "${cfg.workerHome}/logs/current.log";
-                };
-              }
-            ];
-            pipeline_stages = [
-              {
-                json = {
-                  expressions = {
-                    type = "type";
-                    session_id = "session_id";
-                  };
-                };
-              }
-              {
-                labels = {
-                  type = null;
-                  session_id = null;
-                };
-              }
-            ];
-          }
-        ];
-      };
-    };
+    # ── Grafana Alloy — ship claude-worker logs to Loki ──────────────────
+    # Replaces promtail, which was removed from nixpkgs after reaching EOL.
+    # Equivalent pipeline: tail current.log → parse JSON → promote type and
+    # session_id to labels → push to the in-cluster Loki.
+    services.alloy.enable = true;
 
-    systemd.services.promtail = {
+    environment.etc."alloy/config.alloy".text = ''
+      local.file_match "claude_worker" {
+        path_targets = [{
+          __path__ = "${cfg.workerHome}/logs/current.log",
+          job      = "claude-worker",
+          vm       = "${config.networking.hostName}",
+        }]
+      }
+
+      loki.source.file "claude_worker" {
+        targets    = local.file_match.claude_worker.targets
+        forward_to = [loki.process.claude_worker.receiver]
+      }
+
+      loki.process "claude_worker" {
+        stage.json {
+          expressions = {
+            type       = "type",
+            session_id = "session_id",
+          }
+        }
+        stage.labels {
+          values = {
+            type       = "",
+            session_id = "",
+          }
+        }
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://monitoring-loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+    '';
+
+    systemd.services.alloy = {
       after = [ "claude-worker.service" ];
       wants = [ "claude-worker.service" ];
     };
