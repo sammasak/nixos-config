@@ -6,6 +6,7 @@
     ./base.nix
     ../core/always-on.nix
     ../homelab/k3s/server.nix
+    ../homelab/k3s-db-snapshot.nix
     ../homelab/adguardhome.nix
     ../homelab/acme.nix
     ../homelab/tailscale.nix
@@ -22,5 +23,8 @@
 
   # Tailscale subnet router for control plane node
   homelab.tailscale.enable = true;
+
+  # Nightly snapshot of the sqlite datastore that holds all cluster state.
+  homelab.k3sDbSnapshot.enable = true;
 
 }
