@@ -23,7 +23,11 @@ in
     enable = true;
     flake = "github:sammasak/nixos-config/main";
     flags = [ "--print-build-logs" ];
-    dates = "Sun 03:00";
+    # Sun 06:00: clear of the 03:00-04:05 nightly backup chain AND the Sun
+    # 05:00 flake-update timer — a nix build/switch inside the backup window
+    # on acer's single disk is the I/O-storm pattern from the 2026-08-26
+    # postmortem.
+    dates = "Sun 06:00";
     randomizedDelaySec = "45min";
     allowReboot = true;
   };

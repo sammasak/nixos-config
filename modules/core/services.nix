@@ -5,7 +5,8 @@ let
   hasDesktop = config.sam.desktop.enable;
 in
 {
-  services = {
+  services = lib.mkMerge [
+    {
     fstrim.enable = true;
 
     openssh = {
@@ -22,7 +23,8 @@ in
       };
     };
 
-  } // lib.optionalAttrs hasDesktop {
+    }
+    (lib.mkIf hasDesktop {
     libinput.enable = true;
     devmon.enable = true;
     gvfs.enable = true;
@@ -47,7 +49,8 @@ in
         };
       };
     };
-  };
+    })
+  ];
 
   security.rtkit.enable = lib.mkDefault hasDesktop;
 }

@@ -108,10 +108,22 @@ in
       };
     };
 
-    # Create kubeconfig symlink for easier access
+    # Give the interactive user a private COPY of the admin kubeconfig.
+    # Previously this was a symlink to a world-readable (644) file — any
+    # local account could read cluster-admin credentials. The source is now
+    # 600 root-only; the copy is chowned 0600 to the operator. Re-copied on
+    # every activation, so cert rotation propagates on rebuild. Note the
+    # honest limit: code running AS the operator can still read the copy —
+    # inherent to the operator's own machine, not fixable with permissions.
     system.activationScripts.k3sKubeconfig = stringAfter [ "users" ] ''
-      mkdir -p /home/${config.users.users.lukas.name or "lukas"}/.kube
-      ln -sf /etc/rancher/k3s/k3s.yaml /home/${config.users.users.lukas.name or "lukas"}/.kube/config 2>/dev/null || true
+      u=${config.sam.profile.username}
+      if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+        mkdir -p /home/$u/.kube
+        rm -f /home/$u/.kube/config
+        cp /etc/rancher/k3s/k3s.yaml /home/$u/.kube/config
+        chown $u /home/$u/.kube/config
+        chmod 0600 /home/$u/.kube/config
+      fi
     '';
   };
 }

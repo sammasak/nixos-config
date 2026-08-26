@@ -210,13 +210,10 @@ The overlay is regenerated automatically by Home Manager activation on every reb
 | Role | Mode | Behaviour |
 |------|------|-----------|
 | `homelab-server` (`lenovo-21CB001PMX`) | `subnet-router` | Advertises the LAN CIDR, accepts routes, enables Tailscale SSH |
-| `homelab-agent` (`acer-swift`) | `client` | Joins the tailnet only — no advertised routes, `--accept-routes=false`, `--accept-dns=false`, no Tailscale SSH |
+| `homelab-agent` (`acer-swift`) | — (none) | **No Tailscale client — owner decision 2026-08-26.** Remote access rides the lenovo subnet router; the lenovo-death edge case needs physical recovery anyway (vault: lenovo-death runbook). Client-mode machinery stays in the module if ever revisited |
 
-Workers run a direct client so that remote access to them does not die with the
-control plane. They deliberately do **not** accept routes or DNS: they already
-sit on the LAN, so accepting the router's own subnet would push their LAN
-traffic back through the control plane and recreate the dependency. sshd stays
-the only shell boundary on workers.
+Workers deliberately run NO client (see table above and the rationale in
+`modules/roles/homelab-agent.nix`).
 
 **Key features:**
 - **Subnet routing** (subnet-router mode) — Advertises 192.168.10.0/24 to the Tailscale network

@@ -44,7 +44,7 @@ flake.nix                # Minimal flake-parts entrypoint (auto-imports flake mo
 │   ├── programs/        # Home Manager program modules
 │   ├── roles/           # Base/laptop/homelab composition
 │   └── themes/          # Theme definitions
-├── lib/                 # Shared helpers (users, theme)
+├── lib/                 # Shared helpers (users)
 ├── assets/              # Wallpapers and other assets
 ├── dotfiles/            # Plain config files (symlinked)
 ├── secrets/             # Secrets (handled out-of-band)

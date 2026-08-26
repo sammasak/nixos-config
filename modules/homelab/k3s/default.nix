@@ -121,7 +121,10 @@ in
         ]
         ++ optionals (cfg.role == "server") (
           [
-            "--write-kubeconfig-mode=644"
+            # 600 (k3s default): the admin kubeconfig is cluster-admin; 644 left
+            # it world-readable on the desktop control-plane for months. The
+            # interactive user gets a 0600 owned COPY via activation (server.nix).
+            "--write-kubeconfig-mode=600"
             "--secrets-encryption"
           ]
           ++ (
