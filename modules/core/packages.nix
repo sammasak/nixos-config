@@ -43,6 +43,10 @@ in
     just
 
     # Nix tools
+    # nh wraps nixos-rebuild with a readable TUI and a build diff; nvd is the
+    # diff engine it shells out to (and is useful standalone).
+    nh
+    nvd
     nix-prefetch-scripts
     appimage-run
     gawk
