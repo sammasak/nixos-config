@@ -104,7 +104,7 @@ build error if a `variables.nix` sets it):
 - `username` (str) — Primary user account
 - `hostname` (str) — System hostname
 - `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str) — Localisation
-- `videoDriver` (str) — GPU driver module selector: "intel", "nvidia-kepler"
+- `videoDriver` (str) — GPU driver module selector; picks `modules/hardware/video/<value>.nix` (currently only "intel")
 - `monitors` (list of str) — Hyprland monitor rules, `name,resolution,position,scale`
 - `roles` (list of str) — Enabled roles from `modules/roles/`
 - `laptop` (bool) — Laptop-specific settings enabled
@@ -128,7 +128,7 @@ Composable role modules assigned per-host via `variables.nix`:
 modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
 ├── desktop/      # Desktop stack: hyprland/ (Wayland compositor)
-├── hardware/     # GPU drivers (intel, nvidia-kepler, nvidia-modern, amd), thermal
+├── hardware/     # GPU drivers (intel), thermal
 ├── homelab/      # k3s (agent/server), sops, flux, tailscale, workstation-image
 ├── programs/     # Home Manager programs: cli/, browser/, editor/, terminal/
 ├── roles/        # Composition roles (see above)
