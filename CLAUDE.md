@@ -104,8 +104,14 @@ build error if a `variables.nix` sets it):
 - `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
 - `sshAuthorizedKeys` (list of str) — Authorized SSH public keys
 
-Sibling option, outside the profile because specialisations set it:
-- `sam.desktop.enable` (bool) — whether a GUI desktop session is active
+Sibling options, outside the profile:
+- `sam.desktop.enable` (bool) — whether a GUI desktop session is active (outside the profile because specialisations set it)
+- `sam.thermal.*` — fan/CPU thermal policy, see `modules/hardware/thermal.nix`
+- `sam.secrets.enable` (bool) — shared sops secrets, see `modules/core/sops.nix`
+- `sam.wifi.*` — declarative WiFi profile, see `modules/core/wifi.nix`
+
+Everything this repo defines lives under `sam.*` (or `homelab.*` for cluster
+concerns) so it is never confused with an upstream NixOS option.
 
 ### Roles (`modules/roles/`)
 

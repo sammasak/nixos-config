@@ -67,7 +67,7 @@ in
   homelab.k3s.cni = "cilium";
 
   # ThinkPad-class laptop: use thinkfan + thermald with a less heat-prone curve.
-  hardware.thermal = {
+  sam.thermal = {
     platform = "thinkpad";
     profile = "quiet";
   };

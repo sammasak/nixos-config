@@ -6,7 +6,7 @@
   ];
 
   # Safe defaults for laptops. Host-specific configs can override platform/profile.
-  hardware.thermal = {
+  sam.thermal = {
     enable = true;
     platform = lib.mkDefault "generic";
     profile = lib.mkDefault "balanced";

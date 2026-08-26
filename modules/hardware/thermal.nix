@@ -1,12 +1,16 @@
 # Thermal management for quiet laptop operation
 # Configures thinkfan for ThinkPads/Lenovo with conservative fan curves
+#
+# Lives under `sam.thermal`, not `hardware.thermal`: `hardware.*` is upstream
+# NixOS territory, and squatting in it makes a local option indistinguishable
+# from a nixpkgs one — and collides outright the day upstream adds that name.
 { config, lib, pkgs, ... }:
 
 let
-  cfg = config.hardware.thermal;
+  cfg = config.sam.thermal;
 in
 {
-  options.hardware.thermal = {
+  options.sam.thermal = {
     enable = lib.mkEnableOption "thermal management with quiet fan control";
 
     platform = lib.mkOption {
