@@ -30,7 +30,11 @@ in
 
     tokenFile = mkOption {
       type = types.nullOr types.path;
-      default = "/run/secrets/k3s-cluster-token";
+      # Read from the sops secret rather than repeating its path: ../sops.nix
+      # is imported above and `homelab.secrets.enable` is forced true below, so
+      # the secret is always declared in the same evaluation as this default.
+      default = config.sops.secrets."k3s/cluster_token".path;
+      defaultText = ''config.sops.secrets."k3s/cluster_token".path'';
       description = "Path to file containing the cluster token (managed by sops-nix)";
     };
 

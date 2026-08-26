@@ -127,7 +127,10 @@ skillsSrc:
   };
 
   # ── OAuth token sourcing ────────────────────────────────────────────
-  # sops-nix decrypts the token to /run/secrets/claude_oauth_token at boot.
+  # sops-nix decrypts the token to /run/secrets/claude_oauth_token at boot
+  # (declared by modules/core/sops.nix). The path is a literal here on purpose:
+  # this is a Home Manager module, so `config` is the HM configuration and
+  # `config.sops.secrets` — a NixOS option — is not in scope.
   # ~/.env: local development override only.
   programs.fish.interactiveShellInit = lib.mkAfter ''
     if test -f "$HOME/.env"

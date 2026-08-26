@@ -7,6 +7,10 @@ let
   inherit (lib) mkEnableOption mkOption mkIf types;
 in
 {
+  # Pulled in so the Cloudflare credential can be referenced through the sops
+  # option instead of repeating its path; the config block turns it on.
+  imports = [ ./sops.nix ];
+
   options.homelab.acme = {
     enable = mkEnableOption "ACME certificate management";
 
@@ -24,6 +28,9 @@ in
   };
 
   config = mkIf cfg.enable {
+    # Declares the cloudflare/api_token secret used below.
+    homelab.secrets.enable = true;
+
     security.acme = {
       acceptTerms = true;
       defaults.email = cfg.email;
@@ -43,7 +50,7 @@ in
 
         # Cloudflare API token read from sops-managed file
         credentialFiles = {
-          "CLOUDFLARE_DNS_API_TOKEN_FILE" = "/run/secrets/cloudflare-api-token";
+          "CLOUDFLARE_DNS_API_TOKEN_FILE" = config.sops.secrets."cloudflare/api_token".path;
         };
 
         # Reload AdGuard Home when certificate is renewed

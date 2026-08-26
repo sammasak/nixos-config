@@ -39,6 +39,10 @@ let
       ];
 in
 {
+  # Pulled in so `authKeyFile` can point at the declared secret instead of
+  # repeating its path; the config block below turns homelab.secrets on.
+  imports = [ ./sops.nix ];
+
   options.homelab.tailscale = {
     enable = mkEnableOption "Tailscale";
 
@@ -60,12 +64,16 @@ in
 
     authKeyFile = mkOption {
       type = types.path;
-      default = "/run/secrets/tailscale-authkey";
+      default = config.sops.secrets."tailscale/authkey".path;
+      defaultText = ''config.sops.secrets."tailscale/authkey".path'';
       description = "Path to the Tailscale authkey file (SOPS-encrypted)";
     };
   };
 
   config = mkIf cfg.enable {
+    # Declares the tailscale/authkey secret that authKeyFile defaults to.
+    homelab.secrets.enable = true;
+
     # Enable Tailscale service
     services.tailscale = {
       enable = true;

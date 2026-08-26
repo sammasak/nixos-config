@@ -4,8 +4,16 @@
 let
   inherit (lib) mkEnableOption mkIf mkOption types;
   cfg = config.homelab.flux;
+
+  # Referenced through the sops option rather than by literal path; ./sops.nix
+  # is imported below and homelab.secrets is turned on in the config block, so
+  # both secrets are declared in the same evaluation.
+  deployKey = config.sops.secrets."flux/deploy_key".path;
+  ageKey = config.sops.secrets."flux/age_key".path;
 in
 {
+  imports = [ ./sops.nix ];
+
   options.homelab.flux = {
     enable = mkEnableOption "Flux GitOps bootstrap";
 
@@ -29,6 +37,9 @@ in
   };
 
   config = mkIf cfg.enable {
+    # Declares the flux/deploy_key and flux/age_key secrets used below.
+    homelab.secrets.enable = true;
+
     # Bootstrap Flux after k3s is ready
     systemd.services.flux-bootstrap = {
       description = "Bootstrap Flux GitOps";
@@ -59,26 +70,26 @@ in
         kubectl create namespace flux-system --dry-run=client -o yaml | kubectl apply -f -
 
         # Create GitHub deploy key secret
-        if [ -f /run/secrets/flux-deploy-key ]; then
+        if [ -f ${deployKey} ]; then
           kubectl create secret generic flux-system \
             --namespace=flux-system \
-            --from-file=identity=/run/secrets/flux-deploy-key \
+            --from-file=identity=${deployKey} \
             --from-literal=known_hosts="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" \
             --dry-run=client -o yaml | kubectl apply -f -
           echo "Created flux-system secret"
         else
-          echo "Warning: /run/secrets/flux-deploy-key not found, skipping secret creation"
+          echo "Warning: ${deployKey} not found, skipping secret creation"
         fi
 
         # Create SOPS age key secret for decryption
-        if [ -f /run/secrets/flux-age-key ]; then
+        if [ -f ${ageKey} ]; then
           kubectl create secret generic sops-age \
             --namespace=flux-system \
-            --from-file=age.agekey=/run/secrets/flux-age-key \
+            --from-file=age.agekey=${ageKey} \
             --dry-run=client -o yaml | kubectl apply -f -
           echo "Created sops-age secret"
         else
-          echo "Warning: /run/secrets/flux-age-key not found, skipping secret creation"
+          echo "Warning: ${ageKey} not found, skipping secret creation"
         fi
 
         # Check if Flux is already bootstrapped
@@ -93,7 +104,7 @@ in
           --url="${cfg.gitUrl}" \
           --branch="${cfg.gitBranch}" \
           --path="${cfg.gitPath}" \
-          --private-key-file=/run/secrets/flux-deploy-key \
+          --private-key-file=${deployKey} \
           --silent
 
         echo "Flux bootstrap complete"

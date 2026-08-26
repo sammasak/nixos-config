@@ -120,6 +120,10 @@ let
     startup_timeout_sec = 20
   '';
 
+  # /run/secrets/openai_api_key is declared by modules/core/sops.nix. The path
+  # is a literal here and in the shell inits below on purpose: this is a Home
+  # Manager module, so `config` is the HM configuration and `config.sops.secrets`
+  # — a NixOS option — is not in scope.
   seedCodexAuth = pkgs.writeShellScript "seed-codex-auth" ''
     set -eu
 
