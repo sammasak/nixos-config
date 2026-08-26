@@ -1,6 +1,9 @@
 # Lightweight cluster health watchdog running on the k3s control plane.
-# Checks node readiness and monitoring-stack pod status every 10 minutes,
-# posts to the local ntfy instance on the first failure in a run.
+# Checks node readiness, monitoring-stack pod status, and that Alertmanager's
+# always-firing Watchdog alert is still active, every 10 minutes.
+# Posts a high-priority alert to the local ntfy instance when anything fails,
+# and a min-priority heartbeat when everything passes, so that "healthy" and
+# "the watchdog itself is dead" are distinguishable from the outside.
 # Runs outside k8s so it survives worker node outages.
 { config, lib, pkgs, ... }:
 
@@ -45,7 +48,10 @@ in
         # Prevent a hung curl/kubectl from blocking the next run.
         TimeoutStartSec = "90";
       };
-      path = [ pkgs.kubectl pkgs.curl pkgs.gawk ];
+      # gnugrep is pinned rather than taken from the system path: a missing grep
+      # would make the Watchdog check below fail closed and page for a healthy
+      # cluster.
+      path = [ pkgs.kubectl pkgs.curl pkgs.gawk pkgs.gnugrep ];
       script = ''
         failures=""
 
@@ -77,6 +83,23 @@ in
           if [ "$am_running" -eq 0 ]; then
             failures="$failures\n• Alertmanager: no running pods"
           fi
+
+          # 5. Alertmanager's built-in Watchdog alert is ACTIVE.
+          # Watchdog is an always-firing alert shipped by kube-prometheus. A
+          # running Alertmanager pod (check 4) only proves the process is up;
+          # if Prometheus has stopped evaluating rules or delivering to
+          # Alertmanager, Watchdog goes quiet and every other alert in the
+          # cluster silently stops firing too. This is the one check that
+          # notices the alerting pipeline itself has died.
+          am_ip=$(kubectl -n monitoring get svc monitoring-kube-prometheus-alertmanager \
+            -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+          if [ -z "$am_ip" ]; then
+            failures="$failures\n• Alertmanager: service has no clusterIP"
+          elif ! curl -sf --max-time 10 \
+              "http://$am_ip:9093/api/v2/alerts?filter=alertname%3DWatchdog&active=true" \
+              2>/dev/null | grep -q '"Watchdog"'; then
+            failures="$failures\n• Alertmanager: Watchdog alert not active — alerting pipeline is down"
+          fi
         fi
 
         if [ -n "$failures" ]; then
@@ -85,6 +108,19 @@ in
             -H "Priority: high" \
             -H "Tags: warning,rotating_light" \
             -d "$(printf "Health check failures:%b\n\nNode: $(hostname -s)\nTime: $(date -u '+%H:%M UTC')" "$failures")" \
+            "${cfg.ntfyUrl}" || true
+        else
+          # Heartbeat on a clean run. This watchdog is otherwise silent when
+          # healthy, which is indistinguishable from the watchdog being dead —
+          # a stopped timer, a broken kubectl or an unreachable ntfy all look
+          # exactly like "everything is fine". Publishing on success turns that
+          # silence into a signal any future observer can alert on. Priority min
+          # is delivered and retained but does not raise a notification.
+          curl -sf \
+            -H "Title: watchdog OK" \
+            -H "Priority: min" \
+            -H "Tags: heavy_check_mark" \
+            -d "$(printf "All checks passed.\n\nNode: $(hostname -s)\nTime: $(date -u '+%H:%M UTC')")" \
             "${cfg.ntfyUrl}" || true
         fi
       '';
