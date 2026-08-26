@@ -1,7 +1,10 @@
 tmp/
-result
-result-*
+result*
 .playwright-mcp/
 .worktrees/
 target/
 **/target/
+report.md
+
+# Personal Claude Code permission allowlist — machine-local, not shared config
+.claude/settings.local.json
