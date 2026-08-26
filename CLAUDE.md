@@ -241,18 +241,18 @@ nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-ski
 The KubeVirt workstation / claude-worker VM images were retired in 2026-08. The
 hosts (`workstation-template`, `claude-worker-template`), their image modules,
 the build/publish scripts and the `just build`/`publish`/`release` targets are
-gone. Three things deliberately survived the cull because they are still wired
-into physical hosts and removing them is a behaviour change, not a deletion:
+gone. `pkgs/claude-ctl.nix`, the `claude-ctl` flake input and its overlay wiring
+were removed on 2026-08-26. Two things still survive the cull because they are
+wired into physical hosts and removing them is a behaviour change, not a
+deletion:
 
 | What | Why it is still here | Why it is dead weight |
 |------|---------------------|----------------------|
 | `modules/programs/cli/claude-code/default.nix` | Listed in `sharedModules` in `40-outputs-nixos.nix`, so it applies to every host. Also sets `programs.claude-code.settings.permissions` | Writes a `~/Justfile` of VM agent recipes, sources `/etc/workstation/agent-env`, and defines an `agent-heartbeat` user unit that annotates a `WorkspaceClaim` in the deleted `workstations` namespace. The unit has no `Install` section, so it never auto-starts |
-| `pkgs/claude-ctl.nix` (+ the `claude-ctl` flake input) | Packaged into the base CLI set | CLI for provisioning claude-worker VMs — there is no longer anything to provision |
 | `modules/programs/cli/codex/validate-bash.sh` | Shared Codex hook | Two of its rules only fire inside `/var/lib/claude-worker`, which no longer exists anywhere |
 
-Removing these is a reasonable follow-up; it needs a decision about the
-permissions block and a `flake.lock` edit, so it was kept out of the retirement
-commit.
+Removing these two is a reasonable follow-up; it needs a decision about the
+permissions block, so it was kept out of the retirement commit.
 
 ## Conventions
 

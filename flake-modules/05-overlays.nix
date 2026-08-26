@@ -1,6 +1,6 @@
 { inputs, ... }:
 let
-  overlay = import ../pkgs { claude-ctl-src = inputs.claude-ctl; };
+  overlay = import ../pkgs;
 in
 {
   perSystem = { system, ... }: {

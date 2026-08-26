@@ -1,9 +1,6 @@
 # Homelab k3s server role
 # Use this role for control plane nodes
-{ lib, pkgs, config, ... }:
-let
-  username = config.sam.profile.username;
-in
+{ ... }:
 {
   imports = [
     ./base.nix
@@ -16,9 +13,6 @@ in
     ../homelab/cluster-watchdog.nix
     ../homelab/nixos-rebuild-trigger.nix
   ];
-
-  # claude-ctl CLI tool for managing agents
-  environment.systemPackages = [ pkgs.claude-ctl ];
 
   # Server role defaults
   homelab.k3s = {

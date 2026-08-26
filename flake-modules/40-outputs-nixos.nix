@@ -37,7 +37,7 @@ let
           inputs.sops-nix.nixosModules.sops
           inputs.home-manager.nixosModules.home-manager
           {
-            nixpkgs.overlays = [ (import ../pkgs { claude-ctl-src = inputs.claude-ctl; }) ];
+            nixpkgs.overlays = [ (import ../pkgs) ];
             sam.userConfig = users.${username} or { };
 
             home-manager = {

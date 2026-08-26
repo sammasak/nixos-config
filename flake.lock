@@ -84,22 +84,6 @@
         "type": "github"
       }
     },
-    "claude-ctl": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1778095711,
-        "narHash": "sha256-sxND6RYATpU3H8OVHdDXq3P/tpQKIwVoLZ9/Y5+2pDM=",
-        "owner": "sammasak",
-        "repo": "claude-ctl",
-        "rev": "f81cfbe03bd5a2ee0384ec65f9945a18af8731d4",
-        "type": "github"
-      },
-      "original": {
-        "owner": "sammasak",
-        "repo": "claude-ctl",
-        "type": "github"
-      }
-    },
     "firefox-gnome-theme": {
       "flake": false,
       "locked": {
@@ -269,7 +253,6 @@
     "root": {
       "inputs": {
         "claude-code-skills": "claude-code-skills",
-        "claude-ctl": "claude-ctl",
         "flake-parts": "flake-parts",
         "home-manager": "home-manager",
         "nixpkgs": "nixpkgs",
