@@ -33,7 +33,7 @@ just publish [tag]            # Publish OCI containerDisk to Harbor
 just release [tag]            # Build + publish
 ```
 
-Current hostnames: `acer-swift`, `lenovo-21CB001PMX`, `msi-ms7758`, `workstation-template`
+Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `workstation-template`, `claude-worker-template`
 
 ## Architecture
 
@@ -52,63 +52,67 @@ Current hostnames: `acer-swift`, `lenovo-21CB001PMX`, `msi-ms7758`, `workstation
 
 Automatically generates `flake.modules` from filesystem conventions:
 - `modules/roles/*.nix` → `flake.modules.nixos.role-<name>`
-- `hosts/*/home.nix` → `flake.modules.homeManager.host-<dir>`
+- `modules/home/*.nix` → `flake.modules.homeManager.<name>`
+
+Home Manager is shared, not per-host: every host gets
+`modules/home/default.nix`. There are no `hosts/*/home.nix` files.
 
 ### Host Configuration Flow
 
-Each host follows a 3–4 file pattern in `hosts/<name>/`:
+Each host follows a 2–3 file pattern in `hosts/<name>/`:
 
 | File | Purpose |
 |------|---------|
 | `variables.nix` | Plain attrset of host-specific choices (username, roles, videoDriver, monitors, etc.) |
 | `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
-| `home.nix` | Home Manager config — imports CLI programs and optionally GUI programs |
 | `hardware-configuration.nix` | Auto-generated hardware scan (physical machines only; omitted for virtual/image targets like `workstation-template`) |
 
 The wiring: `flake-modules/hosts/<name>.nix` reads `variables.nix` and creates a typed `configurations.nixos.<name>` declaration. Then `40-outputs-nixos.nix` resolves roles to modules, injects Stylix/SOPS/Home Manager, and produces the final `nixosConfigurations.<name>`.
 
-### Desktop Specialisation
+### Desktop vs Server Mode
 
-All hosts boot into **server mode** by default (optimized headless environment with full CLI tooling).
+Desktop mode (Hyprland + SDDM + Waybar/Rofi/theming + GUI apps) and headless
+server mode are boot-menu variants. **The default differs per host** — each one
+boots into whichever mode it spends most of its life in, and carries the other
+as a specialisation:
 
-Hosts with compatible GPUs (Intel iGPU) have a **desktop specialisation** - an optional boot menu entry that adds:
-- Hyprland Wayland compositor
-- SDDM display manager
-- Waybar, Rofi, theming
-- GUI applications (Firefox, VS Code, Kitty)
+| Host | Default boot | Specialisations |
+|------|--------------|-----------------|
+| `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | `server` (headless), `niri` (compositor trial) |
+| `acer-swift` | **server** (headless k3s worker) | `desktop` |
+| `workstation-template` / `claude-worker-template` | server (VM images, no GUI) | — |
 
-**Boot menu:**
+Boot menu on lenovo, for example:
 ```
-NixOS (default)  ← Server mode (always available)
-NixOS (desktop)  ← GUI mode (Intel GPU hosts only)
+NixOS (default)  ← Desktop mode
+NixOS - server   ← Headless
+NixOS - niri     ← Desktop mode, niri compositor instead of Hyprland
 ```
 
-**Hosts with desktop specialisation:**
-- acer-swift
-- lenovo-21CB001PMX
-
-**Headless-only hosts:**
-- msi-ms7758 (legacy NVIDIA Kepler GPU)
-- workstation-template (VM image)
+**One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
+`modules/specialisations/desktop.nix` and force-cleared by
+`modules/specialisations/server.nix`. Fonts, GUI packages, desktop services and
+the Home Manager desktop imports all key off it. Do not gate new desktop-only
+config on `programs.hyprland.enable` — that ties it to one compositor.
 
 ### Profile System (`sam.profile`)
 
 Defined in `modules/core/system.nix`. All host metadata lives in `config.sam.profile` — a typed NixOS option submodule. Modules read this instead of using `specialArgs`.
 
-**Available fields:**
+**Available fields** (the submodule is strict — anything not listed here is a
+build error if a `variables.nix` sets it):
 - `username` (str) — Primary user account
 - `hostname` (str) — System hostname
-- `videoDriver` (str) — GPU driver: "intel", "nvidia-kepler", "nvidia-modern", "amd", or null
-- `monitors` (list of attrset) — Monitor configuration for Hyprland (name, width, height, refreshRate, x, y, scale)
+- `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str) — Localisation
+- `videoDriver` (str) — GPU driver module selector: "intel", "nvidia-kepler"
+- `monitors` (list of str) — Hyprland monitor rules, `name,resolution,position,scale`
 - `roles` (list of str) — Enabled roles from `modules/roles/`
 - `laptop` (bool) — Laptop-specific settings enabled
-- `games` (bool) — Gaming packages enabled
 - `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
 - `sshAuthorizedKeys` (list of str) — Authorized SSH public keys
-- `guiPrograms` (bool) — GUI applications enabled (set via specialisation)
-- `hyprlandMonitors` (list of str) — Generated Hyprland monitor config strings
-- `homeManagerBackpackGlobs` (list of str) — Backpack file patterns for Home Manager
-- `homeManagerModules` (list of module) — Additional Home Manager modules to import
+
+Sibling option, outside the profile because specialisations set it:
+- `sam.desktop.enable` (bool) — whether a GUI desktop session is active
 
 ### Roles (`modules/roles/`)
 
@@ -143,8 +147,8 @@ Secret scopes in `secrets/.sops.yaml`:
 
 | Path pattern | Recipients | Purpose |
 |--------------|-----------|---------|
-| `homelab/*.yaml` | Personal + 3 hosts + Flux | k3s, Cloudflare, Flux keys, Tailscale authkey |
-| `claude/*.yaml` | Personal + 3 hosts | Claude Code OAuth token |
+| `homelab/*.yaml` | Personal + 2 hosts + Flux | k3s, Cloudflare, Flux keys, Tailscale authkey |
+| `claude/*.yaml` | Personal + 2 hosts | Claude Code OAuth token |
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in bash shell init via `modules/programs/cli/claude-code/mcp.nix`. The workstation-template VM is unaffected — it receives its token via cloud-init at `/etc/workstation/agent-env`.
 
@@ -242,14 +246,14 @@ nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-ski
 ## Conventions
 
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.
-- **Desktop via specialisation**: Hosts with Intel GPUs get an optional desktop boot entry; all hosts boot to server mode by default.
+- **Desktop via specialisation**: desktop and server are boot-menu variants; the default is per-host (lenovo boots desktop, acer-swift boots server). Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
 - **Firewall**: LAN CIDR defaults to `192.168.10.0/24` (override via `sam.profile.lanCidr`). SSH is key-only, no root login.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
 
 ## Adding a New Host
 
-1. Create `hosts/<name>/` with `variables.nix`, `configuration.nix`, `home.nix`, `hardware-configuration.nix`
+1. Create `hosts/<name>/` with `variables.nix`, `configuration.nix`, `hardware-configuration.nix` (Home Manager is shared — no per-host `home.nix`)
 2. Create `flake-modules/hosts/<name>.nix` declaring `configurations.nixos.<name>` (reads variables, sets system/username/roles)
 3. The module registry auto-discovers the rest
 

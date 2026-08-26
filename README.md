@@ -13,9 +13,8 @@ Personal NixOS + Home Manager configuration. A work in progress as I learn the N
 
 | Machine | Type | Status |
 |---------|------|--------|
-| `acer-swift` | Linux laptop (Hyprland) | Active |
-| `lenovo-21CB001PMX` | Linux laptop (Hyprland) | Active |
-| `msi-ms7758` | Headless k3s worker node (legacy NVIDIA GPU for Ollama); Windows dual-boot for gaming | Active |
+| `acer-swift` | Laptop run headless as a k3s worker; boots server mode, has a `desktop` boot entry | Active |
+| `lenovo-21CB001PMX` | Daily-driver laptop and k3s control plane; boots the Hyprland desktop, has `server` and `niri` boot entries | Active |
 | `workstation-template` | KubeVirt workstation image | Active |
 
 ## Structure
@@ -33,24 +32,18 @@ flake.nix                # Minimal flake-parts entrypoint (auto-imports flake mo
 │   ├── acer-swift/
 │   │   ├── configuration.nix
 │   │   ├── hardware-configuration.nix
-│   │   ├── home.nix
 │   │   └── variables.nix
-│   ├── lenovo-21CB001PMX/
+│   └── lenovo-21CB001PMX/
 │       ├── configuration.nix
 │       ├── hardware-configuration.nix
-│       ├── home.nix
-│       └── variables.nix
-│   └── msi-ms7758/
-│       ├── configuration.nix
-│       ├── hardware-configuration.nix
-│       ├── home.nix
 │       └── variables.nix
 ├── modules/             # Reusable modules
 │   ├── core/            # System baseline (nix, users, services, fonts)
-│   ├── desktop/         # Desktop stacks (Hyprland, i3)
+│   ├── desktop/         # Desktop stacks (Hyprland)
 │   ├── hardware/        # Hardware drivers
+│   ├── home/            # Shared Home Manager entrypoint (all hosts)
 │   ├── programs/        # Home Manager program modules
-│   ├── roles/           # Base/desktop/laptop composition
+│   ├── roles/           # Base/laptop/homelab composition
 │   └── themes/          # Theme definitions
 ├── lib/                 # Shared helpers (users, theme)
 ├── assets/              # Wallpapers and other assets
@@ -65,13 +58,16 @@ Each host lives in `hosts/<name>/` and provides:
 
 - `variables.nix`: choices for desktop, theme, apps, hardware
 - `configuration.nix`: system modules for that host
-- `home.nix`: Home Manager modules for that host
+
+Home Manager is shared rather than per-host: every machine gets
+`modules/home/default.nix`, which imports the CLI baseline and adds the GUI
+program set when `sam.desktop.enable` is true.
 
 [flake.nix](flake.nix) now uses **flake-parts** with `flake-parts.flakeModules.modules` (the `deferredModule` registry):
 
 - Every file under `flake-modules/` is imported as a top-level flake module
 - `flake.modules.nixos.role-*` is auto-generated from `modules/roles/*.nix`
-- `flake.modules.homeManager.host-*` is auto-generated from `hosts/*/home.nix`
+- `flake.modules.homeManager.*` is auto-generated from `modules/home/*.nix`
 - `configurations.nixos.*` are typed distribution declarations converted into flake outputs
 
 This establishes a dendritic-style flake trunk for top-level composition: typed, classed module registries with no lower-level `specialArgs` pass-through.
@@ -81,8 +77,9 @@ Host distributions are composed from typed options (`sam.profile`, `sam.userConf
 
 Roles are driven by `variables.nix`:
 
-- `roles = [ "base" "laptop" "desktop" ]` for laptops
-- Drop `"desktop"` for headless machines to keep the same shell/CLI baseline without a GUI
+- `roles = [ "base" "laptop" "homelab-server" ]` for the control-plane laptop
+- `roles = [ "base" "laptop" "homelab-agent" ]` for a worker node
+- GUI-ness is not a role: desktop and server are boot-menu specialisations, gated on `sam.desktop.enable`
 
 ## Commands
 
@@ -90,7 +87,6 @@ Roles are driven by `variables.nix`:
 # Build and switch (Linux)
 sudo nixos-rebuild switch --flake .#acer-swift
 sudo nixos-rebuild switch --flake .#lenovo
-sudo nixos-rebuild switch --flake .#msi-ms7758
 
 # Test build without applying
 sudo nixos-rebuild build --flake .#acer-swift
@@ -113,7 +109,6 @@ Use direct toplevel builds to validate host composition:
 nix flake check --all-systems --no-write-lock-file
 nix build .#nixosConfigurations.acer-swift.config.system.build.toplevel --no-link
 nix build .#nixosConfigurations.lenovo.config.system.build.toplevel --no-link
-nix build .#nixosConfigurations.msi-ms7758.config.system.build.toplevel --no-link
 ```
 
 ## Codex
@@ -166,7 +161,7 @@ Use this sequence to reproduce the same pattern in your own repo:
 
 1. Fork/clone and rename host directories under `hosts/` for your machines.
 2. Update identity defaults in `lib/users.nix` (git name/email, SSH keys).
-3. Copy a host template (`hosts/acer-swift/` or `hosts/lenovo-21CB001PMX/`) and edit `variables.nix`, `configuration.nix`, `home.nix`.
+3. Copy a host template (`hosts/acer-swift/` or `hosts/lenovo-21CB001PMX/`) and edit `variables.nix` and `configuration.nix`.
 4. Add one distribution declaration per host in `flake-modules/hosts/<name>.nix`.
 5. Keep reusable behavior in `modules/roles/*.nix` and `modules/core/*.nix`; avoid host-specific `specialArgs`.
 6. If using secrets, update recipients in `secrets/.sops.yaml` and re-encrypt with `sops updatekeys`.
@@ -178,10 +173,6 @@ Use this sequence to reproduce the same pattern in your own repo:
 - https://flake.parts/options/flake-parts-modules.html
 - https://github.com/mightyiam/dendritic
 - https://discourse.nixos.org/t/dendrix-dendritic-nix-configurations-distribution/65853
-
-## Host Notes
-
-- `docs/hosts/msi-ms7758.md`
 
 ## Remote Deploys (SSH)
 
@@ -280,7 +271,7 @@ git clone <repo-url> /mnt/home/nixos-config && cd /mnt/home/nixos-config
 # Create host config (copy from existing machine)
 mkdir -p hosts/<name>
 cp /mnt/etc/nixos/hardware-configuration.nix hosts/<name>/
-cp hosts/acer-swift/{configuration.nix,home.nix,variables.nix} hosts/<name>/
+cp hosts/acer-swift/{configuration.nix,variables.nix} hosts/<name>/
 # Edit variables.nix + configuration.nix, then add a host declaration under flake-modules/hosts/
 ```
 
@@ -290,7 +281,7 @@ cp hosts/acer-swift/{configuration.nix,home.nix,variables.nix} hosts/<name>/
 2. Update `variables.nix` (apps, desktop, hardware, SSH hardening vars)
 3. Update `configuration.nix` if the hardware/roles differ
 4. Add `flake-modules/hosts/<name>.nix` with `configurations.nixos.<flake-name>`
-5. No registry edits are needed for Home Manager modules if `hosts/<name>/home.nix` exists (auto-discovered by `flake-modules/20-module-registry.nix`)
+5. No registry edits are needed for Home Manager: every host shares `modules/home/default.nix` (auto-discovered by `flake-modules/20-module-registry.nix`)
 
 Use `hosts/acer-swift` and `hosts/lenovo-21CB001PMX` as examples.
 
@@ -356,7 +347,6 @@ in
 6. Add host files:
    - `hosts/<new-host>/variables.nix`
    - `hosts/<new-host>/configuration.nix`
-   - `hosts/<new-host>/home.nix`
    - `hosts/<new-host>/hardware-configuration.nix`
 7. Register host in `flake-modules/hosts/<flake-host-name>.nix`.
 8. Apply on the new host:
@@ -379,7 +369,6 @@ Only add secret-dependent roles (`homelab-server` / `homelab-agent`) after step 
 | Git credentials | [lib/users.nix](lib/users.nix) |
 | VSCode settings | [dotfiles/vscode/](dotfiles/vscode/) |
 | Hyprland keybinds | [modules/desktop/hyprland/](modules/desktop/hyprland/) |
-| i3 keybinds | [modules/desktop/i3/home.nix](modules/desktop/i3/home.nix) |
 | Desktop stacks | See knowledge-vault: `~/knowledge-vault/Infrastructure/Concepts/desktop-specialisation.md` |
 
 ## Learning Resources
