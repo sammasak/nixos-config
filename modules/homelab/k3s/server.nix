@@ -5,6 +5,31 @@ with lib;
 
 let
   cfg = config.homelab.k3s;
+
+  # Control-plane management ports. 2379/2380 have no listener on this cluster
+  # (it runs the embedded sqlite/kine datastore, not etcd) but stay declared so
+  # a future HA etcd inherits the same scoping instead of being opened wide.
+  apiPorts = [
+    6443 # Kubernetes API server
+    2379 # etcd client requests
+    2380 # etcd peer communication
+  ];
+
+  # Source networks allowed to reach the ports above.
+  apiSources = [
+    config.sam.profile.lanCidr # agents (acer-swift) and admin workstations
+    "10.42.0.0/16" # k3s pod CIDR — Cilium native-routing keeps the pod source IP
+    "10.43.0.0/16" # k3s service CIDR — ClusterIP hairpin back to the apiserver
+  ];
+
+  # Interfaces that may always reach them, independent of source address.
+  apiInterfaces = [
+    "lo" # kubectl / kubelet on the control plane itself
+    "tailscale0" # remote admins over the tailnet
+  ];
+
+  nftPorts = concatMapStringsSep ", " toString apiPorts;
+  nftSources = concatStringsSep ", " apiSources;
 in
 {
   imports = [
@@ -13,13 +38,39 @@ in
   ];
 
   config = mkIf (cfg.enable && cfg.role == "server") {
-    # Server-specific firewall rules
+    # Server-specific firewall rules.
+    #
+    # The API/etcd ports are deliberately NOT listed in `allowedTCPPorts` —
+    # that option accepts them from any source. They are instead accepted only
+    # from `apiSources` and `apiInterfaces` above. `lo` and `tailscale0` are
+    # already in `trustedInterfaces` (the latter via ../tailscale.nix), so those
+    # rules are belt-and-braces should the trusted set ever be trimmed.
+    #
+    # Both backends are targeted because they read different options and this
+    # tree currently runs the iptables backend:
+    #   * `extraInputRules` — nftables backend only (appended to input-allow).
+    #   * `extraCommands`   — iptables backend only; the nftables backend
+    #     asserts it is empty, hence the explicit backend guard.
     networking.firewall = {
-      allowedTCPPorts = [
-        6443  # Kubernetes API server
-        2379  # etcd client requests
-        2380  # etcd peer communication
-      ];
+      extraInputRules = ''
+        # k3s control-plane API + etcd: LAN, cluster networks and tailnet only.
+        ${concatMapStringsSep "\n" (i: ''iifname "${i}" tcp dport { ${nftPorts} } accept'') apiInterfaces}
+        ip saddr { ${nftSources} } tcp dport { ${nftPorts} } accept
+      '';
+
+      extraCommands = optionalString (config.networking.firewall.backend == "iptables") (
+        concatStrings (
+          map (
+            port:
+            concatMapStrings (iface: ''
+              ip46tables -w -A nixos-fw -i ${iface} -p tcp --dport ${toString port} -j nixos-fw-accept
+            '') apiInterfaces
+            + concatMapStrings (src: ''
+              iptables -w -A nixos-fw -s ${src} -p tcp --dport ${toString port} -j nixos-fw-accept
+            '') apiSources
+          ) apiPorts
+        )
+      );
     };
 
     # Additional server tools
