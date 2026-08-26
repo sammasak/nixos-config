@@ -28,6 +28,25 @@ in
     imports = [ ../../modules/specialisations/server.nix ];
   };
 
+  # Niri trial (boot menu option) — a scrollable-tiling compositor, evaluated
+  # side by side with Hyprland. Specialisations inherit the parent config, so
+  # this entry keeps the whole default desktop (SDDM, portals, fonts, GUI
+  # packages, Home Manager desktop imports) and only adds a second session:
+  # SDDM stays the chooser and niri registers its own session, while
+  # services.displayManager.defaultSession remains "hyprland".
+  #
+  # Deliberately minimal — it is a trial, not a rice. Waybar is still the
+  # Hyprland bar (its modules-left uses hyprland/workspaces, which renders
+  # empty under niri); if niri sticks, swap that module for niri-taskbar or
+  # a niri-native bar rather than patching the shared Hyprland waybar config.
+  specialisation.niri.configuration = {
+    programs.niri.enable = true;
+
+    # X11 clients under niri need an external Xwayland shim; the nixpkgs niri
+    # module does not install one.
+    environment.systemPackages = [ pkgs.xwayland-satellite ];
+  };
+
   # Lenovo is the source of truth — rebuilds run manually before pushing to the
   # homelab branch. Other hosts pick up changes via system.autoUpgrade from GitHub.
   system.autoUpgrade.enable = lib.mkForce false;
