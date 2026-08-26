@@ -14,4 +14,24 @@
     SystemMaxUse=500M
     MaxRetentionSec=1month
   '';
+
+  # userspace OOM killer, scoped to user slices only. A runaway editor, browser
+  # or agent session gets killed under memory pressure before the kernel OOM
+  # killer starts picking victims by badness score.
+  #
+  # Root and system slices are DELIBERATELY left unmanaged: k3s, containerd and
+  # the workloads under them live in system.slice, and systemd-oomd would judge
+  # them on cgroup pressure alone — killing a kubelet or a container runtime
+  # that kubernetes itself is already responsible for evicting from. Node
+  # pressure handling stays with k3s.
+  systemd.oomd = {
+    enable = true;
+    enableUserSlices = true;
+  };
+
+  # Trim offline documentation nobody reads on these machines. Man pages stay
+  # (documentation.man.enable keeps its default) — those get used.
+  documentation.nixos.enable = false;
+  documentation.info.enable = false;
+  documentation.doc.enable = false;
 }
