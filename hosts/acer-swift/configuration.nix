@@ -24,6 +24,14 @@ in
     imports = [ ../../modules/specialisations/desktop.nix ];
   };
 
+  # Never let the Sunday 03:00 auto-upgrade reboot this box on its own.
+  # acer-swift is the sole k3s worker: an unattended reboot is a total cluster
+  # outage (the reserved taint strands every singleton — DNS, kyverno, ntfy —
+  # so paging is impossible while it is down). Upgrades may still build and
+  # activate; the reboot is operator-initiated, at a time someone is watching.
+  # See the 2026-08-26 OOM incident.
+  system.autoUpgrade.allowReboot = lib.mkForce false;
+
   # k3s agent configuration
   homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
   homelab.k3s.cni = "cilium";  # match control-plane: disable kube-proxy for Cilium KPR
