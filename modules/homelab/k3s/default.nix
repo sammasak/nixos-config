@@ -104,6 +104,18 @@ in
       serverAddr = mkIf (cfg.role == "agent") cfg.serverAddr;
       extraFlags = toString (
         cfg.extraFlags
+        # OOM defense (recurring acer-swift hard-hangs, latest 2026-08-26):
+        # evict pods while the node still has memory to act, and reserve
+        # headroom for the OS + k3s itself. The k3s default eviction
+        # threshold (100Mi) fires far too late on a 15Gi machine — the
+        # kernel OOM-hangs before kubelet reacts. Applies to both roles;
+        # lenovo also runs failover pods now.
+        ++ [
+          "--kubelet-arg=eviction-hard=memory.available<500Mi"
+          "--kubelet-arg=eviction-soft=memory.available<1Gi"
+          "--kubelet-arg=eviction-soft-grace-period=memory.available=60s"
+          "--kubelet-arg=system-reserved=memory=1Gi"
+        ]
         ++ optionals (cfg.role == "server") (
           [
             "--write-kubeconfig-mode=644"
