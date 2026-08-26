@@ -199,28 +199,44 @@ The overlay is regenerated automatically by Home Manager activation on every reb
 
 **Configuration:** `modules/homelab/tailscale.nix`
 
-**Enabled on:** Control-plane node (`lenovo-21CB001PMX`) via `homelab-server` role
+**Enabled on:** every homelab node, in one of two modes.
+
+| Role | Mode | Behaviour |
+|------|------|-----------|
+| `homelab-server` (`lenovo-21CB001PMX`) | `subnet-router` | Advertises the LAN CIDR, accepts routes, enables Tailscale SSH |
+| `homelab-agent` (`acer-swift`) | `client` | Joins the tailnet only — no advertised routes, `--accept-routes=false`, `--accept-dns=false`, no Tailscale SSH |
+
+Workers run a direct client so that remote access to them does not die with the
+control plane. They deliberately do **not** accept routes or DNS: they already
+sit on the LAN, so accepting the router's own subnet would push their LAN
+traffic back through the control plane and recreate the dependency. sshd stays
+the only shell boundary on workers.
 
 **Key features:**
-- **Subnet routing** — Advertises 192.168.10.0/24 to the Tailscale network
-- **MagicDNS integration** — Uses AdGuard Home (192.168.10.154) for `*.sammasak.dev` DNS resolution
-- **SOPS-encrypted authkey** — Stored in `secrets/homelab/tailscale.yaml`
-- **IP forwarding** — Enables kernel forwarding for subnet routes
+- **Subnet routing** (subnet-router mode) — Advertises 192.168.10.0/24 to the Tailscale network
+- **MagicDNS integration** (subnet-router mode) — Uses AdGuard Home (192.168.10.154) for `*.sammasak.dev` DNS resolution
+- **SOPS-encrypted authkey** — Stored in `secrets/homelab/tailscale.yaml`, encrypted to both host keys
+- **IP forwarding** — Enabled for subnet routes (subnet-router mode only)
 - **Firewall integration** — Trusts `tailscale0` interface
 
 **Module options** (`homelab.tailscale.*`):
-- `enable` (bool) — Enable Tailscale subnet router
-- `subnetRoutes` (list of str) — Subnets to advertise (defaults to `sam.profile.lanCidr`)
+- `enable` (bool) — Enable Tailscale
+- `mode` (enum `subnet-router` | `client`) — Node behaviour, default `subnet-router`
+- `subnetRoutes` (list of str) — Subnets to advertise, subnet-router mode only (defaults to `sam.profile.lanCidr`)
 - `authKeyFile` (path) — Path to SOPS-decrypted authkey (default: `/run/secrets/tailscale-authkey`)
 
 **How it works:**
 1. `tailscaled.service` starts at boot
-2. `tailscale-subnet-router.service` runs once to configure:
-   - Authenticates using authkey from SOPS
-   - Advertises subnet routes
-   - Enables SSH access via Tailscale
-3. Admin must approve subnet routes in Tailscale admin console
+2. `tailscale-autoconnect.service` runs once to configure:
+   - Authenticates using the authkey from SOPS, but only if not already authenticated
+     (re-using a consumed single-use key fails)
+   - Applies the mode's preferences
+3. Admin must approve subnet routes in the Tailscale admin console
 4. Tailscale clients can access homelab LAN IPs and services
+
+If `tailscale-autoconnect` fails, the usual cause is an expired or already-consumed
+authkey: mint a new one in the admin console, update `secrets/homelab/tailscale.yaml`,
+rebuild, then `systemctl start tailscale-autoconnect`.
 
 **DNS flow:**
 - Client queries `grafana.sammasak.dev`
