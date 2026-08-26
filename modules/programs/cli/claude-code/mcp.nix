@@ -6,8 +6,8 @@
 # Usage (in 40-outputs-nixos.nix):
 #   (import ../modules/programs/cli/claude-code/mcp.nix inputs.claude-code-skills)
 #
-# Hooks are wired via Nix store paths so they are available on all hosts,
-# including claude-worker VMs where HOME=/var/lib/claude-worker.
+# Hooks are wired via Nix store paths so they are available on all hosts
+# regardless of what HOME is.
 skillsSrc:
 { pkgs, lib, config, ... }:
 {
@@ -46,9 +46,10 @@ skillsSrc:
       #     "--user-data-dir","/tmp/playwright-mcp-herman"] } } }
       # (system chromium on a stable profile path; npx fetches only the JS server).
       # Hooks are wired from the claude-code-skills Nix store path so they are
-      # available everywhere: physical hosts, workstation VMs, and claude-worker VMs.
-      # check-goals.sh no-ops on physical hosts (goals.json absent).
-      # validate-bash.sh has a VM guard for agent-specific rules.
+      # available on every host.
+      # check-goals.sh no-ops when goals.json is absent.
+      # validate-bash.sh's agent-specific rules are guarded on a directory that
+      # no longer exists on any host, so they never fire.
       # validate-manifest.sh works on all hosts.
       hooks = {
         UserPromptSubmit = [{
@@ -126,9 +127,7 @@ skillsSrc:
   };
 
   # ── OAuth token sourcing ────────────────────────────────────────────
-  # Physical hosts: sops-nix decrypts the token to /run/secrets/claude_oauth_token at boot.
-  # VM golden images: token delivered via cloud-init (/etc/workstation/agent-env),
-  #   sourced in fish loginShellInit by modules/programs/cli/claude-code/default.nix.
+  # sops-nix decrypts the token to /run/secrets/claude_oauth_token at boot.
   # ~/.env: local development override only.
   programs.fish.interactiveShellInit = lib.mkAfter ''
     if test -f "$HOME/.env"

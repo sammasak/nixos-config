@@ -24,8 +24,10 @@ in
   home.packages = [ heartbeatScript ];
 
   # Seed ~/.claude.json on first boot so the interactive setup wizard is skipped.
-  # NOTE: the project path "/home/lukas" is hardcoded in the JSON — this module
-  # is only used on workstation-template which always has username = "lukas".
+  # NOTE: the project path "/home/lukas" is hardcoded in the JSON. This module
+  # was written for the (now retired) VM images, which always had
+  # username = "lukas"; it is applied to every host via `sharedModules`, and
+  # every remaining host also uses "lukas". See "Known residue" in CLAUDE.md.
   home.activation.seedClaudeState =
     let
       script = pkgs.writeShellScript "seed-claude-state" ''

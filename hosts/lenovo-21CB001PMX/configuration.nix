@@ -94,9 +94,9 @@ in
     };
     rewrites = [
       # Wildcard for all K8s ingress-based services via Traefik MetalLB IP.
-      # Workstation SSH endpoints (openfang-central, rocket, etc.) are managed
-      # by External-DNS running in the k3s cluster and written as AdGuard filtering
-      # rules (not rewrites). With mutableSettings=true, those filtering rules persist.
+      # Per-service records published by External-DNS running in the k3s cluster
+      # are written as AdGuard filtering rules (not rewrites). With
+      # mutableSettings=true, those filtering rules persist.
       { domain = "*.sammasak.dev"; answer = "192.168.10.203"; }
       { domain = "sammasak.dev"; answer = "192.168.10.203"; }
       { domain = "dns.sammasak.dev"; answer = "192.168.10.154"; }  # AdGuard Home on host

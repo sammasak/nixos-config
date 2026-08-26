@@ -2,12 +2,13 @@
 #
 # Keeps the lock from rotting between manual rebuilds. It commits locally and
 # never pushes: the human still reviews the diff, rebuilds, and pushes.
-{ lib, pkgs, osConfig ? null, ... }:
+# This used to be skipped on the workstation/worker VM images, which were
+# disposable and rebuilt from a pinned revision with no personal nixos-config
+# checkout to keep fresh. Those images were retired with the KubeVirt platform;
+# every remaining host is a physical machine, so the timer is unconditional.
+# The script still no-ops when ~/nixos-config is not a git checkout.
+{ pkgs, ... }:
 let
-  # Workstation/worker VMs are disposable and rebuilt from a pinned revision —
-  # they have no personal nixos-config checkout to keep fresh.
-  isWorkstationVm = osConfig != null && (osConfig.homelab.workstation.enable or false);
-
   flakeUpdate = pkgs.writeShellApplication {
     name = "nixos-config-flake-update";
     runtimeInputs = [
@@ -45,7 +46,7 @@ let
     '';
   };
 in
-lib.mkIf (!isWorkstationVm) {
+{
   home.packages = [ flakeUpdate ];
 
   systemd.user.services.nixos-config-flake-update = {

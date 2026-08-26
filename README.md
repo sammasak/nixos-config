@@ -15,7 +15,6 @@ Personal NixOS + Home Manager configuration. A work in progress as I learn the N
 |---------|------|--------|
 | `acer-swift` | Laptop run headless as a k3s worker; boots server mode, has a `desktop` boot entry | Active |
 | `lenovo-21CB001PMX` | Daily-driver laptop and k3s control plane; boots the Hyprland desktop, has `server` and `niri` boot entries | Active |
-| `workstation-template` | KubeVirt workstation image | Active |
 
 ## Structure
 
@@ -128,32 +127,6 @@ sudo nixos-rebuild switch --flake .#<hostname>
 ```
 
 No separate manual Codex sync step is required.
-
-## Workstation Image Builds (KubeVirt)
-
-Build and publish NixOS workstation images as OCI containerDisk artifacts to Harbor:
-
-```bash
-just build              # Build qcow2 image
-just publish            # Publish as OCI containerDisk to Harbor
-just release            # Build + publish in one step
-just harbor-login       # First-time Harbor login
-just image-info         # Show published image metadata
-```
-
-Or using the build script directly:
-
-```bash
-./scripts/build-workstation-image.sh workstation-template kubevirt
-./scripts/build-workstation-image.sh workstation-template qcow
-```
-
-Related files:
-
-- `hosts/workstation-template/`
-- `modules/homelab/workstation-image.nix`
-- `Justfile`
-- See knowledge-vault: `~/knowledge-vault/Infrastructure/Concepts/workstation-images.md`
 
 ## Forking For Your Setup
 

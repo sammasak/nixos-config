@@ -4,14 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A NixOS + Home Manager configuration repository using **flake-parts** with a dendritic auto-discovery pattern. Manages Linux servers, laptops, and KubeVirt workstation images from a single flake.
+A NixOS + Home Manager configuration repository using **flake-parts** with a dendritic auto-discovery pattern. Manages Linux servers and laptops from a single flake.
 
 ## Build & Deploy Commands
 
 ```bash
 # ── Verification (run before deploying) ────────────────────────────
-just verify                   # Verify all physical hosts build successfully
-just verify-all               # Verify all hosts including VM images
+just verify                   # Verify all hosts build successfully
 just check                    # Run flake checks (comprehensive validation)
 
 # Or manually verify specific host:
@@ -26,14 +25,9 @@ sudo nixos-rebuild build --flake .#<hostname>
 
 # Remote deploy via SSH
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
-
-# ── Workstation Images ─────────────────────────────────────────────
-just build                    # Build qcow2 image
-just publish [tag]            # Publish OCI containerDisk to Harbor
-just release [tag]            # Build + publish
 ```
 
-Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `workstation-template`, `claude-worker-template`
+Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`)
 
 ## Architecture
 
@@ -65,7 +59,7 @@ Each host follows a 2–3 file pattern in `hosts/<name>/`:
 |------|---------|
 | `variables.nix` | Plain attrset of host-specific choices (username, roles, videoDriver, monitors, etc.) |
 | `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
-| `hardware-configuration.nix` | Auto-generated hardware scan (physical machines only; omitted for virtual/image targets like `workstation-template`) |
+| `hardware-configuration.nix` | Auto-generated hardware scan |
 
 The wiring: `flake-modules/hosts/<name>.nix` reads `variables.nix` and creates a typed `configurations.nixos.<name>` declaration. Then `40-outputs-nixos.nix` resolves roles to modules, injects Stylix/SOPS/Home Manager, and produces the final `nixosConfigurations.<name>`.
 
@@ -80,7 +74,6 @@ as a specialisation:
 |------|--------------|-----------------|
 | `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | `server` (headless), `niri` (compositor trial) |
 | `acer-swift` | **server** (headless k3s worker) | `desktop` |
-| `workstation-template` / `claude-worker-template` | server (VM images, no GUI) | — |
 
 Boot menu on lenovo, for example:
 ```
@@ -129,7 +122,7 @@ modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
 ├── desktop/      # Desktop stack: hyprland/ (Wayland compositor)
 ├── hardware/     # GPU drivers (intel), thermal
-├── homelab/      # k3s (agent/server), sops, flux, tailscale, workstation-image
+├── homelab/      # k3s (agent/server), sops, flux, tailscale, ntfy, watchdog
 ├── programs/     # Home Manager programs: cli/, browser/, editor/, terminal/
 ├── roles/        # Composition roles (see above)
 └── themes/       # Catppuccin via Stylix
@@ -150,7 +143,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/*.yaml` | Personal + 2 hosts + Flux | k3s, Cloudflare, Flux keys, Tailscale authkey |
 | `claude/*.yaml` | Personal + 2 hosts | Claude Code OAuth token |
 
-The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in bash shell init via `modules/programs/cli/claude-code/mcp.nix`. The workstation-template VM is unaffected — it receives its token via cloud-init at `/etc/workstation/agent-env`.
+The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in bash shell init via `modules/programs/cli/claude-code/mcp.nix`.
 
 ### Claude Code
 
@@ -159,7 +152,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 | File | Scope | Purpose |
 |------|-------|---------|
 | `mcp.nix` | All NixOS hosts (shared HM module) | Settings, plugins, MCP servers, shebang fixes, SOPS token sourcing |
-| `default.nix` | `workstation-template` only | Headless agent config, Justfile, heartbeat service, cloud-init env sourcing |
+| `default.nix` | All NixOS hosts (shared HM module) | Headless-agent settings, `~/Justfile` agent recipes, heartbeat unit. Written for the retired VM images and still applied everywhere; see "Known residue" below |
 | `skills.nix` | All NixOS hosts (shared HM module) | Symlinks skills and agents from the `claude-code-skills` flake input |
 
 **Plugin configuration** (`mcp.nix`): Declares `enabledPlugins` (superpowers, ralph-loop, playwright, superpowers-lab) and MCP servers (playwright/chromium) in `programs.claude-code.settings`.
@@ -242,6 +235,24 @@ The overlay is regenerated automatically by Home Manager activation on every reb
 ### Key Inputs
 
 nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-skills — all following nixpkgs (except claude-code-skills which is a plain source input).
+
+### Known residue: the retired VM image platform
+
+The KubeVirt workstation / claude-worker VM images were retired in 2026-08. The
+hosts (`workstation-template`, `claude-worker-template`), their image modules,
+the build/publish scripts and the `just build`/`publish`/`release` targets are
+gone. Three things deliberately survived the cull because they are still wired
+into physical hosts and removing them is a behaviour change, not a deletion:
+
+| What | Why it is still here | Why it is dead weight |
+|------|---------------------|----------------------|
+| `modules/programs/cli/claude-code/default.nix` | Listed in `sharedModules` in `40-outputs-nixos.nix`, so it applies to every host. Also sets `programs.claude-code.settings.permissions` | Writes a `~/Justfile` of VM agent recipes, sources `/etc/workstation/agent-env`, and defines an `agent-heartbeat` user unit that annotates a `WorkspaceClaim` in the deleted `workstations` namespace. The unit has no `Install` section, so it never auto-starts |
+| `pkgs/claude-ctl.nix` (+ the `claude-ctl` flake input) | Packaged into the base CLI set | CLI for provisioning claude-worker VMs — there is no longer anything to provision |
+| `modules/programs/cli/codex/validate-bash.sh` | Shared Codex hook | Two of its rules only fire inside `/var/lib/claude-worker`, which no longer exists anywhere |
+
+Removing these is a reasonable follow-up; it needs a decision about the
+permissions block and a `flake.lock` edit, so it was kept out of the retirement
+commit.
 
 ## Conventions
 

@@ -2,22 +2,15 @@
 # Verify all NixOS host configurations build successfully before deploying.
 #
 # Usage:
-#   ./scripts/verify-all-hosts.sh           # Build all physical hosts
-#   ./scripts/verify-all-hosts.sh --all     # Build all hosts including VM images
+#   ./scripts/verify-all-hosts.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Physical hosts that should always build
-PHYSICAL_HOSTS=("acer-swift" "lenovo")
-
-# VM/image hosts (may have different requirements)
-IMAGE_HOSTS=("workstation-template" "claude-worker-template")
-
-BUILD_ALL=false
-if [[ "${1:-}" == "--all" ]]; then
-  BUILD_ALL=true
-fi
+# Every host in the flake. The VM/image hosts (workstation-template,
+# claude-worker-template) were retired with the KubeVirt platform, so there is
+# no longer a second, optional build tier.
+HOSTS=("acer-swift" "lenovo")
 
 failed=()
 succeeded=()
@@ -42,19 +35,9 @@ build_host() {
 echo "Verifying NixOS host configurations..."
 echo "========================================"
 
-# Always build physical hosts
-for host in "${PHYSICAL_HOSTS[@]}"; do
+for host in "${HOSTS[@]}"; do
   build_host "$host"
 done
-
-# Optionally build image hosts
-if $BUILD_ALL; then
-  echo ""
-  echo "Building VM/image hosts..."
-  for host in "${IMAGE_HOSTS[@]}"; do
-    build_host "$host" || true  # Don't fail on image build errors
-  done
-fi
 
 # Summary
 echo ""
