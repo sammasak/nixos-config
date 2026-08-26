@@ -34,6 +34,10 @@ in
     ripgrep
     tldr
     claude-code
+    # nodejs + chromium look desktop-only but are load-bearing on headless
+    # hosts: the Playwright MCP server (claude-code/mcp.nix) runs
+    # `npx @playwright/mcp --executable-path /run/current-system/sw/bin/chromium`
+    # for agent browser automation. Do not gate behind hasDesktop.
     nodejs
     chromium
     just

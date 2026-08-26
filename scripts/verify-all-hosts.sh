@@ -9,10 +9,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Physical hosts that should always build
-PHYSICAL_HOSTS=("acer-swift" "lenovo" "msi-ms7758")
+PHYSICAL_HOSTS=("acer-swift" "lenovo")
 
 # VM/image hosts (may have different requirements)
-IMAGE_HOSTS=("workstation-template" "openfang-agent-template")
+IMAGE_HOSTS=("workstation-template" "claude-worker-template")
 
 BUILD_ALL=false
 if [[ "${1:-}" == "--all" ]]; then

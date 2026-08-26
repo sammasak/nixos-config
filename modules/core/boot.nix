@@ -25,6 +25,8 @@
       timeout = 3;
       grub = {
         enable = true;
+        # Uncapped generation lists grow the ESP + GC roots without bound.
+        configurationLimit = 10;
         device = "nodev";
         efiSupport = true;
         useOSProber = false;

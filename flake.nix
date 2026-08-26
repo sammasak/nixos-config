@@ -37,7 +37,11 @@
               entryType = entries.${name};
               path = dir + "/${name}";
             in
-            if entryType == "directory" then
+            # Underscore-prefixed entries are skipped (same convention as
+            # import-tree): lets non-module files live under flake-modules/.
+            if builtins.substring 0 1 name == "_" then
+              [ ]
+            else if entryType == "directory" then
               collectFlakeModules path
             else if entryType == "regular" && builtins.match ".*\\.nix" name != null then
               [ path ]
