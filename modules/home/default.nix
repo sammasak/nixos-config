@@ -7,6 +7,7 @@ let
     ../core/fish.nix
     ../programs/cli/git
     ../programs/cli/cli-tools
+    ../programs/cli/flake-update
     ../programs/editor/nvim
   ];
   desktopImports = lib.optionals isDesktopMode [
