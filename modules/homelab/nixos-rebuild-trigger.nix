@@ -51,6 +51,11 @@ let
   inherit (lib) mkEnableOption mkIf mkOption types;
   cfg = config.homelab.nixosRebuildTrigger;
   username = config.sam.profile.username;
+  # The primary group of the trigger principal. Resolved from the user rather
+  # than assumed to be eponymous: NixOS gives a normal user the shared `users`
+  # group by default, so `${username}` is NOT a group that exists. A tmpfiles
+  # rule naming a non-existent group is silently useless.
+  triggerGroup = config.users.users.${username}.group;
   triggerDir = "/run/nixos-rebuild-trigger";
   triggerFile = "${triggerDir}/request";
   resultFile = "${triggerDir}/result";
@@ -94,21 +99,52 @@ in
     # Trigger directory: writable by the primary user so bubblewrap agents and
     # the board worker (via SSH) can write the request file without sudo.
     #
-    # WHO CAN TRIGGER: any member of the `${username}` group. This is the
+    # WHO CAN TRIGGER: any member of the `${triggerGroup}` group. This is the
     # documented trust boundary for devex-052. Tightening to a dedicated,
     # narrowly-scoped service identity (e.g. a `board-deploy` group with only the
     # board worker's SSH key) is recommended as a follow-up; doing so only
-    # requires changing the group on the tmpfiles rule below.
+    # requires changing the group here and in the provisioning unit below.
     systemd.tmpfiles.rules = [
-      "d ${triggerDir} 0770 root ${username} -"
+      "d ${triggerDir} 0770 root ${triggerGroup} -"
       # Persistent state dir for the deploy lock (survives reboots, outside /run).
       "d /var/lib/nixos-rebuild-trigger 0700 root root -"
     ];
+
+    # The tmpfiles rule above is NOT sufficient on its own, for two reasons:
+    #
+    #   1. /run is a tmpfs, and tmpfiles rules for it are applied only by
+    #      systemd-tmpfiles-setup.service at BOOT. A `nixos-rebuild switch` that
+    #      introduces or changes a /run rule renders the new
+    #      /etc/tmpfiles.d/00-nixos.conf but does not re-run that service, so the
+    #      directory stays missing — and the trigger stays dead — until the next
+    #      reboot. That is exactly how this module shipped broken: the deployed
+    #      generation carried the rule while the booted one did not.
+    #   2. Nothing recreates the directory if it is removed mid-boot.
+    #
+    # This oneshot closes both gaps. It is pulled in by multi-user.target, so
+    # activation starts it during a switch, and the path watcher orders itself
+    # after it so the watch can never be armed against a missing directory.
+    systemd.services.nixos-rebuild-trigger-dir = {
+      description = "Provision the nixos-rebuild trigger request directory";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      path = [ pkgs.coreutils ];
+      script = ''
+        install -d -m 0770 -o root -g ${triggerGroup} "${triggerDir}"
+      '';
+    };
 
     # Arm when request file exists; activate the rebuild service.
     systemd.paths.nixos-rebuild-trigger = {
       description = "Board-worker nixos-rebuild trigger (path watch)";
       wantedBy = [ "multi-user.target" ];
+      # Wants, not Requires: a Requires on a oneshot would propagate the
+      # oneshot's eventual stop back to the path unit.
+      wants = [ "nixos-rebuild-trigger-dir.service" ];
+      after = [ "nixos-rebuild-trigger-dir.service" ];
       pathConfig.PathExists = triggerFile;
     };
 
@@ -117,8 +153,8 @@ in
     # on failure. Audit trail: append-only ${auditLog} + journald + resultFile.
     systemd.services.nixos-rebuild-trigger = {
       description = "Pinned, health-gated nixos-rebuild (board-worker trigger)";
-      after = [ "nix-daemon.service" "network-online.target" ];
-      wants = [ "nix-daemon.service" "network-online.target" ];
+      after = [ "nix-daemon.service" "network-online.target" "nixos-rebuild-trigger-dir.service" ];
+      wants = [ "nix-daemon.service" "network-online.target" "nixos-rebuild-trigger-dir.service" ];
       serviceConfig = {
         Type = "oneshot";
         User = "root";
@@ -134,8 +170,16 @@ in
         set -euo pipefail
 
         # --- Snapshot and consume the request first (prevents re-arm loop) ----
+        # Consume the request FILE only. The directory must survive: it is the
+        # trigger surface itself, and /run tmpfiles rules are re-applied only at
+        # boot, so removing it here would disable the trigger until reboot.
         REQUEST_RAW="$(cat "${triggerFile}" 2>/dev/null || true)"
         rm -f "${triggerFile}"
+
+        # Belt and braces: every status write below targets this directory, and
+        # `set -e` would abort the run before any audit trail existed if it were
+        # missing. Re-asserting it is idempotent.
+        install -d -m 0770 -o root -g ${triggerGroup} "${triggerDir}"
 
         REQUESTER="$(printf '%s\n' "$REQUEST_RAW" | sed -n 's/^requester=//p' | head -1 | tr -dc '[:alnum:]._-' | cut -c1-128)"
         REV="$(printf '%s\n' "$REQUEST_RAW" | sed -n 's/^rev=//p' | head -1 | tr -dc '[:alnum:]' | cut -c1-64)"
