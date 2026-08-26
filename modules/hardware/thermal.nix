@@ -51,16 +51,61 @@ in
     # it often exits early due to platform checks and provides no control.
     services.thermald.enable = lib.mkIf (cfg.platform == "generic") true;
 
-    # Apply CPU frequency tuning at boot and after wakeup from sleep.
-    powerManagement.powerUpCommands = lib.mkIf (cfg.disableTurboBoost || cfg.energyPerformancePreference != "default") (
-      lib.concatStringsSep "\n" (lib.optional cfg.disableTurboBoost ''
-        echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo
-      '' ++ lib.optional (cfg.energyPerformancePreference != "default") ''
-        for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
-          echo ${cfg.energyPerformancePreference} > "$f"
-        done
-      '')
-    );
+    # Apply CPU frequency tuning at boot and again after every resume — the
+    # kernel resets both sysfs knobs across a suspend cycle.
+    #
+    # This replaces `powerManagement.powerUpCommands`, which is deprecated for
+    # having unclear ordering semantics and is slated for removal in NixOS
+    # 26.11. Note that `post-resume.target`, the obvious-looking hook, was
+    # REMOVED in NixOS 26.05 and does not exist in systemd — a unit hung off it
+    # would silently never run. The sleep targets are the documented
+    # replacement: each is only reached once systemd-suspend.service returns,
+    # which is after the machine has woken up, so ordering `After=` them means
+    # "on resume".
+    systemd.services.cpu-power-tuning =
+      lib.mkIf (cfg.disableTurboBoost || cfg.energyPerformancePreference != "default")
+        {
+          description = "Apply CPU turbo/EPP power tuning";
+
+          wantedBy = [
+            "multi-user.target"
+            "suspend.target"
+            "hibernate.target"
+            "hybrid-sleep.target"
+            "suspend-then-hibernate.target"
+          ];
+          after = [
+            "suspend.target"
+            "hibernate.target"
+            "hybrid-sleep.target"
+            "suspend-then-hibernate.target"
+          ];
+
+          # Deliberately no RemainAfterExit: an already-active oneshot would not
+          # re-run when the sleep targets pull it in again on resume.
+          serviceConfig.Type = "oneshot";
+
+          script = ''
+            ${lib.optionalString cfg.disableTurboBoost ''
+              turbo=/sys/devices/system/cpu/intel_pstate/no_turbo
+              if [ -w "$turbo" ]; then
+                echo 1 > "$turbo"
+                echo "cpu-power-tuning: turbo boost disabled"
+              else
+                echo "cpu-power-tuning: $turbo absent or read-only — not an intel_pstate system, skipping"
+              fi
+            ''}
+            ${lib.optionalString (cfg.energyPerformancePreference != "default") ''
+              applied=0
+              for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+                [ -w "$f" ] || continue
+                echo ${cfg.energyPerformancePreference} > "$f"
+                applied=$((applied + 1))
+              done
+              echo "cpu-power-tuning: EPP ${cfg.energyPerformancePreference} applied to $applied CPU(s)"
+            ''}
+          '';
+        };
 
     # ThinkPad-specific fan control
     boot.extraModprobeConfig = lib.mkIf (cfg.platform == "thinkpad") ''
