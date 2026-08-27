@@ -281,6 +281,49 @@ One item survives the cull:
 |------|---------------------|----------------------|
 | `modules/programs/cli/codex/validate-bash.sh` | Shared Codex hook, and its other rules (force-push blocking) are live | Two of its rules only fire inside `/var/lib/claude-worker`, which no longer exists anywhere |
 
+## Comment Policy
+
+Nix is declarative: the option name and value already say *what*. A comment
+earns its line only by saying something the code cannot. Write one only when it
+is one of these four:
+
+| Allowed | Example |
+|---------|---------|
+| **(a) A consequence or gotcha** — what breaks, and when | `# NOT security.lockKernelModules: it breaks on-demand module loading for k3s/containerd.` |
+| **(b) An upstream doc link** | `# https://wiki.hyprland.org/Configuring/Variables/#input` |
+| **(c) A FIXME with the specific blocker** | `# FIXME: waiting on nixpkgs#123456; the module asserts on empty extraCommands.` |
+| **(d) A one-line justification for a pin or override** | `# mkForce: the desktop module sets this too and we must win.` |
+
+Never:
+
+- restate the option (`# Enable the firewall` above `firewall.enable = true`)
+- carry incident history, dates, or a ticket number used as narrative
+- explain how to restore something you deleted — `git log` owns that, and a
+  commit message is the right place for the why of a deletion
+- keep a commented-out config block "in case"
+
+Long rationale goes to the knowledge vault, and the code keeps a single pointer:
+
+```nix
+# <one-line why>. See vault: <file>.md
+```
+
+The pointer must name a file that **exists**. Check before you write it; the
+board prune of 2026-08-25 left several in-code references to deleted tickets
+pointing at nothing.
+
+Files that already hit the target style — read one before writing a comment,
+and leave them alone:
+
+- `modules/core/wifi.nix:1-14` — a header that is entirely consequence
+- `modules/homelab/k3s/default.nix:110-115` — why the eviction thresholds are
+  what they are
+- `modules/homelab/k3s/default.nix:143-145` — a flag that fatals on the wrong role
+- `modules/homelab/k3s/default.nix:180-183` — why Cilium interfaces must be trusted
+
+`just bench` records the repo-wide comment ratio in `metrics/history.jsonl`. The
+target band is 7–13%; above that, the file is narrating itself.
+
 ## Conventions
 
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.

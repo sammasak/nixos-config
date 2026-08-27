@@ -11,45 +11,50 @@ Personal NixOS + Home Manager configuration. A work in progress as I learn the N
 
 ## Current Machines
 
-| Machine | Type | Status |
-|---------|------|--------|
-| `acer-swift` | Laptop run headless as a k3s worker; boots server mode, has a `desktop` boot entry | Active |
-| `lenovo-21CB001PMX` | Daily-driver laptop and k3s control plane; boots the Hyprland desktop, has `server` and `niri` boot entries | Active |
+| Machine | Type | Boot entries |
+|---------|------|--------------|
+| `acer-swift` | Laptop run headless as the sole k3s worker | Headless only |
+| `lenovo-21CB001PMX` | Daily-driver laptop and k3s control plane | Hyprland desktop (default), `niri` |
+
+The cross-mode specialisations (`lenovo`'s `server` entry, `acer-swift`'s
+`desktop` entry) were removed on 2026-08-27 — neither had ever been booted, and
+each cost a second full system closure on every rebuild.
 
 ## Structure
 
-```
-flake.nix                # Minimal flake-parts entrypoint (auto-imports flake modules)
-├── flake-modules/       # Top-level flake modules (dendritic trunk)
-│   ├── 00-flake-parts-modules.nix
-│   ├── 10-systems.nix
-│   ├── 20-module-registry.nix
-│   ├── 30-configurations-options.nix
-│   ├── 40-outputs-nixos.nix
-│   └── hosts/           # Distribution declarations
-├── hosts/               # Per-machine configs
-│   ├── acer-swift/
-│   │   ├── configuration.nix
-│   │   ├── hardware-configuration.nix
-│   │   └── variables.nix
-│   └── lenovo-21CB001PMX/
-│       ├── configuration.nix
-│       ├── hardware-configuration.nix
-│       └── variables.nix
-├── modules/             # Reusable modules
-│   ├── core/            # System baseline (nix, users, services, fonts)
-│   ├── desktop/         # Desktop stacks (Hyprland)
-│   ├── hardware/        # Hardware drivers
-│   ├── home/            # Shared Home Manager entrypoint (all hosts)
-│   ├── programs/        # Home Manager program modules
-│   ├── roles/           # Base/laptop/homelab composition
-│   └── themes/          # Theme definitions
-├── lib/                 # Shared helpers (users)
-├── assets/              # Wallpapers and other assets
-├── dotfiles/            # Plain config files (symlinked)
-├── secrets/             # Secrets (handled out-of-band)
-└── tmp/                 # Local comparison/scratch (gitignored)
-```
+Every directory has one job. Where two places could hold a thing, this table is
+the tie-breaker.
+
+| Path | Owns | Notes |
+|------|------|-------|
+| `flake.nix` | Flake entry point | ~49 lines; recursively auto-imports `flake-modules/` |
+| `flake-modules/` | Top-level flake composition | Numbered for load order; see table below |
+| `flake-modules/hosts/` | One typed distribution declaration per host | Reads `hosts/<name>/variables.nix` |
+| `hosts/<name>/` | Per-machine facts only | `variables.nix` (choices), `configuration.nix` (host-only modules), `hardware-configuration.nix` (generated) |
+| `modules/core/` | System baseline on every host | boot, users, network, services, packages, automation, sops, wifi, resource-hygiene |
+| `modules/roles/` | Composition | `base`, `laptop`, `homelab-agent`, `homelab-server`; selected in `variables.nix` |
+| `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |
+| `modules/desktop/` | The GUI stack | Hyprland, Waybar, Rofi; gated on `sam.desktop.enable` |
+| `modules/specialisations/` | Boot-menu variants | Currently only `desktop.nix` |
+| `modules/hardware/` | GPU and thermal | `video/<driver>.nix` picked by `sam.profile.videoDriver` |
+| `modules/home/` | Shared Home Manager entry point | One tree for all hosts — there are no per-host `home.nix` files |
+| `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `terminal/` |
+| `modules/themes/` | Catppuccin via Stylix | |
+| `lib/` | Pure helpers, no module semantics | `users.nix` — git identity and SSH keys |
+| `scripts/` | Repo tooling | `verify-all-hosts.sh`, `bench.sh` |
+| `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
+| `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
+| `assets/`, `dotfiles/` | Wallpapers; plain config files symlinked verbatim | |
+
+`flake-modules/` in load order:
+
+| File | Job |
+|------|-----|
+| `00-flake-parts-modules.nix` | flake-parts setup |
+| `10-systems.nix` | Supported systems |
+| `20-module-registry.nix` | Auto-generates `flake.modules` from the filesystem |
+| `30-configurations-options.nix` | Typed host declaration options |
+| `40-outputs-nixos.nix` | Turns declarations into `nixosConfigurations` |
 
 ## How It Works
 
@@ -231,7 +236,7 @@ sudo nixos-rebuild switch --flake .#<host>
 
 ## Automation
 
-System auto-updates weekly (Sunday 3 AM), runs garbage collection monthly, and optimizes the store weekly. Configured in `modules/core/automation.nix`.
+System auto-updates weekly (Sunday 06:00, plus up to 45 min of jitter), runs garbage collection monthly, and optimises the store weekly. Configured in `modules/core/automation.nix`. `acer-swift` forces `allowReboot = false` — it is the sole worker.
 
 ## Fresh Install (New Laptop)
 
