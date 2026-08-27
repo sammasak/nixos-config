@@ -1,4 +1,3 @@
-# Firefox browser with privacy-focused settings
 { ... }:
 {
   stylix.targets.firefox.profileNames = [ "default" ];

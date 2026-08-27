@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, ... }:
 
 let
   inherit (lib) mkIf;
@@ -7,12 +7,9 @@ in
 {
   imports = [ ./default.nix ];
 
-  config = mkIf (cfg.enable && cfg.role == "agent") {
-    # Agent nodes need minimal additional configuration
-    # The default.nix handles most settings
-
-    # Note: kubernetes.io/node-role labels are restricted by kubelet
-    # They should be applied via kubectl after the node joins, or use custom labels
-    # Worker nodes don't require special labels - they're identified by absence of control-plane role
-  };
+  # Deliberately empty: ./default.nix carries every agent setting. Kept as the
+  # role's named seam, and because kubelet rejects kubernetes.io/node-role
+  # labels — a worker is identified by the absence of the control-plane role,
+  # so there is nothing to set here.
+  config = mkIf (cfg.enable && cfg.role == "agent") { };
 }

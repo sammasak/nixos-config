@@ -1,7 +1,6 @@
 { ... }:
 {
-  # A soft cushion before the OOM killer reaches anything important, on hosts
-  # where one node's death is a total outage.
+  # A cushion before the OOM killer reaches anything important.
   zramSwap = {
     enable = true;
     memoryPercent = 50;

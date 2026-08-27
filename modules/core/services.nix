@@ -1,4 +1,3 @@
-# Core services (audio, bluetooth, etc.)
 { config, lib, ... }:
 let
   username = config.sam.profile.username;

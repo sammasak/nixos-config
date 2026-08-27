@@ -5,11 +5,12 @@ let
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
 
   sshRules = mkDualBackendFirewall {
-    comment = "Allow SSH only from LAN subnet and loopback (nftables backend).";
+    nftComment = "Allow SSH only from LAN subnet and loopback (nftables backend).";
     ports = [ 22 ];
     sources = [ profile.lanCidr ];
     interfaces = [ "lo" ];
-    # 22 would otherwise be reachable from anywhere the host is routable.
+    # nftables path only, and inert on the iptables backend running today,
+    # where nixos-fw's default refuse already covers it.
     dropOthers = true;
     backend = config.networking.firewall.backend;
   };

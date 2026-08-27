@@ -1,21 +1,16 @@
-# Desktop configuration (now the default boot mode)
-# Adds Hyprland, SDDM, and GUI applications
 { pkgs, ... }:
 {
   imports = [
     ../desktop/hyprland
     ../core/sddm.nix
-    # Catppuccin theme now in base role for GRUB theming
   ];
 
   # The GUI signal every desktop-gated module reads (compositor-agnostic).
   sam.desktop.enable = true;
 
-  # Enable X server for compatibility (some apps need it)
+  # Some GUI apps still expect an X server to exist.
   services.xserver.enable = true;
 
-  # GUI applications (installed in desktop mode)
   environment.systemPackages = with pkgs; [
-    # These will be moved from core packages later
   ];
 }

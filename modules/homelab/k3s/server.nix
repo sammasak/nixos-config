@@ -26,7 +26,7 @@ let
   ];
 
   apiRules = mkDualBackendFirewall {
-    comment = "k3s control-plane API + etcd: LAN, cluster networks and tailnet only.";
+    nftComment = "k3s control-plane API + etcd: LAN, cluster networks and tailnet only.";
     ports = apiPorts;
     sources = apiSources;
     interfaces = apiInterfaces;

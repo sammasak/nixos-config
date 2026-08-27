@@ -1,17 +1,11 @@
-# Declarative WiFi for the laptops — profile survives crashes.
+# Declarative WiFi for the laptops. NetworkManager's own profiles are imperative
+# state, so a crash can lose them — and a headless node that loses its profile
+# needs a console session and a typed password to come back.
+# See vault: homelab/acer-swift-wifi-resilience.md
 #
-# Why this exists (2026-08-26 incident): acer-swift OOM-hung and its
-# NetworkManager connection profile (imperative state under
-# /etc/NetworkManager/system-connections) was lost in the crash. The
-# headless sole worker came back up with no way onto the network — a
-# console session and manual password entry were required to recover.
-# With the profile declared here, every boot re-asserts it.
-#
-# Secrets: SSID + PSK live sops-encrypted in secrets/homelab/wifi.yaml
-# (key "env", systemd EnvironmentFile format) and are substituted by
-# NetworkManager-ensure-profiles at activation. Never plaintext in-repo.
-#
-# To set/rotate the password:  sops secrets/homelab/wifi.yaml
+# SSID + PSK live sops-encrypted in secrets/homelab/wifi.yaml (key "env", systemd
+# EnvironmentFile format), substituted at activation. Never plaintext in-repo.
+# To set or rotate the password:  sops secrets/homelab/wifi.yaml
 { config, lib, ... }:
 let
   inherit (lib) mkEnableOption mkIf;

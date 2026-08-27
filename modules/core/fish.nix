@@ -26,13 +26,11 @@
     '';
   };
 
-  # Starship prompt (already configured, works with fish)
   programs.starship = {
     enable = true;
     enableFishIntegration = true;
   };
 
-  # fzf fuzzy finder with fish integration
   programs.fzf = {
     enable = true;
     enableFishIntegration = true;

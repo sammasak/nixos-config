@@ -1,4 +1,3 @@
-# Neovim with inline plugin configuration
 { pkgs, ... }:
 {
   programs.neovim = {
@@ -10,21 +9,17 @@
     withPython3 = false;
 
     plugins = with pkgs.vimPlugins; [
-      # Treesitter for syntax highlighting
       (nvim-treesitter.withPlugins (p: [
         p.nix p.python p.rust p.markdown p.yaml p.json p.lua p.bash
       ]))
 
-      # Telescope fuzzy finder
       plenary-nvim
       telescope-fzf-native-nvim
       telescope-nvim
 
-      # File explorer
       nvim-web-devicons
       nvim-tree-lua
 
-      # Git integration
       gitsigns-nvim
 
       # Catppuccin theme (already available via Stylix)
@@ -32,11 +27,9 @@
     ];
 
     extraPackages = with pkgs; [
-      # Treesitter dependencies
       gcc
       tree-sitter
 
-      # Telescope dependencies
       ripgrep
       fd
     ];

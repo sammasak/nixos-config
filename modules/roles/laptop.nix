@@ -1,4 +1,3 @@
-# Laptop-specific role (power + input)
 { ... }:
 {
   imports = [
@@ -6,7 +5,7 @@
     ../core/wifi.nix
   ];
 
-  # Both laptops use the home WiFi; the sole-worker incident 2026-08-26
-  # showed why the profile must be declarative.
+  # NetworkManager's own profiles are imperative state and a crash can lose them.
+  # See vault: homelab/acer-swift-wifi-resilience.md
   sam.wifi.declarativeHomeProfile = true;
 }

@@ -27,7 +27,7 @@ the tie-breaker.
 
 | Path | Owns | Notes |
 |------|------|-------|
-| `flake.nix` | Flake entry point | ~49 lines; recursively auto-imports `flake-modules/` |
+| `flake.nix` | Flake entry point | Recursively auto-imports `flake-modules/`; nothing host-specific |
 | `flake-modules/` | Top-level flake composition | Numbered for load order; see table below |
 | `flake-modules/hosts/` | One typed distribution declaration per host | Reads `hosts/<name>/variables.nix` |
 | `hosts/<name>/` | Per-machine facts only | `variables.nix` (choices), `configuration.nix` (host-only modules), `hardware-configuration.nix` (generated) |
@@ -45,6 +45,7 @@ the tie-breaker.
 | `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
 | `assets/`, `dotfiles/` | Wallpapers; plain config files symlinked verbatim | |
+| `pkgs/` | Packages not in nixpkgs | Exposed through an overlay in `flake-modules/` |
 
 `flake-modules/` in load order:
 
@@ -122,7 +123,7 @@ Codex is configured through `modules/programs/cli/codex/`.
 - `~/.agents/skills/` receives the shared portable subset from the `claude-code-skills` input
 - `~/.codex/skills/` mirrors that portable subset
 - Home Manager activation then regenerates a Codex-local overlay from:
-  - `~/workspace/workflows/*/CONTEXT.md`
+  - `~/knowledge/workflows/*/CONTEXT.md`
   - `~/claude-code-skills/skills/*/SKILL.md` entries not already present in the portable subset
 
 That means a normal rebuild is enough to make new workspace workflows and Codex-compatible repo skills available:
@@ -347,7 +348,7 @@ Only add secret-dependent roles (`homelab-server` / `homelab-agent`) after step 
 | Git credentials | [lib/users.nix](lib/users.nix) |
 | VSCode settings | [dotfiles/vscode/](dotfiles/vscode/) |
 | Hyprland keybinds | [modules/desktop/hyprland/](modules/desktop/hyprland/) |
-| Desktop stacks | See knowledge-vault: `~/knowledge-vault/Infrastructure/Concepts/desktop-specialisation.md` |
+| Desktop stacks | `modules/specialisations/desktop.nix` and `modules/desktop/` |
 
 ## Learning Resources
 

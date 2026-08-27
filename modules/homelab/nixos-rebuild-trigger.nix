@@ -5,6 +5,9 @@
 # fetched from the remote, never the local clone. Never deploy a change to THIS
 # module through the trigger itself.
 # See vault: homelab/decisions/ADR-024-nixos-rebuild-trigger-security-model.md
+# The numbered notes the inline scripts below refer to are that ADR's numbered
+# sections: 1 pinned source, 2 health gate and detached activation, 3 deploy
+# lock, 4 audit log.
 { config, lib, pkgs, ... }:
 let
   inherit (lib) mkEnableOption mkIf mkOption types;

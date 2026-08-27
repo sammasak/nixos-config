@@ -22,7 +22,10 @@ bench:
 bench-diff:
     bash scripts/bench.sh diff
 
-# Zero-functional-change gate: toplevel drvPaths must match the last bench entry
+# Compare both toplevel drvPaths against the last bench entry; non-zero if they moved.
+# Run this after a refactor that is meant to change nothing. Deliberately NOT part
+# of `check` or `verify`: a change that legitimately moves the derivation should
+# not fail the build gates.
 parity:
     bash scripts/bench.sh parity
 

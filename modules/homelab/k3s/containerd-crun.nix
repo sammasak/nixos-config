@@ -3,9 +3,8 @@
 {
   environment.systemPackages = [ pkgs.crun pkgs.gvisor ];
 
-  # Symlink containerd-shim-runsc-v1 so k3s's bundled containerd can discover it.
-  # Symlink criu into /var/lib/rancher/k3s/data/cni/ which is in k3s's constructed
-  # PATH for containerd/shim processes, allowing crun to find criu for checkpointing.
+  # k3s's bundled containerd only discovers the runsc shim on its own PATH, and its
+  # constructed PATH for shim processes includes data/cni — hence criu lands there.
   systemd.tmpfiles.rules = [
     "L+ /usr/local/sbin/containerd-shim-runsc-v1 - - - - ${pkgs.gvisor}/bin/containerd-shim-runsc-v1"
     "L+ /var/lib/rancher/k3s/data/cni/criu - - - - ${pkgs.criu}/bin/criu"
@@ -13,13 +12,9 @@
 
   programs.criu.enable = true;
 
-  # Write k3s containerd config template using an activation script so it runs
-  # on every nixos-rebuild switch (not just at k3s start). This ensures the
-  # template is always up-to-date on disk before k3s next reads it.
-  #
-  # k3s reads config.toml.tmpl instead of generating its default config.toml.
-  # The template uses containerd v3 format (k3s >= 1.32 / containerd >= 2.0).
-  # runc remains the default runtime; crun is added for RuntimeClass "crun".
+  # An activation script, not a unit, so the template is refreshed on every switch
+  # rather than only at k3s start. k3s reads config.toml.tmpl in place of its own
+  # generated config.toml; v3 format (k3s >= 1.32). runc stays the default runtime.
   system.activationScripts.k3s-containerd-crun = {
     text = let
       crunBin = "${pkgs.crun}/bin/crun";
@@ -83,7 +78,8 @@ TOML
     '';
   };
 
-  # Backwards-compatible no-op service (activation script replaced this).
+  # FIXME: dead (the activation script above does the work). Blocked until a cycle
+  # allowed to break drvPath parity — removing it moves both hosts' derivation.
   systemd.services.k3s-containerd-config = {
     description = "Write k3s containerd runtime config template";
     wantedBy = [ "k3s.service" ];

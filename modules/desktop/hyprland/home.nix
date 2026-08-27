@@ -194,13 +194,11 @@ in
         # Window cycling with visual selector (like macOS Command+Tab)
         "$mod, Tab, exec, rofi -show window"
 
-        # Simple window cycling (current workspace only)
         "$mod CTRL, Tab, cyclenext,"
         "$mod CTRL, Tab, bringactivetotop,"
         "$mod CTRL SHIFT, Tab, cyclenext, prev"
         "$mod CTRL SHIFT, Tab, bringactivetotop,"
 
-        # Minimize
         "$mod, N, movetoworkspacesilent, special:minimized"
         "$mod SHIFT, N, togglespecialworkspace, minimized"
 
@@ -240,7 +238,6 @@ in
         "$mod CTRL, 9, movetoworkspacesilent, 9"
         "$mod CTRL, 0, movetoworkspacesilent, 10"
 
-        # Mouse scroll
         "$mod, mouse_down, workspace, e+1"
         "$mod, mouse_up, workspace, e-1"
 
@@ -252,29 +249,21 @@ in
         "$mod SHIFT, P, exec, ~/.config/hypr/scripts/screenshot.sh sf"
         "$mod CTRL, P, exec, ~/.config/hypr/scripts/screenshot.sh m"
 
-        # Screen recording
         "$mod SHIFT, R, exec, ~/.config/hypr/scripts/screen-record.sh a"
         "$mod CTRL, R, exec, ~/.config/hypr/scripts/screen-record.sh m"
 
-        # Clipboard manager
         "$mod, V, exec, ~/.config/hypr/scripts/ClipManager.sh"
 
-        # Wallpaper selector
         "$mod SHIFT, W, exec, ~/.config/hypr/scripts/wallpaper-select.sh"
 
-        # Keybinds help
         "$mod, question, exec, ~/.config/hypr/scripts/keybinds.sh"
 
-        # Notifications
         "$mod SHIFT, N, exec, swaync-client -t -sw"
 
-        # Color picker
         "$mod SHIFT, C, exec, hyprpicker -a"
 
-        # Lock screen
         "$mod, escape, exec, hyprlock"
 
-        # Alt-Tab (simple focus cycling)
         "ALT, Tab, movefocus, d"
       ];
 

@@ -15,8 +15,6 @@ in
   sam.profile = vars;
   sam.secrets.enable = true;
 
-  # Headless is the only boot mode: this is a k3s worker with no GUI.
-
   # Sole worker — an unattended reboot is a total cluster outage (the reserved
   # taint strands DNS, kyverno and ntfy, so paging dies with it). Upgrades still
   # build and activate; the reboot is operator-initiated.

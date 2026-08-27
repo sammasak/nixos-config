@@ -36,7 +36,8 @@ echo "Verifying NixOS host configurations..."
 echo "========================================"
 
 for host in "${HOSTS[@]}"; do
-  build_host "$host"
+  # `set -e` would abort the loop on the first failure and skip the summary.
+  build_host "$host" || true
 done
 
 # Summary

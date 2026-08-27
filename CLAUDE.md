@@ -33,7 +33,7 @@ Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`)
 
 ### Flake Entry Point
 
-`flake.nix` is minimal (~49 lines). It recursively auto-imports all `.nix` files from `flake-modules/` using `collectFlakeModules`. The `flake-modules/` directory is numbered for load order:
+`flake.nix` is minimal. It recursively auto-imports all `.nix` files from `flake-modules/` using `collectFlakeModules`. The `flake-modules/` directory is numbered for load order:
 
 - `00-flake-parts-modules.nix` — flake-parts setup
 - `10-systems.nix` — supported systems
@@ -83,8 +83,9 @@ NixOS - niri     ← Desktop mode, niri compositor instead of Hyprland
 The cross-mode specialisations were removed on 2026-08-27: lenovo's `server`
 entry (and `modules/specialisations/server.nix` with it) and acer-swift's
 `desktop` entry. Neither had been booted, and each cost a second full system
-closure on every rebuild — about 5 GiB on the worker. Both host files carry a
-comment recording how to restore them.
+closure on every rebuild — about 5 GiB on the worker. To restore either, read
+the removal commit; per the Comment Policy the host files do not carry undo
+instructions.
 
 **One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
 `modules/specialisations/desktop.nix`; the default is `false`, so a host that
@@ -301,6 +302,11 @@ Never:
 - explain how to restore something you deleted — `git log` owns that, and a
   commit message is the right place for the why of a deletion
 - keep a commented-out config block "in case"
+- label a single setting with its own name (`# Cursor` above `cursor_shape`)
+
+One exception to the last point: a bare label heading **four or more** related
+entries in a long flat list — `packages.nix`'s groups, hyprland's keybind
+sections — is navigation, not restatement, and stays.
 
 Long rationale goes to the knowledge vault, and the code keeps a single pointer:
 
@@ -312,17 +318,23 @@ The pointer must name a file that **exists**. Check before you write it; the
 board prune of 2026-08-25 left several in-code references to deleted tickets
 pointing at nothing.
 
-Files that already hit the target style — read one before writing a comment,
-and leave them alone:
+Comments that hit the target style — read one before writing your own. Anchored
+to what they sit above, not to a line number, because line numbers rot:
 
-- `modules/core/wifi.nix:1-14` — a header that is entirely consequence
-- `modules/homelab/k3s/default.nix:110-115` — why the eviction thresholds are
-  what they are
-- `modules/homelab/k3s/default.nix:143-145` — a flag that fatals on the wrong role
-- `modules/homelab/k3s/default.nix:180-183` — why Cilium interfaces must be trusted
+- `modules/core/wifi.nix`, file header — why declarative WiFi exists, in three
+  lines, with the incident in the vault
+- `modules/homelab/k3s/default.nix`, above the `eviction-hard`/`eviction-soft`
+  kubelet args — why those thresholds and not the k3s defaults
+- `modules/homelab/k3s/default.nix`, above the `taintControlPlane` flag block —
+  `--disable-kube-proxy` is server-only and *fatals* on an agent
+- `modules/homelab/k3s/default.nix`, above `trustedInterfaces` — why the host
+  firewall must not filter Cilium's datapath interfaces
+- `lib/firewall.nix`, file header — why both backends are always emitted
 
-`just bench` records the repo-wide comment ratio in `metrics/history.jsonl`. The
-target band is 7–13%; above that, the file is narrating itself.
+`just bench` records the comment ratio in `metrics/history.jsonl`, measured over
+nix-code lines (the body of `''` strings is excluded from both sides of the
+fraction, so moving an inline script out to a real file neither helps nor hurts
+the number). The target band is 7–13%; above that, the file is narrating itself.
 
 ## Conventions
 

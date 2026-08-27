@@ -28,17 +28,22 @@ eval_host() {
   printf '%s\t%s\n' "$(((end - start) / 1000000))" "$drv"
 }
 
-# files, total lines, comment lines, largest file, median file — over every
-# .nix file in the worktree.
+# files, physical lines, nix-code lines, comment lines, largest file, median
+# file. See scripts/nix-comment-metrics.awk for what counts as a comment and
+# why the ratio is reported over nix-code lines.
 #
-# A comment line is one whose first non-blank character is '#' AND which is not
-# inside a Nix string. Both halves matter: trailing comments are deliberately
-# not counted (the metric tracks standalone commentary), and the string check
-# stops CSS id selectors in a `programs.waybar.style` block, or shell comments
-# in an inline script, from being scored as Nix commentary.
+# gawk is invoked once so it can aggregate; a second invocation from xargs
+# splitting on ARG_MAX would emit a second TSV row and the caller would silently
+# read only the first. The row count is checked rather than assumed.
 static_metrics() {
-  find . -name '*.nix' -not -path './.git/*' -print0 |
-    xargs -0 gawk -f scripts/nix-comment-metrics.awk
+  local files rows
+  mapfile -d '' files < <(find . -name '*.nix' -not -path './.git/*' -print0)
+  rows=$(gawk -v verify=1 -f scripts/nix-comment-metrics.awk "${files[@]}")
+  if [ "$(wc -l <<<"$rows")" -ne 1 ]; then
+    echo "static_metrics: gawk produced $(wc -l <<<"$rows") rows, expected 1" >&2
+    return 1
+  fi
+  printf '%s\n' "$rows"
 }
 
 cmd_bench() {
@@ -67,24 +72,31 @@ cmd_bench() {
        }' <<<"$hostjson")
   done
 
-  local files total comments maxlines p50lines
-  IFS=$'\t' read -r files total comments maxlines p50lines < <(static_metrics)
+  local files total nixlines comments maxlines p50lines
+  IFS=$'\t' read -r files total nixlines comments maxlines p50lines < <(static_metrics)
 
   mkdir -p metrics
   jq -c -n \
     --arg sha "$(git rev-parse HEAD)" \
+    --arg dirty "$(git status --porcelain | wc -l)" \
+    --arg metricsTool "$(sha256sum scripts/nix-comment-metrics.awk | cut -c1-12)" \
     --arg timestamp "$(date -Iseconds)" \
-    --argjson files "$files" --argjson lines "$total" --argjson comments "$comments" \
+    --argjson files "$files" --argjson lines "$total" --argjson nixLines "$nixlines" \
+    --argjson comments "$comments" \
     --argjson maxFileLines "$maxlines" --argjson p50FileLines "$p50lines" \
     --argjson hosts "$hostjson" \
     '{
        sha: $sha,
+       dirtyPaths: ($dirty | tonumber),
+       metricsTool: $metricsTool,
        timestamp: $timestamp,
        static: {
          files: $files,
          lines: $lines,
+         nixLines: $nixLines,
          comments: $comments,
-         commentRatio: (($comments * 1000 / $lines | round) / 1000),
+         commentRatio: (($comments * 1000 / $nixLines | round) / 1000),
+         commentRatioPhysical: (($comments * 1000 / $lines | round) / 1000),
          maxFileLines: $maxFileLines,
          p50FileLines: $p50FileLines
        },
@@ -110,6 +122,17 @@ cmd_diff() {
     echo "only $n entry in $HISTORY — nothing to diff yet"
     return 0
   fi
+  # Two entries measured by different versions of the metric tool are not
+  # comparable, and that is exactly the mistake that is invisible in a table.
+  local tools
+  tools=$(tail -n 2 "$HISTORY" | jq -rs '[.[].metricsTool] | unique | length')
+  if [ "$tools" != "1" ]; then
+    echo "REFUSING to diff: the last two entries were measured by different" >&2
+    echo "versions of scripts/nix-comment-metrics.awk. Re-run the older tree" >&2
+    echo "through the current tool before comparing." >&2
+    return 1
+  fi
+
   tail -n 2 "$HISTORY" | jq -rs '
     def pct($a; $b):
       if $a == $b then "—"
@@ -124,8 +147,10 @@ cmd_diff() {
     [
       (["metric", "before", "after", "delta"] | @tsv),
       num("comment lines"; $a.static.comments; $b.static.comments),
+      num("nix code lines"; $a.static.nixLines; $b.static.nixLines),
       num("total lines"; $a.static.lines; $b.static.lines),
       num("comment ratio"; $a.static.commentRatio; $b.static.commentRatio),
+      num("ratio (all lines)"; $a.static.commentRatioPhysical; $b.static.commentRatioPhysical),
       num("nix files"; $a.static.files; $b.static.files),
       num("max file lines"; $a.static.maxFileLines; $b.static.maxFileLines),
       num("p50 file lines"; $a.static.p50FileLines; $b.static.p50FileLines)
