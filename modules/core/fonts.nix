@@ -6,11 +6,9 @@ lib.mkIf hasDesktop {
   fonts = {
     fontDir.enable = true;
     packages = with pkgs; [
-      # Nerd Fonts
       maple-mono.NF
       nerd-fonts.jetbrains-mono
 
-      # Normal Fonts
       noto-fonts
       noto-fonts-color-emoji
     ];

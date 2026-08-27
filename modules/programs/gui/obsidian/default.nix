@@ -1,8 +1,8 @@
 { lib, pkgs, ... }:
 
 {
-  # Obsidian GUI enabled only on desktop (import is conditional in home/default.nix)
-  # MCP server works on all hosts regardless (configured in claude-code/mcp.nix)
+  # The GUI is desktop-only (home/default.nix gates the import); the MCP server in
+  # claude-code/mcp.nix works on every host regardless.
   programs.obsidian = {
     enable = true;
     package = pkgs.obsidian;
@@ -21,7 +21,6 @@
         appearance = {
           baseFontSize = 16;
           nativeMenus = false;
-          # Will use Stylix theme colors via Catppuccin
         };
 
         corePlugins = [

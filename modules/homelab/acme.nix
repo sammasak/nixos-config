@@ -35,7 +35,6 @@ in
       defaults.email = cfg.email;
 
       certs."${cfg.dnsDomain}" = {
-        # DNS-01 validation via Cloudflare (no public exposure needed)
         dnsProvider = "cloudflare";
 
         # Use public DNS resolvers for SOA lookups so that cert renewal is not
@@ -57,7 +56,6 @@ in
       };
     };
 
-    # Ensure ACME services wait for secrets (Cloudflare token)
     systemd.services."acme-order-renew-${cfg.dnsDomain}" = {
       after = [ "sops-nix.service" ];
       wants = [ "sops-nix.service" ];

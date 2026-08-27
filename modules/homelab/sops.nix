@@ -57,14 +57,12 @@ in
         restartUnits = [ "flux-bootstrap.service" ];
       };
 
-      # Cloudflare API token for ACME DNS-01 validation
       secrets."cloudflare/api_token" = {
         sopsFile = cfg.cloudflareSecretsFile;
         path = "/run/secrets/cloudflare-api-token";
         mode = "0400";
       };
 
-      # Tailscale authkey for subnet router
       secrets."tailscale/authkey" = {
         sopsFile = cfg.tailscaleSecretsFile;
         path = "/run/secrets/tailscale-authkey";

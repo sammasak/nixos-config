@@ -325,16 +325,17 @@ to what they sit above, not to a line number, because line numbers rot:
   incident itself in the vault
 - `modules/homelab/k3s/default.nix`, above the `eviction-hard`/`eviction-soft`
   kubelet args — why those thresholds and not the k3s defaults
-- `modules/homelab/k3s/default.nix`, above the `taintControlPlane` flag block —
-  `--disable-kube-proxy` is server-only and *fatals* on an agent
+- `modules/homelab/k3s/default.nix`, inside the `cfg.cni == "cilium"` server
+  branch — `--disable-kube-proxy` is server-only and *fatals* on an agent
 - `modules/homelab/k3s/default.nix`, above `trustedInterfaces` — why the host
   firewall must not filter Cilium's datapath interfaces
 - `lib/firewall.nix`, file header — why both backends are always emitted
 
-**Comments inside a `''` string are out of scope for now.** They are rendered
-shell — `fish.nix`'s `interactiveShellInit`, the two inline programs in
-`nixos-rebuild-trigger.nix` — so editing one moves the derivation and breaks
-`just parity`. They get swept when those scripts move to real `.sh` files.
+**Comments inside a `''` string are out of scope for now — all of them.** They
+are rendered shell (the two inline programs in `nixos-rebuild-trigger.nix`,
+`cluster-watchdog.nix`, `flux.nix`, `k3s-db-snapshot.nix`, `fish.nix` and more),
+so editing one moves the derivation and breaks `just parity`. They get swept
+when those scripts move to real `.sh` files.
 The same reason there is no `nix fmt`: a formatter reindents `''` strings.
 
 `just bench` records the comment ratio in `metrics/history.jsonl`, measured over

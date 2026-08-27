@@ -40,7 +40,6 @@ in
     dates = [ "weekly" ];
   };
 
-  # Clean up home-manager backup files
   systemd.services.cleanup-hm-backups = {
     description = "Clean up old home-manager backup files";
     serviceConfig = {

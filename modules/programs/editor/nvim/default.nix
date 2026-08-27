@@ -22,7 +22,6 @@
 
       gitsigns-nvim
 
-      # Catppuccin theme (already available via Stylix)
       catppuccin-nvim
     ];
 

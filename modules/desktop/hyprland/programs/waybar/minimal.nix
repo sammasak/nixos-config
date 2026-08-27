@@ -1,5 +1,4 @@
-# Waybar - Status Bar for Hyprland
-# Minimal theme with Catppuccin Mocha colors
+# Waybar's style block below is CSS, not Nix — `#battery` there is an id selector.
 { pkgs, ... }:
 {
   programs.waybar = {

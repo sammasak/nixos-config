@@ -1,4 +1,3 @@
-# SwayNC - Notification Center for Wayland
 { pkgs, config, ... }:
 let
   colors = config.lib.stylix.colors.withHashtag;

@@ -1,4 +1,3 @@
-# Catppuccin Mocha Theme - Stylix configuration
 { pkgs, ... }:
 let
   wallpaper = ../../../assets/wallpapers/train-sideview.webp;

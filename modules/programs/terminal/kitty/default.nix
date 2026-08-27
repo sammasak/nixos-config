@@ -16,7 +16,6 @@
 
       scrollback_lines = 10000;
 
-      # Mouse
       mouse_hide_wait = 3;
       url_style = "curly";
       open_url_with = "default";
@@ -30,7 +29,6 @@
       initial_window_height = 400;
       window_padding_width = 5;
 
-      # Tab bar
       tab_bar_edge = "top";
       tab_bar_style = "powerline";
       tab_powerline_style = "slanted";
@@ -44,7 +42,6 @@
       wayland_titlebar_color = "background";
       linux_display_server = "wayland";
 
-      # Performance
       repaint_delay = 10;
       input_delay = 3;
       sync_to_monitor = true;

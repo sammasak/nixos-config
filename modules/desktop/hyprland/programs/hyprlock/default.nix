@@ -1,4 +1,3 @@
-# Hyprlock - Screen Locker for Hyprland
 { lib, config, ... }:
 let
   wallpaper = ../../../../../assets/wallpapers/train-sideview.webp;

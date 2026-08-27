@@ -1,4 +1,3 @@
-# direnv with nix-direnv — automatic per-project dev shells
 { ... }:
 {
   programs.direnv = {

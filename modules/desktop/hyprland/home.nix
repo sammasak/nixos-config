@@ -321,13 +321,10 @@ in
   };
 
   # Ensure swww is the only wallpaper daemon.
-  services.hyprpaper.enable = lib.mkForce false;
+  services.hyprpaper.enable = mkForce false;
 
-  # There was no polkit authentication agent in the session at all, so every
-  # privileged desktop action that asks for authorisation — NetworkManager
-  # editing a connection, udisks2 mounting a disk — had nowhere to render its
-  # prompt and simply failed. The Home Manager module wires up the user unit
-  # with the right libexec path and binds it to the Hyprland session target.
+  # Without an agent in the session every privileged desktop prompt — NetworkManager
+  # editing a connection, udisks2 mounting a disk — fails silently.
   services.hyprpolkitagent.enable = true;
 
   home.packages = [ pkgs.wdisplays ];

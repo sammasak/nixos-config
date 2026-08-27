@@ -1,4 +1,3 @@
-# Hypridle - Idle Management for Hyprland
 { ... }:
 {
   services.hypridle = {

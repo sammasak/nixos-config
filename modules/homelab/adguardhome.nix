@@ -124,8 +124,7 @@ in
       allowedTCPPorts = optionals cfg.tls.enable [ cfg.tls.dohPort cfg.tls.dotPort ];
     };
 
-    # Ensure AdGuard Home starts after ACME certificates are available
-    # and has permission to read them via SupplementaryGroups
+    # Without the ACME group AdGuard cannot read its own certificate.
     systemd.services.adguardhome = mkIf cfg.tls.enable {
       after = [ "acme-${cfg.tls.domain}.service" ];
       wants = [ "acme-${cfg.tls.domain}.service" ];

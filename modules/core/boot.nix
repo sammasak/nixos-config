@@ -1,7 +1,6 @@
 { pkgs, lib, ... }:
 {
   boot = {
-    # Filesystems support
     supportedFilesystems = [
       "ntfs"
       "exfat"
@@ -46,7 +45,6 @@
         });
       };
     };
-    # Appimage Support
     binfmt.registrations.appimage = {
       wrapInterpreterInShell = false;
       interpreter = "${pkgs.appimage-run}/bin/appimage-run";

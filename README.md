@@ -16,9 +16,7 @@ Personal NixOS + Home Manager configuration. A work in progress as I learn the N
 | `acer-swift` | Laptop run headless as the sole k3s worker | Headless only |
 | `lenovo-21CB001PMX` | Daily-driver laptop and k3s control plane | Hyprland desktop (default), `niri` |
 
-The cross-mode specialisations (`lenovo`'s `server` entry, `acer-swift`'s
-`desktop` entry) were removed on 2026-08-27 — neither had ever been booted, and
-each cost a second full system closure on every rebuild.
+Neither host has a cross-mode boot entry; see CLAUDE.md, Desktop vs Server Mode.
 
 ## Structure
 
@@ -41,11 +39,11 @@ the tie-breaker.
 | `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `terminal/` |
 | `modules/themes/` | Catppuccin via Stylix | |
 | `lib/` | Pure helpers, no module semantics | `users.nix` (git identity, SSH keys), `firewall.nix` (dual-backend rule builder) |
-| `scripts/` | Repo tooling | `verify-all-hosts.sh`, `bench.sh` |
+| `scripts/` | Repo tooling | `verify-all-hosts.sh`, `bench.sh`, `nix-comment-metrics.awk` |
 | `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
 | `docs/` | Superseded design docs | Banner-marked; kept for history, not current |
-| `Justfile` | Task entry points | `verify`, `check`, `bench`, `bench-diff`, `parity` |
+| `Justfile` | Task entry points | `verify`, `check`, `bench`, `bench-diff`, `parity`, plus registry recipes |
 | `assets/`, `dotfiles/` | Wallpapers; plain config files symlinked verbatim | |
 | `pkgs/` | Packages not in nixpkgs | Exposed through an overlay in `flake-modules/` |
 

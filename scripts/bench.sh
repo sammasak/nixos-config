@@ -36,9 +36,9 @@ eval_host() {
 # splitting on ARG_MAX would emit a second TSV row and the caller would silently
 # read only the first. The row count is checked rather than assumed.
 static_metrics() {
-  local files rows
-  mapfile -d '' files < <(find . -name '*.nix' -not -path './.git/*' -print0)
-  rows=$(gawk -v verify=1 -f scripts/nix-comment-metrics.awk "${files[@]}")
+  local nixfiles rows
+  mapfile -d '' nixfiles < <(find . -name '*.nix' -not -path './.git/*' -print0)
+  rows=$(gawk -v verify=1 -f scripts/nix-comment-metrics.awk "${nixfiles[@]}")
   if [ "$(wc -l <<<"$rows")" -ne 1 ]; then
     echo "static_metrics: gawk produced $(wc -l <<<"$rows") rows, expected 1" >&2
     return 1

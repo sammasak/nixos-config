@@ -25,7 +25,6 @@
     };
   };
 
-  # Set environment variables for consistent dark mode detection
   home.sessionVariables = {
     GTK_THEME = "Adwaita:dark";
   };
