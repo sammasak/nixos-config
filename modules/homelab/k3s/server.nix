@@ -71,7 +71,6 @@ in
       );
     };
 
-    # Additional server tools
     environment.systemPackages = with pkgs; [
       fluxcd        # GitOps toolkit
       sops          # Secret management

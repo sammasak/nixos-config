@@ -1,13 +1,7 @@
-# Claude Code shared configuration — settings, plugins, MCP servers, NixOS fixes
-#
-# Injected into every host via home-manager.sharedModules in 40-outputs-nixos.nix.
-# Uses the upstream programs.claude-code Home Manager module.
-#
-# Usage (in 40-outputs-nixos.nix):
-#   (import ../modules/programs/cli/claude-code/mcp.nix inputs.claude-code-skills)
-#
-# Hooks are wired via Nix store paths so they are available on all hosts
-# regardless of what HOME is.
+# Claude Code settings, plugins and NixOS fixes, injected into every host via
+# home-manager.sharedModules. Takes the claude-code-skills flake input as its
+# first argument, so it is imported applied:
+#   (import .../claude-code/mcp.nix inputs.claude-code-skills)
 skillsSrc:
 { pkgs, lib, config, ... }:
 {
@@ -33,24 +27,12 @@ skillsSrc:
         "frontend-design@claude-plugins-official" = true;
         "context7@claude-plugins-official" = true;
       };
-      # NOTE (2026-08-08): MCP servers are NOT configured here. Claude Code does
-      # not read `mcpServers` from settings.json — it only loads them from a
-      # project `.mcp.json`, `~/.claude.json` (per-project/user), or --mcp-config
-      # (confirmed via `claude mcp list` returning none). The old block here also
-      # named the wrong binary (`mcp-server-playwright`; the actual bin is
-      # `playwright-mcp`) and pinned a store path whose bin is now empty.
-      # Playwright is configured per-project instead, e.g. ~/herman/.mcp.json:
-      #   { "mcpServers": { "playwright": { "type": "stdio", "command": "npx",
-      #     "args": ["-y","@playwright/mcp@latest","--headless","--no-sandbox",
-      #     "--executable-path","/run/current-system/sw/bin/chromium",
-      #     "--user-data-dir","/tmp/playwright-mcp-herman"] } } }
-      # (system chromium on a stable profile path; npx fetches only the JS server).
-      # Hooks are wired from the claude-code-skills Nix store path so they are
-      # available on every host.
-      # check-goals.sh no-ops when goals.json is absent.
-      # validate-bash.sh's agent-specific rules are guarded on a directory that
-      # no longer exists on any host, so they never fire.
-      # validate-manifest.sh works on all hosts.
+      # No `mcpServers` here: Claude Code ignores it in settings.json and reads
+      # MCP servers only from a project `.mcp.json`, `~/.claude.json`, or
+      # --mcp-config. Add servers per project.
+      #
+      # Hook commands are Nix store paths from the claude-code-skills input, so
+      # they resolve on every host regardless of HOME.
       hooks = {
         UserPromptSubmit = [{
           hooks = [{

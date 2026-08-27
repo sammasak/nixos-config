@@ -85,10 +85,8 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Enable homelab secrets for cluster token
     homelab.secrets.enable = true;
 
-    # Ensure token file is specified
     assertions = [
       {
         assertion = cfg.tokenFile != null;
@@ -158,24 +156,20 @@ in
       ];
     };
 
-    # Common packages for all k3s nodes
     environment.systemPackages = with pkgs; [
       kubectl
       kubernetes-helm
       k9s
     ];
 
-    # Ensure required kernel modules
     boot.kernelModules = [ "br_netfilter" "overlay" ];
 
-    # Required sysctl settings for Kubernetes
     boot.kernel.sysctl = {
       "net.bridge.bridge-nf-call-iptables" = 1;
       "net.bridge.bridge-nf-call-ip6tables" = 1;
       "net.ipv4.ip_forward" = 1;
     };
 
-    # Common firewall rules
     networking.firewall = {
       # Cilium owns pod connectivity on its own datapath interfaces. The NixOS
       # host firewall must NOT filter traffic on them, or host<->pod packets
