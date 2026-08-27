@@ -154,6 +154,7 @@ Secret scopes in `secrets/.sops.yaml`:
 |--------------|-----------|---------|
 | `homelab/*.yaml` | Personal + 2 hosts + Flux | k3s, Cloudflare, Flux keys, Tailscale authkey |
 | `claude/*.yaml` | Personal + 2 hosts | Claude Code OAuth token |
+| `cosign.key` | Personal only | Image-signing key used by `just sign` |
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in bash shell init via `modules/programs/cli/claude-code/mcp.nix`.
 
@@ -293,6 +294,7 @@ is one of these four:
 | **(b) An upstream doc link** | `# https://wiki.hyprland.org/Configuring/Variables/#input` |
 | **(c) A FIXME with the specific blocker** | `# FIXME: waiting on nixpkgs#123456; the module asserts on empty extraCommands.` |
 | **(d) A one-line justification for a pin or override** | `# mkForce: the desktop module sets this too and we must win.` |
+| **(e) A file header, only when it carries a fact the path does not** | `# Common k3s configuration shared between server and agent` |
 
 Never:
 
@@ -302,6 +304,7 @@ Never:
 - explain how to restore something you deleted — `git log` owns that, and a
   commit message is the right place for the why of a deletion
 - keep a commented-out config block "in case"
+- head a file with its own path (`# Boot configuration` in `core/boot.nix`)
 - label a single setting with its own name (`# Cursor` above `cursor_shape`)
 
 One exception to the last point: a bare label heading **four or more** related
@@ -337,6 +340,10 @@ are rendered shell (the two inline programs in `nixos-rebuild-trigger.nix`,
 so editing one moves the derivation and breaks `just parity`. They get swept
 when those scripts move to real `.sh` files.
 The same reason there is no `nix fmt`: a formatter reindents `''` strings.
+
+The ratio counts only lines that *start* with `#`. Trailing comments are
+invisible to it, so `foo # restates foo` is a violation the number will never
+flag — judge those by reading.
 
 `just bench` records the comment ratio in `metrics/history.jsonl`, measured over
 nix-code lines (the body of `''` strings is excluded from both sides of the

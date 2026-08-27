@@ -3,10 +3,8 @@
 # Which option is read depends on the backend — `extraInputRules` for nftables,
 # `extraCommands` for iptables (nftables asserts that one is empty, hence the
 # guard). Writing only one is silently INERT on the other: an nftables-only SSH
-# rule once left port 22 open to anything routable, with no warning.
-#
-# Scoped ports deliberately do NOT go in `allowedTCPPorts`, which accepts from
-# any source.
+# rule once left port 22 open to anything routable, with no warning. Scoped
+# ports also stay out of `allowedTCPPorts`, which accepts from any source.
 lib:
 let
   inherit (lib) concatMapStrings concatStringsSep head length optional optionalString;

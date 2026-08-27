@@ -1,6 +1,4 @@
-# User identity configuration
-# Define user-specific data here (git credentials, SSH keys, etc.)
-# Referenced by flake.nix when defining hosts
+# Imported by flake-modules/40-outputs-nixos.nix and exposed as `sam.userConfig`.
 
 {
   lukas = {

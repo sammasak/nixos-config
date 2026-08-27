@@ -48,9 +48,9 @@ in
     };
 
     environment.systemPackages = with pkgs; [
-      fluxcd        # GitOps toolkit
-      sops          # Secret management
-      age           # Encryption for sops
+      fluxcd
+      sops
+      age
     ];
 
     # local-storage is replaced by a resource-limited copy in k3s-manifests below.

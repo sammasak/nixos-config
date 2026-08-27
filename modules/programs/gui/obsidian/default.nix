@@ -42,8 +42,8 @@
     };
   };
 
-  # Clone knowledge repository if it doesn't exist
-  # This ensures all hosts have a proper git repository, not symlinked files
+  # A real clone, not a Home Manager symlink: the vault must be a writable git
+  # repository on every host.
   home.activation.cloneKnowledgeVault = lib.hm.dag.entryAfter ["writeBoundary"] ''
     VAULT_DIR="$HOME/knowledge"
     VAULT_REPO="git@github.com:sammasak/knowledge.git"

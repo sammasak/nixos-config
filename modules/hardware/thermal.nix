@@ -127,15 +127,15 @@ in
       levels =
         if cfg.profile == "quiet" then [
           # Quiet profile: fan stays off below 60C, then ramps gradually.
-          [ 0     0   60 ]   # Fan off up to 60°C
-          [ 1    57   65 ]   # Level 1: 57-65°C
-          [ 2    62   70 ]   # Level 2: 62-70°C
-          [ 3    67   75 ]   # Level 3: 67-75°C
-          [ 4    72   80 ]   # Level 4: 72-80°C
-          [ 5    77   85 ]   # Level 5: 77-85°C
-          [ 6    82   90 ]   # Level 6: 82-90°C
-          [ 7    87   95 ]   # Level 7: 87-95°C (max)
-          [ "level full-speed" 93 32767 ]  # Emergency
+          [ 0     0   60 ]
+          [ 1    57   65 ]
+          [ 2    62   70 ]
+          [ 3    67   75 ]
+          [ 4    72   80 ]
+          [ 5    77   85 ]
+          [ 6    82   90 ]
+          [ 7    87   95 ]
+          [ "level full-speed" 93 32767 ]
         ]
         else if cfg.profile == "balanced" then [
           [ 0     0   50 ]

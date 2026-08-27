@@ -291,8 +291,8 @@ Template:
 
 ```nix
 { config, lib, ... }:
-with lib;
 let
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.homelab.myservice;
 in
 {

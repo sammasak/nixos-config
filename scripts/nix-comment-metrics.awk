@@ -14,6 +14,10 @@
 # selectors in a waybar style block and from shell comments inside an inline
 # `script = ''...''`. Both look like `^\s*#` to grep; neither is Nix.
 #
+# Trailing comments (`foo # why`) are NOT counted. They are usually annotation
+# rather than commentary, but the consequence is a real blind spot: a trailing
+# restatement never shows up in the ratio.
+#
 # The scanner tracks `''` indented strings (honouring the ''', ''$ and ''\
 # escapes), "..." strings, and `${...}` antiquotation — including a `''` string
 # opened inside an antiquotation inside another `''` string, which this tree
