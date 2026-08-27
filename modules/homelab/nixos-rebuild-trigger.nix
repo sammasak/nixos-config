@@ -1,87 +1,17 @@
-# Non-interactive nixos-rebuild trigger for the homelab board worker.
-#
-# Problem: the improvement-loop agents run Claude Code inside a bubblewrap sandbox
-# where setuid is stripped, so `sudo nixos-rebuild` fails even with a NOPASSWD
-# rule. Polkit has the same limitation. They need a non-interactive way to deploy
-# a config change to the lenovo control plane.
-#
-# SECURITY MODEL (devex-052 rework):
-#   This grants the trigger principal NON-INTERACTIVE CONTROL-PLANE DEPLOY. That
-#   is a deliberate trust choice. The hardening below removes the arbitrary-root
-#   execution hole and adds deploy safety, but it cannot remove the underlying
-#   trust: anyone who can write the request file can deploy any committed,
-#   pushed revision of sammasak/nixos-config to lenovo. Gate the first uses
-#   behind human approval.
-#
-#   1. PINNED, INTEGRITY-CHECKED SOURCE. The rebuild does NOT read the
-#      agent-writable local clone (/home/lukas/nixos-config). It rebuilds from
-#      `github:sammasak/nixos-config/<rev>#lenovo`, where <rev> is a 40-char git
-#      SHA supplied in the request. nix fetches that exact immutable commit fresh
-#      from the remote and verifies it; the triggering agent cannot mutate the
-#      Nix that runs as root. A floating ref (branch name) is rejected - only a
-#      full commit SHA is accepted, so the deployed tree is reproducible and
-#      auditable. The private repo is fetched using root's existing nix.conf
-#      `access-tokens` line (sourced from SOPS at /run/secrets/nix_access_token);
-#      no token is hardcoded here.
-#
-#   2. HEALTH-GATED with AUTOMATIC ROLLBACK, RUN OUT-OF-BAND. We `nixos-rebuild
-#      boot` the new generation (staged as the next-boot default but NOT
-#      activated), then activate it live with `switch-to-configuration switch`.
-#      A post-activation health gate checks: k3s API on :6443, sshd listening on
-#      :22, and DNS resolution. If any check fails within the timeout, we
-#      automatically roll back: re-activate the previous generation and reset it
-#      as the boot default. No bare `switch` without recovery is ever used.
-#
-#      CRITICAL: the activation tail does NOT run inside this service.
-#      `switch-to-configuration` stops every unit whose definition changed — and
-#      nixos-rebuild-trigger.service is itself part of the configuration being
-#      activated. Running the switch inline meant the switch SIGTERM'd the shell
-#      that was running it, mid-stop-phase. Observed 2026-08-26: the deployed rev
-#      changed this very unit, so the stop phase listed
-#      "k3s.service, nixos-rebuild-trigger.service, polkit.service", killed the
-#      switch (status=15/TERM), and activation aborted AFTER stopping units and
-#      BEFORE the start phase. k3s stayed down; no result was ever written; the
-#      health gate and rollback never ran. The deploy safety net was itself
-#      destroyed by the deploy.
-#
-#      So once the build succeeds, this service hands the remaining work to a
-#      DETACHED transient unit (`systemd-run --unit=nixos-rebuild-activation`)
-#      and exits. A transient unit lives in /run/systemd/transient and is not
-#      part of any generation's unit set, so switch-to-configuration neither
-#      knows nor cares about it and can never stop it. The trigger service
-#      records `staged-and-activating`; the transient unit writes the final
-#      result.
-#
-#   3. DEPLOY LOCK. A flock on a persistent lockfile serializes deploys so two
-#      triggers (or a deploy racing other Nix work) cannot overlap. A concurrent
-#      request is rejected rather than queued. The lock is re-acquired by the
-#      activation unit across the handoff - see the comment there.
-#
-#   4. APPEND-ONLY AUDIT LOG outside /run, at /var/log/nixos-rebuild-trigger.log
-#      (root-owned, 0640). Each line records timestamp, requester, resolved rev,
-#      and result. /run/.../result remains as a transient status file for pollers.
-#
-# Trigger (from improvement-loop agent or board worker SSH):
-#   printf 'requester=board-worker\nrev=<40-char-git-sha>\n' \
-#     > /run/nixos-rebuild-trigger/request
-#
-# Poll result. NOTE: `status=staged-and-activating` is NOT terminal - it means
-# the build is done and the detached activation unit has taken over. Poll until
-# the status is one of: success, failed-build, failed-activate-rolledback,
-# failed-health-rolledback, failed-activation-lock, rejected-bad-rev,
-# rejected-locked, rejected-activating.
-#   grep -m1 'status=' /run/nixos-rebuild-trigger/result
-#   systemctl status nixos-rebuild-activation.service   # while it runs
-#   journalctl -t nixos-rebuild-activation
+# Path-activated, health-gated nixos-rebuild for a non-interactive deployer.
+# Enabling this grants the trigger principal CONTROL-PLANE DEPLOY: anyone who can
+# write /run/nixos-rebuild-trigger/request can deploy any pushed revision of
+# sammasak/nixos-config to this host. The rebuild source is a pinned 40-char SHA
+# fetched from the remote, never the local clone. Never deploy a change to THIS
+# module through the trigger itself.
+# See vault: homelab/decisions/ADR-024-nixos-rebuild-trigger-security-model.md
 { config, lib, pkgs, ... }:
 let
   inherit (lib) mkEnableOption mkIf mkOption types;
   cfg = config.homelab.nixosRebuildTrigger;
   username = config.sam.profile.username;
-  # The primary group of the trigger principal. Resolved from the user rather
-  # than assumed to be eponymous: NixOS gives a normal user the shared `users`
-  # group by default, so `${username}` is NOT a group that exists. A tmpfiles
-  # rule naming a non-existent group is silently useless.
+  # Resolved, not assumed eponymous: NixOS gives a normal user the shared `users`
+  # group, and a tmpfiles rule naming a non-existent group is silently useless.
   triggerGroup = config.users.users.${username}.group;
   triggerDir = "/run/nixos-rebuild-trigger";
   triggerFile = "${triggerDir}/request";
@@ -90,9 +20,8 @@ let
   lockFile = "/var/lib/nixos-rebuild-trigger/deploy.lock";
   activationUnit = "nixos-rebuild-activation";
 
-  # Tools needed by both the trigger service and the detached activation script.
-  # The activation script runs under a transient unit with no inherited PATH, so
-  # it cannot rely on the service's `path =` list and sets its own from this.
+  # Shared by both units. The activation script runs under a transient unit with
+  # no inherited PATH, so it cannot use the service's `path =` and sets its own.
   runtimePkgs = with pkgs; [
     nixos-rebuild
     git
@@ -106,17 +35,10 @@ let
     systemd
   ];
 
-  # ── The activation tail, extracted so it can run OUT OF BAND ──────────────
-  # Everything from "activate the staged generation" onwards lives here:
-  # switch-to-configuration, the post-activation health gate, rollback, and the
-  # result/audit writes for those phases.
-  #
-  # This is deliberately NOT part of the trigger service's script. See note 2 in
-  # the header: switch-to-configuration stops units whose definitions changed,
-  # the trigger service is one of them, and running the switch inline meant the
-  # switch killed itself mid-stop-phase and left the machine half-activated.
-  # Launched via `systemd-run` it lives in a transient unit that no generation
-  # owns, so the switch cannot stop it.
+  # The activation tail — switch, health gate, rollback — runs OUT OF BAND under
+  # a transient unit. It cannot live in the trigger service: switch-to-
+  # configuration stops every unit whose definition changed, the trigger service
+  # is one of them, and an inline switch SIGTERMs itself mid-stop-phase.
   #
   # Args: PREV_SYSTEM REQUESTER REV TS
   activationScript = pkgs.writeShellScript "nixos-rebuild-activate" ''
@@ -252,34 +174,18 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Trigger directory: writable by the primary user so bubblewrap agents and
-    # the board worker (via SSH) can write the request file without sudo.
-    #
-    # WHO CAN TRIGGER: any member of the `${triggerGroup}` group. This is the
-    # documented trust boundary for devex-052. Tightening to a dedicated,
-    # narrowly-scoped service identity (e.g. a `board-deploy` group with only the
-    # board worker's SSH key) is recommended as a follow-up; doing so only
-    # requires changing the group here and in the provisioning unit below.
+    # WHO CAN TRIGGER: any member of `${triggerGroup}` — 0770 is what makes the
+    # request file writable without sudo, and it is the whole trust boundary.
     systemd.tmpfiles.rules = [
       "d ${triggerDir} 0770 root ${triggerGroup} -"
       # Persistent state dir for the deploy lock (survives reboots, outside /run).
       "d /var/lib/nixos-rebuild-trigger 0700 root root -"
     ];
 
-    # The tmpfiles rule above is NOT sufficient on its own, for two reasons:
-    #
-    #   1. /run is a tmpfs, and tmpfiles rules for it are applied only by
-    #      systemd-tmpfiles-setup.service at BOOT. A `nixos-rebuild switch` that
-    #      introduces or changes a /run rule renders the new
-    #      /etc/tmpfiles.d/00-nixos.conf but does not re-run that service, so the
-    #      directory stays missing — and the trigger stays dead — until the next
-    #      reboot. That is exactly how this module shipped broken: the deployed
-    #      generation carried the rule while the booted one did not.
-    #   2. Nothing recreates the directory if it is removed mid-boot.
-    #
-    # This oneshot closes both gaps. It is pulled in by multi-user.target, so
-    # activation starts it during a switch, and the path watcher orders itself
-    # after it so the watch can never be armed against a missing directory.
+    # The tmpfiles rule alone is not enough: /run rules are applied only at boot
+    # by systemd-tmpfiles-setup, so a switch that introduces one leaves the
+    # directory missing — and the trigger dead — until the next reboot. That is
+    # how this module first shipped broken. This oneshot runs during activation.
     systemd.services.nixos-rebuild-trigger-dir = {
       description = "Provision the nixos-rebuild trigger request directory";
       wantedBy = [ "multi-user.target" ];
@@ -293,7 +199,6 @@ in
       '';
     };
 
-    # Arm when request file exists; activate the rebuild service.
     systemd.paths.nixos-rebuild-trigger = {
       description = "Board-worker nixos-rebuild trigger (path watch)";
       wantedBy = [ "multi-user.target" ];
@@ -304,9 +209,7 @@ in
       pathConfig.PathExists = triggerFile;
     };
 
-    # Privileged oneshot: validates the request, rebuilds from a PINNED remote
-    # rev under a deploy lock, health-gates the activation, and auto-rolls-back
-    # on failure. Audit trail: append-only ${auditLog} + journald + resultFile.
+    # Audit trail: append-only ${auditLog}, journald, and ${resultFile} for pollers.
     systemd.services.nixos-rebuild-trigger = {
       description = "Pinned, health-gated nixos-rebuild (board-worker trigger)";
       after = [ "nix-daemon.service" "network-online.target" "nixos-rebuild-trigger-dir.service" ];
