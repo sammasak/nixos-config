@@ -65,28 +65,33 @@ The wiring: `flake-modules/hosts/<name>.nix` reads `variables.nix` and creates a
 
 ### Desktop vs Server Mode
 
-Desktop mode (Hyprland + SDDM + Waybar/Rofi/theming + GUI apps) and headless
-server mode are boot-menu variants. **The default differs per host** — each one
-boots into whichever mode it spends most of its life in, and carries the other
-as a specialisation:
+Desktop mode is Hyprland + SDDM + Waybar/Rofi/theming + GUI apps; headless mode
+is simply its absence. **Each host has exactly one mode**, chosen by whether it
+imports `modules/specialisations/desktop.nix` in its default boot:
 
-| Host | Default boot | Specialisations |
-|------|--------------|-----------------|
-| `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | `server` (headless), `niri` (compositor trial) |
-| `acer-swift` | **server** (headless k3s worker) | `desktop` |
+| Host | Mode | Specialisations |
+|------|------|-----------------|
+| `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | `niri` (compositor trial) |
+| `acer-swift` | **headless** (k3s worker) | none |
 
-Boot menu on lenovo, for example:
+Boot menu on lenovo:
 ```
 NixOS (default)  ← Desktop mode
-NixOS - server   ← Headless
 NixOS - niri     ← Desktop mode, niri compositor instead of Hyprland
 ```
 
+The cross-mode specialisations were removed on 2026-08-27: lenovo's `server`
+entry (and `modules/specialisations/server.nix` with it) and acer-swift's
+`desktop` entry. Neither had been booted, and each cost a second full system
+closure on every rebuild — about 5 GiB on the worker. Both host files carry a
+comment recording how to restore them.
+
 **One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
-`modules/specialisations/desktop.nix` and force-cleared by
-`modules/specialisations/server.nix`. Fonts, GUI packages, desktop services and
-the Home Manager desktop imports all key off it. Do not gate new desktop-only
-config on `programs.hyprland.enable` — that ties it to one compositor.
+`modules/specialisations/desktop.nix`; the default is `false`, so a host that
+does not import that module is headless. Fonts, GUI packages, desktop services
+and the Home Manager desktop imports all key off it. Do not gate new
+desktop-only config on `programs.hyprland.enable` — that ties it to one
+compositor.
 
 ### Profile System (`sam.profile`)
 
@@ -105,7 +110,7 @@ build error if a `variables.nix` sets it):
 - `sshAuthorizedKeys` (list of str) — Authorized SSH public keys
 
 Sibling options, outside the profile:
-- `sam.desktop.enable` (bool) — whether a GUI desktop session is active (outside the profile because specialisations set it)
+- `sam.desktop.enable` (bool) — whether a GUI desktop session is active (outside the profile so `modules/specialisations/desktop.nix` can set it)
 - `sam.thermal.*` — fan/CPU thermal policy, see `modules/hardware/thermal.nix`
 - `sam.secrets.enable` (bool) — shared sops secrets, see `modules/core/sops.nix`
 - `sam.wifi.*` — declarative WiFi profile, see `modules/core/wifi.nix`
@@ -158,7 +163,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 | File | Scope | Purpose |
 |------|-------|---------|
 | `mcp.nix` | All NixOS hosts (shared HM module) | Settings, plugins, MCP servers, shebang fixes, SOPS token sourcing |
-| `default.nix` | All NixOS hosts (shared HM module) | Headless-agent settings, `~/Justfile` agent recipes, heartbeat unit. Written for the retired VM images and still applied everywhere; see "Known residue" below |
+| `default.nix` | All NixOS hosts (shared HM module) | First-boot `~/.claude.json` seed, tool-permissions block, `programs.fish.enable` |
 | `skills.nix` | All NixOS hosts (shared HM module) | Symlinks skills and agents from the `claude-code-skills` flake input |
 
 **Plugin configuration** (`mcp.nix`): Declares `enabledPlugins` (superpowers, ralph-loop, playwright, superpowers-lab) and MCP servers (playwright/chromium) in `programs.claude-code.settings`.
@@ -261,24 +266,29 @@ The KubeVirt workstation / claude-worker VM images were retired in 2026-08. The
 hosts (`workstation-template`, `claude-worker-template`), their image modules,
 the build/publish scripts and the `just build`/`publish`/`release` targets are
 gone. `pkgs/claude-ctl.nix`, the `claude-ctl` flake input and its overlay wiring
-were removed on 2026-08-26. Two things still survive the cull because they are
-wired into physical hosts and removing them is a behaviour change, not a
-deletion:
+were removed on 2026-08-26.
+
+The VM scaffolding inside `modules/programs/cli/claude-code/default.nix` — the
+`~/Justfile` of agent recipes, the `agent-heartbeat` user unit pointing at the
+deleted `workstations` namespace, and the fish `loginShellInit` that sourced
+`/etc/workstation/{agent-env,otel-env}` — was removed on 2026-08-27. That module
+still applies to every host via `sharedModules`, but now only seeds
+`~/.claude.json` and sets the tool-permissions block.
+
+One item survives the cull:
 
 | What | Why it is still here | Why it is dead weight |
 |------|---------------------|----------------------|
-| `modules/programs/cli/claude-code/default.nix` | Listed in `sharedModules` in `40-outputs-nixos.nix`, so it applies to every host. Also sets `programs.claude-code.settings.permissions` | Writes a `~/Justfile` of VM agent recipes, sources `/etc/workstation/agent-env`, and defines an `agent-heartbeat` user unit that annotates a `WorkspaceClaim` in the deleted `workstations` namespace. The unit has no `Install` section, so it never auto-starts |
-| `modules/programs/cli/codex/validate-bash.sh` | Shared Codex hook | Two of its rules only fire inside `/var/lib/claude-worker`, which no longer exists anywhere |
-
-Removing these two is a reasonable follow-up; it needs a decision about the
-permissions block, so it was kept out of the retirement commit.
+| `modules/programs/cli/codex/validate-bash.sh` | Shared Codex hook, and its other rules (force-push blocking) are live | Two of its rules only fire inside `/var/lib/claude-worker`, which no longer exists anywhere |
 
 ## Conventions
 
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.
-- **Desktop via specialisation**: desktop and server are boot-menu variants; the default is per-host (lenovo boots desktop, acer-swift boots server). Gate GUI config on `sam.desktop.enable`.
+- **Desktop is per-host, not a role**: lenovo imports `modules/specialisations/desktop.nix` in its default boot, acer-swift does not. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
 - **Firewall**: LAN CIDR defaults to `192.168.10.0/24` (override via `sam.profile.lanCidr`). SSH is key-only, no root login.
+- **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (currently claude-code, obsidian, unrar, vscode) — otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
+- **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` forces `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
 
 ## Adding a New Host

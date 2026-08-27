@@ -78,7 +78,7 @@ Roles are driven by `variables.nix`:
 
 - `roles = [ "base" "laptop" "homelab-server" ]` for the control-plane laptop
 - `roles = [ "base" "laptop" "homelab-agent" ]` for a worker node
-- GUI-ness is not a role: desktop and server are boot-menu specialisations, gated on `sam.desktop.enable`
+- GUI-ness is not a role: it is gated on `sam.desktop.enable`, which lenovo sets in its default boot and acer-swift leaves false
 
 ## Commands
 
