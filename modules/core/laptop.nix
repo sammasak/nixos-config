@@ -1,5 +1,8 @@
 # Laptop-specific configuration
-{ lib, ... }:
+{ config, lib, ... }:
+let
+  hasDesktop = config.sam.desktop.enable;
+in
 {
   imports = [
     ../hardware/thermal.nix
@@ -12,10 +15,15 @@
     profile = lib.mkDefault "balanced";
   };
 
-  programs.nm-applet.enable = true;
+  # Desktop-only: a tray applet needs a tray, and acpilight's backlight udev
+  # rules only matter to an interactive session. upower and
+  # power-profiles-daemon stay ungated — both are headless-useful (battery
+  # state, thermal/power policy).
+  programs.nm-applet.enable = hasDesktop;
+  hardware.acpilight.enable = hasDesktop;
+
   services.power-profiles-daemon.enable = true;
   services.upower.enable = true;
-  hardware.acpilight.enable = true;
 
   services.logind.settings.Login = {
     HandleLidSwitch = "suspend";

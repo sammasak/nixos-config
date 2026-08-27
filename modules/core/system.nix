@@ -202,7 +202,6 @@ in
       XDG_CONFIG_HOME = "$HOME/.config";
       XDG_DATA_HOME = "$HOME/.local/share";
       XDG_BIN_HOME = "$HOME/.local/bin";
-      PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
       # Makes Nixpkgs-wrapped Electron apps prefer Wayland in Wayland sessions.
       NIXOS_OZONE_WL = "1";
     };

@@ -3,7 +3,8 @@
 {
   hardware.graphics = {
     enable = true;
-    enable32Bit = true;
+    # No 32-bit GL consumers on these hosts. Re-enable for Steam/Wine.
+    enable32Bit = false;
     extraPackages = with pkgs; [
       intel-media-driver
       intel-vaapi-driver
