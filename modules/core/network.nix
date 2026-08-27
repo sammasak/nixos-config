@@ -1,4 +1,3 @@
-# Network configuration
 { config, pkgs, lib, ... }:
 let
   profile = config.sam.profile;
@@ -9,23 +8,15 @@ in
     hostName = profile.hostname;
     networkmanager.enable = true;
 
-    # Baseline firewall for EVERY host: SSH only.
-    #
-    # HTTP/HTTPS (80/443/8080) used to be opened here unconditionally. Those are
-    # cluster ingress ports and belong to the k3s path, so they now live in
-    # modules/homelab/k3s/default.nix behind `homelab.k3s.enable`. A plain
-    # desktop laptop that never joins the cluster therefore ends up SSH-only.
+    # Baseline firewall for EVERY host: SSH only. Cluster ingress ports live in
+    # modules/homelab/k3s/default.nix behind `homelab.k3s.enable`, so a laptop
+    # that never joins the cluster ends up SSH-only.
     firewall = {
       enable = true;
-      # SSH is scoped to LAN + loopback + tailnet through BOTH firewall
-      # backends (2026-08-26): `extraInputRules` covers a future nftables
-      # backend; `extraCommands` covers the iptables backend that is live
-      # today (the nftables-only rule alone was silently INERT — SSH was
-      # world-open to anything routable). `services.openssh.openFirewall`
-      # is disabled below so 22 never lands in allowedTCPPorts' any-source
-      # accept; tailscale0 sits in trustedInterfaces, so tailnet SSH is
-      # unaffected. Break-glass if a rule is ever wrong: the k8s API
-      # (root pod) path, or the console.
+      # SSH scoped to LAN + loopback, through BOTH backends. Writing only the
+      # nftables rule left SSH silently world-open to anything routable, because
+      # this tree runs the iptables backend. Break-glass if a rule is wrong: the
+      # k8s API (root pod) path, or the console.
       extraInputRules = ''
         # Allow SSH only from LAN subnet and loopback (nftables backend).
         iifname "lo" tcp dport 22 accept

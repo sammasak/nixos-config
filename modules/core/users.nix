@@ -1,4 +1,3 @@
-# User configuration with home-manager
 { config, pkgs, lib, ... }:
 let
   profile = config.sam.profile;

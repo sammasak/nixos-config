@@ -1,4 +1,3 @@
-# k3s server (control plane) module
 { config, lib, pkgs, ... }:
 
 let

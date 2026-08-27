@@ -1,4 +1,3 @@
-# Automation for system updates and cleanup
 { config, pkgs, ... }:
 let
   username = config.sam.profile.username;
@@ -23,10 +22,8 @@ in
     enable = true;
     flake = "github:sammasak/nixos-config/main";
     flags = [ "--print-build-logs" ];
-    # Sun 06:00: clear of the 03:00-04:05 nightly backup chain AND the Sun
-    # 05:00 flake-update timer — a nix build/switch inside the backup window
-    # on acer's single disk is the I/O-storm pattern from the 2026-08-26
-    # postmortem.
+    # Clear of the 03:00-04:05 backup chain and the Sun 05:00 flake-update timer:
+    # a build inside the backup window is the I/O storm that hung acer-swift.
     dates = "Sun 06:00";
     randomizedDelaySec = "45min";
     allowReboot = true;

@@ -1,4 +1,3 @@
-# Rofi - Application Launcher
 { pkgs, ... }:
 {
   programs.rofi = {

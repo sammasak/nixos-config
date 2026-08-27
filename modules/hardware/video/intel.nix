@@ -1,4 +1,3 @@
-# Intel Graphics Driver
 { pkgs, ... }:
 {
   hardware.graphics = {

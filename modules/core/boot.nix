@@ -1,4 +1,3 @@
-# Boot configuration
 { pkgs, lib, ... }:
 {
   boot = {
@@ -11,13 +10,8 @@
       "btrfs"
     ];
     tmp.cleanOnBoot = true;
-    # DECISION (ratified 2026-08-26, revisit if eBPF/Cilium breaks): stay on
-    # linuxPackages_latest on both hosts. Rationale: falco (the LTS argument's
-    # driver) is deleted; both machines are laptops whose iwlwifi stability has
-    # historically improved with newer kernels (the load-bearing WiFi self-heal
-    # was tuned against current kernels); the 2026-08-26 OOM hang was a memory
-    # config issue, not a kernel fault. Cost accepted: occasional bleeding-edge
-    # risk on the k3s eBPF path.
+    # Latest over LTS, ratified 2026-08-26 — revisit if the Cilium eBPF path breaks.
+    # See vault: homelab/self-assessment/2026-08-26-nixos-config-report.md
     kernelPackages = lib.mkDefault pkgs.linuxPackages_latest;
     kernelParams = [
       "preempt=full"

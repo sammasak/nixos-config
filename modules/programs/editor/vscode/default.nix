@@ -1,4 +1,3 @@
-# Visual Studio Code
 { pkgs, config, ... }:
 let
   configDir = if pkgs.stdenv.isDarwin

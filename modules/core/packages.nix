@@ -1,4 +1,3 @@
-# Base system packages
 { config, pkgs, lib, ... }:
 let
   hasDesktop = config.sam.desktop.enable;

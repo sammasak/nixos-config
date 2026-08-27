@@ -1,4 +1,3 @@
-# Desktop utility scripts module
 { pkgs, ... }:
 let
   defaultWallpaper = ../../../../assets/wallpapers/train-sideview.webp;

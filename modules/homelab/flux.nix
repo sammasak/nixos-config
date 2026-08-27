@@ -1,4 +1,3 @@
-# Flux GitOps bootstrap module
 { config, lib, pkgs, ... }:
 
 let

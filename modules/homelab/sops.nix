@@ -1,4 +1,3 @@
-# SOPS secrets configuration for homelab
 { config, lib, ... }:
 
 let

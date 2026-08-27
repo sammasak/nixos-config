@@ -1,4 +1,3 @@
-# Host-specific variables for lenovo-21CB001PMX
 {
   # System
   username = "lukas";

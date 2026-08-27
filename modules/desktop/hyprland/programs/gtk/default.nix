@@ -1,4 +1,3 @@
-# GTK Configuration
 { pkgs, lib, ... }:
 {
   gtk = {

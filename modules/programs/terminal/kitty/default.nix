@@ -1,4 +1,3 @@
-# Kitty Terminal Configuration
 { ... }:
 {
   programs.kitty = {

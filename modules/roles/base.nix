@@ -1,4 +1,3 @@
-# Base role for all machines
 { ... }:
 {
   imports = [

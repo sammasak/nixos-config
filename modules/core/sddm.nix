@@ -1,4 +1,3 @@
-# SDDM display manager
 { pkgs, ... }:
 let
   sddmTheme = "astronaut";

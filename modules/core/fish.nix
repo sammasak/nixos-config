@@ -1,4 +1,3 @@
-# Fish shell - friendly interactive shell with native inline suggestions
 { ... }:
 {
   programs.fish = {

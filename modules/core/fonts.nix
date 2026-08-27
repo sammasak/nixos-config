@@ -1,4 +1,3 @@
-# Font configuration
 { config, pkgs, lib, ... }:
 let
   hasDesktop = config.sam.desktop.enable;

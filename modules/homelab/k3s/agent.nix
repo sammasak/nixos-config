@@ -1,4 +1,3 @@
-# k3s agent (worker) module
 { config, lib, pkgs, ... }:
 
 let

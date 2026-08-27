@@ -1,4 +1,3 @@
-# Host-specific variables for acer-swift
 {
   # System
   username = "lukas";

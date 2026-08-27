@@ -1,4 +1,3 @@
-# Common CLI tools
 { pkgs, ... }:
 {
   home.packages = with pkgs; [

@@ -1,4 +1,3 @@
-# Laptop-specific configuration
 { config, lib, ... }:
 let
   hasDesktop = config.sam.desktop.enable;

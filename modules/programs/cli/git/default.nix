@@ -1,4 +1,3 @@
-# Git configuration
 { osConfig ? null, ... }:
 let
   resolvedUserConfig =
