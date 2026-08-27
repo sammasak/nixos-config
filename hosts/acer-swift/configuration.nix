@@ -17,12 +17,11 @@ in
   sam.profile = vars;
   sam.secrets.enable = true;
 
-  # Headless (server) mode is now the DEFAULT boot — acer-swift is a k3s worker
-  # and normally runs without a GUI (matches msi-ms7758). Desktop is kept as an
-  # optional boot-menu entry ("NixOS (desktop)") for occasional interactive use.
-  specialisation.desktop.configuration = {
-    imports = [ ../../modules/specialisations/desktop.nix ];
-  };
+  # Headless (server) mode is the ONLY boot mode — acer-swift is a k3s worker
+  # and runs without a GUI.
+  # Removed 2026-08-27: the `desktop` specialisation (never booted since it was
+  # added on 2026-08-16, ~5 GiB of closure). To restore, re-add:
+  #   specialisation.desktop.configuration.imports = [ ../../modules/specialisations/desktop.nix ];
 
   # Never let the Sunday 03:00 auto-upgrade reboot this box on its own.
   # acer-swift is the sole k3s worker: an unattended reboot is a total cluster

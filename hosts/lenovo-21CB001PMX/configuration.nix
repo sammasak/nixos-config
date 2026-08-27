@@ -23,10 +23,11 @@ in
   sam.profile = vars;
   sam.secrets.enable = true;
 
-  # Server specialisation (boot menu option for headless mode)
-  specialisation.server.configuration = {
-    imports = [ ../../modules/specialisations/server.nix ];
-  };
+  # Removed 2026-08-27: the `server` specialisation (headless boot entry) and its
+  # module modules/specialisations/server.nix — unused, and a second full system
+  # closure to build on every rebuild. To restore, recreate that module (it force-
+  # cleared sam.desktop.enable / programs.hyprland.enable / sddm / xserver) and
+  # re-add: specialisation.server.configuration.imports = [ ... ];
 
   # Niri trial (boot menu option) — a scrollable-tiling compositor, evaluated
   # side by side with Hyprland. Specialisations inherit the parent config, so

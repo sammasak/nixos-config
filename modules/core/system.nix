@@ -105,11 +105,11 @@ in
       type = types.bool;
       default = false;
       description = ''
-        Whether this configuration runs a GUI desktop session (default boot or
-        specialisation). Set by `modules/specialisations/desktop.nix` and
-        cleared by `modules/specialisations/server.nix`. Modules must key
-        desktop-only packages, fonts, services and Home Manager imports off
-        this option rather than off a compositor's own enable flag.
+        Whether this configuration runs a GUI desktop session. Set by
+        `modules/specialisations/desktop.nix`; false (the default) means
+        headless. Modules must key desktop-only packages, fonts, services and
+        Home Manager imports off this option rather than off a compositor's
+        own enable flag.
       '';
     };
   };
