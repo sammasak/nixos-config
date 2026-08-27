@@ -1,23 +1,13 @@
-# Tailscale for the homelab.
+# Tailscale for the homelab, in two modes.
 #
-# Two modes, because the two node classes want different things from the tailnet:
+# "subnet-router" (control plane) advertises the LAN CIDR, which is what makes
+# every box on the LAN reachable from outside through a single node.
 #
-#   * "subnet-router" (control plane) — advertises the LAN CIDR into the tailnet
-#     and enables Tailscale SSH. This is what makes every box on the LAN
-#     reachable from outside through a single node.
-#
-#   * "client" (workers) — plain tailnet membership, nothing more. The point is
-#     that the node keeps its own remote-access path when the subnet router is
-#     down; without it, losing the control plane also loses the only way to
-#     reach the worker. Deliberately restrained:
-#       - no advertised routes: the worker is already on the LAN;
-#       - --accept-routes=false: accepting the router's LAN CIDR on a host that
-#         sits inside that subnet would push its own LAN traffic back through
-#         the control plane, recreating the very dependency this removes;
-#       - --accept-dns=false: MagicDNS would rewrite /etc/resolv.conf to the
-#         control plane's AdGuard — same coupling, plus it disturbs the
-#         resolver on a k3s node;
-#       - no --ssh: sshd and its hardening stay the only shell boundary.
+# "client" is plain tailnet membership with everything else refused — no routes
+# advertised or accepted, no MagicDNS, no Tailscale SSH — so that a node using
+# it gains a remote-access path without routing its own LAN traffic back
+# through the control plane. No host currently selects it; workers run no
+# client at all (see CLAUDE.md, Tailscale Remote Access).
 { config, lib, pkgs, ... }:
 
 let
@@ -74,13 +64,11 @@ in
     # Declares the tailscale/authkey secret that authKeyFile defaults to.
     homelab.secrets.enable = true;
 
-    # Enable Tailscale service
     services.tailscale = {
       enable = true;
       useRoutingFeatures = if isSubnetRouter then "server" else "client";
     };
 
-    # Systemd service that joins the tailnet with this node's mode-specific prefs.
     systemd.services.tailscale-autoconnect = {
       description = "Join the Tailscale tailnet (mode: ${cfg.mode})";
       after = [ "network-online.target" "tailscaled.service" ];
@@ -130,12 +118,10 @@ in
       "net.ipv6.conf.all.forwarding" = mkDefault 1;
     };
 
-    # Firewall rules for Tailscale
     networking.firewall = {
-      # Allow Tailscale traffic
       trustedInterfaces = [ "tailscale0" ];
 
-      # Allow UDP for Tailscale (41641 is the default)
+      # 41641 is tailscaled's default UDP port.
       allowedUDPPorts = [ config.services.tailscale.port ];
     };
   };

@@ -1,7 +1,6 @@
 { config, pkgs, lib, ... }:
 
 {
-  # Install crun and gVisor (runsc) binaries
   environment.systemPackages = [ pkgs.crun pkgs.gvisor ];
 
   # Symlink containerd-shim-runsc-v1 so k3s's bundled containerd can discover it.
@@ -12,7 +11,6 @@
     "L+ /var/lib/rancher/k3s/data/cni/criu - - - - ${pkgs.criu}/bin/criu"
   ];
 
-  # CRIU for container checkpoint/restore (Sprint 2)
   programs.criu.enable = true;
 
   # Write k3s containerd config template using an activation script so it runs

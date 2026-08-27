@@ -1,6 +1,3 @@
-# Thermal management for quiet laptop operation
-# Configures thinkfan for ThinkPads/Lenovo with conservative fan curves
-#
 # Lives under `sam.thermal`, not `hardware.thermal`: `hardware.*` is upstream
 # NixOS territory, and squatting in it makes a local option indistinguishable
 # from a nixpkgs one — and collides outright the day upstream adds that name.
@@ -51,17 +48,12 @@ in
     # it often exits early due to platform checks and provides no control.
     services.thermald.enable = lib.mkIf (cfg.platform == "generic") true;
 
-    # Apply CPU frequency tuning at boot and again after every resume — the
-    # kernel resets both sysfs knobs across a suspend cycle.
-    #
-    # This replaces `powerManagement.powerUpCommands`, which is deprecated for
-    # having unclear ordering semantics and is slated for removal in NixOS
-    # 26.11. Note that `post-resume.target`, the obvious-looking hook, was
-    # REMOVED in NixOS 26.05 and does not exist in systemd — a unit hung off it
-    # would silently never run. The sleep targets are the documented
-    # replacement: each is only reached once systemd-suspend.service returns,
-    # which is after the machine has woken up, so ordering `After=` them means
-    # "on resume".
+    # Re-applied after every resume: the kernel resets both sysfs knobs across a
+    # suspend cycle. Two traps here — `powerManagement.powerUpCommands` is
+    # deprecated and goes away in 26.11, and `post-resume.target` was REMOVED in
+    # 26.05, so a unit hung off it silently never runs. Ordering After= the
+    # sleep targets is the documented replacement: each is reached only once
+    # systemd-suspend.service returns, i.e. after the machine has woken.
     systemd.services.cpu-power-tuning =
       lib.mkIf (cfg.disableTurboBoost || cfg.energyPerformancePreference != "default")
         {
@@ -107,16 +99,13 @@ in
           '';
         };
 
-    # ThinkPad-specific fan control
     boot.extraModprobeConfig = lib.mkIf (cfg.platform == "thinkpad") ''
       options thinkpad_acpi fan_control=1
     '';
 
-    # Thinkfan service for custom fan curves
     services.thinkfan = lib.mkIf (cfg.platform == "thinkpad") {
       enable = true;
 
-      # Use coretemp for accurate CPU package temperature
       sensors = [
         {
           type = "hwmon";
@@ -149,7 +138,6 @@ in
           [ "level full-speed" 93 32767 ]  # Emergency
         ]
         else if cfg.profile == "balanced" then [
-          # Balanced profile: reasonable compromise
           [ 0     0   50 ]
           [ 1    47   55 ]
           [ 2    52   60 ]
@@ -161,7 +149,6 @@ in
           [ "level full-speed" 88 32767 ]
         ]
         else [
-          # Performance profile: keeps temps lower
           [ 0     0   45 ]
           [ 2    42   50 ]
           [ 4    47   55 ]
@@ -172,7 +159,6 @@ in
         ];
     };
 
-    # Ensure thinkpad_acpi module is loaded
     boot.kernelModules = lib.mkIf (cfg.platform == "thinkpad") [ "thinkpad_acpi" ];
   };
 }

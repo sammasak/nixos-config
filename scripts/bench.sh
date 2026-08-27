@@ -29,20 +29,16 @@ eval_host() {
 }
 
 # files, total lines, comment lines, largest file, median file — over every
-# .nix file in the worktree. A comment line is one whose first non-blank
-# character is '#'; that undercounts trailing comments, which is deliberate:
-# the metric tracks standalone commentary, not annotations.
+# .nix file in the worktree.
+#
+# A comment line is one whose first non-blank character is '#' AND which is not
+# inside a Nix string. Both halves matter: trailing comments are deliberately
+# not counted (the metric tracks standalone commentary), and the string check
+# stops CSS id selectors in a `programs.waybar.style` block, or shell comments
+# in an inline script, from being scored as Nix commentary.
 static_metrics() {
   find . -name '*.nix' -not -path './.git/*' -print0 |
-    xargs -0 gawk '
-      FNR == 1 { lines[++files] = 0 }
-      { total++; lines[files]++ }
-      /^[[:space:]]*#/ { comments++ }
-      END {
-        n = asort(lines)
-        printf "%d\t%d\t%d\t%d\t%d\n", files, total, comments, lines[n], lines[int((n + 1) / 2)]
-      }
-    '
+    xargs -0 gawk -f scripts/nix-comment-metrics.awk
 }
 
 cmd_bench() {

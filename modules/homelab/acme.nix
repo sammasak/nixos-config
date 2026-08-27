@@ -1,5 +1,4 @@
-# ACME certificate management for homelab
-# Uses Cloudflare DNS-01 validation for Let's Encrypt certificates
+# Let's Encrypt certificates via Cloudflare DNS-01 validation.
 { config, lib, ... }:
 
 let
@@ -48,15 +47,12 @@ in
         dnsResolver = "1.1.1.1:53";
         extraLegoFlags = [ "--dns.resolvers" "8.8.8.8:53" ];
 
-        # Cloudflare API token read from sops-managed file
         credentialFiles = {
           "CLOUDFLARE_DNS_API_TOKEN_FILE" = config.sops.secrets."cloudflare/api_token".path;
         };
 
-        # Reload AdGuard Home when certificate is renewed
         reloadServices = [ "adguardhome.service" ];
 
-        # Group that can read the certificates
         group = "acme";
       };
     };

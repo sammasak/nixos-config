@@ -1,5 +1,3 @@
-# Hyprland Desktop Environment
-# Imports all hyprland-related programs and scripts
 { config, pkgs, lib, osConfig ? null, ... }:
 let
   mkForce = lib.mkForce;

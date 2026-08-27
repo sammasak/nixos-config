@@ -28,35 +28,26 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Configure sops-nix
     sops = {
       defaultSopsFile = cfg.sopsFile;
 
-      # Use the host's SSH key for decryption (converted to age)
-      # This allows unattended decryption during system activation
+      # The host SSH key, converted to age, is what makes decryption
+      # unattended at activation time.
       age = {
-        # sops-nix will automatically use keys from:
-        # - ~/.config/sops/age/keys.txt (user key)
-        # - /etc/ssh/ssh_host_ed25519_key (host key, if ssh-to-age configured)
         sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
         keyFile = "/var/lib/sops-nix/key.txt";
         generateKey = true;
       };
 
-      # Define the k3s cluster token secret
       secrets."k3s/cluster_token" = {
-        # The secret will be available at this path
         path = "/run/secrets/k3s-cluster-token";
         mode = "0400";
-        # Restart k3s when the secret changes
         restartUnits = [ "k3s.service" ];
       };
 
-      # Flux GitOps secrets
       secrets."flux/deploy_key" = {
         path = "/run/secrets/flux-deploy-key";
         mode = "0400";
-        # Restart flux-bootstrap when the secret changes
         restartUnits = [ "flux-bootstrap.service" ];
       };
 

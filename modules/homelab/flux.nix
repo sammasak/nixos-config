@@ -39,7 +39,6 @@ in
     # Declares the flux/deploy_key and flux/age_key secrets used below.
     homelab.secrets.enable = true;
 
-    # Bootstrap Flux after k3s is ready
     systemd.services.flux-bootstrap = {
       description = "Bootstrap Flux GitOps";
       after = [ "k3s.service" ];

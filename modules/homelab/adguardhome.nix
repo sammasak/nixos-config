@@ -20,7 +20,6 @@ in
       description = "Enable ad blocking filters";
     };
 
-    # TLS options for encrypted DNS
     tls = {
       enable = mkEnableOption "TLS for DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH)";
 
@@ -55,7 +54,6 @@ in
       };
     };
 
-    # DNS rewrites (wildcards supported)
     rewrites = mkOption {
       type = types.listOf (types.submodule {
         options = {
@@ -98,7 +96,6 @@ in
           bootstrap_dns = [ "1.1.1.1" "8.8.8.8" ];
         };
 
-        # TLS configuration for DoT and DoH
         tls = mkIf cfg.tls.enable {
           enabled = true;
           server_name = cfg.tls.domain;
@@ -122,7 +119,6 @@ in
       };
     };
 
-    # Firewall rules
     networking.firewall = {
       allowedUDPPorts = [ 53 ];
       allowedTCPPorts = optionals cfg.tls.enable [ cfg.tls.dohPort cfg.tls.dotPort ];

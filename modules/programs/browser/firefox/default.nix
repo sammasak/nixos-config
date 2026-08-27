@@ -10,7 +10,6 @@
     profiles.default = {
       isDefault = true;
       settings = {
-        # Privacy.
         # fingerprintingProtection, not resistFingerprinting: RFP spoofs
         # timezone, screen size and canvas to join an anonymity set this
         # machine is never in (a logged-in daily driver). The cost is real —
@@ -20,26 +19,20 @@
         "privacy.trackingprotection.enabled" = true;
         "privacy.trackingprotection.socialtracking.enabled" = true;
 
-        # Disable telemetry
         "toolkit.telemetry.enabled" = false;
         "toolkit.telemetry.unified" = false;
         "datareporting.healthreport.uploadEnabled" = false;
         "datareporting.policy.dataSubmissionEnabled" = false;
 
-        # Disable search suggestions
         "browser.search.suggest.enabled" = false;
 
-        # Disable network prediction
         "network.predictor.enabled" = false;
 
-        # Disable Pocket
         "extensions.pocket.enabled" = false;
 
-        # Disable Firefox Suggest sponsored content
         "browser.urlbar.suggest.quicksuggest.sponsored" = false;
         "browser.urlbar.suggest.quicksuggest.nonsponsored" = false;
 
-        # Force dark mode for UI and content
         "ui.systemUsesDarkTheme" = 1;
         "layout.css.prefers-color-scheme.content-override" = 0; # 0 = dark, 1 = light, 2 = system
         "browser.theme.content-theme" = 0; # Dark
