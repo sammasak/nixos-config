@@ -1,6 +1,6 @@
 # Homelab k3s agent role
 # Use this role for worker nodes
-{ ... }:
+{ lib, ... }:
 {
   imports = [
     ./base.nix
@@ -25,4 +25,15 @@
   # requires physical recovery anyway; a shell on an unorchestratable worker
   # remediates nothing. Client-mode machinery remains in
   # modules/homelab/tailscale.nix if this is ever revisited.
+
+  # No WWAN/modem hardware on any worker — ModemManager is pure D-Bus attack
+  # surface and one more resident process on an OOM-prone node.
+  # NetworkManager pulls it in by default; force it off.
+  systemd.services.ModemManager.enable = lib.mkForce false;
+
+  # A Nix trusted-user is root-equivalent (it can inject arbitrary store paths
+  # and override substituters). Deploys are push-from-lenovo over SSH as root,
+  # so the login user never needs it. Workers only: lenovo keeps root + lukas
+  # from modules/core/users.nix because it builds locally.
+  nix.settings.trusted-users = lib.mkForce [ "root" ];
 }
