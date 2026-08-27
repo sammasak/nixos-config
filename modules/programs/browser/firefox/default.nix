@@ -10,8 +10,13 @@
     profiles.default = {
       isDefault = true;
       settings = {
-        # Privacy
-        "privacy.resistFingerprinting" = true;
+        # Privacy.
+        # fingerprintingProtection, not resistFingerprinting: RFP spoofs
+        # timezone, screen size and canvas to join an anonymity set this
+        # machine is never in (a logged-in daily driver). The cost is real —
+        # broken canvas rendering, wrong local times — for no gain. FPP blocks
+        # known fingerprinting scripts without the breakage.
+        "privacy.fingerprintingProtection" = true;
         "privacy.trackingprotection.enabled" = true;
         "privacy.trackingprotection.socialtracking.enabled" = true;
 

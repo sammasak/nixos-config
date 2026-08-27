@@ -142,6 +142,10 @@ in
         "wl-paste --type text --watch cliphist store"
         "wl-paste --type image --watch cliphist store"
         "nwg-dock-hyprland -d -i 16"
+        # Belt-and-braces, same pattern as waybar above: the unit is WantedBy
+        # the Hyprland session target, but starting it here also covers a
+        # post-SDDM relogin where that target was never re-reached.
+        "systemctl --user start hyprpolkitagent.service"
       ];
 
       bind = [
@@ -333,6 +337,13 @@ in
 
   # Ensure swww is the only wallpaper daemon.
   services.hyprpaper.enable = lib.mkForce false;
+
+  # There was no polkit authentication agent in the session at all, so every
+  # privileged desktop action that asks for authorisation — NetworkManager
+  # editing a connection, udisks2 mounting a disk — had nowhere to render its
+  # prompt and simply failed. The Home Manager module wires up the user unit
+  # with the right libexec path and binds it to the Hyprland session target.
+  services.hyprpolkitagent.enable = true;
 
   home.packages = [ pkgs.wdisplays ];
 }

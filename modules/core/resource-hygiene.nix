@@ -34,4 +34,19 @@
   documentation.nixos.enable = false;
   documentation.info.enable = false;
   documentation.doc.enable = false;
+
+  # Cheap kernel-info hygiene. Each of these closes a source of the addresses
+  # and process state an exploit uses to orient itself, and none of them
+  # changes what a normal session can do:
+  #   dmesg_restrict   — non-root cannot read the kernel ring buffer
+  #   kptr_restrict    — kernel pointers print as zeros to unprivileged readers
+  #   yama.ptrace_scope — a process may only ptrace its own descendants
+  #                       (gdb/strace still work when you launch the target)
+  # Deliberately NOT setting security.lockKernelModules: it would break
+  # on-demand module loading, which k3s/containerd rely on.
+  boot.kernel.sysctl = {
+    "kernel.dmesg_restrict" = 1;
+    "kernel.kptr_restrict" = 1;
+    "kernel.yama.ptrace_scope" = 1;
+  };
 }
