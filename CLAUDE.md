@@ -113,11 +113,12 @@ build error if a `variables.nix` sets it):
 Sibling options, outside the profile:
 - `sam.desktop.enable` (bool) — whether a GUI desktop session is active (outside the profile so `modules/specialisations/desktop.nix` can set it)
 - `sam.thermal.*` — fan/CPU thermal policy, see `modules/hardware/thermal.nix`
-- `sam.secrets.enable` (bool) — shared sops secrets, see `modules/core/sops.nix`
+- `sam.hostSecrets.enable` (bool) — per-machine operator credentials, see `modules/core/sops.nix`
 - `sam.wifi.*` — declarative WiFi profile, see `modules/core/wifi.nix`
 
-Everything this repo defines lives under `sam.*` (or `homelab.*` for cluster
-concerns) so it is never confused with an upstream NixOS option.
+Everything this repo defines lives under `sam.*` or `homelab.*` so it is never
+confused with an upstream NixOS option. Which of the two is the Namespace
+Boundary rule in Conventions.
 
 ### Roles (`modules/roles/`)
 
@@ -146,7 +147,7 @@ SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decr
 
 Two SOPS modules:
 - **`modules/homelab/sops.nix`** (`homelab.secrets.enable`) — k3s cluster tokens, Flux deploy keys, Cloudflare API token. Encrypted to all host keys + Flux age key.
-- **`modules/core/sops.nix`** (`sam.secrets.enable`) — shared secrets for all physical hosts (Claude Code OAuth token). Uses `mkDefault` for age config to avoid conflicts with the homelab module.
+- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`) — per-machine operator credentials on every physical host (Claude Code OAuth token, nix access token). Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
 
@@ -335,10 +336,11 @@ to what they sit above, not to a line number, because line numbers rot:
 - `lib/firewall.nix`, file header — why both backends are always emitted
 
 **Comments inside a `''` string are out of scope for now — all of them.** They
-are rendered shell (the two inline programs in `nixos-rebuild-trigger.nix`,
-`cluster-watchdog.nix`, `flux.nix`, `k3s-db-snapshot.nix`, `fish.nix` and more),
-so editing one moves the derivation and breaks `just parity`. They get swept
-when those scripts move to real `.sh` files.
+are rendered shell (`cluster-watchdog.nix`, `flux.nix`, `k3s-db-snapshot.nix`,
+`fish.nix` and more), so editing one moves the derivation and breaks
+`just parity`. They get swept when those scripts move to real `.sh` files, as
+`modules/homelab/nixos-rebuild-trigger/` did — that move is also what put the
+scripts under shellcheck, which no `''` string gets.
 The same reason there is no `nix fmt`: a formatter reindents `''` strings.
 
 The ratio counts only lines that *start* with `#`. Trailing comments are
@@ -352,6 +354,12 @@ the number). The target band is 7–13%; above that, the file is narrating itsel
 
 ## Conventions
 
+- **Namespace boundary**: `homelab.*` is a cluster/platform capability a host
+  opts into (k3s, flux, dns, acme, ntfy, tailscale, the rebuild trigger);
+  `sam.*` is host identity and personal-machine concern (profile, desktop,
+  wifi, thermal, hostSecrets). When both scopes need the same noun, the leaf
+  states its scope — `homelab.secrets` (cluster) vs `sam.hostSecrets` (machine)
+  — because an option path is usually read without its module.
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.
 - **Desktop is per-host, not a role**: lenovo imports `modules/specialisations/desktop.nix` in its default boot, acer-swift does not. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.

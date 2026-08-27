@@ -1,3 +1,6 @@
+# Cluster-scoped credentials, enabled only on nodes that join the cluster.
+# Per-machine operator credentials are a different tree: sam.hostSecrets in
+# modules/core/sops.nix.
 { config, lib, ... }:
 
 let

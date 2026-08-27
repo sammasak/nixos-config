@@ -18,7 +18,7 @@ in
   ];
 
   sam.profile = vars;
-  sam.secrets.enable = true;
+  sam.hostSecrets.enable = true;
 
   # A specialisation inherits the parent config, so this entry keeps the whole
   # desktop and only adds a second session; SDDM stays the chooser and

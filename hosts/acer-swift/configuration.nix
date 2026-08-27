@@ -13,7 +13,7 @@ in
   ];
 
   sam.profile = vars;
-  sam.secrets.enable = true;
+  sam.hostSecrets.enable = true;
 
   # Sole worker — an unattended reboot is a total cluster outage (the reserved
   # taint strands DNS, kyverno and ntfy, so paging dies with it). Upgrades still

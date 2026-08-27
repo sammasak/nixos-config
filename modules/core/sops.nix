@@ -1,13 +1,15 @@
-# SOPS secrets shared across all physical hosts (Claude Code OAuth token, etc.)
+# Per-machine operator credentials, on every physical host regardless of cluster
+# role. Cluster secrets (k3s, Flux, Cloudflare, Tailscale) are a different tree:
+# homelab.secrets in modules/homelab/sops.nix.
 { config, lib, ... }:
 
 let
-  cfg = config.sam.secrets;
+  cfg = config.sam.hostSecrets;
   username = config.sam.profile.username;
 in
 {
-  options.sam.secrets = {
-    enable = lib.mkEnableOption "shared secrets via sops-nix";
+  options.sam.hostSecrets = {
+    enable = lib.mkEnableOption "per-machine operator credentials via sops-nix";
   };
 
   config = lib.mkIf cfg.enable {
