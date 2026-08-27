@@ -140,6 +140,8 @@ cmd_diff() {
   ' | column -t -s $'\t'
   echo ""
   tail -n 2 "$HISTORY" | jq -rs '"\(.[0].sha[0:12]) (\(.[0].timestamp)) → \(.[1].sha[0:12]) (\(.[1].timestamp))"'
+  echo "eval seconds are wall-clock and move with machine load; the values and"
+  echo "gc-bytes counters are the load-independent measure of evaluation work."
 }
 
 cmd_parity() {
