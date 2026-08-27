@@ -215,10 +215,10 @@ The overlay is regenerated automatically by Home Manager activation on every reb
 | Role | Mode | Behaviour |
 |------|------|-----------|
 | `homelab-server` (`lenovo-21CB001PMX`) | `subnet-router` | Advertises the LAN CIDR, accepts routes, enables Tailscale SSH |
-| `homelab-agent` (`acer-swift`) | — (none) | **No Tailscale client — owner decision 2026-08-26.** Remote access rides the lenovo subnet router; the lenovo-death edge case needs physical recovery anyway (vault: lenovo-death runbook). Client-mode machinery stays in the module if ever revisited |
+| `homelab-agent` (`acer-swift`) | — (none) | **No Tailscale client — owner decision 2026-08-26.** Remote access rides the lenovo subnet router; the lenovo-death edge case needs physical recovery anyway (vault: `homelab/runbooks/lenovo-death-recovery.md`). Client-mode machinery stays in the module if ever revisited |
 
-Workers deliberately run NO client (see table above and the rationale in
-`modules/roles/homelab-agent.nix`).
+`modules/roles/homelab-agent.nix` imports `modules/homelab/tailscale.nix` but
+never sets `homelab.tailscale.enable`, so the import is inert on workers.
 
 **Key features:**
 - **Subnet routing** (subnet-router mode) — Advertises 192.168.10.0/24 to the Tailscale network
