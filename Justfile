@@ -12,6 +12,20 @@ verify:
 check:
     nix flake check --all-systems --no-write-lock-file
 
+# ── Metrics ───────────────────────────────────────────────────────────
+
+# Measure eval time + static readability metrics, append to metrics/history.jsonl
+bench:
+    bash scripts/bench.sh bench
+
+# Delta table between the last two metrics/history.jsonl entries
+bench-diff:
+    bash scripts/bench.sh diff
+
+# Zero-functional-change gate: toplevel drvPaths must match the last bench entry
+parity:
+    bash scripts/bench.sh parity
+
 # ── Registry ──────────────────────────────────────────────────────────
 
 # Login to Harbor
