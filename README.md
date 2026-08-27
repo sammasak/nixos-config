@@ -40,7 +40,7 @@ the tie-breaker.
 | `modules/home/` | Shared Home Manager entry point | One tree for all hosts — there are no per-host `home.nix` files |
 | `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `terminal/` |
 | `modules/themes/` | Catppuccin via Stylix | |
-| `lib/` | Pure helpers, no module semantics | `users.nix` — git identity and SSH keys |
+| `lib/` | Pure helpers, no module semantics | `users.nix` (git identity, SSH keys), `firewall.nix` (dual-backend rule builder) |
 | `scripts/` | Repo tooling | `verify-all-hosts.sh`, `bench.sh` |
 | `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |

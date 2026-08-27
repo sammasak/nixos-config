@@ -1,7 +1,8 @@
 { config, lib, pkgs, ... }:
 
 let
-  inherit (lib) concatMapStrings concatMapStringsSep concatStrings concatStringsSep mkIf optionalString stringAfter;
+  inherit (lib) mkIf stringAfter;
+  inherit (import ../../../lib/firewall.nix lib) mkDualBackendFirewall;
   cfg = config.homelab.k3s;
 
   # Control-plane management ports. 2379/2380 have no listener on this cluster
@@ -13,21 +14,24 @@ let
     2380 # etcd peer communication
   ];
 
-  # Source networks allowed to reach the ports above.
   apiSources = [
     config.sam.profile.lanCidr # agents (acer-swift) and admin workstations
     "10.42.0.0/16" # k3s pod CIDR — Cilium native-routing keeps the pod source IP
     "10.43.0.0/16" # k3s service CIDR — ClusterIP hairpin back to the apiserver
   ];
 
-  # Interfaces that may always reach them, independent of source address.
   apiInterfaces = [
     "lo" # kubectl / kubelet on the control plane itself
     "tailscale0" # remote admins over the tailnet
   ];
 
-  nftPorts = concatMapStringsSep ", " toString apiPorts;
-  nftSources = concatStringsSep ", " apiSources;
+  apiRules = mkDualBackendFirewall {
+    comment = "k3s control-plane API + etcd: LAN, cluster networks and tailnet only.";
+    ports = apiPorts;
+    sources = apiSources;
+    interfaces = apiInterfaces;
+    backend = config.networking.firewall.backend;
+  };
 in
 {
   imports = [
@@ -36,39 +40,11 @@ in
   ];
 
   config = mkIf (cfg.enable && cfg.role == "server") {
-    # Server-specific firewall rules.
-    #
-    # The API/etcd ports are deliberately NOT listed in `allowedTCPPorts` —
-    # that option accepts them from any source. They are instead accepted only
-    # from `apiSources` and `apiInterfaces` above. `lo` and `tailscale0` are
-    # already in `trustedInterfaces` (the latter via ../tailscale.nix), so those
-    # rules are belt-and-braces should the trusted set ever be trimmed.
-    #
-    # Both backends are targeted because they read different options and this
-    # tree currently runs the iptables backend:
-    #   * `extraInputRules` — nftables backend only (appended to input-allow).
-    #   * `extraCommands`   — iptables backend only; the nftables backend
-    #     asserts it is empty, hence the explicit backend guard.
+    # `lo` and `tailscale0` are already in `trustedInterfaces` (the latter via
+    # ../tailscale.nix), so accepting on them here is belt-and-braces should the
+    # trusted set ever be trimmed.
     networking.firewall = {
-      extraInputRules = ''
-        # k3s control-plane API + etcd: LAN, cluster networks and tailnet only.
-        ${concatMapStringsSep "\n" (i: ''iifname "${i}" tcp dport { ${nftPorts} } accept'') apiInterfaces}
-        ip saddr { ${nftSources} } tcp dport { ${nftPorts} } accept
-      '';
-
-      extraCommands = optionalString (config.networking.firewall.backend == "iptables") (
-        concatStrings (
-          map (
-            port:
-            concatMapStrings (iface: ''
-              ip46tables -w -A nixos-fw -i ${iface} -p tcp --dport ${toString port} -j nixos-fw-accept
-            '') apiInterfaces
-            + concatMapStrings (src: ''
-              iptables -w -A nixos-fw -s ${src} -p tcp --dport ${toString port} -j nixos-fw-accept
-            '') apiSources
-          ) apiPorts
-        )
-      );
+      inherit (apiRules) extraInputRules extraCommands;
     };
 
     environment.systemPackages = with pkgs; [
@@ -77,13 +53,9 @@ in
       age           # Encryption for sops
     ];
 
-    # Disable bundled local-storage (a custom, resource-limited version is
-    # deployed via k3s-manifests.service below) and metrics-server.
-    #
-    # metrics-server is intentionally NOT run on this cluster: nothing depends on
-    # metrics.k8s.io. All autoscaling goes through KEDA (external.metrics.k8s.io),
-    # and no HPA uses Resource (cpu/memory) metrics. The bundled addon stays
-    # disabled here and no override manifest is shipped for it. See infra-042.
+    # local-storage is replaced by a resource-limited copy in k3s-manifests below.
+    # metrics-server stays off: nothing depends on metrics.k8s.io — autoscaling is
+    # all KEDA (external.metrics.k8s.io) and no HPA uses Resource metrics.
     homelab.k3s.disableComponents = [ "traefik" "servicelb" "local-storage" "metrics-server" ];
 
     # k3s 1.35 added a staging step that tries to write bundled manifests to
@@ -106,13 +78,9 @@ in
       };
     };
 
-    # Give the interactive user a private COPY of the admin kubeconfig.
-    # Previously this was a symlink to a world-readable (644) file — any
-    # local account could read cluster-admin credentials. The source is now
-    # 600 root-only; the copy is chowned 0600 to the operator. Re-copied on
-    # every activation, so cert rotation propagates on rebuild. Note the
-    # honest limit: code running AS the operator can still read the copy —
-    # inherent to the operator's own machine, not fixable with permissions.
+    # A private 0600 COPY, not a symlink to the 644 source: that let any local
+    # account read cluster-admin credentials. Re-copied every activation so cert
+    # rotation propagates. Honest limit: code running AS the operator still reads it.
     system.activationScripts.k3sKubeconfig = stringAfter [ "users" ] ''
       u=${config.sam.profile.username}
       if [ -f /etc/rancher/k3s/k3s.yaml ]; then
