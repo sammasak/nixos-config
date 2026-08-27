@@ -192,9 +192,23 @@ in
 
     console.keyMap = profile.consoleKeymap;
 
-    nixpkgs.config.allowUnfree = true;
+    # Unfree is opt-in per package, not a blanket allow. `allowUnfree = true`
+    # made the predicate below decorative and let any transitive unfree
+    # dependency in unannounced. With it false the predicate is the real gate:
+    # an unexpected unfree package fails eval, by name, at review time.
+    #
+    # The list below is empirically complete — with it, both hosts evaluate to
+    # the exact same toplevel derivation as they did under allowUnfree = true.
+    # Redistributable *firmware* is NOT gated here:
+    # hardware.enableRedistributableFirmware goes through nixpkgs' separate
+    # `allowUnfreeRedistributableFirmware` knob, so no allowlistedLicenses
+    # escape hatch is needed.
+    nixpkgs.config.allowUnfree = false;
     nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
-      "obsidian"
+      "claude-code" # Anthropic CLI, all hosts
+      "obsidian"    # vault GUI, desktop only
+      "unrar"       # unfreeRedistributable, from core/packages.nix
+      "vscode"      # editor, desktop only
     ];
 
     environment.variables = {
