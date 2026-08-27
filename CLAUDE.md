@@ -11,23 +11,25 @@ A NixOS + Home Manager configuration repository using **flake-parts** with a den
 ```bash
 # ── Verification (run before deploying) ────────────────────────────
 just verify                   # Verify all hosts build successfully
-just check                    # Run flake checks (comprehensive validation)
+just check                    # Comment lint, then flake checks
+just lint-comments            # Comment Policy only (density + forbidden shapes)
 
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
 
-# ── Deployment ─────────────────────────────────────────────────────
-# Build and apply locally (NixOS)
-sudo nixos-rebuild switch --flake .#<hostname>
-
-# Build without applying (dry run)
-sudo nixos-rebuild build --flake .#<hostname>
+# ── Deployment (nh wraps nixos-rebuild + nvd) ──────────────────────
+just switch [HOST]            # Build and activate
+just build  [HOST]            # Build only
+just diff   [HOST]            # Build and print the package diff vs the running system
 
 # Remote deploy via SSH
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
 ```
 
-Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`)
+Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`).
+`HOST` is the **flake attribute**, which for lenovo is not its hostname — the
+`host` variable at the top of the Justfile does that mapping, so the argument is
+only needed when targeting the other machine.
 
 ## Architecture
 

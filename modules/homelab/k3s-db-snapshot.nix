@@ -1,23 +1,10 @@
 # Daily snapshot of the k3s datastore (control plane only).
 #
-# This cluster runs k3s with the embedded sqlite/kine datastore, so the entire
-# Kubernetes state — every object the API server has ever been told about —
-# lives in a single file: /var/lib/rancher/k3s/server/db/state.db. sqlite can be
-# corrupted by an unclean shutdown or a full disk, and a corrupt state.db is not
+# All Kubernetes state lives in one sqlite file, and a corrupt state.db is not
 # something Flux can fix: the API server will not start, so nothing reconciles.
-#
-# What this protects against: sqlite CORRUPTION. Restoring is `systemctl stop
-# k3s`, put a decompressed snapshot back at the path above, `systemctl start
-# k3s`, then let Flux reconcile the (at most 24 h) drift.
-#
-# What this does NOT protect against: losing the disk. There is deliberately no
-# off-host copy here — the recovery path for a dead control-plane disk is to
-# reinstall NixOS from this flake and let Flux rebuild the cluster from
-# homelab-gitops. That is documented as the GitOps reconstruction runbook in the
-# knowledge vault; snapshots are the cheap fast path, not the disaster plan.
-#
-# `.backup` is sqlite's online backup API, so it is safe to run against the live
-# database while k3s holds it open.
+# Guards CORRUPTION only — there is deliberately no off-host copy, so a dead
+# disk is still a reinstall-and-let-Flux-rebuild event.
+# See vault: homelab/runbooks/k3s-datastore-snapshot-restore.md
 { config, lib, pkgs, ... }:
 
 let

@@ -2,14 +2,36 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 registry := "registry.sammasak.dev"
 
+# nh selects by nixosConfigurations attribute, and lenovo's attribute is not its
+# hostname, so the default cannot just be `hostname`.
+host := if `hostname` == "lenovo-21CB001PMX" { "lenovo" } else { `hostname` }
+
+# ── Build & Deploy ────────────────────────────────────────────────────
+
+# Build and activate this host's configuration
+switch HOST=host:
+    nh os switch . -H {{HOST}}
+
+# Build this host's configuration without activating it
+build HOST=host:
+    nh os build . -H {{HOST}}
+
+# Build and print the package diff against the running system
+diff HOST=host:
+    nh os build . -H {{HOST}} --diff always
+
 # ── Configuration Verification ────────────────────────────────────────
 
 # Verify all host configurations build successfully
 verify:
     bash scripts/verify-all-hosts.sh
 
-# Run flake checks (includes all configurations)
-check:
+# Enforce the CLAUDE.md Comment Policy: density ceiling + forbidden shapes
+lint-comments:
+    bash scripts/nix-comment-lint.sh
+
+# Run flake checks (includes all configurations) and the comment lint
+check: lint-comments
     nix flake check --all-systems --no-write-lock-file
 
 # ── Metrics ───────────────────────────────────────────────────────────
@@ -22,10 +44,10 @@ bench:
 bench-diff:
     bash scripts/bench.sh diff
 
-# Compare both toplevel drvPaths against the last bench entry; non-zero if they moved.
 # Run this after a refactor that is meant to change nothing. Deliberately NOT part
 # of `check` or `verify`: a change that legitimately moves the derivation should
 # not fail the build gates.
+[doc("Compare both toplevel drvPaths against the last bench entry; non-zero if they moved")]
 parity:
     bash scripts/bench.sh parity
 
@@ -37,13 +59,11 @@ registry-login:
 
 # ── Image Supply Chain Security ───────────────────────────────────────
 
-# Scan image for vulnerabilities before publishing
-# Fails if any CRITICAL severity CVEs are found
+[doc("Scan image for CRITICAL CVEs before publishing; non-zero if any are found")]
 scan IMAGE:
     nix shell nixpkgs#trivy -c trivy image --exit-code 1 --severity CRITICAL {{IMAGE}}
 
-# Sign image with Cosign after publishing
-# Requires SOPS-encrypted cosign.key in secrets/
+[doc("Sign image with Cosign after publishing; needs SOPS-encrypted secrets/cosign.key")]
 sign IMAGE:
     #!/usr/bin/env bash
     set -euo pipefail

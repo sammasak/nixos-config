@@ -75,6 +75,13 @@ cmd_bench() {
   local files total nixlines comments maxlines p50lines
   IFS=$'\t' read -r files total nixlines comments maxlines p50lines < <(static_metrics)
 
+  # Closure creep is the number a comment ratio cannot show. It is the RUNNING
+  # system, not a freshly evaluated one, so it moves only when a host is
+  # switched — which is the point: it measures what was actually deployed.
+  local systemjson
+  systemjson=$(nix path-info --json -S /run/current-system | jq -c '
+    to_entries[0] | { storePath: .key, closureBytes: .value.closureSize }')
+
   mkdir -p metrics
   jq -c -n \
     --arg sha "$(git rev-parse HEAD)" \
@@ -85,6 +92,7 @@ cmd_bench() {
     --argjson comments "$comments" \
     --argjson maxFileLines "$maxlines" --argjson p50FileLines "$p50lines" \
     --argjson hosts "$hostjson" \
+    --argjson system "$systemjson" \
     '{
        sha: $sha,
        dirtyPaths: ($dirty | tonumber),
@@ -100,6 +108,7 @@ cmd_bench() {
          maxFileLines: $maxFileLines,
          p50FileLines: $p50FileLines
        },
+       system: $system,
        hosts: $hosts
      }' >>"$HISTORY"
 
@@ -155,7 +164,9 @@ cmd_diff() {
       num("ratio (all lines)"; $a.static.commentRatioPhysical; $b.static.commentRatioPhysical),
       num("nix files"; $a.static.files; $b.static.files),
       num("max file lines"; $a.static.maxFileLines; $b.static.maxFileLines),
-      num("p50 file lines"; $a.static.p50FileLines; $b.static.p50FileLines)
+      num("p50 file lines"; $a.static.p50FileLines; $b.static.p50FileLines),
+      num("system closure MB"; (($a.system.closureBytes // 0) / 1048576 | round);
+                               (($b.system.closureBytes // 0) / 1048576 | round))
     ]
     + ([$b.hosts | keys[]] | map(. as $h | [
         num($h + " eval seconds"; $a.hosts[$h].wallSeconds; $b.hosts[$h].wallSeconds),
@@ -169,6 +180,8 @@ cmd_diff() {
   tail -n 2 "$HISTORY" | jq -rs '"\(.[0].sha[0:12]) (\(.[0].timestamp)) → \(.[1].sha[0:12]) (\(.[1].timestamp))"'
   echo "eval seconds are wall-clock and move with machine load; the values and"
   echo "gc-bytes counters are the load-independent measure of evaluation work."
+  echo "system closure is /run/current-system on the machine that ran the bench,"
+  echo "so it moves on switch, not on commit; 0 means the entry predates it."
 }
 
 cmd_parity() {
