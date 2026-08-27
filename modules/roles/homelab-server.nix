@@ -10,7 +10,7 @@
     ../homelab/tailscale.nix
     ../homelab/ntfy.nix
     ../homelab/cluster-watchdog.nix
-    ../homelab/nixos-rebuild-trigger.nix
+    ../homelab/nixos-rebuild-trigger
   ];
 
   homelab.k3s = {
