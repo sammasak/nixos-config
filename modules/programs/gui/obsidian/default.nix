@@ -1,9 +1,5 @@
-{ config, lib, pkgs, ... }:
+{ lib, pkgs, ... }:
 
-let
-  cfg = config.programs.obsidian;
-  plugins = import ../../../../lib/obsidian-plugins.nix { inherit pkgs lib; };
-in
 {
   # Obsidian GUI enabled only on desktop (import is conditional in home/default.nix)
   # MCP server works on all hosts regardless (configured in claude-code/mcp.nix)
@@ -43,13 +39,6 @@ in
           "tag-pane"
           "templates"
         ];
-
-        # Community plugins (optional - uncomment when hashes are updated)
-        # communityPlugins = [
-        #   plugins.dataview
-        #   plugins.templater
-        #   plugins.obsidian-git
-        # ];
       };
     };
   };
