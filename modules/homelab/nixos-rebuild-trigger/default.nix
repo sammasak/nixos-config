@@ -1,3 +1,4 @@
+# Path-activated, health-gated nixos-rebuild for a non-interactive deployer.
 # Enabling this grants the trigger principal CONTROL-PLANE DEPLOY: anyone who can
 # write /run/nixos-rebuild-trigger/request can deploy any pushed revision of
 # sammasak/nixos-config to this host. The source is a pinned 40-char SHA fetched
@@ -19,6 +20,9 @@ let
   lockFile = "/var/lib/nixos-rebuild-trigger/deploy.lock";
   activationUnit = "nixos-rebuild-activation";
 
+  # Attached to BOTH scripts, not to the unit: the activation script runs under
+  # a transient unit forked by PID 1, which inherits nothing from the trigger
+  # service, so it cannot rely on the service's `path =`.
   runtimePkgs = with pkgs; [
     nixos-rebuild
     git
@@ -35,15 +39,18 @@ let
   # common.sh is prepended rather than sourced so the build-time shellcheck sees
   # helpers and callers as one file; nothing about the pair is dynamic.
   mkScript =
-    name: body:
+    name: inheritPath: body:
     pkgs.writeShellApplication {
-      inherit name;
+      inherit name inheritPath;
       runtimeInputs = runtimePkgs;
       text = builtins.readFile ./common.sh + builtins.readFile body;
     };
 
-  triggerScript = mkScript "nixos-rebuild-trigger" ./trigger.sh;
-  activateScript = mkScript "nixos-rebuild-activate" ./activate.sh;
+  triggerScript = mkScript "nixos-rebuild-trigger" true ./trigger.sh;
+  # inheritPath = false: the transient unit's inherited PATH is systemd's
+  # /usr/bin default, which on NixOS is noise that would sit ahead of the system
+  # profile activate.sh appends.
+  activateScript = mkScript "nixos-rebuild-activate" false ./activate.sh;
 in
 {
   options.homelab.nixosRebuildTrigger = {
@@ -114,14 +121,18 @@ in
       pathConfig.PathExists = triggerFile;
     };
 
-    # Audit trail: append-only ${auditLog}, journald, and ${resultFile} for pollers.
+    # Three sinks, deliberately: journald for humans, /var/log/… append-only for
+    # history, and the result file for pollers that cannot read the journal.
     systemd.services.nixos-rebuild-trigger = {
       description = "Pinned, health-gated nixos-rebuild (board-worker trigger)";
       after = [ "nix-daemon.service" "network-online.target" "nixos-rebuild-trigger-dir.service" ];
       wants = [ "nix-daemon.service" "network-online.target" "nixos-rebuild-trigger-dir.service" ];
-      path = [ "/run/current-system/sw/bin" ];
-      # trigger.sh forwards the four activation values on to the transient unit
-      # with --setenv; nothing is interpolated into the shell sources.
+      # Without the trailing /bin: `path` runs entries through makeBinPath, so
+      # "/run/current-system/sw/bin" would render as ".../sw/bin/bin".
+      path = [ "/run/current-system/sw" ];
+      # Every name here has a matching `${NAME:?}` contract line in the scripts,
+      # and activate.sh's contract set must stay a subset of what trigger.sh
+      # forwards with --setenv. Nothing but that pairing enforces it.
       environment = {
         TRIGGER_DIR = triggerDir;
         TRIGGER_FILE = triggerFile;

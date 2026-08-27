@@ -2,12 +2,16 @@
 # started by trigger.sh; see the handoff comment there for why.
 # Args: PREV_SYSTEM REQUESTER REV TS
 
+AUDIT_LOG="${AUDIT_LOG:?}"
+RESULT_FILE="${RESULT_FILE:?}"
 LOCK_FILE="${LOCK_FILE:?}"
 HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:?}"
 TRIGGER_USER="${TRIGGER_USER:?}"
 
 # getent (glibc) and switch-to-configuration's helpers are not in runtimeInputs;
-# the health gate and the rollback need the live system profile on PATH.
+# the health gate and the rollback need the live system profile on PATH. This
+# is an APPEND, and default.nix builds this script with inheritPath = false, so
+# the search order is runtimeInputs then the system profile and nothing else.
 export PATH="$PATH:/run/current-system/sw/bin"
 
 PREV_SYSTEM="$1"

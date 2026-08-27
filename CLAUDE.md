@@ -11,8 +11,9 @@ A NixOS + Home Manager configuration repository using **flake-parts** with a den
 ```bash
 # ── Verification (run before deploying) ────────────────────────────
 just verify                   # Verify all hosts build successfully
-just check                    # Comment lint, then flake checks
+just check                    # Both lints, then flake checks
 just lint-comments            # Comment Policy only (density + forbidden shapes)
+just lint-shell               # Shellcheck scripts/*.sh
 
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
@@ -268,9 +269,10 @@ nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-ski
 
 The KubeVirt workstation / claude-worker VM images were retired in 2026-08. The
 hosts (`workstation-template`, `claude-worker-template`), their image modules,
-the build/publish scripts and the `just build`/`publish`/`release` targets are
-gone. `pkgs/claude-ctl.nix`, the `claude-ctl` flake input and its overlay wiring
-were removed on 2026-08-26.
+the build/publish scripts and the `publish`/`release` targets are gone.
+`pkgs/claude-ctl.nix`, the `claude-ctl` flake input and its overlay wiring were
+removed on 2026-08-26. The `just build` recipe that exists today is unrelated —
+it builds a NixOS system, not a VM image.
 
 The VM scaffolding inside `modules/programs/cli/claude-code/default.nix` — the
 `~/Justfile` of agent recipes, the `agent-heartbeat` user unit pointing at the
@@ -353,6 +355,12 @@ flag — judge those by reading.
 nix-code lines (the body of `''` strings is excluded from both sides of the
 fraction, so moving an inline script out to a real file neither helps nor hurts
 the number). The target band is 7–13%; above that, the file is narrating itself.
+
+`just lint-comments` is the enforced floor under that band, not the band itself:
+it fails any `.nix` file of 30+ nix-code lines above **25%**, plus the
+never-allowed shapes above, across `.nix` and `.sh` alike. The gap between 13%
+and 25% is judgement; the ratchet only catches the indefensible. Tighten
+`MAX_PERCENT` in `scripts/nix-comment-lint.sh` when the tree can take it.
 
 ## Conventions
 

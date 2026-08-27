@@ -3,8 +3,9 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 registry := "registry.sammasak.dev"
 
 # nh selects by nixosConfigurations attribute, and lenovo's attribute is not its
-# hostname, so the default cannot just be `hostname`.
-host := if `hostname` == "lenovo-21CB001PMX" { "lenovo" } else { `hostname` }
+# hostname, so the default cannot just be the hostname. `uname -n` rather than
+# `hostname`: the latter arrives via nettools, which nothing here declares.
+host := if `uname -n` == "lenovo-21CB001PMX" { "lenovo" } else { `uname -n` }
 
 # ── Build & Deploy ────────────────────────────────────────────────────
 
@@ -30,8 +31,14 @@ verify:
 lint-comments:
     bash scripts/nix-comment-lint.sh
 
-# Run flake checks (includes all configurations) and the comment lint
-check: lint-comments
+# The .sh files under modules/ are shellchecked by their writeShellApplication
+# derivation; these are the ones nothing else would ever check.
+[doc("Shellcheck the repo's own scripts (the ones no derivation builds)")]
+lint-shell:
+    nix shell nixpkgs#shellcheck -c shellcheck scripts/*.sh
+
+# Run flake checks (includes all configurations) and both lints
+check: lint-comments lint-shell
     nix flake check --all-systems --no-write-lock-file
 
 # ── Metrics ───────────────────────────────────────────────────────────

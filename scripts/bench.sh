@@ -77,10 +77,19 @@ cmd_bench() {
 
   # Closure creep is the number a comment ratio cannot show. It is the RUNNING
   # system, not a freshly evaluated one, so it moves only when a host is
-  # switched — which is the point: it measures what was actually deployed.
+  # switched — which is the point: it measures what was actually deployed. The
+  # host is recorded because two entries benched on different machines are not
+  # comparable, the same way two metricsTool versions are not.
+  #
+  # `nix path-info --json` returns an array in newer nix and a path-keyed object
+  # in older; both shapes are accepted. A failure here degrades to null rather
+  # than discarding two expensive host evaluations.
   local systemjson
-  systemjson=$(nix path-info --json -S /run/current-system | jq -c '
-    to_entries[0] | { storePath: .key, closureBytes: .value.closureSize }')
+  systemjson=$(
+    nix path-info --json -S /run/current-system 2>/dev/null | jq -c --arg host "$(uname -n)" '
+      (if type == "array" then .[0] else (to_entries[0] | .value + { path: .key }) end)
+      | { host: $host, storePath: .path, closureBytes: .closureSize }' || echo null
+  )
 
   mkdir -p metrics
   jq -c -n \
@@ -165,8 +174,12 @@ cmd_diff() {
       num("nix files"; $a.static.files; $b.static.files),
       num("max file lines"; $a.static.maxFileLines; $b.static.maxFileLines),
       num("p50 file lines"; $a.static.p50FileLines; $b.static.p50FileLines),
-      num("system closure MB"; (($a.system.closureBytes // 0) / 1048576 | round);
-                               (($b.system.closureBytes // 0) / 1048576 | round))
+      (if ($a.system.host // "?") != ($b.system.host // "?")
+       then ["system closure MB", ($a.system.host // "n/a"), ($b.system.host // "n/a"),
+             "SKIPPED (different machine)"] | @tsv
+       else num("system closure MB"; (($a.system.closureBytes // 0) / 1048576 | round);
+                                     (($b.system.closureBytes // 0) / 1048576 | round))
+       end)
     ]
     + ([$b.hosts | keys[]] | map(. as $h | [
         num($h + " eval seconds"; $a.hosts[$h].wallSeconds; $b.hosts[$h].wallSeconds),
@@ -182,6 +195,7 @@ cmd_diff() {
   echo "gc-bytes counters are the load-independent measure of evaluation work."
   echo "system closure is /run/current-system on the machine that ran the bench,"
   echo "so it moves on switch, not on commit; 0 means the entry predates it."
+  echo "shellcheck gates scripts/*.sh via 'just lint-shell', not this script."
 }
 
 cmd_parity() {

@@ -1,5 +1,18 @@
+# Consume the request FILE before ANY other statement. `systemd.paths` re-arms
+# on PathExists, so every early exit that leaves the file behind spins the unit
+# until TriggerLimitBurst kills the path — which is a permanently dead deploy
+# path, discovered at the worst possible time. Nothing above this line may fail.
+# -rf, not -f: a trigger-group member can `mkdir` the request path, and plain
+# `rm -f` on a directory returns 1 into `set -e`. The enclosing DIRECTORY must
+# survive — it is the trigger surface itself, and /run tmpfiles rules are
+# re-applied only at boot, so removing it would disable the trigger until the
+# next reboot.
+REQUEST_RAW="$(cat "${TRIGGER_FILE:?}" 2>/dev/null || true)"
+rm -rf "$TRIGGER_FILE"
+
+AUDIT_LOG="${AUDIT_LOG:?}"
+RESULT_FILE="${RESULT_FILE:?}"
 TRIGGER_DIR="${TRIGGER_DIR:?}"
-TRIGGER_FILE="${TRIGGER_FILE:?}"
 TRIGGER_GROUP="${TRIGGER_GROUP:?}"
 LOCK_FILE="${LOCK_FILE:?}"
 FLAKE_REF="${FLAKE_REF:?}"
@@ -8,13 +21,6 @@ ACTIVATION_UNIT="${ACTIVATION_UNIT:?}"
 ACTIVATE_SCRIPT="${ACTIVATE_SCRIPT:?}"
 HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:?}"
 TRIGGER_USER="${TRIGGER_USER:?}"
-
-# Consume the request FILE only, and first, so the path unit cannot re-arm into
-# a loop. The directory must survive: it is the trigger surface itself, and /run
-# tmpfiles rules are re-applied only at boot, so removing it here would disable
-# the trigger until the next reboot.
-REQUEST_RAW="$(cat "$TRIGGER_FILE" 2>/dev/null || true)"
-rm -f "$TRIGGER_FILE"
 
 # Every status write below targets this directory, and `set -e` would abort the
 # run before any audit trail existed if it were missing. Re-asserting is
@@ -36,6 +42,9 @@ if ! printf '%s' "$REV" | grep -Eq '^[0-9a-f]{40}$'; then
 fi
 
 FLAKE="$FLAKE_REF/$REV#$HOST_ATTR"
+# Written before the flock, so a request that arrives mid-deploy overwrites the
+# in-flight deploy's result with `running` and then `rejected-locked`. A poller
+# must key on the `start=` field, not just `status=`.
 result running
 audit "result=running flake=$FLAKE"
 echo "nixos-rebuild-trigger: requester=$REQUESTER rebuilding PINNED $FLAKE"

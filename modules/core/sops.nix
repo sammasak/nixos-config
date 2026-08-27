@@ -28,7 +28,10 @@ in
         };
 
         # Decrypted to /run/secrets/nix_access_token, which nix.conf includes at
-        # runtime so nix can fetch private flake inputs.
+        # runtime so nix can fetch private flake inputs. It lives under
+        # secrets/homelab/ for the `homelab/*.yaml` recipient rule in
+        # secrets/.sops.yaml, not because it is a cluster secret — moving it
+        # breaks decryption until the rule moves with it.
         "nix_access_token" = {
           sopsFile = ../../secrets/homelab/github-access-token.yaml;
           owner = "root";
