@@ -1,10 +1,5 @@
-# Lightweight cluster health watchdog running on the k3s control plane.
-# Checks node readiness, monitoring-stack pod status, and that Alertmanager's
-# always-firing Watchdog alert is still active, every 10 minutes.
-# Posts a high-priority alert to the local ntfy instance when anything fails,
-# and a min-priority heartbeat when everything passes, so that "healthy" and
-# "the watchdog itself is dead" are distinguishable from the outside.
-# Runs outside k8s so it survives worker node outages.
+# Cluster health watchdog. Runs outside k8s so it survives a worker outage, and
+# publishes on success as well as failure — see the heartbeat comment below.
 { config, lib, pkgs, ... }:
 
 let

@@ -10,8 +10,8 @@
       "btrfs"
     ];
     tmp.cleanOnBoot = true;
-    # Latest over LTS, ratified 2026-08-26 — revisit if the Cilium eBPF path breaks.
-    # See vault: homelab/self-assessment/2026-08-26-nixos-config-report.md
+    # Latest over LTS — revisit if the Cilium eBPF path breaks.
+    # See vault: homelab/decisions/ADR-025-linux-kernel-latest-over-lts.md
     kernelPackages = lib.mkDefault pkgs.linuxPackages_latest;
     kernelParams = [
       "preempt=full"

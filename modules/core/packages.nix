@@ -20,7 +20,6 @@ in
     killall
     lm_sensors
 
-    # File handling
     unrar
     unzip
     jq
@@ -47,8 +46,9 @@ in
     nh
     nvd
     nix-prefetch-scripts
+
     appimage-run
-    gawk
+    gawk  # scripts/bench.sh needs asort and a state machine
     ]
     ++ lib.optionals hasDesktop [
       # Desktop utilities
@@ -59,8 +59,6 @@ in
       playerctl
       libnotify
       yad
-    ]
-    ++ lib.optionals hasDesktop [
       wl-clipboard
       grim
       slurp

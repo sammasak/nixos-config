@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ ... }:
 {
   imports = [
     ../desktop/hyprland
@@ -10,7 +10,4 @@
 
   # Some GUI apps still expect an X server to exist.
   services.xserver.enable = true;
-
-  environment.systemPackages = with pkgs; [
-  ];
 }

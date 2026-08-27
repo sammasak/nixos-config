@@ -1,11 +1,12 @@
 { config, pkgs, lib, osConfig ? null, ... }:
 let
-  mkForce = lib.mkForce;
+  inherit (lib) mkForce;
   baseProfile =
     if osConfig != null && osConfig ? sam && osConfig.sam ? profile
     then osConfig.sam.profile
     else { };
-  # Merge base profile with hardcoded defaults for removed fields
+  # terminal/browser are unconditional overrides, not defaults: they were
+  # dropped from sam.profile and nothing else supplies them.
   profile = baseProfile // {
     monitors = baseProfile.monitors or [ ",preferred,auto,1" ];
     kbdLayout = baseProfile.kbdLayout or "se";
@@ -119,7 +120,6 @@ in
 
       # Touchpad gestures (new syntax for Hyprland 0.51+)
       gesture = [
-        # 3-finger horizontal swipe = switch workspaces
         "3, horizontal, workspace"
       ];
 
@@ -183,15 +183,13 @@ in
         "$mod CTRL, K, resizeactive, 0 -50"
         "$mod CTRL, J, resizeactive, 0 50"
 
-        # Master layout
         "$mod, I, layoutmsg, addmaster"
         "$mod, O, layoutmsg, removemaster"
         "$mod CTRL, Return, layoutmsg, swapwithmaster"
 
-        # Window grouping
         "$mod, G, togglegroup,"
 
-        # Window cycling with visual selector (like macOS Command+Tab)
+        # Window cycling: Tab opens a visual selector, CTRL+Tab is direct.
         "$mod, Tab, exec, rofi -show window"
 
         "$mod CTRL, Tab, cyclenext,"

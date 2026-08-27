@@ -125,7 +125,9 @@ cmd_diff() {
   # Two entries measured by different versions of the metric tool are not
   # comparable, and that is exactly the mistake that is invisible in a table.
   local tools
-  tools=$(tail -n 2 "$HISTORY" | jq -rs '[.[].metricsTool] | unique | length')
+  tools=$(tail -n 2 "$HISTORY" | jq -rs '
+    if length != 2 or any(.[].metricsTool; . == null) then "bad"
+    else ([.[].metricsTool] | unique | length | tostring) end')
   if [ "$tools" != "1" ]; then
     echo "REFUSING to diff: the last two entries were measured by different" >&2
     echo "versions of scripts/nix-comment-metrics.awk. Re-run the older tree" >&2

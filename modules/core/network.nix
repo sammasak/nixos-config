@@ -36,8 +36,5 @@ in
   # accepts above are the only SSH path besides trusted interfaces.
   services.openssh.openFirewall = false;
 
-  environment.systemPackages = with pkgs; [
-  ] ++ lib.optionals hasDesktop [
-    networkmanagerapplet
-  ];
+  environment.systemPackages = lib.optionals hasDesktop [ pkgs.networkmanagerapplet ];
 }

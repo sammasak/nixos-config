@@ -31,8 +31,8 @@ parity:
 
 # ── Registry ──────────────────────────────────────────────────────────
 
-# Login to Harbor
-harbor-login:
+# Log in to the image registry (zot)
+registry-login:
     nix shell nixpkgs#skopeo -c skopeo login {{registry}}
 
 # ── Image Supply Chain Security ───────────────────────────────────────

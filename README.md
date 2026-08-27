@@ -44,6 +44,8 @@ the tie-breaker.
 | `scripts/` | Repo tooling | `verify-all-hosts.sh`, `bench.sh` |
 | `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
+| `docs/` | Superseded design docs | Banner-marked; kept for history, not current |
+| `Justfile` | Task entry points | `verify`, `check`, `bench`, `bench-diff`, `parity` |
 | `assets/`, `dotfiles/` | Wallpapers; plain config files symlinked verbatim | |
 | `pkgs/` | Packages not in nixpkgs | Exposed through an overlay in `flake-modules/` |
 

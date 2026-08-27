@@ -20,9 +20,9 @@
 # does in modules/hardware/thermal.nix. State is a small explicit stack.
 #
 # Known limit: an identifier ending in two apostrophes (`x''`) would be read as
-# a string delimiter. Nix allows such names; this tree has none. `--verify`
-# reports any file that ends with a non-empty stack, which is how that class of
-# mistake surfaces instead of silently skewing the metric.
+# a string delimiter. Nix allows such names; this tree has none. `-v verify=1`
+# makes the run FAIL (exit 2) on any file that ends with a non-empty stack, so
+# that class of mistake stops the benchmark instead of skewing it quietly.
 
 function push(s) { stack[++sp] = s }
 function pop() { if (sp > 0) sp-- }
@@ -58,7 +58,9 @@ function scan(line,    i, n, c, c2, c3, state) {
       # code, or inside an antiquotation (which contains ordinary Nix)
       if (c2 == "''") { push("indented"); i += 2; continue }
       if (c == "\"") { push("quoted"); i++; continue }
-      if (c == "{" && state == "antiquote") { push("brace"); i++; continue }
+      # Braces are tracked only inside an antiquotation, where the closing `}`
+      # ends it — at top level they are ordinary attrset syntax and irrelevant.
+      if (c == "{" && (state == "antiquote" || state == "brace")) { push("brace"); i++; continue }
       if (c == "}" && (state == "antiquote" || state == "brace")) { pop(); i++; continue }
       # An unquoted '#' comments out the rest of the line.
       if (c == "#") return
@@ -70,7 +72,7 @@ function scan(line,    i, n, c, c2, c3, state) {
 function inCode() { return top() == "code" || top() == "antiquote" || top() == "brace" }
 
 FNR == 1 {
-  if (files > 0 && sp > 0 && verify) printf "unbalanced: %s\n", prevfile > "/dev/stderr"
+  if (files > 0 && sp > 0 && verify) { printf "unbalanced string state at end of %s\n", prevfile > "/dev/stderr"; bad = 1 }
   lines[++files] = 0
   sp = 0
 }
@@ -87,7 +89,9 @@ FNR == 1 {
 }
 
 END {
-  if (sp > 0 && verify) printf "unbalanced: %s\n", prevfile > "/dev/stderr"
+  if (sp > 0 && verify) { printf "unbalanced string state at end of %s\n", prevfile > "/dev/stderr"; bad = 1 }
   n = asort(lines)
   printf "%d\t%d\t%d\t%d\t%d\t%d\n", files, total, nixlines, comments, lines[n], lines[int((n + 1) / 2)]
+  # A skewed metric must fail the run, not warn into a pipe nobody reads.
+  if (bad) exit 2
 }

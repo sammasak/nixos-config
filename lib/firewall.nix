@@ -17,8 +17,9 @@ let
 in
 {
   # `nftComment` and `dropOthers` land in the nftables output only, hence the name.
-  # The assert is the point of the file: under the third backend, `firewalld`,
-  # neither output is read and the scoping would vanish silently.
+  # The assert is the point of the file. `networking.firewall.backend` is
+  # `enum [ "iptables" "nftables" "firewalld" ]`; under firewalld neither output
+  # is read at all and the scoping would vanish silently.
   mkDualBackendFirewall =
     {
       nftComment,

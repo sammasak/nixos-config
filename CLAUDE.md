@@ -254,8 +254,7 @@ rebuild, then `systemctl start tailscale-autoconnect`.
 - Traffic routes through control-plane subnet router
 
 **Documentation:**
-- Setup checklist: `~/knowledge/Homelab/Projects/tailscale-integration/HUMAN_ACTION_REQUIRED.md`
-- Operations runbook: `~/knowledge/Homelab/Runbooks/tailscale-operations.md`
+- Operations runbook: `~/knowledge/homelab/runbooks/tailscale-operations.md`
 
 ### Key Inputs
 
@@ -298,7 +297,8 @@ is one of these four:
 Never:
 
 - restate the option (`# Enable the firewall` above `firewall.enable = true`)
-- carry incident history, dates, or a ticket number used as narrative
+- carry incident history, dates, or a ticket number used as narrative (a dated
+  *revisit trigger* — "revisit if X breaks" — is a consequence, and is fine)
 - explain how to restore something you deleted — `git log` owns that, and a
   commit message is the right place for the why of a deletion
 - keep a commented-out config block "in case"
@@ -321,8 +321,8 @@ pointing at nothing.
 Comments that hit the target style — read one before writing your own. Anchored
 to what they sit above, not to a line number, because line numbers rot:
 
-- `modules/core/wifi.nix`, file header — why declarative WiFi exists, in three
-  lines, with the incident in the vault
+- `modules/core/wifi.nix`, file header — why declarative WiFi exists, with the
+  incident itself in the vault
 - `modules/homelab/k3s/default.nix`, above the `eviction-hard`/`eviction-soft`
   kubelet args — why those thresholds and not the k3s defaults
 - `modules/homelab/k3s/default.nix`, above the `taintControlPlane` flag block —
@@ -330,6 +330,12 @@ to what they sit above, not to a line number, because line numbers rot:
 - `modules/homelab/k3s/default.nix`, above `trustedInterfaces` — why the host
   firewall must not filter Cilium's datapath interfaces
 - `lib/firewall.nix`, file header — why both backends are always emitted
+
+**Comments inside a `''` string are out of scope for now.** They are rendered
+shell — `fish.nix`'s `interactiveShellInit`, the two inline programs in
+`nixos-rebuild-trigger.nix` — so editing one moves the derivation and breaks
+`just parity`. They get swept when those scripts move to real `.sh` files.
+The same reason there is no `nix fmt`: a formatter reindents `''` strings.
 
 `just bench` records the comment ratio in `metrics/history.jsonl`, measured over
 nix-code lines (the body of `''` strings is excluded from both sides of the
@@ -352,23 +358,29 @@ the number). The target band is 7–13%; above that, the file is narrating itsel
 2. Create `flake-modules/hosts/<name>.nix` declaring `configurations.nixos.<name>` (reads variables, sets system/username/roles)
 3. The module registry auto-discovers the rest
 
-See [[Infrastructure/Runbooks/add-new-host]] in knowledge for detailed instructions.
+See `~/knowledge/homelab/runbooks/add-new-host.md` for detailed instructions.
 
 ## Further Documentation
 
 Additional documentation is maintained in the knowledge (~/knowledge):
 
-**Infrastructure Concepts:**
-- [[Infrastructure/Concepts/nixos-modules]] - NixOS declarative configuration
-- [[Infrastructure/Concepts/nix-specialisations]] - Boot-time system variants
-- [[Infrastructure/Concepts/k3s-nixos]] - Lightweight Kubernetes on NixOS
-- [[Infrastructure/Concepts/flux-gitops]] - GitOps continuous deployment
-- [[Infrastructure/Concepts/sops-nixos]] - Secrets management with SOPS
-- [[Infrastructure/Concepts/age-encryption]] - Modern encryption with age
+Paths are relative to `~/knowledge`, and every one below was verified to
+exist. The vault uses relative markdown links, not `[[wikilinks]]`.
 
-**Infrastructure Runbooks:**
-- [[Infrastructure/Runbooks/bootstrap-homelab]] - Complete cluster bootstrap guide
-- [[Infrastructure/Runbooks/add-new-host]] - Adding new NixOS hosts
+**Concepts:**
+- `nix/nixos-modules.md` — NixOS declarative configuration
+- `nix/nix-specialisations.md` — boot-time system variants
+- `nix/k3s-nixos.md` — lightweight Kubernetes on NixOS
+- `nix/sops-nixos.md` — secrets management with SOPS
+- `nix/age-encryption.md` — modern encryption with age
+- `homelab/concepts/flux-gitops.md` — GitOps continuous deployment
 
-**Architecture Overviews:**
-- [[Infrastructure/Architecture/homelab-platform-overview]] - Homelab platform architecture
+**Runbooks:**
+- `homelab/runbooks/bootstrap-homelab.md` — complete cluster bootstrap guide
+- `homelab/runbooks/add-new-host.md` — adding new NixOS hosts
+- `homelab/runbooks/lenovo-death-recovery.md` — the control plane is gone
+
+**Architecture and decisions:**
+- `homelab/architecture/homelab-platform-overview.md` — platform architecture
+- `homelab/decisions/` — ADRs, including ADR-024 (rebuild trigger) and
+  ADR-025 (kernel choice), both referenced from code in this repo
