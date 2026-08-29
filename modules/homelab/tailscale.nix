@@ -83,30 +83,58 @@ in
       };
 
       script = ''
-        # Wait for tailscaled to be ready (bounded — see TimeoutStartSec).
+        # Wait for tailscaled's LocalAPI (bounded — see TimeoutStartSec).
+        # --json: the plain form exits 1 while merely logged out, which reads
+        # as "daemon not up" and burns the whole loop before every re-auth.
         for _ in $(seq 1 60); do
-          ${pkgs.tailscale}/bin/tailscale status &>/dev/null && break
+          ${pkgs.tailscale}/bin/tailscale status --json &>/dev/null && break
           echo "Waiting for tailscaled to start..."
           sleep 2
         done
 
-        upFlags=( ${escapeShellArgs modeFlags} )
+        # The LocalAPI answers before the control round trip that mints an
+        # AuthURL on node-key expiry; snapshotting too early misses the URL and
+        # the stored key then stomps the pending re-auth. Wait for the backend
+        # to settle, and give NeedsLogin a bounded window to produce its URL —
+        # a never-registered node stays URL-less and falls through to the key.
+        state=""; authUrl=""
+        for _ in $(seq 1 15); do
+          status="$(${pkgs.tailscale}/bin/tailscale status --json)"
+          state="$(printf '%s' "$status" | ${pkgs.jq}/bin/jq -r '.BackendState')"
+          authUrl="$(printf '%s' "$status" | ${pkgs.jq}/bin/jq -r '.AuthURL // ""')"
+          case "$state" in
+            Running|Stopped|NeedsMachineAuth) break ;;
+            NeedsLogin) [ -n "$authUrl" ] && break ;;
+          esac
+          sleep 1
+        done
 
-        # Only pass the authkey when this node is not authenticated yet:
-        # re-running `tailscale up` with an already-consumed single-use key fails.
-        if ! ${pkgs.tailscale}/bin/tailscale status --json | ${pkgs.jq}/bin/jq -e '.Self.Online' &>/dev/null; then
+        upFlags=( ${escapeShellArgs modeFlags} )
+        usedAuthKey=""
+
+        if [ "$state" = "Running" ]; then
+          echo "Already authenticated. Reapplying preferences..."
+        elif [ -n "$authUrl" ]; then
+          echo "Interactive re-auth already pending; not passing the stored authkey." >&2
+          echo "Finish the login in a browser: $authUrl" >&2
+          exit 1
+        else
           echo "Authenticating with Tailscale..."
           upFlags+=( --authkey=file:${cfg.authKeyFile} )
-        else
-          echo "Already authenticated. Reapplying preferences..."
+          usedAuthKey=1
         fi
 
         if ! ${pkgs.tailscale}/bin/tailscale up "''${upFlags[@]}"; then
-          echo "tailscale up failed. The likeliest cause is that the authkey in" >&2
-          echo "${cfg.authKeyFile} has expired, or was single-use and is already" >&2
-          echo "consumed. Mint a fresh key in the Tailscale admin console, update" >&2
-          echo "secrets/homelab/tailscale.yaml, rebuild, then run:" >&2
-          echo "  systemctl start tailscale-autoconnect" >&2
+          if [ -n "$usedAuthKey" ]; then
+            echo "tailscale up failed. The likeliest cause is that the authkey in" >&2
+            echo "${cfg.authKeyFile} has expired, or was single-use and is already" >&2
+            echo "consumed. Mint a fresh key in the Tailscale admin console, update" >&2
+            echo "secrets/homelab/tailscale.yaml, rebuild, then run:" >&2
+            echo "  systemctl start tailscale-autoconnect" >&2
+          else
+            echo "tailscale up failed while reapplying preferences; no authkey was" >&2
+            echo "involved. Inspect 'tailscale status' and 'journalctl -u tailscaled'." >&2
+          fi
           exit 1
         fi
       '';

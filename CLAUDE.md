@@ -11,9 +11,10 @@ A NixOS + Home Manager configuration repository using **flake-parts** with a den
 ```bash
 # ── Verification (run before deploying) ────────────────────────────
 just verify                   # Verify all hosts build successfully
-just check                    # Both lints, then flake checks
+just check                    # Both lints + secrets gate, then flake checks
 just lint-comments            # Comment Policy only (density + forbidden shapes)
 just lint-shell               # Shellcheck scripts/*.sh
+just secrets-verify           # Sanity-check decrypted wifi credentials (skips without an age key)
 
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
@@ -82,6 +83,13 @@ Boot menu on lenovo:
 NixOS (default)  ← Desktop mode
 NixOS - niri     ← Desktop mode, niri compositor instead of Hyprland
 ```
+
+The niri entry sets `defaultSession = "niri"`, but SDDM's remembered
+`Last.Session` (`/var/lib/sddm/state.conf`, shared across boot entries) beats
+`DefaultSession` whenever the remembered session exists in the booted entry —
+and `hyprland.desktop` exists in both. So the niri entry pre-selects Hyprland
+until niri is picked once in the greeter; the base entry always falls back to
+Hyprland because it has no `niri.desktop`.
 
 The cross-mode specialisations were removed on 2026-08-27: lenovo's `server`
 entry (and `modules/specialisations/server.nix` with it) and acer-swift's
@@ -244,12 +252,17 @@ never sets `homelab.tailscale.enable`, so the import is inert on workers.
 2. `tailscale-autoconnect.service` runs once to configure:
    - Authenticates using the authkey from SOPS, but only if not already authenticated
      (re-using a consumed single-use key fails)
+   - If an interactive re-auth is already pending (node-key expiry mints an auth
+     URL at boot), the unit fails loudly with that URL instead of stomping it
+     with the stored key
    - Applies the mode's preferences
 3. Admin must approve subnet routes in the Tailscale admin console
 4. Tailscale clients can access homelab LAN IPs and services
 
-If `tailscale-autoconnect` fails, the usual cause is an expired or already-consumed
-authkey: mint a new one in the admin console, update `secrets/homelab/tailscale.yaml`,
+If `tailscale-autoconnect` fails, read which failure message is in
+the journal: "Interactive re-auth already pending" means finish the printed
+auth URL in a browser (do NOT rotate the authkey); the authkey message means
+mint a new key in the admin console, update `secrets/homelab/tailscale.yaml`,
 rebuild, then `systemctl start tailscale-autoconnect`.
 
 **DNS flow:**
