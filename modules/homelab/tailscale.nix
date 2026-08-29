@@ -29,9 +29,11 @@ let
       ];
 in
 {
-  # Pulled in so `authKeyFile` can point at the declared secret instead of
+  # sops.nix: so `authKeyFile` can point at the declared secret instead of
   # repeating its path; the config block below turns homelab.secrets on.
-  imports = [ ./sops.nix ];
+  # ntfy.nix: so the `ntfyUrl` default can read homelab.ntfy.port on hosts
+  # that never import the ntfy module themselves.
+  imports = [ ./sops.nix ./ntfy.nix ];
 
   options.homelab.tailscale = {
     enable = mkEnableOption "Tailscale";
@@ -58,6 +60,13 @@ in
       defaultText = ''config.sops.secrets."tailscale/authkey".path'';
       description = "Path to the Tailscale authkey file (SOPS-encrypted)";
     };
+
+    ntfyUrl = mkOption {
+      type = types.str;
+      default = "http://localhost:${toString config.homelab.ntfy.port}/homelab-alerts";
+      defaultText = "http://localhost:<ntfy.port>/homelab-alerts";
+      description = "ntfy push URL paged when tailnet auth needs an operator.";
+    };
   };
 
   config = mkIf cfg.enable {
@@ -78,7 +87,9 @@ in
       # Without this, a switch restarts the unit and a dead authkey or pending
       # re-auth fails the WHOLE activation (exit 4 → the rebuild trigger rolls
       # back), holding every deploy hostage to tailnet auth state. Unit changes
-      # apply on next boot or a manual `systemctl start tailscale-autoconnect`.
+      # apply on next boot or a manual `systemctl restart tailscale-autoconnect`
+      # — restart, not start: RemainAfterExit leaves the unit active, and start
+      # on an active unit is a no-op.
       restartIfChanged = false;
 
       serviceConfig = {
@@ -118,15 +129,24 @@ in
         upFlags=( ${escapeShellArgs modeFlags} )
         usedAuthKey=""
 
+        notify() {
+          ${pkgs.curl}/bin/curl -fsS -m 10 -X POST \
+            -H "Title: Tailscale auth needs an operator" \
+            -H "Tags: warning" -H "Priority: high" \
+            -d "$1" "${cfg.ntfyUrl}" || true
+        }
+
         # Operator-actionable auth states exit 0: a failed wanted unit is
-        # (re)started by every switch, so exiting 1 here fails whole
-        # activations (exit 4 → the rebuild trigger rolls back) until a human
-        # re-auths. The journal and `tailscale status` health carry the signal.
+        # started (not restarted, so restartIfChanged cannot help) by every
+        # switch, so exiting 1 here fails whole activations (exit 4 → the
+        # rebuild trigger rolls back) until a human re-auths. The page below
+        # and the journal carry the signal instead.
         if [ "$state" = "Running" ]; then
           echo "Already authenticated. Reapplying preferences..."
         elif [ -n "$authUrl" ]; then
           echo "Interactive re-auth already pending; not passing the stored authkey." >&2
           echo "Finish the login in a browser: $authUrl" >&2
+          notify "${config.networking.hostName}: interactive tailscale re-auth pending: $authUrl"
           exit 0
         else
           echo "Authenticating with Tailscale..."
@@ -136,11 +156,13 @@ in
 
         if ! ${pkgs.tailscale}/bin/tailscale up "''${upFlags[@]}"; then
           if [ -n "$usedAuthKey" ]; then
-            echo "tailscale up failed. The likeliest cause is that the authkey in" >&2
-            echo "${cfg.authKeyFile} has expired, or was single-use and is already" >&2
-            echo "consumed. Mint a fresh key in the Tailscale admin console, update" >&2
-            echo "secrets/homelab/tailscale.yaml, rebuild, then run:" >&2
-            echo "  systemctl start tailscale-autoconnect" >&2
+            echo "tailscale up failed (BackendState=$state). The likeliest cause is" >&2
+            echo "that the authkey in ${cfg.authKeyFile} has expired, or was" >&2
+            echo "single-use and is already consumed. Mint a fresh key in the" >&2
+            echo "Tailscale admin console, update secrets/homelab/tailscale.yaml," >&2
+            echo "rebuild, then run:" >&2
+            echo "  systemctl restart tailscale-autoconnect" >&2
+            notify "${config.networking.hostName}: tailscale authkey rejected (BackendState=$state); node logged out until re-auth"
             exit 0
           else
             echo "tailscale up failed while reapplying preferences; no authkey was" >&2

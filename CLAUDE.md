@@ -253,21 +253,23 @@ never sets `homelab.tailscale.enable`, so the import is inert on workers.
    - Authenticates using the authkey from SOPS, but only if not already authenticated
      (re-using a consumed single-use key fails)
    - If an interactive re-auth is already pending (node-key expiry mints an auth
-     URL at boot), the unit fails loudly with that URL instead of stomping it
-     with the stored key
+     URL at boot), it logs that URL, pages ntfy, and exits 0 instead of stomping
+     the URL with the stored key
    - Applies the mode's preferences
 3. Admin must approve subnet routes in the Tailscale admin console
 4. Tailscale clients can access homelab LAN IPs and services
 
-Operator-actionable auth states (pending auth URL, dead authkey) log to the
-journal and exit 0 — a failed wanted unit would be restarted by every switch
-and fail whole activations (the rebuild trigger then rolls back), holding
-deploys hostage to tailnet auth state. So when the tailnet is down, read
+Operator-actionable auth states (pending auth URL, dead authkey) page ntfy,
+log to the journal and exit 0 — a failed wanted unit is *started* (not
+restarted, so `restartIfChanged` cannot help) by every switch and fails whole
+activations (the rebuild trigger then rolls back), holding deploys hostage to
+tailnet auth state. So when the tailnet is down, read
 `journalctl -u tailscale-autoconnect`: "Interactive re-auth already pending"
 means finish the printed auth URL in a browser (do NOT rotate the authkey);
 the authkey message means mint a new key in the admin console, update
 `secrets/homelab/tailscale.yaml`, rebuild, then
-`systemctl start tailscale-autoconnect`. The unit only *fails* when
+`systemctl restart tailscale-autoconnect` (restart, not start — the unit
+stays `active (exited)` after the clean exit). The unit only *fails* when
 reapplying preferences on an authenticated node errors.
 
 **DNS flow:**
