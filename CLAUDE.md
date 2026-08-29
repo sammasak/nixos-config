@@ -259,11 +259,16 @@ never sets `homelab.tailscale.enable`, so the import is inert on workers.
 3. Admin must approve subnet routes in the Tailscale admin console
 4. Tailscale clients can access homelab LAN IPs and services
 
-If `tailscale-autoconnect` fails, read which failure message is in
-the journal: "Interactive re-auth already pending" means finish the printed
-auth URL in a browser (do NOT rotate the authkey); the authkey message means
-mint a new key in the admin console, update `secrets/homelab/tailscale.yaml`,
-rebuild, then `systemctl start tailscale-autoconnect`.
+Operator-actionable auth states (pending auth URL, dead authkey) log to the
+journal and exit 0 — a failed wanted unit would be restarted by every switch
+and fail whole activations (the rebuild trigger then rolls back), holding
+deploys hostage to tailnet auth state. So when the tailnet is down, read
+`journalctl -u tailscale-autoconnect`: "Interactive re-auth already pending"
+means finish the printed auth URL in a browser (do NOT rotate the authkey);
+the authkey message means mint a new key in the admin console, update
+`secrets/homelab/tailscale.yaml`, rebuild, then
+`systemctl start tailscale-autoconnect`. The unit only *fails* when
+reapplying preferences on an authenticated node errors.
 
 **DNS flow:**
 - Client queries `grafana.sammasak.dev`

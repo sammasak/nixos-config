@@ -118,12 +118,16 @@ in
         upFlags=( ${escapeShellArgs modeFlags} )
         usedAuthKey=""
 
+        # Operator-actionable auth states exit 0: a failed wanted unit is
+        # (re)started by every switch, so exiting 1 here fails whole
+        # activations (exit 4 → the rebuild trigger rolls back) until a human
+        # re-auths. The journal and `tailscale status` health carry the signal.
         if [ "$state" = "Running" ]; then
           echo "Already authenticated. Reapplying preferences..."
         elif [ -n "$authUrl" ]; then
           echo "Interactive re-auth already pending; not passing the stored authkey." >&2
           echo "Finish the login in a browser: $authUrl" >&2
-          exit 1
+          exit 0
         else
           echo "Authenticating with Tailscale..."
           upFlags+=( --authkey=file:${cfg.authKeyFile} )
@@ -137,11 +141,12 @@ in
             echo "consumed. Mint a fresh key in the Tailscale admin console, update" >&2
             echo "secrets/homelab/tailscale.yaml, rebuild, then run:" >&2
             echo "  systemctl start tailscale-autoconnect" >&2
+            exit 0
           else
             echo "tailscale up failed while reapplying preferences; no authkey was" >&2
             echo "involved. Inspect 'tailscale status' and 'journalctl -u tailscaled'." >&2
+            exit 1
           fi
-          exit 1
         fi
       '';
     };
