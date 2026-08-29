@@ -20,12 +20,14 @@ in
   sam.profile = vars;
   sam.hostSecrets.enable = true;
 
-  # A specialisation inherits the parent config, so this entry keeps the whole
-  # desktop and only adds a second session; SDDM stays the chooser and
-  # defaultSession remains hyprland. Waybar is still the Hyprland bar and its
-  # workspaces module renders empty under niri.
+  # The hyprland module sets defaultSession with mkDefault, so the bare
+  # assignment below wins. SDDM's remembered Last.Session in
+  # /var/lib/sddm/state.conf still beats DefaultSession in the greeter, so this
+  # entry needs one manual pick of niri before it sticks. Waybar is still the
+  # Hyprland bar and its workspaces module renders empty under niri.
   specialisation.niri.configuration = {
     programs.niri.enable = true;
+    services.displayManager.defaultSession = "niri";
 
     # X11 clients under niri need an external Xwayland shim; the nixpkgs niri
     # module does not install one.
