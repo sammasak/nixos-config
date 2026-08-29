@@ -37,8 +37,12 @@ lint-comments:
 lint-shell:
     nix shell nixpkgs#shellcheck -c shellcheck scripts/*.sh
 
-# Run flake checks (includes all configurations) and both lints
-check: lint-comments lint-shell
+[doc("Decrypt the wifi secret and assert SSID+PSK are sane, never printing them; skips without an age key")]
+secrets-verify:
+    nix shell nixpkgs#sops -c bash scripts/secrets-verify.sh
+
+# Run flake checks (includes all configurations), both lints and the secrets gate
+check: lint-comments lint-shell secrets-verify
     nix flake check --all-systems --no-write-lock-file
 
 # ── Metrics ───────────────────────────────────────────────────────────
