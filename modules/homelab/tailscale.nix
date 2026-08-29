@@ -75,6 +75,12 @@ in
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 
+      # Without this, a switch restarts the unit and a dead authkey or pending
+      # re-auth fails the WHOLE activation (exit 4 → the rebuild trigger rolls
+      # back), holding every deploy hostage to tailnet auth state. Unit changes
+      # apply on next boot or a manual `systemctl start tailscale-autoconnect`.
+      restartIfChanged = false;
+
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
