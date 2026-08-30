@@ -195,10 +195,14 @@ in
       };
 
       script = ''
-        dev="$(${pkgs.iproute2}/bin/ip -o route get 8.8.8.8 2>/dev/null \
-          | ${pkgs.gawk}/bin/awk '{for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1)}')"
+        # route show, not route get: get simulates a packet through the policy
+        # rules, so tailscaled's fwmark rules can void the lookup even while
+        # the default route is live; show reads the main table directly.
+        out="$(${pkgs.iproute2}/bin/ip -o -4 route show default 2>&1)" || true
+        dev="$(printf '%s\n' "$out" \
+          | ${pkgs.gawk}/bin/awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')"
         if [ -z "$dev" ]; then
-          echo "no default-route interface found; skipping GRO tuning"
+          echo "no default-route interface found; skipping GRO tuning (ip said: $out)"
           exit 0
         fi
         if ${pkgs.ethtool}/bin/ethtool -K "$dev" rx-udp-gro-forwarding on rx-gro-list off; then
