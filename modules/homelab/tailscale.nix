@@ -179,6 +179,36 @@ in
       "net.ipv6.conf.all.forwarding" = mkDefault 1;
     };
 
+    # Quiets `tailscale up`'s UDP-GRO warning and raises forwarded-traffic
+    # throughput. https://tailscale.com/s/ethtool-config-udp-gro
+    # Always exits 0: a wanted oneshot that fails on a driver quirk would fail
+    # whole activations, exactly like tailscale-autoconnect above.
+    systemd.services.tailscale-gro-tune = mkIf isSubnetRouter {
+      description = "Enable UDP GRO forwarding on the default-route interface";
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+
+      script = ''
+        dev="$(${pkgs.iproute2}/bin/ip -o route get 8.8.8.8 2>/dev/null \
+          | ${pkgs.gawk}/bin/awk '{for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1)}')"
+        if [ -z "$dev" ]; then
+          echo "no default-route interface found; skipping GRO tuning"
+          exit 0
+        fi
+        if ${pkgs.ethtool}/bin/ethtool -K "$dev" rx-udp-gro-forwarding on rx-gro-list off; then
+          echo "GRO forwarding tuned on $dev"
+        else
+          echo "ethtool could not change features on $dev (driver limitation); leaving defaults" >&2
+        fi
+      '';
+    };
+
     networking.firewall = {
       trustedInterfaces = [ "tailscale0" ];
 
