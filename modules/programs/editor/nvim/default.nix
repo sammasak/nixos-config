@@ -42,8 +42,7 @@ in
     initLua = ''require("config.lazy")'';
   };
 
-  # Stylix's base16 target injects a broken require("mini.base16") into init.lua
-  # (errors on every launch); LazyVim owns the catppuccin colours instead.
+  # Stylix's base16 nvim target injects a broken require("mini.base16"); LazyVim owns colours.
   stylix.targets.neovim.enable = false;
 
   # Nix-provided debugpy interpreter for the live Lua config (Mason is off).
