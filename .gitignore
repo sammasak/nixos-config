@@ -1,6 +1,7 @@
 tmp/
 result*
 .playwright-mcp/
+.direnv/
 .worktrees/
 target/
 **/target/

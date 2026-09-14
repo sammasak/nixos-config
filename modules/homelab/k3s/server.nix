@@ -51,6 +51,12 @@ in
       fluxcd
       sops
       age
+      # Cluster-admin extras for the interactive control plane: multi-pod log
+      # tailing, image-layer analysis and registry inspection for the
+      # buildah -> zot pipeline. Workers never need them.
+      stern
+      dive
+      skopeo
     ];
 
     # local-storage is replaced by a resource-limited copy in k3s-manifests below.

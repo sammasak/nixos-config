@@ -37,7 +37,11 @@ let
           inputs.sops-nix.nixosModules.sops
           inputs.home-manager.nixosModules.home-manager
           {
-            nixpkgs.overlays = [ (import ../pkgs) ];
+            nixpkgs.overlays = [
+              (import ../pkgs)
+              # pkgs.nur.* — keeps modules on plain pkgs, no specialArgs.
+              inputs.nur.overlays.default
+            ];
             sam.userConfig = users.${username} or { };
 
             home-manager = {
@@ -45,6 +49,7 @@ let
               useUserPackages = true;
               backupFileExtension = "backup";
               sharedModules = [
+                inputs.nix-index-database.homeModules.default
                 ../modules/programs/cli/workspace/default.nix
                 ../modules/programs/cli/claude-code/default.nix
                 (import ../modules/programs/cli/claude-code/mcp.nix inputs.claude-code-skills)

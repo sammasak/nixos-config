@@ -15,6 +15,16 @@
     sops-nix.url = "github:Mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
 
+    # Firefox add-ons (rycee's firefox-addons set) for declarative extensions.
+    nur.url = "github:nix-community/NUR";
+    nur.inputs.nixpkgs.follows = "nixpkgs";
+    nur.inputs.flake-parts.follows = "flake-parts";
+
+    # Weekly prebuilt nix-index DB: powers `, cmd` (comma) without ever
+    # running nix-index locally.
+    nix-index-database.url = "github:nix-community/nix-index-database";
+    nix-index-database.inputs.nixpkgs.follows = "nixpkgs";
+
     claude-code-skills.url = "github:sammasak/claude-code-skills";
     claude-code-skills.flake = false;
   };

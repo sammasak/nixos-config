@@ -1,5 +1,5 @@
 # Claude Code agent configuration — first-boot state seed + tool permissions
-{ pkgs, lib, ... }:
+{ pkgs, lib, osConfig, ... }:
 {
   # Seed ~/.claude.json on first boot so the interactive setup wizard is skipped.
   # NOTE: the project path "/home/lukas" is hardcoded in the JSON. This module
@@ -56,4 +56,14 @@
   # Enabled here because the sibling Claude Code / Codex Home Manager modules
   # attach interactiveShellInit fragments to it.
   programs.fish.enable = true;
+
+  # Caps Claude on the sole k3s worker so a runaway build cannot starve the
+  # cluster or the co-located ntfy pod (paging dies with it); CPUWeight < 100.
+  programs.fish.functions = lib.mkIf (!(osConfig.sam.desktop.enable or false)) {
+    ccap = ''
+      systemd-run --user --scope --quiet \
+        -p CPUWeight=50 -p CPUQuota=400% -p MemoryHigh=4G -p MemoryMax=5G \
+        -- claude $argv
+    '';
+  };
 }

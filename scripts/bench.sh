@@ -58,12 +58,27 @@ cmd_bench() {
     echo "  evaluating $host ..."
     local ms drv
     IFS=$'\t' read -r ms drv < <(eval_host "$host" "$statsdir/$host.json")
+    # Per-host closure of the FRESH evaluation, unlike the running-system
+    # number below: this one moves on every benched commit, so regressions
+    # surface before a switch. Usually a cache hit after `just verify`;
+    # failure degrades to null rather than discarding the evaluation.
+    local closure
+    closure=$(
+      nix build --no-link --print-out-paths "$drv^out" 2>/dev/null \
+        | head -1 \
+        | xargs -r nix path-info --json -S 2>/dev/null \
+        | jq 'if type == "array" then .[0].closureSize else (to_entries[0].value.closureSize) end' \
+        || echo null
+    )
+    [ -n "$closure" ] || closure=null
     hostjson=$(jq \
       --arg host "$host" --arg drv "$drv" --argjson ms "$ms" \
+      --argjson closure "$closure" \
       --slurpfile stats "$statsdir/$host.json" \
       '.[$host] = {
          drvPath: $drv,
          wallSeconds: ($ms / 1000),
+         closureBytes: $closure,
          values: $stats[0].values.number,
          valueBytes: $stats[0].values.bytes,
          gcTotalBytes: $stats[0].gc.totalBytes,

@@ -205,6 +205,7 @@ in
     # escape hatch is needed.
     nixpkgs.config.allowUnfree = false;
     nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
+      "antigravity-cli" # Google agent CLI (gemini-cli successor), desktop only
       "claude-code" # Anthropic CLI, all hosts
       "obsidian"    # vault GUI, desktop only
       "unrar"       # unfreeRedistributable, from core/packages.nix

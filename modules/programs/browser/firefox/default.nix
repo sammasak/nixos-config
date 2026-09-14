@@ -1,4 +1,4 @@
-{ ... }:
+{ pkgs, ... }:
 {
   stylix.targets.firefox.profileNames = [ "default" ];
 
@@ -6,9 +6,21 @@
     enable = true;
     configPath = ".mozilla/firefox";
 
+    # Without the native messenger, Tridactyl loses :editor, native config
+    # loading and profile commands — it degrades silently.
+    nativeMessagingHosts = [ pkgs.tridactyl-native ];
+
     profiles.default = {
       isDefault = true;
+
+      # Tridactyl: modal vim command layer for mouseless browsing.
+      extensions.packages = [ pkgs.nur.repos.rycee.firefox-addons.tridactyl ];
+
       settings = {
+        # Without this, declaratively installed extensions need a manual
+        # enable click on first start.
+        "extensions.autoDisableScopes" = 0;
+
         # fingerprintingProtection, not resistFingerprinting: RFP spoofs
         # timezone, screen size and canvas to join an anonymity set this
         # machine is never in (a logged-in daily driver). The cost is real —

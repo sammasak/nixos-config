@@ -1,6 +1,7 @@
 { config, pkgs, lib, osConfig ? null, ... }:
 let
   inherit (lib) mkForce;
+  inherit (lib.generators) mkLuaInline;
   baseProfile =
     if osConfig != null && osConfig ? sam && osConfig.sam ? profile
     then osConfig.sam.profile
@@ -13,6 +14,38 @@ let
     terminal = "kitty";
     browser = "firefox";
   };
+
+  # Lua config helpers: b/bf build hl.bind() `_args` (key, dispatcher, flags?);
+  # env/curve build the matching env{}/curve{} entries. Keys stay plain Nix
+  # strings so HM's toLua does the escaping; only dispatchers are raw Lua.
+  b = k: d: { _args = [ k (mkLuaInline d) ]; };
+  bf = k: d: f: { _args = [ k (mkLuaInline d) f ]; };
+  env = n: v: { _args = [ n v ]; };
+  curve = n: x1: y1: x2: y2: { _args = [ n { type = "bezier"; points = [ [ x1 y1 ] [ x2 y2 ] ]; } ]; };
+
+  # monitor = "name,res,pos,scale" (hyprlang) -> hl.monitor{ output,mode,position,scale }.
+  parseMonitor =
+    s:
+    let
+      p = lib.splitString "," s;
+      at = i: lib.elemAt p i;
+      scaleStr = at 3;
+    in
+    if builtins.length p != 4 then
+      throw "sam.profile.monitors: expected 4 comma-separated fields (name,resolution,position,scale) in '${s}'"
+    else
+    {
+      output = at 0;
+      mode = at 1;
+      position = at 2;
+      scale = if scaleStr == "auto" then "auto" else builtins.fromJSON scaleStr;
+    };
+
+  wsRange = builtins.genList (i: i + 1) 10;
+  wsKey = n: if n == 10 then "0" else toString n;
+  wsFocus = map (n: b "SUPER + ${wsKey n}" "hl.dsp.focus({ workspace = ${toString n} })") wsRange;
+  wsMove = map (n: b "SUPER + SHIFT + ${wsKey n}" "hl.dsp.window.move({ workspace = ${toString n} })") wsRange;
+  wsMoveSilent = map (n: b "SUPER + CTRL + ${wsKey n}" "hl.dsp.window.move({ workspace = ${toString n}, follow = false })") wsRange;
 in
 {
   imports = [
@@ -29,293 +62,240 @@ in
     enable = true;
     package = null;
     portalPackage = null;
-    configType = "hyprlang";
+    configType = "lua";
+
+    # In extraCommands (not the settings.on hook) so they run after HM's dbus
+    # environment import — a user unit started before it can miss WAYLAND_DISPLAY.
+    # waybar restart + polkit start are belt-and-braces for post-SDDM relogin,
+    # where the session target was never re-reached.
+    systemd.extraCommands = [
+      "systemctl --user stop hyprland-session.target"
+      "systemctl --user start hyprland-session.target"
+      "systemctl --user restart waybar.service"
+      "systemctl --user start hyprpolkitagent.service"
+    ];
 
     settings = {
-      monitor = profile.monitors;
-
-      xwayland = {
-        force_zero_scaling = true;
-      };
-
-      "$mod" = "SUPER";
+      monitor = map parseMonitor profile.monitors;
 
       env = [
-        "XDG_CURRENT_DESKTOP,Hyprland"
-        "XDG_SESSION_DESKTOP,Hyprland"
-        "XDG_SESSION_TYPE,wayland"
-        "GDK_BACKEND,wayland,x11,*"
-        "NIXOS_OZONE_WL,1"
-        "ELECTRON_OZONE_PLATFORM_HINT,wayland"
-        "MOZ_ENABLE_WAYLAND,1"
-        "QT_QPA_PLATFORM,wayland;xcb"
-        "QT_WAYLAND_DISABLE_WINDOWDECORATION,1"
-        "QT_AUTO_SCREEN_SCALE_FACTOR,1"
+        (env "XDG_CURRENT_DESKTOP" "Hyprland")
+        (env "XDG_SESSION_DESKTOP" "Hyprland")
+        (env "XDG_SESSION_TYPE" "wayland")
+        (env "GDK_BACKEND" "wayland,x11,*")
+        (env "NIXOS_OZONE_WL" "1")
+        (env "ELECTRON_OZONE_PLATFORM_HINT" "wayland")
+        (env "MOZ_ENABLE_WAYLAND" "1")
+        (env "QT_QPA_PLATFORM" "wayland;xcb")
+        (env "QT_WAYLAND_DISABLE_WINDOWDECORATION" "1")
+        (env "QT_AUTO_SCREEN_SCALE_FACTOR" "1")
       ];
 
-      master = {
-        new_on_top = false;
-        mfact = 0.5;
-      };
-
-      general = {
-        gaps_in = 4;
-        gaps_out = 9;
-        border_size = 2;
-        "col.active_border" = mkForce "rgba(ca9ee6ff) rgba(f2d5cfff) 45deg";
-        "col.inactive_border" = mkForce "rgba(b4befecc) rgba(6c7086cc) 45deg";
-        layout = "master";
-        resize_on_border = true;
-      };
-
-      decoration = {
-        rounding = 10;
-        dim_special = 0.3;
-        shadow = { enabled = false; };
-        blur = {
-          enabled = true;
-          special = true;
-          size = 6;
-          passes = 2;
-          xray = false;
+      config = {
+        general = {
+          gaps_in = 4;
+          gaps_out = 9;
+          border_size = 2;
+          # Dotted keys match Stylix's Lua colour form so mkForce overrides it.
+          # Gradient tables, not hyprlang "rgba(..) rgba(..) 45deg" strings: the
+          # Lua layer rejects those as invalid colors at config load.
+          "col.active_border" = mkForce { colors = [ "rgba(ca9ee6ff)" "rgba(f2d5cfff)" ]; angle = 45; };
+          "col.inactive_border" = mkForce { colors = [ "rgba(b4befecc)" "rgba(6c7086cc)" ]; angle = 45; };
+          layout = "master";
+          resize_on_border = true;
         };
-      };
 
-      animations = {
-        enabled = true;
-        bezier = [
-          "linear, 0, 0, 1, 1"
-          "md3_standard, 0.2, 0, 0, 1"
-          "md3_decel, 0.05, 0.7, 0.1, 1"
-          "md3_accel, 0.3, 0, 0.8, 0.15"
-          "overshot, 0.05, 0.9, 0.1, 1.1"
-          "fluent_decel, 0.1, 1, 0, 1"
-          "easeOutExpo, 0.16, 1, 0.3, 1"
-        ];
-
-        animation = [
-          "windows, 1, 3, md3_decel, popin 60%"
-          "windowsIn, 1, 3, md3_decel, popin 60%"
-          "windowsOut, 1, 3, md3_accel, popin 60%"
-          "border, 1, 10, default"
-          "fade, 1, 2.5, md3_decel"
-          "workspaces, 1, 3.5, easeOutExpo, slide"
-          "specialWorkspace, 1, 3, md3_decel, slidevert"
-        ];
-      };
-
-      input = {
-        kb_layout = profile.kbdLayout;
-        follow_mouse = 1;
-        sensitivity = 0;
-        accel_profile = "flat";
-        touchpad = {
-          natural_scroll = true;
-          disable_while_typing = true;
-          tap-to-click = true;
+        decoration = {
+          rounding = 10;
+          dim_special = 0.3;
+          shadow = { enabled = false; };
+          blur = {
+            enabled = true;
+            special = true;
+            size = 6;
+            passes = 2;
+            xray = false;
+          };
         };
-        repeat_rate = 50;
-        repeat_delay = 240;
+
+        animations = { enabled = true; };
+
+        input = {
+          kb_layout = profile.kbdLayout;
+          follow_mouse = 1;
+          sensitivity = 0;
+          accel_profile = "flat";
+          touchpad = {
+            natural_scroll = true;
+            disable_while_typing = true;
+            tap_to_click = true;
+          };
+          repeat_rate = 50;
+          repeat_delay = 240;
+        };
+
+        master = {
+          new_on_top = false;
+          mfact = 0.5;
+        };
+
+        misc = {
+          disable_hyprland_logo = true;
+          disable_splash_rendering = true;
+          mouse_move_enables_dpms = true;
+          key_press_enables_dpms = true;
+          vrr = 0;
+          animate_manual_resizes = true;
+          animate_mouse_windowdragging = true;
+        };
+
+        xwayland = { force_zero_scaling = true; };
       };
 
-      # Touchpad gestures (new syntax for Hyprland 0.51+)
-      gesture = [
-        "3, horizontal, workspace"
+      curve = [
+        (curve "linear" 0 0 1 1)
+        (curve "md3_standard" 0.2 0 0 1)
+        (curve "md3_decel" 0.05 0.7 0.1 1)
+        (curve "md3_accel" 0.3 0 0.8 0.15)
+        (curve "overshot" 0.05 0.9 0.1 1.1)
+        (curve "fluent_decel" 0.1 1 0 1)
+        (curve "easeOutExpo" 0.16 1 0.3 1)
       ];
 
-      misc = {
-        disable_hyprland_logo = true;
-        disable_splash_rendering = true;
-        mouse_move_enables_dpms = true;
-        key_press_enables_dpms = true;
-        vrr = 0;
-        animate_manual_resizes = true;
-        animate_mouse_windowdragging = true;
+      animation = [
+        { leaf = "windows"; enabled = true; speed = 3; bezier = "md3_decel"; style = "popin 60%"; }
+        { leaf = "windowsIn"; enabled = true; speed = 3; bezier = "md3_decel"; style = "popin 60%"; }
+        { leaf = "windowsOut"; enabled = true; speed = 3; bezier = "md3_accel"; style = "popin 60%"; }
+        { leaf = "border"; enabled = true; speed = 10; bezier = "default"; }
+        { leaf = "fade"; enabled = true; speed = 2.5; bezier = "md3_decel"; }
+        { leaf = "workspaces"; enabled = true; speed = 3.5; bezier = "easeOutExpo"; style = "slide"; }
+        { leaf = "specialWorkspace"; enabled = true; speed = 3; bezier = "md3_decel"; style = "slidevert"; }
+      ];
+
+      gesture = {
+        fingers = 3;
+        direction = "horizontal";
+        action = "workspace";
       };
 
-      exec-once = [
-        # Ensure status bar is present after any new Hyprland session (including post-SDDM relogin).
-        "systemctl --user restart waybar.service"
-        "wallpaper-init"
-        "wl-paste --type text --watch cliphist store"
-        "wl-paste --type image --watch cliphist store"
-        "nwg-dock-hyprland -d -i 16"
-        # Belt-and-braces, same pattern as waybar above: the unit is WantedBy
-        # the Hyprland session target, but starting it here also covers a
-        # post-SDDM relogin where that target was never re-reached.
-        "systemctl --user start hyprpolkitagent.service"
-      ];
+      on = {
+        _args = [
+          "hyprland.start"
+          (mkLuaInline ''
+            function()
+              hl.exec_cmd("wallpaper-init")
+              hl.exec_cmd("wl-paste --type text --watch cliphist store")
+              hl.exec_cmd("wl-paste --type image --watch cliphist store")
+            end
+          '')
+        ];
+      };
 
       bind = [
         # Application launchers
-        "$mod, Return, exec, ${profile.terminal}"
-        "$mod SHIFT, Return, exec, ${profile.terminal}"
-        "$mod, D, exec, rofi -show drun"
-        "$mod, A, exec, rofi -show drun"
-        "$mod, Space, exec, rofi -show drun"
-        "$mod, E, exec, thunar"
-        "$mod, B, exec, ${profile.browser}"
+        (b "SUPER + Return" ''hl.dsp.exec_cmd("${profile.terminal}")'')
+        (b "SUPER + SHIFT + Return" ''hl.dsp.exec_cmd("${profile.terminal}")'')
+        (b "SUPER + D" ''hl.dsp.exec_cmd("rofi -show drun")'')
+        (b "SUPER + A" ''hl.dsp.exec_cmd("rofi -show drun")'')
+        (b "SUPER + Space" ''hl.dsp.exec_cmd("rofi -show drun")'')
+        (b "SUPER + E" ''hl.dsp.exec_cmd("kitty yazi")'')
+        (b "SUPER + B" ''hl.dsp.exec_cmd("${profile.browser}")'')
 
         # Window management
-        "$mod, Q, killactive,"
-        "$mod SHIFT, Q, exit,"
-        "$mod, F, fullscreen,"
-        "$mod, W, togglefloating,"
-        "$mod, C, centerwindow,"
-        "$mod, Y, pin,"
-        "$mod SHIFT, Space, swapnext,"
+        (b "SUPER + Q" ''hl.dsp.window.close()'')
+        (b "SUPER + SHIFT + Q" ''hl.dsp.exit()'')
+        (b "SUPER + F" ''hl.dsp.window.fullscreen()'')
+        (b "SUPER + W" ''hl.dsp.window.float({ action = "toggle" })'')
+        (b "SUPER + C" ''hl.dsp.window.center()'')
+        (b "SUPER + Y" ''hl.dsp.window.pin()'')
+        # hyprctl dispatch: swapnext's and cyclenext-prev's Lua arg shapes are
+        # unverified for 0.56, and a bad Lua arg aborts config load; the shell
+        # dispatcher is stable.
+        (b "SUPER + SHIFT + Space" ''hl.dsp.exec_cmd("hyprctl dispatch swapnext")'')
 
         # Focus movement (vim-style)
-        "$mod, H, movefocus, l"
-        "$mod, L, movefocus, r"
-        "$mod, K, movefocus, u"
-        "$mod, J, movefocus, d"
+        (b "SUPER + H" ''hl.dsp.focus({ direction = "left" })'')
+        (b "SUPER + L" ''hl.dsp.focus({ direction = "right" })'')
+        (b "SUPER + K" ''hl.dsp.focus({ direction = "up" })'')
+        (b "SUPER + J" ''hl.dsp.focus({ direction = "down" })'')
 
         # Window movement
-        "$mod SHIFT, H, movewindow, l"
-        "$mod SHIFT, L, movewindow, r"
-        "$mod SHIFT, K, movewindow, u"
-        "$mod SHIFT, J, movewindow, d"
+        (b "SUPER + SHIFT + H" ''hl.dsp.window.move({ direction = "left" })'')
+        (b "SUPER + SHIFT + L" ''hl.dsp.window.move({ direction = "right" })'')
+        (b "SUPER + SHIFT + K" ''hl.dsp.window.move({ direction = "up" })'')
+        (b "SUPER + SHIFT + J" ''hl.dsp.window.move({ direction = "down" })'')
 
         # Window resizing
-        "$mod CTRL, H, resizeactive, -50 0"
-        "$mod CTRL, L, resizeactive, 50 0"
-        "$mod CTRL, K, resizeactive, 0 -50"
-        "$mod CTRL, J, resizeactive, 0 50"
+        (b "SUPER + CTRL + H" ''hl.dsp.window.resize({ x = -50, y = 0, relative = true })'')
+        (b "SUPER + CTRL + L" ''hl.dsp.window.resize({ x = 50, y = 0, relative = true })'')
+        (b "SUPER + CTRL + K" ''hl.dsp.window.resize({ x = 0, y = -50, relative = true })'')
+        (b "SUPER + CTRL + J" ''hl.dsp.window.resize({ x = 0, y = 50, relative = true })'')
 
-        "$mod, I, layoutmsg, addmaster"
-        "$mod, O, layoutmsg, removemaster"
-        "$mod CTRL, Return, layoutmsg, swapwithmaster"
+        # Master layout
+        (b "SUPER + I" ''hl.dsp.layout("addmaster")'')
+        (b "SUPER + O" ''hl.dsp.layout("removemaster")'')
+        (b "SUPER + CTRL + Return" ''hl.dsp.layout("swapwithmaster")'')
 
-        "$mod, G, togglegroup,"
+        (b "SUPER + G" ''hl.dsp.group.toggle()'')
 
         # Window cycling: Tab opens a visual selector, CTRL+Tab is direct.
-        "$mod, Tab, exec, rofi -show window"
+        (b "SUPER + Tab" ''hl.dsp.exec_cmd("rofi -show window")'')
+        (b "SUPER + CTRL + Tab" ''function() hl.dispatch(hl.dsp.window.cycle_next()); hl.dispatch(hl.dsp.window.bring_to_top()) end'')
+        (b "SUPER + CTRL + SHIFT + Tab" ''hl.dsp.exec_cmd("hyprctl dispatch cyclenext prev; hyprctl dispatch bringactivetotop")'')
 
-        "$mod CTRL, Tab, cyclenext,"
-        "$mod CTRL, Tab, bringactivetotop,"
-        "$mod CTRL SHIFT, Tab, cyclenext, prev"
-        "$mod CTRL SHIFT, Tab, bringactivetotop,"
+        (b "SUPER + N" ''hl.dsp.window.move({ workspace = "special:minimized", follow = false })'')
+        # SUPER+SHIFT+N drove two dispatchers in the legacy config (special
+        # workspace + notifications); Lua rebinds per key, so both run in one fn.
+        (b "SUPER + SHIFT + N" ''function() hl.dispatch(hl.dsp.workspace.toggle_special("minimized")); hl.exec_cmd("swaync-client -t -sw") end'')
 
-        "$mod, N, movetoworkspacesilent, special:minimized"
-        "$mod SHIFT, N, togglespecialworkspace, minimized"
-
-        # Workspaces
-        "$mod, 1, workspace, 1"
-        "$mod, 2, workspace, 2"
-        "$mod, 3, workspace, 3"
-        "$mod, 4, workspace, 4"
-        "$mod, 5, workspace, 5"
-        "$mod, 6, workspace, 6"
-        "$mod, 7, workspace, 7"
-        "$mod, 8, workspace, 8"
-        "$mod, 9, workspace, 9"
-        "$mod, 0, workspace, 10"
-
-        # Move to workspace
-        "$mod SHIFT, 1, movetoworkspace, 1"
-        "$mod SHIFT, 2, movetoworkspace, 2"
-        "$mod SHIFT, 3, movetoworkspace, 3"
-        "$mod SHIFT, 4, movetoworkspace, 4"
-        "$mod SHIFT, 5, movetoworkspace, 5"
-        "$mod SHIFT, 6, movetoworkspace, 6"
-        "$mod SHIFT, 7, movetoworkspace, 7"
-        "$mod SHIFT, 8, movetoworkspace, 8"
-        "$mod SHIFT, 9, movetoworkspace, 9"
-        "$mod SHIFT, 0, movetoworkspace, 10"
-
-        # Move silent
-        "$mod CTRL, 1, movetoworkspacesilent, 1"
-        "$mod CTRL, 2, movetoworkspacesilent, 2"
-        "$mod CTRL, 3, movetoworkspacesilent, 3"
-        "$mod CTRL, 4, movetoworkspacesilent, 4"
-        "$mod CTRL, 5, movetoworkspacesilent, 5"
-        "$mod CTRL, 6, movetoworkspacesilent, 6"
-        "$mod CTRL, 7, movetoworkspacesilent, 7"
-        "$mod CTRL, 8, movetoworkspacesilent, 8"
-        "$mod CTRL, 9, movetoworkspacesilent, 9"
-        "$mod CTRL, 0, movetoworkspacesilent, 10"
-
-        "$mod, mouse_down, workspace, e+1"
-        "$mod, mouse_up, workspace, e-1"
+        # Scroll through workspaces
+        (b "SUPER + mouse_down" ''hl.dsp.focus({ workspace = "e+1" })'')
+        (b "SUPER + mouse_up" ''hl.dsp.focus({ workspace = "e-1" })'')
 
         # Screenshots
-        ", Print, exec, grim -g \"$(slurp)\" - | wl-copy"
-        "SHIFT, Print, exec, grim - | wl-copy"
-        "$mod SHIFT, S, exec, grim -g \"$(slurp)\" - | wl-copy"
-        "$mod, P, exec, ~/.config/hypr/scripts/screenshot.sh s"
-        "$mod SHIFT, P, exec, ~/.config/hypr/scripts/screenshot.sh sf"
-        "$mod CTRL, P, exec, ~/.config/hypr/scripts/screenshot.sh m"
+        (b "Print" ''hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy')'')
+        (b "SHIFT + Print" ''hl.dsp.exec_cmd("grim - | wl-copy")'')
+        (b "SUPER + SHIFT + S" ''hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy')'')
+        (b "SUPER + P" ''hl.dsp.exec_cmd("~/.config/hypr/scripts/screenshot.sh s")'')
+        (b "SUPER + SHIFT + P" ''hl.dsp.exec_cmd("~/.config/hypr/scripts/screenshot.sh sf")'')
+        (b "SUPER + CTRL + P" ''hl.dsp.exec_cmd("~/.config/hypr/scripts/screenshot.sh m")'')
 
-        "$mod SHIFT, R, exec, ~/.config/hypr/scripts/screen-record.sh a"
-        "$mod CTRL, R, exec, ~/.config/hypr/scripts/screen-record.sh m"
+        # Screen recording
+        (b "SUPER + SHIFT + R" ''hl.dsp.exec_cmd("~/.config/hypr/scripts/screen-record.sh a")'')
+        (b "SUPER + CTRL + R" ''hl.dsp.exec_cmd("~/.config/hypr/scripts/screen-record.sh m")'')
 
-        "$mod, V, exec, ~/.config/hypr/scripts/ClipManager.sh"
+        # Utilities
+        (b "SUPER + V" ''hl.dsp.exec_cmd("~/.config/hypr/scripts/ClipManager.sh")'')
+        (b "SUPER + SHIFT + W" ''hl.dsp.exec_cmd("~/.config/hypr/scripts/wallpaper-select.sh")'')
+        (b "SUPER + question" ''hl.dsp.exec_cmd("~/.config/hypr/scripts/keybinds.sh")'')
+        (b "SUPER + SHIFT + C" ''hl.dsp.exec_cmd("hyprpicker -a")'')
+        (b "SUPER + Escape" ''hl.dsp.exec_cmd("hyprlock")'')
+        (b "ALT + Tab" ''hl.dsp.focus({ direction = "down" })'')
 
-        "$mod SHIFT, W, exec, ~/.config/hypr/scripts/wallpaper-select.sh"
+        # Mouse drag / resize
+        (bf "SUPER + mouse:272" ''hl.dsp.window.drag()'' { mouse = true; })
+        (bf "SUPER + mouse:273" ''hl.dsp.window.resize()'' { mouse = true; })
 
-        "$mod, question, exec, ~/.config/hypr/scripts/keybinds.sh"
+        # Media (locked = works on lockscreen)
+        (bf "XF86AudioPlay" ''hl.dsp.exec_cmd("playerctl play-pause")'' { locked = true; })
+        (bf "XF86AudioPrev" ''hl.dsp.exec_cmd("playerctl previous")'' { locked = true; })
+        (bf "XF86AudioNext" ''hl.dsp.exec_cmd("playerctl next")'' { locked = true; })
 
-        "$mod SHIFT, N, exec, swaync-client -t -sw"
+        # Volume / brightness (locked + repeating)
+        (bf "XF86AudioRaiseVolume" ''hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+")'' { locked = true; repeating = true; })
+        (bf "XF86AudioLowerVolume" ''hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-")'' { locked = true; repeating = true; })
+        (bf "XF86AudioMute" ''hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")'' { locked = true; repeating = true; })
+        (bf "XF86MonBrightnessUp" ''hl.dsp.exec_cmd("brightnessctl set 5%+")'' { locked = true; repeating = true; })
+        (bf "XF86MonBrightnessDown" ''hl.dsp.exec_cmd("brightnessctl set 5%-")'' { locked = true; repeating = true; })
+      ] ++ wsFocus ++ wsMove ++ wsMoveSilent;
 
-        "$mod SHIFT, C, exec, hyprpicker -a"
-
-        "$mod, escape, exec, hyprlock"
-
-        "ALT, Tab, movefocus, d"
-      ];
-
-      bindm = [
-        "$mod, mouse:272, movewindow"
-        "$mod, mouse:273, resizewindow"
-      ];
-
-      bindl = [
-        ", XF86AudioPlay, exec, playerctl play-pause"
-        ", XF86AudioPrev, exec, playerctl previous"
-        ", XF86AudioNext, exec, playerctl next"
-      ];
-
-      bindle = [
-        ", XF86AudioRaiseVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"
-        ", XF86AudioLowerVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"
-        ", XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
-        ", XF86MonBrightnessUp, exec, brightnessctl set 5%+"
-        ", XF86MonBrightnessDown, exec, brightnessctl set 5%-"
-      ];
-
-      windowrule = [
-        {
-          name = "float-pavucontrol";
-          "match:class" = "^(pavucontrol)$";
-          float = true;
-        }
-        {
-          name = "float-thunar-progress";
-          "match:class" = "^(thunar)$";
-          "match:title" = "^(File Operation Progress)$";
-          float = true;
-        }
-        {
-          name = "float-yad";
-          "match:class" = "^(yad)$";
-          float = true;
-        }
-        {
-          name = "float-pip";
-          "match:title" = "^(Picture-in-Picture)$";
-          float = true;
-        }
-        {
-          name = "pin-pip";
-          "match:title" = "^(Picture-in-Picture)$";
-          pin = true;
-        }
-        {
-          name = "kitty-opacity";
-          "match:class" = "^(kitty)$";
-          opacity = "0.95 0.95";
-        }
+      window_rule = [
+        { name = "float-pavucontrol"; match = { class = "^(pavucontrol)$"; }; float = true; }
+        { name = "float-thunar-progress"; match = { class = "^(thunar)$"; title = "^(File Operation Progress)$"; }; float = true; }
+        { name = "float-yad"; match = { class = "^(yad)$"; }; float = true; }
+        { name = "float-pip"; match = { title = "^(Picture-in-Picture)$"; }; float = true; }
+        { name = "pin-pip"; match = { title = "^(Picture-in-Picture)$"; }; pin = true; }
+        { name = "kitty-opacity"; match = { class = "^(kitty)$"; }; opacity = "0.95 0.95"; }
       ];
     };
   };

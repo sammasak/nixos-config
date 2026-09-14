@@ -1,0 +1,13 @@
+# Per-project environment. Copy to a project root as `.envrc`, then run
+# `direnv allow` once. nvim's direnv plugin then adopts this PATH, so LSPs and
+# formatters spawn from THIS project's toolchain automatically.
+#
+# This is the no-nix analog of a devenv/flake devshell for the work machine.
+
+# JS/TS: prefer the project's own toolchain (tsserver, vtsls, eslint, prettier,
+# svelte-language-server, ...) installed in node_modules.
+PATH_add node_modules/.bin
+
+# Polyglot per-project tool versions without nix (node/python/go/rust/...).
+# Requires mise (see bootstrap.sh) and a mise.toml in the project root.
+use mise

@@ -1,9 +1,4 @@
--- Neovim init.lua
--- Plugin configurations are handled inline by Nix module
-
--- Load basic options and keymaps
-require("config.options")
-require("config.keymaps")
-
--- Set colorscheme (catppuccin from Stylix)
-vim.cmd.colorscheme("catppuccin")
+-- Portable LazyVim entry point. This repo IS ~/.config/nvim on every machine
+-- (NixOS at home, no-nix at work), so init.lua lives here rather than being
+-- supplied by Home Manager.
+require("config.lazy")

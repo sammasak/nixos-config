@@ -2,6 +2,7 @@
 {
   imports = [
     ../desktop/hyprland
+    ../desktop/niri
     ../core/sddm.nix
   ];
 

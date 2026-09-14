@@ -1,0 +1,4 @@
+# LazyVim writes machine-local state here; the pins in lazy-lock.json are the
+# shared source of truth and stay tracked.
+/lazyvim.json
+/.luarc.json

@@ -75,28 +75,23 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 
 | Host | Mode | Specialisations |
 |------|------|-----------------|
-| `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | `niri` (compositor trial) |
+| `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | none |
 | `acer-swift` | **headless** (k3s worker) | none |
 
-Boot menu on lenovo:
-```
-NixOS (default)  ← Desktop mode
-NixOS - niri     ← Desktop mode, niri compositor instead of Hyprland
-```
+Desktop mode ships **two coexisting compositors** — Hyprland and niri
+(`modules/desktop/hyprland` and `modules/desktop/niri`, both imported by
+`modules/specialisations/desktop.nix`). Both session files land in the SDDM
+greeter; the compositor is picked at sign-in, and SDDM's remembered
+`Last.Session` (`/var/lib/sddm/state.conf`) pre-selects whatever was used
+last. `defaultSession` is `niri` (the daily driver, set in
+`modules/desktop/niri`) and only matters for a fresh state file.
 
-The niri entry sets `defaultSession = "niri"`, but SDDM's remembered
-`Last.Session` (`/var/lib/sddm/state.conf`, shared across boot entries) beats
-`DefaultSession` whenever the remembered session exists in the booted entry —
-and `hyprland.desktop` exists in both. So the niri entry pre-selects Hyprland
-until niri is picked once in the greeter; the base entry always falls back to
-Hyprland because it has no `niri.desktop`.
-
-The cross-mode specialisations were removed on 2026-08-27: lenovo's `server`
-entry (and `modules/specialisations/server.nix` with it) and acer-swift's
-`desktop` entry. Neither had been booted, and each cost a second full system
-closure on every rebuild — about 5 GiB on the worker. To restore either, read
-the removal commit; per the Comment Policy the host files do not carry undo
-instructions.
+There are no specialisations today. Niri's boot-entry specialisation was
+promoted into the default system on 2026-08-31, and the cross-mode entries
+(lenovo `server`, acer-swift `desktop`) were removed on 2026-08-27 — each
+specialisation cost a second full system closure on every rebuild. To restore
+one, read the removal commit; per the Comment Policy the host files do not
+carry undo instructions.
 
 **One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
 `modules/specialisations/desktop.nix`; the default is `false`, so a host that
@@ -144,7 +139,7 @@ Composable role modules assigned per-host via `variables.nix`:
 ```
 modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
-├── desktop/      # Desktop stack: hyprland/ (Wayland compositor)
+├── desktop/      # Desktop stack: hyprland/ and niri/ (Wayland compositors)
 ├── hardware/     # GPU drivers (intel), thermal
 ├── homelab/      # k3s (agent/server), sops, flux, tailscale, ntfy, watchdog
 ├── programs/     # Home Manager programs: cli/, browser/, editor/, terminal/

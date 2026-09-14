@@ -1,4 +1,23 @@
-{ ... }:
+{ pkgs, ... }:
+let
+  # hypridle is WantedBy=graphical-session.target, so it runs under niri too, not
+  # just Hyprland, where bare `hyprctl dispatch dpms` is a silent no-op. This
+  # dispatches DPMS per live compositor. No idle logout: niri quit/hyprctl exit
+  # would close every app, defeating resume. See vault:
+  # desktop-niri-hyprland-lua-herdr.md
+  dpms = pkgs.writeShellScript "hypridle-dpms" ''
+    case "$1" in
+      off) hypr="dpms off"; niri="power-off-monitors" ;;
+      on)  hypr="dpms on";  niri="power-on-monitors" ;;
+      *) exit 2 ;;
+    esac
+    if [ -n "''${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+      exec hyprctl dispatch $hypr
+    elif [ -n "''${NIRI_SOCKET:-}" ]; then
+      exec niri msg action "$niri"
+    fi
+  '';
+in
 {
   services.hypridle = {
     enable = true;
@@ -7,7 +26,7 @@
       general = {
         lock_cmd = "pidof hyprlock || hyprlock";
         before_sleep_cmd = "loginctl lock-session";
-        after_sleep_cmd = "hyprctl dispatch dpms on";
+        after_sleep_cmd = "${dpms} on";
       };
 
       listener = [
@@ -27,14 +46,8 @@
         }
         {
           timeout = 760;
-          on-timeout = "hyprctl dispatch dpms off";
-          on-resume = "hyprctl dispatch dpms on";
-        }
-        {
-          # After 60m idle: lock, turn displays off, then cleanly logout to SDDM.
-          # Keep terminate-user as a fallback if the compositor exit command fails.
-          timeout = 3600;
-          on-timeout = "loginctl lock-session && hyprctl dispatch dpms off && sleep 1 && hyprctl dispatch exit || loginctl terminate-user \"$USER\"";
+          on-timeout = "${dpms} off";
+          on-resume = "${dpms} on";
         }
       ];
     };

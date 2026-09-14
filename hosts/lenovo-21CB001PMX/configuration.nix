@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ lib, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -19,20 +19,6 @@ in
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
-
-  # The hyprland module sets defaultSession with mkDefault, so the bare
-  # assignment below wins. SDDM's remembered Last.Session in
-  # /var/lib/sddm/state.conf still beats DefaultSession in the greeter, so this
-  # entry needs one manual pick of niri before it sticks. Waybar is still the
-  # Hyprland bar and its workspaces module renders empty under niri.
-  specialisation.niri.configuration = {
-    programs.niri.enable = true;
-    services.displayManager.defaultSession = "niri";
-
-    # X11 clients under niri need an external Xwayland shim; the nixpkgs niri
-    # module does not install one.
-    environment.systemPackages = [ pkgs.xwayland-satellite ];
-  };
 
   # Rebuilds here are manual and precede the push other hosts auto-upgrade from.
   system.autoUpgrade.enable = lib.mkForce false;

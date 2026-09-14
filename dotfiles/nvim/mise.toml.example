@@ -1,0 +1,14 @@
+# Per-project tool versions without nix. Copy to a project root as `mise.toml`,
+# then `mise install`. Paired with `use mise` in .envrc, direnv puts these on
+# PATH on `cd`, and nvim adopts them. This is what a project "hands" to the
+# editor at work in place of a nix devshell.
+[tools]
+node = "lts"
+# python = "3.12"
+# go = "latest"
+# rust = "stable"
+
+# Language servers / formatters can be pinned here too (via mise backends), so
+# every checkout of this project gets the exact same tooling:
+# "npm:@vtsls/language-server" = "latest"
+# "npm:prettier" = "latest"

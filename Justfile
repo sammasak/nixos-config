@@ -62,6 +62,12 @@ bench-diff:
 parity:
     bash scripts/bench.sh parity
 
+# ── Editor ────────────────────────────────────────────────────────────
+
+# Mirror dotfiles/nvim to the standalone public repo the work machine clones
+export-nvim REMOTE="git@github.com:sammasak/nvim-config.git":
+    bash scripts/export-nvim.sh {{REMOTE}}
+
 # ── Registry ──────────────────────────────────────────────────────────
 
 # Log in to the image registry (zot)

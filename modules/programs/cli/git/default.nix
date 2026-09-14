@@ -10,6 +10,14 @@ let
   gitEmail = gitConfig.email or "you@example.com";
 in
 {
+  # Global by structural necessity: gitconfig references the diff binary from
+  # any directory, devshell or not. `git diff --no-ext-diff` for plain output.
+  programs.difftastic = {
+    enable = true;
+    git.enable = true;
+    git.mode = "external";
+  };
+
   programs.git = {
     enable = true;
     settings = {
