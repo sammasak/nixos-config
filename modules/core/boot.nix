@@ -1,4 +1,7 @@
-{ pkgs, lib, ... }:
+{ pkgs, lib, config, ... }:
+let
+  useSystemdBoot = config.sam.desktop.enable;
+in
 {
   boot = {
     supportedFilesystems = [
@@ -23,7 +26,17 @@
       # the root filesystem (useful when sharing a small Windows ESP).
       efi.efiSysMountPoint = lib.mkDefault "/boot";
       timeout = 3;
-      grub = {
+
+      # systemd-boot on the physical daily driver: no GRUB core/module split to
+      # fall out of lockstep on a bootloader bump. The remote sole worker keeps
+      # GRUB -- reflashing a bootloader over SSH is unrecoverable without hands on
+      # the machine, and its GRUB path is proven.
+      systemd-boot = lib.mkIf useSystemdBoot {
+        enable = true;
+        configurationLimit = 10;
+      };
+
+      grub = lib.mkIf (!useSystemdBoot) {
         enable = true;
         # Uncapped generation lists grow the ESP + GC roots without bound.
         configurationLimit = 10;
