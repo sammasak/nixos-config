@@ -12,6 +12,10 @@ in
   # A read-only symlink means `herdr config reset-keys` / in-app edits cannot
   # persist; the config is owned here and reapplied on rebuild.
   xdg.configFile."herdr/config.toml".text = ''
+    # Owned here because the config symlink is read-only: herdr cannot persist the
+    # onboarding dismissal itself (it fails with "os error 30" on every start).
+    onboarding = false
+
     [terminal]
     default_shell = "fish"
 
