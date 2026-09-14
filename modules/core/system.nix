@@ -209,7 +209,6 @@ in
       "claude-code" # Anthropic CLI, all hosts
       "obsidian"    # vault GUI, desktop only
       "unrar"       # unfreeRedistributable, from core/packages.nix
-      "vscode"      # editor, desktop only
     ];
 
     environment.variables = {

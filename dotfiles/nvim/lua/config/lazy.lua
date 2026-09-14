@@ -21,8 +21,12 @@ require("lazy").setup({
     -- Language extras attach servers by PATH lookup; the binaries come from
     -- each repo's devshell/direnv, with Mason as the fallback off-Nix.
     { import = "lazyvim.plugins.extras.lang.rust" },
+    { import = "lazyvim.plugins.extras.lang.python" },
+    { import = "lazyvim.plugins.extras.lang.markdown" },
     { import = "lazyvim.plugins.extras.lang.typescript" },
     { import = "lazyvim.plugins.extras.lang.svelte" },
+    { import = "lazyvim.plugins.extras.ai.copilot" },
+    { import = "lazyvim.plugins.extras.dap.core" },
     { import = "plugins" },
   },
   defaults = { lazy = false, version = false },
