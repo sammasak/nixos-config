@@ -9,9 +9,12 @@ host := if `uname -n` == "lenovo-21CB001PMX" { "lenovo" } else { `uname -n` }
 
 # ── Build & Deploy ────────────────────────────────────────────────────
 
-# Build and activate this host's configuration
+# Build and activate. --install-bootloader forces grub-install every switch so a
+# bootloader-version bump (e.g. grub 2.12 -> 2.14) can't leave the EFI core
+# lagging the modules -- a skew that renders GRUB unable to boot any generation.
+# nh's inline diff is dropped here; preview first with `just diff`.
 switch HOST=host:
-    nh os switch . -H {{HOST}}
+    sudo nixos-rebuild switch --flake .#{{HOST}} --install-bootloader
 
 # Build this host's configuration without activating it
 build HOST=host:

@@ -72,8 +72,10 @@ fi
 PREV_SYSTEM="$(readlink -f /run/current-system)"
 echo "nixos-rebuild-trigger: current generation = $PREV_SYSTEM"
 
-# Stages as the boot default; does NOT activate live.
-if ! nixos-rebuild boot --flake "$FLAKE"; then
+# Stages as the boot default; does NOT activate live. --install-bootloader forces
+# grub-install even when NixOS's state check thinks nothing changed, so the EFI
+# core can never lag the modules on a grub version bump (a skew that bricks boot).
+if ! nixos-rebuild boot --flake "$FLAKE" --install-bootloader; then
   result failed-build
   audit "result=failed-build flake=$FLAKE"
   echo "nixos-rebuild-trigger: build/boot staging FAILED" >&2
