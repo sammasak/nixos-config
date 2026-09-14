@@ -3,9 +3,8 @@
   programs.ghostty = {
     enable = true;
     settings = {
-      font-family = "JetBrains Mono";
-      font-size = 11;
-
+      # Font and colours come from Stylix (stylix.targets.ghostty); setting them
+      # here only duplicates font-family and fights the themed size.
       cursor-style = "block";
       cursor-style-blink = false;
 
