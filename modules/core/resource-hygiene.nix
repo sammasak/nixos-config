@@ -6,10 +6,10 @@
     memoryPercent = 50;
   };
 
-  services.journald.extraConfig = ''
-    SystemMaxUse=500M
-    MaxRetentionSec=1month
-  '';
+  services.journald.settings.Journal = {
+    SystemMaxUse = "500M";
+    MaxRetentionSec = "1month";
+  };
 
   # User slices only. system.slice is DELIBERATELY left unmanaged: k3s and
   # containerd live there, and oomd would judge them on cgroup pressure alone,

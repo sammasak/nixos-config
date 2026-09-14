@@ -2,6 +2,9 @@
 final: prev: {
   codex = final.callPackage ./codex.nix { };
 
+  # Bumped past nixpkgs 0.8.2 for the multi-machine `machine add` feature.
+  herdr = final.callPackage ./herdr/package.nix { };
+
   # Patch CRIU 4.1.1 for kernel 6.16+ compatibility.
   # SO_PASSCRED/SO_PASSSEC on non-Unix sockets returns EOPNOTSUPP on
   # kernel 6.16+ (was ENOPROTOOPT). CRIU only skips ENOPROTOOPT, crashing
