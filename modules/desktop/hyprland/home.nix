@@ -11,7 +11,7 @@ let
   profile = baseProfile // {
     monitors = baseProfile.monitors or [ ",preferred,auto,1" ];
     kbdLayout = baseProfile.kbdLayout or "se";
-    terminal = "kitty";
+    terminal = "ghostty";
     browser = "firefox";
   };
 
@@ -198,7 +198,7 @@ in
         (b "SUPER + D" ''hl.dsp.exec_cmd("rofi -show drun")'')
         (b "SUPER + A" ''hl.dsp.exec_cmd("rofi -show drun")'')
         (b "SUPER + Space" ''hl.dsp.exec_cmd("rofi -show drun")'')
-        (b "SUPER + E" ''hl.dsp.exec_cmd("kitty yazi")'')
+        (b "SUPER + E" ''hl.dsp.exec_cmd("ghostty -e yazi")'')
         (b "SUPER + B" ''hl.dsp.exec_cmd("${profile.browser}")'')
 
         # Window management
@@ -295,7 +295,7 @@ in
         { name = "float-yad"; match = { class = "^(yad)$"; }; float = true; }
         { name = "float-pip"; match = { title = "^(Picture-in-Picture)$"; }; float = true; }
         { name = "pin-pip"; match = { title = "^(Picture-in-Picture)$"; }; pin = true; }
-        { name = "kitty-opacity"; match = { class = "^(kitty)$"; }; opacity = "0.95 0.95"; }
+        { name = "ghostty-opacity"; match = { class = "^(com.mitchellh.ghostty)$"; }; opacity = "0.95 0.95"; }
       ];
     };
   };

@@ -137,7 +137,7 @@
           max-length = 10;
           tooltip = true;
           tooltip-format = " {used:.1f}GB/{total:.1f}GB";
-          on-click-right = "kitty --title btop sh -c 'btop'";
+          on-click-right = "ghostty --title=btop -e btop";
         };
 
         network = {

@@ -11,7 +11,7 @@
     extraConfig = {
       modi = "drun,run,filebrowser,window,emoji";
       show-icons = true;
-      terminal = "kitty";
+      terminal = "ghostty";
       drun-display-format = "{name}";
       disable-history = false;
       hide-scrollbar = true;

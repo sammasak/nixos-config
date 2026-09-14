@@ -76,12 +76,12 @@ in
 
     binds {
         // Programs
-        Mod+Return       hotkey-overlay-title="Terminal" { spawn "kitty"; }
-        Mod+Shift+Return hotkey-overlay-title="Terminal" { spawn "kitty"; }
+        Mod+Return       hotkey-overlay-title="Terminal" { spawn "ghostty"; }
+        Mod+Shift+Return hotkey-overlay-title="Terminal" { spawn "ghostty"; }
         Mod+D     hotkey-overlay-title="Launcher" { spawn "rofi" "-show" "drun"; }
         Mod+A     hotkey-overlay-title="Launcher" { spawn "rofi" "-show" "drun"; }
         Mod+Space hotkey-overlay-title="Launcher" { spawn "rofi" "-show" "drun"; }
-        Mod+E { spawn "kitty" "yazi"; }
+        Mod+E { spawn "ghostty" "-e" "yazi"; }
         Mod+B { spawn "firefox"; }
 
         // Session / window management

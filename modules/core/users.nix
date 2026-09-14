@@ -26,7 +26,7 @@ in
         stateVersion = "25.11";
         sessionVariables = {
           BROWSER = "firefox";
-          TERMINAL = "kitty";
+          TERMINAL = "ghostty";
         };
       };
     };

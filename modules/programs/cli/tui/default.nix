@@ -2,7 +2,7 @@
 # interactive dev session, and these grow its closure for nothing.
 { ... }:
 {
-  # yazi previews ride kitty's graphics protocol.
+  # yazi previews ride ghostty's kitty-graphics protocol.
   programs.yazi.enable = true;
   programs.yazi.shellWrapperName = "y";
   programs.lazygit.enable = true;

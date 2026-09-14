@@ -18,7 +18,7 @@ let
     ../programs/cli/comma
     ../programs/cli/dev-tools
     ../programs/cli/tui
-    ../programs/terminal/kitty
+    ../programs/terminal/ghostty
     ../programs/browser/firefox
     ../programs/editor/vscode
     ../programs/gui/obsidian
