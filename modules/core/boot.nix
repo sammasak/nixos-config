@@ -1,7 +1,4 @@
-{ pkgs, lib, config, ... }:
-let
-  useSystemdBoot = config.sam.desktop.enable;
-in
+{ pkgs, lib, ... }:
 {
   boot = {
     supportedFilesystems = [
@@ -26,36 +23,11 @@ in
       # the root filesystem (useful when sharing a small Windows ESP).
       efi.efiSysMountPoint = lib.mkDefault "/boot";
       timeout = 3;
-
-      # systemd-boot on the physical daily driver: no GRUB core/module split to
-      # fall out of lockstep on a bootloader bump. The remote sole worker keeps
-      # GRUB -- reflashing a bootloader over SSH is unrecoverable without hands on
-      # the machine, and its GRUB path is proven.
-      systemd-boot = lib.mkIf useSystemdBoot {
+      # No GRUB anywhere: systemd-boot has no core/module split to fall out of
+      # lockstep on a bootloader bump (the skew that bricked lenovo's boot).
+      systemd-boot = {
         enable = true;
         configurationLimit = 10;
-      };
-
-      grub = lib.mkIf (!useSystemdBoot) {
-        enable = true;
-        # Uncapped generation lists grow the ESP + GC roots without bound.
-        configurationLimit = 10;
-        device = "nodev";
-        efiSupport = true;
-        useOSProber = false;
-        gfxmodeEfi = "1920x1080";
-        gfxmodeBios = "1920x1080";
-        theme = lib.mkDefault (pkgs.stdenv.mkDerivation {
-          pname = "distro-grub-themes";
-          version = "3.1";
-          src = pkgs.fetchFromGitHub {
-            owner = "AdisonCavani";
-            repo = "distro-grub-themes";
-            rev = "v3.1";
-            hash = "sha256-ZcoGbbOMDDwjLhsvs77C7G7vINQnprdfI37a9ccrmPs=";
-          };
-          installPhase = "cp -r customize/nixos $out";
-        });
       };
     };
     binfmt.registrations.appimage = {
