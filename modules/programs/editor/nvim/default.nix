@@ -5,8 +5,7 @@
 { pkgs, config, ... }:
 let
   repoRoot = "/home/lukas/nixos-config";
-  # Mason is off, so DAP adapters come from Nix. codelldb is self-contained
-  # (rpath); rustaceanvim auto-detects it once it is on PATH by this name.
+  # Mason-off DAP adapter; self-contained (rpath), rustaceanvim finds it on PATH.
   codelldb = pkgs.writeShellScriptBin "codelldb" ''
     exec ${pkgs.vscode-extensions.vadimcn.vscode-lldb}/share/vscode/extensions/vadimcn.vscode-lldb/adapter/codelldb "$@"
   '';
@@ -43,13 +42,11 @@ in
     initLua = ''require("config.lazy")'';
   };
 
-  # LazyVim themes nvim with catppuccin; Stylix's base16 target also injects a
-  # require("mini.base16") into init.lua that is not on the rtp yet, erroring on
-  # every launch. Let LazyVim own the colours.
+  # Stylix's base16 target injects a broken require("mini.base16") into init.lua
+  # (errors on every launch); LazyVim owns the catppuccin colours instead.
   stylix.targets.neovim.enable = false;
 
-  # Nix-provided debug tool paths for the live Lua config (Mason is off, so the
-  # python debugpy interpreter cannot be resolved by name).
+  # Nix-provided debugpy interpreter for the live Lua config (Mason is off).
   xdg.configFile."nvim/nix.lua".text = ''
     return {
       debugpy_python = "${pythonDebug}/bin/python",
