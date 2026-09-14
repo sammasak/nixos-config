@@ -48,16 +48,6 @@ skillsSrc:
           hooks = [
             {
               type = "command";
-              command = "${skillsSrc}/hooks/persist-session.sh";
-              timeout = 45;
-            }
-            {
-              type = "command";
-              command = "${skillsSrc}/hooks/extract-instincts.sh";
-              timeout = 45;
-            }
-            {
-              type = "command";
               command = "${skillsSrc}/hooks/check-goals.sh";
             }
             {
