@@ -165,6 +165,29 @@ Secret scopes in `secrets/.sops.yaml`:
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in bash shell init via `modules/programs/cli/claude-code/mcp.nix`.
 
+### Branch-only state: `modernization`
+
+Two features live only on this branch and need operator action, not more
+code, before they are safe to merge to `main`:
+
+- **deploy-rs signing** (`nix.settings.trusted-public-keys` in
+  `modules/core/system.nix`, the `nix_signing_key` secret in
+  `modules/core/sops.nix`, lenovo's `nix.settings.secret-key-files`) is active
+  on both hosts today — it is not gated behind an option. Merging to `main`
+  therefore changes acer's evaluated toplevel, and acer auto-upgrades weekly
+  from `main`. Before pushing this branch to `main`: mask
+  `nixos-upgrade.timer` on acer for that window and re-run the store-path
+  parity proof against the exact commit being pushed. (Key correspondence
+  spot-checked 2026-09-15: `nix key convert-secret-to-public` on the decrypted
+  `nix_signing_key` reproduces the committed `nixos-config-1` public key.)
+- **impermanence** (`hosts/lenovo-21CB001PMX/{impermanence-fs,persistence,declarative-password}.nix`)
+  is staged only — `git grep` finds no import of any of the three files, so
+  neither host's toplevel changes. Wiring it in (an impermanence flake input,
+  a per-host `sam.profile` bool, and `mkNixosDistribution`'s
+  `lib.optional`/`mkIf` import) is deliberately deferred to the on-site
+  rescue-media `/persist` disk carve; each file's header names its specific
+  blocker.
+
 ### Claude Code
 
 Configuration lives in `modules/programs/cli/claude-code/`:
