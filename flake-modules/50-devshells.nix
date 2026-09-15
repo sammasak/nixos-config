@@ -1,8 +1,8 @@
 # Repo devshell: the tools the Justfile and lint scripts assume on PATH.
-{ ... }:
+{ inputs, ... }:
 {
   perSystem =
-    { pkgs, ... }:
+    { pkgs, system, ... }:
     {
       # mkShellNoCC: nothing here compiles C; mkShell would drag ~330MB of
       # gcc/binutils/glibc-dev into the shell closure.
@@ -13,6 +13,7 @@
           sops
           age
           jq
+          inputs.deploy-rs.packages.${system}.default
         ];
       };
     };

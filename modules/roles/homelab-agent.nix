@@ -19,7 +19,7 @@
   # and another resident process on an OOM-prone node. NetworkManager pulls it in.
   systemd.services.ModemManager.enable = lib.mkForce false;
 
-  # A Nix trusted-user is root-equivalent. Deploys are push-from-lenovo over SSH
-  # as root, so the login user never needs it.
+  # A Nix trusted-user is root-equivalent. deploy-rs connects as lukas and
+  # becomes root locally via sudo, so the login user never needs it.
   nix.settings.trusted-users = lib.mkForce [ "root" ];
 }

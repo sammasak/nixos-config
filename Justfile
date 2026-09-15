@@ -9,10 +9,9 @@ host := if `uname -n` == "lenovo-21CB001PMX" { "lenovo" } else { `uname -n` }
 
 # ── Build & Deploy ────────────────────────────────────────────────────
 
-# Build and activate. --install-bootloader forces grub-install every switch so a
-# bootloader-version bump (e.g. grub 2.12 -> 2.14) can't leave the EFI core
-# lagging the modules -- a skew that renders GRUB unable to boot any generation.
-# nh's inline diff is dropped here; preview first with `just diff`.
+# --install-bootloader re-runs bootctl install every switch, syncing the ESP's
+# systemd-boot binary to the running generation. nh's inline diff is dropped
+# here; preview first with `just diff`.
 switch HOST=host:
     sudo nixos-rebuild switch --flake .#{{HOST}} --install-bootloader
 
@@ -23,6 +22,16 @@ build HOST=host:
 # Build and print the package diff against the running system
 diff HOST=host:
     nh os build . -H {{HOST}} --diff always
+
+# Loopback self-push, proving the deploy-rs/sudo/magic-rollback path before it
+# is ever trusted against acer-swift, which has no BMC to recover a bad push.
+deploy-lenovo:
+    deploy .#lenovo --auto-rollback --magic-rollback --activation-timeout 180 --confirm-timeout 30
+
+# Pushes as lukas over SSH; acer's trusted-users=[root] accepts the closure via
+# the deploy-rs signing key, not via SSH identity.
+deploy-acer:
+    deploy .#acer-swift --auto-rollback --magic-rollback --activation-timeout 180 --confirm-timeout 30
 
 # ── Configuration Verification ────────────────────────────────────────
 
