@@ -1,4 +1,4 @@
-{ lib, ... }:
+{ config, lib, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -20,6 +20,10 @@ in
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
+
+  # Signs deploy-rs closures pushed to acer, whose trusted-users = [ "root" ]
+  # would otherwise reject anything copied in over SSH as lukas.
+  nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];
 
   # Rebuilds here are manual and precede the push other hosts auto-upgrade from.
   system.autoUpgrade.enable = lib.mkForce false;
