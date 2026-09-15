@@ -27,37 +27,14 @@
 
     claude-code-skills.url = "github:sammasak/claude-code-skills";
     claude-code-skills.flake = false;
+
+    import-tree.url = "github:mightyiam/import-tree";
   };
 
   outputs =
-    inputs@{ flake-parts, ... }:
+    inputs@{ flake-parts, import-tree, ... }:
     let
-      collectFlakeModules =
-        dir:
-        let
-          entries = builtins.readDir dir;
-          names = builtins.sort builtins.lessThan (builtins.attrNames entries);
-          toImports =
-            name:
-            let
-              entryType = entries.${name};
-              path = dir + "/${name}";
-            in
-            # Underscore-prefixed entries are skipped (same convention as
-            # import-tree): lets non-module files live under flake-modules/.
-            if builtins.substring 0 1 name == "_" then
-              [ ]
-            else if entryType == "directory" then
-              collectFlakeModules path
-            else if entryType == "regular" && builtins.match ".*\\.nix" name != null then
-              [ path ]
-            else
-              [ ];
-        in
-        builtins.concatLists (builtins.map toImports names);
-      rawFlake = flake-parts.lib.mkFlake { inherit inputs; } {
-        imports = collectFlakeModules ./flake-modules;
-      };
+      rawFlake = flake-parts.lib.mkFlake { inherit inputs; } (import-tree ./flake-modules);
     in
     builtins.removeAttrs rawFlake [ "modules" ];
 }
