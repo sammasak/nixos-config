@@ -1,9 +1,7 @@
-# Hyprland desktop (system-wide)
+# Shared desktop services (system-wide): xdg portal, thunar file manager, gvfs.
 { config, pkgs, lib, ... }:
 {
   config = {
-    programs.hyprland.enable = true;
-    programs.hyprland.xwayland.enable = true;
     xdg.portal.enable = true;
     xdg.portal.extraPortals = [ pkgs.xdg-desktop-portal-hyprland ];
     # Keep pre-1.17 behavior: use the first portal implementation available.

@@ -1,7 +1,7 @@
 { ... }:
 {
   imports = [
-    ../desktop/hyprland
+    ../desktop/common
     ../desktop/niri
     ../core/sddm.nix
   ];

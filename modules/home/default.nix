@@ -13,7 +13,7 @@ let
     ../programs/editor/nvim
   ];
   desktopImports = lib.optionals isDesktopMode [
-    ../desktop/hyprland/home.nix
+    ../desktop/common/home.nix
     ../desktop/niri/home.nix
     ../programs/cli/comma
     ../programs/cli/dev-tools
