@@ -29,6 +29,9 @@
     claude-code-skills.flake = false;
 
     import-tree.url = "github:mightyiam/import-tree";
+
+    disko.url = "github:nix-community/disko";
+    disko.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =

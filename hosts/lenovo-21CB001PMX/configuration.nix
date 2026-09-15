@@ -5,6 +5,7 @@ in
 {
   imports = [
     ./hardware-configuration.nix
+    ./disk-config.nix
 
     ../../modules/hardware/video/${vars.videoDriver}.nix
 

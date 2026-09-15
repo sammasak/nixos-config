@@ -36,6 +36,7 @@ let
           inputs.stylix.nixosModules.stylix
           inputs.sops-nix.nixosModules.sops
           inputs.home-manager.nixosModules.home-manager
+          inputs.disko.nixosModules.disko
           {
             nixpkgs.overlays = [
               (import ../pkgs)
