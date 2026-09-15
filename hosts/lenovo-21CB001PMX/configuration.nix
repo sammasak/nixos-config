@@ -21,6 +21,11 @@ in
   sam.profile = vars;
   sam.hostSecrets.enable = true;
 
+  # facter.json is gitignored (DMI/MAC data) and generated on-host via
+  # nixos-facter; mkIf keeps reportPath at its null default so a checkout
+  # without one doesn't hit its readFile on a missing file.
+  hardware.facter.reportPath = lib.mkIf (builtins.pathExists ./facter.json) ./facter.json;
+
   # Signs deploy-rs closures pushed to acer, whose trusted-users = [ "root" ]
   # would otherwise reject anything copied in over SSH as lukas.
   nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];
