@@ -26,6 +26,15 @@ in
   # without one doesn't hit its readFile on a missing file.
   hardware.facter.reportPath = lib.mkIf (builtins.pathExists ./facter.json) ./facter.json;
 
+  # Declared here, not in the shared sam.hostSecrets tree, so acer never
+  # decrypts the private signing key — it only needs the public half already
+  # in nix.settings.trusted-public-keys.
+  sops.secrets."nix_signing_key" = {
+    sopsFile = ../../secrets/homelab/nix-signing-key.yaml;
+    owner = "root";
+    mode = "0400";
+  };
+
   # Signs deploy-rs closures pushed to acer, whose trusted-users = [ "root" ]
   # would otherwise reject anything copied in over SSH as lukas.
   nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];

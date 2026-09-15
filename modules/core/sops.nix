@@ -37,15 +37,6 @@ in
           owner = "root";
           mode = "0400";
         };
-
-        # deploy-rs closure signing (nix.settings.secret-key-files, lenovo only —
-        # decrypted on both hosts since this tree has no per-host branching, but
-        # only lenovo's config.nix actually references the path).
-        "nix_signing_key" = {
-          sopsFile = ../../secrets/homelab/nix-signing-key.yaml;
-          owner = "root";
-          mode = "0400";
-        };
       };
     };
 

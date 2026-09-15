@@ -26,6 +26,9 @@
         user = "root";
         sshOpts = [ "-t" ];
         path = inputs.deploy-rs.lib.x86_64-linux.activate.nixos config.flake.nixosConfigurations.acer-swift;
+        # False (the deploy-rs default too): building on acer, the sole k3s
+        # worker, would I/O-storm the node mid-deploy. Build stays on lenovo.
+        remoteBuild = false;
         autoRollback = true;
         magicRollback = true;
         activationTimeout = 180;
