@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 # Every host in the flake. The VM/image hosts (workstation-template,
 # claude-worker-template) were retired with the KubeVirt platform, so there is
 # no longer a second, optional build tier.
-HOSTS=("acer-swift" "lenovo")
+HOSTS=("acer-swift" "lenovo" "msi-ms7758")
 
 failed=()
 succeeded=()

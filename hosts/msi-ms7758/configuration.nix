@@ -6,11 +6,9 @@ in
   imports = [
     ./hardware-configuration.nix
     ../../modules/hardware/video/${vars.videoDriver}.nix
-    ../../modules/homelab/k3s/containerd-crun.nix
   ];
 
   sam.profile = vars;
-  sam.hostSecrets.enable = true;
 
   # Keep this host manual until the existing Windows/EFI layout is verified.
   system.autoUpgrade.enable = lib.mkForce false;
@@ -60,10 +58,7 @@ in
     HandlePowerKey = "poweroff";
   };
 
-  homelab.k3s.serverAddr = "https://192.168.10.154:6443";
-  homelab.k3s.cni = "cilium";
-  homelab.k3s.extraFlags = [
-    "--node-label=node-pool=workers"
-    "--node-label=gpu=nvidia"
-  ];
+  # Initial onboarding is deliberately outside the cluster and SOPS tree. Add
+  # the machine's verified SSH host key to SOPS before enabling k3s secrets.
+  homelab.k3s.enable = lib.mkForce false;
 }
