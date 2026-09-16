@@ -13,10 +13,12 @@ Personal NixOS + Home Manager configuration. A work in progress as I learn the N
 
 | Machine | Type | Boot entries |
 |---------|------|--------------|
-| `acer-swift` | Laptop run headless as the sole k3s worker | Headless only |
+| `acer-swift` | Laptop run headless as the sole k3s worker | Terminal default, `desktop`/Niri |
 | `lenovo-21CB001PMX` | Daily-driver laptop and k3s control plane | Hyprland desktop (default), `niri` |
+| `msi-ms7758` | Legacy tower with existing Windows dual boot | GRUB with NixOS and Windows |
 
-Neither host has a cross-mode boot entry; see CLAUDE.md, Desktop vs Server Mode.
+MSI is staged for safe re-onboarding; its existing disk layout and Windows EFI
+entry must be verified on the machine before activation.
 
 ## Structure
 
@@ -92,6 +94,7 @@ Roles are driven by `variables.nix`:
 # Build and switch (Linux)
 sudo nixos-rebuild switch --flake .#acer-swift
 sudo nixos-rebuild switch --flake .#lenovo
+sudo nixos-rebuild switch --flake .#msi-ms7758
 
 # Test build without applying
 sudo nixos-rebuild build --flake .#acer-swift
@@ -140,7 +143,7 @@ Use this sequence to reproduce the same pattern in your own repo:
 
 1. Fork/clone and rename host directories under `hosts/` for your machines.
 2. Update identity defaults in `lib/users.nix` (git name/email, SSH keys).
-3. Copy a host template (`hosts/acer-swift/` or `hosts/lenovo-21CB001PMX/`) and edit `variables.nix` and `configuration.nix`.
+3. Copy a host template (`hosts/acer-swift/`, `hosts/lenovo-21CB001PMX/`, or `hosts/msi-ms7758/`) and edit `variables.nix` and `configuration.nix`.
 4. Add one distribution declaration per host in `flake-modules/hosts/<name>.nix`.
 5. Keep reusable behavior in `modules/roles/*.nix` and `modules/core/*.nix`; avoid host-specific `specialArgs`.
 6. If using secrets, update recipients in `secrets/.sops.yaml` and re-encrypt with `sops updatekeys`.

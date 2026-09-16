@@ -1,0 +1,26 @@
+# Recovered from the last known MSI installation. Verify UUIDs on the machine
+# before activation because this host has a shared Windows EFI partition.
+{ config, lib, modulesPath, ... }:
+{
+  imports = [ (modulesPath + "/installer/scan/not-detected.nix") ];
+
+  boot.initrd.availableKernelModules = [
+    "xhci_pci" "ehci_pci" "ahci" "usb_storage" "usbhid" "sd_mod" "sr_mod"
+  ];
+  boot.kernelModules = [ "kvm-intel" ];
+
+  fileSystems."/" = {
+    device = "/dev/disk/by-uuid/e53e8e1e-80fc-49ea-ba7c-521b07084a3f";
+    fsType = "ext4";
+  };
+
+  fileSystems."/boot" = {
+    device = "/dev/disk/by-uuid/4814-4E1F";
+    fsType = "vfat";
+    options = [ "fmask=0077" "dmask=0077" ];
+  };
+
+  swapDevices = [ ];
+  nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
+  hardware.cpu.intel.updateMicrocode = lib.mkDefault config.hardware.enableRedistributableFirmware;
+}

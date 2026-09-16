@@ -28,7 +28,7 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
 ```
 
-Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`).
+Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), and `msi-ms7758`.
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
 `host` variable at the top of the Justfile does that mapping, so the argument is
 only needed when targeting the other machine.
@@ -76,7 +76,8 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 | Host | Mode | Specialisations |
 |------|------|-----------------|
 | `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | none |
-| `acer-swift` | **headless** (k3s worker) | none |
+| `acer-swift` | **headless** (k3s worker) | `desktop` (Niri GUI) |
+| `msi-ms7758` | **staged headless** (dual-boot re-onboarding) | none |
 
 Desktop mode ships **two coexisting compositors** — Hyprland and niri
 (`modules/desktop/hyprland` and `modules/desktop/niri`, both imported by
@@ -86,12 +87,9 @@ greeter; the compositor is picked at sign-in, and SDDM's remembered
 last. `defaultSession` is `niri` (the daily driver, set in
 `modules/desktop/niri`) and only matters for a fresh state file.
 
-There are no specialisations today. Niri's boot-entry specialisation was
-promoted into the default system on 2026-08-31, and the cross-mode entries
-(lenovo `server`, acer-swift `desktop`) were removed on 2026-08-27 — each
-specialisation cost a second full system closure on every rebuild. To restore
-one, read the removal commit; per the Comment Policy the host files do not
-carry undo instructions.
+The Acer headless configuration is the default and its `desktop` specialisation
+adds the Niri GUI boot entry. MSI is deliberately staged without k3s or SOPS
+until its existing root and shared Windows ESP UUIDs are verified locally.
 
 **One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
 `modules/specialisations/desktop.nix`; the default is `false`, so a host that
@@ -414,7 +412,7 @@ and 25% is judgement; the ratchet only catches the indefensible. Tighten
   states its scope — `homelab.secrets` (cluster) vs `sam.hostSecrets` (machine)
   — because an option path is usually read without its module.
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.
-- **Desktop is per-host, not a role**: lenovo imports `modules/specialisations/desktop.nix` in its default boot, acer-swift does not. Gate GUI config on `sam.desktop.enable`.
+- **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
 - **Firewall**: LAN CIDR defaults to `192.168.10.0/24` (override via `sam.profile.lanCidr`). SSH is key-only, no root login.
 - **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (currently claude-code, obsidian, unrar, vscode) — otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
