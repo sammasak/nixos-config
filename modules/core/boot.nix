@@ -27,7 +27,7 @@
       # lockstep on a bootloader bump (the skew that bricked lenovo's boot).
       systemd-boot = {
         enable = true;
-        configurationLimit = 10;
+        configurationLimit = 4;
       };
     };
     binfmt.registrations.appimage = {
