@@ -16,6 +16,12 @@ in
   sam.profile = vars;
   sam.hostSecrets.enable = true;
 
+  # Headless shell mode remains the default for the always-on worker. The GUI
+  # variant is an explicit boot-menu specialisation for daily laptop use.
+  specialisation.desktop.configuration = {
+    imports = [ ../../modules/specialisations/desktop.nix ];
+  };
+
   # Sole worker — an unattended reboot is a total cluster outage (the reserved
   # taint strands DNS, kyverno and ntfy, so paging dies with it). Upgrades still
   # build and activate; the reboot is operator-initiated.
