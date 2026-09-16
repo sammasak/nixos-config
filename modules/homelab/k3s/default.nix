@@ -152,9 +152,21 @@ in
     # During switch, network services can restart before k3s. Wait for a
     # default route so k3s doesn't fail fast with "no default routes found".
     systemd.services.k3s = {
+      serviceConfig.Slice = "homelab.slice";
       serviceConfig.ExecStartPre = [
         "${pkgs.bash}/bin/bash -euc 'for i in {1..60}; do if ${pkgs.iproute2}/bin/ip route show default | ${pkgs.gnugrep}/bin/grep -q \"^default\"; then exit 0; fi; sleep 1; done; echo \"k3s: no default route after waiting 60s\" >&2; exit 1'"
       ];
+    };
+
+    # Keep the desktop and coding tools responsive when the node is also
+    # running containers. Child processes, including k3s's bundled containerd,
+    # inherit this slice.
+    systemd.slices.homelab = {
+      description = "Low-priority homelab workloads";
+      sliceConfig = {
+        CPUWeight = 50;
+        IOWeight = 50;
+      };
     };
 
     environment.systemPackages = with pkgs; [

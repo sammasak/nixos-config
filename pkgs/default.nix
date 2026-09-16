@@ -1,7 +1,5 @@
 # Custom packages overlay
 final: prev: {
-  codex = final.callPackage ./codex.nix { };
-
   # Bumped past nixpkgs 0.8.2 for the multi-machine `machine add` feature.
   herdr = final.callPackage ./herdr/package.nix { };
 

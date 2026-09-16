@@ -57,13 +57,21 @@
   # attach interactiveShellInit fragments to it.
   programs.fish.enable = true;
 
-  # Caps Claude on the sole k3s worker so a runaway build cannot starve the
-  # cluster or the co-located ntfy pod (paging dies with it); CPUWeight < 100.
-  programs.fish.functions = lib.mkIf (!(osConfig.sam.desktop.enable or false)) {
-    ccap = ''
+  # Bound agent sessions on both laptops so coding tools remain useful without
+  # allowing an agent or build to make the interactive desktop unusable.
+  programs.fish.functions = {
+    agent-run = ''
+      set -l command $argv[1]
+      set -e argv[1]
       systemd-run --user --scope --quiet \
         -p CPUWeight=50 -p CPUQuota=400% -p MemoryHigh=4G -p MemoryMax=5G \
-        -- claude $argv
+        -p IOWeight=50 -- $command $argv
+    '';
+    ccap = ''
+      agent-run claude $argv
+    '';
+    codexcap = ''
+      agent-run codex $argv
     '';
   };
 }

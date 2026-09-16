@@ -27,14 +27,15 @@ in
     "--node-label=node-pool=workers"
   ];
 
-  # Turbo boost off keeps idle package temp ~10-15°C lower, below the 63°C fan
-  # trigger; balance_power biases HWP toward lower voltage at idle.
+  # Keep turbo available for interactive coding and builds. Power-profiles-daemon
+  # still provides the battery-aware system profile; EPP keeps sustained work
+  # balanced instead of forcing the server-oriented power bias.
   sam.thermal = {
     enable = true;
     platform = "generic";
     profile = "balanced";
-    disableTurboBoost = true;
-    energyPerformancePreference = "balance_power";
+    disableTurboBoost = false;
+    energyPerformancePreference = "balance_performance";
   };
 
   # WiFi powersave lets the NIC enter deep states, causing ~300-500 ms link

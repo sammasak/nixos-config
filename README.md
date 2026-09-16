@@ -161,7 +161,7 @@ From one Linux host, deploy to another host over SSH:
 # Example: deploy acer-swift from lenovo
 nixos-rebuild switch \
   --flake .#acer-swift \
-  --target-host lukas@192.168.10.124 \
+  --target-host lukas@192.168.10.110 \
   --sudo \
   --ask-sudo-password
 ```

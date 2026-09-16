@@ -64,6 +64,23 @@ in
   systemd.services.nixos-upgrade = {
     onSuccess = [ "nixos-upgrade-notify-success.service" ];
     onFailure = [ "nixos-upgrade-notify-failure.service" ];
+    serviceConfig = {
+      Nice = 10;
+      IOSchedulingClass = "best-effort";
+      IOWeight = 20;
+    };
+  };
+
+  systemd.services.nix-gc.serviceConfig = {
+    Nice = 19;
+    IOSchedulingClass = "idle";
+    IOWeight = 10;
+  };
+
+  systemd.services.nix-optimise.serviceConfig = {
+    Nice = 19;
+    IOSchedulingClass = "idle";
+    IOWeight = 10;
   };
 
   systemd.services.nixos-upgrade-notify-success = {
