@@ -1,15 +1,14 @@
 # LazyVim owns plugins (pinned by dotfiles/nvim/lazy-lock.json); Nix supplies
-# native deps plus only the non-project-versioned language servers — every
-# project server (rust-analyzer, vtsls, svelte) must come from its repo
-# devshell via PATH.
+# native dependencies and fallback language servers. When direnv activates a
+# repository, its project-local tools appear first in Neovim's PATH.
 { pkgs, config, ... }:
 let
-  repoRoot = "/home/lukas/nixos-config";
+  repoRoot = "${config.home.homeDirectory}/nixos-config";
   # Mason-off DAP adapter; self-contained (rpath), rustaceanvim finds it on PATH.
   codelldb = pkgs.writeShellScriptBin "codelldb" ''
     exec ${pkgs.vscode-extensions.vadimcn.vscode-lldb}/share/vscode/extensions/vadimcn.vscode-lldb/adapter/codelldb "$@"
   '';
-  pythonDebug = pkgs.python3.withPackages (ps: [ ps.debugpy ]);
+  pythonDebug = pkgs.python3.withPackages (ps: [ ps.debugpy ps.pytest ps.pytest-cov ]);
 in
 {
   programs.neovim = {
@@ -32,11 +31,28 @@ in
       # ensure_installed formatters must be satisfied here or they silently fail.
       stylua
       shfmt
+      tree-sitter
       basedpyright
+      cargo
+      cargo-deny
+      cargo-edit
+      cargo-nextest
+      cargo-watch
+      clippy
+      rustc
       ruff
+      rust-analyzer
+      rustfmt
+      ty
+      uv
       nodejs
       markdownlint-cli2
+      nixfmt
+      statix
       codelldb
+      prettier
+      # gio: snacks.nvim's explorer trashes files (recoverable) instead of rm.
+      glib
     ];
     # HM owns init.lua; a whole-directory nvim symlink would collide with it.
     initLua = ''require("config.lazy")'';
@@ -49,6 +65,8 @@ in
   xdg.configFile."nvim/nix.lua".text = ''
     return {
       debugpy_python = "${pythonDebug}/bin/python",
+      codelldb = "${codelldb}/bin/codelldb",
+      liblldb = "${pkgs.llvmPackages_21.lldb}/lib/liblldb.so",
     }
   '';
 

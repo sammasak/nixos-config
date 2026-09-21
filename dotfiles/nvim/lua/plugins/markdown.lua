@@ -19,8 +19,9 @@ return {
       workspaces = {
         { name = "knowledge", path = vault },
       },
+      legacy_commands = false,
       -- The vault convention is relative markdown links, not wikilinks.
-      preferred_link_style = "markdown",
+      link = { style = "markdown" },
       ui = { enable = false },
     },
   },

@@ -1,4 +1,9 @@
--- Bootstrap lazy.nvim, then LazyVim with local overrides from lua/plugins/.
+vim.loader.enable()
+require("config.autocmds")
+require("config.project")
+vim.g.lazyvim_python_lsp = "basedpyright"
+vim.g.lazyvim_python_ruff = "ruff"
+
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not (vim.uv or vim.loop).fs_stat(lazypath) then
   local lazyrepo = "https://github.com/folke/lazy.nvim.git"
@@ -27,9 +32,22 @@ require("lazy").setup({
     { import = "lazyvim.plugins.extras.lang.svelte" },
     { import = "lazyvim.plugins.extras.ai.copilot" },
     { import = "lazyvim.plugins.extras.dap.core" },
+    { import = "lazyvim.plugins.extras.test.core" },
+    { import = "lazyvim.plugins.extras.editor.harpoon2" },
+    { import = "lazyvim.plugins.extras.editor.inc-rename" },
+    { import = "lazyvim.plugins.extras.editor.aerial" },
+    { import = "lazyvim.plugins.extras.editor.overseer" },
+    { import = "lazyvim.plugins.extras.editor.refactoring" },
+    { import = "lazyvim.plugins.extras.editor.dial" },
+    { import = "lazyvim.plugins.extras.coding.neogen" },
+    { import = "lazyvim.plugins.extras.coding.mini-surround" },
+    { import = "lazyvim.plugins.extras.ui.treesitter-context" },
+    { import = "lazyvim.plugins.extras.lang.nix" },
+    { import = "lazyvim.plugins.extras.lsp.neoconf" },
+    { import = "lazyvim.plugins.extras.util.gh" },
     { import = "plugins" },
   },
-  defaults = { lazy = false, version = false },
+  defaults = { lazy = true, version = false },
   -- The lock lives in this repo, which is stdpath("config") on every machine,
   -- so pins are identical everywhere and updates stay deliberate.
   lockfile = vim.fn.stdpath("config") .. "/lazy-lock.json",
@@ -43,3 +61,8 @@ require("lazy").setup({
     },
   },
 })
+
+vim.schedule(function()
+  require("config.options")
+  require("config.keymaps")
+end)

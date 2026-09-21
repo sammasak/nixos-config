@@ -1,1 +1,10 @@
 -- Extra keymaps on top of LazyVim defaults (https://www.lazyvim.org/keymaps).
+vim.keymap.set("n", "<leader>q", vim.diagnostic.setloclist, { desc = "Diagnostics to Location List" })
+vim.keymap.set("n", "<leader>cf", function()
+  require("conform").format({ async = true, lsp_format = "fallback" })
+end, { desc = "Format Buffer" })
+vim.keymap.set("n", "<leader>cl", vim.lsp.codelens.run, { desc = "Run Code Lens" })
+vim.keymap.set("n", "<leader>co", vim.lsp.buf.document_symbol, { desc = "Document Symbols" })
+vim.keymap.set("n", "<leader>ci", vim.lsp.buf.incoming_calls, { desc = "Incoming Calls" })
+vim.keymap.set("n", "<leader>cO", vim.lsp.buf.outgoing_calls, { desc = "Outgoing Calls" })
+vim.keymap.set("n", "<leader>cp", "<cmd>ProjectInfo<cr>", { desc = "Project Info" })

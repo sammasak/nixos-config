@@ -54,7 +54,7 @@ secrets-verify:
     nix shell nixpkgs#sops -c bash scripts/secrets-verify.sh
 
 # Run flake checks (includes all configurations), both lints and the secrets gate
-check: lint-comments lint-shell secrets-verify
+check: lint-comments lint-shell secrets-verify nvim-check
     nix flake check --all-systems --no-write-lock-file
 
 # facter.json is gitignored, so this is the only gate that re-validates facter's
@@ -95,6 +95,26 @@ parity:
 # Mirror dotfiles/nvim to the standalone public repo the work machine clones
 export-nvim REMOTE="git@github.com:sammasak/nvim-config.git":
     bash scripts/export-nvim.sh {{REMOTE}}
+
+# Build lenovo's nvim and confirm the config-as-written starts headless clean
+nvim-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    hm='.#nixosConfigurations.lenovo.config.home-manager.users.lukas'
+    NV=$(nix build "$hm.programs.neovim.finalPackage" --no-link --print-out-paths)
+    # Isolated config from the generated files, not ~/.config/nvim: a plain +qa
+    # against the live dir would exercise the deployed (possibly un-switched,
+    # stale) generation and mask errors, since +qa exits 0 even on an init throw.
+    cfg=$(mktemp -d); trap 'rm -rf "$cfg"' EXIT
+    mkdir -p "$cfg/nvim"
+    ln -s "$PWD/dotfiles/nvim/lua" "$cfg/nvim/lua"
+    ln -s "$PWD/dotfiles/nvim/lazy-lock.json" "$cfg/nvim/lazy-lock.json"
+    nix eval --raw "$hm.xdg.configFile.\"nvim/init.lua\".text" > "$cfg/nvim/init.lua"
+    nix eval --raw "$hm.xdg.configFile.\"nvim/nix.lua\".text" > "$cfg/nvim/nix.lua"
+    out=$(XDG_CONFIG_HOME="$cfg" "$NV/bin/nvim" --headless +qa 2>&1 || true)
+    if printf '%s' "$out" | grep -qiE 'error|stack traceback|E[0-9]{3,}:'; then
+      printf '%s\n' "$out"; echo "nvim-check: startup errored" >&2; exit 1
+    fi
 
 # ── Registry ──────────────────────────────────────────────────────────
 
