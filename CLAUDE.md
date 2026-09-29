@@ -77,7 +77,7 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 |------|------|-----------------|
 | `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | none |
 | `acer-swift` | **headless** (k3s worker) | `desktop` (Niri GUI) |
-| `msi-ms7758` | **staged headless** (dual-boot re-onboarding) | none |
+| `msi-ms7758` | **headless** (intermittent opt-in k3s worker, dual-boot Windows) | none |
 
 Desktop mode ships **two coexisting compositors** — Hyprland and niri
 (`modules/desktop/hyprland` and `modules/desktop/niri`, both imported by
@@ -88,8 +88,11 @@ last. `defaultSession` is `niri` (the daily driver, set in
 `modules/desktop/niri`) and only matters for a fresh state file.
 
 The Acer headless configuration is the default and its `desktop` specialisation
-adds the Niri GUI boot entry. MSI is deliberately staged without k3s or SOPS
-until its existing root and shared Windows ESP UUIDs are verified locally.
+adds the Niri GUI boot entry. MSI is an intermittent opt-in k3s worker: powered
+on only occasionally (woken via Wake-on-LAN), tainted
+`sammasak.dev/intermittent=true:NoSchedule` so nothing schedules on it unless it
+tolerates that. Its root/shared-Windows-ESP UUIDs are verified; boot stays GRUB
+with a manual Windows Boot Manager entry (dual-boot preserved).
 
 **One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
 `modules/specialisations/desktop.nix`; the default is `false`, so a host that

@@ -66,7 +66,7 @@ in
   # cluster address, CNI, labels, and the taint that keeps it opt-in.
   #
   # The NoSchedule taint means nothing lands here unless it explicitly tolerates
-  # homelab.io/intermittent, so this node's frequent shutdowns never disrupt the
+  # sammasak.dev/intermittent, so this node's frequent shutdowns never disrupt the
   # always-on workloads. CPU/batch jobs opt in via toleration + node-pool.
   # (The GTX 680 is Kepler/compute-3.0; its driver was removed in d5cf2fb, so
   # the GPU is deliberately not wired into k3s.)
@@ -74,7 +74,7 @@ in
   homelab.k3s.cni = "cilium"; # must match control-plane: Cilium KPR, kube-proxy disabled
   homelab.k3s.extraFlags = [
     "--node-label=node-pool=workers"
-    "--node-taint=homelab.io/intermittent=true:NoSchedule"
+    "--node-taint=sammasak.dev/intermittent=true:NoSchedule"
     # Graceful node shutdown: let tolerating pods terminate cleanly on poweroff
     # instead of being killed and lingering until the eviction timeout.
     "--kubelet-arg=shutdown-grace-period=30s"
