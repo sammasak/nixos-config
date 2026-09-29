@@ -16,10 +16,16 @@ in
     # the Cilium plugin ("cni plugin not initialized"). This gives it a v3-format
     # CNI section with explicit bin/conf dirs, and registers crun/gvisor.
     ../../modules/homelab/k3s/containerd-crun.nix
+
+    # Wake msi (the intermittent LLM worker) on the work-hours schedule.
+    ../../modules/homelab/msi-power-schedule.nix
   ];
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
+
+  # As the always-on control plane, lenovo sends msi its Mon-Fri 09:00 wake.
+  homelab.msiPowerSchedule.waker.enable = true;
 
   # facter.json is gitignored (DMI/MAC data) and generated on-host via
   # nixos-facter; mkIf keeps reportPath at its null default so a checkout

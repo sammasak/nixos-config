@@ -8,7 +8,12 @@ in
     ../../modules/hardware/video/${vars.videoDriver}.nix
     # Registers crun as an additional containerd runtime for k3s (worker parity).
     ../../modules/homelab/k3s/containerd-crun.nix
+    # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
+    ../../modules/homelab/msi-power-schedule.nix
   ];
+
+  # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
+  homelab.msiPowerSchedule.selfShutdown.enable = true;
 
   sam.profile = vars;
 
