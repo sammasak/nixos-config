@@ -75,9 +75,9 @@ in
   homelab.k3s.extraFlags = [
     "--node-label=node-pool=workers"
     "--node-taint=sammasak.dev/intermittent=true:NoSchedule"
-    # Graceful node shutdown: let tolerating pods terminate cleanly on poweroff
-    # instead of being killed and lingering until the eviction timeout.
-    "--kubelet-arg=shutdown-grace-period=30s"
-    "--kubelet-arg=shutdown-grace-period-critical-pods=10s"
+    # NOTE: no graceful-shutdown args. `shutdownGracePeriod` is a kubelet
+    # config-file field, NOT a CLI flag — passing it via --kubelet-arg makes
+    # kubelet exit with "unknown flag" and crashloops the node. Not worth a
+    # kubelet config file for an opt-in node that runs nothing critical.
   ];
 }
