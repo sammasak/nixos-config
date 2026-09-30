@@ -407,7 +407,12 @@ function model_tier_default(pi) {
 // dist/index.js
 function dist_default(pi) {
   router_default(pi);
-  model_tier_default(pi);
+  if (typeof pi.registerVirtualModel === "function") {
+    try {
+      model_tier_default(pi);
+    } catch {
+    }
+  }
 }
 export {
   dist_default as default

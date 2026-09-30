@@ -1,9 +1,14 @@
-# Installs the pi-harness extension (performance-first classifier harness) for
-# the pi coding agent. The bundle is generated from sammasak/pi-harness
+# Installs the pi coding agent and the pi-harness extension (performance-first
+# classifier harness). The bundle is generated from sammasak/pi-harness
 # (`npm run bundle`) and vendored here; regenerate and re-commit when that
 # source changes. See vault: nix/nixos-modules.md for the home.file pattern.
-{ lib, ... }:
+{ lib, pkgs, ... }:
 {
+  # nixpkgs ships 0.87.1: stage 1 (routing) works; stage 2 (model-tier) needs a
+  # newer runtime that exposes registerVirtualModel and self-activates there
+  # (e.g. `nix run github:nklmilojevic/pi-flake` gives 0.99.x with both stages).
+  home.packages = [ pkgs.pi-coding-agent ];
+
   home.file.".pi/agent/extensions/pi-harness.ts".source = ./pi-harness.bundle.mjs;
 
   # The earlier single-stage router was dropped in imperatively (a real file, not
