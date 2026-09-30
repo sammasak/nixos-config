@@ -11,6 +11,7 @@ let
     ../programs/cli/flake-update
     ../programs/cli/herdr
     ../programs/editor/nvim
+    ./pi-harness
   ];
   desktopImports = lib.optionals isDesktopMode [
     ../desktop/common/home.nix
