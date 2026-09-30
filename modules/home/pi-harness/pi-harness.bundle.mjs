@@ -159,7 +159,14 @@ var LANGS = [
   [/\b(typescript|\.ts\b)\b/i, "typescript", "ts"],
   [/\b(javascript|node\.?js|\.js\b)\b/i, "javascript", "js"],
   [/\b(golang|go language|go program|go function)\b/i, "go", "go"],
-  [/\b(c\+\+|cpp)\b/i, "cpp", "cpp"]
+  [/\b(c\+\+|cpp)\b/i, "cpp", "cpp"],
+  [/\b(java|\.java\b)\b/i, "java", "java"],
+  [/\b(kotlin|\.kt\b)\b/i, "kotlin", "kt"],
+  [/\b(ruby|\.rb\b)\b/i, "ruby", "rb"],
+  [/\b(php|\.php\b)\b/i, "php", "php"],
+  [/\b(c#|csharp|\.cs\b)\b/i, "csharp", "cs"],
+  [/\b(swift|\.swift\b)\b/i, "swift", "swift"],
+  [/\b(sql|postgres|sqlite|mysql)\b/i, "sql", "sql"]
 ];
 function detectLang(task) {
   for (const [re, tag, ext] of LANGS)
@@ -229,6 +236,8 @@ function router_default(pi) {
   pi.on("input", async (event, ctx) => {
     try {
       if (event.source === "extension")
+        return { action: "continue" };
+      if (event.streamingBehavior)
         return { action: "continue" };
       const task = event.text.trim();
       if (!task || task.startsWith("/"))
