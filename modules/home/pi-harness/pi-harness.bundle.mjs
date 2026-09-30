@@ -391,71 +391,10 @@ function model_tier_default(pi) {
   });
 }
 
-// dist/stages/loop-control.js
-var GATE2 = envString("PICODE_GATE", "qwen2.5-coder:3b");
-var MAX_AUTO_CONTINUE = Math.max(0, Math.floor(envNumber("PICODE_MAX_AUTO_CONTINUE", 2)));
-var COMPLETION_LABELS = { DONE: "D", MORE: "M" };
-function safeNotify3(ctx, msg, level) {
-  try {
-    ctx.ui.notify(msg, level);
-  } catch {
-  }
-}
-function textOf(m) {
-  const content = m.content ?? "";
-  if (typeof content === "string")
-    return content;
-  return content.flatMap((b) => b.type === "text" ? [b.text] : []).join("\n");
-}
-function settlePointsSinceUser(messages) {
-  const lastUser = messages.findLastIndex((m) => m.role === "user");
-  const after = messages.slice(lastUser + 1);
-  let count = 0;
-  for (let i = 0; i < after.length; i++) {
-    if (after[i].role === "assistant" && after[i + 1]?.role !== "toolResult")
-      count++;
-  }
-  return count;
-}
-function completionPrompt(task, answer) {
-  return `A coding agent was asked to do a task. Decide if the task is now FULLY complete based on its latest response. Answer with a SINGLE letter and nothing else:
-D = done: the response fully satisfies the task, nothing important is left.
-M = more work needed: parts are missing, stubbed, unverified, or the response promises to continue.
-Task: ${task.slice(0, 2e3)}
-Latest response: ${answer.slice(0, 2e3)}
-Answer (D or M):`;
-}
-function loop_control_default(pi) {
-  pi.on("agent_before_settle", async (event, ctx) => {
-    try {
-      if (!event.context.canContinue)
-        return;
-      const msgs = event.context.llmMessages;
-      const spent = Math.max(0, settlePointsSinceUser(msgs) - 1);
-      if (spent >= MAX_AUTO_CONTINUE)
-        return;
-      const lastUser = msgs.filter((m) => m.role === "user").at(-1);
-      const lastAssistant = msgs.filter((m) => m.role === "assistant").at(-1);
-      const task = lastUser ? textOf(lastUser) : "";
-      const answer = lastAssistant ? textOf(lastAssistant) : "";
-      if (!task || !answer)
-        return;
-      const { label, ok } = await classifyLabels(completionPrompt(task, answer), COMPLETION_LABELS, { model: GATE2 });
-      if (ok && label === "MORE") {
-        safeNotify3(ctx, `[stage3] not complete -> auto-continue (${spent + 1}/${MAX_AUTO_CONTINUE})`, "info");
-        return { continue: true };
-      }
-    } catch {
-    }
-    return;
-  });
-}
-
 // dist/index.js
 function dist_default(pi) {
   router_default(pi);
   model_tier_default(pi);
-  loop_control_default(pi);
 }
 export {
   dist_default as default
