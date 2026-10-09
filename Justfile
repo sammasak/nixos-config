@@ -23,6 +23,16 @@ build HOST=host:
 diff HOST=host:
     nh os build . -H {{HOST}} --diff always
 
+# Update all flake inputs, a named input, or Codex's nixpkgs source.
+[doc("Update all inputs, a named input, or `codex` (which updates nixpkgs)")]
+bump TARGET="all":
+    #!/usr/bin/env bash
+    case "{{TARGET}}" in
+      all) nix flake update ;;
+      codex) nix flake update nixpkgs ;;
+      *) nix flake update "{{TARGET}}" ;;
+    esac
+
 # Loopback self-push, proving the deploy-rs/sudo/magic-rollback path before it
 # is ever trusted against acer-swift, which has no BMC to recover a bad push.
 deploy-lenovo:
@@ -82,6 +92,18 @@ bench:
 # Delta table between the last two metrics/history.jsonl entries
 bench-diff:
     bash scripts/bench.sh diff
+
+# Record host load, process activity, PSI, and sensor readings outside the repo.
+system-record LABEL duration="300" interval="2":
+    devenv tasks run system:record --input label={{LABEL}} --input duration={{duration}} --input interval={{interval}}
+
+# Benchmark the same workload repeatedly before and after a system change.
+system-bench LABEL COMMAND runs="7" warmup="2":
+    devenv tasks run system:benchmark --input label={{quote(LABEL)}} --input command={{quote(COMMAND)}} --input runs={{runs}} --input warmup={{warmup}}
+
+# Compare two system-bench result directories; refuses mismatched workloads.
+system-compare BEFORE AFTER:
+    devenv tasks run system:compare --input before={{quote(BEFORE)}} --input after={{quote(AFTER)}}
 
 # Run this after a refactor that is meant to change nothing. Deliberately NOT part
 # of `check` or `verify`: a change that legitimately moves the derivation should

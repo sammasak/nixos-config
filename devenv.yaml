@@ -1,0 +1,5 @@
+require_version: ">=2.2.2"
+
+inputs:
+  nixpkgs:
+    url: github:NixOS/nixpkgs/4975466d324710c576dc11ad614684e6bd8cad8e

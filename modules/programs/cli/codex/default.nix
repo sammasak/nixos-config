@@ -115,8 +115,8 @@ let
 
     [mcp_servers.playwright]
     enabled = true
-    command = "${pkgs.playwright-mcp}/bin/mcp-server-playwright"
-    args = ["--user-data-dir", "/tmp/playwright-mcp-profile", "--executable-path", "${pkgs.chromium}/bin/chromium", "--headless", "--no-sandbox"]
+    command = "${pkgs.playwright-mcp}/bin/playwright-mcp"
+    args = ["--isolated", "--executable-path", "${pkgs.chromium}/bin/chromium", "--headless", "--sandbox"]
     startup_timeout_sec = 20
   '';
 

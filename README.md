@@ -1,5 +1,34 @@
 # NixOS Configuration
 
+## Performance measurements
+
+`just bench` compares Nix evaluation work and closure size. It does not measure
+runtime performance. For a runtime comparison, choose a representative command
+and run the exact same command before and after the change:
+
+```sh
+just system-bench before-change 'your representative command' 7 2
+# Make and activate the change; reboot too if it changes the kernel.
+just system-bench after-change 'your representative command' 7 2
+just system-compare /path/to/before-result /path/to/after-result
+```
+
+The benchmark uses pinned `hyperfine`, warmups, repeated trials, and compares
+medians. It refuses to compare different commands, trial counts, or hosts, and
+warns if the power profile or AC state changed. Each result directory (under
+`${XDG_STATE_HOME:-~/.local/state}/nixos-config/performance/`) contains JSON
+results, command and system metadata, git state, and before/after context
+snapshots. Keep workload, power profile, AC state, and background services
+consistent; repeat the pair and compare the spread before attributing a small
+difference to the configuration. Only benchmark commands that are safe to run
+repeatedly; each command runs once per warmup and trial.
+
+For troubleshooting rather than scoring a benchmark, use
+`just system-record LABEL 300 2` to capture `sar`/`pidstat`, PSI, and sensor
+samples. These tools are only provided by the manually invoked devenv task; no
+monitoring service or NixOS package is enabled. Fan RPM is not an acoustic
+measurement; use a sound meter to assess noise.
+
 Personal NixOS + Home Manager configuration. A work in progress as I learn the Nix ecosystem.
 
 ## Goals
@@ -99,8 +128,10 @@ sudo nixos-rebuild switch --flake .#msi-ms7758
 # Test build without applying
 sudo nixos-rebuild build --flake .#acer-swift
 
-# Update all inputs
-nix flake update
+# Update all inputs, only nixpkgs, or Codex (provided by nixpkgs)
+just bump
+just bump nixpkgs
+just bump codex
 
 # Rollback if something breaks
 sudo nixos-rebuild switch --rollback

@@ -38,14 +38,12 @@ in
       isNormalUser = true;
       extraGroups = [
         "wheel"
-        "input"
         "networkmanager"
         "video"
         "audio"
         "libvirtd"
         "kvm"
         "docker"
-        "disk"
       ];
       shell = pkgs.fish;
       ignoreShellProgramCheck = true;
