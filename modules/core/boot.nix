@@ -23,8 +23,9 @@
       # the root filesystem (useful when sharing a small Windows ESP).
       efi.efiSysMountPoint = lib.mkDefault "/boot";
       timeout = 3;
-      # No GRUB anywhere: systemd-boot has no core/module split to fall out of
-      # lockstep on a bootloader bump (the skew that bricked lenovo's boot).
+      # systemd-boot default: no core/module split to fall out of lockstep on
+      # a bootloader bump (the skew that bricked lenovo's boot). msi alone
+      # mkForces GRUB back on for the Windows dual-boot (hosts/msi-ms7758).
       systemd-boot = {
         enable = true;
         configurationLimit = 4;
