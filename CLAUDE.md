@@ -79,13 +79,9 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 | `acer-swift` | **headless** (k3s worker) | `desktop` (Niri GUI) |
 | `msi-ms7758` | **headless** (intermittent opt-in k3s worker, dual-boot Windows) | none |
 
-Desktop mode ships **two coexisting compositors** — Hyprland and niri
-(`modules/desktop/hyprland` and `modules/desktop/niri`, both imported by
-`modules/specialisations/desktop.nix`). Both session files land in the SDDM
-greeter; the compositor is picked at sign-in, and SDDM's remembered
-`Last.Session` (`/var/lib/sddm/state.conf`) pre-selects whatever was used
-last. `defaultSession` is `niri` (the daily driver, set in
-`modules/desktop/niri`) and only matters for a fresh state file.
+Desktop mode ships **two coexisting compositors** — Hyprland and niri, both
+imported by `modules/specialisations/desktop.nix`; the compositor is picked
+at the SDDM greeter and niri is the default/daily driver.
 
 The Acer headless configuration is the default and its `desktop` specialisation
 adds the Niri GUI boot entry. MSI is an intermittent opt-in k3s worker: powered
@@ -223,11 +219,8 @@ recovery anyway). Features, DNS flow, and auth-state handling:
 `~/knowledge/homelab/runbooks/tailscale-operations.md`.
 
 The one gotcha worth carrying here: a dead tailnet can hold deploys hostage
-(the wanted unit is *started* by every switch). Read
-`journalctl -u tailscale-autoconnect` — a pending auth URL means finish it in
-a browser (do NOT rotate the authkey); the dead-authkey message means mint a
-new key, update `secrets/homelab/tailscale.yaml`, rebuild, then
-`systemctl restart tailscale-autoconnect` (restart, not start).
+(the wanted unit is *started* by every switch); recovery steps are in the
+runbook above — never rotate the authkey while an auth URL is pending.
 
 ### Key Inputs
 

@@ -38,10 +38,8 @@
       run ${script}
     '';
 
-  # Auto-approve tool permissions (merged with shared settings), with the
-  # destructive classes carved out: deny wins over allow, so these prompt or
-  # fail even in bypass-permissions sessions. validate-bash.sh backstops the
-  # same classes in-session.
+  # Auto-approve with destructive classes carved out: deny wins over allow,
+  # so these prompt even in bypass-permissions sessions.
   programs.claude-code.settings.permissions = {
     allow = [
       "Read"
@@ -54,6 +52,8 @@
       "WebSearch"
     ];
     deny = [
+      # Prefix-matched only: flag-after-remote orderings belong to
+      # validate-bash and the pre-push ancestry guard.
       "Bash(git push --force:*)"
       "Bash(git push -f:*)"
       "Bash(rm -rf /:*)"
