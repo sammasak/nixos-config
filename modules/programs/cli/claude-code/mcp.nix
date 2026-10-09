@@ -47,7 +47,7 @@ skillsSrc:
 
     settings = {
       theme = "dark";
-      model = "claude-fable-5";
+      model = "claude-opus-5-5";
       # Answers the "Try the new fullscreen renderer?" startup prompt; the
       # read-only settings.json means the interactive choice can never save.
       tui = "fullscreen";
