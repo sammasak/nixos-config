@@ -19,7 +19,7 @@ just secrets-verify           # Sanity-check decrypted wifi credentials (skips w
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
 
-# ── Deployment (nh wraps nixos-rebuild + nvd) ──────────────────────
+# ── Deployment (switch is plain nixos-rebuild; build/diff use nh) ──
 just switch [HOST]            # Build and activate
 just build  [HOST]            # Build only
 just diff   [HOST]            # Build and print the package diff vs the running system
@@ -285,41 +285,12 @@ The pointer must name a file that **exists**. Check before you write it; the
 board prune of 2026-08-25 left several in-code references to deleted tickets
 pointing at nothing.
 
-Comments that hit the target style — read one before writing your own. Anchored
-to what they sit above, not to a line number, because line numbers rot:
-
-- `modules/core/wifi.nix`, file header — why declarative WiFi exists, with the
-  incident itself in the vault
-- `modules/homelab/k3s/default.nix`, above the `eviction-hard`/`eviction-soft`
-  kubelet args — why those thresholds and not the k3s defaults
-- `modules/homelab/k3s/default.nix`, inside the `cfg.cni == "cilium"` server
-  branch — `--disable-kube-proxy` is server-only and *fatals* on an agent
-- `modules/homelab/k3s/default.nix`, above `trustedInterfaces` — why the host
-  firewall must not filter Cilium's datapath interfaces
-- `lib/firewall.nix`, file header — why both backends are always emitted
-
-**Comments inside a `''` string are out of scope for now — all of them.** They
-are rendered shell (`cluster-watchdog.nix`, `flux.nix`, `k3s-db-snapshot.nix`,
-`fish.nix` and more), so editing one moves the derivation and breaks
-`just parity`. They get swept when those scripts move to real `.sh` files, as
-`modules/homelab/nixos-rebuild-trigger/` did — that move is also what put the
-scripts under shellcheck, which no `''` string gets.
-The same reason there is no `nix fmt`: a formatter reindents `''` strings.
-
-The ratio counts only lines that *start* with `#`. Trailing comments are
-invisible to it, so `foo # restates foo` is a violation the number will never
-flag — judge those by reading.
-
-`just bench` records the comment ratio in `metrics/history.jsonl`, measured over
-nix-code lines (the body of `''` strings is excluded from both sides of the
-fraction, so moving an inline script out to a real file neither helps nor hurts
-the number). The target band is 7–13%; above that, the file is narrating itself.
-
-`just lint-comments` is the enforced floor under that band, not the band itself:
-it fails any `.nix` file of 30+ nix-code lines above **25%**, plus the
-never-allowed shapes above, across `.nix` and `.sh` alike. The gap between 13%
-and 25% is judgement; the ratchet only catches the indefensible. Tighten
-`MAX_PERCENT` in `scripts/nix-comment-lint.sh` when the tree can take it.
+Target band 7–13% comment density; `just lint-comments` is the enforced floor
+(fails any 30+ nix-code-line `.nix` file above **25%**, plus the never-allowed
+shapes, across `.nix` and `.sh` alike). `''` string bodies are out of scope —
+editing one moves the derivation and breaks `just parity`. Exemplar comments,
+the `''`-string rationale, and measurement mechanics:
+`~/knowledge/nix/comment-policy-notes.md`.
 
 ## Conventions
 

@@ -91,8 +91,11 @@ skillsSrc:
               command = "${skillsSrc}/hooks/validate-manifest.sh";
             }
             {
+              # cargo check on a cold workspace can exceed the default 60s;
+              # an explicit budget keeps the death visible in the hook log.
               type = "command";
               command = "${skillsSrc}/hooks/validate-rust.sh";
+              timeout = 120;
             }
             {
               type = "command";
