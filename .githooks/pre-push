@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 # Pre-push gate: fast lints only (comment policy + shellcheck); builds stay manual.
 set -euo pipefail
+# no-force-guard v2: refuse non-fast-forward pushes on git's own stdin.
+stdin=$(cat)
+zeros=0000000000000000000000000000000000000000
+printf "%s\n" "$stdin" | {
+  while read -r _ lsha rref rsha; do
+    [ -z "$rsha" ] && continue
+    [ "$rsha" = "$zeros" ] && continue
+    [ "$lsha" = "$zeros" ] && continue
+    if ! git merge-base --is-ancestor "$rsha" "$lsha" 2>/dev/null; then
+      echo "pre-push: non-fast-forward to $rref refused (force push, or stale view of the remote - fetch first)." >&2
+      exit 1
+    fi
+  done
+} || exit 1
 cd "$(git rev-parse --show-toplevel)"
 just lint-comments
 just lint-shell
