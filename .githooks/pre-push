@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Pre-push gate: fast lints only (comment policy + shellcheck); builds stay manual.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+just lint-comments
+just lint-shell

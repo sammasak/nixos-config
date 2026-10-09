@@ -166,34 +166,6 @@ Secret scopes in `secrets/.sops.yaml`:
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in fish shell init via `modules/programs/cli/claude-code/mcp.nix`.
 
-### Branch-only state: `modernization`
-
-Two features live only on this branch and need operator action, not more
-code, before they are safe to merge to `main`:
-
-- **deploy-rs signing** (`nix.settings.trusted-public-keys` in
-  `modules/core/system.nix`, lenovo's `nix.settings.secret-key-files` and its
-  now host-scoped `sops.secrets."nix_signing_key"`, both in
-  `hosts/lenovo-21CB001PMX/configuration.nix`) is active on both hosts
-  today — the public key is not gated behind an option (acer must trust it to
-  accept pushed closures). Merging to `main` therefore still changes acer's
-  evaluated toplevel, and acer auto-upgrades weekly from `main`. Before
-  pushing this branch to `main`: mask `nixos-upgrade.timer` on acer for that
-  window and re-run the store-path parity proof against the exact commit
-  being pushed. (Key correspondence spot-checked 2026-09-15: `nix key
-  convert-secret-to-public` on the decrypted `nix_signing_key` reproduces the
-  committed `nixos-config-1` public key. The private key itself is no longer
-  a risk on acer: `secrets/homelab/nix-signing-key.yaml` is encrypted to
-  lenovo + personal only, so acer cannot decrypt it even if a future edit
-  mistakenly re-declared the secret in a shared module.)
-- **impermanence** (`hosts/lenovo-21CB001PMX/{impermanence-fs,persistence,declarative-password}.nix`)
-  is staged only — `git grep` finds no import of any of the three files, so
-  neither host's toplevel changes. Wiring it in (an impermanence flake input,
-  a per-host `sam.profile` bool, and `mkNixosDistribution`'s
-  `lib.optional`/`mkIf` import) is deliberately deferred to the on-site
-  rescue-media `/persist` disk carve; each file's header names its specific
-  blocker.
-
 ### Claude Code
 
 Configuration lives in `modules/programs/cli/claude-code/`:
@@ -273,28 +245,6 @@ authkey); the dead-authkey message means mint a new key, update
 ### Key Inputs
 
 nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-skills — all following nixpkgs (except claude-code-skills which is a plain source input).
-
-### Known residue: the retired VM image platform
-
-The KubeVirt workstation / claude-worker VM images were retired in 2026-08. The
-hosts (`workstation-template`, `claude-worker-template`), their image modules,
-the build/publish scripts and the `publish`/`release` targets are gone.
-`pkgs/claude-ctl.nix`, the `claude-ctl` flake input and its overlay wiring were
-removed on 2026-08-26. The `just build` recipe that exists today is unrelated —
-it builds a NixOS system, not a VM image.
-
-The VM scaffolding inside `modules/programs/cli/claude-code/default.nix` — the
-`~/Justfile` of agent recipes, the `agent-heartbeat` user unit pointing at the
-deleted `workstations` namespace, and the fish `loginShellInit` that sourced
-`/etc/workstation/{agent-env,otel-env}` — was removed on 2026-08-27. That module
-still applies to every host via `sharedModules`, but now only seeds
-`~/.claude.json` and sets the tool-permissions block.
-
-One item survives the cull:
-
-| What | Why it is still here | Why it is dead weight |
-|------|---------------------|----------------------|
-| `modules/programs/cli/codex/validate-bash.sh` | Shared Codex hook, and its other rules (force-push blocking) are live | Two of its rules only fire inside `/var/lib/claude-worker`, which no longer exists anywhere |
 
 ## Comment Policy
 

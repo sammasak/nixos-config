@@ -118,9 +118,10 @@ skillsSrc:
   # declared is pruned from cache, data, and the installed list on activation.
   home.activation.prunePluginState =
     let
-      keep = lib.concatStringsSep "|" (
-        map (p: lib.head (lib.splitString "@" p))
-          (lib.attrNames config.programs.claude-code.settings.enabledPlugins)
+      declared = lib.attrNames config.programs.claude-code.settings.enabledPlugins;
+      keep = lib.concatStringsSep "|" (map (p: lib.head (lib.splitString "@" p)) declared);
+      keepMarketplaces = lib.concatStringsSep "|" (
+        lib.unique (map (p: lib.last (lib.splitString "@" p)) declared)
       );
       script = pkgs.writeShellScript "prune-plugin-state" ''
         base="$HOME/.claude/plugins"
@@ -136,6 +137,17 @@ skillsSrc:
           name=$(basename "$dir")
           echo "$name" | grep -qE '^(${keep})' || rm -rf "$dir"
         done
+        rmdir "$base"/cache/*/ 2>/dev/null || true
+        for dir in "$base"/marketplaces/*/; do
+          [ -d "$dir" ] || continue
+          name=$(basename "$dir")
+          echo "$name" | grep -qE '^(${keepMarketplaces})$' || rm -rf "$dir"
+        done
+        if [ -f "$base/known_marketplaces.json" ]; then
+          ${pkgs.jq}/bin/jq --arg keep '${keepMarketplaces}' \
+            'with_entries(select(.key | test("^(" + $keep + ")$")))' \
+            "$base/known_marketplaces.json" > "$base/.km.tmp" && mv "$base/.km.tmp" "$base/known_marketplaces.json"
+        fi
         if [ -f "$base/installed_plugins.json" ]; then
           ${pkgs.jq}/bin/jq --arg keep '${keep}' \
             '.plugins |= with_entries(select(.key | split("@")[0] | test("^(" + $keep + ")$")))' \
