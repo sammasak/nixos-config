@@ -62,34 +62,12 @@ skillsSrc:
         # marketplaces are already known, so no marketplace declaration is needed.
         "rust-analyzer-lsp@claude-plugins-official" = true;
         "frontend-design@claude-plugins-official" = true;
-        "context7@claude-plugins-official" = true;
       };
       # Hook commands are Nix store paths from the claude-code-skills input, so
       # they resolve on every host regardless of HOME.
       hooks = {
-        UserPromptSubmit = [{
-          hooks = [{
-            type = "command";
-            command = "${skillsSrc}/hooks/retrieve-context.sh";
-            timeout = 15;
-          }];
-        }];
         Stop = [{
           hooks = [
-            {
-              type = "command";
-              command = "${skillsSrc}/hooks/check-goals.sh";
-            }
-            {
-              type = "command";
-              command = "${skillsSrc}/hooks/write-session-state.sh";
-              timeout = 45;
-            }
-            {
-              type = "command";
-              command = "${skillsSrc}/hooks/agent-telemetry.sh";
-              timeout = 60;
-            }
             {
               type = "command";
               command = "${skillsSrc}/hooks/check-git-state.sh";
@@ -98,13 +76,6 @@ skillsSrc:
           ];
         }];
         PreToolUse = [
-          {
-            matcher = "Bash|Write|Edit|MultiEdit";
-            hooks = [{
-              type = "command";
-              command = "${skillsSrc}/hooks/report-activity.sh";
-            }];
-          }
           {
             matcher = "Bash";
             hooks = [
