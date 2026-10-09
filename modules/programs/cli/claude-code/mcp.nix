@@ -70,15 +70,18 @@ skillsSrc:
         }];
         PreToolUse = [
           {
+            # 5s: these run before EVERY Bash call; a hang must fail fast.
             matcher = "Bash";
             hooks = [
               {
                 type = "command";
                 command = "${skillsSrc}/hooks/validate-bash.sh";
+                timeout = 5;
               }
               {
                 type = "command";
                 command = "${skillsSrc}/hooks/check-loop.sh";
+                timeout = 5;
               }
             ];
           }
@@ -89,6 +92,7 @@ skillsSrc:
             {
               type = "command";
               command = "${skillsSrc}/hooks/validate-manifest.sh";
+              timeout = 30;
             }
             {
               # cargo check on a cold workspace can exceed the default 60s;
@@ -100,12 +104,14 @@ skillsSrc:
             {
               type = "command";
               command = "${skillsSrc}/hooks/validate-nix.sh";
+              timeout = 30;
             }
             {
               # PATH prefix: shellcheck is not in the user environment, and the
               # hook skips silently when it cannot find the binary.
               type = "command";
               command = "PATH=${lib.makeBinPath [ pkgs.shellcheck ]}:$PATH ${skillsSrc}/hooks/validate-shell.sh";
+              timeout = 30;
             }
           ];
         }];
