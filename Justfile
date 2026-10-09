@@ -15,6 +15,10 @@ host := if `uname -n` == "lenovo-21CB001PMX" { "lenovo" } else { `uname -n` }
 switch HOST=host:
     sudo nixos-rebuild switch --flake .#{{HOST}} --install-bootloader
 
+# Update one flake input (default: the Claude skills repo); pair with `just switch`
+bump input='claude-code-skills':
+    nix flake update {{input}}
+
 # Build this host's configuration without activating it
 build HOST=host:
     nh os build . -H {{HOST}}

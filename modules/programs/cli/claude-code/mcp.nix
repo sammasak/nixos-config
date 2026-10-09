@@ -48,11 +48,13 @@ skillsSrc:
         DISABLE_ERROR_REPORTING = "1";
       };
       enabledPlugins = {
-        "superpowers@claude-plugins-official" = true;
+        # The complete intended set — anything not listed here is uninstalled.
         # Declared here because interactive `/plugin` toggles cannot save
         # against the read-only settings.json.
+        "superpowers@claude-plugins-official" = true;
         "rust-analyzer-lsp@claude-plugins-official" = true;
         "frontend-design@claude-plugins-official" = true;
+        "code-simplifier@claude-plugins-official" = true;
       };
       # Hook commands are Nix store paths from the claude-code-skills input, so
       # they resolve on every host regardless of HOME.
