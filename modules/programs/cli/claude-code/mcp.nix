@@ -56,9 +56,7 @@ skillsSrc:
         DISABLE_ERROR_REPORTING = "1";
       };
       enabledPlugins = {
-        "ralph-loop@claude-plugins-official" = true;
         "superpowers@claude-plugins-official" = true;
-        "superpowers-lab@superpowers-marketplace" = true;
         # Declaratively enabled so they persist: the generated settings.json is
         # read-only, so interactive `/plugin` toggles cannot save. Both
         # marketplaces are already known, so no marketplace declaration is needed.
