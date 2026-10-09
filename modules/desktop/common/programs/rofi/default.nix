@@ -8,7 +8,7 @@
       rofi-emoji
     ];
 
-    extraConfig = {
+    settings = {
       modi = "drun,run,filebrowser,window,emoji";
       show-icons = true;
       terminal = "ghostty";
