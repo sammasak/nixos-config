@@ -113,6 +113,40 @@ skillsSrc:
   # playwright-mcp does not create the --storage-state parent dir itself.
   home.file.".local/share/claude-playwright-login/.keep".text = "";
 
+  # Keeps the enabledPlugins declaration true on disk: interactive /plugin
+  # installs survive in mutable ~/.claude/plugins state, so anything not
+  # declared is pruned from cache, data, and the installed list on activation.
+  home.activation.prunePluginState =
+    let
+      keep = lib.concatStringsSep "|" (
+        map (p: lib.head (lib.splitString "@" p))
+          (lib.attrNames config.programs.claude-code.settings.enabledPlugins)
+      );
+      script = pkgs.writeShellScript "prune-plugin-state" ''
+        base="$HOME/.claude/plugins"
+        [ -d "$base/cache" ] || exit 0
+        for dir in "$base"/cache/*/*/; do
+          [ -d "$dir" ] || continue
+          name=$(basename "$dir")
+          echo "$name" | grep -qE '^(${keep})$' && continue
+          rm -rf "$dir"
+        done
+        for dir in "$base"/data/*/; do
+          [ -d "$dir" ] || continue
+          name=$(basename "$dir")
+          echo "$name" | grep -qE '^(${keep})' || rm -rf "$dir"
+        done
+        if [ -f "$base/installed_plugins.json" ]; then
+          ${pkgs.jq}/bin/jq --arg keep '${keep}' \
+            '.plugins |= with_entries(select(.key | split("@")[0] | test("^(" + $keep + ")$")))' \
+            "$base/installed_plugins.json" > "$base/.ipj.tmp" && mv "$base/.ipj.tmp" "$base/installed_plugins.json"
+        fi
+      '';
+    in
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run ${script}
+    '';
+
   # sops-nix decrypts to /run/secrets/claude_oauth_token (modules/core/sops.nix).
   # Literal path on purpose: this is an HM module, so config.sops.secrets — a
   # NixOS option — is not in scope. ~/.env is a local dev override only.

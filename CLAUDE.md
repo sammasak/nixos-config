@@ -164,7 +164,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `claude/*.yaml` | Personal + 2 hosts | Claude Code OAuth token |
 | `cosign.key` | Personal only | Image-signing key used by `just sign` |
 
-The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in bash shell init via `modules/programs/cli/claude-code/mcp.nix`.
+The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in fish shell init via `modules/programs/cli/claude-code/mcp.nix`.
 
 ### Branch-only state: `modernization`
 
@@ -258,52 +258,17 @@ The overlay is regenerated automatically by Home Manager activation on every reb
 `modules/roles/homelab-agent.nix` imports `modules/homelab/tailscale.nix` but
 never sets `homelab.tailscale.enable`, so the import is inert on workers.
 
-**Key features:**
-- **Subnet routing** (subnet-router mode) — Advertises 192.168.10.0/24 to the Tailscale network
-- **MagicDNS integration** (subnet-router mode) — Uses AdGuard Home (192.168.10.154) for `*.sammasak.dev` DNS resolution
-- **SOPS-encrypted authkey** — Stored in `secrets/homelab/tailscale.yaml`, encrypted to both host keys
-- **IP forwarding** — Enabled for subnet routes (subnet-router mode only)
-- **Firewall integration** — Trusts `tailscale0` interface
+Options are `homelab.tailscale.*` in the module; features, DNS flow, and
+auth-state handling live in the operations runbook:
+`~/knowledge/homelab/runbooks/tailscale-operations.md`.
 
-**Module options** (`homelab.tailscale.*`):
-- `enable` (bool) — Enable Tailscale
-- `mode` (enum `subnet-router` | `client`) — Node behaviour, default `subnet-router`
-- `subnetRoutes` (list of str) — Subnets to advertise, subnet-router mode only (defaults to `sam.profile.lanCidr`)
-- `authKeyFile` (path) — Path to SOPS-decrypted authkey (default: `/run/secrets/tailscale-authkey`)
-
-**How it works:**
-1. `tailscaled.service` starts at boot
-2. `tailscale-autoconnect.service` runs once to configure:
-   - Authenticates using the authkey from SOPS, but only if not already authenticated
-     (re-using a consumed single-use key fails)
-   - If an interactive re-auth is already pending (node-key expiry mints an auth
-     URL at boot), it logs that URL, pages ntfy, and exits 0 instead of stomping
-     the URL with the stored key
-   - Applies the mode's preferences
-3. Admin must approve subnet routes in the Tailscale admin console
-4. Tailscale clients can access homelab LAN IPs and services
-
-Operator-actionable auth states (pending auth URL, dead authkey) page ntfy,
-log to the journal and exit 0 — a failed wanted unit is *started* (not
-restarted, so `restartIfChanged` cannot help) by every switch and fails whole
-activations (the rebuild trigger then rolls back), holding deploys hostage to
-tailnet auth state. So when the tailnet is down, read
-`journalctl -u tailscale-autoconnect`: "Interactive re-auth already pending"
-means finish the printed auth URL in a browser (do NOT rotate the authkey);
-the authkey message means mint a new key in the admin console, update
+The one gotcha worth carrying here: auth states page ntfy and exit 0, but a
+failed wanted unit is *started* by every switch, so a dead tailnet can hold
+deploys hostage. Read `journalctl -u tailscale-autoconnect`: "Interactive
+re-auth already pending" means finish the printed auth URL (do NOT rotate the
+authkey); the dead-authkey message means mint a new key, update
 `secrets/homelab/tailscale.yaml`, rebuild, then
-`systemctl restart tailscale-autoconnect` (restart, not start — the unit
-stays `active (exited)` after the clean exit). The unit only *fails* when
-reapplying preferences on an authenticated node errors.
-
-**DNS flow:**
-- Client queries `grafana.sammasak.dev`
-- Tailscale MagicDNS forwards to AdGuard Home (192.168.10.154)
-- AdGuard returns internal IP (e.g., 192.168.10.200)
-- Traffic routes through control-plane subnet router
-
-**Documentation:**
-- Operations runbook: `~/knowledge/homelab/runbooks/tailscale-operations.md`
+`systemctl restart tailscale-autoconnect` (restart, not start).
 
 ### Key Inputs
 

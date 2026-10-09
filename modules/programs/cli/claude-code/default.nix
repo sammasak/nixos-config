@@ -38,7 +38,10 @@
       run ${script}
     '';
 
-  # Headless agent: auto-approve all tool permissions (merged with shared settings)
+  # Auto-approve tool permissions (merged with shared settings), with the
+  # destructive classes carved out: deny wins over allow, so these prompt or
+  # fail even in bypass-permissions sessions. validate-bash.sh backstops the
+  # same classes in-session.
   programs.claude-code.settings.permissions = {
     allow = [
       "Read"
@@ -50,7 +53,14 @@
       "WebFetch"
       "WebSearch"
     ];
-    deny = [ ];
+    deny = [
+      "Bash(git push --force:*)"
+      "Bash(git push -f:*)"
+      "Bash(rm -rf /:*)"
+      "Bash(kubectl delete pvc:*)"
+      "Bash(kubectl delete namespace:*)"
+      "Bash(kubectl delete ns:*)"
+    ];
   };
 
   # Enabled here because the sibling Claude Code / Codex Home Manager modules
