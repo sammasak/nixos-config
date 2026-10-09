@@ -290,11 +290,9 @@ the `''`-string rationale, and measurement mechanics:
 
 ## Adding a New Host
 
-1. Create `hosts/<name>/` with `variables.nix`, `configuration.nix`, `hardware-configuration.nix` (Home Manager is shared — no per-host `home.nix`)
-2. Create `flake-modules/hosts/<name>.nix` declaring `configurations.nixos.<name>` (reads variables, sets system/username/roles)
-3. The module registry auto-discovers the rest
-
-See `~/knowledge/homelab/runbooks/add-new-host.md` for detailed instructions.
+`hosts/<name>/` (variables + configuration + hardware scan) plus
+`flake-modules/hosts/<name>.nix`; the registry auto-discovers the rest.
+Full procedure: `~/knowledge/homelab/runbooks/add-new-host.md`.
 
 ## Further Documentation
 

@@ -164,6 +164,13 @@ skillsSrc:
           ${pkgs.jq}/bin/jq --arg keep '${keep}' \
             '.plugins |= with_entries(select(.key | split("@")[0] | test("^(" + $keep + ")$")))' \
             "$base/installed_plugins.json" > "$base/.ipj.tmp" && mv "$base/.ipj.tmp" "$base/installed_plugins.json"
+          # Convergence is prune-only; installing needs an interactive /plugin
+          # run, so a declared-but-missing plugin gets a loud line instead.
+          for p in ${lib.concatStringsSep " " (map (p: lib.head (lib.splitString "@" p)) declared)}; do
+            ${pkgs.jq}/bin/jq -e --arg p "$p" '.plugins | keys | map(split("@")[0]) | index($p)' \
+              "$base/installed_plugins.json" >/dev/null || \
+              echo "claude-code: declared plugin '$p' is not installed — run /plugin install" >&2
+          done
         fi
       '';
     in
