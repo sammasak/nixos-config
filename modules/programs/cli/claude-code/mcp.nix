@@ -9,9 +9,45 @@ skillsSrc:
     enable = true;
     package = pkgs.claude-code;
 
+    # The HM module packages these into a generated `hm` plugin (a bundled
+    # `.mcp.json`), so they load in every project — not via settings.json, which
+    # Claude Code ignores for MCP. Mirrors the Codex playwright server: headless
+    # chromium, --isolated so each session gets a fresh profile.
+    mcpServers.playwright = {
+      type = "stdio";
+      command = "${pkgs.playwright-mcp}/bin/playwright-mcp";
+      args = [
+        "--isolated"
+        "--executable-path"
+        "${pkgs.chromium}/bin/chromium"
+        "--headless"
+        "--sandbox"
+      ];
+    };
+
+    # Interactive sibling of `playwright`: headed (a real window opens so you can
+    # complete an interactive login, e.g. BankID). Use only when a task must act
+    # as you on a logged-in site.
+    # NOT --user-data-dir: playwright-mcp 0.0.80 is isolated-only and throws
+    # "userDataDir is not supported in isolated mode" for it (and for a config
+    # isolated:false). --storage-state is the supported persistence path — it
+    # loads/saves cookies + localStorage, so the signed-in session survives
+    # across Claude sessions.
+    mcpServers."playwright-login" = {
+      type = "stdio";
+      command = "${pkgs.playwright-mcp}/bin/playwright-mcp";
+      args = [
+        "--executable-path"
+        "${pkgs.chromium}/bin/chromium"
+        "--storage-state"
+        "${config.home.homeDirectory}/.local/share/claude-playwright-login/state.json"
+        "--sandbox"
+      ];
+    };
+
     settings = {
       theme = "dark";
-      model = "claude-opus-4-8";
+      model = "claude-fable-5";
       # Answers the "Try the new fullscreen renderer?" startup prompt; the
       # read-only settings.json means the interactive choice can never save.
       tui = "fullscreen";
@@ -30,10 +66,6 @@ skillsSrc:
         "frontend-design@claude-plugins-official" = true;
         "context7@claude-plugins-official" = true;
       };
-      # No `mcpServers` here: Claude Code ignores it in settings.json and reads
-      # MCP servers only from a project `.mcp.json`, `~/.claude.json`, or
-      # --mcp-config. Add servers per project.
-      #
       # Hook commands are Nix store paths from the claude-code-skills input, so
       # they resolve on every host regardless of HOME.
       hooks = {
@@ -59,6 +91,11 @@ skillsSrc:
               type = "command";
               command = "${skillsSrc}/hooks/agent-telemetry.sh";
               timeout = 60;
+            }
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/check-git-state.sh";
+              timeout = 10;
             }
           ];
         }];
@@ -95,11 +132,25 @@ skillsSrc:
               type = "command";
               command = "${skillsSrc}/hooks/validate-rust.sh";
             }
+            {
+              type = "command";
+              command = "${skillsSrc}/hooks/validate-nix.sh";
+            }
+            {
+              # PATH prefix: shellcheck is not in the user environment, and the
+              # hook skips silently when it cannot find the binary.
+              type = "command";
+              command = "PATH=${lib.makeBinPath [ pkgs.shellcheck ]}:$PATH ${skillsSrc}/hooks/validate-shell.sh";
+            }
           ];
         }];
       };
     };
   };
+
+  # playwright-login writes its --storage-state here; playwright-mcp does not
+  # create the parent dir, so ensure it exists.
+  home.file.".local/share/claude-playwright-login/.keep".text = "";
 
   # ── OAuth token sourcing ────────────────────────────────────────────
   # sops-nix decrypts the token to /run/secrets/claude_oauth_token at boot
