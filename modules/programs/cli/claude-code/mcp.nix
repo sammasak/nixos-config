@@ -182,6 +182,26 @@ skillsSrc:
       run ${script}
     '';
 
+  # Live sessions keep enforcing the hook generation loaded at their start,
+  # and the in-band Stop-hook warning only exists in NEW generations — so a
+  # generation change also pings ntfy out-of-band (fail-open: no LAN, no ping).
+  home.activation.notifyHookGeneration =
+    let
+      script = pkgs.writeShellScript "notify-hook-generation" ''
+        state="$HOME/.local/state/claude-hooks/deployed-store"
+        [ "$(cat "$state" 2>/dev/null)" = "${skillsSrc}" ] && exit 0
+        mkdir -p "$(dirname "$state")"
+        printf '%s' "${skillsSrc}" > "$state"
+        ${pkgs.curl}/bin/curl -fsS -m 5 \
+          -H "Title: Claude hooks updated" -H "Priority: min" -H "Tags: wrench" \
+          -d "New hook generation ${skillsSrc} deployed; running Claude sessions enforce their start-time generation until restarted." \
+          https://ntfy.sammasak.dev/homelab-improvements >/dev/null 2>&1 || true
+      '';
+    in
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run ${script}
+    '';
+
   # sops-nix decrypts to /run/secrets/claude_oauth_token (modules/core/sops.nix).
   # Literal path on purpose: this is an HM module, so config.sops.secrets — a
   # NixOS option — is not in scope. ~/.env is a local dev override only.
