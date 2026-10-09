@@ -216,30 +216,17 @@ The overlay is regenerated automatically by Home Manager activation on every reb
 
 ### Tailscale Remote Access
 
-**Purpose:** Secure remote access to homelab LAN (192.168.10.0/24) from anywhere via Tailscale VPN subnet routing.
-
-**Configuration:** `modules/homelab/tailscale.nix`
-
-**Enabled on:** every homelab node, in one of two modes.
-
-| Role | Mode | Behaviour |
-|------|------|-----------|
-| `homelab-server` (`lenovo-21CB001PMX`) | `subnet-router` | Advertises the LAN CIDR, accepts routes, enables Tailscale SSH |
-| `homelab-agent` (`acer-swift`) | — (none) | **No Tailscale client — owner decision 2026-08-26.** Remote access rides the lenovo subnet router; the lenovo-death edge case needs physical recovery anyway (vault: `homelab/runbooks/lenovo-death-recovery.md`). Client-mode machinery stays in the module if ever revisited |
-
-`modules/roles/homelab-agent.nix` imports `modules/homelab/tailscale.nix` but
-never sets `homelab.tailscale.enable`, so the import is inert on workers.
-
-Options are `homelab.tailscale.*` in the module; features, DNS flow, and
-auth-state handling live in the operations runbook:
+`modules/homelab/tailscale.nix` (`homelab.tailscale.*`): lenovo is the
+subnet-router for the LAN; acer runs **no client** (owner decision
+2026-08-26 — remote access rides lenovo, and lenovo-death needs physical
+recovery anyway). Features, DNS flow, and auth-state handling:
 `~/knowledge/homelab/runbooks/tailscale-operations.md`.
 
-The one gotcha worth carrying here: auth states page ntfy and exit 0, but a
-failed wanted unit is *started* by every switch, so a dead tailnet can hold
-deploys hostage. Read `journalctl -u tailscale-autoconnect`: "Interactive
-re-auth already pending" means finish the printed auth URL (do NOT rotate the
-authkey); the dead-authkey message means mint a new key, update
-`secrets/homelab/tailscale.yaml`, rebuild, then
+The one gotcha worth carrying here: a dead tailnet can hold deploys hostage
+(the wanted unit is *started* by every switch). Read
+`journalctl -u tailscale-autoconnect` — a pending auth URL means finish it in
+a browser (do NOT rotate the authkey); the dead-authkey message means mint a
+new key, update `secrets/homelab/tailscale.yaml`, rebuild, then
 `systemctl restart tailscale-autoconnect` (restart, not start).
 
 ### Key Inputs
@@ -318,25 +305,7 @@ See `~/knowledge/homelab/runbooks/add-new-host.md` for detailed instructions.
 
 ## Further Documentation
 
-Additional documentation is maintained in the knowledge (~/knowledge):
-
-Paths are relative to `~/knowledge`, and every one below was verified to
-exist. The vault uses relative markdown links, not `[[wikilinks]]`.
-
-**Concepts:**
-- `nix/nixos-modules.md` — NixOS declarative configuration
-- `nix/nix-specialisations.md` — boot-time system variants
-- `nix/k3s-nixos.md` — lightweight Kubernetes on NixOS
-- `nix/sops-nixos.md` — secrets management with SOPS
-- `nix/age-encryption.md` — modern encryption with age
-- `homelab/concepts/flux-gitops.md` — GitOps continuous deployment
-
-**Runbooks:**
-- `homelab/runbooks/bootstrap-homelab.md` — complete cluster bootstrap guide
-- `homelab/runbooks/add-new-host.md` — adding new NixOS hosts
-- `homelab/runbooks/lenovo-death-recovery.md` — the control plane is gone
-
-**Architecture and decisions:**
-- `homelab/architecture/homelab-platform-overview.md` — platform architecture
-- `homelab/decisions/` — ADRs, including ADR-024 (rebuild trigger) and
-  ADR-025 (kernel choice), both referenced from code in this repo
+The vault (`~/knowledge`) owns concepts, runbooks, and ADRs for everything
+this repo touches — route via `~/knowledge/CLAUDE.md`; start at `nix/` for
+NixOS concepts and `homelab/` for runbooks and decisions (ADR-024 rebuild
+trigger and ADR-025 kernel choice are referenced from code here).
