@@ -166,10 +166,14 @@ skillsSrc:
             "$base/installed_plugins.json" > "$base/.ipj.tmp" && mv "$base/.ipj.tmp" "$base/installed_plugins.json"
           # Convergence is prune-only; installing needs an interactive /plugin
           # run, so a declared-but-missing plugin gets a loud line instead.
+          # Marketplace-served plugins never enter installed_plugins.json, so
+          # presence under marketplaces/*/plugins/ also counts as installed.
           for p in ${lib.concatStringsSep " " (map (p: lib.head (lib.splitString "@" p)) declared)}; do
             ${pkgs.jq}/bin/jq -e --arg p "$p" '.plugins | keys | map(split("@")[0]) | index($p)' \
-              "$base/installed_plugins.json" >/dev/null || \
-              echo "claude-code: declared plugin '$p' is not installed — run /plugin install" >&2
+              "$base/installed_plugins.json" >/dev/null 2>&1 && continue
+            ls -d "$base"/marketplaces/*/plugins/"$p" >/dev/null 2>&1 && continue
+            ls -d "$base"/marketplaces/*/"$p" >/dev/null 2>&1 && continue
+            echo "claude-code: declared plugin '$p' is not installed — run /plugin install" >&2
           done
         fi
       '';
