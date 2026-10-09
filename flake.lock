@@ -71,11 +71,11 @@
     "claude-code-skills": {
       "flake": false,
       "locked": {
-        "lastModified": 1791567290,
-        "narHash": "sha256-7NlGeKxFBLJY8sd2QzOk+zJiJCZaKDRjrlFkcKfgJKk=",
+        "lastModified": 1791568209,
+        "narHash": "sha256-KaOcJTfvTsecwx00I80gJU5w0vlPAul3DO+qQe+oTRk=",
         "owner": "sammasak",
         "repo": "claude-code-skills",
-        "rev": "87690433e715b3dc338db4e4c587ac2392d6a2ff",
+        "rev": "902c5fb4bb7d4ea112c6ad5bf303a5e3089db0e0",
         "type": "github"
       },
       "original": {
