@@ -53,11 +53,11 @@
     ];
     deny = [
       # Prefix-matched only: flag-after-remote orderings belong to
-      # validate-bash and the pre-push ancestry guard.
+      # validate-bash and the ancestry guard; pv covers pvc/persistentvolume.
       "Bash(git push --force:*)"
       "Bash(git push -f:*)"
       "Bash(rm -rf /:*)"
-      "Bash(kubectl delete pvc:*)"
+      "Bash(kubectl delete pv:*)"
       "Bash(kubectl delete namespace:*)"
       "Bash(kubectl delete ns:*)"
     ];
