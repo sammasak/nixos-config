@@ -39,7 +39,7 @@
     '';
 
   # Auto-approve with destructive classes carved out: deny wins over allow,
-  # so these prompt even in bypass-permissions sessions.
+  # and a denied call is refused outright (deny rules never prompt).
   programs.claude-code.settings.permissions = {
     allow = [
       "Read"
