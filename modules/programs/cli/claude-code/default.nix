@@ -56,6 +56,7 @@
       # (deny cannot be approved, and a root-rm prefix refuses legit deep deletes) are validate-bash's.
       "Bash(git push --force:*)"
       "Bash(git push -f:*)"
+      "Bash(git push --no-verify:*)"
       "Bash(kubectl delete pv:*)"
       "Bash(kubectl delete namespace:*)"
       "Bash(kubectl delete ns:*)"
