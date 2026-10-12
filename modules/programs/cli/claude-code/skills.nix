@@ -11,7 +11,7 @@ let
 in
 {
   home.file =
-    { ".claude/CLAUDE.md".source = "${skillsSrc}/CLAUDE.md"; }
+    { ".claude/CLAUDE.md".source = "${skillsSrc}/global-context.md"; }
     //
     (lib.mapAttrs' (name: _:
       lib.nameValuePair ".claude/skills/${name}" {
