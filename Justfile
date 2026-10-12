@@ -30,12 +30,13 @@ diff HOST=host:
 # Loopback self-push, proving the deploy-rs/sudo/magic-rollback path before it
 # is ever trusted against acer-swift, which has no BMC to recover a bad push.
 deploy-lenovo:
-    deploy .#lenovo --auto-rollback --magic-rollback --activation-timeout 180 --confirm-timeout 30
+    deploy .#lenovo --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
 # Pushes as lukas over SSH; acer's trusted-users=[root] accepts the closure via
-# the deploy-rs signing key, not via SSH identity.
+# the deploy-rs signing key, not via SSH identity. Run from a real terminal:
+# activation does `ssh -t … sudo` on acer and needs lukas's sudo password.
 deploy-acer:
-    deploy .#acer-swift --auto-rollback --magic-rollback --activation-timeout 180 --confirm-timeout 30
+    deploy .#acer-swift --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
 # ── Configuration Verification ────────────────────────────────────────
 
