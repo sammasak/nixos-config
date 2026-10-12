@@ -54,7 +54,4 @@ in
     evictionHard = "200Mi";
     evictionSoft = "400Mi";
   };
-
-  # Joins only after the black-pi rename is live, so it never registers under an old name.
-  homelab.k3s.enable = lib.mkForce false;
 }
