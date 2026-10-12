@@ -9,12 +9,17 @@ A NixOS + Home Manager configuration repository using **flake-parts** with a den
 ## Build & Deploy Commands
 
 ```bash
-# ── Verification (run before deploying) ────────────────────────────
-just verify                   # Verify all hosts build successfully
-just check                    # Both lints + secrets gate, then flake checks
-just lint-comments            # Comment Policy only (density + forbidden shapes)
-just lint-shell               # Shellcheck scripts/*.sh
-just secrets-verify           # Sanity-check decrypted wifi credentials (skips without an age key)
+# ── Verification: devenv tasks (devenv.nix), also run by the git hooks ──
+devenv tasks run nixos:qa     # everything below, in order (= just check)
+devenv tasks run nixos:lint-comments   # Comment Policy (density + forbidden shapes)
+devenv tasks run nixos:lint-shell      # shellcheck scripts/*.sh
+devenv tasks run nixos:secrets-verify  # wifi credentials sanity (skips without an age key)
+devenv tasks run nixos:nvim-check      # lenovo's nvim starts headless clean
+devenv tasks run nixos:flake-check     # nix flake check --all-systems
+devenv tasks run nixos:verify          # build every x86 host, evaluate black-pi
+# Hooks (installed by entering the devenv; .envrc does it on cd):
+#   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
+#   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree.
 
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link

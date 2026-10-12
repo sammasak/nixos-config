@@ -1,0 +1,16 @@
+require_version: ">=2.4.0"
+
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling
+  platform:
+    url: git+ssh://git@github.com/sammasak/devenv-platform?rev=2ebebc8d823ca54d4bfbb00d86d990cdf0a48b9d
+    flake: false
+  git-hooks:
+    url: github:cachix/git-hooks.nix/27555e2624241fb116b49095df4caaee85a25691
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
+  # Same rev as flake.lock: the deploy CLI must match the activation side.
+  deploy-rs:
+    url: github:serokell/deploy-rs/45ba3f8c5cb28396fff71671806e2550b464ac86

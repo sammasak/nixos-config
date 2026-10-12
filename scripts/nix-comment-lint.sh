@@ -27,8 +27,8 @@ report() {
   printf '%s\n' "$1" >&2
 }
 
-mapfile -d '' NIXFILES < <(find . -name '*.nix' -not -path './.git/*' -print0)
-mapfile -d '' SHFILES < <(find . -name '*.sh' -not -path './.git/*' -print0)
+mapfile -d '' NIXFILES < <(git ls-files -z '*.nix')
+mapfile -d '' SHFILES < <(git ls-files -z '*.sh')
 
 # ── 1. density ────────────────────────────────────────────────────────
 for f in "${NIXFILES[@]}"; do

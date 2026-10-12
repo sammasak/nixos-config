@@ -13,3 +13,9 @@ report.md
 
 # nixos-facter output: DMI/MAC/serial data, regenerated on-host on demand
 hosts/lenovo-21CB001PMX/facter.json
+
+# devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+.pre-commit-config.yaml
