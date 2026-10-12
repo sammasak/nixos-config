@@ -37,7 +37,7 @@ let
           inputs.sops-nix.nixosModules.sops
           inputs.home-manager.nixosModules.home-manager
           inputs.disko.nixosModules.disko
-          {
+          (nixos: {
             nixpkgs.overlays = [
               (import ../pkgs)
               # pkgs.nur.* — keeps modules on plain pkgs, no specialArgs.
@@ -51,6 +51,8 @@ let
               backupFileExtension = "backup";
               sharedModules = [
                 inputs.nix-index-database.homeModules.default
+              ]
+              ++ lib.optionals nixos.config.sam.profile.devTools [
                 ../modules/programs/cli/workspace/default.nix
                 ../modules/programs/cli/claude-code/default.nix
                 (import ../modules/programs/cli/claude-code/mcp.nix inputs.claude-code-skills)
@@ -61,7 +63,7 @@ let
                 config.flake.modules.homeManager.default
                 or (throw "Missing shared home-manager module at modules/home/default.nix");
             };
-          }
+          })
         ];
     };
 in

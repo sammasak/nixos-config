@@ -28,7 +28,8 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
 ```
 
-Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), and `msi-ms7758`.
+Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
+and `raspberry-pi-4` (aarch64; evaluated but not built on x86 hosts, build it on the Pi).
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
 `host` variable at the top of the Justfile does that mapping, so the argument is
 only needed when targeting the other machine.
@@ -55,7 +56,7 @@ Secret scopes in `secrets/.sops.yaml`:
 
 | Path pattern | Recipients | Purpose |
 |--------------|-----------|---------|
-| `homelab/*.yaml` | Personal + 2 hosts + Flux | k3s, Cloudflare, Flux keys, Tailscale authkey |
+| `homelab/*.yaml` | Personal + every cluster host + Flux (`wifi`, `github-access-token` lack msi + Pi) | k3s, Cloudflare, Flux keys, Tailscale authkey |
 | `claude/*.yaml` | Personal + 2 hosts | Claude Code OAuth token |
 | `cosign.key` | Personal only | Image-signing key used by `just sign` |
 
@@ -67,9 +68,9 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 
 | File | Scope | Purpose |
 |------|-------|---------|
-| `mcp.nix` | All NixOS hosts (shared HM module) | Settings, plugins, MCP servers, shebang fixes, SOPS token sourcing |
-| `default.nix` | All NixOS hosts (shared HM module) | First-boot `~/.claude.json` seed, tool-permissions block, `programs.fish.enable` |
-| `skills.nix` | All NixOS hosts (shared HM module) | Symlinks skills and agents from the `claude-code-skills` flake input |
+| `mcp.nix` | All `devTools` hosts (shared HM module) | Settings, plugins, MCP servers, shebang fixes, SOPS token sourcing |
+| `default.nix` | All `devTools` hosts (shared HM module) | First-boot `~/.claude.json` seed, tool-permissions block, `programs.fish.enable` |
+| `skills.nix` | All `devTools` hosts (shared HM module) | Symlinks skills and agents from the `claude-code-skills` flake input |
 
 **Plugin configuration** (`mcp.nix`): Declares `enabledPlugins` (superpowers, rust-analyzer-lsp, frontend-design, ralph-loop) and MCP servers (playwright/chromium) in `programs.claude-code.settings`.
 
@@ -94,11 +95,11 @@ Configuration lives in `modules/programs/cli/codex/`:
 
 | File | Scope | Purpose |
 |------|-------|---------|
-| `default.nix` | All NixOS hosts (shared HM module) | Codex config, hooks, shared skill links, activation-time skill sync |
-| `context-hook.sh` | All NixOS hosts | Injects workspace routing hints for `~/knowledge`, workflows, and `claude-code-skills` |
-| `validate-bash.sh` | All NixOS hosts | Blocks force pushes and other unsafe bash patterns |
-| `sync-codex-skills.sh` | All NixOS hosts | Regenerates Codex-local workflow/repo skill wrappers after each activation |
-| `workspace-routing/` | All NixOS hosts | Base Codex skill for ICM workspace routing |
+| `default.nix` | All `devTools` hosts (shared HM module) | Codex config, hooks, shared skill links, activation-time skill sync |
+| `context-hook.sh` | All `devTools` hosts | Injects workspace routing hints for `~/knowledge`, workflows, and `claude-code-skills` |
+| `validate-bash.sh` | All `devTools` hosts | Blocks force pushes and other unsafe bash patterns |
+| `sync-codex-skills.sh` | All `devTools` hosts | Regenerates Codex-local workflow/repo skill wrappers after each activation |
+| `workspace-routing/` | All `devTools` hosts | Base Codex skill for ICM workspace routing |
 
 **Skill delivery model**:
 - `~/.agents/skills/` holds the shared portable subset from the `claude-code-skills` flake input

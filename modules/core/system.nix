@@ -70,6 +70,17 @@ in
             description = "Whether this host is a laptop.";
           };
 
+          devTools = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Whether to ship the interactive developer toolset (claude-code,
+              codex, nvim + language toolchains, nodejs/chromium for Playwright,
+              herdr, pi-harness). False for appliance-style nodes that are only
+              ever administered over SSH.
+            '';
+          };
+
           roles = mkOption {
             type = types.listOf types.str;
             default = [ "base" ];

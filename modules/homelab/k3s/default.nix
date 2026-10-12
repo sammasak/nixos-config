@@ -4,6 +4,7 @@
 let
   inherit (lib) mkEnableOption mkIf mkOption optionals types;
   cfg = config.homelab.k3s;
+  quantity = types.strMatching "[0-9]+(Ki|Mi|Gi)";
 in
 {
   imports = [ ../sops.nix ];
@@ -77,6 +78,24 @@ in
       description = "Built-in k3s components to disable";
     };
 
+    memory = {
+      systemReserved = mkOption {
+        type = quantity;
+        default = "1Gi";
+        description = "kubelet system-reserved memory (headroom for the OS + k3s itself).";
+      };
+      evictionHard = mkOption {
+        type = quantity;
+        default = "500Mi";
+        description = "kubelet hard-eviction threshold on memory.available.";
+      };
+      evictionSoft = mkOption {
+        type = quantity;
+        default = "1Gi";
+        description = "kubelet soft-eviction threshold on memory.available (60s grace).";
+      };
+    };
+
     taintControlPlane = mkOption {
       type = types.bool;
       default = false;
@@ -112,10 +131,10 @@ in
         # kernel OOM-hangs before kubelet reacts. Applies to both roles;
         # lenovo also runs failover pods now.
         ++ [
-          "--kubelet-arg=eviction-hard=memory.available<500Mi"
-          "--kubelet-arg=eviction-soft=memory.available<1Gi"
+          "--kubelet-arg=eviction-hard=memory.available<${cfg.memory.evictionHard}"
+          "--kubelet-arg=eviction-soft=memory.available<${cfg.memory.evictionSoft}"
           "--kubelet-arg=eviction-soft-grace-period=memory.available=60s"
-          "--kubelet-arg=system-reserved=memory=1Gi"
+          "--kubelet-arg=system-reserved=memory=${cfg.memory.systemReserved}"
         ]
         ++ optionals (cfg.role == "server") (
           [

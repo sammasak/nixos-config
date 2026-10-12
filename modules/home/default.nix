@@ -2,11 +2,14 @@
 { lib, osConfig, ... }:
 let
   isDesktopMode = osConfig.sam.desktop.enable or false;
+  hasDevTools = osConfig.sam.profile.devTools;
   baseImports = [
     ../core/fish.nix
     ../programs/cli/git
     ../programs/cli/cli-tools
     ../programs/cli/direnv
+  ];
+  devToolImports = lib.optionals hasDevTools [
     ../programs/cli/dev-init
     ../programs/cli/flake-update
     ../programs/cli/herdr
@@ -27,5 +30,5 @@ in
 {
   home.stateVersion = "25.11";
 
-  imports = baseImports ++ desktopImports;
+  imports = baseImports ++ devToolImports ++ desktopImports;
 }

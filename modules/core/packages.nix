@@ -31,6 +31,8 @@ in
       fd
       ripgrep
       tldr
+    ]
+    ++ lib.optionals config.sam.profile.devTools [
       claude-code
       # nodejs + chromium look desktop-only but are load-bearing on headless
       # hosts: the Playwright MCP server (claude-code/mcp.nix) runs
@@ -38,6 +40,8 @@ in
       # for agent browser automation. Do not gate behind hasDesktop.
       nodejs
       chromium
+    ]
+    ++ [
       just
 
       # nh wraps nixos-rebuild with a readable TUI and a build diff; nvd is the

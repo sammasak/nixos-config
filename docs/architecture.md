@@ -43,6 +43,7 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 | `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | none |
 | `acer-swift` | **headless** (k3s worker) | `desktop` (Niri GUI) |
 | `msi-ms7758` | **headless** (intermittent opt-in k3s worker, dual-boot Windows) | none |
+| `raspberry-pi-4` | **headless** (aarch64 k3s worker, SD card, `devTools = false`) | none |
 
 Desktop mode ships **two coexisting compositors** — Hyprland and niri, both
 imported by `modules/specialisations/desktop.nix`; the compositor is picked
@@ -75,6 +76,7 @@ build error if a `variables.nix` sets it):
 - `monitors` (list of str) — Hyprland monitor rules, `name,resolution,position,scale`
 - `roles` (list of str) — Enabled roles from `modules/roles/`
 - `laptop` (bool) — Laptop-specific settings enabled
+- `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
 - `sshAuthorizedKeys` (list of str) — Authorized SSH public keys
 
