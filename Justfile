@@ -38,6 +38,12 @@ deploy-lenovo:
 deploy-acer:
     deploy .#acer-swift --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
+# Builds ON the Pi (lenovo has no aarch64 builder): hours on a first run or an
+# aarch64 cache miss, so run it inside zellij, where a dropped SSH session from
+# the phone does not kill the build. Needs lukas's sudo password on black-pi.
+deploy-pi:
+    deploy .#black-pi --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
+
 # ── Configuration Verification ────────────────────────────────────────
 
 # Verify all host configurations build successfully

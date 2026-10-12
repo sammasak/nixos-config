@@ -1,8 +1,10 @@
 # Stock NixOS aarch64 SD image layout (nixos/modules/installer/sd-card):
 # U-Boot on the FIRMWARE partition loads extlinux.conf from /boot on root.
 # Labels, not UUIDs: the image stamps a fixed 4444…-8888 root UUID.
-{ lib, ... }:
+{ lib, modulesPath, ... }:
 {
+  imports = [ (modulesPath + "/installer/scan/not-detected.nix") ];
+
   boot.initrd.availableKernelModules = [ "xhci_pci" "usbhid" "usb_storage" ];
 
   fileSystems."/" = {

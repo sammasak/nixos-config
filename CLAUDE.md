@@ -29,7 +29,7 @@ nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-
 ```
 
 Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
-and `raspberry-pi-4` (aarch64; evaluated but not built on x86 hosts, build it on the Pi).
+and `black-pi` (aarch64; evaluated but not built on x86 hosts, build it on the Pi).
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
 `host` variable at the top of the Justfile does that mapping, so the argument is
 only needed when targeting the other machine.
@@ -56,7 +56,7 @@ Secret scopes in `secrets/.sops.yaml`:
 
 | Path pattern | Recipients | Purpose |
 |--------------|-----------|---------|
-| `homelab/*.yaml` | Personal + every cluster host + Flux (`wifi`, `github-access-token` lack msi + Pi) | k3s, Cloudflare, Flux keys, Tailscale authkey |
+| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Flux keys, Tailscale authkey |
 | `claude/*.yaml` | Personal + 2 hosts | Claude Code OAuth token |
 | `cosign.key` | Personal only | Image-signing key used by `just sign` |
 

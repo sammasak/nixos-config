@@ -43,7 +43,7 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 | `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | none |
 | `acer-swift` | **headless** (k3s worker) | `desktop` (Niri GUI) |
 | `msi-ms7758` | **headless** (intermittent opt-in k3s worker, dual-boot Windows) | none |
-| `raspberry-pi-4` | **headless** (aarch64 k3s worker, SD card, `devTools = false`) | none |
+| `black-pi` | **headless** (aarch64 k3s worker, Raspberry Pi 4 on SD card, builds its own closure) | none |
 
 Desktop mode ships **two coexisting compositors** — Hyprland and niri, both
 imported by `modules/specialisations/desktop.nix`; the compositor is picked

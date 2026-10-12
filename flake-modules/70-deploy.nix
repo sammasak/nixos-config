@@ -2,7 +2,25 @@
 # ever invoked from lenovo itself, so lenovo's own deploy is a loopback
 # self-push, used to prove the sudo/magic-rollback path before it is ever
 # trusted against acer-swift, which has no BMC.
-{ config, inputs, ... }:
+{ config, inputs, lib, ... }:
+let
+  # nixpkgs' deploy-rs binary is cached for aarch64; the flake's own would be
+  # a Rust build on the Pi.
+  deployLib =
+    system:
+    (import inputs.nixpkgs {
+      inherit system;
+      overlays = [
+        inputs.deploy-rs.overlays.default
+        (final: prev: {
+          deploy-rs = {
+            inherit (inputs.nixpkgs.legacyPackages.${system}) deploy-rs;
+            inherit (prev.deploy-rs) lib;
+          };
+        })
+      ];
+    }).deploy-rs.lib;
+in
 {
   flake.deploy.nodes = {
     lenovo = {
@@ -40,11 +58,37 @@
         confirmTimeout = 30;
       };
     };
+
+    black-pi = {
+      hostname = "black-pi";
+      profiles.system = {
+        sshUser = "lukas";
+        user = "root";
+        # Also exported as NIX_SSHOPTS for the ssh-ng copy/build: -t only warns
+        # there (piped stdin), -tt would corrupt the protocol stream.
+        sshOpts = [ "-t" ];
+        interactiveSudo = true;
+        path = (deployLib "aarch64-linux").activate.nixos config.flake.nixosConfigurations.black-pi;
+        # True, unlike acer: lenovo has no aarch64 builder, so the Pi builds its
+        # own closure (untrusted lukas is enough: .drv and sources are CA paths).
+        remoteBuild = true;
+        autoRollback = true;
+        magicRollback = true;
+        activationTimeout = 180;
+        confirmTimeout = 30;
+      };
+    };
   };
 
   perSystem =
     { system, ... }:
     {
-      checks = inputs.deploy-rs.lib.${system}.deployChecks config.flake.deploy;
+      # Unfiltered, the x86 check would need the aarch64 toplevel built on lenovo.
+      checks = inputs.deploy-rs.lib.${system}.deployChecks (
+        config.flake.deploy
+        // {
+          nodes = lib.filterAttrs (_: node: node.profiles.system.path.system == system) config.flake.deploy.nodes;
+        }
+      );
     };
 }

@@ -3,9 +3,24 @@ let
   vars = import ./variables.nix;
 in
 {
-  imports = [ ./hardware-configuration.nix ];
+  imports = [
+    ./hardware-configuration.nix
+
+    # Registers crun as an additional containerd runtime for k3s (worker parity).
+    ../../modules/homelab/k3s/containerd-crun.nix
+
+    # Directly, not via the laptop role (Intel-only settings). No wifi-selfheal:
+    # wlan0 is the secondary NIC here, end0 carries the cluster.
+    ../../modules/core/wifi.nix
+  ];
 
   sam.profile = vars;
+  sam.hostSecrets.enable = true;
+  sam.wifi.declarativeHomeProfile = true;
+
+  # 0 = retry forever; the default 4 ends in a secret-agent request that never
+  # comes on a headless box (one AP deauth became a 10-day outage on acer).
+  networking.networkmanager.settings.connection."connection.autoconnect-retries" = 0;
 
   # No UEFI: the Pi firmware chains U-Boot, which reads /boot/extlinux.
   # https://wiki.nixos.org/wiki/NixOS_on_ARM/Raspberry_Pi_4
@@ -16,7 +31,13 @@ in
   # The SD image creates root with an empty password; mutableUsers would keep it.
   users.users.root.hashedPassword = "!";
 
-  # Manual until the first SD-card boot of this config is verified.
+  # nodejs/neovim/herdr build on the Pi (aarch64 cache misses); 4x4 threads OOM it.
+  nix.settings = {
+    max-jobs = 1;
+    cores = 2;
+  };
+
+  # Weekly upgrades would compile nodejs on the SD card; revisit when aarch64 caches it.
   system.autoUpgrade.enable = lib.mkForce false;
 
   homelab.k3s.serverAddr = "https://192.168.10.154:6443"; # k3s server on lenovo-21CB001PMX
@@ -34,6 +55,6 @@ in
     evictionSoft = "400Mi";
   };
 
-  # Held off until that first boot is verified; the homelab-agent role turns it on.
+  # Joins only after the black-pi rename is live, so it never registers under an old name.
   homelab.k3s.enable = lib.mkForce false;
 }
