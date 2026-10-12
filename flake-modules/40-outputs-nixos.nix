@@ -53,7 +53,6 @@ let
                 inputs.nix-index-database.homeModules.default
               ]
               ++ lib.optionals nixos.config.sam.profile.devTools [
-                ../modules/programs/cli/workspace/default.nix
                 ../modules/programs/cli/claude-code/default.nix
                 (import ../modules/programs/cli/claude-code/mcp.nix inputs.claude-code-skills)
                 (import ../modules/programs/cli/claude-code/skills.nix inputs.claude-code-skills)

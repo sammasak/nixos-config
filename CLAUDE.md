@@ -24,7 +24,12 @@ just switch [HOST]            # Build and activate
 just build  [HOST]            # Build only
 just diff   [HOST]            # Build and print the package diff vs the running system
 
-# Remote deploy via SSH
+# Push from lenovo with deploy-rs (magic-rollback; prompts for the target's sudo password, unlabeled)
+just deploy-acer              # builds on lenovo
+just deploy-pi                # builds on the Pi (remoteBuild); run inside zellij, it takes hours on a cache miss
+just deploy-lenovo            # loopback self-push, proves the deploy-rs path
+
+# Remote deploy via SSH (msi, or any host without a deploy-rs node)
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
 ```
 
@@ -56,9 +61,11 @@ Secret scopes in `secrets/.sops.yaml`:
 
 | Path pattern | Recipients | Purpose |
 |--------------|-----------|---------|
-| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Flux keys, Tailscale authkey |
-| `claude/*.yaml` | Personal + 2 hosts | Claude Code OAuth token |
-| `cosign.key` | Personal only | Image-signing key used by `just sign` |
+| `homelab/nix-signing-key.yaml` | Personal + lenovo | deploy-rs closure-signing private key (workers trust the public half) |
+| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, wifi, GitHub access token |
+| `core/*.yaml` | Personal + lenovo | Staged declarative login password |
+| `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Claude Code OAuth token |
+| `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in fish shell init via `modules/programs/cli/claude-code/mcp.nix`.
 
