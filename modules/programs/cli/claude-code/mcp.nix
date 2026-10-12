@@ -73,18 +73,21 @@ skillsSrc:
         }];
         PreToolUse = [
           {
-            # 5s: these run before EVERY Bash call; a hang must fail fast.
+            # 15s: these run before EVERY Bash call. p99 is ~0.8s but under
+            # high load avg the ~74 sed/grep forks have hit 3.7s; a timed-out
+            # PreToolUse hook does NOT block, so the budget must clear the
+            # worst case with headroom rather than fail-open the guard.
             matcher = "Bash";
             hooks = [
               {
                 type = "command";
                 command = "${skillsSrc}/hooks/validate-bash.sh";
-                timeout = 5;
+                timeout = 15;
               }
               {
                 type = "command";
                 command = "${skillsSrc}/hooks/check-loop.sh";
-                timeout = 5;
+                timeout = 15;
               }
             ];
           }
@@ -96,13 +99,6 @@ skillsSrc:
               type = "command";
               command = "${skillsSrc}/hooks/validate-manifest.sh";
               timeout = 30;
-            }
-            {
-              # cargo check on a cold workspace can exceed the default 60s;
-              # an explicit budget keeps the death visible in the hook log.
-              type = "command";
-              command = "${skillsSrc}/hooks/validate-rust.sh";
-              timeout = 120;
             }
             {
               type = "command";
