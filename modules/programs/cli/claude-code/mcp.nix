@@ -202,6 +202,27 @@ skillsSrc:
       run ${script}
     '';
 
+  # The four manual-.githooks repos carry the no-force guard only when
+  # core.hooksPath=.githooks is set, and that config does NOT travel with a
+  # clone — a fresh checkout runs no guard until set. Every machine runs HM
+  # activation, so set it here for each repo that exists with a .githooks dir:
+  # a fresh clone is guarded by its first rebuild. Idempotent, skips absent repos.
+  home.activation.wireManualGitHooks =
+    let
+      wireScript = pkgs.writeShellScript "wire-manual-githooks" ''
+        for r in nixos-config claude-code-skills homelab-gitops knowledge; do
+          d="$HOME/$r"
+          [ -d "$d/.git" ] && [ -d "$d/.githooks" ] || continue
+          cur=$(${pkgs.git}/bin/git -C "$d" config --local core.hooksPath 2>/dev/null || true)
+          [ "$cur" = ".githooks" ] && continue
+          ${pkgs.git}/bin/git -C "$d" config --local core.hooksPath .githooks || true
+        done
+      '';
+    in
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run ${wireScript}
+    '';
+
   # sops-nix decrypts to /run/secrets/claude_oauth_token (modules/core/sops.nix).
   # Literal path on purpose: this is an HM module, so config.sops.secrets — a
   # NixOS option — is not in scope. ~/.env is a local dev override only.

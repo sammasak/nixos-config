@@ -52,11 +52,10 @@
       "WebSearch"
     ];
     deny = [
-      # Prefix-matched only: flag-after-remote orderings belong to
-      # validate-bash and the ancestry guard; pv covers pvc/persistentvolume.
+      # Prefix-only coarse backstop; cleverer spellings and all fs deletion
+      # (deny cannot be approved, and a root-rm prefix refuses legit deep deletes) are validate-bash's.
       "Bash(git push --force:*)"
       "Bash(git push -f:*)"
-      "Bash(rm -rf /:*)"
       "Bash(kubectl delete pv:*)"
       "Bash(kubectl delete namespace:*)"
       "Bash(kubectl delete ns:*)"
