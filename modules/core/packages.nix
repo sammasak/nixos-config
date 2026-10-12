@@ -34,6 +34,7 @@ in
     ]
     ++ lib.optionals config.sam.profile.devTools [
       claude-code
+      devenv
       # nodejs + chromium look desktop-only but are load-bearing on headless
       # hosts: the Playwright MCP server (claude-code/mcp.nix) runs
       # `npx @playwright/mcp --executable-path /run/current-system/sw/bin/chromium`
