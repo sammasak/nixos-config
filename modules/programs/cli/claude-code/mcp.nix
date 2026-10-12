@@ -54,7 +54,6 @@ skillsSrc:
         "superpowers@claude-plugins-official" = true;
         "rust-analyzer-lsp@claude-plugins-official" = true;
         "frontend-design@claude-plugins-official" = true;
-        "code-simplifier@claude-plugins-official" = true;
         # usageCount 2006 in ~/.claude.json: pruning it fought real daily use
         # (slash-command usage is invisible to Skill-invocation greps).
         "ralph-loop@claude-plugins-official" = true;
