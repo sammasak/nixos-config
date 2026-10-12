@@ -11,6 +11,10 @@
         sshUser = "lukas";
         user = "root";
         sshOpts = [ "-t" ];
+        # lukas's sudo on the target needs a password; deploy-rs pipes the inner
+        # ssh so its -t can't reach the terminal. interactiveSudo makes deploy-rs
+        # prompt for and feed the password itself.
+        interactiveSudo = true;
         path = inputs.deploy-rs.lib.x86_64-linux.activate.nixos config.flake.nixosConfigurations.lenovo;
         autoRollback = true;
         magicRollback = true;
@@ -25,6 +29,7 @@
         sshUser = "lukas";
         user = "root";
         sshOpts = [ "-t" ];
+        interactiveSudo = true;
         path = inputs.deploy-rs.lib.x86_64-linux.activate.nixos config.flake.nixosConfigurations.acer-swift;
         # False (the deploy-rs default too): building on acer, the sole k3s
         # worker, would I/O-storm the node mid-deploy. Build stays on lenovo.
