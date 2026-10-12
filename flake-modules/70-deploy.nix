@@ -26,13 +26,9 @@ in
     lenovo = {
       hostname = "localhost";
       profiles.system = {
-        sshUser = "lukas";
+        # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
+        sshUser = "deploy";
         user = "root";
-        sshOpts = [ "-t" ];
-        # lukas's sudo on the target needs a password; deploy-rs pipes the inner
-        # ssh so its -t can't reach the terminal. interactiveSudo makes deploy-rs
-        # prompt for and feed the password itself.
-        interactiveSudo = true;
         path = inputs.deploy-rs.lib.x86_64-linux.activate.nixos config.flake.nixosConfigurations.lenovo;
         autoRollback = true;
         magicRollback = true;
@@ -44,10 +40,8 @@ in
     acer-swift = {
       hostname = "acer-swift";
       profiles.system = {
-        sshUser = "lukas";
+        sshUser = "deploy";
         user = "root";
-        sshOpts = [ "-t" ];
-        interactiveSudo = true;
         path = inputs.deploy-rs.lib.x86_64-linux.activate.nixos config.flake.nixosConfigurations.acer-swift;
         # False (the deploy-rs default too): building on acer, the sole k3s
         # worker, would I/O-storm the node mid-deploy. Build stays on lenovo.
@@ -62,12 +56,8 @@ in
     black-pi = {
       hostname = "black-pi";
       profiles.system = {
-        sshUser = "lukas";
+        sshUser = "deploy";
         user = "root";
-        # Also exported as NIX_SSHOPTS for the ssh-ng copy/build: -t only warns
-        # there (piped stdin), -tt would corrupt the protocol stream.
-        sshOpts = [ "-t" ];
-        interactiveSudo = true;
         path = (deployLib "aarch64-linux").activate.nixos config.flake.nixosConfigurations.black-pi;
         # True, unlike acer: lenovo has no aarch64 builder, so the Pi builds its
         # own closure (untrusted lukas is enough: .drv and sources are CA paths).

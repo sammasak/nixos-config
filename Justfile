@@ -32,15 +32,14 @@ diff HOST=host:
 deploy-lenovo:
     deploy .#lenovo --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
-# Pushes as lukas over SSH; acer's trusted-users=[root] accepts the closure via
-# the deploy-rs signing key, not via SSH identity. Run from a real terminal:
-# activation does `ssh -t … sudo` on acer and needs lukas's sudo password.
+# Pushes as `deploy` (no password; homelab/deploy-target.nix). acer's
+# trusted-users=[root] accepts the closure via the deploy-rs signing key.
 deploy-acer:
     deploy .#acer-swift --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
 # Builds ON the Pi (lenovo has no aarch64 builder): hours on a first run or an
 # aarch64 cache miss, so run it inside zellij, where a dropped SSH session from
-# the phone does not kill the build. Needs lukas's sudo password on black-pi.
+# the phone does not kill the build.
 deploy-pi:
     deploy .#black-pi --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
