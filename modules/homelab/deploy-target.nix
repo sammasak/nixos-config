@@ -21,6 +21,8 @@ in
   };
 
   services.openssh.settings.AllowUsers = [ "deploy" ];
+  # deploy-rs copies closures (and remote-builds) over ssh-ng as this user.
+  nix.settings.allowed-users = [ "deploy" ];
 
   security.sudo.extraRules = [
     {
