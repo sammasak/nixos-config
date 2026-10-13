@@ -29,7 +29,7 @@ just switch [HOST]            # Build and activate
 just build  [HOST]            # Build only
 just diff   [HOST]            # Build and print the package diff vs the running system
 
-# Push from lenovo with deploy-rs (magic-rollback; prompts for the target's sudo password, unlabeled)
+# Push from lenovo with deploy-rs (magic-rollback; logs in as `deploy`, no password)
 just deploy-acer              # builds on lenovo
 just deploy-pi                # builds on the Pi (remoteBuild); run inside zellij, it takes hours on a cache miss
 just deploy-lenovo            # loopback self-push, proves the deploy-rs path
