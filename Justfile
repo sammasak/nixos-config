@@ -6,6 +6,8 @@ registry := "registry.sammasak.dev"
 # hostname, so the default cannot just be the hostname. `uname -n` rather than
 # `hostname`: the latter arrives via nettools, which nothing here declares.
 host := if `uname -n` == "lenovo-21CB001PMX" { "lenovo" } else { `uname -n` }
+# The flake-pinned deploy-rs, so the recipes work outside the devenv shell.
+deploy := "nix run --inputs-from . deploy-rs --"
 
 # ── Build & Deploy ────────────────────────────────────────────────────
 
@@ -30,22 +32,22 @@ diff HOST=host:
 # Loopback self-push, proving the deploy-rs/sudo/magic-rollback path before it
 # is ever trusted against acer-swift, which has no BMC to recover a bad push.
 deploy-lenovo:
-    deploy .#lenovo --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
+    {{deploy}} .#lenovo --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
 # Pushes as `deploy` (no password; homelab/deploy-target.nix). acer's
 # trusted-users=[root] accepts the closure via the deploy-rs signing key.
 deploy-acer:
-    deploy .#acer-swift --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
+    {{deploy}} .#acer-swift --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
 # Only in msi's power window (Mon-Fri ~09:00-21:00).
 deploy-msi:
-    deploy .#msi-ms7758 --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
+    {{deploy}} .#msi-ms7758 --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
 # Builds ON the Pi (lenovo has no aarch64 builder): hours on a first run or an
 # aarch64 cache miss, so run it inside zellij, where a dropped SSH session from
 # the phone does not kill the build.
 deploy-pi:
-    deploy .#black-pi --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
+    {{deploy}} .#black-pi --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
 # ── Configuration Verification ────────────────────────────────────────
 
