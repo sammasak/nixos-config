@@ -37,6 +37,10 @@ deploy-lenovo:
 deploy-acer:
     deploy .#acer-swift --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
+# Only in msi's power window (Mon-Fri ~09:00-21:00).
+deploy-msi:
+    deploy .#msi-ms7758 --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
+
 # Builds ON the Pi (lenovo has no aarch64 builder): hours on a first run or an
 # aarch64 cache miss, so run it inside zellij, where a dropped SSH session from
 # the phone does not kill the build.

@@ -33,8 +33,9 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 just deploy-acer              # builds on lenovo
 just deploy-pi                # builds on the Pi (remoteBuild); run inside zellij, it takes hours on a cache miss
 just deploy-lenovo            # loopback self-push, proves the deploy-rs path
+just deploy-msi               # only in its Mon-Fri ~09:00-21:00 power window
 
-# Remote deploy via SSH (msi, or any host without a deploy-rs node)
+# Remote deploy via SSH (a host without a deploy-rs node yet)
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
 ```
 

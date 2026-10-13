@@ -53,6 +53,21 @@ in
       };
     };
 
+    # Only reachable in its Mon-Fri ~09:00-21:00 power window.
+    msi-ms7758 = {
+      hostname = "msi-ms7758";
+      profiles.system = {
+        sshUser = "deploy";
+        user = "root";
+        path = inputs.deploy-rs.lib.x86_64-linux.activate.nixos config.flake.nixosConfigurations.msi-ms7758;
+        remoteBuild = false;
+        autoRollback = true;
+        magicRollback = true;
+        activationTimeout = 180;
+        confirmTimeout = 30;
+      };
+    };
+
     black-pi = {
       hostname = "black-pi";
       profiles.system = {
