@@ -26,8 +26,8 @@ Verified on the pinned 1.1.0 build:
 | `pi.registerProvider()`, `ctx.modelRegistry` | present |
 | Groq (`groq`, `GROQ_API_KEY`) | built in, authenticated, tool calls hit free-tier TPM limits (below) |
 | Cloudflare Workers AI (`cloudflare-workers-ai`, `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID`) | built in, end-to-end tool use verified |
-| Gemini (`google`, `GEMINI_API_KEY`) | built in, not yet keyed |
-| Cerebras (`cerebras`, `CEREBRAS_API_KEY`; catalog: `gpt-oss-120b`, `qwen-3.8-27b`) | built in, not yet keyed |
+| Gemini (`google`, `GEMINI_API_KEY`) | built in; the only existing key is on a prepaid-billing project (402), not free tier (below) |
+| Cerebras (`cerebras`, `CEREBRAS_API_KEY`; catalog: `gpt-oss-120b`, `qwen-3.8-27b`) | built in; API access now needs a payment method ($5 trial credits), not yet keyed |
 
 ## What the module does
 
@@ -45,15 +45,14 @@ Verified on the pinned 1.1.0 build:
 
 ## Credentials
 
-Keys live in `secrets/claude/llm-cloud.yaml` (sops, age). Lenovo declares the
-sops secrets in `hosts/lenovo-21CB001PMX/configuration.nix`, owner `lukas`, mode
+Keys live in `secrets/claude/llm-cloud.yaml` (sops, age). Its own rule in
+`secrets/.sops.yaml` limits recipients to the personal key (used by factum's
+`dev/cloud-env.sh`) and lenovo's host key (sops-nix). Lenovo declares the sops
+secrets in `hosts/lenovo-21CB001PMX/configuration.nix`, owner `lukas`, mode
 0400, decrypted to `/run/secrets/` at activation. They never enter the Nix store
-or Git in plaintext. Declaring them per host, not in `sam.hostSecrets`, keeps
-them out of `/run/secrets` on acer/black-pi. Those host keys are still sops
-recipients of `claude/*.yaml`, so root there could decrypt the file. To close that,
-add a `claude/llm-cloud\.yaml$` rule (personal + lenovo) above the `claude/`
-rule, run `sops updatekeys`, and rotate the keys, because old revisions stay
-decryptable in Git history.
+or Git in plaintext. Revisions before the recipient narrowing were also
+encrypted to acer/black-pi, so treat the keys in them as exposed and rotate them
+at the provider.
 
 Exporting keys in shell init puts them in every process started from a shell
 (the same trade-off codex makes for `OPENAI_API_KEY`). For a narrower scope, use
@@ -132,7 +131,31 @@ edit, run with bash"), `-p --no-session`:
 | `groq/openai/gpt-oss-120b`, `gpt-oss-20b` | first turn works, then 429: free tier is 8k tokens/min and one Pi turn is ~3-6k |
 | `groq/qwen/qwen3.8-27b` | 400 chat-template error on tool-result role |
 | `groq/llama-3.3-70b-versatile` | 404: in Pi's catalog, no longer served by Groq |
+| `google/gemini-2.5-flash`, `gemini-3-flash-preview`, `gemini-3.1-flash-lite` | 402 "prepayment credits are depleted": the key in `~/.env` belongs to a billing-enabled AI Studio project |
 
 Inputs for the devenv-platform#5 catalog: Pi's built-in catalog drifts from what
 providers serve, free plans gate some models per account, and Groq's free TPM
 cannot sustain a multi-turn agent loop.
+
+## Free-router eligibility (2026-10-14)
+
+Only models listed **eligible** may be offered to a free-only router. Primary
+sources: [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/),
+[Groq rate limits](https://console.groq.com/docs/rate-limits),
+[Cerebras rate limits](https://inference-docs.cerebras.ai/support/rate-limits).
+
+| Provider / model | Tier and cost class | Limits | Cap behaviour | Verdict |
+|---|---|---|---|---|
+| `cloudflare-workers-ai/@cf/qwen/qwen3.8-27b` | Workers Free, no card | 10,000 neurons/day, resets 00:00 UTC | hard stop with an error, no overage on Free | **eligible** (multi-turn tool use verified) |
+| `groq/openai/gpt-oss-120b`, `gpt-oss-20b` | free org, no card | 30 RPM, 1K RPD, 8K TPM, 200K TPD (observed `x-ratelimit-limit-tokens: 8000`); per **organization**, so a second key in the same org adds no quota | 429 | eligible only with long cooldowns; the multi-turn loop is not verified |
+| `groq/qwen/qwen3.8-27b` | free org | same | 429 | **excluded**: 400 on tool-result turn |
+| other CF models listed above | Workers Free | | | **excluded**: 400 or 403 (paid-gated) |
+| `google/*` with the existing key | prepaid billing project | | 402 when credits are empty; would bill if topped up | **excluded** until a separate no-billing AI Studio project exists; free-tier prompts may be used by Google to improve products, so send no private source |
+| `cerebras/*` | $5 trial credits after adding a payment method | 5 RPM, 30K uncached TPM, 1M TPD | prepaid credits, no charge until more are bought | not free tier: a separate "trial credit" cost class, owner decision |
+
+Manual onboarding steps (account access is not automatable here):
+
+1. Groq: create a key named `pi` in the console, then `sops secrets/claude/llm-cloud.yaml` and replace `groq_api_key`. Revoke the old key once factum has its own. More quota needs a separate Groq account; a new key does not add any.
+2. Gemini: create a new AI Studio project with **no** billing account and a key in it. Store it as `gemini_api_key` and add `sops.secrets.gemini_api_key = llmCloudSecret;` to the lenovo config. Move or delete the plaintext `GEMINI_API_KEY` in `~/.env` (mode 0644).
+3. Cerebras: only if trial credits are acceptable. Add `cerebras_api_key` the same way.
+4. Rotate the Cloudflare token and Groq key that predate the recipient narrowing.
