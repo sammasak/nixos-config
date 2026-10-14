@@ -77,6 +77,7 @@ build error if a `variables.nix` sets it):
 - `roles` (list of str) — Enabled roles from `modules/roles/`
 - `laptop` (bool) — Laptop-specific settings enabled
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
+- `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets
 - `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
 - `sshAuthorizedKeys` (list of str) — Authorized SSH public keys
 

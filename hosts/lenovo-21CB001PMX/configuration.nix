@@ -50,14 +50,11 @@ in
   # would otherwise reject anything copied in over SSH as lukas.
   nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];
 
-  # Pi opt-in (docs/pi.md). Host-declared, not in sam.hostSecrets: llm-cloud.yaml
+  # Keys for sam.profile.pi (docs/pi.md). Host-declared, not in sam.hostSecrets: llm-cloud.yaml
   # is encrypted to lenovo only, so other hosts would fail activation decrypting it.
   sops.secrets.groq_api_key = llmCloudSecret;
   sops.secrets.cloudflare_workers_ai_token = llmCloudSecret;
   sops.secrets.cloudflare_account_id = llmCloudSecret;
-  home-manager.users.${vars.username}.imports = [
-    ../../modules/programs/cli/pi
-  ];
 
   # Rebuilds here are manual and precede the push other hosts auto-upgrade from.
   system.autoUpgrade.enable = lib.mkForce false;
