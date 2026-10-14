@@ -60,7 +60,14 @@ let
   '';
 in
 {
-  home.packages = [ pkgs.pi-coding-agent ];
+  home.packages = [
+    pkgs.pi-coding-agent
+    (pkgs.writeShellApplication {
+      name = "pi-offload";
+      runtimeInputs = with pkgs; [ git jq coreutils util-linux ];
+      text = builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-offload";
+    })
+  ];
 
   # A store symlink: Pi only reads it, and updates arrive via `just bump devenv-platform`.
   home.file.".pi/agent/extensions/router-free".source = "${devenvPlatform}/agents/pi/router-free";

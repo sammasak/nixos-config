@@ -71,11 +71,11 @@
     "claude-code-skills": {
       "flake": false,
       "locked": {
-        "lastModified": 1791878939,
-        "narHash": "sha256-WuBRkd0VQwHtqEc1BezvUDwhQnntG4c5nbdg721m6xQ=",
+        "lastModified": 1792012843,
+        "narHash": "sha256-jtjxelFAwJH0BeBVIkynhQDVkAddhMlY3QDl6kfC+BQ=",
         "owner": "sammasak",
         "repo": "claude-code-skills",
-        "rev": "781ecac8cb3a895945f60c8fdc4cedf1d2712959",
+        "rev": "c4a75bc3d1b1786c4c02f9eef7ff8a9159f10c48",
         "type": "github"
       },
       "original": {
@@ -109,11 +109,11 @@
     "devenv-platform": {
       "flake": false,
       "locked": {
-        "lastModified": 1792006816,
-        "narHash": "sha256-NYI+nU+0LRlmcjO8dslWMdkL6IBu/ue1YnaaB1ADXBk=",
+        "lastModified": 1792012798,
+        "narHash": "sha256-p4XewaqHJ0rdhEiUNb3IAolUZ8QbhvHjO2y+oQ+xiLk=",
         "ref": "refs/heads/main",
-        "rev": "e9bcc99ae5d9e13b44ce9f5fbefca0ede3fd56ae",
-        "revCount": 95,
+        "rev": "17ef9b6d11d379e47962d6791d621e496a3d4720",
+        "revCount": 96,
         "type": "git",
         "url": "ssh://git@github.com/sammasak/devenv-platform"
       },

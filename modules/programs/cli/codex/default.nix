@@ -10,6 +10,7 @@ let
     "kubernetes-gitops"
     "nix-flake-development"
     "observability-patterns"
+    "pi-offload"
     "python-agentic-development"
     "python-engineering"
     "rust-engineering"
