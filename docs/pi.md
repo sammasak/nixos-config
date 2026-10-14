@@ -40,8 +40,8 @@ Verified on the pinned 1.1.0 build:
   `GEMINI_API_KEY`, `CEREBRAS_API_KEY`. Only names and paths are in Nix.
 - Seeds missing top-level keys into the writable `~/.pi/agent/settings.json`
   (`enabledModels` = free-tier models, longer `retry` backoff). Top-level keys you
-  already have win as whole objects, not deep-merged. `auth.json`, `models.json`, `sessions/` are never
-  touched.
+  already have win as whole objects, not deep-merged. `auth.json`,
+  `models.json` and `sessions/` are never touched.
 
 ## Credentials
 

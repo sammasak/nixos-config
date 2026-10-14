@@ -5,7 +5,7 @@
 { lib, pkgs, ... }:
 {
   # Stage 2 (model-tier) self-activates only where the runtime exposes
-  # registerVirtualModel; the pinned nixpkgs build (1.1.0) does, see docs/pi.md.
+  # registerVirtualModel; the pinned nixpkgs build does, see docs/pi.md.
   home.packages = [ pkgs.pi-coding-agent ];
 
   home.file.".pi/agent/extensions/pi-harness.ts".source = ./pi-harness.bundle.mjs;
