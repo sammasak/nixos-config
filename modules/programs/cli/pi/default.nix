@@ -8,8 +8,8 @@ let
   # Literal /run/secrets paths: this is an HM module, so the NixOS
   # config.sops.secrets is not in scope. A missing file just leaves the var unset.
   providerKeys = {
-    GROQ_API_KEY = "groq_api_key";
-    CLOUDFLARE_API_KEY = "cloudflare_workers_ai_token";
+    GROQ_API_KEY = "groq_pi_agent_api_key";
+    CLOUDFLARE_API_KEY = "cloudflare_pi_agent_workers_ai_token";
     CLOUDFLARE_ACCOUNT_ID = "cloudflare_account_id";
     GEMINI_API_KEY = "gemini_api_key";
     CEREBRAS_API_KEY = "cerebras_api_key";

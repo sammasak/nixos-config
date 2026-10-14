@@ -75,14 +75,14 @@ pi --list-models cerebras
 
 | Provider | Get a key | sops key | Env var |
 |---|---|---|---|
-| Groq | console.groq.com → API Keys | `groq_api_key` | `GROQ_API_KEY` |
-| Cloudflare Workers AI | dash → AI → Workers AI → "Use REST API" (token with *Workers AI Read+Edit*), plus account ID | `cloudflare_workers_ai_token`, `cloudflare_account_id` | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID` |
+| Groq | console.groq.com → API Keys | `groq_pi_agent_api_key` (factum keeps `groq_api_key`) | `GROQ_API_KEY` |
+| Cloudflare Workers AI | dash → AI → Workers AI → "Use REST API" (token with *Workers AI Read+Edit*), plus account ID | `cloudflare_pi_agent_workers_ai_token` (factum keeps `cloudflare_workers_ai_token`), `cloudflare_account_id` | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID` |
 | Gemini | aistudio.google.com → Get API key | `gemini_api_key` | `GEMINI_API_KEY` |
 | Cerebras | cloud.cerebras.ai → API Keys | `cerebras_api_key` | `CEREBRAS_API_KEY` |
 
 Interactive alternative (no sops): `/login <provider>` stores the key in
 `~/.pi/agent/auth.json` (0600, outside Nix). Or reference sops without
-exporting it: `{"groq": {"type": "api_key", "key": "!cat /run/secrets/groq_api_key"}}`.
+exporting it: `{"groq": {"type": "api_key", "key": "!cat /run/secrets/groq_pi_agent_api_key"}}`.
 
 ### Revoke
 

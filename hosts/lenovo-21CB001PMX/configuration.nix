@@ -52,9 +52,11 @@ in
 
   # Keys for sam.profile.pi (docs/pi.md). Host-declared, not in sam.hostSecrets: llm-cloud.yaml
   # is encrypted to lenovo only, so other hosts would fail activation decrypting it.
-  sops.secrets.groq_api_key = llmCloudSecret;
-  sops.secrets.cloudflare_workers_ai_token = llmCloudSecret;
+  sops.secrets.groq_pi_agent_api_key = llmCloudSecret;
+  sops.secrets.cloudflare_pi_agent_workers_ai_token = llmCloudSecret;
   sops.secrets.cloudflare_account_id = llmCloudSecret;
+  sops.secrets.gemini_api_key = llmCloudSecret;
+  sops.secrets.cerebras_api_key = llmCloudSecret;
 
   # Rebuilds here are manual and precede the push other hosts auto-upgrade from.
   system.autoUpgrade.enable = lib.mkForce false;
