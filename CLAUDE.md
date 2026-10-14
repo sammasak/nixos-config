@@ -70,7 +70,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/nix-signing-key.yaml` | Personal + lenovo | deploy-rs closure-signing private key (workers trust the public half) |
 | `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, wifi, GitHub access token |
 | `core/*.yaml` | Personal + lenovo | Staged declarative login password |
-| `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Claude Code OAuth token |
+| `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Claude Code OAuth token; cloud LLM keys (`llm-cloud.yaml`, materialised in `/run/secrets` only on hosts that opt into Pi, see `docs/pi.md`) |
 | `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in fish shell init via `modules/programs/cli/claude-code/mcp.nix`.

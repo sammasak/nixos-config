@@ -1,6 +1,11 @@
 { config, lib, ... }:
 let
   vars = import ./variables.nix;
+  llmCloudSecret = {
+    sopsFile = ../../secrets/claude/llm-cloud.yaml;
+    owner = vars.username;
+    mode = "0400";
+  };
 in
 {
   imports = [
@@ -44,6 +49,16 @@ in
   # Signs deploy-rs closures pushed to acer, whose trusted-users = [ "root" ]
   # would otherwise reject anything copied in over SSH as lukas.
   nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];
+
+  # Pi opt-in (docs/pi.md). Host-declared, not in sam.hostSecrets, so acer and
+  # black-pi never materialise these keys in /run/secrets (their host keys are
+  # still recipients of claude/*.yaml).
+  sops.secrets.groq_api_key = llmCloudSecret;
+  sops.secrets.cloudflare_workers_ai_token = llmCloudSecret;
+  sops.secrets.cloudflare_account_id = llmCloudSecret;
+  home-manager.users.${vars.username}.imports = [
+    ../../modules/programs/cli/pi
+  ];
 
   # Rebuilds here are manual and precede the push other hosts auto-upgrade from.
   system.autoUpgrade.enable = lib.mkForce false;
