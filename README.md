@@ -137,6 +137,10 @@ sudo nixos-rebuild switch --flake .#<hostname>
 
 No separate manual Codex sync step is required.
 
+## Pi
+
+The Pi coding agent is an opt-in Home Manager module in `modules/programs/cli/pi/`, enabled on lenovo. It covers the distribution choice, provider keys via sops, `/model`, revocation, upgrade and rollback: [docs/pi.md](docs/pi.md).
+
 ## Forking For Your Setup
 
 Use this sequence to reproduce the same pattern in your own repo:

@@ -4,9 +4,8 @@
 # source changes. See vault: nix/nixos-modules.md for the home.file pattern.
 { lib, pkgs, ... }:
 {
-  # nixpkgs ships 0.87.1: stage 1 (routing) works; stage 2 (model-tier) needs a
-  # newer runtime that exposes registerVirtualModel and self-activates there
-  # (e.g. `nix run github:nklmilojevic/pi-flake` gives 0.99.x with both stages).
+  # Stage 2 (model-tier) self-activates only where the runtime exposes
+  # registerVirtualModel; the pinned nixpkgs build (1.1.0) does, see docs/pi.md.
   home.packages = [ pkgs.pi-coding-agent ];
 
   home.file.".pi/agent/extensions/pi-harness.ts".source = ./pi-harness.bundle.mjs;
