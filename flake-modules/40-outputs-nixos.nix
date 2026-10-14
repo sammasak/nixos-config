@@ -57,6 +57,9 @@ let
                 (import ../modules/programs/cli/claude-code/mcp.nix inputs.claude-code-skills)
                 (import ../modules/programs/cli/claude-code/skills.nix inputs.claude-code-skills)
                 (import ../modules/programs/cli/codex/default.nix inputs.claude-code-skills)
+              ]
+              ++ lib.optionals nixos.config.sam.profile.pi [
+                (import ../modules/programs/cli/pi inputs.devenv-platform)
               ];
               users.${username} =
                 config.flake.modules.homeManager.default

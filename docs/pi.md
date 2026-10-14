@@ -1,6 +1,6 @@
 # Pi coding agent
 
-Module: `modules/programs/cli/pi/` (Home Manager, opt-in per host). Enabled on
+Module: `modules/programs/cli/pi/` (Home Manager, opt-in per host via `sam.profile.pi`). Enabled on
 `lenovo` only.
 
 ## Distribution decision (2026-10-14)
@@ -90,6 +90,25 @@ exporting it: `{"groq": {"type": "api_key", "key": "!cat /run/secrets/groq_api_k
 2. Remove it from `llm-cloud.yaml` (`sops ...`) and the host's `sops.secrets` line, then `just switch`.
 3. `/logout <provider>` in Pi if it was ever stored in `auth.json`.
 
+## router/free
+
+Hosts with `sam.profile.pi = true` get the `router/free` virtual model from
+devenv-platform `agents/pi/router-free` (input `devenv-platform`, locked in
+`flake.lock`). It is linked read-only into `~/.pi/agent/extensions/router-free`.
+It only routes to catalog entries marked free, verified and credentialed, and
+fails closed otherwise. A used-up daily free allocation blocks that model until
+midnight UTC. Behaviour, limits and tests are documented in its README.
+
+```bash
+pi --model router/free        # or pick it in /model
+/free-status                  # candidates, credentials, cooldowns
+just bump devenv-platform     # take a newer router; then just switch
+```
+
+To turn it off for one host, set `pi = false` in its `variables.nix`. That
+removes the module, the key exports and the extension link. `~/.pi/agent` state
+stays.
+
 ## Use
 
 ```bash
@@ -115,7 +134,7 @@ you pick another.
   below, since provider catalogs change between releases.
 - Rollback: `sudo nixos-rebuild switch --rollback` (or pick the previous
   systemd-boot entry). Pi state in `~/.pi/agent` is version-tolerant and untouched.
-- Remove: drop the `imports` and `sops.secrets` lines from the host config.
+- Remove: set `pi = false` in the host's `variables.nix` and drop its `sops.secrets` lines.
   Seeded keys stay in `~/.pi/agent/settings.json` until you delete them.
 
 ## Verification (2026-10-14, Pi 1.1.0)

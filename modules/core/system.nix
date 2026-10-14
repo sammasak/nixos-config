@@ -81,6 +81,16 @@ in
             '';
           };
 
+          pi = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Opt into the Pi coding agent (docs/pi.md): Home Manager config,
+              provider-key exports and the router/free extension. The host
+              also declares the sops secrets the keys come from.
+            '';
+          };
+
           roles = mkOption {
             type = types.listOf types.str;
             default = [ "base" ];

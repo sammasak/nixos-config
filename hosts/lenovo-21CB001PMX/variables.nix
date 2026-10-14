@@ -19,6 +19,7 @@
 
   # Features
   laptop = true;
+  pi = true;
 
   # Roles
   roles = [ "base" "laptop" "homelab-server" ];

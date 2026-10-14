@@ -28,6 +28,11 @@
     claude-code-skills.url = "github:sammasak/claude-code-skills";
     claude-code-skills.flake = false;
 
+    # Private repo: ssh URL (github: 404s without a token). Supplies the Pi
+    # router/free extension to hosts with sam.profile.pi.
+    devenv-platform.url = "git+ssh://git@github.com/sammasak/devenv-platform";
+    devenv-platform.flake = false;
+
     import-tree.url = "github:mightyiam/import-tree";
 
     disko.url = "github:nix-community/disko";

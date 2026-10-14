@@ -1,6 +1,8 @@
-# Opt-in per host: import into the host's Home Manager user and declare the sops
-# secrets named in providerKeys (see hosts/lenovo-21CB001PMX/configuration.nix).
-# Distribution, auth, upgrade and rollback: docs/pi.md.
+# Imported applied, for hosts with sam.profile.pi (flake-modules/40-outputs-nixos.nix):
+#   (import .../pi inputs.devenv-platform)
+# The host still declares the sops secrets named in providerKeys
+# (see hosts/lenovo-21CB001PMX/configuration.nix). Auth, upgrade, rollback: docs/pi.md.
+devenvPlatform:
 { lib, pkgs, ... }:
 let
   # Literal /run/secrets paths: this is an HM module, so the NixOS
@@ -25,13 +27,12 @@ let
     fi
   '') providerKeys);
 
-  # Free-tier models that authenticate on the pinned build; only the Cloudflare
-  # one finishes multi-turn tool use, Groq's 8k TPM cap 429s it (docs/pi.md).
+  # router/free plus the only model that passed multi-turn Rust tasks; Groq free
+  # tier went 0/6 (TPM 429s, tool-schema rejects), see docs/pi.md.
   defaultSettings = builtins.toJSON {
     enabledModels = [
+      "router/free"
       "cloudflare-workers-ai/@cf/qwen/qwen3.8-27b"
-      "groq/openai/gpt-oss-120b"
-      "groq/openai/gpt-oss-20b"
     ];
     # Free-tier 429s carry ~10-60s resets; the 2s default base gives up first.
     retry = {
@@ -60,6 +61,9 @@ let
 in
 {
   home.packages = [ pkgs.pi-coding-agent ];
+
+  # A store symlink: Pi only reads it, and updates arrive via `just bump devenv-platform`.
+  home.file.".pi/agent/extensions/router-free".source = "${devenvPlatform}/agents/pi/router-free";
 
   home.sessionVariables = {
     PI_SKIP_VERSION_CHECK = "1";
