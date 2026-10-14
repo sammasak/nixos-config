@@ -26,8 +26,8 @@ Verified on the pinned 1.1.0 build:
 | `pi.registerProvider()`, `ctx.modelRegistry` | present |
 | Groq (`groq`, `GROQ_API_KEY`) | built in, authenticated, tool calls hit free-tier TPM limits (below) |
 | Cloudflare Workers AI (`cloudflare-workers-ai`, `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID`) | built in, end-to-end tool use verified |
-| Gemini (`google`, `GEMINI_API_KEY`) | built in; the only existing key is on a prepaid-billing project (402), not free tier (below) |
-| Cerebras (`cerebras`, `CEREBRAS_API_KEY`; catalog: `gpt-oss-120b`, `qwen-3.8-27b`) | built in; API access now needs a payment method ($5 trial credits), not yet keyed |
+| Gemini (`google`, `GEMINI_API_KEY`) | keyed (no-billing project); `gemini-3.5-flash-lite` passes multi-turn tool use, `3.8-flash` returned 503 "high demand" |
+| Cerebras (`cerebras`, `CEREBRAS_API_KEY`; catalog: `gpt-oss-120b`, `qwen-3.8-27b`) | keyed (prepaid trial credits); both models pass multi-turn Rust tasks |
 
 ## What the module does
 
@@ -169,8 +169,9 @@ sources: [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platf
 | `groq/openai/gpt-oss-120b`, `gpt-oss-20b` | free org, no card | 30 RPM, 1K RPD, 8K TPM, 200K TPD (observed `x-ratelimit-limit-tokens: 8000`); per **organization**, so a second key in the same org adds no quota | 429 | eligible only with long cooldowns; the multi-turn loop is not verified |
 | `groq/qwen/qwen3.8-27b` | free org | same | 429 | **excluded**: 400 on tool-result turn |
 | other CF models listed above | Workers Free | | | **excluded**: 400 or 403 (paid-gated) |
-| `google/*` with the existing key | prepaid billing project | | 402 when credits are empty; would bill if topped up | **excluded** until a separate no-billing AI Studio project exists; free-tier prompts may be used by Google to improve products, so send no private source |
-| `cerebras/*` | $5 trial credits after adding a payment method | 5 RPM, 30K uncached TPM, 1M TPD | prepaid credits, no charge until more are bought | not free tier: a separate "trial credit" cost class, owner decision |
+| `google/gemini-3.5-flash-lite` (new no-billing project) | free tier, no billing account | free-tier RPM/RPD per project | 429; cannot bill | **verified, off** in router/free until the owner approves sending private code (free-tier prompts may be used by Google) |
+| `google/*` with the old `~/.env` key | prepaid billing project | | 402; would bill if topped up | **excluded**; delete that key |
+| `cerebras/qwen-3.8-27b`, `gpt-oss-120b` | prepaid trial credits ($5, 30 days); auto-recharge off by default | 5 RPM, 1M TPD on the trial | requests fail when credits run out; the card is only charged when credits are bought or auto-recharge is enabled | verified (logic 3/3 each); off in router/free as a separate cost class, owner decision |
 
 Manual onboarding steps (account access is not automatable here):
 
