@@ -8,6 +8,7 @@ in
   imports = [
     ./base.nix
     ../homelab/deploy-target.nix
+    ../rf-lab/tools.nix
   ];
 
   # NM would otherwise autoconnect or rescan a radio mid-capture; Ethernet stays managed.
@@ -18,13 +19,6 @@ in
   boot.extraModprobeConfig = ''
     options cfg80211 ieee80211_regdom=SE
   '';
-
-  environment.systemPackages = with pkgs; [
-    iw
-    usbutils
-    ethtool
-    tcpdump
-  ];
 
   # Captures stay off the Nix store and age out, so the SD card cannot fill silently.
   systemd.tmpfiles.rules = [ "d /var/lib/rf-lab/captures 0750 ${username} users 14d" ];
