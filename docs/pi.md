@@ -40,8 +40,14 @@ Verified on the pinned 1.1.0 build:
   `GEMINI_API_KEY`, `CEREBRAS_API_KEY`. Only names and paths are in Nix.
 - Seeds missing top-level keys into the writable `~/.pi/agent/settings.json`
   (`enabledModels` = free-tier models, longer `retry` backoff). Top-level keys you
-  already have win as whole objects, not deep-merged. `auth.json`,
-  `models.json` and `sessions/` are never touched.
+  already have win as whole objects, not deep-merged. `auth.json` and
+  `sessions/` are never touched.
+- Merges one provider, `msi-ollama`, into `~/.pi/agent/models.json` on every
+  activation (jq; replaces only that key, so hand-written providers such as
+  `ollama` for pi-harness stay). It points at msi's Ollama, which is the
+  router/free local tier. Override the URL with
+  `sam.pi.msiOllamaBaseUrl` in the host's Home Manager config. A models.json
+  that is not a JSON object is left alone.
 
 ## Credentials
 
@@ -96,12 +102,31 @@ Hosts with `sam.profile.pi = true` get the `router/free` virtual model from
 devenv-platform `agents/pi/router-free` (input `devenv-platform`, locked in
 `flake.lock`). It is linked read-only into `~/.pi/agent/extensions/router-free`.
 It only routes to catalog entries marked free, verified and credentialed, and
-fails closed otherwise. A used-up daily free allocation blocks that model until
-midnight UTC. Behaviour, limits and tests are documented in its README.
+fails closed otherwise. Behaviour, limits and tests are documented in its
+README.
+
+The catalog is in tiers. Each user turn takes the first ready model of the best
+tier, so turns drop a tier while a model cools down or is spent, and climb back
+when it recovers. Tool continuations stay on the model that answered. Cooldowns
+and daily blocks are kept in `~/.local/state/pi-router-free/ledger.json`, which
+every Pi process shares. Each routing decision is logged with its reason in
+`routes.log` next to it.
+
+| Tier | Models (2026-10-15) | Free limits observed |
+|---|---|---|
+| 1 best-free | `google/gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, in that order | 5 RPM and 20 RPD per model; 3.8 and 3.7 often take minutes per turn ("high demand"). Slow models sit out 10-60 min |
+| 2 free-floor | `cloudflare-workers-ai/@cf/qwen/qwen3.8-27b`, `google/gemini-3.5-flash-lite` | 10k neurons/day; Flash-Lite RPM 15 |
+| 3 local | none enabled. Provider `msi-ollama` (msi's Ollama, below) is wired in, but no msi model passed verification | no quota; msi is off outside its power window |
+
+The local provider is `msi-ollama` in `~/.pi/agent/models.json`, merged in by
+this module (default `http://10.43.160.41:11434/v1`, the `ollama-msi-backend`
+ClusterIP; set `sam.pi.msiOllamaBaseUrl` to change it). The router probes it
+before each dispatch, so a powered-off msi fails over within seconds and is used
+again once it answers.
 
 ```bash
 pi --model router/free        # or pick it in /model
-/free-status                  # candidates, credentials, cooldowns
+/free-status                  # tiers, per-model state, recent routing decisions
 just bump devenv-platform     # take a newer router; then just switch
 ```
 
@@ -156,7 +181,7 @@ Inputs for the devenv-platform#5 catalog: Pi's built-in catalog drifts from what
 providers serve, free plans gate some models per account, and Groq's free TPM
 cannot sustain a multi-turn agent loop.
 
-## Free-router eligibility (2026-10-14)
+## Free-router eligibility (2026-10-14, tiers 2026-10-15)
 
 Only models listed **eligible** may be offered to a free-only router. Primary
 sources: [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/),
@@ -169,7 +194,10 @@ sources: [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platf
 | `groq/openai/gpt-oss-120b`, `gpt-oss-20b` | free org, no card | 30 RPM, 1K RPD, 8K TPM, 200K TPD (observed `x-ratelimit-limit-tokens: 8000`); per **organization**, so a second key in the same org adds no quota | 429 | eligible only with long cooldowns; the multi-turn loop is not verified |
 | `groq/qwen/qwen3.8-27b` | free org | same | 429 | **excluded**: 400 on tool-result turn |
 | other CF models listed above | Workers Free | | | **excluded**: 400 or 403 (paid-gated) |
-| `google/gemini-3.5-flash-lite` (new no-billing project) | free tier, no billing account | free-tier RPM/RPD per project | 429; cannot bill | **verified, off** in router/free until the owner approves sending private code (free-tier prompts may be used by Google) |
+| `google/gemini-3.5-flash-lite` (new no-billing project) | free tier, no billing account | free-tier RPM/RPD per project | 429; cannot bill | **eligible**, tier 2 (owner approved free-tier use 2026-10-14; free-tier prompts may be used by Google) |
+| `google/gemini-3.8-flash`, `3.7-flash`, `3.6-flash`, `3.5-flash` (same project) | free tier, no billing account | 5 RPM, 20 RPD per model (429 `quotaValue`); the day ends at midnight UTC (429 `retryDelay`) | 429 with "billing" wording, which Pi does not retry; router/free rewords it and fails over | **eligible**, tier 1. Verified 2026-10-15 with read+edit+bash: 3.8 in 37s (its first run timed out at 15 min), 3.7 in 775s (minutes per turn; a second run timed out after a correct edit+bash), 3.6 in 67s, 3.5 in 15s |
+| `google/gemini-3.1-pro-preview`, `gemini-pro-latest` | free tier | none: 429 quota on the first request | 429 | **excluded**: no free-tier allocation |
+| `msi-ollama/*` (msi's Ollama, CPU-only i7-3770K) | local, no cost | none; 7 tok/s prefill, 4 tok/s output (7B), so the first Pi turn takes 5-7 min, over Pi's default 300s idle timeout | connection refused or timeout when msi is off | **excluded** for now (2026-10-15, idle timeout raised for the test): `qwen2.5-coder:7b` and `llama3.2:3b` return tool calls as plain text; `llama3.1:8b` calls tools but failed the task twice (wrong edits, wrong answer) |
 | `google/*` with the old `~/.env` key | prepaid billing project | | 402; would bill if topped up | **excluded**; delete that key |
 | `cerebras/qwen-3.8-27b`, `gpt-oss-120b` | prepaid trial credits ($5, 30 days); auto-recharge off by default | 5 RPM, 1M TPD on the trial | requests fail when credits run out; the card is only charged when credits are bought or auto-recharge is enabled | verified (logic 3/3 each); off in router/free as a separate cost class, owner decision |
 
