@@ -74,7 +74,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, wifi, GitHub access token |
 | `core/*.yaml` | Personal + lenovo | Staged declarative login password |
 | `claude/llm-cloud.yaml` | Personal + lenovo | Cloud LLM keys for Pi (sops-nix) and factum `dev/cloud-env.sh` (personal key), see `docs/pi.md` |
-| `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Claude Code OAuth token |
+| `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Claude Code OAuth token; Pi's llm-gateway project key (`llm-gateway.yaml`) |
 | `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in fish shell init via `modules/programs/cli/claude-code/mcp.nix`.

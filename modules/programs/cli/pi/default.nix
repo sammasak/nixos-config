@@ -80,6 +80,22 @@ let
     }) [ "qwen2.5-coder:7b" "llama3.1:8b" ];
   };
 
+  # Opt-in (`--model homelab/auto`): the in-cluster llm-gateway picks a free model
+  # by tier and fails over. `!cat` reads the sops key per request, so it never
+  # enters the store or the environment.
+  homelabProvider = builtins.toJSON {
+    baseUrl = cfg.llmGatewayBaseUrl;
+    api = "openai-completions";
+    apiKey = "!cat /run/secrets/llm_gateway_pi_key";
+    models = [
+      { id = "auto"; name = "homelab auto"; reasoning = true; contextWindow = 1048576; maxTokens = 32768; }
+      { id = "best"; name = "homelab best"; reasoning = true; contextWindow = 1048576; maxTokens = 32768; }
+      { id = "local"; name = "homelab local"; contextWindow = 131072; maxTokens = 8192; }
+    ];
+    # Gemini answers 400 to `store`; the gateway strips it, this keeps every tier clean.
+    compat.supportsStore = false;
+  };
+
   # Same rules as seedPiSettings: a malformed user file is left alone.
   mergePiModels = pkgs.writeShellScript "merge-pi-models" ''
     set -eu
@@ -92,7 +108,8 @@ let
     fi
     tmp="$(mktemp "$f.XXXXXX")"
     trap 'rm -f "$tmp"' EXIT
-    ${pkgs.jq}/bin/jq --argjson p ${lib.escapeShellArg msiOllamaProvider} '.providers["msi-ollama"] = $p' "$f" > "$tmp"
+    ${pkgs.jq}/bin/jq --argjson p ${lib.escapeShellArg msiOllamaProvider} --argjson h ${lib.escapeShellArg homelabProvider} \
+      '.providers["msi-ollama"] = $p | .providers.homelab = $h' "$f" > "$tmp"
     chmod --reference="$f" "$tmp"
     cmp -s "$tmp" "$f" || mv "$tmp" "$f"
   '';
@@ -109,6 +126,13 @@ in
     # ollama-msi-backend ClusterIP (llm ns): reachable from k3s nodes; update if the Service is recreated.
     default = "http://10.43.160.41:11434/v1";
     description = "OpenAI-compatible base URL of msi's Ollama, the router/free local tier.";
+  };
+
+  options.sam.pi.llmGatewayBaseUrl = lib.mkOption {
+    type = lib.types.str;
+    # Pinned spec.clusterIP in homelab-gitops apps/llm-gateway/service.yaml; reachable from k3s nodes.
+    default = "http://10.43.0.80:8080/v1";
+    description = "OpenAI-compatible base URL of the in-cluster llm-gateway (Pi provider `homelab`).";
   };
 
   config = {
