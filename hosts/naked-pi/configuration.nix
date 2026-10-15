@@ -1,4 +1,4 @@
-{ lib, ... }:
+{ lib, pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -14,6 +14,14 @@ in
   boot.loader.generic-extlinux-compatible.enable = true;
   boot.loader.generic-extlinux-compatible.configurationLimit = 4;
 
-  # The SD image creates root with an empty password; mutableUsers would keep it.
-  users.users.root.hashedPassword = "!";
+  # The SD image creates root with an empty password, and with mutableUsers an
+  # existing user's hashedPassword is never applied, so lock it imperatively.
+  system.activationScripts.lockEmptyRootPassword = {
+    deps = [ "users" ];
+    text = ''
+      if [ -z "$(${pkgs.getent}/bin/getent shadow root | cut -d: -f2)" ]; then
+        ${pkgs.shadow}/bin/usermod -p '!' root
+      fi
+    '';
+  };
 }
