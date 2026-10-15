@@ -44,6 +44,7 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 | `acer-swift` | **headless** (k3s worker) | `desktop` (Niri GUI) |
 | `msi-ms7758` | **headless** (intermittent opt-in k3s worker, dual-boot Windows) | none |
 | `black-pi` | **headless** (aarch64 k3s worker, Raspberry Pi 4 on SD card, builds its own closure) | none |
+| `naked-pi` | **headless** (aarch64 Wi-Fi learning node, Raspberry Pi 3, role `rf-lab`; not in k3s) | none |
 
 Desktop mode ships **two coexisting compositors** — Hyprland and niri, both
 imported by `modules/specialisations/desktop.nix`; the compositor is picked
