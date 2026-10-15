@@ -93,7 +93,7 @@ in
     "nixos:secrets-verify" = task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
     "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
-    "nixos:verify" = task "Build every x86 host, evaluate black-pi" verifyHosts;
+    "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
     "nixos:qa" = task "Every gate above, in order" qa;
   };
 

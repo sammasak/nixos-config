@@ -42,13 +42,16 @@ in
       nodejs
       chromium
     ]
-    ++ [
-      just
-
+    ++ [ just ]
+    # Split around `just` to keep systemPackages order, and so every other host's
+    # toplevel, unchanged; nh is an aarch64 cache miss a 1 GiB board cannot build.
+    ++ lib.optionals config.sam.profile.devTools [
       # nh wraps nixos-rebuild with a readable TUI and a build diff; nvd is the
       # diff engine it shells out to (and is useful standalone).
       nh
       nvd
+    ]
+    ++ [
       nix-prefetch-scripts
 
       appimage-run

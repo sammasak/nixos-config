@@ -34,13 +34,16 @@ just deploy-acer              # builds on lenovo
 just deploy-pi                # builds on the Pi (remoteBuild); run inside zellij, it takes hours on a cache miss
 just deploy-lenovo            # loopback self-push, proves the deploy-rs path
 just deploy-msi               # only in its Mon-Fri ~09:00-21:00 power window
+just deploy-naked-pi          # Pi 3 rf-lab; builds on the Pi, cache hits only
 
 # Remote deploy via SSH (a host without a deploy-rs node yet)
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
 ```
 
 Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
-and `black-pi` (aarch64; evaluated but not built on x86 hosts, build it on the Pi).
+`black-pi` (aarch64; evaluated but not built on x86 hosts, build it on the Pi),
+and `naked-pi` (Pi 3 `rf-lab` node, off k3s; `just deploy-naked-pi`;
+runbook `~/knowledge/homelab/runbooks/naked-pi-rf-lab.md`).
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
 `host` variable at the top of the Justfile does that mapping, so the argument is
 only needed when targeting the other machine.

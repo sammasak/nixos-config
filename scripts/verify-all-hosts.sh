@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 HOSTS=("acer-swift" "lenovo" "msi-ms7758")
 # aarch64 hosts: nothing here can build aarch64 (no binfmt, no remote builder),
 # so they are only evaluated. Their real build runs on the device itself.
-EVAL_ONLY_HOSTS=("black-pi")
+EVAL_ONLY_HOSTS=("black-pi" "naked-pi")
 
 failed=()
 succeeded=()

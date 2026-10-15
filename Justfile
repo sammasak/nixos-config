@@ -49,6 +49,10 @@ deploy-msi:
 deploy-pi:
     {{deploy}} .#black-pi --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
 
+# Also builds on its Pi, but the rf-lab closure is cache hits plus trivial derivations.
+deploy-naked-pi:
+    {{deploy}} .#naked-pi --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
+
 # ── Configuration Verification ────────────────────────────────────────
 
 # QA gates live in devenv.nix as tasks; the git hooks run the same ones.
