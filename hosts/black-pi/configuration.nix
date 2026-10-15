@@ -18,6 +18,14 @@ in
   sam.hostSecrets.enable = true;
   sam.wifi.declarativeHomeProfile = true;
 
+  # mkForce: the fleet's monthly 30-day GC can fill this 29 GB SD card, which also
+  # holds the observability volumes; min-free makes nix GC itself during builds.
+  nix.gc.dates = lib.mkForce "weekly";
+  nix.gc.options = lib.mkForce "--delete-older-than 7d";
+  nix.settings.min-free = 3 * 1024 * 1024 * 1024;
+  nix.settings.max-free = 8 * 1024 * 1024 * 1024;
+  services.journald.settings.Journal.SystemMaxUse = lib.mkForce "200M";
+
   # 0 = retry forever; the default 4 ends in a secret-agent request that never
   # comes on a headless box (one AP deauth became a 10-day outage on acer).
   networking.networkmanager.settings.connection."connection.autoconnect-retries" = 0;
