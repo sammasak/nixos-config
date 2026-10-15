@@ -83,6 +83,22 @@ in
         confirmTimeout = 30;
       };
     };
+
+    naked-pi = {
+      hostname = "naked-pi";
+      profiles.system = {
+        sshUser = "deploy";
+        user = "root";
+        path = (deployLib "aarch64-linux").activate.nixos config.flake.nixosConfigurations.naked-pi;
+        # True for the same no-aarch64-builder reason; rf-lab keeps the closure
+        # to cache hits plus text/symlink derivations, so 1 GiB is enough.
+        remoteBuild = true;
+        autoRollback = true;
+        magicRollback = true;
+        activationTimeout = 180;
+        confirmTimeout = 30;
+      };
+    };
   };
 
   perSystem =
