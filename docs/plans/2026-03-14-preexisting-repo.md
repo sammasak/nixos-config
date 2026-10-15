@@ -610,9 +610,9 @@ git push origin main
 **Step 3: Update flake input and rebuild**
 ```bash
 cd ~/nixos-config
-nix flake update claude-code-skills
+nix flake update skills
 git add flake.lock
-git commit -m "chore: update claude-code-skills flake input"
+git commit -m "chore: update skills flake input"
 sudo nixos-rebuild switch --flake .#$(hostname)
 ```
 

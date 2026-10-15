@@ -3,7 +3,7 @@ set -euo pipefail
 
 codex_skills_dir="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
 shared_skills_dir="${SHARED_SKILLS_DIR:-$HOME/.agents/skills}"
-repo_skills_dir="${REPO_SKILLS_DIR:-$HOME/claude-code-skills/skills}"
+repo_skills_dir="${REPO_SKILLS_DIR:-$HOME/skills/skills}"
 workflows_dir="${WORKFLOWS_DIR:-$HOME/knowledge/workflows}"
 manifest_file="$codex_skills_dir/.codex-generated.manifest"
 

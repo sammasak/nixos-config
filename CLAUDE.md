@@ -84,11 +84,11 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 |------|-------|---------|
 | `mcp.nix` | All `devTools` hosts (shared HM module) | Settings, plugins, MCP servers, shebang fixes, SOPS token sourcing |
 | `default.nix` | All `devTools` hosts (shared HM module) | First-boot `~/.claude.json` seed, tool-permissions block, `programs.fish.enable` |
-| `skills.nix` | All `devTools` hosts (shared HM module) | Symlinks skills and agents from the `claude-code-skills` flake input |
+| `skills.nix` | All `devTools` hosts (shared HM module) | Symlinks skills and agents from the `skills` flake input |
 
 **Plugin configuration** (`mcp.nix`): Declares `enabledPlugins` (superpowers, rust-analyzer-lsp, frontend-design, ralph-loop) and MCP servers (playwright/chromium) in `programs.claude-code.settings`.
 
-**Personal skills and agents** are managed via the [`sammasak/claude-code-skills`](https://github.com/sammasak/claude-code-skills) repo, added as a non-flake input (`flake = false`). The `skills.nix` module auto-discovers all directories in `skills/` and `.md` files in `agents/` from that input and creates Home Manager symlinks:
+**Personal skills and agents** are managed via the [`sammasak/skills`](https://github.com/sammasak/skills) repo, added as a non-flake input (`flake = false`). The `skills.nix` module auto-discovers all directories in `skills/` and `.md` files in `agents/` from that input and creates Home Manager symlinks:
 
 - `skills/<name>/SKILL.md` → `~/.claude/skills/<name>/SKILL.md`
 - `agents/<name>.md` → `~/.claude/agents/<name>.md`
@@ -99,7 +99,7 @@ These are available across all projects without manual `/plugin install`.
 ```bash
 # In ~/claude-code-skills: add/edit skills or agents, push to GitHub
 # In ~/nixos-config:
-nix flake update claude-code-skills
+nix flake update skills
 sudo nixos-rebuild switch --flake .#<hostname>
 ```
 
@@ -110,13 +110,13 @@ Configuration lives in `modules/programs/cli/codex/`:
 | File | Scope | Purpose |
 |------|-------|---------|
 | `default.nix` | All `devTools` hosts (shared HM module) | Codex config, hooks, shared skill links, activation-time skill sync |
-| `context-hook.sh` | All `devTools` hosts | Injects workspace routing hints for `~/knowledge`, workflows, and `claude-code-skills` |
+| `context-hook.sh` | All `devTools` hosts | Injects workspace routing hints for `~/knowledge`, workflows, and `skills` |
 | `validate-bash.sh` | All `devTools` hosts | Blocks force pushes and other unsafe bash patterns |
 | `sync-codex-skills.sh` | All `devTools` hosts | Regenerates Codex-local workflow/repo skill wrappers after each activation |
 | `workspace-routing/` | All `devTools` hosts | Base Codex skill for ICM workspace routing |
 
 **Skill delivery model**:
-- `~/.agents/skills/` holds the shared portable subset from the `claude-code-skills` flake input
+- `~/.agents/skills/` holds the shared portable subset from the `skills` flake input
 - `~/.codex/skills/` mirrors that portable subset for compatibility
 - `sync-codex-skills.sh` then overlays Codex-local wrappers for:
   - canonical workspace workflows from `~/knowledge/workflows/*/CONTEXT.md`
@@ -138,7 +138,7 @@ runbook above — never rotate the authkey while an auth URL is pending.
 
 ### Key Inputs
 
-nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, claude-code-skills — all following nixpkgs (except claude-code-skills which is a plain source input).
+nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, skills — all following nixpkgs (except skills which is a plain source input).
 
 ## Comment Policy
 

@@ -68,22 +68,6 @@
         "type": "github"
       }
     },
-    "claude-code-skills": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1792012843,
-        "narHash": "sha256-jtjxelFAwJH0BeBVIkynhQDVkAddhMlY3QDl6kfC+BQ=",
-        "owner": "sammasak",
-        "repo": "claude-code-skills",
-        "rev": "c4a75bc3d1b1786c4c02f9eef7ff8a9159f10c48",
-        "type": "github"
-      },
-      "original": {
-        "owner": "sammasak",
-        "repo": "claude-code-skills",
-        "type": "github"
-      }
-    },
     "deploy-rs": {
       "inputs": {
         "flake-compat": "flake-compat",
@@ -384,7 +368,6 @@
     },
     "root": {
       "inputs": {
-        "claude-code-skills": "claude-code-skills",
         "deploy-rs": "deploy-rs",
         "devenv-platform": "devenv-platform",
         "disko": "disko",
@@ -394,8 +377,25 @@
         "nix-index-database": "nix-index-database",
         "nixpkgs": "nixpkgs",
         "nur": "nur",
+        "skills": "skills",
         "sops-nix": "sops-nix",
         "stylix": "stylix"
+      }
+    },
+    "skills": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792065661,
+        "narHash": "sha256-yFA21lo2S4eyYnJO2DRk+IJSjOAYv8osMd67//F4wSY=",
+        "owner": "sammasak",
+        "repo": "skills",
+        "rev": "d12ff6f81218866cc18f2890eba605fc0a516770",
+        "type": "github"
+      },
+      "original": {
+        "owner": "sammasak",
+        "repo": "skills",
+        "type": "github"
       }
     },
     "sops-nix": {

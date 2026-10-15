@@ -123,7 +123,7 @@ nix build .#nixosConfigurations.lenovo.config.system.build.toplevel --no-link
 
 Codex is configured through `modules/programs/cli/codex/`.
 
-- `~/.agents/skills/` receives the shared portable subset from the `claude-code-skills` input
+- `~/.agents/skills/` receives the shared portable subset from the `skills` input
 - `~/.codex/skills/` mirrors that portable subset
 - Home Manager activation then regenerates a Codex-local overlay from:
   - `~/knowledge/workflows/*/CONTEXT.md`

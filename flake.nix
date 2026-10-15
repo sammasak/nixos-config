@@ -25,8 +25,8 @@
     nix-index-database.url = "github:nix-community/nix-index-database";
     nix-index-database.inputs.nixpkgs.follows = "nixpkgs";
 
-    claude-code-skills.url = "github:sammasak/claude-code-skills";
-    claude-code-skills.flake = false;
+    skills.url = "github:sammasak/skills";
+    skills.flake = false;
 
     # Private repo: ssh URL (github: 404s without a token). Supplies the Pi
     # router/free extension to hosts with sam.profile.pi.

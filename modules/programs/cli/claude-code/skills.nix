@@ -1,5 +1,5 @@
-# Takes the claude-code-skills flake input as its first argument, so it is
-# imported applied:  import .../skills.nix inputs.claude-code-skills
+# Takes the skills flake input as its first argument, so it is
+# imported applied:  import .../skills.nix inputs.skills
 skillsSrc:
 { lib, ... }:
 let

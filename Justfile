@@ -18,7 +18,7 @@ switch HOST=host:
     sudo nixos-rebuild switch --flake .#{{HOST}} --install-bootloader
 
 # Update one flake input (default: the Claude skills repo); pair with `just switch`
-bump input='claude-code-skills':
+bump input='skills':
     nix flake update {{input}}
 
 # Build this host's configuration without activating it

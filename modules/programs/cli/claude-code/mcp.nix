@@ -1,7 +1,7 @@
 # Claude Code settings, plugins and NixOS fixes, injected into every host via
-# home-manager.sharedModules. Takes the claude-code-skills flake input as its
+# home-manager.sharedModules. Takes the skills flake input as its
 # first argument, so it is imported applied:
-#   (import .../claude-code/mcp.nix inputs.claude-code-skills)
+#   (import .../claude-code/mcp.nix inputs.skills)
 skillsSrc:
 { pkgs, lib, config, ... }:
 {
@@ -58,7 +58,7 @@ skillsSrc:
         # (slash-command usage is invisible to Skill-invocation greps).
         "ralph-loop@claude-plugins-official" = true;
       };
-      # Hook commands are Nix store paths from the claude-code-skills input, so
+      # Hook commands are Nix store paths from the skills input, so
       # they resolve on every host regardless of HOME.
       hooks = {
         Stop = [{
@@ -205,7 +205,7 @@ skillsSrc:
   home.activation.wireManualGitHooks =
     let
       wireScript = pkgs.writeShellScript "wire-manual-githooks" ''
-        for r in nixos-config claude-code-skills homelab-gitops knowledge; do
+        for r in nixos-config skills homelab-gitops knowledge; do
           d="$HOME/$r"
           [ -d "$d/.git" ] && [ -d "$d/.githooks" ] || continue
           cur=$(${pkgs.git}/bin/git -C "$d" config --local core.hooksPath 2>/dev/null || true)
