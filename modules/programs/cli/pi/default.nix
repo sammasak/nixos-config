@@ -58,14 +58,24 @@ let
     ${pkgs.jq}/bin/jq --argjson d ${lib.escapeShellArg defaultSettings} '$d + .' "$f" > "$tmp"
     cmp -s "$tmp" "$f" || mv "$tmp" "$f"
   '';
+  # monitoring/loki ClusterIP: reachable from k3s nodes only; update if the Service is
+  # recreated. Baked into the wrappers so non-login shells and timers get it too.
+  lokiDefault = ''
+    export PI_OFFLOAD_LOKI_URL="''${PI_OFFLOAD_LOKI_URL:-http://10.43.92.124:3100}"
+  '';
 in
 {
   home.packages = [
     pkgs.pi-coding-agent
     (pkgs.writeShellApplication {
       name = "pi-offload";
-      runtimeInputs = with pkgs; [ git jq coreutils util-linux ];
-      text = builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-offload";
+      runtimeInputs = with pkgs; [ git jq coreutils util-linux curl openssh ];
+      text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-offload";
+    })
+    (pkgs.writeShellApplication {
+      name = "pi-view";
+      runtimeInputs = with pkgs; [ curl jq coreutils ];
+      text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-view";
     })
   ];
 
