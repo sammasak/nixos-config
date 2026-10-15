@@ -42,12 +42,19 @@ Verified on the pinned 1.1.0 build:
   (`enabledModels` = free-tier models, longer `retry` backoff). Top-level keys you
   already have win as whole objects, not deep-merged. `auth.json` and
   `sessions/` are never touched.
-- Merges one provider, `msi-ollama`, into `~/.pi/agent/models.json` on every
-  activation (jq; replaces only that key, so hand-written providers such as
-  `ollama` for pi-harness stay). It points at msi's Ollama, which is the
-  router/free local tier. Override the URL with
-  `sam.pi.msiOllamaBaseUrl` in the host's Home Manager config. A models.json
-  that is not a JSON object is left alone.
+- Merges two providers into `~/.pi/agent/models.json` on every activation (jq;
+  replaces only those keys, so hand-written providers such as `ollama` for
+  pi-harness stay): `msi-ollama` and `homelab`. A models.json that is not a
+  JSON object is left alone.
+  - `msi-ollama` points at msi's Ollama, the router/free local tier. Override
+    the URL with `sam.pi.msiOllamaBaseUrl` in the host's Home Manager config.
+  - `homelab` (opt-in: `pi --model homelab/auto`, also `best`, `local`) is the
+    in-cluster llm-gateway (homelab-gitops `apps/llm-gateway`, pinned ClusterIP
+    `10.43.0.80`, override `sam.pi.llmGatewayBaseUrl`). It holds the provider
+    keys and fails over across free tiers itself. Pi authenticates with the
+    project key `llm_gateway_pi_key` (`secrets/claude/llm-gateway.yaml`, every
+    pi host, declared in `modules/core/sops.nix`), read per request via
+    `apiKey: "!cat /run/secrets/llm_gateway_pi_key"`.
 
 ## Credentials
 

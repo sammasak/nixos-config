@@ -27,6 +27,15 @@ in
           mode = "0400";
         };
 
+        # Pi's project key for the in-cluster llm-gateway (homelab-gitops
+        # apps/llm-gateway). Read by Pi's `homelab` provider at request time
+        # (modules/programs/cli/pi); no provider keys, so every pi host may hold it.
+        "llm_gateway_pi_key" = lib.mkIf config.sam.profile.pi {
+          sopsFile = ../../secrets/claude/llm-gateway.yaml;
+          owner = username;
+          mode = "0400";
+        };
+
         # Decrypted to /run/secrets/nix_access_token, which nix.conf includes at
         # runtime so nix can fetch private flake inputs. It lives under
         # secrets/homelab/ for the `homelab/*.yaml` recipient rule in
