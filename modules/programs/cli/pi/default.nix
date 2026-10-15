@@ -3,8 +3,10 @@
 # The host still declares the sops secrets named in providerKeys
 # (see hosts/lenovo-21CB001PMX/configuration.nix). Auth, upgrade, rollback: docs/pi.md.
 devenvPlatform:
-{ lib, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
+  cfg = config.sam.pi;
+
   # Literal /run/secrets paths: this is an HM module, so the NixOS
   # config.sops.secrets is not in scope. A missing file just leaves the var unset.
   providerKeys = {
@@ -58,6 +60,43 @@ let
     ${pkgs.jq}/bin/jq --argjson d ${lib.escapeShellArg defaultSettings} '$d + .' "$f" > "$tmp"
     cmp -s "$tmp" "$f" || mv "$tmp" "$f"
   '';
+
+  # router/free tier 3 (local): msi's CPU-only Ollama. Its own provider key, so the
+  # hand-written providers in models.json (e.g. `ollama` for pi-harness) are kept;
+  # only `msi-ollama` is replaced on every activation. contextWindow is the
+  # server's OLLAMA_CONTEXT_LENGTH: Ollama truncates longer prompts silently.
+  msiOllamaProvider = builtins.toJSON {
+    baseUrl = cfg.msiOllamaBaseUrl;
+    api = "openai-completions";
+    apiKey = "ollama";
+    models = map (id: {
+      inherit id;
+      contextWindow = 16384;
+      maxTokens = 4096;
+      compat = {
+        supportsDeveloperRole = false;
+        supportsReasoningEffort = false;
+      };
+    }) [ "qwen2.5-coder:7b" "llama3.1:8b" ];
+  };
+
+  # Same rules as seedPiSettings: a malformed user file is left alone.
+  mergePiModels = pkgs.writeShellScript "merge-pi-models" ''
+    set -eu
+    f="''${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/models.json"
+    mkdir -p "$(dirname "$f")"
+    [ -f "$f" ] || echo '{}' > "$f"
+    if ! ${pkgs.jq}/bin/jq -e 'type == "object" and ((.providers // {}) | type == "object")' "$f" >/dev/null 2>&1; then
+      echo "merge-pi-models: $f is not a models.json object, leaving it alone" >&2
+      exit 0
+    fi
+    tmp="$(mktemp "$f.XXXXXX")"
+    trap 'rm -f "$tmp"' EXIT
+    ${pkgs.jq}/bin/jq --argjson p ${lib.escapeShellArg msiOllamaProvider} '.providers["msi-ollama"] = $p' "$f" > "$tmp"
+    chmod --reference="$f" "$tmp"
+    cmp -s "$tmp" "$f" || mv "$tmp" "$f"
+  '';
+
   # monitoring/loki ClusterIP: reachable from k3s nodes only; update if the Service is
   # recreated. Baked into the wrappers so non-login shells and timers get it too.
   lokiDefault = ''
@@ -65,33 +104,46 @@ let
   '';
 in
 {
-  home.packages = [
-    pkgs.pi-coding-agent
-    (pkgs.writeShellApplication {
-      name = "pi-offload";
-      runtimeInputs = with pkgs; [ git jq coreutils util-linux curl openssh ];
-      text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-offload";
-    })
-    (pkgs.writeShellApplication {
-      name = "pi-view";
-      runtimeInputs = with pkgs; [ curl jq coreutils ];
-      text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-view";
-    })
-  ];
-
-  # A store symlink: Pi only reads it, and updates arrive via `just bump devenv-platform`.
-  home.file.".pi/agent/extensions/router-free".source = "${devenvPlatform}/agents/pi/router-free";
-
-  home.sessionVariables = {
-    PI_SKIP_VERSION_CHECK = "1";
-    PI_TELEMETRY = "0";
+  options.sam.pi.msiOllamaBaseUrl = lib.mkOption {
+    type = lib.types.str;
+    # ollama-msi-backend ClusterIP (llm ns): reachable from k3s nodes; update if the Service is recreated.
+    default = "http://10.43.160.41:11434/v1";
+    description = "OpenAI-compatible base URL of msi's Ollama, the router/free local tier.";
   };
 
-  home.activation.seedPiSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    run ${seedPiSettings}
-  '';
+  config = {
+    home.packages = [
+      pkgs.pi-coding-agent
+      (pkgs.writeShellApplication {
+        name = "pi-offload";
+        runtimeInputs = with pkgs; [ git jq coreutils util-linux curl openssh ];
+        text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-offload";
+      })
+      (pkgs.writeShellApplication {
+        name = "pi-view";
+        runtimeInputs = with pkgs; [ curl jq coreutils ];
+        text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-view";
+      })
+    ];
 
-  programs.bash.enable = true;
-  programs.bash.initExtra = lib.mkAfter bashExports;
-  programs.fish.interactiveShellInit = lib.mkAfter fishExports;
+    # A store symlink: Pi only reads it, and updates arrive via `just bump devenv-platform`.
+    home.file.".pi/agent/extensions/router-free".source = "${devenvPlatform}/agents/pi/router-free";
+
+    home.sessionVariables = {
+      PI_SKIP_VERSION_CHECK = "1";
+      PI_TELEMETRY = "0";
+    };
+
+    home.activation.seedPiSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run ${seedPiSettings}
+    '';
+
+    home.activation.mergePiModels = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run ${mergePiModels}
+    '';
+
+    programs.bash.enable = true;
+    programs.bash.initExtra = lib.mkAfter bashExports;
+    programs.fish.interactiveShellInit = lib.mkAfter fishExports;
+  };
 }
