@@ -1,11 +1,6 @@
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 let
   vars = import ./variables.nix;
-  llmCloudSecret = {
-    sopsFile = ../../secrets/claude/llm-cloud.yaml;
-    owner = vars.username;
-    mode = "0400";
-  };
 in
 {
   imports = [
@@ -50,16 +45,21 @@ in
   # would otherwise reject anything copied in over SSH as lukas.
   nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];
 
-  # Keys for sam.profile.pi (docs/pi.md). Host-declared, not in sam.hostSecrets: llm-cloud.yaml
-  # is encrypted to lenovo only, so other hosts would fail activation decrypting it.
-  sops.secrets.groq_pi_agent_api_key = llmCloudSecret;
-  sops.secrets.cloudflare_pi_agent_workers_ai_token = llmCloudSecret;
-  sops.secrets.cloudflare_account_id = llmCloudSecret;
-  sops.secrets.gemini_api_key = llmCloudSecret;
-  sops.secrets.cerebras_api_key = llmCloudSecret;
-
   # Rebuilds here are manual and precede the push other hosts auto-upgrade from.
   system.autoUpgrade.enable = lib.mkForce false;
+
+  # pi-harness PICODE_EP and factum FACTS_OLLAMA_EP default to localhost:8080. The
+  # llm-gateway serves keyless Ollama only on its pod loopback, so only this reaches it.
+  systemd.user.services.ollama-portforward = {
+    description = "Port-forward the llm-gateway keyless Ollama passthrough to localhost:8080";
+    wantedBy = [ "default.target" ];
+    environment.KUBECONFIG = "%h/.kube/config";
+    serviceConfig = {
+      ExecStart = "${pkgs.kubectl}/bin/kubectl port-forward --address 127.0.0.1 deploy/llm-gateway -n llm 8080:11434";
+      Restart = "always";
+      RestartSec = 5;
+    };
+  };
 
   homelab.flux = {
     enable = true;

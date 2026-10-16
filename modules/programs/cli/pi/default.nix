@@ -1,33 +1,11 @@
 # Imported applied, for hosts with sam.profile.pi (flake-modules/40-outputs-nixos.nix):
 #   (import .../pi inputs.devenv-platform)
-# The host still declares the sops secrets named in providerKeys
-# (see hosts/lenovo-21CB001PMX/configuration.nix). Auth, upgrade, rollback: docs/pi.md.
+# No provider key reaches the host: the in-cluster llm-gateway holds them. Auth, upgrade,
+# rollback: docs/pi.md.
 devenvPlatform:
 { config, lib, pkgs, ... }:
 let
   cfg = config.sam.pi;
-
-  # Literal /run/secrets paths: this is an HM module, so the NixOS
-  # config.sops.secrets is not in scope. A missing file just leaves the var unset.
-  providerKeys = {
-    GROQ_API_KEY = "groq_pi_agent_api_key";
-    CLOUDFLARE_API_KEY = "cloudflare_pi_agent_workers_ai_token";
-    CLOUDFLARE_ACCOUNT_ID = "cloudflare_account_id";
-    GEMINI_API_KEY = "gemini_api_key";
-    CEREBRAS_API_KEY = "cerebras_api_key";
-  };
-
-  fishExports = lib.concatStrings (lib.mapAttrsToList (var: secret: ''
-    if test -r /run/secrets/${secret}
-      set -gx ${var} (cat /run/secrets/${secret})
-    end
-  '') providerKeys);
-
-  bashExports = lib.concatStrings (lib.mapAttrsToList (var: secret: ''
-    if [ -r /run/secrets/${secret} ]; then
-      export ${var}="$(cat /run/secrets/${secret})"
-    fi
-  '') providerKeys);
 
   # Seeded only when missing.
   defaultSettings = builtins.toJSON {
@@ -183,9 +161,5 @@ in
     home.activation.mergePiModels = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       run ${mergePiModels}
     '';
-
-    programs.bash.enable = true;
-    programs.bash.initExtra = lib.mkAfter bashExports;
-    programs.fish.interactiveShellInit = lib.mkAfter fishExports;
   };
 }

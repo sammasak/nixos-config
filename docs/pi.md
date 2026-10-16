@@ -33,12 +33,9 @@ Verified on the pinned 1.1.0 build:
 ## What the module does
 
 - Installs `pkgs.pi-coding-agent`. The binary is also installed on every
-  `devTools` host by `modules/home/pi-harness`; this module adds the config and
-  credentials only where it is imported.
+  `devTools` host by `modules/home/pi-harness`; this module adds the config only
+  where it is imported.
 - Sets `PI_SKIP_VERSION_CHECK=1` (Nix owns upgrades) and `PI_TELEMETRY=0`.
-- Exports provider keys in fish/bash init from `/run/secrets/<name>` when the
-  file exists: `GROQ_API_KEY`, `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`,
-  `GEMINI_API_KEY`, `CEREBRAS_API_KEY`. Only names and paths are in Nix.
 - Seeds missing top-level keys into the writable `~/.pi/agent/settings.json`
   (a longer `retry` backoff). Top-level keys you already have win as whole
   objects, not deep-merged. Three keys are re-pinned on every activation:
@@ -61,50 +58,25 @@ Verified on the pinned 1.1.0 build:
 
 ## Credentials
 
-Keys live in `secrets/claude/llm-cloud.yaml` (sops, age). Its own rule in
-`secrets/.sops.yaml` limits recipients to the personal key (used by factum's
-`dev/cloud-env.sh`) and lenovo's host key (sops-nix). Lenovo declares the sops
-secrets in `hosts/lenovo-21CB001PMX/configuration.nix`, owner `lukas`, mode
-0400, decrypted to `/run/secrets/` at activation. They never enter the Nix store
-or Git in plaintext. Revisions before the recipient narrowing were also
-encrypted to acer/black-pi, so treat the keys in them as exposed and rotate them
-at the provider.
+Pi on the hosts holds **no provider key**. Since 2026-10-16
+(sammasak/llm-gateway#8) the in-cluster llm-gateway is the only path to cloud
+models. It holds the Gemini and Workers AI keys (homelab-gitops
+`apps/llm-gateway/secrets`) and the free-quota ledger that Pi shares with Open
+WebUI and factum. Pi authenticates with its project key `llm_gateway_pi_key`
+(above). Adding or rotating a provider key is a gateway change: edit the
+gateway's SOPS secret and catalog in homelab-gitops.
 
-Exporting keys in shell init puts them in every process started from a shell
-(the same trade-off codex makes for `OPENAI_API_KEY`). For a narrower scope, use
-the `auth.json` command reference below instead.
+`secrets/claude/llm-cloud.yaml` now holds only factum's keys: its direct
+benchmark arms and `llm_gateway_factum_key`. It is encrypted to the personal key
+alone, so no host decrypts it at activation. The Pi-only entries
+(`groq_pi_agent_api_key`, `cloudflare_pi_agent_workers_ai_token`,
+`gemini_api_key`, `cerebras_api_key`) are gone. The Gemini and Workers AI ones
+were the gateway's keys. Revoke the Groq and Cerebras ones in their consoles
+once nothing uses them.
 
-Account policy: use dedicated free-tier accounts with **no billing method
-attached** wherever the provider allows it. Then exhausting quota yields a 429/403,
-never a charge. Create one key per consumer (Pi vs factum) so limits and
-revocation are independent.
-
-### Add or rotate a provider key
-
-```bash
-sops secrets/claude/llm-cloud.yaml           # add e.g. cerebras_api_key: ...
-# Gemini/Cerebras: add a matching line in hosts/lenovo-21CB001PMX/configuration.nix
-#   sops.secrets.cerebras_api_key = llmCloudSecret;
-just switch                                   # then open a new shell
-pi --list-models cerebras
-```
-
-| Provider | Get a key | sops key | Env var |
-|---|---|---|---|
-| Groq | console.groq.com → API Keys | `groq_pi_agent_api_key` (factum keeps `groq_api_key`) | `GROQ_API_KEY` |
-| Cloudflare Workers AI | dash → AI → Workers AI → "Use REST API" (token with *Workers AI Read+Edit*), plus account ID | `cloudflare_pi_agent_workers_ai_token` (factum keeps `cloudflare_workers_ai_token`), `cloudflare_account_id` | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID` |
-| Gemini | aistudio.google.com → Get API key | `gemini_api_key` | `GEMINI_API_KEY` |
-| Cerebras | cloud.cerebras.ai → API Keys | `cerebras_api_key` | `CEREBRAS_API_KEY` |
-
-Interactive alternative (no sops): `/login <provider>` stores the key in
-`~/.pi/agent/auth.json` (0600, outside Nix). Or reference sops without
-exporting it: `{"groq": {"type": "api_key", "key": "!cat /run/secrets/groq_pi_agent_api_key"}}`.
-
-### Revoke
-
-1. Revoke the key in the provider console (this is the only step that stops it working).
-2. Remove it from `llm-cloud.yaml` (`sops ...`) and the host's `sops.secrets` line, then `just switch`.
-3. `/logout <provider>` in Pi if it was ever stored in `auth.json`.
+Escape hatch for a one-off direct call: `/login <provider>` stores a key in
+`~/.pi/agent/auth.json` (0600, outside Nix), and `/logout <provider>` removes it.
+Do not add provider keys back to shell init.
 
 ## router/free
 
@@ -140,8 +112,13 @@ pi --model router/free        # or pick it in /model
 just bump devenv-platform     # take a newer router; then just switch
 ```
 
+On the hosts `router/free` has no credentials and its local tier is disabled,
+so it answers "no usable free model (no credentials for: ...)" and points at
+`homelab/auto`. It stays installed as an explicit fallback for a session that
+brings its own key (`/login`).
+
 To turn it off for one host, set `pi = false` in its `variables.nix`. That
-removes the module, the key exports and the extension link. `~/.pi/agent` state
+removes the module and the extension link. `~/.pi/agent` state
 stays.
 
 ## Use
@@ -150,15 +127,14 @@ stays.
 pi                                   # any repo; no devenv/factum needed
 /model                               # pick provider/model; Ctrl+P cycles enabledModels
 pi --list-models                     # only providers with credentials are listed
-pi --model cloudflare-workers-ai/@cf/qwen/qwen3.8-27b -p "..." </dev/null   # one-shot
+pi --model homelab/best -p "..." </dev/null         # one-shot
 ```
 
 `-p` waits for stdin when it is a non-TTY pipe (scripts, agents), so close it
 with `</dev/null`.
 
 `/model` persists the choice as `defaultProvider`/`defaultModel` in
-`settings.json`. Lenovo's existing default (`ollama/llama3.2:3b`) is kept until
-you pick another.
+`settings.json` until the next activation re-pins `homelab/auto`.
 
 ## Upgrade and rollback
 
@@ -169,7 +145,7 @@ you pick another.
   below, since provider catalogs change between releases.
 - Rollback: `sudo nixos-rebuild switch --rollback` (or pick the previous
   systemd-boot entry). Pi state in `~/.pi/agent` is version-tolerant and untouched.
-- Remove: set `pi = false` in the host's `variables.nix` and drop its `sops.secrets` lines.
+- Remove: set `pi = false` in the host's `variables.nix`.
   Seeded keys stay in `~/.pi/agent/settings.json` until you delete them.
 
 ## Verification (2026-10-14, Pi 1.1.0)
@@ -211,7 +187,7 @@ sources: [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platf
 | `google/*` with the old `~/.env` key | prepaid billing project | | 402; would bill if topped up | **excluded**; delete that key |
 | `cerebras/qwen-3.8-27b`, `gpt-oss-120b` | prepaid trial credits ($5, 30 days); auto-recharge off by default | 5 RPM, 1M TPD on the trial | requests fail when credits run out; the card is only charged when credits are bought or auto-recharge is enabled | verified (logic 3/3 each); off in router/free as a separate cost class, owner decision |
 
-Manual onboarding steps (account access is not automatable here):
+Manual onboarding steps (historical: superseded on 2026-10-16, when provider keys moved to the llm-gateway; see Credentials):
 
 1. Groq: create a key named `pi` in the console, then `sops secrets/claude/llm-cloud.yaml` and replace `groq_api_key`. Revoke the old key once factum has its own. More quota needs a separate Groq account; a new key does not add any.
 2. Gemini: create a new AI Studio project with **no** billing account and a key in it. Store it as `gemini_api_key` and add `sops.secrets.gemini_api_key = llmCloudSecret;` to the lenovo config. Move or delete the plaintext `GEMINI_API_KEY` in `~/.env` (mode 0644).
