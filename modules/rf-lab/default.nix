@@ -186,6 +186,8 @@ let
   tools = [ rfSweep rfCapture rfBtScan rfSim ];
 in
 {
+  imports = [ ./ap.nix ];
+
   options.sam.rfLab = {
     enable = lib.mkEnableOption "passive 2.4 GHz RF observation kit (naked-pi)";
 
