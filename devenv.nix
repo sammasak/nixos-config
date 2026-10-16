@@ -112,6 +112,13 @@ let
     ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-sim"
   '';
 
+  rfApOutage = gate "rf-ap-outage" [ pkgs.openssh ] ''
+    exec >&2
+    secs=''${RF_SECONDS:-10}
+    echo "Bounded outage of naked-pi's own lab AP (''${secs}s)..."
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-outage $secs"
+  '';
+
   rfList = gate "rf-list" (with pkgs; [ openssh coreutils ]) ''
     exec >&2  # devenv captures task stdout; stream the listing instead
     echo "== naked-pi /var/lib/rf-lab/captures:"
@@ -187,6 +194,7 @@ in
     "rf:list" = task "naked-pi: list captures on the Pi and locally" rfList;
     "rf:analyze" = task "offline pcap analysis: mgmt frames + deauth/disassoc reason codes (RF_PCAP)" rfAnalyze;
     "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
+    "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
   };
 
   git-hooks.hooks = {

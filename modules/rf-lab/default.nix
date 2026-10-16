@@ -183,7 +183,29 @@ let
     '';
   };
 
-  tools = [ rfSweep rfCapture rfBtScan rfSim ];
+  # Chaos/resilience: a bounded outage of the lab's *own* AP (stop then restart
+  # hostapd/dnsmasq), timing the restore. Acts only on the rf-lab AP units — no
+  # deauth, no frames at other networks. Inert unless sam.rfLab.ap is running.
+  rfApOutage = pkgs.writeShellApplication {
+    name = "rf-ap-outage";
+    runtimeInputs = [ pkgs.systemd pkgs.coreutils ];
+    text = ''
+      secs=''${1:-10}
+      if ! systemctl is-active --quiet rf-lab-ap; then
+        echo "lab AP not running (sam.rfLab.ap.enable=false?); nothing to outage" >&2
+        exit 1
+      fi
+      echo "stopping lab AP for ''${secs}s..."
+      start=$(date +%s)
+      systemctl stop rf-lab-dhcp rf-lab-ap || true
+      sleep "$secs"
+      systemctl start rf-lab-ap rf-lab-dhcp || true
+      for _ in $(seq 1 15); do systemctl is-active --quiet rf-lab-ap && break; sleep 1; done
+      echo "AP restored after ~$(( $(date +%s) - start ))s"
+    '';
+  };
+
+  tools = [ rfSweep rfCapture rfBtScan rfSim rfApOutage ];
 in
 {
   imports = [ ./ap.nix ];
