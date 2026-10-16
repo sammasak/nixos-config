@@ -108,8 +108,8 @@ let
 
   rfSim = gate "rf-sim" [ pkgs.openssh ] ''
     exec >&2
-    loss=''${RF_LOSS:-0.0}; outage=''${RF_OUTAGE:-1}
-    echo "Virtual-radio Wi-Fi lab on naked-pi (mac80211_hwsim; no physical RF; loss=$loss outage=''${outage}s)..."
+    loss=''${RF_LOSS:-0}; outage=''${RF_OUTAGE:-1}
+    echo "Virtual-radio two-netns Wi-Fi lab on naked-pi (mac80211_hwsim; no physical RF; loss=''${loss}% outage=''${outage}s)..."
     ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-sim $loss $outage"
   '';
 
