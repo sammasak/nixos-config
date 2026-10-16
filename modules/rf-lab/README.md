@@ -28,6 +28,26 @@ sam.rfLab.enable = true;          # installs the kit + narrow sudo
 
 Analysis stays on lenovo: `nix shell nixpkgs#wireshark -c wireshark ~/rf-lab-captures/<file>.pcap`.
 
+## Owned-AP lab (opt-in, off by default)
+
+An isolated WPA2 test AP on the onboard `wlan0`, for associating **your own**
+clients — never a tool against anyone else's network. No bridge/NAT/route to the
+LAN, so lab clients cannot reach the management subnet; the AP never touches the
+Ethernet management path. Off by default (inert); enable per host:
+
+```nix
+sam.rfLab.ap = {
+  enable = true;
+  pskFile = config.sops.secrets."rf-lab/psk".path;  # WPA2 passphrase, one line
+  # ssid = "naked-lab"; channel = 6; gateway = "10.77.0.1";
+};
+```
+
+`hostapd` (WPA2) + `dnsmasq` (DHCP only, `10.77.0.0/24`) run as explicit systemd
+units; the passphrase is loaded as a systemd credential, never in the Nix store.
+Verified on naked-pi: hostapd reaches `AP-ENABLED` on `wlan0` and Ethernet SSH is
+unaffected. Associating a client is a physical step (bring your own device).
+
 ## On-Pi wrappers
 
 The tasks call three narrow `sudo` wrappers (lukas has NOPASSWD for exactly
