@@ -162,8 +162,8 @@ let
       }
       EOF
 
-      ip netns exec "$ns" ip link set "$ap" up 2>/dev/null || true
-      ip netns exec "$ns" ip link set "$sta" up 2>/dev/null || true
+      # hostapd/wpa_supplicant bring their own interfaces up; pre-upping the AP
+      # makes nl80211 fail to set AP mode ("Could not configure driver mode").
       ip netns exec "$ns" hostapd -B "$tmp/hostapd.conf" >/dev/null 2>&1 || { echo "hostapd failed to start" >&2; exit 1; }
       ip netns exec "$ns" ip addr add 10.77.0.1/24 dev "$ap" 2>/dev/null || true
       ip netns exec "$ns" wpa_supplicant -B -i "$sta" -c "$tmp/wpa.conf" >/dev/null 2>&1 || true
