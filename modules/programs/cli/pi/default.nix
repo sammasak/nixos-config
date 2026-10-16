@@ -115,6 +115,12 @@ let
   lokiDefault = ''
     export PI_OFFLOAD_LOKI_URL="''${PI_OFFLOAD_LOKI_URL:-http://10.43.92.124:3100}"
   '';
+
+  piOffload = pkgs.writeShellApplication {
+    name = "pi-offload";
+    runtimeInputs = with pkgs; [ git jq coreutils util-linux curl openssh ];
+    text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-offload";
+  };
 in
 {
   options.sam.pi.msiOllamaBaseUrl = lib.mkOption {
@@ -134,15 +140,23 @@ in
   config = {
     home.packages = [
       pkgs.pi-coding-agent
-      (pkgs.writeShellApplication {
-        name = "pi-offload";
-        runtimeInputs = with pkgs; [ git jq coreutils util-linux curl openssh ];
-        text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-offload";
-      })
+      piOffload
       (pkgs.writeShellApplication {
         name = "pi-view";
         runtimeInputs = with pkgs; [ curl jq coreutils ];
         text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-view";
+      })
+      # ADR-028 issue pipeline. Run in place from the pinned checkout, so it finds its
+      # contract files (docs/templates, configs/agent-issues) next to it. Managed clones
+      # push over ssh with the host key (github.com pinned in modules/core/services.nix);
+      # gh is only used for API and PR calls.
+      (pkgs.writeShellApplication {
+        name = "pi-ticket";
+        runtimeInputs = with pkgs; [ bash gh git jq coreutils util-linux curl openssh gawk gnused gnugrep findutils diffutils ];
+        text = lokiDefault + ''
+          export PI_TICKET_OFFLOAD="''${PI_TICKET_OFFLOAD:-${piOffload}/bin/pi-offload}"
+          exec bash ${devenvPlatform}/agents/pi/ticket/pi-ticket "$@"
+        '';
       })
     ];
 
