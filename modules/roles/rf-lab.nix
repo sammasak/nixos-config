@@ -13,8 +13,10 @@ in
 
   sam.rfLab.enable = true;
 
-  # NM would otherwise autoconnect or rescan a radio mid-capture; Ethernet stays managed.
-  networking.networkmanager.unmanaged = [ "type:wifi" ];
+  # Keep USB capture adapters (wlu*) out of NM so a capture can't be interrupted
+  # or interfere; the onboard wlan0 stays managed so the host can use declarative
+  # home Wi-Fi for management when Ethernet is unplugged.
+  networking.networkmanager.unmanaged = [ "interface-name:wlu*" ];
   systemd.services.ModemManager.enable = lib.mkForce false;
 
   hardware.wirelessRegulatoryDatabase = true;
