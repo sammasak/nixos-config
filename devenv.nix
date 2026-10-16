@@ -120,6 +120,14 @@ let
     ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-outage $secs"
   '';
 
+  rfApKickHil = gate "rf-ap-kick-hil" [ pkgs.openssh ] ''
+    exec >&2
+    mode=dry-run; arg=""
+    [ "''${RF_HIL_COMMIT:-0}" = "1" ] && { mode=commit; arg="--commit"; }
+    echo "Two-radio hardware-in-the-loop rf-ap-kick on naked-pi (mode=''${mode}; refuses unless mgmt is Ethernet)..."
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-kick-hil $arg"
+  '';
+
   rfApStatus = gate "rf-ap-status" [ pkgs.openssh ] ''
     exec >&2
     ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-status"
@@ -266,6 +274,7 @@ in
     "rf:preflight" = task "naked-pi: offline pre-deploy safety-invariant gate" rfPreflight;
     "rf:ap-status" = task "naked-pi: list stations associated to the lab AP" rfApStatus;
     "rf:ap-kick" = task "naked-pi: evict an enrolled station from our own AP (RF_MAC, RF_COMMIT)" rfApKick;
+    "rf:ap-kick-hil" = task "naked-pi: two-radio hardware-in-the-loop rf-ap-kick (Ethernet-gated; RF_HIL_COMMIT)" rfApKickHil;
     "rf:bt-status" = task "naked-pi: Bluetooth controller + paired-device status" rfBtStatus2;
     "rf:bt-disconnect" = task "naked-pi: disconnect an enrolled paired BT device (RF_MAC, RF_COMMIT)" rfBtDisconnect;
     "rf:bt-outage" = task "naked-pi: bounded local BT adapter power-off/on (RF_SECONDS)" rfBtOutage;

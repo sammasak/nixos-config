@@ -252,7 +252,7 @@ let
   tools = [ rfSweep rfCapture rfBtScan rfSim rfApOutage ];
 in
 {
-  imports = [ ./ap.nix ./net-watchdog.nix ./bluetooth.nix ];
+  imports = [ ./ap.nix ./net-watchdog.nix ./bluetooth.nix ./hil.nix ];
 
   options.sam.rfLab = {
     enable = lib.mkEnableOption "passive 2.4 GHz RF observation kit (naked-pi)";

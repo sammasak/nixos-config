@@ -66,6 +66,25 @@ units; the passphrase is loaded as a systemd credential, never in the Nix store.
 Verified on naked-pi: hostapd reaches `AP-ENABLED` on `wlan0` and Ethernet SSH is
 unaffected. Associating a client is a physical step (bring your own device).
 
+## Two-radio hardware-in-the-loop kick test (#38)
+
+`rf-ap-kick-hil` (task `rf:ap-kick-hil`) proves the `rf-ap-kick` deauth primitive
+on **real radios**: onboard `wlan0` as a throwaway WPA2 AP, the USB adapter
+(rtl8192cu) as an enrolled station, one `hostapd_cli deauthenticate`, and a timed
+reassociation — emitting `{"kind":"hardware",...}`. It is the only path to #38's
+real over-the-air acceptance without an external client.
+
+It **hard-refuses unless the default route is a third interface (Ethernet)**, so
+it structurally cannot cut SSH the way bringing the AP up on `wlan0` would; the
+onboard radio supports `AP` and the USB phy supports `managed`, on separate phys,
+so concurrent AP+station is within the hardware's limits (`iw phy` confirmed). An
+`EXIT` trap tears down hostapd/wpa_supplicant and hands `wlan0` back to
+NetworkManager. Run `rf:ap-kick-hil` for a dry-run (prints the gate decision);
+`RF_HIL_COMMIT=1 rf:ap-kick-hil` runs the real test. **Only run with Ethernet
+plugged in** — otherwise it refuses by design. The rtl8192cu RX path is fragile
+under mode flips/undervoltage, so a non-association is a retry/replug, not a
+failure of the primitive.
+
 ## On-Pi wrappers
 
 The tasks call three narrow `sudo` wrappers (lukas has NOPASSWD for exactly
