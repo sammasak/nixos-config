@@ -111,6 +111,8 @@ let
     runtimeInputs = with pkgs; [ kmod iw iproute2 hostapd wpa_supplicant wmediumd iperf3 coreutils gnugrep ];
     text = ''
       ns=rfsim
+      loss=''${RF_LOSS:-0.0}     # wmediumd per-frame loss probability (0.0 = perfect)
+      outage=''${RF_OUTAGE:-1}   # seconds the station stays disconnected
       tmp=$(mktemp -d)
       cleanup() {
         ip netns pids "$ns" 2>/dev/null | xargs -r kill 2>/dev/null || true
@@ -142,7 +144,7 @@ let
       # default_prob 0.0 is a perfect link — raise it to model loss for chaos.
       cat >"$tmp/wm.cfg" <<EOF
       ifaces : { ids = ["$apmac", "$stamac"]; };
-      model : { type = "prob"; default_prob = 0.0; };
+      model : { type = "prob"; default_prob = $loss; };
       EOF
       ip netns exec "$ns" wmediumd -c "$tmp/wm.cfg" >/dev/null 2>&1 &
       sleep 1
@@ -185,11 +187,11 @@ let
       ip netns exec "$ns" iperf3 -c 10.77.0.1 -t 3 2>/dev/null | grep -E "sender|receiver" \
         || echo "  no data plane: hwsim passes assoc but not data frames on kernel $(uname -r), even with wmediumd (see #40)"
 
-      # Chaos/recovery: drop the station from its own AP and time the reassociation.
-      echo "== disconnect/reconnect:"
+      # Chaos/recovery: drop the station from its own AP, hold the outage, time recovery.
+      echo "== disconnect/reconnect (outage ''${outage}s):"
       start=$(date +%s)
       ip netns exec "$ns" wpa_cli -i "$sta" -p "$tmp/wpa" disconnect >/dev/null 2>&1 || true
-      sleep 1
+      sleep "$outage"
       ip netns exec "$ns" wpa_cli -i "$sta" -p "$tmp/wpa" reconnect >/dev/null 2>&1 || true
       recovered=timeout
       for _ in $(seq 1 15); do
@@ -197,6 +199,11 @@ let
         sleep 1
       done
       echo "  reassociated in ~''${recovered}s"
+
+      # Deterministic artifact (simulation only — not a hardware measurement).
+      dp=blocked
+      printf '{"kind":"simulation","scenario":{"loss":%s,"outage_s":%s},"association":"%s","reassociated_s":"%s","data_plane":"%s","kernel":"%s"}\n' \
+        "$loss" "$outage" "$assoc" "$recovered" "$dp" "$(uname -r)"
     '';
   };
 
