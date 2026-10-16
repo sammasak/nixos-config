@@ -60,9 +60,10 @@ let
     ${lib.getExe qa}
   '';
 
-  # Operator side of the naked-pi passive RF kit. Each SSHes the Pi (the
-  # `naked-pi` ssh alias), runs one bounded observation wrapper there, and keeps
-  # analysis on this host. Observation only: no task can transmit, deauth or jam.
+  # Operator side of the naked-pi RF kit. Each SSHes the Pi (the `naked-pi` ssh
+  # alias), runs one bounded wrapper there, and keeps analysis on this host.
+  # Mostly passive; deauth is limited to our own AP's enrolled stations
+  # (rf:ap-kick, rf:ap-kick-hil) — never injection or a third-party network.
   rfBeacons = gate "rf-beacons" (with pkgs; [ openssh coreutils gawk gnugrep wireshark-cli ]) ''
     exec >&2  # devenv captures task stdout; stream the table instead
     dwell=''${RF_DWELL:-1.2}
@@ -118,6 +119,15 @@ let
     secs=''${RF_SECONDS:-10}
     echo "Bounded outage of naked-pi's own lab AP (''${secs}s)..."
     ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-outage $secs"
+  '';
+
+  rfApKickHil = gate "rf-ap-kick-hil" [ pkgs.openssh ] ''
+    exec >&2
+    mode=dry-run; arg=""
+    [ "''${RF_HIL_COMMIT:-0}" = "1" ] && { mode=commit; arg="--commit"; }
+    echo "Two-radio hardware-in-the-loop rf-ap-kick on naked-pi (mode=''${mode}; refuses unless mgmt is Ethernet)..."
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+      naked-pi "sudo rf-ap-kick-hil $arg"
   '';
 
   rfApStatus = gate "rf-ap-status" [ pkgs.openssh ] ''
@@ -266,6 +276,7 @@ in
     "rf:preflight" = task "naked-pi: offline pre-deploy safety-invariant gate" rfPreflight;
     "rf:ap-status" = task "naked-pi: list stations associated to the lab AP" rfApStatus;
     "rf:ap-kick" = task "naked-pi: evict an enrolled station from our own AP (RF_MAC, RF_COMMIT)" rfApKick;
+    "rf:ap-kick-hil" = task "naked-pi: two-radio hardware-in-the-loop rf-ap-kick (Ethernet-gated; RF_HIL_COMMIT)" rfApKickHil;
     "rf:bt-status" = task "naked-pi: Bluetooth controller + paired-device status" rfBtStatus2;
     "rf:bt-disconnect" = task "naked-pi: disconnect an enrolled paired BT device (RF_MAC, RF_COMMIT)" rfBtDisconnect;
     "rf:bt-outage" = task "naked-pi: bounded local BT adapter power-off/on (RF_SECONDS)" rfBtOutage;

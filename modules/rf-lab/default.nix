@@ -1,7 +1,8 @@
-# Opt-in passive 2.4 GHz observation kit for naked-pi. Capture and standard
-# discovery only — no injection, deauth, jamming or AP mode in any wrapper.
-# Driven from lenovo by the `rf:*` devenv tasks (see devenv.nix); full context
-# in modules/rf-lab/README.md and ~/knowledge/homelab/runbooks/naked-pi-rf-lab.md.
+# Opt-in 2.4 GHz RF lab for naked-pi: passive capture/discovery here, with the
+# owned-AP lab (ap.nix) and the Ethernet-gated HIL kick test (hil.nix) as the only
+# deauth/AP-mode paths — all scoped to our own AP and enrolled stations, never
+# frame injection or anyone else's network. Driven from lenovo by the `rf:*`
+# devenv tasks; full context in README.md and the naked-pi-rf-lab.md runbook.
 { config, lib, pkgs, ... }:
 let
   cfg = config.sam.rfLab;
@@ -11,6 +12,10 @@ let
   # managed-only). Find it by its udev USB name (wlu*), which is stable — unlike
   # the phy index, which flips with USB enumeration order across boots.
   pickMon = ''
+    # One USB-adapter op at a time: rf-ap-kick-hil uses wlu* as a station and its
+    # restore would fight a monitor-mode capture (and vice versa). Same lock file.
+    exec 9>/run/rf-lab.lock
+    flock -n 9 || { echo "another rf-lab op holds the radio lock; retry when it finishes" >&2; exit 1; }
     IF=$(iw dev | awk '/Interface/{print $2}' | grep -m1 '^wlu' || true)
     if [ -z "''${IF:-}" ]; then
       # The rtl8192cu RX path wedges after repeated mode flips or an undervoltage
@@ -47,7 +52,7 @@ let
 
   rfSweep = pkgs.writeShellApplication {
     name = "rf-sweep";
-    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod ];
+    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod util-linux ];
     text = ''
       per=''${1:-1.2}
       ${pickMon}
@@ -69,7 +74,7 @@ let
 
   rfCapture = pkgs.writeShellApplication {
     name = "rf-capture";
-    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod ];
+    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod util-linux ];
     text = ''
       ch=''${1:?usage: rf-capture <channel> [seconds] [bpf-filter]}
       secs=''${2:-30}
@@ -252,7 +257,7 @@ let
   tools = [ rfSweep rfCapture rfBtScan rfSim rfApOutage ];
 in
 {
-  imports = [ ./ap.nix ./net-watchdog.nix ./bluetooth.nix ];
+  imports = [ ./ap.nix ./net-watchdog.nix ./bluetooth.nix ./hil.nix ];
 
   options.sam.rfLab = {
     enable = lib.mkEnableOption "passive 2.4 GHz RF observation kit (naked-pi)";
