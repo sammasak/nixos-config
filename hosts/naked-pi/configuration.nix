@@ -14,6 +14,7 @@ in
 
   sam.profile = vars;
   sam.wifi.declarativeHomeProfile = true;
+  sam.rfLab.bluetooth.enable = true;
 
   # Pi 3 onboard radio is 2.4 GHz only; override the shared 5 GHz SSID. SSID is
   # public so it is fine in-repo; the PSK stays in sops.
