@@ -106,12 +106,43 @@ let
     ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-btscan $secs"
   '';
 
+  rfSim = gate "rf-sim" [ pkgs.openssh ] ''
+    exec >&2
+    echo "Virtual-radio Wi-Fi lab on naked-pi (mac80211_hwsim; no physical RF)..."
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-sim"
+  '';
+
   rfList = gate "rf-list" (with pkgs; [ openssh coreutils ]) ''
     exec >&2  # devenv captures task stdout; stream the listing instead
     echo "== naked-pi /var/lib/rf-lab/captures:"
     ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi 'ls -la /var/lib/rf-lab/captures 2>/dev/null || echo "(none)"'
     echo "== local $HOME/rf-lab-captures:"
     ls -la "$HOME/rf-lab-captures" 2>/dev/null || echo "(none)"
+  '';
+
+  # Offline analysis of a capture (no device involved): management-frame
+  # breakdown and, crucially, any deauth/disassoc frames with their reason codes
+  # — how you recognise a disconnect in a trace without transmitting anything.
+  rfAnalyze = gate "rf-analyze" (with pkgs; [ coreutils gawk wireshark-cli ]) ''
+    exec >&2
+    # shellcheck disable=SC2012
+    f=''${RF_PCAP:-$(ls -t "$HOME"/rf-lab-captures/*.pcap 2>/dev/null | head -1)}
+    if [ -z "''${f:-}" ] || [ ! -e "$f" ]; then echo "no pcap (set RF_PCAP=path)"; exit 1; fi
+    echo "Analyzing $f"
+    echo "== management-frame subtypes:"
+    tshark -r "$f" -Y 'wlan.fc.type==0' -T fields -e wlan.fc.type_subtype 2>/dev/null \
+      | sort | uniq -c | sort -rn | gawk '
+          BEGIN{n["0x0000"]="assoc-req";n["0x0001"]="assoc-resp";n["0x0004"]="probe-req";
+                n["0x0005"]="probe-resp";n["0x0008"]="beacon";n["0x000a"]="disassoc";
+                n["0x000b"]="auth";n["0x000c"]="deauth"}
+          {name=(n[$2]?n[$2]:"subtype "$2); printf "  %6d  %s\n",$1,name}'
+    echo "== deauth/disassoc frames (reason codes):"
+    tshark -r "$f" -Y 'wlan.fc.type_subtype==0x0c || wlan.fc.type_subtype==0x0a' \
+      -T fields -e wlan.sa -e wlan.da -e wlan.fixed.reason_code 2>/dev/null \
+      | sort | uniq -c | sort -rn | gawk '{printf "  %4d  src=%s dst=%s reason=%s\n",$1,$2,$3,$4} END{if(NR==0)print "  (none in this trace)"}'
+    echo "== top source addresses:"
+    tshark -r "$f" -T fields -e wlan.sa 2>/dev/null | sort | uniq -c | sort -rn | head -8 \
+      | gawk '{printf "  %6d  %s\n",$1,$2}'
   '';
 
   task = description: app: { inherit description; exec = lib.getExe app; };
@@ -154,6 +185,8 @@ in
     "rf:capture" = task "naked-pi: bounded monitor capture (RF_CHANNEL, RF_SECONDS, RF_BSSID)" rfCapture;
     "rf:btscan" = task "naked-pi: passive Bluetooth/BLE discovery (RF_SECONDS)" rfBtScan;
     "rf:list" = task "naked-pi: list captures on the Pi and locally" rfList;
+    "rf:analyze" = task "offline pcap analysis: mgmt frames + deauth/disassoc reason codes (RF_PCAP)" rfAnalyze;
+    "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
   };
 
   git-hooks.hooks = {

@@ -23,6 +23,8 @@ sam.rfLab.enable = true;          # installs the kit + narrow sudo
 | `RF_CHANNEL=6 devenv tasks run rf:capture` | Bounded monitor capture on one channel. `RF_SECONDS` (default 30), `RF_BSSID` to filter to one AP. |
 | `devenv tasks run rf:btscan` | Passive Bluetooth/BLE device discovery. `RF_SECONDS` (default 15). |
 | `devenv tasks run rf:list` | List captures on the Pi and locally. |
+| `devenv tasks run rf:analyze` | Offline analysis of a pcap (`RF_PCAP`, default newest local): management-frame breakdown and any deauth/disassoc reason codes. |
+| `devenv tasks run rf:sim` | Fully-virtual `mac80211_hwsim` lab: real hostapd+wpa_supplicant association and a disconnect/reconnect recovery, no physical radio. Data-plane throughput/loss modelling is a wmediumd follow-up (#40). |
 
 Analysis stays on lenovo: `nix shell nixpkgs#wireshark -c wireshark ~/rf-lab-captures/<file>.pcap`.
 
