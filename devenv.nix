@@ -229,6 +229,22 @@ let
     bash scripts/rf-analyze-test.sh
   '';
 
+  embeddedDiscover = gate "embedded-discover" [ pkgs.openssh ] ''
+    exec >&2  # devenv captures task stdout; stream results instead
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "espflash board-info"
+  '';
+
+  embeddedFlash = gate "embedded-flash" (with pkgs; [ openssh coreutils ]) ''
+    exec >&2  # devenv captures task stdout; stream results instead
+    fw=''${FW_BIN:?set FW_BIN=/path/to/firmware.bin (e.g. FW_BIN=app.bin devenv tasks run embedded:flash)}
+    [ -f "$fw" ] || { echo "no such file: $fw" >&2; exit 1; }
+    remote=/tmp/embedded-fw.bin
+    scp -o BatchMode=yes -o ConnectTimeout=10 "$fw" "naked-pi:$remote"
+    # TODO: the exact invocation depends on the chip, confirmed at M0 via
+    # embedded:discover; add --chip/--flash-size/--baud then.
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "espflash flash $remote"
+  '';
+
   task = description: app: { inherit description; exec = lib.getExe app; };
 
   hook = name: stage: app: {
@@ -273,6 +289,8 @@ in
     "rf:analyze-test" = task "offline: assert rf:analyze classifies the crafted pcap fixtures" rfAnalyzeTest;
     "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
     "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
+    "embedded:discover" = task "naked-pi: espflash board-info (chip, revision, flash, MAC)" embeddedDiscover;
+    "embedded:flash" = task "naked-pi: scp FW_BIN to the Pi and espflash flash it" embeddedFlash;
     "rf:preflight" = task "naked-pi: offline pre-deploy safety-invariant gate" rfPreflight;
     "rf:ap-status" = task "naked-pi: list stations associated to the lab AP" rfApStatus;
     "rf:ap-kick" = task "naked-pi: evict an enrolled station from our own AP (RF_MAC, RF_COMMIT)" rfApKick;
