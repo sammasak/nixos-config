@@ -53,6 +53,7 @@ in
   systemd.user.services.ollama-portforward = {
     description = "Port-forward the llm-gateway keyless Ollama passthrough to localhost:8080";
     wantedBy = [ "default.target" ];
+    unitConfig.ConditionUser = vars.username;
     environment.KUBECONFIG = "%h/.kube/config";
     serviceConfig = {
       ExecStart = "${pkgs.kubectl}/bin/kubectl port-forward --address 127.0.0.1 deploy/llm-gateway -n llm 8080:11434";

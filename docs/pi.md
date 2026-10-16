@@ -78,6 +78,13 @@ Escape hatch for a one-off direct call: `/login <provider>` stores a key in
 `~/.pi/agent/auth.json` (0600, outside Nix), and `/logout <provider>` removes it.
 Do not add provider keys back to shell init.
 
+Before the recipient narrowing, revisions of `llm-cloud.yaml` were also encrypted to
+acer/black-pi (and later lenovo), so treat factum's remaining keys as exposed and
+rotate them at the provider.
+
+To take over the old hand-made port-forward on lenovo before the first switch:
+`systemctl --user disable --now ollama-portforward && rm ~/.config/systemd/user/ollama-portforward.service`.
+
 ## router/free
 
 Hosts with `sam.profile.pi = true` get the `router/free` virtual model from
@@ -190,6 +197,4 @@ sources: [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platf
 Manual onboarding steps (historical: superseded on 2026-10-16, when provider keys moved to the llm-gateway; see Credentials):
 
 1. Groq: create a key named `pi` in the console, then `sops secrets/claude/llm-cloud.yaml` and replace `groq_api_key`. Revoke the old key once factum has its own. More quota needs a separate Groq account; a new key does not add any.
-2. Gemini: create a new AI Studio project with **no** billing account and a key in it. Store it as `gemini_api_key` and add `sops.secrets.gemini_api_key = llmCloudSecret;` to the lenovo config. Move or delete the plaintext `GEMINI_API_KEY` in `~/.env` (mode 0644).
-3. Cerebras: only if trial credits are acceptable. Add `cerebras_api_key` the same way.
 4. Rotate the Cloudflare token and Groq key that predate the recipient narrowing.
