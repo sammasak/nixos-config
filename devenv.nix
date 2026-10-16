@@ -127,6 +127,33 @@ let
     ls -la "$HOME/rf-lab-captures" 2>/dev/null || echo "(none)"
   '';
 
+  # Offline pre-deploy gate: evaluate naked-pi and assert the management-safety
+  # invariants hold before anyone pushes a config to the headless box.
+  rfPreflight = gate "rf-preflight" (with pkgs; [ nix jq coreutils ]) ''
+    exec >&2
+    echo "Evaluating naked-pi + checking management-safety invariants..."
+    facts=$(nix eval --json ".#nixosConfigurations.naked-pi.config" --apply '
+      c: {
+        sshPassword = c.services.openssh.settings.PasswordAuthentication;
+        rootLogin = c.services.openssh.settings.PermitRootLogin;
+        sshOpenFirewall = c.services.openssh.openFirewall;
+        homeWifi = c.networking.networkmanager.ensureProfiles.profiles ? home-wifi;
+        watchdog = c.systemd.timers ? rf-net-watchdog;
+        rootLock = c.system.activationScripts ? lockEmptyRootPassword;
+        wifiUnmanaged = c.networking.networkmanager.unmanaged;
+      }')
+    echo "$facts" | jq .
+    fail=0
+    check() { if [ "$1" = "$2" ]; then echo "  ok  $3"; else echo "  FAIL $3 (got $1, want $2)"; fail=1; fi; }
+    check "$(echo "$facts" | jq -r .sshPassword)" false "SSH password auth disabled"
+    check "$(echo "$facts" | jq -r .rootLogin)" no "SSH root login disabled"
+    check "$(echo "$facts" | jq -r .sshOpenFirewall)" false "SSH not globally open (scoped to LAN)"
+    check "$(echo "$facts" | jq -r .homeWifi)" true "home-wifi management fallback present"
+    check "$(echo "$facts" | jq -r .watchdog)" true "net-watchdog timer present"
+    check "$(echo "$facts" | jq -r .rootLock)" true "empty-root-password lock present"
+    if [ "$fail" = 0 ]; then echo "PREFLIGHT PASS — safe to deploy over Ethernet"; else echo "PREFLIGHT FAIL"; exit 1; fi
+  '';
+
   # Offline analysis of a capture (no device involved): management-frame
   # breakdown and, crucially, any deauth/disassoc frames with their reason codes
   # — how you recognise a disconnect in a trace without transmitting anything.
@@ -195,6 +222,7 @@ in
     "rf:analyze" = task "offline pcap analysis: mgmt frames + deauth/disassoc reason codes (RF_PCAP)" rfAnalyze;
     "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
     "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
+    "rf:preflight" = task "naked-pi: offline pre-deploy safety-invariant gate" rfPreflight;
   };
 
   git-hooks.hooks = {

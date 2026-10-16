@@ -225,7 +225,7 @@ let
   tools = [ rfSweep rfCapture rfBtScan rfSim rfApOutage ];
 in
 {
-  imports = [ ./ap.nix ];
+  imports = [ ./ap.nix ./net-watchdog.nix ];
 
   options.sam.rfLab = {
     enable = lib.mkEnableOption "passive 2.4 GHz RF observation kit (naked-pi)";
