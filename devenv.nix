@@ -213,6 +213,12 @@ let
       | gawk '{printf "  %6d  %s\n",$1,$2}'
   '';
 
+  # Offline classification test: assert rf:analyze's decode recognises each
+  # crafted fixture (beacon count, deauth/disassoc reason codes). No device.
+  rfAnalyzeTest = gate "rf-analyze-test" (with pkgs; [ bash wireshark-cli coreutils gnugrep ]) ''
+    bash scripts/rf-analyze-test.sh
+  '';
+
   task = description: app: { inherit description; exec = lib.getExe app; };
 
   hook = name: stage: app: {
@@ -254,6 +260,7 @@ in
     "rf:btscan" = task "naked-pi: passive Bluetooth/BLE discovery (RF_SECONDS)" rfBtScan;
     "rf:list" = task "naked-pi: list captures on the Pi and locally" rfList;
     "rf:analyze" = task "offline pcap analysis: mgmt frames + deauth/disassoc reason codes (RF_PCAP)" rfAnalyze;
+    "rf:analyze-test" = task "offline: assert rf:analyze classifies the crafted pcap fixtures" rfAnalyzeTest;
     "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
     "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
     "rf:preflight" = task "naked-pi: offline pre-deploy safety-invariant gate" rfPreflight;

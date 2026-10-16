@@ -24,7 +24,25 @@ sam.rfLab.enable = true;          # installs the kit + narrow sudo
 | `devenv tasks run rf:btscan` | Passive Bluetooth/BLE device discovery. `RF_SECONDS` (default 15). |
 | `devenv tasks run rf:list` | List captures on the Pi and locally. |
 | `devenv tasks run rf:analyze` | Offline analysis of a pcap (`RF_PCAP`, default newest local): management-frame breakdown and any deauth/disassoc reason codes. |
+| `devenv tasks run rf:analyze-test` | Offline, deterministic: run the `rf:analyze` decode over the crafted fixtures in `fixtures/` and assert beacon count + deauth/disassoc reason codes. No device. |
 | `devenv tasks run rf:sim` | Fully-virtual `mac80211_hwsim` lab: real hostapd+wpa_supplicant association and a disconnect/reconnect recovery, no physical radio. Data-plane throughput/loss modelling is a wmediumd follow-up (#40). |
+
+## Crafted pcap fixtures
+
+`fixtures/` holds tiny **synthetic** beacon / deauth / disassoc pcaps built offline
+with scapy (`fixtures/craft-fixtures.py`) — not hardware captures, never
+transmitted. `rf:analyze-test` asserts the decode logic recognises them. See
+`fixtures/README.md`.
+
+## hwsim data-plane VM test (#40 kernel-blocker check)
+
+`tests/rf-hwsim-dataplane.nix` boots a QEMU VM on a standard nixpkgs kernel and
+exercises `mac80211_hwsim` there (never on the host — lenovo is the k3s control
+plane). It tests the claim that the Pi's kernel 7.2.9 blocks hwsim data frames.
+Run: `nix build .#packages.x86_64-linux.rf-hwsim-dataplane -L`. Finding: on
+kernel 6.18.55 a two-netns bare-hwsim link passes ICMP (data plane works), while
+the single-netns + wmediumd `rf-sim` topology drops 100% — so the data-plane
+block is the wmediumd/netns setup, not kernel 7.2.9.
 
 Analysis stays on lenovo: `nix shell nixpkgs#wireshark -c wireshark ~/rf-lab-captures/<file>.pcap`.
 
