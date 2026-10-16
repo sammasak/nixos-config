@@ -8,7 +8,10 @@ in
   imports = [
     ./base.nix
     ../homelab/deploy-target.nix
+    ../rf-lab
   ];
+
+  sam.rfLab.enable = true;
 
   # NM would otherwise autoconnect or rescan a radio mid-capture; Ethernet stays managed.
   networking.networkmanager.unmanaged = [ "type:wifi" ];
@@ -18,16 +21,6 @@ in
   boot.extraModprobeConfig = ''
     options cfg80211 ieee80211_regdom=SE
   '';
-
-  environment.systemPackages = with pkgs; [
-    iw
-    usbutils
-    ethtool
-    tcpdump
-  ];
-
-  # Captures stay off the Nix store and age out, so the SD card cannot fill silently.
-  systemd.tmpfiles.rules = [ "d /var/lib/rf-lab/captures 0750 ${username} users 14d" ];
 
   # A Nix trusted-user is root-equivalent; deploy-rs becomes root via sudo instead.
   nix.settings.trusted-users = lib.mkForce [ "root" ];

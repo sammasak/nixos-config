@@ -12,6 +12,8 @@ in
     # Directly, not via the laptop role (Intel-only settings). No wifi-selfheal:
     # wlan0 is the secondary NIC here, end0 carries the cluster.
     ../../modules/core/wifi.nix
+
+    ../../modules/hardware/sd-image-root-lock.nix
   ];
 
   sam.profile = vars;
@@ -36,8 +38,6 @@ in
   boot.loader.grub.enable = false;
   boot.loader.generic-extlinux-compatible.enable = true;
 
-  # The SD image creates root with an empty password; mutableUsers would keep it.
-  users.users.root.hashedPassword = "!";
 
   # nodejs/neovim/herdr build on the Pi (aarch64 cache misses); 4x4 threads OOM it.
   nix.settings = {
