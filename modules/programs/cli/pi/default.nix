@@ -1,41 +1,14 @@
 # Imported applied, for hosts with sam.profile.pi (flake-modules/40-outputs-nixos.nix):
 #   (import .../pi inputs.devenv-platform)
-# The host still declares the sops secrets named in providerKeys
-# (see hosts/lenovo-21CB001PMX/configuration.nix). Auth, upgrade, rollback: docs/pi.md.
+# No provider key reaches the host: the in-cluster llm-gateway holds them. Auth, upgrade,
+# rollback: docs/pi.md.
 devenvPlatform:
 { config, lib, pkgs, ... }:
 let
   cfg = config.sam.pi;
 
-  # Literal /run/secrets paths: this is an HM module, so the NixOS
-  # config.sops.secrets is not in scope. A missing file just leaves the var unset.
-  providerKeys = {
-    GROQ_API_KEY = "groq_pi_agent_api_key";
-    CLOUDFLARE_API_KEY = "cloudflare_pi_agent_workers_ai_token";
-    CLOUDFLARE_ACCOUNT_ID = "cloudflare_account_id";
-    GEMINI_API_KEY = "gemini_api_key";
-    CEREBRAS_API_KEY = "cerebras_api_key";
-  };
-
-  fishExports = lib.concatStrings (lib.mapAttrsToList (var: secret: ''
-    if test -r /run/secrets/${secret}
-      set -gx ${var} (cat /run/secrets/${secret})
-    end
-  '') providerKeys);
-
-  bashExports = lib.concatStrings (lib.mapAttrsToList (var: secret: ''
-    if [ -r /run/secrets/${secret} ]; then
-      export ${var}="$(cat /run/secrets/${secret})"
-    fi
-  '') providerKeys);
-
-  # router/free plus the only model that passed multi-turn Rust tasks; Groq free
-  # tier went 0/6 (TPM 429s, tool-schema rejects), see docs/pi.md.
+  # Seeded only when missing.
   defaultSettings = builtins.toJSON {
-    enabledModels = [
-      "router/free"
-      "cloudflare-workers-ai/@cf/qwen/qwen3.8-27b"
-    ];
     # Free-tier 429s carry ~10-60s resets; the 2s default base gives up first.
     retry = {
       maxRetries = 5;
@@ -43,8 +16,22 @@ let
     };
   };
 
+  # Re-applied on every activation: the in-cluster llm-gateway is the default
+  # path (sammasak/llm-gateway#8); router/free stays selectable as the fallback.
+  pinnedSettings = builtins.toJSON {
+    defaultProvider = "homelab";
+    defaultModel = "auto";
+    enabledModels = [
+      "homelab/auto"
+      "homelab/best"
+      "homelab/local"
+      "router/free"
+    ];
+  };
+
   # Pi rewrites settings.json (/model, /settings), so seed missing top-level
-  # keys into the writable file instead of symlinking a read-only one over it.
+  # keys (and re-pin the default model) into the writable file instead of
+  # symlinking a read-only one over it.
   # A malformed user file is skipped, not fatal: it must not abort HM activation.
   seedPiSettings = pkgs.writeShellScript "seed-pi-settings" ''
     set -eu
@@ -57,7 +44,7 @@ let
     fi
     tmp="$(mktemp "$f.XXXXXX")"
     trap 'rm -f "$tmp"' EXIT
-    ${pkgs.jq}/bin/jq --argjson d ${lib.escapeShellArg defaultSettings} '$d + .' "$f" > "$tmp"
+    ${pkgs.jq}/bin/jq --argjson d ${lib.escapeShellArg defaultSettings} --argjson p ${lib.escapeShellArg pinnedSettings} '$d + . + $p' "$f" > "$tmp"
     cmp -s "$tmp" "$f" || mv "$tmp" "$f"
   '';
 
@@ -80,7 +67,7 @@ let
     }) [ "qwen2.5-coder:7b" "llama3.1:8b" ];
   };
 
-  # Opt-in (`--model homelab/auto`): the in-cluster llm-gateway picks a free model
+  # The default (`homelab/auto`, pinned above): the in-cluster llm-gateway picks a free model
   # by tier and fails over. `!cat` reads the sops key per request, so it never
   # enters the store or the environment.
   homelabProvider = builtins.toJSON {
@@ -174,9 +161,5 @@ in
     home.activation.mergePiModels = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       run ${mergePiModels}
     '';
-
-    programs.bash.enable = true;
-    programs.bash.initExtra = lib.mkAfter bashExports;
-    programs.fish.interactiveShellInit = lib.mkAfter fishExports;
   };
 }

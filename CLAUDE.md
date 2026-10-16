@@ -73,7 +73,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/nix-signing-key.yaml` | Personal + lenovo | deploy-rs closure-signing private key (workers trust the public half) |
 | `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, wifi, GitHub access token |
 | `core/*.yaml` | Personal + lenovo | Staged declarative login password |
-| `claude/llm-cloud.yaml` | Personal + lenovo | Cloud LLM keys for Pi (sops-nix) and factum `dev/cloud-env.sh` (personal key), see `docs/pi.md` |
+| `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys, incl. its llm-gateway project key. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
 | `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Claude Code OAuth token; Pi's llm-gateway project key (`llm-gateway.yaml`) |
 | `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
 
