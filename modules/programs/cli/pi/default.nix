@@ -29,13 +29,8 @@ let
     fi
   '') providerKeys);
 
-  # router/free plus the only model that passed multi-turn Rust tasks; Groq free
-  # tier went 0/6 (TPM 429s, tool-schema rejects), see docs/pi.md.
+  # Seeded only when missing.
   defaultSettings = builtins.toJSON {
-    enabledModels = [
-      "router/free"
-      "cloudflare-workers-ai/@cf/qwen/qwen3.8-27b"
-    ];
     # Free-tier 429s carry ~10-60s resets; the 2s default base gives up first.
     retry = {
       maxRetries = 5;
@@ -43,8 +38,22 @@ let
     };
   };
 
+  # Re-applied on every activation: the in-cluster llm-gateway is the default
+  # path (sammasak/llm-gateway#8); router/free stays selectable as the fallback.
+  pinnedSettings = builtins.toJSON {
+    defaultProvider = "homelab";
+    defaultModel = "auto";
+    enabledModels = [
+      "homelab/auto"
+      "homelab/best"
+      "homelab/local"
+      "router/free"
+    ];
+  };
+
   # Pi rewrites settings.json (/model, /settings), so seed missing top-level
-  # keys into the writable file instead of symlinking a read-only one over it.
+  # keys (and re-pin the default model) into the writable file instead of
+  # symlinking a read-only one over it.
   # A malformed user file is skipped, not fatal: it must not abort HM activation.
   seedPiSettings = pkgs.writeShellScript "seed-pi-settings" ''
     set -eu
@@ -57,7 +66,7 @@ let
     fi
     tmp="$(mktemp "$f.XXXXXX")"
     trap 'rm -f "$tmp"' EXIT
-    ${pkgs.jq}/bin/jq --argjson d ${lib.escapeShellArg defaultSettings} '$d + .' "$f" > "$tmp"
+    ${pkgs.jq}/bin/jq --argjson d ${lib.escapeShellArg defaultSettings} --argjson p ${lib.escapeShellArg pinnedSettings} '$d + . + $p' "$f" > "$tmp"
     cmp -s "$tmp" "$f" || mv "$tmp" "$f"
   '';
 
@@ -80,7 +89,7 @@ let
     }) [ "qwen2.5-coder:7b" "llama3.1:8b" ];
   };
 
-  # Opt-in (`--model homelab/auto`): the in-cluster llm-gateway picks a free model
+  # The default (`homelab/auto`, pinned above): the in-cluster llm-gateway picks a free model
   # by tier and fails over. `!cat` reads the sops key per request, so it never
   # enters the store or the environment.
   homelabProvider = builtins.toJSON {

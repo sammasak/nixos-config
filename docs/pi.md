@@ -1,7 +1,8 @@
 # Pi coding agent
 
 Module: `modules/programs/cli/pi/` (Home Manager, opt-in per host via `sam.profile.pi`). Enabled on
-`lenovo` only.
+`lenovo` and `acer-swift`. The default model is `homelab/auto`, the in-cluster llm-gateway.
+`router/free` is an explicit fallback.
 
 ## Distribution decision (2026-10-14)
 
@@ -39,16 +40,18 @@ Verified on the pinned 1.1.0 build:
   file exists: `GROQ_API_KEY`, `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`,
   `GEMINI_API_KEY`, `CEREBRAS_API_KEY`. Only names and paths are in Nix.
 - Seeds missing top-level keys into the writable `~/.pi/agent/settings.json`
-  (`enabledModels` = free-tier models, longer `retry` backoff). Top-level keys you
-  already have win as whole objects, not deep-merged. `auth.json` and
-  `sessions/` are never touched.
+  (a longer `retry` backoff). Top-level keys you already have win as whole
+  objects, not deep-merged. Three keys are re-pinned on every activation:
+  `defaultProvider`/`defaultModel` = `homelab`/`auto`, and `enabledModels` =
+  `homelab/{auto,best,local}` plus `router/free`. A `/model` choice lasts until
+  the next switch. `auth.json` and `sessions/` are never touched.
 - Merges two providers into `~/.pi/agent/models.json` on every activation (jq;
   replaces only those keys, so hand-written providers such as `ollama` for
   pi-harness stay): `msi-ollama` and `homelab`. A models.json that is not a
   JSON object is left alone.
   - `msi-ollama` points at msi's Ollama, the router/free local tier. Override
     the URL with `sam.pi.msiOllamaBaseUrl` in the host's Home Manager config.
-  - `homelab` (opt-in: `pi --model homelab/auto`, also `best`, `local`) is the
+  - `homelab` (the default: `homelab/auto`, also `best`, `local`) is the
     in-cluster llm-gateway (homelab-gitops `apps/llm-gateway`, pinned ClusterIP
     `10.43.0.80`, override `sam.pi.llmGatewayBaseUrl`). It holds the provider
     keys and fails over across free tiers itself. Pi authenticates with the
