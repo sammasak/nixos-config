@@ -15,14 +15,18 @@ in
   sam.profile = vars;
   sam.wifi.declarativeHomeProfile = true;
 
-  # The shared profile targets the 5 GHz SSID; the Pi 3 onboard radio is 2.4 GHz
-  # only (same router, same PSK from sops). SSID is public, so it is fine in-repo.
+  # Pi 3 onboard radio is 2.4 GHz only; override the shared 5 GHz SSID. SSID is
+  # public so it is fine in-repo; the PSK stays in sops.
   networking.networkmanager.ensureProfiles.profiles.home-wifi.wifi.ssid =
     lib.mkForce "Lilla Ettan 2.4";
 
-  # sops-nix age straight from the host SSH key — WITHOUT sam.hostSecrets, which
-  # would also pull the Claude/nix operator tokens naked-pi is not a recipient of
-  # (and #32 keeps off this host). naked-pi decrypts only secrets/homelab/wifi.yaml.
+  # Send the MAC as DHCP client-id so the router's MAC reservation (.138) applies;
+  # a sticky client-id lease otherwise shadowed it. See vault: dhcp-reservations.md
+  networking.networkmanager.ensureProfiles.profiles.home-wifi.ipv4.dhcp-client-id =
+    lib.mkForce "mac";
+
+  # age from the host SSH key WITHOUT sam.hostSecrets, so naked-pi decrypts only
+  # secrets/homelab/wifi.yaml — not the operator tokens #32 keeps off this host.
   sops.age = {
     sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
     keyFile = "/var/lib/sops-nix/key.txt";
