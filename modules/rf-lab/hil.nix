@@ -45,7 +45,7 @@ let
       [ -n "$mgmt_devs" ] || refuse "no default route; cannot confirm an independent management path"
       for d in $mgmt_devs; do
         if [ "$d" = "$apif" ] || [ "$d" = "$sta" ] || [ -d "/sys/class/net/$d/wireless" ]; then
-          refuse "a default route rides a wireless/radio interface ($d); plug in Ethernet"
+          refuse "a default route rides a wireless/radio interface ($d); plug in Ethernet, then 'nmcli dev disconnect wlan0' so only the wired default remains"
         fi
         [ -e "/sys/class/net/$d" ] || refuse "default-route device $d is not a real link"
       done
@@ -56,7 +56,7 @@ let
       radio_addrs=$( { ip -o addr show dev "$apif"; ip -o addr show dev "$sta"; } 2>/dev/null \
         | awk '{print $4}' | cut -d/ -f1 || true)
       ssh_laddrs=$(ss -Htn state established '( sport = :22 )' 2>/dev/null \
-        | awk '{print $3}' | sed -E 's/:[0-9]+$//; s/[][]//g' || true)
+        | awk '{print $3}' | sed -E 's/:[0-9]+$//; s/%[^]]*//; s/[][]//g' || true)
       for la in $ssh_laddrs; do
         for ra in $radio_addrs; do
           [ -n "$la" ] && [ "$la" = "$ra" ] && refuse "an SSH session is on a radio interface ($la); plug in Ethernet"
@@ -128,7 +128,7 @@ let
 
       # The rf-ap-kick primitive against a REAL associated station over real RF.
       kstart=$(date +%s)
-      deauth=$(hostapd_cli -p "$tmp/hapd" -i "$apif" deauthenticate "$stamac" 2>&1 || true)
+      deauth=$(hostapd_cli -p "$tmp/hapd" -i "$apif" deauthenticate "$stamac" 2>&1 | tr -d '\n"' || true)
       kicked=no
       for _ in $(seq 1 10); do
         if ! iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then kicked=yes; break; fi

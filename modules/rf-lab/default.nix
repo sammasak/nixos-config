@@ -12,6 +12,10 @@ let
   # managed-only). Find it by its udev USB name (wlu*), which is stable — unlike
   # the phy index, which flips with USB enumeration order across boots.
   pickMon = ''
+    # One USB-adapter op at a time: rf-ap-kick-hil uses wlu* as a station and its
+    # restore would fight a monitor-mode capture (and vice versa). Same lock file.
+    exec 9>/run/rf-lab.lock
+    flock -n 9 || { echo "another rf-lab op holds the radio lock; retry when it finishes" >&2; exit 1; }
     IF=$(iw dev | awk '/Interface/{print $2}' | grep -m1 '^wlu' || true)
     if [ -z "''${IF:-}" ]; then
       # The rtl8192cu RX path wedges after repeated mode flips or an undervoltage
@@ -48,7 +52,7 @@ let
 
   rfSweep = pkgs.writeShellApplication {
     name = "rf-sweep";
-    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod ];
+    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod util-linux ];
     text = ''
       per=''${1:-1.2}
       ${pickMon}
@@ -70,7 +74,7 @@ let
 
   rfCapture = pkgs.writeShellApplication {
     name = "rf-capture";
-    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod ];
+    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod util-linux ];
     text = ''
       ch=''${1:?usage: rf-capture <channel> [seconds] [bpf-filter]}
       secs=''${2:-30}
