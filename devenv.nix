@@ -119,6 +119,19 @@ let
     ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-outage $secs"
   '';
 
+  rfApStatus = gate "rf-ap-status" [ pkgs.openssh ] ''
+    exec >&2
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-status"
+  '';
+
+  rfApKick = gate "rf-ap-kick" [ pkgs.openssh ] ''
+    exec >&2
+    mac=''${RF_MAC:?set RF_MAC=<enrolled-MAC> (RF_COMMIT=1 to actually evict)}
+    flag=""; [ "''${RF_COMMIT:-}" = 1 ] && flag="--commit"
+    echo "rf-ap-kick $mac ''${flag:-(dry-run)} on naked-pi's own AP..."
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-kick $mac $flag"
+  '';
+
   rfList = gate "rf-list" (with pkgs; [ openssh coreutils ]) ''
     exec >&2  # devenv captures task stdout; stream the listing instead
     echo "== naked-pi /var/lib/rf-lab/captures:"
@@ -223,6 +236,8 @@ in
     "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
     "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
     "rf:preflight" = task "naked-pi: offline pre-deploy safety-invariant gate" rfPreflight;
+    "rf:ap-status" = task "naked-pi: list stations associated to the lab AP" rfApStatus;
+    "rf:ap-kick" = task "naked-pi: evict an enrolled station from our own AP (RF_MAC, RF_COMMIT)" rfApKick;
   };
 
   git-hooks.hooks = {
