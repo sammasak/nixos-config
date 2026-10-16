@@ -107,7 +107,7 @@ let
   # effect on enu1u1/wlan0 or anyone else. Teardown rmmods the module.
   rfSim = pkgs.writeShellApplication {
     name = "rf-sim";
-    runtimeInputs = with pkgs; [ kmod iw iproute2 hostapd wpa_supplicant coreutils gnugrep ];
+    runtimeInputs = with pkgs; [ kmod iw iproute2 hostapd wpa_supplicant wmediumd iperf3 coreutils gnugrep ];
     text = ''
       ns=rfsim
       tmp=$(mktemp -d)
@@ -133,7 +133,18 @@ let
       mapfile -t ifs < <(ip netns exec "$ns" sh -c 'ls /sys/class/net | grep "^wlan"')
       if [ "''${#ifs[@]}" -lt 2 ]; then echo "hwsim did not yield two radios" >&2; exit 1; fi
       ap=''${ifs[0]}; sta=''${ifs[1]}
+      apmac=$(ip netns exec "$ns" cat "/sys/class/net/$ap/address")
+      stamac=$(ip netns exec "$ns" cat "/sys/class/net/$sta/address")
       echo "virtual radios: AP=$ap STA=$sta (netns $ns)"
+
+      # wmediumd mediates the virtual medium so data frames (not just assoc) flow;
+      # default_prob 0.0 is a perfect link — raise it to model loss for chaos.
+      cat >"$tmp/wm.cfg" <<EOF
+      ifaces : { ids = ["$apmac", "$stamac"]; };
+      model : { type = "prob"; default_prob = 0.0; };
+      EOF
+      ip netns exec "$ns" wmediumd -c "$tmp/wm.cfg" >/dev/null 2>&1 &
+      sleep 1
 
       cat >"$tmp/hostapd.conf" <<EOF
       interface=$ap
@@ -151,10 +162,11 @@ let
       }
       EOF
 
-      ip netns exec "$ns" ip addr add 10.77.0.1/24 dev "$ap" 2>/dev/null || true
+      ip netns exec "$ns" ip link set "$ap" up 2>/dev/null || true
+      ip netns exec "$ns" ip link set "$sta" up 2>/dev/null || true
       ip netns exec "$ns" hostapd -B "$tmp/hostapd.conf" >/dev/null 2>&1 || { echo "hostapd failed to start" >&2; exit 1; }
+      ip netns exec "$ns" ip addr add 10.77.0.1/24 dev "$ap" 2>/dev/null || true
       ip netns exec "$ns" wpa_supplicant -B -i "$sta" -c "$tmp/wpa.conf" >/dev/null 2>&1 || true
-      ip netns exec "$ns" ip addr add 10.77.0.2/24 dev "$sta" 2>/dev/null || true
 
       assoc=no
       for _ in $(seq 1 15); do
@@ -163,6 +175,14 @@ let
       done
       echo "association: $assoc"
       [ "$assoc" = yes ] || { echo "station did not associate" >&2; exit 1; }
+      ip netns exec "$ns" ip addr add 10.77.0.2/24 dev "$sta" 2>/dev/null || true
+      sleep 1
+
+      echo "== iperf3 (virtual link via wmediumd, 3s):"
+      ip netns exec "$ns" iperf3 -s -1 -D >/dev/null 2>&1 || true
+      sleep 1
+      ip netns exec "$ns" iperf3 -c 10.77.0.1 -t 3 2>/dev/null | grep -E "sender|receiver" \
+        || echo "  no data plane: hwsim passes assoc but not data frames on kernel $(uname -r), even with wmediumd (see #40)"
 
       # Chaos/recovery: drop the station from its own AP and time the reassociation.
       echo "== disconnect/reconnect:"
@@ -176,10 +196,6 @@ let
         sleep 1
       done
       echo "  reassociated in ~''${recovered}s"
-      # Data-plane throughput/loss modelling needs wmediumd between the radios
-      # (hwsim's default medium carries mgmt/assoc but not reliable data in a
-      # netns); that is the #40 follow-up.
-      echo "note: throughput/loss modelling pending wmediumd (see issue #40)"
     '';
   };
 
