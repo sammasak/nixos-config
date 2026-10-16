@@ -229,6 +229,36 @@ let
     bash scripts/rf-analyze-test.sh
   '';
 
+  embeddedDiscover = gate "embedded-discover" [ pkgs.openssh ] ''
+    exec >&2  # devenv captures task stdout; stream results instead
+    port=''${EMBEDDED_PORT:+--port ''${EMBEDDED_PORT}}
+    # shellcheck disable=SC2086
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "espflash board-info $port"
+  '';
+
+  # Flashes the ELF from `cargo build` (espflash flash reads an ELF, not a raw
+  # .bin). Dry-run by default like rf:ap-kick, since flashing overwrites device
+  # state; EMBEDDED_COMMIT=1 performs it. EMBEDDED_PORT overrides espflash's
+  # auto-detect when more than one serial port is present (non-interactive SSH
+  # cannot answer espflash's port prompt).
+  embeddedFlash = gate "embedded-flash" (with pkgs; [ openssh coreutils ]) ''
+    exec >&2  # devenv captures task stdout; stream results instead
+    fw=''${FW_ELF:?set FW_ELF=/path/to/firmware (the ELF from cargo build, not a raw .bin)}
+    [ -f "$fw" ] || { echo "no such file: $fw" >&2; exit 1; }
+    port=''${EMBEDDED_PORT:+--port ''${EMBEDDED_PORT}}
+    if [ "''${EMBEDDED_COMMIT:-}" != 1 ]; then
+      echo "dry-run: would copy $fw to naked-pi and run: espflash flash $port <remote-elf>" >&2
+      echo "set EMBEDDED_COMMIT=1 to flash for real" >&2
+      exit 0
+    fi
+    remote=$(ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "mktemp /tmp/embedded-fw.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi 'rm -f $remote'" EXIT
+    scp -o BatchMode=yes -o ConnectTimeout=10 "$fw" "naked-pi:$remote"
+    # shellcheck disable=SC2086
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "espflash flash $port $remote"
+  '';
+
   task = description: app: { inherit description; exec = lib.getExe app; };
 
   hook = name: stage: app: {
@@ -273,6 +303,8 @@ in
     "rf:analyze-test" = task "offline: assert rf:analyze classifies the crafted pcap fixtures" rfAnalyzeTest;
     "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
     "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
+    "embedded:discover" = task "naked-pi: espflash board-info (chip, revision, flash, MAC)" embeddedDiscover;
+    "embedded:flash" = task "naked-pi: flash FW_ELF to the board (dry-run; EMBEDDED_COMMIT=1, EMBEDDED_PORT)" embeddedFlash;
     "rf:preflight" = task "naked-pi: offline pre-deploy safety-invariant gate" rfPreflight;
     "rf:ap-status" = task "naked-pi: list stations associated to the lab AP" rfApStatus;
     "rf:ap-kick" = task "naked-pi: evict an enrolled station from our own AP (RF_MAC, RF_COMMIT)" rfApKick;
