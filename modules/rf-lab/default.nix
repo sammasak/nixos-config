@@ -7,19 +7,20 @@ let
   cfg = config.sam.rfLab;
   username = config.sam.profile.username;
 
-  # The USB adapter is the only monitor-capable radio (onboard wlan0 is managed/
-  # AP only), so pick its interface by phy; a kernel rename then cannot break it.
+  # The USB adapter is the only monitor-capable radio (onboard is 2.4 GHz
+  # managed-only). Find it by its udev USB name (wlu*), which is stable — unlike
+  # the phy index, which flips with USB enumeration order across boots.
   pickMon = ''
-    IF=$(iw dev | awk -v p="phy#${toString cfg.monitorPhy}" '$0~p{f=1} f&&/Interface/{print $2; exit}')
+    IF=$(iw dev | awk '/Interface/{print $2}' | grep -m1 '^wlu' || true)
     if [ -z "''${IF:-}" ]; then
       # The rtl8192cu RX path wedges after repeated mode flips or an undervoltage
       # USB brownout; one module reload clears the soft cases, a replug the rest.
       modprobe -r rtl8192cu 2>/dev/null || true; sleep 1
       modprobe rtl8192cu 2>/dev/null || true; sleep 3
-      IF=$(iw dev | awk -v p="phy#${toString cfg.monitorPhy}" '$0~p{f=1} f&&/Interface/{print $2; exit}')
+      IF=$(iw dev | awk '/Interface/{print $2}' | grep -m1 '^wlu' || true)
     fi
     if [ -z "''${IF:-}" ]; then
-      echo "no monitor-capable radio on phy#${toString cfg.monitorPhy}; replug the USB adapter (see runbook)" >&2
+      echo "no USB capture adapter (wlu*) present; replug it (see runbook)" >&2
       exit 1
     fi
   '';
@@ -239,12 +240,6 @@ in
       type = lib.types.ints.positive;
       default = 14;
       description = "Days before a capture is deleted, so the SD card cannot fill silently.";
-    };
-
-    monitorPhy = lib.mkOption {
-      type = lib.types.ints.unsigned;
-      default = 1;
-      description = "phy index of the USB monitor-capable adapter (onboard wlan0 is phy0).";
     };
   };
 
