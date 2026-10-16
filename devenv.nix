@@ -60,9 +60,10 @@ let
     ${lib.getExe qa}
   '';
 
-  # Operator side of the naked-pi passive RF kit. Each SSHes the Pi (the
-  # `naked-pi` ssh alias), runs one bounded observation wrapper there, and keeps
-  # analysis on this host. Observation only: no task can transmit, deauth or jam.
+  # Operator side of the naked-pi RF kit. Each SSHes the Pi (the `naked-pi` ssh
+  # alias), runs one bounded wrapper there, and keeps analysis on this host.
+  # Mostly passive; deauth is limited to our own AP's enrolled stations
+  # (rf:ap-kick, rf:ap-kick-hil) — never injection or a third-party network.
   rfBeacons = gate "rf-beacons" (with pkgs; [ openssh coreutils gawk gnugrep wireshark-cli ]) ''
     exec >&2  # devenv captures task stdout; stream the table instead
     dwell=''${RF_DWELL:-1.2}
@@ -125,7 +126,8 @@ let
     mode=dry-run; arg=""
     [ "''${RF_HIL_COMMIT:-0}" = "1" ] && { mode=commit; arg="--commit"; }
     echo "Two-radio hardware-in-the-loop rf-ap-kick on naked-pi (mode=''${mode}; refuses unless mgmt is Ethernet)..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-kick-hil $arg"
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+      naked-pi "sudo rf-ap-kick-hil $arg"
   '';
 
   rfApStatus = gate "rf-ap-status" [ pkgs.openssh ] ''

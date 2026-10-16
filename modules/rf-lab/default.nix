@@ -1,7 +1,8 @@
-# Opt-in passive 2.4 GHz observation kit for naked-pi. Capture and standard
-# discovery only — no injection, deauth, jamming or AP mode in any wrapper.
-# Driven from lenovo by the `rf:*` devenv tasks (see devenv.nix); full context
-# in modules/rf-lab/README.md and ~/knowledge/homelab/runbooks/naked-pi-rf-lab.md.
+# Opt-in 2.4 GHz RF lab for naked-pi: passive capture/discovery here, with the
+# owned-AP lab (ap.nix) and the Ethernet-gated HIL kick test (hil.nix) as the only
+# deauth/AP-mode paths — all scoped to our own AP and enrolled stations, never
+# frame injection or anyone else's network. Driven from lenovo by the `rf:*`
+# devenv tasks; full context in README.md and the naked-pi-rf-lab.md runbook.
 { config, lib, pkgs, ... }:
 let
   cfg = config.sam.rfLab;
