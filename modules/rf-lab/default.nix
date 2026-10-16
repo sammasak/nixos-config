@@ -108,46 +108,40 @@ let
   # effect on enu1u1/wlan0 or anyone else. Teardown rmmods the module.
   rfSim = pkgs.writeShellApplication {
     name = "rf-sim";
-    runtimeInputs = with pkgs; [ kmod iw iproute2 hostapd wpa_supplicant wmediumd iperf3 coreutils gnugrep ];
+    runtimeInputs = with pkgs; [ kmod iw iproute2 hostapd wpa_supplicant iperf3 coreutils gnugrep ];
     text = ''
-      ns=rfsim
-      loss=''${1:-0.0}     # arg1: wmediumd per-frame loss probability (0.0 = perfect)
-      outage=''${2:-1}     # arg2: seconds the station stays disconnected
+      loss=''${1:-0}      # arg1: tc-netem loss percent on the station link (0 = perfect)
+      outage=''${2:-1}    # arg2: seconds the station stays disconnected
+      apns=rfsim-ap; stns=rfsim-sta
       tmp=$(mktemp -d)
       cleanup() {
-        ip netns pids "$ns" 2>/dev/null | xargs -r kill 2>/dev/null || true
-        ip netns del "$ns" 2>/dev/null || true
+        for n in "$apns" "$stns"; do
+          ip netns pids "$n" 2>/dev/null | xargs -r kill 2>/dev/null || true
+          ip netns del "$n" 2>/dev/null || true
+        done
         modprobe -r mac80211_hwsim 2>/dev/null || true
         rm -rf "$tmp"
       }
       trap cleanup EXIT
       modprobe -r mac80211_hwsim 2>/dev/null || true
 
+      # Two netns each holding one hwsim radio: bare hwsim carries data between
+      # them (verified on this kernel). wmediumd is NOT used — in a shared netns it
+      # dropped all data frames; loss is modelled with tc-netem instead (#40).
       # shellcheck disable=SC2012
       before=$(ls /sys/class/ieee80211 2>/dev/null | sort)
       modprobe mac80211_hwsim radios=2
       sleep 1
       # shellcheck disable=SC2012
       after=$(ls /sys/class/ieee80211 2>/dev/null | sort)
-      newphys=$(comm -13 <(echo "$before") <(echo "$after"))
-      ip netns add "$ns"
-      for p in $newphys; do iw phy "$p" set netns name "$ns" 2>/dev/null || true; done
-
-      mapfile -t ifs < <(ip netns exec "$ns" sh -c 'ls /sys/class/net | grep "^wlan"')
-      if [ "''${#ifs[@]}" -lt 2 ]; then echo "hwsim did not yield two radios" >&2; exit 1; fi
-      ap=''${ifs[0]}; sta=''${ifs[1]}
-      apmac=$(ip netns exec "$ns" cat "/sys/class/net/$ap/address")
-      stamac=$(ip netns exec "$ns" cat "/sys/class/net/$sta/address")
-      echo "virtual radios: AP=$ap STA=$sta (netns $ns)"
-
-      # wmediumd mediates the virtual medium so data frames (not just assoc) flow;
-      # default_prob 0.0 is a perfect link — raise it to model loss for chaos.
-      cat >"$tmp/wm.cfg" <<EOF
-      ifaces : { ids = ["$apmac", "$stamac"]; };
-      model : { type = "prob"; default_prob = $loss; };
-      EOF
-      ip netns exec "$ns" wmediumd -c "$tmp/wm.cfg" >/dev/null 2>&1 &
-      sleep 1
+      mapfile -t newphys < <(comm -13 <(echo "$before") <(echo "$after"))
+      if [ "''${#newphys[@]}" -lt 2 ]; then echo "hwsim did not yield two radios" >&2; exit 1; fi
+      ip netns add "$apns"; ip netns add "$stns"
+      iw phy "''${newphys[0]}" set netns name "$apns" 2>/dev/null || true
+      iw phy "''${newphys[1]}" set netns name "$stns" 2>/dev/null || true
+      ap=$(ip netns exec "$apns" sh -c 'ls /sys/class/net | grep "^wlan"' | head -1)
+      sta=$(ip netns exec "$stns" sh -c 'ls /sys/class/net | grep "^wlan"' | head -1)
+      echo "virtual radios: AP=$ap ($apns) STA=$sta ($stns)"
 
       cat >"$tmp/hostapd.conf" <<EOF
       interface=$ap
@@ -165,45 +159,48 @@ let
       }
       EOF
 
-      # hostapd/wpa_supplicant bring their own interfaces up; pre-upping the AP
-      # makes nl80211 fail to set AP mode ("Could not configure driver mode").
-      ip netns exec "$ns" hostapd -B "$tmp/hostapd.conf" >/dev/null 2>&1 || { echo "hostapd failed to start" >&2; exit 1; }
-      ip netns exec "$ns" ip addr add 10.77.0.1/24 dev "$ap" 2>/dev/null || true
-      ip netns exec "$ns" wpa_supplicant -B -i "$sta" -c "$tmp/wpa.conf" >/dev/null 2>&1 || true
+      ip netns exec "$apns" hostapd -B "$tmp/hostapd.conf" >/dev/null 2>&1 || { echo "hostapd failed to start" >&2; exit 1; }
+      ip netns exec "$apns" ip addr add 10.77.0.1/24 dev "$ap" 2>/dev/null || true
+      ip netns exec "$apns" ip link set "$ap" up 2>/dev/null || true
+      ip netns exec "$stns" wpa_supplicant -B -i "$sta" -c "$tmp/wpa.conf" >/dev/null 2>&1 || true
 
       assoc=no
       for _ in $(seq 1 15); do
-        if ip netns exec "$ns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then assoc=yes; break; fi
+        if ip netns exec "$stns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then assoc=yes; break; fi
         sleep 1
       done
       echo "association: $assoc"
       [ "$assoc" = yes ] || { echo "station did not associate" >&2; exit 1; }
-      ip netns exec "$ns" ip addr add 10.77.0.2/24 dev "$sta" 2>/dev/null || true
+      ip netns exec "$stns" ip addr add 10.77.0.2/24 dev "$sta" 2>/dev/null || true
+      ip netns exec "$stns" ip link set "$sta" up 2>/dev/null || true
+
+      if [ "$loss" != "0" ]; then
+        ip netns exec "$stns" tc qdisc add dev "$sta" root netem loss "''${loss}%" 2>/dev/null || true
+      fi
       sleep 1
 
-      echo "== iperf3 (virtual link via wmediumd, 3s):"
-      ip netns exec "$ns" iperf3 -s -1 -D >/dev/null 2>&1 || true
+      echo "== iperf3 (two-netns virtual link, 3s, loss=''${loss}%):"
+      ip netns exec "$apns" iperf3 -s -1 -D >/dev/null 2>&1 || true
       sleep 1
-      ip netns exec "$ns" iperf3 --connect-timeout 3000 -c 10.77.0.1 -t 3 2>/dev/null | grep -E "sender|receiver" \
-        || echo "  no data plane: hwsim passes assoc but not data frames on kernel $(uname -r), even with wmediumd (see #40)"
+      iperf=$(ip netns exec "$stns" iperf3 --connect-timeout 3000 -c 10.77.0.1 -t 3 2>/dev/null \
+        | grep receiver | grep -oE '[0-9.]+ [MKG]bits/sec' | head -1)
+      if [ -n "$iperf" ]; then echo "  throughput: $iperf"; else echo "  no data path (unexpected for two-netns)"; fi
 
-      # Chaos/recovery: drop the station from its own AP, hold the outage, time recovery.
       echo "== disconnect/reconnect (outage ''${outage}s):"
       start=$(date +%s)
-      ip netns exec "$ns" wpa_cli -i "$sta" -p "$tmp/wpa" disconnect >/dev/null 2>&1 || true
+      ip netns exec "$stns" wpa_cli -i "$sta" -p "$tmp/wpa" disconnect >/dev/null 2>&1 || true
       sleep "$outage"
-      ip netns exec "$ns" wpa_cli -i "$sta" -p "$tmp/wpa" reconnect >/dev/null 2>&1 || true
+      ip netns exec "$stns" wpa_cli -i "$sta" -p "$tmp/wpa" reconnect >/dev/null 2>&1 || true
       recovered=timeout
       for _ in $(seq 1 15); do
-        if ip netns exec "$ns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then recovered=$(( $(date +%s) - start )); break; fi
+        if ip netns exec "$stns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then recovered=$(( $(date +%s) - start )); break; fi
         sleep 1
       done
       echo "  reassociated in ~''${recovered}s"
 
       # Deterministic artifact (simulation only — not a hardware measurement).
-      dp=blocked
-      printf '{"kind":"simulation","scenario":{"loss":%s,"outage_s":%s},"association":"%s","reassociated_s":"%s","data_plane":"%s","kernel":"%s"}\n' \
-        "$loss" "$outage" "$assoc" "$recovered" "$dp" "$(uname -r)"
+      printf '{"kind":"simulation","scenario":{"loss_pct":%s,"outage_s":%s},"association":"%s","throughput":"%s","reassociated_s":"%s","kernel":"%s"}\n' \
+        "$loss" "$outage" "$assoc" "''${iperf:-none}" "$recovered" "$(uname -r)"
     '';
   };
 

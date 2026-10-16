@@ -25,7 +25,7 @@ sam.rfLab.enable = true;          # installs the kit + narrow sudo
 | `devenv tasks run rf:list` | List captures on the Pi and locally. |
 | `devenv tasks run rf:analyze` | Offline analysis of a pcap (`RF_PCAP`, default newest local): management-frame breakdown and any deauth/disassoc reason codes. |
 | `devenv tasks run rf:analyze-test` | Offline, deterministic: run the `rf:analyze` decode over the crafted fixtures in `fixtures/` and assert beacon count + deauth/disassoc reason codes. No device. |
-| `devenv tasks run rf:sim` | Fully-virtual `mac80211_hwsim` lab: real hostapd+wpa_supplicant association and a disconnect/reconnect recovery, no physical radio. Data-plane throughput/loss modelling is a wmediumd follow-up (#40). |
+| `devenv tasks run rf:sim` | Fully-virtual `mac80211_hwsim` lab (two netns): real hostapd+wpa_supplicant association, an iperf3 throughput measurement over the virtual link, optional `tc-netem` packet loss (`RF_LOSS` percent), and a disconnect/reconnect recovery (`RF_OUTAGE` seconds). Emits a JSON artifact; no physical radio. |
 
 ## Crafted pcap fixtures
 
