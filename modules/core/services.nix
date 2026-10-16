@@ -52,4 +52,11 @@ in
   ];
 
   security.rtkit.enable = lib.mkDefault hasDesktop;
+
+  # github.com's published ed25519 key (as in modules/homelab/flux.nix): non-interactive
+  # ssh clones (pi-ticket's managed clones, no TTY) must not stop at a host-key prompt.
+  programs.ssh.knownHosts.github = {
+    hostNames = [ "github.com" ];
+    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+  };
 }
