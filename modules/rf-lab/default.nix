@@ -112,6 +112,7 @@ let
     text = ''
       loss=''${1:-0}      # arg1: tc-netem loss percent on the station link (0 = perfect)
       outage=''${2:-1}    # arg2: seconds the station stays disconnected
+      kick=''${3:-0}      # arg3: 1 = AP-initiated hostapd deauth (the rf-ap-kick primitive), observed
       apns=rfsim-ap; stns=rfsim-sta
       tmp=$(mktemp -d)
       cleanup() {
@@ -198,9 +199,31 @@ let
       done
       echo "  reassociated in ~''${recovered}s"
 
+      kicked=na; kickback=na
+      if [ "$kick" = 1 ]; then
+        # AP-initiated hostapd deauth is exactly the rf-ap-kick primitive; this
+        # observes the drop + auto-reassociation in sim (cipher-independent).
+        echo "== AP-initiated deauth (rf-ap-kick primitive):"
+        stamac=$(ip netns exec "$stns" cat /sys/class/net/"$sta"/address)
+        kstart=$(date +%s)
+        ip netns exec "$apns" hostapd_cli -p "$tmp/hapd" -i "$ap" deauthenticate "$stamac" >/dev/null 2>&1 || true
+        kicked=no
+        for _ in $(seq 1 10); do
+          if ! ip netns exec "$stns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then kicked=yes; break; fi
+          sleep 1
+        done
+        echo "  station dropped by AP deauth: $kicked"
+        kickback=timeout
+        for _ in $(seq 1 15); do
+          if ip netns exec "$stns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then kickback=$(( $(date +%s) - kstart )); break; fi
+          sleep 1
+        done
+        echo "  reassociated after deauth in ~''${kickback}s"
+      fi
+
       # Deterministic artifact (simulation only — not a hardware measurement).
-      printf '{"kind":"simulation","scenario":{"loss_pct":%s,"outage_s":%s},"association":"%s","throughput":"%s","reassociated_s":"%s","kernel":"%s"}\n' \
-        "$loss" "$outage" "$assoc" "''${iperf:-none}" "$recovered" "$(uname -r)"
+      printf '{"kind":"simulation","scenario":{"loss_pct":%s,"outage_s":%s,"kick":%s},"association":"%s","throughput":"%s","reassociated_s":"%s","kicked":"%s","kick_reassoc_s":"%s","kernel":"%s"}\n' \
+        "$loss" "$outage" "$kick" "$assoc" "''${iperf:-none}" "$recovered" "$kicked" "$kickback" "$(uname -r)"
     '';
   };
 
