@@ -163,9 +163,10 @@ edit, run with bash"), `-p --no-session`:
 | Model | Result |
 |---|---|
 | `cloudflare-workers-ai/@cf/qwen/qwen3.8-27b` | pass: read→edit→bash, printed `5`, ~40s |
-| `cloudflare-workers-ai/@cf/openai/gpt-oss-120b` | 400 on the turn after a tool call (Workers AI rejects the tool-call message shape) |
+| `cloudflare-workers-ai/@cf/openai/gpt-oss-120b` | 400 on the turn after a tool call (Workers AI rejects assistant `content: null`; the llm-gateway rewrites it to `""` and routes this model since 2026-10-17) |
 | `cloudflare-workers-ai/@cf/moonshotai/kimi-k2.7-code`, `@cf/zai-org/glm-5.3-flash` | 403 "not available on the Workers Free plan" (fails closed, no charge) |
-| `groq/openai/gpt-oss-120b`, `gpt-oss-20b` | first turn works, then 429: free tier is 8k tokens/min and one Pi turn is ~3-6k |
+| `groq/openai/gpt-oss-120b` | 400 on the first turn: "Tool call validation failed: parameters for tool bash did not match schema" (devenv-platform `docs/pi-bench.md`) |
+| `groq/openai/gpt-oss-20b` | first turn works, then 429: free tier is 8k tokens/min and one Pi turn is ~3-6k |
 | `groq/qwen/qwen3.8-27b` | 400 chat-template error on tool-result role |
 | `groq/llama-3.3-70b-versatile` | 404: in Pi's catalog, no longer served by Groq |
 | `google/gemini-2.5-flash`, `gemini-3-flash-preview`, `gemini-3.1-flash-lite` | 402 "prepayment credits are depleted": the key in `~/.env` belongs to a billing-enabled AI Studio project |
@@ -184,15 +185,15 @@ sources: [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platf
 | Provider / model | Tier and cost class | Limits | Cap behaviour | Verdict |
 |---|---|---|---|---|
 | `cloudflare-workers-ai/@cf/qwen/qwen3.8-27b` | Workers Free, no card | 10,000 neurons/day, resets 00:00 UTC | hard stop with an error, no overage on Free | **eligible** (multi-turn tool use verified) |
-| `groq/openai/gpt-oss-120b`, `gpt-oss-20b` | free org, no card | 30 RPM, 1K RPD, 8K TPM, 200K TPD (observed `x-ratelimit-limit-tokens: 8000`); per **organization**, so a second key in the same org adds no quota | 429 | eligible only with long cooldowns; the multi-turn loop is not verified |
-| `groq/qwen/qwen3.8-27b` | free org | same | 429 | **excluded**: 400 on tool-result turn |
-| other CF models listed above | Workers Free | | | **excluded**: 400 or 403 (paid-gated) |
+| `groq/openai/gpt-oss-120b`, `gpt-oss-20b` | free org, no card | 30 RPM, 1K RPD, 8K TPM, 200K TPD (observed `x-ratelimit-limit-tokens: 8000`); per **organization**, so a second key in the same org adds no quota | 429 | **routed by the llm-gateway** since 2026-10-17: read+edit+bash passed through it for both (about 2 min each, paced by the 8K TPM) (llm-gateway#13) |
+| `groq/qwen/qwen3.8-27b` | free org | same | 429 | excluded 2026-10-14 (400 on tool-result turn); passed through the llm-gateway 2026-10-17 and is routed there (llm-gateway#13) |
+| other CF models listed above | Workers Free | | | **excluded**: 400 or 403 (paid-gated); gpt-oss-120b is routed by the llm-gateway since 2026-10-17 (null-content rewrite) |
 | `google/gemini-3.5-flash-lite` (new no-billing project) | free tier, no billing account | free-tier RPM/RPD per project | 429; cannot bill | **eligible**, tier 2 (owner approved free-tier use 2026-10-14; free-tier prompts may be used by Google) |
 | `google/gemini-3.8-flash`, `3.7-flash`, `3.6-flash`, `3.5-flash` (same project) | free tier, no billing account | 5 RPM, 20 RPD per model (429 `quotaValue`); the day ends at midnight UTC (429 `retryDelay`) | 429 with "billing" wording, which Pi does not retry; router/free rewords it and fails over | **eligible**, tier 1. Verified 2026-10-15 with read+edit+bash: 3.8 in 37s (its first run timed out at 15 min), 3.7 in 775s (minutes per turn; a second run timed out after a correct edit+bash), 3.6 in 67s, 3.5 in 15s |
 | `google/gemini-3.1-pro-preview`, `gemini-pro-latest` | free tier | none: 429 quota on the first request | 429 | **excluded**: no free-tier allocation |
 | `msi-ollama/*` (msi's Ollama, CPU-only i7-3770K) | local, no cost | none; 7 tok/s prefill, 4 tok/s output (7B), so the first Pi turn takes 5-7 min, over Pi's default 300s idle timeout | connection refused or timeout when msi is off | **excluded** for now (2026-10-15, idle timeout raised for the test): `qwen2.5-coder:7b` and `llama3.2:3b` return tool calls as plain text; `llama3.1:8b` calls tools but failed the task twice (wrong edits, wrong answer) |
 | `google/*` with the old `~/.env` key | prepaid billing project | | 402; would bill if topped up | **excluded**; delete that key |
-| `cerebras/qwen-3.8-27b`, `gpt-oss-120b` | prepaid trial credits ($5, 30 days); auto-recharge off by default | 5 RPM, 1M TPD on the trial | requests fail when credits run out; the card is only charged when credits are bought or auto-recharge is enabled | verified (logic 3/3 each); off in router/free as a separate cost class, owner decision |
+| `cerebras/qwen-3.8-27b`, `gpt-oss-120b` | prepaid trial credits ($5, 30 days); auto-recharge off by default | 5 RPM, 1M TPD on the trial per docs; the key showed 450 RPM, 150K TPM on 2026-10-17 | requests fail when credits run out; the card is only charged when credits are bought or auto-recharge is enabled | verified (logic 3/3 each); **not routed**: a card is on file and auto-recharge was never observed off, so the llm-gateway keeps it `trial-credit` (2026-10-17, llm-gateway#13) |
 
 Manual onboarding steps (historical: superseded on 2026-10-16, when provider keys moved to the llm-gateway; see Credentials):
 
