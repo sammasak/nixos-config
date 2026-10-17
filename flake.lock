@@ -93,11 +93,11 @@
     "devenv-platform": {
       "flake": false,
       "locked": {
-        "lastModified": 1792175428,
-        "narHash": "sha256-/jPsS4BbNEN0Ye2z3iumSW1Yc7jVdErVQlOtgWBElnY=",
+        "lastModified": 1792199285,
+        "narHash": "sha256-8HZh40POr9HgZtYBALD/XGeX/wTCufoIe42/yythS74=",
         "ref": "refs/heads/main",
-        "rev": "f6b44a8377208869c1e21ccf166e89fba6ae7d77",
-        "revCount": 179,
+        "rev": "bceb2af461af65be053aac21f3ac464e3d3d7a92",
+        "revCount": 184,
         "type": "git",
         "url": "ssh://git@github.com/sammasak/devenv-platform"
       },
@@ -385,11 +385,11 @@
     "skills": {
       "flake": false,
       "locked": {
-        "lastModified": 1792181070,
-        "narHash": "sha256-MngmS9uy3LIdROEA4QI8kZnGPp4Lq1Q6lp2BsuZyCZc=",
+        "lastModified": 1792197758,
+        "narHash": "sha256-qhKyxOA6EATRCYAxMFv7IpedFfUT5U9CQjXiBZkRQa0=",
         "owner": "sammasak",
         "repo": "skills",
-        "rev": "806db93374661875ab5dd5d5c7001d31bfa05d87",
+        "rev": "b19dda4cabf32a3b283143cc0a355ab902082f70",
         "type": "github"
       },
       "original": {
