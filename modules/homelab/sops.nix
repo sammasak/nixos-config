@@ -4,35 +4,15 @@
 { config, lib, ... }:
 
 let
-  inherit (lib) mkEnableOption mkIf mkOption types;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.homelab.secrets;
 in
 {
-  options.homelab.secrets = {
-    enable = mkEnableOption "homelab secrets via sops-nix";
-
-    sopsFile = mkOption {
-      type = types.path;
-      default = ../../secrets/homelab/k3s.yaml;
-      description = "Path to the sops-encrypted secrets file";
-    };
-
-    cloudflareSecretsFile = mkOption {
-      type = types.path;
-      default = ../../secrets/homelab/cloudflare.yaml;
-      description = "Path to the sops-encrypted Cloudflare secrets file";
-    };
-
-    tailscaleSecretsFile = mkOption {
-      type = types.path;
-      default = ../../secrets/homelab/tailscale.yaml;
-      description = "Path to the sops-encrypted Tailscale secrets file";
-    };
-  };
+  options.homelab.secrets.enable = mkEnableOption "homelab secrets via sops-nix";
 
   config = mkIf cfg.enable {
     sops = {
-      defaultSopsFile = cfg.sopsFile;
+      defaultSopsFile = ../../secrets/homelab/k3s.yaml;
 
       # The host SSH key, converted to age, is what makes decryption
       # unattended at activation time.
@@ -61,13 +41,13 @@ in
       };
 
       secrets."cloudflare/api_token" = {
-        sopsFile = cfg.cloudflareSecretsFile;
+        sopsFile = ../../secrets/homelab/cloudflare.yaml;
         path = "/run/secrets/cloudflare-api-token";
         mode = "0400";
       };
 
       secrets."tailscale/authkey" = {
-        sopsFile = cfg.tailscaleSecretsFile;
+        sopsFile = ../../secrets/homelab/tailscale.yaml;
         path = "/run/secrets/tailscale-authkey";
         owner = "root";
         mode = "0400";

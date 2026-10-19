@@ -12,11 +12,6 @@ in
     # Default boot mode.
     ../../modules/specialisations/desktop.nix
 
-    # Required for Cilium: stock k3s containerd on the server never initializes
-    # the Cilium plugin ("cni plugin not initialized"). This gives it a v3-format
-    # CNI section with explicit bin/conf dirs, and registers crun/gvisor.
-    ../../modules/homelab/k3s/containerd-crun.nix
-
     # Wake msi (the intermittent LLM worker) on the work-hours schedule.
     ../../modules/homelab/msi-power-schedule.nix
   ];

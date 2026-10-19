@@ -7,7 +7,7 @@ let
   quantity = types.strMatching "[0-9]+(Ki|Mi|Gi)";
 in
 {
-  imports = [ ../sops.nix ];
+  imports = [ ../sops.nix ./containerd-crun.nix ];
 
   options.homelab.k3s = {
     enable = mkEnableOption "k3s Kubernetes";
@@ -24,7 +24,7 @@ in
     };
 
     tokenFile = mkOption {
-      type = types.nullOr types.path;
+      type = types.path;
       # Read from the sops secret rather than repeating its path: ../sops.nix
       # is imported above and `homelab.secrets.enable` is forced true below, so
       # the secret is always declared in the same evaluation as this default.
@@ -37,14 +37,6 @@ in
       type = types.listOf types.str;
       default = [ ];
       description = "Additional flags to pass to k3s";
-    };
-
-    flannel = {
-      backend = mkOption {
-        type = types.enum [ "vxlan" "host-gw" "wireguard-native" "none" ];
-        default = "host-gw";
-        description = "Flannel backend for pod networking (only used when cni = \"flannel\")";
-      };
     };
 
     cni = mkOption {
@@ -102,10 +94,6 @@ in
 
     assertions = [
       {
-        assertion = cfg.tokenFile != null;
-        message = "homelab.k3s.tokenFile must be set (use sops-nix to manage the secret)";
-      }
-      {
         assertion = cfg.role == "server" || cfg.serverAddr != null;
         message = "homelab.k3s.serverAddr must be set for agent nodes";
       }
@@ -122,8 +110,7 @@ in
         # evict pods while the node still has memory to act, and reserve
         # headroom for the OS + k3s itself. The k3s default eviction
         # threshold (100Mi) fires far too late on a 15Gi machine — the
-        # kernel OOM-hangs before kubelet reacts. Applies to both roles;
-        # lenovo also runs failover pods now.
+        # kernel OOM-hangs before kubelet reacts. Applies to both roles.
         ++ [
           "--kubelet-arg=eviction-hard=memory.available<${cfg.memory.evictionHard}"
           "--kubelet-arg=eviction-soft=memory.available<${cfg.memory.evictionSoft}"
@@ -140,18 +127,13 @@ in
           ]
           ++ (
             if cfg.cni == "cilium" then [
-              # Cilium becomes the sole CNI: disable bundled flannel, the embedded
-              # network-policy controller, and kube-proxy so Cilium's eBPF datapath
-              # (kube-proxy replacement + native NetworkPolicy) can take over.
-              #
-              # --disable-kube-proxy is SERVER-ONLY — the agent binary rejects it
-              # ("flag provided but not defined") and fatals. It is inside this
-              # server-only branch for that reason; kube-proxy is off cluster-wide.
+              # Server-only: the agent binary rejects --disable-kube-proxy
+              # ("flag provided but not defined") and fatals.
               "--flannel-backend=none"
               "--disable-network-policy"
               "--disable-kube-proxy"
             ] else [
-              "--flannel-backend=${cfg.flannel.backend}"
+              "--flannel-backend=host-gw"
             ]
           )
         )
@@ -225,11 +207,8 @@ in
           9964 # Cilium Envoy proxy Prometheus metrics
           9965 # Hubble Prometheus metrics
         ];
-      # VXLAN tunnel: flannel uses 8472 when its backend is vxlan; Cilium's
-      # default tunnel mode also uses 8472. Open it for either.
-      allowedUDPPorts =
-        optionals (cfg.cni == "flannel" && cfg.flannel.backend == "vxlan") [ 8472 ]
-        ++ optionals (cfg.cni == "cilium") [ 8472 ];
+      # Cilium's default tunnel mode is VXLAN; flannel's host-gw needs no tunnel.
+      allowedUDPPorts = optionals (cfg.cni == "cilium") [ 8472 ];
     };
   };
 }

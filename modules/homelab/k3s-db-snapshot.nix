@@ -8,41 +8,18 @@
 { config, lib, pkgs, ... }:
 
 let
-  inherit (lib) mkEnableOption mkIf mkOption types;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.homelab.k3sDbSnapshot;
+  databasePath = "/var/lib/rancher/k3s/server/db/state.db";
+  snapshotDir = "/var/lib/k3s-db-snapshots";
+  keep = 7;
 in
 {
-  options.homelab.k3sDbSnapshot = {
-    enable = mkEnableOption "daily snapshots of the k3s sqlite datastore";
-
-    databasePath = mkOption {
-      type = types.str;
-      default = "/var/lib/rancher/k3s/server/db/state.db";
-      description = "Path to the k3s sqlite datastore.";
-    };
-
-    snapshotDir = mkOption {
-      type = types.str;
-      default = "/var/lib/k3s-db-snapshots";
-      description = "Directory the gzipped snapshots are written to (root-only).";
-    };
-
-    keep = mkOption {
-      type = types.ints.positive;
-      default = 7;
-      description = "Number of snapshots to retain; older ones are pruned.";
-    };
-
-    schedule = mkOption {
-      type = types.str;
-      default = "*-*-* 03:10:00";
-      description = "systemd OnCalendar expression. Default: daily at 03:10.";
-    };
-  };
+  options.homelab.k3sDbSnapshot.enable = mkEnableOption "daily snapshots of the k3s sqlite datastore";
 
   config = mkIf cfg.enable {
     systemd.tmpfiles.rules = [
-      "d ${cfg.snapshotDir} 0700 root root -"
+      "d ${snapshotDir} 0700 root root -"
     ];
 
     systemd.services.k3s-db-snapshot = {
@@ -63,8 +40,8 @@ in
       };
 
       script = ''
-        db="${cfg.databasePath}"
-        dir="${cfg.snapshotDir}"
+        db="${databasePath}"
+        dir="${snapshotDir}"
 
         # Guard: an etcd-backed or not-yet-bootstrapped server has no sqlite
         # datastore. Say so in the journal and exit clean rather than failing
@@ -85,7 +62,7 @@ in
         # Retention: keep the newest N, prune the rest.
         find "$dir" -maxdepth 1 -type f -name 'state-*.db.gz' -printf '%T@ %p\n' \
           | sort -rn \
-          | tail -n +${toString (cfg.keep + 1)} \
+          | tail -n +${toString (keep + 1)} \
           | cut -d' ' -f2- \
           | while read -r old; do
               echo "k3s-db-snapshot: pruning $old"
@@ -98,7 +75,7 @@ in
       description = "Daily k3s sqlite datastore snapshot";
       wantedBy = [ "timers.target" ];
       timerConfig = {
-        OnCalendar = cfg.schedule;
+        OnCalendar = "*-*-* 03:10:00";
         Persistent = true;
         RandomizedDelaySec = "5min";
       };

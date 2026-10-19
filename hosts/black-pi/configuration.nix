@@ -6,9 +6,6 @@ in
   imports = [
     ./hardware-configuration.nix
 
-    # Registers crun as an additional containerd runtime for k3s (worker parity).
-    ../../modules/homelab/k3s/containerd-crun.nix
-
     # Directly, not via the laptop role (Intel-only settings). No wifi-selfheal:
     # wlan0 is the secondary NIC here, end0 carries the cluster.
     ../../modules/core/wifi.nix

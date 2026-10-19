@@ -8,9 +8,6 @@ in
     (import ../../modules/hardware/disko-single-ext4.nix "/dev/disk/by-id/nvme-INTEL_SSDPEKNW010T8_BTNH014425J11P0B")
 
     ../../modules/hardware/video/${vars.videoDriver}.nix
-
-    # Registers crun as an additional containerd runtime for k3s.
-    ../../modules/homelab/k3s/containerd-crun.nix
   ];
 
   sam.profile = vars;

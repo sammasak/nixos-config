@@ -6,8 +6,6 @@ in
   imports = [
     ./hardware-configuration.nix
     ../../modules/hardware/video/${vars.videoDriver}.nix
-    # Registers crun as an additional containerd runtime for k3s (worker parity).
-    ../../modules/homelab/k3s/containerd-crun.nix
     # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
     ../../modules/homelab/msi-power-schedule.nix
   ];

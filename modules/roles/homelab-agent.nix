@@ -3,12 +3,10 @@
   imports = [
     ./base.nix
     ../core/always-on.nix
-    ../homelab/k3s/agent.nix
+    # kubelet rejects kubernetes.io/node-role labels, so a worker is marked
+    # only by lacking the control-plane role: no agent-only k3s settings exist.
+    ../homelab/k3s/default.nix
     ../homelab/deploy-target.nix
-
-    # Imported but left disabled: workers run no Tailscale client, so remote
-    # access rides the control-plane subnet router.
-    ../homelab/tailscale.nix
   ];
 
   homelab.k3s = {

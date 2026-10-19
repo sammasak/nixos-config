@@ -3,22 +3,12 @@
 let
   cfg = config.homelab.dns;
   inherit (lib) mkEnableOption mkOption mkIf types optionals;
+  # Android Private DNS only speaks DoT on 853.
+  dotPort = 853;
 in
 {
   options.homelab.dns = {
     enable = mkEnableOption "AdGuard Home DNS server";
-
-    upstreamDNS = mkOption {
-      type = types.listOf types.str;
-      default = [ "1.1.1.1" "8.8.8.8" ];
-      description = "Upstream DNS servers";
-    };
-
-    adBlocking = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Enable ad blocking filters";
-    };
 
     tls = {
       enable = mkEnableOption "TLS for DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH)";
@@ -29,28 +19,10 @@ in
         description = "Domain for DoT/DoH (must match ACME certificate)";
       };
 
-      certFile = mkOption {
-        type = types.path;
-        default = "/var/lib/acme/dns.sammasak.dev/fullchain.pem";
-        description = "Path to TLS certificate file";
-      };
-
-      keyFile = mkOption {
-        type = types.path;
-        default = "/var/lib/acme/dns.sammasak.dev/key.pem";
-        description = "Path to TLS private key file";
-      };
-
       dohPort = mkOption {
         type = types.port;
         default = 443;
         description = "Port for DNS-over-HTTPS (use 8443 if 443 is taken by ingress)";
-      };
-
-      dotPort = mkOption {
-        type = types.port;
-        default = 853;
-        description = "Port for DNS-over-TLS (Android Private DNS uses this)";
       };
     };
 
@@ -92,7 +64,7 @@ in
         dns = {
           bind_hosts = [ "0.0.0.0" ];
           port = 53;
-          upstream_dns = cfg.upstreamDNS;
+          upstream_dns = [ "1.1.1.1" "8.8.8.8" ];
           bootstrap_dns = [ "1.1.1.1" "8.8.8.8" ];
         };
 
@@ -100,16 +72,16 @@ in
           enabled = true;
           server_name = cfg.tls.domain;
           port_https = cfg.tls.dohPort;
-          port_dns_over_tls = cfg.tls.dotPort;
+          port_dns_over_tls = dotPort;
           port_dns_over_quic = 0; # Disabled
-          certificate_path = cfg.tls.certFile;
-          private_key_path = cfg.tls.keyFile;
+          certificate_path = "/var/lib/acme/${cfg.tls.domain}/fullchain.pem";
+          private_key_path = "/var/lib/acme/${cfg.tls.domain}/key.pem";
           allow_unencrypted_doh = false;
         };
 
         filtering = {
-          filtering_enabled = cfg.adBlocking;
-          protection_enabled = cfg.adBlocking;
+          filtering_enabled = true;
+          protection_enabled = true;
           rewrites = map (r: {
             domain = r.domain;
             answer = r.answer;
@@ -121,7 +93,7 @@ in
 
     networking.firewall = {
       allowedUDPPorts = [ 53 ];
-      allowedTCPPorts = optionals cfg.tls.enable [ cfg.tls.dohPort cfg.tls.dotPort ];
+      allowedTCPPorts = optionals cfg.tls.enable [ cfg.tls.dohPort dotPort ];
     };
 
     # Without the ACME group AdGuard cannot read its own certificate.
