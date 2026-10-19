@@ -7,22 +7,21 @@
 let
   cfg = config.sam.rfLab;
   username = config.sam.profile.username;
+  radio = import ./radio.nix;
+  captureDir = "/var/lib/rf-lab/captures";
 
   # The USB adapter is the only monitor-capable radio (onboard is 2.4 GHz
-  # managed-only). Find it by its udev USB name (wlu*), which is stable — unlike
-  # the phy index, which flips with USB enumeration order across boots.
+  # managed-only).
   pickMon = ''
-    # One USB-adapter op at a time: rf-ap-kick-hil uses wlu* as a station and its
-    # restore would fight a monitor-mode capture (and vice versa). Same lock file.
-    exec 9>/run/rf-lab.lock
+    exec 9>${radio.lock}
     flock -n 9 || { echo "another rf-lab op holds the radio lock; retry when it finishes" >&2; exit 1; }
-    IF=$(iw dev | awk '/Interface/{print $2}' | grep -m1 '^wlu' || true)
+    IF=$(${radio.findUsb})
     if [ -z "''${IF:-}" ]; then
       # The rtl8192cu RX path wedges after repeated mode flips or an undervoltage
       # USB brownout; one module reload clears the soft cases, a replug the rest.
       modprobe -r rtl8192cu 2>/dev/null || true; sleep 1
       modprobe rtl8192cu 2>/dev/null || true; sleep 3
-      IF=$(iw dev | awk '/Interface/{print $2}' | grep -m1 '^wlu' || true)
+      IF=$(${radio.findUsb})
     fi
     if [ -z "''${IF:-}" ]; then
       echo "no USB capture adapter (wlu*) present; replug it (see runbook)" >&2
@@ -56,7 +55,7 @@ let
     text = ''
       per=''${1:-1.2}
       ${pickMon}
-      out="${cfg.captureDir}/sweep-$(date +%Y%m%dT%H%M%S).pcap"
+      out="${captureDir}/sweep-$(date +%Y%m%dT%H%M%S).pcap"
       ${enterMonitor}
       tcpdump -i "$IF" -y IEEE802_11_RADIO -s 300 'type mgt subtype beacon' -w "$out" 2>/dev/null &
       tp=$!
@@ -80,7 +79,7 @@ let
       secs=''${2:-30}
       filter=''${3:-}
       ${pickMon}
-      out="${cfg.captureDir}/capture-ch''${ch}-$(date +%Y%m%dT%H%M%S).pcap"
+      out="${captureDir}/capture-ch''${ch}-$(date +%Y%m%dT%H%M%S).pcap"
       ${enterMonitor}
       iw dev "$IF" set channel "$ch" 2>/dev/null || true
       # shellcheck disable=SC2086
@@ -260,19 +259,7 @@ in
   imports = [ ./ap.nix ./net-watchdog.nix ./bluetooth.nix ./hil.nix ];
 
   options.sam.rfLab = {
-    enable = lib.mkEnableOption "passive 2.4 GHz RF observation kit (naked-pi)";
-
-    captureDir = lib.mkOption {
-      type = lib.types.str;
-      default = "/var/lib/rf-lab/captures";
-      description = "Directory for PCAPs; kept off the Nix store and aged out.";
-    };
-
-    retentionDays = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 14;
-      description = "Days before a capture is deleted, so the SD card cannot fill silently.";
-    };
+    enable = lib.mkEnableOption "2.4 GHz RF lab kit (naked-pi)";
   };
 
   config = lib.mkIf cfg.enable {
@@ -280,7 +267,8 @@ in
       (with pkgs; [ iw usbutils ethtool tcpdump bluez ]) ++ tools;
 
     systemd.tmpfiles.rules = [
-      "d ${cfg.captureDir} 0750 ${username} users ${toString cfg.retentionDays}d"
+      # Aged out so captures cannot fill the SD card silently.
+      "d ${captureDir} 0750 ${username} users 14d"
     ];
 
     # Monitor mode needs CAP_NET_ADMIN and capture needs raw sockets, so the

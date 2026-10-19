@@ -100,26 +100,27 @@ let
     echo "open: nix shell nixpkgs#wireshark -c wireshark $f"
   '';
 
-  rfBtScan = gate "rf-btscan" [ pkgs.openssh ] ''
-    exec >&2  # devenv captures task stdout; stream results instead
+  # Streams to stderr because devenv captures task stdout.
+  naked = name: preamble: cmd: gate name [ pkgs.openssh ] ''
+    exec >&2
+    ${preamble}
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo ${cmd}"
+  '';
+
+  rfBtScan = naked "rf-btscan" ''
     secs=''${RF_SECONDS:-15}
     echo "Passive BT/BLE discovery for ''${secs}s (visible devices only)..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-btscan $secs"
-  '';
+  '' "rf-btscan $secs";
 
-  rfSim = gate "rf-sim" [ pkgs.openssh ] ''
-    exec >&2
+  rfSim = naked "rf-sim" ''
     loss=''${RF_LOSS:-0}; outage=''${RF_OUTAGE:-1}; kick=''${RF_KICK:-0}
     echo "Virtual-radio two-netns Wi-Fi lab on naked-pi (mac80211_hwsim; no physical RF; loss=''${loss}% outage=''${outage}s kick=''${kick})..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-sim $loss $outage $kick"
-  '';
+  '' "rf-sim $loss $outage $kick";
 
-  rfApOutage = gate "rf-ap-outage" [ pkgs.openssh ] ''
-    exec >&2
+  rfApOutage = naked "rf-ap-outage" ''
     secs=''${RF_SECONDS:-10}
     echo "Bounded outage of naked-pi's own lab AP (''${secs}s)..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-outage $secs"
-  '';
+  '' "rf-ap-outage $secs";
 
   rfApKickHil = gate "rf-ap-kick-hil" [ pkgs.openssh ] ''
     exec >&2
@@ -130,38 +131,26 @@ let
       naked-pi "sudo rf-ap-kick-hil $arg"
   '';
 
-  rfApStatus = gate "rf-ap-status" [ pkgs.openssh ] ''
-    exec >&2
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-status"
-  '';
+  rfApStatus = naked "rf-ap-status" "" "rf-ap-status";
 
-  rfBtStatus2 = gate "rf-bt-status" [ pkgs.openssh ] ''
-    exec >&2
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-bt-status"
-  '';
+  rfBtStatus2 = naked "rf-bt-status" "" "rf-bt-status";
 
-  rfBtDisconnect = gate "rf-bt-disconnect" [ pkgs.openssh ] ''
-    exec >&2
+  rfBtDisconnect = naked "rf-bt-disconnect" ''
     mac=''${RF_MAC:?set RF_MAC=<enrolled-paired-MAC> (RF_COMMIT=1 to actually disconnect)}
     flag=""; [ "''${RF_COMMIT:-}" = 1 ] && flag="--commit"
     echo "rf-bt-disconnect $mac ''${flag:-(dry-run)} via our own controller..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-bt-disconnect $mac $flag"
-  '';
+  '' "rf-bt-disconnect $mac $flag";
 
-  rfBtOutage = gate "rf-bt-outage" [ pkgs.openssh ] ''
-    exec >&2
+  rfBtOutage = naked "rf-bt-outage" ''
     secs=''${RF_SECONDS:-10}
     echo "rf-bt-adapter-outage ''${secs}s on naked-pi's own controller..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-bt-adapter-outage $secs"
-  '';
+  '' "rf-bt-adapter-outage $secs";
 
-  rfApKick = gate "rf-ap-kick" [ pkgs.openssh ] ''
-    exec >&2
+  rfApKick = naked "rf-ap-kick" ''
     mac=''${RF_MAC:?set RF_MAC=<enrolled-MAC> (RF_COMMIT=1 to actually evict)}
     flag=""; [ "''${RF_COMMIT:-}" = 1 ] && flag="--commit"
     echo "rf-ap-kick $mac ''${flag:-(dry-run)} on naked-pi's own AP..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-kick $mac $flag"
-  '';
+  '' "rf-ap-kick $mac $flag";
 
   rfList = gate "rf-list" (with pkgs; [ openssh coreutils ]) ''
     exec >&2  # devenv captures task stdout; stream the listing instead

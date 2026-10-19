@@ -1,8 +1,10 @@
-# rf-lab: naked-pi passive Wi-Fi observation kit
+# rf-lab: naked-pi 2.4 GHz RF lab
 
-Opt-in, **observation-only** 2.4 GHz tooling for the `naked-pi` host (Raspberry
-Pi 3, role `rf-lab`). Capture and standard discovery only — no deauthentication,
-frame injection, jamming or AP mode lives here. Operated from lenovo over SSH.
+Opt-in 2.4 GHz tooling for the `naked-pi` host (Raspberry Pi 3, role `rf-lab`):
+passive capture and discovery, plus the owned-AP lab (`ap.nix`) and the
+Ethernet-gated HIL kick test (`hil.nix`) as the only deauth/AP-mode paths, all
+scoped to our own AP and enrolled stations. No frame injection, jamming or
+action against anyone else's network. Operated from lenovo over SSH.
 
 ## Enable
 
@@ -10,10 +12,9 @@ Set in a host's config (the `rf-lab` role does this):
 
 ```nix
 sam.rfLab.enable = true;          # installs the kit + narrow sudo
-# sam.rfLab.captureDir    = "/var/lib/rf-lab/captures";   # aged out
-# sam.rfLab.retentionDays = 14;
-# sam.rfLab.monitorPhy    = 1;     # USB adapter; onboard wlan0 is phy0
 ```
+
+Captures land in `/var/lib/rf-lab/captures` on the Pi and age out after 14 days.
 
 ## Operate (from lenovo, in this repo's devenv)
 
@@ -36,13 +37,9 @@ transmitted. `rf:analyze-test` asserts the decode logic recognises them. See
 
 ## hwsim data-plane VM test (#40 kernel-blocker check)
 
-`tests/rf-hwsim-dataplane.nix` boots a QEMU VM on a standard nixpkgs kernel and
-exercises `mac80211_hwsim` there (never on the host — lenovo is the k3s control
-plane). It tests the claim that the Pi's kernel 7.2.9 blocks hwsim data frames.
-Run: `nix build .#packages.x86_64-linux.rf-hwsim-dataplane -L`. Finding: on
-kernel 6.18.55 a two-netns bare-hwsim link passes ICMP (data plane works), while
-the single-netns + wmediumd `rf-sim` topology drops 100% — so the data-plane
-block is the wmediumd/netns setup, not kernel 7.2.9.
+`nix build .#packages.x86_64-linux.rf-hwsim-dataplane -L` runs
+`tests/rf-hwsim-dataplane.nix` in a QEMU VM. Finding: the data-plane block is
+the wmediumd/netns setup of `rf-sim`, not the Pi's kernel 7.2.9.
 
 Analysis stays on lenovo: `nix shell nixpkgs#wireshark -c wireshark ~/rf-lab-captures/<file>.pcap`.
 
@@ -87,11 +84,11 @@ failure of the primitive.
 
 ## On-Pi wrappers
 
-The tasks call three narrow `sudo` wrappers (lukas has NOPASSWD for exactly
-these, nothing else): `rf-sweep [dwell]`, `rf-capture <ch> [secs] [bpf]`,
-`rf-btscan [secs]`. Each restores managed mode on exit and tolerates the USB
-adapter's undervoltage drops; a wedged RX path triggers one module-reload
-recovery, then asks for a physical replug.
+The tasks call narrow `sudo` wrappers (lukas has NOPASSWD for exactly these,
+nothing else): the `tools` list in `default.nix`, plus those `ap.nix`,
+`hil.nix` and `bluetooth.nix` add when enabled. The monitor-mode ones restore
+managed mode on exit and tolerate the USB adapter's undervoltage drops; a wedged
+RX path triggers one module-reload recovery, then asks for a physical replug.
 
 ## Hardware limits
 

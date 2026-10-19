@@ -9,6 +9,7 @@
 let
   cfg = config.sam.rfLab;
   username = config.sam.profile.username;
+  radio = import ./radio.nix;
 
   rfApKickHil = pkgs.writeShellApplication {
     name = "rf-ap-kick-hil";
@@ -18,7 +19,7 @@ let
     ];
     text = ''
       apif=wlan0
-      sta=$(iw dev | awk '/Interface/{print $2}' | grep -m1 '^wlu' || true)
+      sta=$(${radio.findUsb})
 
       refuse() {
         printf '{"mode":"refused","reason":"%s","ap_if":"%s","sta_if":"%s"}\n' \
@@ -28,9 +29,7 @@ let
 
       [ -n "''${sta:-}" ] || { echo "no USB wlan adapter (wlu*) present; plug it in" >&2; exit 1; }
 
-      # One rf-lab radio op at a time: rf-capture/rf-sweep flip wlu* to monitor and
-      # their restore would fight ours. flock serialises them.
-      exec 9>/run/rf-lab.lock
+      exec 9>${radio.lock}
       flock -n 9 || refuse "another rf-lab operation holds the lock"
 
       # A running lab AP already owns wlan0; don't stamp on it.
