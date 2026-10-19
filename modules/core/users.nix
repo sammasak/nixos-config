@@ -2,11 +2,7 @@
 let
   profile = config.sam.profile;
   inherit (profile) username;
-  defaultSshKeys = config.sam.userConfig.sshKeys or [ ];
-  sshAuthorizedKeys =
-    if profile.sshAuthorizedKeys != [ ]
-    then profile.sshAuthorizedKeys
-    else defaultSshKeys;
+  sshAuthorizedKeys = config.sam.userConfig.sshKeys or [ ];
 in
 {
   programs.dconf.enable = true;
@@ -41,9 +37,7 @@ in
         "networkmanager"
         "video"
         "audio"
-        "libvirtd"
         "kvm"
-        "docker"
         "disk"
       ];
       shell = pkgs.fish;
@@ -55,7 +49,7 @@ in
   assertions = [
     {
       assertion = sshAuthorizedKeys != [ ];
-      message = "No SSH authorized keys configured for `${username}`. Set `lib/users.nix` (${username}.sshKeys) or `sam.profile.sshAuthorizedKeys`.";
+      message = "No SSH authorized keys configured for `${username}`. Set `lib/users.nix` (${username}.sshKeys).";
     }
   ];
 

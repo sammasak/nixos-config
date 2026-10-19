@@ -56,20 +56,6 @@ in
             description = "Video driver module selector.";
           };
 
-          monitors = mkOption {
-            type = types.listOf types.str;
-            # Hyprland monitor rules are `name,resolution,position,scale`.
-            # A leading comma means "all monitors".
-            default = [ ",preferred,auto,1" ];
-            description = "Hyprland monitor definitions.";
-          };
-
-          laptop = mkOption {
-            type = types.bool;
-            default = false;
-            description = "Whether this host is a laptop.";
-          };
-
           devTools = mkOption {
             type = types.bool;
             default = true;
@@ -95,12 +81,6 @@ in
             type = types.listOf types.str;
             default = [ "base" ];
             description = "Role aspects enabled for this host.";
-          };
-
-          sshAuthorizedKeys = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-            description = "Optional host-specific SSH authorized key override.";
           };
 
           lanCidr = mkOption {
@@ -197,7 +177,6 @@ in
         ];
         warn-dirty = false;
       };
-      optimise.automatic = true;
     };
 
     time.timeZone = profile.timezone;

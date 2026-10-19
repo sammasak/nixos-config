@@ -17,12 +17,6 @@ in
       description = "Node role in the cluster";
     };
 
-    clusterName = mkOption {
-      type = types.str;
-      default = "homelab";
-      description = "Name of the k3s cluster";
-    };
-
     serverAddr = mkOption {
       type = types.nullOr types.str;
       default = null;

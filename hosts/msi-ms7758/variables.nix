@@ -7,6 +7,5 @@
   kbdVariant = "";
   consoleKeymap = "sv-latin1";
   videoDriver = "intel";
-  laptop = false;
   roles = [ "base" "homelab-agent" ];
 }

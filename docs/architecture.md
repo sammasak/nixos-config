@@ -30,7 +30,7 @@ Each host follows a 2–3 file pattern in `hosts/<name>/`:
 
 | File | Purpose |
 |------|---------|
-| `variables.nix` | Plain attrset of host-specific choices (username, roles, videoDriver, monitors, etc.) |
+| `variables.nix` | Plain attrset of host-specific choices (username, roles, videoDriver, etc.) |
 | `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
 | `hardware-configuration.nix` | Auto-generated hardware scan |
 
@@ -78,13 +78,10 @@ build error if a `variables.nix` sets it):
 - `hostname` (str) — System hostname
 - `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str) — Localisation
 - `videoDriver` (str) — GPU driver module selector; picks `modules/hardware/video/<value>.nix` (currently only "intel")
-- `monitors` (list of str) — Hyprland monitor rules, `name,resolution,position,scale`
 - `roles` (list of str) — Enabled roles from `modules/roles/`
-- `laptop` (bool) — Laptop-specific settings enabled
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets
 - `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
-- `sshAuthorizedKeys` (list of str) — Authorized SSH public keys
 
 Sibling options, outside the profile:
 - `sam.desktop.enable` (bool) — whether a GUI desktop session is active (outside the profile so `modules/specialisations/desktop.nix` can set it)
