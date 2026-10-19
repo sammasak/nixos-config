@@ -1,8 +1,5 @@
 # Custom packages overlay
 final: prev: {
-  # Bumped past nixpkgs 0.8.2 for the multi-machine `machine add` feature.
-  herdr = final.callPackage ./herdr/package.nix { };
-
   wmediumd = final.callPackage ./wmediumd/package.nix { };
 
   # Patch CRIU 4.1.1 for kernel 6.16+ compatibility.
