@@ -39,7 +39,7 @@ let
           inputs.disko.nixosModules.disko
           (nixos: {
             nixpkgs.overlays = [
-              (import ../pkgs)
+              config.flake.overlays.default
               # pkgs.nur.* — keeps modules on plain pkgs, no specialArgs.
               inputs.nur.overlays.default
             ];

@@ -28,10 +28,6 @@ in
   nix.settings.max-free = 8 * 1024 * 1024 * 1024;
   services.journald.settings.Journal.SystemMaxUse = lib.mkForce "200M";
 
-  # 0 = retry forever; the default 4 ends in a secret-agent request that never
-  # comes on a headless box (one AP deauth became a 10-day outage on acer).
-  networking.networkmanager.settings.connection."connection.autoconnect-retries" = 0;
-
   # No UEFI: the Pi firmware chains U-Boot, which reads /boot/extlinux.
   # https://wiki.nixos.org/wiki/NixOS_on_ARM/Raspberry_Pi_4
   boot.loader.systemd-boot.enable = lib.mkForce false;

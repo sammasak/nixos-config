@@ -1,24 +1,13 @@
 let
-  sortNames = names: builtins.sort builtins.lessThan names;
-
   listRegularNixFiles =
     dir:
     let
       entries = builtins.readDir dir;
-      names = sortNames (builtins.attrNames entries);
     in
     builtins.filter (
       name:
       entries.${name} == "regular" && builtins.match ".*\\.nix" name != null
-    ) names;
-
-  listDirectories =
-    dir:
-    let
-      entries = builtins.readDir dir;
-      names = sortNames (builtins.attrNames entries);
-    in
-    builtins.filter (name: entries.${name} == "directory") names;
+    ) (builtins.attrNames entries);
 
   mkAttrs =
     names: mkName: mkValue:

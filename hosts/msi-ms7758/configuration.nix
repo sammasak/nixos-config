@@ -65,16 +65,9 @@ in
     HandlePowerKey = "poweroff";
   };
 
-  # Intermittent worker: this tower is powered on only occasionally (woken via
-  # Wake-on-LAN above), so it joins the cluster as an OPT-IN node. The
-  # homelab-agent role enables k3s + role = "agent"; here we only wire the
-  # cluster address, CNI, labels, and the taint that keeps it opt-in.
-  #
-  # The NoSchedule taint means nothing lands here unless it explicitly tolerates
-  # sammasak.dev/intermittent, so this node's frequent shutdowns never disrupt the
-  # always-on workloads. CPU/batch jobs opt in via toleration + node-pool.
-  # (The GTX 680 is Kepler/compute-3.0; its driver was removed in d5cf2fb, so
-  # the GPU is deliberately not wired into k3s.)
+  # Intermittent (WoL-woken) node: the taint keeps its shutdowns off always-on
+  # workloads; CPU/batch jobs opt in via toleration + node-pool. The GTX 680 is
+  # Kepler, which current drivers dropped, so the GPU is not wired into k3s.
   homelab.k3s.serverAddr = "https://192.168.10.154:6443"; # k3s server on lenovo-21CB001PMX
   homelab.k3s.cni = "cilium"; # must match control-plane: Cilium KPR, kube-proxy disabled
   homelab.k3s.extraFlags = [

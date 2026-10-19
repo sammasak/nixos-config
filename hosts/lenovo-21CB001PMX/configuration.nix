@@ -5,7 +5,7 @@ in
 {
   imports = [
     ./hardware-configuration.nix
-    ./disk-config.nix
+    (import ../../modules/hardware/disko-single-ext4.nix "/dev/disk/by-id/nvme-SAMSUNG_MZVL2512HCJQ-00BL7_S64KNX1T235655")
 
     ../../modules/hardware/video/${vars.videoDriver}.nix
 
