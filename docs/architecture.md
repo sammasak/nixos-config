@@ -1,14 +1,18 @@
-# Architecture (moved from CLAUDE.md 2026-10-09)
+# Architecture
 
 ### Flake Entry Point
 
 `flake.nix` is minimal. It recursively auto-imports all `.nix` files from `flake-modules/` using `collectFlakeModules`. The `flake-modules/` directory is numbered for load order:
 
 - `00-flake-parts-modules.nix` — flake-parts setup
+- `05-overlays.nix` — exposes `pkgs/` through an overlay
 - `10-systems.nix` — supported systems
 - `20-module-registry.nix` — auto-generates module registries from filesystem
 - `30-configurations-options.nix` — typed host declaration options
 - `40-outputs-nixos.nix` — transforms declarations into `nixosConfigurations`
+- `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
+- `60-templates.nix` — devenv templates stamped by `dev-init`
+- `70-deploy.nix` — deploy-rs push targets
 - `hosts/<name>.nix` — per-host distribution declarations
 
 ### Module Registry (`20-module-registry.nix`)
@@ -99,17 +103,22 @@ Composable role modules assigned per-host via `variables.nix`:
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node; disables sleep/suspend
 - **homelab-server** — k3s control plane
+- **rf-lab** — headless Wi-Fi learning appliance (naked-pi)
+- **embedded** — ESP32 development host (USB-serial, debug probes)
 
 ### Module Layout
 
 ```
 modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
-├── desktop/      # Desktop stack: hyprland/ and niri/ (Wayland compositors)
+├── desktop/      # Desktop stack: common/ and niri/
+├── embedded/     # ESP32 tooling
 ├── hardware/     # GPU drivers (intel), thermal
 ├── homelab/      # k3s (agent/server), sops, flux, tailscale, ntfy, watchdog
 ├── programs/     # Home Manager programs: cli/, browser/, editor/, terminal/
+├── rf-lab/       # Wi-Fi/Bluetooth lab and HIL tests
 ├── roles/        # Composition roles (see above)
+├── specialisations/  # Boot-menu variants (desktop.nix)
 └── themes/       # Catppuccin via Stylix
 ```
 

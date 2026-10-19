@@ -85,31 +85,17 @@ wiring (`modules/programs/editor/nvim`). Mason auto-disables on NixOS.
 
 ## Coding workflow
 
-- Rust uses `rust-analyzer` with all Cargo features, proc macros, Clippy on save,
-  `rustfmt`, explicit NixOS `codelldb` wiring, Cargo test integration, and
-  `crates.nvim`.
-- Python uses `basedpyright`, Ruff diagnostics and formatting, virtualenv
-  selection, pytest discovery, and `debugpy`; an active project virtualenv is
-  used for debugging before the Nix fallback interpreter.
-- `<leader>tr` runs the nearest test, `<leader>tt` runs the file, and `<leader>tT`
-  runs the project. `<leader>ts` toggles the test summary.
-- `<leader>cf` formats the buffer; `<leader>db` toggles a breakpoint and
-  `<leader>dc` starts or continues debugging.
-- `<leader>gd` opens the working-tree diff and `<leader>gS` opens the staged diff;
+LazyVim extras own the language, test, debug and refactor bindings; find them
+via which-key. What this config adds:
+
+- Rust debugging uses the Nix-provided `codelldb`; Python's `debugpy` prefers
+  the active project virtualenv over the Nix fallback interpreter.
+- `<leader>gd` / `<leader>gS` open the working-tree / staged diff (diffview);
   `<leader>gh` opens current-file history.
-- Copilot suggestions appear in Blink completion. Use `<Tab>` to accept the
-  selected completion and `:Copilot auth` once per machine to sign in.
-- `<leader>a` opens Harpoon; `<leader>cr` performs incremental rename.
-- `<leader>oo` opens the project task runner; use it for `just`, Cargo, pytest,
-  and repo-defined commands instead of inventing editor-specific build logic.
-- `<leader>cs` opens the symbol outline; Treesitter context keeps the current
-  function/type visible while navigating large files.
-- `<leader>rs` opens structural refactors and `<leader>cn` generates a language-
-  appropriate documentation stub.
-- `:Neoconf` manages repository-specific LSP settings; keep project policy in
-  the repository instead of encoding it globally.
-- `<leader>G` opens GitHub workflow tools for issues and pull requests when
-  `gh` is available; review remains an explicit human action.
+- Copilot suggestions appear in Blink completion; run `:Copilot auth` once per
+  machine.
+- Keep project policy in the repo: `:Neoconf` for LSP settings, the
+  `<leader>oo` task runner for `just`/Cargo/pytest; review stays a human action.
 
 ## Per-project overrides
 
