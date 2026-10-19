@@ -22,7 +22,7 @@
         margin-bottom = 0;
 
         modules-left = [
-          "hyprland/workspaces"
+          "niri/workspaces"
           "cpu"
           "temperature"
           "memory"
@@ -116,18 +116,8 @@
           format-icons = [ "▁" "▂" "▃" "▄" "▅" "▆" "▇" "█" ];
         };
 
-        "hyprland/language" = {
-          format = "{short}";
-        };
-
-        "hyprland/workspaces" = {
-          disable-scroll = true;
+        "niri/workspaces" = {
           all-outputs = true;
-          active-only = false;
-          on-click = "activate";
-          persistent-workspaces = {
-            "*" = [ 1 2 3 4 5 ];
-          };
         };
 
         memory = {

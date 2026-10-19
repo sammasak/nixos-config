@@ -1,4 +1,4 @@
-{ config, pkgs, lib, ... }:
+{ config, pkgs, ... }:
 let
   profile = config.sam.profile;
   inherit (profile) username;
@@ -16,7 +16,6 @@ in
     useUserPackages = true;
     backupFileExtension = "backup";
     users.${username} = {
-      services.hyprpaper.enable = lib.mkOverride 2000 false;
       programs.home-manager.enable = true;
       xdg.enable = true;
 
