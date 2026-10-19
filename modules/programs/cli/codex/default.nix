@@ -2,17 +2,11 @@ skillsSrc:
 { lib, pkgs, ... }:
 let
   portableSkillNames = [
-    "claude-ctl"
-    "clean-code-principles"
-    "container-workflows"
     "credentials"
     "knowledge-vault"
     "kubernetes-gitops"
     "nix-flake-development"
-    "observability-patterns"
     "pi-offload"
-    "python-agentic-development"
-    "python-engineering"
     "rust-engineering"
     "secrets-management"
   ];
@@ -153,7 +147,7 @@ in
         # Personal Codex Defaults
 
         - Treat `~/knowledge` as the active knowledge graph and route through `~/knowledge/CLAUDE.md` when a task references your projects or rooms.
-        - Prefer the shared skills in `~/.agents/skills`, then the Codex-local overlay in `~/.codex/skills` for knowledge workflows and Codex-compatible projections of `~/claude-code-skills/skills`.
+        - Prefer the shared skills in `~/.agents/skills`, then the Codex-local overlay in `~/.codex/skills` for knowledge workflows.
         - When working inside `~/knowledge`, load the nearest room `CONTEXT.md`; use `INDEX.md` only when `CONTEXT.md` is absent.
         - When a task names a workflow, `skills`, or `claude-code-skills`, route through `~/knowledge/CLAUDE.md` and load the owning room `CONTEXT.md`.
         - Keep Codex and Claude aligned on bash safety: avoid force pushes, avoid encrypting SOPS payloads from `/tmp`, and follow the knowledge guardrails.
