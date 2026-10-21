@@ -12,11 +12,16 @@ Codex. The Pi extension is installed on hosts with `sam.profile.pi = true`.
 These hooks report the agent session reference Herdr needs to resume a native
 conversation after a server restart.
 
-On `devTools` hosts, a real interactive Fish terminal attaches to the default
-Herdr session automatically. The usual `pi`, `claude`, and `codex` commands
-then run in the Herdr pane without wrappers. Noninteractive shells, CI, and
-shells already inside Herdr skip auto-attach. Start a one-off Fish shell without
-auto-attach with `HERDR_AUTOATTACH_DISABLED=1 fish`.
+On `devTools` hosts, an ordinary interactive Fish shell stays in the terminal
+where it was opened. Running `pi`, `claude`, or `codex` from a local interactive
+Fish shell creates a Herdr workspace in the current directory, starts that
+agent with the original arguments, and attaches directly to its pane. Inside
+Herdr, the wrappers call the native CLI directly. Print/noninteractive modes,
+CI, SSH, noninteractive shells, and `HERDR_AUTOATTACH_DISABLED=1` calls use the
+native CLI in the current terminal. Use `command pi`, `command claude`, or
+`command codex` to explicitly bypass the wrappers. A plain explicit resume of
+an agent session that is already registered attaches to that pane instead of
+opening the same conversation a second time.
 
 Herdr stores its session snapshot and pane history in `~/.config/herdr/`.
 Home Manager sets that directory to mode `0700`; the systemd unit also uses a

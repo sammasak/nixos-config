@@ -12,6 +12,11 @@ let
     fi
     exit 0
   '';
+  herdrAgentLauncher = pkgs.writeShellApplication {
+    name = "herdr-agent-launcher";
+    runtimeInputs = [ pkgs.coreutils pkgs.herdr pkgs.jq ];
+    text = builtins.readFile ./agent-launcher.sh;
+  };
   integrationFiles = pkgs.runCommand "herdr-agent-integrations" {
     nativeBuildInputs = [ pkgs.herdr ];
   } ''
@@ -29,16 +34,17 @@ in
 {
   home.packages = [ pkgs.herdr pkgs.python3Minimal ];
 
-  programs.fish.interactiveShellInit = lib.mkAfter ''
-    if status is-interactive
-      and isatty stdin
-      and isatty stdout
-      and not set -q HERDR_ENV
-      and not set -q CI
-      and not set -q HERDR_AUTOATTACH_DISABLED
-      exec ${herdrBin}
-    end
-  '';
+  programs.fish.functions = {
+    pi = ''
+      command ${herdrAgentLauncher}/bin/herdr-agent-launcher pi $argv
+    '';
+    claude = ''
+      command ${herdrAgentLauncher}/bin/herdr-agent-launcher claude $argv
+    '';
+    codex = ''
+      command ${herdrAgentLauncher}/bin/herdr-agent-launcher codex $argv
+    '';
+  };
 
   home.file = {
     ".claude/hooks/herdr-agent-state.sh".source = "${integrationFiles}/claude/herdr-agent-state.sh";
