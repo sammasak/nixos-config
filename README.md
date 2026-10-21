@@ -10,6 +10,8 @@ auto-discovery.
   registry, host wiring, `sam.profile` fields, desktop vs headless, roles.
 - [docs/pi.md](docs/pi.md): the Pi coding agent module (enabled on lenovo and
   acer-swift).
+- [docs/herdr.md](docs/herdr.md): persistent Herdr sessions, agent restore,
+  and reboot verification.
 
 ## Hosts
 
@@ -45,7 +47,7 @@ the tie-breaker.
 | `scripts/` | Repo tooling | `verify-all-hosts.sh`, `bench.sh`, `nix-comment-metrics.awk` |
 | `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
-| `docs/` | Current reference | `architecture.md`, `pi.md` |
+| `docs/` | Current reference | `architecture.md`, `herdr.md`, `pi.md` |
 | `Justfile` | Task entry points | build, switch, deploy, verify and image recipes |
 | `assets/`, `dotfiles/` | Wallpapers; plain config files symlinked verbatim | |
 | `pkgs/` | Packages not in nixpkgs | Exposed through an overlay in `flake-modules/` |

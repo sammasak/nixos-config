@@ -1,5 +1,5 @@
 skillsSrc:
-{ lib, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   portableSkillNames = [
     "credentials"
@@ -52,12 +52,21 @@ let
 
   hooksConfig = builtins.toJSON {
     hooks = {
-      SessionStart = [
+    SessionStart = [
         {
           hooks = [
             {
               type = "command";
               command = "${codexContextHook}/bin/codex-workspace-context-hook";
+            }
+          ];
+        }
+        {
+          hooks = [
+            {
+              type = "command";
+              command = "bash '${config.home.homeDirectory}/.codex/herdr-agent-state.sh' session";
+              timeout = 10;
             }
           ];
         }
@@ -97,7 +106,7 @@ let
     project_doc_max_bytes = 65536
 
     [features]
-    codex_hooks = true
+    hooks = true
 
     [projects."/home/lukas"]
     trust_level = "trusted"

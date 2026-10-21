@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   profile = config.sam.profile;
   inherit (profile) username;
@@ -43,7 +43,7 @@ in
       shell = pkgs.fish;
       ignoreShellProgramCheck = true;
       openssh.authorizedKeys.keys = sshAuthorizedKeys;
-    };
+    } // lib.optionalAttrs profile.devTools { linger = true; };
   };
 
   assertions = [
