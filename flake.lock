@@ -126,6 +126,23 @@
         "type": "github"
       }
     },
+    "factum": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792047016,
+        "narHash": "sha256-nuvKoO+Avhz21fetB3X9mJMcYcRpbqiBPTUht5Vo8IA=",
+        "ref": "refs/heads/main",
+        "rev": "5bb7fa304db7d8ae7d422e8d6356bf06b90d3b41",
+        "revCount": 78,
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/factum"
+      },
+      "original": {
+        "rev": "5bb7fa304db7d8ae7d422e8d6356bf06b90d3b41",
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/factum"
+      }
+    },
     "firefox-gnome-theme": {
       "flake": false,
       "locked": {
@@ -371,6 +388,7 @@
         "deploy-rs": "deploy-rs",
         "devenv-platform": "devenv-platform",
         "disko": "disko",
+        "factum": "factum",
         "flake-parts": "flake-parts",
         "home-manager": "home-manager",
         "import-tree": "import-tree",

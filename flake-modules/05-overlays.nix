@@ -1,6 +1,8 @@
 { inputs, ... }:
 let
-  overlay = import ../pkgs;
+  overlay = final: prev: (import ../pkgs final prev) // {
+    factum = final.callPackage ../pkgs/factum/package.nix { src = inputs.factum; };
+  };
 in
 {
   perSystem = { system, ... }: {

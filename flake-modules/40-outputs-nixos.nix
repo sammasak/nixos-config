@@ -60,6 +60,9 @@ let
               ]
               ++ lib.optionals nixos.config.sam.profile.pi [
                 (import ../modules/programs/cli/pi inputs.devenv-platform)
+              ]
+              ++ lib.optionals (name == "lenovo") [
+                ../modules/programs/cli/factum-lenovo.nix
               ];
               users.${username} =
                 config.flake.modules.homeManager.default

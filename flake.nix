@@ -28,6 +28,9 @@
     skills.url = "github:sammasak/skills";
     skills.flake = false;
 
+    factum.url = "git+ssh://git@github.com/sammasak/factum?rev=5bb7fa304db7d8ae7d422e8d6356bf06b90d3b41";
+    factum.flake = false;
+
     # Private repo: ssh URL (github: 404s without a token). Supplies the Pi
     # router/free extension to hosts with sam.profile.pi.
     devenv-platform.url = "git+ssh://git@github.com/sammasak/devenv-platform";
