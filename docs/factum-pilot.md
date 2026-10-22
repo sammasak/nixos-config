@@ -23,7 +23,7 @@ and review gates. `brief` is capped at 6,144 bytes by default and may omit detai
 present in full `tests-for` output; inspect the full output when those caveats matter. Do not treat
 an empty report or selection as proof that a change is correct.
 
-The `0.2.0` source has a non-hermetic apply integration test that fails from a clean Nix source
-export because it assumes a generated ignored fixture lockfile. The Nix package therefore builds
-the CLI without rerunning that test suite. The Factum repository's deterministic gates remain the
-test authority; the package build and read-only CLI smoke are verified separately.
+The Nix package seeds the ignored `e0308_mismatch/Cargo.lock` fixture deterministically, then runs
+the complete Factum `0.2.0` test suite with its pinned Rust `1.99.0` toolchain. The build passed
+offline from the flake-locked source; this keeps the packaged binary and its test evidence tied to
+the same release commit.
