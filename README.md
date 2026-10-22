@@ -13,6 +13,7 @@ auto-discovery.
 - [docs/herdr.md](docs/herdr.md): persistent Herdr sessions, agent restore,
   and reboot verification.
 - [docs/factum-pilot.md](docs/factum-pilot.md): the Lenovo-only, advisory Factum CLI pilot.
+- [docs/nix-audit-pilot.md](docs/nix-audit-pilot.md): the Lenovo-only, read-only nix-audit pilot.
 
 ## Hosts
 
