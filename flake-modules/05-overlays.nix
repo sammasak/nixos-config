@@ -20,6 +20,9 @@ let
         rustPlatform = factumRustPlatform;
         src = inputs.factum;
       };
+      nixAudit = final.callPackage ../pkgs/nix-audit/package.nix {
+        rustPlatform = factumRustPlatform;
+      };
     })
   ];
 in

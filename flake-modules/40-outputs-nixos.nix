@@ -63,6 +63,7 @@ let
               ]
               ++ lib.optionals (name == "lenovo") [
                 ../modules/programs/cli/factum-lenovo.nix
+                ../modules/programs/cli/nix-audit-lenovo.nix
               ];
               users.${username} =
                 config.flake.modules.homeManager.default
