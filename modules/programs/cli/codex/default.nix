@@ -5,10 +5,12 @@ let
     "credentials"
     "knowledge-vault"
     "kubernetes-gitops"
+    "nix-audit-operator"
     "nix-flake-development"
     "pi-offload"
     "rust-engineering"
     "secrets-management"
+    "tooling-feedback"
   ];
 
   mkSkillLinks =
