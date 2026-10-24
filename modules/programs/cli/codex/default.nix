@@ -110,6 +110,11 @@ let
     [features]
     hooks = true
 
+    ${lib.optionalString nativeOtel ''
+    [shell_environment_policy.filters]
+    "OTEL_EXPORTER_OTLP_HEADERS" = "exclude"
+    ''}
+
     [projects."/home/lukas"]
     trust_level = "trusted"
 
