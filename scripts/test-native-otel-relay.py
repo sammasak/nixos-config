@@ -76,6 +76,10 @@ def main():
                 relay_port = listener.getsockname()[1]
 
             config_text = config.read_text(encoding="utf-8")
+            if "proxy_ssl_verify on;" not in config_text:
+                raise AssertionError("relay does not verify the upstream certificate")
+            if "proxy_ssl_verify_depth 3;" not in config_text:
+                raise AssertionError("relay TLS verification depth is not explicit")
             config_text = config_text.replace(
                 "127.0.0.1:4319", f"127.0.0.1:{relay_port}"
             ).replace(
