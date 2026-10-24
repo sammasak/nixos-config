@@ -1,4 +1,4 @@
-skillsSrc:
+skillsSrc: nativeOtel:
 { config, lib, pkgs, ... }:
 let
   portableSkillNames = [
@@ -110,6 +110,11 @@ let
     [features]
     hooks = true
 
+    ${lib.optionalString nativeOtel ''
+    [shell_environment_policy.filters]
+    "OTEL_EXPORTER_OTLP_HEADERS" = "exclude"
+    ''}
+
     [projects."/home/lukas"]
     trust_level = "trusted"
 
@@ -124,6 +129,14 @@ let
     command = "${pkgs.playwright-mcp}/bin/mcp-server-playwright"
     args = ["--user-data-dir", "/tmp/playwright-mcp-profile", "--executable-path", "${pkgs.chromium}/bin/chromium", "--headless", "--no-sandbox"]
     startup_timeout_sec = 20
+    ${lib.optionalString nativeOtel ''
+
+    [otel]
+    environment = "prod"
+    exporter = "none"
+    metrics_exporter = { "otlp-http" = { endpoint = "http://127.0.0.1:4319/v1/metrics", protocol = "json" } }
+    trace_exporter = "none"
+    ''}
   '';
 
   # /run/secrets/openai_api_key is declared by modules/core/sops.nix. The path

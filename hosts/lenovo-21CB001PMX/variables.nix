@@ -13,6 +13,7 @@
 
   # Features
   pi = true;
+  nativeOtel = true;
 
   # Roles
   roles = [ "base" "laptop" "homelab-server" ];

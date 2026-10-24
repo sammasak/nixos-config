@@ -14,7 +14,7 @@ in
 
     # Wake msi (the intermittent LLM worker) on the work-hours schedule.
     ../../modules/homelab/msi-power-schedule.nix
-  ];
+  ] ++ lib.optional vars.nativeOtel ../../modules/homelab/native-otel-relay.nix;
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
@@ -33,6 +33,13 @@ in
   sops.secrets."nix_signing_key" = {
     sopsFile = ../../secrets/homelab/nix-signing-key.yaml;
     owner = "root";
+    mode = "0400";
+  };
+
+  sops.secrets."native_otlp_auth" = lib.mkIf vars.nativeOtel {
+    sopsFile = ../../secrets/claude/native-otlp-auth.yaml;
+    key = "token";
+    owner = vars.username;
     mode = "0400";
   };
 
