@@ -6,6 +6,13 @@ collector-sanitized tool-result events. The client configuration is gated on
 the private OTLP receiver being reviewed and live; this change does not alter
 subscriptions, API credentials, or inference routing.
 
+Claude Code's `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is enabled so OTLP
+authorization headers are not inherited by Bash, hooks, or stdio MCP
+subprocesses. Validate this without a paid request using
+`python3 scripts/test-native-otel-subprocess-env.py`; the test sends a fake
+OTLP credential to a local mock API and checks the Bash tool result, never
+printing the fake credential.
+
 ## Smoke check
 
 After the receiver and its host credential are approved and deployed, switch

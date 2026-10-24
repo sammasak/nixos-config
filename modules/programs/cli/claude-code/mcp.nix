@@ -49,6 +49,7 @@ skillsSrc: nativeOtel: hostName:
         DISABLE_TELEMETRY = "1";
       } // lib.optionalAttrs nativeOtel {
         CLAUDE_CODE_ENABLE_TELEMETRY = "1";
+        CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "1";
         OTEL_METRICS_EXPORTER = "otlp";
         OTEL_LOGS_EXPORTER = "otlp";
         OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp.sammasak.dev";
