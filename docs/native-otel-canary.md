@@ -6,6 +6,15 @@ collector-sanitized tool-result events. The client configuration is gated on
 the private OTLP receiver being reviewed and live; this change does not alter
 subscriptions, API credentials, or inference routing.
 
+Codex does not consume `OTEL_EXPORTER_OTLP_HEADERS`, so its metrics use a
+localhost-only Nginx relay. The relay runs as a dynamic systemd user, reads the
+SOPS credential through `LoadCredential`, and creates its configuration in a
+0700 runtime directory. It accepts only `POST /v1/metrics`, forwards only the
+OTLP content/encoding/accept headers plus its bearer credential over verified
+TLS, and does not log request bodies or headers. Neither Codex nor its tool
+subprocesses receive the receiver credential. The relay is enabled only with
+`nativeOtel = true`.
+
 Claude Code's `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is enabled so OTLP
 authorization headers are not inherited by Bash, hooks, or stdio MCP
 subprocesses. Validate this without a paid request using
@@ -17,8 +26,9 @@ printing the fake credential.
 
 After the receiver and its host credential are approved and deployed, switch
 to the NixOS generation containing the canary, open a fresh shell, and verify
-the two CLI wrappers still invoke the expected binaries. Run one bounded
-synthetic command with each CLI, then confirm at the receiver that only
+the two CLI wrappers still invoke the expected binaries and that
+`native-otel-relay.service` is active. Run one bounded synthetic command with
+each CLI, then confirm at the receiver that only
 allowlisted metrics arrive with `host.name=lenovo-21cb001pmx`. Confirm
 `/v1/traces` receives no data and that logs contain no prompt, tool content,
 tool details, raw API bodies, or Codex events. Check for both successful
@@ -34,7 +44,7 @@ Set `nativeOtel = false` in
 `hosts/lenovo-21CB001PMX/variables.nix`, rebuild and switch to that generation,
 then start a fresh shell. The standard Claude telemetry-disable setting is
 restored, Codex's OTLP exporter stanza and wrapper functions are removed, and
-the host secret is no longer installed. Verify no new requests arrive at the
-receiver. Keep the prior NixOS generation available until rollback is
-confirmed; do not revoke the shared receiver credential if another approved
-client uses it.
+the host secret and relay are no longer installed. Verify no new requests
+arrive at the receiver. Keep the prior NixOS generation available until
+rollback is confirmed; do not revoke the shared receiver credential if another
+approved client uses it.

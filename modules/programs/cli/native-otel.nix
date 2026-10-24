@@ -1,8 +1,8 @@
 hostName:
 { pkgs, lib, ... }:
 let
-  nativeOtelEnv = pkgs.writeShellApplication {
-    name = "native-otel-env";
+  nativeOtelClaudeEnv = pkgs.writeShellApplication {
+    name = "native-otel-claude-env";
     runtimeInputs = [ pkgs.coreutils ];
     text = ''
       token_file=/run/secrets/native_otlp_auth
@@ -16,23 +16,31 @@ let
       exec "$@"
     '';
   };
+  nativeOtelCodexEnv = pkgs.writeShellApplication {
+    name = "native-otel-codex-env";
+    text = ''
+      export OTEL_RESOURCE_ATTRIBUTES="host.name=${lib.toLower hostName}"
+      export OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
+      exec "$@"
+    '';
+  };
 in
 {
   programs.bash.initExtra = lib.mkAfter ''
     codex() {
-      ${nativeOtelEnv}/bin/native-otel-env ${pkgs.codex}/bin/codex "$@"
+      ${nativeOtelCodexEnv}/bin/native-otel-codex-env ${pkgs.codex}/bin/codex "$@"
     }
     claude() {
-      ${nativeOtelEnv}/bin/native-otel-env ${pkgs.claude-code}/bin/claude "$@"
+      ${nativeOtelClaudeEnv}/bin/native-otel-claude-env ${pkgs.claude-code}/bin/claude "$@"
     }
   '';
 
   programs.fish.functions = {
     codex = ''
-      ${nativeOtelEnv}/bin/native-otel-env ${pkgs.codex}/bin/codex $argv
+      ${nativeOtelCodexEnv}/bin/native-otel-codex-env ${pkgs.codex}/bin/codex $argv
     '';
     claude = ''
-      ${nativeOtelEnv}/bin/native-otel-env ${pkgs.claude-code}/bin/claude $argv
+      ${nativeOtelClaudeEnv}/bin/native-otel-claude-env ${pkgs.claude-code}/bin/claude $argv
     '';
   };
 }

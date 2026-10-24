@@ -14,7 +14,7 @@ in
 
     # Wake msi (the intermittent LLM worker) on the work-hours schedule.
     ../../modules/homelab/msi-power-schedule.nix
-  ];
+  ] ++ lib.optional vars.nativeOtel ../../modules/homelab/native-otel-relay.nix;
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;

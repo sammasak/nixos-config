@@ -42,8 +42,13 @@ let
     bash scripts/verify-all-hosts.sh
   '';
 
+  nativeOtelRelayTest = gate "native-otel-relay-test" (with pkgs; [ nginx nix python3 ]) ''
+    helper=$(nix eval --raw .#nixosConfigurations.lenovo.config.systemd.services.native-otel-relay.serviceConfig.ExecStartPre)
+    ${pkgs.python3}/bin/python scripts/test-native-otel-relay.py "$helper" "${pkgs.nginx}/bin/nginx"
+  '';
+
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
-    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts
+    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither

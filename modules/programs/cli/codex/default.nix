@@ -134,7 +134,7 @@ let
     [otel]
     environment = "prod"
     exporter = "none"
-    metrics_exporter = { "otlp-http" = { endpoint = "https://otlp.sammasak.dev/v1/metrics", protocol = "json" } }
+    metrics_exporter = { "otlp-http" = { endpoint = "http://127.0.0.1:4319/v1/metrics", protocol = "json" } }
     trace_exporter = "none"
     ''}
   '';
