@@ -36,6 +36,13 @@ in
     mode = "0400";
   };
 
+  sops.secrets."native_otlp_auth" = lib.mkIf vars.nativeOtel {
+    sopsFile = ../../secrets/claude/native-otlp-auth.yaml;
+    key = "token";
+    owner = vars.username;
+    mode = "0400";
+  };
+
   # Signs deploy-rs closures pushed to acer, whose trusted-users = [ "root" ]
   # would otherwise reject anything copied in over SSH as lukas.
   nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];

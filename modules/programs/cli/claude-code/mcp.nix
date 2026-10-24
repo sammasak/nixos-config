@@ -2,7 +2,7 @@
 # home-manager.sharedModules. Takes the skills flake input as its
 # first argument, so it is imported applied:
 #   (import .../claude-code/mcp.nix inputs.skills)
-skillsSrc:
+skillsSrc: nativeOtel: hostName:
 { pkgs, lib, config, ... }:
 {
   programs.claude-code = {
@@ -44,8 +44,23 @@ skillsSrc:
       # Pre-answered: read-only settings.json means the prompt could never save.
       tui = "fullscreen";
       env = {
-        DISABLE_TELEMETRY = "1";
         DISABLE_ERROR_REPORTING = "1";
+      } // lib.optionalAttrs (!nativeOtel) {
+        DISABLE_TELEMETRY = "1";
+      } // lib.optionalAttrs nativeOtel {
+        CLAUDE_CODE_ENABLE_TELEMETRY = "1";
+        OTEL_METRICS_EXPORTER = "otlp";
+        OTEL_LOGS_EXPORTER = "otlp";
+        OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp.sammasak.dev";
+        OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf";
+        OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE = "cumulative";
+        OTEL_RESOURCE_ATTRIBUTES = "host.name=${lib.toLower hostName}";
+        OTEL_METRICS_INCLUDE_SESSION_ID = "false";
+        OTEL_METRICS_INCLUDE_ACCOUNT_UUID = "false";
+        OTEL_LOG_USER_PROMPTS = "0";
+        OTEL_LOG_TOOL_CONTENT = "0";
+        OTEL_LOG_TOOL_DETAILS = "0";
+        OTEL_LOG_RAW_API_BODIES = "0";
       };
       enabledPlugins = {
         # The complete intended set — anything not listed here is uninstalled.

@@ -77,6 +77,12 @@ in
             '';
           };
 
+          nativeOtel = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Enable private, collector-sanitized native harness telemetry on this host.";
+          };
+
           roles = mkOption {
             type = types.listOf types.str;
             default = [ "base" ];

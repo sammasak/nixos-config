@@ -54,9 +54,12 @@ let
               ]
               ++ lib.optionals nixos.config.sam.profile.devTools [
                 ../modules/programs/cli/claude-code/default.nix
-                (import ../modules/programs/cli/claude-code/mcp.nix inputs.skills)
+                (import ../modules/programs/cli/claude-code/mcp.nix inputs.skills nixos.config.sam.profile.nativeOtel nixos.config.sam.profile.hostname)
                 (import ../modules/programs/cli/claude-code/skills.nix inputs.skills)
-                (import ../modules/programs/cli/codex/default.nix inputs.skills)
+                (import ../modules/programs/cli/codex/default.nix inputs.skills nixos.config.sam.profile.nativeOtel)
+              ]
+              ++ lib.optionals nixos.config.sam.profile.nativeOtel [
+                (import ../modules/programs/cli/native-otel.nix nixos.config.sam.profile.hostname)
               ]
               ++ lib.optionals nixos.config.sam.profile.pi [
                 (import ../modules/programs/cli/pi inputs.devenv-platform)
