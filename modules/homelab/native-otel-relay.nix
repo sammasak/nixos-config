@@ -40,6 +40,7 @@ let
             proxy_ssl_server_name on;
             proxy_ssl_name otlp.sammasak.dev;
             proxy_ssl_verify on;
+            proxy_ssl_verify_depth 3;
             proxy_ssl_trusted_certificate ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt;
             proxy_pass https://otlp.sammasak.dev/v1/metrics;
           }

@@ -14,6 +14,8 @@ OTLP content/encoding/accept headers plus its bearer credential over verified
 TLS, and does not log request bodies or headers. Neither Codex nor its tool
 subprocesses receive the receiver credential. The relay is enabled only with
 `nativeOtel = true`.
+The upstream certificate chain is verified to depth 3; Nginx's default depth
+of 1 rejects the receiver's valid certificate chain.
 
 Claude Code's `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is enabled so OTLP
 authorization headers are not inherited by Bash, hooks, or stdio MCP
