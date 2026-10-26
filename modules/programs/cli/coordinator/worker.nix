@@ -9,10 +9,16 @@ let
     runtimeInputs = [ pkgs.coreutils pkgs.bash pkgs.herdr ];
     text = builtins.readFile ./herdr-shim.sh;
   };
-  restrict = key: "command=\"${shim}/bin/herdr-shim\",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ${key}";
+  restrict = key: "restrict,command=\"${shim}/bin/herdr-shim\" ${key}";
+  blob = key: builtins.elemAt (lib.splitString " " key) 1;
+  ownerBlobs = map blob (config.sam.userConfig.sshKeys or [ ]);
 in
 {
   config = lib.mkIf (keys != [ ]) {
+    assertions = [{
+      assertion = lib.all (k: !(builtins.elem (blob k) ownerBlobs)) keys;
+      message = "sam.coordinator.acceptKeys must not contain the owner's own interactive keys: sshd would pick whichever authorized_keys line comes first and the restriction could be skipped.";
+    }];
     users.users.${config.sam.profile.username}.openssh.authorizedKeys.keys = map restrict keys;
   };
 }

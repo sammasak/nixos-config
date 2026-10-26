@@ -112,13 +112,15 @@ in
 
     coordinator = {
       acceptKeys = mkOption {
-        type = types.listOf types.str;
+        type = types.listOf (types.strMatching "^(ssh-|ecdsa-|sk-)[A-Za-z0-9@.:/+=_-]+ [A-Za-z0-9+/=]+( [^\n\"]*)?$");
         default = [ ];
         description = ''
           Public keys of coordinator hosts allowed to reach this worker. Each is
           installed for the primary user with a forced command (herdr-shim) that
-          permits only `herdr agent list|get|read|wait|prompt` and the bounded
-          session-file reads the coordinator tasks issue; no shell, no forwarding.
+          permits only `herdr agent list|get|read|wait|prompt` and the two exact
+          session-file reads the coordinator tasks issue (confined to the user's
+          Claude and Pi session stores); no shell, no pty, no forwarding. Use a
+          dedicated key, never the owner's interactive one.
         '';
       };
       fleet = {
