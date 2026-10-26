@@ -54,8 +54,13 @@ let
     ${pkgs.python3}/bin/python scripts/test-native-otel-relay.py "$helper" "${pkgs.nginx}/bin/nginx"
   '';
 
+  nativeOtelFishTest = gate "native-otel-fish-test" (with pkgs; [ fish nix python3 ]) ''
+    nixpkgs_source=$(nix eval --raw --impure --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')
+    ${pkgs.python3}/bin/python scripts/test-native-otel-fish.py "$nixpkgs_source"
+  '';
+
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
-    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest claudeSettingsTest
+    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
