@@ -13,8 +13,9 @@ let
   permissions = builtins.fromJSON (builtins.readFile "${skillsSrc}/agents/coordinator/permissions.json");
   # The adapter's `skills:` frontmatter list is the single source of truth for what gets project-scoped.
   adapterLines = lib.splitString "\n" (builtins.readFile "${skillsSrc}/agents/coordinator.md");
-  skillsBlock = lib.drop 1 (lib.lists.dropWhile (l: l != "skills:") adapterLines);
-  coordinatorSkills = map (l: lib.removePrefix "  - " l) (lib.lists.takeWhile (l: lib.hasPrefix "  - " l) skillsBlock);
+  afterSkills = lib.drop (lib.lists.findFirstIndex (l: l == "skills:") (-1) adapterLines + 1) adapterLines;
+  listItems = xs: if xs == [ ] || !lib.hasPrefix "  - " (builtins.head xs) then [ ] else [ (lib.removePrefix "  - " (builtins.head xs)) ] ++ listItems (builtins.tail xs);
+  coordinatorSkills = listItems afterSkills;
   guard = "${skillsSrc}/hooks/validate-coordinator.sh";
   userSettings = config.programs.claude-code.settings;
   # Only the role's permissions replace the user scope; host policy (telemetry env,
