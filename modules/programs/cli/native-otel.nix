@@ -1,5 +1,10 @@
 hostName:
-{ pkgs, lib, ... }:
+{
+  pkgs,
+  lib,
+  osConfig,
+  ...
+}:
 let
   nativeOtelClaudeEnv = pkgs.writeShellApplication {
     name = "native-otel-claude-env";
@@ -35,12 +40,28 @@ in
     }
   '';
 
-  programs.fish.functions = {
-    codex = ''
-      ${nativeOtelCodexEnv}/bin/native-otel-codex-env ${pkgs.codex}/bin/codex $argv
-    '';
-    claude = ''
-      ${nativeOtelClaudeEnv}/bin/native-otel-claude-env ${pkgs.claude-code}/bin/claude $argv
-    '';
-  };
+  programs.fish.functions =
+    if osConfig.sam.profile.devTools or false then
+      {
+        codex = lib.mkBefore ''
+          set -lx OTEL_RESOURCE_ATTRIBUTES "host.name=${lib.toLower hostName}"
+          set -lx OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE cumulative
+        '';
+        claude = lib.mkBefore ''
+          set -lx OTEL_RESOURCE_ATTRIBUTES "host.name=${lib.toLower hostName}"
+          set -lx OTEL_EXPORTER_OTLP_HEADERS
+          if test -r /run/secrets/native_otlp_auth
+            set OTEL_EXPORTER_OTLP_HEADERS "Authorization=Bearer "(string collect < /run/secrets/native_otlp_auth)
+          end
+        '';
+      }
+    else
+      {
+        codex = ''
+          ${nativeOtelCodexEnv}/bin/native-otel-codex-env ${pkgs.codex}/bin/codex $argv
+        '';
+        claude = ''
+          ${nativeOtelClaudeEnv}/bin/native-otel-claude-env ${pkgs.claude-code}/bin/claude $argv
+        '';
+      };
 }
