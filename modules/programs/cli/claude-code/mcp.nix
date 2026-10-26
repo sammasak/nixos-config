@@ -4,7 +4,25 @@
 #   (import .../claude-code/mcp.nix inputs.skills)
 skillsSrc: nativeOtel: hostName:
 { pkgs, lib, config, ... }:
+let
+  # Claude Code forces permission mode to default while
+  # CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is set, and a shell-exported 0 loses to
+  # settings.json env, so the opt-out must be a --settings layer. OTEL_* never
+  # reaches subprocesses either way.
+  bypassSettings = pkgs.writeText "claude-bypass-settings.json" (builtins.toJSON {
+    env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "0";
+  });
+in
 {
+  # Calls the claude function, so the Herdr and telemetry dispatch still applies.
+  # Flags go last: the Herdr launcher reads subcommands from the first argument
+  # and strips exactly this suffix when matching --resume. A user --settings
+  # replaces this layer and falls back to default mode.
+  programs.fish.functions.claude-bypass = {
+    description = "Claude in bypassPermissions mode, without subprocess env scrubbing";
+    body = "claude $argv --settings ${bypassSettings} --dangerously-skip-permissions";
+  };
+
   programs.claude-code = {
     enable = true;
     package = pkgs.claude-code;

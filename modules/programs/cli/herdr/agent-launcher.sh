@@ -97,7 +97,15 @@ if [[ ! -t 0 || ! -t 1 ]] \
   run_native "$@"
 fi
 
-if resume_ref=$(resume_reference "$@"); then
+resume_args=("$@")
+# claude-bypass appends `--settings <layer> --dangerously-skip-permissions`;
+# without stripping it, a bypass --resume opens a second pane on a live session.
+if [[ $agent_kind == claude && $# -ge 3 && ${resume_args[-1]} == --dangerously-skip-permissions \
+  && ${resume_args[-3]} == --settings ]]; then
+  resume_args=("${resume_args[@]:0:$#-3}")
+fi
+
+if resume_ref=$(resume_reference "${resume_args[@]}"); then
   if existing_pane=$(herdr agent list 2>/dev/null | jq -er \
     --arg kind "$agent_kind" --arg ref "$resume_ref" '
       [.result.agents[]? | select(.agent == $kind) |
