@@ -26,7 +26,7 @@ revision that carries `agents/coordinator.md` and `hooks/validate-coordinator.sh
 
 | Path | Purpose |
 |---|---|
-| `~/.local/share/coordinator/skills-<rev>` (+ `current` link) | writable copy of the pinned skills input; devenv runs here |
+| `~/.local/share/coordinator/skills-<rev>` (+ `current` link) | writable copy of the pinned skills input with a project-scoped `.claude/agents/coordinator.md` and `.claude/skills/*` (the launcher loads no user-scope settings); devenv runs here |
 | `~/.config/coordinator/fleet.json` | hosts and repos from `sam.coordinator.fleet` |
 | `~/.claude/hooks/validate-coordinator.sh` | the agent-scoped guard (fails closed when absent) |
 | `~/.claude/agents/coordinator.md` | via `skills.nix` on every devTools host; without the guard its hook command refuses every Bash call |
@@ -49,7 +49,8 @@ in the checkout yourself.
 ## Verify after activation
 
 ```bash
-coordinator --print "List my agents and say whether anything needs me."   # expect only coord:brief calls
+coordinator -p "Which agent are you, which skills were preloaded, and what are my agents doing?"
+# expect: Coordinator / claude-sonnet-5-5 / herdr-operations + agent-handoff; tool calls only `devenv tasks run coord:brief|work:status`
 cd ~/.local/share/coordinator/current && devenv tasks run skills:test        # repo gates
 tail -3 ~/.local/state/coordinator/audit.jsonl                               # written by herdr:message (epic M2); absent until a message is sent
 ```
