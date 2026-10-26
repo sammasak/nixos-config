@@ -17,9 +17,12 @@ eval "set -- $inner" 2>/dev/null || { echo "herdr-shim: unparseable command" >&2
 case "$*" in
   "herdr agent list"|"herdr agent get "*|"herdr agent read "*|"herdr agent wait "*|"herdr agent prompt "*) exec "$@" ;;
   "bash -c "*)
-    # harness:session-summary ships `f=<store>/<slug>/<id>.jsonl; [ -r "$f" ] || exit 44; tail -n <N> "$f"` style one-liners
+    # harness:session-summary ships exactly one of two one-liners; anything else is refused. Paths and ids are
+    # restricted to [A-Za-z0-9_./-], so no other command can hide inside the template.
     script="$3"
-    [[ "$script" =~ ^(f|d)=.*tail\ -n\ [0-9]+\ .*$ ]] && [[ "$script" != *';'*';'*';'*';'* ]] && [[ "$script" != *'$('* ]] && [[ "$script" != *'`'* ]] || { echo "herdr-shim: session read form not allowed: $script" >&2; exit 2; }
+    claude_re='^f=[A-Za-z0-9_./-]+; \[ -r "\$f" \] \|\| exit 44; tail -n [0-9]{1,3} "\$f"$'
+    pi_re='^d=[A-Za-z0-9_./-]+; f=\$\(ls -t "\$d"/\*_[A-Za-z0-9_-]+\.jsonl 2>/dev/null \| head -1\); \[ -n "\$f" \] \|\| exit 44; tail -n [0-9]{1,3} "\$f"$'
+    [ "$#" -eq 3 ] && { [[ "$script" =~ $claude_re ]] || [[ "$script" =~ $pi_re ]]; } || { echo "herdr-shim: session read form not allowed: $script" >&2; exit 2; }
     exec bash -c "$script" ;;
   *) echo "herdr-shim: command not allowed for the coordinator key: $*" >&2; exit 2 ;;
 esac
