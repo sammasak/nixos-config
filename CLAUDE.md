@@ -17,7 +17,7 @@ devenv tasks run nixos:secrets-verify  # wifi credentials sanity (skips without 
 devenv tasks run nixos:nvim-check      # lenovo's nvim starts headless clean
 devenv tasks run nixos:flake-check     # nix flake check --all-systems
 devenv tasks run nixos:verify          # build every x86 host, evaluate black-pi
-devenv tasks run nixos:claude-bypass-test  # ordinary Claude stays scrubbed; claude-bypass reaches bypass mode (not yet in qa)
+devenv tasks run nixos:claude-bypass-test  # ordinary Claude stays scrubbed; claude-bypass dispatch + bypass mode
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
 #   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree.

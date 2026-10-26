@@ -16,11 +16,19 @@ in
 {
   # Calls the claude function, so the Herdr and telemetry dispatch still applies.
   # Flags go last: the Herdr launcher reads subcommands from the first argument
-  # and strips exactly this suffix when matching --resume. A user --settings
-  # replaces this layer and falls back to default mode.
+  # and keys its bypass handling on exactly this suffix. Rejected arguments
+  # lose silently to it: `--` makes it prompt text (default mode), and it
+  # overrides a user --settings or --permission-mode.
   programs.fish.functions.claude-bypass = {
     description = "Claude in bypassPermissions mode, without subprocess env scrubbing";
-    body = "claude $argv --settings ${bypassSettings} --dangerously-skip-permissions";
+    body = ''
+      set -l conflict (string match -r -- '^(?:--|--settings(?:=.*)?|--permission-mode(?:=.*)?)$' $argv)[1]
+      if test -n "$conflict"
+          echo "claude-bypass: '$conflict' would silently replace or drop bypassPermissions; use claude for it" >&2
+          return 2
+      end
+      claude $argv --settings ${bypassSettings} --dangerously-skip-permissions
+    '';
   };
 
   programs.claude-code = {

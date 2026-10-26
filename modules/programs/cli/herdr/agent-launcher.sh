@@ -98,11 +98,13 @@ if [[ ! -t 0 || ! -t 1 ]] \
 fi
 
 resume_args=("$@")
+bypass=0
 # claude-bypass appends `--settings <layer> --dangerously-skip-permissions`;
 # without stripping it, a bypass --resume opens a second pane on a live session.
 if [[ $agent_kind == claude && $# -ge 3 && ${resume_args[-1]} == --dangerously-skip-permissions \
   && ${resume_args[-3]} == --settings ]]; then
   resume_args=("${resume_args[@]:0:$#-3}")
+  bypass=1
 fi
 
 if resume_ref=$(resume_reference "${resume_args[@]}"); then
@@ -113,6 +115,12 @@ if resume_ref=$(resume_reference "${resume_args[@]}"); then
           ($kind == "pi" and ((.agent_session.value // "") | endswith("/" + $ref + ".jsonl")))) |
         .pane_id] | first // empty
     ' 2>/dev/null); then
+    # Herdr does not record a pane's permission mode, and attaching cannot change it.
+    if ((bypass)); then
+      printf 'claude-bypass: session %s is already running in Herdr pane %s; attaching would not change its permission mode.\nAttach as-is with: herdr agent attach %s\nOr exit that session and rerun claude-bypass.\n' \
+        "$resume_ref" "$existing_pane" "$existing_pane" >&2
+      exit 3
+    fi
     exec herdr agent attach "$existing_pane"
   fi
 fi

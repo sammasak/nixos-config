@@ -24,6 +24,42 @@ subprocesses. Validate this without a paid request using
 OTLP credential to a local mock API and checks the Bash tool result, never
 printing the fake credential.
 
+### `claude-bypass`
+
+While scrubbing is on, Claude Code 2.1.300 forces every session to the
+`default` permission mode and ignores `--dangerously-skip-permissions`. An
+exported `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0` does not help either, because
+`settings.json` env overrides it. The Fish command `claude-bypass` is the only
+opt-out. It runs `claude` with a `--settings` layer that turns scrubbing off for
+that one process, adds `--dangerously-skip-permissions`, and then goes through
+the usual Herdr and telemetry dispatch.
+
+**A `claude-bypass` session intentionally weakens two protections:**
+- Tools run without permission prompts.
+- Subprocesses inherit credential-shaped variables from the launching
+  environment, such as `AWS_*`, `*_TOKEN` and `SOPS_AGE_KEY`, and lose the
+  bubblewrap subprocess sandbox.
+
+**Still withheld** either way: `CLAUDE_CODE_OAUTH_TOKEN` and all `OTEL_*`
+variables, including the OTLP bearer token. Telemetry keeps working.
+
+Use it only in trusted directories, and assume the session can read any file
+your user can, including `/run/secrets/*`. Ordinary `claude` sessions are
+unchanged.
+
+**What `claude-bypass` refuses, and how it behaves under Herdr:**
+- **Refused with exit 2:** `--`, `--settings` and `--permission-mode`. Each of
+  them would silently replace or drop the bypass mode.
+- **Resuming a live Herdr session:** `claude-bypass --resume <id>` is refused
+  with exit 3 when that session is already live in a Herdr pane. Herdr does not
+  record a pane's permission mode, and attaching cannot change it. Use
+  `herdr agent attach <pane>` to keep the pane's current mode.
+- **Herdr restore:** what mode a Herdr-restored bypass agent comes back in is
+  unverified.
+
+`nixos:claude-bypass-test`, part of `nixos:qa`, covers all of this with stubs, a
+mock API and a mock OTLP receiver.
+
 ## Smoke check
 
 Before activation, from the repository root run:

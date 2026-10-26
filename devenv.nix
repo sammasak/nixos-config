@@ -43,13 +43,13 @@ let
   '';
 
   # Reads the HM-deployed files, so a hand-edited ~/.claude cannot make it pass.
-  # FIXME: join the qa list once PR #95, which rewrites that line, merges.
-  claudeBypassTest = gate "claude-bypass-test" (with pkgs; [ nix python3 ]) ''
+  claudeBypassTest = gate "claude-bypass-test" (with pkgs; [ bash fish nix python3 util-linux ]) ''
     hm='.#nixosConfigurations.lenovo.config.home-manager.users.lukas'
     files=$(nix build "$hm.home-files" --no-link --print-out-paths)
     CLAUDE_BIN=$(nix build "$hm.programs.claude-code.package" --no-link --print-out-paths)/bin/claude \
       python3 scripts/test-claude-bypass-mode.py "$files/.claude/settings.json" \
       "$files/.config/fish/functions/claude-bypass.fish"
+    python3 scripts/test-claude-bypass-dispatch.py "$files/.config/fish/functions"
   '';
 
   nativeOtelRelayTest = gate "native-otel-relay-test" (with pkgs; [ nginx nix python3 ]) ''
@@ -63,7 +63,7 @@ let
   '';
 
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
-    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest
+    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeBypassTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
