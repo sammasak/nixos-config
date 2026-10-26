@@ -117,8 +117,10 @@ honest. OS-level: on each worker the coordinator's dedicated key is bound to
 `ssh -F none -i <key> -o IdentitiesOnly=yes`: no `ssh_config` is read at all,
 so no `Host *` `IdentityFile` from `~/.ssh/config` can be appended as a
 fallback and no agent key is offered; if a worker rejects the dedicated key the
-call fails instead of falling through to an owner key. Fleet targets are
-explicit `user@host`, so no alias or `ProxyJump` is lost. The system-wide
+call fails instead of falling through to an owner key. Fleet targets must
+therefore resolve without any ssh_config (DNS or MagicDNS names, `user@` when
+the remote user differs); a `Host` alias, `User` or `ProxyJump` defined only in
+`~/.ssh/config` is not honoured and shows up as unreachable. The system-wide
 `ssh_config` blocks only make a manual `ssh <fleet host>` prefer the same key.
 The read-only file modes on the copy are a convenience; the manifest check is
 the control (tamper-evident, not tamper-proof: directories stay writable). The

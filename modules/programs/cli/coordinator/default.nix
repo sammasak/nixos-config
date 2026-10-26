@@ -72,7 +72,9 @@ let
       # the agent frontmatter runs the guard from this path (the settings file runs the store copy); both must exist
       [ -x "$HOME/.claude/hooks/validate-coordinator.sh" ] || { echo "coordinator: guard hook missing; refusing to start" >&2; exit 2; }
       ${lib.optionalString (cfg.identityFile != null) ''
-        # the tasks run ssh with `-F none -i <key> -o IdentitiesOnly=yes`: no ssh_config is read, so this is the only key offered
+        # the tasks run ssh with `-F none -i <key> -o IdentitiesOnly=yes`: no ssh_config is read, so this is the only key offered;
+        # a missing key would otherwise surface as "unreachable" from every remote host
+        [ -r ${lib.escapeShellArg cfg.identityFile} ] || { echo "coordinator: identity file ${cfg.identityFile} is missing or unreadable" >&2; exit 2; }
         export COORDINATOR_SSH_IDENTITY=${lib.escapeShellArg cfg.identityFile}
       ''}
       exec claude --agent coordinator --permission-mode default --setting-sources project --settings ${settingsFile} "$@"
@@ -93,8 +95,12 @@ in
     # a copy the guard would refuse (manifest, pin, listed files, unlisted policy files) is rebuilt by the same
     # predicate, so activation repairs it instead of leaving the operator to wipe the directory by hand
     healthy() {
-      [ "$(cat "${checkout}/.complete" 2>/dev/null)" = "${layoutVersion}" ] && [ -s "${pinFile}" ] \
-        && ${integrityCheck} "${checkout}" "$(cat "${pinFile}")" coordinator >/dev/null 2>&1
+      local pin; pin=$(cat "${pinFile}" 2>/dev/null) || pin=""
+      # the guard accepts only a 64-hex pin, so the activation must demand the same or a copy could stay refused
+      [[ "$pin" =~ ^[0-9a-f]{64}$ ]] || { echo "coordinator: no valid integrity pin; rebuilding the checkout" >&2; return 1; }
+      [ "$(cat "${checkout}/.complete" 2>/dev/null)" = "${layoutVersion}" ] || { echo "coordinator: checkout layout changed; rebuilding" >&2; return 1; }
+      ${integrityCheck} "${checkout}" "$pin" coordinator 2>&1 | sed 's/^/coordinator: checkout rebuilt because: /' >&2
+      [ "''${PIPESTATUS[0]}" -eq 0 ]
     }
     run mkdir -p "${checkoutRoot}" "${stateDir}" "${config.xdg.configHome}/coordinator"
     wipe "${checkoutRoot}"/skills-*.tmp
