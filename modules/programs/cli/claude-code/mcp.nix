@@ -46,9 +46,9 @@ skillsSrc: nativeOtel: hostName:
       # Publishing to claude.ai is never wanted from these hosts.
       # https://code.claude.com/docs/en/artifacts#disable-artifacts
       enableArtifact = false;
-      # Explicit: without scrubbing (below), 2.1.300 otherwise starts sessions
-      # in auto mode. --dangerously-skip-permissions still overrides it.
-      permissions.defaultMode = "default";
+      # Keeps the default mode these hosts had under scrubbing (below); 2.1.300
+      # otherwise starts in auto. --dangerously-skip-permissions overrides it.
+      permissions = lib.optionalAttrs nativeOtel { defaultMode = "default"; };
       env = {
         DISABLE_ERROR_REPORTING = "1";
       } // lib.optionalAttrs (!nativeOtel) {
