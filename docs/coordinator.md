@@ -68,6 +68,25 @@ keeps the active copy plus the two newest others and prunes the rest; what is
 left under `~/.local/share/coordinator` and `~/.local/state/coordinator` can be
 deleted by hand. No service units, no secrets, no firewall changes.
 
+## Least-privilege SSH to workers
+
+The coordinator reaches a worker only through `ssh <host> …` with the
+coordinator user's key. On each worker, list that key under
+`sam.coordinator.acceptKeys` and the base role installs it with a forced
+command (`herdr-shim`), `no-pty` and no forwarding:
+
+```nix
+# hosts/<worker>/configuration.nix
+sam.coordinator.acceptKeys = [ "ssh-ed25519 AAAA… coordinator@lenovo" ];
+```
+
+The shim decodes the tasks' `echo <b64> | base64 -d | bash` transport and runs
+the inner argv only when it is `herdr agent list|get|read|wait|prompt …` or
+the bounded `tail -n N <session file>` one-liner `harness:session-summary`
+ships; everything else exits 2 with the refused command in the message. Use a
+dedicated key for the coordinator so the owner's own interactive key is not
+affected.
+
 ## Boundaries
 
 The guard is registered twice on purpose: in the rendered settings file (the

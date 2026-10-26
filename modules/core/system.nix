@@ -111,6 +111,16 @@ in
     };
 
     coordinator = {
+      acceptKeys = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = ''
+          Public keys of coordinator hosts allowed to reach this worker. Each is
+          installed for the primary user with a forced command (herdr-shim) that
+          permits only `herdr agent list|get|read|wait|prompt` and the bounded
+          session-file reads the coordinator tasks issue; no shell, no forwarding.
+        '';
+      };
       fleet = {
         hosts = mkOption {
           type = types.listOf (types.submodule {
