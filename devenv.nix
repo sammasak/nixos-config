@@ -43,7 +43,7 @@ let
   '';
 
   # Reads the HM-deployed files, so a hand-edited ~/.claude cannot make it pass.
-  claudeBypassTest = gate "claude-bypass-test" (with pkgs; [ bash fish nix python3 util-linux ]) ''
+  claudeBypassTest = gate "claude-bypass-test" (with pkgs; [ bash fish jq nix python3 util-linux ]) ''
     hm='.#nixosConfigurations.lenovo.config.home-manager.users.lukas'
     files=$(nix build "$hm.home-files" --no-link --print-out-paths)
     CLAUDE_BIN=$(nix build "$hm.programs.claude-code.package" --no-link --print-out-paths)/bin/claude \
@@ -302,7 +302,7 @@ in
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
     "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
     "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
-    "nixos:claude-bypass-test" = task "Ordinary Claude stays scrubbed; claude-bypass reaches bypassPermissions" claudeBypassTest;
+    "nixos:claude-bypass-test" = task "Ordinary Claude stays scrubbed; claude-bypass dispatch + bypass mode" claudeBypassTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;

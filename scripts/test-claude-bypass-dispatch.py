@@ -8,6 +8,7 @@ usage: test-claude-bypass-dispatch.py <home-manager fish functions dir>
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -63,6 +64,8 @@ def main():
         for name in ("claude.fish", "claude-bypass.fish"):
             text = (hm_functions / name).read_text().replace("/run/secrets/native_otlp_auth", str(token))
             (functions / name).write_text(text)
+        if "herdr-agent-launcher" not in (functions / "claude.fish").read_text():
+            raise SystemExit("claude.fish does not dispatch through the Herdr launcher; stubs would be bypassed")
         suffix = re.search(r"claude \$argv (--settings \S+ --dangerously-skip-permissions)$",
                            (functions / "claude-bypass.fish").read_text(), re.M)
         if not suffix:
@@ -76,21 +79,25 @@ def main():
                    CLAUDE_CONFIG_DIR=str(root / "config"))
         env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
 
-        def fish(args):
+        def fish(args, stdin=None):
             capture.unlink(missing_ok=True)
             quoted = " ".join("'" + a.replace("'", "\\'") + "'" for a in args)
             script = f"set -p fish_function_path {functions}\nclaude-bypass {quoted}"
             p = subprocess.run(["fish", "--no-config", "-c", script], env=env, cwd=root,
-                               stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                               input=stdin or "", capture_output=True, text=True, timeout=60)
             return p.returncode, p.stderr, records(capture)
 
         # A + B: the real HM functions, non-TTY so the launcher runs the client natively.
-        for args in (["--version", "argument with spaces"], ["--resume", "synthetic-id"],
+        for args in ([], ["--version", "argument with spaces"], ["--resume", "synthetic-id"],
                      ["fix the --settings parser"]):
             status, err, calls = fish(args)
             check(f"dispatch once: {args}",
                   status == 17 and len(calls) == 1 and calls[0]["args"] == args + suffix
                   and calls[0]["has_header"], f"status={status} calls={calls} err={err[-200:]}")
+        # Zero arguments must not read stdin as candidate arguments.
+        status, err, calls = fish([], stdin="--settings\n")
+        check("zero args with '--settings' on stdin still dispatches",
+              status == 17 and len(calls) == 1 and calls[0]["args"] == suffix, f"status={status} calls={calls}")
         for args in (["--"], ["--", "prompt"], ["--settings", "x.json"], ["--settings=x.json"],
                      ["--permission-mode", "plan"], ["--permission-mode=default"]):
             status, err, calls = fish(args)
@@ -100,16 +107,17 @@ def main():
         # C: Herdr resume/attach through the launcher under a pseudo-terminal.
         def launcher(args, agents=None):
             capture.unlink(missing_ok=True)
-            cmd = " ".join(["bash", str(LAUNCHER), "claude"] + [f"'{a}'" for a in args])
+            cmd = shlex.join(["bash", str(LAUNCHER), "claude", *args])
             run_env = dict(env, HERDR_STUB_AGENTS=agents or '{"result":{"agents":[]}}')
             p = subprocess.run(["script", "-qec", cmd, "/dev/null"], env=run_env, cwd=root,
-                               stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
             return p.returncode, p.stdout, [(c["tool"], c["args"]) for c in records(capture)]
 
-        status, out, calls = launcher(["--resume", "synthetic-live"] + suffix, LIVE)
-        check("bypass resume of a live pane is refused", status == 3 and "pane-7" in out
-              and "would not change its permission mode" in out
-              and calls == [("herdr", ["agent", "list"])], f"status={status} calls={calls}")
+        for form in (["--resume", "synthetic-live"], ["-r", "synthetic-live"], ["--resume=synthetic-live"]):
+            status, out, calls = launcher(form + suffix, LIVE)
+            check(f"bypass {form[0]} of a live pane is refused", status == 3 and "pane-7" in out
+                  and "would not change its permission mode" in out
+                  and calls == [("herdr", ["agent", "list"])], f"status={status} calls={calls}")
         status, out, calls = launcher(["--resume", "synthetic-new"] + suffix)
         check("bypass resume without a pane starts a new bypass agent",
               status == 23 and ("herdr", ["agent", "start", "cli-claude-w1", "--kind", "claude",

@@ -50,15 +50,20 @@ unchanged.
 **What `claude-bypass` refuses, and how it behaves under Herdr:**
 - **Refused with exit 2:** `--`, `--settings` and `--permission-mode`. Each of
   them would silently replace or drop the bypass mode.
-- **Resuming a live Herdr session:** `claude-bypass --resume <id>` is refused
-  with exit 3 when that session is already live in a Herdr pane. Herdr does not
-  record a pane's permission mode, and attaching cannot change it. Use
-  `herdr agent attach <pane>` to keep the pane's current mode.
+- **Resuming a live Herdr session:** launched from a local terminal outside
+  Herdr, `claude-bypass --resume <id>` is refused with exit 3 when that session
+  is already live in a Herdr pane. Herdr does not record a pane's permission
+  mode, and attaching cannot change it. Use `herdr agent attach <pane>` to keep
+  the pane's current mode. Inside a Herdr pane, over SSH or with `CI` set, the
+  launcher runs claude directly, exactly as plain `claude --resume` does.
 - **Herdr restore:** what mode a Herdr-restored bypass agent comes back in is
   unverified.
 
-`nixos:claude-bypass-test`, part of `nixos:qa`, covers all of this with stubs, a
-mock API and a mock OTLP receiver.
+`nixos:claude-bypass-test`, part of `nixos:qa`, covers the refusals, the Herdr
+resume handling, exactly-once dispatch, and the effective mode and subprocess
+environment. It uses stubs, plus the real client against a mock API and a mock
+OTLP receiver. It does not cover Herdr restore, the bubblewrap sandbox, or file
+access.
 
 ## Smoke check
 
