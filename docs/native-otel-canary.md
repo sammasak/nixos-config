@@ -1,6 +1,6 @@
 # Native OTLP canary
 
-The Lenovo profile enables Claude Code and Codex metrics only. Traces are
+The Lenovo profile enables the native telemetry canary. Traces are
 disabled, Codex logs are disabled, and Claude log forwarding is limited to
 collector-sanitized tool-result events. The client configuration is gated on
 the private OTLP receiver being reviewed and live; this change does not alter
