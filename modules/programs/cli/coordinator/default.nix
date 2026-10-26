@@ -23,7 +23,8 @@ let
   # stays a tracked Herdr agent under the same privacy settings.
   settings = {
     permissions = { inherit (permissions) allow ask deny; };
-    env = userSettings.env or { };
+    # quality:gate may run up to 540 s; Claude's Bash tool defaults to 120 s
+    env = (userSettings.env or { }) // { BASH_DEFAULT_TIMEOUT_MS = "600000"; BASH_MAX_TIMEOUT_MS = "600000"; };
     enableArtifact = userSettings.enableArtifact or false;
     hooks = {
       SessionStart = userSettings.hooks.SessionStart or [ ];
@@ -40,7 +41,7 @@ let
     repos = map (r: { inherit (r) name gh checkout; }) cfg.fleet.repos;
   };
   # bump when the materialised layout changes so existing copies get rebuilt
-  layoutVersion = "3-" + lib.concatStringsSep "," coordinatorSkills;
+  layoutVersion = "4-" + lib.concatStringsSep "," coordinatorSkills;
   launcher = pkgs.writeShellApplication {
     name = "coordinator";
     runtimeInputs = [ pkgs.coreutils pkgs.claude-code pkgs.devenv pkgs.jq pkgs.openssh pkgs.git pkgs.gh pkgs.herdr ];
@@ -49,6 +50,10 @@ let
     text = ''
       export COORDINATOR_CHECKOUT=${lib.escapeShellArg checkout}
       [ -f "$COORDINATOR_CHECKOUT/.complete" ] || { echo "coordinator: checkout not materialised; re-run the Home Manager activation" >&2; exit 2; }
+      # the guard must find the manifest and its pinned hash (kept outside the checkout) on every call
+      export COORDINATOR_REQUIRE_INTEGRITY=1
+      COORDINATOR_INTEGRITY_SHA256=$(cat ${lib.escapeShellArg "${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256"}) || { echo "coordinator: integrity pin missing; re-run the activation" >&2; exit 2; }
+      export COORDINATOR_INTEGRITY_SHA256
       cd "$COORDINATOR_CHECKOUT"
       [ -x "$HOME/.claude/hooks/validate-coordinator.sh" ] || { echo "coordinator: guard hook missing; refusing to start" >&2; exit 2; }
       exec claude --agent coordinator --permission-mode default --setting-sources project,local --settings ${settingsFile} "$@"
@@ -66,7 +71,7 @@ in
   # rollback and the `current` link follows the active generation.
   home.activation.coordinatorCheckout = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     wipe() { for d in "$@"; do [ -e "$d" ] || continue; run chmod -R u+w "$d" 2>/dev/null || true; run rm -rf "$d" || true; done; }
-    run mkdir -p "${checkoutRoot}" "${stateDir}"
+    run mkdir -p "${checkoutRoot}" "${stateDir}" "${config.xdg.configHome}/coordinator"
     wipe "${checkoutRoot}"/skills-*.tmp
     if [ "$(cat "${checkout}/.complete" 2>/dev/null)" != "${layoutVersion}" ]; then
       wipe "${checkout}" "${checkout}.tmp"
@@ -76,8 +81,9 @@ in
       run mkdir -p "${checkout}.tmp/.claude/agents" "${checkout}.tmp/.claude/skills"
       run ln -sfn ../../agents/coordinator.md "${checkout}.tmp/.claude/agents/coordinator.md"
       for sk in ${lib.concatStringsSep " " (map lib.escapeShellArg coordinatorSkills)}; do run ln -sfn "../../skills/$sk" "${checkout}.tmp/.claude/skills/$sk"; done
-      # .integrity lets the guard refuse every task call once a contract, task, hook or devenv file in the copy changes
-      run sh -c ${lib.escapeShellArg "cd '${checkout}.tmp' && find agents task-modules hooks devenv.nix devenv.yaml devenv.lock -type f -print0 | sort -z | xargs -0 sha256sum > .integrity"}
+      # .integrity lets the guard refuse every task call once a contract, task, hook or devenv file in the copy changes;
+      # its own hash is pinned outside the checkout, and the guarded files lose their write bits
+      run sh -c ${lib.escapeShellArg "cd '${checkout}.tmp' && find agents task-modules hooks devenv.nix devenv.yaml devenv.lock -type f -print0 | sort -z | xargs -0 sha256sum > .integrity && sha256sum .integrity | cut -d' ' -f1 > '${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256' && find agents task-modules hooks devenv.nix devenv.yaml devenv.lock .integrity -type f -exec chmod a-w {} +"}
       run sh -c ${lib.escapeShellArg "printf '%s' '${layoutVersion}' > '${checkout}.tmp/.complete'"}
       run mv "${checkout}.tmp" "${checkout}"
     fi
