@@ -11,11 +11,17 @@ let
   rev = skillsSrc.shortRev or (builtins.substring 0 12 (baseNameOf skillsSrc));
   checkout = "${checkoutRoot}/skills-${rev}";
   permissions = builtins.fromJSON (builtins.readFile "${skillsSrc}/agents/coordinator/permissions.json");
-  # The adapter's `skills:` frontmatter list is the single source of truth for what gets project-scoped.
+  # Adding a skill to the adapter's `skills:` frontmatter is enough to project-scope it here.
   adapterLines = lib.splitString "\n" (builtins.readFile "${skillsSrc}/agents/coordinator.md");
-  afterSkills = lib.drop (lib.lists.findFirstIndex (l: l == "skills:") (-1) adapterLines + 1) adapterLines;
+  skillsIdx = lib.lists.findFirstIndex (l: l == "skills:") null adapterLines;
   listItems = xs: if xs == [ ] || !lib.hasPrefix "  - " (builtins.head xs) then [ ] else [ (lib.removePrefix "  - " (builtins.head xs)) ] ++ listItems (builtins.tail xs);
-  coordinatorSkills = listItems afterSkills;
+  coordinatorSkills =
+    if skillsIdx == null then throw "coordinator: agents/coordinator.md has no skills: block"
+    else let xs = listItems (lib.drop (skillsIdx + 1) adapterLines); in if xs == [ ] then throw "coordinator: skills: block is empty or not a block list" else xs;
+  # roots the manifest covers; the skills repo ships the list so guard, tests and this module agree
+  integrityPathsFile = "${skillsSrc}/hooks/lib/integrity-paths";
+  integrityRoots = if builtins.pathExists integrityPathsFile then lib.filter (l: l != "") (lib.splitString "\n" (builtins.readFile integrityPathsFile)) else [ "agents" "task-modules" "hooks" "devenv.nix" "devenv.yaml" "devenv.lock" ];
+  pinFile = "${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256";
   guard = "${skillsSrc}/hooks/validate-coordinator.sh";
   userSettings = config.programs.claude-code.settings;
   # Only the role's permissions replace the user scope; host policy (telemetry env,
@@ -41,7 +47,7 @@ let
     repos = map (r: { inherit (r) name gh checkout; }) cfg.fleet.repos;
   };
   # bump when the materialised layout changes so existing copies get rebuilt
-  layoutVersion = "4-" + lib.concatStringsSep "," coordinatorSkills;
+  layoutVersion = "5-" + lib.concatStringsSep "," coordinatorSkills;
   launcher = pkgs.writeShellApplication {
     name = "coordinator";
     runtimeInputs = [ pkgs.coreutils pkgs.claude-code pkgs.devenv pkgs.jq pkgs.openssh pkgs.git pkgs.gh pkgs.herdr ];
@@ -52,11 +58,11 @@ let
       [ -f "$COORDINATOR_CHECKOUT/.complete" ] || { echo "coordinator: checkout not materialised; re-run the Home Manager activation" >&2; exit 2; }
       # the guard must find the manifest and its pinned hash (kept outside the checkout) on every call
       export COORDINATOR_REQUIRE_INTEGRITY=1
-      COORDINATOR_INTEGRITY_SHA256=$(cat ${lib.escapeShellArg "${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256"}) || { echo "coordinator: integrity pin missing; re-run the activation" >&2; exit 2; }
+      COORDINATOR_INTEGRITY_SHA256=$(cat ${lib.escapeShellArg pinFile}) || { echo "coordinator: integrity pin missing; re-run the activation" >&2; exit 2; }
       export COORDINATOR_INTEGRITY_SHA256
       cd "$COORDINATOR_CHECKOUT"
       [ -x "$HOME/.claude/hooks/validate-coordinator.sh" ] || { echo "coordinator: guard hook missing; refusing to start" >&2; exit 2; }
-      exec claude --agent coordinator --permission-mode default --setting-sources project,local --settings ${settingsFile} "$@"
+      exec claude --agent coordinator --permission-mode default --setting-sources project --settings ${settingsFile} "$@"
     '';
   };
 in
@@ -73,23 +79,25 @@ in
     wipe() { for d in "$@"; do [ -e "$d" ] || continue; run chmod -R u+w "$d" 2>/dev/null || true; run rm -rf "$d" || true; done; }
     run mkdir -p "${checkoutRoot}" "${stateDir}" "${config.xdg.configHome}/coordinator"
     wipe "${checkoutRoot}"/skills-*.tmp
-    if [ "$(cat "${checkout}/.complete" 2>/dev/null)" != "${layoutVersion}" ]; then
+    if [ "$(cat "${checkout}/.complete" 2>/dev/null)" != "${layoutVersion}" ] || [ ! -s "${pinFile}" ]; then
       wipe "${checkout}" "${checkout}.tmp"
       run cp -r "${skillsSrc}" "${checkout}.tmp"
       run chmod -R u+w "${checkout}.tmp"
-      # project-scoped agent and skills: --setting-sources project,local does not load user-scope ~/.claude/agents
+      # project-scoped agent and skills: --setting-sources project does not load user-scope ~/.claude/agents; an empty,
+      # read-only, manifest-listed project settings file leaves nothing for a later session to plant
       run mkdir -p "${checkout}.tmp/.claude/agents" "${checkout}.tmp/.claude/skills"
+      run sh -c ${lib.escapeShellArg "printf '{}\n' > '${checkout}.tmp/.claude/settings.json'"}
       run ln -sfn ../../agents/coordinator.md "${checkout}.tmp/.claude/agents/coordinator.md"
       for sk in ${lib.concatStringsSep " " (map lib.escapeShellArg coordinatorSkills)}; do run ln -sfn "../../skills/$sk" "${checkout}.tmp/.claude/skills/$sk"; done
       # .integrity lets the guard refuse every task call once a contract, task, hook or devenv file in the copy changes;
       # its own hash is pinned outside the checkout, and the guarded files lose their write bits
-      run sh -c ${lib.escapeShellArg "cd '${checkout}.tmp' && find agents task-modules hooks devenv.nix devenv.yaml devenv.lock -type f -print0 | sort -z | xargs -0 sha256sum > .integrity && sha256sum .integrity | cut -d' ' -f1 > '${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256' && find agents task-modules hooks devenv.nix devenv.yaml devenv.lock .integrity -type f -exec chmod a-w {} +"}
+      run bash -c ${lib.escapeShellArg "set -o pipefail; cd '${checkout}.tmp' && find -L ${lib.concatStringsSep " " integrityRoots} -type f -print0 | sort -z | xargs -0 sha256sum > .integrity && sha256sum .integrity | cut -d' ' -f1 > '${pinFile}' && find -L ${lib.concatStringsSep " " integrityRoots} .integrity -type f -exec chmod a-w {} +"}
       run sh -c ${lib.escapeShellArg "printf '%s' '${layoutVersion}' > '${checkout}.tmp/.complete'"}
       run mv "${checkout}.tmp" "${checkout}"
     fi
     run ln -sfn "${checkout}" "${checkoutRoot}/current"
     # keep the active copy plus the two newest others; each old copy pins a devenv closure via .devenv/gc
     { find "${checkoutRoot}" -mindepth 1 -maxdepth 1 -type d -name 'skills-*' -not -path "${checkout}" -printf '%T@ %p\n' 2>/dev/null \
-      | sort -rn | tail -n +3 | cut -d' ' -f2- | while read -r old; do wipe "$old"; done; } || true
+      | sort -rn | tail -n +3 | cut -d' ' -f2- | while read -r old; do wipe "$old"; run rm -f "${config.xdg.configHome}/coordinator/$(basename "$old").integrity.sha256"; done; } || true
   '';
 }

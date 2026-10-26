@@ -33,7 +33,7 @@ revision that carries `agents/coordinator.md` and `hooks/validate-coordinator.sh
 | `~/.config/coordinator/fleet.json` | hosts and repos from `sam.coordinator.fleet` |
 | `~/.claude/hooks/validate-coordinator.sh` | the agent-scoped guard (fails closed when absent) |
 | `~/.claude/agents/coordinator.md` | via `skills.nix` on every devTools host; without the guard its hook command refuses every Bash call |
-| `coordinator` | launcher: `claude --agent coordinator --permission-mode default --setting-sources project,local --settings <rendered settings>` from the checkout; user-scope settings (which allow bare Read/Bash) are not loaded, the rendered file carries the role's rules plus the host's telemetry env and Herdr hook |
+| `coordinator` | launcher: `claude --agent coordinator --permission-mode default --setting-sources project --settings <rendered settings>` from the checkout; user-scope and local settings are not loaded (the checkout carries an empty, read-only, manifest-listed `.claude/settings.json`); the rendered file carries the role's rules plus the host's telemetry env and Herdr hook |
 
 ## Run
 
@@ -80,12 +80,18 @@ command (`herdr-shim`), `no-pty` and no forwarding:
 sam.coordinator.acceptKeys = [ "ssh-ed25519 AAAA… coordinator@lenovo" ];
 ```
 
-The shim decodes the tasks' `echo <b64> | base64 -d | bash` transport and runs
-the inner argv only when it is `herdr agent list|get|read|wait|prompt …` or
-the bounded `tail -n N <session file>` one-liner `harness:session-summary`
-ships; everything else exits 2 with the refused command in the message. Use a
-dedicated key for the coordinator so the owner's own interactive key is not
-affected.
+The shim accepts only the tasks' transport (`bash -c '<runner>' _ <base64 of
+NUL-separated argv>`), decodes the argv itself (no shell re-parse, no `eval`)
+and execs it only when it is `herdr agent list|get|read|wait|prompt …` or one
+of the two exact session-read one-liners `harness:session-summary` ships,
+confined to the user's `~/.claude/projects` and `~/.pi/agent/sessions` stores;
+everything else exits 2 with the refused command in the message. Known limits:
+`herdr agent prompt` can type into any *detected agent* pane on the worker
+(not plain shells), and the `read`/`wait`/`prompt` flags pass through as herdr
+defines them (`--lines/--source/--format`, `--until/--timeout`, `--wait`);
+none of them writes files. The key must be a dedicated one: the module refuses
+a key that is also in the owner's `sshKeys`, because sshd would honour
+whichever `authorized_keys` line comes first.
 
 ## Boundaries
 
@@ -97,6 +103,6 @@ Bash call that is not `devenv tasks run <allowed task> [--input-json '<object>']
 [--show-output]` from the checkout. Read is allowed inside the checkout and the
 state directory and denied for key, token and secret paths; the coordinator
 reads untrusted pane and session text from other agents, so keep that list
-honest. OS-level: the coordinator uses the user's own SSH identity for
-`ssh <host> herdr agent …`; a restricted command key per worker host is tracked
-in the epic as follow-up.
+honest. OS-level: on each worker the coordinator's dedicated key is bound to
+`herdr-shim` as described above; the coordinator host must use that key for
+the fleet's `ssh` targets (an `IdentityFile` match block for the worker hosts).
