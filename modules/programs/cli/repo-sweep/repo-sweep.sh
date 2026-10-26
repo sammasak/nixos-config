@@ -23,7 +23,7 @@ done
 roots=("$@")
 ((${#roots[@]})) || roots=("$HOME" "$HOME/wt")
 # Home Manager activation wires git hooks into these by path.
-protected=" nixos-config knowledge claude-code-skills homelab-gitops "
+protected=" nixos-config knowledge skills claude-code-skills homelab-gitops "
 caches=(target node_modules)
 
 act() {
