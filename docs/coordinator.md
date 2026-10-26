@@ -33,7 +33,6 @@ revision that carries `agents/coordinator.md` and `hooks/validate-coordinator.sh
 | `~/.local/share/coordinator/skills-<rev>` (+ `current` link) | writable copy of the pinned skills input with a project-scoped `.claude/agents/coordinator.md` and `.claude/skills/*` (the launcher loads no user-scope settings) and an `.integrity` manifest the guard checks on every call (its hash is pinned in `~/.config/coordinator/skills-<rev>.integrity.sha256`, guarded files are read-only); devenv runs here |
 | `~/.config/coordinator/fleet.json` | hosts and repos from `sam.coordinator.fleet` |
 | `~/.claude/hooks/validate-coordinator.sh` | the agent-scoped guard (fails closed when absent) |
-| `~/.claude/agents/coordinator.md` | via `skills.nix` on every devTools host; without the guard its hook command refuses every Bash call |
 | `coordinator` | launcher: `claude --agent coordinator --permission-mode default --setting-sources project --settings <rendered settings>` from the checkout; user-scope and local settings are not loaded (the checkout carries an empty, read-only, manifest-listed `.claude/settings.json`); the rendered file carries the role's rules plus the host's telemetry env and Herdr hook |
 
 ## Run
@@ -64,7 +63,8 @@ tail -3 ~/.local/state/coordinator/audit.jsonl                               # w
 `skills.nix` links `agents/*.md` into `~/.claude/agents` on every devTools host
 but skips role adapters (an `.md` with a sibling `agents/<name>/` contract):
 the launcher project-scopes its adapter inside the pinned checkout, and a
-user-scope copy would only attract delegation that the absent guard refuses.
+user-scope copy would only attract delegation that the guard refuses outside
+the launcher (or that fails closed where the guard is absent).
 The quality role has no launcher yet; its adapter is reachable only through
 `agents/quality/tests/two-harness.sh`.
 
@@ -113,8 +113,9 @@ whichever `authorized_keys` line comes first.
 
 The guard is registered twice on purpose: in the rendered settings file (the
 one Claude honours for `allow` decisions when the agent is the main session,
-verified live) and in the agent frontmatter (fails closed on hosts without the
-launcher). `herdr:message` prompts every time (permission `ask`); the guard refuses any
+verified live) and in the agent frontmatter (a backstop for an adapter loaded
+outside the launcher's settings, e.g. `--agent coordinator` by hand from a
+skills checkout; it fails closed without the host guard). `herdr:message` prompts every time (permission `ask`); the guard refuses any
 Bash call that is not `devenv tasks run <allowed task> [--input-json '<object>']
 [--show-output]` from the checkout. Read is allowed inside the checkout and the
 state directory and denied for key, token and secret paths; the coordinator
