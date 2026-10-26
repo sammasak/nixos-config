@@ -12,6 +12,7 @@ let
   devToolImports = lib.optionals hasDevTools [
     ../programs/cli/dev-init
     ../programs/cli/flake-update
+    ../programs/cli/repo-sweep
     ../programs/cli/herdr
     ../programs/editor/nvim
     ./pi-harness
