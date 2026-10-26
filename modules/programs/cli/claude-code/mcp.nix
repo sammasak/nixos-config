@@ -43,13 +43,23 @@ skillsSrc: nativeOtel: hostName:
       model = "claude-opus-5-5";
       # Pre-answered: read-only settings.json means the prompt could never save.
       tui = "fullscreen";
+      # Publishing to claude.ai is never wanted from these hosts.
+      # https://code.claude.com/docs/en/artifacts#disable-artifacts
+      enableArtifact = false;
+      # Keeps the default mode these hosts had under scrubbing (below); 2.1.300
+      # otherwise starts in auto. --dangerously-skip-permissions overrides it.
+      permissions = lib.optionalAttrs nativeOtel { defaultMode = "default"; };
       env = {
         DISABLE_ERROR_REPORTING = "1";
       } // lib.optionalAttrs (!nativeOtel) {
         DISABLE_TELEMETRY = "1";
       } // lib.optionalAttrs nativeOtel {
         CLAUDE_CODE_ENABLE_TELEMETRY = "1";
-        CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "1";
+        # "1" forces every session to the default permission mode, ignoring
+        # --dangerously-skip-permissions (claude-code 2.1.300). With "0", tools
+        # inherit credential-shaped env and run outside the bubblewrap sandbox;
+        # OTEL_* and CLAUDE_CODE_OAUTH_TOKEN are still withheld.
+        CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "0";
         OTEL_METRICS_EXPORTER = "otlp";
         OTEL_LOGS_EXPORTER = "otlp";
         OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp.sammasak.dev";

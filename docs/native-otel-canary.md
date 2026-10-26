@@ -17,12 +17,32 @@ subprocesses receive the receiver credential. The relay is enabled only with
 The upstream certificate chain is verified to depth 3; Nginx's default depth
 of 1 rejects the receiver's valid certificate chain.
 
-Claude Code's `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is enabled so OTLP
-authorization headers are not inherited by Bash, hooks, or stdio MCP
-subprocesses. Validate this without a paid request using
-`python3 scripts/test-native-otel-subprocess-env.py`; the test sends a fake
-OTLP credential to a local mock API and checks the Bash tool result, never
-printing the fake credential.
+Claude Code removes every `OTEL_*` variable, including the OTLP authorization
+header, from the environment of Bash, hooks and stdio MCP subprocesses.
+
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is `"0"`. In Claude Code 2.1.300, `"1"`
+forces every session into the default permission mode, so
+`claude --dangerously-skip-permissions` could not work. Sessions still start in
+default mode unless that flag is passed.
+
+The cost of `"0"` applies to every session: subprocesses inherit other
+credential-shaped variables (`AWS_*`, `*_TOKEN`, …) and run outside the
+bubblewrap sandbox. `CLAUDE_CODE_OAUTH_TOKEN` is still withheld.
+
+Validate this without a paid request:
+
+```sh
+python3 scripts/test-native-otel-subprocess-env.py <generated settings.json>
+```
+
+It runs the real client with the generated settings against a local mock API
+and a mock OTLP receiver, with a fake OTLP credential. It checks that:
+- `claude` starts in default mode;
+- `claude --dangerously-skip-permissions` starts in `bypassPermissions`;
+- Bash never sees the credential;
+- exports stay authorized.
+
+It never prints the fake credential.
 
 ## Smoke check
 

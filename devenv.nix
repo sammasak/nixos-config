@@ -42,6 +42,13 @@ let
     bash scripts/verify-all-hosts.sh
   '';
 
+  claudeSettingsTest = gate "claude-settings-test" (with pkgs; [ nix python3 ]) ''
+    hm='.#nixosConfigurations.lenovo.config.home-manager.users.lukas'
+    files=$(nix build "$hm.home-files" --no-link --print-out-paths)
+    CLAUDE_BIN=$(nix build "$hm.programs.claude-code.package" --no-link --print-out-paths)/bin/claude \
+      python3 scripts/test-native-otel-subprocess-env.py "$files/.claude/settings.json"
+  '';
+
   nativeOtelRelayTest = gate "native-otel-relay-test" (with pkgs; [ nginx nix python3 ]) ''
     helper=$(nix eval --raw .#nixosConfigurations.lenovo.config.systemd.services.native-otel-relay.serviceConfig.ExecStartPre)
     ${pkgs.python3}/bin/python scripts/test-native-otel-relay.py "$helper" "${pkgs.nginx}/bin/nginx"
@@ -53,7 +60,7 @@ let
   '';
 
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
-    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest
+    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
@@ -292,6 +299,7 @@ in
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
     "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
     "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
+    "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;
