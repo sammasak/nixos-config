@@ -11,19 +11,14 @@ let
   rev = skillsSrc.shortRev or (builtins.substring 0 12 (baseNameOf skillsSrc));
   checkout = "${checkoutRoot}/skills-${rev}";
   permissions = builtins.fromJSON (builtins.readFile "${skillsSrc}/agents/coordinator/permissions.json");
-  # The portable rules name ~/.local/state/coordinator; render the real state dir.
-  renderRule = r: builtins.replaceStrings [ "~/.local/state/coordinator" ] [ stateDir ] r;
+  guard = "${skillsSrc}/hooks/validate-coordinator.sh";
+  # Rules use ~/ paths, which Claude Code resolves itself; nothing to rewrite.
   settings = {
-    permissions = {
-      allow = map renderRule permissions.allow;
-      ask = map renderRule permissions.ask;
-      deny = map renderRule permissions.deny;
-      defaultMode = "default";
-    };
-    # Fail closed even if the agent file's frontmatter were ignored: same guard at settings level.
+    permissions = { inherit (permissions) allow ask deny; };
+    # Same guard as the agent frontmatter, from the immutable store path so it cannot go missing mid-session.
     hooks.PreToolUse = [{
       matcher = "Bash";
-      hooks = [{ type = "command"; command = "${home}/.claude/hooks/validate-coordinator.sh"; timeout = 10; }];
+      hooks = [{ type = "command"; command = guard; timeout = 10; }];
     }];
   };
   settingsFile = pkgs.writeText "coordinator-claude-settings.json" (builtins.toJSON settings);
@@ -35,20 +30,17 @@ let
   launcher = pkgs.writeShellApplication {
     name = "coordinator";
     runtimeInputs = [ pkgs.coreutils pkgs.claude-code pkgs.devenv pkgs.jq pkgs.openssh pkgs.git pkgs.gh pkgs.herdr ];
+    # --setting-sources drops the user-scope allow list (bare Read/Bash on devTools hosts), so only
+    # this file's rules and the guard apply to the coordinator's session.
     text = ''
-      export COORDINATOR_CHECKOUT=${checkout}
+      export COORDINATOR_CHECKOUT=${lib.escapeShellArg checkout}
       cd "$COORDINATOR_CHECKOUT"
       [ -x "$HOME/.claude/hooks/validate-coordinator.sh" ] || { echo "coordinator: guard hook missing; refusing to start" >&2; exit 2; }
-      exec claude --agent coordinator --permission-mode default --settings ${settingsFile} "$@"
+      exec claude --agent coordinator --permission-mode default --setting-sources project,local --settings ${settingsFile} "$@"
     '';
   };
 in
 {
-  assertions = [
-    { assertion = osConfig.sam.profile.devTools; message = "sam.profile.coordinator needs devTools (claude-code, herdr)."; }
-    { assertion = cfg.fleet.hosts != [ ]; message = "sam.coordinator.fleet.hosts must list at least the local host."; }
-  ];
-
   home.packages = [ launcher ];
 
   home.file.".claude/hooks/validate-coordinator.sh".source = "${skillsSrc}/hooks/validate-coordinator.sh";
@@ -58,10 +50,15 @@ in
   # store copy is materialised once per skills revision; older copies stay for
   # rollback and the `current` link follows the active generation.
   home.activation.coordinatorCheckout = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run mkdir -p "${checkoutRoot}" "${stateDir}"
+    run rm -rf "${checkoutRoot}"/skills-*.tmp
     if [ ! -d "${checkout}" ]; then
-      run mkdir -p "${checkoutRoot}" "${stateDir}"
-      run cp -r --no-preserve=mode "${skillsSrc}" "${checkout}"
+      run cp -r "${skillsSrc}" "${checkout}.tmp"
+      run chmod -R u+w "${checkout}.tmp"
+      run mv "${checkout}.tmp" "${checkout}"
     fi
     run ln -sfn "${checkout}" "${checkoutRoot}/current"
+    # keep the active copy plus the two newest others; each old copy pins a devenv closure via .devenv/gc
+    for old in $(ls -1dt "${checkoutRoot}"/skills-*/ 2>/dev/null | grep -vF "${checkout}/" | tail -n +3); do run rm -rf "$old"; done
   '';
 }

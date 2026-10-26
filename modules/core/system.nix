@@ -115,8 +115,8 @@ in
         hosts = mkOption {
           type = types.listOf (types.submodule {
             options = {
-              name = mkOption { type = types.strMatching "[A-Za-z0-9_:.@/-]+"; };
-              ssh = mkOption { type = types.nullOr (types.strMatching "[A-Za-z0-9_:.@/-]+"); default = null; description = "SSH target, or null for the local host."; };
+              name = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_:.@/-]*"; description = "Fleet host name as the coordinator reports it."; };
+              ssh = mkOption { type = types.nullOr (types.strMatching "[A-Za-z0-9_][A-Za-z0-9_:.@/-]*"); default = null; description = "SSH target, or null for the local host."; };
             };
           });
           default = [ ];
@@ -125,9 +125,9 @@ in
         repos = mkOption {
           type = types.listOf (types.submodule {
             options = {
-              name = mkOption { type = types.strMatching "[A-Za-z0-9_:.@/-]+"; };
-              gh = mkOption { type = types.nullOr types.str; default = null; description = "OWNER/REPO for gh:work, or null."; };
-              checkout = mkOption { type = types.nullOr (types.strMatching "[A-Za-z0-9_./-]+"); default = null; description = "Local checkout for git:recent, or null."; };
+              name = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_:.@/-]*"; description = "Repo name as the coordinator reports it."; };
+              gh = mkOption { type = types.nullOr (types.strMatching "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"); default = null; description = "OWNER/REPO for gh:work, or null."; };
+              checkout = mkOption { type = types.nullOr (types.strMatching "/[A-Za-z0-9_./-]*"); default = null; description = "Absolute local checkout for git:recent, or null."; };
             };
           });
           default = [ ];
@@ -159,6 +159,12 @@ in
   };
 
   config = {
+    assertions = lib.optionals config.sam.profile.coordinator [
+      { assertion = config.sam.profile.devTools; message = "sam.profile.coordinator needs devTools (claude-code, herdr)."; }
+      { assertion = lib.any (h: h.ssh == null) config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts must include the local host (ssh = null)."; }
+      { assertion = lib.length (lib.unique (map (h: h.name) config.sam.coordinator.fleet.hosts)) == lib.length config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts has duplicate names."; }
+    ];
+
     programs = {
       nix-ld.enable = true;
       nix-ld.libraries = with pkgs; [
