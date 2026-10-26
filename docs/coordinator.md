@@ -70,7 +70,10 @@ deleted by hand. No service units, no secrets, no firewall changes.
 
 ## Boundaries
 
-`herdr:message` prompts every time (permission `ask`); the guard refuses any
+The guard is registered twice on purpose: in the rendered settings file (the
+one Claude honours for `allow` decisions when the agent is the main session,
+verified live) and in the agent frontmatter (fails closed on hosts without the
+launcher). `herdr:message` prompts every time (permission `ask`); the guard refuses any
 Bash call that is not `devenv tasks run <allowed task> [--input-json '<object>']
 [--show-output]` from the checkout. Read is allowed inside the checkout and the
 state directory and denied for key, token and secret paths; the coordinator
