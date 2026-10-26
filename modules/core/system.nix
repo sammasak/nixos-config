@@ -112,7 +112,7 @@ in
 
     coordinator = {
       identityFile = mkOption {
-        type = types.nullOr types.str;
+        type = types.nullOr (types.strMatching "(/|~/)[^[:space:]]+");
         default = null;
         description = ''
           Private key the coordinator host uses for every fleet ssh target
@@ -188,13 +188,14 @@ in
       { assertion = lib.length (lib.unique (map (h: h.name) config.sam.coordinator.fleet.hosts)) == lib.length config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts has duplicate names."; }
     ];
 
-    # every fleet ssh target is reached with the dedicated key only (system-wide ssh_config, so the user's own
-    # ~/.ssh/config stays untouched): ssh would otherwise offer agent keys first and skip the worker's herdr-shim
-    programs.ssh.extraConfig = lib.mkIf (config.sam.profile.coordinator && config.sam.coordinator.identityFile != null) (lib.concatMapStrings (h: ''
+    # second layer behind the launcher's `-i … -o IdentitiesOnly=yes`: system-wide ssh_config blocks so a plain
+    # `ssh <fleet host>` on this host also offers the dedicated key only. mkAfter keeps any global lines another
+    # module adds from landing inside the last Host block; the user's own ~/.ssh/config is left untouched
+    programs.ssh.extraConfig = lib.mkIf (config.sam.profile.coordinator && config.sam.coordinator.identityFile != null) (lib.mkAfter (lib.concatMapStrings (h: ''
       Host ${lib.last (lib.splitString "@" h.ssh)}
         IdentityFile ${config.sam.coordinator.identityFile}
         IdentitiesOnly yes
-    '') (lib.filter (h: h.ssh != null) config.sam.coordinator.fleet.hosts));
+    '') (lib.filter (h: h.ssh != null) config.sam.coordinator.fleet.hosts)));
 
     programs = {
       nix-ld.enable = true;

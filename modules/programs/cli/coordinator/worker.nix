@@ -6,7 +6,7 @@ let
   keys = config.sam.coordinator.acceptKeys;
   shim = pkgs.writeShellApplication {
     name = "herdr-shim";
-    runtimeInputs = [ pkgs.coreutils pkgs.bash pkgs.herdr ];
+    runtimeInputs = [ pkgs.coreutils pkgs.gnused pkgs.bash pkgs.herdr ];
     text = builtins.readFile ./herdr-shim.sh;
   };
   restrict = key: "restrict,command=\"${shim}/bin/herdr-shim\" ${key}";

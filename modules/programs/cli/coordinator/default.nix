@@ -65,7 +65,12 @@ let
       COORDINATOR_INTEGRITY_SHA256=$(cat ${lib.escapeShellArg pinFile}) || { echo "coordinator: integrity pin missing; re-run the activation" >&2; exit 2; }
       export COORDINATOR_INTEGRITY_SHA256
       cd "$COORDINATOR_CHECKOUT"
+      # the agent frontmatter runs the guard from this path (the settings file runs the store copy); both must exist
       [ -x "$HOME/.claude/hooks/validate-coordinator.sh" ] || { echo "coordinator: guard hook missing; refusing to start" >&2; exit 2; }
+      ${lib.optionalString (cfg.identityFile != null) ''
+        # the tasks add `-i <key> -o IdentitiesOnly=yes` on the ssh command line, which beats any ~/.ssh/config `Host *`
+        export COORDINATOR_SSH_IDENTITY=${lib.escapeShellArg cfg.identityFile}
+      ''}
       exec claude --agent coordinator --permission-mode default --setting-sources project --settings ${settingsFile} "$@"
     '';
   };
@@ -79,11 +84,18 @@ in
   # devenv needs a writable project dir (.devenv/, eval cache), so the pinned
   # store copy is materialised once per skills revision; older copies stay for
   # rollback and the `current` link follows the active generation.
-  home.activation.coordinatorCheckout = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+  home.activation.coordinatorCheckout = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
     wipe() { for d in "$@"; do [ -e "$d" ] || continue; run chmod -R u+w "$d" 2>/dev/null || true; run rm -rf "$d" || true; done; }
+    # a copy whose manifest no longer verifies (or no longer matches the pin) is rebuilt, so activation repairs
+    # what the guard refuses instead of leaving the operator to wipe the directory by hand
+    healthy() {
+      [ "$(cat "${checkout}/.complete" 2>/dev/null)" = "${layoutVersion}" ] && [ -s "${pinFile}" ] \
+        && [ "$(sha256sum "${checkout}/.integrity" 2>/dev/null | cut -d' ' -f1)" = "$(cat "${pinFile}")" ] \
+        && (cd "${checkout}" && sha256sum --check --quiet --strict .integrity >/dev/null 2>&1)
+    }
     run mkdir -p "${checkoutRoot}" "${stateDir}" "${config.xdg.configHome}/coordinator"
     wipe "${checkoutRoot}"/skills-*.tmp
-    if [ "$(cat "${checkout}/.complete" 2>/dev/null)" != "${layoutVersion}" ] || [ ! -s "${pinFile}" ]; then
+    if ! healthy; then
       wipe "${checkout}" "${checkout}.tmp"
       run cp -r "${skillsSrc}" "${checkout}.tmp"
       run chmod -R u+w "${checkout}.tmp"

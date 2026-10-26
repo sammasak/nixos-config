@@ -69,6 +69,12 @@ keeps the active copy plus the two newest others and prunes the rest; what is
 left under `~/.local/share/coordinator` and `~/.local/state/coordinator` can be
 deleted by hand. No service units, no secrets, no firewall changes.
 
+Roll back by generation, not by reverting the skills pin alone: with
+`sam.profile.coordinator` still enabled, an older skills input has no
+`agents/coordinator.md` and evaluation fails (checked on lenovo with the pin
+moved back to the pre-epic revision). Disable the profile in the same commit
+if the pin must go back.
+
 ## Least-privilege SSH to workers
 
 The coordinator reaches a worker only through `ssh <host> …` with the
@@ -106,9 +112,13 @@ state directory and denied for key, token and secret paths; the coordinator
 reads untrusted pane and session text from other agents, so keep that list
 honest. OS-level: on each worker the coordinator's dedicated key is bound to
 `herdr-shim` as described above, and the coordinator host sets
-`sam.coordinator.identityFile`, from which the system-wide `ssh_config` gets a
-`Host` block per fleet target with `IdentityFile` and `IdentitiesOnly yes`, so
-an owner key sitting in an ssh-agent is never offered to a worker (the user's
-own `~/.ssh/config` is left alone; a per-host override there would win). The read-only file modes on the copy
-are a convenience; the manifest check is the control (tamper-evident, not
-tamper-proof: directories stay writable).
+`sam.coordinator.identityFile`. The launcher exports it as
+`COORDINATOR_SSH_IDENTITY` and the tasks put `-i <key> -o IdentitiesOnly=yes`
+on every ssh command line, which no config file can override. The system-wide
+`ssh_config` gets the same per-host blocks as a second layer for manual `ssh`.
+Note that a `~/.ssh/config` is read first: a `Host *` stanza there with its own
+`IdentityFile` adds that key ahead of the dedicated one, and `IdentitiesOnly no`
+in it wins over the system block; only the command-line layer survives both.
+The read-only file modes on the copy are a convenience; the manifest check is
+the control (tamper-evident, not tamper-proof: directories stay writable). A copy
+whose manifest no longer verifies is rebuilt by the next activation.
