@@ -35,7 +35,7 @@ python3 scripts/test-native-otel-fish.py "$nixpkgs_source"
 
 Use Fish, Python 3 and Nix from the project environment. This regression also
 runs in `devenv tasks run nixos:qa`; reserve a shared verification slot before
-that full host-build gate. Three `PASS:` lines indicate success; an assertion
+that full host-build gate. Four `PASS:` lines indicate success; an assertion
 failure blocks activation. The no-inference
 test checks that composing Herdr and telemetry produces one Fish dispatch,
 preserves arguments and exit status, and keeps telemetry settings local to
@@ -43,9 +43,12 @@ the function. It covers native telemetry enabled and disabled, missing
 credentials, and hosts without Herdr. On Herdr hosts, the Fish telemetry
 module supplies environment setup before the existing Herdr dispatch.
 
-The fixture substitutes local recording stubs for the launcher/binaries; it
-does not launch a real CLI, contact an inference endpoint, or read a live
-credential. To reproduce the defect, keep these test scripts but restore the
+The composition cases substitute local recording stubs for the launcher/binaries.
+A separate non-TTY case executes the real Herdr launcher with client stubs,
+checking exactly-once execution and exit-status propagation. It does not
+exercise interactive Herdr workspace/attach/fallback branches, launch a real
+CLI, contact an inference endpoint, or read a live credential.
+To reproduce the defect, keep these test scripts but restore the
 parent revision of `modules/programs/cli/native-otel.nix` in a disposable
 worktree: the duplicated dispatch must fail. Restore the fixed module and
 rerun for green.
