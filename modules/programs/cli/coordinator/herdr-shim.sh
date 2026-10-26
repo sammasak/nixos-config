@@ -18,7 +18,7 @@ case "$*" in
   "herdr agent list"|"herdr agent get "*|"herdr agent read "*|"herdr agent wait "*|"herdr agent prompt "*) exec "$@" ;;
   "bash -c "*)
     # harness:session-summary ships `f=<store>/<slug>/<id>.jsonl; [ -r "$f" ] || exit 44; tail -n <N> "$f"` style one-liners
-    script="$2"
+    script="$3"
     [[ "$script" =~ ^(f|d)=.*tail\ -n\ [0-9]+\ .*$ ]] && [[ "$script" != *';'*';'*';'*';'* ]] && [[ "$script" != *'$('* ]] && [[ "$script" != *'`'* ]] || { echo "herdr-shim: session read form not allowed: $script" >&2; exit 2; }
     exec bash -c "$script" ;;
   *) echo "herdr-shim: command not allowed for the coordinator key: $*" >&2; exit 2 ;;
