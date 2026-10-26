@@ -94,9 +94,9 @@ in
     wipe() { for d in "$@"; do [ -e "$d" ] || continue; run chmod -R u+w "$d" 2>/dev/null || true; run rm -rf "$d" || true; done; }
     # a copy the guard would refuse (manifest, pin, listed files, unlisted policy files) is rebuilt by the same
     # predicate, so activation repairs it instead of leaving the operator to wipe the directory by hand
-    # called only as an `if !` condition: errexit/pipefail are off inside, which the PIPESTATUS line relies on
+    # called only as an `if !` condition: errexit is suppressed inside, so a failing check reaches the PIPESTATUS line
     healthy() {
-      local pin; pin=$(cat "${pinFile}" 2>/dev/null) || { echo "coordinator: new skills revision ${rev}; materialising its checkout" >&2; return 1; }
+      local pin; pin=$(cat "${pinFile}" 2>/dev/null) || { echo "coordinator: no integrity pin for skills revision ${rev}; materialising its checkout" >&2; return 1; }
       # the guard accepts only a 64-hex pin, so the activation must demand the same or a copy could stay refused
       [[ "$pin" =~ ^[0-9a-f]{64}$ ]] || { echo "coordinator: integrity pin malformed; rebuilding the checkout" >&2; return 1; }
       [ "$(cat "${checkout}/.complete" 2>/dev/null)" = "${layoutVersion}" ] || { echo "coordinator: checkout layout changed; rebuilding" >&2; return 1; }

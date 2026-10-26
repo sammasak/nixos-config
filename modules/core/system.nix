@@ -112,13 +112,15 @@ in
 
     coordinator = {
       identityFile = mkOption {
-        type = types.nullOr (types.strMatching "/[^[:space:]'\"$`\\\\]+");
+        type = types.nullOr (types.strMatching "/[^[:space:]'\"$`%\\\\]+");
         default = null;
         description = ''
           Private key the coordinator tasks use for every fleet ssh target, run
           as `ssh -F none -i <key> -o IdentitiesOnly=yes` so it is the only key
           offered (no ssh_config is read, agent keys are excluded) and an owner
-          key cannot log in past the worker's herdr-shim. Required when
+          key cannot log in past the worker's herdr-shim. Absolute path; no
+          whitespace, quotes, `$`, backtick, `%` or backslash (`~` is not
+          expanded). Required when
           any fleet host has an ssh target.
         '';
       };
