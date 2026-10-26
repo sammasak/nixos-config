@@ -29,7 +29,7 @@ revision that carries `agents/coordinator.md` and `hooks/validate-coordinator.sh
 
 | Path | Purpose |
 |---|---|
-| `~/.local/share/coordinator/skills-<rev>` (+ `current` link) | writable copy of the pinned skills input with a project-scoped `.claude/agents/coordinator.md` and `.claude/skills/*` (the launcher loads no user-scope settings); devenv runs here |
+| `~/.local/share/coordinator/skills-<rev>` (+ `current` link) | writable copy of the pinned skills input with a project-scoped `.claude/agents/coordinator.md` and `.claude/skills/*` (the launcher loads no user-scope settings) and an `.integrity` manifest the guard checks on every call; devenv runs here |
 | `~/.config/coordinator/fleet.json` | hosts and repos from `sam.coordinator.fleet` |
 | `~/.claude/hooks/validate-coordinator.sh` | the agent-scoped guard (fails closed when absent) |
 | `~/.claude/agents/coordinator.md` | via `skills.nix` on every devTools host; without the guard its hook command refuses every Bash call |

@@ -40,7 +40,7 @@ let
     repos = map (r: { inherit (r) name gh checkout; }) cfg.fleet.repos;
   };
   # bump when the materialised layout changes so existing copies get rebuilt
-  layoutVersion = "2-" + lib.concatStringsSep "," coordinatorSkills;
+  layoutVersion = "3-" + lib.concatStringsSep "," coordinatorSkills;
   launcher = pkgs.writeShellApplication {
     name = "coordinator";
     runtimeInputs = [ pkgs.coreutils pkgs.claude-code pkgs.devenv pkgs.jq pkgs.openssh pkgs.git pkgs.gh pkgs.herdr ];
@@ -76,6 +76,8 @@ in
       run mkdir -p "${checkout}.tmp/.claude/agents" "${checkout}.tmp/.claude/skills"
       run ln -sfn ../../agents/coordinator.md "${checkout}.tmp/.claude/agents/coordinator.md"
       for sk in ${lib.concatStringsSep " " (map lib.escapeShellArg coordinatorSkills)}; do run ln -sfn "../../skills/$sk" "${checkout}.tmp/.claude/skills/$sk"; done
+      # .integrity lets the guard refuse every task call once a contract, task, hook or devenv file in the copy changes
+      run sh -c ${lib.escapeShellArg "cd '${checkout}.tmp' && find agents task-modules hooks devenv.nix devenv.yaml devenv.lock -type f -print0 | sort -z | xargs -0 sha256sum > .integrity"}
       run sh -c ${lib.escapeShellArg "printf '%s' '${layoutVersion}' > '${checkout}.tmp/.complete'"}
       run mv "${checkout}.tmp" "${checkout}"
     fi
