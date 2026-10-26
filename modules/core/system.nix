@@ -83,6 +83,17 @@ in
             description = "Enable private, collector-sanitized native harness telemetry on this host.";
           };
 
+          coordinator = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Opt into the Coordinator agent (docs/coordinator.md): a writable
+              checkout of the pinned skills input, its fleet.json, the Claude
+              guard hook and the `coordinator` launcher. Needs devTools (Claude
+              Code, Herdr); fleet comes from sam.coordinator.fleet.
+            '';
+          };
+
           roles = mkOption {
             type = types.listOf types.str;
             default = [ "base" ];
@@ -97,6 +108,32 @@ in
         };
       };
       default = { };
+    };
+
+    coordinator = {
+      fleet = {
+        hosts = mkOption {
+          type = types.listOf (types.submodule {
+            options = {
+              name = mkOption { type = types.strMatching "[A-Za-z0-9_:.@/-]+"; };
+              ssh = mkOption { type = types.nullOr (types.strMatching "[A-Za-z0-9_:.@/-]+"); default = null; description = "SSH target, or null for the local host."; };
+            };
+          });
+          default = [ ];
+          description = "Hosts the Coordinator may inspect over Herdr (read) and message (act, prompted).";
+        };
+        repos = mkOption {
+          type = types.listOf (types.submodule {
+            options = {
+              name = mkOption { type = types.strMatching "[A-Za-z0-9_:.@/-]+"; };
+              gh = mkOption { type = types.nullOr types.str; default = null; description = "OWNER/REPO for gh:work, or null."; };
+              checkout = mkOption { type = types.nullOr (types.strMatching "[A-Za-z0-9_./-]+"); default = null; description = "Local checkout for git:recent, or null."; };
+            };
+          });
+          default = [ ];
+          description = "Repositories that count as durable evidence for work:status.";
+        };
+      };
     };
 
     userConfig = mkOption {
