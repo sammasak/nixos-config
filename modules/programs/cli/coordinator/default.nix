@@ -73,9 +73,9 @@ let
       [ -x "$HOME/.claude/hooks/validate-coordinator.sh" ] || { echo "coordinator: guard hook missing; refusing to start" >&2; exit 2; }
       ${lib.optionalString (cfg.identityFile != null) ''
         # the tasks run ssh with `-F none -i <key> -o IdentitiesOnly=yes`: no ssh_config is read, so this is the only key offered;
-        # a missing key would otherwise surface as "unreachable" from every remote host
-        [ -r ${lib.escapeShellArg cfg.identityFile} ] || { echo "coordinator: identity file ${cfg.identityFile} is missing or unreadable" >&2; exit 2; }
+        # a missing key would otherwise surface as "unreachable" from every remote host (absolute path by option type)
         export COORDINATOR_SSH_IDENTITY=${lib.escapeShellArg cfg.identityFile}
+        [ -r "$COORDINATOR_SSH_IDENTITY" ] || { echo "coordinator: identity file $COORDINATOR_SSH_IDENTITY is missing or unreadable" >&2; exit 2; }
       ''}
       exec claude --agent coordinator --permission-mode default --setting-sources project --settings ${settingsFile} "$@"
     '';
@@ -94,10 +94,11 @@ in
     wipe() { for d in "$@"; do [ -e "$d" ] || continue; run chmod -R u+w "$d" 2>/dev/null || true; run rm -rf "$d" || true; done; }
     # a copy the guard would refuse (manifest, pin, listed files, unlisted policy files) is rebuilt by the same
     # predicate, so activation repairs it instead of leaving the operator to wipe the directory by hand
+    # called only as an `if !` condition: errexit/pipefail are off inside, which the PIPESTATUS line relies on
     healthy() {
-      local pin; pin=$(cat "${pinFile}" 2>/dev/null) || pin=""
+      local pin; pin=$(cat "${pinFile}" 2>/dev/null) || { echo "coordinator: new skills revision ${rev}; materialising its checkout" >&2; return 1; }
       # the guard accepts only a 64-hex pin, so the activation must demand the same or a copy could stay refused
-      [[ "$pin" =~ ^[0-9a-f]{64}$ ]] || { echo "coordinator: no valid integrity pin; rebuilding the checkout" >&2; return 1; }
+      [[ "$pin" =~ ^[0-9a-f]{64}$ ]] || { echo "coordinator: integrity pin malformed; rebuilding the checkout" >&2; return 1; }
       [ "$(cat "${checkout}/.complete" 2>/dev/null)" = "${layoutVersion}" ] || { echo "coordinator: checkout layout changed; rebuilding" >&2; return 1; }
       ${integrityCheck} "${checkout}" "$pin" coordinator 2>&1 | sed 's/^/coordinator: checkout rebuilt because: /' >&2
       [ "''${PIPESTATUS[0]}" -eq 0 ]

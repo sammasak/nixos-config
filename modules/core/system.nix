@@ -112,7 +112,7 @@ in
 
     coordinator = {
       identityFile = mkOption {
-        type = types.nullOr (types.strMatching "(/|~/)[^[:space:]]+");
+        type = types.nullOr (types.strMatching "/[^[:space:]'\"$`\\\\]+");
         default = null;
         description = ''
           Private key the coordinator tasks use for every fleet ssh target, run
