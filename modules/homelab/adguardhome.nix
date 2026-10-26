@@ -51,8 +51,6 @@ in
   config = mkIf cfg.enable {
     services.adguardhome = {
       enable = true;
-      host = "0.0.0.0";
-      port = 3003;
       openFirewall = true;
       # mutableSettings = true allows External-DNS (running in k3s) to write
       # filtering rules via the AdGuard API and have them persist across restarts.
@@ -61,6 +59,7 @@ in
       mutableSettings = true;
 
       settings = {
+        http.address = "0.0.0.0:3003";
         dns = {
           bind_hosts = [ "0.0.0.0" ];
           port = 53;
