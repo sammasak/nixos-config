@@ -115,9 +115,10 @@ in
         type = types.nullOr (types.strMatching "(/|~/)[^[:space:]]+");
         default = null;
         description = ''
-          Private key the coordinator host uses for every fleet ssh target
-          (IdentitiesOnly), so an owner key sitting in an agent can never be
-          offered to a worker and skip the herdr-shim restriction. Required when
+          Private key the coordinator tasks use for every fleet ssh target, run
+          as `ssh -F none -i <key> -o IdentitiesOnly=yes` so it is the only key
+          offered (no ssh_config is read, agent keys are excluded) and an owner
+          key cannot log in past the worker's herdr-shim. Required when
           any fleet host has an ssh target.
         '';
       };
@@ -182,20 +183,20 @@ in
 
   config = {
     assertions = lib.optionals config.sam.profile.coordinator [
-      { assertion = (lib.all (h: h.ssh == null) config.sam.coordinator.fleet.hosts) || config.sam.coordinator.identityFile != null; message = "sam.coordinator.identityFile is required when a fleet host has an ssh target (IdentitiesOnly keeps owner keys away from the herdr-shim)."; }
+      { assertion = (lib.all (h: h.ssh == null) config.sam.coordinator.fleet.hosts) || config.sam.coordinator.identityFile != null; message = "sam.coordinator.identityFile is required when a fleet host has an ssh target (the tasks offer only that key, so an owner key never reaches a worker past the herdr-shim)."; }
       { assertion = config.sam.profile.devTools; message = "sam.profile.coordinator needs devTools (claude-code, herdr)."; }
       { assertion = lib.any (h: h.ssh == null) config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts must include the local host (ssh = null)."; }
       { assertion = lib.length (lib.unique (map (h: h.name) config.sam.coordinator.fleet.hosts)) == lib.length config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts has duplicate names."; }
     ];
 
-    # second layer behind the launcher's `-i … -o IdentitiesOnly=yes`: system-wide ssh_config blocks so a plain
-    # `ssh <fleet host>` on this host also offers the dedicated key only. mkAfter keeps any global lines another
-    # module adds from landing inside the last Host block; the user's own ~/.ssh/config is left untouched
-    programs.ssh.extraConfig = lib.mkIf (config.sam.profile.coordinator && config.sam.coordinator.identityFile != null) (lib.mkAfter (lib.concatMapStrings (h: ''
-      Host ${lib.last (lib.splitString "@" h.ssh)}
+    # the tasks themselves run ssh with -F none (no config read); these system-wide blocks only make a manual
+    # `ssh <fleet host>` on this host prefer the dedicated key. mkAfter keeps any global lines another module adds
+    # from landing inside the last Host block; the user's own ~/.ssh/config is left untouched
+    programs.ssh.extraConfig = lib.mkIf (config.sam.profile.coordinator && config.sam.coordinator.identityFile != null) (lib.mkAfter (lib.concatMapStrings (host: ''
+      Host ${host}
         IdentityFile ${config.sam.coordinator.identityFile}
         IdentitiesOnly yes
-    '') (lib.filter (h: h.ssh != null) config.sam.coordinator.fleet.hosts)));
+    '') (lib.unique (map (h: lib.last (lib.splitString "@" h.ssh)) (lib.filter (h: h.ssh != null) config.sam.coordinator.fleet.hosts)))));
 
     programs = {
       nix-ld.enable = true;

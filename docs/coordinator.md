@@ -113,12 +113,14 @@ reads untrusted pane and session text from other agents, so keep that list
 honest. OS-level: on each worker the coordinator's dedicated key is bound to
 `herdr-shim` as described above, and the coordinator host sets
 `sam.coordinator.identityFile`. The launcher exports it as
-`COORDINATOR_SSH_IDENTITY` and the tasks put `-i <key> -o IdentitiesOnly=yes`
-on every ssh command line, which no config file can override. The system-wide
-`ssh_config` gets the same per-host blocks as a second layer for manual `ssh`.
-Note that a `~/.ssh/config` is read first: a `Host *` stanza there with its own
-`IdentityFile` adds that key ahead of the dedicated one, and `IdentitiesOnly no`
-in it wins over the system block; only the command-line layer survives both.
+`COORDINATOR_SSH_IDENTITY` and the tasks run every fleet ssh as
+`ssh -F none -i <key> -o IdentitiesOnly=yes`: no `ssh_config` is read at all,
+so no `Host *` `IdentityFile` from `~/.ssh/config` can be appended as a
+fallback and no agent key is offered; if a worker rejects the dedicated key the
+call fails instead of falling through to an owner key. Fleet targets are
+explicit `user@host`, so no alias or `ProxyJump` is lost. The system-wide
+`ssh_config` blocks only make a manual `ssh <fleet host>` prefer the same key.
 The read-only file modes on the copy are a convenience; the manifest check is
-the control (tamper-evident, not tamper-proof: directories stay writable). A copy
-whose manifest no longer verifies is rebuilt by the next activation.
+the control (tamper-evident, not tamper-proof: directories stay writable). The
+activation runs the guard's own predicate (`hooks/lib/integrity-check.sh`) and
+rebuilds a copy it would refuse.

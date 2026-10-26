@@ -20,6 +20,10 @@ let
     else let xs = listItems (lib.drop (skillsIdx + 1) adapterLines); in if xs == [ ] then throw "coordinator: skills: block is empty or not a block list" else xs;
   # roots the manifest covers; the skills repo ships the list so guard, tests and this module agree
   integrityPathsFile = "${skillsSrc}/hooks/lib/integrity-paths";
+  # the guard's own predicate decides whether a copy is intact, so activation rebuilds exactly what the guard refuses
+  integrityCheck =
+    if builtins.pathExists "${skillsSrc}/hooks/lib/integrity-check.sh" then "${skillsSrc}/hooks/lib/integrity-check.sh"
+    else throw "coordinator: the skills input has no hooks/lib/integrity-check.sh; bump the skills input to a revision from epic #16 M4";
   integrityRoots =
     if builtins.pathExists integrityPathsFile
     then lib.filter (l: l != "" && !lib.hasPrefix "#" l) (map (l: lib.removeSuffix "\r" l) (lib.splitString "\n" (builtins.readFile integrityPathsFile)))
@@ -68,7 +72,7 @@ let
       # the agent frontmatter runs the guard from this path (the settings file runs the store copy); both must exist
       [ -x "$HOME/.claude/hooks/validate-coordinator.sh" ] || { echo "coordinator: guard hook missing; refusing to start" >&2; exit 2; }
       ${lib.optionalString (cfg.identityFile != null) ''
-        # the tasks add `-i <key> -o IdentitiesOnly=yes` on the ssh command line, which beats any ~/.ssh/config `Host *`
+        # the tasks run ssh with `-F none -i <key> -o IdentitiesOnly=yes`: no ssh_config is read, so this is the only key offered
         export COORDINATOR_SSH_IDENTITY=${lib.escapeShellArg cfg.identityFile}
       ''}
       exec claude --agent coordinator --permission-mode default --setting-sources project --settings ${settingsFile} "$@"
@@ -86,12 +90,11 @@ in
   # rollback and the `current` link follows the active generation.
   home.activation.coordinatorCheckout = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
     wipe() { for d in "$@"; do [ -e "$d" ] || continue; run chmod -R u+w "$d" 2>/dev/null || true; run rm -rf "$d" || true; done; }
-    # a copy whose manifest no longer verifies (or no longer matches the pin) is rebuilt, so activation repairs
-    # what the guard refuses instead of leaving the operator to wipe the directory by hand
+    # a copy the guard would refuse (manifest, pin, listed files, unlisted policy files) is rebuilt by the same
+    # predicate, so activation repairs it instead of leaving the operator to wipe the directory by hand
     healthy() {
       [ "$(cat "${checkout}/.complete" 2>/dev/null)" = "${layoutVersion}" ] && [ -s "${pinFile}" ] \
-        && [ "$(sha256sum "${checkout}/.integrity" 2>/dev/null | cut -d' ' -f1)" = "$(cat "${pinFile}")" ] \
-        && (cd "${checkout}" && sha256sum --check --quiet --strict .integrity >/dev/null 2>&1)
+        && ${integrityCheck} "${checkout}" "$(cat "${pinFile}")" coordinator >/dev/null 2>&1
     }
     run mkdir -p "${checkoutRoot}" "${stateDir}" "${config.xdg.configHome}/coordinator"
     wipe "${checkoutRoot}"/skills-*.tmp
