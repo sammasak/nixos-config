@@ -25,8 +25,6 @@ let
     then lib.filter (l: l != "" && !lib.hasPrefix "#" l) (map (l: lib.removeSuffix "\r" l) (lib.splitString "\n" (builtins.readFile integrityPathsFile)))
     else throw "coordinator: the skills input has no hooks/lib/integrity-paths; bump the skills input to a revision from epic #16 M4";
   rootsArg = lib.concatStringsSep " " (map lib.escapeShellArg integrityRoots);
-  remoteHosts = lib.filter (h: h.ssh != null) cfg.fleet.hosts;
-  sshHostOf = target: lib.last (lib.splitString "@" target);
   pinFile = "${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256";
   guard = "${skillsSrc}/hooks/validate-coordinator.sh";
   userSettings = config.programs.claude-code.settings;
@@ -74,13 +72,6 @@ let
 in
 {
   home.packages = [ launcher ];
-
-  # every fleet ssh target is reached with the dedicated key only: ssh would otherwise offer agent keys first
-  programs.ssh.matchBlocks = lib.listToAttrs (map (h: lib.nameValuePair "coordinator-${h.name}" {
-    host = sshHostOf h.ssh;
-    identityFile = cfg.identityFile;
-    identitiesOnly = true;
-  }) remoteHosts);
 
   home.file.".claude/hooks/validate-coordinator.sh".source = "${skillsSrc}/hooks/validate-coordinator.sh";
   xdg.configFile."coordinator/fleet.json".text = builtins.toJSON fleet;

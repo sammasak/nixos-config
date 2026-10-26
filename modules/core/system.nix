@@ -138,7 +138,7 @@ in
           type = types.listOf (types.submodule {
             options = {
               name = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_:.@/-]*"; description = "Fleet host name as the coordinator reports it."; };
-              ssh = mkOption { type = types.nullOr (types.strMatching "[A-Za-z0-9_][A-Za-z0-9_:.@/-]*"); default = null; description = "SSH target, or null for the local host."; };
+              ssh = mkOption { type = types.nullOr (types.strMatching "([A-Za-z0-9_.-]+@)?[A-Za-z0-9_.-]+"); default = null; description = "SSH target `[user@]host`, or null for the local host."; };
             };
           });
           default = [ ];
@@ -187,6 +187,14 @@ in
       { assertion = lib.any (h: h.ssh == null) config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts must include the local host (ssh = null)."; }
       { assertion = lib.length (lib.unique (map (h: h.name) config.sam.coordinator.fleet.hosts)) == lib.length config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts has duplicate names."; }
     ];
+
+    # every fleet ssh target is reached with the dedicated key only (system-wide ssh_config, so the user's own
+    # ~/.ssh/config stays untouched): ssh would otherwise offer agent keys first and skip the worker's herdr-shim
+    programs.ssh.extraConfig = lib.mkIf (config.sam.profile.coordinator && config.sam.coordinator.identityFile != null) (lib.concatMapStrings (h: ''
+      Host ${lib.last (lib.splitString "@" h.ssh)}
+        IdentityFile ${config.sam.coordinator.identityFile}
+        IdentitiesOnly yes
+    '') (lib.filter (h: h.ssh != null) config.sam.coordinator.fleet.hosts));
 
     programs = {
       nix-ld.enable = true;

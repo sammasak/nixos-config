@@ -106,8 +106,9 @@ state directory and denied for key, token and secret paths; the coordinator
 reads untrusted pane and session text from other agents, so keep that list
 honest. OS-level: on each worker the coordinator's dedicated key is bound to
 `herdr-shim` as described above, and the coordinator host sets
-`sam.coordinator.identityFile`, from which the module generates an ssh match
-block per fleet target with `IdentitiesOnly yes`, so an owner key sitting in an
-ssh-agent is never offered to a worker. The read-only file modes on the copy
+`sam.coordinator.identityFile`, from which the system-wide `ssh_config` gets a
+`Host` block per fleet target with `IdentityFile` and `IdentitiesOnly yes`, so
+an owner key sitting in an ssh-agent is never offered to a worker (the user's
+own `~/.ssh/config` is left alone; a per-host override there would win). The read-only file modes on the copy
 are a convenience; the manifest check is the control (tamper-evident, not
 tamper-proof: directories stay writable).
