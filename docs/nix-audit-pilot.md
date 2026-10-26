@@ -43,13 +43,19 @@ candidate under `flock /tmp/$(hostname)-heavy-work.lock`. It then gates the pair
 gate exits 3, it also runs a grype-only gate. Evidence goes to
 `~/nix-audit-pilot/<date>-<host>-<rev>/`, which stays private on that host, and the recipe
 always exits 0. acer-swift and msi are deployed from lenovo, which holds their derivations,
-so run their comparisons on lenovo. On the targets, vulnix fails (exit 3) and only
-grype-only results are possible. If the running system is no longer in lenovo's store, the
+so run their comparisons on lenovo. vulnix needs the closure's `.drv` files in the local
+store: on a target that did not build its own system, vulnix fails (exit 3) and only a
+grype-only comparison is possible. If the running system is no longer in lenovo's store, the
 recipe says so and stops.
 
 ## Rollback
 
 Revert this change, or drop a host from the `lib.elem` list in
-`flake-modules/40-outputs-nixos.nix`, then switch or deploy as usual. nix-audit writes only
-its `--json-out` files and `~/nix-audit-pilot`; it installs no service, hook or timer, and
-removing it changes no system it inspected.
+`flake-modules/40-outputs-nixos.nix`, then switch or deploy as usual. nix-audit installs no
+service, hook or timer, and removing it changes no system it inspected. It writes:
+- its `--json-out` files and `~/nix-audit-pilot`;
+- the grype and vulnix databases in `~/.cache`;
+- the gcroot of each run's `candidate` out-link, which keeps that closure alive so it can be
+  the next baseline.
+
+Delete old `~/nix-audit-pilot/*/candidate` links to release those closures.

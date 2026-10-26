@@ -31,7 +31,7 @@ diff HOST=host:
 
 # Report-only nix-audit comparison of HOST's running system and its candidate
 # (built, not activated). Always exits 0; never call it from switch, deploy or CI.
-audit-candidate HOST=host TARGET=HOST:
+audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
     scripts/nix-audit-candidate.sh {{HOST}} {{TARGET}}
 
 # Loopback self-push, proving the deploy-rs/sudo/magic-rollback path before it
