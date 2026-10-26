@@ -43,6 +43,9 @@ skillsSrc: nativeOtel: hostName:
       model = "claude-opus-5-5";
       # Pre-answered: read-only settings.json means the prompt could never save.
       tui = "fullscreen";
+      # Publishing to claude.ai is never wanted from these hosts.
+      # https://code.claude.com/docs/en/artifacts#disable-artifacts
+      enableArtifact = false;
       env = {
         DISABLE_ERROR_REPORTING = "1";
       } // lib.optionalAttrs (!nativeOtel) {
