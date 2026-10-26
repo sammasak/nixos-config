@@ -20,7 +20,13 @@ let
     else let xs = listItems (lib.drop (skillsIdx + 1) adapterLines); in if xs == [ ] then throw "coordinator: skills: block is empty or not a block list" else xs;
   # roots the manifest covers; the skills repo ships the list so guard, tests and this module agree
   integrityPathsFile = "${skillsSrc}/hooks/lib/integrity-paths";
-  integrityRoots = if builtins.pathExists integrityPathsFile then lib.filter (l: l != "") (lib.splitString "\n" (builtins.readFile integrityPathsFile)) else [ "agents" "task-modules" "hooks" "devenv.nix" "devenv.yaml" "devenv.lock" ];
+  integrityRoots =
+    if builtins.pathExists integrityPathsFile
+    then lib.filter (l: l != "" && !lib.hasPrefix "#" l) (map (l: lib.removeSuffix "\r" l) (lib.splitString "\n" (builtins.readFile integrityPathsFile)))
+    else throw "coordinator: the skills input has no hooks/lib/integrity-paths; bump the skills input to a revision from epic #16 M4";
+  rootsArg = lib.concatStringsSep " " (map lib.escapeShellArg integrityRoots);
+  remoteHosts = lib.filter (h: h.ssh != null) cfg.fleet.hosts;
+  sshHostOf = target: lib.last (lib.splitString "@" target);
   pinFile = "${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256";
   guard = "${skillsSrc}/hooks/validate-coordinator.sh";
   userSettings = config.programs.claude-code.settings;
@@ -69,6 +75,13 @@ in
 {
   home.packages = [ launcher ];
 
+  # every fleet ssh target is reached with the dedicated key only: ssh would otherwise offer agent keys first
+  programs.ssh.matchBlocks = lib.listToAttrs (map (h: lib.nameValuePair "coordinator-${h.name}" {
+    host = sshHostOf h.ssh;
+    identityFile = cfg.identityFile;
+    identitiesOnly = true;
+  }) remoteHosts);
+
   home.file.".claude/hooks/validate-coordinator.sh".source = "${skillsSrc}/hooks/validate-coordinator.sh";
   xdg.configFile."coordinator/fleet.json".text = builtins.toJSON fleet;
 
@@ -91,7 +104,7 @@ in
       for sk in ${lib.concatStringsSep " " (map lib.escapeShellArg coordinatorSkills)}; do run ln -sfn "../../skills/$sk" "${checkout}.tmp/.claude/skills/$sk"; done
       # .integrity lets the guard refuse every task call once a contract, task, hook or devenv file in the copy changes;
       # its own hash is pinned outside the checkout, and the guarded files lose their write bits
-      run bash -c ${lib.escapeShellArg "set -o pipefail; cd '${checkout}.tmp' && find -L ${lib.concatStringsSep " " integrityRoots} -type f -print0 | sort -z | xargs -0 sha256sum > .integrity && sha256sum .integrity | cut -d' ' -f1 > '${pinFile}' && find -L ${lib.concatStringsSep " " integrityRoots} .integrity -type f -exec chmod a-w {} +"}
+      run bash -c ${lib.escapeShellArg "set -o pipefail; cd '${checkout}.tmp' && find -L ${rootsArg} -type f -print0 | sort -z | xargs -0 sha256sum > .integrity && sha256sum .integrity | cut -d' ' -f1 > '${pinFile}' && find -L ${rootsArg} .integrity -type f -exec chmod a-w {} +"}
       run sh -c ${lib.escapeShellArg "printf '%s' '${layoutVersion}' > '${checkout}.tmp/.complete'"}
       run mv "${checkout}.tmp" "${checkout}"
     fi

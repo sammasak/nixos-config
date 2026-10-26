@@ -111,6 +111,16 @@ in
     };
 
     coordinator = {
+      identityFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Private key the coordinator host uses for every fleet ssh target
+          (IdentitiesOnly), so an owner key sitting in an agent can never be
+          offered to a worker and skip the herdr-shim restriction. Required when
+          any fleet host has an ssh target.
+        '';
+      };
       acceptKeys = mkOption {
         type = types.listOf (types.strMatching "^(ssh-|ecdsa-|sk-)[A-Za-z0-9@.:/+=_-]+ [A-Za-z0-9+/=]+( [^\n\"]*)?$");
         default = [ ];
@@ -172,6 +182,7 @@ in
 
   config = {
     assertions = lib.optionals config.sam.profile.coordinator [
+      { assertion = (lib.all (h: h.ssh == null) config.sam.coordinator.fleet.hosts) || config.sam.coordinator.identityFile != null; message = "sam.coordinator.identityFile is required when a fleet host has an ssh target (IdentitiesOnly keeps owner keys away from the herdr-shim)."; }
       { assertion = config.sam.profile.devTools; message = "sam.profile.coordinator needs devTools (claude-code, herdr)."; }
       { assertion = lib.any (h: h.ssh == null) config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts must include the local host (ssh = null)."; }
       { assertion = lib.length (lib.unique (map (h: h.name) config.sam.coordinator.fleet.hosts)) == lib.length config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts has duplicate names."; }

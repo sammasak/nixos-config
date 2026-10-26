@@ -15,6 +15,7 @@ It never codes, builds, merges, deploys or approves.
 coordinator = true;
 
 # hosts/<host>/configuration.nix
+sam.coordinator.identityFile = "/home/lukas/.ssh/id_coordinator";   # dedicated key, never the interactive one
 sam.coordinator.fleet = {
   hosts = [ { name = "lenovo"; } { name = "acer-swift"; ssh = "lukas@acer-swift"; } ];
   repos = [ { name = "skills"; gh = "sammasak/skills"; checkout = "/home/lukas/skills"; } ];
@@ -73,7 +74,7 @@ deleted by hand. No service units, no secrets, no firewall changes.
 The coordinator reaches a worker only through `ssh <host> …` with the
 coordinator user's key. On each worker, list that key under
 `sam.coordinator.acceptKeys` and the base role installs it with a forced
-command (`herdr-shim`), `no-pty` and no forwarding:
+command (`herdr-shim`) under `restrict` (no pty, no forwarding, no user rc):
 
 ```nix
 # hosts/<worker>/configuration.nix
@@ -104,5 +105,9 @@ Bash call that is not `devenv tasks run <allowed task> [--input-json '<object>']
 state directory and denied for key, token and secret paths; the coordinator
 reads untrusted pane and session text from other agents, so keep that list
 honest. OS-level: on each worker the coordinator's dedicated key is bound to
-`herdr-shim` as described above; the coordinator host must use that key for
-the fleet's `ssh` targets (an `IdentityFile` match block for the worker hosts).
+`herdr-shim` as described above, and the coordinator host sets
+`sam.coordinator.identityFile`, from which the module generates an ssh match
+block per fleet target with `IdentitiesOnly yes`, so an owner key sitting in an
+ssh-agent is never offered to a worker. The read-only file modes on the copy
+are a convenience; the manifest check is the control (tamper-evident, not
+tamper-proof: directories stay writable).
