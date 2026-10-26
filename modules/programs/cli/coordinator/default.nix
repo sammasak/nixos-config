@@ -11,7 +11,10 @@ let
   rev = skillsSrc.shortRev or (builtins.substring 0 12 (baseNameOf skillsSrc));
   checkout = "${checkoutRoot}/skills-${rev}";
   permissions = builtins.fromJSON (builtins.readFile "${skillsSrc}/agents/coordinator/permissions.json");
-  coordinatorSkills = lib.attrNames (lib.filterAttrs (n: t: t == "directory" && lib.hasPrefix "herdr-" n || n == "agent-handoff") (builtins.readDir "${skillsSrc}/skills"));
+  # The adapter's `skills:` frontmatter list is the single source of truth for what gets project-scoped.
+  adapterLines = lib.splitString "\n" (builtins.readFile "${skillsSrc}/agents/coordinator.md");
+  skillsBlock = lib.drop 1 (lib.lists.dropWhile (l: l != "skills:") adapterLines);
+  coordinatorSkills = map (l: lib.removePrefix "  - " l) (lib.lists.takeWhile (l: lib.hasPrefix "  - " l) skillsBlock);
   guard = "${skillsSrc}/hooks/validate-coordinator.sh";
   userSettings = config.programs.claude-code.settings;
   # Only the role's permissions replace the user scope; host policy (telemetry env,
@@ -35,13 +38,16 @@ let
     hosts = map (h: { inherit (h) name ssh; }) cfg.fleet.hosts;
     repos = map (r: { inherit (r) name gh checkout; }) cfg.fleet.repos;
   };
+  # bump when the materialised layout changes so existing copies get rebuilt
+  layoutVersion = "2-" + lib.concatStringsSep "," coordinatorSkills;
   launcher = pkgs.writeShellApplication {
     name = "coordinator";
     runtimeInputs = [ pkgs.coreutils pkgs.claude-code pkgs.devenv pkgs.jq pkgs.openssh pkgs.git pkgs.gh pkgs.herdr ];
-    # --setting-sources drops the user-scope allow list (bare Read/Bash on devTools hosts), so only
-    # this file's rules and the guard apply to the coordinator's session.
+    # --setting-sources drops user-scope settings (bare Read/Bash allow on devTools hosts); project scope
+    # is the pinned checkout, and the rendered file carries the role's rules plus the host's env/hooks.
     text = ''
       export COORDINATOR_CHECKOUT=${lib.escapeShellArg checkout}
+      [ -f "$COORDINATOR_CHECKOUT/.complete" ] || { echo "coordinator: checkout not materialised; re-run the Home Manager activation" >&2; exit 2; }
       cd "$COORDINATOR_CHECKOUT"
       [ -x "$HOME/.claude/hooks/validate-coordinator.sh" ] || { echo "coordinator: guard hook missing; refusing to start" >&2; exit 2; }
       exec claude --agent coordinator --permission-mode default --setting-sources project,local --settings ${settingsFile} "$@"
@@ -58,22 +64,23 @@ in
   # store copy is materialised once per skills revision; older copies stay for
   # rollback and the `current` link follows the active generation.
   home.activation.coordinatorCheckout = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    wipe() { for d in "$@"; do [ -e "$d" ] || continue; run chmod -R u+w "$d" 2>/dev/null || true; run rm -rf "$d" || true; done; }
     run mkdir -p "${checkoutRoot}" "${stateDir}"
-    run rm -rf "${checkoutRoot}"/skills-*.tmp
-    if [ ! -f "${checkout}/.complete" ]; then
-      run rm -rf "${checkout}" "${checkout}.tmp"
+    wipe "${checkoutRoot}"/skills-*.tmp
+    if [ "$(cat "${checkout}/.complete" 2>/dev/null)" != "${layoutVersion}" ]; then
+      wipe "${checkout}" "${checkout}.tmp"
       run cp -r "${skillsSrc}" "${checkout}.tmp"
       run chmod -R u+w "${checkout}.tmp"
       # project-scoped agent and skills: --setting-sources project,local does not load user-scope ~/.claude/agents
       run mkdir -p "${checkout}.tmp/.claude/agents" "${checkout}.tmp/.claude/skills"
       run ln -sfn ../../agents/coordinator.md "${checkout}.tmp/.claude/agents/coordinator.md"
       for sk in ${lib.concatStringsSep " " (map lib.escapeShellArg coordinatorSkills)}; do run ln -sfn "../../skills/$sk" "${checkout}.tmp/.claude/skills/$sk"; done
-      run touch "${checkout}.tmp/.complete"
+      run sh -c ${lib.escapeShellArg "printf '%s' '${layoutVersion}' > '${checkout}.tmp/.complete'"}
       run mv "${checkout}.tmp" "${checkout}"
     fi
     run ln -sfn "${checkout}" "${checkoutRoot}/current"
     # keep the active copy plus the two newest others; each old copy pins a devenv closure via .devenv/gc
-    find "${checkoutRoot}" -mindepth 1 -maxdepth 1 -type d -name 'skills-*' -not -path "${checkout}" -printf '%T@ %p\n' 2>/dev/null \
-      | sort -rn | tail -n +3 | cut -d' ' -f2- | while read -r old; do run chmod -R u+w "$old" 2>/dev/null || true; run rm -rf "$old" || true; done
+    { find "${checkoutRoot}" -mindepth 1 -maxdepth 1 -type d -name 'skills-*' -not -path "${checkout}" -printf '%T@ %p\n' 2>/dev/null \
+      | sort -rn | tail -n +3 | cut -d' ' -f2- | while read -r old; do wipe "$old"; done; } || true
   '';
 }

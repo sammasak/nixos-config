@@ -2,7 +2,10 @@
 
 The Coordinator (skills epic #16) is the owner's conversational interface to
 the fleet's coding agents. It only runs devenv tasks from a pinned skills
-checkout: `coord:brief`, `herdr:*`, `harness:*`, `gh:*`, `git:*`, `work:status`.
+checkout: `coord:brief` and `work:status` directly (they fan out over the
+`herdr:*`, `harness:*`, `gh:*`, `git:*` tasks), `herdr:inventory`, and the
+input-driven reads the guard allows (`herdr:inspect`, `harness:session-summary`,
+`coord:handoff`, `herdr:await`); `herdr:message` prompts every time.
 It never codes, builds, merges, deploys or approves.
 
 ## Enable
@@ -30,7 +33,7 @@ revision that carries `agents/coordinator.md` and `hooks/validate-coordinator.sh
 | `~/.config/coordinator/fleet.json` | hosts and repos from `sam.coordinator.fleet` |
 | `~/.claude/hooks/validate-coordinator.sh` | the agent-scoped guard (fails closed when absent) |
 | `~/.claude/agents/coordinator.md` | via `skills.nix` on every devTools host; without the guard its hook command refuses every Bash call |
-| `coordinator` | launcher: `claude --agent coordinator --permission-mode default --setting-sources project,local --settings <rendered permissions>` from the checkout; user-scope settings (which allow bare Read/Bash) are not loaded |
+| `coordinator` | launcher: `claude --agent coordinator --permission-mode default --setting-sources project,local --settings <rendered settings>` from the checkout; user-scope settings (which allow bare Read/Bash) are not loaded, the rendered file carries the role's rules plus the host's telemetry env and Herdr hook |
 
 ## Run
 
@@ -50,7 +53,7 @@ in the checkout yourself.
 
 ```bash
 coordinator -p "Which agent are you, which skills were preloaded, and what are my agents doing?"
-# expect: Coordinator / claude-sonnet-5-5 / herdr-operations + agent-handoff; tool calls only `devenv tasks run coord:brief|work:status`
+# expect: Coordinator / claude-sonnet-5-5 / herdr-operations + agent-handoff; tool calls are Read inside the checkout plus `devenv tasks run coord:brief|work:status`
 cd ~/.local/share/coordinator/current && devenv tasks run skills:test        # repo gates
 tail -3 ~/.local/state/coordinator/audit.jsonl                               # written by herdr:message (epic M2); absent until a message is sent
 ```
