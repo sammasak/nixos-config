@@ -284,6 +284,23 @@
         "type": "github"
       }
     },
+    "nix-audit": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1793012977,
+        "narHash": "sha256-tfcZIrR7wIyysOrgeN76PGoKNFm3D+VIu+fQIoBLKFM=",
+        "ref": "refs/heads/main",
+        "rev": "38789c530998164335637c6b6982b5ddc9e0fda1",
+        "revCount": 76,
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/nix-audit"
+      },
+      "original": {
+        "rev": "38789c530998164335637c6b6982b5ddc9e0fda1",
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/nix-audit"
+      }
+    },
     "nix-index-database": {
       "inputs": {
         "nixpkgs": [
@@ -392,6 +409,7 @@
         "flake-parts": "flake-parts",
         "home-manager": "home-manager",
         "import-tree": "import-tree",
+        "nix-audit": "nix-audit",
         "nix-index-database": "nix-index-database",
         "nixpkgs": "nixpkgs",
         "nur": "nur",

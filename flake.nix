@@ -31,6 +31,9 @@
     factum.url = "git+ssh://git@github.com/sammasak/factum?rev=5bb7fa304db7d8ae7d422e8d6356bf06b90d3b41";
     factum.flake = false;
 
+    nix-audit.url = "git+ssh://git@github.com/sammasak/nix-audit?rev=38789c530998164335637c6b6982b5ddc9e0fda1";
+    nix-audit.flake = false;
+
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
 
