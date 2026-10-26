@@ -14,7 +14,6 @@
   # Features
   pi = true;
   nativeOtel = true;
-  # Herdr coordinator (skills epic #16): launcher + pinned skills checkout; fleet below
   coordinator = true;
 
   # Roles

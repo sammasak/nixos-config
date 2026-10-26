@@ -19,7 +19,7 @@ in
   sam.profile = vars;
   sam.hostSecrets.enable = true;
 
-  # Phase A fleet: this host only, so no dedicated ssh key is needed yet; acer-swift joins as an ssh target
+  # Local-only fleet: no ssh target, so no dedicated key is needed yet; acer-swift joins as an ssh target
   # once `sam.coordinator.identityFile` exists here and its public half is in acer's `acceptKeys`.
   sam.coordinator.fleet = {
     hosts = [ { name = "lenovo"; } ];

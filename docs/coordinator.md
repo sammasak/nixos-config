@@ -59,6 +59,15 @@ cd ~/.local/share/coordinator/current && devenv tasks run skills:test        # r
 tail -3 ~/.local/state/coordinator/audit.jsonl                               # written by herdr:message (epic M2); absent until a message is sent
 ```
 
+## Role adapters are not user-scope agents
+
+`skills.nix` links `agents/*.md` into `~/.claude/agents` on every devTools host
+but skips role adapters (an `.md` with a sibling `agents/<name>/` contract):
+the launcher project-scopes its adapter inside the pinned checkout, and a
+user-scope copy would only attract delegation that the absent guard refuses.
+The quality role has no launcher yet; its adapter is reachable only through
+`agents/quality/tests/two-harness.sh`.
+
 ## Rollback
 
 The module touches only the paths above. `nixos-rebuild switch --rollback`
