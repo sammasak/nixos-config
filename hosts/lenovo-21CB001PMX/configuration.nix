@@ -19,9 +19,11 @@ in
   sam.profile = vars;
   sam.hostSecrets.enable = true;
 
-  # acer is reached by LAN address: the tasks run ssh with -F none, so a ~/.ssh/config alias would not resolve
-  sam.coordinator.identityFile = "/home/lukas/.ssh/id_coordinator";
+  sam.coordinator.identityFile = "/home/${vars.username}/.ssh/id_coordinator";
+  # pinned so the first -F none contact is not trust-on-first-use (ssh_known_hosts is a built-in default path)
+  programs.ssh.knownHosts.acer-swift = { hostNames = [ "192.168.10.110" "acer-swift" ]; publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF9kicjYJJdW1tP6dG0I/PSh8kse7e6ueStLS9fsNJGT"; };
   sam.coordinator.fleet = {
+    # LAN address, not the ssh_config alias: the tasks run ssh with -F none. Revisit if acer's lease moves.
     hosts = [ { name = "lenovo"; } { name = "acer-swift"; ssh = "lukas@192.168.10.110"; } ];
     repos = [
       { name = "skills"; gh = "sammasak/skills"; }

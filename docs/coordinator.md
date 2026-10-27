@@ -128,10 +128,13 @@ honest. OS-level: on each worker the coordinator's dedicated key is bound to
 so no `Host *` `IdentityFile` from `~/.ssh/config` can be appended as a
 fallback and no agent key is offered; if a worker rejects the dedicated key the
 call fails instead of falling through to an owner key. Fleet targets must
-therefore resolve without any ssh_config (DNS or MagicDNS names, `user@` when
+therefore resolve without any ssh_config (an address, a DNS name, `user@` when
 the remote user differs); a `Host` alias, `User` or `ProxyJump` defined only in
-`~/.ssh/config` is not honoured and shows up as unreachable. The system-wide
-`ssh_config` blocks only make a manual `ssh <fleet host>` prefer the same key.
+`~/.ssh/config` is not honoured and shows up as unreachable. No system-wide
+`ssh_config` block is written for fleet hosts: it would make the owner's own
+`ssh <address>` coordinator-only and cut the IP recovery path. Pin each
+worker's host key with `programs.ssh.knownHosts` (read under `-F none`) so the
+first contact is not trust-on-first-use.
 The read-only file modes on the copy are a convenience; the manifest check is
 the control (tamper-evident, not tamper-proof: directories stay writable). The
 activation runs the guard's own predicate (`hooks/lib/integrity-check.sh`) and

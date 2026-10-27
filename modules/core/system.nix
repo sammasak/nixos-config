@@ -191,15 +191,6 @@ in
       { assertion = lib.length (lib.unique (map (h: h.name) config.sam.coordinator.fleet.hosts)) == lib.length config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts has duplicate names."; }
     ];
 
-    # the tasks themselves run ssh with -F none (no config read); these system-wide blocks only make a manual
-    # `ssh <fleet host>` on this host prefer the dedicated key. mkAfter keeps any global lines another module adds
-    # from landing inside the last Host block; the user's own ~/.ssh/config is left untouched
-    programs.ssh.extraConfig = lib.mkIf (config.sam.profile.coordinator && config.sam.coordinator.identityFile != null) (lib.mkAfter (lib.concatMapStrings (host: ''
-      Host ${host}
-        IdentityFile ${config.sam.coordinator.identityFile}
-        IdentitiesOnly yes
-    '') (lib.unique (map (h: lib.last (lib.splitString "@" h.ssh)) (lib.filter (h: h.ssh != null) config.sam.coordinator.fleet.hosts)))));
-
     programs = {
       nix-ld.enable = true;
       nix-ld.libraries = with pkgs; [
