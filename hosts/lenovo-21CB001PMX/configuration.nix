@@ -12,7 +12,7 @@ let
       failures=0
       while kill -0 "$child" 2>/dev/null; do
         sleep "$PROBE_INTERVAL"
-        if curl -fsS -o /dev/null --max-time 5 "$PROBE_URL"; then
+        if curl -sS -o /dev/null --max-time 5 "$PROBE_URL"; then
           failures=0
         else
           failures=$((failures + 1))
@@ -77,8 +77,8 @@ in
 
   # pi-harness PICODE_EP and factum FACTS_OLLAMA_EP default to localhost:8080. The
   # llm-gateway serves keyless Ollama only on its pod loopback, so only this reaches it.
-  # kubectl keeps running after "lost connection to pod" when the gateway rolls,
-  # so Restart=always never fired; the probe exits the unit instead.
+  # kubectl keeps running after "lost connection to pod" when the gateway rolls;
+  # the probe exits so Restart=always applies. Any HTTP reply proves the tunnel.
   systemd.user.services.ollama-portforward = {
     description = "Port-forward the llm-gateway keyless Ollama passthrough to localhost:8080";
     wantedBy = [ "default.target" ];

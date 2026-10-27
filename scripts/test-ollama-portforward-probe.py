@@ -8,10 +8,16 @@ import threading
 import time
 
 
+mode = {"reply": 200, "alternate": False, "requests": 0}
+
+
 class Tags(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        status = 200 if self.path == "/api/tags" else 404
-        self.send_response(status)
+        mode["requests"] += 1
+        if mode["alternate"] and mode["requests"] % 2:
+            self.close_connection = True
+            return
+        self.send_response(mode["reply"] if self.path == "/api/tags" else 404)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -80,6 +86,12 @@ def main():
         process = subprocess.Popen([wrapper, *child], env=fast)
         check(wait_exit(process, 2) is None, "a healthy forward keeps running")
         child_pid = int(pid_file.read_text())
+
+        mode["reply"] = 500
+        check(wait_exit(process, 2) is None, "an upstream error reply still proves the tunnel")
+
+        mode["alternate"] = True
+        check(wait_exit(process, 3) is None, "a success resets the failure count")
 
         server.shutdown()
         server.server_close()
