@@ -2,6 +2,7 @@
 import json
 import os
 import shutil
+import sys
 import subprocess
 import tempfile
 import threading
@@ -15,9 +16,16 @@ class MockMessagesHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_POST(self):
-        self.server.request_count += 1
         length = int(self.headers.get("Content-Length", "0"))
-        request = json.loads(self.rfile.read(length))
+        body = self.rfile.read(length)
+        if self.path.startswith(("/v1/metrics", "/v1/logs")):
+            self.server.otlp_auth.append(self.headers.get("Authorization", ""))
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.server.request_count += 1
+        request = json.loads(body)
         if not self.server.tool_requested:
             self.server.tool_requested = True
             response = self.tool_response(request.get("model", "claude-opus-5-5"))
@@ -133,15 +141,24 @@ class MockMessagesHandler(BaseHTTPRequestHandler):
         return
 
 
-def run_case(claude, scrub):
+def run_case(claude, settings, extra_args):
     server = ThreadingHTTPServer(("127.0.0.1", 0), MockMessagesHandler)
     server.tool_requested = False
     server.tool_result = None
     server.request_count = 0
+    server.otlp_auth = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         with tempfile.TemporaryDirectory(prefix="claude-otel-env-test-") as config_dir:
+            # The generated settings, minus hooks (they reach Herdr) and with
+            # telemetry pointed at the mock instead of the real receiver.
+            generated = json.loads(open(settings).read())
+            generated.pop("hooks", None)
+            generated["env"]["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"http://127.0.0.1:{server.server_port}"
+            generated["env"]["OTEL_METRIC_EXPORT_INTERVAL"] = "500"
+            with open(os.path.join(config_dir, "settings.json"), "w") as out:
+                json.dump(generated, out)
             environment = os.environ.copy()
             for name in (
                 "ANTHROPIC_AUTH_TOKEN",
@@ -159,13 +176,10 @@ def run_case(claude, scrub):
                     "CLAUDE_CODE_SIMPLE": "1",
                     "CLAUDE_CONFIG_DIR": config_dir,
                     "DISABLE_AUTOUPDATER": "1",
-                    "DISABLE_TELEMETRY": "1",
                     "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer NATIVE_OTLP_FAKE_TOKEN",
-                    "OTEL_LOGS_EXPORTER": "none",
-                    "OTEL_METRICS_EXPORTER": "none",
                 }
             )
-            environment["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] = "1"
+            environment.pop("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", None)
             result = subprocess.run(
                 [
                     claude,
@@ -175,17 +189,26 @@ def run_case(claude, scrub):
                     "Bash",
                     "--allowedTools",
                     "Bash(printenv OTEL_EXPORTER_OTLP_HEADERS)",
+                    "--output-format",
+                    "stream-json",
+                    "--verbose",
+                    *extra_args,
                 ],
                 env=environment,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
-                timeout=45,
+                timeout=90,
                 check=False,
             )
-        output = f"{result.stdout}\n{result.stderr}"
+        mode = next((json.loads(line).get("permissionMode") for line in result.stdout.splitlines()
+                     if '"subtype":"init"' in line), None)
+        authorized = bool(server.otlp_auth) and all(
+            a == "Bearer NATIVE_OTLP_FAKE_TOKEN" for a in server.otlp_auth)
+        output = f"{result.stdout[-300:]}\n{result.stderr}"
         output = output.replace("NATIVE_OTLP_FAKE_TOKEN", "<fake-token>")
         output = output.replace("NATIVE_OTLP_FAKE_ANTHROPIC_KEY", "<fake-key>")
-        return result.returncode, server.tool_result, server.request_count, output.strip()
+        return mode, server.tool_result, authorized, output.strip()
     finally:
         server.shutdown()
         server.server_close()
@@ -193,16 +216,25 @@ def run_case(claude, scrub):
 
 
 def main():
+    settings = sys.argv[1]
     claude = os.environ.get("CLAUDE_BIN") or shutil.which("claude")
     if not claude:
         raise SystemExit("claude executable not found")
-    status, result, requests, output = run_case(claude, True)
-    if status != 0 or result != "CLEAN":
-        raise SystemExit(
-            f"subprocess environment scrub failed: exit={status}, "
-            f"result={result!r}, requests={requests}, output={output[-500:]!r}"
-        )
-    print("PASS: Claude Bash subprocess does not receive the fake OTLP credential")
+    generated = json.loads(open(settings).read())
+    assert generated.get("enableArtifact") is False, "enableArtifact must be false"
+    failures = 0
+    for name, args, want in [("claude", [], "default"),
+                             ("claude --dangerously-skip-permissions",
+                              ["--dangerously-skip-permissions"], "bypassPermissions")]:
+        mode, result, authorized, output = run_case(claude, settings, args)
+        ok = mode == want and result == "CLEAN" and authorized
+        print(f"{'PASS' if ok else 'FAIL'}: {name}: mode={mode} bash_otlp_header={result} "
+              f"otlp_export_authorized={authorized}")
+        if not ok:
+            failures += 1
+            print(output[-500:])
+    if failures:
+        raise SystemExit(f"{failures} case(s) failed")
 
 
 if __name__ == "__main__":

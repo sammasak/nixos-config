@@ -17,6 +17,7 @@ devenv tasks run nixos:secrets-verify  # wifi credentials sanity (skips without 
 devenv tasks run nixos:nvim-check      # lenovo's nvim starts headless clean
 devenv tasks run nixos:flake-check     # nix flake check --all-systems
 devenv tasks run nixos:verify          # build every x86 host, evaluate black-pi
+devenv tasks run nixos:claude-settings-test  # generated Claude settings: default mode, bypass on request
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
 #   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree.
@@ -93,7 +94,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 **Personal skills and agents** are managed via the [`sammasak/skills`](https://github.com/sammasak/skills) repo, added as a non-flake input (`flake = false`). The `skills.nix` module auto-discovers all directories in `skills/` and `.md` files in `agents/` from that input and creates Home Manager symlinks:
 
 - `skills/<name>/SKILL.md` → `~/.claude/skills/<name>/SKILL.md`
-- `agents/<name>.md` → `~/.claude/agents/<name>.md`
+- `agents/<name>.md` → `~/.claude/agents/<name>.md` (role adapters included: plain subagents whose prompt states the one allowed command form; Claude Code's permission prompt is the gate, see `docs/herdr.md` and the skills repo `docs/operator-runbook.md`)
 
 These are available across all projects without manual `/plugin install`.
 

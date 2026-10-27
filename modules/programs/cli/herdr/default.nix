@@ -1,11 +1,13 @@
-# Persistent terminal workspace for AI coding agents, on every host: the worker
-# runs the herdr server that the desktop drives over `herdr --remote acer-swift`.
+# Persistent terminal workspace for AI coding agents, on every host: every host
+# runs a herdr server; the coordinator host also saves the workers as herdr
+# machines (sam.herdr.machines) and reaches them with `herdr --machine <label>`.
 { config, lib, pkgs, osConfig, ... }:
 let
   # delivery = "system" needs an OS notification daemon; the headless worker has
   # none, so it falls back to herdr's own in-app toasts (rendered in the client).
   toastDelivery = if (osConfig.sam.desktop.enable or false) then "system" else "herdr";
   herdrBin = lib.getExe pkgs.herdr;
+  machines = osConfig.sam.herdr.machines or [ ];
   herdrAlreadyRunning = pkgs.writeShellScript "herdr-already-running" ''
     if ${herdrBin} status --json | ${lib.getExe pkgs.jq} -e '.server.running == true' >/dev/null 2>&1; then
       exit 1
@@ -100,6 +102,20 @@ in
       $DRY_RUN_CMD chmod 600 "$HOME/.config/herdr/session-history.json"
     fi
   '';
+
+  # Added through herdr itself so its client state stays herdr-owned and mutable; a label herdr already
+  # knows is skipped, and a failed add (host down, key missing) is reported but never stops activation.
+  home.activation.herdrMachines = lib.mkIf (machines != [ ]) (lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    for spec in ${lib.concatMapStringsSep " " (m: lib.escapeShellArg "${m.label}=${m.target}") machines}; do
+      label=''${spec%%=*}; target=''${spec#*=}
+      if ${herdrBin} machine list --json 2>/dev/null | ${lib.getExe pkgs.jq} -e --arg l "$label" 'any(.[]?; .label == $l)' >/dev/null; then
+        continue
+      fi
+      echo "herdr: saving machine $label ($target)"
+      run ${pkgs.coreutils}/bin/timeout 30 ${herdrBin} machine add "$target" --label "$label" --remote-session default </dev/null \
+        || echo "herdr: machine add $label failed; run by hand: herdr machine add $target --label $label --remote-session default" >&2
+    done
+  '');
 
   systemd.user.services.herdr = {
     Unit.Description = "Persistent Herdr session server";

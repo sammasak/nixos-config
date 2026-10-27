@@ -99,6 +99,24 @@ in
       default = { };
     };
 
+    herdr.machines = mkOption {
+      type = types.listOf (types.submodule {
+        options = {
+          label = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_.-]*"; description = "Herdr machine label, as in `herdr --machine <label>`."; };
+          target = mkOption { type = types.strMatching "([A-Za-z0-9_.-]+@)?[A-Za-z0-9_.-]+"; description = "SSH target `[user@]host` behind the label; the user's own key and known_hosts entry must already work."; };
+        };
+      });
+      default = [ ];
+      description = ''
+        Herdr saved machines this host should know: each is added with
+        `herdr machine add <target> --label <label> --remote-session default`
+        at Home Manager activation when the label is not saved yet (a saved
+        label is left as herdr has it, even if the target here changed). Only
+        the coordinator host declares its workers; a worker declares nothing
+        and so sees its own agents only (docs/herdr.md).
+      '';
+    };
+
     userConfig = mkOption {
       type = types.attrs;
       default = { };
@@ -122,6 +140,11 @@ in
   };
 
   config = {
+    assertions = [{
+      assertion = lib.length (lib.unique (map (m: m.label) config.sam.herdr.machines)) == lib.length config.sam.herdr.machines;
+      message = "sam.herdr.machines labels must be unique (herdr --machine addresses a machine by its label).";
+    }];
+
     programs = {
       nix-ld.enable = true;
       nix-ld.libraries = with pkgs; [
