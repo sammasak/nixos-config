@@ -1,6 +1,30 @@
 { config, lib, pkgs, ... }:
 let
   vars = import ./variables.nix;
+
+  probedForward = lib.getExe (pkgs.writeShellApplication {
+    name = "probed-forward";
+    runtimeInputs = with pkgs; [ curl coreutils ];
+    text = ''
+      "$@" &
+      child=$!
+      trap 'kill "$child" 2>/dev/null || true' EXIT
+      failures=0
+      while kill -0 "$child" 2>/dev/null; do
+        sleep "$PROBE_INTERVAL"
+        if curl -fsS -o /dev/null --max-time 5 "$PROBE_URL"; then
+          failures=0
+        else
+          failures=$((failures + 1))
+          if [ "$failures" -ge "$PROBE_FAILURES" ]; then
+            echo "probed-forward: $PROBE_URL failed $failures probes in a row, exiting" >&2
+            exit 1
+          fi
+        fi
+      done
+      wait "$child"
+    '';
+  });
 in
 {
   imports = [
@@ -53,13 +77,20 @@ in
 
   # pi-harness PICODE_EP and factum FACTS_OLLAMA_EP default to localhost:8080. The
   # llm-gateway serves keyless Ollama only on its pod loopback, so only this reaches it.
+  # kubectl keeps running after "lost connection to pod" when the gateway rolls,
+  # so Restart=always never fired; the probe exits the unit instead.
   systemd.user.services.ollama-portforward = {
     description = "Port-forward the llm-gateway keyless Ollama passthrough to localhost:8080";
     wantedBy = [ "default.target" ];
     unitConfig.ConditionUser = vars.username;
-    environment.KUBECONFIG = "%h/.kube/config";
+    environment = {
+      KUBECONFIG = "%h/.kube/config";
+      PROBE_URL = "http://127.0.0.1:8080/api/tags";
+      PROBE_INTERVAL = "10";
+      PROBE_FAILURES = "3";
+    };
     serviceConfig = {
-      ExecStart = "${pkgs.kubectl}/bin/kubectl port-forward --address 127.0.0.1 deploy/llm-gateway -n llm 8080:11434";
+      ExecStart = "${probedForward} ${pkgs.kubectl}/bin/kubectl port-forward --address 127.0.0.1 deploy/llm-gateway -n llm 8080:11434";
       Restart = "always";
       RestartSec = 5;
     };
