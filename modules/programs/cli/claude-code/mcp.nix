@@ -4,8 +4,6 @@
 #   (import .../claude-code/mcp.nix inputs.skills)
 skillsSrc: nativeOtel: hostName:
 { pkgs, lib, config, ... }:
-let
-in
 {
   programs.claude-code = {
     enable = true;
