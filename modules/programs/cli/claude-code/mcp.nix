@@ -5,7 +5,6 @@
 skillsSrc: nativeOtel: hostName:
 { pkgs, lib, config, ... }:
 let
-  roleGuard = import ./role-guard.nix skillsSrc pkgs;
 in
 {
   programs.claude-code = {
@@ -101,10 +100,8 @@ in
         }];
         PreToolUse = [
           {
-            # 15s: these run before EVERY Bash call. p99 is ~0.8s but under
-            # high load avg the ~74 sed/grep forks have hit 3.7s; a timed-out
-            # PreToolUse hook does NOT block, so the budget must clear the
-            # worst case with headroom rather than fail-open the guard.
+            # 15s: p99 is ~0.8s, but a timed-out PreToolUse hook does NOT block,
+            # so the budget clears the worst observed case (3.7s) with headroom.
             matcher = "Bash";
             hooks = [
               {
@@ -117,14 +114,7 @@ in
                 command = "${skillsSrc}/hooks/check-loop.sh";
                 timeout = 15;
               }
-            ]
-            # subagent frontmatter hooks never run, so the role guard dispatches here on agent_type (no-op otherwise);
-            # the guard library is built into the store so a writable checkout cannot change its own guard
-            ++ lib.optional (builtins.pathExists "${skillsSrc}/hooks/role-guard-dispatch.sh") {
-              type = "command";
-              command = "${roleGuard.envPrefix}${roleGuard.dispatcher}";
-              timeout = 15;
-            };
+            ];
           }
         ];
         PostToolUse = [{

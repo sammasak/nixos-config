@@ -48,8 +48,8 @@ activation service, so add such a machine by hand once). Herdr owns the result
 in `~/.local/state/herdr/client/endpoints.json`: a saved label is never
 rewritten, so to change a target run `herdr machine remove <label>` and switch
 again. The coordinator subagent (skills repo, `agents/coordinator.md`, linked
-by `skills.nix` and guarded by the settings-level `role-guard-dispatch.sh`
-hook that `mcp.nix` registers) reads the same list, so on a worker it reports
+by `skills.nix`; no hook guards it, Claude Code's permission prompt does)
+reads the same list, so on a worker it reports
 that host only and on lenovo every machine.
 
 ## Verify reboot recovery
