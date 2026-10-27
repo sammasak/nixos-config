@@ -33,6 +33,21 @@ These directories live in the persistent home filesystem and are not managed
 or replaced by Home Manager, so reboot recovery can resume the native
 conversations referenced by Herdr.
 
+## Saved machines (the coordinator host)
+
+Herdr itself is the fleet view: a host sees its own agents, and any Herdr
+**saved machine** it has (`herdr machine list --json`) through command
+forwarding (`herdr --machine <label> agent list` and friends). Workers save
+nothing and so see themselves only. The coordinator host (lenovo) declares its
+workers as `sam.herdr.machines = [ { label = "acer-swift"; target =
+"acer-swift"; } ]`; at activation Home Manager runs `herdr machine add
+<target> --label <label>` for each label Herdr does not know yet, with the
+user's own SSH key and `known_hosts` (a failed add is reported, not fatal).
+Herdr owns the result in `~/.local/state/herdr/client/endpoints.json`; remove a
+machine with `herdr machine remove`. The coordinator subagent (skills repo,
+`agents/coordinator.md`) reads the same list, so on a worker it reports that
+host only and on lenovo every machine.
+
 ## Verify reboot recovery
 
 Before reboot, attach to the Herdr server and note the workspaces, panes, and
