@@ -66,7 +66,9 @@ let
               ]
               ++ lib.optionals (name == "lenovo") [
                 ../modules/programs/cli/factum-lenovo.nix
-                ../modules/programs/cli/nix-audit-lenovo.nix
+              ]
+              ++ lib.optionals (lib.elem name [ "lenovo" "acer-swift" "msi-ms7758" ]) [
+                ../modules/programs/cli/nix-audit.nix
               ];
               users.${username} =
                 config.flake.modules.homeManager.default

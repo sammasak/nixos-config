@@ -22,6 +22,8 @@ let
       };
       nixAudit = final.callPackage ../pkgs/nix-audit/package.nix {
         rustPlatform = factumRustPlatform;
+        src = inputs.nix-audit;
+        inherit (inputs.nix-audit) rev;
       };
     })
   ];

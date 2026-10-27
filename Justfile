@@ -29,6 +29,11 @@ build HOST=host:
 diff HOST=host:
     nh os build . -H {{HOST}} --diff always
 
+# Report-only nix-audit comparison of HOST's running system and its candidate
+# (built, not activated). Always exits 0; never call it from switch, deploy or CI.
+audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
+    scripts/nix-audit-candidate.sh {{HOST}} {{TARGET}}
+
 # Loopback self-push, proving the deploy-rs/sudo/magic-rollback path before it
 # is ever trusted against acer-swift, which has no BMC to recover a bad push.
 deploy-lenovo:
