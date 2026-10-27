@@ -1,5 +1,14 @@
 # Coordinator agent
 
+> **Optional hardened mode, currently disabled on every host.** The coordinator
+> and quality roles are delivered as ordinary subagents from the `skills` repo:
+> `~/.claude/agents/coordinator.md` and `quality.md` are linked like every other
+> agent and run their devenv task DAGs from a writable skills checkout
+> (`$SKILLS_CHECKOUT`, default `~/claude-code-skills`). Everything below
+> describes the stricter launcher mode (`sam.profile.coordinator`) that pins a
+> materialised checkout and a dedicated worker key; enable it only if that
+> isolation is wanted.
+
 The Coordinator (skills epic #16) is the owner's conversational interface to
 the fleet's coding agents. It only runs devenv tasks from a pinned skills
 checkout: `coord:brief` and `work:status` directly (they fan out over the

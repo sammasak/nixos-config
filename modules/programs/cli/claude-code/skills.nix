@@ -7,11 +7,7 @@ let
   skillDirs = lib.filterAttrs (_: type: type == "directory") skillEntries;
 
   agentEntries = builtins.readDir "${skillsSrc}/agents";
-  # role adapters (<name>.md next to an agents/<name>/ contract) are not user-scope agents: a role launcher
-  # project-scopes its own adapter and guard, and linked here they would only attract delegation that the
-  # missing guard then refuses
-  isRoleAdapter = name: (agentEntries.${lib.removeSuffix ".md" name} or null) == "directory";
-  agentFiles = lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".md" name && !isRoleAdapter name) agentEntries;
+  agentFiles = lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".md" name) agentEntries;
 in
 {
   home.file =
