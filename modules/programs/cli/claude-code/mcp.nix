@@ -114,7 +114,13 @@ skillsSrc: nativeOtel: hostName:
                 command = "${skillsSrc}/hooks/check-loop.sh";
                 timeout = 15;
               }
-            ];
+            ]
+            # subagent frontmatter hooks never run, so the role guard dispatches here on agent_type (no-op otherwise)
+            ++ lib.optional (builtins.pathExists "${skillsSrc}/hooks/role-guard-dispatch.sh") {
+              type = "command";
+              command = "${skillsSrc}/hooks/role-guard-dispatch.sh";
+              timeout = 15;
+            };
           }
         ];
         PostToolUse = [{
