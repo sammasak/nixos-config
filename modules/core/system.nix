@@ -83,17 +83,6 @@ in
             description = "Enable private, collector-sanitized native harness telemetry on this host.";
           };
 
-          coordinator = mkOption {
-            type = types.bool;
-            default = false;
-            description = ''
-              Opt into the Coordinator agent (docs/coordinator.md): a writable
-              checkout of the pinned skills input, its fleet.json, the Claude
-              guard hook and the `coordinator` launcher. Needs devTools (Claude
-              Code, Herdr); fleet comes from sam.coordinator.fleet.
-            '';
-          };
-
           roles = mkOption {
             type = types.listOf types.str;
             default = [ "base" ];
@@ -110,55 +99,22 @@ in
       default = { };
     };
 
-    coordinator = {
-      identityFile = mkOption {
-        type = types.nullOr (types.strMatching "/[^[:space:]'\"$`%\\\\]+");
-        default = null;
-        description = ''
-          Private key the coordinator tasks use for every fleet ssh target, run
-          as `ssh -F none -i <key> -o IdentitiesOnly=yes` so it is the only key
-          offered (no ssh_config is read, agent keys are excluded) and an owner
-          key cannot log in past the worker's herdr-shim. Absolute path; no
-          whitespace, quotes, `$`, backtick, `%` or backslash (`~` is not
-          expanded). Required when
-          any fleet host has an ssh target.
-        '';
-      };
-      acceptKeys = mkOption {
-        type = types.listOf (types.strMatching "^(ssh-|ecdsa-|sk-)[A-Za-z0-9@.:/+=_-]+ [A-Za-z0-9+/=]+( [^\n\"]*)?$");
-        default = [ ];
-        description = ''
-          Public keys of coordinator hosts allowed to reach this worker. Each is
-          installed for the primary user with a forced command (herdr-shim) that
-          permits only `herdr agent list|get|read|wait|prompt` and the two exact
-          session-file reads the coordinator tasks issue (confined to the user's
-          Claude and Pi session stores); no shell, no pty, no forwarding. Use a
-          dedicated key, never the owner's interactive one.
-        '';
-      };
-      fleet = {
-        hosts = mkOption {
-          type = types.listOf (types.submodule {
-            options = {
-              name = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_:.@/-]*"; description = "Fleet host name as the coordinator reports it."; };
-              ssh = mkOption { type = types.nullOr (types.strMatching "([A-Za-z0-9_.-]+@)?[A-Za-z0-9_.-]+"); default = null; description = "SSH target `[user@]host`, or null for the local host."; };
-            };
-          });
-          default = [ ];
-          description = "Hosts the Coordinator may inspect over Herdr (read) and message (act, prompted).";
+    herdr.machines = mkOption {
+      type = types.listOf (types.submodule {
+        options = {
+          label = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_.-]*"; description = "Herdr machine label, as in `herdr --machine <label>`."; };
+          target = mkOption { type = types.strMatching "([A-Za-z0-9_.-]+@)?[A-Za-z0-9_.-]+"; description = "SSH target `[user@]host` behind the label; the user's own key and known_hosts entry must already work."; };
         };
-        repos = mkOption {
-          type = types.listOf (types.submodule {
-            options = {
-              name = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_:.@/-]*"; description = "Repo name as the coordinator reports it."; };
-              gh = mkOption { type = types.nullOr (types.strMatching "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"); default = null; description = "OWNER/REPO for gh:work, or null."; };
-              checkout = mkOption { type = types.nullOr (types.strMatching "/[A-Za-z0-9_./-]*"); default = null; description = "Absolute local checkout for git:recent, or null."; };
-            };
-          });
-          default = [ ];
-          description = "Repositories that count as durable evidence for work:status.";
-        };
-      };
+      });
+      default = [ ];
+      description = ''
+        Herdr saved machines this host should know: each is added with
+        `herdr machine add <target> --label <label> --remote-session default`
+        at Home Manager activation when the label is not saved yet (a saved
+        label is left as herdr has it, even if the target here changed). Only
+        the coordinator host declares its workers; a worker declares nothing
+        and so sees its own agents only (docs/herdr.md).
+      '';
     };
 
     userConfig = mkOption {
@@ -184,21 +140,10 @@ in
   };
 
   config = {
-    assertions = lib.optionals config.sam.profile.coordinator [
-      { assertion = (lib.all (h: h.ssh == null) config.sam.coordinator.fleet.hosts) || config.sam.coordinator.identityFile != null; message = "sam.coordinator.identityFile is required when a fleet host has an ssh target (the tasks offer only that key, so an owner key never reaches a worker past the herdr-shim)."; }
-      { assertion = config.sam.profile.devTools; message = "sam.profile.coordinator needs devTools (claude-code, herdr)."; }
-      { assertion = lib.any (h: h.ssh == null) config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts must include the local host (ssh = null)."; }
-      { assertion = lib.length (lib.unique (map (h: h.name) config.sam.coordinator.fleet.hosts)) == lib.length config.sam.coordinator.fleet.hosts; message = "sam.coordinator.fleet.hosts has duplicate names."; }
-    ];
-
-    # the tasks themselves run ssh with -F none (no config read); these system-wide blocks only make a manual
-    # `ssh <fleet host>` on this host prefer the dedicated key. mkAfter keeps any global lines another module adds
-    # from landing inside the last Host block; the user's own ~/.ssh/config is left untouched
-    programs.ssh.extraConfig = lib.mkIf (config.sam.profile.coordinator && config.sam.coordinator.identityFile != null) (lib.mkAfter (lib.concatMapStrings (host: ''
-      Host ${host}
-        IdentityFile ${config.sam.coordinator.identityFile}
-        IdentitiesOnly yes
-    '') (lib.unique (map (h: lib.last (lib.splitString "@" h.ssh)) (lib.filter (h: h.ssh != null) config.sam.coordinator.fleet.hosts)))));
+    assertions = [{
+      assertion = lib.length (lib.unique (map (m: m.label) config.sam.herdr.machines)) == lib.length config.sam.herdr.machines;
+      message = "sam.herdr.machines labels must be unique (herdr --machine addresses a machine by its label).";
+    }];
 
     programs = {
       nix-ld.enable = true;
