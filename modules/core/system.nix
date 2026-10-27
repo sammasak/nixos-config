@@ -109,10 +109,11 @@ in
       default = [ ];
       description = ''
         Herdr saved machines this host should know: each is added with
-        `herdr machine add <target> --label <label>` at Home Manager
-        activation when the label is not saved yet. Only the coordinator host
-        declares its workers; a worker declares nothing and so sees its own
-        agents only (docs/herdr.md).
+        `herdr machine add <target> --label <label> --remote-session default`
+        at Home Manager activation when the label is not saved yet (a saved
+        label is left as herdr has it, even if the target here changed). Only
+        the coordinator host declares its workers; a worker declares nothing
+        and so sees its own agents only (docs/herdr.md).
       '';
     };
 
@@ -139,6 +140,11 @@ in
   };
 
   config = {
+    assertions = [{
+      assertion = lib.length (lib.unique (map (m: m.label) config.sam.herdr.machines)) == lib.length config.sam.herdr.machines;
+      message = "sam.herdr.machines labels must be unique (herdr --machine addresses a machine by its label).";
+    }];
+
     programs = {
       nix-ld.enable = true;
       nix-ld.libraries = with pkgs; [

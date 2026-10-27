@@ -112,8 +112,8 @@ in
         continue
       fi
       echo "herdr: saving machine $label ($target)"
-      $DRY_RUN_CMD ${pkgs.coreutils}/bin/timeout 30 ${herdrBin} machine add "$target" --label "$label" --remote-session default </dev/null \
-        || echo "herdr: machine add $label failed; run by hand: herdr machine add $target --label $label" >&2
+      run ${pkgs.coreutils}/bin/timeout 30 ${herdrBin} machine add "$target" --label "$label" --remote-session default </dev/null \
+        || echo "herdr: machine add $label failed; run by hand: herdr machine add $target --label $label --remote-session default" >&2
     done
   '');
 
