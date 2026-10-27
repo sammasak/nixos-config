@@ -32,7 +32,7 @@ sam.coordinator.fleet = {
 ```
 
 Needs `devTools = true` (Claude Code and Herdr). The skills input must be at a
-revision that carries `agents/coordinator.md` and `hooks/validate-coordinator.sh`
+revision that carries `agents/coordinator.md`, `hooks/role-guard-dispatch.sh` and `task-modules/guard.nix`
 (`just bump skills` after the epic PRs merge).
 
 ## What gets installed
@@ -41,7 +41,6 @@ revision that carries `agents/coordinator.md` and `hooks/validate-coordinator.sh
 |---|---|
 | `~/.local/share/coordinator/skills-<rev>` (+ `current` link) | writable copy of the pinned skills input with a project-scoped `.claude/agents/coordinator.md` and `.claude/skills/*` (the launcher loads no user-scope settings) and an `.integrity` manifest the guard checks on every call (its hash is pinned in `~/.config/coordinator/skills-<rev>.integrity.sha256`, guarded files are read-only); devenv runs here |
 | `~/.config/coordinator/fleet.json` | hosts and repos from `sam.coordinator.fleet` |
-| `~/.claude/hooks/validate-coordinator.sh` | the agent-scoped guard (fails closed when absent) |
 | `coordinator` | launcher: `claude --agent coordinator --permission-mode default --setting-sources project --settings <rendered settings>` from the checkout; user-scope and local settings are not loaded (the checkout carries an empty, read-only, manifest-listed `.claude/settings.json`); the rendered file carries the role's rules plus the host's telemetry env and Herdr hook |
 
 ## Run
@@ -143,5 +142,5 @@ the remote user differs); a `Host` alias, `User` or `ProxyJump` defined only in
 `ssh_config` blocks only make a manual `ssh <fleet host>` prefer the same key.
 The read-only file modes on the copy are a convenience; the manifest check is
 the control (tamper-evident, not tamper-proof: directories stay writable). The
-activation runs the guard's own predicate (`hooks/lib/integrity-check.sh`) and
-rebuilds a copy it would refuse.
+activation runs the guard's own predicate (the skills `guard:integrity` task in the
+copy) and rebuilds a copy it would refuse.

@@ -20,17 +20,16 @@ let
     else let xs = listItems (lib.drop (skillsIdx + 1) adapterLines); in if xs == [ ] then throw "coordinator: skills: block is empty or not a block list" else xs;
   # roots the manifest covers; the skills repo ships the list so guard, tests and this module agree
   integrityPathsFile = "${skillsSrc}/hooks/lib/integrity-paths";
-  # the guard's own predicate decides whether a copy is intact, so activation rebuilds exactly what the guard refuses
-  integrityCheck =
-    if builtins.pathExists "${skillsSrc}/hooks/lib/integrity-check.sh" then "${skillsSrc}/hooks/lib/integrity-check.sh"
-    else throw "coordinator: the skills input has no hooks/lib/integrity-check.sh; bump the skills input to a revision from epic #16 M4";
+  # the guard's own predicate (the skills `guard:integrity` task, run in the copy) decides whether a copy is intact
+  guardIntegrityShipped = builtins.pathExists "${skillsSrc}/task-modules/guard.nix";
   integrityRoots =
-    if builtins.pathExists integrityPathsFile
+    if builtins.pathExists integrityPathsFile && guardIntegrityShipped
     then lib.filter (l: l != "" && !lib.hasPrefix "#" l) (map (l: lib.removeSuffix "\r" l) (lib.splitString "\n" (builtins.readFile integrityPathsFile)))
-    else throw "coordinator: the skills input has no hooks/lib/integrity-paths; bump the skills input to a revision from epic #16 M4";
+    else throw "coordinator: the skills input has no hooks/lib/integrity-paths or task-modules/guard.nix; bump the skills input";
   rootsArg = lib.concatStringsSep " " (map lib.escapeShellArg integrityRoots);
   pinFile = "${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256";
-  guard = "${skillsSrc}/hooks/validate-coordinator.sh";
+  # the role dispatcher is the single hook entry; it runs `guard:check` in the checkout for role agents only
+  guard = "${skillsSrc}/hooks/role-guard-dispatch.sh";
   userSettings = config.programs.claude-code.settings;
   # Only the role's permissions replace the user scope; host policy (telemetry env,
   # artifact switch, Herdr SessionStart hook) is carried over so the coordinator
@@ -44,7 +43,7 @@ let
       SessionStart = userSettings.hooks.SessionStart or [ ];
       PreToolUse = [{
         matcher = "Bash";
-        hooks = [{ type = "command"; command = guard; timeout = 10; }];
+        hooks = [{ type = "command"; command = "ROLE_GUARD_AGENT=coordinator ${guard}"; timeout = 20; }];
       }];
     };
   };
@@ -69,8 +68,8 @@ let
       COORDINATOR_INTEGRITY_SHA256=$(cat ${lib.escapeShellArg pinFile}) || { echo "coordinator: integrity pin missing; re-run the activation" >&2; exit 2; }
       export COORDINATOR_INTEGRITY_SHA256
       cd "$COORDINATOR_CHECKOUT"
-      # the agent frontmatter runs the guard from this path (the settings file runs the store copy); both must exist
-      [ -x "$HOME/.claude/hooks/validate-coordinator.sh" ] || { echo "coordinator: guard hook missing; refusing to start" >&2; exit 2; }
+      # the adapter's frontmatter hook resolves the dispatcher from the checkout itself
+      [ -x "$COORDINATOR_CHECKOUT/hooks/role-guard-dispatch.sh" ] || { echo "coordinator: no role dispatcher in the checkout; refusing to start" >&2; exit 2; }
       ${lib.optionalString (cfg.identityFile != null) ''
         # the tasks run ssh with `-F none -i <key> -o IdentitiesOnly=yes`: no ssh_config is read, so this is the only key offered;
         # a missing key would otherwise surface as "unreachable" from every remote host (absolute path by option type)
@@ -84,7 +83,6 @@ in
 {
   home.packages = [ launcher ];
 
-  home.file.".claude/hooks/validate-coordinator.sh".source = "${skillsSrc}/hooks/validate-coordinator.sh";
   xdg.configFile."coordinator/fleet.json".text = builtins.toJSON fleet;
 
   # devenv needs a writable project dir (.devenv/, eval cache), so the pinned
@@ -100,7 +98,8 @@ in
       # the guard accepts only a 64-hex pin, so the activation must demand the same or a copy could stay refused
       [[ "$pin" =~ ^[0-9a-f]{64}$ ]] || { echo "coordinator: integrity pin malformed; rebuilding the checkout" >&2; return 1; }
       [ "$(cat "${checkout}/.complete" 2>/dev/null)" = "${layoutVersion}" ] || { echo "coordinator: checkout layout changed; rebuilding" >&2; return 1; }
-      ${integrityCheck} "${checkout}" "$pin" coordinator 2>&1 | sed 's/^/coordinator: checkout rebuilt because: /' >&2
+      ( cd "${checkout}" && COORDINATOR_CHECKOUT="${checkout}" ${pkgs.devenv}/bin/devenv tasks run guard:integrity --input-json "$(${pkgs.jq}/bin/jq -cn --arg p "$pin" '{pin:$p, roles:["coordinator"]}')" ) 2>&1 \
+        | ${pkgs.gnused}/bin/sed 's/^/coordinator: checkout rebuilt because: /' >&2
       [ "''${PIPESTATUS[0]}" -eq 0 ]
     }
     run mkdir -p "${checkoutRoot}" "${stateDir}" "${config.xdg.configHome}/coordinator"
