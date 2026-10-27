@@ -5,13 +5,7 @@
 skillsSrc: nativeOtel: hostName:
 { pkgs, lib, config, ... }:
 let
-  # the role guard library built into the store: a checkout the agent can write cannot change its own guard
-  roleGuardShipped = builtins.pathExists "${skillsSrc}/task-modules/guard-lib.nix";
-  roleGuardBin = pkgs.writeShellApplication {
-    name = "guard-check";
-    runtimeInputs = [ pkgs.jq pkgs.gawk pkgs.coreutils pkgs.gnugrep pkgs.gnused ];
-    text = import "${skillsSrc}/task-modules/guard-lib.nix" + "\nguard_main\n";
-  };
+  roleGuard = import ./role-guard.nix skillsSrc pkgs;
 in
 {
   programs.claude-code = {
@@ -128,7 +122,7 @@ in
             # the guard library is built into the store so a writable checkout cannot change its own guard
             ++ lib.optional (builtins.pathExists "${skillsSrc}/hooks/role-guard-dispatch.sh") {
               type = "command";
-              command = "${lib.optionalString roleGuardShipped "ROLE_GUARD_BIN=${roleGuardBin}/bin/guard-check "}${skillsSrc}/hooks/role-guard-dispatch.sh";
+              command = "${roleGuard.envPrefix}${roleGuard.dispatcher}";
               timeout = 15;
             };
           }

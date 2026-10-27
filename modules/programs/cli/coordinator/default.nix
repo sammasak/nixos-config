@@ -21,7 +21,7 @@ let
   # roots the manifest covers; the skills repo ships the list so guard, tests and this module agree
   integrityPathsFile = "${skillsSrc}/hooks/lib/integrity-paths";
   # the guard's own predicate (the skills `guard:integrity` task, run in the copy) decides whether a copy is intact
-  guardIntegrityShipped = builtins.pathExists "${skillsSrc}/task-modules/guard.nix";
+  guardIntegrityShipped = builtins.pathExists "${skillsSrc}/task-modules/guard.nix" && roleGuard.shipped;
   integrityRoots =
     if builtins.pathExists integrityPathsFile && guardIntegrityShipped
     then lib.filter (l: l != "" && !lib.hasPrefix "#" l) (map (l: lib.removeSuffix "\r" l) (lib.splitString "\n" (builtins.readFile integrityPathsFile)))
@@ -29,12 +29,8 @@ let
   rootsArg = lib.concatStringsSep " " (map lib.escapeShellArg integrityRoots);
   pinFile = "${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256";
   # the role dispatcher is the single hook entry; it runs `guard:check` in the checkout for role agents only
-  guard = "${skillsSrc}/hooks/role-guard-dispatch.sh";
-  roleGuardBin = pkgs.writeShellApplication {
-    name = "guard-check";
-    runtimeInputs = [ pkgs.jq pkgs.gawk pkgs.coreutils pkgs.gnugrep pkgs.gnused ];
-    text = import "${skillsSrc}/task-modules/guard-lib.nix" + "\nguard_main\n";
-  };
+  roleGuard = import ../claude-code/role-guard.nix skillsSrc pkgs;
+  guard = roleGuard.dispatcher;
   userSettings = config.programs.claude-code.settings;
   # Only the role's permissions replace the user scope; host policy (telemetry env,
   # artifact switch, Herdr SessionStart hook) is carried over so the coordinator
@@ -48,7 +44,7 @@ let
       SessionStart = userSettings.hooks.SessionStart or [ ];
       PreToolUse = [{
         matcher = "Bash";
-        hooks = [{ type = "command"; command = "ROLE_GUARD_AGENT=coordinator ROLE_GUARD_BIN=${roleGuardBin}/bin/guard-check ${guard}"; timeout = 20; }];
+        hooks = [{ type = "command"; command = "ROLE_GUARD_AGENT=coordinator ROLE_GUARD_BIN=${roleGuard.bin}/bin/guard-check ${guard}"; timeout = 20; }];
       }];
     };
   };
@@ -73,8 +69,8 @@ let
       COORDINATOR_INTEGRITY_SHA256=$(cat ${lib.escapeShellArg pinFile}) || { echo "coordinator: integrity pin missing; re-run the activation" >&2; exit 2; }
       export COORDINATOR_INTEGRITY_SHA256
       cd "$COORDINATOR_CHECKOUT"
-      # the adapter's frontmatter hook resolves the dispatcher from the checkout itself
-      [ -x "$COORDINATOR_CHECKOUT/hooks/role-guard-dispatch.sh" ] || { echo "coordinator: no role dispatcher in the checkout; refusing to start" >&2; exit 2; }
+      # the adapter's frontmatter hook and the tasks use the store dispatcher and guard, never the copy's own
+      export ROLE_GUARD_DISPATCH=${lib.escapeShellArg guard} ROLE_GUARD_BIN=${roleGuard.bin}/bin/guard-check
       ${lib.optionalString (cfg.identityFile != null) ''
         # the tasks run ssh with `-F none -i <key> -o IdentitiesOnly=yes`: no ssh_config is read, so this is the only key offered;
         # a missing key would otherwise surface as "unreachable" from every remote host (absolute path by option type)
