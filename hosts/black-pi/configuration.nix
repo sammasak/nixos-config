@@ -6,9 +6,6 @@ in
   imports = [
     ./hardware-configuration.nix
 
-    # Registers crun as an additional containerd runtime for k3s (worker parity).
-    ../../modules/homelab/k3s/containerd-crun.nix
-
     # Directly, not via the laptop role (Intel-only settings). No wifi-selfheal:
     # wlan0 is the secondary NIC here, end0 carries the cluster.
     ../../modules/core/wifi.nix
@@ -27,10 +24,6 @@ in
   nix.settings.min-free = 3 * 1024 * 1024 * 1024;
   nix.settings.max-free = 8 * 1024 * 1024 * 1024;
   services.journald.settings.Journal.SystemMaxUse = lib.mkForce "200M";
-
-  # 0 = retry forever; the default 4 ends in a secret-agent request that never
-  # comes on a headless box (one AP deauth became a 10-day outage on acer).
-  networking.networkmanager.settings.connection."connection.autoconnect-retries" = 0;
 
   # No UEFI: the Pi firmware chains U-Boot, which reads /boot/extlinux.
   # https://wiki.nixos.org/wiki/NixOS_on_ARM/Raspberry_Pi_4

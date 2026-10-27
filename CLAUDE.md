@@ -17,6 +17,7 @@ devenv tasks run nixos:secrets-verify  # wifi credentials sanity (skips without 
 devenv tasks run nixos:nvim-check      # lenovo's nvim starts headless clean
 devenv tasks run nixos:flake-check     # nix flake check --all-systems
 devenv tasks run nixos:verify          # build every x86 host, evaluate black-pi
+devenv tasks run nixos:claude-settings-test  # generated Claude settings: default mode, bypass on request
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
 #   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree.
@@ -72,7 +73,6 @@ Secret scopes in `secrets/.sops.yaml`:
 |--------------|-----------|---------|
 | `homelab/nix-signing-key.yaml` | Personal + lenovo | deploy-rs closure-signing private key (workers trust the public half) |
 | `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, wifi, GitHub access token |
-| `core/*.yaml` | Personal + lenovo | Staged declarative login password |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys, incl. its llm-gateway project key. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
 | `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Claude Code OAuth token; Pi's llm-gateway project key (`llm-gateway.yaml`) |
 | `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
@@ -86,7 +86,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 | File | Scope | Purpose |
 |------|-------|---------|
 | `mcp.nix` | All `devTools` hosts (shared HM module) | Settings, plugins, MCP servers, shebang fixes, SOPS token sourcing |
-| `default.nix` | All `devTools` hosts (shared HM module) | First-boot `~/.claude.json` seed, tool-permissions block, `programs.fish.enable` |
+| `default.nix` | All `devTools` hosts (shared HM module) | Tool-permissions block, `programs.fish.enable` |
 | `skills.nix` | All `devTools` hosts (shared HM module) | Symlinks skills and agents from the `skills` flake input |
 
 **Plugin configuration** (`mcp.nix`): Declares `enabledPlugins` (superpowers, rust-analyzer-lsp, frontend-design, ralph-loop) and MCP servers (playwright/chromium) in `programs.claude-code.settings`.
@@ -94,7 +94,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 **Personal skills and agents** are managed via the [`sammasak/skills`](https://github.com/sammasak/skills) repo, added as a non-flake input (`flake = false`). The `skills.nix` module auto-discovers all directories in `skills/` and `.md` files in `agents/` from that input and creates Home Manager symlinks:
 
 - `skills/<name>/SKILL.md` → `~/.claude/skills/<name>/SKILL.md`
-- `agents/<name>.md` → `~/.claude/agents/<name>.md`
+- `agents/<name>.md` → `~/.claude/agents/<name>.md` (role adapters included: plain subagents whose prompt states the one allowed command form; Claude Code's permission prompt is the gate, see `docs/herdr.md` and the skills repo `docs/operator-runbook.md`)
 
 These are available across all projects without manual `/plugin install`.
 
@@ -115,15 +115,13 @@ Configuration lives in `modules/programs/cli/codex/`:
 | `default.nix` | All `devTools` hosts (shared HM module) | Codex config, hooks, shared skill links, activation-time skill sync |
 | `context-hook.sh` | All `devTools` hosts | Injects workspace routing hints for `~/knowledge`, workflows, and `skills` |
 | `validate-bash.sh` | All `devTools` hosts | Blocks force pushes and other unsafe bash patterns |
-| `sync-codex-skills.sh` | All `devTools` hosts | Regenerates Codex-local workflow/repo skill wrappers after each activation |
+| `sync-codex-skills.sh` | All `devTools` hosts | Regenerates Codex-local workflow skill wrappers after each activation |
 | `workspace-routing/` | All `devTools` hosts | Base Codex skill for ICM workspace routing |
 
 **Skill delivery model**:
 - `~/.agents/skills/` holds the shared portable subset from the `skills` flake input
 - `~/.codex/skills/` mirrors that portable subset for compatibility
-- `sync-codex-skills.sh` then overlays Codex-local wrappers for:
-  - canonical workspace workflows from `~/knowledge/workflows/*/CONTEXT.md`
-  - repo-only skills from `~/claude-code-skills/skills/*/SKILL.md` that are not already in the shared portable subset
+- `sync-codex-skills.sh` then overlays Codex-local wrappers for canonical workspace workflows from `~/knowledge/workflows/*/CONTEXT.md`
 
 The overlay is regenerated automatically by Home Manager activation on every rebuild. No manual Codex skill sync step is required after `nixos-rebuild switch`.
 

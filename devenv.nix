@@ -42,8 +42,25 @@ let
     bash scripts/verify-all-hosts.sh
   '';
 
+  claudeSettingsTest = gate "claude-settings-test" (with pkgs; [ nix python3 ]) ''
+    hm='.#nixosConfigurations.lenovo.config.home-manager.users.lukas'
+    files=$(nix build "$hm.home-files" --no-link --print-out-paths)
+    CLAUDE_BIN=$(nix build "$hm.programs.claude-code.package" --no-link --print-out-paths)/bin/claude \
+      python3 scripts/test-native-otel-subprocess-env.py "$files/.claude/settings.json"
+  '';
+
+  nativeOtelRelayTest = gate "native-otel-relay-test" (with pkgs; [ nginx nix python3 ]) ''
+    helper=$(nix eval --raw .#nixosConfigurations.lenovo.config.systemd.services.native-otel-relay.serviceConfig.ExecStartPre)
+    ${pkgs.python3}/bin/python scripts/test-native-otel-relay.py "$helper" "${pkgs.nginx}/bin/nginx"
+  '';
+
+  nativeOtelFishTest = gate "native-otel-fish-test" (with pkgs; [ fish nix python3 ]) ''
+    nixpkgs_source=$(nix eval --raw --impure --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')
+    ${pkgs.python3}/bin/python scripts/test-native-otel-fish.py "$nixpkgs_source"
+  '';
+
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
-    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts
+    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
@@ -60,9 +77,10 @@ let
     ${lib.getExe qa}
   '';
 
-  # Operator side of the naked-pi passive RF kit. Each SSHes the Pi (the
-  # `naked-pi` ssh alias), runs one bounded observation wrapper there, and keeps
-  # analysis on this host. Observation only: no task can transmit, deauth or jam.
+  # Operator side of the naked-pi RF kit. Each SSHes the Pi (the `naked-pi` ssh
+  # alias), runs one bounded wrapper there, and keeps analysis on this host.
+  # Mostly passive; deauth is limited to our own AP's enrolled stations
+  # (rf:ap-kick, rf:ap-kick-hil) — never injection or a third-party network.
   rfBeacons = gate "rf-beacons" (with pkgs; [ openssh coreutils gawk gnugrep wireshark-cli ]) ''
     exec >&2  # devenv captures task stdout; stream the table instead
     dwell=''${RF_DWELL:-1.2}
@@ -99,59 +117,57 @@ let
     echo "open: nix shell nixpkgs#wireshark -c wireshark $f"
   '';
 
-  rfBtScan = gate "rf-btscan" [ pkgs.openssh ] ''
-    exec >&2  # devenv captures task stdout; stream results instead
+  # Streams to stderr because devenv captures task stdout.
+  naked = name: preamble: cmd: gate name [ pkgs.openssh ] ''
+    exec >&2
+    ${preamble}
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo ${cmd}"
+  '';
+
+  rfBtScan = naked "rf-btscan" ''
     secs=''${RF_SECONDS:-15}
     echo "Passive BT/BLE discovery for ''${secs}s (visible devices only)..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-btscan $secs"
-  '';
+  '' "rf-btscan $secs";
 
-  rfSim = gate "rf-sim" [ pkgs.openssh ] ''
-    exec >&2
-    loss=''${RF_LOSS:-0.0}; outage=''${RF_OUTAGE:-1}
-    echo "Virtual-radio Wi-Fi lab on naked-pi (mac80211_hwsim; no physical RF; loss=$loss outage=''${outage}s)..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-sim $loss $outage"
-  '';
+  rfSim = naked "rf-sim" ''
+    loss=''${RF_LOSS:-0}; outage=''${RF_OUTAGE:-1}; kick=''${RF_KICK:-0}
+    echo "Virtual-radio two-netns Wi-Fi lab on naked-pi (mac80211_hwsim; no physical RF; loss=''${loss}% outage=''${outage}s kick=''${kick})..."
+  '' "rf-sim $loss $outage $kick";
 
-  rfApOutage = gate "rf-ap-outage" [ pkgs.openssh ] ''
-    exec >&2
+  rfApOutage = naked "rf-ap-outage" ''
     secs=''${RF_SECONDS:-10}
     echo "Bounded outage of naked-pi's own lab AP (''${secs}s)..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-outage $secs"
+  '' "rf-ap-outage $secs";
+
+  rfApKickHil = gate "rf-ap-kick-hil" [ pkgs.openssh ] ''
+    exec >&2
+    mode=dry-run; arg=""
+    [ "''${RF_HIL_COMMIT:-0}" = "1" ] && { mode=commit; arg="--commit"; }
+    echo "Two-radio hardware-in-the-loop rf-ap-kick on naked-pi (mode=''${mode}; refuses unless mgmt is Ethernet)..."
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+      naked-pi "sudo rf-ap-kick-hil $arg"
   '';
 
-  rfApStatus = gate "rf-ap-status" [ pkgs.openssh ] ''
-    exec >&2
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-status"
-  '';
+  rfApStatus = naked "rf-ap-status" "" "rf-ap-status";
 
-  rfBtStatus2 = gate "rf-bt-status" [ pkgs.openssh ] ''
-    exec >&2
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-bt-status"
-  '';
+  rfBtStatus2 = naked "rf-bt-status" "" "rf-bt-status";
 
-  rfBtDisconnect = gate "rf-bt-disconnect" [ pkgs.openssh ] ''
-    exec >&2
+  rfBtDisconnect = naked "rf-bt-disconnect" ''
     mac=''${RF_MAC:?set RF_MAC=<enrolled-paired-MAC> (RF_COMMIT=1 to actually disconnect)}
     flag=""; [ "''${RF_COMMIT:-}" = 1 ] && flag="--commit"
     echo "rf-bt-disconnect $mac ''${flag:-(dry-run)} via our own controller..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-bt-disconnect $mac $flag"
-  '';
+  '' "rf-bt-disconnect $mac $flag";
 
-  rfBtOutage = gate "rf-bt-outage" [ pkgs.openssh ] ''
-    exec >&2
+  rfBtOutage = naked "rf-bt-outage" ''
     secs=''${RF_SECONDS:-10}
     echo "rf-bt-adapter-outage ''${secs}s on naked-pi's own controller..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-bt-adapter-outage $secs"
-  '';
+  '' "rf-bt-adapter-outage $secs";
 
-  rfApKick = gate "rf-ap-kick" [ pkgs.openssh ] ''
-    exec >&2
+  rfApKick = naked "rf-ap-kick" ''
     mac=''${RF_MAC:?set RF_MAC=<enrolled-MAC> (RF_COMMIT=1 to actually evict)}
     flag=""; [ "''${RF_COMMIT:-}" = 1 ] && flag="--commit"
     echo "rf-ap-kick $mac ''${flag:-(dry-run)} on naked-pi's own AP..."
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-ap-kick $mac $flag"
-  '';
+  '' "rf-ap-kick $mac $flag";
 
   rfList = gate "rf-list" (with pkgs; [ openssh coreutils ]) ''
     exec >&2  # devenv captures task stdout; stream the listing instead
@@ -213,6 +229,42 @@ let
       | gawk '{printf "  %6d  %s\n",$1,$2}'
   '';
 
+  # Offline classification test: assert rf:analyze's decode recognises each
+  # crafted fixture (beacon count, deauth/disassoc reason codes). No device.
+  rfAnalyzeTest = gate "rf-analyze-test" (with pkgs; [ bash wireshark-cli coreutils gnugrep ]) ''
+    bash scripts/rf-analyze-test.sh
+  '';
+
+  embeddedDiscover = gate "embedded-discover" [ pkgs.openssh ] ''
+    exec >&2  # devenv captures task stdout; stream results instead
+    port=''${EMBEDDED_PORT:+--port ''${EMBEDDED_PORT}}
+    # shellcheck disable=SC2086
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "espflash board-info $port"
+  '';
+
+  # Flashes the ELF from `cargo build` (espflash flash reads an ELF, not a raw
+  # .bin). Dry-run by default like rf:ap-kick, since flashing overwrites device
+  # state; EMBEDDED_COMMIT=1 performs it. EMBEDDED_PORT overrides espflash's
+  # auto-detect when more than one serial port is present (non-interactive SSH
+  # cannot answer espflash's port prompt).
+  embeddedFlash = gate "embedded-flash" (with pkgs; [ openssh coreutils ]) ''
+    exec >&2  # devenv captures task stdout; stream results instead
+    fw=''${FW_ELF:?set FW_ELF=/path/to/firmware (the ELF from cargo build, not a raw .bin)}
+    [ -f "$fw" ] || { echo "no such file: $fw" >&2; exit 1; }
+    port=''${EMBEDDED_PORT:+--port ''${EMBEDDED_PORT}}
+    if [ "''${EMBEDDED_COMMIT:-}" != 1 ]; then
+      echo "dry-run: would copy $fw to naked-pi and run: espflash flash $port <remote-elf>" >&2
+      echo "set EMBEDDED_COMMIT=1 to flash for real" >&2
+      exit 0
+    fi
+    remote=$(ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "mktemp /tmp/embedded-fw.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi 'rm -f $remote'" EXIT
+    scp -o BatchMode=yes -o ConnectTimeout=10 "$fw" "naked-pi:$remote"
+    # shellcheck disable=SC2086
+    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "espflash flash $port $remote"
+  '';
+
   task = description: app: { inherit description; exec = lib.getExe app; };
 
   hook = name: stage: app: {
@@ -247,6 +299,7 @@ in
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
     "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
     "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
+    "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;
@@ -254,11 +307,15 @@ in
     "rf:btscan" = task "naked-pi: passive Bluetooth/BLE discovery (RF_SECONDS)" rfBtScan;
     "rf:list" = task "naked-pi: list captures on the Pi and locally" rfList;
     "rf:analyze" = task "offline pcap analysis: mgmt frames + deauth/disassoc reason codes (RF_PCAP)" rfAnalyze;
+    "rf:analyze-test" = task "offline: assert rf:analyze classifies the crafted pcap fixtures" rfAnalyzeTest;
     "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
     "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
+    "embedded:discover" = task "naked-pi: espflash board-info (chip, revision, flash, MAC)" embeddedDiscover;
+    "embedded:flash" = task "naked-pi: flash FW_ELF to the board (dry-run; EMBEDDED_COMMIT=1, EMBEDDED_PORT)" embeddedFlash;
     "rf:preflight" = task "naked-pi: offline pre-deploy safety-invariant gate" rfPreflight;
     "rf:ap-status" = task "naked-pi: list stations associated to the lab AP" rfApStatus;
     "rf:ap-kick" = task "naked-pi: evict an enrolled station from our own AP (RF_MAC, RF_COMMIT)" rfApKick;
+    "rf:ap-kick-hil" = task "naked-pi: two-radio hardware-in-the-loop rf-ap-kick (Ethernet-gated; RF_HIL_COMMIT)" rfApKickHil;
     "rf:bt-status" = task "naked-pi: Bluetooth controller + paired-device status" rfBtStatus2;
     "rf:bt-disconnect" = task "naked-pi: disconnect an enrolled paired BT device (RF_MAC, RF_COMMIT)" rfBtDisconnect;
     "rf:bt-outage" = task "naked-pi: bounded local BT adapter power-off/on (RF_SECONDS)" rfBtOutage;

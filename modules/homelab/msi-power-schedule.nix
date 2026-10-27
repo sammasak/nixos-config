@@ -1,15 +1,5 @@
-# Scheduled power window for the intermittent msi-ms7758 worker.
-#
-# msi runs the "bigger/faster" ollama tier (llama3.1:8b) but is a dual-boot
-# tower we only want awake during work hours. Two halves, enabled on different
-# hosts:
-#
-#   * waker       — runs on an ALWAYS-ON host (the control plane). Sends a
-#                   Wake-on-LAN magic packet Mon-Fri at 09:00 so msi boots.
-#   * selfShutdown — runs ON msi. Mon-Fri at 21:00 it stops k3s (so the ollama
-#                   pod gets SIGTERM and terminates within its grace period),
-#                   then powers off. No weekend wake fires, so it stays off from
-#                   Fri 21:00 to Mon 09:00.
+# Work-hours power window for msi-ms7758, a dual-boot tower only wanted awake
+# then. No weekend wake fires, so it stays off from Fri 21:00 to Mon 09:00.
 #
 # Graceful note: we deliberately do a local graceful stop rather than an API
 # `kubectl cordon`/`drain`. msi runs a single stateless pod (ollama-msi, model
@@ -20,33 +10,14 @@
 { config, lib, pkgs, ... }:
 
 let
-  inherit (lib) mkEnableOption mkIf mkMerge mkOption types;
+  inherit (lib) mkEnableOption mkIf mkMerge;
   cfg = config.homelab.msiPowerSchedule;
+  msiMac = "d4:3d:7e:4a:f9:3d";
 in
 {
   options.homelab.msiPowerSchedule = {
-    waker = {
-      enable = mkEnableOption "sending msi its Mon-Fri 09:00 Wake-on-LAN packet (enable on an always-on host)";
-      mac = mkOption {
-        type = types.str;
-        default = "d4:3d:7e:4a:f9:3d";
-        description = "MAC address of msi's enp3s0 (the Wake-on-LAN target).";
-      };
-      onCalendar = mkOption {
-        type = types.str;
-        default = "Mon-Fri 09:00";
-        description = "systemd OnCalendar for the wake packet (system timezone).";
-      };
-    };
-
-    selfShutdown = {
-      enable = mkEnableOption "msi's scheduled Mon-Fri 21:00 graceful poweroff (enable on msi)";
-      onCalendar = mkOption {
-        type = types.str;
-        default = "Mon-Fri 21:00";
-        description = "systemd OnCalendar for the scheduled shutdown (system timezone).";
-      };
-    };
+    waker.enable = mkEnableOption "sending msi its Mon-Fri 09:00 Wake-on-LAN packet (enable on an always-on host)";
+    selfShutdown.enable = mkEnableOption "msi's scheduled Mon-Fri 21:00 graceful poweroff (enable on msi)";
   };
 
   config = mkMerge [
@@ -56,14 +27,14 @@ in
         # WoL is best-effort: a failed send must not leave a failed unit around.
         serviceConfig = {
           Type = "oneshot";
-          ExecStart = "${pkgs.wakeonlan}/bin/wakeonlan ${cfg.waker.mac}";
+          ExecStart = "${pkgs.wakeonlan}/bin/wakeonlan ${msiMac}";
         };
       };
       systemd.timers.msi-wake = {
         description = "Wake msi-ms7758 on the work-hours schedule";
         wantedBy = [ "timers.target" ];
         timerConfig = {
-          OnCalendar = cfg.waker.onCalendar;
+          OnCalendar = "Mon-Fri 09:00";
           # Do NOT catch up a missed wake (e.g. a weekend boot of the control
           # plane) — only wake at the real scheduled tick.
           Persistent = false;
@@ -93,7 +64,7 @@ in
         description = "Scheduled work-hours shutdown of msi";
         wantedBy = [ "timers.target" ];
         timerConfig = {
-          OnCalendar = cfg.selfShutdown.onCalendar;
+          OnCalendar = "Mon-Fri 21:00";
           # No catch-up: if msi was off at 21:00 it is already where we want it.
           Persistent = false;
         };

@@ -19,12 +19,8 @@ local rustacean_opts = {
   server = {
     default_settings = {
       ["rust-analyzer"] = {
-        cargo = { allFeatures = true, buildScripts = { enable = true } },
         check = { command = "clippy" },
-        checkOnSave = true,
-        diagnostics = { enable = true },
         inlayHints = { bindingModeHints = { enable = true }, closingBraceHints = { minLines = 20 }, parameterHints = { enable = true }, typeHints = { enable = true } },
-        procMacro = { enable = true },
         files = { exclude = { ".direnv", ".git", "target", "node_modules", ".venv", "venv" } },
       },
     },

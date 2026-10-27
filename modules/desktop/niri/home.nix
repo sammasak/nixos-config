@@ -157,10 +157,6 @@ in
         Mod+Ctrl+R  { spawn-sh "~/.config/hypr/scripts/screen-record.sh m"; }
         Mod+V { spawn-sh "~/.config/hypr/scripts/ClipManager.sh"; }
         Mod+Shift+W { spawn-sh "~/.config/hypr/scripts/wallpaper-select.sh"; }
-        // Mod+Shift+Plus, not Mod+Shift+Slash: niri binds match the unshifted
-        // keysym, and on the se layout "?" lives on the plus key — Slash would
-        // resolve to Shift+7 and lose to the workspace bind.
-        Mod+Shift+Plus hotkey-overlay-title="Full keybinds cheatsheet" { spawn-sh "~/.config/hypr/scripts/keybinds.sh"; }
         Mod+F1 hotkey-overlay-title="Show this overlay" { show-hotkey-overlay; }
         Mod+Shift+C { spawn "hyprpicker" "-a"; }
         Mod+Shift+N { spawn "swaync-client" "-t" "-sw"; }

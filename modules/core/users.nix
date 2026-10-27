@@ -1,12 +1,8 @@
-{ config, pkgs, lib, ... }:
+{ config, lib, pkgs, ... }:
 let
   profile = config.sam.profile;
   inherit (profile) username;
-  defaultSshKeys = config.sam.userConfig.sshKeys or [ ];
-  sshAuthorizedKeys =
-    if profile.sshAuthorizedKeys != [ ]
-    then profile.sshAuthorizedKeys
-    else defaultSshKeys;
+  sshAuthorizedKeys = config.sam.userConfig.sshKeys or [ ];
 in
 {
   programs.dconf.enable = true;
@@ -16,7 +12,6 @@ in
     useUserPackages = true;
     backupFileExtension = "backup";
     users.${username} = {
-      services.hyprpaper.enable = lib.mkOverride 2000 false;
       programs.home-manager.enable = true;
       xdg.enable = true;
 
@@ -42,21 +37,19 @@ in
         "networkmanager"
         "video"
         "audio"
-        "libvirtd"
         "kvm"
-        "docker"
         "disk"
       ];
       shell = pkgs.fish;
       ignoreShellProgramCheck = true;
       openssh.authorizedKeys.keys = sshAuthorizedKeys;
-    };
+    } // lib.optionalAttrs profile.devTools { linger = true; };
   };
 
   assertions = [
     {
       assertion = sshAuthorizedKeys != [ ];
-      message = "No SSH authorized keys configured for `${username}`. Set `lib/users.nix` (${username}.sshKeys) or `sam.profile.sshAuthorizedKeys`.";
+      message = "No SSH authorized keys configured for `${username}`. Set `lib/users.nix` (${username}.sshKeys).";
     }
   ];
 

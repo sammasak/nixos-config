@@ -1,32 +1,16 @@
-# Tailscale for the homelab, in two modes.
-#
-# "subnet-router" (control plane) advertises the LAN CIDR, which is what makes
-# every box on the LAN reachable from outside through a single node.
-#
-# "client" is plain tailnet membership with everything else refused — no routes
-# advertised or accepted, no MagicDNS, no Tailscale SSH — so that a node using
-# it gains a remote-access path without routing its own LAN traffic back
-# through the control plane. No host currently selects it; workers run no
-# client at all (see CLAUDE.md, Tailscale Remote Access).
+# Tailscale subnet router: advertising the LAN CIDR is what makes every box on
+# the LAN reachable from outside through a single node.
 { config, lib, pkgs, ... }:
 
 let
   inherit (lib) concatStringsSep escapeShellArgs mkDefault mkEnableOption mkIf mkOption types;
   cfg = config.homelab.tailscale;
-  isSubnetRouter = cfg.mode == "subnet-router";
 
-  modeFlags =
-    if isSubnetRouter then
-      [
-        "--advertise-routes=${concatStringsSep "," cfg.subnetRoutes}"
-        "--accept-routes"
-        "--ssh"
-      ]
-    else
-      [
-        "--accept-routes=false"
-        "--accept-dns=false"
-      ];
+  upFlags = [
+    "--advertise-routes=${concatStringsSep "," cfg.subnetRoutes}"
+    "--accept-routes"
+    "--ssh"
+  ];
 in
 {
   # sops.nix: so `authKeyFile` can point at the declared secret instead of
@@ -38,20 +22,10 @@ in
   options.homelab.tailscale = {
     enable = mkEnableOption "Tailscale";
 
-    mode = mkOption {
-      type = types.enum [ "subnet-router" "client" ];
-      default = "subnet-router";
-      description = ''
-        "subnet-router" advertises `subnetRoutes` into the tailnet and enables
-        Tailscale SSH. "client" only joins the tailnet: no routes advertised,
-        none accepted, no MagicDNS takeover and no Tailscale SSH.
-      '';
-    };
-
     subnetRoutes = mkOption {
       type = types.listOf types.str;
       default = [ config.sam.profile.lanCidr ];
-      description = ''List of subnet routes to advertise (mode = "subnet-router" only).'';
+      description = "List of subnet routes to advertise.";
     };
 
     authKeyFile = mkOption {
@@ -75,11 +49,11 @@ in
 
     services.tailscale = {
       enable = true;
-      useRoutingFeatures = if isSubnetRouter then "server" else "client";
+      useRoutingFeatures = "server";
     };
 
     systemd.services.tailscale-autoconnect = {
-      description = "Join the Tailscale tailnet (mode: ${cfg.mode})";
+      description = "Join the Tailscale tailnet";
       after = [ "network-online.target" "tailscaled.service" ];
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
@@ -126,7 +100,7 @@ in
           sleep 1
         done
 
-        upFlags=( ${escapeShellArgs modeFlags} )
+        upFlags=( ${escapeShellArgs upFlags} )
         usedAuthKey=""
 
         notify() {
@@ -173,8 +147,7 @@ in
       '';
     };
 
-    # IP forwarding is only needed when this node routes on behalf of others.
-    boot.kernel.sysctl = mkIf isSubnetRouter {
+    boot.kernel.sysctl = {
       "net.ipv4.ip_forward" = mkDefault 1;
       "net.ipv6.conf.all.forwarding" = mkDefault 1;
     };
@@ -183,7 +156,7 @@ in
     # throughput. https://tailscale.com/s/ethtool-config-udp-gro
     # Always exits 0: a wanted oneshot that fails on a driver quirk would fail
     # whole activations, exactly like tailscale-autoconnect above.
-    systemd.services.tailscale-gro-tune = mkIf isSubnetRouter {
+    systemd.services.tailscale-gro-tune = {
       description = "Enable UDP GRO forwarding on the default-route interface";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];

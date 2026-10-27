@@ -7,9 +7,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Every host in the flake. The VM/image hosts (workstation-template,
-# claude-worker-template) were retired with the KubeVirt platform, so there is
-# no longer a second, optional build tier.
+# Every host in the flake.
 HOSTS=("acer-swift" "lenovo" "msi-ms7758")
 # aarch64 hosts: nothing here can build aarch64 (no binfmt, no remote builder),
 # so they are only evaluated. Their real build runs on the device itself.

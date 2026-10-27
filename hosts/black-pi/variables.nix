@@ -6,6 +6,6 @@
   kbdLayout = "se";
   kbdVariant = "";
   consoleKeymap = "sv-latin1";
-  laptop = false;
+  devTools = false;
   roles = [ "base" "homelab-agent" ];
 }

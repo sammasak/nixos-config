@@ -4,8 +4,6 @@
     supportedFilesystems = [
       "ntfs"
       "exfat"
-      "ext4"
-      "fat32"
       "btrfs"
     ];
     tmp.cleanOnBoot = true;

@@ -1,7 +1,4 @@
 { lib, config, ... }:
-let
-  wallpaper = ../../../../../assets/wallpapers/train-sideview.webp;
-in
 {
   programs.hyprlock = {
     enable = true;
@@ -17,7 +14,7 @@ in
       background = lib.mkForce [
         {
           monitor = "";
-          path = "${wallpaper}";
+          path = "${config.stylix.image}";
           blur_passes = 3;
           blur_size = 8;
         }

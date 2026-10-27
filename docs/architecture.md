@@ -1,14 +1,18 @@
-# Architecture (moved from CLAUDE.md 2026-10-09)
+# Architecture
 
 ### Flake Entry Point
 
 `flake.nix` is minimal. It recursively auto-imports all `.nix` files from `flake-modules/` using `collectFlakeModules`. The `flake-modules/` directory is numbered for load order:
 
 - `00-flake-parts-modules.nix` — flake-parts setup
+- `05-overlays.nix` — exposes `pkgs/` through an overlay
 - `10-systems.nix` — supported systems
 - `20-module-registry.nix` — auto-generates module registries from filesystem
 - `30-configurations-options.nix` — typed host declaration options
 - `40-outputs-nixos.nix` — transforms declarations into `nixosConfigurations`
+- `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
+- `60-templates.nix` — devenv templates stamped by `dev-init`
+- `70-deploy.nix` — deploy-rs push targets
 - `hosts/<name>.nix` — per-host distribution declarations
 
 ### Module Registry (`20-module-registry.nix`)
@@ -26,7 +30,7 @@ Each host follows a 2–3 file pattern in `hosts/<name>/`:
 
 | File | Purpose |
 |------|---------|
-| `variables.nix` | Plain attrset of host-specific choices (username, roles, videoDriver, monitors, etc.) |
+| `variables.nix` | Plain attrset of host-specific choices (username, roles, videoDriver, etc.) |
 | `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
 | `hardware-configuration.nix` | Auto-generated hardware scan |
 
@@ -34,7 +38,7 @@ The wiring: `flake-modules/hosts/<name>.nix` reads `variables.nix` and creates a
 
 ### Desktop vs Server Mode
 
-Desktop mode is Hyprland + SDDM + Waybar/Rofi/theming + GUI apps; headless mode
+Desktop mode is niri + SDDM + Waybar/Rofi/theming + GUI apps; headless mode
 is simply its absence. **Each host has exactly one mode**, chosen by whether it
 imports `modules/specialisations/desktop.nix` in its default boot:
 
@@ -46,9 +50,9 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 | `black-pi` | **headless** (aarch64 k3s worker, Raspberry Pi 4 on SD card, builds its own closure) | none |
 | `naked-pi` | **headless** (aarch64 Wi-Fi learning node, Raspberry Pi 3, role `rf-lab`; not in k3s) | none |
 
-Desktop mode ships **two coexisting compositors** — Hyprland and niri, both
-imported by `modules/specialisations/desktop.nix`; the compositor is picked
-at the SDDM greeter and niri is the default/daily driver.
+`modules/specialisations/desktop.nix` imports `modules/desktop/common`
+(compositor-agnostic bar, launcher, lock/idle, notifications, GTK) and
+`modules/desktop/niri`, the only compositor.
 
 The Acer headless configuration is the default and its `desktop` specialisation
 adds the Niri GUI boot entry. MSI is an intermittent opt-in k3s worker: powered
@@ -61,7 +65,7 @@ with a manual Windows Boot Manager entry (dual-boot preserved).
 `modules/specialisations/desktop.nix`; the default is `false`, so a host that
 does not import that module is headless. Fonts, GUI packages, desktop services
 and the Home Manager desktop imports all key off it. Do not gate new
-desktop-only config on `programs.hyprland.enable` — that ties it to one
+desktop-only config on `programs.niri.enable` — that ties it to one
 compositor.
 
 ### Profile System (`sam.profile`)
@@ -74,13 +78,10 @@ build error if a `variables.nix` sets it):
 - `hostname` (str) — System hostname
 - `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str) — Localisation
 - `videoDriver` (str) — GPU driver module selector; picks `modules/hardware/video/<value>.nix` (currently only "intel")
-- `monitors` (list of str) — Hyprland monitor rules, `name,resolution,position,scale`
 - `roles` (list of str) — Enabled roles from `modules/roles/`
-- `laptop` (bool) — Laptop-specific settings enabled
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets
 - `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
-- `sshAuthorizedKeys` (list of str) — Authorized SSH public keys
 
 Sibling options, outside the profile:
 - `sam.desktop.enable` (bool) — whether a GUI desktop session is active (outside the profile so `modules/specialisations/desktop.nix` can set it)
@@ -99,17 +100,22 @@ Composable role modules assigned per-host via `variables.nix`:
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node; disables sleep/suspend
 - **homelab-server** — k3s control plane
+- **rf-lab** — headless Wi-Fi learning appliance (naked-pi)
+- **embedded** — ESP32 development host (USB-serial, debug probes)
 
 ### Module Layout
 
 ```
 modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
-├── desktop/      # Desktop stack: hyprland/ and niri/ (Wayland compositors)
+├── desktop/      # Desktop stack: common/ and niri/
+├── embedded/     # ESP32 tooling
 ├── hardware/     # GPU drivers (intel), thermal
 ├── homelab/      # k3s (agent/server), sops, flux, tailscale, ntfy, watchdog
 ├── programs/     # Home Manager programs: cli/, browser/, editor/, terminal/
+├── rf-lab/       # Wi-Fi/Bluetooth lab and HIL tests
 ├── roles/        # Composition roles (see above)
+├── specialisations/  # Boot-menu variants (desktop.nix)
 └── themes/       # Catppuccin via Stylix
 ```
 

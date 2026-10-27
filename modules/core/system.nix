@@ -56,20 +56,6 @@ in
             description = "Video driver module selector.";
           };
 
-          monitors = mkOption {
-            type = types.listOf types.str;
-            # Hyprland monitor rules are `name,resolution,position,scale`.
-            # A leading comma means "all monitors".
-            default = [ ",preferred,auto,1" ];
-            description = "Hyprland monitor definitions.";
-          };
-
-          laptop = mkOption {
-            type = types.bool;
-            default = false;
-            description = "Whether this host is a laptop.";
-          };
-
           devTools = mkOption {
             type = types.bool;
             default = true;
@@ -91,16 +77,16 @@ in
             '';
           };
 
+          nativeOtel = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Enable private, collector-sanitized native harness telemetry on this host.";
+          };
+
           roles = mkOption {
             type = types.listOf types.str;
             default = [ "base" ];
             description = "Role aspects enabled for this host.";
-          };
-
-          sshAuthorizedKeys = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-            description = "Optional host-specific SSH authorized key override.";
           };
 
           lanCidr = mkOption {
@@ -111,6 +97,24 @@ in
         };
       };
       default = { };
+    };
+
+    herdr.machines = mkOption {
+      type = types.listOf (types.submodule {
+        options = {
+          label = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_.-]*"; description = "Herdr machine label, as in `herdr --machine <label>`."; };
+          target = mkOption { type = types.strMatching "([A-Za-z0-9_.-]+@)?[A-Za-z0-9_.-]+"; description = "SSH target `[user@]host` behind the label; the user's own key and known_hosts entry must already work."; };
+        };
+      });
+      default = [ ];
+      description = ''
+        Herdr saved machines this host should know: each is added with
+        `herdr machine add <target> --label <label> --remote-session default`
+        at Home Manager activation when the label is not saved yet (a saved
+        label is left as herdr has it, even if the target here changed). Only
+        the coordinator host declares its workers; a worker declares nothing
+        and so sees its own agents only (docs/herdr.md).
+      '';
     };
 
     userConfig = mkOption {
@@ -136,6 +140,11 @@ in
   };
 
   config = {
+    assertions = [{
+      assertion = lib.length (lib.unique (map (m: m.label) config.sam.herdr.machines)) == lib.length config.sam.herdr.machines;
+      message = "sam.herdr.machines labels must be unique (herdr --machine addresses a machine by its label).";
+    }];
+
     programs = {
       nix-ld.enable = true;
       nix-ld.libraries = with pkgs; [
@@ -197,7 +206,6 @@ in
         ];
         warn-dirty = false;
       };
-      optimise.automatic = true;
     };
 
     time.timeZone = profile.timezone;

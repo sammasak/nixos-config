@@ -5,25 +5,21 @@ in
 {
   imports = [
     ./hardware-configuration.nix
-    ./disk-config.nix
+    (import ../../modules/hardware/disko-single-ext4.nix "/dev/disk/by-id/nvme-SAMSUNG_MZVL2512HCJQ-00BL7_S64KNX1T235655")
 
     ../../modules/hardware/video/${vars.videoDriver}.nix
 
     # Default boot mode.
     ../../modules/specialisations/desktop.nix
 
-    # Required for Cilium: stock k3s containerd on the server never initializes
-    # the Cilium plugin ("cni plugin not initialized"). This gives it a v3-format
-    # CNI section with explicit bin/conf dirs, and registers crun/gvisor.
-    ../../modules/homelab/k3s/containerd-crun.nix
-
     # Wake msi (the intermittent LLM worker) on the work-hours schedule.
     ../../modules/homelab/msi-power-schedule.nix
-  ];
+  ] ++ lib.optional vars.nativeOtel ../../modules/homelab/native-otel-relay.nix;
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
-
+  # The coordinator host: the only one whose Herdr reaches the worker (`herdr --machine acer-swift`).
+  sam.herdr.machines = [ { label = "acer-swift"; target = "acer-swift"; } ];
   # As the always-on control plane, lenovo sends msi its Mon-Fri 09:00 wake.
   homelab.msiPowerSchedule.waker.enable = true;
 
@@ -38,6 +34,13 @@ in
   sops.secrets."nix_signing_key" = {
     sopsFile = ../../secrets/homelab/nix-signing-key.yaml;
     owner = "root";
+    mode = "0400";
+  };
+
+  sops.secrets."native_otlp_auth" = lib.mkIf vars.nativeOtel {
+    sopsFile = ../../secrets/claude/native-otlp-auth.yaml;
+    key = "token";
+    owner = vars.username;
     mode = "0400";
   };
 

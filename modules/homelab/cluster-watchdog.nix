@@ -10,23 +10,11 @@ in
   options.homelab.clusterWatchdog = {
     enable = mkEnableOption "k3s cluster health watchdog";
 
-    interval = mkOption {
-      type = types.str;
-      default = "*:0/10:00";
-      description = "systemd OnCalendar expression. Default: every 10 minutes.";
-    };
-
     ntfyUrl = mkOption {
       type = types.str;
       default = "http://localhost:${toString config.homelab.ntfy.port}/homelab-watchdog";
       defaultText = "http://localhost:<ntfy.port>/homelab-watchdog";
       description = "ntfy push URL for watchdog alerts.";
-    };
-
-    kubeconfig = mkOption {
-      type = types.str;
-      default = "/etc/rancher/k3s/k3s.yaml";
-      description = "Path to the kubeconfig used to query the cluster.";
     };
   };
 
@@ -38,7 +26,7 @@ in
       serviceConfig = {
         Type = "oneshot";
         User = "root";
-        Environment = "KUBECONFIG=${cfg.kubeconfig}";
+        Environment = "KUBECONFIG=/etc/rancher/k3s/k3s.yaml";
         # Prevent a hung curl/kubectl from blocking the next run.
         TimeoutStartSec = "90";
       };
@@ -124,7 +112,7 @@ in
       wantedBy = [ "timers.target" ];
       description = "Homelab cluster health watchdog — every 10 minutes";
       timerConfig = {
-        OnCalendar = cfg.interval;
+        OnCalendar = "*:0/10:00";
         Persistent = true;
       };
     };

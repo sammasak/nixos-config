@@ -2,8 +2,6 @@
 set -euo pipefail
 
 codex_skills_dir="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
-shared_skills_dir="${SHARED_SKILLS_DIR:-$HOME/.agents/skills}"
-repo_skills_dir="${REPO_SKILLS_DIR:-$HOME/skills/skills}"
 workflows_dir="${WORKFLOWS_DIR:-$HOME/knowledge/workflows}"
 manifest_file="$codex_skills_dir/.codex-generated.manifest"
 
@@ -12,8 +10,6 @@ mkdir -p "$codex_skills_dir"
 new_manifest="$(mktemp)"
 tmp_body="$(mktemp)"
 trap 'rm -f "$new_manifest" "$tmp_body"' EXIT
-
-declare -A workflow_names=()
 
 strip_frontmatter() {
   local source_path="$1"
@@ -122,22 +118,8 @@ if [ -d "$workflows_dir" ]; then
     [ "$skill_name" = "hooks" ] && continue
     context_path="$workflow_dir/CONTEXT.md"
     [ -f "$context_path" ] || continue
-
-    workflow_names["$skill_name"]=1
     write_wrapper "$skill_name" "$context_path" "$codex_skills_dir/$skill_name"
   done < <(find "$workflows_dir" -mindepth 1 -maxdepth 1 -type d | sort)
-fi
-
-if [ -d "$repo_skills_dir" ]; then
-  while IFS= read -r skill_dir; do
-    skill_name="$(basename "$skill_dir")"
-    source_path="$skill_dir/SKILL.md"
-    [ -f "$source_path" ] || continue
-    [ -e "$shared_skills_dir/$skill_name" ] && continue
-    [ -n "${workflow_names[$skill_name]:-}" ] && continue
-
-    write_wrapper "$skill_name" "$source_path" "$codex_skills_dir/$skill_name"
-  done < <(find "$repo_skills_dir" -mindepth 1 -maxdepth 1 -type d | sort)
 fi
 
 sort -u "$new_manifest" -o "$new_manifest"

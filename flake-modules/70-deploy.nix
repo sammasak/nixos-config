@@ -20,85 +20,42 @@ let
         })
       ];
     }).deploy-rs.lib;
+
+  x86 = inputs.deploy-rs.lib.x86_64-linux.activate;
+  aarch64 = (deployLib "aarch64-linux").activate;
+
+  mkNode = name: activate: profile: {
+    hostname = name;
+    profiles.system = {
+      # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
+      sshUser = "deploy";
+      user = "root";
+      path = activate.nixos config.flake.nixosConfigurations.${name};
+      autoRollback = true;
+      magicRollback = true;
+      activationTimeout = 180;
+      confirmTimeout = 30;
+    } // profile;
+  };
 in
 {
   flake.deploy.nodes = {
-    lenovo = {
-      hostname = "localhost";
-      profiles.system = {
-        # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
-        sshUser = "deploy";
-        user = "root";
-        path = inputs.deploy-rs.lib.x86_64-linux.activate.nixos config.flake.nixosConfigurations.lenovo;
-        autoRollback = true;
-        magicRollback = true;
-        activationTimeout = 180;
-        confirmTimeout = 30;
-      };
-    };
+    lenovo = mkNode "lenovo" x86 { } // { hostname = "localhost"; };
 
-    acer-swift = {
-      hostname = "acer-swift";
-      profiles.system = {
-        sshUser = "deploy";
-        user = "root";
-        path = inputs.deploy-rs.lib.x86_64-linux.activate.nixos config.flake.nixosConfigurations.acer-swift;
-        # False (the deploy-rs default too): building on acer, the sole k3s
-        # worker, would I/O-storm the node mid-deploy. Build stays on lenovo.
-        remoteBuild = false;
-        autoRollback = true;
-        magicRollback = true;
-        activationTimeout = 180;
-        confirmTimeout = 30;
-      };
-    };
+    # False (the deploy-rs default too): building on acer, the sole k3s
+    # worker, would I/O-storm the node mid-deploy. Build stays on lenovo.
+    acer-swift = mkNode "acer-swift" x86 { remoteBuild = false; };
 
     # Only reachable in its Mon-Fri ~09:00-21:00 power window.
-    msi-ms7758 = {
-      hostname = "msi-ms7758";
-      profiles.system = {
-        sshUser = "deploy";
-        user = "root";
-        path = inputs.deploy-rs.lib.x86_64-linux.activate.nixos config.flake.nixosConfigurations.msi-ms7758;
-        remoteBuild = false;
-        autoRollback = true;
-        magicRollback = true;
-        activationTimeout = 180;
-        confirmTimeout = 30;
-      };
-    };
+    msi-ms7758 = mkNode "msi-ms7758" x86 { remoteBuild = false; };
 
-    black-pi = {
-      hostname = "black-pi";
-      profiles.system = {
-        sshUser = "deploy";
-        user = "root";
-        path = (deployLib "aarch64-linux").activate.nixos config.flake.nixosConfigurations.black-pi;
-        # True, unlike acer: lenovo has no aarch64 builder, so the Pi builds its
-        # own closure (untrusted lukas is enough: .drv and sources are CA paths).
-        remoteBuild = true;
-        autoRollback = true;
-        magicRollback = true;
-        activationTimeout = 180;
-        confirmTimeout = 30;
-      };
-    };
+    # True, unlike acer: lenovo has no aarch64 builder, so the Pi builds its
+    # own closure (untrusted lukas is enough: .drv and sources are CA paths).
+    black-pi = mkNode "black-pi" aarch64 { remoteBuild = true; };
 
-    naked-pi = {
-      hostname = "naked-pi";
-      profiles.system = {
-        sshUser = "deploy";
-        user = "root";
-        path = (deployLib "aarch64-linux").activate.nixos config.flake.nixosConfigurations.naked-pi;
-        # True for the same no-aarch64-builder reason; rf-lab keeps the closure
-        # to cache hits plus text/symlink derivations, so 1 GiB is enough.
-        remoteBuild = true;
-        autoRollback = true;
-        magicRollback = true;
-        activationTimeout = 180;
-        confirmTimeout = 30;
-      };
-    };
+    # True for the same no-aarch64-builder reason; rf-lab keeps the closure
+    # to cache hits plus text/symlink derivations, so 1 GiB is enough.
+    naked-pi = mkNode "naked-pi" aarch64 { remoteBuild = true; };
   };
 
   perSystem =

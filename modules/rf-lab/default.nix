@@ -1,23 +1,27 @@
-# Opt-in passive 2.4 GHz observation kit for naked-pi. Capture and standard
-# discovery only — no injection, deauth, jamming or AP mode in any wrapper.
-# Driven from lenovo by the `rf:*` devenv tasks (see devenv.nix); full context
-# in modules/rf-lab/README.md and ~/knowledge/homelab/runbooks/naked-pi-rf-lab.md.
+# Opt-in 2.4 GHz RF lab for naked-pi: passive capture/discovery here, with the
+# owned-AP lab (ap.nix) and the Ethernet-gated HIL kick test (hil.nix) as the only
+# deauth/AP-mode paths — all scoped to our own AP and enrolled stations, never
+# frame injection or anyone else's network. Driven from lenovo by the `rf:*`
+# devenv tasks; full context in README.md and the naked-pi-rf-lab.md runbook.
 { config, lib, pkgs, ... }:
 let
   cfg = config.sam.rfLab;
   username = config.sam.profile.username;
+  radio = import ./radio.nix;
+  captureDir = "/var/lib/rf-lab/captures";
 
   # The USB adapter is the only monitor-capable radio (onboard is 2.4 GHz
-  # managed-only). Find it by its udev USB name (wlu*), which is stable — unlike
-  # the phy index, which flips with USB enumeration order across boots.
+  # managed-only).
   pickMon = ''
-    IF=$(iw dev | awk '/Interface/{print $2}' | grep -m1 '^wlu' || true)
+    exec 9>${radio.lock}
+    flock -n 9 || { echo "another rf-lab op holds the radio lock; retry when it finishes" >&2; exit 1; }
+    IF=$(${radio.findUsb})
     if [ -z "''${IF:-}" ]; then
       # The rtl8192cu RX path wedges after repeated mode flips or an undervoltage
       # USB brownout; one module reload clears the soft cases, a replug the rest.
       modprobe -r rtl8192cu 2>/dev/null || true; sleep 1
       modprobe rtl8192cu 2>/dev/null || true; sleep 3
-      IF=$(iw dev | awk '/Interface/{print $2}' | grep -m1 '^wlu' || true)
+      IF=$(${radio.findUsb})
     fi
     if [ -z "''${IF:-}" ]; then
       echo "no USB capture adapter (wlu*) present; replug it (see runbook)" >&2
@@ -47,11 +51,11 @@ let
 
   rfSweep = pkgs.writeShellApplication {
     name = "rf-sweep";
-    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod ];
+    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod util-linux ];
     text = ''
       per=''${1:-1.2}
       ${pickMon}
-      out="${cfg.captureDir}/sweep-$(date +%Y%m%dT%H%M%S).pcap"
+      out="${captureDir}/sweep-$(date +%Y%m%dT%H%M%S).pcap"
       ${enterMonitor}
       tcpdump -i "$IF" -y IEEE802_11_RADIO -s 300 'type mgt subtype beacon' -w "$out" 2>/dev/null &
       tp=$!
@@ -69,13 +73,13 @@ let
 
   rfCapture = pkgs.writeShellApplication {
     name = "rf-capture";
-    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod ];
+    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod util-linux ];
     text = ''
       ch=''${1:?usage: rf-capture <channel> [seconds] [bpf-filter]}
       secs=''${2:-30}
       filter=''${3:-}
       ${pickMon}
-      out="${cfg.captureDir}/capture-ch''${ch}-$(date +%Y%m%dT%H%M%S).pcap"
+      out="${captureDir}/capture-ch''${ch}-$(date +%Y%m%dT%H%M%S).pcap"
       ${enterMonitor}
       iw dev "$IF" set channel "$ch" 2>/dev/null || true
       # shellcheck disable=SC2086
@@ -108,46 +112,41 @@ let
   # effect on enu1u1/wlan0 or anyone else. Teardown rmmods the module.
   rfSim = pkgs.writeShellApplication {
     name = "rf-sim";
-    runtimeInputs = with pkgs; [ kmod iw iproute2 hostapd wpa_supplicant wmediumd iperf3 coreutils gnugrep ];
+    runtimeInputs = with pkgs; [ kmod iw iproute2 hostapd wpa_supplicant iperf3 coreutils gnugrep ];
     text = ''
-      ns=rfsim
-      loss=''${1:-0.0}     # arg1: wmediumd per-frame loss probability (0.0 = perfect)
-      outage=''${2:-1}     # arg2: seconds the station stays disconnected
+      loss=''${1:-0}      # arg1: tc-netem loss percent on the station link (0 = perfect)
+      outage=''${2:-1}    # arg2: seconds the station stays disconnected
+      kick=''${3:-0}      # arg3: 1 = AP-initiated hostapd deauth (the rf-ap-kick primitive), observed
+      apns=rfsim-ap; stns=rfsim-sta
       tmp=$(mktemp -d)
       cleanup() {
-        ip netns pids "$ns" 2>/dev/null | xargs -r kill 2>/dev/null || true
-        ip netns del "$ns" 2>/dev/null || true
+        for n in "$apns" "$stns"; do
+          ip netns pids "$n" 2>/dev/null | xargs -r kill 2>/dev/null || true
+          ip netns del "$n" 2>/dev/null || true
+        done
         modprobe -r mac80211_hwsim 2>/dev/null || true
         rm -rf "$tmp"
       }
       trap cleanup EXIT
       modprobe -r mac80211_hwsim 2>/dev/null || true
 
+      # Two netns each holding one hwsim radio: bare hwsim carries data between
+      # them (verified on this kernel). wmediumd is NOT used — in a shared netns it
+      # dropped all data frames; loss is modelled with tc-netem instead (#40).
       # shellcheck disable=SC2012
       before=$(ls /sys/class/ieee80211 2>/dev/null | sort)
       modprobe mac80211_hwsim radios=2
       sleep 1
       # shellcheck disable=SC2012
       after=$(ls /sys/class/ieee80211 2>/dev/null | sort)
-      newphys=$(comm -13 <(echo "$before") <(echo "$after"))
-      ip netns add "$ns"
-      for p in $newphys; do iw phy "$p" set netns name "$ns" 2>/dev/null || true; done
-
-      mapfile -t ifs < <(ip netns exec "$ns" sh -c 'ls /sys/class/net | grep "^wlan"')
-      if [ "''${#ifs[@]}" -lt 2 ]; then echo "hwsim did not yield two radios" >&2; exit 1; fi
-      ap=''${ifs[0]}; sta=''${ifs[1]}
-      apmac=$(ip netns exec "$ns" cat "/sys/class/net/$ap/address")
-      stamac=$(ip netns exec "$ns" cat "/sys/class/net/$sta/address")
-      echo "virtual radios: AP=$ap STA=$sta (netns $ns)"
-
-      # wmediumd mediates the virtual medium so data frames (not just assoc) flow;
-      # default_prob 0.0 is a perfect link — raise it to model loss for chaos.
-      cat >"$tmp/wm.cfg" <<EOF
-      ifaces : { ids = ["$apmac", "$stamac"]; };
-      model : { type = "prob"; default_prob = $loss; };
-      EOF
-      ip netns exec "$ns" wmediumd -c "$tmp/wm.cfg" >/dev/null 2>&1 &
-      sleep 1
+      mapfile -t newphys < <(comm -13 <(echo "$before") <(echo "$after"))
+      if [ "''${#newphys[@]}" -lt 2 ]; then echo "hwsim did not yield two radios" >&2; exit 1; fi
+      ip netns add "$apns"; ip netns add "$stns"
+      iw phy "''${newphys[0]}" set netns name "$apns" 2>/dev/null || true
+      iw phy "''${newphys[1]}" set netns name "$stns" 2>/dev/null || true
+      ap=$(ip netns exec "$apns" sh -c 'ls /sys/class/net | grep "^wlan"' | head -1)
+      sta=$(ip netns exec "$stns" sh -c 'ls /sys/class/net | grep "^wlan"' | head -1)
+      echo "virtual radios: AP=$ap ($apns) STA=$sta ($stns)"
 
       cat >"$tmp/hostapd.conf" <<EOF
       interface=$ap
@@ -165,45 +164,70 @@ let
       }
       EOF
 
-      # hostapd/wpa_supplicant bring their own interfaces up; pre-upping the AP
-      # makes nl80211 fail to set AP mode ("Could not configure driver mode").
-      ip netns exec "$ns" hostapd -B "$tmp/hostapd.conf" >/dev/null 2>&1 || { echo "hostapd failed to start" >&2; exit 1; }
-      ip netns exec "$ns" ip addr add 10.77.0.1/24 dev "$ap" 2>/dev/null || true
-      ip netns exec "$ns" wpa_supplicant -B -i "$sta" -c "$tmp/wpa.conf" >/dev/null 2>&1 || true
+      ip netns exec "$apns" hostapd -B "$tmp/hostapd.conf" >/dev/null 2>&1 || { echo "hostapd failed to start" >&2; exit 1; }
+      ip netns exec "$apns" ip addr add 10.77.0.1/24 dev "$ap" 2>/dev/null || true
+      ip netns exec "$apns" ip link set "$ap" up 2>/dev/null || true
+      ip netns exec "$stns" wpa_supplicant -B -i "$sta" -c "$tmp/wpa.conf" >/dev/null 2>&1 || true
 
       assoc=no
       for _ in $(seq 1 15); do
-        if ip netns exec "$ns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then assoc=yes; break; fi
+        if ip netns exec "$stns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then assoc=yes; break; fi
         sleep 1
       done
       echo "association: $assoc"
       [ "$assoc" = yes ] || { echo "station did not associate" >&2; exit 1; }
-      ip netns exec "$ns" ip addr add 10.77.0.2/24 dev "$sta" 2>/dev/null || true
+      ip netns exec "$stns" ip addr add 10.77.0.2/24 dev "$sta" 2>/dev/null || true
+      ip netns exec "$stns" ip link set "$sta" up 2>/dev/null || true
+
+      if [ "$loss" != "0" ]; then
+        ip netns exec "$stns" tc qdisc add dev "$sta" root netem loss "''${loss}%" 2>/dev/null || true
+      fi
       sleep 1
 
-      echo "== iperf3 (virtual link via wmediumd, 3s):"
-      ip netns exec "$ns" iperf3 -s -1 -D >/dev/null 2>&1 || true
+      echo "== iperf3 (two-netns virtual link, 3s, loss=''${loss}%):"
+      ip netns exec "$apns" iperf3 -s -1 -D >/dev/null 2>&1 || true
       sleep 1
-      ip netns exec "$ns" iperf3 --connect-timeout 3000 -c 10.77.0.1 -t 3 2>/dev/null | grep -E "sender|receiver" \
-        || echo "  no data plane: hwsim passes assoc but not data frames on kernel $(uname -r), even with wmediumd (see #40)"
+      iperf=$(ip netns exec "$stns" iperf3 --connect-timeout 3000 -c 10.77.0.1 -t 3 2>/dev/null \
+        | grep receiver | grep -oE '[0-9.]+ [MKG]bits/sec' | head -1)
+      if [ -n "$iperf" ]; then echo "  throughput: $iperf"; else echo "  no data path (unexpected for two-netns)"; fi
 
-      # Chaos/recovery: drop the station from its own AP, hold the outage, time recovery.
       echo "== disconnect/reconnect (outage ''${outage}s):"
       start=$(date +%s)
-      ip netns exec "$ns" wpa_cli -i "$sta" -p "$tmp/wpa" disconnect >/dev/null 2>&1 || true
+      ip netns exec "$stns" wpa_cli -i "$sta" -p "$tmp/wpa" disconnect >/dev/null 2>&1 || true
       sleep "$outage"
-      ip netns exec "$ns" wpa_cli -i "$sta" -p "$tmp/wpa" reconnect >/dev/null 2>&1 || true
+      ip netns exec "$stns" wpa_cli -i "$sta" -p "$tmp/wpa" reconnect >/dev/null 2>&1 || true
       recovered=timeout
       for _ in $(seq 1 15); do
-        if ip netns exec "$ns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then recovered=$(( $(date +%s) - start )); break; fi
+        if ip netns exec "$stns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then recovered=$(( $(date +%s) - start )); break; fi
         sleep 1
       done
       echo "  reassociated in ~''${recovered}s"
 
+      kicked=na; kickback=na
+      if [ "$kick" = 1 ]; then
+        # AP-initiated hostapd deauth is exactly the rf-ap-kick primitive; this
+        # observes the drop + auto-reassociation in sim (cipher-independent).
+        echo "== AP-initiated deauth (rf-ap-kick primitive):"
+        stamac=$(ip netns exec "$stns" cat /sys/class/net/"$sta"/address)
+        kstart=$(date +%s)
+        ip netns exec "$apns" hostapd_cli -p "$tmp/hapd" -i "$ap" deauthenticate "$stamac" >/dev/null 2>&1 || true
+        kicked=no
+        for _ in $(seq 1 10); do
+          if ! ip netns exec "$stns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then kicked=yes; break; fi
+          sleep 1
+        done
+        echo "  station dropped by AP deauth: $kicked"
+        kickback=timeout
+        for _ in $(seq 1 15); do
+          if ip netns exec "$stns" iw dev "$sta" link 2>/dev/null | grep -qi "Connected to"; then kickback=$(( $(date +%s) - kstart )); break; fi
+          sleep 1
+        done
+        echo "  reassociated after deauth in ~''${kickback}s"
+      fi
+
       # Deterministic artifact (simulation only — not a hardware measurement).
-      dp=blocked
-      printf '{"kind":"simulation","scenario":{"loss":%s,"outage_s":%s},"association":"%s","reassociated_s":"%s","data_plane":"%s","kernel":"%s"}\n' \
-        "$loss" "$outage" "$assoc" "$recovered" "$dp" "$(uname -r)"
+      printf '{"kind":"simulation","scenario":{"loss_pct":%s,"outage_s":%s,"kick":%s},"association":"%s","throughput":"%s","reassociated_s":"%s","kicked":"%s","kick_reassoc_s":"%s","kernel":"%s"}\n' \
+        "$loss" "$outage" "$kick" "$assoc" "''${iperf:-none}" "$recovered" "$kicked" "$kickback" "$(uname -r)"
     '';
   };
 
@@ -232,22 +256,10 @@ let
   tools = [ rfSweep rfCapture rfBtScan rfSim rfApOutage ];
 in
 {
-  imports = [ ./ap.nix ./net-watchdog.nix ./bluetooth.nix ];
+  imports = [ ./ap.nix ./net-watchdog.nix ./bluetooth.nix ./hil.nix ];
 
   options.sam.rfLab = {
-    enable = lib.mkEnableOption "passive 2.4 GHz RF observation kit (naked-pi)";
-
-    captureDir = lib.mkOption {
-      type = lib.types.str;
-      default = "/var/lib/rf-lab/captures";
-      description = "Directory for PCAPs; kept off the Nix store and aged out.";
-    };
-
-    retentionDays = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 14;
-      description = "Days before a capture is deleted, so the SD card cannot fill silently.";
-    };
+    enable = lib.mkEnableOption "2.4 GHz RF lab kit (naked-pi)";
   };
 
   config = lib.mkIf cfg.enable {
@@ -255,7 +267,8 @@ in
       (with pkgs; [ iw usbutils ethtool tcpdump bluez ]) ++ tools;
 
     systemd.tmpfiles.rules = [
-      "d ${cfg.captureDir} 0750 ${username} users ${toString cfg.retentionDays}d"
+      # Aged out so captures cannot fill the SD card silently.
+      "d ${captureDir} 0750 ${username} users 14d"
     ];
 
     # Monitor mode needs CAP_NET_ADMIN and capture needs raw sockets, so the

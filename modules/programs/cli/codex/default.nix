@@ -1,20 +1,16 @@
-skillsSrc:
-{ lib, pkgs, ... }:
+skillsSrc: nativeOtel:
+{ config, lib, pkgs, ... }:
 let
   portableSkillNames = [
-    "claude-ctl"
-    "clean-code-principles"
-    "container-workflows"
     "credentials"
     "knowledge-vault"
     "kubernetes-gitops"
+    "nix-audit-operator"
     "nix-flake-development"
-    "observability-patterns"
     "pi-offload"
-    "python-agentic-development"
-    "python-engineering"
     "rust-engineering"
     "secrets-management"
+    "tooling-feedback"
   ];
 
   mkSkillLinks =
@@ -58,12 +54,21 @@ let
 
   hooksConfig = builtins.toJSON {
     hooks = {
-      SessionStart = [
+    SessionStart = [
         {
           hooks = [
             {
               type = "command";
               command = "${codexContextHook}/bin/codex-workspace-context-hook";
+            }
+          ];
+        }
+        {
+          hooks = [
+            {
+              type = "command";
+              command = "bash '${config.home.homeDirectory}/.codex/herdr-agent-state.sh' session";
+              timeout = 10;
             }
           ];
         }
@@ -103,7 +108,12 @@ let
     project_doc_max_bytes = 65536
 
     [features]
-    codex_hooks = true
+    hooks = true
+
+    ${lib.optionalString nativeOtel ''
+    [shell_environment_policy.filters]
+    "OTEL_EXPORTER_OTLP_HEADERS" = "exclude"
+    ''}
 
     [projects."/home/lukas"]
     trust_level = "trusted"
@@ -119,6 +129,14 @@ let
     command = "${pkgs.playwright-mcp}/bin/mcp-server-playwright"
     args = ["--user-data-dir", "/tmp/playwright-mcp-profile", "--executable-path", "${pkgs.chromium}/bin/chromium", "--headless", "--no-sandbox"]
     startup_timeout_sec = 20
+    ${lib.optionalString nativeOtel ''
+
+    [otel]
+    environment = "prod"
+    exporter = "none"
+    metrics_exporter = { "otlp-http" = { endpoint = "http://127.0.0.1:4319/v1/metrics", protocol = "json" } }
+    trace_exporter = "none"
+    ''}
   '';
 
   # /run/secrets/openai_api_key is declared by modules/core/sops.nix. The path
@@ -153,7 +171,7 @@ in
         # Personal Codex Defaults
 
         - Treat `~/knowledge` as the active knowledge graph and route through `~/knowledge/CLAUDE.md` when a task references your projects or rooms.
-        - Prefer the shared skills in `~/.agents/skills`, then the Codex-local overlay in `~/.codex/skills` for knowledge workflows and Codex-compatible projections of `~/claude-code-skills/skills`.
+        - Prefer the shared skills in `~/.agents/skills`, then the Codex-local overlay in `~/.codex/skills` for knowledge workflows.
         - When working inside `~/knowledge`, load the nearest room `CONTEXT.md`; use `INDEX.md` only when `CONTEXT.md` is absent.
         - When a task names a workflow, `skills`, or `claude-code-skills`, route through `~/knowledge/CLAUDE.md` and load the owning room `CONTEXT.md`.
         - Keep Codex and Claude aligned on bash safety: avoid force pushes, avoid encrypting SOPS payloads from `/tmp`, and follow the knowledge guardrails.

@@ -74,7 +74,7 @@ in
 
   config = lib.mkIf (config.sam.rfLab.enable && cfg.enable) {
     hardware.bluetooth.enable = true;
-    environment.systemPackages = (with pkgs; [ bluez ]) ++ btTools;
+    environment.systemPackages = btTools;
 
     security.sudo.extraRules = [
       {

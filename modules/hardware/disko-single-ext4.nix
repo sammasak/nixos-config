@@ -1,11 +1,12 @@
 # Declares the current hand-partitioned layout for a future nixos-anywhere/
 # disko-install reinstall. enableConfig=false keeps hardware-configuration.nix
 # authoritative for the live system; disko generates nothing here.
+device:
 {
   disko.enableConfig = false;
 
   disko.devices.disk.main = {
-    device = "/dev/disk/by-id/nvme-INTEL_SSDPEKNW010T8_BTNH014425J11P0B";
+    inherit device;
     type = "disk";
     content = {
       type = "gpt";

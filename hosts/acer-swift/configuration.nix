@@ -5,12 +5,9 @@ in
 {
   imports = [
     ./hardware-configuration.nix
-    ./disk-config.nix
+    (import ../../modules/hardware/disko-single-ext4.nix "/dev/disk/by-id/nvme-INTEL_SSDPEKNW010T8_BTNH014425J11P0B")
 
     ../../modules/hardware/video/${vars.videoDriver}.nix
-
-    # Registers crun as an additional containerd runtime for k3s.
-    ../../modules/homelab/k3s/containerd-crun.nix
   ];
 
   sam.profile = vars;
@@ -51,11 +48,6 @@ in
   boot.extraModprobeConfig = ''
     options iwlwifi power_save=0
   '';
-
-  # 0 = retry autoconnect forever using the stored system secret. The default of
-  # 4 ends in a secret request to an *agent*, which never exists on a headless
-  # box — that turned one AP deauth into a 10-day outage.
-  networking.networkmanager.settings.connection."connection.autoconnect-retries" = 0;
 
   # Defence in depth for what the retry loop cannot reach: NetworkManager
   # wedged, driver stuck, associated but carrying no traffic.

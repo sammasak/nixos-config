@@ -6,8 +6,7 @@
   kbdLayout = "se";
   kbdVariant = "";
   consoleKeymap = "sv-latin1";
-  laptop = false;
   devTools = false;
   pi = false;
-  roles = [ "base" "rf-lab" ];
+  roles = [ "base" "rf-lab" "embedded" ];
 }

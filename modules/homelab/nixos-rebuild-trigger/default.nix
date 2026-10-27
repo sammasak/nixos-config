@@ -7,8 +7,11 @@
 # See vault: homelab/decisions/ADR-024-nixos-rebuild-trigger-security-model.md
 { config, lib, pkgs, ... }:
 let
-  inherit (lib) mkEnableOption mkIf mkOption types;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.homelab.nixosRebuildTrigger;
+  flakeRef = "github:sammasak/nixos-config";
+  hostAttr = "lenovo";
+  healthTimeoutSec = 120;
   username = config.sam.profile.username;
   # Resolved, not assumed eponymous: NixOS gives a normal user the shared `users`
   # group, and a tmpfiles rule naming a non-existent group is silently useless.
@@ -53,37 +56,8 @@ let
   activateScript = mkScript "nixos-rebuild-activate" false ./activate.sh;
 in
 {
-  options.homelab.nixosRebuildTrigger = {
-    enable = mkEnableOption "path-activated, health-gated nixos-rebuild for board worker";
-
-    flakeRef = mkOption {
-      type = types.str;
-      default = "github:sammasak/nixos-config";
-      description = ''
-        Remote flake reference (without revision) the rebuild is pinned to.
-        A full git SHA supplied in the request is appended as `/<rev>`. The local
-        writable clone is deliberately NOT used - the source is always fetched
-        fresh and integrity-checked from this remote so the triggering agent
-        cannot inject Nix that runs as root.
-      '';
-    };
-
-    hostAttr = mkOption {
-      type = types.str;
-      default = "lenovo";
-      description = "nixosConfigurations attribute to build (flake#<hostAttr>).";
-    };
-
-    healthTimeoutSec = mkOption {
-      type = types.int;
-      default = 120;
-      description = ''
-        Seconds to wait for post-activation health checks (k3s API :6443, sshd,
-        DNS) to pass before triggering an automatic rollback to the previous
-        generation.
-      '';
-    };
-  };
+  options.homelab.nixosRebuildTrigger.enable =
+    mkEnableOption "path-activated, health-gated nixos-rebuild for board worker";
 
   config = mkIf cfg.enable {
     # WHO CAN TRIGGER: any member of `${triggerGroup}` — 0770 is what makes the
@@ -140,11 +114,11 @@ in
         RESULT_FILE = resultFile;
         AUDIT_LOG = auditLog;
         LOCK_FILE = lockFile;
-        FLAKE_REF = cfg.flakeRef;
-        HOST_ATTR = cfg.hostAttr;
+        FLAKE_REF = flakeRef;
+        HOST_ATTR = hostAttr;
         ACTIVATION_UNIT = activationUnit;
         ACTIVATE_SCRIPT = lib.getExe activateScript;
-        HEALTH_TIMEOUT_SEC = toString cfg.healthTimeoutSec;
+        HEALTH_TIMEOUT_SEC = toString healthTimeoutSec;
         TRIGGER_USER = username;
       };
       serviceConfig = {
