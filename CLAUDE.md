@@ -94,7 +94,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 **Personal skills and agents** are managed via the [`sammasak/skills`](https://github.com/sammasak/skills) repo, added as a non-flake input (`flake = false`). The `skills.nix` module auto-discovers all directories in `skills/` and `.md` files in `agents/` from that input and creates Home Manager symlinks:
 
 - `skills/<name>/SKILL.md` → `~/.claude/skills/<name>/SKILL.md`
-- `agents/<name>.md` → `~/.claude/agents/<name>.md` (role adapters, i.e. an `.md` with a sibling `agents/<name>/` contract, are skipped; see `docs/coordinator.md`)
+- `agents/<name>.md` → `~/.claude/agents/<name>.md` (role adapters included: they are guarded by the settings-level `role-guard-dispatch.sh` hook, see `docs/coordinator.md`)
 
 These are available across all projects without manual `/plugin install`.
 
