@@ -17,7 +17,7 @@ coordinator = true;
 # hosts/<host>/configuration.nix
 sam.coordinator.identityFile = "/home/lukas/.ssh/id_coordinator";   # dedicated key, never the interactive one
 sam.coordinator.fleet = {
-  hosts = [ { name = "lenovo"; } { name = "acer-swift"; ssh = "lukas@acer-swift"; } ];
+  hosts = [ { name = "lenovo"; } { name = "acer-swift"; ssh = "lukas@192.168.10.110"; } ];  # an address: -F none sees no alias
   repos = [ { name = "skills"; gh = "sammasak/skills"; checkout = "/home/lukas/skills"; } ];
 };
 ```
