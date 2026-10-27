@@ -2,9 +2,74 @@
 { config, lib, pkgs, ... }:
 
 let
-  inherit (lib) mkEnableOption mkIf mkOption optionals types;
+  inherit (lib) mkEnableOption mkIf mkOption optionals optionalString types;
+  inherit (import ../../../lib/firewall.nix lib) mkDualBackendFirewall;
   cfg = config.homelab.k3s;
   quantity = types.strMatching "[0-9]+(Ki|Mi|Gi)";
+
+  isCilium = cfg.cni == "cilium";
+  lanCidr = config.sam.profile.lanCidr;
+  clusterSources = [
+    lanCidr # node LAN addrs + admin workstations
+    "10.42.0.0/16" # k3s pod CIDR (Cilium native-routing keeps the pod source IP)
+    "10.43.0.0/16" # k3s service CIDR (ClusterIP hairpin)
+  ];
+  # tailscale0 only exists on hosts running a tailscale client (acer runs none),
+  # where it is already a trustedInterface; the accept is inert otherwise and
+  # belt-and-braces there, matching the control-plane API rules in server.nix.
+  lanInterfaces = [ "tailscale0" ];
+
+  backend = config.networking.firewall.backend;
+
+  # North-south ingress: LAN clients (and remote admins over the tailnet) only.
+  # 8080 has no proven host listener here — lenovo's llm-gateway port-forward
+  # binds 127.0.0.1 and the pi reaches 8080 via the in-cluster ClusterIP, not
+  # this host port — but the ingress path (managed out-of-band in Flux) may bind
+  # it, so it stays opened, scoped to the LAN rather than any source.
+  ingressRules = mkDualBackendFirewall {
+    nftComment = "k3s cluster ingress (HTTP/HTTPS): LAN clients and tailnet only.";
+    ports = [
+      80 # HTTP  (ingress / ACME http-01)
+      443 # HTTPS (ingress)
+      8080 # Alternative HTTP (ingress)
+    ];
+    sources = [ lanCidr ];
+    interfaces = lanInterfaces;
+    inherit backend;
+  };
+
+  # Kubelet API and Cilium's node-to-node / metrics ports: reachable from LAN
+  # nodes, the pod and service CIDRs, and tailnet admins — never any source.
+  clusterRules = mkDualBackendFirewall {
+    nftComment = "k3s kubelet + Cilium health/metrics: LAN, cluster networks and tailnet only.";
+    ports = [
+      10250 # Kubelet API (liveness/readiness probes, metrics)
+    ]
+    ++ optionals isCilium [
+      4240 # Cilium agent health check (cilium-health, node-to-node)
+      4244 # Hubble server on the agent (Hubble Relay connects here)
+      9962 # Cilium agent Prometheus metrics
+      9963 # Cilium operator Prometheus metrics
+      9964 # Cilium Envoy proxy Prometheus metrics
+      9965 # Hubble Prometheus metrics
+    ];
+    sources = clusterSources;
+    interfaces = lanInterfaces;
+    inherit backend;
+  };
+
+  # Cilium's default tunnel mode is VXLAN on 8472; flannel's host-gw needs no
+  # tunnel. Node-to-node only, so scope to the LAN subnet.
+  vxlanRules = mkDualBackendFirewall {
+    nftComment = "k3s VXLAN overlay (8472/udp): node LAN addresses only.";
+    ports = [ ];
+    sources = [ lanCidr ];
+    interfaces = [ ];
+    udpPorts = [ 8472 ];
+    inherit backend;
+  };
+
+  needsVxlan = isCilium;
 in
 {
   imports = [ ../sops.nix ./containerd-crun.nix ];
@@ -190,25 +255,18 @@ in
         "cilium_health"
         "lxc+"
       ];
-      allowedTCPPorts = [
-        # Cluster ingress. Moved here from modules/core/network.nix so they are
-        # only opened on hosts that actually take part in the k3s data path;
-        # a desktop-only machine no longer exposes them.
-        80    # HTTP  (ingress / ACME http-01)
-        443   # HTTPS (ingress)
-        8080  # Alternative HTTP (ingress)
-        10250 # Kubelet API
-      ]
-        ++ optionals (cfg.cni == "cilium") [
-          4240 # Cilium agent health check (cilium-health, node-to-node)
-          4244 # Hubble server on the agent (Hubble Relay connects here)
-          9962 # Cilium agent Prometheus metrics
-          9963 # Cilium operator Prometheus metrics
-          9964 # Cilium Envoy proxy Prometheus metrics
-          9965 # Hubble Prometheus metrics
-        ];
-      # Cilium's default tunnel mode is VXLAN; flannel's host-gw needs no tunnel.
-      allowedUDPPorts = optionals (cfg.cni == "cilium") [ 8472 ];
+      # Scoped accepts replace the former any-source allowedTCPPorts/UDPPorts.
+      # These ports are cluster data-path, not public services, so they stay out
+      # of allowedTCPPorts (which accepts from any routable source). See the rule
+      # groups in `let` above for the source scoping per port.
+      extraInputRules =
+        ingressRules.extraInputRules
+        + clusterRules.extraInputRules
+        + optionalString needsVxlan vxlanRules.extraInputRules;
+      extraCommands =
+        ingressRules.extraCommands
+        + clusterRules.extraCommands
+        + optionalString needsVxlan vxlanRules.extraCommands;
     };
   };
 }
