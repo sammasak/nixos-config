@@ -59,8 +59,14 @@ let
     ${pkgs.python3}/bin/python scripts/test-native-otel-fish.py "$nixpkgs_source"
   '';
 
+  ollamaPortforwardTest = gate "ollama-portforward-test" (with pkgs; [ nix python3 ]) ''
+    unit=$(nix build --no-link --print-out-paths '.#nixosConfigurations.lenovo.config.systemd.user.units."ollama-portforward.service".unit')
+    ${pkgs.python3}/bin/python scripts/test-ollama-portforward-probe.py "$unit/ollama-portforward.service"
+  '';
+
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
     lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
+    ollamaPortforwardTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
@@ -300,6 +306,7 @@ in
     "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
     "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
+    "nixos:ollama-portforward-test" = task "lenovo ollama-portforward exits when the forward stops answering" ollamaPortforwardTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;
