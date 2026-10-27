@@ -13,6 +13,11 @@ in
   sam.profile = vars;
   sam.hostSecrets.enable = true;
 
+  # lenovo's coordinator reaches this worker only through herdr-shim (restrict,command=...), never a shell
+  sam.coordinator.acceptKeys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINxwDQW65gXCx944lIlAge8PMn3y3GI5/7EgkrX7SxXr coordinator@lenovo"
+  ];
+
   # Headless shell mode remains the default for the always-on worker. The GUI
   # variant is an explicit boot-menu specialisation for daily laptop use.
   specialisation.desktop.configuration = {

@@ -19,10 +19,10 @@ in
   sam.profile = vars;
   sam.hostSecrets.enable = true;
 
-  # Local-only fleet: no ssh target, so no dedicated key is needed yet; acer-swift joins as an ssh target
-  # once `sam.coordinator.identityFile` exists here and its public half is in acer's `acceptKeys`.
+  # acer is reached by LAN address: the tasks run ssh with -F none, so a ~/.ssh/config alias would not resolve
+  sam.coordinator.identityFile = "/home/lukas/.ssh/id_coordinator";
   sam.coordinator.fleet = {
-    hosts = [ { name = "lenovo"; } ];
+    hosts = [ { name = "lenovo"; } { name = "acer-swift"; ssh = "lukas@192.168.10.110"; } ];
     repos = [
       { name = "skills"; gh = "sammasak/skills"; }
       { name = "nixos-config"; gh = "sammasak/nixos-config"; }
