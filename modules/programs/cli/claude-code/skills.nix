@@ -7,13 +7,17 @@ let
   skillDirs = lib.filterAttrs (_: type: type == "directory") skillEntries;
 
   agentEntries = builtins.readDir "${skillsSrc}/agents";
-  # role adapters (<name>.md next to an agents/<name>/ contract) are not user-scope agents: a role launcher
-  # project-scopes its own adapter and guard, and linked here they would only attract delegation that the
-  # missing guard then refuses
-  isRoleAdapter = name: (agentEntries.${lib.removeSuffix ".md" name} or null) == "directory";
-  agentFiles = lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".md" name && !isRoleAdapter name) agentEntries;
+  agentFiles = lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".md" name) agentEntries;
+  # a role adapter (an .md with a sibling agents/<name>/ contract) is only safe to link when the same skills
+  # revision ships the settings-level dispatcher that guards it; an older pin must fail evaluation, not link it bare
+  roleContracts = lib.filterAttrs (name: type: type == "directory" && builtins.pathExists "${skillsSrc}/agents/${name}/ROLE.md") agentEntries;
+  guarded = roleContracts == { } || builtins.pathExists "${skillsSrc}/hooks/role-guard-dispatch.sh";
 in
 {
+  assertions = [{
+    assertion = guarded;
+    message = "skills input ships role contracts (${lib.concatStringsSep ", " (builtins.attrNames roleContracts)}) but no hooks/role-guard-dispatch.sh; bump the skills input before linking role adapters.";
+  }];
   home.file =
     { ".claude/CLAUDE.md".source = "${skillsSrc}/global-context.md"; }
     //

@@ -18,18 +18,6 @@ in
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
-
-  # Local-only fleet: no ssh target, so no dedicated key is needed yet; acer-swift joins as an ssh target
-  # once `sam.coordinator.identityFile` exists here and its public half is in acer's `acceptKeys`.
-  sam.coordinator.fleet = {
-    hosts = [ { name = "lenovo"; } ];
-    repos = [
-      { name = "skills"; gh = "sammasak/skills"; }
-      { name = "nixos-config"; gh = "sammasak/nixos-config"; }
-      { name = "homelab-gitops"; gh = "sammasak/homelab-gitops"; }
-    ];
-  };
-
   # As the always-on control plane, lenovo sends msi its Mon-Fri 09:00 wake.
   homelab.msiPowerSchedule.waker.enable = true;
 
