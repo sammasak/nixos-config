@@ -30,6 +30,11 @@ let
   pinFile = "${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256";
   # the role dispatcher is the single hook entry; it runs `guard:check` in the checkout for role agents only
   guard = "${skillsSrc}/hooks/role-guard-dispatch.sh";
+  roleGuardBin = pkgs.writeShellApplication {
+    name = "guard-check";
+    runtimeInputs = [ pkgs.jq pkgs.gawk pkgs.coreutils pkgs.gnugrep pkgs.gnused ];
+    text = import "${skillsSrc}/task-modules/guard-lib.nix" + "\nguard_main\n";
+  };
   userSettings = config.programs.claude-code.settings;
   # Only the role's permissions replace the user scope; host policy (telemetry env,
   # artifact switch, Herdr SessionStart hook) is carried over so the coordinator
@@ -43,7 +48,7 @@ let
       SessionStart = userSettings.hooks.SessionStart or [ ];
       PreToolUse = [{
         matcher = "Bash";
-        hooks = [{ type = "command"; command = "ROLE_GUARD_AGENT=coordinator ${guard}"; timeout = 20; }];
+        hooks = [{ type = "command"; command = "ROLE_GUARD_AGENT=coordinator ROLE_GUARD_BIN=${roleGuardBin}/bin/guard-check ${guard}"; timeout = 20; }];
       }];
     };
   };

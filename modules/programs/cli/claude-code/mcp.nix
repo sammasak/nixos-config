@@ -4,6 +4,15 @@
 #   (import .../claude-code/mcp.nix inputs.skills)
 skillsSrc: nativeOtel: hostName:
 { pkgs, lib, config, ... }:
+let
+  # the role guard library built into the store: a checkout the agent can write cannot change its own guard
+  roleGuardShipped = builtins.pathExists "${skillsSrc}/task-modules/guard-lib.nix";
+  roleGuardBin = pkgs.writeShellApplication {
+    name = "guard-check";
+    runtimeInputs = [ pkgs.jq pkgs.gawk pkgs.coreutils pkgs.gnugrep pkgs.gnused ];
+    text = import "${skillsSrc}/task-modules/guard-lib.nix" + "\nguard_main\n";
+  };
+in
 {
   programs.claude-code = {
     enable = true;
@@ -115,10 +124,11 @@ skillsSrc: nativeOtel: hostName:
                 timeout = 15;
               }
             ]
-            # subagent frontmatter hooks never run, so the role guard dispatches here on agent_type (no-op otherwise)
+            # subagent frontmatter hooks never run, so the role guard dispatches here on agent_type (no-op otherwise);
+            # the guard library is built into the store so a writable checkout cannot change its own guard
             ++ lib.optional (builtins.pathExists "${skillsSrc}/hooks/role-guard-dispatch.sh") {
               type = "command";
-              command = "${skillsSrc}/hooks/role-guard-dispatch.sh";
+              command = "${lib.optionalString roleGuardShipped "ROLE_GUARD_BIN=${roleGuardBin}/bin/guard-check "}${skillsSrc}/hooks/role-guard-dispatch.sh";
               timeout = 15;
             };
           }
