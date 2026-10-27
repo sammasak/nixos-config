@@ -4,6 +4,9 @@
 #   (import .../claude-code/mcp.nix inputs.skills)
 skillsSrc: nativeOtel: hostName:
 { pkgs, lib, config, ... }:
+let
+  roleGuard = import ./role-guard.nix skillsSrc pkgs;
+in
 {
   programs.claude-code = {
     enable = true;
@@ -115,10 +118,11 @@ skillsSrc: nativeOtel: hostName:
                 timeout = 15;
               }
             ]
-            # subagent frontmatter hooks never run, so the role guard dispatches here on agent_type (no-op otherwise)
+            # subagent frontmatter hooks never run, so the role guard dispatches here on agent_type (no-op otherwise);
+            # the guard library is built into the store so a writable checkout cannot change its own guard
             ++ lib.optional (builtins.pathExists "${skillsSrc}/hooks/role-guard-dispatch.sh") {
               type = "command";
-              command = "${skillsSrc}/hooks/role-guard-dispatch.sh";
+              command = "${roleGuard.envPrefix}${roleGuard.dispatcher}";
               timeout = 15;
             };
           }
