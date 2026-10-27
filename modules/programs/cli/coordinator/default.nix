@@ -30,7 +30,7 @@ let
   pinFile = "${config.xdg.configHome}/coordinator/skills-${rev}.integrity.sha256";
   # the role dispatcher is the single hook entry; it runs `guard:check` in the checkout for role agents only
   roleGuard = import ../claude-code/role-guard.nix skillsSrc pkgs;
-  guard = roleGuard.dispatcher;
+  guard = assert roleGuard.shipped || throw "coordinator: the skills input has no task-modules/guard-lib.nix; bump the skills input"; roleGuard.dispatcher;
   userSettings = config.programs.claude-code.settings;
   # Only the role's permissions replace the user scope; host policy (telemetry env,
   # artifact switch, Herdr SessionStart hook) is carried over so the coordinator
