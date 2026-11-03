@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tomllib
@@ -91,17 +92,26 @@ def main():
           "the script exits before any model call when nothing is actionable or pending")
     check("claude -p --agent coordinator --max-budget-usd" in script, "the session is headless, the coordinator agent, spend-capped")
     check(script.index("flock -n 9") < script.index("devenv tasks run coord:changed"), "the lock is taken before coord:changed runs, so two runs never race on the snapshot")
-    check("--disallowedTools 'Bash(devenv tasks run herdr:message:*)'" in script and "'Bash(gh:*)'" in script and "Edit Write" in script,
-          "the headless session cannot reach the act tasks, gh, pushes or file edits")
-    check('if [ "$rc" -eq 0 ]; then : > "$pending"; : > "$attempts"' in script
+    check("--disallowedTools 'Bash(devenv:*)'" in script and "'Bash(herdr agent prompt:*)'" in script and "'Bash(gh:*)'" in script
+          and "'Bash(git push:*)'" in script and "Edit Write" in script,
+          "the headless session cannot reach devenv directly, raw herdr prompts, gh, pushes or file edits")
+    check('if [ "$rc" -eq 0 ]; then : > "$pending"; rm -f "$attempts"' in script
           and script.index("|| rc=$?") < script.index('if [ "$rc" -eq 0 ]; then : > "$pending"'),
           "pending changes and the attempt counter are cleared only after claude exited 0")
     check('[ "$rec" -nt "$state/.started" ]' in script, "a latest.json not rewritten by this run is not trusted")
     check('[ "$tries" -ge 2 ]' in script and 'cat "$pending" >> "$parked"' in script and script.index('[ "$tries" -ge 2 ]') < script.index("claude -p"),
           "after two failed sessions the pending lines are parked instead of buying a third")
-    check("--permission-mode dontAsk" in script and "--allowedTools Read 'Bash(cd ~/claude-code-skills:*)'" in script
-          and "'Bash(herdr --machine:*)'" in script and "'Bash(devenv tasks run herdr:message:*)'" in script,
-          "the session runs dontAsk with an allow list of read tasks and Herdr read commands; --machine and act tasks denied")
+    check("--permission-mode dontAsk" in script and "'Bash(coordinator-read:*)'" in script and "'Bash(devenv:*)'" in script
+          and "'Bash(herdr --machine:*)'" in script and "Bash(devenv tasks run" not in script,
+          "the session runs dontAsk; tasks only through coordinator-read, devenv itself and --machine denied")
+    check('[ -s "$parked" ] && {' in script and script.index('[ -s "$parked" ] && {') < script.index("claude -p"),
+          "parked lines stop every later session until the owner clears pending.failed")
+    wrapper_dirs = re.findall(r"/nix/store/[a-z0-9]+-coordinator-read/bin", script)
+    check(wrapper_dirs != [], "coordinator-read is on the wake-up script's PATH")
+    wrapper = pathlib.Path(wrapper_dirs[0], "coordinator-read").read_text()
+    check("coord:brief|coord:changed|work:status|herdr:inventory|herdr:inspect|gh:work|git:recent|harness:session-summary) ;;" in wrapper
+          and "--option" not in wrapper and "input=$(jq -c '. + {peek:true}'" in wrapper,
+          "coordinator-read takes only a read task and an input object, forces peek on coord:changed, passes no --option")
     check("Task does not exist: coord:changed" in script, "a checkout without the task is skipped, not failed")
 
 main()

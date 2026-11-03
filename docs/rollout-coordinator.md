@@ -106,10 +106,12 @@ counts and the audit log's open handoffs against
 nothing is actionable. Only then does the service start one headless
 `claude -p --agent coordinator --max-budget-usd <maxBudgetUsd>` session,
 write its report to `~/.local/state/coordinator/changed/wake-<ts>.md` and
-raise a Herdr toast. The session runs `--permission-mode dontAsk` with an
-allow list of the role's read tasks and Herdr's read commands (the act tasks,
-`herdr --machine`, `gh`, `git push` and file edits are denied as well), so
-it can only read and report. Lines are appended to `changed/pending.txt`
+raise a Herdr toast. The session runs `--permission-mode dontAsk`; tasks are
+reachable only through `coordinator-read <task> ['<input-json>']` (the role's
+read tasks, `coord:changed` forced to `peek`, no other devenv arguments) plus
+Herdr's read commands, while `devenv` itself, `herdr --machine`, the act
+tasks, `gh`, `git push` and file edits are denied, so it can only read and
+report. Lines are appended to `changed/pending.txt`
 first and cleared only when the session exits 0; after two failed sessions
 in a row they are parked in `changed/pending.failed` (toast raised) and no
 further session starts until the owner clears that file, so a persistent
