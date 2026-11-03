@@ -111,7 +111,12 @@ reachable only through `coordinator-read <task> ['<input-json>']` (the role's
 read tasks, `coord:changed` forced to `peek`, no other devenv arguments) plus
 Herdr's read commands, while `devenv` itself, `herdr --machine`, the act
 tasks, `gh`, `git push` and file edits are denied, so it can only read and
-report. Lines are appended to `changed/pending.txt`
+report; `Read` is scoped to the checkout and the coordinator state and no
+shell read or write primitive is allowed. The session authenticates with the
+OAuth token file the Fish session also exports
+(`/run/secrets/claude_oauth_token`), else `~/.claude/.credentials.json`; the
+journal names the source. The lock fd never reaches a child, and a lock still
+held after 20 s fails the run (exit 75) with a toast. Lines are appended to `changed/pending.txt`
 first and cleared only when the session exits 0; after two failed sessions
 in a row they are parked in `changed/pending.failed` (toast raised) and no
 further session starts until the owner clears that file, so a persistent
