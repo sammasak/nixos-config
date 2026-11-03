@@ -116,17 +116,19 @@ send). Its allow list, pinned word for word by
 | Allowed | Form | What it reaches |
 |---|---|---|
 | `coordinator-read` | `coordinator-read <task> ['<input-json>']` | the role's read tasks: `coord:brief` (prints `brief/latest.md`, never devenv's stdout), `coord:changed` (never consuming), `coord:capacity`, `work:status`, `herdr:inventory`, `herdr:inspect`, `herdr:await`, `gh:work`, `gh:repos`, `git:recent`, `harness:session-summary` |
-| `coordinator-act` | `coordinator-act <task> '<input-json>'` | `coord:handoff`, `herdr:message`, `gh:label`, `gh:comment`; one non-empty object, no other argument; `coord:spawn` is not reachable |
-| `coordinator-prompt` | `coordinator-prompt [--machine <label>] <agent_id> /clear\|/compact` | `herdr agent prompt` with exactly that literal text (a worker's hygiene prompt); each call is logged in `~/.local/state/coordinator/prompts.log` |
-| Herdr reads | `herdr machine list\|status`, `herdr agent list\|get\|read\|wait` | as typed, this host only |
+| `coordinator-act` | `coordinator-act <task> '<input-json>'` | `coord:handoff`, `herdr:message`, `gh:label`, `gh:comment`; one non-empty object, no other argument; `gh:comment` and `gh:label` only with `repo` under the owner's account (`sam.userConfig.git.userName/<repo>`); `coord:spawn` is not reachable |
+| `coordinator-prompt` | `coordinator-prompt [--machine <label>] <agent_id> /clear\|/compact` | `herdr agent prompt` with exactly that literal text (a worker's hygiene prompt); identifiers never start with a dash, so none becomes a herdr flag; each call is logged in `~/.local/state/coordinator/prompts.log` |
+| Herdr reads | `herdr machine list\|status`, `herdr agent list\|get\|read\|wait` | as typed; the `herdr --machine` deny is textual, so the trailing `--machine <label>` form of these read commands still reaches a saved machine (read-only) |
 | `cd` | into `~/claude-code-skills` | |
 | `Read` | `//home/lukas/claude-code-skills/**`, `//home/lukas/.local/state/coordinator/**` | the checkout and the coordinator state, `//` (filesystem-root) anchors |
 
 Denied, and refused rather than asked: `devenv` itself (a free `--option`
 would swap `herdrCommand` or `ghCommand`), `herdr agent prompt|send-keys|start`,
 `herdr --machine`, `herdr pane`, `gh`, `git`, `ssh`, `sudo`, `Edit`, `Write`,
-`NotebookEdit`, and every shell read or write primitive (`cat`, `jq`, `tee`,
-interpreters) since none is on the allow list. Each act lands in
+`NotebookEdit`, and every shell write primitive and interpreter (`tee`, `sed -i`,
+`bash -c`, `python`) since none is on the allow list; the file readers Claude
+Code path-checks against the Read rules (`cat`, `head`, `tail`) reach only the
+two Read scopes, and `jq` is refused. Each act lands in
 `~/.local/state/coordinator/audit.jsonl` through its task (an attempt line
 before, an outcome line after), so a wake session that sent a handoff leaves
 `herdr:message` attempt and outcome records naming its `handoff_id`,

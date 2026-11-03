@@ -13,6 +13,8 @@ let
   skillsDir = "${config.home.homeDirectory}/claude-code-skills";
   # The long-lived OAuth token the Fish session also exports; the service has no interactive login.
   oauthTokenFile = osConfig.sops.secrets.claude_oauth_token.path or "/run/secrets/claude_oauth_token";
+  # the only GitHub account the unattended session may write to (gh:comment, gh:label); the skills tasks accept any OWNER/REPO
+  ghOwner = osConfig.sam.userConfig.git.userName;
   # ROLE.md's read tasks, minus coord:handoff (the first half of a send, so it lives in coordinator-act)
   readTasks = [ "coord:brief" "coord:changed" "coord:capacity" "work:status" "herdr:inventory" "herdr:inspect" "herdr:await" "gh:work" "gh:repos" "git:recent" "harness:session-summary" ];
   # the act tasks the owner opened to the unattended session (skills#28): draft, send, label, comment; never coord:spawn
@@ -60,6 +62,12 @@ let
       [ "$#" -eq 2 ] || { echo "coordinator-act: usage: coordinator-act <task> '<input-json>' (the input object is required)" >&2; exit 3; }
       input=$(jq -c 'select(type == "object" and length > 0)' <<<"$input" 2>/dev/null) || input=""
       [ -n "$input" ] || { echo "coordinator-act: the input must be one non-empty JSON object" >&2; exit 3; }
+      # a GitHub write stays inside the owner's account: worker terminals and issue text are this session's inputs, so a
+      # repo they name is data, never a target
+      case "$task" in gh:comment|gh:label)
+        jq -e --arg o "${ghOwner}" '(.repo | type) == "string" and (.repo | test("^" + $o + "/[A-Za-z0-9_.-]+\\z"))' <<<"$input" >/dev/null 2>&1 \
+          || { echo "coordinator-act: $task needs repo to be one of the owner's repositories (${ghOwner}/<repo>); got $(jq -c '.repo' <<<"$input")" >&2; exit 3; } ;;
+      esac
       cd "''${COORDINATOR_SKILLS_DIR:-${skillsDir}}"
       # the task itself is the gate: herdr:message sends only with the owner's label on the issue (authorized_by), and
       # every act lands in the audit log with an attempt line before and an outcome line after; nothing is retried here
@@ -78,8 +86,9 @@ let
       [ "$#" -eq 2 ] || usage
       agent="$1"; text="$2"
       case "$text" in /clear|/compact) ;; *) echo "coordinator-prompt: only the literal text /clear or /compact may be sent (got '$text'); any other message goes through coordinator-act herdr:message" >&2; exit 3 ;; esac
-      [[ "$agent" =~ ^[A-Za-z0-9_:.@-]+$ ]] || { echo "coordinator-prompt: agent_id '$agent' has characters outside [A-Za-z0-9_:.@-]" >&2; exit 3; }
-      [ -z "$machine" ] || [[ "$machine" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "coordinator-prompt: machine label '$machine' has characters outside [A-Za-z0-9_.-]" >&2; exit 3; }
+      # the same shapes as the prelude's valid_id and valid_machine: no leading dash, so an identifier is never a herdr flag
+      [[ "$agent" =~ ^[A-Za-z0-9_][A-Za-z0-9_:.@-]*$ ]] || { echo "coordinator-prompt: agent_id '$agent' must match [A-Za-z0-9_][A-Za-z0-9_:.@-]*" >&2; exit 3; }
+      [ -z "$machine" ] || [[ "$machine" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || { echo "coordinator-prompt: machine label '$machine' must match [A-Za-z0-9_][A-Za-z0-9_.-]*" >&2; exit 3; }
       log="''${XDG_STATE_HOME:-$HOME/.local/state}/coordinator/prompts.log"; mkdir -p "$(dirname "$log")"
       rc=0
       if [ -n "$machine" ]; then timeout -k 1 30 herdr --machine "$machine" agent prompt "$agent" "$text" 9>&- || rc=$?

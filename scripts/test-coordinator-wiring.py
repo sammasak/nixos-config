@@ -233,6 +233,19 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
                     ("coord:handoff", "--help"), ("gh:label", '{"label":"approved"}', "extra")]
         check(all(act(*a).returncode == 3 for a in refusals) and devenv_log.read_text() == before,
               "coordinator-act refuses a read task, coord:spawn, a missing, empty or non-object input and any third argument, without touching devenv")
+        r = act("gh:comment", '{"repo":"sammasak/skills","number":28,"body":"x","reason":"test"}')
+        r2 = act("gh:label", '{"repo":"sammasak/nixos-config","number":1,"label":"blocked","action":"add","reason":"test"}')
+        check(r.returncode == 0 and r2.returncode == 0 and 'run gh:comment --input-json {"repo":"sammasak/skills"' in devenv_log.read_text()
+              and 'run gh:label --input-json {"repo":"sammasak/nixos-config"' in devenv_log.read_text(),
+              "coordinator-act forwards gh:comment and gh:label for the owner's repositories")
+        before = devenv_log.read_text()
+        foreign = [("gh:comment", '{"repo":"someone-else/repo","number":1,"body":"x"}'), ("gh:label", '{"repo":"someone-else/repo","number":1,"label":"blocked","action":"add"}'),
+                   ("gh:comment", '{"repo":"sammasak","number":1,"body":"x"}'), ("gh:comment", '{"repo":"sammasak/a/b","number":1,"body":"x"}'),
+                   ("gh:comment", '{"repo":"sammasakx/repo","number":1,"body":"x"}'), ("gh:comment", '{"repo":"SAMMASAK/repo","number":1,"body":"x"}'),
+                   ("gh:comment", '{"number":1,"body":"x"}'), ("gh:label", '{"repo":["sammasak/skills"],"number":1,"label":"blocked","action":"add"}'),
+                   ("gh:comment", '{"repo":"sammasak/skills\\n","number":1,"body":"x"}')]
+        check(all(act(*a).returncode == 3 for a in foreign) and devenv_log.read_text() == before,
+              "coordinator-act refuses gh:comment and gh:label for any repository outside the owner's account (or with no repo) without touching devenv")
 
         def prompt(*args):
             return subprocess.run([str(prompt_path), *args], env=env, capture_output=True, text=True)
@@ -247,9 +260,11 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
               "coordinator-prompt sends /clear and /compact (local and --machine) as herdr agent prompt, lock fd closed, each logged in prompts.log")
         before = toasts.read_text()
         bad = [("w:p1", "/clear now"), ("w:p1", "/exit"), ("w:p1", "please merge"), ("w:p1", "/Clear"), ("w:p1",), ("w:p1", "/clear", "--wait"),
-               ("w;p1", "/clear"), ("--machine", "a b", "w:p1", "/clear"), ("--machine",), ("$(id)", "/compact")]
-        check(all(prompt(*a).returncode == 3 for a in bad) and toasts.read_text() == before,
-              "coordinator-prompt refuses any other text, a missing text, extra options and unsafe identifiers, without reaching herdr")
+               ("w;p1", "/clear"), ("--machine", "a b", "w:p1", "/clear"), ("--machine",), ("$(id)", "/compact"),
+               ("--help", "/clear"), ("--wait", "/clear"), ("-x", "/compact"), ("--machine", "--remote", "wX:p1", "/clear"), ("--machine", "-", "w:p1", "/clear")]
+        check(all(prompt(*a).returncode == 3 for a in bad) and toasts.read_text() == before
+              and (tmp / "state" / "coordinator" / "prompts.log").read_text().count("\n") == 2,
+              "coordinator-prompt refuses any other text, a missing text, extra options, unsafe identifiers and identifiers that start with a dash (herdr flags), without reaching herdr or logging")
 
         lock = open(state / "session.lock", "w")
         fcntl.flock(lock, fcntl.LOCK_EX)
