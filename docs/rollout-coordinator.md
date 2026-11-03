@@ -108,9 +108,9 @@ nothing is actionable. Only then does the service start one headless
 write its report to `~/.local/state/coordinator/changed/wake-<ts>.md` and
 raise a Herdr toast. The session runs `--permission-mode dontAsk`; tasks are
 reachable only through `coordinator-read <task> ['<input-json>']` (the role's
-read tasks, `coord:changed` never consuming, `coord:brief` answered with
-`brief/latest.md` instead of the `--show-output` JSON dump, no other devenv
-arguments) plus
+read tasks, `coord:changed` never consuming, no other devenv arguments;
+`coord:brief` hands back the Markdown `brief/latest.md` alone, not devenv's
+stdout with every task's JSON) plus
 Herdr's read commands, while `devenv` itself, `herdr --machine`, the act
 tasks, `gh`, `git push` and file edits are denied, so it can only read and
 report; `Read` is scoped to the checkout and the coordinator state with

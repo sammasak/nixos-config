@@ -127,17 +127,16 @@ def main():
           and "--option" not in wrapper and "input=$(jq -c '. + {consume:false}'" in wrapper and "consume:true" not in wrapper,
           "coordinator-read takes only a read task and an input object, never consumes with coord:changed, passes no --option")
     check(" 9>&-" in wrapper.split("exec devenv")[1], "coordinator-read closes the lock fd before devenv")
-    brief = wrapper.split('if [ "$task" = coord:brief ]; then')[1].split("fi\n")[0]
-    check("--show-output" not in brief and 'devenv tasks run coord:brief --input-json "$input" > /dev/null' in brief and 'exec cat "$md"' in brief
-          and "/coordinator/brief/latest.md" in brief,
-          "coordinator-read prints the Markdown brief (brief/latest.md), never the --show-output JSON dump, for coord:brief")
     check("Task does not exist: coord:changed" in script, "a checkout without the task is skipped, not failed")
-    behaviour_checks(pathlib.Path(wakeup, "bin/coordinator-wakeup"))
+    check("coordinator-read coord:brief prints the Markdown brief" in script and "/.local/state/coordinator/brief/latest.json, readable with Read" in script,
+          "the wake prompt tells the session that coordinator-read coord:brief prints the Markdown and where the JSON record is")
+    behaviour_checks(pathlib.Path(wakeup, "bin/coordinator-wakeup"), pathlib.Path(wrapper_dirs[0], "coordinator-read"))
 
 
-def behaviour_checks(script_path):
+def behaviour_checks(script_path, read_path):
     """Run the built script against fakes: the lock fd must not reach children, a held lock must fail loudly,
-    an empty change set must end before any session, and an unreadable credential must not start one."""
+    an empty change set must end before any session, and an unreadable credential must not start one;
+    coordinator-read coord:brief must hand the session the Markdown brief alone."""
     import fcntl
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
@@ -148,6 +147,9 @@ def behaviour_checks(script_path):
         (fakes / "devenv").write_text(
             "#!/bin/sh\n"
             'if [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED; else echo FD9_CLOSED; fi\n'
+            'case "$*" in *coord:brief*) echo \'{"task":"herdr:inventory","hosts":[{"agents":[]}]}\'; echo \'{"task":"coord:brief","items":[]}\'\n'
+            '  if [ -n "${FAKE_BRIEF_MD:-}" ]; then mkdir -p "$XDG_STATE_HOME/coordinator/brief"; printf \'%s\\n\' "$FAKE_BRIEF_MD" > "$XDG_STATE_HOME/coordinator/brief/latest.md"; fi\n'
+            '  exit "${FAKE_BRIEF_RC:-0}";; esac\n'
             'printf \'{"schema_version":1,"task":"coord:changed","observed_at":"now","changes":%s}\\n\' "${FAKE_CHANGES:-[]}" > "$XDG_STATE_HOME/coordinator/changed/latest.json"\n')
         (fakes / "herdr").write_text('#!/bin/sh\necho "herdr $*" >> "$XDG_STATE_HOME/toasts.log"\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED >> "$XDG_STATE_HOME/toasts.log"; fi\n')
         (fakes / "claude").write_text('#!/bin/sh\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED; else echo FD9_CLOSED; fi; echo "oauth token ${CLAUDE_CODE_OAUTH_TOKEN:+set}${CLAUDE_CODE_OAUTH_TOKEN:-unset}" | sed "s/set.*/set/"\n')
@@ -163,6 +165,20 @@ def behaviour_checks(script_path):
         r = run()
         check(r.returncode == 0 and "FD9_CLOSED" in (state / "run.log").read_text() and not (state / "pending.txt").exists(),
               "an empty change set ends before any session and devenv saw no lock fd")
+
+        def read(task, extra_env=None):
+            return subprocess.run([str(read_path), task], env=dict(env, **(extra_env or {})), capture_output=True, text=True)
+
+        r = read("coord:brief", {"FAKE_BRIEF_MD": "# Fleet brief (now)\n- nothing", "FAKE_BRIEF_RC": "2"})
+        check(r.returncode == 2 and r.stdout == "# Fleet brief (now)\n- nothing\n" and '{"' not in r.stdout + r.stderr,
+              "coordinator-read coord:brief prints the fresh latest.md alone, with devenv's exit code, never the tasks' JSON")
+        stale = (tmp / "state" / "coordinator" / "brief" / "latest.md"); os.utime(stale, (0, 0))
+        r = read("coord:brief")
+        check(r.returncode == 0 and "Fleet brief" not in r.stdout and '"task":"coord:brief"' in r.stdout and "FD9_CLOSED" in r.stdout,
+              "a checkout that did not rewrite latest.md (skills#44 not pulled) gets the full output instead of a stale brief")
+        r = read("work:status")
+        check(r.returncode == 0 and '"task":"coord:changed"' not in r.stdout and "Fleet brief" not in r.stdout,
+              "other read tasks are unchanged (no latest.md read)")
 
         lock = open(state / "session.lock", "w")
         fcntl.flock(lock, fcntl.LOCK_EX)
