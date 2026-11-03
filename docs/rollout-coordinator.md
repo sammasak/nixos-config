@@ -106,12 +106,14 @@ counts and the audit log's open handoffs against
 nothing is actionable. Only then does the service start one headless
 `claude -p --agent coordinator --max-budget-usd <maxBudgetUsd>` session,
 write its report to `~/.local/state/coordinator/changed/wake-<ts>.md` and
-raise a Herdr toast. The session runs with `--disallowedTools` for the act
-tasks (`herdr:message`, `gh:label`, `gh:comment`), raw `herdr agent prompt`,
-`gh`, `git push` and file edits, so it can only read and report. Lines are
-appended to `changed/pending.txt` first and cleared only when the session
-exits 0, so a failed session (no network, budget hit) is retried on the next
-tick rather than forgotten. A checkout without the task yet (the skills PR
+raise a Herdr toast. The session runs `--permission-mode dontAsk` with an
+allow list of the role's read tasks and Herdr's read commands (the act tasks,
+`herdr --machine`, `gh`, `git push` and file edits are denied as well), so
+it can only read and report. Lines are appended to `changed/pending.txt`
+first and cleared only when the session exits 0; after two failed sessions
+in a row they are parked in `changed/pending.failed` (toast raised) and no
+further session starts until the owner clears that file, so a persistent
+failure cannot buy a session every tick. A checkout without the task yet (the skills PR
 not merged or not pulled) is logged and skipped, not failed.
 
 ```sh

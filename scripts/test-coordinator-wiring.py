@@ -93,9 +93,15 @@ def main():
     check(script.index("flock -n 9") < script.index("devenv tasks run coord:changed"), "the lock is taken before coord:changed runs, so two runs never race on the snapshot")
     check("--disallowedTools 'Bash(devenv tasks run herdr:message:*)'" in script and "'Bash(gh:*)'" in script and "Edit Write" in script,
           "the headless session cannot reach the act tasks, gh, pushes or file edits")
-    check(': > "$pending"' in script and script.index("|| rc=$?") < script.index(': > "$pending"'),
-          "pending changes are cleared only after claude exited 0")
-    check('[[ "$observed" > "$started" || "$observed" == "$started" ]]' in script, "a latest.json older than this run is not trusted")
+    check('if [ "$rc" -eq 0 ]; then : > "$pending"; : > "$attempts"' in script
+          and script.index("|| rc=$?") < script.index('if [ "$rc" -eq 0 ]; then : > "$pending"'),
+          "pending changes and the attempt counter are cleared only after claude exited 0")
+    check('[ "$rec" -nt "$state/.started" ]' in script, "a latest.json not rewritten by this run is not trusted")
+    check('[ "$tries" -ge 2 ]' in script and 'cat "$pending" >> "$parked"' in script and script.index('[ "$tries" -ge 2 ]') < script.index("claude -p"),
+          "after two failed sessions the pending lines are parked instead of buying a third")
+    check("--permission-mode dontAsk" in script and "--allowedTools Read 'Bash(cd ~/claude-code-skills:*)'" in script
+          and "'Bash(herdr --machine:*)'" in script and "'Bash(devenv tasks run herdr:message:*)'" in script,
+          "the session runs dontAsk with an allow list of read tasks and Herdr read commands; --machine and act tasks denied")
     check("Task does not exist: coord:changed" in script, "a checkout without the task is skipped, not failed")
 
 main()
