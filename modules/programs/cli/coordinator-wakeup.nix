@@ -11,7 +11,8 @@ let
   # The long-lived OAuth token the Fish session also exports; the service has no interactive login.
   oauthTokenFile = osConfig.sops.secrets.claude_oauth_token.path or "/run/secrets/claude_oauth_token";
   # The only door to devenv the headless session gets: a fixed task from the role's read list, an optional
-  # input object, no other arguments (a free `--option` would let it swap herdrCommand for anything).
+  # input object, no other arguments (a free `--option` would let it swap herdrCommand for anything); the session's
+  # coord:changed never consumes, that is the timer's form alone.
   readTask = pkgs.writeShellApplication {
     name = "coordinator-read";
     runtimeInputs = [ pkgs.coreutils pkgs.jq ];
@@ -24,7 +25,7 @@ let
       [ "$#" -le 2 ] || { echo "coordinator-read: usage: coordinator-read <task> ['<input-json>']" >&2; exit 3; }
       input=$(jq -c 'select(type == "object")' <<<"$input" 2>/dev/null) || input=""
       [ -n "$input" ] || { echo "coordinator-read: the input must be one JSON object" >&2; exit 3; }
-      [ "$task" = coord:changed ] && input=$(jq -c '. + {peek:true}' <<<"$input")
+      [ "$task" = coord:changed ] && input=$(jq -c '. + {consume:false}' <<<"$input")
       cd "''${COORDINATOR_SKILLS_DIR:-${skillsDir}}"
       exec devenv tasks run "$task" --input-json "$input" --show-output 9>&-
     '';
@@ -47,7 +48,7 @@ let
       pending="$state/pending.txt"; attempts="$state/pending.attempts"; parked="$state/pending.failed"
       : > "$state/.started"
       cd "$skills"
-      if ! devenv tasks run coord:changed > "$state/run.log" 2>&1 9>&-; then
+      if ! devenv tasks run coord:changed --input-json '{"consume":true}' > "$state/run.log" 2>&1 9>&-; then
         if grep -q 'Task does not exist: coord:changed' "$state/run.log"; then
           log "coord:changed is not in $skills yet (pull the checkout); nothing checked"; exit 0
         fi
@@ -83,9 +84,11 @@ let
       log "credential source: $auth"
       rc=0
       # dontAsk: anything outside the allow list is refused, not asked; the list is the role's read tasks and Herdr's read commands;
-      # Read is scoped to the checkout and the coordinator state, and no shell read or write primitive is allowed
+      # Read is scoped to the checkout and the coordinator state; the paths already start with a slash, the extra one
+      # makes the // anchor (filesystem root). A single slash is relative to the working directory and would refuse
+      # every read under dontAsk. No shell read or write primitive
       printf '%s' "$prompt" | claude -p --agent coordinator --max-budget-usd "$budget" --output-format text --permission-mode dontAsk \
-        --allowedTools 'Read(${skillsDir}/**)' 'Read(${config.home.homeDirectory}/.local/state/coordinator/**)' \
+        --allowedTools 'Read(/${skillsDir}/**)' 'Read(/${config.home.homeDirectory}/.local/state/coordinator/**)' \
           'Bash(cd ~/claude-code-skills:*)' 'Bash(cd ${skillsDir}:*)' 'Bash(coordinator-read:*)' \
           'Bash(herdr machine list:*)' 'Bash(herdr machine status:*)' 'Bash(herdr agent list:*)' 'Bash(herdr agent get:*)' 'Bash(herdr agent read:*)' \
         --disallowedTools 'Bash(devenv:*)' \

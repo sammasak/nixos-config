@@ -87,7 +87,7 @@ def main():
           "the service sees devenv and claude through the system and user profiles")
     script = nix("eval", "--raw", ".#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages",
                  "--apply", 'ps: (builtins.head (builtins.filter (p: (p.name or "") == "coordinator-wakeup") ps)).text')
-    check("devenv tasks run coord:changed" in script, "the script runs coord:changed")
+    check('devenv tasks run coord:changed --input-json \'{"consume":true}\'' in script, "the timer runs coord:changed in its consuming form")
     check('[ -s "$pending" ] || exit 0' in script and script.index('[ -s "$pending" ] || exit 0') < script.index("claude -p"),
           "the script exits before any model call when nothing is actionable or pending")
     check("claude -p --agent coordinator --max-budget-usd" in script, "the session is headless, the coordinator agent, spend-capped")
@@ -105,8 +105,9 @@ def main():
           and "'Bash(herdr --machine:*)'" in script and "Bash(devenv tasks run" not in script,
           "the session runs dontAsk; tasks only through coordinator-read, devenv itself and --machine denied")
     check("'Bash(cat:*)'" not in script and "'Bash(jq:*)'" not in script and " Read " not in script.split("--allowedTools")[1].split("--disallowedTools")[0]
-          and "'Read(/home/lukas/claude-code-skills/**)'" in script and "'Read(/home/lukas/.local/state/coordinator/**)'" in script,
-          "no shell read/write primitive is allowed and Read is scoped to the checkout and the coordinator state")
+          and "'Read(//home/lukas/claude-code-skills/**)'" in script and "'Read(//home/lukas/.local/state/coordinator/**)'" in script
+          and "'Read(/home/lukas" not in script,
+          "no shell read/write primitive; Read is scoped to the checkout and the coordinator state with // (filesystem-root) anchors, never a single slash")
     check("CLAUDE_CODE_OAUTH_TOKEN=$(cat " in script and "/.claude/.credentials.json" in script and 'log "credential source: $auth"' in script,
           "the session's credential is the OAuth token file the Fish session also uses, else credentials.json, and the source is logged")
     check("flock -w 20 9 ||" in script and "exit 75;" in script.split("flock -w 20 9 ||")[1].split("\n")[0],
@@ -123,8 +124,8 @@ def main():
                  ' (builtins.getFlake (toString ./.)).nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages)')
     wrapper = pathlib.Path(wrapper_dirs[0], "coordinator-read").read_text()
     check("coord:brief|coord:changed|work:status|herdr:inventory|herdr:inspect|gh:work|git:recent|harness:session-summary) ;;" in wrapper
-          and "--option" not in wrapper and "input=$(jq -c '. + {peek:true}'" in wrapper,
-          "coordinator-read takes only a read task and an input object, forces peek on coord:changed, passes no --option")
+          and "--option" not in wrapper and "input=$(jq -c '. + {consume:false}'" in wrapper and "consume:true" not in wrapper,
+          "coordinator-read takes only a read task and an input object, never consumes with coord:changed, passes no --option")
     check(" 9>&-" in wrapper.split("exec devenv")[1], "coordinator-read closes the lock fd before devenv")
     check("Task does not exist: coord:changed" in script, "a checkout without the task is skipped, not failed")
     behaviour_checks(pathlib.Path(wakeup, "bin/coordinator-wakeup"))

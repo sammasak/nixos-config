@@ -99,7 +99,7 @@ herdr status --json | jq .server.running             # true
 
 `sam.herdr.coordinatorWakeup.enable` installs the user units
 `coordinator-wakeup.timer` and `.service`. Every `interval` (2min) of service
-inactivity the service runs `devenv tasks run coord:changed` in
+inactivity the service runs `devenv tasks run coord:changed --input-json '{"consume":true}'` in
 `~/claude-code-skills`; the task is a jq diff of Herdr agent state, GitHub
 counts and the audit log's open handoffs against
 `~/.local/state/coordinator/changed/snapshot.json` and prints nothing when
@@ -108,10 +108,11 @@ nothing is actionable. Only then does the service start one headless
 write its report to `~/.local/state/coordinator/changed/wake-<ts>.md` and
 raise a Herdr toast. The session runs `--permission-mode dontAsk`; tasks are
 reachable only through `coordinator-read <task> ['<input-json>']` (the role's
-read tasks, `coord:changed` forced to `peek`, no other devenv arguments) plus
+read tasks, `coord:changed` never consuming, no other devenv arguments) plus
 Herdr's read commands, while `devenv` itself, `herdr --machine`, the act
 tasks, `gh`, `git push` and file edits are denied, so it can only read and
-report; `Read` is scoped to the checkout and the coordinator state and no
+report; `Read` is scoped to the checkout and the coordinator state with
+`//` (filesystem-root) anchors and no
 shell read or write primitive is allowed. The session authenticates with the
 OAuth token file the Fish session also exports
 (`/run/secrets/claude_oauth_token`), else `~/.claude/.credentials.json`; the
