@@ -128,6 +128,8 @@ def main():
           "coordinator-read takes only a read task and an input object, never consumes with coord:changed, passes no --option")
     check(" 9>&-" in wrapper.split("exec devenv")[1], "coordinator-read closes the lock fd before devenv")
     check("Task does not exist: coord:changed" in script, "a checkout without the task is skipped, not failed")
+    check("coordinator-read coord:brief prints the Markdown brief" in script and "/.local/state/coordinator/brief/latest.json, readable with Read" in script,
+          "the wake prompt tells the session that coordinator-read coord:brief prints the Markdown and where the JSON record is")
     behaviour_checks(pathlib.Path(wakeup, "bin/coordinator-wakeup"), pathlib.Path(wrapper_dirs[0], "coordinator-read"))
 
 
