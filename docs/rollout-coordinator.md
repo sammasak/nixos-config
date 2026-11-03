@@ -10,7 +10,7 @@ switched on either host. Tracking: #111, sammasak/skills#28.
 | lenovo (coordinator: declares `sam.herdr.machines`) | `~/.claude/agents/coordinator.md` from the skills input | `~/.codex/agents/coordinator.toml`, the skills input's `agents/coordinator/codex.toml` installed as shipped (its instructions point Codex at `agents/coordinator/ROLE.md`); the role's skills `herdr`, `herdr-operations`, `agent-handoff` added to `~/.agents/skills` and `~/.codex/skills` |
 | acer-swift (worker) | every adapter except `coordinator.md`; all shared skills | unchanged (portable skills) |
 
-Both hosts move the skills input to `309e7e7` (skills main after #32 and #34), so every linked skill and
+Both hosts move the skills input to `2704cd0` (skills main after #32, #34 and #33), so every linked skill and
 adapter follows it. gh, herdr and devenv are already on both hosts. No package,
 service, timer or daemon is added: the system and user unit lists of both
 toplevels are identical to main's, and `nix store diff-closures` against main
@@ -20,11 +20,11 @@ shows only the skills source and, on lenovo, the coordinator file links.
 
 | | Value |
 |---|---|
-| nixos-config base | `be1f01a6` (main, after #112) |
-| skills input | `309e7e7eb7d20cedc0e3723903567c3dc32d73b1` (hosts run `08e300a` today), narHash `sha256-YkQy17yN+BnFBIbo+PH9TzdZLFJUPtrj5SMXT6jd0Bk=` |
-| lenovo toplevel | `/nix/store/vrpl51lgmm1glgbwa98m0432yk8w1ila-nixos-system-lenovo-21CB001PMX-26.11.20261015.fe13242` (main: `83l2hqij…`) |
-| acer-swift toplevel | `/nix/store/10xvx80a2kgwgzc2qijjikxwnr6zkf1w-nixos-system-acer-swift-26.11.20261015.fe13242` (main: `70amrwmh…`) |
-| Codex adapter | `/nix/store/vfw0l954s5mb5zjkirah1blpa8b7y21x-source/agents/coordinator/codex.toml` |
+| nixos-config base | `120d41fc` (main, after #113) |
+| skills input | `2704cd03bdb21be63218bceb1f6508f1ebf95958` (hosts run `08e300a` today), narHash `sha256-omhRah9NneaUqOJLEoGPocQPE1jDzms4I19nl4gyTlc=` |
+| lenovo toplevel | `/nix/store/7idvnqw1ydpg0dyxjy2fdgm5qqpp9329-nixos-system-lenovo-21CB001PMX-26.11.20261015.fe13242` (main: `vrpl51lg…`) |
+| acer-swift toplevel | `/nix/store/5wbj1b1piwbkirlv4r38yq0mwradw8q4-nixos-system-acer-swift-26.11.20261015.fe13242` (main: `10xvx80a…`) |
+| Codex adapter | `/nix/store/9ka734f0dy79z86lwssvagvlrpnff40b-source/agents/coordinator/codex.toml` |
 
 The toplevel hashes hold for the PR head that was built; a later commit on the
 branch or a rebase changes them, so rebuild and compare before switching.
@@ -36,7 +36,7 @@ branch or a rebase changes them, so rebuild and compare before switching.
 - On lenovo, make the writable skills checkout match the pin, because the
   coordinator's tasks run from it, not from the store:
   `git -C ~/claude-code-skills fetch && git -C ~/claude-code-skills status -sb`
-  then bring `main` to `309e7e7` (or later) without discarding local work.
+  then bring `main` to `2704cd0` (or later) without discarding local work.
 - `just diff` on each host: expect no bootloader or kernel store-path change.
 
 ## Switch (owner)
@@ -57,7 +57,7 @@ just deploy-acer            # deploy-rs, magic rollback if acer stops answering
 On lenovo:
 
 ```sh
-readlink -f ~/.claude/agents/coordinator.md          # .../<skills 309e7e7 source>/agents/coordinator.md
+readlink -f ~/.claude/agents/coordinator.md          # .../<skills 2704cd0 source>/agents/coordinator.md
 python3 -c 'import tomllib,sys; d=tomllib.load(open(sys.argv[1],"rb")); print(d["name"])' ~/.codex/agents/coordinator.toml
 ls ~/.agents/skills/{herdr,herdr-operations,agent-handoff}/SKILL.md
 herdr status --json | jq .server.running             # true
@@ -101,7 +101,7 @@ ssh deploy@acer-swift sudo nixos-rebuild switch --rollback      # or as deploy, 
 
 Rolling back also returns the skills input to `08e300a` on that host. The
 writable `~/claude-code-skills` checkout is not part of the generation: leave it
-at `309e7e7` (only the coordinator's tasks read it) or check out `08e300a` there
+at `2704cd0` (only the coordinator's tasks read it) or check out `08e300a` there
 too if the rollback is about the role itself. The
 Herdr saved-machine list (`~/.local/state/herdr/client/endpoints.json`) is not
 touched by this change and needs no rollback.
