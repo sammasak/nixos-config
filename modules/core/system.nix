@@ -117,6 +117,24 @@ in
       '';
     };
 
+    herdr.coordinatorWakeup = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Run `coord:changed` on a user timer and start one spend-capped headless Coordinator session only when it prints an actionable change.";
+      };
+      interval = mkOption {
+        type = types.str;
+        default = "2min";
+        description = "Pause between two `coord:changed` runs (systemd `OnUnitInactiveSec`); one run costs about 0.6 s and 80 MB.";
+      };
+      maxBudgetUsd = mkOption {
+        type = types.strMatching "[0-9]+([.][0-9]+)?";
+        default = "1.00";
+        description = "Spend cap for one wake-up session (`claude --max-budget-usd`).";
+      };
+    };
+
     userConfig = mkOption {
       type = types.attrs;
       default = { };

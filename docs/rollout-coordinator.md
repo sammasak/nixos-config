@@ -95,6 +95,31 @@ ls ~/.claude/agents/quality.md
 herdr status --json | jq .server.running             # true
 ```
 
+## Wake-up timer (lenovo only)
+
+`sam.herdr.coordinatorWakeup.enable` installs the user units
+`coordinator-wakeup.timer` and `.service`. Every `interval` (2min) of service
+inactivity the service runs `devenv tasks run coord:changed` in
+`~/claude-code-skills`; the task is a jq diff of Herdr agent state, GitHub
+counts and the audit log's open handoffs against
+`~/.local/state/coordinator/changed/snapshot.json` and prints nothing when
+nothing is actionable. Only then does the service start one headless
+`claude -p --agent coordinator --max-budget-usd <maxBudgetUsd>` session,
+write its report to `~/.local/state/coordinator/changed/wake-<ts>.md` and
+raise a Herdr toast. A checkout without the task yet (the skills PR not
+merged or not pulled) is logged and skipped, not failed.
+
+```sh
+systemctl --user list-timers coordinator-wakeup.timer
+journalctl --user -u coordinator-wakeup.service -n 20 --no-pager
+cat ~/.local/state/coordinator/changed/latest.json | jq .changes
+```
+
+Switch it off without a rebuild with
+`systemctl --user disable --now coordinator-wakeup.timer` (the next switch
+re-enables it); for good, set `sam.herdr.coordinatorWakeup.enable = false`
+on lenovo. Nothing else in this module touches a worker.
+
 ## Rollback
 
 Each switch is one NixOS generation; Home Manager's files roll back with it.

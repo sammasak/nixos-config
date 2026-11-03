@@ -65,4 +65,31 @@ def main():
     check("agents/coordinator/ROLE.md" in agent["developer_instructions"], "the Codex instructions point at the pinned ROLE.md")
     check(agent["description"].strip() != "", "the Codex agent has a description")
 
+
+    def user_units(host, kind):
+        attr = f".#nixosConfigurations.{host}.config.home-manager.users.lukas.systemd.user.{kind}"
+        return json.loads(nix("eval", "--json", attr))
+
+    lenovo_timers, acer_timers = user_units("lenovo", "timers"), user_units("acer-swift", "timers")
+    lenovo_services = user_units("lenovo", "services")
+    check("coordinator-wakeup" in lenovo_timers and "coordinator-wakeup" in lenovo_services,
+          "lenovo has the coordinator-wakeup timer and service")
+    check("coordinator-wakeup" not in acer_timers, "acer, a worker, has no coordinator-wakeup timer")
+    timer = lenovo_timers["coordinator-wakeup"]["Timer"]
+    check(timer["Unit"] == "coordinator-wakeup.service" and timer["OnUnitInactiveSec"] == "2min",
+          "the timer re-arms 2min after the service went inactive (never while a session runs)")
+    service = lenovo_services["coordinator-wakeup"]["Service"]
+    exec_start = service["ExecStart"] if isinstance(service["ExecStart"], list) else [service["ExecStart"]]
+    check(service["Type"] == "oneshot" and len(exec_start) == 1 and exec_start[0].endswith("/bin/coordinator-wakeup"),
+          "the service is a oneshot running the coordinator-wakeup script")
+    check(any(e.startswith("PATH=/run/current-system/sw/bin:") for e in service["Environment"]),
+          "the service sees devenv and claude through the system and user profiles")
+    script = nix("eval", "--raw", ".#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages",
+                 "--apply", 'ps: (builtins.head (builtins.filter (p: (p.name or "") == "coordinator-wakeup") ps)).text')
+    check("devenv tasks run coord:changed" in script, "the script runs coord:changed")
+    check('[ "$n" -gt 0 ] || exit 0' in script, "the script exits before any model call when nothing is actionable")
+    check("claude -p --agent coordinator --max-budget-usd" in script, "the session is headless, the coordinator agent, spend-capped")
+    check("flock -n 9" in script, "one wake-up session at a time")
+    check("Task does not exist: coord:changed" in script, "a checkout without the task is skipped, not failed")
+
 main()
