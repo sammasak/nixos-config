@@ -135,6 +135,18 @@ Switch it off without a rebuild with
 re-enables it); for good, set `sam.herdr.coordinatorWakeup.enable = false`
 on lenovo. Nothing else in this module touches a worker.
 
+### Lenovo switch record (2026-11-03)
+
+Switched with `just deploy-lenovo` from main `39c1b81` (deploy-rs loopback,
+"Deployment confirmed", 78 s): `/run/current-system` is
+`/nix/store/z37xik30qzmw6qy4pq1l4xzgvyqvql6j-nixos-system-lenovo-21CB001PMX-26.11.20261015.fe13242`;
+kernel, initrd and systemd unchanged against the previous generation
+(`sz1lw0qp…`). `coordinator-wakeup.timer` enabled and active, `Linger=yes`.
+The first tick ran at activation (the elapsed `OnBootSec`), found two real
+changes and finished its session in 39 s. Rollback stays
+`sudo nixos-rebuild switch --rollback` (owner) or
+`systemctl --user disable --now coordinator-wakeup.timer` until the next switch.
+
 ## Rollback
 
 Each switch is one NixOS generation; Home Manager's files roll back with it.
