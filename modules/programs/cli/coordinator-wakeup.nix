@@ -27,6 +27,15 @@ let
       [ -n "$input" ] || { echo "coordinator-read: the input must be one JSON object" >&2; exit 3; }
       [ "$task" = coord:changed ] && input=$(jq -c '. + {consume:false}' <<<"$input")
       cd "''${COORDINATOR_SKILLS_DIR:-${skillsDir}}"
+      # coord:brief: the session gets the Markdown alone (brief/latest.md, skills#44), never devenv's stdout, which repeats
+      # every task's JSON; the fresh file is printed whatever the exit, so a failing brief still explains itself, and a
+      # checkout that does not write latest.md yet falls back to the full output
+      if [ "$task" = coord:brief ]; then
+        md="''${XDG_STATE_HOME:-$HOME/.local/state}/coordinator/brief/latest.md"; mark=$(mktemp); rc=0
+        devenv tasks run coord:brief --input-json "$input" --show-output > "$mark.out" 2>&1 9>&- || rc=$?
+        if [ "$md" -nt "$mark" ]; then cat "$md"; else cat "$mark.out"; fi
+        rm -f "$mark" "$mark.out"; exit "$rc"
+      fi
       exec devenv tasks run "$task" --input-json "$input" --show-output 9>&-
     '';
   };
