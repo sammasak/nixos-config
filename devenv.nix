@@ -59,7 +59,7 @@ let
     ${pkgs.python3}/bin/python scripts/test-native-otel-fish.py "$nixpkgs_source"
   '';
 
-  coordinatorWiringTest = gate "coordinator-wiring-test" (with pkgs; [ nix python3 ]) ''
+  coordinatorWiringTest = gate "coordinator-wiring-test" (with pkgs; [ nix python3 yq-go ]) ''
     ${pkgs.python3}/bin/python scripts/test-coordinator-wiring.py
   '';
 

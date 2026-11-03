@@ -1,7 +1,6 @@
 skillsSrc: nativeOtel:
 { config, lib, pkgs, osConfig, ... }:
 let
-  # Same host rule as the Claude adapter in claude-code/skills.nix.
   coordinatorHost = (osConfig.sam.herdr.machines or [ ]) != [ ];
   coordinatorRole = "${skillsSrc}/agents/coordinator/ROLE.md";
   coordinatorSkills =
@@ -10,15 +9,19 @@ let
       afterKey = lib.drop (lib.lists.findFirstIndex (l: l == "skills:") (builtins.length lines) lines + 1) lines;
       count = lib.lists.findFirstIndex (l: !lib.hasPrefix "  - " l) (builtins.length afterKey) afterKey;
       items = map (lib.removePrefix "  - ") (lib.take count afterKey);
+      missing = lib.filter (n: !builtins.pathExists "${skillsSrc}/skills/${n}/SKILL.md") items;
     in
-    if items == [ ] then throw "coordinator ROLE.md lists no skills" else items;
+    if items == [ ] then throw "coordinator ROLE.md: no `skills:` list in the exact `  - name` form"
+    else if missing != [ ] then throw "coordinator ROLE.md names skills the input lacks: ${toString missing}"
+    else items;
 
-  # Codex's custom-agent file, generated from the pinned role contract so no role text lives here.
+  # The build fails if yq reads a different skills list than the eval-time parse above.
   codexCoordinatorAgent = pkgs.runCommand "codex-coordinator-agent.toml" {
     nativeBuildInputs = [ pkgs.yq-go pkgs.jq pkgs.python3 ];
   } ''
     mission=$(yq --front-matter=extract '.mission // ""' ${coordinatorRole})
-    test -n "$mission"
+    test -n "$mission" || { echo "coordinator ROLE.md has no mission" >&2; exit 1; }
+    test "$(yq --front-matter=extract '.skills | join(" ")' ${coordinatorRole})" = ${lib.escapeShellArg (toString coordinatorSkills)}
     jq -rn --arg d "$mission" --rawfile i ${coordinatorRole} \
       '"name = \("coordinator" | tojson)\ndescription = \($d | tojson)\ndeveloper_instructions = \($i | tojson)"' > "$out"
     python3 -c 'import sys, tomllib; d = tomllib.load(open(sys.argv[1], "rb")); assert d["name"] and d["description"].strip() and d["developer_instructions"].strip()' "$out"

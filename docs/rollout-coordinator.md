@@ -41,7 +41,8 @@ branch or a rebase changes them, so rebuild and compare before switching.
 
 ## Switch (owner)
 
-Lenovo first, then acer:
+Lenovo first, then acer. Both commands need a real terminal: `just switch`
+runs `sudo nixos-rebuild`, and lukas has no passwordless sudo.
 
 ```sh
 # on lenovo, in ~/nixos-config at the merged commit
@@ -67,9 +68,16 @@ cd ~/claude-code-skills && devenv tasks run herdr:inventory --show-output   # on
 Then one conversation in each harness. Claude Code: "ask the coordinator what
 my agents are doing", which must delegate to the `coordinator` subagent. Codex:
 "have the coordinator report what my agents are doing", which must spawn the
-custom agent `coordinator` (`/subagents` shows it). That Codex conversation is
+custom agent `coordinator` (once spawned, `/subagents` lists its thread). That Codex conversation is
 the first proof that Codex loads the generated file; acer could only check it
 against Codex's documented schema.
+
+Two differences between the harnesses to keep in mind. Codex embeds the pinned
+`ROLE.md`, while the Claude adapter reads it from `~/claude-code-skills`, so the
+two match only while that checkout is at the pinned revision. And Codex's
+custom-agent schema cannot restrict tools per agent: the Claude adapter
+disallows Edit/Write, the Codex coordinator inherits Codex's own sandbox and
+approval settings and is bounded by its instructions only.
 
 On acer-swift:
 
@@ -88,9 +96,13 @@ Each switch is one NixOS generation; Home Manager's files roll back with it.
 sudo nixos-rebuild switch --rollback     # or pick the previous entry at boot (systemd-boot)
 
 # acer-swift: deploy-rs rolls back by itself when the confirm step fails; otherwise
-ssh acer-swift sudo nixos-rebuild switch --rollback   # needs a real terminal for sudo
+ssh -t acer-swift sudo nixos-rebuild switch --rollback          # from a real terminal (lukas's sudo password)
+ssh deploy@acer-swift sudo nixos-rebuild switch --rollback      # or as deploy, from lenovo only (passwordless sudo)
 ```
 
 Rolling back also returns the skills input to `08e300a` on that host. The
+writable `~/claude-code-skills` checkout is not part of the generation: leave it
+at `fdbc501` (only the coordinator's tasks read it) or check out `08e300a` there
+too if the rollback is about the role itself. The
 Herdr saved-machine list (`~/.local/state/herdr/client/endpoints.json`) is not
 touched by this change and needs no rollback.
