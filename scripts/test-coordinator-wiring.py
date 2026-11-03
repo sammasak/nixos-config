@@ -127,6 +127,10 @@ def main():
           and "--option" not in wrapper and "input=$(jq -c '. + {consume:false}'" in wrapper and "consume:true" not in wrapper,
           "coordinator-read takes only a read task and an input object, never consumes with coord:changed, passes no --option")
     check(" 9>&-" in wrapper.split("exec devenv")[1], "coordinator-read closes the lock fd before devenv")
+    brief = wrapper.split('if [ "$task" = coord:brief ]; then')[1].split("fi\n")[0]
+    check("--show-output" not in brief and 'devenv tasks run coord:brief --input-json "$input" > /dev/null' in brief and 'exec cat "$md"' in brief
+          and "/coordinator/brief/latest.md" in brief,
+          "coordinator-read prints the Markdown brief (brief/latest.md), never the --show-output JSON dump, for coord:brief")
     check("Task does not exist: coord:changed" in script, "a checkout without the task is skipped, not failed")
     behaviour_checks(pathlib.Path(wakeup, "bin/coordinator-wakeup"))
 
