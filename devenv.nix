@@ -305,7 +305,7 @@ in
     "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
     "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
-    "nixos:coordinator-test" = task "Coordinator adapters on lenovo only, Codex's from the pinned ROLE.md" coordinatorWiringTest;
+    "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex's is the shipped codex.toml" coordinatorWiringTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;

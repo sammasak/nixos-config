@@ -30,7 +30,6 @@ def main():
     skills = pathlib.Path(nix("eval", "--raw", "--impure", "--expr",
                               "(builtins.getFlake (toString ./.)).inputs.skills.outPath"))
     role_path = skills / "agents/coordinator/ROLE.md"
-    role = role_path.read_text()
     front = json.loads(subprocess.run(["yq", "--front-matter=extract", "-o=json", ".", str(role_path)],
                                       check=True, capture_output=True, text=True).stdout)
     role_skills = front["skills"]
@@ -44,10 +43,13 @@ def main():
         check(f".agents/skills/{name}" not in acer, f"acer's Codex does not get the coordinator skill {name}")
 
     attr = '.#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.file.".codex/agents/coordinator.toml".source'
-    agent = tomllib.loads(pathlib.Path(nix("build", "--no-link", "--print-out-paths", attr)).read_text())
+    installed = pathlib.Path(nix("eval", "--raw", attr)).read_text()
+    shipped = (skills / "agents/coordinator/codex.toml").read_text()
+    check(installed == shipped, "lenovo installs the shipped agents/coordinator/codex.toml, byte for byte")
+    agent = tomllib.loads(installed)
     check(agent["name"] == "coordinator", "the Codex agent is named coordinator")
-    check(agent["developer_instructions"] == role, "the Codex instructions are the pinned ROLE.md, byte for byte")
-    check(agent["description"] == front["mission"], "the Codex description is the role's mission")
+    check("agents/coordinator/ROLE.md" in agent["developer_instructions"], "the Codex instructions point at the pinned ROLE.md")
+    check(agent["description"].strip() != "", "the Codex agent has a description")
 
 
 main()
