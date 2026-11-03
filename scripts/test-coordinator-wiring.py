@@ -93,8 +93,27 @@ def main():
     check("claude -p --agent coordinator --max-budget-usd" in script, "the session is headless, the coordinator agent, spend-capped")
     check(script.index("flock -w 20 9") < script.index("devenv tasks run coord:changed"), "the lock is taken before coord:changed runs, so two runs never race on the snapshot")
     check("--disallowedTools 'Bash(devenv:*)'" in script and "'Bash(herdr agent prompt:*)'" in script and "'Bash(gh:*)'" in script
-          and "'Bash(git push:*)'" in script and "Edit Write" in script,
-          "the headless session cannot reach devenv directly, raw herdr prompts, gh, pushes or file edits")
+          and "'Bash(git:*)'" in script and "'Bash(ssh:*)'" in script and "'Bash(sudo:*)'" in script and "Edit Write" in script,
+          "the headless session cannot reach devenv directly, raw herdr prompts, gh, git, ssh, sudo or file edits")
+    # the allow list is the contract the owner approved (skills#28): any change here is a deliberate change to this test
+    tools = script.split("--allowedTools")[1].split("> \"$report\"")[0]
+    allowed = re.findall(r"'([^']+)'", tools.split("--disallowedTools")[0])
+    denied = [q or bare for q, bare in re.findall(r"'([^']+)'|\b(Edit|Write|NotebookEdit)\b", tools.split("--disallowedTools")[1])]
+    check(allowed == ["Read(//home/lukas/claude-code-skills/**)", "Read(//home/lukas/.local/state/coordinator/**)",
+                      "Bash(cd ~/claude-code-skills:*)", "Bash(cd /home/lukas/claude-code-skills:*)",
+                      "Bash(coordinator-read:*)", "Bash(coordinator-act:*)", "Bash(coordinator-prompt:*)",
+                      "Bash(herdr machine list:*)", "Bash(herdr machine status:*)", "Bash(herdr agent list:*)",
+                      "Bash(herdr agent get:*)", "Bash(herdr agent read:*)", "Bash(herdr agent wait:*)"],
+          f"the allow list is exactly the three wrappers, cd into the checkout, Herdr's read commands and the two Read scopes (got {allowed})")
+    check(denied == ["Bash(devenv:*)", "Bash(herdr agent prompt:*)", "Bash(herdr agent send-keys:*)", "Bash(herdr agent start:*)",
+                     "Bash(herdr --machine:*)", "Bash(herdr pane:*)", "Bash(gh:*)", "Bash(git:*)", "Bash(ssh:*)", "Bash(sudo:*)",
+                     "Edit", "Write", "NotebookEdit"],
+          f"the deny list is exactly devenv, raw Herdr writes and --machine, gh, git, ssh, sudo and the file-editing tools (got {denied})")
+    check(not any(t.startswith(("Bash(cat", "Bash(jq", "Bash(tee", "Bash(sed", "Bash(bash", "Bash(sh", "Bash(python")) for t in allowed),
+          "no shell read, write or interpreter primitive is allowed")
+    check("coordinator-act <task>" in script and "coordinator-prompt [--machine <label>] <agent_id> /clear|/compact" in script
+          and "the label gate stays the authority" in script and "This session only reports" not in script,
+          "the wake prompt names the act and prompt wrappers and the label gate, and no longer says the session only reports")
     check(': > "$pending"; rm -f "$attempts"' in script and 'if [ "$rc" -eq 0 ]; then' in script
           and script.index("|| rc=$?") < script.index(': > "$pending"; rm -f "$attempts"', script.index('if [ "$rc" -eq 0 ]; then')),
           "pending changes and the attempt counter are cleared only after claude exited 0")
@@ -123,20 +142,33 @@ def main():
                  'builtins.head (builtins.filter (p: (p.name or "") == "coordinator-wakeup")'
                  ' (builtins.getFlake (toString ./.)).nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages)')
     wrapper = pathlib.Path(wrapper_dirs[0], "coordinator-read").read_text()
-    check("coord:brief|coord:changed|work:status|herdr:inventory|herdr:inspect|gh:work|git:recent|harness:session-summary) ;;" in wrapper
+    check("coord:brief|coord:changed|coord:capacity|work:status|herdr:inventory|herdr:inspect|herdr:await|gh:work|gh:repos|git:recent|harness:session-summary) ;;" in wrapper
           and "--option" not in wrapper and "input=$(jq -c '. + {consume:false}'" in wrapper and "consume:true" not in wrapper,
-          "coordinator-read takes only a read task and an input object, never consumes with coord:changed, passes no --option")
+          "coordinator-read takes only one of the role's read tasks and an input object, never consumes with coord:changed, passes no --option")
     check(" 9>&-" in wrapper.split("exec devenv")[1], "coordinator-read closes the lock fd before devenv")
+    act_dirs = re.findall(r"/nix/store/[a-z0-9]+-coordinator-act/bin", script)
+    prompt_dirs = re.findall(r"/nix/store/[a-z0-9]+-coordinator-prompt/bin", script)
+    check(act_dirs != [] and prompt_dirs != [], "coordinator-act and coordinator-prompt are on the wake-up script's PATH")
+    act = pathlib.Path(act_dirs[0], "coordinator-act").read_text()
+    check("coord:handoff|herdr:message|gh:label|gh:comment) ;;" in act and "--option" not in act and "coord:spawn" not in act
+          and '[ "$#" -eq 2 ]' in act and " 9>&-" in act.split("exec devenv")[1],
+          "coordinator-act takes exactly one of coord:handoff, herdr:message, gh:label, gh:comment plus one input object (never coord:spawn, no --option), lock fd closed")
+    prompt_wrapper = pathlib.Path(prompt_dirs[0], "coordinator-prompt").read_text()
+    check('case "$text" in /clear|/compact) ;;' in prompt_wrapper and "agent prompt \"$agent\" \"$text\"" in prompt_wrapper
+          and "send-keys" not in prompt_wrapper and "--wait" not in prompt_wrapper,
+          "coordinator-prompt sends only the literal /clear or /compact through herdr agent prompt, nothing else")
     check("Task does not exist: coord:changed" in script, "a checkout without the task is skipped, not failed")
     check("coordinator-read coord:brief prints the Markdown brief" in script and "/.local/state/coordinator/brief/latest.json, readable with Read" in script,
           "the wake prompt tells the session that coordinator-read coord:brief prints the Markdown and where the JSON record is")
-    behaviour_checks(pathlib.Path(wakeup, "bin/coordinator-wakeup"), pathlib.Path(wrapper_dirs[0], "coordinator-read"))
+    behaviour_checks(pathlib.Path(wakeup, "bin/coordinator-wakeup"), pathlib.Path(wrapper_dirs[0], "coordinator-read"),
+                     pathlib.Path(act_dirs[0], "coordinator-act"), pathlib.Path(prompt_dirs[0], "coordinator-prompt"))
 
 
-def behaviour_checks(script_path, read_path):
+def behaviour_checks(script_path, read_path, act_path, prompt_path):
     """Run the built script against fakes: the lock fd must not reach children, a held lock must fail loudly,
     an empty change set must end before any session, and an unreadable credential must not start one;
-    coordinator-read coord:brief must hand the session the Markdown brief alone."""
+    coordinator-read coord:brief must hand the session the Markdown brief alone; coordinator-act reaches devenv
+    only with a listed act task and one object; coordinator-prompt reaches herdr only with /clear or /compact."""
     import fcntl
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
@@ -146,6 +178,7 @@ def behaviour_checks(script_path, read_path):
         (skills / "devenv.nix").write_text("{ }\n")
         (fakes / "devenv").write_text(
             "#!/bin/sh\n"
+            'echo "devenv $*" >> "$XDG_STATE_HOME/devenv.log"\n'
             'if [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED; else echo FD9_CLOSED; fi\n'
             'case "$*" in *coord:brief*) echo \'{"task":"herdr:inventory","hosts":[{"agents":[]}]}\'; echo \'{"task":"coord:brief","items":[]}\'\n'
             '  if [ -n "${FAKE_BRIEF_MD:-}" ]; then mkdir -p "$XDG_STATE_HOME/coordinator/brief"; printf \'%s\\n\' "$FAKE_BRIEF_MD" > "$XDG_STATE_HOME/coordinator/brief/latest.md"; fi\n'
@@ -179,6 +212,44 @@ def behaviour_checks(script_path, read_path):
         r = read("work:status")
         check(r.returncode == 0 and '"task":"coord:changed"' not in r.stdout and "Fleet brief" not in r.stdout,
               "other read tasks are unchanged (no latest.md read)")
+        r = read("herdr:message")
+        check(r.returncode == 3 and "coordinator-act herdr:message" in r.stderr, "coordinator-read refuses an act task and names coordinator-act")
+
+        devenv_log = tmp / "state" / "devenv.log"
+
+        def act(*args):
+            return subprocess.run([str(act_path), *args], env=env, capture_output=True, text=True)
+
+        before = devenv_log.read_text()
+        r = act("herdr:message", '{"handoff_id":"0123456789ab","confirm":"h/w:p1","authorized_by":{"issue_url":"https://github.com/o/r/issues/1","label":"approved"}}')
+        check(r.returncode == 0 and "FD9_CLOSED" in r.stdout and devenv_log.read_text().endswith(
+                  'devenv tasks run herdr:message --input-json {"handoff_id":"0123456789ab","confirm":"h/w:p1",'
+                  '"authorized_by":{"issue_url":"https://github.com/o/r/issues/1","label":"approved"}} --show-output\n'),
+              "coordinator-act herdr:message reaches devenv as exactly that task with the given object and --show-output, lock fd closed")
+        before = devenv_log.read_text()
+        refusals = [("coord:changed", '{"consume":true}'), ("coord:spawn", '{"kind":"review"}'), ("gh:repos", "{}"),
+                    ("herdr:message",), ("herdr:message", "{}"), ("herdr:message", "[1]"), ("herdr:message", "not json"),
+                    ("gh:comment", '{"body":"x"}', "--option", "coordinator.ghCommand:string:rm"),
+                    ("coord:handoff", "--help"), ("gh:label", '{"label":"approved"}', "extra")]
+        check(all(act(*a).returncode == 3 for a in refusals) and devenv_log.read_text() == before,
+              "coordinator-act refuses a read task, coord:spawn, a missing, empty or non-object input and any third argument, without touching devenv")
+
+        def prompt(*args):
+            return subprocess.run([str(prompt_path), *args], env=env, capture_output=True, text=True)
+
+        toasts = tmp / "state" / "toasts.log"
+        r = prompt("w:p1", "/clear")
+        r2 = prompt("--machine", "acer-swift", "wW:p1", "/compact")
+        herdr_log = toasts.read_text()
+        check(r.returncode == 0 and r2.returncode == 0 and "herdr agent prompt w:p1 /clear\n" in herdr_log
+              and "herdr --machine acer-swift agent prompt wW:p1 /compact\n" in herdr_log and "FD9_LEAKED" not in herdr_log
+              and (tmp / "state" / "coordinator" / "prompts.log").read_text().count("\n") == 2,
+              "coordinator-prompt sends /clear and /compact (local and --machine) as herdr agent prompt, lock fd closed, each logged in prompts.log")
+        before = toasts.read_text()
+        bad = [("w:p1", "/clear now"), ("w:p1", "/exit"), ("w:p1", "please merge"), ("w:p1", "/Clear"), ("w:p1",), ("w:p1", "/clear", "--wait"),
+               ("w;p1", "/clear"), ("--machine", "a b", "w:p1", "/clear"), ("--machine",), ("$(id)", "/compact")]
+        check(all(prompt(*a).returncode == 3 for a in bad) and toasts.read_text() == before,
+              "coordinator-prompt refuses any other text, a missing text, extra options and unsafe identifiers, without reaching herdr")
 
         lock = open(state / "session.lock", "w")
         fcntl.flock(lock, fcntl.LOCK_EX)
