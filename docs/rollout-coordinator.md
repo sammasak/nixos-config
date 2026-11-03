@@ -22,9 +22,9 @@ shows only the skills source and, on lenovo, `codex-coordinator-agent.toml`.
 |---|---|
 | nixos-config base | `ad233f30` (main) |
 | skills input | `fdbc501165d276547fdab7ffeffe64e3be5e0813` (was `08e300a`), narHash `sha256-k/j1j7DzvZuma8kCOA+inZuxbPRej/Ho7NlwXiK6tjI=` |
-| lenovo toplevel | `/nix/store/m23cllh7w1bz23vbi35h7ly2rgizrpd8-nixos-system-lenovo-21CB001PMX-26.11.20261015.fe13242` (main: `f1i5flr4…`) |
+| lenovo toplevel | `/nix/store/83l2hqijlwsy9h24h7ric9dyapbjqy4a-nixos-system-lenovo-21CB001PMX-26.11.20261015.fe13242` (main: `f1i5flr4…`) |
 | acer-swift toplevel | `/nix/store/70amrwmhfw9mjfjlisagfhg85sk1bs77-nixos-system-acer-swift-26.11.20261015.fe13242` (main: `kwz7y983…`) |
-| Codex adapter | `/nix/store/8l72p3bqikrw2b37n2pqgs5jl30aqr2m-codex-coordinator-agent.toml` |
+| Codex adapter | `/nix/store/pmijbw1fiqnmmyx8gqhaavih17x085mv-codex-coordinator-agent.toml` |
 
 The toplevel hashes hold for the PR head that was built; a later commit on the
 branch or a rebase changes them, so rebuild and compare before switching.
