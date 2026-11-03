@@ -1,7 +1,30 @@
 skillsSrc: nativeOtel:
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, osConfig, ... }:
 let
-  portableSkillNames = [
+  # Same host rule as the Claude adapter in claude-code/skills.nix.
+  coordinatorHost = (osConfig.sam.herdr.machines or [ ]) != [ ];
+  coordinatorRole = "${skillsSrc}/agents/coordinator/ROLE.md";
+  coordinatorSkills =
+    let
+      lines = lib.splitString "\n" (builtins.readFile coordinatorRole);
+      afterKey = lib.drop (lib.lists.findFirstIndex (l: l == "skills:") (builtins.length lines) lines + 1) lines;
+      count = lib.lists.findFirstIndex (l: !lib.hasPrefix "  - " l) (builtins.length afterKey) afterKey;
+      items = map (lib.removePrefix "  - ") (lib.take count afterKey);
+    in
+    if items == [ ] then throw "coordinator ROLE.md lists no skills" else items;
+
+  # Codex's custom-agent file, generated from the pinned role contract so no role text lives here.
+  codexCoordinatorAgent = pkgs.runCommand "codex-coordinator-agent.toml" {
+    nativeBuildInputs = [ pkgs.yq-go pkgs.jq pkgs.python3 ];
+  } ''
+    mission=$(yq --front-matter=extract '.mission // ""' ${coordinatorRole})
+    test -n "$mission"
+    jq -rn --arg d "$mission" --rawfile i ${coordinatorRole} \
+      '"name = \("coordinator" | tojson)\ndescription = \($d | tojson)\ndeveloper_instructions = \($i | tojson)"' > "$out"
+    python3 -c 'import sys, tomllib; d = tomllib.load(open(sys.argv[1], "rb")); assert d["name"] and d["description"].strip() and d["developer_instructions"].strip()' "$out"
+  '';
+
+  portableSkillNames = lib.optionals coordinatorHost coordinatorSkills ++ [
     "credentials"
     "knowledge-vault"
     "kubernetes-gitops"
@@ -167,6 +190,7 @@ in
       ".codex/skills/workspace-routing" = workspaceRoutingSkill;
       ".codex/config.toml".text = codexConfig;
       ".codex/hooks.json".text = hooksConfig;
+      ".codex/agents/coordinator.toml" = lib.mkIf coordinatorHost { source = codexCoordinatorAgent; };
       ".codex/AGENTS.md".text = ''
         # Personal Codex Defaults
 

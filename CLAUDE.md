@@ -18,6 +18,7 @@ devenv tasks run nixos:nvim-check      # lenovo's nvim starts headless clean
 devenv tasks run nixos:flake-check     # nix flake check --all-systems
 devenv tasks run nixos:verify          # build every x86 host, evaluate black-pi
 devenv tasks run nixos:claude-settings-test  # generated Claude settings: default mode, bypass on request
+devenv tasks run nixos:coordinator-test  # coordinator adapters on lenovo only, Codex's from the pinned ROLE.md
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
 #   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree.
@@ -95,6 +96,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 
 - `skills/<name>/SKILL.md` → `~/.claude/skills/<name>/SKILL.md`
 - `agents/<name>.md` → `~/.claude/agents/<name>.md` (role adapters included: plain subagents whose prompt states the one allowed command form; Claude Code's permission prompt is the gate, see `docs/herdr.md` and the skills repo `docs/operator-runbook.md`)
+- The coordinator adapter only on the coordinator host (the one with `sam.herdr.machines`, lenovo), which also gets Codex's `~/.codex/agents/coordinator.toml` built from the pinned `agents/coordinator/ROLE.md`; rollout in `docs/rollout-coordinator.md`
 
 These are available across all projects without manual `/plugin install`.
 
