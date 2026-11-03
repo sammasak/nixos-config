@@ -20,6 +20,7 @@ in
   sam.hostSecrets.enable = true;
   # The coordinator host: the only one whose Herdr reaches the worker (`herdr --machine acer-swift`).
   sam.herdr.machines = [ { label = "acer-swift"; target = "acer-swift"; } ];
+  sam.herdr.coordinatorWakeup.enable = true;
   # As the always-on control plane, lenovo sends msi its Mon-Fri 09:00 wake.
   homelab.msiPowerSchedule.waker.enable = true;
 

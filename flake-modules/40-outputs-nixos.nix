@@ -57,6 +57,7 @@ let
                 (import ../modules/programs/cli/claude-code/mcp.nix inputs.skills nixos.config.sam.profile.nativeOtel nixos.config.sam.profile.hostname)
                 (import ../modules/programs/cli/claude-code/skills.nix inputs.skills)
                 (import ../modules/programs/cli/codex/default.nix inputs.skills nixos.config.sam.profile.nativeOtel)
+                ../modules/programs/cli/coordinator-wakeup.nix
               ]
               ++ lib.optionals nixos.config.sam.profile.nativeOtel [
                 (import ../modules/programs/cli/native-otel.nix nixos.config.sam.profile.hostname)

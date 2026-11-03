@@ -95,6 +95,46 @@ ls ~/.claude/agents/quality.md
 herdr status --json | jq .server.running             # true
 ```
 
+## Wake-up timer (lenovo only)
+
+`sam.herdr.coordinatorWakeup.enable` installs the user units
+`coordinator-wakeup.timer` and `.service`. Every `interval` (2min) of service
+inactivity the service runs `devenv tasks run coord:changed --input-json '{"consume":true}'` in
+`~/claude-code-skills`; the task is a jq diff of Herdr agent state, GitHub
+counts and the audit log's open handoffs against
+`~/.local/state/coordinator/changed/snapshot.json` and prints nothing when
+nothing is actionable. Only then does the service start one headless
+`claude -p --agent coordinator --max-budget-usd <maxBudgetUsd>` session,
+write its report to `~/.local/state/coordinator/changed/wake-<ts>.md` and
+raise a Herdr toast. The session runs `--permission-mode dontAsk`; tasks are
+reachable only through `coordinator-read <task> ['<input-json>']` (the role's
+read tasks, `coord:changed` never consuming, no other devenv arguments) plus
+Herdr's read commands, while `devenv` itself, `herdr --machine`, the act
+tasks, `gh`, `git push` and file edits are denied, so it can only read and
+report; `Read` is scoped to the checkout and the coordinator state with
+`//` (filesystem-root) anchors and no
+shell read or write primitive is allowed. The session authenticates with the
+OAuth token file the Fish session also exports
+(`/run/secrets/claude_oauth_token`), else `~/.claude/.credentials.json`; the
+journal names the source. The lock fd never reaches a child, and a lock still
+held after 20 s fails the run (exit 75) with a toast. Lines are appended to `changed/pending.txt`
+first and cleared only when the session exits 0; after two failed sessions
+in a row they are parked in `changed/pending.failed` (toast raised) and no
+further session starts until the owner clears that file, so a persistent
+failure cannot buy a session every tick. A checkout without the task yet (the skills PR
+not merged or not pulled) is logged and skipped, not failed.
+
+```sh
+systemctl --user list-timers coordinator-wakeup.timer
+journalctl --user -u coordinator-wakeup.service -n 20 --no-pager
+cat ~/.local/state/coordinator/changed/latest.json | jq .changes
+```
+
+Switch it off without a rebuild with
+`systemctl --user disable --now coordinator-wakeup.timer` (the next switch
+re-enables it); for good, set `sam.herdr.coordinatorWakeup.enable = false`
+on lenovo. Nothing else in this module touches a worker.
+
 ## Rollback
 
 Each switch is one NixOS generation; Home Manager's files roll back with it.
