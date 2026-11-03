@@ -113,7 +113,6 @@ let
 
   codexConfig = ''
     personality = "pragmatic"
-    model = "gpt-5.4"
     model_reasoning_effort = "xhigh"
     approvals_reviewer = "user"
     check_for_update_on_startup = false
@@ -124,6 +123,12 @@ let
     [features]
     hooks = true
 
+    ${lib.optionalString coordinatorHost ''
+    # Codex opens a role's config_file with O_NOFOLLOW at spawn time, so it must not be a
+    # Home Manager symlink under ~/.codex/agents; a store path is a regular file.
+    [agents.coordinator]
+    config_file = "${skillsSrc}/agents/coordinator/codex.toml"
+    ''}
     ${lib.optionalString nativeOtel ''
     [shell_environment_policy.filters]
     "OTEL_EXPORTER_OTLP_HEADERS" = "exclude"
@@ -181,7 +186,6 @@ in
       ".codex/skills/workspace-routing" = workspaceRoutingSkill;
       ".codex/config.toml".text = codexConfig;
       ".codex/hooks.json".text = hooksConfig;
-      ".codex/agents/coordinator.toml" = lib.mkIf coordinatorHost { source = "${skillsSrc}/agents/coordinator/codex.toml"; };
       ".codex/AGENTS.md".text = ''
         # Personal Codex Defaults
 

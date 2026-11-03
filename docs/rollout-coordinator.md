@@ -7,7 +7,7 @@ switched on either host. Tracking: #111, sammasak/skills#28.
 
 | Host | Claude Code | Codex |
 |---|---|---|
-| lenovo (coordinator: declares `sam.herdr.machines`) | `~/.claude/agents/coordinator.md` from the skills input | `~/.codex/agents/coordinator.toml`, the skills input's `agents/coordinator/codex.toml` installed as shipped (its instructions point Codex at `agents/coordinator/ROLE.md`); the role's skills `herdr`, `herdr-operations`, `agent-handoff` added to `~/.agents/skills` and `~/.codex/skills` |
+| lenovo (coordinator: declares `sam.herdr.machines`) | `~/.claude/agents/coordinator.md` from the skills input | `[agents.coordinator] config_file` in `~/.codex/config.toml`, pointing at the skills input's `agents/coordinator/codex.toml` as shipped (a regular store file: Codex re-reads it with `O_NOFOLLOW` at spawn, so it is not symlinked into `~/.codex/agents`); its instructions point Codex at `agents/coordinator/ROLE.md`; the role's skills `herdr`, `herdr-operations`, `agent-handoff` added to `~/.agents/skills` and `~/.codex/skills` |
 | acer-swift (worker) | every adapter except `coordinator.md`; all shared skills | unchanged (portable skills) |
 
 Both hosts move the skills input to `2704cd0` (skills main after #32, #34 and #33), so every linked skill and
@@ -58,7 +58,8 @@ On lenovo:
 
 ```sh
 readlink -f ~/.claude/agents/coordinator.md          # .../<skills 2704cd0 source>/agents/coordinator.md
-python3 -c 'import tomllib,sys; d=tomllib.load(open(sys.argv[1],"rb")); print(d["name"])' ~/.codex/agents/coordinator.toml
+python3 -c 'import os,tomllib; c=tomllib.load(open(os.path.expanduser("~/.codex/config.toml"),"rb")); f=c["agents"]["coordinator"]["config_file"]; os.close(os.open(f, os.O_RDONLY|os.O_NOFOLLOW)); print(f, "model" in c)'   # <store>/agents/coordinator/codex.toml False
+test ! -e ~/.codex/agents/coordinator.toml && echo no-symlinked-role
 ls ~/.agents/skills/{herdr,herdr-operations,agent-handoff}/SKILL.md
 herdr status --json | jq .server.running             # true
 herdr --machine acer-swift agent list                # acer reachable through the saved machine
@@ -66,11 +67,19 @@ cd ~/claude-code-skills && devenv tasks run herdr:inventory --show-output   # on
 ```
 
 Then one conversation in each harness. Claude Code: "ask the coordinator what
-my agents are doing", which must delegate to the `coordinator` subagent. Codex:
-"have the coordinator report what my agents are doing", which must spawn the
-custom agent `coordinator` (once spawned, `/subagents` lists its thread). That Codex conversation is
-the first proof that Codex loads the shipped file; acer could only check it
-against Codex's documented schema.
+my agents are doing", which must delegate to the `coordinator` subagent. Codex,
+non-interactively and with no `-m` (the account default model applies):
+
+```sh
+cd ~/claude-code-skills && codex exec "Spawn the coordinator agent and have it run only coord:brief; reply with hosts_total and answered_hosts" 2>&1 | tee /tmp/codex-coordinator.log
+grep -c 'agent type is currently not available' /tmp/codex-coordinator.log      # 0
+grep -l 'agent_type.\{0,6\}coordinator' $(ls -t ~/.codex/sessions/*/*/*/rollout-*.jsonl | head -3)   # the parent session
+```
+
+Pass: exit 0, the reply carries both numbers, no "currently not available",
+and the spawn names `agent_type` `coordinator` rather than falling back to
+`default`. acer has no Codex login, so this conversation is the first live
+proof; acer checked the mechanism against the 0.162.1 source (#115).
 
 Both adapters read `ROLE.md` from `~/claude-code-skills`, so the role is
 whatever that checkout holds; keep it at the pinned revision. Codex's
