@@ -15,18 +15,6 @@ let
     else if missing != [ ] then throw "coordinator ROLE.md names skills the input lacks: ${toString missing}"
     else items;
 
-  # The build fails if yq reads a different skills list than the eval-time parse above.
-  codexCoordinatorAgent = pkgs.runCommand "codex-coordinator-agent.toml" {
-    nativeBuildInputs = [ pkgs.yq-go pkgs.jq pkgs.python3 ];
-  } ''
-    mission=$(yq --front-matter=extract '.mission // ""' ${coordinatorRole})
-    test -n "$mission" || { echo "coordinator ROLE.md has no mission" >&2; exit 1; }
-    test "$(yq --front-matter=extract '.skills | join(" ")' ${coordinatorRole})" = ${lib.escapeShellArg (toString coordinatorSkills)}
-    jq -rn --arg d "$mission" --rawfile i ${coordinatorRole} \
-      '"name = \("coordinator" | tojson)\ndescription = \($d | tojson)\ndeveloper_instructions = \($i | tojson)"' > "$out"
-    python3 -c 'import sys, tomllib; d = tomllib.load(open(sys.argv[1], "rb")); assert d["name"] and d["description"].strip() and d["developer_instructions"].strip()' "$out"
-  '';
-
   portableSkillNames = lib.optionals coordinatorHost coordinatorSkills ++ [
     "credentials"
     "knowledge-vault"
@@ -193,7 +181,7 @@ in
       ".codex/skills/workspace-routing" = workspaceRoutingSkill;
       ".codex/config.toml".text = codexConfig;
       ".codex/hooks.json".text = hooksConfig;
-      ".codex/agents/coordinator.toml" = lib.mkIf coordinatorHost { source = codexCoordinatorAgent; };
+      ".codex/agents/coordinator.toml" = lib.mkIf coordinatorHost { source = "${skillsSrc}/agents/coordinator/codex.toml"; };
       ".codex/AGENTS.md".text = ''
         # Personal Codex Defaults
 
