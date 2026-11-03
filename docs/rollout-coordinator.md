@@ -106,8 +106,13 @@ counts and the audit log's open handoffs against
 nothing is actionable. Only then does the service start one headless
 `claude -p --agent coordinator --max-budget-usd <maxBudgetUsd>` session,
 write its report to `~/.local/state/coordinator/changed/wake-<ts>.md` and
-raise a Herdr toast. A checkout without the task yet (the skills PR not
-merged or not pulled) is logged and skipped, not failed.
+raise a Herdr toast. The session runs with `--disallowedTools` for the act
+tasks (`herdr:message`, `gh:label`, `gh:comment`), raw `herdr agent prompt`,
+`gh`, `git push` and file edits, so it can only read and report. Lines are
+appended to `changed/pending.txt` first and cleared only when the session
+exits 0, so a failed session (no network, budget hit) is retried on the next
+tick rather than forgotten. A checkout without the task yet (the skills PR
+not merged or not pulled) is logged and skipped, not failed.
 
 ```sh
 systemctl --user list-timers coordinator-wakeup.timer

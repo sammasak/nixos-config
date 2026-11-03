@@ -87,9 +87,15 @@ def main():
     script = nix("eval", "--raw", ".#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages",
                  "--apply", 'ps: (builtins.head (builtins.filter (p: (p.name or "") == "coordinator-wakeup") ps)).text')
     check("devenv tasks run coord:changed" in script, "the script runs coord:changed")
-    check('[ "$n" -gt 0 ] || exit 0' in script, "the script exits before any model call when nothing is actionable")
+    check('[ -s "$pending" ] || exit 0' in script and script.index('[ -s "$pending" ] || exit 0') < script.index("claude -p"),
+          "the script exits before any model call when nothing is actionable or pending")
     check("claude -p --agent coordinator --max-budget-usd" in script, "the session is headless, the coordinator agent, spend-capped")
-    check("flock -n 9" in script, "one wake-up session at a time")
+    check(script.index("flock -n 9") < script.index("devenv tasks run coord:changed"), "the lock is taken before coord:changed runs, so two runs never race on the snapshot")
+    check("--disallowedTools 'Bash(devenv tasks run herdr:message:*)'" in script and "'Bash(gh:*)'" in script and "Edit Write" in script,
+          "the headless session cannot reach the act tasks, gh, pushes or file edits")
+    check(': > "$pending"' in script and script.index("|| rc=$?") < script.index(': > "$pending"'),
+          "pending changes are cleared only after claude exited 0")
+    check('[[ "$observed" > "$started" || "$observed" == "$started" ]]' in script, "a latest.json older than this run is not trusted")
     check("Task does not exist: coord:changed" in script, "a checkout without the task is skipped, not failed")
 
 main()
