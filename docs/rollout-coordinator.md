@@ -123,25 +123,28 @@ send). Its allow list, pinned word for word by
 | `Read` | `//home/lukas/claude-code-skills/**`, `//home/lukas/.local/state/coordinator/**` | the checkout and the coordinator state, `//` (filesystem-root) anchors |
 
 The owner's skills config for the host is `sam.herdr.coordinatorWakeup`
-(`mayApprove`, `approvalDecision`, `panes`), rendered by Home Manager as
-`~/claude-code-skills/devenv.local.nix`, which devenv reads next to
-`devenv.nix` for every task run in the checkout: the timer's `coord:changed`,
-the wrappers and an interactive Coordinator session alike, while the wrappers
-still pass no `--option`, so a session cannot change it. On lenovo
-`mayApprove = true` with the owner's decision comment
+(`mayApprove`, `approvalDecision`, `panes`). The timer and the two devenv
+wrappers append it to every devenv call as fixed `--option` flags
+(`coordinator.mayApprove`, `coordinator.approvalDecision`,
+`coordinator.panes`), pinned word for word by the wiring test; the caller
+still passes none, so a session can neither widen the delegation nor drop
+the pane rule, and nothing in the checkout changes (an interactive
+Coordinator session running devenv itself sees the skills defaults). On
+lenovo `mayApprove = true` with the owner's decision comment
 (sammasak/skills#28, quoted: "change so that you are allowed to set approved
-label!!") lets `gh:label` add `approved` to one of the owner's open issues
-that a worker can finish (never a PR, never over `needs-live`, `blocked` or
-`needs-decision`); both audit lines cite the decision and `herdr:message`
-accepts that label on that basis. `panes = [ "lenovo-21CB001PMX/wM:p1" ]`
-names the interactive Coordinator's pane, which `coord:changed` then never
-counts as a worker and `coord:handoff`/`herdr:message` refuse as a target
-(skills#54). Withdrawing the delegation is `mayApprove = false` plus a
-switch: the send gate then refuses every label the Coordinator added under
-it. The checkout must be at or past the pinned skills revision (the options
-exist since skills `f958d38`); an older checkout fails every task's
-evaluation and the timer logs `coord:changed failed`. The file is untracked
-in the checkout (`git status` shows it); do not add it.
+label!!") lets the wake session's `gh:label` add `approved` to one of the
+owner's open issues that a worker can finish (never a PR, never over
+`needs-live`, `blocked` or `needs-decision`); both audit lines cite the
+decision and `herdr:message` accepts that label on that basis.
+`panes = [ "lenovo-21CB001PMX/wM:p1" ]` names the interactive Coordinator's
+pane, which `coord:changed` then never counts as a worker and
+`coord:handoff`/`herdr:message` refuse as a target (skills#54). Withdrawing
+the delegation is `mayApprove = false` plus a switch: the send gate then
+refuses every label the Coordinator added under it. Rollout order: pull the
+checkout first (the options exist since skills `f958d38`), then switch; a
+checkout older than the pin fails every call with "The option
+`coordinator.panes' does not exist", which the timer reports as "older than
+the pinned skills input" with the pull command, exits 1 and toasts.
 
 Denied, and refused rather than asked: `devenv` itself (a free `--option`
 would swap `herdrCommand` or `ghCommand`), `herdr agent prompt|send-keys|start`,

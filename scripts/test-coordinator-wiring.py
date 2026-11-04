@@ -34,21 +34,13 @@ def main():
     role_skills = front["skills"]
 
     common = (skills / "task-modules/common.nix").read_text()
-    check("mayApprove = lib.mkOption" in common and "approvalDecision = lib.mkOption" in common and "panes = lib.mkOption" in common,
-          "the pinned skills input declares coordinator.mayApprove, approvalDecision and panes (skills#53, #54), so the local config evaluates")
+    check("mayApprove = lib.mkOption { type = t.bool;" in common and "approvalDecision = lib.mkOption { type = t.nullOr t.str;" in common
+          and "panes = lib.mkOption { type = t.str;" in common,
+          "the pinned skills input declares coordinator.mayApprove (bool), approvalDecision (nullable string) and panes (comma string) (skills#53, #54), the types the fixed options use")
 
     lenovo, acer = home_files("lenovo"), home_files("acer-swift")
     check(COORDINATOR_FILES <= lenovo, "lenovo links the Claude and Codex coordinator adapters")
-    # the owner's skills config for the host: one file devenv reads in the checkout, for the timer, the wrappers and an
-    # interactive session alike; evaluated as Nix so a malformed value fails here, not at the next wake
-    local_attr = '.#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.file."claude-code-skills/devenv.local.nix".text'
-    local_text = nix("eval", "--raw", local_attr)
-    local_cfg = json.loads(subprocess.run(["nix", "eval", "--json", "--impure", "--expr", f"import (builtins.toFile \"devenv.local.nix\" {json.dumps(local_text)})"],
-                                          check=True, capture_output=True, text=True).stdout)
-    check(local_cfg == {"coordinator": {"mayApprove": True, "approvalDecision": "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996",
-                                        "panes": "lenovo-21CB001PMX/wM:p1"}},
-          f"lenovo's devenv.local.nix delegates approval citing the owner's decision comment and names the interactive Coordinator's pane (got {local_cfg})")
-    check("claude-code-skills/devenv.local.nix" not in acer, "acer, a worker, gets no devenv.local.nix")
+    check(not any(f.startswith("claude-code-skills/") for f in lenovo | acer), "Home Manager writes nothing into the skills checkout")
     check(not COORDINATOR_FILES & acer, "acer, a worker, links no coordinator adapter")
     check(".claude/agents/quality.md" in acer, "acer keeps the other role adapters")
     for name in role_skills:
@@ -102,6 +94,14 @@ def main():
     script = nix("eval", "--raw", ".#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages",
                  "--apply", 'ps: (builtins.head (builtins.filter (p: (p.name or "") == "coordinator-wakeup") ps)).text')
     check('devenv tasks run coord:changed --input-json \'{"consume":true}\'' in script, "the timer runs coord:changed in its consuming form")
+    # the owner's skills config for the host rides on every devenv call as fixed --option flags (sam.herdr.coordinatorWakeup);
+    # the exact flags are the contract: the delegation, the decision it cites, the Coordinator's pane
+    OPTS = ("--option coordinator.mayApprove:bool true --option coordinator.approvalDecision:string "
+            "'https://github.com/sammasak/skills/issues/28#issuecomment-6629911996' --option coordinator.panes:string lenovo-21CB001PMX/wM:p1")
+    check('devenv tasks run coord:changed --input-json \'{"consume":true}\' ' + OPTS + " >" in script,
+          "the timer's coord:changed carries the host's fixed skills options: delegated approval citing the owner's decision comment, the Coordinator's pane")
+    check("does not exist" in script and "older than the pinned skills input" in script and "pull --ff-only origin main" in script,
+          "a checkout that lacks the options (older than the pin) is named in the journal and toasted, not retried silently")
     quiet = script.index('if [ ! -s "$pending" ]; then')
     check(quiet < script.index("claude -p") and "  exit 0\nfi\n" in script[quiet:script.index("claude -p")],
           "the script exits before any model call when nothing is actionable or pending")
@@ -168,16 +168,17 @@ def main():
                  ' (builtins.getFlake (toString ./.)).nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages)')
     wrapper = pathlib.Path(wrapper_dirs[0], "coordinator-read").read_text()
     check("coord:brief|coord:changed|coord:capacity|work:status|herdr:inventory|herdr:inspect|herdr:await|gh:work|gh:repos|git:recent|harness:session-summary) ;;" in wrapper
-          and "--option" not in wrapper and "input=$(jq -c '. + {consume:false}'" in wrapper and "consume:true" not in wrapper,
-          "coordinator-read takes only one of the role's read tasks and an input object, never consumes with coord:changed, passes no --option")
+          and wrapper.count("--option") == 2 * OPTS.count("--option") and wrapper.count(OPTS) == 2 and '[ "$#" -le 2 ]' in wrapper
+          and "input=$(jq -c '. + {consume:false}'" in wrapper and "consume:true" not in wrapper,
+          "coordinator-read takes only one of the role's read tasks and an input object, never consumes with coord:changed, and the only --option flags are the host's fixed ones (both devenv calls)")
     check(" 9>&-" in wrapper.split("exec devenv")[1], "coordinator-read closes the lock fd before devenv")
     act_dirs = re.findall(r"/nix/store/[a-z0-9]+-coordinator-act/bin", script)
     prompt_dirs = re.findall(r"/nix/store/[a-z0-9]+-coordinator-prompt/bin", script)
     check(act_dirs != [] and prompt_dirs != [], "coordinator-act and coordinator-prompt are on the wake-up script's PATH")
     act = pathlib.Path(act_dirs[0], "coordinator-act").read_text()
-    check("coord:handoff|herdr:message|gh:label|gh:comment) ;;" in act and "--option" not in act and "coord:spawn" not in act
-          and '[ "$#" -eq 2 ]' in act and " 9>&-" in act.split("exec devenv")[1],
-          "coordinator-act takes exactly one of coord:handoff, herdr:message, gh:label, gh:comment plus one input object (never coord:spawn, no --option), lock fd closed")
+    check("coord:handoff|herdr:message|gh:label|gh:comment) ;;" in act and act.count("--option") == OPTS.count("--option") and OPTS in act
+          and "coord:spawn" not in act and '[ "$#" -eq 2 ]' in act and " 9>&-" in act.split("exec devenv")[1],
+          "coordinator-act takes exactly one of coord:handoff, herdr:message, gh:label, gh:comment plus one input object (never coord:spawn), the only --option flags the host's fixed ones, lock fd closed")
     prompt_wrapper = pathlib.Path(prompt_dirs[0], "coordinator-prompt").read_text()
     check('case "$text" in /clear|/compact) ;;' in prompt_wrapper and "agent prompt \"$agent\" \"$text\"" in prompt_wrapper
           and "send-keys" not in prompt_wrapper and "--wait" not in prompt_wrapper,
@@ -208,6 +209,7 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
             'case "$*" in *coord:brief*) echo \'{"task":"herdr:inventory","hosts":[{"agents":[]}]}\'; echo \'{"task":"coord:brief","items":[]}\'\n'
             '  if [ -n "${FAKE_BRIEF_MD:-}" ]; then mkdir -p "$XDG_STATE_HOME/coordinator/brief"; printf \'%s\\n\' "$FAKE_BRIEF_MD" > "$XDG_STATE_HOME/coordinator/brief/latest.md"; fi\n'
             '  exit "${FAKE_BRIEF_RC:-0}";; esac\n'
+            'if [ -n "${FAKE_OLD:-}" ]; then echo "error: The option \\`coordinator.panes\' does not exist. Definition values:" >&2; exit 1; fi\n'
             'printf \'{"schema_version":1,"task":"coord:changed","observed_at":"now","changes":%s%s}\\n\' "${FAKE_CHANGES:-[]}" "${FAKE_EXTRA:-}" > "$XDG_STATE_HOME/coordinator/changed/latest.json"\n')
         (fakes / "herdr").write_text('#!/bin/sh\necho "herdr $*" >> "$XDG_STATE_HOME/toasts.log"\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED >> "$XDG_STATE_HOME/toasts.log"; fi\n')
         (fakes / "claude").write_text('#!/bin/sh\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED; else echo FD9_CLOSED; fi; echo "oauth token ${CLAUDE_CODE_OAUTH_TOKEN:+set}${CLAUDE_CODE_OAUTH_TOKEN:-unset}" | sed "s/set.*/set/"\n')
@@ -244,6 +246,10 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
         r = run({"FAKE_EXTRA": ',"idle_wake":{"fleet_idle":true,"agents":4,"hosts":2,"evaluated":false,"skipped":{"kind":"gh_failed"},"fired":false,"fingerprint":null}'})
         check('no session: fleet idle; the idle check was skipped: {"kind":"gh_failed"}' in r.stdout, "a skipped idle check (gh failure) is named")
         (state / "quiet.last").unlink()
+        r = run({"FAKE_OLD": "1"})
+        check(r.returncode == 1 and "older than the pinned skills input" in r.stdout and "pull the checkout" in r.stdout
+              and "skills checkout behind the pin" in (tmp / "state" / "toasts.log").read_text(),
+              "a checkout older than the pin (devenv: the option does not exist) ends the run non-zero with the pull command in the journal and a toast")
 
         def read(task, extra_env=None):
             return subprocess.run([str(read_path), task], env=dict(env, **(extra_env or {})), capture_output=True, text=True)
@@ -268,10 +274,12 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
 
         before = devenv_log.read_text()
         r = act("herdr:message", '{"handoff_id":"0123456789ab","confirm":"h/w:p1","authorized_by":{"issue_url":"https://github.com/o/r/issues/1","label":"approved"}}')
+        opts_log = ("--option coordinator.mayApprove:bool true --option coordinator.approvalDecision:string "
+                    "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996 --option coordinator.panes:string lenovo-21CB001PMX/wM:p1")
         check(r.returncode == 0 and "FD9_CLOSED" in r.stdout and devenv_log.read_text().endswith(
                   'devenv tasks run herdr:message --input-json {"handoff_id":"0123456789ab","confirm":"h/w:p1",'
-                  '"authorized_by":{"issue_url":"https://github.com/o/r/issues/1","label":"approved"}} --show-output\n'),
-              "coordinator-act herdr:message reaches devenv as exactly that task with the given object and --show-output, lock fd closed")
+                  '"authorized_by":{"issue_url":"https://github.com/o/r/issues/1","label":"approved"}} --show-output ' + opts_log + "\n"),
+              "coordinator-act herdr:message reaches devenv as exactly that task with the given object, --show-output and the host's fixed options, lock fd closed")
         before = devenv_log.read_text()
         refusals = [("coord:changed", '{"consume":true}'), ("coord:spawn", '{"kind":"review"}'), ("gh:repos", "{}"),
                     ("herdr:message",), ("herdr:message", "{}"), ("herdr:message", "[1]"), ("herdr:message", "not json"),
@@ -286,8 +294,11 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
               "coordinator-act forwards gh:comment and gh:label for the owner's repositories")
         r = act("gh:label", '{"repo":"sammasak/skills","number":36,"label":"approved","action":"add","reason":"delegated: fits a worker"}')
         check(r.returncode == 0 and devenv_log.read_text().endswith(
-                  'devenv tasks run gh:label --input-json {"repo":"sammasak/skills","number":36,"label":"approved","action":"add","reason":"delegated: fits a worker"} --show-output\n'),
-              "a delegated approval reaches devenv as exactly gh:label with the given object and no --option: the task's mayApprove gate (from devenv.local.nix) decides, never the wrapper")
+                  'devenv tasks run gh:label --input-json {"repo":"sammasak/skills","number":36,"label":"approved","action":"add","reason":"delegated: fits a worker"} --show-output ' + opts_log + "\n"),
+              "an approval reaches devenv as exactly gh:label with the given object and the host's fixed options: the task's mayApprove gate decides (issues only, holds refuse), the wrapper forwards")
+        before = devenv_log.read_text()
+        check(act("gh:label", '{"repo":"sammasak/skills","number":36,"label":"approved","action":"add"}', "--option", "coordinator.mayApprove:bool", "true").returncode == 3
+              and devenv_log.read_text() == before, "a caller-supplied --option (even one repeating the fixed set) is refused before devenv")
         before = devenv_log.read_text()
         foreign = [("gh:comment", '{"repo":"someone-else/repo","number":1,"body":"x"}'), ("gh:label", '{"repo":"someone-else/repo","number":1,"label":"blocked","action":"add"}'),
                    ("gh:comment", '{"repo":"sammasak","number":1,"body":"x"}'), ("gh:comment", '{"repo":"sammasak/a/b","number":1,"body":"x"}'),
