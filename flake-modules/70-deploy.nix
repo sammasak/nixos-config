@@ -26,6 +26,8 @@ let
 
   mkNode = name: activate: profile: {
     hostname = name;
+    # the pinned key or nothing (modules/core/ssh-known-hosts.nix): no first-use trust from the deployer either
+    sshOpts = [ "-o" "StrictHostKeyChecking=yes" ];
     profiles.system = {
       # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
       sshUser = "deploy";

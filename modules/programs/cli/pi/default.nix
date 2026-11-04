@@ -148,7 +148,7 @@ in
       })
       # ADR-028 issue pipeline. Run in place from the pinned checkout, so it finds its
       # contract files (docs/templates, configs/agent-issues) next to it. Managed clones
-      # push over ssh with the host key (github.com pinned in modules/core/services.nix);
+      # push over ssh with the host key (github.com pinned in modules/core/ssh-known-hosts.nix);
       # gh is only used for API and PR calls.
       (pkgs.writeShellApplication {
         name = "pi-ticket";
