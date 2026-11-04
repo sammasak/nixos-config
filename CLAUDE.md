@@ -19,6 +19,7 @@ devenv tasks run nixos:flake-check     # nix flake check --all-systems
 devenv tasks run nixos:verify          # build every x86 host, evaluate black-pi
 devenv tasks run nixos:claude-settings-test  # generated Claude settings: default mode, bypass on request
 devenv tasks run nixos:coordinator-test  # coordinator adapters on lenovo only; Codex's agent declared via config_file, no model pin
+devenv tasks run nixos:build-bounds-test  # lenovo's nix-daemon builds bounded (#109); acer keeps defaults
 devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward supervisor restarts a wedged forward, not an HTTP error
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
