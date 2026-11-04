@@ -3,6 +3,7 @@
 (fingerprints recorded here and in docs/ssh-host-keys.md), every name and address of each host is covered, a host
 pins loopback to its own key only, every client fails closed, deploy-rs too, and the old github pin is gone."""
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -58,6 +59,45 @@ def fingerprint(public_key):
     return out.stdout.split()[1] if out.returncode == 0 else None
 
 
+def verify_script_checks(known_hosts_text):
+    """scripts/ssh-known-hosts-verify.sh over fakes: a host that answers with the pinned key is OK (exit 0), with a
+    different key DIFF (1), not at all UNREACHABLE (2); a contradicting ~/.ssh/known_hosts entry is named (1)."""
+    script = ROOT / "scripts/ssh-known-hosts-verify.sh"
+    acer_key = next(l for l in known_hosts_text.splitlines() if l.startswith("acer-swift,")).split(" ", 1)[1]
+    other_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ17UFIIh7VzaEykstxZC3QaPDrya+YSS0wMtTAggp4q"  # lenovo's: a real key, the wrong host
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = pathlib.Path(tmp); fakes = tmp / "bin"; fakes.mkdir()
+        (tmp / "known_hosts").write_text(known_hosts_text)
+        (fakes / "hostname").write_text("#!/bin/sh\necho test-client\n")
+        (fakes / "curl").write_text('#!/bin/sh\nprintf \'{"ssh_keys":["%s"]}\\n\' "${FAKE_GH_KEY:-}"\n')
+        (fakes / "ssh").write_text("#!/bin/sh\n[ -n \"${FAKE_SSH_KEY:-}\" ] || exit 255\necho \"$FAKE_SSH_KEY root@fake\"\n")
+        for f in fakes.iterdir():
+            f.chmod(0o755)
+        gh_key = next(l for l in known_hosts_text.splitlines() if l.startswith("github.com ")).split(" ", 1)[1]
+        env = dict(os.environ, PATH=f"{fakes}:{os.environ['PATH']}", KNOWN_HOSTS=str(tmp / "known_hosts"),
+                   USER_KNOWN_HOSTS=str(tmp / "user_known_hosts"), FAKE_GH_KEY=gh_key)
+
+        def run(**extra):
+            return subprocess.run([str(script), "acer-swift"], env=dict(env, **extra), capture_output=True, text=True)
+
+        r = run(FAKE_SSH_KEY=acer_key)
+        check(r.returncode == 0 and "OK   acer-swift live" in r.stdout and "OK   acer-swift sops-recipient" in r.stdout and "OK   github.com" in r.stdout,
+              "verify: a host answering with its pinned key, github matching the publisher: OK, exit 0")
+        r = run(FAKE_SSH_KEY=other_key)
+        check(r.returncode == 1 and "DIFF acer-swift" in r.stdout, "verify: a host answering with another key: DIFF, exit 1")
+        r = run()
+        check(r.returncode == 2 and "UNREACHABLE acer-swift" in r.stdout, "verify: a host that does not answer: UNREACHABLE, exit 2 (unknown is never a pass)")
+        r = run(FAKE_SSH_KEY=acer_key, FAKE_GH_KEY="")
+        check(r.returncode == 2 and "UNCHECKED github.com" in r.stdout, "verify: the publisher API not answering: UNCHECKED, exit 2")
+        (tmp / "user_known_hosts").write_text(f"192.168.10.110 {other_key}\n")
+        r = run(FAKE_SSH_KEY=acer_key)
+        check(r.returncode == 1 and "CONTRADICTION 192.168.10.110:" in r.stdout and "ssh-keygen -R 192.168.10.110" in r.stdout,
+              "verify: a first-use entry in the user's known_hosts that contradicts a pin is named with its ssh-keygen -R, exit 1")
+        (tmp / "user_known_hosts").write_text(f"acer-swift {acer_key}\n")
+        r = run(FAKE_SSH_KEY=acer_key)
+        check(r.returncode == 0 and "CONTRADICTION" not in r.stdout, "verify: a user entry equal to the pin is not a contradiction")
+
+
 def main():
     hosts = nix_json(".#nixosConfigurations.lenovo.config.programs.ssh.knownHosts")
     check(set(hosts) == set(EXPECTED), f"exactly the verified hosts are pinned (got {sorted(hosts)})")
@@ -109,6 +149,7 @@ def main():
     for node in ("lenovo", "acer-swift", "black-pi"):
         opts = nix_json(f".#deploy.nodes.{node}.sshOpts")
         check(opts == ["-o", "StrictHostKeyChecking=yes"], f"deploy-rs node {node} refuses unknown or changed host keys")
+    verify_script_checks(known)
     services = (ROOT / "modules/core/services.nix").read_text()
     check("knownHosts" not in services, "the old github pin in services.nix is gone: one module owns host keys")
     module = (ROOT / "modules/core/ssh-known-hosts.nix").read_text()
