@@ -7,6 +7,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FAILED = False
@@ -90,12 +91,17 @@ def main():
         strict = re.search(r"Host \*\n\s*StrictHostKeyChecking yes\n\s*UpdateHostKeys no", rendered)
         check(strict is not None and strict.start() < rendered.index("# Generated options"),
               f"{host}: the rendered ssh_config fails closed for every host, ahead of nixpkgs' generated Host * block")
-        cfg = ROOT / f".ssh_config.{host}.test"; cfg.write_text(rendered)
+        # the gpg-agent "Match host * exec" line is dropped: it only pokes the agent's tty, which is not under test
+        plain = "\n".join(l for l in rendered.splitlines() if not l.startswith("Match host * exec"))
+        with tempfile.NamedTemporaryFile("w", suffix=".ssh_config", delete=False) as cfg:
+            cfg.write(plain); path = cfg.name
         try:
-            eff = subprocess.run(["ssh", "-G", "-F", str(cfg), "unknown-host.example"], capture_output=True, text=True).stdout
+            run = subprocess.run(["ssh", "-G", "-F", path, "unknown-host.example"], capture_output=True, text=True)
         finally:
-            cfg.unlink()
-        check("stricthostkeychecking true" in eff and "updatehostkeys false" in eff and "globalknownhostsfile /etc/ssh/ssh_known_hosts" in eff,
+            pathlib.Path(path).unlink()
+        eff = run.stdout
+        check(run.returncode == 0 and "stricthostkeychecking true" in eff and "updatehostkeys false" in eff
+              and "globalknownhostsfile /etc/ssh/ssh_known_hosts" in eff,
               f"{host}: ssh -G on the rendered file resolves to strict checking against the pinned file")
     check(nix_json(".#nixosConfigurations.lenovo.options.sam.sshKnownHosts.strict.default") is True
           and nix_json(".#nixosConfigurations.lenovo.options.sam.sshKnownHosts.enable.default") is True,

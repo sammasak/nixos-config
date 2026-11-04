@@ -17,7 +17,8 @@ NixOS host here decrypts its sops secrets with `/etc/ssh/ssh_host_ed25519_key`,
 and the recipient the owner wrote into `secrets/.sops.yaml` for that host at
 onboarding is `ssh-to-age` of exactly that key. A pinned key whose age form is
 the host's recipient is therefore the key that host has been decrypting with
-(for naked-pi: the Wi-Fi PSK it joined the LAN with). The live read of
+(for naked-pi this is inferred: it has been seen at its Wi-Fi addresses, and
+it can only join that network with the PSK it decrypts with this key). The live read of
 `/etc/ssh/ssh_host_ed25519_key.pub` over ssh is a consistency check on top.
 
 | Entry | Names and addresses | SHA256 (Ed25519) | Evidence |
