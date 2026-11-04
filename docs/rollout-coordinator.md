@@ -178,6 +178,36 @@ changes and finished its session in 39 s. Rollback stays
 `sudo nixos-rebuild switch --rollback` (owner) or
 `systemctl --user disable --now coordinator-wakeup.timer` until the next switch.
 
+## Git authentication from lenovo (checked 2026-11-04)
+
+Git over SSH on lenovo authenticates with the key file
+`~/.ssh/id_ed25519` (no passphrase; GitHub key "lenovo", added
+2026-01-14), which OpenSSH tries by name without any agent. The agent
+behind `SSH_AUTH_SOCK` is gpg-agent (`programs.gnupg.agent.enableSSHSupport`
+in `modules/core/system.nix`, socket `/run/user/1000/gnupg/S.gpg-agent.ssh`,
+also the target of herdr's `herdr.sock.agent` link); it holds no identities
+and never did (`~/.gnupg/sshcontrol` is empty), so `ssh-add -l` answering
+"The agent has no identities" is the normal state, not a fault, and a
+rebuild restarting the agent changes nothing for git. The push failures of
+2026-11-04 09:58–10:45Z ("Permission denied (publickey)" with the same key
+that GitHub accepts before and after) fell inside GitHub's incident
+"Incident with Pull Requests, Git Operations and Issues" (opened 09:49:55Z,
+API 502s in the same window), not the 09:22 CET switch.
+
+When GitHub's SSH endpoint misbehaves but HTTPS works, push with gh's token
+without touching the remote or the key (the capital S dodges the
+`url.git@github.com:sammasak/.insteadOf` rewrite in `~/.config/git/config`;
+the pre-push hooks run as usual):
+
+```sh
+git -c credential.helper='!gh auth git-credential' push https://github.com/Sammasak/<repo>.git HEAD:refs/heads/<branch>
+```
+
+Not worth changing: `AddKeysToAgent yes` would import the key into
+gpg-agent on first use, but gpg-agent then asks through pinentry to protect
+the imported key, which hangs a headless session; HTTPS-only is not
+intended either. Nothing in this section touches a secret.
+
 ## Rollback
 
 Each switch is one NixOS generation; Home Manager's files roll back with it.
