@@ -132,11 +132,16 @@ the pane rule. The same options are rendered by Home Manager as
 `~/claude-code-skills/devenv.local.nix` (a store symlink, untracked: do not
 `git add` it), which devenv reads next to `devenv.nix`, so an interactive
 Coordinator session running devenv itself in the checkout sees the same
-delegation and pane list and can approve and send like the wake session. A
-`--option` on the command line wins over that file without a conflict
-(measured on lenovo), so the timer's and the wrappers' flags, and the skills
-suites' own flags, agree with it; the full `skills:test` with the file
-present gave the same result as without it. `nixos:delegation-test` runs
+delegation and pane list and can approve and send like the wake session.
+Two consequences the owner accepted with this mechanism: devenv reads the
+file for every run in that checkout, so any session that runs `gh:label`
+there holds the same delegation (still bounded by the skills gate: the
+owner's open issues, never a PR, no hold, the decision cited), and the
+skills test suites would read it too, so they pin their own delegation
+defaults with a leading `--option` (skills PR "suites pin delegation
+defaults"); a command-line `--option` wins over the file without a conflict
+(measured on lenovo), which is also why the timer's and the wrappers' flags
+agree with it. `nixos:delegation-test` runs
 the generated file against the pinned skills input with its fake `gh`:
 `gh:label approved` on an owner issue is accepted with both audit lines
 citing the decision, and refused as `not_delegated` with no gh call when the
