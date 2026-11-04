@@ -7,6 +7,7 @@
     ../core/users.nix
     ../core/network.nix
     ../core/services.nix
+    ../core/ssh-known-hosts.nix
     ../core/packages.nix
     ../core/fonts.nix
     ../core/sops.nix
