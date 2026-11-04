@@ -133,6 +133,24 @@ in
         default = "1.00";
         description = "Spend cap for one wake-up session (`claude --max-budget-usd`).";
       };
+      # The skills options the owner sets for this host, written to ~/claude-code-skills/devenv.local.nix so the
+      # timer, the wrappers and an interactive Coordinator session in the checkout all read the same config.
+      mayApprove = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Owner delegation (skills `coordinator.mayApprove`): the Coordinator may add the authorizing label to the owner's own issues; needs `approvalDecision`.";
+      };
+      approvalDecision = mkOption {
+        type = types.nullOr (types.strMatching "https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(issues|pull)/[0-9]+#issuecomment-[0-9]+");
+        default = null;
+        description = "URL of the issue comment quoting the owner's decision that `mayApprove` rests on (skills `coordinator.approvalDecision`).";
+      };
+      panes = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "lenovo-21CB001PMX/wM:p1" ];
+        description = "The Coordinator's own panes as host/agent_id (skills `coordinator.panes`): never workers for the idle wake, never handoff targets.";
+      };
     };
 
     userConfig = mkOption {

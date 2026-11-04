@@ -33,8 +33,22 @@ def main():
                                       check=True, capture_output=True, text=True).stdout)
     role_skills = front["skills"]
 
+    common = (skills / "task-modules/common.nix").read_text()
+    check("mayApprove = lib.mkOption" in common and "approvalDecision = lib.mkOption" in common and "panes = lib.mkOption" in common,
+          "the pinned skills input declares coordinator.mayApprove, approvalDecision and panes (skills#53, #54), so the local config evaluates")
+
     lenovo, acer = home_files("lenovo"), home_files("acer-swift")
     check(COORDINATOR_FILES <= lenovo, "lenovo links the Claude and Codex coordinator adapters")
+    # the owner's skills config for the host: one file devenv reads in the checkout, for the timer, the wrappers and an
+    # interactive session alike; evaluated as Nix so a malformed value fails here, not at the next wake
+    local_attr = '.#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.file."claude-code-skills/devenv.local.nix".text'
+    local_text = nix("eval", "--raw", local_attr)
+    local_cfg = json.loads(subprocess.run(["nix", "eval", "--json", "--impure", "--expr", f"import (builtins.toFile \"devenv.local.nix\" {json.dumps(local_text)})"],
+                                          check=True, capture_output=True, text=True).stdout)
+    check(local_cfg == {"coordinator": {"mayApprove": True, "approvalDecision": "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996",
+                                        "panes": "lenovo-21CB001PMX/wM:p1"}},
+          f"lenovo's devenv.local.nix delegates approval citing the owner's decision comment and names the interactive Coordinator's pane (got {local_cfg})")
+    check("claude-code-skills/devenv.local.nix" not in acer, "acer, a worker, gets no devenv.local.nix")
     check(not COORDINATOR_FILES & acer, "acer, a worker, links no coordinator adapter")
     check(".claude/agents/quality.md" in acer, "acer keeps the other role adapters")
     for name in role_skills:
@@ -115,6 +129,10 @@ def main():
     check("coordinator-act <task>" in script and "coordinator-prompt [--machine <label>] <agent_id> /clear|/compact" in script
           and "the label gate stays the authority" in script and "This session only reports" not in script,
           "the wake prompt names the act and prompt wrappers and the label gate, and no longer says the session only reports")
+    check("The owner delegated approval (coordinator.mayApprove, decision https://github.com/sammasak/skills/issues/28#issuecomment-6629911996)" in script
+          and "never a PR, never one carrying needs-live, blocked or needs-decision) may get the approved label through coordinator-act gh:label, one issue per call" in script
+          and "Never hand off to a Coordinator pane (coord:handoff and herdr:message refuse one; coordinator.panes names them), only to workers." in script,
+          "the wake prompt states the owner's delegation (approve issues a worker can finish through coordinator-act gh:label, citing the decision) and that a Coordinator pane is never a handoff target")
     check("is not flagged needs_owner is free" in script and "Never two implementation handoffs for one item and never two review handoffs for the same PR head" in script
           and "a re-review of a new head or a fix-up back to the implementer is not a second implementation handoff" in script
           and "allowed_actions comment and the merge at 9 or more) for a free worker other than its implementer, then send it with herdr:message, authorized_by naming the URL and owner label" in script,
@@ -266,6 +284,10 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
         check(r.returncode == 0 and r2.returncode == 0 and 'run gh:comment --input-json {"repo":"sammasak/skills"' in devenv_log.read_text()
               and 'run gh:label --input-json {"repo":"sammasak/nixos-config"' in devenv_log.read_text(),
               "coordinator-act forwards gh:comment and gh:label for the owner's repositories")
+        r = act("gh:label", '{"repo":"sammasak/skills","number":36,"label":"approved","action":"add","reason":"delegated: fits a worker"}')
+        check(r.returncode == 0 and devenv_log.read_text().endswith(
+                  'devenv tasks run gh:label --input-json {"repo":"sammasak/skills","number":36,"label":"approved","action":"add","reason":"delegated: fits a worker"} --show-output\n'),
+              "a delegated approval reaches devenv as exactly gh:label with the given object and no --option: the task's mayApprove gate (from devenv.local.nix) decides, never the wrapper")
         before = devenv_log.read_text()
         foreign = [("gh:comment", '{"repo":"someone-else/repo","number":1,"body":"x"}'), ("gh:label", '{"repo":"someone-else/repo","number":1,"label":"blocked","action":"add"}'),
                    ("gh:comment", '{"repo":"sammasak","number":1,"body":"x"}'), ("gh:comment", '{"repo":"sammasak/a/b","number":1,"body":"x"}'),
