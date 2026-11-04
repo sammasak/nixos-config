@@ -133,15 +133,17 @@ the pane rule. The same options are rendered by Home Manager as
 `git add` it), which devenv reads next to `devenv.nix`, so an interactive
 Coordinator session running devenv itself in the checkout sees the same
 delegation and pane list and can approve and send like the wake session.
-Two consequences the owner accepted with this mechanism: devenv reads the
-file for every run in that checkout, so any session that runs `gh:label`
-there holds the same delegation (still bounded by the skills gate: the
-owner's open issues, never a PR, no hold, the decision cited), and the
-skills test suites would read it too, so they pin their own delegation
-defaults with a leading `--option` (skills PR "suites pin delegation
-defaults"); a command-line `--option` wins over the file without a conflict
-(measured on lenovo), which is also why the timer's and the wrappers' flags
-agree with it. `nixos:delegation-test` runs
+Two consequences of this owner-requested mechanism (the mechanism is the
+owner's choice on sammasak/skills#28; the owner's acceptance of the first
+consequence is an open gate there): devenv reads the file for every run in
+that checkout, so any session that runs `gh:label` there holds the same
+delegation (still bounded by the skills gate: the owner's open issues, never
+a PR, no hold, the decision cited; `mayApprove = false` plus a switch
+withdraws it), and the skills test suites would read it too, so they pin
+their own delegation defaults with a leading `--option`
+(sammasak/skills#59); a command-line `--option` wins over the file without a
+conflict (measured on lenovo), which is also why the timer's and the
+wrappers' flags agree with it. `nixos:delegation-test` runs
 the generated file against the pinned skills input with its fake `gh`:
 `gh:label approved` on an owner issue is accepted with both audit lines
 citing the decision, and refused as `not_delegated` with no gh call when the
@@ -157,8 +159,9 @@ decision and `herdr:message` accepts that label on that basis.
 pane, which `coord:changed` then never counts as a worker and
 `coord:handoff`/`herdr:message` refuse as a target (skills#54). Withdrawing
 the delegation is `mayApprove = false` plus a switch: the send gate then
-refuses every label the Coordinator added under it. Rollout order: pull the
-checkout first (the options exist since skills `f958d38`), then switch; a
+refuses every label the Coordinator added under it. Rollout order: merge sammasak/skills#59, pull the
+checkout (the options exist since skills `f958d38`, the suites' pins since
+#59), then switch; a
 checkout older than the pin fails every call with "The option
 `coordinator.panes' does not exist", which the timer reports as "older than
 the pinned skills input" with the pull command, exits 1 and toasts.
