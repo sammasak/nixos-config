@@ -115,6 +115,10 @@ def main():
     check("coordinator-act <task>" in script and "coordinator-prompt [--machine <label>] <agent_id> /clear|/compact" in script
           and "the label gate stays the authority" in script and "This session only reports" not in script,
           "the wake prompt names the act and prompt wrappers and the label gate, and no longer says the session only reports")
+    check("is not flagged needs_owner is free" in script and "one implementation handoff per item, as ROLE.md says" in script
+          and "for a free worker other than its implementer, then send it with herdr:message, authorized_by naming the URL and owner label" in script
+          and "a review handoff is not a duplicate of the implementation handoff for the same item, any other second handoff for one item is" in script,
+          "the prompt makes a review of an ungraded PR its own handoff for a free (idle or done) worker, drafted with coord:handoff and sent with herdr:message, without loosening the one-implementation-handoff rule (skills#28: the 09:07Z idle wake sent nothing)")
     check(': > "$pending"; rm -f "$attempts"' in script and 'if [ "$rc" -eq 0 ]; then' in script
           and script.index("|| rc=$?") < script.index(': > "$pending"; rm -f "$attempts"', script.index('if [ "$rc" -eq 0 ]; then')),
           "pending changes and the attempt counter are cleared only after claude exited 0")
