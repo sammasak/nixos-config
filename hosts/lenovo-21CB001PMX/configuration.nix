@@ -20,7 +20,14 @@ in
   sam.hostSecrets.enable = true;
   # The coordinator host: the only one whose Herdr reaches the worker (`herdr --machine acer-swift`).
   sam.herdr.machines = [ { label = "acer-swift"; target = "acer-swift"; } ];
-  sam.herdr.coordinatorWakeup.enable = true;
+  sam.herdr.coordinatorWakeup = {
+    enable = true;
+    # Delegated approval (the comment every delegated gh:label act cites) and the interactive
+    # Coordinator's pane, never a worker nor a handoff target.
+    mayApprove = true;
+    approvalDecision = "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996";
+    panes = [ "lenovo-21CB001PMX/wM:p1" ];
+  };
   # As the always-on control plane, lenovo sends msi its Mon-Fri 09:00 wake.
   homelab.msiPowerSchedule.waker.enable = true;
 
