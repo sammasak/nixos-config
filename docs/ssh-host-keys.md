@@ -33,11 +33,13 @@ it can only join that network with the PSK it decrypts with this key). The live 
 The addresses are routing, not identity: a host's key is pinned for every
 address it is reached by (black-pi's .136 and naked-pi's .138/.180 come from
 the owner's `~/.ssh/config` aliases). Tailscale addresses and MagicDNS names
-are not pinned (only lenovo and the phone are on the tailnet). No Mac or CI
-runner is managed by this repository. The ephemeral KubeVirt workstations
-(192.168.10.20x) keep changing keys by design; the owner's own
-`~/.ssh/config` carries their exception, which the user file wins over the
-system file. The `# naked-pi — FILL` comment in `secrets/.sops.yaml` is stale
+are not pinned: only lenovo (which runs `tailscale up --ssh`) and the phone
+are on the tailnet, so a NixOS client reaching lenovo off-LAN by its MagicDNS
+name fails closed until that name is added to lenovo's entry. No Mac or CI
+runner is managed by this repository. The owner's own `~/.ssh/config` keeps
+a `StrictHostKeyChecking no` block for ephemeral workstation VMs
+(192.168.10.20x, keys change on every boot); that file is outside this
+repository and wins over the system file for the hosts it names. The `# naked-pi — FILL` comment in `secrets/.sops.yaml` is stale
 (the recipient below it is filled in); it is left alone here.
 
 Each host runs the same `ssh_known_hosts`; a host additionally pins
@@ -59,11 +61,17 @@ scripts/ssh-known-hosts-verify.sh            # all fleet hosts and github.com
 scripts/ssh-known-hosts-verify.sh acer-swift # one host
 ```
 
-It prints, per host, the sops-recipient check (offline) and the live read
+It prints, per host, the sops-recipient check (offline), the live read
 (over the pinned connection; a changed key shows as UNREACHABLE because the
-connection itself fails). Exit 1 means a mismatch, 2 means something could
-not be checked; both deserve a look. Converting a key yourself:
-`ssh-to-age < /etc/ssh/ssh_host_ed25519_key.pub`.
+connection itself fails) and any CONTRADICTION: ssh accepts a key found in
+either the system pin file or `~/.ssh/known_hosts`, so a first-use entry of
+yours for a pinned name or address that carries a different key would still
+be trusted (acer held its own key under `lenovo-21cb001pmx`, which resolves
+to 127.0.0.2 there). The script names such entries with the
+`ssh-keygen -R <name> -f ~/.ssh/known_hosts` that removes them; run it once on
+each client after the switch. Exit 1 means a mismatch or contradiction, 2
+means something could not be checked; both deserve a look. Converting a key
+yourself: `ssh-to-age < /etc/ssh/ssh_host_ed25519_key.pub`.
 
 `ssh-keyscan` is never the verification: it shows what a server claims, not
 who it is. It is fine as a cross-check once the fingerprint is known.
