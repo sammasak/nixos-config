@@ -60,7 +60,7 @@ in
     unitConfig.ConditionUser = vars.username;
     environment.KUBECONFIG = "%h/.kube/config";
     serviceConfig = {
-      ExecStart = "${pkgs.kubectl}/bin/kubectl port-forward --address 127.0.0.1 deploy/llm-gateway -n llm 8080:11434";
+      ExecStart = "${lib.getExe pkgs.ollama-portforward} http://127.0.0.1:8080/api/tags ${pkgs.kubectl}/bin/kubectl port-forward --address 127.0.0.1 deploy/llm-gateway -n llm 8080:11434";
       Restart = "always";
       RestartSec = 5;
     };
