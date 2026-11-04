@@ -210,6 +210,7 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
             '  if [ -n "${FAKE_BRIEF_MD:-}" ]; then mkdir -p "$XDG_STATE_HOME/coordinator/brief"; printf \'%s\\n\' "$FAKE_BRIEF_MD" > "$XDG_STATE_HOME/coordinator/brief/latest.md"; fi\n'
             '  exit "${FAKE_BRIEF_RC:-0}";; esac\n'
             'if [ -n "${FAKE_OLD:-}" ]; then echo "error: The option \\`coordinator.panes\' does not exist. Definition values:" >&2; exit 1; fi\n'
+            'if [ -n "${FAKE_FAIL:-}" ]; then echo "error: some other evaluation failure" >&2; exit 1; fi\n'
             'printf \'{"schema_version":1,"task":"coord:changed","observed_at":"now","changes":%s%s}\\n\' "${FAKE_CHANGES:-[]}" "${FAKE_EXTRA:-}" > "$XDG_STATE_HOME/coordinator/changed/latest.json"\n')
         (fakes / "herdr").write_text('#!/bin/sh\necho "herdr $*" >> "$XDG_STATE_HOME/toasts.log"\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED >> "$XDG_STATE_HOME/toasts.log"; fi\n')
         (fakes / "claude").write_text('#!/bin/sh\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED; else echo FD9_CLOSED; fi; echo "oauth token ${CLAUDE_CODE_OAUTH_TOKEN:+set}${CLAUDE_CODE_OAUTH_TOKEN:-unset}" | sed "s/set.*/set/"\n')
@@ -256,6 +257,9 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
               "the next tick behind the pin logs again but does not toast again")
         r = run()
         check(r.returncode == 0 and not (state / "behind-pin.toasted").exists(), "a run that evaluates again forgets the behind-pin toast, so a later regression toasts once more")
+        run({"FAKE_OLD": "1"}); r = run({"FAKE_FAIL": "1"})
+        check(r.returncode == 1 and "coord:changed failed" in r.stdout and not (state / "behind-pin.toasted").exists(),
+              "any other failure after a stretch behind the pin also forgets the toast marker (it marks the stretch, not the last success)")
 
         def read(task, extra_env=None):
             return subprocess.run([str(read_path), task], env=dict(env, **(extra_env or {})), capture_output=True, text=True)

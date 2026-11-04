@@ -134,9 +134,9 @@ defaults (`mayApprove = false`): it cannot approve, and because the send gate
 compares a delegated `approved` in `audit.jsonl` against the running config,
 it also cannot send a handoff for an issue the wake session approved
 (`herdr:message` refuses it as `not_delegated`, worded as a withdrawn
-delegation). Until the skills adapter uses the wrappers on the coordinator
-host (sammasak/skills#56), such a handoff goes through `coordinator-act`, which
-is on the same PATH, or the owner adds the label themselves. On
+delegation). Until the skills adapter resolves this (sammasak/skills#56),
+the owner adds the label themselves; the wrappers live on the wake-up
+script's own PATH, not on the interactive one. On
 lenovo `mayApprove = true` with the owner's decision comment
 (sammasak/skills#28, quoted: "change so that you are allowed to set approved
 label!!") lets the wake session's `gh:label` add `approved` to one of the
