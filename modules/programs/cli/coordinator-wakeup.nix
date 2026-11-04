@@ -132,13 +132,16 @@ let
         # the host's fixed options name skills options the checkout does not declare yet: older than the pin
         if grep -qE "option .coordinator\.(mayApprove|approvalDecision|panes). does not exist" "$state/run.log"; then
           log "$skills is older than the pinned skills input (no coordinator.mayApprove/panes option); pull the checkout. Nothing checked"
-          toast "Coordinator wake-up: skills checkout behind the pin" "git -C $skills pull --ff-only origin main"; exit 1
+          # one toast per stretch behind the pin, not one per tick; the marker goes when a run succeeds again
+          [ -e "$state/behind-pin.toasted" ] || { toast "Coordinator wake-up: skills checkout behind the pin" "git -C $skills pull --ff-only origin main"; : > "$state/behind-pin.toasted"; }
+          exit 1
         fi
         if grep -q '"kind":"nothing_observed"' "$state/run.log"; then
           log "no herdr host answered (is herdr.service up?); nothing checked"; exit 0
         fi
         log "coord:changed failed: $(grep -vE '^\s*$' "$state/run.log" | tail -n 3 | tr '\n' ' ')"; exit 1
       fi
+      rm -f "$state/behind-pin.toasted"
       rec="$state/latest.json"
       [ "$rec" -nt "$state/.started" ] || { log "$rec was not rewritten by this run; not trusted"; exit 1; }
       n=$(jq -r '.changes | length' "$rec" 2>/dev/null) || { log "no readable $rec after the run"; exit 1; }

@@ -250,6 +250,12 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
         check(r.returncode == 1 and "older than the pinned skills input" in r.stdout and "pull the checkout" in r.stdout
               and "skills checkout behind the pin" in (tmp / "state" / "toasts.log").read_text(),
               "a checkout older than the pin (devenv: the option does not exist) ends the run non-zero with the pull command in the journal and a toast")
+        r = run({"FAKE_OLD": "1"})
+        check(r.returncode == 1 and "older than the pinned skills input" in r.stdout
+              and (tmp / "state" / "toasts.log").read_text().count("skills checkout behind the pin") == 1,
+              "the next tick behind the pin logs again but does not toast again")
+        r = run()
+        check(r.returncode == 0 and not (state / "behind-pin.toasted").exists(), "a run that evaluates again forgets the behind-pin toast, so a later regression toasts once more")
 
         def read(task, extra_env=None):
             return subprocess.run([str(read_path), task], env=dict(env, **(extra_env or {})), capture_output=True, text=True)

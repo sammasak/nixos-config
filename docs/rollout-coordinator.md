@@ -128,8 +128,15 @@ wrappers append it to every devenv call as fixed `--option` flags
 (`coordinator.mayApprove`, `coordinator.approvalDecision`,
 `coordinator.panes`), pinned word for word by the wiring test; the caller
 still passes none, so a session can neither widen the delegation nor drop
-the pane rule, and nothing in the checkout changes (an interactive
-Coordinator session running devenv itself sees the skills defaults). On
+the pane rule, and nothing in the checkout changes. An interactive
+Coordinator session that runs devenv itself in the checkout sees the skills
+defaults (`mayApprove = false`): it cannot approve, and because the send gate
+compares a delegated `approved` in `audit.jsonl` against the running config,
+it also cannot send a handoff for an issue the wake session approved
+(`herdr:message` refuses it as `not_delegated`, worded as a withdrawn
+delegation). Until the skills adapter uses the wrappers on the coordinator
+host (sammasak/skills#56), such a handoff goes through `coordinator-act`, which
+is on the same PATH, or the owner adds the label themselves. On
 lenovo `mayApprove = true` with the owner's decision comment
 (sammasak/skills#28, quoted: "change so that you are allowed to set approved
 label!!") lets the wake session's `gh:label` add `approved` to one of the
