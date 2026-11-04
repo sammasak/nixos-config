@@ -40,7 +40,17 @@ def main():
 
     lenovo, acer = home_files("lenovo"), home_files("acer-swift")
     check(COORDINATOR_FILES <= lenovo, "lenovo links the Claude and Codex coordinator adapters")
-    check(not any(f.startswith("claude-code-skills/") for f in lenovo | acer), "Home Manager writes nothing into the skills checkout")
+    # the same options for an interactive session: devenv.local.nix in the checkout, evaluated as Nix so a malformed value
+    # fails here, not at the Coordinator's next act; nothing else is written into the checkout
+    local_text = nix("eval", "--raw", '.#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.file."claude-code-skills/devenv.local.nix".text')
+    local_cfg = json.loads(subprocess.run(["nix", "eval", "--json", "--impure", "--expr", f"import (builtins.toFile \"devenv.local.nix\" {json.dumps(local_text)})"],
+                                          check=True, capture_output=True, text=True).stdout)
+    check(local_cfg == {"coordinator": {"mayApprove": True, "approvalDecision": "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996",
+                                        "panes": "lenovo-21CB001PMX/wM:p1"}},
+          f"lenovo's devenv.local.nix carries exactly the delegation, the decision comment and the Coordinator pane the wrappers pass (got {local_cfg})")
+    check([f for f in lenovo if f.startswith("claude-code-skills/")] == ["claude-code-skills/devenv.local.nix"]
+          and not any(f.startswith("claude-code-skills/") for f in acer),
+          "devenv.local.nix is the only file Home Manager writes into the checkout, and only on lenovo")
     check(not COORDINATOR_FILES & acer, "acer, a worker, links no coordinator adapter")
     check(".claude/agents/quality.md" in acer, "acer keeps the other role adapters")
     for name in role_skills:

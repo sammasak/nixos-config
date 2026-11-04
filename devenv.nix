@@ -75,9 +75,15 @@ let
     ${pkgs.python3}/bin/python scripts/test-lenovo-build-bounds.py
   '';
 
+  # the generated devenv.local.nix against the pinned skills input and its fake gh: approved accepted under the
+  # delegation, refused with it off; devenv itself comes from the system profile, as on the coordinator host
+  delegationTest = gate "delegation-test" (with pkgs; [ nix python3 ]) ''
+    PATH="$PATH:/run/current-system/sw/bin" ${pkgs.python3}/bin/python scripts/test-coordinator-delegation.py
+  '';
+
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
     lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest ollamaPortforwardTest knownHostsTest buildBoundsTest
+    coordinatorWiringTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
@@ -320,6 +326,7 @@ in
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:known-hosts-test" = task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed" knownHostsTest;
+    "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" = task "lenovo's nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max); acer keeps defaults" buildBoundsTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
