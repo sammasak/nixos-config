@@ -63,9 +63,13 @@ let
     ${pkgs.python3}/bin/python scripts/test-coordinator-wiring.py
   '';
 
+  knownHostsTest = gate "known-hosts-test" (with pkgs; [ nix python3 openssh ]) ''
+    ${pkgs.python3}/bin/python scripts/test-ssh-known-hosts.py
+  '';
+
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
     lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest
+    coordinatorWiringTest knownHostsTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
@@ -306,6 +310,7 @@ in
     "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
+    "nixos:known-hosts-test" = task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed" knownHostsTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;
