@@ -49,6 +49,13 @@ in
   # would otherwise reject anything copied in over SSH as lukas.
   nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];
 
+  # nixos-config#109: a cold devenv gate builds cargo-semver-checks from source in the daemon,
+  # outside every user cgroup and oomd's reach; at cores 8 it peaked at 7.5 GiB plus 1.6 GiB swap
+  # on acer, at cores 2 at 6.1 GiB with none. The cap keeps a build from pushing the control plane
+  # into zram exhaustion; MemoryHigh throttles first, MemoryMax fails the build, not the host.
+  nix.settings = { max-jobs = 2; cores = 2; };
+  systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "6G"; MemoryMax = "7G"; };
+
   # Rebuilds here are manual and precede the push other hosts auto-upgrade from.
   system.autoUpgrade.enable = lib.mkForce false;
 
