@@ -106,16 +106,33 @@ counts and the audit log's open handoffs against
 nothing is actionable. Only then does the service start one headless
 `claude -p --agent coordinator --max-budget-usd <maxBudgetUsd>` session,
 write its report to `~/.local/state/coordinator/changed/wake-<ts>.md` and
-raise a Herdr toast. The session runs `--permission-mode dontAsk`; tasks are
-reachable only through `coordinator-read <task> ['<input-json>']` (the role's
-read tasks, `coord:changed` never consuming, no other devenv arguments;
-`coord:brief` hands back the Markdown `brief/latest.md` alone, not devenv's
-stdout with every task's JSON) plus
-Herdr's read commands, while `devenv` itself, `herdr --machine`, the act
-tasks, `gh`, `git push` and file edits are denied, so it can only read and
-report; `Read` is scoped to the checkout and the coordinator state with
-`//` (filesystem-root) anchors and no
-shell read or write primitive is allowed. The session authenticates with the
+raise a Herdr toast. The session runs `--permission-mode dontAsk` and acts
+under ROLE.md's Autonomy rule without a human (owner decision on
+sammasak/skills#28: everything except sudo, and merges are not asked of the
+owner; the label gate inside `herdr:message` stays the authority for every
+send). Its allow list, pinned word for word by
+`scripts/test-coordinator-wiring.py`, is:
+
+| Allowed | Form | What it reaches |
+|---|---|---|
+| `coordinator-read` | `coordinator-read <task> ['<input-json>']` | the role's read tasks: `coord:brief` (prints `brief/latest.md`, never devenv's stdout), `coord:changed` (never consuming), `coord:capacity`, `work:status`, `herdr:inventory`, `herdr:inspect`, `herdr:await`, `gh:work`, `gh:repos`, `git:recent`, `harness:session-summary` |
+| `coordinator-act` | `coordinator-act <task> '<input-json>'` | `coord:handoff`, `herdr:message`, `gh:label`, `gh:comment`; one non-empty object, no other argument; `gh:comment` and `gh:label` only with `repo` under the owner's account (`sam.userConfig.git.userName/<repo>`); `coord:spawn` is not reachable |
+| `coordinator-prompt` | `coordinator-prompt [--machine <label>] <agent_id> /clear\|/compact` | `herdr agent prompt` with exactly that literal text (a worker's hygiene prompt); identifiers never start with a dash, so none becomes a herdr flag; each call is logged in `~/.local/state/coordinator/prompts.log` |
+| Herdr reads | `herdr machine list\|status`, `herdr agent list\|get\|read\|wait` | as typed; the `herdr --machine` deny is textual, so the trailing `--machine <label>` form of these read commands still reaches a saved machine (read-only) |
+| `cd` | into `~/claude-code-skills` | |
+| `Read` | `//home/lukas/claude-code-skills/**`, `//home/lukas/.local/state/coordinator/**` | the checkout and the coordinator state, `//` (filesystem-root) anchors |
+
+Denied, and refused rather than asked: `devenv` itself (a free `--option`
+would swap `herdrCommand` or `ghCommand`), `herdr agent prompt|send-keys|start`,
+`herdr --machine`, `herdr pane`, `gh`, `git`, `ssh`, `sudo`, `Edit`, `Write`,
+`NotebookEdit`, and every shell write primitive and interpreter (`tee`, `sed -i`,
+`bash -c`, `python`) since none is on the allow list; the file readers Claude
+Code path-checks against the Read rules (`cat`, `head`, `tail`) reach only the
+two Read scopes, and `jq` is refused. Each act lands in
+`~/.local/state/coordinator/audit.jsonl` through its task (an attempt line
+before, an outcome line after), so a wake session that sent a handoff leaves
+`herdr:message` attempt and outcome records naming its `handoff_id`,
+`authorized_by` and `audit_id`. The session authenticates with the
 OAuth token file the Fish session also exports
 (`/run/secrets/claude_oauth_token`), else `~/.claude/.credentials.json`; the
 journal names the source. The lock fd never reaches a child, and a lock still
@@ -125,6 +142,18 @@ in a row they are parked in `changed/pending.failed` (toast raised) and no
 further session starts until the owner clears that file, so a persistent
 failure cannot buy a session every tick. A checkout without the task yet (the skills PR
 not merged or not pulled) is logged and skipped, not failed.
+
+A tick that starts no session logs why, once: `no session: fleet idle with N
+work item(s) left; the idle line already printed at <time> for this
+fleet+work fingerprint, so no new session until the fleet or the work
+changes`, `no session: wake budget deferred (per_hour_cap) until <time>`,
+`no session: fleet idle; the idle check was skipped: …` (gh failed) or
+`no session: fleet not idle (…); no actionable change`. The reason is
+remembered in `changed/quiet.last` and repeated only when it changes or
+after a session, so a ten-hour idle stretch is one journal line, not 300
+silent ticks (the overnight no-wake of 2026-11-03/04 on skills#28 had no
+such line: the one idle wake at 23:04 CET went to the read-only profile,
+sent nothing, and the unchanged fingerprint rightly suppressed repeats).
 
 ```sh
 systemctl --user list-timers coordinator-wakeup.timer
