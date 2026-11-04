@@ -136,9 +136,9 @@ let
           if .wake.deferred == true then "wake budget deferred (" + (.wake.reason // "?") + ") until " + (.wake.next_allowed_at // "?")
           elif .idle_wake.fleet_idle == true then
             if .idle_wake.skipped != null then "fleet idle; the idle check was skipped: " + (.idle_wake.skipped | tostring)
-            elif ((.idle_wake.fingerprint.work // []) | length) == 0 then "fleet idle (" + (.idle_wake.agents | n) + " agents on " + (.idle_wake.hosts | n) + " host(s)), no work left"
+            elif ((.idle_wake.fingerprint.work // []) | length) == 0 then "fleet idle (" + (.idle_wake.agents | n) + " worker(s) on " + (.idle_wake.hosts | n) + " host(s)), no work left"
             else "fleet idle with " + ((.idle_wake.fingerprint.work | length) | n) + " work item(s) left; the idle line already printed at " + ($S[0].idle_wake.at // "?") + " for this fleet+work fingerprint, so no new session until the fleet or the work changes" end
-          else "fleet not idle (" + (.idle_wake.agents | n) + " agents on " + (.idle_wake.hosts | n) + " host(s)); no actionable change" end' "$rec" 2>/dev/null) || quiet="latest.json gives no reason"
+          else "fleet not idle (" + (.idle_wake.agents | n) + " worker(s), " + ((.idle_wake.non_workers // 0) | n) + " other agent(s) on " + (.idle_wake.hosts | n) + " host(s)); no actionable change" end' "$rec" 2>/dev/null) || quiet="latest.json gives no reason"
         [ "$quiet" = "$(cat "$state/quiet.last" 2>/dev/null)" ] || { log "no session: $quiet"; printf '%s\n' "$quiet" > "$state/quiet.last"; }
         exit 0
       fi

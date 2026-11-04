@@ -201,10 +201,13 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
         r = run()
         check(r.returncode == 0 and "FD9_CLOSED" in (state / "run.log").read_text() and not (state / "pending.txt").exists(),
               "an empty change set ends before any session and devenv saw no lock fd")
-        check("no session: fleet not idle (null agents on null host(s)); no actionable change" in r.stdout and (state / "quiet.last").exists(),
+        check("no session: fleet not idle (null worker(s), 0 other agent(s) on null host(s)); no actionable change" in r.stdout and (state / "quiet.last").exists(),
               "a quiet tick logs why there is no session (here: the fleet is not idle) and remembers it")
         r = run()
         check(r.returncode == 0 and "no session" not in r.stdout, "the same quiet reason is not logged again on the next tick")
+        r = run({"FAKE_EXTRA": ',"idle_wake":{"fleet_idle":false,"agents":2,"non_workers":2,"hosts":2,"evaluated":false,"fired":false,"fingerprint":null}'})
+        check("no session: fleet not idle (2 worker(s), 2 other agent(s) on 2 host(s)); no actionable change" in r.stdout,
+              "the not-idle reason counts workers and the other agents apart (skills#51: Coordinator panes are not workers)")
         (state / "snapshot.json").write_text('{"idle_wake":{"at":"2026-11-03T22:04:05Z","fingerprint":{}}}\n')
         idle = {"FAKE_EXTRA": ',"idle_wake":{"fleet_idle":true,"agents":4,"hosts":2,"evaluated":true,"skipped":null,"fired":false,'
                               '"fingerprint":{"agents":["h/a","h/b","h/c","h/d"],"work":["pr:o/r#123","pr:o/r#47","pr:o/r#50"]}}'}
