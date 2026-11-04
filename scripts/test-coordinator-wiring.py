@@ -115,6 +115,10 @@ def main():
     check("coordinator-act <task>" in script and "coordinator-prompt [--machine <label>] <agent_id> /clear|/compact" in script
           and "the label gate stays the authority" in script and "This session only reports" not in script,
           "the wake prompt names the act and prompt wrappers and the label gate, and no longer says the session only reports")
+    check("is not flagged needs_owner is free" in script and "Never two implementation handoffs for one item and never two review handoffs for the same PR head" in script
+          and "a re-review of a new head or a fix-up back to the implementer is not a second implementation handoff" in script
+          and "allowed_actions comment and the merge at 9 or more) for a free worker other than its implementer, then send it with herdr:message, authorized_by naming the URL and owner label" in script,
+          "the prompt makes a review of an ungraded PR its own handoff for a free (idle or done) worker, drafted with coord:handoff (comment and merge allowed) and sent with herdr:message, keeping one implementation handoff per item and allowing re-reviews and fix-ups (skills#28: the 09:07Z idle wake sent nothing)")
     check(': > "$pending"; rm -f "$attempts"' in script and 'if [ "$rc" -eq 0 ]; then' in script
           and script.index("|| rc=$?") < script.index(': > "$pending"; rm -f "$attempts"', script.index('if [ "$rc" -eq 0 ]; then')),
           "pending changes and the attempt counter are cleared only after claude exited 0")
@@ -201,10 +205,13 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
         r = run()
         check(r.returncode == 0 and "FD9_CLOSED" in (state / "run.log").read_text() and not (state / "pending.txt").exists(),
               "an empty change set ends before any session and devenv saw no lock fd")
-        check("no session: fleet not idle (null agents on null host(s)); no actionable change" in r.stdout and (state / "quiet.last").exists(),
+        check("no session: fleet not idle (null worker(s), 0 other agent(s) on null host(s)); no actionable change" in r.stdout and (state / "quiet.last").exists(),
               "a quiet tick logs why there is no session (here: the fleet is not idle) and remembers it")
         r = run()
         check(r.returncode == 0 and "no session" not in r.stdout, "the same quiet reason is not logged again on the next tick")
+        r = run({"FAKE_EXTRA": ',"idle_wake":{"fleet_idle":false,"agents":2,"non_workers":2,"hosts":2,"evaluated":false,"fired":false,"fingerprint":null}'})
+        check("no session: fleet not idle (2 worker(s), 2 other agent(s) on 2 host(s)); no actionable change" in r.stdout,
+              "the not-idle reason counts workers and the other agents apart (skills#51: Coordinator panes are not workers)")
         (state / "snapshot.json").write_text('{"idle_wake":{"at":"2026-11-03T22:04:05Z","fingerprint":{}}}\n')
         idle = {"FAKE_EXTRA": ',"idle_wake":{"fleet_idle":true,"agents":4,"hosts":2,"evaluated":true,"skipped":null,"fired":false,'
                               '"fingerprint":{"agents":["h/a","h/b","h/c","h/d"],"work":["pr:o/r#123","pr:o/r#47","pr:o/r#50"]}}'}
