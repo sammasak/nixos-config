@@ -1,6 +1,7 @@
 # Verified SSH host public keys (nixos-config#86): the fleet and github.com pinned in /etc/ssh/ssh_known_hosts, so
-# no client trusts a server on first use. Each key was read over an already trusted channel or from the publisher's
-# API; the fingerprint stands beside it, docs/ssh-host-keys.md has sources, dates and procedures. Host keys only.
+# no client trusts a server on first use. github.com comes from the publisher's API; each fleet key converts
+# (ssh-to-age) to that host's recipient in secrets/.sops.yaml, the key the host decrypts its secrets with, which is
+# evidence independent of any ssh connection. Fingerprints beside the keys; docs/ssh-host-keys.md has the rest.
 { config, lib, ... }:
 let
   cfg = config.sam.sshKnownHosts;
@@ -13,27 +14,31 @@ let
       hostNames = [ "github.com" ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
     };
-    # read on the machine; SHA256:7DLYFLKZ4wrcrO0Bk7MnZ8yYHrVeu5pFsSwYWjvpNGs
+    # read on the machine, sops recipient age13lj7p...; SHA256:7DLYFLKZ4wrcrO0Bk7MnZ8yYHrVeu5pFsSwYWjvpNGs
     lenovo-21CB001PMX = {
       hostNames = own "lenovo-21CB001PMX" [ "lenovo-21CB001PMX" "192.168.10.154" ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ17UFIIh7VzaEykstxZC3QaPDrya+YSS0wMtTAggp4q";
     };
-    # read over the pinned ssh channel; SHA256:5Ong1jvhk4Hgx82l2fYrKBjqlkVyG5rYvYfVPo7WdRY
+    # sops recipient age1uu9y3...; SHA256:5Ong1jvhk4Hgx82l2fYrKBjqlkVyG5rYvYfVPo7WdRY
     acer-swift = {
       hostNames = own "acer-swift" [ "acer-swift" "192.168.10.110" ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF9kicjYJJdW1tP6dG0I/PSh8kse7e6ueStLS9fsNJGT";
     };
-    # read over the pinned ssh channel; SHA256:JebDBAzSWRc/WHY8wQG7jVcidYFp4eFKyjuTzXl5Jwc
+    # sops recipient age1g0k9v...; SHA256:JebDBAzSWRc/WHY8wQG7jVcidYFp4eFKyjuTzXl5Jwc
     msi-ms7758 = {
       hostNames = own "msi-ms7758" [ "msi-ms7758" "msi" "192.168.10.235" ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN3KB1qWY1sl8s3yJ18FMAFH5XU2UL9DJhnnHsgDryP1";
     };
-    # read over the pinned ssh channel; SHA256:i78xzl+ImmEgGFp0QehlBaa3zuFgkpk2nU5ALIHZMjY
+    # sops recipient age16l5rq...; SHA256:i78xzl+ImmEgGFp0QehlBaa3zuFgkpk2nU5ALIHZMjY
     black-pi = {
-      hostNames = own "black-pi" [ "black-pi" "192.168.10.137" ];
+      hostNames = own "black-pi" [ "black-pi" "192.168.10.137" "192.168.10.136" ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH88AIyzWh38c9+97gSFa87QA02OJL8KCRAATRtyQ7Vo";
     };
-    # naked-pi is not pinned until its key is read on the console (docs/ssh-host-keys.md)
+    # sops recipient age1kdjql... (the Wi-Fi PSK it joined with); SHA256:auOEtU3d4yfB4U6iB7WIt0gSCLwK7hCDPorJAwVs0sY
+    naked-pi = {
+      hostNames = own "naked-pi" [ "naked-pi" "192.168.10.127" "192.168.10.138" "192.168.10.180" ];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMyeESlmIoNX5aWSaXmM/7fvWXN+2tMCI/5no21XXct7";
+    };
   };
 in
 {
@@ -52,12 +57,12 @@ in
 
   config = lib.mkIf cfg.enable {
     programs.ssh.knownHosts = hosts;
-    # extraConfig lands before the generated "Host *" block, and a user's own config is read before this file, so
-    # the owner's per-host exceptions (ephemeral VMs) stay in force while every other target fails closed
-    programs.ssh.extraConfig = lib.mkIf cfg.strict ''
+    # mkAfter: a per-host exception another module adds to extraConfig stays ahead of this catch-all (ssh keeps the
+    # first value); the whole of extraConfig precedes nixpkgs' generated "Host *", and a user's own config precedes both
+    programs.ssh.extraConfig = lib.mkIf cfg.strict (lib.mkAfter ''
       Host *
         StrictHostKeyChecking yes
         UpdateHostKeys no
-    '';
+    '');
   };
 }

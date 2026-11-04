@@ -63,7 +63,7 @@ let
     ${pkgs.python3}/bin/python scripts/test-coordinator-wiring.py
   '';
 
-  knownHostsTest = gate "known-hosts-test" (with pkgs; [ nix python3 openssh ]) ''
+  knownHostsTest = gate "known-hosts-test" (with pkgs; [ nix python3 openssh ssh-to-age ]) ''
     ${pkgs.python3}/bin/python scripts/test-ssh-known-hosts.py
   '';
 
