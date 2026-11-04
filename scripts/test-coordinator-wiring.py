@@ -88,7 +88,8 @@ def main():
     script = nix("eval", "--raw", ".#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages",
                  "--apply", 'ps: (builtins.head (builtins.filter (p: (p.name or "") == "coordinator-wakeup") ps)).text')
     check('devenv tasks run coord:changed --input-json \'{"consume":true}\'' in script, "the timer runs coord:changed in its consuming form")
-    check('[ -s "$pending" ] || exit 0' in script and script.index('[ -s "$pending" ] || exit 0') < script.index("claude -p"),
+    quiet = script.index('if [ ! -s "$pending" ]; then')
+    check(quiet < script.index("claude -p") and "  exit 0\nfi\n" in script[quiet:script.index("claude -p")],
           "the script exits before any model call when nothing is actionable or pending")
     check("claude -p --agent coordinator --max-budget-usd" in script, "the session is headless, the coordinator agent, spend-capped")
     check(script.index("flock -w 20 9") < script.index("devenv tasks run coord:changed"), "the lock is taken before coord:changed runs, so two runs never race on the snapshot")
@@ -118,6 +119,8 @@ def main():
           and script.index("|| rc=$?") < script.index(': > "$pending"; rm -f "$attempts"', script.index('if [ "$rc" -eq 0 ]; then')),
           "pending changes and the attempt counter are cleared only after claude exited 0")
     check('[ "$rec" -nt "$state/.started" ]' in script, "a latest.json not rewritten by this run is not trusted")
+    check('rm -f "$state/quiet.last"' in script and script.index('rm -f "$state/quiet.last"') < script.index("starting one Coordinator session"),
+          "a session start forgets the last quiet reason, so the first quiet tick after a session is explained again")
     check('[ "$tries" -ge 2 ]' in script and 'cat "$pending" >> "$parked"' in script and script.index('[ "$tries" -ge 2 ]') < script.index("claude -p"),
           "after two failed sessions the pending lines are parked instead of buying a third")
     check("--permission-mode dontAsk" in script and "'Bash(coordinator-read:*)'" in script and "'Bash(devenv:*)'" in script
@@ -183,7 +186,7 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
             'case "$*" in *coord:brief*) echo \'{"task":"herdr:inventory","hosts":[{"agents":[]}]}\'; echo \'{"task":"coord:brief","items":[]}\'\n'
             '  if [ -n "${FAKE_BRIEF_MD:-}" ]; then mkdir -p "$XDG_STATE_HOME/coordinator/brief"; printf \'%s\\n\' "$FAKE_BRIEF_MD" > "$XDG_STATE_HOME/coordinator/brief/latest.md"; fi\n'
             '  exit "${FAKE_BRIEF_RC:-0}";; esac\n'
-            'printf \'{"schema_version":1,"task":"coord:changed","observed_at":"now","changes":%s}\\n\' "${FAKE_CHANGES:-[]}" > "$XDG_STATE_HOME/coordinator/changed/latest.json"\n')
+            'printf \'{"schema_version":1,"task":"coord:changed","observed_at":"now","changes":%s%s}\\n\' "${FAKE_CHANGES:-[]}" "${FAKE_EXTRA:-}" > "$XDG_STATE_HOME/coordinator/changed/latest.json"\n')
         (fakes / "herdr").write_text('#!/bin/sh\necho "herdr $*" >> "$XDG_STATE_HOME/toasts.log"\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED >> "$XDG_STATE_HOME/toasts.log"; fi\n')
         (fakes / "claude").write_text('#!/bin/sh\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED; else echo FD9_CLOSED; fi; echo "oauth token ${CLAUDE_CODE_OAUTH_TOKEN:+set}${CLAUDE_CODE_OAUTH_TOKEN:-unset}" | sed "s/set.*/set/"\n')
         for f in fakes.iterdir():
@@ -198,6 +201,24 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
         r = run()
         check(r.returncode == 0 and "FD9_CLOSED" in (state / "run.log").read_text() and not (state / "pending.txt").exists(),
               "an empty change set ends before any session and devenv saw no lock fd")
+        check("no session: fleet not idle (null agents on null host(s)); no actionable change" in r.stdout and (state / "quiet.last").exists(),
+              "a quiet tick logs why there is no session (here: the fleet is not idle) and remembers it")
+        r = run()
+        check(r.returncode == 0 and "no session" not in r.stdout, "the same quiet reason is not logged again on the next tick")
+        (state / "snapshot.json").write_text('{"idle_wake":{"at":"2026-11-03T22:04:05Z","fingerprint":{}}}\n')
+        idle = {"FAKE_EXTRA": ',"idle_wake":{"fleet_idle":true,"agents":4,"hosts":2,"evaluated":true,"skipped":null,"fired":false,'
+                              '"fingerprint":{"agents":["h/a","h/b","h/c","h/d"],"work":["pr:o/r#123","pr:o/r#47","pr:o/r#50"]}}'}
+        r = run(idle)
+        check("no session: fleet idle with 3 work item(s) left; the idle line already printed at 2026-11-03T22:04:05Z for this fleet+work fingerprint, "
+              "so no new session until the fleet or the work changes" in r.stdout,
+              "an idle fleet whose fingerprint already woke a session is explained in the journal once (the overnight no-wake of skills#28)")
+        r = run(idle)
+        check(r.returncode == 0 and "no session" not in r.stdout, "the idle explanation is not repeated while nothing changes")
+        r = run({"FAKE_EXTRA": ',"wake":{"deferred":true,"reason":"per_hour_cap","next_allowed_at":"2026-11-04T00:44:00Z"}'})
+        check("no session: wake budget deferred (per_hour_cap) until 2026-11-04T00:44:00Z" in r.stdout, "a run deferred by the wake budget says so once")
+        r = run({"FAKE_EXTRA": ',"idle_wake":{"fleet_idle":true,"agents":4,"hosts":2,"evaluated":false,"skipped":{"kind":"gh_failed"},"fired":false,"fingerprint":null}'})
+        check('no session: fleet idle; the idle check was skipped: {"kind":"gh_failed"}' in r.stdout, "a skipped idle check (gh failure) is named")
+        (state / "quiet.last").unlink()
 
         def read(task, extra_env=None):
             return subprocess.run([str(read_path), task], env=dict(env, **(extra_env or {})), capture_output=True, text=True)

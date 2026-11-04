@@ -128,7 +128,20 @@ let
       [ "$rec" -nt "$state/.started" ] || { log "$rec was not rewritten by this run; not trusted"; exit 1; }
       n=$(jq -r '.changes | length' "$rec" 2>/dev/null) || { log "no readable $rec after the run"; exit 1; }
       [ "$n" -gt 0 ] && jq -r '.changes[].line' "$rec" >> "$pending"
-      [ -s "$pending" ] || exit 0
+      # a quiet tick says why once, deduplicated (quiet.last) so the journal explains a long idle stretch in one line (skills#28, the overnight no-wake)
+      if [ ! -s "$pending" ]; then
+        snap=/dev/null; [ -r "$state/snapshot.json" ] && snap="$state/snapshot.json"
+        quiet=$(jq -r --slurpfile S "$snap" '
+          def n: tostring;
+          if .wake.deferred == true then "wake budget deferred (" + (.wake.reason // "?") + ") until " + (.wake.next_allowed_at // "?")
+          elif .idle_wake.fleet_idle == true then
+            if .idle_wake.skipped != null then "fleet idle; the idle check was skipped: " + (.idle_wake.skipped | tostring)
+            elif ((.idle_wake.fingerprint.work // []) | length) == 0 then "fleet idle (" + (.idle_wake.agents | n) + " agents on " + (.idle_wake.hosts | n) + " host(s)), no work left"
+            else "fleet idle with " + ((.idle_wake.fingerprint.work | length) | n) + " work item(s) left; the idle line already printed at " + ($S[0].idle_wake.at // "?") + " for this fleet+work fingerprint, so no new session until the fleet or the work changes" end
+          else "fleet not idle (" + (.idle_wake.agents | n) + " agents on " + (.idle_wake.hosts | n) + " host(s)); no actionable change" end' "$rec" 2>/dev/null) || quiet="latest.json gives no reason"
+        [ "$quiet" = "$(cat "$state/quiet.last" 2>/dev/null)" ] || { log "no session: $quiet"; printf '%s\n' "$quiet" > "$state/quiet.last"; }
+        exit 0
+      fi
       [ -s "$parked" ] && { log "$(grep -c . "$parked") parked line(s) in $parked await the owner; no session until it is cleared"; exit 0; }
       # two failed sessions park the lines: a cause that persists must not buy a new session every tick
       tries=$(cat "$attempts" 2>/dev/null || echo 0)
@@ -141,6 +154,7 @@ let
       sort -u -o "$pending" "$pending"
       total=$(grep -c . "$pending"); lines=$(cat "$pending")
       ts=$(date -u +%Y%m%dT%H%M%SZ); report="$state/wake-$ts.md"
+      rm -f "$state/quiet.last"
       log "$total actionable change(s), $n new; starting one Coordinator session (budget $budget USD) -> $report"
       printf '%s\n' "$lines" | sed 's/^/coordinator-wakeup:   /'
       # the session acts (skills#28, owner decision): ROLE.md's Autonomy rule applies unattended; the three wrappers are

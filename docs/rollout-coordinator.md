@@ -143,6 +143,18 @@ further session starts until the owner clears that file, so a persistent
 failure cannot buy a session every tick. A checkout without the task yet (the skills PR
 not merged or not pulled) is logged and skipped, not failed.
 
+A tick that starts no session logs why, once: `no session: fleet idle with N
+work item(s) left; the idle line already printed at <time> for this
+fleet+work fingerprint, so no new session until the fleet or the work
+changes`, `no session: wake budget deferred (per_hour_cap) until <time>`,
+`no session: fleet idle; the idle check was skipped: …` (gh failed) or
+`no session: fleet not idle (…); no actionable change`. The reason is
+remembered in `changed/quiet.last` and repeated only when it changes or
+after a session, so a ten-hour idle stretch is one journal line, not 300
+silent ticks (the overnight no-wake of 2026-11-03/04 on skills#28 had no
+such line: the one idle wake at 23:04 CET went to the read-only profile,
+sent nothing, and the unchanged fingerprint rightly suppressed repeats).
+
 ```sh
 systemctl --user list-timers coordinator-wakeup.timer
 journalctl --user -u coordinator-wakeup.service -n 20 --no-pager
