@@ -81,9 +81,14 @@ let
     PATH="$PATH:/run/current-system/sw/bin" ${pkgs.python3}/bin/python scripts/test-coordinator-delegation.py
   '';
 
+  # nixos-config#92: nativeOtel = false (the runbook's rollback) removes every telemetry surface
+  otelRollbackTest = gate "otel-rollback-test" (with pkgs; [ nix python3 git gnutar ]) ''
+    ${pkgs.python3}/bin/python scripts/test-native-otel-rollback.py
+  '';
+
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
     lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest
+    coordinatorWiringTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
@@ -328,6 +333,7 @@ in
     "nixos:known-hosts-test" = task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed" knownHostsTest;
     "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" = task "lenovo's nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max); acer keeps defaults" buildBoundsTest;
+    "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;
