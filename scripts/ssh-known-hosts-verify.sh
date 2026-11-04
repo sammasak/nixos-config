@@ -4,15 +4,23 @@
 # that host's recipient in secrets/.sops.yaml (the key it decrypts its secrets with: evidence independent of ssh);
 # live, its /etc/ssh/ssh_host_ed25519_key.pub read over the pinned connection must equal the pin, a consistency
 # check (a changed key makes the connection fail, which shows as UNREACHABLE). ssh-keyscan is never consulted.
-# Exit 1 on any mismatch, 2 when something could not be checked, 0 when every check passed.
+# ssh accepts a key found in either file, so a first-use entry in the user's own known_hosts that contradicts a pin
+# would still be trusted: those are listed as CONTRADICTION with the ssh-keygen -R that removes them.
+# Exit 1 on any mismatch or contradiction, 2 when something could not be checked, 0 when every check passed.
 # Needs ssh-keygen, ssh-to-age, curl and jq on PATH.
 set -euo pipefail
 for tool in ssh-keygen ssh-to-age curl jq; do command -v "$tool" >/dev/null || { echo "UNCHECKED: $tool is not on PATH"; exit 2; }; done
 here=$(cd "$(dirname "$0")/.." && pwd)
-known="${KNOWN_HOSTS:-/etc/ssh/ssh_known_hosts}"; sops="$here/secrets/.sops.yaml"
+known="${KNOWN_HOSTS:-/etc/ssh/ssh_known_hosts}"; user_known="${USER_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}"; sops="$here/secrets/.sops.yaml"
 hosts=("$@"); [ "${#hosts[@]}" -gt 0 ] || hosts=(lenovo-21CB001PMX acer-swift msi-ms7758 black-pi naked-pi)
 rc=0
 pinned() { { ssh-keygen -F "$1" -f "$known" 2>/dev/null || true; } | { grep -v '^#' || true; } | awk '$2 == "ssh-ed25519" {print $3; exit}'; }
+user_key() { [ -r "$user_known" ] || return 0; { ssh-keygen -F "$1" -f "$user_known" 2>/dev/null || true; } | { grep -v '^#' || true; } | awk '$2 == "ssh-ed25519" {print $3; exit}'; }
+contradictions() { # every name and address the pin file lists for <host>, checked against the user's file
+  local n uk
+  for n in $(awk -v h="$1" '{split($1, a, ","); for (i in a) if (a[i] == h) {print $1; exit}}' "$known" | tr ',' ' '); do
+    uk=$(user_key "$n"); [ -z "$uk" ] || [ "$uk" = "$2" ] || { echo "CONTRADICTION $n: $user_known holds $(fp "$uk"), not the pin; remove it: ssh-keygen -R $n -f $user_known"; worse 1; }
+  done; }
 fp() { printf 'ssh-ed25519 %s\n' "$1" | ssh-keygen -lf - | awk '{print $2}'; }
 worse() { [ "$rc" -ge "$1" ] || rc=$1; }
 gh_key=$(curl -fsS --max-time 15 https://api.github.com/meta 2>/dev/null | jq -r '.ssh_keys[] | select(startswith("ssh-ed25519 "))' | awk '{print $2}' || true)
@@ -21,11 +29,13 @@ if [ -z "$pin" ]; then echo "UNCHECKED github.com: not pinned in $known"; worse 
 elif [ -z "$gh_key" ]; then echo "UNCHECKED github.com: api.github.com/meta did not answer (pinned $(fp "$pin"))"; worse 2
 elif [ "$pin" = "$gh_key" ]; then echo "OK   github.com publisher $(fp "$pin")"
 else echo "DIFF github.com pinned $pin publisher $gh_key"; worse 1; fi
+[ -z "$pin" ] || contradictions github.com "$pin"
 for h in "${hosts[@]}"; do
   pin=$(pinned "$h")
   [ -n "$pin" ] || { echo "UNCHECKED $h: not pinned in $known"; worse 2; continue; }
   age=$(printf 'ssh-ed25519 %s\n' "$pin" | ssh-to-age) || { echo "UNCHECKED $h: ssh-to-age failed on the pinned key"; worse 2; continue; }
   if grep -Eq -- "- ${age}[[:space:]]+# ${h}\b" "$sops"; then echo "OK   $h sops-recipient $age"; else echo "DIFF $h: $age is not $h's recipient in secrets/.sops.yaml"; worse 1; fi
+  contradictions "$h" "$pin"
   if [ "$h" = "$(hostname)" ]; then live=$(awk '{print $2}' /etc/ssh/ssh_host_ed25519_key.pub)
   else live=$(timeout 15 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=yes "$h" cat /etc/ssh/ssh_host_ed25519_key.pub 2>/dev/null | awk '{print $2}' || true); fi
   if [ -z "$live" ]; then echo "UNREACHABLE $h (pinned $(fp "$pin"); a changed key looks like this too)"; worse 2
