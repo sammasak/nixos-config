@@ -19,7 +19,7 @@ devenv tasks run nixos:flake-check     # nix flake check --all-systems
 devenv tasks run nixos:verify          # build every x86 host, evaluate black-pi
 devenv tasks run nixos:claude-settings-test  # generated Claude settings: default mode, bypass on request
 devenv tasks run nixos:coordinator-test  # coordinator adapters on lenovo only; Codex's agent declared via config_file, no model pin
-devenv tasks run nixos:worker-permissions-test  # #145: worker hosts start Herdr workers in bypassPermissions; claude and the Coordinator unchanged
+devenv tasks run nixos:worker-permissions-test  # #145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged
 devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer
 devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
 devenv tasks run nixos:build-bounds-test  # lenovo's nix-daemon builds bounded (#109); acer keeps defaults
@@ -32,9 +32,10 @@ devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward s
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
 
 # QEMU proofs (packages, not checks; acer under the heavy-work lock):
-nix build -L .#packages.x86_64-linux.agent-runtime-nspawn  # #135/#137: ephemeral nspawn instances, enforcement, admission; docs/agent-runtime-nspawn.md
+nix build -L .#packages.x86_64-linux.agent-runtime-nspawn  # #135/#137/#138: nspawn instances, enforcement, lifecycle; docs/agent-runtime-nspawn.md
 nix build -L .#packages.x86_64-linux.agent-runtime-herdr-test  # #139: runtimes as Herdr agents, docs/agent-runtime-herdr.md
 nix build -L .#packages.x86_64-linux.agent-runtime-herdr-machines-test  # #139: the coordinator sees them through a saved Herdr machine (two VMs)
+nix build -L .#packages.x86_64-linux.agent-runtime-deploy-test  # #140: deploy-rs substrate + template profiles, rollback; docs/agent-runtime-deploy.md
 
 # ── Deployment (switch is plain nixos-rebuild; build/diff use nh) ──
 just switch [HOST]            # Build and activate

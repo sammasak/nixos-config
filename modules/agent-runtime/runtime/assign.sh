@@ -91,5 +91,12 @@ digest=$(jq -cS . <<<"$body" | sha256sum | cut -d' ' -f1)
 jq --arg at "$(now)" --arg digest "$digest" \
   '{schemaVersion: 1, kind: "agent-runtime-run"} + . + {run: (.run + {assignedAt: $at}), digests: {run: $digest}}' \
   <<<"$body" >"$tmp"
-mv "$staging" "$out/gcroots"
+# root each path at its final location before dropping the staging root, so every store path keeps
+# a live indirect root at every instant (a mv-then-reroot would leave a brief unrooted window)
+mkdir -p "$out/gcroots"
+for name in $names; do
+  run_capture store "$name: cannot root $out/gcroots/$name" \
+    nix_cmd build --out-link "$out/gcroots/$name" "$(readlink "$staging/$name")"
+done
+rm -rf "$staging"
 ln "$tmp" "$out/run.json" || fail state "cannot publish $out/run.json"

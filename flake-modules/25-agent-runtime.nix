@@ -4,6 +4,7 @@
 {
   flake.modules.nixos.agent-runtime = ../modules/agent-runtime;
   flake.nixosModules.agent-runtime = config.flake.modules.nixos.agent-runtime;
+  flake.nixosModules.agent-runtime-host = ../modules/agent-runtime/host.nix;
   flake.lib.agentRuntime = { pkgs }: import ../modules/agent-runtime/lib.nix { inherit lib pkgs; };
 
   perSystem =
@@ -45,6 +46,7 @@
         agent-runtime-materialize = runtime.tools.materialize;
         agent-runtime-export = runtime.tools.export;
         agent-runtime-reclaim = runtime.tools.reclaim;
+        agent-runtime-instance = runtime.tools.instance;
       };
     };
 }

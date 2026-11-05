@@ -1,10 +1,8 @@
-# Proof for the ephemeral nspawn agent runtime (#135 M0, #137 M1 enforcement):
-# templates declared through the typed module (#134) materialised as
-# user-namespaced systemd-nspawn instances by a transient-unit factory, never by
-# a host switch or a static containers.<name> entry. Every writable mount is its
-# own fixed-size ext4 image, and create admits an instance only against the host
-# policy. Runs only in QEMU:
-# nix build .#packages.x86_64-linux.agent-runtime-nspawn
+# Proof for the ephemeral nspawn agent runtime (#135 M0, #137 enforcement, #138
+# lifecycle): templates declared through the typed module (#134) run as
+# user-namespaced systemd-nspawn instances by the shipped agent-runtime-instance
+# tool, never by a host switch or a static containers.<name> entry. Runs only in
+# QEMU: nix build .#packages.x86_64-linux.agent-runtime-nspawn
 { pkgs, lib, rfProto, skills }:
 let
   runtime = import ../modules/agent-runtime/lib.nix { inherit lib pkgs; };
@@ -13,9 +11,25 @@ let
       {
         sam.agentRuntime.host = {
           enable = true;
-          eligibleTemplates = [ "rust-worker-m0" "tiny" ];
+          eligibleTemplates = [ "rust-worker-m0" "tiny" "egress" ];
           maxConcurrentInstances = 3;
           reserve = { memoryMiB = 2600; diskMiB = 512; };
+        };
+        # #137 slice 2: minimal egress to one allowlisted name, and a per-run credential at start
+        sam.agentRuntime.templates.egress = {
+          role = { name = "rust-worker"; harness = "claude-code"; };
+          skillsSource = skills;
+          skills.lean-code = { };
+          packages = with pkgs; [ bash coreutils curl cacert glibc.bin ];
+          network.allow = [ "allowed.test" ];
+          filesystem = {
+            workspaceBudget = { sizeMiB = 16; inodes = 1000; };
+            home = { sizeMiB = 16; inodes = 1000; };
+            tmp = { sizeMiB = 16; inodes = 1000; };
+            cache = { sizeMiB = 16; inodes = 1000; };
+            output = { sizeMiB = 16; inodes = 1000; };
+          };
+          resources = { cpus = 1; memoryMiB = 256; tasksMax = 128; timeoutMinutes = 5; };
         };
         sam.agentRuntime.templates.rust-worker-m0 = {
           role = { name = "rust-worker"; harness = "claude-code"; };
@@ -43,7 +57,7 @@ let
           role = { name = "quality"; harness = "codex"; };
           skillsSource = skills;
           skills.lean-code = { };
-          packages = with pkgs; [ bash coreutils ];
+          packages = with pkgs; [ bash coreutils gnugrep util-linux ];
           filesystem = {
             workspaceBudget = { sizeMiB = 16; inodes = 1000; };
             home = { sizeMiB = 16; inodes = 1000; };
@@ -57,174 +71,25 @@ let
     ];
   };
   hostPolicy = evaluated.host;
-  nsList = "user mnt pid ipc uts net cgroup time";
-  # nspawn's default bounding set minus SETUID, SETGID and SETPCAP, which setpriv
-  # needs to switch user and empty the bounding set before the payload runs
-  dropCaps = lib.concatStringsSep "," [
-    "CAP_CHOWN" "CAP_DAC_OVERRIDE" "CAP_DAC_READ_SEARCH" "CAP_FOWNER" "CAP_FSETID" "CAP_KILL"
-    "CAP_LINUX_IMMUTABLE" "CAP_NET_BIND_SERVICE" "CAP_NET_BROADCAST" "CAP_NET_ADMIN" "CAP_NET_RAW"
-    "CAP_IPC_OWNER" "CAP_SYS_CHROOT" "CAP_SYS_PTRACE" "CAP_SYS_ADMIN" "CAP_SYS_BOOT" "CAP_SYS_NICE"
-    "CAP_SYS_RESOURCE" "CAP_SYS_TTY_CONFIG" "CAP_MKNOD" "CAP_LEASE" "CAP_AUDIT_WRITE"
-    "CAP_AUDIT_CONTROL" "CAP_SETFCAP"
-  ];
-
-  # One factory per template; admission state (reservations, UID slots) is shared.
-  mkFactory =
-    name:
-    let
-      t = evaluated.templates.${name};
-      m = evaluated.manifestData.${name};
-      fs = m.filesystem;
-      manifestFile = "${evaluated.manifestDir}/${name}.json";
-      volumes = {
-        workspace = { path = fs.workspace; inherit (fs.workspaceBudget) sizeMiB inodes; mode = "0755"; owner = 1000; };
-        home = fs.home // { mode = "0700"; owner = 1000; };
-        cache = fs.cache // { mode = "0700"; owner = 1000; };
-        output = fs.output // { mode = "0755"; owner = 1000; };
-        tmp = fs.tmp // { mode = "1777"; owner = 0; };
-      };
-      diskMiB = lib.foldl' (s: v: s + v.sizeMiB) 0 (lib.attrValues volumes);
-      sourceBinds = lib.concatMapStrings (s: ''--bind-ro="${s.locked.storePath}:/src/${baseNameOf s.path}$opt" '') (lib.attrValues m.sources);
-      skillBinds = lib.concatStrings (lib.mapAttrsToList (n: s: ''--bind-ro="${s.path}:/skills/${n}$opt" '') m.skills.names);
-    in
-    pkgs.writeShellScript "agent-runtime-${name}" ''
-      set -euo pipefail
-      export PATH=${lib.makeBinPath (with pkgs; [ bash coreutils diffutils gawk gnugrep findutils util-linux procps systemd e2fsprogs ])}
-      cmd=$1; id=$2; shift 2
-      state=/var/lib/agent-runtime
-      base=$state/$id
-      root=/run/agent-runtime/$id/root
-      refuse() { echo "admission refused: $*" >&2; exit 75; }
-      reservations() { cat "$state"/*/reservation 2>/dev/null || true; }
-      teardown() {
-        systemctl stop "agent-runtime-$id.service" 2>/dev/null || true
-        systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
-        if mountpoint -q "$root"; then umount -R "$root"; fi
-        for v in "$base"/mnt/*; do
-          if mountpoint -q "$v"; then umount "$v"; fi
-        done
-        rm -rf --one-file-system "/run/agent-runtime/$id" "$base/mnt" "$base/img" "$base/uidbase"
-        # the reservation goes last: a teardown that fails above keeps the instance counted
-        rm -f "$base/reservation"
-        rmdir "$base"
-      }
-      case $cmd in
-        create)
-          [[ $id =~ ^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ ]] && [ "$id" != exports ] || { echo "bad instance id: $id" >&2; exit 64; }
-          mkdir -p "$state" /run/agent-runtime
-          exec 9>/run/agent-runtime/.admission.lock; flock 9
-          [ ! -e "$base" ] || { echo "instance $id exists" >&2; exit 1; }
-          live=$(reservations | wc -l)
-          [ "$live" -lt ${toString hostPolicy.maxConcurrentInstances} ] || refuse "instances $live of ${toString hostPolicy.maxConcurrentInstances} live"
-          mem_used=$(reservations | awk '{s += $1} END {print s + 0}')
-          mem_total=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
-          [ $((mem_used + ${toString t.resources.memoryMiB})) -le $((mem_total - ${toString hostPolicy.reserve.memoryMiB})) ] \
-            || refuse "memory $mem_used+${toString t.resources.memoryMiB} MiB over $mem_total-${toString hostPolicy.reserve.memoryMiB} MiB"
-          disk_free=$(df --output=avail -BM "$state" | tail -1 | tr -dc 0-9)
-          [ $((${toString diskMiB} + ${toString hostPolicy.reserve.diskMiB})) -le "$disk_free" ] \
-            || refuse "disk ${toString diskMiB}+${toString hostPolicy.reserve.diskMiB} MiB over $disk_free MiB free"
-          uidbase=""
-          for slot in $(seq 0 63); do
-            b=$((1048576 + 65536 * slot))
-            if ! reservations | awk -v b="$b" '$3 == b {f = 1} END {exit !f}'; then uidbase=$b; break; fi
-          done
-          [ -n "$uidbase" ] || refuse "no free UID range"
-          mkdir -p "$base/img" "$base/mnt"
-          echo "${toString t.resources.memoryMiB} ${toString diskMiB} $uidbase ${name}" > "$base/reservation"
-          created=0
-          trap '[ "$created" = 1 ] || { echo "create $id failed, rolling back" >&2; teardown; }' EXIT
-          vol() {  # name sizeMiB inodes mode owner-offset
-            fallocate -l "$2M" "$base/img/$1.img"
-            mkfs.ext4 -q -F -m 0 -N "$3" -E nodiscard,root_owner=$((uidbase + $5)):$((uidbase + $5)) "$base/img/$1.img"
-            mkdir -p "$base/mnt/$1"
-            mount -o loop,nosuid,nodev "$base/img/$1.img" "$base/mnt/$1"
-            rmdir "$base/mnt/$1/lost+found"
-            chmod "$4" "$base/mnt/$1"
-          }
-          ${lib.concatStrings (lib.mapAttrsToList (n: v: "vol ${n} ${toString v.sizeMiB} ${toString v.inodes} ${v.mode} ${toString v.owner}\n") volumes)}
-          mkdir -p "$root"/{etc/agent-runtime,bin,usr/bin,nix/store,src,skills,proc,sys,dev}
-          mkdir -p "$root"{${lib.concatStringsSep "," (map (v: v.path) (lib.attrValues volumes))}}
-          ${lib.concatMapStrings (s: ''mkdir -p "$root/src/${baseNameOf s.path}"'' + "\n") (lib.attrValues m.sources)}
-          ${lib.concatStrings (lib.mapAttrsToList (n: _: ''mkdir -p "$root/skills/${n}"'' + "\n") m.skills.names)}
-          printf 'ID=agent-runtime\nPRETTY_NAME="agent-runtime ${name}"\n' > "$root/etc/os-release"
-          printf 'root:x:0:0::/root:/bin/sh\nagent:x:1000:1000::${fs.home.path}:/bin/sh\nnobody:x:65534:65534::/:/bin/sh\n' > "$root/etc/passwd"
-          printf 'root:x:0:\nagent:x:1000:\nnogroup:x:65534:\n' > "$root/etc/group"
-          printf 'passwd: files\ngroup: files\n' > "$root/etc/nsswitch.conf"
-          touch "$root/etc/agent-runtime/template.json"
-          ln -sf ${pkgs.bash}/bin/bash "$root/bin/sh"
-          ln -sf ${pkgs.coreutils}/bin/env "$root/usr/bin/env"
-          created=1
-          ;;
-        run)  # run <id> <uid> <script> [store-bind-opt]
-          user=$1; script=$2; opt=''${3:-}; rc=0
-          uidbase=$(awk '{print $3}' "$base/reservation")
-          systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
-          args=(systemd-run --unit="agent-runtime-$id" --wait --pipe --collect
-            -p MemoryMax=${toString t.resources.memoryMiB}M -p MemorySwapMax=0 -p TasksMax=${toString t.resources.tasksMax}
-            -p CPUQuota=${toString (t.resources.cpus * 100)}% -p KillMode=mixed --setenv=SYSTEMD_LOG_TARGET=journal
-            systemd-nspawn --quiet --keep-unit --settings=no --register=yes
-              -M "agent-runtime-$id" -D "$root"
-              --private-users="$uidbase:65536" --private-users-ownership=chown
-              --private-network --as-pid2 --resolv-conf=off --timezone=off --no-new-privileges=yes
-              --drop-capability=${dropCaps}
-              --bind-ro="/nix/store:/nix/store$opt"
-              ${sourceBinds}${skillBinds}
-              --bind-ro="${manifestFile}:/etc/agent-runtime/template.json"
-              ${lib.concatStrings (lib.mapAttrsToList (n: v: ''--bind="$base/mnt/${n}:${v.path}" '') volumes)}
-              /bin/sh -c "exec ${pkgs.util-linux}/bin/setpriv --reuid=$user --regid=$user --clear-groups --bounding-set=-all --inh-caps=-all --no-new-privs /bin/sh -c '$script > ${fs.tmp.path}/run.log 2>&1'")
-          echo "== command ($id):"; printf '%q ' "''${args[@]}"; echo
-          "''${args[@]}" || rc=$?
-          echo "== run.log ($id, exit $rc):"; cat "$base/mnt/tmp/run.log" 2>/dev/null || echo "(no run.log)"
-          if [ "$rc" != 0 ]; then echo "== nspawn journal ($id):"; journalctl --sync; journalctl -b -o cat -u "agent-runtime-$id.service" | grep -v -E "^(Started|agent-runtime-)" | tail -8; fi
-          exit "$rc"
-          ;;
-        export)
-          out=$state/exports/$id
-          mkdir -p "$out"
-          cp -r "$base/mnt/output/." "$out"
-          (cd "$out" && sha256sum -c SHA256SUMS)
-          cmp "$out/template.json" ${manifestFile}
-          ;;
-        destroy)
-          exec 9>/run/agent-runtime/.admission.lock; flock 9
-          teardown
-          ;;
-        reservations)
-          reservations | awk '{n++; m += $1; d += $2} END {printf "instances=%d memoryMiB=%d diskMiB=%d\n", n, m, d}'
-          ;;
-        check-clean)
-          fail=0
-          chk() { if "$@"; then echo "clean: $*"; else echo "LEAK: $*"; fail=1; fi; }
-          chk sh -c "! findmnt -rn | grep -q 'agent-runtime/$id'"
-          chk sh -c "! losetup -l -n -O BACK-FILE | grep -q '$base/'"
-          chk sh -c "! systemctl list-units --all --no-legend 'agent-runtime-$id.service' | grep -q ."
-          chk sh -c "! machinectl list --no-legend | grep -q 'agent-runtime-$id'"
-          chk sh -c "! pgrep -a -x systemd-nspawn | grep -q 'agent-runtime-$id'"
-          chk test ! -e "$base"
-          chk test ! -e "/run/agent-runtime/$id"
-          exit $fail
-          ;;
-      esac
-    '';
-
+  tool = lib.getExe runtime.tools.instance;
+  manifest = n: "${evaluated.manifestDir}/${n}.json";
   rust = rec {
-    name = "rust-worker-m0";
-    t = evaluated.templates.${name};
-    m = evaluated.manifestData.${name};
+    t = evaluated.templates.rust-worker-m0;
+    m = evaluated.manifestData.rust-worker-m0;
     fs = m.filesystem;
     src = m.sources.rf-proto;
-    env = pkgs.buildEnv { name = "agent-runtime-${name}"; paths = t.packages; };
-    factory = mkFactory name;
+    env = pkgs.buildEnv { name = "agent-runtime-rust-worker-m0"; paths = t.packages; };
   };
-  tiny = { factory = mkFactory "tiny"; };
   inherit (rust) fs env;
   ws = fs.workspace;
   out = fs.output.path;
+  nsList = "user mnt pid ipc uts net cgroup time";
   probeEnv = pkgs.buildEnv { name = "agent-runtime-probe"; paths = [ env pkgs.hostname-debian ]; };
   closure = pkgs.closureInfo { rootPaths = [ env rust.src.locked.storePath rust.m.skills.source.storePath ]; };
+  sh = pkgs.writeShellScript;
 
   # Runs as container root, with no capabilities: records the boundary and tries to break it.
-  probe = pkgs.writeShellScript "agent-probe" ''
+  probe = sh "agent-probe" ''
     set -u
     export PATH=${probeEnv}/bin
     for n in ${nsList}; do echo "ns_$n: $(readlink /proc/self/ns/$n)"; done
@@ -236,7 +101,6 @@ let
     echo "dev: $(ls /dev | tr '\n' ' ')"
     echo "net: $(ls /sys/class/net | tr '\n' ' ')"
     echo "pids_visible: $(ls /proc | grep -cE '^[0-9]+$')"
-    echo "store_owner: $(stat -c '%u:%g %A' ${env})"
     hostpid=$(cat ${ws}/host.pid)
     fail=0
     chk() { if "$@"; then echo "ok   $*"; else echo "FAIL $*"; fail=1; fi; }
@@ -246,9 +110,11 @@ let
     chk test ! -e /home/host-sentinel
     chk test ! -e /root/host-sentinel
     chk test -z "''${SSH_AUTH_SOCK:-}"
+    echo "fds: $(ls /proc/self/fd | tr '\n' ' ')"
+    chk test "$(ls /proc/self/fd | tr '\n' ' ')" = "0 1 2 3 "
     chk test "$(ls /sys/class/net)" = lo
     chk test -f /skills/rust-engineering/SKILL.md
-    chk test -f /src/rf-proto/Cargo.toml
+    chk test -f ${ws}/rf-proto/Cargo.toml
     chk test "$(awk '{print $2}' /proc/self/uid_map)" != 0
     chk test "$(awk '{print $2}' /proc/self/gid_map)" != 0
     for c in CapInh CapPrm CapEff CapBnd CapAmb; do chk grep -qE "^$c:\s+0+$" /proc/self/status; done
@@ -259,11 +125,9 @@ let
     deny kill -0 "$hostpid"
     deny touch /nix/store/agent-runtime-write-attempt
     deny touch ${env}/bin/agent-runtime-write-attempt
-    deny touch /src/rf-proto/agent-runtime-write-attempt
     deny touch /skills/rust-engineering/agent-runtime-write-attempt
     deny touch ${ws}/root-write-attempt
     deny mount -o remount,rw /nix/store
-    deny mount -o remount,rw /src/rf-proto
     deny mount -o remount,rw /
     deny mount -t tmpfs none /tmp
     deny mknod /dev/sda b 8 0
@@ -276,71 +140,103 @@ let
     exit $fail
   '';
 
-  # Runs as the unprivileged user `agent`: the real workload and the export.
-  work = pkgs.writeShellScript "agent-work" ''
+  # The real job, as `agent`: test the pinned source, change it, leave an untracked
+  # binary file and an artifact, so the export has a patch, a binary and output.
+  work = sh "agent-work" ''
     set -euo pipefail
-    export PATH=${env}/bin HOME=${fs.home.path} TMPDIR=${fs.tmp.path} CARGO_HOME=${fs.cache.path}/cargo
+    export PATH=${env}/bin CARGO_HOME=${fs.cache.path}/cargo
     echo "started_ns=$(date +%s%N)"
     echo "whoami=$(id -u):$(id -g) home=$(stat -c %u:%a $HOME) cache=$(stat -c %u:%a ${fs.cache.path}) tmp=$(stat -c %a $TMPDIR)"
     echo "status: $(grep -E '^(CapEff|CapBnd|NoNewPrivs|Seccomp):' /proc/self/status | tr -s '\t ' ' ' | tr '\n' ' ')"
     touch $HOME/.written ${fs.cache.path}/.written $TMPDIR/.written
-    cp -r /src/rf-proto ${rust.src.path}
-    chmod -R u+w ${rust.src.path}
-    cd ${rust.src.path}
+    cd ${ws}/rf-proto
     cargo test --offline 2>&1 | tee ${out}/cargo-test.log
     test "''${PIPESTATUS[0]}" = 0
-    bin=$(find target/debug/deps -maxdepth 1 -type f -perm -u+x -name 'rf_proto-*' | head -1)
-    cp "$bin" ${out}/rf_proto-test
-    cp /etc/agent-runtime/template.json ${out}/template.json
-    (cd ${out} && sha256sum rf_proto-test template.json > SHA256SUMS)
+    echo "edited by $AGENT_RUNTIME_INSTANCE" >> README.md
+    head -c 4096 /dev/urandom > untracked-artifact.bin
+    cp "$(find target/debug/deps -maxdepth 1 -type f -perm -u+x -name 'rf_proto-*' | head -1)" ${out}/rf_proto-test
+    (cd ${out} && sha256sum rf_proto-test > SHA256SUMS)
     if touch /nix/store/agent-runtime-write-attempt 2>/dev/null; then echo "FAIL store writable"; exit 1; fi
-    if touch /src/rf-proto/x 2>/dev/null; then echo "FAIL source writable"; exit 1; fi
     echo "finished_ns=$(date +%s%N)"
   '';
 
-  # Two of these run at once: each records its identity, holds a SysV segment,
-  # waits for the host's go, then must not reach its peer.
-  conc = pkgs.writeShellScript "agent-conc" ''
+  # Holds until the host's go; must see only its own marker and SysV segment and
+  # must not reach the peer whose leader PID the host writes in.
+  hold = sh "agent-hold" ''
     set -euo pipefail
-    export PATH=${env}/bin
     me=$(cat /proc/sys/kernel/hostname)
-    echo "$(id -u) $(for n in ${nsList}; do readlink /proc/self/ns/$n; done | tr '\n' ' ')" > ${ws}/identity
     echo "$me" > ${ws}/marker-$me
     ipcmk -M 4096 > /dev/null
     touch ${ws}/ready
     while [ ! -e ${ws}/go ]; do sleep 0.2; done
-    ls ${ws} | tr '\n' ' '; echo
     test "$(ls ${ws} | grep -c '^marker-')" = 1
     test "$(ipcs -m | grep -c '^0x')" = 1
     if kill -0 "$(cat ${ws}/peer.pid)" 2>/dev/null; then echo "FAIL peer signalable"; exit 1; fi
-    echo "peer $(cat ${ws}/peer.pid) not signalable, own segment only"
+    echo "held as $me: own marker and segment only, peer $(cat ${ws}/peer.pid) not signalable"
   '';
-
-  # Budget workloads: tasks, memory, CPU, bytes and inodes past the template's limits.
-  forkbomb = pkgs.writeShellScript "agent-pids" ''
-    export PATH=${env}/bin
+  sleeper = sh "agent-sleep" "touch ${ws}/ready; exec sleep 600";
+  forkbomb = sh "agent-pids" ''
     # xargs waits for a child and retries on EAGAIN, so the bomb sits at the limit and then ends
     seq 1 ${toString (rust.t.resources.tasksMax + 200)} | xargs -P 0 -I{} sleep 10
   '';
-  hog = pkgs.writeShellScript "agent-oom" ''
-    export PATH=${env}/bin
-    head -c ${toString (rust.t.resources.memoryMiB * 2)}M /dev/zero | tail > /dev/null
-  '';
-  spin = pkgs.writeShellScript "agent-cpu" ''
-    export PATH=${env}/bin
+  hog = sh "agent-oom" "head -c ${toString (rust.t.resources.memoryMiB * 2)}M /dev/zero | tail > /dev/null";
+  spin = sh "agent-cpu" ''
     for i in 1 2 3; do (while :; do :; done) & done
     sleep 5
     kill $(jobs -p)
   '';
-  fill = pkgs.writeShellScript "agent-fill" ''
-    export PATH=${env}/bin
-    dd if=/dev/zero of=${ws}/fill bs=1M 2> ${fs.tmp.path}/dd.err; echo "dd_exit=$?"; head -1 ${fs.tmp.path}/dd.err
-    cd ${fs.home.path}
-    seq 1 ${toString (fs.home.inodes * 2)} | xargs touch 2> ${fs.tmp.path}/touch.err; echo "touch_exit=$?"; head -1 ${fs.tmp.path}/touch.err
-    df -B1M --output=target,used,avail ${ws} | tail -1; df -i ${fs.home.path} | tail -1
+  fill = sh "agent-fill" ''
+    dd if=/dev/zero of=${ws}/fill bs=1M 2> $TMPDIR/dd.err; echo "dd_exit=$?"; head -1 $TMPDIR/dd.err
+    cd $HOME
+    seq 1 ${toString (fs.home.inodes * 2)} | xargs touch 2> $TMPDIR/touch.err; echo "touch_exit=$?"; head -1 $TMPDIR/touch.err
+    df -i $HOME | tail -1
+    exit 3
   '';
-  marker = pkgs.writeShellScript "agent-marker" ''
-    echo ran > ${ws}/payload-ran
+  marker = sh "agent-marker" "echo ran > ${ws}/payload-ran";
+  eg = evaluated.manifestData.egress;
+  egEnv = pkgs.buildEnv { name = "agent-runtime-egress-env"; paths = evaluated.templates.egress.packages; };
+  tlsEndpoint = pkgs.writeText "tls-endpoint.py" ''
+    import http.server, ssl
+    def get(s):
+        s.send_response(200); s.send_header("Content-Length", "11"); s.send_header("Connection", "close"); s.end_headers()
+        s.wfile.write(b"endpoint-ok")
+    h = type("H", (http.server.BaseHTTPRequestHandler,), {"protocol_version": "HTTP/1.0", "do_GET": get})
+    import sys
+    srv = http.server.ThreadingHTTPServer((sys.argv[1], 443), h)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain("/tmp/ca.pem", "/tmp/k.pem")
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True); srv.serve_forever()
+  '';
+  # the egress payload (inside the instance, uid 1000): the allowlisted name over TLS works; a denied local
+  # IP and a denied IP reachable only by routing off the host are both refused.
+  egWork = sh "agent-egress" ''
+    set -u
+    export PATH=${egEnv}/bin SSL_CERT_FILE=${eg.filesystem.workspace}/ca.pem
+    ab=$(curl -sS --max-time 8 https://allowed.test/ 2>&1); arc=$?
+    echo "allowed: rc=$arc body=[$ab]"
+    echo -n "denied-local: "; if curl -sS --max-time 8 -k https://10.9.0.9/ >/dev/null 2>&1; then echo REACHED; else echo "REFUSED rc=$?"; fi
+    echo -n "denied-routed: "; if curl -sS --max-time 8 -k https://10.8.0.5/ >/dev/null 2>&1; then echo REACHED; else echo "REFUSED rc=$?"; fi
+  '';
+  # the credential payload (on the non-egress `tiny` template): read it (tmpfs, read-only), print it once (to
+  # exercise redaction), write a clean artifact, and optionally leak it to the output for the export-gate test
+  tn = evaluated.manifestData.tiny;
+  tnEnv = pkgs.buildEnv { name = "agent-runtime-tiny-env"; paths = evaluated.templates.tiny.packages; };
+  credWork = sh "agent-cred" ''
+    set -euo pipefail
+    export PATH=${tnEnv}/bin
+    t=/run/agent-runtime/credentials/token
+    echo "cred_owner=$(stat -c %u:%a $t) whoami=$(id -u)"
+    echo "using credential: $(cat $t)"
+    if printf x > $t 2>/dev/null; then echo "FAIL credential writable"; exit 1; fi
+    echo "clean result" > ${tn.filesystem.output.path}/result.txt
+    cp /etc/agent-runtime/template.json ${tn.filesystem.output.path}/template.json
+    (cd ${tn.filesystem.output.path} && sha256sum result.txt template.json > SHA256SUMS)
+  '';
+  credLeakWork = sh "agent-cred-leak" ''
+    set -euo pipefail
+    export PATH=${tnEnv}/bin
+    cat /run/agent-runtime/credentials/token > ${tn.filesystem.output.path}/leaked.txt
+    cp /etc/agent-runtime/template.json ${tn.filesystem.output.path}/template.json
+    (cd ${tn.filesystem.output.path} && sha256sum leaked.txt template.json > SHA256SUMS)
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -350,266 +246,480 @@ pkgs.testers.runNixOSTest {
     virtualisation.memorySize = 4096;
     virtualisation.cores = 2;
     virtualisation.diskSize = 4096;
+    # assign roots the sources with nix build --out-link, which needs them registered in the VM's store;
+    # the egress template's package closure must be present too (the manifest only names it as a string)
+    virtualisation.additionalPaths = [
+      rfProto skills runtime.tools.instance evaluated.manifestDir evaluated.hostPolicy
+      (pkgs.buildEnv { name = "egress-pkgs"; paths = evaluated.templates.egress.packages; })
+    ];
     # test-instrumentation's mkDefault 2 panics the VM on any cgroup OOM; hosts run the kernel's 0
     boot.kernel.sysctl."vm.panic_on_oom" = 0;
-    environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils ];
+    # the egress subtest filters the instance veth with the tool's own nft table and routes to a non-local
+    # endpoint; the node firewall and dhcpcd must not interfere, and forwarding must be on for the forward hook
+    networking.firewall.enable = false;
+    networking.dhcpcd.denyInterfaces = [ "ve-*" "veth-*" "dummy0" ];
+    # the tool resolves the allowlist name on the host via getent; /etc/hosts is read-only on NixOS,
+    # so the test's one allowed name is seeded declaratively to the dummy endpoint it serves TLS on
+    networking.hosts."10.9.0.1" = [ "allowed.test" ];
+    boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
+    environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils jq iproute2 nftables openssl python3 ];
   };
 
   testScript = ''
     import json, re, time
     NS = "${nsList}".split()
-    F = "${rust.factory}"
-    T = "${tiny.factory}"
+    I = "${tool}"
+    RUST = "--template ${manifest "rust-worker-m0"} --host ${evaluated.hostPolicy}"
+    TINY = "--template ${manifest "tiny"} --host ${evaluated.hostPolicy}"
+    EGRESS = "--template ${manifest "egress"} --host ${evaluated.hostPolicy}"
+    V = "/var/lib/agent-runtime"
     timings: dict[str, dict[str, object]] = {}
 
     def ms(a: int, b: int) -> int:
         return (b - a) // 1000000
 
-    def summary(out: str, key: str) -> str:
-        found = re.search(key + r": (\S+)", out)
-        return found.group(1) if found else "?"
+    def status(i: str) -> dict:
+        return json.loads(machine.succeed(f"{I} status {i}"))
 
-    def seconds(v: str) -> float:
-        found = re.fullmatch(r"([\d.]+)(ms|s)", v)
-        assert found, v
-        return float(found.group(1)) / (1000 if found.group(2) == "ms" else 1)
-
-    def reserved() -> str:
-        return machine.succeed(f"{F} reservations x").strip()
-
-    def create(i: str, f: str = F) -> int:
+    def create(i: str, tmpl: str = RUST, task: str = "") -> int:
         t = time.monotonic_ns()
-        machine.succeed(f"{f} create {i}")
+        machine.succeed(f"{I} create {i} {tmpl} --task {task or 'task-' + i}")
         return ms(t, time.monotonic_ns())
 
-    def teardown(i: str, f: str = F) -> int:
+    def refused(cmd: str, code: int, text: str) -> None:
+        rc, out = machine.execute(f"{cmd} 2>&1")
+        print(f"refused ({rc}):", out.strip()[-300:])
+        assert rc == code and text in out, (cmd, rc, out)
+
+    def run(i: str, script: str, flags: str = "") -> dict:
+        machine.execute(f"{I} start {i} {flags} --wait -- {script}")
+        s = status(i)
+        print(f"== {i}: {s['state']}", json.dumps(s["result"]))
+        print(machine.succeed(f"{I} logs {i}")[-2500:])
+        return s
+
+    def start(i: str, script: str) -> None:
+        machine.succeed(f"{I} start {i} -- {script}")
+
+    def ws(i: str) -> str:
+        return f"{V}/{i}/vol/workspace/workspace"
+
+    def destroy(i: str, flags: str = "") -> int:
         t = time.monotonic_ns()
-        machine.succeed(f"{f} destroy {i}")
+        machine.succeed(f"{I} destroy {i} {flags}")
         took = ms(t, time.monotonic_ns())
-        print(machine.succeed(f"{f} check-clean {i}"))
+        clean(i)
         return took
 
-    def disk(i: str) -> int:
-        return int(machine.succeed(f"du -sbx /var/lib/agent-runtime/{i}/mnt/* /run/agent-runtime/{i} | awk '{{s+=$1}} END {{print s}}'"))
+    def clean(i: str) -> None:
+        machine.succeed(f"! findmnt -rn | grep -qE 'agent-runtime[-/]{i}(/| |$)'")
+        machine.succeed(f"test ! -e /run/systemd/nspawn/agent-runtime-{i} -a ! -e /run/systemd/nspawn/propagate/agent-runtime-{i}")
+        machine.succeed(f"! losetup -l -n -O BACK-FILE | grep -q '{V}/{i}/'")
+        machine.succeed(f"! systemctl list-units --all --no-legend 'agent-runtime-{i}.service' | grep -q .")
+        machine.succeed(f"! machinectl list --no-legend | grep -q 'agent-runtime-{i} '")
+        machine.succeed(f"test ! -e {V}/{i} -a ! -e /run/agent-runtime/{i}")
+        assert status(i)["state"] == "absent"
 
-    def host_free() -> dict[str, int]:
-        return {"mem_total_mib": int(machine.succeed("awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo")),
-                "disk_avail_mib": int(machine.succeed("df --output=avail -BM /var/lib | tail -1 | tr -dc 0-9")),
-                "mem_available_mib": int(machine.succeed("awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo"))}
+    def reserved() -> tuple[int, int]:
+        rows = [r.split() for r in machine.succeed(f"cat {V}/*/reservation 2>/dev/null || true").split("\n") if r.strip()]
+        return len(rows), sum(int(r[0]) for r in rows)
 
-    def background(i: str, script: str, f: str = F) -> None:
-        machine.succeed(f"({f} run {i} 1000 {script} {opt} > /tmp/{i}.out 2>&1; echo $? > /tmp/{i}.rc) >/dev/null 2>&1 &")
+    def inventory(label: str) -> dict[str, str]:
+        inv = {
+            "units": machine.succeed("systemctl list-units --all --no-legend 'agent-runtime-*' | sort"),
+            "mounts": machine.succeed("findmnt -rn -o TARGET,SOURCE | grep agent-runtime || true"),
+            "nspawn_dirs": machine.succeed("ls -d /run/systemd/nspawn/agent-runtime-* /run/systemd/nspawn/propagate/agent-runtime-* 2>/dev/null || true"),
+            "loops": machine.succeed("losetup -l -n -O NAME,BACK-FILE | grep agent-runtime || true"),
+            "state": machine.succeed(f"ls {V} 2>/dev/null | grep -v '^exports$' || true"),
+            # live auto roots into the state dir; a destroyed run leaves only dangling ones, which GC drops
+            "gcroots": machine.succeed(f"for l in /nix/var/nix/gcroots/auto/*; do t=$(readlink \"$l\") || continue; "
+                                       f"case $t in {V}/*) if [ -e \"$t\" ]; then echo \"$t -> $(readlink \"$t\")\"; fi ;; esac; done"),
+            "mapped_processes": machine.succeed("ps -eo uid=,pid=,comm= | awk '$1 >= 1048576' || true"),
+            "links": machine.succeed("ip -o link | awk '{print $2}' | sort | tr '\\n' ' '"),
+        }
+        print(f"=== inventory {label} ===")
+        for k, v in inv.items():
+            print(f"{k}: {v.strip() or '(none)'}")
+        return inv
+
+    def no_leaks(label: str) -> dict[str, str]:
+        inv = inventory(label)
+        for k in ("units", "mounts", "nspawn_dirs", "loops", "state", "gcroots", "mapped_processes"):
+            assert inv[k].strip() == "", (label, k, inv[k])
+        assert inv["links"] == baseline["links"], (label, inv["links"], baseline["links"])
+        assert reserved() == (0, 0), (label, reserved())
+        return inv
 
     machine.wait_for_unit("multi-user.target")
     print("=== versions ===")
     print(machine.succeed("uname -r; systemctl --version | head -1; ${pkgs.systemd}/bin/systemd-nspawn --version | head -1"))
     print("nixpkgs ${pkgs.lib.version}; rf-proto ${rfProto.rev}; skills ${skills.rev or "unpinned"}")
-    print("template digest ${rust.m.digests.template}; host policy reserve memoryMiB=${toString hostPolicy.reserve.memoryMiB} diskMiB=${toString hostPolicy.reserve.diskMiB} max ${toString hostPolicy.maxConcurrentInstances}")
+    print("host policy:", machine.succeed("cat ${evaluated.hostPolicy}"))
     closure = {"paths": int(machine.succeed("wc -l < ${closure}/store-paths")), "nar_bytes": int(machine.succeed("cat ${closure}/total-nar-size"))}
     print("closure:", closure)
-    print("=== host: namespaces, maps, mountinfo ===")
     host_ns = {n: machine.succeed(f"readlink /proc/1/ns/{n}").strip() for n in NS}
-    print(host_ns)
-    print(machine.succeed("cat /proc/1/uid_map /proc/1/gid_map; cat /proc/1/mountinfo"))
+    print("host namespaces:", host_ns)
     machine.succeed("touch /root/host-sentinel /home/host-sentinel")
     store_before = machine.succeed("ls /nix/store | wc -l; stat -c %Y /nix/store").split()
-    host_before = host_free()
-    print("host before:", host_before)
+    disk_before = int(machine.succeed("df --output=avail -BM /var/lib | tail -1 | tr -dc 0-9"))
+    baseline = inventory("before")
     host_pid = machine.succeed("systemd-run --unit=host-sleeper --property=Type=exec sleep 3600 >/dev/null; systemctl show -p MainPID --value host-sleeper").strip()
     shm = machine.succeed("ipcmk -M 4096 | grep -o '[0-9]*$'").strip()
 
-    with subtest("bad instance ids are refused"):
+    with subtest("bad instance ids are refused before anything is created"):
         for bad in ("exports", "../x", "A", "-x"):
-            machine.fail(f"{F} create '{bad}'")
+            machine.fail(f"{I} create '{bad}' {TINY} --task t")
+        assert machine.succeed(f"ls {V} 2>/dev/null | grep -v exports || true").strip() == ""
 
-    with subtest("idle instance: create cost, runtime start, memory overhead"):
+    with subtest("idle instance: create cost, start, memory overhead, teardown"):
         c = create("idle")
         print(machine.succeed("findmnt -rn -o TARGET,SOURCE,FSTYPE,OPTIONS | grep agent-runtime/idle; losetup -l -n"))
         t0 = time.monotonic_ns()
-        status, out = machine.execute(f"{F} run idle 0 ${pkgs.coreutils}/bin/true :idmap 2>&1")
-        opt = ":idmap" if status == 0 else ""
-        if not opt:
-            print("=== :idmap refused, plain read-only bind; reservation kept across the failed start:", reserved())
-            assert reserved().startswith("instances=1 ")
-            status, out = machine.execute(f"{F} run idle 0 ${pkgs.coreutils}/bin/true 2>&1")
-        assert status == 0, out
-        t1 = time.monotonic_ns()
-        print(out[-800:])
-        timings["idle"] = {"create_ms": c, "run_ms": ms(t0, t1), "memory_peak": summary(out, "Memory peak"), "disk_bytes": disk("idle")}
-        timings["idle"]["teardown_ms"] = teardown("idle")
-        assert reserved() == "instances=0 memoryMiB=0 diskMiB=0", reserved()
+        s = run("idle", "${pkgs.coreutils}/bin/true", "--root")
+        assert s["state"] == "succeeded", s
+        timings["idle"] = {"create_ms": c, "start_to_end_ms": ms(t0, time.monotonic_ns()),
+                           "memory_peak_bytes": s["result"]["memoryPeakBytes"], "runtime_us": s["result"]["runtimeUSec"],
+                           "teardown_ms": destroy("idle", "--discard")}
 
-    with subtest("probe as container root: no capabilities, namespaces, read-only store and sources"):
+    with subtest("concurrent reader during the start window: starting, never ambiguous; wait rides it to success"):
+        # the blocking finding (wN on #152): during start's up-to-5 s leader poll state_of read ambiguous,
+        # and a lock-free wait/status took it as final, failing a run that then succeeds.
+        create("cwin")
+        # a wait launched together with start must poll through the starting window to the real outcome
+        out = machine.succeed(f"({I} start cwin -- /bin/sh -c 'sleep 1; true' >/dev/null 2>&1) & {I} wait cwin; echo rc=$?")
+        assert "rc=0" in out and status("cwin")["state"] == "succeeded", out
+        destroy("cwin", "--discard")
+        # and a rapid sampler across a fresh start observes created/starting/running, never ambiguous
+        create("cwin2")
+        # rapid lock-free sampling across a whole run: start, running and the end window all read as
+        # live states, never the terminal `ambiguous` (which is reserved for an outcome that never lands)
+        seen = sorted(set(machine.succeed(
+            f"({I} start cwin2 -- /bin/sh -c 'sleep 1; true' >/dev/null 2>&1) & "
+            f"for _ in $(seq 1 200); do {I} status cwin2 | ${pkgs.jq}/bin/jq -r .state; done"
+        ).split()))
+        print("states observed during start:", seen)
+        assert "ambiguous" not in seen, seen
+        assert "starting" in seen, ("the start window was never observed as starting", seen)
+        machine.succeed(f"{I} wait cwin2")
+        assert status("cwin2")["state"] == "succeeded", status("cwin2")
+        destroy("cwin2", "--discard")
+
+    with subtest("probe as container root: no capabilities, namespaces recorded, read-only store and sources"):
         create("probe")
-        machine.succeed(f"echo {host_pid} > /var/lib/agent-runtime/probe/mnt/workspace/host.pid")
-        out = machine.succeed(f"{F} run probe 0 ${probe} {opt}")
-        print(out)
-        assert "FAIL" not in out
+        machine.succeed(f"echo {host_pid} > {ws('probe')}/host.pid")
+        s = run("probe", "${probe}", "--root")
+        out = machine.succeed(f"{I} logs probe")
+        assert s["state"] == "succeeded" and "FAIL" not in out, out
         guest_ns = dict(re.findall(r"^ns_(\w+): (\S+)$", out, re.M))
         shared = [n for n in NS if guest_ns[n] == host_ns[n]]
         print("namespaces shared with the host:", shared)
         assert shared == ["time"], shared
-        assert machine.succeed("hostname").strip() == "machine", "guest changed the host hostname"
+        assert s["started"]["namespaces"] == guest_ns, (s["started"]["namespaces"], guest_ns)
+        assert s["started"]["uidMap"] == [0, s["uidBase"], 65536] and s["uidBase"] >= 1048576, s["started"]
+        assert machine.succeed("hostname").strip() == "machine"
         machine.succeed(f"ipcs -m -i {shm}")
         machine.succeed(f"kill -0 {host_pid}")
-        teardown("probe")
+        destroy("probe", "--discard")
 
-    for run in ("cold", "warm"):
-        with subtest(f"{run}: create -> cargo test as agent -> export -> destroy"):
-            t0 = time.monotonic_ns()
-            wall0 = int(machine.succeed("date +%s%N"))
-            c = create(run)
-            status, out = machine.execute(f"{F} run {run} 1000 ${work} {opt} 2>&1")
-            t1 = time.monotonic_ns()
-            runlog = out[out.index("== run.log"):]
-            print(out[:out.index("== run.log")][-400:]); print(runlog[:1200]); print("..."); print(runlog[-1200:])
-            assert status == 0, "workload failed"
-            assert re.search(r"test result: ok\. \d+ passed", out), "cargo test did not report a pass"
-            assert re.search(r"^status: CapEff: 0+ CapBnd: 0+ NoNewPrivs: 1 Seccomp: 2 $", out, re.M), "agent kept privileges"
-            marks = re.search(r"started_ns=(\d+).*finished_ns=(\d+)", out, re.S)
-            assert marks, "the workload did not print both time marks"
-            started, finished = int(marks.group(1)), int(marks.group(2))
-            timings[run] = {"create_ms": c, "startup_ms": (started - wall0) // 1000000, "work_ms": (finished - started) // 1000000,
-                            "total_ms": ms(t0, t1), "memory_peak": summary(out, "Memory peak"), "cpu": summary(out, "CPU time consumed"),
-                            "disk_bytes": disk(run)}
-            print(machine.succeed(f"{F} export {run}"))
-            timings[run]["teardown_ms"] = teardown(run)
-            timings[run]["export_bytes"] = int(machine.succeed(f"du -sb /var/lib/agent-runtime/exports/{run} | cut -f1"))
+    with subtest("lifecycle: concurrent instances with unique identities, policy denials, a harmless sibling teardown"):
+        t0 = time.monotonic_ns()
+        wall0 = int(machine.succeed("date +%s%N"))
+        for i in ("job-a", "job-b"):
+            timings[i] = {"create_ms": create(i)}
+        refused(f"{I} create over-m {RUST} --task t", 10, '"message":"memory')
+        create("hold-c", TINY)
+        refused(f"{I} create over-n {TINY} --task t", 10, "instances 3 of 3")
+        start("hold-c", "${hold}")
+        for i in ("job-a", "job-b"):
+            start(i, "${work}")
+        machine.wait_until_succeeds(f"test -e {ws('hold-c')}/ready", timeout=30)
+        listing = {x["id"]: x for x in json.loads(machine.succeed(f"{I} status"))}
+        print("status (all):", json.dumps(listing["job-a"], indent=1))
+        assert set(listing) == {"job-a", "job-b", "hold-c"}, listing
+        idents = {i: (x["uidBase"], tuple(x["started"]["namespaces"][n] for n in NS if n != "time")) for i, x in listing.items()}
+        print("identities:", idents)
+        assert len({v[0] for v in idents.values()}) == 3, idents
+        for k in range(len(NS) - 1):
+            assert len({v[1][k] for v in idents.values()}) == 3, (k, idents)
+        machine.succeed(f"echo {listing['job-a']['started']['leaderPid']} > {ws('hold-c')}/peer.pid")
+        for i in ("job-a", "job-b"):
+            s = json.loads(machine.succeed(f"{I} wait {i} --timeout-sec 300"))
+            joblog = machine.succeed(f"{I} logs {i}")
+            print(joblog[-1200:])
+            assert s["state"] == "succeeded" and s["result"]["exitStatus"] == 0, s
+            assert re.search(r"test result: ok\. \d+ passed", joblog)
+            assert re.search(r"^status: CapEff: 0+ CapBnd: 0+ NoNewPrivs: 1 Seccomp: 2\s*$", joblog, re.M), "agent kept privileges"
+            marks = re.search(r"started_ns=(\d+).*finished_ns=(\d+)", joblog, re.S)
+            assert marks
+            timings[i].update({"startup_ms": (int(marks.group(1)) - wall0) // 1000000,
+                               "work_ms": (int(marks.group(2)) - int(marks.group(1))) // 1000000,
+                               "memory_peak_bytes": s["result"]["memoryPeakBytes"], "cpu_ns": s["result"]["cpuUsageNSec"],
+                               "disk_bytes": int(machine.succeed(f"du -sbx {V}/{i}/vol/* | awk '{{s+=$1}} END {{print s}}'"))})
+            machine.succeed(f"{I} export {i}")
+            e = f"{V}/exports/{i}"
+            bundle = json.loads(machine.succeed(f"cat {e}/bundle.json"))
+            print(i, "bundle:", json.dumps({k: bundle[k] for k in ("outcome", "recovery", "log", "omittedPatches")}), [f["path"] for f in bundle["files"]])
+            assert bundle["outcome"] == "succeeded" and not bundle["recovery"]
+            meta = json.loads(machine.succeed(f"cat {e}/sources/rf-proto.json"))
+            print("changed", meta["changedPaths"], "dropped", meta["droppedPaths"][:5])
+            assert "README.md" in meta["changedPaths"] and "untracked-artifact.bin" in meta["changedPaths"], meta
+            machine.succeed(f"grep -q 'GIT binary patch' {e}/sources/rf-proto.patch")
+            machine.succeed(f"grep -q 'edited by {i}' {e}/sources/rf-proto.patch")
+            machine.succeed(f"cd {e}/output && sha256sum -c SHA256SUMS")
+            machine.succeed(f"grep -q 'test result: ok' {e}/run.log")
+            machine.succeed(f"cd {e} && jq -r '.files[] | select(.path != \"bundle.json\") | \"\\(.sha256)  \\(.path)\"' bundle.json | sha256sum -c --quiet")
+            timings[i]["export_bytes"] = int(machine.succeed(f"du -sb {e} | cut -f1"))
+        live = inventory("three live, two finished")
+        assert f"{V}/job-a/run/gcroots/rf-proto -> ${rust.src.locked.storePath}" in live["gcroots"], live["gcroots"]
+        timings["job-a"]["teardown_ms"] = destroy("job-a")
+        assert status("hold-c")["state"] == "running", "a sibling's teardown disturbed hold-c"
+        machine.succeed(f"touch {ws('hold-c')}/go")
+        s = json.loads(machine.succeed(f"{I} wait hold-c --timeout-sec 30"))
+        print(machine.succeed(f"{I} logs hold-c"))
+        assert s["state"] == "succeeded", s
+        machine.succeed(f"{I} export hold-c")
+        timings["job-b"]["teardown_ms"] = destroy("job-b")
+        destroy("hold-c")
+        timings["lifecycle"] = {"total_ms": ms(t0, time.monotonic_ns())}
 
-    with subtest("two concurrent instances: distinct identities, namespaces, workspaces, IPC and process trees"):
-        for i in ("conc-a", "conc-b"):
-            create(i)
-            background(i, "${conc}")
-        machine.wait_until_succeeds("test -e /var/lib/agent-runtime/conc-a/mnt/workspace/ready && test -e /var/lib/agent-runtime/conc-b/mnt/workspace/ready", timeout=60)
-        print(machine.succeed("machinectl list --no-legend"))
-        assert machine.succeed("machinectl list --no-legend | grep -c agent-runtime-conc-").strip() == "2"
-        print("reserved with two live:", reserved())
-        ids = {}
-        for i in ("conc-a", "conc-b"):
-            w = f"/var/lib/agent-runtime/{i}/mnt/workspace"
-            ids[i] = {"host_uid": machine.succeed(f"stat -c %u {w}/identity").strip(), "guest": machine.succeed(f"cat {w}/identity").split(),
-                      "leader": machine.succeed(f"machinectl show -p Leader --value agent-runtime-{i}").strip()}
-        print(ids)
-        assert ids["conc-a"]["host_uid"] != ids["conc-b"]["host_uid"]
-        for k, n in enumerate(["uid"] + NS):
-            same = ids["conc-a"]["guest"][k] == ids["conc-b"]["guest"][k]
-            assert same == (n in ("uid", "time")), (n, ids)
-        for i, peer in (("conc-a", "conc-b"), ("conc-b", "conc-a")):
-            machine.succeed(f"echo {ids[peer]['leader']} > /var/lib/agent-runtime/{i}/mnt/workspace/peer.pid")
-        print("host sees two guest SysV segments:", machine.succeed("ipcs -m | grep -c '^0x' || true").strip(), "(its own only)")
-        for i in ("conc-a", "conc-b"):
-            machine.succeed(f"touch /var/lib/agent-runtime/{i}/mnt/workspace/go")
-        for i in ("conc-a", "conc-b"):
-            machine.wait_until_succeeds(f"test -e /tmp/{i}.rc", timeout=60)
-            print(machine.succeed(f"cat /tmp/{i}.out"))
-            assert machine.succeed(f"cat /tmp/{i}.rc").strip() == "0"
-            teardown(i)
+    with subtest("idempotent duplicates: create, start, cancel, export, destroy"):
+        create("dup", TINY, "task-dup")
+        machine.succeed(f"{I} create dup {TINY} --task task-dup")
+        refused(f"{I} create dup {TINY} --task another", 12, "another task")
+        s = run("dup", "${pkgs.coreutils}/bin/true")
+        inv = s["started"]["invocation"]
+        machine.succeed(f"{I} start dup -- ${marker}")
+        assert status("dup")["started"]["invocation"] == inv, "a second start re-ran the instance"
+        machine.succeed(f"test ! -e {ws('dup')}/payload-ran")
+        machine.succeed(f"{I} cancel dup; {I} cancel dup")
+        assert status("dup")["state"] == "succeeded"
+        machine.succeed(f"{I} export dup")
+        first = machine.succeed(f"cat {V}/dup/exported.json")
+        machine.succeed(f"{I} export dup")
+        assert machine.succeed(f"cat {V}/dup/exported.json") == first
+        destroy("dup")
+        machine.succeed(f"{I} destroy dup")
 
-    with subtest("admission: memory, instance count and disk refuse oversubscription"):
-        create("adm-a"); create("adm-b")
-        print("two rust instances:", reserved())
-        status, out = machine.execute(f"{F} create adm-c 2>&1")
-        print(out); assert status == 75 and "admission refused: memory" in out, out
-        machine.succeed("test ! -e /var/lib/agent-runtime/adm-c")
-        create("adm-t1", T)
-        status, out = machine.execute(f"{T} create adm-t2 2>&1")
-        print(out); assert status == 75 and "admission refused: instances 3 of 3" in out, out
-        for i in ("adm-a", "adm-b"):
-            teardown(i)
-        teardown("adm-t1", T)
-        free = int(machine.succeed("df --output=avail -BM /var/lib/agent-runtime | tail -1 | tr -dc 0-9"))
-        ballast = free - ${toString hostPolicy.reserve.diskMiB} - 100
-        machine.succeed(f"fallocate -l {ballast}M /var/lib/ballast")
-        status, out = machine.execute(f"{F} create adm-d 2>&1")
-        print(out); assert status == 75 and "admission refused: disk" in out, out
-        create("adm-t3", T)
-        teardown("adm-t3", T)
+    with subtest("cancellation: a running instance stops as cancelled; export is a recovery bundle"):
+        create("cancel", TINY)
+        start("cancel", "${sleeper}")
+        machine.wait_until_succeeds(f"test -e {ws('cancel')}/ready", timeout=30)
+        refused(f"{I} destroy cancel", 12, "cancel it first")
+        machine.succeed(f"{I} cancel cancel; {I} cancel cancel")
+        assert status("cancel")["state"] == "cancelled"
+        refused(f"{I} destroy cancel", 12, "has not been exported")
+        machine.succeed(f"{I} export cancel")
+        assert json.loads(machine.succeed(f"cat {V}/exports/cancel/bundle.json"))["recovery"]
+        destroy("cancel")
+
+    with subtest("timeout: the unit's runtime limit ends the run as timed-out"):
+        create("timeout", TINY)
+        s = run("timeout", "${sleeper}", "--timeout-sec 3")
+        assert s["state"] == "timed-out", s
+        destroy("timeout", "--discard")
+
+    with subtest("crash mid-run: SIGKILL of the instance's nspawn is a failed outcome, torn down clean"):
+        create("killed", TINY)
+        start("killed", "${sleeper}")
+        machine.wait_until_succeeds(f"test -e {ws('killed')}/ready", timeout=30)
+        machine.succeed("kill -9 $(systemctl show -p MainPID --value agent-runtime-killed.service)")
+        s = json.loads(machine.execute(f"{I} wait killed --timeout-sec 30")[1])
+        print(json.dumps(s["result"]))
+        assert s["state"] == "failed" and s["result"]["serviceResult"] == "signal", s
+        machine.succeed(f"{I} export killed")
+        destroy("killed")
+
+    with subtest("supervisor crash: killing the waiting CLI does not lose the outcome"):
+        create("sup", TINY)
+        machine.succeed(f"{I} start sup --wait -- ${sleeper} > /tmp/sup.out 2>&1 & echo $! > /tmp/sup.pid")
+        # start execs wait in the same process once the unit runs
+        machine.wait_until_succeeds("tr '\\0' ' ' < /proc/$(cat /tmp/sup.pid)/cmdline | grep -q ' wait sup'", timeout=30)
+        machine.succeed("kill -9 $(cat /tmp/sup.pid)")
+        assert status("sup")["state"] == "running"
+        machine.succeed(f"{I} cancel sup")
+        s = status("sup")
+        assert s["state"] == "cancelled" and s["result"]["serviceResult"] != "", s
+        machine.succeed(f"{I} export sup")
+        destroy("sup")
+
+    with subtest("killed create: reconcile rolls back what a SIGKILLed create left"):
+        machine.succeed(f"({I} create kc {RUST} --task t > /dev/null 2>&1 & pid=$!; "
+                        f"while [ ! -e {V}/kc/reservation ]; do sleep 0.002; done; kill -9 $pid)")
+        time.sleep(3)
+        print("after SIGKILL:", machine.succeed(f"ls -a {V}/kc; {I} status kc"))
+        assert status("kc")["state"] == "incomplete"
+        refused(f"{I} create kc {RUST} --task t", 12, "incomplete")
+        rec = json.loads(machine.succeed(f"{I} reconcile"))
+        print("reconcile:", rec)
+        assert {"id": "kc", "state": "rolled-back", "reason": "create never finished"} in rec, rec
+        clean("kc")
+
+    with subtest("admission: disk refuses oversubscription"):
+        free = int(machine.succeed(f"df --output=avail -BM {V} | tail -1 | tr -dc 0-9"))
+        machine.succeed(f"fallocate -l {free - ${toString hostPolicy.reserve.diskMiB} - 100}M /var/lib/ballast")
+        refused(f"{I} create adm-d {RUST} --task t", 10, '"message":"disk')
+        create("adm-t", TINY)
+        destroy("adm-t", "--discard")
         machine.succeed("rm /var/lib/ballast")
-        assert reserved() == "instances=0 memoryMiB=0 diskMiB=0", reserved()
 
-    with subtest("fail closed: no user namespace, no payload; reservation held until destroy"):
-        create("nouserns", T)
+    with subtest("fail closed: no user namespace, no payload"):
+        create("nouserns", TINY)
         userns_max = machine.succeed("cat /proc/sys/user/max_user_namespaces").strip()
         machine.succeed("sysctl -w user.max_user_namespaces=0")
-        status, out = machine.execute(f"{T} run nouserns 1000 ${marker} 2>&1")
+        s = run("nouserns", "${marker}")
         machine.succeed(f"sysctl -w user.max_user_namespaces={userns_max}")
-        print(out[-600:])
-        assert status != 0, "instance started without a user namespace"
-        machine.succeed("test ! -e /var/lib/agent-runtime/nouserns/mnt/workspace/payload-ran")
-        assert reserved().startswith("instances=1 "), reserved()
-        teardown("nouserns", T)
+        assert "Failed to fork inner child" in machine.succeed(f"{I} logs nouserns")
+        assert s["state"] == "failed", s
+        machine.succeed(f"test ! -e {ws('nouserns')}/payload-ran")
+        assert reserved()[0] == 1
+        destroy("nouserns", "--discard")
 
     with subtest("failed teardown keeps the reservation; a second destroy releases it"):
-        create("busy", T)
-        machine.succeed("systemd-run --unit=holder --property=Type=exec --working-directory=/var/lib/agent-runtime/busy/mnt/workspace sleep 600")
-        machine.fail(f"{T} destroy busy")
-        held = reserved()
-        print("after failed destroy:", held)
-        assert held.startswith("instances=1 "), held
+        create("busy", TINY)
+        machine.succeed(f"systemd-run --unit=holder --property=Type=exec --working-directory={V}/busy/vol/workspace sleep 600")
+        refused(f"{I} destroy busy", 1, "is busy")
+        assert reserved() == (1, 64), reserved()
         machine.succeed("systemctl stop holder")
-        teardown("busy", T)
-        assert reserved() == "instances=0 memoryMiB=0 diskMiB=0", reserved()
+        destroy("busy")
 
     with subtest("budget: tasksMax holds a fork bomb"):
         create("pids")
-        background("pids", "${forkbomb}")
+        start("pids", "${forkbomb}")
         cg = "/sys/fs/cgroup/system.slice/agent-runtime-pids.service"
         machine.wait_until_succeeds(f"awk '$1 == \"max\" && $2 > 0' {cg}/pids.events | grep -q .", timeout=120)
         tasks = int(machine.succeed(f"cat {cg}/pids.current"))
-        events = machine.succeed(f"cat {cg}/pids.events").strip()
-        print("pids.current", tasks, "pids.max", machine.succeed(f"cat {cg}/pids.max").strip(), events)
+        print("pids.current", tasks, "pids.max", machine.succeed(f"cat {cg}/pids.max").strip(), machine.succeed(f"cat {cg}/pids.events").strip())
         assert tasks <= ${toString rust.t.resources.tasksMax}, tasks
-        machine.wait_until_succeeds("test -e /tmp/pids.rc", timeout=120)
-        timings["pids"] = {"pids_current": tasks, "pids_events": events, "rc": machine.succeed("cat /tmp/pids.rc").strip(), "teardown_ms": teardown("pids")}
-        machine.succeed("systemctl is-system-running --wait | grep -E 'running|degraded'")
+        s = json.loads(machine.execute(f"{I} wait pids --timeout-sec 120")[1])
+        timings["pids"] = {"pids_current": tasks, "state": s["state"], "teardown_ms": destroy("pids", "--discard")}
 
-    with subtest("budget: memoryMiB ends a memory hog with an OOM kill"):
+    with subtest("budget: memoryMiB ends a memory hog as oom-killed; the recovery bundle is kept"):
         create("oom")
-        status, out = machine.execute(f"{F} run oom 1000 ${hog} {opt} 2>&1")
-        print(out[-1200:])
-        assert status != 0, "the hog was not stopped"
-        assert "Finished with result: oom-kill" in out, "no oom-kill result"
-        timings["oom"] = {"memory_peak": summary(out, "Memory peak"), "teardown_ms": teardown("oom")}
-        print(machine.succeed("dmesg | grep -iE 'memory cgroup out of memory|oom-kill' | tail -3"))
+        s = run("oom", "${hog}")
+        assert s["state"] == "oom-killed", s
+        machine.succeed(f"{I} export oom")
+        b = json.loads(machine.succeed(f"cat {V}/exports/oom/bundle.json"))
+        assert b["recovery"] and b["outcome"] == "oom-killed", b
+        timings["oom"] = {"memory_peak_bytes": s["result"]["memoryPeakBytes"], "teardown_ms": destroy("oom")}
 
     with subtest("budget: cpus caps three busy loops at one core"):
         create("cpu")
-        status, out = machine.execute(f"{F} run cpu 1000 ${spin} {opt} 2>&1")
-        print(out[-600:])
-        runtime_s, cpu_s = seconds(summary(out, "Service runtime")), seconds(summary(out, "CPU time consumed"))
+        s = run("cpu", "${spin}")
+        runtime_s, cpu_s = s["result"]["runtimeUSec"] / 1e6, s["result"]["cpuUsageNSec"] / 1e9
         print("runtime", runtime_s, "cpu", cpu_s)
         assert cpu_s <= runtime_s * ${toString rust.t.resources.cpus} * 1.15, (runtime_s, cpu_s)
-        timings["cpu"] = {"runtime_s": runtime_s, "cpu_s": cpu_s, "teardown_ms": teardown("cpu")}
+        timings["cpu"] = {"runtime_s": runtime_s, "cpu_s": cpu_s, "teardown_ms": destroy("cpu", "--discard")}
 
     with subtest("budget: bytes and inodes run out inside the instance, not on the host"):
         create("fill")
-        after_create = host_free()
-        status, out = machine.execute(f"{F} run fill 1000 ${fill} {opt} 2>&1")
-        print(out[-900:])
-        assert re.search(r"dd_exit=1\n.*No space left on device", out), "the workspace did not fill"
-        assert re.search(r"touch_exit=[1-9]\d*\n.*No space left on device", out), "inodes did not run out"
-        during = host_free()
-        print("host after create", after_create, "after fill", during)
-        assert during["disk_avail_mib"] >= after_create["disk_avail_mib"] - 2, (after_create, during)
-        timings["fill"] = {"host_disk_delta_mib": during["disk_avail_mib"] - after_create["disk_avail_mib"], "teardown_ms": teardown("fill")}
+        before = int(machine.succeed("df --output=avail -BM /var/lib | tail -1 | tr -dc 0-9"))
+        s = run("fill", "${fill}")
+        out = machine.succeed(f"{I} logs fill")
+        assert s["state"] == "failed" and s["result"]["exitStatus"] == 3, s
+        assert re.search(r"dd_exit=1\n.*No space left on device", out), out
+        assert re.search(r"touch_exit=[1-9]\d*\n.*No space left on device", out), out
+        after = int(machine.succeed("df --output=avail -BM /var/lib | tail -1 | tr -dc 0-9"))
+        assert after >= before - 2, (before, after)
+        timings["fill"] = {"host_disk_delta_mib": after - before, "teardown_ms": destroy("fill", "--discard")}
+
+    with subtest("host reboot: an interrupted run is ambiguous and not replayed; a created one still starts"):
+        no_leaks("after every pre-reboot subtest")
+        create("reboot-run", TINY)
+        create("reboot-new", TINY)
+        start("reboot-run", "${sleeper}")
+        machine.wait_until_succeeds(f"test -e {ws('reboot-run')}/ready", timeout=30)
+        inventory("before the crash")
+        machine.crash()
+        machine.start()
+        machine.wait_for_unit("multi-user.target")
+        inventory("after the reboot")
+        store_now = machine.succeed("ls /nix/store | wc -l; stat -c %Y /nix/store").split()
+        # the VM's writable store overlay is recreated at boot: same entries, a new mtime
+        assert store_now[0] == store_before[0], (store_before, store_now)
+        store_before = store_now
+        rec = {r["id"]: r["state"] for r in json.loads(machine.succeed(f"{I} reconcile"))}
+        print("reconcile after reboot:", rec)
+        assert rec == {"reboot-run": "ambiguous", "reboot-new": "created"}, rec
+        refused(f"{I} start reboot-run -- ${marker}", 11, "not replayed")
+        assert reserved() == (2, 128), reserved()
+        s = run("reboot-new", "${pkgs.coreutils}/bin/true")
+        assert s["state"] == "succeeded", s
+        machine.succeed(f"{I} export reboot-run")
+        assert json.loads(machine.succeed(f"cat {V}/exports/reboot-run/bundle.json"))["outcome"] == "ambiguous"
+        destroy("reboot-run")
+        destroy("reboot-new", "--discard")
+
+    with subtest("per-run credential: tmpfs delivery, redaction, export leak-gate, cross-instance isolation"):
+        secret = "glpat-REDACTME-" + "0123456789abcdef"
+        machine.succeed(f"umask 077; printf %s {secret} > /tmp/cred")
+        machine.succeed(f"{I} create crd {TINY} --task sammasak/x#1")
+        machine.succeed(f"{I} start crd --credential /tmp/cred --wait -- ${credWork}")
+        assert status("crd")["state"] == "succeeded", status("crd")
+        # the payload's stdout lands in the journal; read it back through `logs` (the --wait
+        # stdout carries the status JSON, not the run's output)
+        out = machine.succeed(f"{I} logs crd")
+        print(out)
+        assert "cred_owner=1000:400" in out and "FAIL credential writable" not in out, out
+        # the printed log is redacted: the tool reads the still-mounted tmpfs secret and masks it
+        assert secret not in out, "credential leaked unredacted into the logs view"
+        # the credential lives on tmpfs under /run, never on the persistent /var/lib state
+        machine.succeed(f"test -e /run/agent-runtime/crd/cred/token -a ! -e {V}/crd/cred")
+        machine.succeed(f"! grep -rqF {secret} {V}/crd 2>/dev/null")  # not at rest in persistent state
+        machine.succeed(f"! grep -rqF {secret} /nix/store/*agent-runtime* 2>/dev/null")  # not in the store
+        print(machine.succeed(f"{I} export crd"))
+        machine.succeed(f"! grep -rqF {secret} {V}/exports/crd")
+        machine.succeed(f"{I} destroy crd --discard"); clean("crd")
+        # a payload that leaks the secret to its output: export refuses (credential class, exit 5), caller re-passes nothing
+        machine.succeed(f"{I} create crl {TINY} --task sammasak/x#2")
+        machine.succeed(f"{I} start crl --credential /tmp/cred --wait -- ${credLeakWork}")
+        rc, out = machine.execute(f"{I} export crl 2>&1")
+        print("export of a leaking run:", rc, out.strip()[-160:])
+        assert rc == 5 and "credential appears in an exported artifact" in out, (rc, out)
+        machine.succeed(f"{I} destroy crl --discard"); clean("crl")
+
+    with subtest("minimal egress: the allowlisted name over DNS+TLS; local and routed-off-host denied"):
+        # endpoints that exist before the instance: 10.9.0.1 allowed (host /etc/hosts maps the name), 10.9.0.9 denied-local;
+        # 10.8.0.5 is in a netns reachable only by the host routing (the forward hook must drop it, not the input hook)
+        machine.succeed("ip link add dummy0 type dummy && ip addr add 10.9.0.1/24 dev dummy0 && ip addr add 10.9.0.9/24 dev dummy0 && ip link set dummy0 up")
+        machine.succeed("ip netns add ep && ip link add veth-h type veth peer name veth-e && ip link set veth-e netns ep")
+        machine.succeed("ip addr add 10.8.0.1/24 dev veth-h && ip link set veth-h up")
+        machine.succeed("ip -n ep addr add 10.8.0.5/24 dev veth-e && ip -n ep link set veth-e up && ip -n ep link set lo up && ip -n ep route add default via 10.8.0.1")
+        # allowed.test -> 10.9.0.1 is seeded declaratively in networking.hosts (the tool resolves via getent)
+        machine.succeed("cd /tmp && openssl req -x509 -newkey rsa:2048 -nodes -keyout k.pem -out ca.pem -days 1 "
+                        "-subj /CN=allowed.test -addext 'subjectAltName=DNS:allowed.test,IP:10.9.0.1,IP:10.9.0.9,IP:10.8.0.5' >/dev/null 2>&1")
+        machine.succeed("systemd-run --unit=tls-local ${pkgs.python3}/bin/python3 ${tlsEndpoint} 0.0.0.0")
+        # systemd-run must wrap `ip netns exec` (not the reverse): the transient unit otherwise lands in the
+        # root netns and binds nothing, while the endpoint IP only exists inside ep. python3 needs its absolute
+        # path -- the transient unit's PATH does not carry /run/current-system/sw/bin into `ip netns exec`.
+        machine.succeed("systemd-run --unit=tls-ep ip netns exec ep ${pkgs.python3}/bin/python3 ${tlsEndpoint} 10.8.0.5")
+        machine.wait_until_succeeds("curl -sS --max-time 5 --cacert /tmp/ca.pem https://10.9.0.1/ | grep -q endpoint-ok", timeout=20)
+        machine.wait_until_succeeds("curl -sS --max-time 5 -k https://10.8.0.5/ | grep -q endpoint-ok", timeout=20)  # host CAN route to it
+        machine.succeed(f"{I} create egr {EGRESS} --task sammasak/egress#1")
+        machine.succeed(f"cp /tmp/ca.pem {V}/egr/vol/workspace/workspace/ca.pem")
+        machine.succeed(f"{I} start egr --wait -- ${egWork}")
+        assert status("egr")["state"] == "succeeded", status("egr")
+        # the payload's stdout lands in the journal; read it back through `logs`
+        out = machine.succeed(f"{I} logs egr")
+        print(out)
+        assert re.search(r"allowed: rc=0 body=\[endpoint-ok\]", out), "the allowlisted host was not reached"
+        assert re.search(r"denied-local: REFUSED", out), "a non-allowlisted local IP was reachable"
+        assert re.search(r"denied-routed: REFUSED", out), "a routed-off-host IP was reachable (forward hook hole)"
+        machine.succeed(f"{I} export egr || true; {I} destroy egr --discard"); clean("egr")
+        machine.succeed("! nft list tables 2>/dev/null | grep -q art_egr")  # the allowlist table is gone
+        machine.succeed("systemctl stop tls-local tls-ep 2>/dev/null; ip netns del ep; ip link del dummy0")
 
     with subtest("host unchanged, nothing left behind"):
+        no_leaks("after")
         store_after = machine.succeed("ls /nix/store | wc -l; stat -c %Y /nix/store").split()
         assert store_before == store_after, (store_before, store_after)
         machine.succeed("test -f /root/host-sentinel -a -f /home/host-sentinel")
-        machine.succeed("test ! -e /nix/store/agent-runtime-write-attempt")
-        machine.succeed("! findmnt -rn | grep agent-runtime")
-        machine.succeed("! losetup -l -n | grep -q agent-runtime")
-        machine.succeed("! machinectl list --no-legend | grep -q .")
-        machine.succeed("! systemctl list-units --all --no-legend 'agent-runtime-*' | grep -q .")
-        machine.succeed("test -z \"$(ls /var/lib/agent-runtime | grep -v '^exports$')\"")
-        host_after = host_free()
-        print("host before", host_before, "after", host_after)
-        assert abs(host_after["disk_avail_mib"] - host_before["disk_avail_mib"]) <= 16, (host_before, host_after)
-        print("exports kept:", machine.succeed("ls /var/lib/agent-runtime/exports").split())
+        disk_after = int(machine.succeed("df --output=avail -BM /var/lib | tail -1 | tr -dc 0-9"))
+        exports = int(machine.succeed(f"du -sm {V}/exports | cut -f1"))
+        print("host disk before", disk_before, "after", disk_after, "exports MiB", exports)
+        assert disk_after >= disk_before - exports - 16, (disk_before, disk_after, exports)
+        print("exports kept:", machine.succeed(f"ls {V}/exports").split())
 
     print("=== measurements ===")
-    print(json.dumps({"store_bind": opt, "closure": closure, "shared_namespaces": shared, "host_before": host_before,
-                      "host_after": host_after, "timings": timings}, indent=2))
+    print(json.dumps({"closure": closure, "shared_namespaces": shared, "timings": timings}, indent=2))
   '';
 }
