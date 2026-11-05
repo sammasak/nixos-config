@@ -31,7 +31,7 @@ devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward s
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
 
 # QEMU proofs (packages, not checks; acer under the heavy-work lock):
-nix build -L .#packages.x86_64-linux.agent-runtime-nspawn  # #135 M0: ephemeral nspawn instances, docs/agent-runtime-nspawn.md
+nix build -L .#packages.x86_64-linux.agent-runtime-nspawn  # #135/#137: ephemeral nspawn instances, enforcement, admission; docs/agent-runtime-nspawn.md
 
 # ── Deployment (switch is plain nixos-rebuild; build/diff use nh) ──
 just switch [HOST]            # Build and activate
