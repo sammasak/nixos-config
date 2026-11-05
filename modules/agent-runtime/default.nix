@@ -135,6 +135,7 @@ let
               options.source = mkOption {
                 type = lockedSource;
                 default = config.skillsSource;
+                defaultText = lib.literalExpression "config.sam.agentRuntime.templates.<name>.skillsSource";
                 description = "Pinned skills tree this skill is read from.";
               };
             }
