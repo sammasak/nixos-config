@@ -4,7 +4,8 @@ Epic: [nixos-config#133](https://github.com/sammasak/nixos-config/issues/133). T
 delivers a reusable NixOS module that types what an ephemeral `systemd-nspawn` agent instance
 would contain, a versioned manifest per template, and the runtime adapter (#136) that pins and
 verifies a manifest's sources for one instance. Nothing here starts a container,
-adds a service, or touches a live host; the nspawn proof (#135), security and admission (#137)
+adds a service, or touches a live host; the nspawn proof (#135,
+`docs/agent-runtime-nspawn.md`), security and admission (#137)
 and lifecycle (#138) consume the manifests, the run manifests and the instance records.
 
 Terms: a **template** is a declaration under `sam.agentRuntime.templates.<name>`. A

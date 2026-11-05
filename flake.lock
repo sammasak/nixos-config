@@ -400,6 +400,23 @@
         "type": "github"
       }
     },
+    "rf-proto": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1793797698,
+        "narHash": "sha256-F/QIeyHBdyeIjDg2rr1XIMv++oXmuVcjW3AYm9Arwe0=",
+        "ref": "refs/heads/main",
+        "rev": "d878c58ebaca9c5281ef522b6fbd1761e122dfb6",
+        "revCount": 6,
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/rf-proto"
+      },
+      "original": {
+        "rev": "d878c58ebaca9c5281ef522b6fbd1761e122dfb6",
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/rf-proto"
+      }
+    },
     "root": {
       "inputs": {
         "deploy-rs": "deploy-rs",
@@ -413,6 +430,7 @@
         "nix-index-database": "nix-index-database",
         "nixpkgs": "nixpkgs",
         "nur": "nur",
+        "rf-proto": "rf-proto",
         "rust-overlay": "rust-overlay",
         "skills": "skills",
         "sops-nix": "sops-nix",
