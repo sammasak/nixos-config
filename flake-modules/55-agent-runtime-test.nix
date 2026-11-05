@@ -8,7 +8,7 @@
     {
       packages = lib.optionalAttrs (system == "x86_64-linux") {
         agent-runtime-nspawn = import ../tests/agent-runtime-nspawn.nix {
-          inherit pkgs;
+          inherit pkgs lib;
           rfProto = inputs.rf-proto;
           skills = inputs.skills;
         };
