@@ -128,7 +128,7 @@ instance id, transient unit per instance); it is not yet that adapter.
 7. **Host unchanged**: the store's entry count and mtime, the sentinel, no
    mount, machine or unit left, `/var/lib/agent-runtime` holds only `exports`.
 
-## Observed on acer (QEMU, 2026-11-05, run 16)
+## Observed on acer (QEMU, 2026-11-05, run 18 on `6a83708`)
 
 Versions: kernel 6.18.56 (the test VM's), systemd 261 (261.3), nixpkgs
 26.11pre-git (`fe13242`), rf-proto `d878c58`, skills `9284403`, template digest
@@ -137,8 +137,10 @@ Versions: kernel 6.18.56 (the test VM's), systemd 261 (261.3), nixpkgs
 - `uid_map`/`gid_map`: `0 1048576 65536` for the first instance; the second
   concurrent one got `1114112` (agent = host UID 1115112 against 1049576).
 - Namespaces shared with the host: `time` only (nspawn does not unshare it).
-- `:idmap` on the store bind was refused (`Failed to clone /nix/store: Invalid
-  argument`): the VM's store is an overlay over virtiofs, which has no
+- `:idmap` on the store bind was refused: nspawn exits 1 before the payload
+  (`Failed with result 'exit-code'`; its message does not reach the test
+  backdoor, an earlier run recorded `Failed to clone /nix/store: Invalid
+  argument`). The VM's store is an overlay over virtiofs, which has no
   idmapped-mount support, so the run used a plain read-only bind and the store
   shows as `65534:65534 dr-xr-xr-x`. On an ext4 host store the NixOS
   containers module uses `:idmap`; that is expected, not proven here.
@@ -155,10 +157,10 @@ Versions: kernel 6.18.56 (the test VM's), systemd 261 (261.3), nixpkgs
 
 | run | startup | work | total | memory peak | CPU | instance disk | teardown |
 |---|---|---|---|---|---|---|---|
-| idle (`true`) | | | 311 ms | 4 MiB | | 447 B | 30 ms |
-| cold (`cargo test`) | 168 ms | 2008 ms | 2209 ms | 374.1 MiB | 3.03 s | 22.9 MB | 29 ms |
-| warm (`cargo test`) | 179 ms | 1716 ms | 1922 ms | 115 MiB | 2.62 s | 22.9 MB | 29 ms |
-| tasksMax bomb | | | 20.6 s | 251.3 MiB | 2.51 s | | 23 ms |
+| idle (`true`) | | | 368 ms | 4 MiB | | 447 B | 26 ms |
+| cold (`cargo test`) | 178 ms | 2061 ms | 2273 ms | 363.8 MiB | 3.06 s | 22.9 MB | 30 ms |
+| warm (`cargo test`) | 216 ms | 1733 ms | 1984 ms | 127.1 MiB | 2.78 s | 22.9 MB | 28 ms |
+| tasksMax bomb | | | 20.5 s | 251 MiB | 2.5 s | | 24 ms |
 | memoryMiB hog | | | | 1 GiB (the ceiling) | | | 52 ms |
 
 Startup is host `create` to the workload's first line; work is the workload's
