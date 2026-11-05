@@ -42,8 +42,11 @@ for p in "${plans[@]}"; do
          and (.source.sha | test("^[0-9a-f]{40}$")) and .source.subproject == "."' "$p" >/dev/null 2>&1 \
     || fail plan "$p is not a prepare:plan for a whole repository (schema_version 1, source.repo/ref/sha, subproject \".\")"
 done
+# each plan with the sha256 of its document: the run records which plan resolved a ref
 planned='[]'
-[ ${#plans[@]} -eq 0 ] || planned=$(jq -sc 'map(.source)' "${plans[@]}")
+for p in "${plans[@]}"; do
+  planned=$(jq -c --slurpfile d "$p" --arg sum "$(sha256sum "$p" | cut -d' ' -f1)" '. + [$d[0].source + {plan: $sum}]' <<<"$planned")
+done
 
 # a leftover of a killed assignment: no run.json, so nothing refers to these roots
 rm -rf "$out/gcroots" "$out"/.gcroots.* "$out"/.run.*
@@ -62,14 +65,16 @@ for name in $names; do
     ref=$(jq -r .ref.value <<<"$src")
     shas=$(jq -r --arg repo "${repo,,}" --arg ref "$ref" \
       '[.[] | select((.repo | ascii_downcase) == $repo and .ref == $ref) | .sha] | unique | join(" ")' <<<"$planned")
-    [ -n "$shas" ] || fail plan "no prepare:plan given for $repo@$ref (resolve = assignment)"
+    [ -n "$shas" ] || fail plan "no prepare:plan given for $repo@$ref (resolve = assignment; a ref GitHub does not know has no plan)"
+    plan_sum=$(jq -r --arg repo "${repo,,}" --arg ref "$ref" \
+      'first(.[] | select((.repo | ascii_downcase) == $repo and .ref == $ref) | .plan)' <<<"$planned")
     [[ $shas != *" "* ]] || fail plan "the plans disagree on $repo@$ref: $shas"
     config=${NIX_CONFIG:-}
     [[ $(jq -r '.access // "public"' <<<"$src") != private ]] \
       || config="${config:+$config$'\n'}access-tokens = github.com=$GH_TOKEN"
     NIX_CONFIG=$config run_capture github "prefetch of $repo@$shas failed" nix_cmd flake prefetch --json "github:$repo/$shas"
-    resolved=$(jq -ec --arg sha "$shas" \
-      'select((.hash | type == "string") and (.storePath | type == "string")) | {rev: $sha, narHash: .hash, storePath, by: "plan"}' \
+    resolved=$(jq -ec --arg sha "$shas" --arg plan "$plan_sum" \
+      'select((.hash | type == "string") and (.storePath | type == "string")) | {rev: $sha, narHash: .hash, storePath, by: "plan", plan: $plan}' \
       <<<"$captured") || fail github "prefetch of $repo@$shas returned no hash or store path"
   fi
   store_path=$(jq -r .storePath <<<"$resolved")

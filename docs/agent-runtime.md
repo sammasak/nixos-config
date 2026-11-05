@@ -253,7 +253,9 @@ the record #137 binds from. Every failure ends stderr with one JSON line,
 | `export` | 9 | a checkout cannot be exported (a nested repository, or git failed) |
 
 ```sh
-agent-runtime-assign --template rust-worker.json --run r1 --out runs/r1 --plan plan.json
+# in a devenv-platform checkout: one audited resolution of the moving ref, recorded as a plan
+devenv tasks run prepare:plan --input url=https://github.com/sammasak/factum --input ref=v0.2.0 --show-output
+agent-runtime-assign --template rust-worker.json --run r1 --out runs/r1 --plan "$DEVENV_STATE/prepare/plan-<hash>.json"
 agent-runtime-materialize --run runs/r1 --template rust-worker.json --root instances/r1
 agent-runtime-export --root instances/r1 --out exports/r1
 agent-runtime-reclaim --root instances/r1
@@ -266,8 +268,10 @@ agent-runtime-reclaim --root instances/r1
   against the template's `github` (case-insensitive) and the plan's `source.ref` against
   `ref.value`; unmatched plans are ignored, plans that disagree on one ref are refused.
   [devenv-platform#92](https://github.com/sammasak/devenv-platform/issues/92) owns that
-  resolver (assign only reads its output), and a template with only locked sources needs no
-  plan. A locked source copies its lock; an assignment-resolved one is prefetched with
+  resolver (assign only reads its output; the check writes its plans with that repository's own
+  `modules/prepare/plan.jq` from the pinned `devenv-platform` input), and a template with only
+  locked sources needs no plan. A ref GitHub does not know gets no plan from `prepare:plan`
+  (exit 2, `not_found`), so assign fails `plan` before any fetch. A locked source copies its lock; an assignment-resolved one is prefetched with
   `nix flake prefetch` at the plan's commit. A private source needs `GH_TOKEN`, which reaches
   `nix` only as an `access-tokens` line appended to `NIX_CONFIG` (an existing `NIX_CONFIG` is
   kept); any occurrence of the token is stripped from error messages. Every source gets an
@@ -275,7 +279,8 @@ agent-runtime-reclaim --root instances/r1
   (`agent-runtime-run`, schemaVersion 1): `run.{id,assignedAt}`, `template.{name,digests}`,
   `workspace`, and `sources` keyed by name with the repository, requested ref, `resolve`,
   `access`, `path`, `writable` and `resolved.{rev,narHash,storePath,by}` (`by` is `lock` or
-  `plan`); `digests.run` is the sha256 of the canonical run id, template digests, workspace and
+  `plan`; a plan-resolved source also records `resolved.plan`, the sha256 of the plan document
+  that named its commit); `digests.run` is the sha256 of the canonical run id, template digests, workspace and
   sources. A run is assigned once; a failed assignment publishes nothing; a branch or tag that
   advances between two assignments changes only the later run.
 - **materialize** needs no network and nothing it was not given. Its trust anchors are the

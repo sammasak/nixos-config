@@ -5,6 +5,7 @@
   lib,
   runtime,
   shipped,
+  devenvPlatform,
 }:
 let
   tree =
@@ -177,6 +178,7 @@ pkgs.runCommand "agent-runtime-runtime"
     exportTool = lib.getExe tools.export;
     reclaimTool = lib.getExe tools.reclaim;
     shippedReclaim = lib.getExe shipped.reclaim;
+    planJq = "${devenvPlatform}/modules/prepare/plan.jq";
   }
   ''
     set -euo pipefail
@@ -209,9 +211,10 @@ pkgs.runCommand "agent-runtime-runtime"
     fill "$manifests/fixture.json" >template.json
     fill "$tightManifests/fixture.json" >template-tight.json
     jq '.sources["factum-release"].access = "private"' template.json >template-private.json
+    # every plan is written by devenv-platform's own prepare:plan program (#92/#112, the pinned input), not a copy of
+    # its shape: a schema change there fails here on the input bump
     plan() {
-      jq -n --arg ref "$1" --arg sha "$2" --arg sub "''${3:-.}" '{schema_version: 1, source: {url: "https://github.com/sammasak/factum",
-        repo: "sammasak/factum", ref: $ref, sha: $sha, subproject: $sub}}'
+      jq -Sn --arg repo sammasak/factum --arg ref "$1" --arg sha "$2" --arg subproject "''${3:-.}" --arg system x86_64-linux -f "$planJq"
     }
     plan v0.2.0 "$TAG_SHA_1" >plan-tag1.json
     plan v0.2.0 "$TAG_SHA_2" >plan-tag2.json
@@ -228,8 +231,12 @@ pkgs.runCommand "agent-runtime-runtime"
     expect "a flag without its value: exit 2, class usage" "2 usage" "$rc $(class err)"
     rc=0; assign --template template.json --run r0 --out o0 2>err || rc=$?
     expect "assignment sources without plans: exit 3, class plan" "3 plan" "$rc $(class err)"
-    rc=0; assign --template template.json --run r0 --out o0 --plan plan-tag1.json 2>err || rc=$?
-    expect "one plan missing (the branch): exit 3, class plan" "3 plan" "$rc $(class err)"
+    expect "the plans are prepare:plan v1 documents (devenv-platform's plan.jq), source pinned to one commit" \
+      "1 sammasak/factum dev $DEV_SHA_1 . https://github.com/sammasak/factum" \
+      "$(jq -r '"\(.schema_version) \(.source.repo) \(.source.ref) \(.source.sha) \(.source.subproject) \(.source.url)"' plan-dev1.json)"
+    rc=0; : >"$FAKE_NIX_LOG"; assign --template template.json --run r0 --out o0 --plan plan-tag1.json 2>err || rc=$?
+    expect "missing ref: the branch has no plan (prepare:plan found no such ref): exit 3, class plan, nothing fetched" "3 plan 0 true" \
+      "$rc $(class err) $(stat -c %s "$FAKE_NIX_LOG") $(has err 'no prepare:plan given for sammasak/factum@dev')"
     rc=0; assign --template template.json --run r0 --out o0 --plan plan-wrong-ref.json --plan plan-dev1.json 2>err || rc=$?
     expect "a plan for the right repo but another ref does not match" "3 plan" "$rc $(class err)"
     rc=0; assign --template template.json --run r0 --out o0 --plan plan-tag1.json --plan plan-tag2.json --plan plan-dev1.json 2>err || rc=$?
@@ -253,6 +260,9 @@ pkgs.runCommand "agent-runtime-runtime"
     expect "run.json: resolved commits and store paths per source" \
       "$(printf '%s\n' "$writableRev $hashA $srcA" "$DEV_SHA_1 $hashA $srcA" "$pinnedRev $hashB $srcB" "$TAG_SHA_1 $hashA $srcA")" \
       "$(jq -r '.sources[] | .resolved | "\(.rev) \(.narHash) \(.storePath)"' o1/run.json)"
+    expect "run.json: each plan-resolved source names the sha256 of the plan document that resolved it" \
+      "$(sha256sum plan-dev1.json | cut -d' ' -f1) $(sha256sum plan-tag1.json | cut -d' ' -f1) null null" \
+      "$(jq -r '"\(.sources["factum-dev"].resolved.plan) \(.sources["factum-release"].resolved.plan) \(.sources.factum.resolved.plan) \(.sources["factum-pinned"].resolved.plan)"' o1/run.json)"
     expect "run.json: kind, template digests, no lock field survives" "agent-runtime-run true false" \
       "$(jq -r '"\(.kind) \(.template.digests.template | test("^[0-9a-f]{64}$")) \([.sources[] | has("locked")] | any)"' o1/run.json)"
     expect "digests.run is the sha256 of the canonical run id, template digests, workspace and sources" \

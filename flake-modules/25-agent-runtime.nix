@@ -35,6 +35,7 @@
         agent-runtime-runtime = import ../tests/agent-runtime/runtime-check.nix {
           inherit pkgs lib runtime;
           shipped = runtime.tools;
+          devenvPlatform = inputs.devenv-platform;
         };
       };
       packages = x86Only {
