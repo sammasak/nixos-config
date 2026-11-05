@@ -36,11 +36,14 @@ pkgs.runCommand "agent-runtime-eval"
         and (.skills.names | type == "object" and length > 0) and (.packages | type == "array" and length > 0)
       ' "$f" >/dev/null || fail "$f" "$name: header, digests, skills or packages"
       # a source is unlocked exactly when it resolves per assignment
-      jq -e '
+      jq -e --arg n "$name" '
         ([.sources[] | (.locked == null) == (.resolve == "assignment")] | all)
         and ([.sources[] | select(.locked != null) | .locked.rev | test("^[0-9a-f]{40}$")] | all)
         and ([.sources[] | .access | IN("public", "private")] | all)
         and (.policies.privateSources == [.sources | to_entries[] | select(.value.access == "private") | .key])
+        and (if $n == "rust-worker" then .sources["factum-release"].access == "private" and .policies.privateSources == ["factum-release"]
+             else .policies.privateSources == [] end)
+        and (.filesystem.workspaceBudget | .sizeMiB > 0 and .inodes > 0)
       ' "$f" >/dev/null || fail "$f" "$name: source locking"
       jq -e '
         ([.. | objects | keys[] | test("token|secret|password|credential|apikey"; "i")] | any | not)

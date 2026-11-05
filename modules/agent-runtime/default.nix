@@ -244,6 +244,18 @@ let
           default = "/workspace";
           description = "Parent of every repository path; no other mount may sit on or under it.";
         };
+        workspaceBudget = {
+          sizeMiB = mkOption {
+            type = types.ints.positive;
+            default = 4096;
+            description = "Bytes (MiB) the writable copies may take together; materialize refuses a run beyond it, run-time enforcement is #137's.";
+          };
+          inodes = mkOption {
+            type = types.ints.positive;
+            default = 200000;
+            description = "Inodes the writable copies may take together.";
+          };
+        };
         home = mkOption {
           type = budgetedMount "/home/agent";
           description = "Private HOME.";
@@ -512,7 +524,7 @@ let
         }) t.packages;
         policies = {
           inherit (t) resources;
-          privateSources = lib.naturalSort (lib.attrNames (lib.filterAttrs (_: r: r.access == "private") t.repositories));
+          privateSources = lib.attrNames (lib.filterAttrs (_: r: r.access == "private") t.repositories);
           network = {
             egress = if t.network.allow == null then "none" else "allowlist";
             allow = lib.naturalSort (lib.unique (lib.optionals (t.network.allow != null) t.network.allow));

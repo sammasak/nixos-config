@@ -6,7 +6,7 @@ lib.genAttrs [ "assign" "materialize" "export" "reclaim" ] (
   name:
   pkgs.writeShellApplication {
     name = "agent-runtime-${name}";
-    runtimeInputs = [ pkgs.coreutils pkgs.findutils pkgs.git pkgs.jq nix ];
+    runtimeInputs = [ pkgs.coreutils pkgs.findutils pkgs.git pkgs.jq pkgs.util-linux nix ];
     text = builtins.readFile ./runtime/lib.sh + builtins.readFile ./runtime/${name}.sh;
   }
 )
