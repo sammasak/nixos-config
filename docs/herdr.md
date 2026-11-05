@@ -23,6 +23,16 @@ native CLI in the current terminal. Use `command pi`, `command claude`, or
 an agent session that is already registered attaches to that pane instead of
 opening the same conversation a second time.
 
+Workers run unattended in `bypassPermissions` on worker hosts only
+(`sam.herdr.worker`, acer-swift): Claude Code's settings carry
+`skipDangerousModePermissionPrompt`, so a `--dangerously-skip-permissions`
+start no longer stops at the acknowledgment dialog, and activation pre-trusts
+`$HOME` plus `sam.herdr.worker.trustedDirs`, nothing else. The flag itself comes
+from the caller: skills `coord:spawn`, or `claude-worker` (the `claude` wrapper
+with the flag) by hand. Plain `claude` still asks, and a host running the
+unattended Coordinator (`coordinatorWakeup`, `--permission-mode dontAsk`)
+cannot be a worker host. `nixos:worker-permissions-test` pins all of it.
+
 Herdr stores its session snapshot and pane history in `~/.config/herdr/`.
 Home Manager sets that directory to mode `0700`; the systemd unit also uses a
 private umask. Pane history may contain prompts, command output, or secrets.

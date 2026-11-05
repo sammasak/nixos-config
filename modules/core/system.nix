@@ -117,6 +117,27 @@ in
       '';
     };
 
+    herdr.worker = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          This host runs unattended Claude Code workers started through Herdr
+          (skills `coord:spawn`, or `claude-worker` here): they start with
+          `--dangerously-skip-permissions` and Claude Code's settings skip its
+          acknowledgment dialog (`skipDangerousModePermissionPrompt`). Plain
+          `claude` and the unattended Coordinator are unchanged, and a host
+          running `coordinatorWakeup` cannot be a worker host.
+        '';
+      };
+      trustedDirs = mkOption {
+        type = types.listOf (types.strMatching "/[A-Za-z0-9_./-]*");
+        default = [ ];
+        example = [ "/home/lukas/claude-code-skills" ];
+        description = "Worker startup directories whose Claude Code trust dialog is pre-accepted in `~/.claude.json` before launch; only these, besides the `$HOME` every host trusts.";
+      };
+    };
+
     herdr.coordinatorWakeup = {
       enable = mkOption {
         type = types.bool;
@@ -185,6 +206,13 @@ in
     assertions = [{
       assertion = lib.length (lib.unique (map (m: m.label) config.sam.herdr.machines)) == lib.length config.sam.herdr.machines;
       message = "sam.herdr.machines labels must be unique (herdr --machine addresses a machine by its label).";
+    } {
+      # the unattended Coordinator stays on dontAsk: it must never share a settings.json that skips the bypass dialog
+      assertion = !(config.sam.herdr.worker.enable && config.sam.herdr.coordinatorWakeup.enable);
+      message = "sam.herdr.worker and sam.herdr.coordinatorWakeup cannot both be enabled on one host (the Coordinator must not inherit worker permissions).";
+    } {
+      assertion = config.sam.herdr.worker.trustedDirs != [ ] -> config.sam.herdr.worker.enable;
+      message = "sam.herdr.worker.trustedDirs is for worker hosts only (set sam.herdr.worker.enable).";
     }];
 
     programs = {
