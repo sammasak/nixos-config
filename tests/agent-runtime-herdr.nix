@@ -194,6 +194,19 @@ pkgs.testers.runNixOSTest {
         assert machine.succeed("test ! -e /var/lib/rt/b1/output/handoff-1.txt && echo none").strip() == "none", "the handoff leaked to the other runtime"
         assert rec("a1")["status"] == "idle"
 
+    with subtest("two delivers back to back: the second is refused, the runtime gets one task"):
+        out = machine.succeed("agent-runtime-herdr deliver a1 'Assignment #901: second task' > /tmp/d1 2>&1; echo first=$?; "
+                              "agent-runtime-herdr deliver a1 'Assignment #901: duplicate' > /tmp/d2 2>&1; echo second=$?; cat /tmp/d1 /tmp/d2")
+        print(out)
+        assert "first=0" in out and "second=75" in out and "assigned, not idle" in out, out
+        wait_state("a1", "idle", 20)
+        assert machine.succeed("ls /var/lib/rt/a1/output").count("handoff-") == 2, machine.succeed("ls /var/lib/rt/a1/output")
+        assert "second task" in machine.succeed("cat /var/lib/rt/a1/output/handoff-2.txt")
+        assert len(rec("a1")["deliveries"]) == 2 and rec("a1")["status"] == "idle", rec("a1")
+        status, o = machine.execute("agent-runtime-herdr deliver a1 \"$(printf 'line one\\nline two')\" 2>&1")
+        print("multi-line deliver:", status, o)
+        assert status == 64 and "one line" in o
+
     with subtest("a blocked runtime is reported blocked; a finished one is no longer an agent"):
         machine.succeed("agent-runtime-herdr deliver b1 BLOCK")
         wait_state("b1", "blocked", 10)
@@ -240,8 +253,8 @@ pkgs.testers.runNixOSTest {
             print("deliver to lost:", status, o)
             assert status == 75 and "lost" in o
         assert machine.succeed("ls /var/lib/rt/*/output | sort").strip() == results_before, "results changed across the restart"
-        assert machine.succeed("ls /var/lib/rt/a1/output").count("handoff-") == 1, "a handoff was replayed"
-        assert len(rec("a1")["deliveries"]) == 1, rec("a1")["deliveries"]
+        assert machine.succeed("ls /var/lib/rt/a1/output").count("handoff-") == 2, "a handoff was replayed"
+        assert len(rec("a1")["deliveries"]) == 2, rec("a1")["deliveries"]
         print(machine.succeed("agent-runtime-herdr status --json | jq -c '.[] | {runtime_id, status}'"))
 
     with subtest("teardown: Herdr, systemd, machined and the mounts hold nothing of either runtime"):

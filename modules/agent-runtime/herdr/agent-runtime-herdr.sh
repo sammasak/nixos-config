@@ -22,7 +22,8 @@ agent_label=agent-runtime
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 die() { echo "agent-runtime-herdr: $1" >&2; exit "${2:-1}"; }
 record() { echo "$state_dir/$1.json"; }
-valid_id() { [[ $1 =~ ^[a-z0-9]([a-z0-9-]{0,24}[a-z0-9])?$ ]]; }
+# Herdr agent names are at most 32 characters and rt- takes three
+valid_id() { [[ $1 =~ ^[a-z0-9]([a-z0-9-]{0,27}[a-z0-9])?$ ]]; }
 # set <runtime_id> <jq filter> [jq args...]: update the record atomically
 set_record() {
   local id=$1 filter=$2; shift 2
@@ -37,6 +38,7 @@ herdr_state() {
     working) echo working ;;
     blocked) echo blocked ;;
     started) echo unknown ;;
+    assigned) echo working ;;
     *) return 1 ;;
   esac
 }
@@ -47,7 +49,7 @@ case $cmd in
   attach)
     [ $# -ge 5 ] && [ "$5" = -- ] || die "usage: attach <runtime_id> <manifest.json> <OWNER/REPO#N> <status-file> -- <pane argv...>" 64
     id=$1 manifest=$2 task_ref=$3 status_file=$4; shift 5
-    valid_id "$id" || die "runtime id must be a DNS label of at most 26 characters: $id" 64
+    valid_id "$id" || die "runtime id must be a DNS label of at most 29 characters: $id" 64
     [[ $task_ref =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$ ]] || die "task_ref must be OWNER/REPO#N: $task_ref" 64
     [ "$#" -gt 0 ] || die "no pane command" 64
     template=$(jq -er .template.name "$manifest") || die "$manifest has no template name" 65
@@ -70,6 +72,9 @@ case $cmd in
       '{schemaVersion: 1, runtime_id: $id, host: $host, herdr: {workspace_id: $ws, pane_id: $pane, name: $name},
         template: $tpl, template_digest: $dg, harness: $harness, task_ref: $ref, status_file: $sf,
         status: "started", seq: 0, deliveries: [], started_at: $now, updated_at: $now}' > "$f.tmp" && mv "$f.tmp" "$f"
+    # a failed attach leaves no workspace and no live record behind, so a retry is not refused
+    attached=0
+    trap '[ "$attached" = 1 ] || { herdr workspace close "$workspace_id" >/dev/null 2>&1 || true; set_record "$id" ".status = \"torn_down\""; }' EXIT
     # Herdr binds a reported agent to the pane's foreground process at report time, so the
     # launcher replaces the pane's shell (exec, same pid) and the report waits until it runs
     fg() { herdr pane process-info --pane "$pane_id" | jq -r '.result.process_info.foreground_processes[0].cmdline // empty'; }
@@ -92,28 +97,33 @@ case $cmd in
       --setenv=AGENT_RUNTIME_HERDR_STATE="$state_dir" --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
       ${HERDR_SOCKET_PATH:+--setenv=HERDR_SOCKET_PATH="$HERDR_SOCKET_PATH"} \
       ${XDG_RUNTIME_DIR:+--setenv=XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"} "$0" follow "$id"
+    attached=1
     jq -c . "$f"
     ;;
 
   follow)
     id=$1; f=$(record "$id")
     [ -e "$f" ] || die "no record for $id" 66
-    last=""
+    # keyed on the line count, not the last line: a turn that goes working -> idle between two
+    # polls still ends with idle, and must still move an assigned runtime on
+    seen=0
     while :; do
-      pane=$(field "$id" .herdr.pane_id); harness=$(field "$id" .harness); sf=$(field "$id" .status_file)
+      pane=$(field "$id" .herdr.pane_id); sf=$(field "$id" .status_file)
       status=$(field "$id" .status)
       case $status in finished|torn_down|lost) exit 0 ;; esac
-      now_state=$(tail -n 1 "$sf" 2>/dev/null || true)
-      if [ -n "$now_state" ] && [ "$now_state" != "$last" ]; then
-        last=$now_state
+      lines=$(wc -l < "$sf" 2>/dev/null || echo 0)
+      if [ "$lines" -gt "$seen" ]; then
+        seen=$lines
+        now_state=$(tail -n 1 "$sf")
         if [ "$now_state" = finished ]; then
           # a finished agent is no agent: Herdr stops listing it, so nothing more can be handed to it
           herdr pane release-agent "$pane" --source "$source_id" --agent "$agent_label" >/dev/null || true
           exec 9>"$state_dir/.lock"; flock 9; set_record "$id" '.status = "finished"'; exit 0
         elif hs=$(herdr_state "$now_state"); then
+          exec 9>"$state_dir/.lock"; flock 9
           seq=$(( $(field "$id" .seq) + 1 ))
           herdr pane report-agent "$pane" --source "$source_id" --agent "$agent_label" --state "$hs" --seq "$seq" >/dev/null || true
-          exec 9>"$state_dir/.lock"; flock 9; set_record "$id" '.status = $s | .seq = ($q | tonumber)' --arg s "$now_state" --arg q "$seq"; exec 9>&-
+          set_record "$id" '.status = $s | .seq = ($q | tonumber)' --arg s "$now_state" --arg q "$seq"; exec 9>&-
         fi
       fi
       sleep 0.3
@@ -127,6 +137,8 @@ case $cmd in
     [ $# -eq 2 ] || die "usage: deliver <runtime_id> <text>" 64
     id=$1 text=$2; f=$(record "$id")
     [ -e "$f" ] || die "no record for $id" 66
+    # Enter submits: a newline inside the text would submit part of it early
+    case $text in *$'\n'*|*$'\r'*) die "a handoff is one line" 64 ;; esac
     exec 9>"$state_dir/.lock"; flock 9
     status=$(field "$id" .status); pane=$(field "$id" .herdr.pane_id)
     case $status in
@@ -138,9 +150,14 @@ case $cmd in
     herdr_status=$(herdr agent get "$pane" | jq -r '.result.agent.agent_status // empty') || die "herdr is unreachable; not delivering" 69
     # done is Herdr's idle-but-not-yet-seen: ready for input, as for any agent
     case $herdr_status in idle|done) ;; *) die "Herdr reports $pane as ${herdr_status:-no agent}; not delivering" 75 ;; esac
+    # assigned before a byte is typed, under the same lock: the next deliver finds it not idle,
+    # and a send that fails halfway leaves it assigned, never free for a second task
+    seq=$(( $(field "$id" .seq) + 1 ))
+    set_record "$id" '.status = "assigned" | .seq = ($q | tonumber) | .deliveries += [{at: $now, sha256: $h}]' \
+      --arg q "$seq" --arg h "$(printf '%s' "$text" | sha256sum | cut -c1-64)"
+    herdr pane report-agent "$pane" --source "$source_id" --agent "$agent_label" --state working --seq "$seq" >/dev/null || true
     herdr pane send-text "$pane" "$text" >/dev/null
     herdr pane send-keys "$pane" Enter >/dev/null
-    set_record "$id" '.deliveries += [{at: $now, sha256: $h}]' --arg h "$(printf '%s' "$text" | sha256sum | cut -c1-64)"
     echo "delivered to $id ($pane)"
     ;;
 
@@ -182,7 +199,9 @@ case $cmd in
       now_fg=$(herdr pane process-info --pane "$pane" 2>/dev/null | jq -r '.result.process_info.foreground_processes[0].cmdline // empty') || now_fg=""
       if [ -n "$now_fg" ] && [ "$now_fg" = "$(jq -r '.herdr.foreground // empty' "$f")" ]; then
         hs=$(herdr_state "$(jq -r .status "$f")") || hs=unknown
-        herdr pane report-agent "$pane" --source "$source_id" --agent "$agent_label" --state "$hs" >/dev/null
+        seq=$(( $(jq -r .seq "$f") + 1 ))
+        herdr pane report-agent "$pane" --source "$source_id" --agent "$agent_label" --state "$hs" --seq "$seq" >/dev/null
+        set_record "$id" '.seq = ($q | tonumber)' --arg q "$seq"
         echo "$id: re-reported ($hs)"
       else
         systemctl "${user_unit[@]}" stop "agent-runtime-herdr-follow-$id.service" 2>/dev/null || true
