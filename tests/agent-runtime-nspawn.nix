@@ -11,9 +11,25 @@ let
       {
         sam.agentRuntime.host = {
           enable = true;
-          eligibleTemplates = [ "rust-worker-m0" "tiny" ];
+          eligibleTemplates = [ "rust-worker-m0" "tiny" "egress" ];
           maxConcurrentInstances = 3;
           reserve = { memoryMiB = 2600; diskMiB = 512; };
+        };
+        # #137 slice 2: minimal egress to one allowlisted name, and a per-run credential at start
+        sam.agentRuntime.templates.egress = {
+          role = { name = "rust-worker"; harness = "claude-code"; };
+          skillsSource = skills;
+          skills.lean-code = { };
+          packages = with pkgs; [ bash coreutils curl cacert glibc.bin ];
+          network.allow = [ "allowed.test" ];
+          filesystem = {
+            workspaceBudget = { sizeMiB = 16; inodes = 1000; };
+            home = { sizeMiB = 16; inodes = 1000; };
+            tmp = { sizeMiB = 16; inodes = 1000; };
+            cache = { sizeMiB = 16; inodes = 1000; };
+            output = { sizeMiB = 16; inodes = 1000; };
+          };
+          resources = { cpus = 1; memoryMiB = 256; tasksMax = 128; timeoutMinutes = 5; };
         };
         sam.agentRuntime.templates.rust-worker-m0 = {
           role = { name = "rust-worker"; harness = "claude-code"; };
@@ -177,6 +193,51 @@ let
     exit 3
   '';
   marker = sh "agent-marker" "echo ran > ${ws}/payload-ran";
+  eg = evaluated.manifestData.egress;
+  egEnv = pkgs.buildEnv { name = "agent-runtime-egress-env"; paths = evaluated.templates.egress.packages; };
+  tlsEndpoint = pkgs.writeText "tls-endpoint.py" ''
+    import http.server, ssl
+    def get(s):
+        s.send_response(200); s.send_header("Content-Length", "11"); s.send_header("Connection", "close"); s.end_headers()
+        s.wfile.write(b"endpoint-ok")
+    h = type("H", (http.server.BaseHTTPRequestHandler,), {"protocol_version": "HTTP/1.0", "do_GET": get})
+    import sys
+    srv = http.server.ThreadingHTTPServer((sys.argv[1], 443), h)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain("/tmp/ca.pem", "/tmp/k.pem")
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True); srv.serve_forever()
+  '';
+  # the egress payload (inside the instance, uid 1000): the allowlisted name over TLS works; a denied local
+  # IP and a denied IP reachable only by routing off the host are both refused.
+  egWork = sh "agent-egress" ''
+    set -u
+    export PATH=${egEnv}/bin SSL_CERT_FILE=${eg.filesystem.workspace}/ca.pem
+    ab=$(curl -sS --max-time 8 https://allowed.test/ 2>&1); arc=$?
+    echo "allowed: rc=$arc body=[$ab]"
+    echo -n "denied-local: "; if curl -sS --max-time 8 -k https://10.9.0.9/ >/dev/null 2>&1; then echo REACHED; else echo "REFUSED rc=$?"; fi
+    echo -n "denied-routed: "; if curl -sS --max-time 8 -k https://10.8.0.5/ >/dev/null 2>&1; then echo REACHED; else echo "REFUSED rc=$?"; fi
+  '';
+  # the credential payload (on the non-egress `tiny` template): read it (tmpfs, read-only), print it once (to
+  # exercise redaction), write a clean artifact, and optionally leak it to the output for the export-gate test
+  tn = evaluated.manifestData.tiny;
+  tnEnv = pkgs.buildEnv { name = "agent-runtime-tiny-env"; paths = evaluated.templates.tiny.packages; };
+  credWork = sh "agent-cred" ''
+    set -euo pipefail
+    export PATH=${tnEnv}/bin
+    t=/run/agent-runtime/credentials/token
+    echo "cred_owner=$(stat -c %u:%a $t) whoami=$(id -u)"
+    echo "using credential: $(cat $t)"
+    if printf x > $t 2>/dev/null; then echo "FAIL credential writable"; exit 1; fi
+    echo "clean result" > ${tn.filesystem.output.path}/result.txt
+    cp /etc/agent-runtime/template.json ${tn.filesystem.output.path}/template.json
+    (cd ${tn.filesystem.output.path} && sha256sum result.txt template.json > SHA256SUMS)
+  '';
+  credLeakWork = sh "agent-cred-leak" ''
+    set -euo pipefail
+    export PATH=${tnEnv}/bin
+    cat /run/agent-runtime/credentials/token > ${tn.filesystem.output.path}/leaked.txt
+    cp /etc/agent-runtime/template.json ${tn.filesystem.output.path}/template.json
+    (cd ${tn.filesystem.output.path} && sha256sum leaked.txt template.json > SHA256SUMS)
+  '';
 in
 pkgs.testers.runNixOSTest {
   name = "agent-runtime-nspawn";
@@ -185,11 +246,23 @@ pkgs.testers.runNixOSTest {
     virtualisation.memorySize = 4096;
     virtualisation.cores = 2;
     virtualisation.diskSize = 4096;
-    # assign roots the sources with nix build --out-link, which needs them registered in the VM's store
-    virtualisation.additionalPaths = [ rfProto skills runtime.tools.instance evaluated.manifestDir evaluated.hostPolicy ];
+    # assign roots the sources with nix build --out-link, which needs them registered in the VM's store;
+    # the egress template's package closure must be present too (the manifest only names it as a string)
+    virtualisation.additionalPaths = [
+      rfProto skills runtime.tools.instance evaluated.manifestDir evaluated.hostPolicy
+      (pkgs.buildEnv { name = "egress-pkgs"; paths = evaluated.templates.egress.packages; })
+    ];
     # test-instrumentation's mkDefault 2 panics the VM on any cgroup OOM; hosts run the kernel's 0
     boot.kernel.sysctl."vm.panic_on_oom" = 0;
-    environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils jq iproute2 ];
+    # the egress subtest filters the instance veth with the tool's own nft table and routes to a non-local
+    # endpoint; the node firewall and dhcpcd must not interfere, and forwarding must be on for the forward hook
+    networking.firewall.enable = false;
+    networking.dhcpcd.denyInterfaces = [ "ve-*" "veth-*" "dummy0" ];
+    # the tool resolves the allowlist name on the host via getent; /etc/hosts is read-only on NixOS,
+    # so the test's one allowed name is seeded declaratively to the dummy endpoint it serves TLS on
+    networking.hosts."10.9.0.1" = [ "allowed.test" ];
+    boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
+    environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils jq iproute2 nftables openssl python3 ];
   };
 
   testScript = ''
@@ -198,6 +271,7 @@ pkgs.testers.runNixOSTest {
     I = "${tool}"
     RUST = "--template ${manifest "rust-worker-m0"} --host ${evaluated.hostPolicy}"
     TINY = "--template ${manifest "tiny"} --host ${evaluated.hostPolicy}"
+    EGRESS = "--template ${manifest "egress"} --host ${evaluated.hostPolicy}"
     V = "/var/lib/agent-runtime"
     timings: dict[str, dict[str, object]] = {}
 
@@ -574,6 +648,65 @@ pkgs.testers.runNixOSTest {
         assert json.loads(machine.succeed(f"cat {V}/exports/reboot-run/bundle.json"))["outcome"] == "ambiguous"
         destroy("reboot-run")
         destroy("reboot-new", "--discard")
+
+    with subtest("per-run credential: tmpfs delivery, redaction, export leak-gate, cross-instance isolation"):
+        secret = "glpat-REDACTME-" + "0123456789abcdef"
+        machine.succeed(f"umask 077; printf %s {secret} > /tmp/cred")
+        machine.succeed(f"{I} create crd {TINY} --task sammasak/x#1")
+        machine.succeed(f"{I} start crd --credential /tmp/cred --wait -- ${credWork}")
+        assert status("crd")["state"] == "succeeded", status("crd")
+        # the payload's stdout lands in the journal; read it back through `logs` (the --wait
+        # stdout carries the status JSON, not the run's output)
+        out = machine.succeed(f"{I} logs crd")
+        print(out)
+        assert "cred_owner=1000:400" in out and "FAIL credential writable" not in out, out
+        # the printed log is redacted: the tool reads the still-mounted tmpfs secret and masks it
+        assert secret not in out, "credential leaked unredacted into the logs view"
+        # the credential lives on tmpfs under /run, never on the persistent /var/lib state
+        machine.succeed(f"test -e /run/agent-runtime/crd/cred/token -a ! -e {V}/crd/cred")
+        machine.succeed(f"! grep -rqF {secret} {V}/crd 2>/dev/null")  # not at rest in persistent state
+        machine.succeed(f"! grep -rqF {secret} /nix/store/*agent-runtime* 2>/dev/null")  # not in the store
+        print(machine.succeed(f"{I} export crd"))
+        machine.succeed(f"! grep -rqF {secret} {V}/exports/crd")
+        machine.succeed(f"{I} destroy crd --discard"); clean("crd")
+        # a payload that leaks the secret to its output: export refuses (credential class, exit 5), caller re-passes nothing
+        machine.succeed(f"{I} create crl {TINY} --task sammasak/x#2")
+        machine.succeed(f"{I} start crl --credential /tmp/cred --wait -- ${credLeakWork}")
+        rc, out = machine.execute(f"{I} export crl 2>&1")
+        print("export of a leaking run:", rc, out.strip()[-160:])
+        assert rc == 5 and "credential appears in an exported artifact" in out, (rc, out)
+        machine.succeed(f"{I} destroy crl --discard"); clean("crl")
+
+    with subtest("minimal egress: the allowlisted name over DNS+TLS; local and routed-off-host denied"):
+        # endpoints that exist before the instance: 10.9.0.1 allowed (host /etc/hosts maps the name), 10.9.0.9 denied-local;
+        # 10.8.0.5 is in a netns reachable only by the host routing (the forward hook must drop it, not the input hook)
+        machine.succeed("ip link add dummy0 type dummy && ip addr add 10.9.0.1/24 dev dummy0 && ip addr add 10.9.0.9/24 dev dummy0 && ip link set dummy0 up")
+        machine.succeed("ip netns add ep && ip link add veth-h type veth peer name veth-e && ip link set veth-e netns ep")
+        machine.succeed("ip addr add 10.8.0.1/24 dev veth-h && ip link set veth-h up")
+        machine.succeed("ip -n ep addr add 10.8.0.5/24 dev veth-e && ip -n ep link set veth-e up && ip -n ep link set lo up && ip -n ep route add default via 10.8.0.1")
+        # allowed.test -> 10.9.0.1 is seeded declaratively in networking.hosts (the tool resolves via getent)
+        machine.succeed("cd /tmp && openssl req -x509 -newkey rsa:2048 -nodes -keyout k.pem -out ca.pem -days 1 "
+                        "-subj /CN=allowed.test -addext 'subjectAltName=DNS:allowed.test,IP:10.9.0.1,IP:10.9.0.9,IP:10.8.0.5' >/dev/null 2>&1")
+        machine.succeed("systemd-run --unit=tls-local ${pkgs.python3}/bin/python3 ${tlsEndpoint} 0.0.0.0")
+        # systemd-run must wrap `ip netns exec` (not the reverse): the transient unit otherwise lands in the
+        # root netns and binds nothing, while the endpoint IP only exists inside ep. python3 needs its absolute
+        # path -- the transient unit's PATH does not carry /run/current-system/sw/bin into `ip netns exec`.
+        machine.succeed("systemd-run --unit=tls-ep ip netns exec ep ${pkgs.python3}/bin/python3 ${tlsEndpoint} 10.8.0.5")
+        machine.wait_until_succeeds("curl -sS --max-time 5 --cacert /tmp/ca.pem https://10.9.0.1/ | grep -q endpoint-ok", timeout=20)
+        machine.wait_until_succeeds("curl -sS --max-time 5 -k https://10.8.0.5/ | grep -q endpoint-ok", timeout=20)  # host CAN route to it
+        machine.succeed(f"{I} create egr {EGRESS} --task sammasak/egress#1")
+        machine.succeed(f"cp /tmp/ca.pem {V}/egr/vol/workspace/workspace/ca.pem")
+        machine.succeed(f"{I} start egr --wait -- ${egWork}")
+        assert status("egr")["state"] == "succeeded", status("egr")
+        # the payload's stdout lands in the journal; read it back through `logs`
+        out = machine.succeed(f"{I} logs egr")
+        print(out)
+        assert re.search(r"allowed: rc=0 body=\[endpoint-ok\]", out), "the allowlisted host was not reached"
+        assert re.search(r"denied-local: REFUSED", out), "a non-allowlisted local IP was reachable"
+        assert re.search(r"denied-routed: REFUSED", out), "a routed-off-host IP was reachable (forward hook hole)"
+        machine.succeed(f"{I} export egr || true; {I} destroy egr --discard"); clean("egr")
+        machine.succeed("! nft list tables 2>/dev/null | grep -q art_egr")  # the allowlist table is gone
+        machine.succeed("systemctl stop tls-local tls-ep 2>/dev/null; ip netns del ep; ip link del dummy0")
 
     with subtest("host unchanged, nothing left behind"):
         no_leaks("after")

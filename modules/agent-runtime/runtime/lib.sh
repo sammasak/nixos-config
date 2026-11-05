@@ -9,6 +9,15 @@ exit_code() {
     admission) echo 10 ;; ambiguous) echo 11 ;; conflict) echo 12 ;; unsupported) echo 13 ;; *) echo 1 ;;
   esac
 }
+# redact_stream SECRET: replace every literal occurrence of SECRET on stdin with <redacted> (fixed
+# string, so a secret with regex/sed metacharacters is handled). Diagnostic use only, never artifacts.
+redact_stream() {
+  awk -v s="$1" 'BEGIN { n = length(s) } { while ((p = index($0, s)) > 0) $0 = substr($0, 1, p - 1) "<redacted>" substr($0, p + n); print }'
+}
+# redact_file SECRET FILE: as redact_stream, applied in place to a file.
+redact_file() {
+  redact_stream "$1" <"$2" >"$2.redacted" && mv "$2.redacted" "$2"
+}
 fail() {
   trap - ERR
   jq -nc --arg class "$1" --arg message "$2" '{error: {class: $class, message: $message}}' >&2
