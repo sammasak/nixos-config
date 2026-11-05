@@ -116,7 +116,7 @@ let
       run)  # run <id> <uid> <script> [store-bind-opt]: the switch to <uid> happens inside, with setpriv
         user=$1; script=$2; opt=''${3:-}; rc=0
         systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
-        systemd-run --unit="agent-runtime-$id" --wait --pipe --collect -p RemainAfterExit=yes \
+        systemd-run --unit="agent-runtime-$id" --wait --pipe --collect \
           -p MemoryMax=${template.budget.memoryMax} -p TasksMax=${toString template.budget.tasksMax} -p CPUQuota=${template.budget.cpuQuota} \
           -p KillMode=mixed \
           ${pkgs.systemd}/bin/systemd-nspawn --quiet --keep-unit --settings=no --register=yes \
@@ -200,7 +200,6 @@ pkgs.testers.runNixOSTest {
             status, out = machine.execute(f"${factory} run {run} 1000 ${work} {opt} 2>&1; echo exit=$?")
             t1 = time.monotonic_ns()
             print(out[:1200]); print("..."); print(out[-1500:])
-            print(machine.succeed(f"systemctl show -p MemoryPeak -p CPUUsageNSec -p ExecMainStartTimestampMonotonic -p ExecMainExitTimestampMonotonic agent-runtime-{run}.service"))
             assert out.rstrip().endswith("exit=0"), "workload failed"
             assert re.search(r"test result: ok\. \d+ passed", out), "cargo test did not report a pass"
             marks = re.search(r"started_ns=(\d+).*finished_ns=(\d+)", out, re.S)
@@ -208,8 +207,10 @@ pkgs.testers.runNixOSTest {
             started, finished = int(marks.group(1)), int(marks.group(2))
             wall_start = int(machine.succeed("date +%s%N")) - (time.monotonic_ns() - t0)
             timings[run] = {"startup_ms": (started - wall_start) // 1000000, "work_ms": (finished - started) // 1000000, "total_ms": (t1 - t0) // 1000000}
-            unit = machine.succeed(f"systemctl show -p MemoryPeak -p CPUUsageNSec agent-runtime-{run}.service")
-            timings[run]["unit"] = unit.replace("\n", " ").strip()
+            cpu = re.search(r"CPU time consumed: ([^\n]*)", out)
+            peak = re.search(r"Memory peak: ([^\n]*)", out)
+            timings[run]["cpu"] = cpu.group(1).strip() if cpu else "?"
+            timings[run]["memory_peak"] = peak.group(1).strip() if peak else "?"
             print(machine.succeed(f"${factory} export {run}"))
             print(machine.succeed(f"cat /var/lib/agent-runtime/exports/{run}/manifest.txt"))
             machine.succeed(f"${factory} destroy {run}")
