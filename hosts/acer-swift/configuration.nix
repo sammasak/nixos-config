@@ -12,6 +12,11 @@ in
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
+  # The worker host: Herdr-started workers run in bypassPermissions, trusted in these checkouts and $HOME.
+  sam.herdr.worker = {
+    enable = true;
+    trustedDirs = map (d: "/home/${vars.username}/${d}") [ "claude-code-skills" "nixos-config" ];
+  };
 
   # Headless shell mode remains the default for the always-on worker. The GUI
   # variant is an explicit boot-menu specialisation for daily laptop use.
