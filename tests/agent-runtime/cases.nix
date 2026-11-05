@@ -63,7 +63,7 @@ in
   }
   {
     name = "branch-without-lock";
-    expect = "needs `lock = inputs.<name>`";
+    expect = "a branch with resolve = \"lock\" needs `lock = inputs.<input>`";
     module = bad { repositories.factum = lockedMain { lock = null; }; };
   }
   {
@@ -106,6 +106,19 @@ in
     };
   }
   {
+    name = "commit-without-lock";
+    expect = "a commit with resolve = \"lock\" needs `lock = inputs.<input>`";
+    module = bad {
+      repositories.factum = lockedMain {
+        ref = {
+          type = "commit";
+          value = factum.rev;
+        };
+        lock = null;
+      };
+    };
+  }
+  {
     name = "ref-value-injection";
     expect = "ref.value' is not of type `git ref name";
     module = bad {
@@ -123,6 +136,7 @@ in
     module = bad {
       repositories = {
         a = lockedMain { path = "/workspace/same"; };
+        # a different repo, so only the path collides and not the identity
         b = lockedMain {
           github = "sammasak/skills";
           lock = skills;
@@ -161,7 +175,7 @@ in
   }
   {
     name = "path-traversal";
-    expect = "absolute normalized path";
+    expect = "repositories.factum.path' is not of type `absolute normalized path";
     module = bad { repositories.factum = lockedMain { path = "/workspace/../etc"; }; };
   }
   {
@@ -177,7 +191,7 @@ in
   }
   {
     name = "lock-is-a-path-literal";
-    expect = "outPath' is not of type";
+    expect = "repositories.factum.lock.outPath' is not of type";
     module = bad { repositories.factum = lockedMain { lock = factum // { outPath = ./.; }; }; };
   }
   {
@@ -209,16 +223,34 @@ in
   }
   {
     name = "writable-mount-under-read-only-root";
-    expect = "read-write but its allowed mount root is read-only";
+    expect = "read-write but its allowed mount root /srv/agent-runtime/cache is read-only";
     module = bad {
       filesystem.mounts = [
         {
           hostPath = "/srv/agent-runtime/cache/shared";
           path = "/mnt/shared";
-          readOnly = false;
+          writable = true;
         }
       ];
     };
+  }
+  {
+    name = "nested-roots-most-specific-wins";
+    expect = "read-write but its allowed mount root /srv/agent-runtime/scratch/locked is read-only";
+    module = lib.recursiveUpdate (bad {
+      filesystem.mounts = [
+        {
+          hostPath = "/srv/agent-runtime/scratch/locked/x";
+          path = "/mnt/x";
+          writable = true;
+        }
+      ];
+    }) { sam.agentRuntime.host.allowedMountRoots = [ "/srv/agent-runtime/scratch/locked" ]; };
+  }
+  {
+    name = "host-root-denied";
+    expect = "is on a denied host root";
+    module = { sam.agentRuntime.host.allowedMountRoots = [ "/run/agent-cache" ]; };
   }
   {
     name = "egress-allowlist-empty";
@@ -232,7 +264,7 @@ in
   }
   {
     name = "allow-ip-literal";
-    expect = "network.allow";
+    expect = "is not of type `DNS name";
     module = bad {
       network = {
         egress = "allowlist";

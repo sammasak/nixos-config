@@ -11,7 +11,13 @@
       enable = true;
       eligibleTemplates = [ "rust-worker" ];
       maxConcurrentInstances = 2;
-      allowedMountRoots = [ "/srv/agent-runtime/cache" ];
+      allowedMountRoots = [
+        "/srv/agent-runtime/cache"
+        {
+          path = "/srv/agent-runtime/scratch";
+          writable = true;
+        }
+      ];
     };
 
     templates.rust-worker = {
@@ -69,6 +75,11 @@
           {
             hostPath = "/srv/agent-runtime/cache/cargo-registry";
             path = "/var/cache/cargo-registry";
+          }
+          {
+            hostPath = "/srv/agent-runtime/scratch/rust-worker";
+            path = "/mnt/scratch";
+            writable = true;
           }
         ];
       };
