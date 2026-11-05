@@ -37,6 +37,7 @@ let
     echo "dev: $(ls /dev | tr '\n' ' ')"
     echo "net: $(ls /sys/class/net | tr '\n' ' ')"
     echo "store_owner: $(stat -c '%u:%g %A' ${env})"
+    echo "getent: $(PATH=/usr/bin:/bin getent passwd agent 2>&1; echo "exit=$?")"
     fail=0
     chk() { if "$@"; then echo "ok   $*"; else echo "FAIL $*"; fail=1; fi; }
     chk test ! -e /nix/var/nix/daemon-socket/socket
@@ -110,11 +111,10 @@ let
         chown -R $((uidbase + 1000)):$((uidbase + 1000)) "$base/workspace"
         echo "$uidbase" > "$base/uidbase"
         ;;
-      run)  # run <id> <user> <script> [store-bind-opt]
+      run)  # run <id> <uid> <script> [store-bind-opt]: the switch to <uid> happens inside, with setpriv
         user=$1; script=$2; opt=''${3:-}; rc=0
         systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
-        # nspawn resolves --uid=<name> with execlp("getent") after entering the root tree, so its PATH must name /usr/bin there
-        systemd-run --unit="agent-runtime-$id" --wait --pipe --collect --setenv=PATH=/usr/bin:/bin \
+        systemd-run --unit="agent-runtime-$id" --wait --pipe --collect \
           -p MemoryMax=${template.budget.memoryMax} -p TasksMax=${toString template.budget.tasksMax} -p CPUQuota=${template.budget.cpuQuota} \
           -p KillMode=mixed \
           ${pkgs.systemd}/bin/systemd-nspawn --quiet --keep-unit --settings=no --register=yes \
@@ -127,7 +127,7 @@ let
             --bind="$base/workspace:${template.filesystem.workspace}" \
             --tmpfs="${template.filesystem.tmp}:mode=1777,size=256M" \
             --tmpfs="${template.filesystem.home}:mode=0755,uid=1000,gid=1000,size=256M" \
-            --uid="$user" /bin/sh -c "$script > ${template.filesystem.workspace}/run.log 2>&1" || rc=$?
+            /bin/sh -c "exec ${pkgs.util-linux}/bin/setpriv --reuid=$user --regid=$user --clear-groups --no-new-privs /bin/sh -c '$script > ${template.filesystem.workspace}/run.log 2>&1'" || rc=$?
         echo "== run.log ($id, exit ''${rc:-0}):"; cat "$base/workspace/run.log" 2>/dev/null || echo "(no run.log)"
         exit "''${rc:-0}"
         ;;
@@ -179,12 +179,12 @@ pkgs.testers.runNixOSTest {
 
     # the store bind: idmap when the backing filesystem allows it, else plain
     machine.succeed("${factory} create probe")
-    status, out = machine.execute("${factory} run probe root ${pkgs.coreutils}/bin/true :idmap")
+    status, out = machine.execute("${factory} run probe 0 ${pkgs.coreutils}/bin/true :idmap")
     opt = ":idmap" if status == 0 else ""
     print("=== store bind option:", repr(opt), "(idmap probe exit", status, ")", out[-300:])
 
     with subtest("probe as container root: boundary visible, store and sources read-only"):
-        out = machine.succeed(f"${factory} run probe root ${probe} {opt}")
+        out = machine.succeed(f"${factory} run probe 0 ${probe} {opt}")
         print(out)
         assert "FAIL" not in out
         machine.succeed("${factory} destroy probe")
@@ -195,7 +195,7 @@ pkgs.testers.runNixOSTest {
         with subtest(f"{run}: create -> run cargo test as agent -> export -> destroy"):
             t0 = time.monotonic_ns()
             machine.succeed(f"${factory} create {run}")
-            status, out = machine.execute(f"${factory} run {run} agent ${work} {opt} 2>&1; echo exit=$?")
+            status, out = machine.execute(f"${factory} run {run} 1000 ${work} {opt} 2>&1; echo exit=$?")
             t1 = time.monotonic_ns()
             print(out[-2500:])
             assert out.rstrip().endswith("exit=0"), "workload failed"
