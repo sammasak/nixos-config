@@ -242,6 +242,8 @@ let
       a=$(dig +time=2 +tries=1 +short @$r allowed.test 2>&1); rc=$?
       if [ "$rc" = 0 ] && [ -n "$a" ]; then echo "raw-dns $r: ANSWERED $a"; else echo "raw-dns $r: REFUSED rc=$rc"; fi
     done
+    # held alive on request, so the host can read the instance's veth pairing while it still exists
+    if [ -e ${eg.filesystem.workspace}/hold ]; then echo held; while [ ! -e ${eg.filesystem.workspace}/release ]; do sleep 0.2; done; fi
   '';
   # two credential instances at once: each holds its own token and tries the other's host path and every
   # other route a token could take into its namespace
@@ -301,7 +303,12 @@ let
         d = load(); d[a["--instance"]] = {"scopes": scopes, "exp": exp, "revoked": False, "task": a["--task"]}; save(d)
         print(json.dumps({"token": "art." + payload + "." + sign(payload), "scopes": scopes, "expires_at": exp}))
     def revoke(args):
-        a = opts(args); d = load(); d.setdefault(a["--instance"], {})["revoked"] = True; save(d)
+        a = opts(args)
+        if os.environ.get("ISSUER_REVOKE_FAIL"):
+            sys.exit("revoke endpoint unavailable")
+        tok = open(a["--token-file"]).read()
+        d = load(); e = d.setdefault(a["--instance"], {}); e["revoked"] = True
+        e.setdefault("revocations", []).append(hashlib.sha256(tok.encode()).hexdigest()[:16]); save(d)
     def check(tok, need):
         parts = tok.split(".")
         if len(parts) != 3 or not hmac.compare_digest(parts[2], sign(parts[1])):
@@ -334,6 +341,7 @@ let
   '';
   issuer = sh "fake-issuer" "exec ${pkgs.python3}/bin/python3 ${fakeGithub} \"$@\"";
   # an issuer that grants more than the template declares: the tool must refuse its token
+  ghNoop = sh "agent-noop" "exit 0";
   issuerWide = sh "fake-issuer-wide" "ISSUER_WIDEN=1 exec ${pkgs.python3}/bin/python3 ${fakeGithub} \"$@\"";
   # the credential payload (on the non-egress `tiny` template): read it (tmpfs, read-only), print it once (to
   # exercise redaction), write a clean artifact, and optionally leak it to the output for the export-gate test
@@ -861,12 +869,29 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"{I} export egr || true; {I} destroy egr --discard"); clean("egr")
         machine.succeed("! nft list tables 2>/dev/null | grep -q art_egr")  # the allowlist table is gone
 
-    with subtest("two egress instances started at once: each filter on its own veth, both work"):
+    with subtest("two egress instances started at once: each filter on its own container's veth, both work"):
         for i in ("eg1", "eg2"):
             machine.succeed(f"{I} create {i} {EGRESS} --task sammasak/egress#2")
             machine.succeed(f"cp /tmp/ca.pem {V}/{i}/vol/workspace/workspace/ca.pem")
+            machine.succeed(f"touch {V}/{i}/vol/workspace/workspace/hold")
         # both starts in flight together: the veth each takes is its own container's peer, not a link diff
         machine.succeed(f"({I} start eg1 --wait -- ${egWork} > /tmp/eg1.out 2>&1 &); ({I} start eg2 --wait -- ${egWork} > /tmp/eg2.out 2>&1 &)")
+        # while both run: the veth in each instance's nft table must be the host end of that instance's own
+        # host0 (host0@ifN, N the host-side index), so a swap between the two fails here
+        for i in ("eg1", "eg2"):
+            machine.wait_until_succeeds(f"{I} logs {i} | grep -q '^held'", timeout=120)
+        for i in ("eg1", "eg2"):
+            leader = status(i)["started"]["leaderPid"]
+            filtered = sorted(set(re.findall(r'iifname "([^"]+)"', machine.succeed(f"nft list table inet art_{i}"))))
+            assert len(filtered) == 1, (i, filtered)
+            host_index = machine.succeed(f"ip -o link show {filtered[0]}").split(":")[0]
+            inner = machine.succeed(f"nsenter -t {leader} -n ip -o link show host0")
+            peer = re.search(r"host0@if(\d+)", inner)
+            assert peer, inner
+            print(f"pairing {i}: leader {leader} host0@if{peer.group(1)}, filtered {filtered[0]} index {host_index}")
+            assert peer.group(1) == host_index, (i, "filters a veth that is not its own", peer.group(1), host_index)
+        for i in ("eg1", "eg2"):
+            machine.succeed(f"touch {V}/{i}/vol/workspace/workspace/release")
         machine.wait_until_succeeds(f"{I} status eg1 | jq -e '.state == \"succeeded\"' && {I} status eg2 | jq -e '.state == \"succeeded\"'", timeout=120)
         veths = {}
         for i in ("eg1", "eg2"):
@@ -891,6 +916,10 @@ pkgs.testers.runNixOSTest {
         rc, out = machine.execute(f"{I} start ghw --credential-issuer ${issuerWide} --wait -- ${ghWork} 2>&1")
         print("issuer granting github-push to a github-read template:", rc, out.strip()[-220:])
         assert rc == 5 and "not within the template's capabilities" in out and status("ghw")["state"] == "created", (rc, out)
+        db = json.loads(machine.succeed("cat /var/lib/fake-issuer/tokens.json"))
+        print("issuer after the refusal:", db["ghw"])
+        assert db["ghw"]["revoked"] and len(db["ghw"]["revocations"]) == 1, ("the refused token was not revoked", db["ghw"])
+        machine.succeed(f"test ! -e /run/agent-runtime/ghw/refused-token -a ! -e {V}/ghw/cred-issuer")
         rc, out = machine.execute(f"{I} start ghw --credential-issuer ${issuer} --credential-ttl 99999 -- ${ghWork} 2>&1")
         assert rc == 2 and "never outlives the run" in out, (rc, out)
         machine.succeed(f"{I} destroy ghw --discard"); clean("ghw")
@@ -916,6 +945,49 @@ pkgs.testers.runNixOSTest {
         db = json.loads(machine.succeed("cat /var/lib/fake-issuer/tokens.json"))
         print("issuer after destroy:", db["gh"])
         assert db["gh"]["revoked"], "teardown did not revoke the minted token"
+
+    with subtest("minted credential: a relative issuer path is made absolute; a failed revoke is reported, not hidden"):
+        machine.succeed("mkdir -p /tmp/iss && cp ${issuer} /tmp/iss/fake-issuer && chmod 0755 /tmp/iss/fake-issuer")
+        machine.succeed(f"{I} create ghr {GH} --task sammasak/x#5")
+        machine.succeed(f"cd /tmp/iss && {I} start ghr --credential-issuer ./fake-issuer --wait -- ${ghNoop}")
+        cred = status("ghr")["started"]["credential"]
+        assert cred["issuer"] == "/tmp/iss/fake-issuer", cred
+        machine.succeed(f"cd / && {I} destroy ghr --discard"); clean("ghr")  # teardown runs from another directory
+        db = json.loads(machine.succeed("cat /var/lib/fake-issuer/tokens.json"))
+        assert db["ghr"]["revoked"], ("a relative issuer path was not revoked from another directory", db["ghr"])
+        machine.succeed(f"{I} create ghf {GH} --task sammasak/x#6")
+        machine.succeed(f"{I} start ghf --credential-issuer ${issuer} --wait -- ${ghNoop}")
+        tok = machine.succeed("cat /run/agent-runtime/ghf/cred/token")
+        rc, out = machine.execute(f"ISSUER_REVOKE_FAIL=1 {I} destroy ghf --discard 2>&1 >/dev/null")
+        print("destroy with a failing revoke:", rc, out.strip())
+        assert rc == 0 and "revoking the minted token at the issuer failed" in out and "revoke endpoint unavailable" in out, (rc, out)
+        assert tok not in out, "the token is in the warning"
+        clean("ghf")
+        db = json.loads(machine.succeed("cat /var/lib/fake-issuer/tokens.json"))
+        assert not db["ghf"]["revoked"], db["ghf"]
+
+    with subtest("retried start: a stale minted record is revoked and dropped; the operator's token never goes to revoke"):
+        import hashlib
+        machine.succeed(f"{I} create grt {GH} --task sammasak/x#7")
+        # what a start leaves when it dies after minting and before its marker: the token on tmpfs, the issuer
+        # record, state still `created`
+        old = json.loads(machine.succeed("${issuer} mint --instance grt --task sammasak/x#7 --capabilities '[\"github-read\"]' --ttl 60"))["token"]
+        machine.succeed(f"mkdir -p /run/agent-runtime/grt/cred && (umask 077; printf %s '{old}' > /run/agent-runtime/grt/cred/token)")
+        machine.succeed(f"echo ${issuer} > {V}/grt/cred-issuer")
+        assert status("grt")["state"] == "created"
+        op = "operator-token-0123456789abcdef"
+        machine.succeed(f"umask 077; printf %s {op} > /tmp/cred-op")
+        machine.succeed(f"{I} start grt --credential /tmp/cred-op --wait -- ${ghNoop}")
+        assert status("grt")["started"]["credential"]["kind"] == "file"
+        machine.succeed(f"test ! -e {V}/grt/cred-issuer")
+        sha = lambda t: hashlib.sha256(t.encode()).hexdigest()[:16]
+        db = json.loads(machine.succeed("cat /var/lib/fake-issuer/tokens.json"))
+        print("issuer after the retried start:", db["grt"])
+        assert db["grt"]["revocations"] == [sha(old)], ("the stale minted token was not revoked", db["grt"])
+        machine.succeed(f"{I} destroy grt --discard"); clean("grt")
+        db = json.loads(machine.succeed("cat /var/lib/fake-issuer/tokens.json"))
+        print("issuer after destroy:", db["grt"])
+        assert db["grt"]["revocations"] == [sha(old)] and sha(op) not in db["grt"]["revocations"], ("the operator token went to revoke", db["grt"])
         machine.succeed("for u in tls-ep dns-local dns-ep fake-github; do systemctl stop $u || true; done; ip netns del ep; ip link del dummy0")
 
     with subtest("host unchanged, nothing left behind"):

@@ -139,15 +139,23 @@ status_json() {
      + (if $rec then $rec | {task, template, run, uidBase, unit, machine, volumes, createdAt} else {} end)
      + {started: $started, result: $result, export: $exported}'
 }
+revoke_token() {  # ISSUER TOKEN-FILE: best effort (the token expires anyway), but a failure is reported, not hidden
+  local rc=0 detail
+  detail=$(timeout 30 "$1" revoke --instance "$id" --token-file "$2" 2>&1 >/dev/null) || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  detail=$(redact_stream "$(cat "$2" 2>/dev/null || true)" <<<"$detail" | tr '\n' ' ' | tail -c 300)
+  jq -nc --arg m "$id: revoking the minted token at the issuer failed (exit $rc); it stays valid until it expires: $detail" \
+    '{warning: {class: "credential", message: $m}}' >&2
+}
 teardown() {  # every step idempotent; a step that fails leaves the reservation, so the instance stays counted
   local name
   systemctl stop "$unit" 2>/dev/null || true
   systemctl reset-failed "$unit" 2>/dev/null || true
   # the egress allowlist table, if any (the veth dies with the container's netns on stop)
   command -v nft >/dev/null && nft delete table inet "art_$id" 2>/dev/null || true
-  # a minted token is revoked at the issuer before its tmpfs copy goes (best effort: it expires anyway)
+  # a minted token is revoked at the issuer before its tmpfs copy goes
   if [ -f "$base/cred-issuer" ] && [ -f "$rundir/$id/cred/token" ]; then
-    timeout 30 "$(cat "$base/cred-issuer")" revoke --instance "$id" --token-file "$rundir/$id/cred/token" >/dev/null 2>&1 || true
+    revoke_token "$(cat "$base/cred-issuer")" "$rundir/$id/cred/token"
   fi
   if mountpoint -q "$root"; then umount -R "$root"; fi
   # a SIGKILLed nspawn leaves its per-machine directories (and the unix-export mount) behind
@@ -293,6 +301,8 @@ case $cmd in
     [ -z "$cred_file" ] || [ -f "$cred_file" ] || fail usage "--credential $cred_file not found"
     [ -z "$cred_file" ] || [ -z "$issuer" ] || fail usage "--credential and --credential-issuer exclude each other"
     [ -z "$issuer" ] || [ -x "$issuer" ] || fail usage "--credential-issuer $issuer is not executable"
+    # absolute (not symlink-resolved): teardown runs it from whatever directory destroy is called in
+    [ -z "$issuer" ] || issuer=$(realpath -s -- "$issuer")
     [ -n "$issuer" ] || [ -z "$cred_ttl" ] || fail usage "--credential-ttl needs --credential-issuer"
     [ $# -ge 1 ] || usage
     [ -d "$base" ] || fail state "$id does not exist"
@@ -355,6 +365,12 @@ case $cmd in
     fi
     # the credential: a token the issuer mints for this run, or a host file; either way only on tmpfs, never in a record
     credbind=() cred_meta=null minted=''
+    # a start that died after minting but before its marker leaves state `created` with the minted token and
+    # its issuer record: revoke that token and drop both, so this start's credential is never sent to revoke
+    if [ -f "$base/cred-issuer" ]; then
+      if [ -f "$rundir/$id/cred/token" ]; then revoke_token "$(cat "$base/cred-issuer")" "$rundir/$id/cred/token"; fi
+      rm -f "$base/cred-issuer" "$rundir/$id/cred/token"
+    fi
     if [ -n "$issuer" ]; then
       caps=$(jq -c '.policies.capabilities' "$t")
       [ "$(jq length <<<"$caps")" -gt 0 ] || fail credential "$id: the template declares no capabilities; there is nothing to mint"
@@ -366,8 +382,15 @@ case $cmd in
       jq -e --argjson caps "$caps" --argjson now "$(date +%s)" --argjson ttl "$ttl" '
         (.token | type == "string" and test("^[A-Za-z0-9._~+/=-]{16,4096}$"))
         and (.scopes | type == "array" and length > 0 and all(.[]; . as $s | $caps | index($s)))
-        and (.expires_at | type == "number" and . > $now and . <= $now + $ttl + 5)' <<<"$minted" >/dev/null \
-        || fail credential "$id: the issuer's token is malformed, not within the template's capabilities $caps, or not expiring within ${ttl}s; nothing was started"
+        and (.expires_at | type == "number" and . > $now and . <= $now + $ttl + 5)' <<<"$minted" >/dev/null || {
+        # a refused token is still live at the issuer: revoke it, when there is one to name
+        refused=$rundir/$id/refused-token
+        if (umask 077; mkdir -p "$rundir/$id"; jq -ej '.token | strings' <<<"$minted" >"$refused") 2>/dev/null; then
+          revoke_token "$issuer" "$refused"
+        fi
+        rm -f "$refused"
+        fail credential "$id: the issuer's token is malformed, not within the template's capabilities $caps, or not expiring within ${ttl}s; nothing was started"
+      }
       cred_meta=$(jq -c --arg i "$issuer" '{kind: "minted", issuer: $i, scopes, expiresAt: .expires_at}' <<<"$minted")
       printf '%s\n' "$issuer" | atomic_json "$base/cred-issuer"
     elif [ -n "$cred_file" ]; then
