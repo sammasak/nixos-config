@@ -1,164 +1,245 @@
-# Agent runtime: M0 nspawn proof (#135)
+# Agent runtime templates (M0: typed module, manifests)
 
-The M0 proof for the ephemeral nspawn agent runtime
-([epic #133](https://github.com/sammasak/nixos-config/issues/133)) lives in
-`tests/agent-runtime-nspawn.nix`, exposed as
-`packages.x86_64-linux.agent-runtime-nspawn` by
-`flake-modules/55-agent-runtime-test.nix`. It is a QEMU `nixosTest`: nothing
-in it touches a live host, and `nix flake check` only evaluates it. Build it on
-acer under the heavy-work lock:
+Epic: [nixos-config#133](https://github.com/sammasak/nixos-config/issues/133). This milestone
+delivers the declarative half only: a reusable NixOS module that types what an ephemeral
+`systemd-nspawn` agent instance would contain, and a versioned manifest per template. Nothing
+in this module starts a container, adds a service, or touches a live host; the nspawn proof
+(#135, `docs/agent-runtime-nspawn.md`), source materialization (#136), security and admission
+(#137) and lifecycle (#138) consume the manifest.
 
-```sh
-flock /tmp/$(hostname)-heavy-work.lock nix build -L .#packages.x86_64-linux.agent-runtime-nspawn
+Terms: a **template** is a declaration under `sam.agentRuntime.templates.<name>`. A
+**source** is one of its `repositories.<name>` entries (emitted under `sources` in the
+manifest); the skills tree is the separate skills source. An **instance** is one ephemeral
+container made from a template; one instance serves one **run**, the execution of one
+**assignment** (the task handed to the run). A source with `resolve = "assignment"` is
+resolved to a revision when the run receives its assignment (#136), not from `flake.lock`. The **template manifest**
+(this milestone) describes the template; the **run manifest** (#136, #138) records what one
+run resolved and did. Options exist only where an issue in this epic names a consumer.
+
+## Using it from another flake
+
+```nix
+inputs = {
+  nixos-config.url = "github:sammasak/nixos-config";
+  factum = { url = "github:sammasak/factum"; flake = false; };   # a source repo (this flake pins it over git+ssh)
+  skills = { url = "github:sammasak/skills"; flake = false; };   # the skills tree
+};
 ```
 
-Passing M0 is not permission to deploy and is not the MVP; the epic's MVP
-definition of done still applies.
+In a host, import the module and declare `sam.agentRuntime` as below. Without a host, the
+standalone evaluator returns `sam.agentRuntime` with `manifestData` and `manifestDir` filled
+in, or throws the failed checks:
 
-## What the fixture declares
+```nix
+imports = [ inputs.nixos-config.nixosModules.agent-runtime ];                  # in a host
 
-One template, as a plain Nix attrset for now (the typed module is #134's
-deliverable; the fixture reads the same fields it will expose):
+runtime = (inputs.nixos-config.lib.agentRuntime { inherit pkgs; }).evalManifests {
+  modules = [ ./templates.nix ];                     # without one: runtime.manifestDir etc.
+};
+```
 
-| field | value |
+The reference consumer is `tests/agent-runtime/flake.nix` (templates `rust-worker` and
+`docs-reviewer`, a read-only reviewer whose role is `quality`).
+
+| Output | What |
 |---|---|
-| repository | `sammasak/rf-proto`, `ref.type = commit`, the pinned flake input `rf-proto` (`flake.lock`), mounted read-only at `/src/rf-proto`, copied into the writable `/workspace/rf-proto` |
-| skill | `rust-engineering` from the pinned `skills` input, read-only at `/skills/rust-engineering` |
-| packages | bash, coreutils, findutils, gnugrep, gnused, gawk, diffutils, util-linux, cargo, rustc, gcc, as one `buildEnv` |
-| filesystem | `/workspace` (host-backed bind, writable), `/home/agent` (tmpfs), `/tmp` (tmpfs), `/workspace/export` (the export contract) |
-| budget | `MemoryMax=1G`, `TasksMax=512`, `CPUQuota=200%` on the transient unit |
+| `nixosModules.agent-runtime` | the NixOS module; options under `sam.agentRuntime` |
+| `lib.agentRuntime { pkgs }` | `evalManifests { modules }`, the standalone evaluator above |
+| `packages.x86_64-linux.agent-runtime-options` | option reference (CommonMark) generated from the module |
+| `packages.x86_64-linux.agent-runtime-manifests` | the example templates' manifests, one `<name>.json` per template |
+| `checks.x86_64-linux.agent-runtime-eval` | the example manifests build and pass a shape check; every negative case fails evaluation |
 
-`pkgs.closureInfo` over the environment, the source and the skill gives the
-closure the instance needs; the fixture mounts the whole host store read-only
-(see the limitations below for why that is a confidentiality finding, not a
-boundary).
+## Options
 
-## NixOS `containers.<name>` or a unit factory
+The generated reference (`nix build .#agent-runtime-options`) is authoritative. The shape is
+below; `x ? d` means the field defaults to `d`, and every other field is required (notably
+`skillsSource`, each private mount's `sizeMiB`, and `cpus`, `memoryMiB`, `timeoutMinutes`):
 
-The question in #135 was whether an evaluated `nixosSystem` container path is
-the right vehicle for dynamic ephemeral instances. On the pinned nixpkgs
-(`nixos/modules/virtualisation/nixos-containers.nix`):
+- `sam.agentRuntime.templates.<name>`: a description of possible instances; the name, like
+  every repository name and `role.name`, is a label: lowercase letters, digits and `-`,
+  starting and ending with a letter or digit, at most 63 characters.
+  - `role = { name; harness = "claude-code" | "codex" | "pi"; }`
+  - `repositories ? { }`, each `<name> = { github = "owner/repo"; ref = { type = "branch" |
+    "tag" | "commit"; value; }; resolve ? "lock"; lock ? null; path; writable ? false; }` with
+    `lock = inputs.<input>`
+  - `skillsSource = inputs.skills;` and `skills ? { }`, each `<skill-dir-name> = { }`
+  - `packages ? [ ]`, as `with pkgs; [ ... ]`
+  - `filesystem`: `workspace ? "/workspace"` (parent of every repository path); the private
+    mounts `home` (`/home/agent`), `tmp` (`/tmp`), `cache` (`/var/cache/agent`), `output`
+    (`/output`), each `{ path ? <that default>; sizeMiB; inodes ? 100000; }`; and
+    `mounts ? [ ]`, each `{ hostPath; path; writable ? false; }`, host bind mounts restricted
+    by `host.allowedMountRoots`
+  - `resources = { cpus; memoryMiB; tasksMax ? 512; timeoutMinutes; }`
+  - `network.allow ? null`: `null` is no egress; a non-empty list of DNS names is the egress
+    allowlist
+  - `capabilities ? [ ]`: a subset of `github-read`, `github-comment`, `github-push`. A
+    writable checkout never implies `github-push`.
+- `sam.agentRuntime.host`, host policy separate from templates: `enable ? false` (must be
+  true before any template is eligible; it starts nothing), `eligibleTemplates ? [ ]`,
+  `maxConcurrentInstances ? 1`, `reserve.{memoryMiB ? 2048, diskMiB ? 10240}`,
+  `allowedMountRoots ? [ ]` (so no host mount is allowed by default; a string is a read-only
+  root, `{ path; writable = true; }` lets templates bind it read-write; each path once; the
+  most specific covering root decides).
+- Results: `manifestData.<name>` (attrset) and `manifestDir` (`<name>.json` files).
 
-- a declarative `containers.<name>` entry becomes a `container@<name>.service`
-  instance with its config under `/etc/nixos-containers/<name>.conf`, written by
-  the host's system activation, so adding or renaming an instance is a host
-  switch;
-- `nixos-container create` (the imperative path) writes the same config file
-  plus `/var/lib/nixos-containers/<name>` and a per-container Nix profile, which
-  is persistent state with its own GC roots;
-- both boot a full NixOS inside (`--boot`, stage-2, systemd as PID 1), and bind
-  `/nix/var/nix/db` and, with `nix.enable`, the host daemon socket.
+## Example: a Rust worker
 
-None of that is wanted for an instance that exists for one assignment: no host
-switch, no persistent per-instance directory, no init system, no daemon socket.
-The fixture therefore uses the smallest explicit factory instead, the same
-primitives the NixOS module wraps, without its persistence:
+The fixture `tests/agent-runtime/templates.nix` is the full `rust-worker` template (role
+`rust-worker` on `claude-code`, skills `rust-engineering` and `nix-flake-development`,
+`cargo rustc gcc git`, budgeted mounts, allowlisted egress, `github-read` and
+`github-comment`). Its three checkouts of one real Rust repo show every ref form; `factum`
+and `skills` are flake inputs with `flake = false`, so `rev`, `narHash` and `outPath` come
+from `flake.lock`:
 
+```nix
+repositories = {
+  factum = {                                    # a branch, locked by the flake input
+    github = "sammasak/factum";
+    ref = { type = "branch"; value = "main"; };
+    lock = inputs.factum;
+    path = "/workspace/factum";
+    writable = true;                            # a private copy; never push rights
+  };
+  factum-pinned = {                             # an exact commit; lock.rev must equal it
+    github = "sammasak/factum";
+    ref = { type = "commit"; value = inputs.factum.rev; };
+    lock = inputs.factum;
+    path = "/workspace/factum-pinned";
+  };
+  factum-release = {                            # a tag, resolved once per run (#136)
+    github = "sammasak/factum";
+    ref = { type = "tag"; value = "v0.2.0"; };
+    resolve = "assignment";
+    path = "/workspace/factum-release";
+  };
+};
+skillsSource = inputs.skills;
+skills = { rust-engineering = { }; nix-flake-development = { }; };
 ```
-systemd-run --unit=agent-runtime-<id> --wait --pipe -p MemoryMax=.. -p TasksMax=.. -p CPUQuota=.. -p KillMode=mixed \
-  systemd-nspawn --keep-unit --settings=no --register=yes -M agent-runtime-<id> -D /run/agent-runtime/<id>/root \
-    --private-users=<base>:65536 --private-users-ownership=chown \
-    --private-network --as-pid2 --resolv-conf=off --timezone=off \
-    --bind-ro=/nix/store:/nix/store[:idmap] \
-    --bind-ro=<rf-proto store path>:/src/rf-proto[:idmap] \
-    --bind-ro=<skills store path>/skills/rust-engineering:/skills/rust-engineering[:idmap] \
-    --bind=/var/lib/agent-runtime/<id>/workspace:/workspace \
-    --tmpfs=/tmp:mode=1777,size=256M --tmpfs=/home/agent:mode=0755,uid=1000,gid=1000,size=256M \
-    --user=agent <script>
+
+The ref rule, by `ref.type` and `resolve`:
+
+| `ref.type` | `resolve = "lock"` (default) | `resolve = "assignment"` |
+|---|---|---|
+| `branch`, `tag` | `lock` required; `lock.rev` is the identity, `ref.value` the label it was taken at (not verified against the input) | `lock` forbidden; the run resolves the ref once (#136) |
+| `commit` | `lock` required and `lock.rev` must equal the commit (the lock carries the content identity) | refused (a commit needs no resolution) |
+
+No evaluation fetches anything: every revision comes from a locked input or is left to the run.
+
+## Validation
+
+Each of the cases in `tests/agent-runtime/cases.nix` fails evaluation (no manifest is produced)
+with a message that names the option; the flake check confirms each fails, and
+`nixos:agent-runtime-test` also matches each message. What is refused:
+
+- refs: a `ref.type` outside `branch | tag | commit`; under `resolve = "lock"`, any ref without
+  `lock`; under `resolve = "assignment"`, a branch or tag with `lock`, or any commit; a commit
+  whose `lock.rev` differs from it; a ref name outside letters, digits and `._/-`, or one git
+  would reject (a leading `-`, a component starting with `.` or ending in `.` or `.lock`, `..`,
+  `//`).
+- sources: the same `github` + ref twice; a repository without `path`; a path outside or equal
+  to `filesystem.workspace`; a `lock.outPath` that is a path literal (it would copy into the
+  store); a template or repository name that is not lowercase letters, digits and `-`.
+- paths: any two of repository paths, private mounts, host-mount targets and the workspace
+  equal or nested (a repository under the workspace is the one allowed pair); a path on, or
+  containing, a root the runtime owns inside the instance (`/nix`, `/etc`, `/proc`, `/sys`,
+  `/dev`, `/run`, `/var/run`, `/usr`, `/bin`, `/lib`, `/lib64`, `/sbin`, `/boot`, `/root`,
+  `/var/lib`); a path with `.`/`..`, `//`, a trailing slash, or characters outside
+  `[A-Za-z0-9._-]`.
+- skills: a name without `<skillsSource>/skills/<name>/SKILL.md` (the message lists the known
+  names), including any name with `/`.
+- policy: a value of the wrong type or shape (`memoryMiB = "4G"`, an IP literal, a single-label
+  name or a name over 253 characters or with a label over 63 in `allow`, an empty `allow` list,
+  an unknown harness or capability, a `github` that is not `owner/repo`, a `lock.rev` that is
+  not 40 hex or a `lock.narHash` that is not a sha256 SRI hash).
+- host: a mount whose `hostPath` is under no allowed root, or bound read-write under a
+  read-only root (the most specific covering root decides); an allowed root declared twice;
+  an allowed root on, or containing, host state no template may reach (`/nix`, `/etc`,
+  `/proc`, `/sys`, `/dev`, `/run`, `/var/run`, `/var/lib`, `/var/tmp`, `/var/log`, `/usr`,
+  `/tmp`, `/boot`, `/root`, `/home`: the instance list plus the world-writable, log and
+  user directories a host exposes); `eligibleTemplates` naming no template, or set while
+  `host.enable` is false.
+
+## Manifest (`agent-runtime-template`, schemaVersion 1)
+
+Generated from the evaluated declaration; JSON is output, never input. Abbreviated:
+
+```json
+{
+  "schemaVersion": 1, "kind": "agent-runtime-template",
+  "template": { "name": "rust-worker" },
+  "role": { "name": "rust-worker", "harness": "claude-code" },
+  "sources": {
+    "factum": { "github": "sammasak/factum", "ref": { "type": "branch", "value": "main" },
+      "resolve": "lock", "path": "/workspace/factum", "writable": true,
+      "locked": { "rev": "<40 hex>", "narHash": "sha256-...", "storePath": "/nix/store/...-source" } },
+    "factum-release": { "...": "...", "resolve": "assignment", "locked": null }
+  },
+  "skills": {
+    "source": { "rev": "<40 hex>", "narHash": "sha256-...", "storePath": "/nix/store/...-source" },
+    "names": { "rust-engineering": { "path": "/nix/store/...-source/skills/rust-engineering" } }
+  },
+  "packages": [ { "name": "cargo", "storePath": "/nix/store/...-cargo-..." } ],
+  "filesystem": { "workspace": "/workspace",
+    "home": { "path": "/home/agent", "sizeMiB": 512, "inodes": 100000 },
+    "tmp": { "...": "same shape" }, "cache": { "...": "same shape" }, "output": { "...": "same shape" },
+    "mounts": [ { "hostPath": "...", "path": "...", "writable": false } ] },
+  "policies": { "resources": { "cpus": 2, "memoryMiB": 3072, "tasksMax": 512, "timeoutMinutes": 90 },
+    "network": { "egress": "allowlist", "allow": [ "crates.io", "github.com", "static.crates.io" ] },
+    "capabilities": [ "github-comment", "github-read" ] },
+  "digests": { "template": "<sha256>", "lockedSources": "<sha256>" }
+}
 ```
 
-The root tree is a few directories and three files (`etc/os-release`,
-`etc/passwd`, `etc/group`) under `/run/agent-runtime/<id>/root`, built by the
-factory's `create` step; the UID base is a fixed function of the instance id so
-the factory can `chown` the workspace before the start. `destroy` stops the
-unit, unmounts anything left and removes both directories; `check-clean`
-asserts no mount, unit, machine, process or directory carries the id.
+- `locked` is `null` exactly when `resolve = "assignment"`, and otherwise always carries
+  `rev`, `narHash` and `storePath`. The run manifest (#136, #138) records that run's single
+  resolved revision and references `digests.template`.
+- `digests.template` is sha256 over the canonical JSON of every field above `digests` (Nix
+  sorts keys): any template field, package store path or locked revision moves it.
+  `digests.lockedSources` covers each source's name with its locked `rev` and `narHash`
+  (`null` for an assignment-resolved source) and the skills source's `rev` and `narHash`, so a
+  nixpkgs bump moves `digests.template` but not `digests.lockedSources`. The per-run
+  resolution digest belongs to the run manifest.
+- Store paths keep their Nix string context, so `nix build .#agent-runtime-manifests` realizes
+  the whole template closure and the `result` link is a GC root for it. Only `name` and
+  `storePath` of a package are serialized.
+- `policies.network.egress` is `"none"` with `allow: []` when `network.allow = null`, else
+  `"allowlist"`; `allow` and `capabilities` are emitted sorted and deduplicated.
+- Credentials never belong here. `capabilities` and `writable` declare intent; grants are per
+  run and outside the store (#137). `agent-runtime-eval` refuses an example manifest with a
+  secret-like field name or a value that looks like a GitHub, Anthropic or AWS key or a
+  private key.
 
-This is the shape #138 should grow into (idempotent operations keyed by the
-instance id, transient unit per instance); it is not yet that adapter.
+## Checks
 
-## What the test proves
+- `nix flake check`: `checks.x86_64-linux.agent-runtime-eval`.
+- `devenv tasks run nixos:agent-runtime-test` (part of `nixos:qa`): `scripts/test-agent-runtime.sh`
+  evaluates `tests/agent-runtime` as an external consumer flake with this repo as its
+  `nixos-config` input (`--override-input`; no module code is vendored into it): the two
+  templates, the consumer
+  `nixosSystem`'s toplevel (eval only), the same host with a bad template refused through
+  NixOS's own assertions, and every negative case with its message.
 
-As container root (the probe): the UID map, capability sets, mounts, devices
-and network interfaces are recorded; the store, the source bind, the skill bind
-and the root are read-only to a write and to `mount -o remount,rw`; `mknod`
-and writing `/proc/sys` are denied; the host's Nix daemon socket, systemd
-control socket, Docker socket, `/home/lukas`, a root sentinel and
-`SSH_AUTH_SOCK` are absent; only `lo` exists; writes succeed in `/workspace`
-and `/tmp`.
+## Limits of this milestone
 
-As the unprivileged user `agent`, twice (cold, then warm): copy the pinned
-source into the workspace, `cargo test --offline`, export the test binary with
-its sha256 and a manifest naming the template, repository, ref, skill and
-environment; the host verifies the sha256 after the unit has exited, then
-destroys the instance and asserts the leak check. Afterwards the host store's
-entry count and mtime are unchanged and no mount, machine or unit remains.
-
-## Observed on acer (QEMU, 2026-11-05)
-
-Raw test log in the PR. What the probe recorded as container root:
-
-- `uid_map: 0 1048576 65536`: container root is host UID 1048576; the store
-  shows as `65534:65534 dr-xr-xr-x` (nobody) because the bind is not idmapped.
-- `:idmap` on the store bind was refused in the VM (`Failed to clone
-  /nix/store: Invalid argument`): the test VM's store is an overlay over
-  virtiofs, which has no idmapped-mount support; the fixture fell back to a
-  plain read-only bind and still passed. On a host whose store is ext4 the
-  NixOS containers module uses `:idmap`, so that is the expected production
-  form; it is not proven here.
-- `CapEff`/`CapBnd` `00000000fdecbfff`: nspawn's default retained set for
-  the container's root (within its user namespace), and `NoNewPrivs` was 0
-  until the factory passed `--no-new-privileges=yes` (now asserted 1). The
-  capability bounding set is #137's work.
-- Mounts: `/` tmpfs, `/nix/store`, `/src/rf-proto` and
-  `/skills/rust-engineering` read-only, `/workspace` ext4 rw (the host
-  directory), `/tmp` and `/home/agent` tmpfs with the mapped owner, `/proc/sys`
-  read-only, `/sys` read-only, cgroup2 delegated.
-- `/dev`: console core fd full fuse mqueue net null ptmx pts random shm stderr
-  stdin stdout tty urandom zero. Network: `lo` only.
-- Denied: writes to the store, the environment, the source and the skill
-  binds; `remount,rw` of `/nix/store`, `/src/rf-proto` and `/`; `mknod`;
-  writing `/proc/sys/kernel/sysrq`. Absent: the Nix daemon socket, the
-  systemd control socket, a Docker socket, `/home/lukas`, the host's root
-  sentinel, `SSH_AUTH_SOCK`. Writes in `/workspace` and `/tmp` succeed.
-- The probe instance: service runtime 1.4 s, CPU 0.5 s, memory peak 5.7 MiB
-  (systemd-run's summary).
-
-Two fixture findings worth keeping: a failed transient unit keeps its name
-until `reset-failed` or `--collect`, so the factory does both; and stdout
-passed through `systemd-run --pipe` arrived as empty lines on the test
-backdoor, so the workload logs into its workspace and the factory prints that
-file.
-
-| run | startup | cargo test | teardown | memory peak |
-|---|---|---|---|---|
-| cold | (filled from the PR log) | | | |
-| warm | | | | |
-
-## Security limitations (initial list, M0)
-
-1. nspawn is a shared-kernel boundary. Container root maps to an unprivileged
-   host UID range, but a kernel vulnerability reachable from the container is a
-   host vulnerability. Approved repositories only; not for hostile code.
-2. The whole host `/nix/store` is visible read-only. Every closure on the host,
-   including configuration that embeds material it should not, is readable from
-   the instance. A closure-only bind set (`closureInfo` lists the paths) is the
-   candidate mitigation for #137; the fixture records the closure for it.
-3. Read-only means not writable, not confidential, and `remount,rw` is denied
-   because the mount is locked in the user namespace; a bind with `idmap`
-   depends on the backing filesystem supporting idmapped mounts (the probe
-   falls back to a plain bind and the run records which one it used).
-4. The writable workspace is a host directory bind with no byte or inode
-   bound; the tmpfs mounts have a size but no inode bound; the unit has
-   `MemoryMax`, `TasksMax` and `CPUQuota` only. Physical bounds and admission
-   are #137.
-5. No credentials enter the instance in M0 (no token, no SSH agent, no HOME
-   from the host). The credential path is designed in #137, never through the
-   store or the manifest.
-6. The export is a plain copy out of the workspace before destruction; there is
-   no retention policy, no size cap and no crash recovery (#138, devenv-platform
-   #95).
-7. Private network means no network at all in M0. Egress policy, DNS and TLS
-   to approved endpoints are #137.
-8. `--register=yes` lists the instance in `machinectl` while it runs; that is
-   diagnostics, not Herdr visibility (#139).
+- `systemd-nspawn` shares the host kernel; a template declares a boundary, it does not enforce
+  one. Mount budgets (bytes and inodes), `host.reserve`, `resources`, `network` and
+  `capabilities` are inputs for #137 (admission and enforcement); `maxConcurrentInstances`
+  and `timeoutMinutes` for #138 (lifecycle). `host.enable` only gates `eligibleTemplates` at
+  evaluation; nothing acts on it yet.
+- A writable host mount is shared by every instance that binds it, across templates and
+  concurrent runs; #137/#138 must give each instance its own subdirectory or refuse the
+  overlap.
+- A read-only `/nix/store` is not a confidential one: an instance that sees the whole store
+  reads every path on the host, not just its pinned closure, unless #135/#137 mount only the
+  closure.
+- The eval-time `hostPath` check is a prefix check on declared strings; #137 must resolve the
+  host path at admission (realpath) and re-check the resolved path against the allowed roots,
+  or refuse any symlink component, before binding.
+- `allow` names are checked for shape only. #137 must enforce the allowlist at resolution
+  time with a pinned resolver and refuse answers in private, link-local or loopback ranges;
+  a name under a wildcard DNS or `.internal` zone can still point anywhere.
+- `lock` is trusted: nothing ties a locked input to `github` or proves `ref.value` is on that
+  revision. The manifest records what the declaration said.
+- `role.name` is a free name until [sammasak/skills#63](https://github.com/sammasak/skills/issues/63)
+  binds it to `agents/<role>/ROLE.md`.
