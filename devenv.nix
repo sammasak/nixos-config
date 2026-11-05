@@ -63,7 +63,7 @@ let
     ${pkgs.python3}/bin/python scripts/test-coordinator-wiring.py
   '';
 
-  workerPermissionsTest = gate "worker-permissions-test" (with pkgs; [ nix python3 ]) ''
+  workerPermissionsTest = gate "worker-permissions-test" (with pkgs; [ nix python3 coreutils util-linux ]) ''
     ${pkgs.python3}/bin/python scripts/test-worker-permissions.py
   '';
 
