@@ -5,17 +5,25 @@
 let
   inherit (lib) mkOption mkEnableOption types;
   cfg = config.sam.agentRuntime;
+  json = pkgs.formats.json { };
 
   sha40 = types.strMatching "^[0-9a-f]{40}$";
   narHash = types.strMatching "^sha256-[A-Za-z0-9+/]{43}=$";
   storePath = types.strMatching "^/nix/store/[a-z0-9]{32}-[^/]+$";
   githubRepo = types.strMatching "^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9._-]*$";
-  dnsLabel = types.strMatching "^[a-z0-9][a-z0-9-]*$";
+  labelPattern = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$";
+  dnsLabel = types.strMatching labelPattern;
+  isLabel = s: lib.match labelPattern s != null;
 
   dnsName = types.mkOptionType {
     name = "dnsName";
-    description = "DNS name (lowercase labels and a TLD; no IP literal, no single label)";
-    check = n: builtins.isString n && builtins.match "^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$" n != null;
+    description = "DNS name (lowercase labels of at most 63 chars and a TLD, at most 253 chars; no IP literal, no single label)";
+    check =
+      n:
+      lib.isString n
+      && lib.stringLength n <= 253
+      && lib.match "^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$" n != null
+      && lib.all (l: lib.stringLength l <= 63) (lib.splitString "." n);
     merge = lib.mergeEqualOption;
   };
 
@@ -25,10 +33,10 @@ let
     description = "git ref name (starts with a letter or digit; components of letters, digits, `._-`, none starting with `.` or ending with `.` or `.lock`; no `..` or `//`)";
     check =
       r:
-      builtins.isString r
-      && builtins.match "^[A-Za-z0-9][A-Za-z0-9._/-]*$" r != null
-      && builtins.match ".*\\.\\..*" r == null
-      && builtins.all (c: c != "" && builtins.match "^\\..*|.*(\\.lock|\\.)$" c == null) (lib.splitString "/" r);
+      lib.isString r
+      && lib.match "^[A-Za-z0-9][A-Za-z0-9._/-]*$" r != null
+      && lib.match ".*\\.\\..*" r == null
+      && lib.all (c: c != "" && lib.match "^\\..*|.*(\\.lock|\\.)$" c == null) (lib.splitString "/" r);
     merge = lib.mergeEqualOption;
   };
 
@@ -37,18 +45,48 @@ let
     description = "absolute normalized path (no `.`/`..` components, no `//`, no trailing slash)";
     check =
       p:
-      builtins.isString p
-      && builtins.match "^(/[A-Za-z0-9._-]+)+$" p != null
-      && !builtins.any (c: c == "." || c == "..") (lib.splitString "/" p);
+      lib.isString p
+      && lib.match "^(/[A-Za-z0-9._-]+)+$" p != null
+      && !lib.any (c: c == "." || c == "..") (lib.splitString "/" p);
     merge = lib.mergeEqualOption;
   };
 
   within = root: p: p == root || lib.hasPrefix "${root}/" p;
   overlaps = a: b: within a b || within b a;
 
-  # Owned by the runtime inside an instance, or holding host state no template may reach.
-  reservedRoots = [ "/nix" "/etc" "/proc" "/sys" "/dev" "/run" "/usr" "/bin" "/lib" "/lib64" "/sbin" "/boot" "/root" "/var/lib" ];
-  deniedHostRoots = [ "/nix" "/etc" "/proc" "/sys" "/dev" "/run" "/boot" "/root" "/home" ];
+  # Owned by the runtime inside an instance.
+  reservedRoots = [
+    "/nix"
+    "/etc"
+    "/proc"
+    "/sys"
+    "/dev"
+    "/run"
+    "/usr"
+    "/bin"
+    "/lib"
+    "/lib64"
+    "/sbin"
+    "/boot"
+    "/root"
+    "/var/lib"
+  ];
+  # Host state no template may reach, nor any directory containing it.
+  deniedHostRoots = [
+    "/nix"
+    "/etc"
+    "/proc"
+    "/sys"
+    "/dev"
+    "/run"
+    "/var/run"
+    "/var/lib"
+    "/usr"
+    "/tmp"
+    "/boot"
+    "/root"
+    "/home"
+  ];
 
   # A flake input (`inputs.<name>` with `flake = false`) is accepted as is:
   # `rev`, `narHash` and `outPath` are typed, the rest passes through.
@@ -113,6 +151,8 @@ let
         type = githubRepo;
         description = "GitHub `owner/repo`.";
       };
+      # The issue's literal shape, kept for schema stability; a tagged union would
+      # move the commit rule into the type.
       ref = {
         type = mkOption {
           type = types.enum [ "branch" "tag" "commit" ];
@@ -144,7 +184,7 @@ let
       };
       path = mkOption {
         type = normalizedPath;
-        description = "Checkout path inside the instance, under `filesystem.workspace`.";
+        description = "Checkout path inside the instance, strictly under `filesystem.workspace`.";
       };
       writable = mkOption {
         type = types.bool;
@@ -169,7 +209,7 @@ let
       repositories = mkOption {
         type = types.attrsOf repository;
         default = { };
-        description = "Named GitHub sources materialized inside the instance.";
+        description = "Named GitHub sources materialized inside the instance (names are lowercase labels).";
       };
       skillsSource = mkOption {
         type = lockedSource;
@@ -189,7 +229,7 @@ let
         workspace = mkOption {
           type = normalizedPath;
           default = "/workspace";
-          description = "Parent of every repository path.";
+          description = "Parent of every repository path; no other mount may sit on or under it.";
         };
         home = mkOption {
           type = budgetedMount "/home/agent";
@@ -222,7 +262,7 @@ let
                 writable = mkOption {
                   type = types.bool;
                   default = false;
-                  description = "Bind read-write; needs the most specific covering root to be `writable`.";
+                  description = "Bind read-write; needs the most specific covering root to be `writable`. Shared by every instance that binds it.";
                 };
               };
             }
@@ -250,17 +290,10 @@ let
           description = "Wall-clock budget of one run (#138).";
         };
       };
-      network = {
-        egress = mkOption {
-          type = types.enum [ "none" "allowlist" ];
-          default = "none";
-          description = "Private network namespace: no egress, or only the listed hosts (#137 enforces at resolution time).";
-        };
-        allow = mkOption {
-          type = types.listOf dnsName;
-          default = [ ];
-          description = "Egress DNS names when `egress = \"allowlist\"`.";
-        };
+      network.allow = mkOption {
+        type = types.nullOr (types.nonEmptyListOf dnsName);
+        default = null;
+        description = "Private network namespace: `null` is no egress; a non-empty list is the egress allowlist (#137 enforces at resolution time).";
       };
       capabilities = mkOption {
         type = types.listOf (
@@ -276,25 +309,29 @@ let
     };
   };
 
-  # Every repository path sits under the workspace, so the workspace itself joins the overlap
-  # set only when there is none to represent it.
+  # Every path an instance mounts; repositories are checked against the workspace by their
+  # own rule, so that one pair is exempt from the overlap check.
   pathsOf =
     t:
     [ t.filesystem.home t.filesystem.tmp t.filesystem.cache t.filesystem.output ]
-    ++ lib.optional (t.repositories == { }) { path = t.filesystem.workspace; }
-    ++ lib.mapAttrsToList (_: r: { inherit (r) path; }) t.repositories
+    ++ [ { path = t.filesystem.workspace; workspace = true; } ]
+    ++ map (r: { inherit (r) path; repo = true; }) (lib.attrValues t.repositories)
     ++ t.filesystem.mounts;
 
   overlapping =
     paths:
     let
-      indexed = lib.imap0 (i: p: { inherit i; inherit (p) path; }) paths;
+      indexed = lib.imap0 (i: p: p // { inherit i; }) paths;
+      exempt = a: b: (a.workspace or false && b.repo or false) || (b.workspace or false && a.repo or false);
     in
     lib.concatMap (
-      a: lib.concatMap (b: lib.optional (a.i < b.i && overlaps a.path b.path) "${a.path} vs ${b.path}") indexed
+      a:
+      lib.concatMap (
+        b: lib.optional (a.i < b.i && !exempt a b && overlaps a.path b.path) "${a.path} vs ${b.path}"
+      ) indexed
     ) indexed;
 
-  onRoots = roots: paths: builtins.filter (p: builtins.any (root: overlaps root p.path) roots) paths;
+  onRoots = roots: paths: lib.filter (p: lib.any (root: overlaps root p.path) roots) paths;
 
   skillsOf =
     src:
@@ -302,7 +339,7 @@ let
       dir = "${src.outPath}/skills";
     in
     if builtins.pathExists dir then
-      builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir dir))
+      lib.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir dir))
     else
       [ ];
 
@@ -312,16 +349,12 @@ let
   mountRootFor =
     hostPath:
     let
-      covering = builtins.filter (root: within root.path hostPath) cfg.host.allowedMountRoots;
+      covering = lib.filter (root: within root.path hostPath) cfg.host.allowedMountRoots;
     in
-    lib.findFirst (_: true) null (lib.sort (a: b: lib.stringLength a.path > lib.stringLength b.path) covering);
+    if covering == [ ] then null else lib.last (lib.sortOn (r: lib.stringLength r.path) covering);
 
   repoChecks =
-    at: r: [
-      {
-        assertion = r.ref.type != "commit" || sha40.check r.ref.value;
-        message = "${at}: a commit ref must be a 40-hex revision, got `${r.ref.value}`";
-      }
+    at: workspace: r: [
       {
         assertion = r.ref.type != "commit" || r.resolve == "lock";
         message = "${at}: a commit needs no resolution; use resolve = \"lock\"";
@@ -332,11 +365,15 @@ let
       }
       {
         assertion = r.ref.type != "commit" || r.lock == null || r.lock.rev == r.ref.value;
-        message = "${at}: lock.rev ${r.lock.rev or ""} differs from the commit ${r.ref.value}";
+        message = "${at}: lock.rev ${r.lock.rev or ""} differs from the commit ${r.ref.value} (the 40-hex revision)";
       }
       {
         assertion = r.resolve != "assignment" || r.lock == null;
         message = "${at}: resolve = \"assignment\" records the revision per run; drop `lock`";
+      }
+      {
+        assertion = lib.hasPrefix "${workspace}/" r.path;
+        message = "${at}.path ${r.path} is not under filesystem.workspace ${workspace}";
       }
     ];
 
@@ -344,11 +381,12 @@ let
     at: m:
     let
       root = mountRootFor m.hostPath;
+      roots = lib.concatStringsSep ", " (map (r: r.path) cfg.host.allowedMountRoots);
     in
     [
       {
         assertion = root != null;
-        message = "${at}: host path ${m.hostPath} is not under an allowed mount root (${lib.concatStringsSep ", " (map (r: r.path) cfg.host.allowedMountRoots)}); unauthorized host mount";
+        message = "${at}: host path ${m.hostPath} is not under an allowed mount root (${roots}); unauthorized host mount";
       }
       {
         assertion = !m.writable || root == null || root.writable;
@@ -362,19 +400,21 @@ let
       at = "sam.agentRuntime.templates.${name}";
       repos = lib.mapAttrsToList (n: r: r // { name = n; }) t.repositories;
       identities = map (r: "${r.github}#${r.ref.type}:${r.ref.value}") repos;
-      paths = pathsOf t;
-      overlapsFound = overlapping paths;
-      onReserved = map (p: p.path) (onRoots reservedRoots paths);
+      overlapsFound = overlapping (pathsOf t);
+      onReserved = map (p: p.path) (onRoots reservedRoots (pathsOf t));
       known = skillsOf t.skillsSource;
+      badNames = lib.filter (n: !isLabel n) (lib.attrNames t.repositories);
     in
-    lib.concatMap (r: repoChecks "${at}.repositories.${r.name}" r) repos
-    ++ lib.concatMap (r: [
-      {
-        assertion = within t.filesystem.workspace r.path && r.path != t.filesystem.workspace;
-        message = "${at}.repositories.${r.name}.path ${r.path} is not under filesystem.workspace ${t.filesystem.workspace}";
-      }
-    ]) repos
+    lib.concatMap (r: repoChecks "${at}.repositories.${r.name}" t.filesystem.workspace r) repos
     ++ [
+      {
+        assertion = isLabel name;
+        message = "sam.agentRuntime.templates: template name `${name}` must be lowercase letters, digits and `-`";
+      }
+      {
+        assertion = badNames == [ ];
+        message = "${at}.repositories: names must be lowercase letters, digits and `-`: ${lib.concatStringsSep ", " badNames}";
+      }
       {
         assertion = duplicates identities == [ ];
         message = "${at}: duplicate repository identity (same github + ref): ${lib.concatStringsSep ", " (duplicates identities)}";
@@ -387,29 +427,22 @@ let
         assertion = onReserved == [ ];
         message = "${at}: instance path on a reserved root (${lib.concatStringsSep " " reservedRoots}): ${lib.concatStringsSep ", " onReserved}";
       }
-      {
-        assertion = t.network.egress != "allowlist" || t.network.allow != [ ];
-        message = "${at}.network: egress = \"allowlist\" needs a non-empty `allow`";
-      }
-      {
-        assertion = t.network.allow == [ ] || t.network.egress == "allowlist";
-        message = "${at}.network: `allow` needs egress = \"allowlist\"";
-      }
     ]
     # Membership first: a name with `/` must never reach the path below.
     ++ lib.mapAttrsToList (n: _: {
-      assertion = builtins.elem n known && builtins.pathExists "${t.skillsSource.outPath}/skills/${n}/SKILL.md";
+      assertion = lib.elem n known && builtins.pathExists "${t.skillsSource.outPath}/skills/${n}/SKILL.md";
       message = "${at}.skills.${n}: not in skills source ${t.skillsSource.rev} (known: ${lib.concatStringsSep ", " known})";
     }) t.skills
     ++ lib.concatMap (mountChecks "${at}.filesystem.mounts") t.filesystem.mounts;
 
-  deniedRoots = map (r: r.path) (onRoots deniedHostRoots (map (r: { inherit (r) path; }) cfg.host.allowedMountRoots));
+  rootPaths = map (r: r.path) cfg.host.allowedMountRoots;
+  deniedRoots = map (r: r.path) (onRoots deniedHostRoots cfg.host.allowedMountRoots);
 
   checks =
     lib.concatLists (lib.mapAttrsToList templateChecks cfg.templates)
     ++ map (n: {
       assertion = cfg.templates ? ${n};
-      message = "sam.agentRuntime.host.eligibleTemplates names unknown template `${n}` (declared: ${lib.concatStringsSep ", " (builtins.attrNames cfg.templates)})";
+      message = "sam.agentRuntime.host.eligibleTemplates names unknown template `${n}` (declared: ${lib.concatStringsSep ", " (lib.attrNames cfg.templates)})";
     }) cfg.host.eligibleTemplates
     ++ [
       {
@@ -420,9 +453,13 @@ let
         assertion = deniedRoots == [ ];
         message = "sam.agentRuntime.host.allowedMountRoots: ${lib.concatStringsSep ", " deniedRoots} is on a denied host root (${lib.concatStringsSep " " deniedHostRoots})";
       }
+      {
+        assertion = duplicates rootPaths == [ ];
+        message = "sam.agentRuntime.host.allowedMountRoots: duplicate root ${lib.concatStringsSep ", " (duplicates rootPaths)} (declare it once with the intended `writable`)";
+      }
     ];
 
-  failures = map (c: c.message) (builtins.filter (c: !c.assertion) checks);
+  failures = map (c: c.message) (lib.filter (c: !c.assertion) checks);
 
   # The manifest is unreachable while a check fails, so a consumer that reads
   # it without building a system toplevel still sees the message.
@@ -433,7 +470,7 @@ let
     storePath = s.outPath;
   };
 
-  # Schema v1 is exactly the declared options: option groups pass through as they are.
+  # Any new field moves `digests.template`; a changed shape needs a `schemaVersion` bump.
   manifestOf =
     name: t:
     let
@@ -457,8 +494,8 @@ let
         policies = {
           inherit (t) resources;
           network = {
-            inherit (t.network) egress;
-            allow = lib.naturalSort (lib.unique t.network.allow);
+            egress = if t.network.allow == null then "none" else "allowlist";
+            allow = lib.naturalSort (lib.unique (if t.network.allow == null then [ ] else t.network.allow));
           };
           capabilities = lib.naturalSort (lib.unique t.capabilities);
         };
@@ -481,7 +518,7 @@ in
     templates = mkOption {
       type = types.attrsOf template;
       default = { };
-      description = "Named templates; each describes possible ephemeral instances, never a booted container.";
+      description = "Named templates (names are lowercase labels); each describes possible ephemeral instances, never a booted container.";
     };
 
     host = {
@@ -511,7 +548,7 @@ in
       allowedMountRoots = mkOption {
         type = types.listOf mountRoot;
         default = [ ];
-        description = "Host directories templates may bind-mount from (none by default); a bare string is a read-only root; never on ${lib.concatStringsSep ", " deniedHostRoots}.";
+        description = "Host directories templates may bind-mount from (none by default); a bare string is a read-only root; each path once; never on or containing ${lib.concatStringsSep ", " deniedHostRoots}.";
       };
     };
 
@@ -535,7 +572,7 @@ in
       manifestDir = pkgs.linkFarm "agent-runtime-manifests" (
         lib.mapAttrsToList (n: m: {
           name = "${n}.json";
-          path = pkgs.writeText "agent-runtime-${n}.json" (builtins.toJSON m);
+          path = json.generate "agent-runtime-${n}.json" m;
         }) cfg.manifestData
       );
     };

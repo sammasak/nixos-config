@@ -1,7 +1,5 @@
-# Registered under flake.modules.nixos (the internal registry, stripped from
-# this flake's outputs) and re-exported as nixosModules.agent-runtime for
-# consumers. Checks and packages are x86-only: `--all-systems` would try to
-# build an aarch64 check, and the packages follow so the docs name one system.
+# x86-only: `--all-systems` would try to build an aarch64 check, and the
+# packages follow so the docs name one system.
 { config, inputs, lib, ... }:
 {
   flake.modules.nixos.agent-runtime = ../modules/agent-runtime;

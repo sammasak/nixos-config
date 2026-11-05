@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Runs the tests/agent-runtime consumer fixture against this checkout: the
-# fixture imports the module through its nixos-config input, nothing copied.
+# Runs the tests/agent-runtime consumer fixture against this checkout.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -20,7 +19,8 @@ if out=$(nix eval --raw "$fixture#nixosConfigurations.consumer-bad.config.system
 fi
 grep -qF -- "names unknown template" <<<"$out" || { printf '%s\n' "$out" >&2; fail "consumer-bad failed for another reason"; }
 
-# One `nix eval` per negative case: tryEval (check.nix) cannot surface the message, this can.
+# One `nix eval` per negative case (each re-copies the checkout and re-evaluates nixpkgs):
+# tryEval (check.nix) cannot surface the message, this can.
 count=0
 while IFS=$'\t' read -r name expect; do
   if out=$(nix eval --json "$fixture#agentRuntimeNegative.$name.manifestData" "${override[@]}" 2>&1); then

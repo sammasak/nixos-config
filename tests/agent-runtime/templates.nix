@@ -1,8 +1,5 @@
-# Two templates a consumer would declare. `rust-worker` checks out one real
-# Rust repo three ways (locked branch, exact commit, tag resolved per
-# assignment) with two real skills; `docs-reviewer` is a read-only reviewer
-# whose template name and role name differ on purpose. Only rust-worker is
-# host-eligible. `factum` and `skills` are flake inputs (flake = false).
+# A consumer's templates; docs-reviewer's role name differs from its template
+# name on purpose. `factum` and `skills` are flake = false inputs.
 { factum, skills }:
 { pkgs, ... }:
 {
@@ -88,14 +85,11 @@
         memoryMiB = 3072;
         timeoutMinutes = 90;
       };
-      network = {
-        egress = "allowlist";
-        allow = [
-          "github.com"
-          "crates.io"
-          "static.crates.io"
-        ];
-      };
+      network.allow = [
+        "github.com"
+        "crates.io"
+        "static.crates.io"
+      ];
       capabilities = [
         "github-read"
         "github-comment"

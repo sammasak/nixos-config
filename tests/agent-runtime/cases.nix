@@ -50,18 +50,6 @@ in
     };
   }
   {
-    name = "commit-value-not-sha";
-    expect = "a commit ref must be a 40-hex revision";
-    module = bad {
-      repositories.factum = lockedMain {
-        ref = {
-          type = "commit";
-          value = "main";
-        };
-      };
-    };
-  }
-  {
     name = "branch-without-lock";
     expect = "a branch with resolve = \"lock\" needs `lock = inputs.<input>`";
     module = bad { repositories.factum = lockedMain { lock = null; }; };
@@ -132,7 +120,7 @@ in
   }
   {
     name = "duplicate-paths";
-    expect = "instance paths overlap";
+    expect = "instance paths overlap: /workspace/same vs /workspace/same";
     module = bad {
       repositories = {
         a = lockedMain { path = "/workspace/same"; };
@@ -147,7 +135,7 @@ in
   }
   {
     name = "nested-path-overlap";
-    expect = "instance paths overlap";
+    expect = "instance paths overlap: /workspace/factum/target vs /workspace";
     module = bad {
       repositories.factum = lockedMain { };
       filesystem.tmp.path = "/workspace/factum/target";
@@ -196,12 +184,12 @@ in
   }
   {
     name = "missing-skill";
-    expect = "not in skills source";
+    expect = "skills.no-such-skill: not in skills source";
     module = bad { skills.no-such-skill = { }; };
   }
   {
     name = "skill-name-traversal";
-    expect = "not in skills source";
+    expect = "skills.../agents: not in skills source";
     module = bad { skills."../agents" = { }; };
   }
   {
@@ -237,6 +225,7 @@ in
   {
     name = "nested-roots-most-specific-wins";
     expect = "read-write but its allowed mount root /srv/agent-runtime/scratch/locked is read-only";
+    # merges with templates.nix's writable /srv/agent-runtime/scratch; the nested read-only root must win
     module = lib.recursiveUpdate (bad {
       filesystem.mounts = [
         {
@@ -249,28 +238,46 @@ in
   }
   {
     name = "host-root-denied";
-    expect = "is on a denied host root";
+    expect = "/run/agent-cache is on a denied host root";
     module = { sam.agentRuntime.host.allowedMountRoots = [ "/run/agent-cache" ]; };
   }
   {
-    name = "egress-allowlist-empty";
-    expect = "needs a non-empty `allow`";
-    module = bad { network.egress = "allowlist"; };
+    name = "host-root-var-lib";
+    expect = "/var/lib/agent-cache is on a denied host root";
+    module = { sam.agentRuntime.host.allowedMountRoots = [ "/var/lib/agent-cache" ]; };
   }
   {
-    name = "allow-without-allowlist";
-    expect = "`allow` needs egress";
-    module = bad { network.allow = [ "github.com" ]; };
+    name = "duplicate-allowed-roots";
+    expect = "duplicate root /srv/agent-runtime/cache";
+    module = { sam.agentRuntime.host.allowedMountRoots = [ "/srv/agent-runtime/cache" ]; };
   }
   {
     name = "allow-ip-literal";
     expect = "is not of type `DNS name";
+    module = bad { network.allow = [ "169.254.169.254" ]; };
+  }
+  {
+    name = "allow-empty-list";
+    expect = "network.allow' is not of type";
+    module = bad { network.allow = [ ]; };
+  }
+  {
+    name = "mount-under-workspace-with-repo";
+    expect = "instance paths overlap: /workspace/home vs /workspace";
     module = bad {
-      network = {
-        egress = "allowlist";
-        allow = [ "169.254.169.254" ];
-      };
+      repositories.factum = lockedMain { };
+      filesystem.home.path = "/workspace/home";
     };
+  }
+  {
+    name = "template-name-invalid";
+    expect = "template name `Bad_Name` must be lowercase";
+    module = { sam.agentRuntime.templates."Bad_Name" = minimal; };
+  }
+  {
+    name = "repository-name-invalid";
+    expect = "repositories: names must be lowercase";
+    module = bad { repositories."Factum Main" = lockedMain { }; };
   }
   {
     name = "host-eligible-unknown-template";

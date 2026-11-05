@@ -7,12 +7,14 @@ in this module starts a container, adds a service, or touches a live host; the n
 (#135), source materialization (#136), security and admission (#137) and lifecycle (#138)
 consume the manifest.
 
-Terms: a **template** is a declaration under `sam.agentRuntime.templates.<name>`. An
-**instance** is one ephemeral container made from it; one instance serves one **run**, the
-execution of one **assignment** (the task handed to the run). A source with
-`resolve = "assignment"` is resolved to a revision at that moment (#136), not from
-`flake.lock`. The **template manifest** (this milestone) describes the template; the **run
-manifest** (#136, #138) records what one run resolved and did.
+Terms: a **template** is a declaration under `sam.agentRuntime.templates.<name>`. A
+**source** is one of its `repositories.<name>` entries (emitted under `sources` in the
+manifest); the skills tree is the separate skills source. An **instance** is one ephemeral
+container made from a template; one instance serves one **run**, the execution of one
+**assignment** (the task handed to the run). A source with `resolve = "assignment"` is
+resolved to a revision at that moment (#136), not from `flake.lock`. The **template manifest**
+(this milestone) describes the template; the **run manifest** (#136, #138) records what one
+run resolved and did. Options exist only where an issue in this epic names a consumer.
 
 ## Using it from another flake
 
@@ -49,11 +51,13 @@ The reference consumer is `tests/agent-runtime/flake.nix` (templates `rust-worke
 
 ## Options
 
-The generated reference (`nix build .#agent-runtime-options`) is authoritative. The shape:
+The generated reference (`nix build .#agent-runtime-options`) is authoritative. The shape,
+where `x ? d` defaults to `d` and every other field is required (notably `skillsSource`, each
+private mount's `sizeMiB`, and `cpus`, `memoryMiB`, `timeoutMinutes`):
 
-- `sam.agentRuntime.templates.<name>`: a description of possible instances.
-  - `role = { name; harness = "claude-code" | "codex" | "pi"; }` (`name` is a lowercase DNS
-    label)
+- `sam.agentRuntime.templates.<name>`: a description of possible instances; the name, like
+  every repository name and `role.name`, is lowercase letters, digits and `-`.
+  - `role = { name; harness = "claude-code" | "codex" | "pi"; }`
   - `repositories.<name> = { github = "owner/repo"; ref = { type = "branch" | "tag" | "commit";
     value; }; resolve ? "lock"; lock ? null; path; writable ? false; }` with
     `lock = inputs.<input>`
@@ -65,16 +69,16 @@ The generated reference (`nix build .#agent-runtime-options`) is authoritative. 
     `mounts = [ { hostPath; path; writable ? false; } ]`, host bind mounts restricted by
     `host.allowedMountRoots`
   - `resources = { cpus; memoryMiB; tasksMax ? 512; timeoutMinutes; }`
-  - `network = { egress ? "none"; allow ? [ ]; }` with `egress = "none" | "allowlist"` and
-    `allow` a list of DNS names
+  - `network.allow ? null`: `null` is no egress; a non-empty list of DNS names is the egress
+    allowlist
   - `capabilities ? [ ]`: a subset of `github-read`, `github-comment`, `github-push`. A
     writable checkout never implies `github-push`.
 - `sam.agentRuntime.host`, host policy separate from templates: `enable ? false` (must be
   true before any template is eligible; it starts nothing), `eligibleTemplates ? [ ]`,
   `maxConcurrentInstances ? 1`, `reserve.{memoryMiB ? 2048, diskMiB ? 10240}`,
   `allowedMountRoots ? [ ]` (so no host mount is allowed by default; a string is a read-only
-  root, `{ path; writable = true; }` lets templates bind it read-write; the most specific
-  covering root decides).
+  root, `{ path; writable = true; }` lets templates bind it read-write; each path once; the
+  most specific covering root decides).
 - Results: `manifestData.<name>` (attrset) and `manifestDir` (`<name>.json` files).
 
 ## Example: a Rust worker
@@ -108,6 +112,8 @@ repositories = {
     path = "/workspace/factum-release";
   };
 };
+skillsSource = inputs.skills;
+skills = { rust-engineering = { }; nix-flake-development = { }; };
 ```
 
 The ref rule, by `ref.type` and `resolve`:
@@ -121,36 +127,31 @@ No evaluation fetches anything: every revision comes from a locked input or is l
 
 ## Validation
 
-Each case below fails evaluation (no manifest is produced) with a message that names the
-option. The canonical list is `tests/agent-runtime/cases.nix` (every case maps to a row; some
-rows cover two cases):
+Each of the cases in `tests/agent-runtime/cases.nix` fails evaluation (no manifest is produced)
+with a message that names the option; the checks run all of them and match the messages. What
+is refused:
 
-| Case | Message contains |
-|---|---|
-| `ref.type = "sha"` | `ref.type' is not of type` |
-| commit value not 40-hex | `a commit ref must be a 40-hex revision` |
-| branch/tag/commit without `lock` | `` needs `lock = inputs.<input>` `` |
-| `lock.rev` differs from the commit | `differs from the commit` |
-| `resolve = "assignment"` with `lock` | `` drop `lock` `` |
-| commit with `resolve = "assignment"` | `a commit needs no resolution` |
-| branch name like `--upload-pack=x` (leading `-` or `.`, `..`, `//`, a component ending in `.` or `.lock`) | `` ref.value' is not of type `git ref name `` |
-| two paths equal or nested (repos, private mounts, host mounts; the workspace when there are no repos) | `instance paths overlap` |
-| a path on `/nix`, `/etc`, `/proc`, `/sys`, `/dev`, `/run`, `/usr`, `/bin`, `/lib`, `/lib64`, `/sbin`, `/boot`, `/root`, `/var/lib` | `instance path on a reserved root` |
-| same `github` + ref twice | `duplicate repository identity` |
-| repo path outside `filesystem.workspace` | `is not under filesystem.workspace` |
-| `.`/`..`, `//`, relative, trailing slash, or characters outside `[A-Za-z0-9._-]` | `` path' is not of type `absolute normalized path `` |
-| repository without `path` | `path' was accessed but has no value defined` |
-| `lock.outPath` a path literal (would copy into the store) | `lock.outPath' is not of type` |
-| skill without `<skillsSource>/skills/<name>/SKILL.md`, or a name with `/` | `not in skills source` (lists the known names) |
-| `memoryMiB = "4G"` | `memoryMiB' is not of type` |
-| mount `hostPath` outside `host.allowedMountRoots` | `unauthorized host mount` |
-| `writable = true` under a read-only root (the most specific covering root decides) | `read-write but its allowed mount root <root> is read-only` |
-| `egress = "allowlist"` with empty `allow` | `` needs a non-empty `allow` `` |
-| `allow` with `egress = "none"` | `` `allow` needs egress = "allowlist" `` |
-| an IP literal or single-label name in `allow` | `` is not of type `DNS name `` |
-| `host.eligibleTemplates` names no template | `names unknown template` |
-| `host.eligibleTemplates` with `host.enable = false` | `host.enable is false` |
-| an allowed mount root on `/nix`, `/etc`, `/proc`, `/sys`, `/dev`, `/run`, `/boot`, `/root`, `/home` | `is on a denied host root` |
+- refs: a `ref.type` outside `branch | tag | commit`; a branch, tag or commit without `lock`
+  (or with one under `resolve = "assignment"`, or a commit under `assignment` at all); a commit
+  whose `lock.rev` differs from it; a ref name git would reject (a leading `-` or `.`, `..`,
+  `//`, a component ending in `.` or `.lock`).
+- sources: the same `github` + ref twice; a repository without `path`; a path outside or equal
+  to `filesystem.workspace`; a `lock.outPath` that is a path literal (it would copy into the
+  store); a template or repository name that is not lowercase letters, digits and `-`.
+- paths: any two of repository paths, private mounts, host-mount targets and the workspace
+  equal or nested (a repository under the workspace is the one allowed pair); a path on, or
+  containing, `/nix`, `/etc`, `/proc`, `/sys`, `/dev`, `/run`, `/usr`, `/bin`, `/lib`,
+  `/lib64`, `/sbin`, `/boot`, `/root`, `/var/lib`; a path with `.`/`..`, `//`, a trailing
+  slash, or characters outside `[A-Za-z0-9._-]`.
+- skills: a name without `<skillsSource>/skills/<name>/SKILL.md` (the message lists the known
+  names), including any name with `/`.
+- policy: a value of the wrong type (`memoryMiB = "4G"`, an IP literal or single-label name in
+  `allow`, an empty `allow` list, an unknown harness or capability).
+- host: a mount whose `hostPath` is under no allowed root, or bound read-write under a
+  read-only root (the most specific covering root decides); an allowed root declared twice;
+  an allowed root on, or containing, `/nix`, `/etc`, `/proc`, `/sys`, `/dev`, `/run`,
+  `/var/run`, `/var/lib`, `/usr`, `/tmp`, `/boot`, `/root`, `/home`; `eligibleTemplates`
+  naming no template, or set while `host.enable` is false.
 
 ## Manifest (`agent-runtime-template`, schemaVersion 1)
 
@@ -190,8 +191,8 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
   sorts keys): any template field, package store path or locked revision moves it.
   `digests.lockedSources` covers each source's name with its locked `rev` and `narHash`
   (`null` for an assignment-resolved source) and the skills source's `rev` and `narHash`, so a
-  nixpkgs bump moves `digests.template` but not `digests.lockedSources`. The per-run resolution digest belongs to
-  the run manifest.
+  nixpkgs bump moves `digests.template` but not `digests.lockedSources`. The per-run
+  resolution digest belongs to the run manifest.
 - Store paths keep their Nix string context, so `nix build .#agent-runtime-manifests` realizes
   the whole template closure and the `result` link is a GC root for it. Only `name` and
   `storePath` of a package are serialized.
@@ -215,7 +216,11 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
 - `systemd-nspawn` shares the host kernel; a template declares a boundary, it does not enforce
   one. Mount budgets (bytes and inodes), `host.reserve`, `resources`, `network` and
   `capabilities` are inputs for #137 (admission and enforcement); `maxConcurrentInstances`
-  and `timeoutMinutes` for #138 (lifecycle). `host.enable` is recorded only.
+  and `timeoutMinutes` for #138 (lifecycle). `host.enable` only gates `eligibleTemplates` at
+  evaluation; nothing acts on it yet.
+- A writable host mount is shared by every instance that binds it, across templates and
+  concurrent runs; #137/#138 must give each instance its own subdirectory or refuse the
+  overlap.
 - A read-only `/nix/store` is not a confidential one: an instance that sees the whole store
   reads every path on the host, not just its pinned closure, unless #135/#137 mount only the
   closure.
@@ -228,5 +233,4 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
 - `lock` is trusted: nothing ties a locked input to `github` or proves `ref.value` is on that
   revision. The manifest records what the declaration said.
 - `role.name` is a free name until [sammasak/skills#63](https://github.com/sammasak/skills/issues/63)
-  binds it to `agents/<role>/ROLE.md`. Options exist only where an issue in this epic names a
-  consumer.
+  binds it to `agents/<role>/ROLE.md`.
