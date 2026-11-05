@@ -49,6 +49,7 @@
             value = "v0.2.0";
           };
           resolve = "assignment";
+          access = "private";
           path = "/workspace/factum-release";
         };
       };
