@@ -1,5 +1,5 @@
 # External consumer fixture: imports the agent-runtime module through the
-# nixos-config input (nothing copied). The input URL is a placeholder;
+# nixos-config input (no module code is vendored). The input URL is a placeholder;
 # scripts/test-agent-runtime.sh always overrides it with this checkout.
 {
   inputs = {
@@ -17,7 +17,9 @@
       args = { inherit (nixos-config.inputs) factum skills; };
       templates = import ./templates.nix args;
       cases = import ./cases.nix (args // { inherit lib; });
-      unknownTemplateCase = lib.findFirst (c: c.name == "host-eligible-unknown-template") (throw "cases.nix: host-eligible-unknown-template missing") cases;
+      unknownTemplateCase = lib.findFirst (c: c.name == "host-eligible-unknown-template") (
+        throw "cases.nix: host-eligible-unknown-template missing"
+      ) cases;
       consumerModules = [
         nixos-config.nixosModules.agent-runtime
         templates
@@ -44,8 +46,7 @@
         }) cases
       );
 
-      # The consumer host, and the same host with one bad template: NixOS's own
-      # assertion path must refuse its toplevel.
+      # The consumer host, and the same host with one bad template.
       nixosConfigurations = {
         consumer = lib.nixosSystem { modules = consumerModules; };
         consumer-bad = lib.nixosSystem { modules = consumerModules ++ [ unknownTemplateCase.module ]; };

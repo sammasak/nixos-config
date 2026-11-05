@@ -7,9 +7,7 @@ fixture="git+file://$PWD?dir=tests/agent-runtime"
 override=(--override-input nixos-config "git+file://$PWD" --no-write-lock-file)
 fail() { printf 'agent-runtime-test: %s\n' "$1" >&2; exit 1; }
 
-# What only the external path proves: both templates reach the consumer through the input, a
-# real nixosSystem importing the module evaluates to a toplevel (eval only, no build), and the
-# same host with one bad template is refused by NixOS's own assertion path.
+# Only the external path proves: input wiring, a real toplevel, and refusal of consumer-bad.
 nix eval --json "$fixture#agentRuntime.manifestData" "${override[@]}" \
   | jq -e 'keys == ["docs-reviewer", "rust-worker"]' >/dev/null || fail "expected exactly the two fixture templates"
 nix eval --raw "$fixture#nixosConfigurations.consumer.config.system.build.toplevel.drvPath" "${override[@]}" >/dev/null \
@@ -17,7 +15,8 @@ nix eval --raw "$fixture#nixosConfigurations.consumer.config.system.build.toplev
 if out=$(nix eval --raw "$fixture#nixosConfigurations.consumer-bad.config.system.build.toplevel.drvPath" "${override[@]}" 2>&1); then
   fail "consumer-bad evaluated to a toplevel"
 fi
-grep -qF -- "names unknown template" <<<"$out" || { printf '%s\n' "$out" >&2; fail "consumer-bad failed for another reason"; }
+{ grep -qF -- "Failed assertions:" <<<"$out" && grep -qF -- "names unknown template" <<<"$out"; } \
+  || { printf '%s\n' "$out" >&2; fail "consumer-bad was not refused by the NixOS assertions"; }
 
 # One `nix eval` per negative case (each re-copies the checkout and re-evaluates nixpkgs):
 # tryEval (check.nix) cannot surface the message, this can.

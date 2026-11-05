@@ -12,7 +12,7 @@ Terms: a **template** is a declaration under `sam.agentRuntime.templates.<name>`
 manifest); the skills tree is the separate skills source. An **instance** is one ephemeral
 container made from a template; one instance serves one **run**, the execution of one
 **assignment** (the task handed to the run). A source with `resolve = "assignment"` is
-resolved to a revision at that moment (#136), not from `flake.lock`. The **template manifest**
+resolved to a revision when the run receives its assignment (#136), not from `flake.lock`. The **template manifest**
 (this milestone) describes the template; the **run manifest** (#136, #138) records what one
 run resolved and did. Options exist only where an issue in this epic names a consumer.
 
@@ -21,7 +21,7 @@ run resolved and did. Options exist only where an issue in this epic names a con
 ```nix
 inputs = {
   nixos-config.url = "github:sammasak/nixos-config";
-  factum = { url = "github:sammasak/factum"; flake = false; };   # a source repo
+  factum = { url = "github:sammasak/factum"; flake = false; };   # a source repo (this flake pins it over git+ssh)
   skills = { url = "github:sammasak/skills"; flake = false; };   # the skills tree
 };
 ```
@@ -33,8 +33,8 @@ in, or throws the failed checks:
 ```nix
 imports = [ inputs.nixos-config.nixosModules.agent-runtime ];                  # in a host
 
-manifests = (inputs.nixos-config.lib.agentRuntime { inherit pkgs; }).evalManifests {
-  modules = [ ./templates.nix ];                                               # without one
+runtime = (inputs.nixos-config.lib.agentRuntime { inherit pkgs; }).evalManifests {
+  modules = [ ./templates.nix ];                     # without one: runtime.manifestDir etc.
 };
 ```
 
@@ -51,23 +51,24 @@ The reference consumer is `tests/agent-runtime/flake.nix` (templates `rust-worke
 
 ## Options
 
-The generated reference (`nix build .#agent-runtime-options`) is authoritative. The shape,
-where `x ? d` defaults to `d` and every other field is required (notably `skillsSource`, each
-private mount's `sizeMiB`, and `cpus`, `memoryMiB`, `timeoutMinutes`):
+The generated reference (`nix build .#agent-runtime-options`) is authoritative. The shape is
+below; `x ? d` means the field defaults to `d`, and every other field is required (notably
+`skillsSource`, each private mount's `sizeMiB`, and `cpus`, `memoryMiB`, `timeoutMinutes`):
 
 - `sam.agentRuntime.templates.<name>`: a description of possible instances; the name, like
-  every repository name and `role.name`, is lowercase letters, digits and `-`.
+  every repository name and `role.name`, is a label: lowercase letters, digits and `-`,
+  starting and ending with a letter or digit, at most 63 characters.
   - `role = { name; harness = "claude-code" | "codex" | "pi"; }`
-  - `repositories.<name> = { github = "owner/repo"; ref = { type = "branch" | "tag" | "commit";
-    value; }; resolve ? "lock"; lock ? null; path; writable ? false; }` with
+  - `repositories ? { }`, each `<name> = { github = "owner/repo"; ref = { type = "branch" |
+    "tag" | "commit"; value; }; resolve ? "lock"; lock ? null; path; writable ? false; }` with
     `lock = inputs.<input>`
-  - `skillsSource = inputs.skills;` and `skills.<skill-dir-name> = { }`
-  - `packages = with pkgs; [ ... ]`
+  - `skillsSource = inputs.skills;` and `skills ? { }`, each `<skill-dir-name> = { }`
+  - `packages ? [ ]`, as `with pkgs; [ ... ]`
   - `filesystem`: `workspace ? "/workspace"` (parent of every repository path); the private
     mounts `home` (`/home/agent`), `tmp` (`/tmp`), `cache` (`/var/cache/agent`), `output`
     (`/output`), each `{ path ? <that default>; sizeMiB; inodes ? 100000; }`; and
-    `mounts = [ { hostPath; path; writable ? false; } ]`, host bind mounts restricted by
-    `host.allowedMountRoots`
+    `mounts ? [ ]`, each `{ hostPath; path; writable ? false; }`, host bind mounts restricted
+    by `host.allowedMountRoots`
   - `resources = { cpus; memoryMiB; tasksMax ? 512; timeoutMinutes; }`
   - `network.allow ? null`: `null` is no egress; a non-empty list of DNS names is the egress
     allowlist
@@ -128,30 +129,36 @@ No evaluation fetches anything: every revision comes from a locked input or is l
 ## Validation
 
 Each of the cases in `tests/agent-runtime/cases.nix` fails evaluation (no manifest is produced)
-with a message that names the option; the checks run all of them and match the messages. What
-is refused:
+with a message that names the option; the flake check confirms each fails, and
+`nixos:agent-runtime-test` also matches each message. What is refused:
 
-- refs: a `ref.type` outside `branch | tag | commit`; a branch, tag or commit without `lock`
-  (or with one under `resolve = "assignment"`, or a commit under `assignment` at all); a commit
-  whose `lock.rev` differs from it; a ref name git would reject (a leading `-` or `.`, `..`,
-  `//`, a component ending in `.` or `.lock`).
+- refs: a `ref.type` outside `branch | tag | commit`; under `resolve = "lock"`, any ref without
+  `lock`; under `resolve = "assignment"`, a branch or tag with `lock`, or any commit; a commit
+  whose `lock.rev` differs from it; a ref name outside letters, digits and `._/-`, or one git
+  would reject (a leading `-`, a component starting with `.` or ending in `.` or `.lock`, `..`,
+  `//`).
 - sources: the same `github` + ref twice; a repository without `path`; a path outside or equal
   to `filesystem.workspace`; a `lock.outPath` that is a path literal (it would copy into the
   store); a template or repository name that is not lowercase letters, digits and `-`.
 - paths: any two of repository paths, private mounts, host-mount targets and the workspace
   equal or nested (a repository under the workspace is the one allowed pair); a path on, or
-  containing, `/nix`, `/etc`, `/proc`, `/sys`, `/dev`, `/run`, `/usr`, `/bin`, `/lib`,
-  `/lib64`, `/sbin`, `/boot`, `/root`, `/var/lib`; a path with `.`/`..`, `//`, a trailing
-  slash, or characters outside `[A-Za-z0-9._-]`.
+  containing, a root the runtime owns inside the instance (`/nix`, `/etc`, `/proc`, `/sys`,
+  `/dev`, `/run`, `/var/run`, `/usr`, `/bin`, `/lib`, `/lib64`, `/sbin`, `/boot`, `/root`,
+  `/var/lib`); a path with `.`/`..`, `//`, a trailing slash, or characters outside
+  `[A-Za-z0-9._-]`.
 - skills: a name without `<skillsSource>/skills/<name>/SKILL.md` (the message lists the known
   names), including any name with `/`.
-- policy: a value of the wrong type (`memoryMiB = "4G"`, an IP literal or single-label name in
-  `allow`, an empty `allow` list, an unknown harness or capability).
+- policy: a value of the wrong type or shape (`memoryMiB = "4G"`, an IP literal, a single-label
+  name or a name over 253 characters or with a label over 63 in `allow`, an empty `allow` list,
+  an unknown harness or capability, a `github` that is not `owner/repo`, a `lock.rev` that is
+  not 40 hex or a `lock.narHash` that is not a sha256 SRI hash).
 - host: a mount whose `hostPath` is under no allowed root, or bound read-write under a
   read-only root (the most specific covering root decides); an allowed root declared twice;
-  an allowed root on, or containing, `/nix`, `/etc`, `/proc`, `/sys`, `/dev`, `/run`,
-  `/var/run`, `/var/lib`, `/usr`, `/tmp`, `/boot`, `/root`, `/home`; `eligibleTemplates`
-  naming no template, or set while `host.enable` is false.
+  an allowed root on, or containing, host state no template may reach (`/nix`, `/etc`,
+  `/proc`, `/sys`, `/dev`, `/run`, `/var/run`, `/var/lib`, `/var/tmp`, `/var/log`, `/usr`,
+  `/tmp`, `/boot`, `/root`, `/home`: the instance list plus the world-writable, log and
+  user directories a host exposes); `eligibleTemplates` naming no template, or set while
+  `host.enable` is false.
 
 ## Manifest (`agent-runtime-template`, schemaVersion 1)
 
@@ -196,7 +203,8 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
 - Store paths keep their Nix string context, so `nix build .#agent-runtime-manifests` realizes
   the whole template closure and the `result` link is a GC root for it. Only `name` and
   `storePath` of a package are serialized.
-- `allow` and `capabilities` are emitted sorted and deduplicated.
+- `policies.network.egress` is `"none"` with `allow: []` when `network.allow = null`, else
+  `"allowlist"`; `allow` and `capabilities` are emitted sorted and deduplicated.
 - Credentials never belong here. `capabilities` and `writable` declare intent; grants are per
   run and outside the store (#137). `agent-runtime-eval` refuses an example manifest with a
   secret-like field name or a value that looks like a GitHub, Anthropic or AWS key or a
@@ -207,7 +215,8 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
 - `nix flake check`: `checks.x86_64-linux.agent-runtime-eval`.
 - `devenv tasks run nixos:agent-runtime-test` (part of `nixos:qa`): `scripts/test-agent-runtime.sh`
   evaluates `tests/agent-runtime` as an external consumer flake with this repo as its
-  `nixos-config` input (`--override-input`, nothing copied): the two templates, the consumer
+  `nixos-config` input (`--override-input`; no module code is vendored into it): the two
+  templates, the consumer
   `nixosSystem`'s toplevel (eval only), the same host with a bad template refused through
   NixOS's own assertions, and every negative case with its message.
 

@@ -135,7 +135,7 @@ in
   }
   {
     name = "nested-path-overlap";
-    expect = "instance paths overlap: /workspace/factum/target vs /workspace";
+    expect = "instance paths overlap: /workspace/factum/target vs /workspace; ";
     module = bad {
       repositories.factum = lockedMain { };
       filesystem.tmp.path = "/workspace/factum/target";
@@ -194,7 +194,7 @@ in
   }
   {
     name = "wrong-resource-type";
-    expect = "memoryMiB' is not of type";
+    expect = "templates.bad.resources.memoryMiB' is not of type";
     module = bad { resources.memoryMiB = "4G"; };
   }
   {
@@ -240,6 +240,16 @@ in
     name = "host-root-denied";
     expect = "/run/agent-cache is on a denied host root";
     module = { sam.agentRuntime.host.allowedMountRoots = [ "/run/agent-cache" ]; };
+  }
+  {
+    name = "reserved-var-run";
+    expect = "instance path on a reserved root";
+    module = bad { filesystem.cache.path = "/var/run/agent"; };
+  }
+  {
+    name = "host-root-ancestor";
+    expect = "/var is on a denied host root";
+    module = { sam.agentRuntime.host.allowedMountRoots = [ "/var" ]; };
   }
   {
     name = "host-root-var-lib";

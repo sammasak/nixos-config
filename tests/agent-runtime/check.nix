@@ -1,6 +1,6 @@
-# `nix flake check` half of the eval test: the example manifests pass the
-# shape checks (realizing their package closures, substituted not built) and
-# every negative case fails to evaluate.
+# `nix flake check` half of the eval test (scripts/test-agent-runtime.sh is
+# the other): the example manifests pass the shape checks (realizing their
+# package closures, substituted not built) and every negative case fails.
 {
   pkgs,
   lib,
@@ -47,17 +47,18 @@ pkgs.runCommand "agent-runtime-eval"
       while read -r p; do test -f "$p/SKILL.md" || fail "$f" "$name: skill $p"; done < <(jq -r '.skills.names[].path' "$f")
       while read -r p; do test -e "$p" || fail "$f" "$name: package $p"; done < <(jq -r '.packages[].storePath' "$f")
     done
-    f="$manifests/rust-worker.json"
-    jq -e '.skills.names | keys == ["nix-flake-development", "rust-engineering"]' "$f" >/dev/null || fail "$f" "rust-worker: skills"
-    jq -e '.packages | length == 4' "$f" >/dev/null || fail "$f" "rust-worker: packages (mirrors templates.nix)"
+    rw="$manifests/rust-worker.json"
+    dr="$manifests/docs-reviewer.json"
+    jq -e '.skills.names | keys == ["nix-flake-development", "rust-engineering"]' "$rw" >/dev/null || fail "$rw" "rust-worker: skills"
+    jq -e '.packages | length == 4' "$rw" >/dev/null || fail "$rw" "rust-worker: packages (mirrors templates.nix)"
     jq -e '.policies | .network == { egress: "allowlist", allow: ["crates.io", "github.com", "static.crates.io"] }
-      and .capabilities == ["github-comment", "github-read"] and .resources.memoryMiB == 3072' "$f" >/dev/null \
-      || fail "$f" "rust-worker: policies"
-    jq -e '.policies.network == { egress: "none", allow: [] }' "$manifests/docs-reviewer.json" >/dev/null \
-      || fail "$manifests/docs-reviewer.json" "docs-reviewer: no egress"
-    jq -e --arg rev "$factumRev" '.sources.factum | .locked.rev == $rev and .writable' "$f" >/dev/null || fail "$f" "rust-worker: locked branch"
-    jq -e '.sources["factum-pinned"] | .locked.rev == .ref.value and (.locked.storePath | startswith("/nix/store/"))' "$f" >/dev/null || fail "$f" "rust-worker: commit"
-    jq -e '.sources["factum-release"] | .locked == null and .ref.type == "tag"' "$f" >/dev/null || fail "$f" "rust-worker: tag"
-    jq -e '[.filesystem.mounts[] | .writable] == [false, true]' "$f" >/dev/null || fail "$f" "rust-worker: mounts"
+      and .capabilities == ["github-comment", "github-read"] and .resources.memoryMiB == 3072' "$rw" >/dev/null \
+      || fail "$rw" "rust-worker: policies"
+    jq -e '.policies.network == { egress: "none", allow: [] }' "$dr" >/dev/null \
+      || fail "$dr" "docs-reviewer: no egress"
+    jq -e --arg rev "$factumRev" '.sources.factum | .locked.rev == $rev and .writable' "$rw" >/dev/null || fail "$rw" "rust-worker: locked branch"
+    jq -e '.sources["factum-pinned"] | .locked.rev == .ref.value and (.locked.storePath | startswith("/nix/store/"))' "$rw" >/dev/null || fail "$rw" "rust-worker: commit"
+    jq -e '.sources["factum-release"] | .locked == null and .ref.type == "tag"' "$rw" >/dev/null || fail "$rw" "rust-worker: tag"
+    jq -e '[.filesystem.mounts[] | .writable] == [false, true]' "$rw" >/dev/null || fail "$rw" "rust-worker: mounts"
     touch "$out"
   ''

@@ -70,6 +70,7 @@ let
     "/boot"
     "/root"
     "/var/lib"
+    "/var/run"
   ];
   # Host state no template may reach, nor any directory containing it.
   deniedHostRoots = [
@@ -81,6 +82,8 @@ let
     "/run"
     "/var/run"
     "/var/lib"
+    "/var/tmp"
+    "/var/log"
     "/usr"
     "/tmp"
     "/boot"
@@ -151,8 +154,7 @@ let
         type = githubRepo;
         description = "GitHub `owner/repo`.";
       };
-      # The issue's literal shape, kept for schema stability; a tagged union would
-      # move the commit rule into the type.
+      # The issue's literal shape, kept for schema stability.
       ref = {
         type = mkOption {
           type = types.enum [ "branch" "tag" "commit" ];
@@ -338,8 +340,8 @@ let
     let
       dir = "${src.outPath}/skills";
     in
-    if builtins.pathExists dir then
-      lib.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir dir))
+    if lib.pathIsDirectory dir then
+      lib.attrNames (lib.filterAttrs (_: t: t == "directory" || t == "symlink") (lib.readDir dir))
     else
       [ ];
 
@@ -399,9 +401,10 @@ let
     let
       at = "sam.agentRuntime.templates.${name}";
       repos = lib.mapAttrsToList (n: r: r // { name = n; }) t.repositories;
-      identities = map (r: "${r.github}#${r.ref.type}:${r.ref.value}") repos;
-      overlapsFound = overlapping (pathsOf t);
-      onReserved = map (p: p.path) (onRoots reservedRoots (pathsOf t));
+      identities = map (r: "${lib.toLower r.github}#${r.ref.type}:${r.ref.value}") repos;
+      paths = pathsOf t;
+      overlapsFound = overlapping paths;
+      onReserved = map (p: p.path) (onRoots reservedRoots paths);
       known = skillsOf t.skillsSource;
       badNames = lib.filter (n: !isLabel n) (lib.attrNames t.repositories);
     in
@@ -430,10 +433,10 @@ let
     ]
     # Membership first: a name with `/` must never reach the path below.
     ++ lib.mapAttrsToList (n: _: {
-      assertion = lib.elem n known && builtins.pathExists "${t.skillsSource.outPath}/skills/${n}/SKILL.md";
+      assertion = lib.elem n known && lib.pathExists "${t.skillsSource.outPath}/skills/${n}/SKILL.md";
       message = "${at}.skills.${n}: not in skills source ${t.skillsSource.rev} (known: ${lib.concatStringsSep ", " known})";
     }) t.skills
-    ++ lib.concatMap (mountChecks "${at}.filesystem.mounts") t.filesystem.mounts;
+    ++ lib.concatLists (lib.imap0 (i: mountChecks "${at}.filesystem.mounts.${toString i}") t.filesystem.mounts);
 
   rootPaths = map (r: r.path) cfg.host.allowedMountRoots;
   deniedRoots = map (r: r.path) (onRoots deniedHostRoots cfg.host.allowedMountRoots);
@@ -481,7 +484,7 @@ let
         inherit (t) role filesystem;
         sources = lib.mapAttrs (_: r: {
           inherit (r) github ref resolve path writable;
-          locked = if r.lock == null then null else sourceRef r.lock;
+          locked = lib.mapNullable sourceRef r.lock;
         }) t.repositories;
         skills = {
           source = sourceRef t.skillsSource;
@@ -495,21 +498,21 @@ let
           inherit (t) resources;
           network = {
             egress = if t.network.allow == null then "none" else "allowlist";
-            allow = lib.naturalSort (lib.unique (if t.network.allow == null then [ ] else t.network.allow));
+            allow = lib.naturalSort (lib.unique (lib.optionals (t.network.allow != null) t.network.allow));
           };
           capabilities = lib.naturalSort (lib.unique t.capabilities);
         };
       };
       lockedSources = {
-        sources = lib.mapAttrs (_: s: if s.locked == null then null else { inherit (s.locked) rev narHash; }) body.sources;
+        sources = lib.mapAttrs (_: s: lib.mapNullable (l: { inherit (l) rev narHash; }) s.locked) body.sources;
         skills = { inherit (body.skills.source) rev narHash; };
       };
     in
     body
     // {
       digests = {
-        template = builtins.hashString "sha256" (builtins.toJSON body);
-        lockedSources = builtins.hashString "sha256" (builtins.toJSON lockedSources);
+        template = lib.hashString "sha256" (lib.toJSON body);
+        lockedSources = lib.hashString "sha256" (lib.toJSON lockedSources);
       };
     };
 in
@@ -524,7 +527,7 @@ in
     host = {
       enable = mkEnableOption "admitting agent-runtime instances on this host (required before any template is eligible; #138 starts nothing without it)";
       eligibleTemplates = mkOption {
-        type = types.listOf types.str;
+        type = types.listOf dnsLabel;
         default = [ ];
         description = "Templates this host may instantiate (#138).";
       };
