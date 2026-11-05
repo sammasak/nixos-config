@@ -37,6 +37,8 @@ let
           inputs.sops-nix.nixosModules.sops
           inputs.home-manager.nixosModules.home-manager
           inputs.disko.nixosModules.disko
+          # off until a host sets sam.agentRuntime.host.enable (#140); then 70-deploy.nix adds its profile
+          ../modules/agent-runtime/host.nix
           (nixos: {
             nixpkgs.overlays = [
               config.flake.overlays.default

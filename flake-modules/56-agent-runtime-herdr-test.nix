@@ -11,6 +11,11 @@
           inherit pkgs lib;
           skills = inputs.skills;
         };
+        # two nodes: a coordinator reaching the runtime host through a saved Herdr machine
+        agent-runtime-herdr-machines-test = import ../tests/agent-runtime-herdr-machines.nix {
+          inherit pkgs lib;
+          skills = inputs.skills;
+        };
       };
     };
 }

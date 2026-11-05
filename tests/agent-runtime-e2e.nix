@@ -95,9 +95,9 @@ pkgs.testers.runNixOSTest {
     boot.kernel.sysctl."vm.panic_on_oom" = 0;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    # the VM has no network: the locked source, the skills tree and the package closure must be in its
-    # store so `create` can assign and materialize offline (the manifest only names them as strings)
-    virtualisation.additionalPaths = [ rfProto skills env ];
+    # the VM has no network: the locked source, the skills tree, the package closure and the manifest
+    # itself (#155's create GC-roots it with `nix build`) must be in its store so `create` works offline
+    virtualisation.additionalPaths = [ rfProto skills env evaluated.manifestDir ];
     environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils jq herdr ];
     systemd.services.herdr = {
       description = "Herdr server of the host";

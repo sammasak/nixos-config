@@ -6,7 +6,7 @@
 # process surviving; export bundles patches, output and a bounded log; destroy
 # tears down in order and releases the reservation last. An outcome that was never
 # recorded (supervisor or host crash) is reported as ambiguous and never replayed.
-USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST --host POLICY --task REF [--plan PLAN.json]... | start ID [--root] [--timeout-sec N] [--idmap] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID | destroy ID [--discard] | reconcile | record-exit ID'
+USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--root] [--timeout-sec N] [--idmap] [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID | destroy ID [--discard] | reconcile | record-exit ID'
 state=/var/lib/agent-runtime
 if [ "${1:-}" = --state ]; then
   [ $# -ge 2 ] || usage
@@ -21,10 +21,11 @@ self=$(realpath "$0")
 log_cap=$((1024 * 1024))
 volume_names=(workspace home tmp cache output)
 
-valid_id() { [[ $1 =~ ^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ && $1 != exports ]]; }
+# 29: an instance id doubles as the Herdr runtime id (rt-<id>, Herdr agent names <= 32)
+valid_id() { [[ $1 =~ ^[a-z0-9]([a-z0-9-]{0,27}[a-z0-9])?$ && $1 != exports ]]; }
 take_id() {
   [ $# -ge 1 ] || usage
-  valid_id "$1" || fail usage "instance id must be a DNS label of at most 42 characters, not \`exports\`: $1"
+  valid_id "$1" || fail usage "instance id must be a DNS label of at most 29 characters, not \`exports\`: $1"
   id=$1
   base=$state/$id
   root=$rundir/$id/root
@@ -144,6 +145,10 @@ teardown() {  # every step idempotent; a step that fails leaves the reservation,
   systemctl reset-failed "$unit" 2>/dev/null || true
   # the egress allowlist table, if any (the veth dies with the container's netns on stop)
   command -v nft >/dev/null && nft delete table inet "art_$id" 2>/dev/null || true
+  # a minted token is revoked at the issuer before its tmpfs copy goes (best effort: it expires anyway)
+  if [ -f "$base/cred-issuer" ] && [ -f "$rundir/$id/cred/token" ]; then
+    timeout 30 "$(cat "$base/cred-issuer")" revoke --instance "$id" --token-file "$rundir/$id/cred/token" >/dev/null 2>&1 || true
+  fi
   if mountpoint -q "$root"; then umount -R "$root"; fi
   # a SIGKILLed nspawn leaves its per-machine directories (and the unix-export mount) behind
   for p in "/run/systemd/nspawn/$machine" "/run/systemd/nspawn/propagate/$machine"; do
@@ -165,7 +170,7 @@ case $cmd in
   create)
     take_id "$@"
     shift
-    template='' host='' task='' plans=()
+    template='' host=/etc/agent-runtime/host.json task='' plans=()
     while [ $# -gt 0 ]; do
       case $1 in
         --template) [ $# -ge 2 ] || usage; template=$2; shift 2 ;;
@@ -175,7 +180,7 @@ case $cmd in
         *) usage ;;
       esac
     done
-    [ -n "$template" ] && [ -n "$host" ] && [ -n "$task" ] || usage
+    [ -n "$template" ] && [ -n "$task" ] || usage
     [ -f "$template" ] && [ -f "$host" ] || fail usage "template or host policy not found"
     jq -e '.kind == "agent-runtime-host" and .schemaVersion == 1' "$host" >/dev/null 2>&1 \
       || fail usage "$host is not an agent-runtime-host policy, schemaVersion 1"
@@ -229,6 +234,12 @@ case $cmd in
     cp "$template" "$base/template.json"
     cp "$host" "$base/host.json"
     run_capture state "assign failed" agent-runtime-assign --template "$template" --run "$id" --out "$base/run" "${plans[@]}"
+    # the manifest references the template's whole closure (packages, skills): rooted here, an
+    # in-flight instance keeps it across a template profile update and nix-collect-garbage -d
+    template_store=$(realpath "$template")
+    if [[ $template_store == /nix/store/* ]]; then
+      run_capture store "cannot root the template $template_store" nix_cmd build --out-link "$base/template-root" "$template_store"
+    fi
     for vname in "${volume_names[@]}"; do
       v=$(jq -c --arg n "$vname" '.[$n]' <<<"$vols")
       owner=$((uidbase + $(jq -r .owner <<<"$v")))
@@ -249,9 +260,9 @@ case $cmd in
     sync -f "$base"
     jq -n --arg id "$id" --arg task "$task" --arg host "$(hostname)" --arg at "$(now)" --argjson uid "$uidbase" \
       --arg unit "$unit" --arg machine "$machine" --argjson vols "$vols" --arg b "$base" \
-      --slurpfile t "$template" --slurpfile r "$base/run/run.json" '
+      --slurpfile t "$template" --slurpfile r "$base/run/run.json" --arg ts "$template_store" '
       {schemaVersion: 1, kind: "agent-runtime-instance-record", id: $id, task: $task, host: $host,
-       template: {name: $t[0].template.name, digests: $t[0].digests}, run: {digest: $r[0].digests.run},
+       template: {name: $t[0].template.name, digests: $t[0].digests, manifest: $ts}, run: {digest: $r[0].digests.run},
        uidBase: $uid, unit: $unit, machine: $machine, createdAt: $at,
        volumes: ($vols | with_entries(.value |= {path, sizeMiB, inodes} + {image: ($b + "/img/" + .key + ".img"), mount: ($b + "/vol/" + .key)}))}' \
       | atomic_json "$base/instance.json"
@@ -262,7 +273,7 @@ case $cmd in
   start)
     take_id "$@"
     shift
-    uid=1000 timeout_sec='' opt='' wait=0 cred_file=''
+    uid=1000 timeout_sec='' opt='' wait=0 cred_file='' issuer='' cred_ttl=''
     while [ $# -gt 0 ]; do
       case $1 in
         --root) uid=0; shift ;;
@@ -272,11 +283,17 @@ case $cmd in
         # a per-run secret read from a host path (LoadCredential, a sops path); delivered on tmpfs,
         # never written under the instance's persistent /var/lib state, never from the manifest
         --credential) [ $# -ge 2 ] || usage; cred_file=$2; shift 2 ;;
+        # or a token minted for this run by a host-side issuer, scoped to the template's capabilities, with an expiry
+        --credential-issuer) [ $# -ge 2 ] || usage; issuer=$2; shift 2 ;;
+        --credential-ttl) [ $# -ge 2 ] || usage; cred_ttl=$2; shift 2 ;;
         --) shift; break ;;
         *) usage ;;
       esac
     done
     [ -z "$cred_file" ] || [ -f "$cred_file" ] || fail usage "--credential $cred_file not found"
+    [ -z "$cred_file" ] || [ -z "$issuer" ] || fail usage "--credential and --credential-issuer exclude each other"
+    [ -z "$issuer" ] || [ -x "$issuer" ] || fail usage "--credential-issuer $issuer is not executable"
+    [ -n "$issuer" ] || [ -z "$cred_ttl" ] || fail usage "--credential-ttl needs --credential-issuer"
     [ $# -ge 1 ] || usage
     [ -d "$base" ] || fail state "$id does not exist"
     lock_instance
@@ -328,20 +345,41 @@ case $cmd in
       printf '127.0.0.1 localhost\n' >"$hostsfile"
       while IFS= read -r n; do
         [ -n "$n" ] || continue
-        aip=$(getent hosts "$n" | awk '{print $1; exit}') || true
+        # IPv4 only: the filter matches `ip daddr`; an IPv6 answer would only make it fail to install
+        aip=$(getent ahostsv4 "$n" | awk '{print $1; exit}') || true
         [ -n "$aip" ] || fail state "$id: egress allowlist name $n did not resolve on the host"
         printf '%s %s\n' "$aip" "$n" >>"$hostsfile"
         allow_ips="$allow_ips $aip"
       done < <(jq -r '.policies.network.allow[]?' "$t")
       netbind=(--bind-ro="$hostsfile:/etc/hosts")
     fi
-    credbind=()
-    if [ -n "$cred_file" ]; then
+    # the credential: a token the issuer mints for this run, or a host file; either way only on tmpfs, never in a record
+    credbind=() cred_meta=null minted=''
+    if [ -n "$issuer" ]; then
+      caps=$(jq -c '.policies.capabilities' "$t")
+      [ "$(jq length <<<"$caps")" -gt 0 ] || fail credential "$id: the template declares no capabilities; there is nothing to mint"
+      ttl=${cred_ttl:-$limit}
+      [[ $ttl =~ ^[1-9][0-9]*$ ]] && [ "$ttl" -le "$limit" ] || fail usage "--credential-ttl must be 1..$limit seconds: a token never outlives the run"
+      run_capture credential "the credential issuer failed" \
+        "$issuer" mint --instance "$id" --task "$(jq -r .task "$base/instance.json")" --capabilities "$caps" --ttl "$ttl"
+      minted=$captured
+      jq -e --argjson caps "$caps" --argjson now "$(date +%s)" --argjson ttl "$ttl" '
+        (.token | type == "string" and test("^[A-Za-z0-9._~+/=-]{16,4096}$"))
+        and (.scopes | type == "array" and length > 0 and all(.[]; . as $s | $caps | index($s)))
+        and (.expires_at | type == "number" and . > $now and . <= $now + $ttl + 5)' <<<"$minted" >/dev/null \
+        || fail credential "$id: the issuer's token is malformed, not within the template's capabilities $caps, or not expiring within ${ttl}s; nothing was started"
+      cred_meta=$(jq -c --arg i "$issuer" '{kind: "minted", issuer: $i, scopes, expiresAt: .expires_at}' <<<"$minted")
+      printf '%s\n' "$issuer" | atomic_json "$base/cred-issuer"
+    elif [ -n "$cred_file" ]; then
+      cred_meta='{"kind":"file","scopes":null,"expiresAt":null}'
+    fi
+    if [ -n "$minted" ] || [ -n "$cred_file" ]; then
       creddir=$rundir/$id/cred
-      mkdir -p "$creddir"; install -m 0400 "$cred_file" "$creddir/token"
+      mkdir -p "$creddir"
+      chmod 0700 "$creddir"
+      if [ -n "$minted" ]; then (umask 077; jq -j .token <<<"$minted" >"$creddir/token"); else install -m 0400 "$cred_file" "$creddir/token"; fi
+      chmod 0400 "$creddir/token"
       chown -R "$((uidbase + uid)):$((uidbase + uid))" "$creddir"
-      # the hash, not the secret, is kept at rest so export can refuse a leak without the caller re-passing it
-      sha256sum <"$cred_file" | cut -d' ' -f1 >"$base/cred-sha256"
       credbind=(--bind-ro="$creddir:/run/agent-runtime/credentials")
     fi
     setpriv=$(realpath "$(command -v setpriv)")
@@ -378,7 +416,6 @@ case $cmd in
     # the marker comes first: a crash between it and the unit is reported as ambiguous, never re-run
     jq -nc --arg at "$(now)" '{at: $at}' | atomic_json "$base/starting"
     systemctl reset-failed "$unit" 2>/dev/null || true
-    ifaces_before=$(ip -o link show | awk -F': ' '{print $2}' | cut -d@ -f1)
     run_capture state "systemd-run failed" "${args[@]}"
     invocation=$(systemctl show -p InvocationID --value "$unit" 2>/dev/null || true)
     leader=''
@@ -393,10 +430,14 @@ case $cmd in
     if [ "$egress" = allowlist ] && [ -n "$leader" ]; then
       slot=$(( (uidbase - 1048576) / 65536 ))
       sub="10.$((slot / 256)).$((slot % 256))"
+      # the instance's own end names its peer (host0@ifN, N the host-side index): two egress starts at once
+      # cannot take each other's veth, as a before/after diff of the host's links could
       veth=''
       for _ in $(seq 1 50); do
-        veth=$(comm -13 <(printf '%s\n' "$ifaces_before" | sort) \
-                        <(ip -o link show | awk -F': ' '{print $2}' | cut -d@ -f1 | sort) | grep -E '^ve-' | head -1)
+        peer=$(nsenter -t "$leader" -n ip -o link show host0 2>/dev/null | sed -n 's/^[0-9]*: host0@if\([0-9]*\):.*/\1/p')
+        if [ -n "$peer" ]; then
+          veth=$(ip -o link show | awk -F': ' -v i="$peer" '$1 == i {print $2; exit}' | cut -d@ -f1)
+        fi
         if [ -n "$veth" ]; then break; fi
         sleep 0.1
       done
@@ -412,7 +453,6 @@ case $cmd in
         nft add chain inet "$tbl" "$hook" "{ type filter hook $hook priority -10; policy accept; }"
         nft add rule inet "$tbl" "$hook" iifname "$veth" ct state established,related accept
         for aip in $allow_ips; do nft add rule inet "$tbl" "$hook" iifname "$veth" ip daddr "$aip" tcp dport 443 accept; done
-        nft add rule inet "$tbl" "$hook" iifname "$veth" ip daddr 127.0.0.0/8 accept
         nft add rule inet "$tbl" "$hook" iifname "$veth" drop
       done
       touch "$base/vol/tmp/.net-ready"
@@ -426,9 +466,10 @@ case $cmd in
     fi
     jq -nc --arg at "$(jq -r .at "$base/starting")" --arg inv "$invocation" --argjson uid "$uid" --argjson timeout "$limit" \
       --arg command "${command% }" --arg cg "$(systemctl show -p ControlGroup --value "$unit" 2>/dev/null || true)" \
-      --arg leader "$leader" --argjson ns "$ns" --argjson map "$uid_map" --arg store "${opt:-plain}" \
+      --arg leader "$leader" --argjson ns "$ns" --argjson map "$uid_map" --arg store "${opt:-plain}" --argjson cm "$cred_meta" \
       '{startedAt: $at, invocation: $inv, uid: $uid, timeoutSec: $timeout, command: $command, controlGroup: $cg,
-        leaderPid: ($leader | if . == "" then null else tonumber end), namespaces: $ns, uidMap: $map, storeBind: $store}' \
+        leaderPid: ($leader | if . == "" then null else tonumber end), namespaces: $ns, uidMap: $map, storeBind: $store,
+        credential: $cm}' \
       | atomic_json "$base/started.json"
     exec 9>&-
     if [ "$wait" = 1 ]; then exec "$self" --state "$state" wait "$id"; fi

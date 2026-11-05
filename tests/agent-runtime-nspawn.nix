@@ -11,16 +11,34 @@ let
       {
         sam.agentRuntime.host = {
           enable = true;
-          eligibleTemplates = [ "rust-worker-m0" "tiny" "egress" ];
+          eligibleTemplates = [ "rust-worker-m0" "tiny" "egress" "ghread" ];
           maxConcurrentInstances = 3;
           reserve = { memoryMiB = 2600; diskMiB = 512; };
+        };
+        # #137 slice 3: a token minted for the run, scoped to the one declared capability, used against a
+        # GitHub stand-in reached through the egress allowlist
+        sam.agentRuntime.templates.ghread = {
+          role = { name = "rust-worker"; harness = "claude-code"; };
+          skillsSource = skills;
+          skills.lean-code = { };
+          packages = with pkgs; [ bash coreutils curl cacert ];
+          network.allow = [ "api.test" ];
+          capabilities = [ "github-read" ];
+          filesystem = {
+            workspaceBudget = { sizeMiB = 16; inodes = 1000; };
+            home = { sizeMiB = 16; inodes = 1000; };
+            tmp = { sizeMiB = 16; inodes = 1000; };
+            cache = { sizeMiB = 16; inodes = 1000; };
+            output = { sizeMiB = 16; inodes = 1000; };
+          };
+          resources = { cpus = 1; memoryMiB = 256; tasksMax = 128; timeoutMinutes = 5; };
         };
         # #137 slice 2: minimal egress to one allowlisted name, and a per-run credential at start
         sam.agentRuntime.templates.egress = {
           role = { name = "rust-worker"; harness = "claude-code"; };
           skillsSource = skills;
           skills.lean-code = { };
-          packages = with pkgs; [ bash coreutils curl cacert glibc.bin ];
+          packages = with pkgs; [ bash coreutils curl cacert getent dnsutils ];
           network.allow = [ "allowed.test" ];
           filesystem = {
             workspaceBudget = { sizeMiB = 16; inodes = 1000; };
@@ -215,7 +233,108 @@ let
     echo "allowed: rc=$arc body=[$ab]"
     echo -n "denied-local: "; if curl -sS --max-time 8 -k https://10.9.0.9/ >/dev/null 2>&1; then echo REACHED; else echo "REFUSED rc=$?"; fi
     echo -n "denied-routed: "; if curl -sS --max-time 8 -k https://10.8.0.5/ >/dev/null 2>&1; then echo REACHED; else echo "REFUSED rc=$?"; fi
+    # DNS is closed: only the pinned allowlist resolves, and a raw query to a resolver (on the host, or routed
+    # off it) gets no answer, though both resolvers answer the host itself
+    # getaddrinfo, as curl resolves; the pinned name must resolve, or the denied result proves nothing
+    p=$(getent ahostsv4 allowed.test 2>&1); prc=$?; echo "pinned-name: rc=$prc $(echo "$p" | head -1)"
+    d=$(getent ahostsv4 denied.test 2>&1); drc=$?; echo "denied-name: rc=$drc [$(echo "$d" | head -1)]"
+    for r in 10.9.0.1 10.8.0.5; do
+      a=$(dig +time=2 +tries=1 +short @$r allowed.test 2>&1); rc=$?
+      if [ "$rc" = 0 ] && [ -n "$a" ]; then echo "raw-dns $r: ANSWERED $a"; else echo "raw-dns $r: REFUSED rc=$rc"; fi
+    done
   '';
+  # two credential instances at once: each holds its own token and tries the other's host path and every
+  # other route a token could take into its namespace
+  credPeer = sh "agent-cred-peer" ''
+    set -u
+    export PATH=${tnEnv}/bin
+    w=${tn.filesystem.workspace}
+    touch $w/ready
+    while [ ! -e $w/go ]; do sleep 0.2; done
+    echo "own: $(sha256sum < /run/agent-runtime/credentials/token | cut -c1-16)"
+    peer=$(cat $w/peer)
+    if cat "/run/agent-runtime/$peer/cred/token" 2>/dev/null; then echo "FAIL read the peer token at its host path"; exit 1; fi
+    echo "credentials dir: $(ls /run/agent-runtime/credentials | tr '\n' ' ')"
+    test "$(ls /run/agent-runtime)" = credentials || { echo "FAIL more than our credentials under /run/agent-runtime"; exit 1; }
+    # every file named token this instance can see (the template has no find; bash globstar walks the trees)
+    shopt -s globstar nullglob
+    tokens=(/run/**/token /tmp/**/token /home/**/token /var/**/token /etc/**/token ${tn.filesystem.workspace}/**/token ${tn.filesystem.output.path}/**/token)
+    test "''${tokens[*]}" = /run/agent-runtime/credentials/token || { echo "FAIL token files here: ''${tokens[*]}"; exit 1; }
+    echo "peer $peer: its token is not readable from here"
+  '';
+  # the minted token against the GitHub stand-in: read is in scope, push is not, and after expiry nothing
+  ghEnv = pkgs.buildEnv { name = "agent-runtime-ghread-env"; paths = evaluated.templates.ghread.packages; };
+  ghWork = sh "agent-gh" ''
+    set -u
+    export PATH=${ghEnv}/bin SSL_CERT_FILE=${tn.filesystem.workspace}/ca.pem
+    tok=$(cat /run/agent-runtime/credentials/token)
+    call() { curl -sS --max-time 8 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $tok" "$@" https://api.test/repo; }
+    echo "read: $(call)"
+    echo "push: $(call -X POST)"
+    while [ ! -e ${tn.filesystem.workspace}/expired ]; do sleep 0.2; done
+    echo "read after expiry: $(call)"
+  '';
+  # the issuer and the API it mints for, one program: HMAC-signed tokens carrying scopes and expiry, a
+  # revocation list, and an HTTPS endpoint that answers 200, 403 (scope) or 401 (expired, revoked, bad)
+  fakeGithub = pkgs.writeText "fake-github.py" ''
+    import base64, hashlib, hmac, http.server, json, os, ssl, sys, time
+    STATE = "/var/lib/fake-issuer"
+    KEY = open(f"{STATE}/key", "rb").read()
+    DB = f"{STATE}/tokens.json"
+    def load():
+        try:
+            return json.load(open(DB))
+        except FileNotFoundError:
+            return {}
+    def save(d):
+        json.dump(d, open(DB + ".t", "w")); os.replace(DB + ".t", DB)
+    def b64(b):
+        return base64.urlsafe_b64encode(b).decode().rstrip("=")
+    def sign(p):
+        return b64(hmac.new(KEY, p.encode(), hashlib.sha256).digest())
+    def opts(args):
+        return dict(zip(args[::2], args[1::2]))
+    def mint(args):
+        a = opts(args); caps = json.loads(a["--capabilities"]); exp = int(time.time()) + int(a["--ttl"])
+        scopes = caps + (["github-push"] if os.environ.get("ISSUER_WIDEN") else [])
+        payload = b64(json.dumps({"i": a["--instance"], "s": scopes, "e": exp}).encode())
+        d = load(); d[a["--instance"]] = {"scopes": scopes, "exp": exp, "revoked": False, "task": a["--task"]}; save(d)
+        print(json.dumps({"token": "art." + payload + "." + sign(payload), "scopes": scopes, "expires_at": exp}))
+    def revoke(args):
+        a = opts(args); d = load(); d.setdefault(a["--instance"], {})["revoked"] = True; save(d)
+    def check(tok, need):
+        parts = tok.split(".")
+        if len(parts) != 3 or not hmac.compare_digest(parts[2], sign(parts[1])):
+            return 401, "bad token"
+        c = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+        if load().get(c["i"], {}).get("revoked"):
+            return 401, "revoked"
+        if time.time() >= c["e"]:
+            return 401, "expired"
+        if need not in c["s"]:
+            return 403, "scope " + need + " not granted"
+        return 200, "ok"
+    class H(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+        def answer(self, need):
+            code, msg = check(self.headers.get("Authorization", "").removeprefix("Bearer "), need)
+            body = msg.encode(); self.send_response(code); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        def do_GET(self):
+            self.answer("github-read")
+        def do_POST(self):
+            self.answer("github-push")
+    if sys.argv[1] == "mint":
+        mint(sys.argv[2:])
+    elif sys.argv[1] == "revoke":
+        revoke(sys.argv[2:])
+    else:
+        srv = http.server.ThreadingHTTPServer((sys.argv[2], 443), H)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain("/tmp/ca.pem", "/tmp/k.pem")
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True); srv.serve_forever()
+  '';
+  issuer = sh "fake-issuer" "exec ${pkgs.python3}/bin/python3 ${fakeGithub} \"$@\"";
+  # an issuer that grants more than the template declares: the tool must refuse its token
+  issuerWide = sh "fake-issuer-wide" "ISSUER_WIDEN=1 exec ${pkgs.python3}/bin/python3 ${fakeGithub} \"$@\"";
   # the credential payload (on the non-egress `tiny` template): read it (tmpfs, read-only), print it once (to
   # exercise redaction), write a clean artifact, and optionally leak it to the output for the export-gate test
   tn = evaluated.manifestData.tiny;
@@ -251,6 +370,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.additionalPaths = [
       rfProto skills runtime.tools.instance evaluated.manifestDir evaluated.hostPolicy
       (pkgs.buildEnv { name = "egress-pkgs"; paths = evaluated.templates.egress.packages; })
+      (pkgs.buildEnv { name = "ghread-pkgs"; paths = evaluated.templates.ghread.packages; })
     ];
     # test-instrumentation's mkDefault 2 panics the VM on any cgroup OOM; hosts run the kernel's 0
     boot.kernel.sysctl."vm.panic_on_oom" = 0;
@@ -260,9 +380,13 @@ pkgs.testers.runNixOSTest {
     networking.dhcpcd.denyInterfaces = [ "ve-*" "veth-*" "dummy0" ];
     # the tool resolves the allowlist name on the host via getent; /etc/hosts is read-only on NixOS,
     # so the test's one allowed name is seeded declaratively to the dummy endpoint it serves TLS on
-    networking.hosts."10.9.0.1" = [ "allowed.test" ];
+    networking.hosts = {
+      "10.9.0.1" = [ "allowed.test" ];
+      "10.9.0.2" = [ "api.test" ];
+      "10.9.0.9" = [ "denied.test" ];
+    };
     boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
-    environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils jq iproute2 nftables openssl python3 ];
+    environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils jq iproute2 nftables openssl python3 dnsmasq dnsutils ];
   };
 
   testScript = ''
@@ -272,6 +396,7 @@ pkgs.testers.runNixOSTest {
     RUST = "--template ${manifest "rust-worker-m0"} --host ${evaluated.hostPolicy}"
     TINY = "--template ${manifest "tiny"} --host ${evaluated.hostPolicy}"
     EGRESS = "--template ${manifest "egress"} --host ${evaluated.hostPolicy}"
+    GH = "--template ${manifest "ghread"} --host ${evaluated.hostPolicy}"
     V = "/var/lib/agent-runtime"
     timings: dict[str, dict[str, object]] = {}
 
@@ -677,6 +802,27 @@ pkgs.testers.runNixOSTest {
         assert rc == 5 and "credential appears in an exported artifact" in out, (rc, out)
         machine.succeed(f"{I} destroy crl --discard"); clean("crl")
 
+    with subtest("credentials: two instances at once, each denied the other's"):
+        for i, t in (("ca", "token-a-0123456789abcdef"), ("cb", "token-b-fedcba9876543210")):
+            machine.succeed(f"umask 077; printf %s {t} > /tmp/cred-{i}")
+            machine.succeed(f"{I} create {i} {TINY} --task sammasak/x#5")
+            machine.succeed(f"{I} start {i} --credential /tmp/cred-{i} -- ${credPeer}")
+        machine.wait_until_succeeds(f"test -e {V}/ca/vol/workspace/workspace/ready -a -e {V}/cb/vol/workspace/workspace/ready", timeout=30)
+        assert status("ca")["state"] == "running" and status("cb")["state"] == "running", "not both running at once"
+        for i, peer in (("ca", "cb"), ("cb", "ca")):
+            machine.succeed(f"echo {peer} > {V}/{i}/vol/workspace/workspace/peer")
+            machine.succeed(f"test -e /run/agent-runtime/{peer}/cred/token")  # the peer's token exists on the host
+        for i in ("ca", "cb"):
+            machine.succeed(f"touch {V}/{i}/vol/workspace/workspace/go")
+        for i, own, other in (("ca", "token-a-0123456789abcdef", "token-b-fedcba9876543210"), ("cb", "token-b-fedcba9876543210", "token-a-0123456789abcdef")):
+            machine.wait_until_succeeds(f"{I} status {i} | jq -e '.state == \"succeeded\"'", timeout=60)
+            out = machine.succeed(f"{I} logs {i}")
+            print(i, out)
+            import hashlib
+            assert f"own: {hashlib.sha256(own.encode()).hexdigest()[:16]}" in out and "its token is not readable from here" in out, out
+            assert other not in out and own not in out, out
+            machine.succeed(f"{I} destroy {i} --discard"); clean(i)
+
     with subtest("minimal egress: the allowlisted name over DNS+TLS; local and routed-off-host denied"):
         # endpoints that exist before the instance: 10.9.0.1 allowed (host /etc/hosts maps the name), 10.9.0.9 denied-local;
         # 10.8.0.5 is in a netns reachable only by the host routing (the forward hook must drop it, not the input hook)
@@ -686,12 +832,17 @@ pkgs.testers.runNixOSTest {
         machine.succeed("ip -n ep addr add 10.8.0.5/24 dev veth-e && ip -n ep link set veth-e up && ip -n ep link set lo up && ip -n ep route add default via 10.8.0.1")
         # allowed.test -> 10.9.0.1 is seeded declaratively in networking.hosts (the tool resolves via getent)
         machine.succeed("cd /tmp && openssl req -x509 -newkey rsa:2048 -nodes -keyout k.pem -out ca.pem -days 1 "
-                        "-subj /CN=allowed.test -addext 'subjectAltName=DNS:allowed.test,IP:10.9.0.1,IP:10.9.0.9,IP:10.8.0.5' >/dev/null 2>&1")
+                        "-subj /CN=allowed.test -addext 'subjectAltName=DNS:allowed.test,DNS:api.test,IP:10.9.0.1,IP:10.9.0.2,IP:10.9.0.9,IP:10.8.0.5' >/dev/null 2>&1")
         machine.succeed("systemd-run --unit=tls-local ${pkgs.python3}/bin/python3 ${tlsEndpoint} 0.0.0.0")
         # systemd-run must wrap `ip netns exec` (not the reverse): the transient unit otherwise lands in the
         # root netns and binds nothing, while the endpoint IP only exists inside ep. python3 needs its absolute
         # path -- the transient unit's PATH does not carry /run/current-system/sw/bin into `ip netns exec`.
         machine.succeed("systemd-run --unit=tls-ep ip netns exec ep ${pkgs.python3}/bin/python3 ${tlsEndpoint} 10.8.0.5")
+        # two resolvers that answer the host, one local and one routed off it: the instance must get neither
+        machine.succeed("systemd-run --unit=dns-local ${pkgs.dnsmasq}/bin/dnsmasq -k --listen-address=10.9.0.1 --bind-interfaces --no-resolv --address=/allowed.test/10.9.0.1 --address=/denied.test/10.9.0.9")
+        machine.succeed("systemd-run --unit=dns-ep ip netns exec ep ${pkgs.dnsmasq}/bin/dnsmasq -k --listen-address=10.8.0.5 --bind-interfaces --no-resolv --address=/allowed.test/10.9.0.1")
+        for r in ("10.9.0.1", "10.8.0.5"):
+            machine.wait_until_succeeds(f"dig +time=2 +tries=1 +short @{r} allowed.test | grep -q 10.9.0.1", timeout=20)  # the host gets answers
         machine.wait_until_succeeds("curl -sS --max-time 5 --cacert /tmp/ca.pem https://10.9.0.1/ | grep -q endpoint-ok", timeout=20)
         machine.wait_until_succeeds("curl -sS --max-time 5 -k https://10.8.0.5/ | grep -q endpoint-ok", timeout=20)  # host CAN route to it
         machine.succeed(f"{I} create egr {EGRESS} --task sammasak/egress#1")
@@ -704,9 +855,68 @@ pkgs.testers.runNixOSTest {
         assert re.search(r"allowed: rc=0 body=\[endpoint-ok\]", out), "the allowlisted host was not reached"
         assert re.search(r"denied-local: REFUSED", out), "a non-allowlisted local IP was reachable"
         assert re.search(r"denied-routed: REFUSED", out), "a routed-off-host IP was reachable (forward hook hole)"
+        assert re.search(r"pinned-name: rc=0 10\.9\.0\.1", out), "the pinned allowlist name did not resolve (the denied check would prove nothing)"
+        assert re.search(r"denied-name: rc=2 \[\]", out), "a non-allowlisted name resolved"
+        assert "raw-dns 10.9.0.1: REFUSED" in out and "raw-dns 10.8.0.5: REFUSED" in out, "a raw DNS query got an answer"
         machine.succeed(f"{I} export egr || true; {I} destroy egr --discard"); clean("egr")
         machine.succeed("! nft list tables 2>/dev/null | grep -q art_egr")  # the allowlist table is gone
-        machine.succeed("systemctl stop tls-local tls-ep 2>/dev/null; ip netns del ep; ip link del dummy0")
+
+    with subtest("two egress instances started at once: each filter on its own veth, both work"):
+        for i in ("eg1", "eg2"):
+            machine.succeed(f"{I} create {i} {EGRESS} --task sammasak/egress#2")
+            machine.succeed(f"cp /tmp/ca.pem {V}/{i}/vol/workspace/workspace/ca.pem")
+        # both starts in flight together: the veth each takes is its own container's peer, not a link diff
+        machine.succeed(f"({I} start eg1 --wait -- ${egWork} > /tmp/eg1.out 2>&1 &); ({I} start eg2 --wait -- ${egWork} > /tmp/eg2.out 2>&1 &)")
+        machine.wait_until_succeeds(f"{I} status eg1 | jq -e '.state == \"succeeded\"' && {I} status eg2 | jq -e '.state == \"succeeded\"'", timeout=120)
+        veths = {}
+        for i in ("eg1", "eg2"):
+            out = machine.succeed(f"{I} logs {i}")
+            assert re.search(r"allowed: rc=0 body=\[endpoint-ok\]", out) and "denied-routed: REFUSED" in out, (i, out)
+            veths[i] = sorted(set(re.findall(r'iifname "([^"]+)"', machine.succeed(f"nft list table inet art_{i}"))))
+        print("filtered veths:", veths)
+        assert len(veths["eg1"]) == 1 and len(veths["eg2"]) == 1 and veths["eg1"] != veths["eg2"], veths
+        for i in ("eg1", "eg2"):
+            machine.succeed(f"{I} destroy {i} --discard"); clean(i)
+            machine.succeed(f"! nft list tables 2>/dev/null | grep -q art_{i}")
+
+    with subtest("minted credential: scoped to the template's capability, expiring, revoked at teardown"):
+        machine.succeed("mkdir -p /var/lib/fake-issuer && head -c 32 /dev/urandom > /var/lib/fake-issuer/key")
+        machine.succeed("ip addr add 10.9.0.2/24 dev dummy0")
+        # the egress subtests' endpoint listens on 0.0.0.0:443 (so a denied address had a live listener); it is done
+        machine.succeed("systemctl stop tls-local")
+        machine.succeed("systemd-run --unit=fake-github ${pkgs.python3}/bin/python3 ${fakeGithub} serve 10.9.0.2")
+        machine.wait_until_succeeds("curl -sS --max-time 5 --cacert /tmp/ca.pem -o /dev/null -w '%{http_code}' https://api.test/repo | grep -q 401", timeout=20)
+        # an issuer that grants more than the template declares is refused before anything runs
+        machine.succeed(f"{I} create ghw {GH} --task sammasak/x#3")
+        rc, out = machine.execute(f"{I} start ghw --credential-issuer ${issuerWide} --wait -- ${ghWork} 2>&1")
+        print("issuer granting github-push to a github-read template:", rc, out.strip()[-220:])
+        assert rc == 5 and "not within the template's capabilities" in out and status("ghw")["state"] == "created", (rc, out)
+        rc, out = machine.execute(f"{I} start ghw --credential-issuer ${issuer} --credential-ttl 99999 -- ${ghWork} 2>&1")
+        assert rc == 2 and "never outlives the run" in out, (rc, out)
+        machine.succeed(f"{I} destroy ghw --discard"); clean("ghw")
+        # the real run: a 6 s token, github-read only
+        machine.succeed(f"{I} create gh {GH} --task sammasak/x#4")
+        machine.succeed(f"cp /tmp/ca.pem {V}/gh/vol/workspace/workspace/ca.pem")
+        machine.succeed(f"{I} start gh --credential-issuer ${issuer} --credential-ttl 6 -- ${ghWork}")
+        st = status("gh")
+        cred = st["started"]["credential"]
+        print("credential record:", json.dumps(cred))
+        assert cred["kind"] == "minted" and cred["scopes"] == ["github-read"] and cred["expiresAt"] > time.time(), cred
+        assert "art." not in json.dumps(st), "the token is in the instance record"
+        machine.wait_until_succeeds(f"{I} logs gh | grep -q '^push: '", timeout=60)
+        machine.succeed(f"w=$(( {cred['expiresAt']} - $(date +%s) + 1 )); [ $w -le 0 ] || sleep $w; touch {V}/gh/vol/workspace/workspace/expired")
+        machine.wait_until_succeeds(f"{I} status gh | jq -e '.state == \"succeeded\"'", timeout=60)
+        out = machine.succeed(f"{I} logs gh")
+        print(out)
+        assert "read: 200" in out and "push: 403" in out and "read after expiry: 401" in out, out
+        db = json.loads(machine.succeed("cat /var/lib/fake-issuer/tokens.json"))
+        assert db["gh"]["scopes"] == ["github-read"] and db["gh"]["task"] == "sammasak/x#4" and not db["gh"]["revoked"], db
+        machine.succeed(f"{I} export gh")
+        machine.succeed(f"{I} destroy gh"); clean("gh")
+        db = json.loads(machine.succeed("cat /var/lib/fake-issuer/tokens.json"))
+        print("issuer after destroy:", db["gh"])
+        assert db["gh"]["revoked"], "teardown did not revoke the minted token"
+        machine.succeed("for u in tls-ep dns-local dns-ep fake-github; do systemctl stop $u || true; done; ip netns del ep; ip link del dummy0")
 
     with subtest("host unchanged, nothing left behind"):
         no_leaks("after")
