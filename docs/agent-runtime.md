@@ -338,6 +338,9 @@ four against fixture trees with a fake `nix` that answers `flake prefetch` and
   `capabilities` are inputs for #137 (admission and enforcement); `maxConcurrentInstances`
   and `timeoutMinutes` for #138 (lifecycle). `host.enable` only gates `eligibleTemplates` at
   evaluation; nothing acts on it yet.
+  The nspawn VM fixture (`docs/agent-runtime-nspawn.md`) enforces the mount budgets,
+  `resources`, `host.reserve` and `maxConcurrentInstances` from the evaluated config; the
+  module itself still starts nothing.
 - A writable host mount is shared by every instance that binds it, across templates and
   concurrent runs; #137/#138 must give each instance its own subdirectory or refuse the
   overlap.
