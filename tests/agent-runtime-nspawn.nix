@@ -109,7 +109,8 @@ let
         ;;
       run)  # run <id> <user> <script> [store-bind-opt]
         user=$1; script=$2; opt=''${3:-}
-        systemd-run --unit="agent-runtime-$id" --wait --pipe --quiet \
+        systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
+        systemd-run --unit="agent-runtime-$id" --wait --pipe --collect \
           -p MemoryMax=${template.budget.memoryMax} -p TasksMax=${toString template.budget.tasksMax} -p CPUQuota=${template.budget.cpuQuota} \
           -p KillMode=mixed \
           ${pkgs.systemd}/bin/systemd-nspawn --quiet --keep-unit --settings=no --register=yes \
@@ -193,8 +194,9 @@ pkgs.testers.runNixOSTest {
             started, finished = int(marks.group(1)), int(marks.group(2))
             wall_start = int(machine.succeed("date +%s%N")) - (time.monotonic_ns() - t0)
             timings[run] = {"startup_ms": (started - wall_start) // 1000000, "work_ms": (finished - started) // 1000000, "total_ms": (t1 - t0) // 1000000}
-            mem = machine.succeed(f"systemctl show -p MemoryPeak -p CPUUsageNSec agent-runtime-{run}.service || true")
-            timings[run]["unit"] = mem.replace("\n", " ")
+            summary = re.search(r"(CPU time consumed: [^\n]*)", out)
+            peak = re.search(r"Memory peak: ([^\n]*)", out)
+            timings[run]["unit"] = (summary.group(1) if summary else "?") + "; memory peak: " + (peak.group(1) if peak else "?")
             print(machine.succeed(f"${factory} export {run}"))
             print(machine.succeed(f"cat /var/lib/agent-runtime/exports/{run}/manifest.txt"))
             machine.succeed(f"${factory} destroy {run}")
