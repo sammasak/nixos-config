@@ -34,6 +34,10 @@
     nix-audit.url = "git+ssh://git@github.com/sammasak/nix-audit?rev=38789c530998164335637c6b6982b5ddc9e0fda1";
     nix-audit.flake = false;
 
+    # The agent-runtime M0 fixture's one pinned Rust repository (#135).
+    rf-proto.url = "git+ssh://git@github.com/sammasak/rf-proto?rev=d878c58ebaca9c5281ef522b6fbd1761e122dfb6";
+    rf-proto.flake = false;
+
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
 
