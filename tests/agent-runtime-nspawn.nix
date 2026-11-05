@@ -38,6 +38,8 @@ let
     echo "net: $(ls /sys/class/net | tr '\n' ' ')"
     echo "store_owner: $(stat -c '%u:%g %A' ${env})"
     echo "getent: $(PATH=/usr/bin:/bin getent passwd agent 2>&1; echo "exit=$?")"
+    echo "usr_bin: $(ls -l /usr/bin | tr -s ' ' | cut -d' ' -f9- | tr '\n' ' ')"
+    echo "getent_target: $(ls -ld ${pkgs.glibc.bin}/bin/getent 2>&1)"
     fail=0
     chk() { if "$@"; then echo "ok   $*"; else echo "FAIL $*"; fail=1; fi; }
     chk test ! -e /nix/var/nix/daemon-socket/socket
@@ -70,8 +72,8 @@ let
   # Runs as the unprivileged user `agent`: the real workload and the export.
   work = pkgs.writeShellScript "agent-work" ''
     set -euo pipefail
-    echo "started_ns=$(date +%s%N)"
     export PATH=${env}/bin HOME=${template.filesystem.home} TMPDIR=${template.filesystem.tmp}
+    echo "started_ns=$(date +%s%N)"
     export CARGO_HOME=$HOME/.cargo
     echo "whoami=$(id -u):$(id -g) home_owner=$(stat -c %u $HOME) tmp_mode=$(stat -c %a $TMPDIR)"
     cp -r /src/rf-proto ${template.repository.path}
@@ -114,7 +116,7 @@ let
       run)  # run <id> <uid> <script> [store-bind-opt]: the switch to <uid> happens inside, with setpriv
         user=$1; script=$2; opt=''${3:-}; rc=0
         systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
-        systemd-run --unit="agent-runtime-$id" --wait --pipe --collect \
+        systemd-run --unit="agent-runtime-$id" --wait --pipe --collect -p RemainAfterExit=yes \
           -p MemoryMax=${template.budget.memoryMax} -p TasksMax=${toString template.budget.tasksMax} -p CPUQuota=${template.budget.cpuQuota} \
           -p KillMode=mixed \
           ${pkgs.systemd}/bin/systemd-nspawn --quiet --keep-unit --settings=no --register=yes \
@@ -197,7 +199,8 @@ pkgs.testers.runNixOSTest {
             machine.succeed(f"${factory} create {run}")
             status, out = machine.execute(f"${factory} run {run} 1000 ${work} {opt} 2>&1; echo exit=$?")
             t1 = time.monotonic_ns()
-            print(out[-2500:])
+            print(out[:1200]); print("..."); print(out[-1500:])
+            print(machine.succeed(f"systemctl show -p MemoryPeak -p CPUUsageNSec -p ExecMainStartTimestampMonotonic -p ExecMainExitTimestampMonotonic agent-runtime-{run}.service"))
             assert out.rstrip().endswith("exit=0"), "workload failed"
             assert re.search(r"test result: ok\. \d+ passed", out), "cargo test did not report a pass"
             marks = re.search(r"started_ns=(\d+).*finished_ns=(\d+)", out, re.S)
@@ -205,9 +208,8 @@ pkgs.testers.runNixOSTest {
             started, finished = int(marks.group(1)), int(marks.group(2))
             wall_start = int(machine.succeed("date +%s%N")) - (time.monotonic_ns() - t0)
             timings[run] = {"startup_ms": (started - wall_start) // 1000000, "work_ms": (finished - started) // 1000000, "total_ms": (t1 - t0) // 1000000}
-            summary = re.search(r"(CPU time consumed: [^\n]*)", out)
-            peak = re.search(r"Memory peak: ([^\n]*)", out)
-            timings[run]["unit"] = (summary.group(1) if summary else "?") + "; memory peak: " + (peak.group(1) if peak else "?")
+            unit = machine.succeed(f"systemctl show -p MemoryPeak -p CPUUsageNSec agent-runtime-{run}.service")
+            timings[run]["unit"] = unit.replace("\n", " ").strip()
             print(machine.succeed(f"${factory} export {run}"))
             print(machine.succeed(f"cat /var/lib/agent-runtime/exports/{run}/manifest.txt"))
             machine.succeed(f"${factory} destroy {run}")
