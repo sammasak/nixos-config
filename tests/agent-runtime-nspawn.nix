@@ -19,7 +19,7 @@ let
       source = "${skills}/skills/rust-engineering";
       path = "/skills/rust-engineering";
     };
-    packages = with pkgs; [ bash coreutils findutils gnugrep gnused gawk diffutils util-linux cargo rustc gcc ];
+    packages = with pkgs; [ bash coreutils findutils gnugrep gnused gawk diffutils util-linux glibc.bin cargo rustc gcc ];
     filesystem = { workspace = "/workspace"; home = "/home/agent"; tmp = "/tmp"; export = "/workspace/export"; };
     budget = { memoryMax = "1G"; tasksMax = 512; cpuQuota = "200%"; };
   };
@@ -105,6 +105,9 @@ let
         printf 'root:x:0:\nagent:x:1000:\nnogroup:x:65534:\n' > "$root/etc/group"
         ln -sf ${pkgs.bash}/bin/bash "$root/bin/sh"
         ln -sf ${pkgs.coreutils}/bin/env "$root/usr/bin/env"
+        # nspawn resolves --uid=<name> by running getent inside the container
+        ln -sf ${pkgs.glibc.bin}/bin/getent "$root/usr/bin/getent"
+        printf 'passwd: files\ngroup: files\n' > "$root/etc/nsswitch.conf"
         chown -R $((uidbase + 1000)):$((uidbase + 1000)) "$base/workspace"
         echo "$uidbase" > "$base/uidbase"
         ;;

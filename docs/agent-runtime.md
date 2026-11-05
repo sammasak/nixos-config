@@ -94,17 +94,46 @@ environment; the host verifies the sha256 after the unit has exited, then
 destroys the instance and asserts the leak check. Afterwards the host store's
 entry count and mtime are unchanged and no mount, machine or unit remains.
 
-## Measurements
+## Observed on acer (QEMU, 2026-11-05)
 
-Filled in from the run on acer; see the PR for the raw test log.
+Raw test log in the PR. What the probe recorded as container root:
 
-| item | value |
-|---|---|
-| versions | (kernel, systemd, nixpkgs, rf-proto, skills) |
-| closure | (paths, total NAR bytes) |
-| store bind | (`:idmap` or plain, by the probe) |
-| cold | startup, cargo test, teardown, memory peak |
-| warm | startup, cargo test, teardown, memory peak |
+- `uid_map: 0 1048576 65536`: container root is host UID 1048576; the store
+  shows as `65534:65534 dr-xr-xr-x` (nobody) because the bind is not idmapped.
+- `:idmap` on the store bind was refused in the VM (`Failed to clone
+  /nix/store: Invalid argument`): the test VM's store is an overlay over
+  virtiofs, which has no idmapped-mount support; the fixture fell back to a
+  plain read-only bind and still passed. On a host whose store is ext4 the
+  NixOS containers module uses `:idmap`, so that is the expected production
+  form; it is not proven here.
+- `CapEff`/`CapBnd` `00000000fdecbfff`: nspawn's default retained set for
+  the container's root (within its user namespace), and `NoNewPrivs` was 0
+  until the factory passed `--no-new-privileges=yes` (now asserted 1). The
+  capability bounding set is #137's work.
+- Mounts: `/` tmpfs, `/nix/store`, `/src/rf-proto` and
+  `/skills/rust-engineering` read-only, `/workspace` ext4 rw (the host
+  directory), `/tmp` and `/home/agent` tmpfs with the mapped owner, `/proc/sys`
+  read-only, `/sys` read-only, cgroup2 delegated.
+- `/dev`: console core fd full fuse mqueue net null ptmx pts random shm stderr
+  stdin stdout tty urandom zero. Network: `lo` only.
+- Denied: writes to the store, the environment, the source and the skill
+  binds; `remount,rw` of `/nix/store`, `/src/rf-proto` and `/`; `mknod`;
+  writing `/proc/sys/kernel/sysrq`. Absent: the Nix daemon socket, the
+  systemd control socket, a Docker socket, `/home/lukas`, the host's root
+  sentinel, `SSH_AUTH_SOCK`. Writes in `/workspace` and `/tmp` succeed.
+- The probe instance: service runtime 1.4 s, CPU 0.5 s, memory peak 5.7 MiB
+  (systemd-run's summary).
+
+Two fixture findings worth keeping: a failed transient unit keeps its name
+until `reset-failed` or `--collect`, so the factory does both; and stdout
+passed through `systemd-run --pipe` arrived as empty lines on the test
+backdoor, so the workload logs into its workspace and the factory prints that
+file.
+
+| run | startup | cargo test | teardown | memory peak |
+|---|---|---|---|---|
+| cold | (filled from the PR log) | | | |
+| warm | | | | |
 
 ## Security limitations (initial list, M0)
 
