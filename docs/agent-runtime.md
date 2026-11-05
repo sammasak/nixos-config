@@ -417,9 +417,11 @@ at teardown); no record, manifest, log view or export carries it.
   nothing (class `credential`) unless every scope is one of the template's declared
   `capabilities` and the expiry falls within the TTL; the TTL defaults to, and may not exceed,
   the run's own limit, so no token outlives its run. The record keeps
-  `{"kind": "minted", "issuer", "scopes", "expiresAt"}`. At teardown the tool runs
-  `PROGRAM revoke --instance ID --token-file PATH` before the tmpfs copy goes (best effort; the
-  token expires anyway).
+  `{"kind": "minted", "issuer", "scopes", "expiresAt"}`, the issuer as an absolute path. The tool
+  runs `PROGRAM revoke --instance ID --token-file PATH` at teardown before the tmpfs copy goes, on a
+  token it refuses, and on a stale token a start that died after minting left behind. A failed
+  revoke does not stop teardown (the token expires anyway); it is reported as
+  `{"warning": {"class": "credential", …}}` on stderr.
 
 The VM test proves the contract with a stand-in issuer and API: a token scoped to `github-read`
 reads (200), is refused a push (403) and a read after its expiry (401), and is revoked at

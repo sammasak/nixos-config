@@ -190,16 +190,22 @@ ranges, network links) is printed before, during and after.
     (`getent ahostsv4 allowed.test` → 10.9.0.1) and nothing else
     (`denied.test`: rc 2), and a raw DNS query to a resolver on the host and to
     one routed off it gets no answer, though both answer the host.
-18. **Two egress starts at once**: `eg1` and `eg2` start together; each nft
-    table filters a different veth (the one whose index the container's
-    `host0@ifN` names) and both reach the allowlisted host and are refused the
-    routed one.
+18. **Two egress starts at once**: `eg1` and `eg2` start together and are held
+    running; for each, the veth its nft table filters has the host index that
+    its own container's `host0@ifN` names (so a swap fails), and both reach the
+    allowlisted host and are refused the routed one.
 19. **Minted credential**: a `ghread` instance (`capabilities = [ "github-read" ]`,
     allowlist `api.test`) gets a 6 s token from a stand-in issuer: read 200,
     push 403, read after expiry 401; the record holds scopes and expiry, never
     the token; teardown revokes it at the issuer. An issuer granting
-    `github-push` too is refused (class `credential`, nothing started), and a
-    TTL beyond the run's limit is refused (class `usage`).
+    `github-push` too is refused (class `credential`, nothing started) and its
+    token is revoked at the issuer, and a TTL beyond the run's limit is refused
+    (class `usage`). A relative `--credential-issuer` is recorded absolute, so a
+    `destroy` from another directory still revokes; a revoke that fails is a
+    `{"warning": …}` on `destroy`'s stderr (the token not in it), not silence.
+    A start retried after one that died between minting and its marker revokes
+    the stale token and drops its issuer record, so an operator `--credential`
+    token on the retry is never sent to `revoke`.
 20. **Host unchanged**: the inventory is empty again (links as before), no
     reservation, the store's entries unchanged, the sentinels in place, host
     disk back to the start minus the kept exports.
