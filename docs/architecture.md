@@ -14,6 +14,7 @@
 - `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
 - `55-agent-runtime-test.nix` — the agent-runtime nspawn VM test package (#135, #137, #138)
 - `56-agent-runtime-herdr-test.nix` — the #139 Herdr adapter package and its VM test package
+- `57-agent-runtime-e2e-test.nix` — the #141 end-to-end pilot VM test package
 - `60-templates.nix` — devenv templates stamped by `dev-init`
 - `70-deploy.nix` — deploy-rs push targets
 - `hosts/<name>.nix` — per-host distribution declarations
