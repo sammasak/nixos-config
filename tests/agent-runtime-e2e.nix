@@ -181,17 +181,15 @@ pkgs.testers.runNixOSTest {
         measures["cleanup_ms"] = (time.monotonic_ns() - tc) // 1000000
         measures["e2e_total_ms"] = (time.monotonic_ns() - t0) // 1000000
 
-    with subtest("id bound: the Herdr adapter refuses an id longer than 29 (rt-<id> caps at 32)"):
-        # The durable guarantee: any Herdr-visible runtime id is at most 29 chars, enforced by the adapter.
-        # On this head the lifecycle tool itself still accepts up to 42; #155 (unmerged) narrows the
-        # lifecycle bound to the same 29, after which an over-long `create` fails at the tool too.
+    with subtest("id bound: create and the Herdr adapter both refuse an id longer than 29 (rt-<id> caps at 32)"):
         long = "r" + "0" * 29  # 30 chars
-        create(long)
+        rc, out = machine.execute(f"${I} create {long} --template {M} --host {POLICY} --task sammasak/rf-proto#1 2>&1")
+        print("create on a 30-char id:", rc, out.strip())
+        assert rc == 2 and "at most 29" in out, (rc, out)
+        clean(long)
         rc, out = machine.execute(f"${H} attach {long} {M} sammasak/rf-proto#1 /tmp/l.status -- /bin/true 2>&1")
         print("adapter on a 30-char id:", rc, out.strip())
         assert rc == 64 and "at most 29" in out, (rc, out)
-        machine.succeed(f"${I} destroy {long} --discard")
-        clean(long)
 
     with subtest("failure: admission refuses a third instance over maxConcurrentInstances=2"):
         create("fa"); create("fb")

@@ -35,11 +35,11 @@ terminal unknown that is **reported, never replayed**.
 ```
 # 1. create: admit against the host policy, assign the locked sources, allocate volumes, materialize
 agent-runtime-instance create <id> \
-  --template /nix/store/…-agent-runtime-manifests/<name>.json \
-  --host     /nix/store/…-agent-runtime-host.json \
+  --template /nix/var/nix/profiles/agent-runtime/templates/templates/<name>.json \
+  --host     /etc/agent-runtime/host.json \
   --task     OWNER/REPO#N
 # 2. start: a detached transient unit, user-namespaced, dropped caps, bounded cgroup + ext4 volumes
-agent-runtime-instance start <id> [--credential FILE] -- <program> [args…]   # --wait blocks for the outcome
+agent-runtime-instance start <id> [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] -- <program> [args…]   # --wait blocks for the outcome
 # 3. make it a Herdr agent of this host (one workspace per runtime, PTY only; no socket in the container)
 agent-runtime-herdr attach <id> <template.json> OWNER/REPO#N <status-file> -- <pane argv…>
 # 4. hand one authorized task to the idle runtime (idle in the registry and in Herdr; refuses blocked/finished/lost)
@@ -49,11 +49,9 @@ agent-runtime-instance wait <id>
 agent-runtime-instance export <id>        # bundle: sources/*.patch, output/, run.log, bundle.json; integrity-checked
 ```
 
-`<id>` must be a DNS label. The **Herdr adapter accepts at most 29** characters
-(a Herdr agent name is `rt-<id>`, capped at 32) and refuses a longer one with a
-clear message rather than truncating, so use **29 characters or fewer** for any
-runtime that will be Herdr-visible. The lifecycle tool's own id bound is wider
-on this release; #155 narrows it to the same 29 so the two cannot disagree.
+`<id>` must be a DNS label of **at most 29** characters (a Herdr agent name is
+`rt-<id>`, capped at 32). `create` and the Herdr adapter both refuse a longer
+one with a clear message rather than truncating.
 
 The handoff authorization gate is unchanged: `deliver` only sends to a runtime
 the operator/Coordinator has an owner-labelled task for, and only while it is
@@ -88,13 +86,14 @@ inspect it (`status`, `logs`, the recovery bundle) and decide by hand.
 - **Host activation is owner-gated and deploy-rs only.** Enabling the runtime on
   a physical host is a `just deploy-<host>` from lenovo after review and merge,
   never a direct switch on the host. No agent deploys or switches a host.
-  **Prerequisite (not on this release):** no host imports the runtime module yet.
-  Activation needs the deploy-rs substrate from **#155** (unmerged) — or an
-  equivalent: `imports` of `nixosModules.agent-runtime` in
-  `hosts/acer-swift/configuration.nix`, `sam.agentRuntime.host.enable = true`,
-  and an `eligibleTemplates`/`reserve` policy. That render writes the host
-  policy to `/etc/agent-runtime/host.json` and the templates under the manifest
-  dir; use those concrete paths (not placeholders) for the commands below.
+  Every host imports the substrate (`nixosModules.agent-runtime-host`, #155),
+  but no host enables it yet. Enabling is a host-config change (import the
+  template module, set `sam.agentRuntime.host.enable` and an
+  `eligibleTemplates`/`reserve` policy) followed by `just deploy-<host>`, which
+  deploys the `system` and `agent-runtime` profiles in order
+  (`docs/agent-runtime-deploy.md`, Rollout). The host policy is then
+  `/etc/agent-runtime/host.json` and the templates are under
+  `/nix/var/nix/profiles/agent-runtime/templates/templates/`.
 - **Capacity is the host policy**, not per-call: `maxConcurrentInstances`,
   `reserve.memoryMiB`/`diskMiB`. Admission refuses (exit 10) before any mount or
   unit when memory, instance count or disk would breach it, and after a failed
@@ -109,6 +108,12 @@ agent-runtime-instance status | jq -r '.[] | select(.state=="running" or .state=
 # drain first. In-flight work is never silently re-run.
 ```
 
+Admission is the drain lever (remove the template from `eligibleTemplates`,
+deploy `system`, let running instances end). Automatic and manual rollback of
+either profile, and what a template deploy does to a running instance, are in
+`docs/agent-runtime-deploy.md` (Drain, Rollback, Failure outcomes; proven by
+`agent-runtime-deploy-test`).
+
 A host reboot leaves started-but-unfinished runs `ambiguous` (reported, not
 replayed) and `created` ones startable; volumes survive, the `/run` root and
 loop mounts do not and are rebuilt by `start`/`mount` idempotently.
@@ -119,22 +124,27 @@ loop mounts do not and are rebuilt by `start`/`mount` idempotently.
   host is readable from inside an instance. Do not run a template whose closure
   embeds material an instance must not see; a closure-only bind is the mitigation
   (#137, not yet enforced by default).
-- **Credentials are per-run and never in the store/manifest.** `start
-  --credential FILE` copies the token to a per-instance **tmpfs** under
-  `/run/agent-runtime/<id>/cred` (only a SHA-256 is kept at rest), bound
-  read-only at `/run/agent-runtime/credentials`; another instance cannot read
-  it. The secret is masked (`<redacted>`) in the `logs` view and the exported
-  log, and `export` refuses an `/output` artifact that carries it; the raw
-  secret still lives in the payload's own files and the private tmp volume until
-  teardown (#137 slice 2, shipped in #153). Minting a real short-lived,
-  capability-scoped provider token, and its expiry, are secret tooling, out of
-  the runtime.
+- **Credentials are per-run and never in the store/manifest.** The token goes
+  to a per-instance **tmpfs** under `/run/agent-runtime/<id>/cred` (nothing about
+  it at rest), bound read-only at `/run/agent-runtime/credentials`; a
+  concurrent instance cannot read it. The secret is masked (`<redacted>`) in the
+  `logs` view and the exported log, and `export` refuses an `/output` artifact
+  that carries it; the raw secret still lives in the payload's own files and the
+  private tmp volume until teardown (#153).
+  - `--credential FILE`: an operator-provided token; its scope is the
+    operator's word (record `{"kind": "file"}`).
+  - `--credential-issuer PROGRAM`: a token minted for the run, refused before
+    anything starts unless its scopes are within the template's `capabilities`
+    and it expires within the run's limit; revoked at teardown (#159). The
+    production issuer (a GitHub App, its key in sops) is an **owner decision**
+    and does not exist yet (`docs/agent-runtime.md`, Per-run credentials).
 - **Egress is deny-by-default.** The default template has no network at all. A
   template with `network.allow` resolves those names once, pins them into the
-  instance's `/etc/hosts` (port 53 is never opened, so a made-up name cannot
-  resolve), and filters the instance's veth on both the `input` and `forward`
-  hooks — `tcp 443` to the resolved addresses, everything else dropped (#137
-  slice 2, shipped in #153).
+  instance's `/etc/hosts` (IPv4 only; port 53 is never opened, so a made-up
+  name cannot resolve and a raw DNS query gets no answer), and filters the
+  instance's own veth on both the `input` and `forward` hooks — `tcp 443` to the
+  resolved addresses, everything else dropped (#153; DNS-closed and concurrent
+  starts proven in #159).
 
 ## No-go conditions for untrusted code
 
