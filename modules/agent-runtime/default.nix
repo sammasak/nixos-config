@@ -589,6 +589,11 @@ in
       readOnly = true;
       description = "Evaluated `agent-runtime-template` manifests (schemaVersion 1), per template.";
     };
+    hostPolicy = mkOption {
+      type = types.package;
+      readOnly = true;
+      description = "`host` as JSON (`agent-runtime-host`, schemaVersion 1), the admission input of `agent-runtime-instance`.";
+    };
     manifestDir = mkOption {
       type = types.package;
       readOnly = true;
@@ -601,6 +606,11 @@ in
 
     sam.agentRuntime = {
       manifestData = guarded (lib.mapAttrs manifestOf cfg.templates);
+      hostPolicy = json.generate "agent-runtime-host.json" {
+        schemaVersion = 1;
+        kind = "agent-runtime-host";
+        inherit (cfg.host) enable eligibleTemplates maxConcurrentInstances reserve;
+      };
       manifestDir = pkgs.linkFarm "agent-runtime-manifests" (
         lib.mapAttrsToList (n: m: {
           name = "${n}.json";
