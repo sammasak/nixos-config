@@ -8,6 +8,7 @@
 - `05-overlays.nix` — exposes `pkgs/` through an overlay
 - `10-systems.nix` — supported systems
 - `20-module-registry.nix` — auto-generates module registries from filesystem
+- `25-agent-runtime.nix` — the public agent-runtime module, its evaluator, eval check and option reference (docs/agent-runtime.md)
 - `30-configurations-options.nix` — typed host declaration options
 - `40-outputs-nixos.nix` — transforms declarations into `nixosConfigurations`
 - `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
