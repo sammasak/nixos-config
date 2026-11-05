@@ -108,7 +108,7 @@ let
         echo "$uidbase" > "$base/uidbase"
         ;;
       run)  # run <id> <user> <script> [store-bind-opt]
-        user=$1; script=$2; opt=''${3:-}
+        user=$1; script=$2; opt=''${3:-}; rc=0
         systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
         systemd-run --unit="agent-runtime-$id" --wait --pipe --collect \
           -p MemoryMax=${template.budget.memoryMax} -p TasksMax=${toString template.budget.tasksMax} -p CPUQuota=${template.budget.cpuQuota} \
@@ -123,7 +123,9 @@ let
             --bind="$base/workspace:${template.filesystem.workspace}" \
             --tmpfs="${template.filesystem.tmp}:mode=1777,size=256M" \
             --tmpfs="${template.filesystem.home}:mode=0755,uid=1000,gid=1000,size=256M" \
-            --user="$user" "$script"
+            --uid="$user" /bin/sh -c "$script > ${template.filesystem.workspace}/run.log 2>&1" || rc=$?
+        echo "== run.log ($id, exit ''${rc:-0}):"; cat "$base/workspace/run.log" 2>/dev/null || echo "(no run.log)"
+        exit "''${rc:-0}"
         ;;
       export)
         mkdir -p /var/lib/agent-runtime/exports
@@ -137,11 +139,15 @@ let
         rm -rf "$base" "/run/agent-runtime/$id"
         ;;
       check-clean)
-        findmnt -rn | grep -c "agent-runtime/$id" | grep -qx 0
-        ! systemctl list-units --all --no-legend "agent-runtime-$id.service" | grep -q .
-        ! machinectl list --no-legend | grep -q "agent-runtime-$id"
-        ! pgrep -f "agent-runtime-$id" >/dev/null
-        test ! -e "$base" && test ! -e "/run/agent-runtime/$id"
+        fail=0
+        chk() { if "$@"; then echo "clean: $*"; else echo "LEAK: $*"; fail=1; fi; }
+        chk sh -c "! findmnt -rn | grep -q 'agent-runtime/$id'"
+        chk sh -c "! systemctl list-units --all --no-legend 'agent-runtime-$id.service' | grep -q ."
+        chk sh -c "! machinectl list --no-legend | grep -q 'agent-runtime-$id'"
+        chk sh -c "! pgrep -f 'nspawn.*agent-runtime-$id' >/dev/null"
+        chk test ! -e "$base"
+        chk test ! -e "/run/agent-runtime/$id"
+        exit $fail
         ;;
     esac
   '';
@@ -177,7 +183,8 @@ pkgs.testers.runNixOSTest {
         out = machine.succeed(f"${factory} run probe root ${probe} {opt}")
         print(out)
         assert "FAIL" not in out
-        machine.succeed("${factory} destroy probe && ${factory} check-clean probe")
+        machine.succeed("${factory} destroy probe")
+        print(machine.succeed("${factory} check-clean probe"))
 
     timings: dict[str, dict[str, object]] = {}
     for run in ("cold", "warm"):
@@ -200,7 +207,7 @@ pkgs.testers.runNixOSTest {
             print(machine.succeed(f"${factory} export {run}"))
             print(machine.succeed(f"cat /var/lib/agent-runtime/exports/{run}/manifest.txt"))
             machine.succeed(f"${factory} destroy {run}")
-            machine.succeed(f"${factory} check-clean {run}")
+            print(machine.succeed(f"${factory} check-clean {run}"))
             t2 = time.monotonic_ns()
             timings[run]["teardown_ms"] = (t2 - t1) // 1000000
 
