@@ -17,6 +17,10 @@ let
   herdrAgentLauncher = pkgs.writeShellApplication {
     name = "herdr-agent-launcher";
     runtimeInputs = [ pkgs.coreutils pkgs.herdr pkgs.jq ];
+    # #157: an unattended worker (any claude started with --dangerously-skip-permissions, as coord:spawn starts
+    # them) switches models when safeguards flag a message instead of waiting at a dialog; settings.json, and so
+    # the choice of every other session (lenovo's Coordinator), is left alone
+    runtimeEnv.HERDR_CLAUDE_WORKER_SETTINGS = pkgs.writeText "claude-worker-settings.json" (builtins.toJSON { switchModelsOnFlag = true; });
     text = builtins.readFile ./agent-launcher.sh;
   };
   integrationFiles = pkgs.runCommand "herdr-agent-integrations" {

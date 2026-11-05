@@ -56,6 +56,8 @@ in
       # Worker hosts only: a --dangerously-skip-permissions start no longer stops at the acknowledgment dialog
       # (2.1.300 ignores ~/.claude.json's bypassPermissionsModeAccepted); a session without the flag is unaffected.
       skipDangerousModePermissionPrompt = true;
+      # #157: "Switch automatically" when safeguards flag a message; unset, every session stops at a dialog asking
+      switchModelsOnFlag = true;
     } // {
       env = {
         DISABLE_ERROR_REPORTING = "1";

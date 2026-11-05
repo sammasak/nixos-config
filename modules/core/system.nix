@@ -125,7 +125,10 @@ in
           This host runs unattended Claude Code workers started through Herdr
           (skills `coord:spawn`, or `claude-worker` here): they start with
           `--dangerously-skip-permissions` and Claude Code's settings skip its
-          acknowledgment dialog (`skipDangerousModePermissionPrompt`). Plain
+          acknowledgment dialog (`skipDangerousModePermissionPrompt`), and a
+          message the safeguards flag switches models instead of stopping at a
+          dialog (`switchModelsOnFlag`, which the Herdr launcher also hands to a
+          bypass-mode `claude` on any host). Plain
           `claude` and the unattended Coordinator are unchanged, and a host
           running `coordinatorWakeup` cannot be a worker host.
         '';
