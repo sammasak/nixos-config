@@ -108,7 +108,7 @@ instance id, transient unit per instance); it is not yet that adapter.
    environment, the source and the skill binds reject writes; `remount,rw` of
    `/nix/store`, `/src/rf-proto` and `/` is denied, as are `mknod` and writing
    `/proc/sys`; the Nix daemon socket, the systemd private socket, a Docker
-   socket, `/home/lukas`, a host root sentinel and `SSH_AUTH_SOCK` are absent;
+   socket, host sentinels in `/root` and `/home` and `SSH_AUTH_SOCK` are absent;
    only `lo` exists; writes in `/workspace` and `/tmp` succeed.
 3. **Cold and warm**, each a fresh instance: as the unprivileged `agent`, copy
    the pinned source into the workspace, `cargo test --offline` (the real test

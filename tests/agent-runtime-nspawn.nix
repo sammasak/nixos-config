@@ -73,7 +73,7 @@ let
     chk test ! -e /nix/var/nix/daemon-socket/socket
     chk test ! -S /run/systemd/private
     chk test ! -e /run/docker.sock
-    chk test ! -e /home/lukas
+    chk test ! -e /home/host-sentinel
     chk test ! -e /root/host-sentinel
     chk test -z "''${SSH_AUTH_SOCK:-}"
     chk test "$(ls /sys/class/net)" = lo
@@ -281,7 +281,7 @@ pkgs.testers.runNixOSTest {
     host_ns = {n: machine.succeed(f"readlink /proc/1/ns/{n}").strip() for n in NS}
     print(host_ns)
     print(machine.succeed("cat /proc/1/uid_map /proc/1/gid_map; cat /proc/1/mountinfo"))
-    machine.succeed("touch /root/host-sentinel")
+    machine.succeed("touch /root/host-sentinel /home/host-sentinel")
     store_before = machine.succeed("ls /nix/store | wc -l; stat -c %Y /nix/store").split()
     host_pid = machine.succeed("systemd-run --unit=host-sleeper --property=Type=exec sleep 3600 >/dev/null; systemctl show -p MainPID --value host-sleeper").strip()
     shm = machine.succeed("ipcmk -M 4096 | grep -o '[0-9]*$'").strip()
@@ -386,7 +386,7 @@ pkgs.testers.runNixOSTest {
     with subtest("host unchanged, nothing left behind"):
         store_after = machine.succeed("ls /nix/store | wc -l; stat -c %Y /nix/store").split()
         assert store_before == store_after, (store_before, store_after)
-        machine.succeed("test -f /root/host-sentinel")
+        machine.succeed("test -f /root/host-sentinel -a -f /home/host-sentinel")
         machine.succeed("test ! -e /nix/store/agent-runtime-write-attempt")
         machine.succeed("! findmnt -rn | grep agent-runtime")
         machine.succeed("! machinectl list --no-legend | grep -q .")
