@@ -105,7 +105,6 @@ let
         printf 'root:x:0:\nagent:x:1000:\nnogroup:x:65534:\n' > "$root/etc/group"
         ln -sf ${pkgs.bash}/bin/bash "$root/bin/sh"
         ln -sf ${pkgs.coreutils}/bin/env "$root/usr/bin/env"
-        # nspawn resolves --uid=<name> by running getent inside the container
         ln -sf ${pkgs.glibc.bin}/bin/getent "$root/usr/bin/getent"
         printf 'passwd: files\ngroup: files\n' > "$root/etc/nsswitch.conf"
         chown -R $((uidbase + 1000)):$((uidbase + 1000)) "$base/workspace"
@@ -114,7 +113,8 @@ let
       run)  # run <id> <user> <script> [store-bind-opt]
         user=$1; script=$2; opt=''${3:-}; rc=0
         systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
-        systemd-run --unit="agent-runtime-$id" --wait --pipe --collect \
+        # nspawn resolves --uid=<name> with execlp("getent") after entering the root tree, so its PATH must name /usr/bin there
+        systemd-run --unit="agent-runtime-$id" --wait --pipe --collect --setenv=PATH=/usr/bin:/bin \
           -p MemoryMax=${template.budget.memoryMax} -p TasksMax=${toString template.budget.tasksMax} -p CPUQuota=${template.budget.cpuQuota} \
           -p KillMode=mixed \
           ${pkgs.systemd}/bin/systemd-nspawn --quiet --keep-unit --settings=no --register=yes \
