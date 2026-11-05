@@ -238,7 +238,7 @@ pkgs.runCommand "agent-runtime-runtime"
     expect "missing ref: the branch has no plan (prepare:plan found no such ref): exit 3, class plan, nothing fetched" "3 plan 0 true" \
       "$rc $(class err) $(stat -c %s "$FAKE_NIX_LOG") $(has err 'no prepare:plan given for sammasak/factum@dev')"
     rc=0; assign --template template.json --run r0 --out o0 --plan plan-wrong-ref.json --plan plan-dev1.json 2>err || rc=$?
-    expect "a plan for the right repo but another ref does not match" "3 plan" "$rc $(class err)"
+    expect "a plan for the right repo but another ref does not match" "3 plan true" "$rc $(class err) $(has err 'no prepare:plan given for sammasak/factum@v0.2.0')"
     rc=0; assign --template template.json --run r0 --out o0 --plan plan-tag1.json --plan plan-tag2.json --plan plan-dev1.json 2>err || rc=$?
     expect "two plans that disagree on one ref are refused" "3 plan" "$rc $(class err)"
     rc=0; assign --template template.json --run r0 --out o0 --plan plan-bad-sha.json --plan plan-dev1.json 2>err || rc=$?
@@ -412,6 +412,29 @@ pkgs.runCommand "agent-runtime-runtime"
     expect "an untouched instance exports an empty patch" "0 0" "$(jq -r '.sources.factum.changed' x9/export.json) $(stat -c %s x9/factum.patch)"
     export_run --root i2 --out x2
     expect "materialize, export and reclaim fetch nothing" "0" "$(stat -c %s "$FAKE_NIX_LOG")"
+
+    # a run without writable sources (docs-reviewer's shape): export writes only export.json and reclaim proceeds
+    jq 'del(.sources.factum, .sources["factum-dev"], .sources["factum-release"])' template.json >template-ro.json
+    assign --template template-ro.json --run r-ro --out o-ro
+    materialize --run o-ro --template template-ro.json --root i-ro
+    expect "a read-only run: materialized, nothing export-pending" "ro 0" "$(jq -r '.sources["factum-pinned"].mode' i-ro/materialized.json) $(wc -c <i-ro/export-pending)"
+    export_run --root i-ro --out x-ro
+    reclaim --root i-ro
+    expect "a read-only run exports only export.json and reclaims" "export.json {} true" \
+      "$(ls x-ro) $(jq -c .sources x-ro/export.json) $(exists i-ro/reclaimed)"
+    # what a patch cannot carry is named in droppedPaths, not lost silently
+    FAKE_NIX_FAIL=github materialize --run o1 --template template.json --root i10
+    mkdir i10/workspace/factum/emptydir i10/workspace/factum/.git
+    export_run --root i10 --out x10
+    expect "an empty directory and a top-level .git are listed as dropped, the patch is empty" '[".git","emptydir/"] 0 2' \
+      "$(jq -c .droppedPaths x10/factum.json) $(jq -r .sources.factum.changed x10/export.json) $(jq -r .sources.factum.dropped x10/export.json)"
+    # one materialize per root: a held root lock refuses before any state check or cleanup
+    mkdir -p i11
+    ( flock 9; sleep 3 ) 9>i11/.lock &
+    sleep 1
+    rc=0; materialize --run o1 --template template.json --root i11 2>err || rc=$?
+    expect "materialize refuses a root held by another materialize, export or reclaim" "1 state false" "$rc $(class err) $(exists i11/workspace)"
+    wait
 
     rc=0; env PATH=/var/empty "$shippedReclaim" 2>err || rc=$?
     expect "the shipped tool (real nix) builds and reports usage the same way" "2 usage" "$rc $(class err)"

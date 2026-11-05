@@ -352,6 +352,15 @@ four against fixture trees with a fake `nix` that answers `flake prefetch` and
 - `lock` is trusted: nothing ties a locked input to `github` or proves `ref.value` is on that
   revision. The manifest records what the declaration said. Likewise a plan is trusted to
   name the right commit; the prefetch pins its content.
+- A plan matches a source by repository and ref *name*: `prepare:plan` resolves a name, not a
+  type, so a branch and a tag of one name in one repository cannot be told apart. Name moving
+  refs unambiguously.
+- The run directory is a trust anchor: materialize checks a plan-resolved source's NAR hash
+  against what assign recorded there and rooted, nothing upstream. Keep run directories
+  writable by the assigner only.
+- Export carries what git can: new paths the pinned tree's own `.gitignore` excludes, a
+  top-level `.git` and empty directories are not in the patch; each source's export JSON lists
+  them under `droppedPaths`, so nothing is lost unseen.
 - `filesystem.workspaceBudget` is checked once, at materialize, against the pinned trees; what
   an instance writes afterwards is bounded only by #137's run-time enforcement. The writable
   copy is owned by the invoking user; mapping it to the instance's UID is #137's.

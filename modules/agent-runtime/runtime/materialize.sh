@@ -31,11 +31,13 @@ jq -e --slurpfile t "$template" '
         and ($r.resolved.rev | test("^[0-9a-f]{40}$"))] | all)
 ' "$run" >/dev/null 2>&1 \
   || fail source "$run does not describe the sources of $template (digests, names, paths, modes or locks differ)"
-[ -e "$root/materialized.json" ] && fail state "$root is already materialized"
-[ -e "$root/workspace" ] && fail state "$root/workspace exists; refusing to touch state this run did not create"
-
 mkdir -p "$root"
 root=$(realpath "$root")
+# one materialize, export or reclaim per root at a time; the state checks hold only under the lock
+exec 9>"$root/.lock"
+flock -n 9 || fail state "$root is in use by another materialize, export or reclaim"
+[ -e "$root/materialized.json" ] && fail state "$root is already materialized"
+[ -e "$root/workspace" ] && fail state "$root/workspace exists; refusing to touch state this run did not create"
 rm -rf "$root"/.materialized.* "$root"/.export-pending.*
 mkdir "$root/workspace"
 scratch=$(mktemp -d)
