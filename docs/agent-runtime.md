@@ -1,4 +1,4 @@
-# Agent runtime templates (M0: typed module, manifests, runtime adapter)
+# Agent runtime templates (typed module, manifests, runtime adapter, instance lifecycle)
 
 Epic: [nixos-config#133](https://github.com/sammasak/nixos-config/issues/133). This milestone
 delivers a reusable NixOS module that types what an ephemeral `systemd-nspawn` agent instance
@@ -276,7 +276,8 @@ agent-runtime-reclaim --root instances/r1
   `nix flake prefetch` at the plan's commit. A private source needs `GH_TOKEN`, which reaches
   `nix` only as an `access-tokens` line appended to `NIX_CONFIG` (an existing `NIX_CONFIG` is
   kept); any occurrence of the token is stripped from error messages. Every source gets an
-  indirect GC root, `OUT/gcroots/<name>`, staged and published together with `OUT/run.json`
+  indirect GC root, `OUT/gcroots/<name>`, staged, published and then rooted again at its final
+  path (nix registers an indirect root by link path) together with `OUT/run.json`
   (`agent-runtime-run`, schemaVersion 1): `run.{id,assignedAt}`, `template.{name,digests}`,
   `workspace`, and `sources` keyed by name with the repository, requested ref, `resolve`,
   `access`, `path`, `writable` and `resolved.{rev,narHash,storePath,by}` (`by` is `lock` or
@@ -323,13 +324,82 @@ agent-runtime-reclaim --root instances/r1
 - **reclaim** removes `ROOT/workspace`, keeps `materialized.json`, writes a `ROOT/reclaimed`
   timestamp, and is a no-op once that exists. It refuses while `export-pending` exists and
   while any exported checkout's tree differs from `exported.json`: no source state disappears
-  unexported. Removing the root and the run directory (which releases the GC roots) is #138's.
+  unexported. Removing the root and the run directory (which releases the GC roots) is
+  `agent-runtime-instance destroy`'s (below).
 
 Export and reclaim hold a lock on ROOT. The checkouts are trees, not git repositories
 (`fetchTree` strips `.git`); a run that needs history or push rights is a capability question
 for #137, not a materialization one. `checks.x86_64-linux.agent-runtime-runtime` drives all
 four against fixture trees with a fake `nix` that answers `flake prefetch` and
 `build --out-link` from a table, with the tools on an empty `PATH`.
+
+## Instance lifecycle: agent-runtime-instance (#138)
+
+`agent-runtime-instance` (`nix build .#agent-runtime-instance`, also `.tools.instance`) is the
+host-side adapter that runs instances of an evaluated template: no host switch, no
+`containers.<name>`, no daemon. It drives the four tools above and systemd, and keeps all its
+state in `--state` (default `/var/lib/agent-runtime`). The host policy it admits against is
+the module's read-only `sam.agentRuntime.hostPolicy` (`agent-runtime-host`, schemaVersion 1).
+
+```sh
+agent-runtime-instance create ID --template rust-worker.json --host host.json --task issue-138 [--plan PLAN]...
+agent-runtime-instance start ID [--root] [--timeout-sec N] [--idmap] [--wait] -- /nix/store/...-job
+agent-runtime-instance wait ID [--timeout-sec N]     # status JSON; exit 0 only when the run succeeded
+agent-runtime-instance status [ID]                    # one instance, or a JSON array of all
+agent-runtime-instance logs ID                        # the payload's journal for its invocation, last 1 MiB
+agent-runtime-instance cancel ID
+agent-runtime-instance export ID                      # bundle under STATE/exports/ID
+agent-runtime-instance destroy ID [--discard]
+agent-runtime-instance reconcile                      # after a supervisor crash or reboot
+```
+
+- **create** refuses ids that are not a DNS label (or are `exports`), templates the host does
+  not list in `eligibleTemplates`, and what the runtime cannot enforce yet: extra host mounts,
+  network egress, capabilities (credentials), a writable source not at `/workspace/<name>`
+  (all class `unsupported`). Under one host lock it admits against `maxConcurrentInstances`,
+  `MemTotal - reserve.memoryMiB` and free disk minus `reserve.diskMiB` (class `admission`),
+  takes a free 64Ki UID range, writes the reservation, runs `assign` (GC roots under
+  `ID/run/gcroots`), allocates one `fallocate`d ext4 image per writable mount (bytes and inodes
+  from the template), loop-mounts them, runs `materialize` into the workspace volume, and
+  writes `ID/instance.json` (template name and digests, run digest, task, host, UID base,
+  unit, machine, volumes) last. A failure rolls everything back; a SIGKILLed create is left
+  `incomplete` for `reconcile`. The same id and task again returns the existing record; another
+  task under the id is `conflict`.
+- **start** runs `systemd-nspawn` in a detached transient unit `agent-runtime-ID.service` with
+  the template's `MemoryMax` (no swap), `TasksMax`, `CPUQuota`, `RuntimeMaxSec`
+  (`timeoutMinutes`, or a shorter `--timeout-sec`) and `Delegate=yes`. The unit's own
+  `ExecStopPost` (`record-exit`) writes `ID/result.json` from systemd's `SERVICE_RESULT`,
+  `EXIT_CODE` and `EXIT_STATUS` plus the unit's memory peak, CPU time and runtime, so the
+  outcome does not depend on the calling process. `start` writes a `starting` marker before
+  the unit and `started.json` after it (invocation id, control group, leader PID, every
+  namespace id and the UID map of the running instance). A second start of a started instance
+  changes nothing.
+- **State** is derived, never stored: `created`, `running`, `cancelling`, then `succeeded`,
+  `failed`, `timed-out`, `oom-killed` or `cancelled` from `result.json`; `ambiguous` when the
+  instance was started but its unit is gone and no outcome was recorded (a host crash, or a
+  crash between the marker and the unit). An ambiguous instance is reported, exported and
+  destroyed, never started again (class `ambiguous`).
+- **cancel** of a running instance marks it and stops the unit (bounded by `TimeoutStopSec=30`);
+  of a created one it records `cancelled` without starting; otherwise it does nothing.
+- **export** (after the run has ended) runs `export` for the writable sources (patches,
+  binary and untracked files included, `droppedPaths` named), copies the output volume, the
+  payload's journal for its invocation (the last 1 MiB, the cut recorded) and the records, and
+  writes `bundle.json` (`agent-runtime-instance-export`: outcome, `recovery` for anything but
+  `succeeded`, every file with its sha256). A patch larger than the output budget is omitted
+  and named. Exporting again is a no-op.
+- **destroy** refuses a running instance and, unless `--discard`, one that ran and was not
+  exported. It runs `reclaim`, stops the unit, unmounts every volume (`timeout 30`; a busy
+  mount fails the destroy), removes the images, the run directory (the GC roots) and the
+  records, and removes the reservation last, so a destroy that fails leaves the instance
+  counted; a later destroy finishes it. Destroying an absent instance is a no-op.
+- **reconcile** reports every instance and rolls back incomplete creates. It starts and re-runs
+  nothing: after a reboot a created instance can still be started (its volumes are mounted
+  again), a running one is `ambiguous`.
+
+New error classes: `admission` 10, `ambiguous` 11, `conflict` 12, `unsupported` 13.
+`status` prints `agent-runtime-instance-status` JSON (schemaVersion 1) for the Herdr adapter
+(#139). `packages.x86_64-linux.agent-runtime-nspawn` proves all of it in a VM
+(`docs/agent-runtime-nspawn.md`).
 
 ## Limits of this milestone
 
@@ -338,9 +408,9 @@ four against fixture trees with a fake `nix` that answers `flake prefetch` and
   `capabilities` are inputs for #137 (admission and enforcement); `maxConcurrentInstances`
   and `timeoutMinutes` for #138 (lifecycle). `host.enable` only gates `eligibleTemplates` at
   evaluation; nothing acts on it yet.
-  The nspawn VM fixture (`docs/agent-runtime-nspawn.md`) enforces the mount budgets,
-  `resources`, `host.reserve` and `maxConcurrentInstances` from the evaluated config; the
-  module itself still starts nothing.
+  `agent-runtime-instance` (below) enforces the mount budgets, `resources`, `host.reserve`,
+  `maxConcurrentInstances` and `timeoutMinutes`; `network` and `capabilities` other than none
+  are refused until #137 implements them. The module itself still starts nothing.
 - A writable host mount is shared by every instance that binds it, across templates and
   concurrent runs; #137/#138 must give each instance its own subdirectory or refuse the
   overlap.

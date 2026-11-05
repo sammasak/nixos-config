@@ -92,4 +92,10 @@ jq --arg at "$(now)" --arg digest "$digest" \
   '{schemaVersion: 1, kind: "agent-runtime-run"} + . + {run: (.run + {assignedAt: $at}), digests: {run: $digest}}' \
   <<<"$body" >"$tmp"
 mv "$staging" "$out/gcroots"
+# nix registered each indirect root at its staging path, which the rename just removed: root
+# them again where they live, or the GC would not see them
+for name in $names; do
+  run_capture store "$name: cannot root $out/gcroots/$name" \
+    nix_cmd build --out-link "$out/gcroots/$name" "$(readlink "$out/gcroots/$name")"
+done
 ln "$tmp" "$out/run.json" || fail state "cannot publish $out/run.json"

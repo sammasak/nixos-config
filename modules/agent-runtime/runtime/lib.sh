@@ -5,7 +5,8 @@ set -E
 exit_code() {
   case $1 in
     usage) echo 2 ;; plan) echo 3 ;; github) echo 4 ;; credential) echo 5 ;;
-    store) echo 6 ;; budget) echo 7 ;; source) echo 8 ;; export) echo 9 ;; *) echo 1 ;;
+    store) echo 6 ;; budget) echo 7 ;; source) echo 8 ;; export) echo 9 ;;
+    admission) echo 10 ;; ambiguous) echo 11 ;; conflict) echo 12 ;; unsupported) echo 13 ;; *) echo 1 ;;
   esac
 }
 fail() {
