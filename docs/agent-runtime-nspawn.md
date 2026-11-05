@@ -165,7 +165,23 @@ ranges, network links) is printed before, during and after.
     starting the ambiguous one is refused (`not replayed`); both stay counted;
     the created one starts and succeeds (its volumes are mounted again); the
     ambiguous one exports a recovery bundle and is destroyed.
-14. **Host unchanged**: the inventory is empty again (links as before), no
+14. **Per-run credential**: a `tiny` instance started with `--credential` sees
+    the token read-only at `/run/agent-runtime/credentials/token`, owned by the
+    mapped `agent` (`1000:400`), and cannot write it. The secret never reaches
+    the persistent state dir or the store; the printed `logs` view masks it
+    (`<redacted>`). A second instance started with the same host file reads only
+    its own token. The export redacts the diagnostic log in place and refuses
+    (class `credential`, exit 5) when an `/output` artifact carries the secret,
+    reading the still-mounted token itself rather than depending on the caller.
+15. **Minimal egress**: an `egress` instance (`network.allow = [ "allowed.test"
+    ]`) reaches `https://allowed.test/` over TLS (`endpoint-ok`) through the
+    name pinned in its `/etc/hosts`, and is refused both a non-allowlisted
+    host-local address (`10.9.0.9`) and a non-allowlisted address reachable only
+    by the host routing on its behalf (`10.8.0.5` in a netns), proving the
+    `forward` hook and not just `input`; the host itself can reach `10.8.0.5`,
+    so the refusal is the filter, not missing routing. After `destroy` the veth
+    and the `art_<id>` nft table are gone. No port 53 is ever opened.
+16. **Host unchanged**: the inventory is empty again (links as before), no
     reservation, the store's entries unchanged, the sentinels in place, host
     disk back to the start minus the kept exports.
 
@@ -259,14 +275,31 @@ Findings worth keeping:
    slots) are per host; nothing coordinates hosts.
 5. The volumes bound bytes and inodes per mount; the cgroup bounds memory
    (`MemorySwapMax=0`), tasks and CPU. I/O bandwidth is not bounded.
-6. No credentials enter the instance yet (no token, no SSH agent, no HOME from
-   the host). Per-run credential injection is #137's next slice, never through
-   the store or the manifest.
+6. A per-run credential (`start --credential FILE`) is copied to a private
+   per-instance tmpfs dir under `/run/agent-runtime/<id>/cred`, owned by the
+   mapped `agent`, and bound read-only at `/run/agent-runtime/credentials`; it
+   never comes from the manifest, the store or the persistent state dir, and the
+   tmpfs is gone on teardown. Only a hash is kept at rest. Redaction masks the
+   secret in the printed `logs` view and in the exported log; the raw secret
+   still lives in the payload's own files and the private tmp volume until
+   teardown, which is acceptable only because that volume is private and
+   discarded. The export refuses an `/output` artifact that carries the secret.
+   Still open: real scoped-token minting (github-read vs push) and expiry are
+   the consumer's, not proven here; this slice proves per-run delivery,
+   isolation, redaction and the leak gate.
 7. Exports are kept under `/var/lib/agent-runtime/exports` with no retention
    policy or size cap beyond each part's own bound (patches up to the output
    budget, the log's last 1 MiB, the output volume); retention is
    devenv-platform #95.
-8. Private network means no network at all. Minimal egress (DNS and TLS to
-   approved endpoints) is #137's next slice.
+8. The default template has no network at all. An `allowlist` template gets a
+   veth, and once its leader is up the host resolves `network.allow` once,
+   pins the names into the instance's `/etc/hosts` (`hosts: files` in nsswitch,
+   delivered as a read-only bind so nspawn's boot-time rewrite cannot clobber
+   it), and installs an nft table filtering the instance's veth on **both** the
+   `input` and `forward` hooks: established/related and `tcp dport 443` to each
+   resolved address accepted, loopback accepted, everything else dropped. Port
+   53 is never opened, so a made-up name cannot resolve and there is no
+   query-based exfiltration path. Enforcement is by address at run start, so a
+   name that moves mid-run is not followed.
 9. `--register=yes` lists the instance in `machinectl` while it runs; that is
    diagnostics, not Herdr visibility (#139).

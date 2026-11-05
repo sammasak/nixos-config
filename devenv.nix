@@ -63,7 +63,7 @@ let
     ${pkgs.python3}/bin/python scripts/test-coordinator-wiring.py
   '';
 
-  workerPermissionsTest = gate "worker-permissions-test" (with pkgs; [ nix python3 ]) ''
+  workerPermissionsTest = gate "worker-permissions-test" (with pkgs; [ nix python3 coreutils util-linux ]) ''
     ${pkgs.python3}/bin/python scripts/test-worker-permissions.py
   '';
 
@@ -339,7 +339,7 @@ in
     "nixos:agent-runtime-test" = task "agent-runtime module: external consumer fixture, manifests, negative cases" agentRuntimeTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
-    "nixos:worker-permissions-test" = task "#145: Herdr workers start in bypassPermissions on worker hosts only; claude and the Coordinator (dontAsk) unchanged" workerPermissionsTest;
+    "nixos:worker-permissions-test" = task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
     "nixos:known-hosts-test" = task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed" knownHostsTest;
     "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" = task "lenovo's nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max); acer keeps defaults" buildBoundsTest;

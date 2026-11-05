@@ -33,6 +33,16 @@ with the flag) by hand. Plain `claude` still asks, and a host running the
 unattended Coordinator (`coordinatorWakeup`, `--permission-mode dontAsk`)
 cannot be a worker host. `nixos:worker-permissions-test` pins all of it.
 
+A worker never stops at Claude Code's safeguards dialog ("… safeguards flagged
+this session … Switch to Opus 4.8 and keep going?"), which nobody answers for an
+unattended session (#157). The setting behind "Switch automatically" is
+`switchModelsOnFlag` (2.1.300; `true` switches, `false` is "Ask each time" and
+pauses, unset asks once). Worker hosts carry it in their settings, and the Herdr
+launcher passes it with `--settings` to any `claude` started with
+`--dangerously-skip-permissions`, which is how coord:spawn starts every worker,
+so lenovo's workers get it too while lenovo's `settings.json`, and the
+Coordinator's own choice, is left to the owner.
+
 Herdr stores its session snapshot and pane history in `~/.config/herdr/`.
 Home Manager sets that directory to mode `0700`; the systemd unit also uses a
 private umask. Pane history may contain prompts, command output, or secrets.

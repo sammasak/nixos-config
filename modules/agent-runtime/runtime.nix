@@ -16,6 +16,6 @@ adapter
 // {
   instance = tool "instance" (
     lib.attrValues adapter
-    ++ (with pkgs; [ bash gawk gnugrep diffutils e2fsprogs procps systemd inetutils ])
+    ++ (with pkgs; [ bash gawk gnugrep diffutils e2fsprogs procps systemd inetutils iproute2 nftables glibc.bin ])
   );
 }

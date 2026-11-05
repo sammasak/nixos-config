@@ -3,6 +3,16 @@ set -euo pipefail
 agent_kind=$1
 shift
 
+# a worker's own settings (#157), prepended so they apply on every path below, native or through Herdr
+if [[ $agent_kind == claude && -n ${HERDR_CLAUDE_WORKER_SETTINGS:-} ]]; then
+  for arg in "$@"; do
+    if [[ $arg == --dangerously-skip-permissions ]]; then
+      set -- --settings "$HERDR_CLAUDE_WORKER_SETTINGS" "$@"
+      break
+    fi
+  done
+fi
+
 run_native() {
   exec "$agent_kind" "$@"
 }

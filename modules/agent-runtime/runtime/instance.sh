@@ -76,7 +76,7 @@ build_root() {  # idempotent: the root tree lives in /run and is gone after a re
   printf 'root:x:0:0::/root:/bin/sh\nagent:x:1000:1000::%s:/bin/sh\nnobody:x:65534:65534::/:/bin/sh\n' \
     "$(jq -r .filesystem.home.path "$base/template.json")" >"$root/etc/passwd"
   printf 'root:x:0:\nagent:x:1000:\nnogroup:x:65534:\n' >"$root/etc/group"
-  printf 'passwd: files\ngroup: files\n' >"$root/etc/nsswitch.conf"
+  printf 'passwd: files\ngroup: files\nhosts: files\n' >"$root/etc/nsswitch.conf"
   touch "$root/etc/agent-runtime/template.json"
   ln -sfn "$sh" "$root/bin/sh"
   ln -sfn "$(realpath "$(command -v env)")" "$root/usr/bin/env"
@@ -142,6 +142,8 @@ teardown() {  # every step idempotent; a step that fails leaves the reservation,
   local name
   systemctl stop "$unit" 2>/dev/null || true
   systemctl reset-failed "$unit" 2>/dev/null || true
+  # the egress allowlist table, if any (the veth dies with the container's netns on stop)
+  command -v nft >/dev/null && nft delete table inet "art_$id" 2>/dev/null || true
   if mountpoint -q "$root"; then umount -R "$root"; fi
   # a SIGKILLed nspawn leaves its per-machine directories (and the unix-export mount) behind
   for p in "/run/systemd/nspawn/$machine" "/run/systemd/nspawn/propagate/$machine"; do
@@ -189,8 +191,10 @@ case $cmd in
     jq -e --arg n "$name" '.enable and (.eligibleTemplates | index($n))' "$host" >/dev/null \
       || fail admission "template $name is not eligible on this host"
     jq -e '(.filesystem.mounts | length) == 0' "$template" >/dev/null || fail unsupported "$name: extra host mounts are not supported yet"
-    jq -e '.policies.network.egress == "none"' "$template" >/dev/null || fail unsupported "$name: network egress is not supported yet (#137)"
-    jq -e '(.policies.capabilities | length) == 0' "$template" >/dev/null || fail unsupported "$name: per-run credentials are not supported yet (#137)"
+    # egress "none" or "allowlist" (#137 slice 2); capabilities declare intent, the per-run credential is a
+    # separate grant delivered at start (never from the manifest). Minting a real scoped token stays open.
+    jq -e '.policies.network.egress as $e | $e == "none" or $e == "allowlist"' "$template" >/dev/null \
+      || fail unsupported "$name: network egress must be none or allowlist"
     jq -e '[.sources | to_entries[] | select(.value.writable) | .key as $k | .value.path == ("/workspace/" + $k)] | all' "$template" >/dev/null \
       || fail unsupported "$name: a writable source must sit at /workspace/<its name>"
     vols=$(vol_json "$template")
@@ -258,17 +262,21 @@ case $cmd in
   start)
     take_id "$@"
     shift
-    uid=1000 timeout_sec='' opt='' wait=0
+    uid=1000 timeout_sec='' opt='' wait=0 cred_file=''
     while [ $# -gt 0 ]; do
       case $1 in
         --root) uid=0; shift ;;
         --timeout-sec) [ $# -ge 2 ] || usage; timeout_sec=$2; shift 2 ;;
         --idmap) opt=:idmap; shift ;;
         --wait) wait=1; shift ;;
+        # a per-run secret read from a host path (LoadCredential, a sops path); delivered on tmpfs,
+        # never written under the instance's persistent /var/lib state, never from the manifest
+        --credential) [ $# -ge 2 ] || usage; cred_file=$2; shift 2 ;;
         --) shift; break ;;
         *) usage ;;
       esac
     done
+    [ -z "$cred_file" ] || [ -f "$cred_file" ] || fail usage "--credential $cred_file not found"
     [ $# -ge 1 ] || usage
     [ -d "$base" ] || fail state "$id does not exist"
     lock_instance
@@ -306,6 +314,44 @@ case $cmd in
     drop+=,CAP_NET_BIND_SERVICE,CAP_NET_BROADCAST,CAP_NET_ADMIN,CAP_NET_RAW,CAP_IPC_OWNER,CAP_SYS_CHROOT,CAP_SYS_PTRACE
     drop+=,CAP_SYS_ADMIN,CAP_SYS_BOOT,CAP_SYS_NICE,CAP_SYS_RESOURCE,CAP_SYS_TTY_CONFIG,CAP_MKNOD,CAP_LEASE
     drop+=,CAP_AUDIT_WRITE,CAP_AUDIT_CONTROL,CAP_SETFCAP
+    # egress (#137 slice 2): an allowlist template gets a veth the host filters after the unit starts;
+    # the payload waits for the host's go. A per-run credential is delivered on tmpfs, never /var/lib.
+    egress=$(jq -r .policies.network.egress "$t")
+    netflag=(--private-network) netready='' allow_ips='' netbind=()
+    if [ "$egress" = allowlist ]; then
+      netflag=(--private-network --network-veth)
+      netready="$(jq -r .filesystem.tmp.path "$t")/.net-ready"
+      # Resolve the allowlist and pin it as the container's /etc/hosts via a read-only bind: nspawn rewrites
+      # a container's rootfs /etc/hosts at boot, so the names must arrive as a bind mount it will not touch.
+      # Port 53 is never opened, so the pinned names are the only resolvable egress targets.
+      hostsfile=$rundir/$id/hosts
+      printf '127.0.0.1 localhost\n' >"$hostsfile"
+      while IFS= read -r n; do
+        [ -n "$n" ] || continue
+        aip=$(getent hosts "$n" | awk '{print $1; exit}') || true
+        [ -n "$aip" ] || fail state "$id: egress allowlist name $n did not resolve on the host"
+        printf '%s %s\n' "$aip" "$n" >>"$hostsfile"
+        allow_ips="$allow_ips $aip"
+      done < <(jq -r '.policies.network.allow[]?' "$t")
+      netbind=(--bind-ro="$hostsfile:/etc/hosts")
+    fi
+    credbind=()
+    if [ -n "$cred_file" ]; then
+      creddir=$rundir/$id/cred
+      mkdir -p "$creddir"; install -m 0400 "$cred_file" "$creddir/token"
+      chown -R "$((uidbase + uid)):$((uidbase + uid))" "$creddir"
+      # the hash, not the secret, is kept at rest so export can refuse a leak without the caller re-passing it
+      sha256sum <"$cred_file" | cut -d' ' -f1 >"$base/cred-sha256"
+      credbind=(--bind-ro="$creddir:/run/agent-runtime/credentials")
+    fi
+    setpriv=$(realpath "$(command -v setpriv)")
+    exec_tail=("$setpriv" --reuid="$uid" --regid="$uid" --clear-groups --bounding-set=-all --inh-caps=-all --no-new-privs --)
+    if [ -n "$netready" ]; then
+      # shellcheck disable=SC2016  # $0/$@ expand inside the container shell, not here
+      exec_tail+=(/bin/sh -c 'while [ ! -e "$0" ]; do sleep 0.1; done; exec "$@"' "$netready" "$@")
+    else
+      exec_tail+=("$@")
+    fi
     args=(systemd-run --unit="$unit" --collect --service-type=exec --quiet
       --description="agent-runtime instance $id ($(jq -r .task "$base/instance.json"))"
       -p MemoryMax="$(jq -r .policies.resources.memoryMiB "$t")M" -p MemorySwapMax=0
@@ -321,18 +367,18 @@ case $cmd in
       systemd-nspawn --quiet --keep-unit --settings=no --register=yes --console=pipe
         -M "$machine" -D "$root"
         --private-users="$uidbase:65536" --private-users-ownership=chown
-        --private-network --as-pid2 --resolv-conf=off --timezone=off --no-new-privileges=yes
+        "${netflag[@]}" --as-pid2 --resolv-conf=off --timezone=off --no-new-privileges=yes
         --drop-capability="$drop"
-        "${binds[@]}"
+        "${binds[@]}" "${credbind[@]}" "${netbind[@]}"
         --setenv=PATH="$path" --setenv=HOME="$(jq -r .filesystem.home.path "$t")"
         --setenv=TMPDIR="$(jq -r .filesystem.tmp.path "$t")" --setenv=AGENT_RUNTIME_INSTANCE="$id"
         --setenv=AGENT_RUNTIME_OUTPUT="$(jq -r .filesystem.output.path "$t")"
-        -- "$(realpath "$(command -v setpriv)")" --reuid="$uid" --regid="$uid" --clear-groups
-        --bounding-set=-all --inh-caps=-all --no-new-privs -- "$@")
+        -- "${exec_tail[@]}")
     printf -v command '%q ' "$@"
     # the marker comes first: a crash between it and the unit is reported as ambiguous, never re-run
     jq -nc --arg at "$(now)" '{at: $at}' | atomic_json "$base/starting"
     systemctl reset-failed "$unit" 2>/dev/null || true
+    ifaces_before=$(ip -o link show | awk -F': ' '{print $2}' | cut -d@ -f1)
     run_capture state "systemd-run failed" "${args[@]}"
     invocation=$(systemctl show -p InvocationID --value "$unit" 2>/dev/null || true)
     leader=''
@@ -341,6 +387,36 @@ case $cmd in
       [ -z "$leader" ] || break
       sleep 0.1
     done
+    # egress: configure the instance's veth and pin the allowlist filter on the host before the payload's
+    # net-ready. Filtered on BOTH input (host-local endpoints/resolver) and forward (routed off the host);
+    # names are already pinned into /etc/hosts and port 53 is never opened, so there is no name-based path.
+    if [ "$egress" = allowlist ] && [ -n "$leader" ]; then
+      slot=$(( (uidbase - 1048576) / 65536 ))
+      sub="10.$((slot / 256)).$((slot % 256))"
+      veth=''
+      for _ in $(seq 1 50); do
+        veth=$(comm -13 <(printf '%s\n' "$ifaces_before" | sort) \
+                        <(ip -o link show | awk -F': ' '{print $2}' | cut -d@ -f1 | sort) | grep -E '^ve-' | head -1)
+        if [ -n "$veth" ]; then break; fi
+        sleep 0.1
+      done
+      [ -n "$veth" ] || fail state "$id: the egress veth never appeared"
+      ip addr add "$sub.1/24" dev "$veth"; ip link set "$veth" up
+      nsenter -t "$leader" -n ip addr add "$sub.2/24" dev host0
+      nsenter -t "$leader" -n ip link set host0 up
+      nsenter -t "$leader" -n ip link set lo up
+      nsenter -t "$leader" -n ip route add default via "$sub.1"
+      tbl="art_$id"
+      nft add table inet "$tbl"
+      for hook in input forward; do
+        nft add chain inet "$tbl" "$hook" "{ type filter hook $hook priority -10; policy accept; }"
+        nft add rule inet "$tbl" "$hook" iifname "$veth" ct state established,related accept
+        for aip in $allow_ips; do nft add rule inet "$tbl" "$hook" iifname "$veth" ip daddr "$aip" tcp dport 443 accept; done
+        nft add rule inet "$tbl" "$hook" iifname "$veth" ip daddr 127.0.0.0/8 accept
+        nft add rule inet "$tbl" "$hook" iifname "$veth" drop
+      done
+      touch "$base/vol/tmp/.net-ready"
+    fi
     ns='{}' uid_map=null
     if [ -n "$leader" ]; then
       for n in user mnt pid ipc uts net cgroup time; do
@@ -408,7 +484,12 @@ case $cmd in
     inv=$(jq -r '.invocation // empty' "$base/started.json" 2>/dev/null || true)
     [ -n "$inv" ] || fail state "$id has not been started"
     journalctl --sync 2>/dev/null || true
-    journalctl -o cat --no-pager "_SYSTEMD_INVOCATION_ID=$inv" | tail -c "$log_cap"
+    cred=$(cat "$rundir/$id/cred/token" 2>/dev/null || true)
+    if [ -n "$cred" ]; then
+      journalctl -o cat --no-pager "_SYSTEMD_INVOCATION_ID=$inv" | tail -c "$log_cap" | redact_stream "$cred"
+    else
+      journalctl -o cat --no-pager "_SYSTEMD_INVOCATION_ID=$inv" | tail -c "$log_cap"
+    fi
     ;;
 
   status)
@@ -480,6 +561,14 @@ case $cmd in
         mv "$tmp/run.log.tail" "$tmp/run.log"
         truncated=true
       fi
+    fi
+    # the credential leak gate (#137): the per-run secret is still on its tmpfs here (export precedes destroy),
+    # so this needs no re-passing by the caller. The diagnostic log is redacted in place; an artifact that
+    # carries the secret refuses the export, because a well-behaved payload never writes it to /output.
+    cred=$(cat "$rundir/$id/cred/token" 2>/dev/null || true)
+    if [ -n "$cred" ]; then
+      [ -f "$tmp/run.log" ] && redact_file "$cred" "$tmp/run.log"
+      ! grep -rqF -- "$cred" "$tmp/output" 2>/dev/null || fail credential "$id: the run credential appears in an exported artifact"
     fi
     for f in instance.json started.json result.json; do
       if [ -f "$base/$f" ]; then cp "$base/$f" "$tmp/$f"; fi
