@@ -6,7 +6,7 @@
 # process surviving; export bundles patches, output and a bounded log; destroy
 # tears down in order and releases the reservation last. An outcome that was never
 # recorded (supervisor or host crash) is reported as ambiguous and never replayed.
-USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST --host POLICY --task REF [--plan PLAN.json]... | start ID [--root] [--timeout-sec N] [--idmap] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID | destroy ID [--discard] | reconcile | record-exit ID'
+USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--root] [--timeout-sec N] [--idmap] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID | destroy ID [--discard] | reconcile | record-exit ID'
 state=/var/lib/agent-runtime
 if [ "${1:-}" = --state ]; then
   [ $# -ge 2 ] || usage
@@ -21,10 +21,11 @@ self=$(realpath "$0")
 log_cap=$((1024 * 1024))
 volume_names=(workspace home tmp cache output)
 
-valid_id() { [[ $1 =~ ^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ && $1 != exports ]]; }
+# 29: an instance id doubles as the Herdr runtime id (rt-<id>, Herdr agent names <= 32)
+valid_id() { [[ $1 =~ ^[a-z0-9]([a-z0-9-]{0,27}[a-z0-9])?$ && $1 != exports ]]; }
 take_id() {
   [ $# -ge 1 ] || usage
-  valid_id "$1" || fail usage "instance id must be a DNS label of at most 42 characters, not \`exports\`: $1"
+  valid_id "$1" || fail usage "instance id must be a DNS label of at most 29 characters, not \`exports\`: $1"
   id=$1
   base=$state/$id
   root=$rundir/$id/root
@@ -146,7 +147,7 @@ case $cmd in
   create)
     take_id "$@"
     shift
-    template='' host='' task='' plans=()
+    template='' host=/etc/agent-runtime/host.json task='' plans=()
     while [ $# -gt 0 ]; do
       case $1 in
         --template) [ $# -ge 2 ] || usage; template=$2; shift 2 ;;
@@ -156,7 +157,7 @@ case $cmd in
         *) usage ;;
       esac
     done
-    [ -n "$template" ] && [ -n "$host" ] && [ -n "$task" ] || usage
+    [ -n "$template" ] && [ -n "$task" ] || usage
     [ -f "$template" ] && [ -f "$host" ] || fail usage "template or host policy not found"
     jq -e '.kind == "agent-runtime-host" and .schemaVersion == 1' "$host" >/dev/null 2>&1 \
       || fail usage "$host is not an agent-runtime-host policy, schemaVersion 1"
@@ -208,6 +209,12 @@ case $cmd in
     cp "$template" "$base/template.json"
     cp "$host" "$base/host.json"
     run_capture state "assign failed" agent-runtime-assign --template "$template" --run "$id" --out "$base/run" "${plans[@]}"
+    # the manifest references the template's whole closure (packages, skills): rooted here, an
+    # in-flight instance keeps it across a template profile update and nix-collect-garbage -d
+    template_store=$(realpath "$template")
+    if [[ $template_store == /nix/store/* ]]; then
+      run_capture store "cannot root the template $template_store" nix_cmd build --out-link "$base/template-root" "$template_store"
+    fi
     for vname in "${volume_names[@]}"; do
       v=$(jq -c --arg n "$vname" '.[$n]' <<<"$vols")
       owner=$((uidbase + $(jq -r .owner <<<"$v")))
@@ -228,9 +235,9 @@ case $cmd in
     sync -f "$base"
     jq -n --arg id "$id" --arg task "$task" --arg host "$(hostname)" --arg at "$(now)" --argjson uid "$uidbase" \
       --arg unit "$unit" --arg machine "$machine" --argjson vols "$vols" --arg b "$base" \
-      --slurpfile t "$template" --slurpfile r "$base/run/run.json" '
+      --slurpfile t "$template" --slurpfile r "$base/run/run.json" --arg ts "$template_store" '
       {schemaVersion: 1, kind: "agent-runtime-instance-record", id: $id, task: $task, host: $host,
-       template: {name: $t[0].template.name, digests: $t[0].digests}, run: {digest: $r[0].digests.run},
+       template: {name: $t[0].template.name, digests: $t[0].digests, manifest: $ts}, run: {digest: $r[0].digests.run},
        uidBase: $uid, unit: $unit, machine: $machine, createdAt: $at,
        volumes: ($vols | with_entries(.value |= {path, sizeMiB, inodes} + {image: ($b + "/img/" + .key + ".img"), mount: ($b + "/vol/" + .key)}))}' \
       | atomic_json "$base/instance.json"

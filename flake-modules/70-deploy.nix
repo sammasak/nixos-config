@@ -24,21 +24,41 @@ let
   x86 = inputs.deploy-rs.lib.x86_64-linux.activate;
   aarch64 = (deployLib "aarch64-linux").activate;
 
-  mkNode = name: activate: profile: {
-    hostname = name;
-    # the pinned key or nothing (modules/core/ssh-known-hosts.nix): no first-use trust from the deployer either
-    sshOpts = [ "-o" "StrictHostKeyChecking=yes" ];
-    profiles.system = {
-      # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
-      sshUser = "deploy";
-      user = "root";
-      path = activate.nixos config.flake.nixosConfigurations.${name};
-      autoRollback = true;
-      magicRollback = true;
-      activationTimeout = 180;
-      confirmTimeout = 30;
-    } // profile;
+  # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
+  pushAs = {
+    sshUser = "deploy";
+    user = "root";
+    autoRollback = true;
+    magicRollback = true;
+    activationTimeout = 180;
+    confirmTimeout = 30;
   };
+
+  mkNode = name: mkNodeFrom config.flake.nixosConfigurations.${name} name;
+  mkNodeFrom =
+    nixos: name: activate: profile:
+    let
+      runtime = nixos.config.sam.agentRuntime;
+    in
+    {
+      hostname = name;
+      # the pinned key or nothing (modules/core/ssh-known-hosts.nix): no first-use trust from the deployer either
+      sshOpts = [ "-o" "StrictHostKeyChecking=yes" ];
+      # the substrate before the templates: the template profile's activation checks the substrate
+      profilesOrder = [ "system" ] ++ lib.optional runtime.host.enable "agent-runtime";
+      profiles = {
+        system = pushAs // { path = activate.nixos nixos; } // profile;
+      }
+      // lib.optionalAttrs runtime.host.enable {
+        # templates only, no host switch (#140): `deploy .#<node>.agent-runtime` updates them alone
+        agent-runtime = pushAs // {
+          path = activate.custom ((config.flake.lib.agentRuntime { inherit (nixos) pkgs; }).templateProfile {
+            agentRuntime = runtime;
+          }) "$PROFILE/bin/agent-runtime-templates-activate";
+          profilePath = "/nix/var/nix/profiles/agent-runtime/templates";
+        } // lib.filterAttrs (n: _: n == "remoteBuild") profile;
+      };
+    };
 in
 {
   flake.deploy.nodes = {
@@ -61,7 +81,7 @@ in
   };
 
   perSystem =
-    { system, ... }:
+    { system, pkgs, ... }:
     {
       # Unfiltered, the x86 check would need the aarch64 toplevel built on lenovo.
       checks = inputs.deploy-rs.lib.${system}.deployChecks (
@@ -69,6 +89,35 @@ in
         // {
           nodes = lib.filterAttrs (_: node: node.profiles.system.path.system == system) config.flake.deploy.nodes;
         }
-      );
+      )
+      // lib.optionalAttrs (system == "x86_64-linux") {
+        # The real lenovo and acer-swift with the substrate on and one template (#140): deploy-rs's
+        # schema and activation checks over both profiles, and at evaluation the claim that
+        # a template change moves the template profile but not the host's system.
+        agent-runtime-deploy-compat =
+          let
+            hosts = [ "lenovo" "acer-swift" ];
+            enabled =
+              name: version:
+              config.flake.nixosConfigurations.${name}.extendModules {
+                modules = [
+                  (import ../tests/agent-runtime/deploy-templates.nix { inherit (inputs) skills; inherit version; })
+                  { sam.agentRuntime.host = { enable = true; eligibleTemplates = [ "tiny" ]; }; }
+                ];
+              };
+            node = version: name: mkNodeFrom (enabled name version) name x86 { };
+            drv = version: name: profile: (node version name).profiles.${profile}.path.drvPath;
+            checks = inputs.deploy-rs.lib.${system}.deployChecks { nodes = lib.genAttrs hosts (node 1); };
+            system1 = map (n: drv 1 n "system") hosts;
+            templates1 = map (n: drv 1 n "agent-runtime") hosts;
+          in
+          assert lib.assertMsg (system1 == map (n: drv 2 n "system") hosts) "agent-runtime: a template change moved a host's system profile";
+          assert lib.assertMsg (templates1 != map (n: drv 2 n "agent-runtime") hosts) "agent-runtime: a template change did not move the template profile";
+          pkgs.runCommand "agent-runtime-deploy-compat" { } ''
+            echo "deployChecks: ${checks.deploy-schema} ${checks.deploy-activate}" > $out
+            echo "system (unchanged by templates): ${toString (map builtins.unsafeDiscardStringContext system1)}" >> $out
+            echo "agent-runtime v1: ${toString (map builtins.unsafeDiscardStringContext templates1)}" >> $out
+          '';
+      };
     };
 }
