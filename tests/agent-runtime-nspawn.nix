@@ -106,6 +106,7 @@ let
     export PATH=${env}/bin HOME=${fs.home.path} TMPDIR=${fs.tmp.path} CARGO_HOME=${fs.cache.path}/cargo
     echo "started_ns=$(date +%s%N)"
     echo "whoami=$(id -u):$(id -g) home=$(stat -c %u:%a $HOME) cache=$(stat -c %u:%a ${fs.cache.path}) tmp=$(stat -c %a $TMPDIR)"
+    touch $HOME/.written ${fs.cache.path}/.written $TMPDIR/.written
     cp -r /src/rf-proto ${src.path}
     chmod -R u+w ${src.path}
     cd ${src.path}
@@ -197,7 +198,7 @@ let
             --tmpfs="${tmpfs "mode=1777" fs.tmp}"
             --tmpfs="${tmpfs agentOwned fs.home}"
             --tmpfs="${tmpfs agentOwned fs.cache}"
-            /bin/sh -c "exec ${pkgs.util-linux}/bin/setpriv --reuid=$user --regid=$user --clear-groups --no-new-privs /bin/sh -c '$script > ${fs.workspace}/run.log 2>&1'")
+            /bin/sh -c "${pkgs.coreutils}/bin/chown 1000:1000 ${fs.home.path} ${fs.cache.path} && exec ${pkgs.util-linux}/bin/setpriv --reuid=$user --regid=$user --clear-groups --no-new-privs /bin/sh -c '$script > ${fs.workspace}/run.log 2>&1'")
         echo "== command ($id):"; printf '%q ' "''${args[@]}"; echo
         "''${args[@]}" || rc=$?
         echo "== run.log ($id, exit $rc):"; cat "$base/workspace/run.log" 2>/dev/null || echo "(no run.log)"
@@ -291,7 +292,7 @@ pkgs.testers.runNixOSTest {
         status, out = machine.execute(f"{F} run idle 0 ${pkgs.coreutils}/bin/true :idmap 2>&1")
         opt = ":idmap" if status == 0 else ""
         if not opt:
-            print("=== :idmap refused:", out[-400:])
+            print("=== :idmap refused:", machine.execute("journalctl -b -o cat -u agent-runtime-idle.service | grep -m3 -iE 'idmap|clone|failed'")[1])
             status, out = machine.execute(f"{F} run idle 0 ${pkgs.coreutils}/bin/true 2>&1")
         assert status == 0, out
         t1 = time.monotonic_ns()

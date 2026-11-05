@@ -76,7 +76,7 @@ systemd-run --unit=agent-runtime-<id> --wait --pipe --collect \
     --tmpfs=/tmp:mode=1777,size=256M,nr_inodes=100000 \
     --tmpfs=/home/agent:mode=0700,uid=1000,gid=1000,size=256M,nr_inodes=100000 \
     --tmpfs=/var/cache/agent:mode=0700,uid=1000,gid=1000,size=512M,nr_inodes=100000 \
-    /bin/sh -c "exec setpriv --reuid=<uid> --regid=<uid> --clear-groups --no-new-privs /bin/sh -c '<script> > /workspace/run.log 2>&1'"
+    /bin/sh -c "chown 1000:1000 /home/agent /var/cache/agent && exec setpriv --reuid=<uid> --regid=<uid> --clear-groups --no-new-privs /bin/sh -c '<script> > /workspace/run.log 2>&1'"
 ```
 
 The root tree is a few directories, `etc/{os-release,passwd,group,nsswitch.conf}`
@@ -146,6 +146,10 @@ Versions: kernel 6.18.56 (the test VM's), systemd 261 (261.3), nixpkgs
   container's root, within its user namespace. Narrowing it is #137's work.
 - `/dev`: char console core fd full fuse mqueue net null ptmx pts random shm
   stderr stdin stdout tty urandom zero; 6 PIDs visible to the probe.
+- nspawn appends its own `uid=`/`gid=` (container root) to `--tmpfs` options,
+  so a `uid=1000` there is overridden and HOME was root-owned 0700 until the
+  factory chowned it inside the instance; the workload now writes HOME, the
+  cache and TMP as `agent`.
 - The OOM kill: `Memory cgroup out of memory: Killed process (tail) …
   UID:1049576`, the mapped agent, nothing outside the cgroup.
 
