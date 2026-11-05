@@ -89,7 +89,7 @@ let
     in
     pkgs.writeShellScript "agent-runtime-${name}" ''
       set -euo pipefail
-      export PATH=${lib.makeBinPath (with pkgs; [ bash coreutils diffutils gawk gnugrep findutils util-linux procps systemd e2fsprogs ])}
+      export PATH=${lib.makeBinPath (with pkgs; [ bash coreutils diffutils gawk gnugrep gnused findutils util-linux procps systemd e2fsprogs ])}
       cmd=$1; id=$2; shift 2
       state=/var/lib/agent-runtime
       base=$state/$id
@@ -103,7 +103,7 @@ let
         for v in "$base"/mnt/*; do
           if mountpoint -q "$v"; then umount "$v"; fi
         done
-        rm -rf --one-file-system "/run/agent-runtime/$id" "$base/mnt" "$base/img" "$base/uidbase"
+        rm -rf --one-file-system "/run/agent-runtime/$id" "$base/mnt" "$base/img" "$base/cred" "$base/uidbase"
         # the reservation goes last: a teardown that fails above keeps the instance counted
         rm -f "$base/reservation"
         rmdir "$base"
@@ -155,10 +155,21 @@ let
           ln -sf ${pkgs.coreutils}/bin/env "$root/usr/bin/env"
           created=1
           ;;
-        run)  # run <id> <uid> <script> [store-bind-opt]
+        run)  # run <id> <uid> <script> [store-bind-opt]; AGENT_RUNTIME_CRED delivers a per-run secret
           user=$1; script=$2; opt=''${3:-}; rc=0
           uidbase=$(awk '{print $3}' "$base/reservation")
           systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
+          # a per-run credential never comes from the manifest or the store: it is written now to a private
+          # tmpfs dir of this instance, owned by the mapped agent, bound read-only; redact() strips it from logs
+          credbind=(); redact() { cat; }
+          if [ -n "''${AGENT_RUNTIME_CRED:-}" ]; then
+            cred=$AGENT_RUNTIME_CRED
+            mkdir -p "$base/cred"; chmod 700 "$base/cred"
+            printf '%s' "$cred" > "$base/cred/token"
+            chmod 400 "$base/cred/token"; chown "$((uidbase + user))":"$((uidbase + user))" "$base/cred" "$base/cred/token"
+            credbind=(--bind-ro="$base/cred:/run/agent-runtime/credentials")
+            redact() { sed "s|$cred|<redacted>|g"; }
+          fi
           args=(systemd-run --unit="agent-runtime-$id" --wait --pipe --collect
             -p MemoryMax=${toString t.resources.memoryMiB}M -p MemorySwapMax=0 -p TasksMax=${toString t.resources.tasksMax}
             -p CPUQuota=${toString (t.resources.cpus * 100)}% -p KillMode=mixed --setenv=SYSTEMD_LOG_TARGET=journal
@@ -170,16 +181,22 @@ let
               --bind-ro="/nix/store:/nix/store$opt"
               ${sourceBinds}${skillBinds}
               --bind-ro="${manifestFile}:/etc/agent-runtime/template.json"
+              "''${credbind[@]}"
               ${lib.concatStrings (lib.mapAttrsToList (n: v: ''--bind="$base/mnt/${n}:${v.path}" '') volumes)}
               /bin/sh -c "exec ${pkgs.util-linux}/bin/setpriv --reuid=$user --regid=$user --clear-groups --bounding-set=-all --inh-caps=-all --no-new-privs /bin/sh -c '$script > ${fs.tmp.path}/run.log 2>&1'")
           echo "== command ($id):"; printf '%q ' "''${args[@]}"; echo
           "''${args[@]}" || rc=$?
-          echo "== run.log ($id, exit $rc):"; cat "$base/mnt/tmp/run.log" 2>/dev/null || echo "(no run.log)"
-          if [ "$rc" != 0 ]; then echo "== nspawn journal ($id):"; journalctl --sync; journalctl -b -o cat -u "agent-runtime-$id.service" | grep -v -E "^(Started|agent-runtime-)" | tail -8; fi
+          echo "== run.log ($id, exit $rc):"; { cat "$base/mnt/tmp/run.log" 2>/dev/null || echo "(no run.log)"; } | redact
+          if [ "$rc" != 0 ]; then echo "== nspawn journal ($id):"; journalctl --sync; journalctl -b -o cat -u "agent-runtime-$id.service" | grep -v -E "^(Started|agent-runtime-)" | tail -8 | redact; fi
           exit "$rc"
           ;;
         export)
           out=$state/exports/$id
+          # the credential must not leave in an artifact: scan the output before publishing, and refuse if the
+          # per-run secret appears in any file (a well-behaved agent never writes it; this is the backstop)
+          if [ -n "''${AGENT_RUNTIME_CRED:-}" ] && grep -rqF "$AGENT_RUNTIME_CRED" "$base/mnt/output"; then
+            echo "export refused: the run credential appears in the output of $id" >&2; exit 77
+          fi
           mkdir -p "$out"
           cp -r "$base/mnt/output/." "$out"
           (cd "$out" && sha256sum -c SHA256SUMS)
@@ -298,17 +315,38 @@ let
     echo "finished_ns=$(date +%s%N)"
   '';
 
-  # Two of these run at once: each records its identity, holds a SysV segment,
-  # waits for the host's go, then must not reach its peer.
+  # The per-run credential: read it, prove the bind is read-only, print it once (to exercise log
+  # redaction), and write a clean result that must not carry it (to exercise the export gate).
+  credwork = pkgs.writeShellScript "agent-cred" ''
+    set -euo pipefail
+    export PATH=${env}/bin
+    t=/run/agent-runtime/credentials/token
+    echo "cred_owner=$(stat -c %u:%a $t) whoami=$(id -u)"
+    tok=$(cat $t)
+    echo "using credential: $tok"
+    if printf 'overwrite' > $t 2>/dev/null; then echo "FAIL credential writable"; exit 1; fi
+    echo "clean result, no secret" > ${out}/result.txt
+    cp /etc/agent-runtime/template.json ${out}/template.json
+    (cd ${out} && sha256sum result.txt template.json > SHA256SUMS)
+  '';
+
+  # Two of these run at once: each records its identity, holds a SysV segment and its own
+  # credential, waits for the host's go, then must not reach its peer's process, IPC or credential.
   conc = pkgs.writeShellScript "agent-conc" ''
     set -euo pipefail
     export PATH=${env}/bin
     me=$(cat /proc/sys/kernel/hostname)
     echo "$(id -u) $(for n in ${nsList}; do readlink /proc/self/ns/$n; done | tr '\n' ' ')" > ${ws}/identity
     echo "$me" > ${ws}/marker-$me
+    cat /run/agent-runtime/credentials/token > ${ws}/my-cred
     ipcmk -M 4096 > /dev/null
     touch ${ws}/ready
     while [ ! -e ${ws}/go ]; do sleep 0.2; done
+    # the peer's credential is neither at the shared path (each sees only its own bind) nor on the host
+    peercred=$(cat /run/agent-runtime/credentials/token)
+    test "$peercred" = "$(cat ${ws}/my-cred)" || { echo "FAIL saw another token at the shared path"; exit 1; }
+    if cat "$(cat ${ws}/peer-credpath)" 2>/dev/null; then echo "FAIL read peer credential from the host"; exit 1; fi
+    echo "peer credential unreadable, own token only"
     ls ${ws} | tr '\n' ' '; echo
     test "$(ls ${ws} | grep -c '^marker-')" = 1
     test "$(ipcs -m | grep -c '^0x')" = 1
@@ -397,8 +435,8 @@ pkgs.testers.runNixOSTest {
                 "disk_avail_mib": int(machine.succeed("df --output=avail -BM /var/lib | tail -1 | tr -dc 0-9")),
                 "mem_available_mib": int(machine.succeed("awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo"))}
 
-    def background(i: str, script: str, f: str = F) -> None:
-        machine.succeed(f"({f} run {i} 1000 {script} {opt} > /tmp/{i}.out 2>&1; echo $? > /tmp/{i}.rc) >/dev/null 2>&1 &")
+    def background(i: str, script: str, f: str = F, env: str = "") -> None:
+        machine.succeed(f"({env} {f} run {i} 1000 {script} {opt} > /tmp/{i}.out 2>&1; echo $? > /tmp/{i}.rc) >/dev/null 2>&1 &")
 
     machine.wait_for_unit("multi-user.target")
     print("=== versions ===")
@@ -476,10 +514,32 @@ pkgs.testers.runNixOSTest {
             timings[run]["teardown_ms"] = teardown(run)
             timings[run]["export_bytes"] = int(machine.succeed(f"du -sb /var/lib/agent-runtime/exports/{run} | cut -f1"))
 
-    with subtest("two concurrent instances: distinct identities, namespaces, workspaces, IPC and process trees"):
+    with subtest("per-run credential: delivered read-only, redacted from the log, kept out of the export"):
+        create("cred")
+        secret = "glpat-REDACTME-" + "0123456789abcdef"
+        status, out = machine.execute(f"AGENT_RUNTIME_CRED={secret} {F} run cred 1000 ${credwork} {opt} 2>&1")
+        print(out)
+        assert status == 0, "credential workload failed"
+        assert secret not in out, "the credential leaked into the run log"
+        assert "using credential: <redacted>" in out, "the credential was not redacted in the log"
+        assert "cred_owner=1000:400" in out, out
+        assert "FAIL credential writable" not in out
+        # the credential is nowhere in the store or the manifest
+        machine.succeed(f"! grep -rqF {secret} /nix/store/*agent-runtime* 2>/dev/null")
+        print(machine.succeed(f"AGENT_RUNTIME_CRED={secret} {F} export cred"))
+        machine.succeed(f"! grep -rqF {secret} /var/lib/agent-runtime/exports/cred")
+        # the export gate refuses an output that carries the secret
+        machine.succeed(f"printf '%s' {secret} > /var/lib/agent-runtime/cred/mnt/output/leak.txt")
+        status, out = machine.execute(f"AGENT_RUNTIME_CRED={secret} {F} export cred 2>&1")
+        assert status == 77 and "export refused" in out, ("the export gate did not catch the leak", status, out)
+        machine.succeed("rm /var/lib/agent-runtime/cred/mnt/output/leak.txt")
+        teardown("cred")
+
+    with subtest("two concurrent instances: distinct identities, namespaces, workspaces, IPC, process trees and credentials"):
         for i in ("conc-a", "conc-b"):
             create(i)
-            background(i, "${conc}")
+            machine.succeed(f"echo /var/lib/agent-runtime/{'conc-b' if i == 'conc-a' else 'conc-a'}/cred/token > /var/lib/agent-runtime/{i}/mnt/workspace/peer-credpath")
+            background(i, "${conc}", env=f"AGENT_RUNTIME_CRED=token-of-{i}")
         machine.wait_until_succeeds("test -e /var/lib/agent-runtime/conc-a/mnt/workspace/ready && test -e /var/lib/agent-runtime/conc-b/mnt/workspace/ready", timeout=60)
         print(machine.succeed("machinectl list --no-legend"))
         assert machine.succeed("machinectl list --no-legend | grep -c agent-runtime-conc-").strip() == "2"
