@@ -128,7 +128,7 @@ instance id, transient unit per instance); it is not yet that adapter.
 7. **Host unchanged**: the store's entry count and mtime, the sentinel, no
    mount, machine or unit left, `/var/lib/agent-runtime` holds only `exports`.
 
-## Observed on acer (QEMU, 2026-11-05, run 18 on `6a83708`)
+## Observed on acer (QEMU, 2026-11-05, run 19 on `5b9c309`)
 
 Versions: kernel 6.18.56 (the test VM's), systemd 261 (261.3), nixpkgs
 26.11pre-git (`fe13242`), rf-proto `d878c58`, skills `9284403`, template digest
@@ -157,11 +157,11 @@ Versions: kernel 6.18.56 (the test VM's), systemd 261 (261.3), nixpkgs
 
 | run | startup | work | total | memory peak | CPU | instance disk | teardown |
 |---|---|---|---|---|---|---|---|
-| idle (`true`) | | | 368 ms | 4 MiB | | 447 B | 26 ms |
-| cold (`cargo test`) | 178 ms | 2061 ms | 2273 ms | 363.8 MiB | 3.06 s | 22.9 MB | 30 ms |
-| warm (`cargo test`) | 216 ms | 1733 ms | 1984 ms | 127.1 MiB | 2.78 s | 22.9 MB | 28 ms |
-| tasksMax bomb | | | 20.5 s | 251 MiB | 2.5 s | | 24 ms |
-| memoryMiB hog | | | | 1 GiB (the ceiling) | | | 52 ms |
+| idle (`true`) | | | 316 ms | 4.1 MiB | | 447 B | 42 ms |
+| cold (`cargo test`) | 169 ms | 2025 ms | 2225 ms | 349.2 MiB | 3.00 s | 22.9 MB | 27 ms |
+| warm (`cargo test`) | 169 ms | 1736 ms | 1938 ms | 136 MiB | 2.59 s | 22.9 MB | 28 ms |
+| tasksMax bomb | | | 20.5 s | 251.9 MiB | 2.44 s | | 22 ms |
+| memoryMiB hog | | | | 1 GiB (the ceiling) | | | 49 ms |
 
 Startup is host `create` to the workload's first line; work is the workload's
 own marks; total adds the unit's exit. The cold peak counts the page cache the
