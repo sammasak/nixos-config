@@ -50,6 +50,7 @@ let
     chk test -f ${template.skill.path}/SKILL.md
     chk test -f /src/rf-proto/Cargo.toml
     chk test "$(cat /proc/self/uid_map | awk '{print $2}')" != 0
+    chk grep -q 'NoNewPrivs:.1' /proc/self/status
     deny() { if "$@" 2>/dev/null; then echo "FAIL (succeeded) $*"; fail=1; else echo "denied $*"; fi; }
     deny touch /nix/store/agent-runtime-write-attempt
     deny touch ${env}/bin/agent-runtime-write-attempt
@@ -116,7 +117,7 @@ let
           ${pkgs.systemd}/bin/systemd-nspawn --quiet --keep-unit --settings=no --register=yes \
             -M "agent-runtime-$id" -D "$root" \
             --private-users="$uidbase:65536" --private-users-ownership=chown \
-            --private-network --as-pid2 --resolv-conf=off --timezone=off \
+            --private-network --as-pid2 --resolv-conf=off --timezone=off --no-new-privileges=yes \
             --bind-ro="/nix/store:/nix/store$opt" \
             --bind-ro="${template.repository.source}:/src/rf-proto$opt" \
             --bind-ro="${template.skill.source}:${template.skill.path}$opt" \
@@ -144,7 +145,7 @@ let
         chk sh -c "! findmnt -rn | grep -q 'agent-runtime/$id'"
         chk sh -c "! systemctl list-units --all --no-legend 'agent-runtime-$id.service' | grep -q ."
         chk sh -c "! machinectl list --no-legend | grep -q 'agent-runtime-$id'"
-        chk sh -c "! pgrep -f 'nspawn.*agent-runtime-$id' >/dev/null"
+        chk sh -c "! pgrep -a -x systemd-nspawn | grep -q 'agent-runtime-$id'"
         chk test ! -e "$base"
         chk test ! -e "/run/agent-runtime/$id"
         exit $fail
