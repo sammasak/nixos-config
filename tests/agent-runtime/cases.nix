@@ -67,6 +67,11 @@ in
     };
   }
   {
+    name = "private-locked-source";
+    expect = "access = \"private\" is consumed only by an assignment-time prefetch";
+    module = bad { repositories.factum = lockedMain { access = "private"; }; };
+  }
+  {
     name = "assignment-with-lock";
     expect = "drop `lock`";
     module = bad {

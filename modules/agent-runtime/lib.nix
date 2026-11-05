@@ -1,5 +1,6 @@
-# Standalone evaluation of agent-runtime templates (no nixosSystem): the
-# manifests throw the failed checks themselves (see `guarded` in default.nix).
+# Standalone entry points (no nixosSystem): template evaluation, whose manifests
+# throw the failed checks themselves (see `guarded` in default.nix), and the
+# runtime adapter tools.
 { lib, pkgs }:
 let
   eval =
@@ -15,5 +16,6 @@ let
 in
 {
   evalManifests = { modules }: (eval modules).config.sam.agentRuntime;
+  tools = import ./runtime.nix { inherit lib pkgs; };
   options = (eval [ ]).options.sam;
 }

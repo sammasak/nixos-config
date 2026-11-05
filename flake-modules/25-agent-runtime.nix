@@ -32,10 +32,19 @@
           cases = import ../tests/agent-runtime/cases.nix (args // { inherit lib; });
           factumRev = inputs.factum.rev;
         };
+        agent-runtime-runtime = import ../tests/agent-runtime/runtime-check.nix {
+          inherit pkgs lib runtime;
+          shipped = runtime.tools;
+          devenvPlatform = inputs.devenv-platform;
+        };
       };
       packages = x86Only {
         agent-runtime-options = optionsDoc.optionsCommonMark;
         agent-runtime-manifests = manifests;
+        agent-runtime-assign = runtime.tools.assign;
+        agent-runtime-materialize = runtime.tools.materialize;
+        agent-runtime-export = runtime.tools.export;
+        agent-runtime-reclaim = runtime.tools.reclaim;
       };
     };
 }

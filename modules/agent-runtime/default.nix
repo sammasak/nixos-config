@@ -193,6 +193,17 @@ let
         default = false;
         description = "Private writable copy (true) or read-only store path (false). Never implies push rights.";
       };
+      access = mkOption {
+        type = types.enum [ "public" "private" ];
+        default = "public";
+        description = ''
+          `public`: prefetched anonymously, `GH_TOKEN` is ignored. `private`: the assignment-time
+          prefetch needs `GH_TOKEN` in the assigner's environment and fails closed without it; the
+          token never enters a manifest or the store. Only `resolve = "assignment"` prefetches, so a
+          locked source must stay `public` (its lock was fetched with the evaluator's credentials).
+          Either way the tree lands world-readable in the host's `/nix/store`.
+        '';
+      };
     };
   };
 
@@ -232,6 +243,18 @@ let
           type = normalizedPath;
           default = "/workspace";
           description = "Parent of every repository path; no other mount may sit on or under it.";
+        };
+        workspaceBudget = {
+          sizeMiB = mkOption {
+            type = types.ints.positive;
+            default = 4096;
+            description = "Bytes (MiB) the writable copies may take together; materialize refuses a run beyond it, run-time enforcement is #137's.";
+          };
+          inodes = mkOption {
+            type = types.ints.positive;
+            default = 200000;
+            description = "Inodes the writable copies may take together.";
+          };
         };
         home = mkOption {
           type = budgetedMount "/home/agent";
@@ -374,6 +397,10 @@ let
         message = "${at}: resolve = \"assignment\" records the revision per run; drop `lock`";
       }
       {
+        assertion = r.access == "public" || r.resolve == "assignment";
+        message = "${at}: access = \"private\" is consumed only by an assignment-time prefetch; a locked source is fetched by the flake lock's own credentials";
+      }
+      {
         assertion = lib.hasPrefix "${workspace}/" r.path;
         message = "${at}.path ${r.path} is not under filesystem.workspace ${workspace}";
       }
@@ -473,7 +500,8 @@ let
     storePath = s.outPath;
   };
 
-  # Any new field moves `digests.template`; a changed shape needs a `schemaVersion` bump.
+  # An added field moves `digests.template` and stays schemaVersion 1 (a reader keys on
+  # names, not shape); a removed, renamed or retyped field bumps `schemaVersion`.
   manifestOf =
     name: t:
     let
@@ -483,7 +511,7 @@ let
         template.name = name;
         inherit (t) role filesystem;
         sources = lib.mapAttrs (_: r: {
-          inherit (r) github ref resolve path writable;
+          inherit (r) github ref resolve access path writable;
           locked = lib.mapNullable sourceRef r.lock;
         }) t.repositories;
         skills = {
@@ -496,6 +524,7 @@ let
         }) t.packages;
         policies = {
           inherit (t) resources;
+          privateSources = lib.attrNames (lib.filterAttrs (_: r: r.access == "private") t.repositories);
           network = {
             egress = if t.network.allow == null then "none" else "allowlist";
             allow = lib.naturalSort (lib.unique (lib.optionals (t.network.allow != null) t.network.allow));
