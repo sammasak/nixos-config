@@ -45,6 +45,7 @@
         agent-runtime-materialize = runtime.tools.materialize;
         agent-runtime-export = runtime.tools.export;
         agent-runtime-reclaim = runtime.tools.reclaim;
+        agent-runtime-instance = runtime.tools.instance;
       };
     };
 }

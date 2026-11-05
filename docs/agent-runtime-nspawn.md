@@ -1,7 +1,9 @@
-# Agent runtime: nspawn proof and enforcement (#135, #137)
+# Agent runtime: nspawn proof, enforcement and lifecycle (#135, #137, #138)
 
-The M0 proof (#135) and the M1 enforcement (#137: capabilities, fixed-size
-volumes, admission, fail-closed start) for the ephemeral nspawn agent runtime
+The M0 proof (#135), the M1 enforcement (#137: capabilities, fixed-size
+volumes, admission, fail-closed start) and the lifecycle (#138: concurrent
+instances, cancel, timeout, crash and reboot recovery, export, teardown) of the
+ephemeral nspawn agent runtime
 ([epic #133](https://github.com/sammasak/nixos-config/issues/133)) lives in
 `tests/agent-runtime-nspawn.nix`, exposed as
 `packages.x86_64-linux.agent-runtime-nspawn` by
@@ -20,11 +22,9 @@ definition of done still applies.
 
 Two templates and one host policy, declared through the typed module
 (`sam.agentRuntime`, `docs/agent-runtime.md`) and evaluated with
-`flake.lib.agentRuntime`'s `evalManifests`. Each template gets its own factory
-script; the factories share one admission state. A factory reads its mounts,
-budgets and sources from the evaluated manifest, binds the manifest read-only at
-`/etc/agent-runtime/template.json`, and the export compares the exported copy
-byte for byte with the manifest.
+`flake.lib.agentRuntime`'s `evalManifests`. The test drives the shipped
+`agent-runtime-instance` (`docs/agent-runtime.md`) with the evaluated manifests
+and `sam.agentRuntime.hostPolicy`; both templates share one admission state.
 
 | | `rust-worker-m0` | `tiny` |
 |---|---|---|
@@ -41,9 +41,8 @@ and a third does not).
 `pkgs.closureInfo` over the environment, the source and the skill gives the
 closure the instance needs; the fixture mounts the whole host store read-only
 (see the limitations below for why that is a confidentiality finding, not a
-boundary). The fixture copies the locked source itself; driving
-`agent-runtime-assign`/`materialize`/`export` (#136) from the factory is the
-lifecycle adapter's job (#138).
+boundary). `create` assigns and materializes the locked source (#136) into the
+workspace volume; `export` turns the agent's changes into a patch.
 
 ## NixOS `containers.<name>` or a unit factory
 
@@ -63,131 +62,128 @@ the right vehicle for dynamic ephemeral instances. On the pinned nixpkgs
 
 None of that is wanted for an instance that exists for one assignment: no host
 switch, no persistent per-instance directory, no init system, no daemon socket.
-The fixture therefore uses the smallest explicit factory instead, the same
-primitives the NixOS module wraps, without its persistence. The effective
-command, as the factory printed it in the passing run:
+The runtime therefore uses the smallest explicit factory instead, the same
+primitives the NixOS module wraps, without its persistence:
+`agent-runtime-instance` (lifecycle, admission, records and exit classes in
+`docs/agent-runtime.md`). Its `start`, with the paths it fills in:
 
 ```
-systemd-run --unit=agent-runtime-<id> --wait --pipe --collect \
-  -p MemoryMax=512M -p MemorySwapMax=0 -p TasksMax=512 -p CPUQuota=100% -p KillMode=mixed \
-  --setenv=SYSTEMD_LOG_TARGET=journal \
-  systemd-nspawn --quiet --keep-unit --settings=no --register=yes -M agent-runtime-<id> -D /run/agent-runtime/<id>/root \
+systemd-run --unit=agent-runtime-<id> --collect --service-type=exec \
+  -p MemoryMax=512M -p MemorySwapMax=0 -p TasksMax=512 -p CPUQuota=100% -p RuntimeMaxSec=<timeout> \
+  -p KillMode=mixed -p TimeoutStopSec=30 -p Delegate=yes \
+  -p ExecStopPost="agent-runtime-instance --state /var/lib/agent-runtime record-exit <id>" \
+  --setenv=SYSTEMD_LOG_TARGET=console \
+  systemd-nspawn --quiet --keep-unit --settings=no --register=yes --console=pipe -M agent-runtime-<id> -D /run/agent-runtime/<id>/root \
     --private-users=<base>:65536 --private-users-ownership=chown \
     --private-network --as-pid2 --resolv-conf=off --timezone=off --no-new-privileges=yes \
     --drop-capability=<nspawn's default set minus CAP_SETUID,CAP_SETGID,CAP_SETPCAP> \
-    --bind-ro=/nix/store:/nix/store[:idmap] \
-    --bind-ro=<rf-proto store path>:/src/rf-proto[:idmap] \
-    --bind-ro=<skills store path>/skills/rust-engineering:/skills/rust-engineering[:idmap] \
-    --bind-ro=<manifest>:/etc/agent-runtime/template.json \
-    --bind=/var/lib/agent-runtime/<id>/mnt/{cache,home,output,tmp,workspace}:<their paths> \
-    /bin/sh -c "exec setpriv --reuid=<uid> --regid=<uid> --clear-groups --bounding-set=-all --inh-caps=-all --no-new-privs \
-      /bin/sh -c '<script> > /tmp/run.log 2>&1'"
+    --bind-ro=/nix/store:/nix/store[:idmap] --bind-ro=<template manifest>:/etc/agent-runtime/template.json \
+    --bind-ro=<skills store path>/skills/<name>:/skills/<name>[:idmap] \
+    --bind=/var/lib/agent-runtime/<id>/vol/workspace/workspace:/workspace \
+    --bind=/var/lib/agent-runtime/<id>/vol/{home,tmp,cache,output}:<their paths> \
+    --setenv=PATH=<the template's packages> --setenv=HOME=... --setenv=TMPDIR=... \
+    -- setpriv --reuid=<uid> --regid=<uid> --clear-groups --bounding-set=-all --inh-caps=-all --no-new-privs -- PROGRAM ARG...
 ```
 
-### create: admission, UID range, volumes
+The payload is argv, never spliced into a shell string. Its stdout and stderr,
+and nspawn's own, go to the unit's journal (`logs`, and the export's
+`run.log`).
 
-Under one host-wide lock, `create`:
+### Volumes
 
-1. refuses an id that is not a DNS label, or is `exports` (exit 64);
-2. admits the instance against the host policy, or refuses with exit 75 and the
-   reason: live instances against `maxConcurrentInstances`; the sum of live
-   reservations' `memoryMiB` plus this one against `MemTotal - reserve.memoryMiB`;
-   this instance's volume total plus `reserve.diskMiB` against the free space of
-   `/var/lib/agent-runtime` (already-created instances' images are allocated, so
-   free space accounts for them);
-3. takes the first of 64 UID ranges of 65536 IDs from host UID 1048576 that no
-   reservation holds;
-4. writes `/var/lib/agent-runtime/<id>/reservation` (`memoryMiB diskMiB uidbase template`)
-   before anything else, then creates one `fallocate`d image per volume,
-   `mkfs.ext4 -m 0 -N <inodes> -E nodiscard,root_owner=<mapped owner>` (nodiscard:
-   the default discard would punch the allocation back out of the file), and
-   loop-mounts it `nosuid,nodev` under `mnt/<volume>`; `tmp` is 1777 and owned
-   by the mapped root, the rest 0700/0755 and owned by the mapped agent;
-5. builds the root tree (a few directories, `etc/{os-release,passwd,group,nsswitch.conf}`,
-   two symlinks). Any failure after the reservation rolls the instance back.
-
-`destroy` takes the same lock, stops the unit, unmounts every volume, removes
-the images and the root tree, and removes the reservation last: a teardown that
-fails (a busy mount) leaves the instance counted, and a second `destroy`
-finishes it. `check-clean` asserts no mount, loop device, unit, machine, nspawn
-process or directory carries the id.
+Every writable mount (workspace, home, tmp, cache, output) is its own
+`fallocate`d ext4 image, `mkfs.ext4 -m 0 -N <inodes> -E nodiscard,root_owner=<mapped owner>`
+(nodiscard: the default discard would punch the allocation back out of the
+file), loop-mounted `nosuid,nodev` under `vol/<name>`. `tmp` is 1777 and owned
+by the mapped root, the rest are 0700/0755 and owned by the mapped agent. The
+workspace volume holds materialize's records at its root and the checkouts in
+`workspace/`, which is the part bound at `/workspace`.
 
 ### Capabilities
 
 nspawn has no "drop all", and the payload has to switch to `agent` inside. The
-factory drops every capability of nspawn's default set except `CAP_SETUID`,
+tool drops every capability of nspawn's default set except `CAP_SETUID`,
 `CAP_SETGID` and `CAP_SETPCAP`; `setpriv` then empties the bounding and
 inheritable sets and sets no-new-privileges before it executes the payload, so
 the payload, as `agent` or as container root, has every capability set at 0.
-Container root without `CAP_DAC_OVERRIDE` cannot write the agent's volumes, so
-the run log lives on the 1777 `tmp` volume. nspawn's stub init (PID 1 in the
-container) keeps the three capabilities.
-
-This is the shape #138 should grow into (idempotent operations keyed by the
-instance id, transient unit per instance); it is not yet that adapter.
+nspawn's stub init (PID 1 in the container) keeps the three capabilities.
 
 ## What the test proves
 
-1. **Ids**: `exports`, `../x`, `A` and `-x` are refused.
-2. **Idle instance**: create (five volumes), run `true`, stop, destroy: the
-   runtime's own cost. `:idmap` on the store bind is tried first; the refused
-   start keeps the reservation, and the fallback used is recorded.
+Every subtest drives `agent-runtime-instance`; each teardown is followed by a
+per-instance check (no mount, loop device, nspawn directory, unit, machine or
+state directory for the id), and the host inventory (units, mounts, nspawn
+directories, loop devices, state, live GC roots, processes in the mapped UID
+ranges, network links) is printed before, during and after.
+
+1. **Ids**: `exports`, `../x`, `A` and `-x` are refused before anything exists.
+2. **Idle instance**: create (five volumes), run `true`, destroy: the runtime's
+   own cost.
 3. **Probe as container root**: records `/proc/self/ns/*`, uid and gid maps,
-   cgroup, capability sets, the full mountinfo, devices and interfaces, and the
-   host records its own namespaces, maps and mountinfo. Asserted: only the
-   `time` namespace is shared with the host; root maps to a non-root host range;
-   `CapInh`, `CapPrm`, `CapEff`, `CapBnd` and `CapAmb` are 0, `NoNewPrivs` 1,
-   `Seccomp` 2; a host process cannot be signalled; a host SysV segment is
-   invisible; `hostname`, `mount -t tmpfs`, `remount,rw` of `/nix/store`,
-   `/src/rf-proto` and `/`, `mknod`, writing `/proc/sys` and `/sys`, reading
-   `/proc/kcore` and writing the agent's workspace are denied; writes to the
-   store, the environment, the source and the skill are denied; the Nix daemon
-   socket, the systemd private socket, a Docker socket, host sentinels in
-   `/root` and `/home` and `SSH_AUTH_SOCK` are absent; only `lo` exists.
-4. **Cold and warm**, each a fresh instance: as `agent` (capabilities 0,
-   asserted), write HOME, cache and TMP, copy the pinned source, `cargo test
-   --offline` (rf-proto's real suite), export the test binary and the manifest
-   with `SHA256SUMS`; the host verifies the sums, compares the manifest,
-   destroys and checks clean.
-5. **Two concurrent instances**: both in `machinectl`; distinct host UIDs for
-   guest UID 1000; every namespace but `time` distinct; each sees only its own
-   workspace marker, only its own SysV segment and its own credential, and
-   cannot signal the other's leader PID or read its credential.
-5a. **Per-run credential** (slice 2): delivered read-only to `agent` at
-    `/run/agent-runtime/credentials`, the bind is not writable, the secret is
-    `<redacted>` in the printed log, absent from the store, and the export is
-    refused (exit 77) when an output file carries it.
-5b. **Minimal egress** (slice 2): the `egress` template (`network.allow =
-    [ "allowed.test" ]`) resolves both the allowed and a denied name through
-    the allowlisted resolver, reaches `https://allowed.test/` (TLS, 200,
-    `remote=10.9.0.1`), and is refused both a non-allowlisted name and a
-    non-allowlisted IP on 443; after `destroy` the veth and the nft table are
-    gone.
-6. **Admission**: with two rust instances live, a third is refused for memory;
-   a `tiny` instance is admitted and a fourth instance is refused for the
-   instance count; with a ballast file leaving 612 MiB free, a rust instance
-   (608 + 512 reserve) is refused for disk while a `tiny` one (80 + 512) is
-   admitted. Refused creates leave nothing behind; the reservations return to
-   zero.
-7. **Fail closed**: with `user.max_user_namespaces = 0` the start fails
-   (`Failed to fork inner child: No space left on device`), the payload never
-   runs, and the reservation stays until `destroy`.
-8. **Failed teardown**: a host process holding the workspace mount makes
-   `destroy` fail; the reservation is still counted; after the holder stops, a
-   second `destroy` releases it.
-9. **tasksMax**: a fork bomb (`xargs -P 0` of 712 sleeps) is held at
-   `pids.current = pids.max = 512`, the kernel counts the `max` event, the
-   instance ends on its own.
-10. **memoryMiB**: a memory hog is OOM-killed inside the unit's cgroup
-    (`Finished with result: oom-kill`).
-11. **cpus**: three busy loops for 5 s get one core: CPU time 5.136 s over a
-    5.139 s runtime on the two-core VM.
-12. **Bytes and inodes**: `dd` into the workspace stops at `No space left on
-    device`, `touch` in HOME stops at 4992 of 4992 inodes; the host's free disk
-    is the same before and after.
-13. **Host unchanged**: store entry count and mtime, sentinels, no mount, loop
-    device, machine or unit left, `/var/lib/agent-runtime` holds only `exports`,
-    host free disk back within 16 MiB of the start.
+   cgroup, capability sets, open file descriptors (0-3 only), the full
+   mountinfo, devices and interfaces. Asserted: only `time` is shared with the
+   host and the namespaces equal what `start` recorded from the leader; root
+   maps to the instance's own range; all capability sets 0, `NoNewPrivs` 1,
+   `Seccomp` 2; a host process cannot be signalled, a host SysV segment is
+   invisible; `hostname`, mounts, `remount,rw`, `mknod`, `/proc/sys`, `/sys`,
+   `/proc/kcore`, and writes to the store, the environment, the skill and the
+   agent's workspace are denied; no Nix daemon, systemd or Docker socket, no
+   host sentinels, no `SSH_AUTH_SOCK`, only `lo`.
+4. **Lifecycle**: two rust instances and one `tiny` live at once with three
+   distinct UID ranges and seven distinct namespaces each (all but `time`); a
+   third rust instance is refused for memory and a fourth instance for the
+   count; both jobs run `cargo test --offline` on the materialized pinned
+   source as `agent` (capabilities 0), change `README.md` and leave an untracked
+   binary file; the live run directories hold GC roots for the pinned source;
+   each export carries a patch with that edit and a `GIT binary patch`, the
+   output artifacts with their sums, the log and `bundle.json` whose sums
+   verify. Destroying `job-a` leaves the running `hold-c` untouched; `hold-c`
+   sees only its own workspace marker and SysV segment and cannot signal
+   `job-a`'s leader.
+5. **Duplicates**: create with the same task returns the record, another task
+   is `conflict`; a second start does not re-run (same invocation, the
+   marker payload never runs); cancel, export and destroy twice are no-ops.
+6. **Cancellation**: destroy refuses a running instance; cancel twice; the
+   outcome is `cancelled`; destroy refuses it unexported; the export is a
+   recovery bundle.
+7. **Timeout**: `--timeout-sec 3` ends a sleeper as `timed-out`.
+8. **Crash mid-run**: SIGKILL of the instance's nspawn is `failed` with
+   `serviceResult = signal`; export and destroy leave nothing.
+9. **Supervisor crash**: killing the CLI that waits on an instance leaves the
+   instance running; its outcome is still recorded by the unit.
+10. **Killed create**: a create SIGKILLed after its reservation is `incomplete`,
+    blocks a new create of the id, and `reconcile` rolls it back.
+11. **Disk admission**, **fail closed** without user namespaces (`Failed to
+    fork inner child`, payload never ran, reservation held), **failed teardown**
+    (a busy mount keeps the reservation until a second destroy).
+12. **Budgets**: a fork bomb held at `pids.current = pids.max = 512`; a memory
+    hog `oom-killed` with a recovery bundle; three busy loops held to one core;
+    `dd` and `touch` stopped by the workspace's bytes and HOME's inodes with the
+    host's free disk unchanged.
+13. **Host reboot**: a running instance and a created one, then a hard crash of
+    the VM. After the boot, `reconcile` reports `ambiguous` and `created`;
+    starting the ambiguous one is refused (`not replayed`); both stay counted;
+    the created one starts and succeeds (its volumes are mounted again); the
+    ambiguous one exports a recovery bundle and is destroyed.
+14. **Per-run credential**: a `tiny` instance started with `--credential` sees
+    the token read-only at `/run/agent-runtime/credentials/token`, owned by the
+    mapped `agent` (`1000:400`), and cannot write it. The secret never reaches
+    the persistent state dir or the store; the printed `logs` view masks it
+    (`<redacted>`). A second instance started with the same host file reads only
+    its own token. The export redacts the diagnostic log in place and refuses
+    (class `credential`, exit 5) when an `/output` artifact carries the secret,
+    reading the still-mounted token itself rather than depending on the caller.
+15. **Minimal egress**: an `egress` instance (`network.allow = [ "allowed.test"
+    ]`) reaches `https://allowed.test/` over TLS (`endpoint-ok`) through the
+    name pinned in its `/etc/hosts`, and is refused both a non-allowlisted
+    host-local address (`10.9.0.9`) and a non-allowlisted address reachable only
+    by the host routing on its behalf (`10.8.0.5` in a netns), proving the
+    `forward` hook and not just `input`; the host itself can reach `10.8.0.5`,
+    so the refusal is the filter, not missing routing. After `destroy` the veth
+    and the `art_<id>` nft table are gone. No port 53 is ever opened.
+16. **Host unchanged**: the inventory is empty again (links as before), no
+    reservation, the store's entries unchanged, the sentinels in place, host
+    disk back to the start minus the kept exports.
 
 ## Observed on acer (QEMU, 2026-11-05)
 
@@ -195,62 +191,66 @@ Versions: kernel 6.18.56 (the test VM's), systemd 261 (261.3), nixpkgs
 26.11pre-git (`fe13242`), rf-proto `d878c58`, skills `9284403`. The raw log is
 in the PR.
 
-- `uid_map`/`gid_map`: `0 1048576 65536` for the first instance; concurrent
-  instances get distinct ranges (agent = host UID 1049576 and 1115112).
+- UID maps `0 <base> 65536`: three live instances got bases 1048576, 1114112
+  and 1179648.
 - Namespaces shared with the host: `time` only (nspawn does not unshare it).
-- `:idmap` on the store bind is refused: nspawn exits 1 before the payload
-  (`Failed to clone /nix/store: Invalid argument`). The VM's store is an
-  overlay over virtiofs, which has no idmapped-mount support, so the run used
-  a plain read-only bind and the store shows as `65534:65534 dr-xr-xr-x`. On
-  an ext4 host store the NixOS containers module uses `:idmap`; that is
-  expected, not proven here.
+- The store bind is plain by default; `start --idmap` asks for `:idmap`, which
+  the test VM refuses (`Failed to clone /nix/store: Invalid argument`: its store
+  is an overlay over virtiofs, without idmapped-mount support). The store shows
+  as `65534:65534` inside. On an ext4 host store `:idmap` is expected to work;
+  that is not proven here.
 - A nested user namespace can be created from inside but its `uid_map` cannot
   be written (`unshare --user --map-root-user`: `write failed
   /proc/self/uid_map: Operation not permitted`); see the limitations.
-- `/dev`: char console core fd full fuse mqueue net null ptmx pts random shm
-  stderr stdin stdout tty urandom zero.
-- The OOM kill names the mapped agent's host UID and nothing outside the
-  cgroup.
+- The payload's open file descriptors are 0, 1, 2 and the directory `ls` reads.
 
-| run | create | startup | work | total | memory peak | CPU | instance disk | teardown |
+| run | create | startup | work | memory peak | CPU | instance disk | export | teardown |
 |---|---|---|---|---|---|---|---|---|
-| idle (`true`) | 269 ms | | | 340 ms | 4 MiB | | 367 B | 159 ms |
-| cold (`cargo test`) | 264 ms | 401 ms | 3241 ms | 3669 ms | 375.3 MiB | 3.22 s | 22.9 MB | 220 ms |
-| warm (`cargo test`) | 263 ms | 390 ms | 2694 ms | 3113 ms | 118.1 MiB | 2.74 s | 22.9 MB | 219 ms |
-| tasksMax bomb | | | | | | | | 158 ms |
-| memoryMiB hog | | | | | 512 MiB (the ceiling) | | | 155 ms |
+| idle (`true`) | 1128 ms | | 167 ms (unit runtime) | 4.0 MiB | | | | 203 ms |
+| job-a (`cargo test`, concurrent) | 1175 ms | 4.0 s | 4443 ms | 355 MiB | 3.64 s | 22.9 MB | 2.03 MB | 346 ms |
+| job-b (`cargo test`, concurrent) | 1257 ms | 4.6 s | 3936 ms | 157 MiB | 3.46 s | 22.9 MB | 2.03 MB | 363 ms |
+| tasksMax bomb | | | | | | | | 184 ms |
+| memoryMiB hog | | | | 512 MiB (the ceiling) | | | | 303 ms |
+| cpus (3 loops, 5 s) | | | 5.159 s | | 5.166 s | | | 218 ms |
 
-Create is the five volumes (allocate, mkfs, mount) and the root tree; startup
-is host `create` to the workload's first line; work is the workload's own
-marks; total adds the unit's exit. With `cpus = 1` the cargo run is slower than
-the two-core M0 numbers (2.0 s / 1.7 s). The cold peak counts the page cache
-the first read of the toolchain charged to the cgroup. Instance disk is what
-the volumes and root tree hold before `destroy`; the reservation is the full
-608 MiB, allocated up front. The required closure is 80 store paths, 2.2 GB
-NAR, shared read-only, never copied. The export is 1.99 MB. Teardown is
-`destroy` alone (five unmounts, image removal).
+Create is admission, assign (the GC roots), five volumes (allocate, mkfs,
+mount, fsync) and materialize; startup is from before the first create of the
+lifecycle subtest to the job's first line, with three creates in between; work
+is the job's own marks. The jobs ran concurrently with `cpus = 1` each on the
+two-core VM. Teardown is `destroy` alone (reclaim, five unmounts, image and
+record removal). The whole lifecycle subtest (three creates, two real jobs, two
+exports, three destroys) took 12.2 s; the whole test script 114.8 s. The
+required closure is 80 store paths, 2.2 GB NAR, shared read-only, never copied.
 
-Fixture findings worth keeping:
+Findings worth keeping:
 
-- `systemd-run --wait` with `RemainAfterExit=yes` never returns (the unit stays
-  active), so the factory reads the memory peak from systemd-run's summary.
-- A failed transient unit keeps its name until `reset-failed` or `--collect`,
-  so the factory does both.
-- nspawn's own errors arrive as empty lines through `systemd-run --pipe`, so
-  the unit runs with `SYSTEMD_LOG_TARGET=journal` and a failed run prints the
-  unit's journal; the payload logs into the instance and the factory prints it.
-- Stopping a running instance from the host (`systemctl stop`) left the
-  backgrounded `systemd-run --wait` client running past 60 s; every instance in
-  the passing run ends on its own. #138's timeout path has to bound the client,
-  not only the unit.
+- With nspawn's cgroup subtree under the unit, `ExecStopPost` cannot be spawned
+  (`Failed to spawn 'stop-post' task: Device or resource busy`) unless the unit
+  has `Delegate=yes`, which runs control processes in `.control`.
+- With `Delegate=yes` the payload killed by the OOM killer usually exits (137)
+  before systemd acts on the OOM event, and the unit's result is `exit-code`;
+  `record-exit` reads the kernel's `oom_kill` count from `memory.events`.
+- nspawn logging natively to the journal and exiting at once loses the unit
+  attribution (journald reads it from the dead PID); `SYSTEMD_LOG_TARGET=console`
+  sends its errors through the unit's stdout stream, which keeps it.
+- A hard crash lost records written seconds earlier (a `starting` marker among
+  them, which would have made the interrupted run look `created` and runnable):
+  every record is fsynced with its directory, and create syncs the volumes
+  before the record that completes it.
+- #136's `assign` registered each GC root at its staging path and then renamed
+  the directory, so the pinned sources were never protected from GC; it now
+  roots them again at their final path.
+- A SIGKILLed nspawn leaves `/run/systemd/nspawn/<machine>` and its
+  `unix-export` mount behind; teardown removes both.
+- `systemd-run --wait` with `RemainAfterExit=yes` never returns; stopping a
+  `--wait`ed unit from outside left the client waiting. `start` runs the unit
+  detached and `wait` polls the recorded outcome.
 - nixpkgs' test instrumentation sets `vm.panic_on_oom = 2`, which turns a
   cgroup OOM into a kernel panic; the test node sets the kernel's 0. A host
   that sets 2 cannot run memory-bounded instances safely.
 - nspawn appends its own `uid=`/`gid=` to `--tmpfs` options, so a tmpfs cannot
   be handed to `agent` from outside; the ext4 volumes are created with the
   mapped owner instead.
-- Bash `$((65536 * x % 64))` is `(65536 * x) % 64 = 0`: an earlier fixture
-  gave every instance UID base 1048576. Allocation is explicit.
 
 ## Security limitations
 
@@ -267,29 +267,39 @@ Fixture findings worth keeping:
 3. `remount,rw` and every mount are denied (no `CAP_SYS_ADMIN`, and the binds
    are locked in the user namespace); a bind with `idmap` depends on the backing
    filesystem supporting idmapped mounts (the run records which one it used).
-4. Admission compares memory against `MemTotal`, not what other host workloads
-   use at the moment, and its state lives in `/var/lib/agent-runtime`: it
-   survives a crash, but a crashed instance stays counted until it is destroyed
-   (#138 owns recovery). The UID ranges (64 slots) are per host.
+4. Admission compares the sum of reservations against `MemTotal - reserve` and
+   checks that `MemAvailable` minus the new instance still covers the reserve;
+   a later surge of other host workloads is not re-checked while instances run.
+   The reservations are durable files in `/var/lib/agent-runtime`: a crashed or
+   ambiguous instance stays counted until it is destroyed. The UID ranges (64
+   slots) are per host; nothing coordinates hosts.
 5. The volumes bound bytes and inodes per mount; the cgroup bounds memory
    (`MemorySwapMax=0`), tasks and CPU. I/O bandwidth is not bounded.
-6. A per-run credential (slice 2) is written to a private per-instance tmpfs
-   dir owned by the mapped agent and bound read-only at
-   `/run/agent-runtime/credentials`; it never comes from the manifest or the
-   store. The run log and journal are redacted, and the export refuses an
-   output carrying the secret. Another instance cannot read it: each binds only
-   its own dir, the host dir is not in a peer's mount namespace, and the UID
-   ranges differ. Scope narrowing per capability (github-read vs push) is the
-   consumer's; this proves the delivery, isolation and redaction.
-7. Minimal egress (slice 2): a template with `network.allow` reaches those names
-   over DNS and TLS and nothing else. `run-net` gives the instance a veth,
-   resolves the allowlist once and pins an nft allowlist (DNS to the resolver,
-   `tcp 443` to the resolved IPs, drop the rest); the enforcement is by
-   address at run start, so a name that later moves is not followed within a
-   run. The default template still has no network at all. DNS resolution of a
-   non-allowlisted name succeeds (the resolver is reachable) but egress to its
-   address is dropped: the allowlist governs egress, not name resolution.
-8. The export is a plain copy out of `/output` before destruction; there is no
-   retention policy and no crash recovery (#138, devenv-platform #95).
+6. A per-run credential (`start --credential FILE`) is copied to a private
+   per-instance tmpfs dir under `/run/agent-runtime/<id>/cred`, owned by the
+   mapped `agent`, and bound read-only at `/run/agent-runtime/credentials`; it
+   never comes from the manifest, the store or the persistent state dir, and the
+   tmpfs is gone on teardown. Only a hash is kept at rest. Redaction masks the
+   secret in the printed `logs` view and in the exported log; the raw secret
+   still lives in the payload's own files and the private tmp volume until
+   teardown, which is acceptable only because that volume is private and
+   discarded. The export refuses an `/output` artifact that carries the secret.
+   Still open: real scoped-token minting (github-read vs push) and expiry are
+   the consumer's, not proven here; this slice proves per-run delivery,
+   isolation, redaction and the leak gate.
+7. Exports are kept under `/var/lib/agent-runtime/exports` with no retention
+   policy or size cap beyond each part's own bound (patches up to the output
+   budget, the log's last 1 MiB, the output volume); retention is
+   devenv-platform #95.
+8. The default template has no network at all. An `allowlist` template gets a
+   veth, and once its leader is up the host resolves `network.allow` once,
+   pins the names into the instance's `/etc/hosts` (`hosts: files` in nsswitch,
+   delivered as a read-only bind so nspawn's boot-time rewrite cannot clobber
+   it), and installs an nft table filtering the instance's veth on **both** the
+   `input` and `forward` hooks: established/related and `tcp dport 443` to each
+   resolved address accepted, loopback accepted, everything else dropped. Port
+   53 is never opened, so a made-up name cannot resolve and there is no
+   query-based exfiltration path. Enforcement is by address at run start, so a
+   name that moves mid-run is not followed.
 9. `--register=yes` lists the instance in `machinectl` while it runs; that is
    diagnostics, not Herdr visibility (#139).
