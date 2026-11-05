@@ -36,6 +36,7 @@ nix build -L .#packages.x86_64-linux.agent-runtime-nspawn  # #135/#137/#138: nsp
 nix build -L .#packages.x86_64-linux.agent-runtime-herdr-test  # #139: runtimes as Herdr agents, docs/agent-runtime-herdr.md
 nix build -L .#packages.x86_64-linux.agent-runtime-herdr-machines-test  # #139: the coordinator sees them through a saved Herdr machine (two VMs)
 nix build -L .#packages.x86_64-linux.agent-runtime-deploy-test  # #140: deploy-rs substrate + template profiles, rollback; docs/agent-runtime-deploy.md
+nix build -L .#packages.x86_64-linux.agent-runtime-e2e  # #141: end-to-end pilot + failure matrix, docs/agent-runtime-runbook.md
 
 # ── Deployment (switch is plain nixos-rebuild; build/diff use nh) ──
 just switch [HOST]            # Build and activate
