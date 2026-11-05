@@ -1,11 +1,11 @@
 # Agent runtime templates (M0: typed module, manifests, runtime adapter)
 
 Epic: [nixos-config#133](https://github.com/sammasak/nixos-config/issues/133). This milestone
-delivers the declarative half only: a reusable NixOS module that types what an ephemeral
-`systemd-nspawn` agent instance would contain, and a versioned manifest per template. Nothing
-in this module starts a container, adds a service, or touches a live host; the nspawn proof
-(#135), source materialization (#136), security and admission (#137) and lifecycle (#138)
-consume the manifest.
+delivers a reusable NixOS module that types what an ephemeral `systemd-nspawn` agent instance
+would contain, a versioned manifest per template, and the runtime adapter (#136) that turns a
+manifest into pinned source trees under an instance root. Nothing here starts a container,
+adds a service, or touches a live host; the nspawn proof (#135), security and admission (#137)
+and lifecycle (#138) consume the manifests, the run manifests and the instance records.
 
 Terms: a **template** is a declaration under `sam.agentRuntime.templates.<name>`. A
 **source** is one of its `repositories.<name>` entries (emitted under `sources` in the
@@ -44,10 +44,12 @@ The reference consumer is `tests/agent-runtime/flake.nix` (templates `rust-worke
 | Output | What |
 |---|---|
 | `nixosModules.agent-runtime` | the NixOS module; options under `sam.agentRuntime` |
-| `lib.agentRuntime { pkgs }` | `evalManifests { modules }`, the standalone evaluator above |
+| `lib.agentRuntime { pkgs }` | `evalManifests { modules }`, the standalone evaluator above, and `tools` (the four executables below) |
+| `packages.x86_64-linux.agent-runtime-{assign,materialize,export,reclaim}` | the runtime adapter executables |
 | `packages.x86_64-linux.agent-runtime-options` | option reference (CommonMark) generated from the module |
 | `packages.x86_64-linux.agent-runtime-manifests` | the example templates' manifests, one `<name>.json` per template |
 | `checks.x86_64-linux.agent-runtime-eval` | the example manifests build and pass a shape check; every negative case fails evaluation |
+| `checks.x86_64-linux.agent-runtime-runtime` | the four executables against fixture trees and a fake `nix`, no network |
 
 ## Options
 
@@ -172,9 +174,9 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
   "role": { "name": "rust-worker", "harness": "claude-code" },
   "sources": {
     "factum": { "github": "sammasak/factum", "ref": { "type": "branch", "value": "main" },
-      "resolve": "lock", "path": "/workspace/factum", "writable": true,
+      "resolve": "lock", "access": "public", "path": "/workspace/factum", "writable": true,
       "locked": { "rev": "<40 hex>", "narHash": "sha256-...", "storePath": "/nix/store/...-source" } },
-    "factum-release": { "...": "...", "resolve": "assignment", "locked": null }
+    "factum-release": { "...": "...", "resolve": "assignment", "access": "private", "locked": null }
   },
   "skills": {
     "source": { "rev": "<40 hex>", "narHash": "sha256-...", "storePath": "/nix/store/...-source" },
@@ -187,6 +189,7 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
     "mounts": [ { "hostPath": "...", "path": "...", "writable": false } ] },
   "policies": { "resources": { "cpus": 2, "memoryMiB": 3072, "tasksMax": 512, "timeoutMinutes": 90 },
     "network": { "egress": "allowlist", "allow": [ "crates.io", "github.com", "static.crates.io" ] },
+    "privateSources": [ "factum-release" ],
     "capabilities": [ "github-comment", "github-read" ] },
   "digests": { "template": "<sha256>", "lockedSources": "<sha256>" }
 }
@@ -206,6 +209,8 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
   `storePath` of a package are serialized.
 - `policies.network.egress` is `"none"` with `allow: []` when `network.allow = null`, else
   `"allowlist"`; `allow` and `capabilities` are emitted sorted and deduplicated.
+- `policies.privateSources` names the sources with `access = "private"` (sorted), so admission
+  (#137) sees that a run needs a GitHub token without reading every source.
 - Credentials never belong here. `capabilities` and `writable` declare intent; grants are per
   run and outside the store (#137). `agent-runtime-eval` refuses an example manifest with a
   secret-like field name or a value that looks like a GitHub, Anthropic or AWS key or a
@@ -213,7 +218,8 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
 
 ## Checks
 
-- `nix flake check`: `checks.x86_64-linux.agent-runtime-eval`.
+- `nix flake check`: `checks.x86_64-linux.agent-runtime-eval` and
+  `checks.x86_64-linux.agent-runtime-runtime`.
 - `devenv tasks run nixos:agent-runtime-test` (part of `nixos:qa`): `scripts/test-agent-runtime.sh`
   evaluates `tests/agent-runtime` as an external consumer flake with this repo as its
   `nixos-config` input (`--override-input`; no module code is vendored into it): the two
@@ -224,50 +230,81 @@ Generated from the evaluated declaration; JSON is output, never input. Abbreviat
 ## Runtime adapter: assign, materialize, export, reclaim (#136)
 
 Four executables (`nix build .#agent-runtime-{assign,materialize,export,reclaim}`, also
-`lib.agentRuntime.tools`) turn a template manifest into pinned source trees at the declared
-paths. Every failure ends stderr with one JSON line, `{"error":{"class","message"}}`, and the
-class is the exit code: `usage` 2, `github` 3 (resolution), `nix` 4 (prefetch) or `store` 4
-(a missing or mismatching store path), `credential` 5, `path`/`source` 6, `state` 1.
+`(lib.agentRuntime { inherit pkgs; }).tools`) turn a template manifest into pinned source trees
+under an instance root, plus the record #137 binds from. Every failure ends stderr with one
+JSON line, `{"error":{"class","message"}}`, including a command failing outside an explicit
+check (reported as `state`); the class fixes the exit code:
+
+| class | exit | meaning |
+|---|---|---|
+| `state` | 1 | the run or instance directory is not in the state the step needs, or an unexpected failure |
+| `usage` | 2 | arguments, or a file that is not the manifest its flag claims |
+| `plan` | 3 | no usable `prepare:plan` for an assignment-resolved source |
+| `github` | 4 | the prefetch from GitHub failed (download, authentication, not found) |
+| `credential` | 5 | a private source without `GH_TOKEN`, or a token of an unexpected shape |
+| `store` | 6 | a store path is missing, not a top-level store path, or has the wrong NAR hash |
+| `source` | 8 | the run does not describe the template's sources, or a symlink escapes its tree |
+| `export` | 9 | git could not produce the patch |
 
 ```sh
 agent-runtime-assign --template rust-worker.json --run r1 --out runs/r1 --plan plan.json
-agent-runtime-materialize --run runs/r1/run.json --root instances/r1
+agent-runtime-materialize --run runs/r1/run.json --template rust-worker.json --root instances/r1
 agent-runtime-export --root instances/r1 --out exports/r1
 agent-runtime-reclaim --root instances/r1
 ```
 
-- **assign** freezes the sources once, on the assigning host, before anything executes. A
-  `resolve = "lock"` source copies its lock. A `resolve = "assignment"` source takes its commit
-  from a devenv-platform `prepare:plan` document (`schema_version: 1`, matched by
-  `source.repo` and `source.ref`; [devenv-platform#92](https://github.com/sammasak/devenv-platform/issues/92)
-  owns that resolver, nothing is copied) and prefetches it with `nix flake prefetch`. A
-  private source needs `GH_TOKEN`, which reaches `nix` as an access token through its
-  environment and nothing else; error text is redacted. The result, `run.json`
-  (`agent-runtime-run`, schemaVersion 1), records per source the repository, requested ref,
-  resolved `rev`, `narHash`, `storePath` and whether the lock or the plan resolved it, plus
-  `digests.run` over the sources. A run is assigned once; a branch that advances between two
-  assignments changes only the later run.
-- **materialize** needs no network and nothing it was not given: the run manifest and a
-  root. It verifies each store path's NAR hash against the run manifest, refuses a path
-  outside the workspace, a non-normalized path, a symlink that resolves outside its tree and
-  a missing store path (reported as `store`, apart from any GitHub failure), and on failure
-  leaves nothing under the root. A read-only source binds its store path; a writable one is
-  copied into `ROOT/workspace/<name>` (owner-writable, bytes recorded), so two instances of
-  one source never share a byte. `ROOT/binds` lists `mode source path` lines for #137 to bind,
-  `ROOT/materialized.json` is the instance record, and `ROOT/export-pending` names the writable
-  checkouts whose state has not been exported.
-- **export** writes, per writable checkout, `<name>.patch` (`diff -ruN --no-dereference` against the
-  pinned store path: new files included, a symlink compared as a link) and `<name>.json` (base `rev`/`narHash`/`storePath`, changed
-  paths, patch digest and size), plus `export.json`; it clears the marker and deletes nothing.
-  Binary changes are listed, not reapplied; the evidence bundle around this is
+- **assign** freezes the sources once, on the assigning host, before anything executes.
+  `--run` is a DNS label; `--plan` repeats, one devenv-platform `prepare:plan` document
+  (`schema_version: 1`, whole repository only: `subproject` is `.`) per `resolve = "assignment"`
+  source, matched by `source.repo` (case-insensitive) and `source.ref`;
+  [devenv-platform#92](https://github.com/sammasak/devenv-platform/issues/92) owns that
+  resolver, nothing is copied, and a template with only locked sources needs no plan. A locked
+  source copies its lock; an assignment-resolved one is prefetched with `nix flake prefetch`
+  at the plan's commit. A private source needs `GH_TOKEN`, which reaches `nix` as an access
+  token through its environment and nothing else; any occurrence of the token is stripped from
+  the error message. Every source gets an indirect GC root, `OUT/gcroots/<name>`, so the trees
+  live as long as the run directory. The result, `OUT/run.json` (`agent-runtime-run`,
+  schemaVersion 1), records `run.id`, `template.{name,digests}`, `workspace`, and per source the
+  repository, requested ref, `access`, `path`, `writable` and `resolved.{rev,narHash,storePath,by}`
+  (`by` is `lock` or `plan`); `digests.run` is the sha256 of the canonical run id, template
+  digests, workspace and sources. A run is assigned once; a branch or tag that advances between
+  two assignments changes only the later run.
+- **materialize** needs no network and nothing it was not given. The template manifest is its
+  trust anchor: the run must carry the template's digests and describe exactly its sources
+  (names, repositories, refs, paths, modes, and the locks of locked sources), else `source`.
+  Each store path must be a present top-level store path whose NAR hash is the run's, and no
+  symlink in it may resolve outside it. A read-only source is its store path; a writable one is
+  copied into `ROOT/workspace/<name>`, owner-writable, so two instances of one source never
+  share a byte. A failed run leaves nothing under `ROOT`; an existing `ROOT/workspace` is
+  refused, never cleaned. `ROOT/materialized.json` (`agent-runtime-instance`, schemaVersion 1)
+  carries `run`, `template`, `workspace` and per source `mode` (`ro` or `rw`), `source` (the
+  host path to bind: the store path, or the private copy), `path` (the declared instance path),
+  `rev`, `narHash`, `storePath`. Nothing is bound here: #137 reads it, for example
+  `jq -r '.sources[] | "\(.mode)\t\(.source)\t\(.path)"'`. Skills, packages and the private
+  mounts are not in it; they come from the template manifest (bundle shape:
+  [skills#63](https://github.com/sammasak/skills/issues/63)). `ROOT/export-pending` lists one
+  writable source name per line and exists until export succeeds, even when empty, so export
+  always precedes reclaim.
+- **export** writes, per name in `export-pending`, `<name>.patch` and `<name>.json`
+  (`base.{rev,narHash,storePath}`, `changedPaths`, `patch`, `patchSha256`), plus `export.json`
+  with a per-source change count. The patch is `git diff-tree --binary` between the pinned tree
+  and the checkout, so content, binaries, symlinks, modes and empty files are carried and
+  `git apply` on a fresh checkout of the base reproduces the instance; paths come from a
+  NUL-separated listing, never from parsing the patch. What git does not track is not exported:
+  `.gitignore`d paths (the repository's own declaration), `.git` directories, and the files of a
+  nested repository (recorded as a gitlink). Export refuses when the marker is gone, a checkout
+  is missing, or the root was reclaimed; on success it removes `ROOT/export-pending` and leaves
+  the workspace untouched. The evidence bundle around this is
   [devenv-platform#95](https://github.com/sammasak/devenv-platform/issues/95).
-- **reclaim** removes `ROOT/workspace` and refuses while `export-pending` exists: no source
-  state disappears before export.
+- **reclaim** removes `ROOT/workspace`, keeps `materialized.json`, writes a `ROOT/reclaimed`
+  timestamp, and refuses while `export-pending` exists: no source state disappears before
+  export. Removing the root and the run directory (which releases the GC roots) is #138's.
 
 The checkouts are trees, not git repositories (`fetchTree` strips `.git`); a run that needs
 history or push rights is a capability question for #137, not a materialization one.
 `checks.x86_64-linux.agent-runtime-runtime` drives all four against fixture trees with a fake
-`nix` that answers `flake prefetch` from a table.
+`nix` that answers `flake prefetch` and `build --out-link` from a table, with the tools on an
+empty `PATH`.
 
 ## Limits of this milestone
 
@@ -291,7 +328,11 @@ history or push rights is a capability question for #137, not a materialization 
 - `lock` is trusted: nothing ties a locked input to `github` or proves `ref.value` is on that
   revision. The manifest records what the declaration said. Likewise a plan is trusted to
   name the right commit; the prefetch pins its content.
-- `materialize` bounds nothing by itself: the workspace copy's size is recorded, enforcing
-  the budgets (bytes and inodes) is #137's. The `binds` file is a request, not a mount.
+- `materialize` bounds nothing by itself and `filesystem.workspace` has no budget yet: a
+  writable copy is as large as its tree, and enforcing bytes and inodes is #137's.
+- `resolve = "assignment"` is the per-source opt-in the spec calls "only by policy"; a host-side
+  switch that refuses it at admission is #137's.
+- A private source's tree lands world-readable in the assigning host's `/nix/store`, like any
+  locked input; only the token is kept out. Confining instances to their closure is #135/#137.
 - `role.name` is a free name until [sammasak/skills#63](https://github.com/sammasak/skills/issues/63)
   binds it to `agents/<role>/ROLE.md`.

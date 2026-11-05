@@ -197,8 +197,11 @@ let
         type = types.enum [ "public" "private" ];
         default = "public";
         description = ''
-          `private`: an assignment-time prefetch needs `GH_TOKEN` in the assigner's environment
-          and fails closed without it; the token never enters a manifest or the store.
+          `public`: prefetched anonymously, `GH_TOKEN` is ignored. `private`: the assignment-time
+          prefetch needs `GH_TOKEN` in the assigner's environment and fails closed without it; the
+          token never enters a manifest or the store. Only `resolve = "assignment"` prefetches, so a
+          locked source must stay `public` (its lock was fetched with the evaluator's credentials).
+          Either way the tree lands world-readable in the host's `/nix/store`.
         '';
       };
     };
@@ -382,6 +385,10 @@ let
         message = "${at}: resolve = \"assignment\" records the revision per run; drop `lock`";
       }
       {
+        assertion = r.access == "public" || r.resolve == "assignment";
+        message = "${at}: access = \"private\" is consumed only by an assignment-time prefetch; a locked source is fetched by the flake lock's own credentials";
+      }
+      {
         assertion = lib.hasPrefix "${workspace}/" r.path;
         message = "${at}.path ${r.path} is not under filesystem.workspace ${workspace}";
       }
@@ -481,7 +488,8 @@ let
     storePath = s.outPath;
   };
 
-  # Any new field moves `digests.template`; a changed shape needs a `schemaVersion` bump.
+  # An added field moves `digests.template` and stays schemaVersion 1 (a reader keys on
+  # names, not shape); a removed, renamed or retyped field bumps `schemaVersion`.
   manifestOf =
     name: t:
     let
@@ -504,6 +512,7 @@ let
         }) t.packages;
         policies = {
           inherit (t) resources;
+          privateSources = lib.naturalSort (lib.attrNames (lib.filterAttrs (_: r: r.access == "private") t.repositories));
           network = {
             egress = if t.network.allow == null then "none" else "allowlist";
             allow = lib.naturalSort (lib.unique (lib.optionals (t.network.allow != null) t.network.allow));

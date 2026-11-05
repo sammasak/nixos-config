@@ -1,68 +1,78 @@
 # agent-runtime-materialize: instantiate a run's sources under one instance root,
-# without network. A read-only source binds its store path; a writable one is
-# copied into ROOT/workspace/<name>. Every store path's NAR hash is verified;
-# traversal and symlink escapes are refused and a failed run leaves nothing
-# behind. Writes ROOT/binds (mode, source, path), ROOT/materialized.json and the
-# ROOT/export-pending marker. Exit 2 usage, 4 store, 6 path/source, 1 state.
-usage() { echo 'usage: agent-runtime-materialize --run RUN.json --root DIR' >&2; exit 2; }
-fail() { jq -nc --arg class "$1" --arg message "$2" '{error:{class:$class,message:$message}}' >&2; exit "$3"; }
-
-run='' root=''
+# without network. The template manifest is the trust anchor: the run must
+# describe exactly its sources. A read-only source is its verified store path; a
+# writable one is copied into ROOT/workspace/<name>. A failed run leaves nothing
+# under ROOT. Writes ROOT/materialized.json and ROOT/export-pending.
+USAGE='agent-runtime-materialize --run RUN.json --template MANIFEST --root DIR'
+run='' template='' root=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --run) run=${2:-}; shift 2 ;;
-    --root) root=${2:-}; shift 2 ;;
+    --run) [ $# -ge 2 ] || usage; run=$2; shift 2 ;;
+    --template) [ $# -ge 2 ] || usage; template=$2; shift 2 ;;
+    --root) [ $# -ge 2 ] || usage; root=$2; shift 2 ;;
     *) usage ;;
   esac
 done
-[ -n "$run" ] && [ -n "$root" ] || usage
-[ -f "$run" ] || fail usage "run manifest not found: $run" 2
-jq -e '.kind == "agent-runtime-run" and .schemaVersion == 1' "$run" >/dev/null 2>&1 \
-  || fail usage "$run is not an agent-runtime-run, schemaVersion 1" 2
-[ -e "$root/materialized.json" ] && fail state "$root is already materialized" 1
+[ -n "$run" ] && [ -n "$template" ] && [ -n "$root" ] || usage
+[ -f "$run" ] || fail usage "run manifest not found: $run"
+[ -f "$template" ] || fail usage "template manifest not found: $template"
+jq -e '.kind == "agent-runtime-run" and .schemaVersion == 1 and (.sources | type == "object")' "$run" >/dev/null 2>&1 \
+  || fail usage "$run is not an agent-runtime-run, schemaVersion 1"
+jq -e '.kind == "agent-runtime-template" and .schemaVersion == 1' "$template" >/dev/null 2>&1 \
+  || fail usage "$template is not an agent-runtime-template, schemaVersion 1"
+jq -e --slurpfile t "$template" '
+  .template.digests == $t[0].digests and .workspace == $t[0].filesystem.workspace
+  and (.sources | keys) == ($t[0].sources | keys)
+  and ([.sources | to_entries[] | .value as $r | $t[0].sources[.key] as $s
+        | ($r | {github, ref, resolve, access, path, writable}) == ($s | {github, ref, resolve, access, path, writable})
+        and ($s.resolve != "lock" or ($r.resolved | {rev, narHash, storePath}) == $s.locked)
+        and ($r.resolved.rev | test("^[0-9a-f]{40}$"))
+        and ($r.resolved.narHash | test("^sha256-[A-Za-z0-9+/]{43}=$"))] | all)
+' "$run" >/dev/null 2>&1 \
+  || fail source "$run does not describe the sources of $template (digests, names, paths, modes or locks differ)"
+[ -e "$root/materialized.json" ] && fail state "$root is already materialized"
+[ -e "$root/workspace" ] && fail state "$root/workspace exists; refusing to touch state this run did not create"
 
-ws=$(jq -r .workspace "$run")
-mkdir -p "$root/workspace"
+mkdir -p "$root"
 root=$(realpath "$root")
-binds=$(mktemp)
-abort() { rm -rf "$root/workspace" "$binds"; fail "$@"; }
+mkdir "$root/workspace"
+trap 'rm -rf "$root/workspace"' EXIT
 
 record='{}'
 while IFS= read -r name; do
   src=$(jq -c --arg n "$name" '.sources[$n]' "$run")
-  path=$(jq -r .path <<<"$src")
-  sp=$(jq -r .resolved.storePath <<<"$src")
-  nar=$(jq -r .resolved.narHash <<<"$src")
-  [[ $name =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || abort path "$name: source names are DNS labels" 6
-  case $path in "$ws"/*) ;; *) abort path "$name: $path is not under $ws" 6 ;; esac
-  case "$path/" in *'/../'* | *'/./'* | *'//'*) abort path "$name: $path is not normalized" 6 ;; esac
-  [[ $sp == /nix/store/* ]] && [ -d "$sp" ] \
-    || abort store "$name: store path missing: $sp (a build or closure failure, not a GitHub one)" 4
-  have=$(nix --extra-experimental-features nix-command hash path "$sp" 2>/dev/null) || abort store "$name: cannot hash $sp" 4
-  [ "$have" = "$nar" ] || abort store "$name: $sp has NAR hash $have, the run manifest says $nar" 4
+  store_path=$(jq -r .resolved.storePath <<<"$src")
+  want=$(jq -r .resolved.narHash <<<"$src")
+  [[ $store_path =~ ^/nix/store/[a-z0-9]{32}-[A-Za-z0-9+._?=-]+$ && -d $store_path ]] \
+    && [[ $(realpath -e "$store_path" 2>/dev/null) == "$store_path" ]] \
+    || fail store "$name: $store_path is not a present top-level store path (a build or closure failure, not a GitHub one)"
+  err=$(mktemp)
+  have=$(nix --extra-experimental-features nix-command hash path "$store_path" 2>"$err") \
+    || fail store "$name: cannot hash $store_path: $(tail -c 200 "$err" | tr '\n' ' ')"
+  rm -f "$err"
+  [[ $have == "$want" ]] || fail store "$name: $store_path has NAR hash $have, the run manifest says $want"
   while IFS= read -r link; do
     target=$(realpath -m "$link")
-    case $target in "$sp"/*) ;; *) abort source "$name: symlink $link escapes the source tree ($target)" 6 ;; esac
-  done < <(find "$sp" -type l)
-  if [ "$(jq -r .writable <<<"$src")" = true ]; then
-    dest=$root/workspace/$name
-    mkdir "$dest"
-    cp -a "$sp/." "$dest/"
-    chmod -R u+w "$dest"
+    case $target in "$store_path" | "$store_path"/*) ;; *) fail source "$name: symlink $link escapes the source tree ($target)" ;; esac
+  done < <(find "$store_path" -type l)
+  if [[ $(jq -r .writable <<<"$src") == true ]]; then
+    host_path=$root/workspace/$name
+    mkdir "$host_path"
+    cp -a "$store_path/." "$host_path/"
+    chmod -R u+w "$host_path"
     mode=rw
-    bytes=$(du -sb "$dest" | cut -f1)
   else
-    dest=$sp
+    host_path=$store_path
     mode=ro
-    bytes=0
   fi
-  printf '%s\t%s\t%s\n' "$mode" "$dest" "$path" >>"$binds"
-  record=$(jq -c --arg n "$name" --arg m "$mode" --arg d "$dest" --arg p "$path" --argjson b "$bytes" --argjson s "$src" \
-    '.[$n] = {mode: $m, source: $d, path: $p, bytes: $b} + ($s.resolved | {rev, narHash, storePath})' <<<"$record")
+  record=$(jq -c --arg n "$name" --arg mode "$mode" --arg source "$host_path" --argjson s "$src" \
+    '.[$n] = {mode: $mode, source: $source, path: $s.path} + ($s.resolved | {rev, narHash, storePath})' <<<"$record")
 done < <(jq -r '.sources | keys[]' "$run")
 
-mv "$binds" "$root/binds"
 jq -r 'to_entries[] | select(.value.mode == "rw") | .key' <<<"$record" >"$root/export-pending"
+tmp=$(mktemp "$root/.materialized.XXXXXX")
 jq -n --slurpfile r "$run" --argjson s "$record" \
   '{schemaVersion: 1, kind: "agent-runtime-instance", run: $r[0].run, template: $r[0].template,
-    workspace: $r[0].workspace, sources: $s}' >"$root/materialized.json"
+    workspace: $r[0].workspace, sources: $s}' >"$tmp"
+mv "$tmp" "$root/materialized.json"
+trap - EXIT

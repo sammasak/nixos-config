@@ -39,6 +39,8 @@ pkgs.runCommand "agent-runtime-eval"
       jq -e '
         ([.sources[] | (.locked == null) == (.resolve == "assignment")] | all)
         and ([.sources[] | select(.locked != null) | .locked.rev | test("^[0-9a-f]{40}$")] | all)
+        and ([.sources[] | .access | IN("public", "private")] | all)
+        and (.policies.privateSources == [.sources | to_entries[] | select(.value.access == "private") | .key])
       ' "$f" >/dev/null || fail "$f" "$name: source locking"
       jq -e '
         ([.. | objects | keys[] | test("token|secret|password|credential|apikey"; "i")] | any | not)
