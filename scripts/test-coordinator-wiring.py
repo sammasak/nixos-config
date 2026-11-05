@@ -37,6 +37,9 @@ def main():
     check("mayApprove = lib.mkOption { type = t.bool;" in common and "approvalDecision = lib.mkOption { type = t.nullOr t.str;" in common
           and "panes = lib.mkOption { type = t.str;" in common,
           "the pinned skills input declares coordinator.mayApprove (bool), approvalDecision (nullable string) and panes (comma string) (skills#53, #54), the types the fixed options use")
+    changed = (skills / "agents/coordinator/changed.nix").read_text()
+    check("options.coordinator.interactiveQuietSeconds = lib.mkOption {" in changed and "type = lib.types.ints.unsigned;" in changed.split("interactiveQuietSeconds", 1)[1][:200],
+          "the pinned skills input declares coordinator.interactiveQuietSeconds (unsigned int, skills#66), the type lenovo's flag uses")
 
     lenovo, acer = home_files("lenovo"), home_files("acer-swift")
     check(COORDINATOR_FILES <= lenovo, "lenovo links the Claude and Codex coordinator adapters")
@@ -107,11 +110,12 @@ def main():
     # the owner's skills config for the host rides on every devenv call as fixed --option flags (sam.herdr.coordinatorWakeup);
     # the exact flags are the contract: the delegation, the decision it cites, the Coordinator's pane
     OPTS = ("--option coordinator.mayApprove:bool true --option coordinator.approvalDecision:string "
-            "'https://github.com/sammasak/skills/issues/28#issuecomment-6629911996' --option coordinator.panes:string lenovo-21CB001PMX/wM:p1")
+            "'https://github.com/sammasak/skills/issues/28#issuecomment-6629911996' --option coordinator.panes:string lenovo-21CB001PMX/wM:p1"
+            " --option coordinator.interactiveQuietSeconds:int 600")
     check('devenv tasks run coord:changed --input-json \'{"consume":true}\' ' + OPTS + " >" in script,
           "the timer's coord:changed carries the host's fixed skills options: delegated approval citing the owner's decision comment, the Coordinator's pane")
-    check("interactiveQuietSeconds" not in OPTS and "--option coordinator.interactiveQuietSeconds" not in script.replace(OPTS, ""),
-          "interactiveQuietSeconds unset (null) passes no flag, so a skills pin without the option keeps working")
+    check(script.count("--option coordinator.interactiveQuietSeconds:int 600") == script.count("--option coordinator.mayApprove:bool true"),
+          "lenovo's interactiveQuietSeconds (600) rides on every devenv call beside the delegation flags (skills#66: no wake while the interactive Coordinator works)")
     check("does not exist" in script and "older than the pinned skills input" in script and "pull --ff-only origin main" in script,
           "a checkout that lacks the options (older than the pin) is named in the journal and toasted, not retried silently")
     quiet = script.index('if [ ! -s "$pending" ]; then')
@@ -303,7 +307,8 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
         before = devenv_log.read_text()
         r = act("herdr:message", '{"handoff_id":"0123456789ab","confirm":"h/w:p1","authorized_by":{"issue_url":"https://github.com/o/r/issues/1","label":"approved"}}')
         opts_log = ("--option coordinator.mayApprove:bool true --option coordinator.approvalDecision:string "
-                    "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996 --option coordinator.panes:string lenovo-21CB001PMX/wM:p1")
+                    "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996 --option coordinator.panes:string lenovo-21CB001PMX/wM:p1"
+                    " --option coordinator.interactiveQuietSeconds:int 600")
         check(r.returncode == 0 and "FD9_CLOSED" in r.stdout and devenv_log.read_text().endswith(
                   'devenv tasks run herdr:message --input-json {"handoff_id":"0123456789ab","confirm":"h/w:p1",'
                   '"authorized_by":{"issue_url":"https://github.com/o/r/issues/1","label":"approved"}} --show-output ' + opts_log + "\n"),
