@@ -151,6 +151,12 @@ in
         example = [ "lenovo-21CB001PMX/wM:p1" ];
         description = "The Coordinator's own panes as host/agent_id (skills `coordinator.panes`): never workers for the idle wake, never handoff targets.";
       };
+      interactiveQuietSeconds = mkOption {
+        type = types.nullOr types.ints.unsigned;
+        default = null;
+        example = 600;
+        description = "Skills `coordinator.interactiveQuietSeconds`: no wake session while a Coordinator pane (`panes`) works or worked within this many seconds, so the timer never races the owner's session; null passes nothing (the skills default, off). Needs a skills pin that declares the option.";
+      };
     };
 
     userConfig = mkOption {
