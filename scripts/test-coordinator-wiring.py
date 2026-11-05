@@ -110,6 +110,8 @@ def main():
             "'https://github.com/sammasak/skills/issues/28#issuecomment-6629911996' --option coordinator.panes:string lenovo-21CB001PMX/wM:p1")
     check('devenv tasks run coord:changed --input-json \'{"consume":true}\' ' + OPTS + " >" in script,
           "the timer's coord:changed carries the host's fixed skills options: delegated approval citing the owner's decision comment, the Coordinator's pane")
+    check("interactiveQuietSeconds" not in OPTS and "--option coordinator.interactiveQuietSeconds" not in script.replace(OPTS, ""),
+          "interactiveQuietSeconds unset (null) passes no flag, so a skills pin without the option keeps working")
     check("does not exist" in script and "older than the pinned skills input" in script and "pull --ff-only origin main" in script,
           "a checkout that lacks the options (older than the pin) is named in the journal and toasted, not retried silently")
     quiet = script.index('if [ ! -s "$pending" ]; then')
@@ -147,6 +149,12 @@ def main():
           and "a re-review of a new head or a fix-up back to the implementer is not a second implementation handoff" in script
           and "allowed_actions comment and the merge at 9 or more) for a free worker other than its implementer, then send it with herdr:message, authorized_by naming the URL and owner label" in script,
           "the prompt makes a review of an ungraded PR its own handoff for a free (idle or done) worker, drafted with coord:handoff (comment and merge allowed) and sent with herdr:message, keeping one implementation handoff per item and allowing re-reviews and fix-ups (skills#28: the 09:07Z idle wake sent nothing)")
+    check("Only an open handoff holds an item (open in the brief: its agent works on it or a PR of it is open and unmerged)" in script
+          and "is eligible again, so hand it to a free worker and name the earlier handoff in the scope" in script
+          and "When herdr:message refuses agent_busy, draft the item for another free worker and send that; with none free, move on: the refusal is parked and coord:changed prints a retry line once a worker is free." in script,
+          "the prompt re-opens an approved item whose handoffs are closed and sends a busy-refused item to another free worker (skills#28, the 06:19Z wake skipped three items and lost two drafts)")
+    check("expected_evidence a comment Grade: N/10 (head <sha>) on that head, signed -- <host> <agent>," in script,
+          "a review handoff asks for the grade in the form coord:brief parses: Grade: N/10 (head <sha>), signed (skills#28 defect 4: merges without a parsed grade)")
     check(': > "$pending"; rm -f "$attempts"' in script and 'if [ "$rc" -eq 0 ]; then' in script
           and script.index("|| rc=$?") < script.index(': > "$pending"; rm -f "$attempts"', script.index('if [ "$rc" -eq 0 ]; then')),
           "pending changes and the attempt counter are cleared only after claude exited 0")
