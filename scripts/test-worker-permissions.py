@@ -45,10 +45,18 @@ def trusted_after_activation(host):
         return home, got
 
 
+STARTUP_SECONDS = 30
+API_LOOPBACK = "http://127.0.0.1:9"
+
+
 def startup_screen(host):
     """What `coord:spawn`'s argv shows at startup under the host's rendered settings.json and its pinned Claude Code,
-    in a throwaway HOME prepared like a provisioned host (onboarding done, cwd trusted, a dummy API key approved):
-    no credential and no network is used before a prompt is sent."""
+    in a throwaway HOME prepared like a provisioned host (onboarding done, cwd trusted, a dummy API key approved).
+
+    Claude Code 2.1.300 calls its API base URL before it draws the first screen (offline that call waits about 18 s;
+    the non-essential-traffic switches do not skip it). So the check runs Claude Code in its own network namespace
+    (`unshare --map-current-user -n`: loopback only, the uid stays the caller's, as bypass mode requires) with
+    ANTHROPIC_BASE_URL on a closed loopback port: the call fails at once and the dummy key never leaves the host."""
     files = nix("build", "--no-link", "--print-out-paths", f".#nixosConfigurations.{host}.config.home-manager.users.lukas.home-files")
     claude = nix("build", "--no-link", "--print-out-paths", f".#nixosConfigurations.{host}.config.home-manager.users.lukas.programs.claude-code.finalPackage")
     key = "sk-ant-api03-hermetic-startup-check-00000000"
@@ -60,9 +68,14 @@ def startup_screen(host):
             "hasCompletedOnboarding": True, "projects": {str(work): {"hasTrustDialogAccepted": True}},
             "customApiKeyResponses": {"approved": [key[-20:]], "rejected": []}}))
         argv = f"{claude}/bin/claude {FLAG} --model claude-opus-5-5"
-        env = {"HOME": home, "PATH": os.environ["PATH"], "TERM": "xterm-256color", "ANTHROPIC_API_KEY": key}
-        out = subprocess.run(["timeout", "15", "script", "-qfec", argv, "/dev/null"], cwd=work, env=env,
-                             stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace").stdout
+        env = {"HOME": home, "PATH": os.environ["PATH"], "TERM": "xterm-256color", "ANTHROPIC_API_KEY": key,
+               "ANTHROPIC_BASE_URL": API_LOOPBACK}
+        run = subprocess.run(["unshare", "--map-current-user", "-n", "timeout", str(STARTUP_SECONDS), "script", "-qfec", argv, "/dev/null"],
+                             cwd=work, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace")
+        out = run.stdout
+        netns_ok = not run.stderr.startswith("unshare:")
+        check(netns_ok, f"{host}: the startup check runs in its own network namespace (no network)"
+              + ("" if netns_ok else f": {run.stderr.strip()[:160]}; unprivileged user namespaces are required"))
     # the TUI places words with cursor moves, so the comparison is on the text with every space removed
     return re.sub(r"\s+", "", re.sub(r"\x1b\][^\x07]*\x07|\x1b\[[0-9;?>]*[A-Za-z]", "", out))
 
@@ -109,6 +122,10 @@ def main():
 
     # #149: the coord:spawn argv against each host's rendered settings, the setting itself under test
     worker_screen, coordinator_screen = startup_screen(WORKER), startup_screen(COORDINATOR)
+    for host, screen in ((WORKER, worker_screen), (COORDINATOR, coordinator_screen)):
+        check("bypasspermissionson" in screen or "Yes,Iaccept" in screen,
+              f"{host}: Claude Code drew its first screen within {STARTUP_SECONDS} s with no network (if not: its startup now waits "
+              f"on something other than the API base URL {API_LOOPBACK}, i.e. a network call this offline check cannot answer)")
     print(f"{WORKER} screen: {worker_screen[-160:]}")
     print(f"{COORDINATOR} screen: {coordinator_screen[-240:]}")
     check("BypassPermissionsmode" not in worker_screen and "Yes,Iaccept" not in worker_screen
