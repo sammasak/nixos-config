@@ -195,8 +195,10 @@ pkgs.testers.runNixOSTest {
         assert rec("a1")["status"] == "idle"
 
     with subtest("two delivers back to back: the second is refused, the runtime gets one task"):
-        out = machine.succeed("agent-runtime-herdr deliver a1 'Assignment #901: second task' > /tmp/d1 2>&1; echo first=$?; "
-                              "agent-runtime-herdr deliver a1 'Assignment #901: duplicate' > /tmp/d2 2>&1; echo second=$?; cat /tmp/d1 /tmp/d2")
+        # the test shell runs under set -e: each exit code is captured, not allowed to abort the pair
+        out = machine.succeed("a=0; agent-runtime-herdr deliver a1 'Assignment #901: second task' > /tmp/d1 2>&1 || a=$?; "
+                              "b=0; agent-runtime-herdr deliver a1 'Assignment #901: duplicate' > /tmp/d2 2>&1 || b=$?; "
+                              "echo first=$a second=$b; cat /tmp/d1 /tmp/d2")
         print(out)
         assert "first=0" in out and "second=75" in out and "assigned, not idle" in out, out
         wait_state("a1", "idle", 20)
