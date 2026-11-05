@@ -12,7 +12,8 @@ exit_code() {
 # redact_stream SECRET: replace every literal occurrence of SECRET on stdin with <redacted> (fixed
 # string, so a secret with regex/sed metacharacters is handled). Diagnostic use only, never artifacts.
 redact_stream() {
-  awk -v s="$1" 'BEGIN { n = length(s) } { while ((p = index($0, s)) > 0) $0 = substr($0, 1, p - 1) "<redacted>" substr($0, p + n); print }'
+  # ENVIRON, not -v: awk -v would interpret backslash escapes in the secret and miss it
+  REDACT_SECRET=$1 awk 'BEGIN { s = ENVIRON["REDACT_SECRET"]; n = length(s) } { while (n > 0 && (p = index($0, s)) > 0) $0 = substr($0, 1, p - 1) "<redacted>" substr($0, p + n); print }'
 }
 # redact_file SECRET FILE: as redact_stream, applied in place to a file.
 redact_file() {
