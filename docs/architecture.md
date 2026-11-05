@@ -21,6 +21,7 @@
 Automatically generates `flake.modules` from filesystem conventions:
 - `modules/roles/*.nix` → `flake.modules.nixos.role-<name>`
 - `modules/home/*.nix` → `flake.modules.homeManager.<name>`
+- `modules/agent-runtime/` → `flake.modules.nixos.agent-runtime`, published as `nixosModules.agent-runtime` by `25-agent-runtime.nix` (the only public module; `flake.modules` itself is stripped from the outputs)
 
 Home Manager is shared, not per-host: every host gets
 `modules/home/default.nix`. There are no `hosts/*/home.nix` files.

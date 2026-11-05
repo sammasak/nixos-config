@@ -20,50 +20,114 @@ let
       timeoutMinutes = 10;
     };
   };
-  repo = extra: {
-    github = "sammasak/factum";
-    path = "/workspace/factum";
-  } // extra;
+  branch = {
+    type = "branch";
+    value = "main";
+  };
+  # A locked checkout of factum's main; each case shows only what it changes.
+  lockedMain =
+    extra:
+    {
+      github = "sammasak/factum";
+      ref = branch;
+      lock = factum;
+      path = "/workspace/factum";
+    }
+    // extra;
   bad = overrides: { sam.agentRuntime.templates.bad = lib.recursiveUpdate minimal overrides; };
 in
 [
   {
     name = "invalid-ref-type";
-    expect = "one of \"branch\", \"tag\", \"commit\"";
-    module = bad { repositories.factum = repo { ref = { type = "sha"; value = "main"; }; lock = factum; }; };
+    expect = "ref.type' is not of type";
+    module = bad {
+      repositories.factum = lockedMain {
+        ref = {
+          type = "sha";
+          value = "main";
+        };
+      };
+    };
   }
   {
     name = "commit-value-not-sha";
     expect = "a commit ref must be a 40-hex revision";
-    module = bad { repositories.factum = repo { ref = { type = "commit"; value = "main"; }; }; };
+    module = bad {
+      repositories.factum = lockedMain {
+        ref = {
+          type = "commit";
+          value = "main";
+        };
+      };
+    };
   }
   {
     name = "branch-without-lock";
     expect = "needs `lock = inputs.<name>`";
-    module = bad { repositories.factum = repo { ref = { type = "branch"; value = "main"; }; }; };
+    module = bad { repositories.factum = lockedMain { lock = null; }; };
   }
   {
     name = "lock-rev-differs-from-commit";
     expect = "differs from the commit";
     module = bad {
-      repositories.factum = repo {
-        ref = { type = "commit"; value = "0000000000000000000000000000000000000000"; };
-        lock = factum;
+      repositories.factum = lockedMain {
+        ref = {
+          type = "commit";
+          value = "0000000000000000000000000000000000000000";
+        };
       };
     };
   }
   {
     name = "assignment-with-lock";
     expect = "drop `lock`";
-    module = bad { repositories.factum = repo { ref = { type = "tag"; value = "v1"; }; resolve = "assignment"; lock = factum; }; };
+    module = bad {
+      repositories.factum = lockedMain {
+        ref = {
+          type = "tag";
+          value = "v1";
+        };
+        resolve = "assignment";
+      };
+    };
+  }
+  {
+    name = "commit-with-assignment";
+    expect = "a commit needs no resolution";
+    module = bad {
+      repositories.factum = lockedMain {
+        ref = {
+          type = "commit";
+          value = factum.rev;
+        };
+        resolve = "assignment";
+        lock = null;
+      };
+    };
+  }
+  {
+    name = "ref-value-injection";
+    expect = "ref.value' is not of type `git ref name";
+    module = bad {
+      repositories.factum = lockedMain {
+        ref = {
+          type = "branch";
+          value = "--upload-pack=x";
+        };
+      };
+    };
   }
   {
     name = "duplicate-paths";
     expect = "instance paths overlap";
     module = bad {
       repositories = {
-        a = repo { ref = { type = "branch"; value = "main"; }; lock = factum; };
-        b = repo { github = "sammasak/skills"; ref = { type = "branch"; value = "main"; }; lock = skills; };
+        a = lockedMain { path = "/workspace/same"; };
+        b = lockedMain {
+          github = "sammasak/skills";
+          lock = skills;
+          path = "/workspace/same";
+        };
       };
     };
   }
@@ -71,29 +135,50 @@ in
     name = "nested-path-overlap";
     expect = "instance paths overlap";
     module = bad {
-      repositories.factum = repo { ref = { type = "branch"; value = "main"; }; lock = factum; };
+      repositories.factum = lockedMain { };
       filesystem.tmp.path = "/workspace/factum/target";
     };
+  }
+  {
+    name = "reserved-instance-path";
+    expect = "instance path on a reserved root";
+    module = bad { filesystem.cache.path = "/nix/store"; };
   }
   {
     name = "duplicate-repository-identity";
     expect = "duplicate repository identity";
     module = bad {
       repositories = {
-        a = repo { ref = { type = "branch"; value = "main"; }; lock = factum; path = "/workspace/a"; };
-        b = repo { ref = { type = "branch"; value = "main"; }; lock = factum; path = "/workspace/b"; };
+        a = lockedMain { path = "/workspace/a"; };
+        b = lockedMain { path = "/workspace/b"; };
       };
     };
   }
   {
     name = "path-outside-workspace";
     expect = "is not under filesystem.workspace";
-    module = bad { repositories.factum = repo { ref = { type = "branch"; value = "main"; }; lock = factum; path = "/opt/factum"; }; };
+    module = bad { repositories.factum = lockedMain { path = "/opt/factum"; }; };
   }
   {
     name = "path-traversal";
     expect = "absolute normalized path";
-    module = bad { repositories.factum = repo { ref = { type = "branch"; value = "main"; }; lock = factum; path = "/workspace/../etc"; }; };
+    module = bad { repositories.factum = lockedMain { path = "/workspace/../etc"; }; };
+  }
+  {
+    name = "missing-repo-path";
+    expect = "repositories.factum.path' was accessed but has no value defined";
+    module = bad {
+      repositories.factum = {
+        github = "sammasak/factum";
+        ref = branch;
+        lock = factum;
+      };
+    };
+  }
+  {
+    name = "lock-is-a-path-literal";
+    expect = "outPath' is not of type";
+    module = bad { repositories.factum = lockedMain { lock = factum // { outPath = ./.; }; }; };
   }
   {
     name = "missing-skill";
@@ -101,15 +186,38 @@ in
     module = bad { skills.no-such-skill = { }; };
   }
   {
+    name = "skill-name-traversal";
+    expect = "not in skills source";
+    module = bad { skills."../agents" = { }; };
+  }
+  {
     name = "wrong-resource-type";
-    expect = "is not of type";
+    expect = "memoryMiB' is not of type";
     module = bad { resources.memoryMiB = "4G"; };
   }
   {
     name = "unauthorized-host-mount";
     expect = "unauthorized host mount";
     module = bad {
-      filesystem.mounts = [ { hostPath = "/home/lukas/.ssh"; path = "/mnt/ssh"; } ];
+      filesystem.mounts = [
+        {
+          hostPath = "/home/lukas/.ssh";
+          path = "/mnt/ssh";
+        }
+      ];
+    };
+  }
+  {
+    name = "writable-mount-under-read-only-root";
+    expect = "read-write but its allowed mount root is read-only";
+    module = bad {
+      filesystem.mounts = [
+        {
+          hostPath = "/srv/agent-runtime/cache/shared";
+          path = "/mnt/shared";
+          readOnly = false;
+        }
+      ];
     };
   }
   {
@@ -118,8 +226,28 @@ in
     module = bad { network.egress = "allowlist"; };
   }
   {
+    name = "allow-without-allowlist";
+    expect = "`allow` needs egress";
+    module = bad { network.allow = [ "github.com" ]; };
+  }
+  {
+    name = "allow-ip-literal";
+    expect = "network.allow";
+    module = bad {
+      network = {
+        egress = "allowlist";
+        allow = [ "169.254.169.254" ];
+      };
+    };
+  }
+  {
     name = "host-eligible-unknown-template";
     expect = "names unknown template";
     module = { sam.agentRuntime.host.eligibleTemplates = [ "no-such-template" ]; };
+  }
+  {
+    name = "host-eligible-without-enable";
+    expect = "host.enable is false";
+    module = { sam.agentRuntime.host.enable = lib.mkForce false; };
   }
 ]

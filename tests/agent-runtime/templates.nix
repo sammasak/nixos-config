@@ -1,6 +1,8 @@
-# Two templates a consumer would declare: a Rust worker on a locked branch of
-# a real Rust repo with two real skills, and a read-only reviewer on a tag
-# resolved per assignment. `factum` and `skills` are flake inputs (flake = false).
+# Two templates a consumer would declare. `rust-worker` checks out one real
+# Rust repo three ways (locked branch, exact commit, tag resolved per
+# assignment) with two real skills; `docs-reviewer` is a read-only reviewer
+# whose template name and role name differ on purpose. Only rust-worker is
+# host-eligible. `factum` and `skills` are flake inputs (flake = false).
 { factum, skills }:
 { pkgs, ... }:
 {
@@ -17,15 +19,35 @@
         name = "rust-worker";
         harness = "claude-code";
       };
-      repositories.factum = {
-        github = "sammasak/factum";
-        ref = {
-          type = "branch";
-          value = "main";
+      repositories = {
+        factum = {
+          github = "sammasak/factum";
+          ref = {
+            type = "branch";
+            value = "main";
+          };
+          lock = factum;
+          path = "/workspace/factum";
+          writable = true;
         };
-        lock = factum;
-        path = "/workspace/factum";
-        writable = true;
+        factum-pinned = {
+          github = "sammasak/factum";
+          ref = {
+            type = "commit";
+            value = factum.rev;
+          };
+          lock = factum;
+          path = "/workspace/factum-pinned";
+        };
+        factum-release = {
+          github = "sammasak/factum";
+          ref = {
+            type = "tag";
+            value = "v0.2.0";
+          };
+          resolve = "assignment";
+          path = "/workspace/factum-release";
+        };
       };
       skillsSource = skills;
       skills = {

@@ -1,6 +1,6 @@
 # External consumer fixture: imports the agent-runtime module through the
-# nixos-config input (nothing copied) and evaluates two templates, a real
-# nixosSystem that imports the module, and the negative cases.
+# nixos-config input (nothing copied). The input URL is a placeholder;
+# scripts/test-agent-runtime.sh always overrides it with this checkout.
 {
   inputs = {
     nixos-config.url = "github:sammasak/nixos-config";
@@ -35,7 +35,10 @@
           {
             nixpkgs.hostPlatform = system;
             boot.loader.grub.enable = false;
-            fileSystems."/".device = "/dev/disk/by-label/nixos";
+            fileSystems."/" = {
+              device = "/dev/disk/by-label/nixos";
+              fsType = "ext4";
+            };
             system.stateVersion = "25.11";
           }
         ];
