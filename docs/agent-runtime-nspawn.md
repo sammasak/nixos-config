@@ -181,7 +181,26 @@ ranges, network links) is printed before, during and after.
     `forward` hook and not just `input`; the host itself can reach `10.8.0.5`,
     so the refusal is the filter, not missing routing. After `destroy` the veth
     and the `art_<id>` nft table are gone. No port 53 is ever opened.
-16. **Host unchanged**: the inventory is empty again (links as before), no
+16. **Credentials, two instances at once**: `ca` and `cb` run concurrently
+    with different tokens; each reads only its own (hash checked), cannot read
+    the other's host path `/run/agent-runtime/<peer>/cred/token`, and finds no
+    file named `token` anywhere in its trees but its own; neither token appears
+    in the other's logs.
+17. **DNS closed**: the egress instance resolves its pinned allowlist name
+    (`getent ahostsv4 allowed.test` → 10.9.0.1) and nothing else
+    (`denied.test`: rc 2), and a raw DNS query to a resolver on the host and to
+    one routed off it gets no answer, though both answer the host.
+18. **Two egress starts at once**: `eg1` and `eg2` start together; each nft
+    table filters a different veth (the one whose index the container's
+    `host0@ifN` names) and both reach the allowlisted host and are refused the
+    routed one.
+19. **Minted credential**: a `ghread` instance (`capabilities = [ "github-read" ]`,
+    allowlist `api.test`) gets a 6 s token from a stand-in issuer: read 200,
+    push 403, read after expiry 401; the record holds scopes and expiry, never
+    the token; teardown revokes it at the issuer. An issuer granting
+    `github-push` too is refused (class `credential`, nothing started), and a
+    TTL beyond the run's limit is refused (class `usage`).
+20. **Host unchanged**: the inventory is empty again (links as before), no
     reservation, the store's entries unchanged, the sentinels in place, host
     disk back to the start minus the kept exports.
 
@@ -279,14 +298,16 @@ Findings worth keeping:
    per-instance tmpfs dir under `/run/agent-runtime/<id>/cred`, owned by the
    mapped `agent`, and bound read-only at `/run/agent-runtime/credentials`; it
    never comes from the manifest, the store or the persistent state dir, and the
-   tmpfs is gone on teardown. Only a hash is kept at rest. Redaction masks the
+   tmpfs is gone on teardown. Nothing about it is kept at rest. Redaction masks the
    secret in the printed `logs` view and in the exported log; the raw secret
    still lives in the payload's own files and the private tmp volume until
    teardown, which is acceptable only because that volume is private and
    discarded. The export refuses an `/output` artifact that carries the secret.
-   Still open: real scoped-token minting (github-read vs push) and expiry are
-   the consumer's, not proven here; this slice proves per-run delivery,
-   isolation, redaction and the leak gate.
+   A minted credential (`--credential-issuer`) is checked against the
+   template's `capabilities` and the run's lifetime before anything starts, and
+   revoked at teardown (`docs/agent-runtime.md`). Open on an owner decision:
+   the production issuer (a GitHub App and its key in sops); the VM proves the
+   contract with a stand-in.
 7. Exports are kept under `/var/lib/agent-runtime/exports` with no retention
    policy or size cap beyond each part's own bound (patches up to the output
    budget, the log's last 1 MiB, the output volume); retention is
@@ -297,7 +318,7 @@ Findings worth keeping:
    delivered as a read-only bind so nspawn's boot-time rewrite cannot clobber
    it), and installs an nft table filtering the instance's veth on **both** the
    `input` and `forward` hooks: established/related and `tcp dport 443` to each
-   resolved address accepted, loopback accepted, everything else dropped. Port
+   resolved address accepted, everything else dropped. Port
    53 is never opened, so a made-up name cannot resolve and there is no
    query-based exfiltration path. Enforcement is by address at run start, so a
    name that moves mid-run is not followed.

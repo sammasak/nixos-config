@@ -356,7 +356,7 @@ agent-runtime-instance reconcile                      # after a supervisor crash
 - **create** refuses ids that are not a DNS label of at most 29 characters (the Herdr runtime id
   `rt-<id>` must fit Herdr's 32; #139) or are `exports`, templates the host does
   not list in `eligibleTemplates`, and what the runtime cannot enforce yet: extra host mounts,
-  network egress, capabilities (credentials), a writable source not at `/workspace/<name>`
+  a network policy other than none or allowlist, a writable source not at `/workspace/<name>`
   (all class `unsupported`). Under one host lock it admits against `maxConcurrentInstances`,
   `MemTotal - reserve.memoryMiB` and free disk minus `reserve.diskMiB` (class `admission`),
   takes a free 64Ki UID range, writes the reservation, runs `assign` (GC roots under
@@ -402,6 +402,40 @@ New error classes: `admission` 10, `ambiguous` 11, `conflict` 12, `unsupported` 
 `status` prints `agent-runtime-instance-status` JSON (schemaVersion 1) for the Herdr adapter
 (#139). `packages.x86_64-linux.agent-runtime-nspawn` proves all of it in a VM
 (`docs/agent-runtime-nspawn.md`).
+
+### Per-run credentials (#137)
+
+`start` delivers at most one credential, on tmpfs only (`/run/agent-runtime/ID/cred`, bound
+read-only at `/run/agent-runtime/credentials/token`, owned by the instance's mapped uid, removed
+at teardown); no record, manifest, log view or export carries it.
+
+- `--credential FILE`: a token the operator provides. Its scope is the operator's word; the record
+  says `{"kind": "file"}`.
+- `--credential-issuer PROGRAM [--credential-ttl SEC]`: a token minted for this run. The tool runs
+  `PROGRAM mint --instance ID --task OWNER/REPO#N --capabilities '<the template's capabilities>' --ttl SEC`
+  and expects `{"token": "…", "scopes": […], "expires_at": <unix seconds>}` on stdout. It starts
+  nothing (class `credential`) unless every scope is one of the template's declared
+  `capabilities` and the expiry falls within the TTL; the TTL defaults to, and may not exceed,
+  the run's own limit, so no token outlives its run. The record keeps
+  `{"kind": "minted", "issuer", "scopes", "expiresAt"}`. At teardown the tool runs
+  `PROGRAM revoke --instance ID --token-file PATH` before the tmpfs copy goes (best effort; the
+  token expires anyway).
+
+The VM test proves the contract with a stand-in issuer and API: a token scoped to `github-read`
+reads (200), is refused a push (403) and a read after its expiry (401), and is revoked at
+teardown; an issuer that grants more than the template declares is refused before anything runs.
+
+**Owner decision: the production issuer.** GitHub mints scoped, expiring tokens only for a
+GitHub App (installation access tokens: per-permission scopes, limited to chosen repositories,
+revocable, a fixed one-hour lifetime). An issuer for this contract needs the owner to create a
+GitHub App, install it on the repositories templates use, and store its private key with sops on
+the hosts that run instances (both are credential and secret changes, never an agent's). The
+capability map it would apply: `github-read` → contents and metadata read; `github-comment` →
+issues and pull requests write; `github-push` → contents write; repositories → the template's
+`sources`. Because GitHub's lifetime is one hour, such an issuer returns that expiry only for runs
+of at least 60 minutes (the tool refuses a token outliving the run) or revokes the token at the
+run's earlier end. Fine-grained personal tokens cannot be minted through an API, so they fit only
+`--credential FILE`.
 
 ## Limits of this milestone
 
