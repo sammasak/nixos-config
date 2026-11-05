@@ -13,7 +13,7 @@ let
       {
         sam.agentRuntime.host = {
           enable = true;
-          eligibleTemplates = [ "rust-worker-m0" "tiny" ];
+          eligibleTemplates = [ "rust-worker-m0" "tiny" "egress" ];
           maxConcurrentInstances = 3;
           reserve = { memoryMiB = 2600; diskMiB = 512; };
         };
@@ -53,6 +53,22 @@ let
           };
           resources = { cpus = 1; memoryMiB = 64; tasksMax = 64; timeoutMinutes = 5; };
         };
+        # minimal egress: a private network namespace with one allowlisted DNS name (#137 slice 2)
+        sam.agentRuntime.templates.egress = {
+          role = { name = "rust-worker"; harness = "claude-code"; };
+          skillsSource = skills;
+          skills.lean-code = { };
+          packages = with pkgs; [ bash coreutils curl cacert iproute2 glibc.bin dnsutils ];
+          network.allow = [ "allowed.test" ];
+          filesystem = {
+            workspaceBudget = { sizeMiB = 16; inodes = 1000; };
+            home = { sizeMiB = 16; inodes = 1000; };
+            tmp = { sizeMiB = 16; inodes = 1000; };
+            cache = { sizeMiB = 16; inodes = 1000; };
+            output = { sizeMiB = 16; inodes = 1000; };
+          };
+          resources = { cpus = 1; memoryMiB = 256; tasksMax = 128; timeoutMinutes = 5; };
+        };
       }
     ];
   };
@@ -86,10 +102,12 @@ let
       diskMiB = lib.foldl' (s: v: s + v.sizeMiB) 0 (lib.attrValues volumes);
       sourceBinds = lib.concatMapStrings (s: ''--bind-ro="${s.locked.storePath}:/src/${baseNameOf s.path}$opt" '') (lib.attrValues m.sources);
       skillBinds = lib.concatStrings (lib.mapAttrsToList (n: s: ''--bind-ro="${s.path}:/skills/${n}$opt" '') m.skills.names);
+      egressAllow = lib.concatStringsSep " " m.policies.network.allow;
     in
     pkgs.writeShellScript "agent-runtime-${name}" ''
       set -euo pipefail
-      export PATH=${lib.makeBinPath (with pkgs; [ bash coreutils diffutils gawk gnugrep gnused findutils util-linux procps systemd e2fsprogs ])}
+      export PATH=${lib.makeBinPath (with pkgs; [ bash coreutils diffutils gawk gnugrep gnused findutils util-linux procps systemd e2fsprogs nftables iproute2 dnsutils ])}
+      egress_allow="${egressAllow}"
       cmd=$1; id=$2; shift 2
       state=/var/lib/agent-runtime
       base=$state/$id
@@ -149,7 +167,7 @@ let
           printf 'ID=agent-runtime\nPRETTY_NAME="agent-runtime ${name}"\n' > "$root/etc/os-release"
           printf 'root:x:0:0::/root:/bin/sh\nagent:x:1000:1000::${fs.home.path}:/bin/sh\nnobody:x:65534:65534::/:/bin/sh\n' > "$root/etc/passwd"
           printf 'root:x:0:\nagent:x:1000:\nnogroup:x:65534:\n' > "$root/etc/group"
-          printf 'passwd: files\ngroup: files\n' > "$root/etc/nsswitch.conf"
+          printf 'passwd: files\ngroup: files\nhosts: files dns\n' > "$root/etc/nsswitch.conf"
           touch "$root/etc/agent-runtime/template.json"
           ln -sf ${pkgs.bash}/bin/bash "$root/bin/sh"
           ln -sf ${pkgs.coreutils}/bin/env "$root/usr/bin/env"
@@ -188,6 +206,62 @@ let
           "''${args[@]}" || rc=$?
           echo "== run.log ($id, exit $rc):"; { cat "$base/mnt/tmp/run.log" 2>/dev/null || echo "(no run.log)"; } | redact
           if [ "$rc" != 0 ]; then echo "== nspawn journal ($id):"; journalctl --sync; journalctl -b -o cat -u "agent-runtime-$id.service" | grep -v -E "^(Started|agent-runtime-)" | tail -8 | redact; fi
+          exit "$rc"
+          ;;
+        run-net)  # run-net <id> <uid> <script> <host-veth-ip> <resolver-ip>: minimal egress to the template's allowlist
+          user=$1; script=$2; hostip=$3; resolver=$4; rc=0; opt=""
+          uidbase=$(awk '{print $3}' "$base/reservation")
+          cinip=''${hostip%.*}.2
+          table="art_$id"
+          cleanup_net() { nft delete table inet "$table" 2>/dev/null || true; }
+          trap cleanup_net EXIT
+          # resolve the allowlist now and pin the IPs: the policy is a set of names, enforced as addresses at run start
+          allow_ips=""
+          for n in $egress_allow; do
+            ip=$(dig +short +time=2 "$n" @"$resolver" | grep -E '^[0-9.]+$' | head -1)
+            [ -n "$ip" ] || { echo "run-net: $n did not resolve via $resolver" >&2; exit 69; }
+            allow_ips="$allow_ips $ip"
+          done
+          printf 'nameserver %s\n' "$resolver" > "$root/etc/resolv.conf"
+          before=$(ls /sys/class/net)
+          systemd-run --unit="agent-runtime-$id" --collect -p MemoryMax=${toString t.resources.memoryMiB}M \
+            -p MemorySwapMax=0 -p TasksMax=${toString t.resources.tasksMax} -p CPUQuota=${toString (t.resources.cpus * 100)}% -p KillMode=mixed \
+            systemd-nspawn --quiet --keep-unit --settings=no --register=yes \
+              -M "agent-runtime-$id" -D "$root" \
+              --private-users="$uidbase:65536" --private-users-ownership=chown \
+              --private-network --network-veth --resolv-conf=off --timezone=off --no-new-privileges=yes \
+              --drop-capability=${dropCaps} \
+              --bind-ro="/nix/store:/nix/store$opt" \
+              ${sourceBinds}${skillBinds} \
+              --bind-ro="${manifestFile}:/etc/agent-runtime/template.json" \
+              ${lib.concatStrings (lib.mapAttrsToList (n: v: ''--bind="$base/mnt/${n}:${v.path}" '') volumes)} \
+              /bin/sh -c "exec ${pkgs.util-linux}/bin/setpriv --reuid=$user --regid=$user --clear-groups --bounding-set=-all --inh-caps=-all --no-new-privs /bin/sh -c 'while [ ! -e ${fs.tmp.path}/net-ready ]; do sleep 0.1; done; $script > ${fs.tmp.path}/run.log 2>&1'" >/dev/null
+          leader=""
+          for _ in $(seq 100); do leader=$(machinectl show -p Leader --value "agent-runtime-$id" 2>/dev/null || true); [ -n "$leader" ] && break; sleep 0.1; done
+          [ -n "$leader" ] || { echo "run-net: instance did not register" >&2; exit 70; }
+          veth=""
+          for _ in $(seq 100); do veth=$(comm -13 <(printf '%s\n' "$before" | sort) <(ls /sys/class/net | sort) | grep -E '^ve-' | head -1); [ -n "$veth" ] && break; sleep 0.1; done
+          [ -n "$veth" ] || { echo "run-net: no veth appeared" >&2; exit 70; }
+          ip addr add "$hostip/24" dev "$veth"; ip link set "$veth" up
+          nsenter -t "$leader" -n ip addr add "$cinip/24" dev host0
+          nsenter -t "$leader" -n ip link set host0 up
+          nsenter -t "$leader" -n ip link set lo up
+          nsenter -t "$leader" -n ip route add default via "$hostip"
+          # the allowlist: this instance's veth may reach DNS on the resolver and tcp 443 on the resolved IPs; nothing else
+          nft add table inet "$table"
+          nft add chain inet "$table" filt '{ type filter hook input priority -10; policy accept; }'
+          nft add rule inet "$table" filt iifname "$veth" ct state established,related accept
+          nft add rule inet "$table" filt iifname "$veth" ip daddr "$resolver" udp dport 53 accept
+          nft add rule inet "$table" filt iifname "$veth" ip daddr "$resolver" tcp dport 53 accept
+          for ip in $allow_ips; do nft add rule inet "$table" filt iifname "$veth" ip daddr "$ip" tcp dport 443 accept; done
+          nft add rule inet "$table" filt iifname "$veth" ip daddr 127.0.0.0/8 accept
+          nft add rule inet "$table" filt iifname "$veth" drop
+          echo "== egress ($id): veth $veth host $hostip allow$allow_ips via resolver $resolver"
+          touch "$base/mnt/tmp/net-ready"
+          while systemctl is-active -q "agent-runtime-$id.service"; do sleep 0.2; done
+          rc=$(systemctl show -p ExecMainStatus --value "agent-runtime-$id.service" 2>/dev/null || echo 1)
+          systemctl reset-failed "agent-runtime-$id.service" 2>/dev/null || true
+          echo "== run.log ($id, exit $rc):"; { cat "$base/mnt/tmp/run.log" 2>/dev/null || echo "(no run.log)"; }
           exit "$rc"
           ;;
         export)
@@ -234,6 +308,35 @@ let
     factory = mkFactory name;
   };
   tiny = { factory = mkFactory "tiny"; };
+  egress = rec {
+    name = "egress";
+    m = evaluated.manifestData.${name};
+    eenv = pkgs.buildEnv { name = "agent-runtime-egress"; paths = evaluated.templates.${name}.packages; };
+    factory = mkFactory name;
+  };
+  tlsEndpoint = pkgs.writeText "tls-endpoint.py" ''
+    import http.server, ssl
+    def get(s):
+        s.send_response(200); s.send_header("Content-Length", "11"); s.send_header("Connection", "close"); s.end_headers()
+        s.wfile.write(b"endpoint-ok")
+    h = type("H", (http.server.BaseHTTPRequestHandler,), {"protocol_version": "HTTP/1.0", "do_GET": get})
+    srv = http.server.ThreadingHTTPServer(("0.0.0.0", 443), h)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain("/tmp/ca.pem", "/tmp/k.pem")
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True); srv.serve_forever()
+  '';
+  # Reaches the allowlisted name over DNS+TLS, is refused a non-allowlisted one, writes the outcome.
+  egresswork = pkgs.writeShellScript "agent-egress" ''
+    set -u
+    export PATH=${egress.eenv}/bin SSL_CERT_FILE=/workspace/ca.pem
+    echo "resolv: $(cat /etc/resolv.conf)"
+    # DNS to the allowlisted resolver (udp 53) works for both names; egress to the resolved IP is what differs
+    echo "allowed dns: $(dig +short +time=3 allowed.test @10.9.0.1 | head -1 || echo none)"
+    echo "denied dns: $(dig +short +time=3 denied.test @10.9.0.1 | head -1 || echo none)"
+    echo -n "allowed https: "; curl -sS --max-time 8 -o /dev/null -w '%{http_code} remote=%{remote_ip}\n' https://allowed.test/ || echo "REFUSED rc=$?"
+    echo -n "allowed body: "; curl -sS --max-time 8 https://allowed.test/ && echo || echo "REFUSED rc=$?"
+    echo -n "denied https: "; if curl -sS --max-time 8 https://denied.test/ >/dev/null 2>&1; then echo REACHED; else echo "REFUSED rc=$?"; fi
+    echo -n "denied by-ip: "; if curl -sS --max-time 8 -k https://10.9.0.9/ >/dev/null 2>&1; then echo REACHED; else echo "REFUSED rc=$?"; fi
+  '';
   inherit (rust) fs env;
   ws = fs.workspace;
   out = fs.output.path;
@@ -390,7 +493,10 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 4096;
     # test-instrumentation's mkDefault 2 panics the VM on any cgroup OOM; hosts run the kernel's 0
     boot.kernel.sysctl."vm.panic_on_oom" = 0;
-    environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils ];
+    # the egress subtest filters the instance's veth with our own nft table; the node firewall must not interfere
+    networking.firewall.enable = false;
+    networking.dhcpcd.denyInterfaces = [ "ve-*" ];
+    environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils nftables iproute2 dnsmasq openssl python3 dnsutils ];
   };
 
   testScript = ''
@@ -564,6 +670,35 @@ pkgs.testers.runNixOSTest {
             print(machine.succeed(f"cat /tmp/{i}.out"))
             assert machine.succeed(f"cat /tmp/{i}.rc").strip() == "0"
             teardown(i)
+
+    with subtest("minimal egress: the allowlisted host over DNS+TLS, everything else refused"):
+        FE = "${egress.factory}"
+        # endpoints that exist before the instance: 10.9.0.1 is allowed (and the resolver), 10.9.0.9 is denied
+        machine.succeed("ip link add dummy0 type dummy && ip addr add 10.9.0.1/24 dev dummy0 && ip addr add 10.9.0.9/24 dev dummy0 && ip link set dummy0 up")
+        machine.succeed("sysctl -w net.ipv4.ip_forward=1 >/dev/null")
+        machine.succeed("cd /tmp && openssl req -x509 -newkey rsa:2048 -nodes -keyout k.pem -out ca.pem -days 1 "
+                        "-subj /CN=allowed.test -addext 'subjectAltName=DNS:allowed.test,DNS:denied.test,IP:10.9.0.1,IP:10.9.0.9' >/dev/null 2>&1")
+        machine.succeed("systemd-run --unit=tls-endpoint ${pkgs.python3}/bin/python3 ${tlsEndpoint}")
+        machine.succeed("systemd-run --unit=egress-dns ${pkgs.dnsmasq}/bin/dnsmasq -k --listen-address=10.9.0.1 "
+                        "--bind-interfaces --no-resolv --address=/allowed.test/10.9.0.1 --address=/denied.test/10.9.0.9")
+        machine.wait_until_succeeds("${pkgs.dnsutils}/bin/dig +short +time=2 allowed.test @10.9.0.1 | grep -q 10.9.0.1", timeout=20)
+        machine.wait_until_succeeds("curl -sS --max-time 5 --cacert /tmp/ca.pem https://10.9.0.1/ | grep -q endpoint-ok", timeout=20)
+        create("egr", FE)
+        machine.succeed("cp /tmp/ca.pem /var/lib/agent-runtime/egr/mnt/workspace/ca.pem")
+        status, out = machine.execute(f"{FE} run-net egr 1000 ${egresswork} 10.0.0.1 10.9.0.1 2>&1")
+        print(out)
+        assert status == 0, "egress workload failed"
+        assert re.search(r"allowed dns: 10\.9\.0\.1", out), "the allowlisted name did not resolve to its address"
+        assert re.search(r"denied dns: 10\.9\.0\.9", out), "the denied name did not resolve (DNS to the resolver should work)"
+        assert re.search(r"allowed https: 200 remote=10\.9\.0\.1", out), "the allowlisted host was not reached over TLS at its address"
+        assert re.search(r"allowed body: endpoint-ok", out), "the allowlisted host did not return its body"
+        assert re.search(r"denied https: REFUSED", out), "a non-allowlisted name was reachable"
+        assert re.search(r"denied by-ip: REFUSED", out), "a non-allowlisted IP was reachable"
+        teardown("egr", FE)
+        # the instance's veth and our nft table are gone
+        machine.succeed("! ip -o link show | grep -q ' ve-'")
+        machine.succeed("! nft list tables 2>/dev/null | grep -q 'art_egr'")
+        machine.succeed("systemctl stop tls-endpoint egress-dns; ip link del dummy0")
 
     with subtest("admission: memory, instance count and disk refuse oversubscription"):
         create("adm-a"); create("adm-b")
