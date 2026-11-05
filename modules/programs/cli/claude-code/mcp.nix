@@ -3,7 +3,10 @@
 # first argument, so it is imported applied:
 #   (import .../claude-code/mcp.nix inputs.skills)
 skillsSrc: nativeOtel: hostName:
-{ pkgs, lib, config, ... }:
+{ pkgs, lib, config, osConfig, ... }:
+let
+  worker = osConfig.sam.herdr.worker;
+in
 {
   programs.claude-code = {
     enable = true;
@@ -49,6 +52,11 @@ skillsSrc: nativeOtel: hostName:
       # Keeps the default mode these hosts had under scrubbing (below); 2.1.300
       # otherwise starts in auto. --dangerously-skip-permissions overrides it.
       permissions = lib.optionalAttrs nativeOtel { defaultMode = "default"; };
+    } // lib.optionalAttrs worker.enable {
+      # Worker hosts only: a --dangerously-skip-permissions start no longer stops at the acknowledgment dialog
+      # (2.1.300 ignores ~/.claude.json's bypassPermissionsModeAccepted); a session without the flag is unaffected.
+      skipDangerousModePermissionPrompt = true;
+    } // {
       env = {
         DISABLE_ERROR_REPORTING = "1";
       } // lib.optionalAttrs (!nativeOtel) {
@@ -256,7 +264,8 @@ skillsSrc: nativeOtel: hostName:
   '';
 
   # Pre-accepts the bypass-permissions and $HOME project-trust dialogs, which
-  # would otherwise reappear every launch (read-only settings.json).
+  # would otherwise reappear every launch (read-only settings.json); a worker
+  # host also trusts its declared startup directories, and only those.
   home.activation.acceptClaudeStartupDialogs =
     let
       script = pkgs.writeShellScript "accept-claude-startup-dialogs" ''
@@ -269,8 +278,8 @@ skillsSrc: nativeOtel: hostName:
         trap 'rm -f "$tmp"' EXIT
         chmod 600 "$tmp"
         ${pkgs.jq}/bin/jq \
-          --arg home "$HOME" \
-          '.bypassPermissionsModeAccepted = true | .projects[$home].hasTrustDialogAccepted = true' \
+          --arg home "$HOME" --argjson dirs ${lib.escapeShellArg (builtins.toJSON worker.trustedDirs)} \
+          '.bypassPermissionsModeAccepted = true | reduce ([$home] + $dirs)[] as $d (.; .projects[$d].hasTrustDialogAccepted = true)' \
           "$stateFile" > "$tmp" && mv "$tmp" "$stateFile"
       '';
     in

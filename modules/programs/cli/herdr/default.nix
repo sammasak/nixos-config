@@ -46,6 +46,11 @@ in
     codex = ''
       command ${herdrAgentLauncher}/bin/herdr-agent-launcher codex $argv
     '';
+  } // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
+    # The worker start by hand, through the same launcher; plain `claude` stays interactive and asks.
+    claude-worker = ''
+      command ${herdrAgentLauncher}/bin/herdr-agent-launcher claude --dangerously-skip-permissions $argv
+    '';
   };
 
   home.file = {
