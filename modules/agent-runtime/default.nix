@@ -193,6 +193,14 @@ let
         default = false;
         description = "Private writable copy (true) or read-only store path (false). Never implies push rights.";
       };
+      access = mkOption {
+        type = types.enum [ "public" "private" ];
+        default = "public";
+        description = ''
+          `private`: an assignment-time prefetch needs `GH_TOKEN` in the assigner's environment
+          and fails closed without it; the token never enters a manifest or the store.
+        '';
+      };
     };
   };
 
@@ -483,7 +491,7 @@ let
         template.name = name;
         inherit (t) role filesystem;
         sources = lib.mapAttrs (_: r: {
-          inherit (r) github ref resolve path writable;
+          inherit (r) github ref resolve access path writable;
           locked = lib.mapNullable sourceRef r.lock;
         }) t.repositories;
         skills = {

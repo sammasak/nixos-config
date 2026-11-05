@@ -14,6 +14,7 @@
       args = { inherit (inputs) factum skills; };
       templates = import ../tests/agent-runtime/templates.nix args;
       manifests = (runtime.evalManifests { modules = [ templates ]; }).manifestDir;
+      tools = import ../modules/agent-runtime/runtime.nix { inherit pkgs; };
       optionsDoc = pkgs.nixosOptionsDoc {
         inherit (runtime) options;
         # repo-relative declaration paths in the rendered reference
@@ -32,10 +33,15 @@
           cases = import ../tests/agent-runtime/cases.nix (args // { inherit lib; });
           factumRev = inputs.factum.rev;
         };
+        agent-runtime-runtime = import ../tests/agent-runtime/runtime-check.nix { inherit pkgs lib manifests; };
       };
       packages = x86Only {
         agent-runtime-options = optionsDoc.optionsCommonMark;
         agent-runtime-manifests = manifests;
+        agent-runtime-assign = tools.assign;
+        agent-runtime-materialize = tools.materialize;
+        agent-runtime-export = tools.export;
+        agent-runtime-reclaim = tools.reclaim;
       };
     };
 }

@@ -15,5 +15,6 @@ let
 in
 {
   evalManifests = { modules }: (eval modules).config.sam.agentRuntime;
+  tools = import ./runtime.nix { inherit pkgs; };
   options = (eval [ ]).options.sam;
 }
