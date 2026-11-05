@@ -335,14 +335,14 @@ four against fixture trees with a fake `nix` that answers `flake prefetch` and
 
 ## Instance lifecycle: agent-runtime-instance (#138)
 
-`agent-runtime-instance` (`nix build .#agent-runtime-instance`, also `.tools.instance`) is the
-host-side adapter that runs instances of an evaluated template: no host switch, no
+`agent-runtime-instance` (`nix build .#agent-runtime-instance`, also `.tools.instance`; on a host
+through the substrate, `docs/agent-runtime-deploy.md`) is the host-side adapter that runs instances of an evaluated template: no host switch, no
 `containers.<name>`, no daemon. It drives the four tools above and systemd, and keeps all its
 state in `--state` (default `/var/lib/agent-runtime`). The host policy it admits against is
 the module's read-only `sam.agentRuntime.hostPolicy` (`agent-runtime-host`, schemaVersion 1).
 
 ```sh
-agent-runtime-instance create ID --template rust-worker.json --host host.json --task issue-138 [--plan PLAN]...
+agent-runtime-instance create ID --template rust-worker.json [--host /etc/agent-runtime/host.json] --task issue-138 [--plan PLAN]...
 agent-runtime-instance start ID [--root] [--timeout-sec N] [--idmap] [--wait] -- /nix/store/...-job
 agent-runtime-instance wait ID [--timeout-sec N]     # status JSON; exit 0 only when the run succeeded
 agent-runtime-instance status [ID]                    # one instance, or a JSON array of all
@@ -353,13 +353,15 @@ agent-runtime-instance destroy ID [--discard]
 agent-runtime-instance reconcile                      # after a supervisor crash or reboot
 ```
 
-- **create** refuses ids that are not a DNS label (or are `exports`), templates the host does
+- **create** refuses ids that are not a DNS label of at most 29 characters (the Herdr runtime id
+  `rt-<id>` must fit Herdr's 32; #139) or are `exports`, templates the host does
   not list in `eligibleTemplates`, and what the runtime cannot enforce yet: extra host mounts,
   network egress, capabilities (credentials), a writable source not at `/workspace/<name>`
   (all class `unsupported`). Under one host lock it admits against `maxConcurrentInstances`,
   `MemTotal - reserve.memoryMiB` and free disk minus `reserve.diskMiB` (class `admission`),
   takes a free 64Ki UID range, writes the reservation, runs `assign` (GC roots under
-  `ID/run/gcroots`), allocates one `fallocate`d ext4 image per writable mount (bytes and inodes
+  `ID/run/gcroots`; the template manifest, and through it the template's closure, is rooted at
+  `ID/template-root`, so a template profile update or a GC cannot take a live instance's packages), allocates one `fallocate`d ext4 image per writable mount (bytes and inodes
   from the template), loop-mounts them, runs `materialize` into the workspace volume, and
   writes `ID/instance.json` (template name and digests, run digest, task, host, UID base,
   unit, machine, volumes) last. A failure rolls everything back; a SIGKILLed create is left
