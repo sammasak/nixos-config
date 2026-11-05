@@ -307,6 +307,29 @@ pkgs.testers.runNixOSTest {
                            "memory_peak_bytes": s["result"]["memoryPeakBytes"], "runtime_us": s["result"]["runtimeUSec"],
                            "teardown_ms": destroy("idle", "--discard")}
 
+    with subtest("concurrent reader during the start window: starting, never ambiguous; wait rides it to success"):
+        # the blocking finding (wN on #152): during start's up-to-5 s leader poll state_of read ambiguous,
+        # and a lock-free wait/status took it as final, failing a run that then succeeds.
+        create("cwin")
+        # a wait launched together with start must poll through the starting window to the real outcome
+        out = machine.succeed(f"({I} start cwin -- /bin/sh -c 'sleep 1; true' >/dev/null 2>&1) & {I} wait cwin; echo rc=$?")
+        assert "rc=0" in out and status("cwin")["state"] == "succeeded", out
+        destroy("cwin", "--discard")
+        # and a rapid sampler across a fresh start observes created/starting/running, never ambiguous
+        create("cwin2")
+        # rapid lock-free sampling across a whole run: start, running and the end window all read as
+        # live states, never the terminal `ambiguous` (which is reserved for an outcome that never lands)
+        seen = sorted(set(machine.succeed(
+            f"({I} start cwin2 -- /bin/sh -c 'sleep 1; true' >/dev/null 2>&1) & "
+            f"for _ in $(seq 1 200); do {I} status cwin2 | ${pkgs.jq}/bin/jq -r .state; done"
+        ).split()))
+        print("states observed during start:", seen)
+        assert "ambiguous" not in seen, seen
+        assert "starting" in seen, ("the start window was never observed as starting", seen)
+        machine.succeed(f"{I} wait cwin2")
+        assert status("cwin2")["state"] == "succeeded", status("cwin2")
+        destroy("cwin2", "--discard")
+
     with subtest("probe as container root: no capabilities, namespaces recorded, read-only store and sources"):
         create("probe")
         machine.succeed(f"echo {host_pid} > {ws('probe')}/host.pid")

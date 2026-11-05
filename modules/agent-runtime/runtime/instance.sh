@@ -87,6 +87,14 @@ unit_active() {  # INVOCATION: the instance's unit is that invocation and not ye
   active=$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)
   [ -n "$1" ] && [ "$cur" = "$1" ] && [[ $active =~ ^(active|activating|deactivating|reloading)$ ]]
 }
+unit_live() {  # the unit is up by name (the invocation isn't recorded yet during start)
+  local active
+  active=$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)
+  [[ $active =~ ^(active|activating|deactivating|reloading)$ ]]
+}
+lock_held() {  # a start (or another op) holds the instance lock right now; a non-blocking probe, lock untouched
+  ! ( flock -n 7 ) 7>"$base/.lock" 2>/dev/null
+}
 state_of() {
   if [ ! -f "$base/instance.json" ]; then
     if [ -d "$base" ]; then echo incomplete; else echo absent; fi
@@ -96,10 +104,19 @@ state_of() {
     if unit_active "$(jq -r .invocation "$base/started.json")"; then
       if [ -e "$base/cancel-requested" ]; then echo cancelling; else echo running; fi
     else
+      # the unit is gone with no result yet: its ExecStopPost (record-exit) may still be writing one.
+      # Wait briefly; only an outcome that never lands (supervisor or host crash) is ambiguous.
+      for _ in $(seq 1 30); do
+        [ -f "$base/result.json" ] && { jq -r .outcome "$base/result.json"; return; }
+        unit_active "$(jq -r .invocation "$base/started.json")" && { echo running; return; }
+        sleep 0.1
+      done
       echo ambiguous
     fi
   elif [ -e "$base/starting" ]; then
-    echo ambiguous
+    # the up-to-5 s start window (lock held) or a unit up by name is not final: a concurrent wait
+    # must not fail a run that then succeeds. Only a vanished unit with nothing recorded is ambiguous.
+    if lock_held || unit_live; then echo starting; else echo ambiguous; fi
   else
     echo created
   fi
