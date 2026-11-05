@@ -30,6 +30,9 @@ devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward s
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
 
+# QEMU proofs (packages, not checks; acer under the heavy-work lock):
+nix build -L .#packages.x86_64-linux.agent-runtime-nspawn  # #135 M0: ephemeral nspawn instances, docs/agent-runtime.md
+
 # ── Deployment (switch is plain nixos-rebuild; build/diff use nh) ──
 just switch [HOST]            # Build and activate
 just build  [HOST]            # Build only

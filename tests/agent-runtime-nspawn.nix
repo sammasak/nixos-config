@@ -178,7 +178,7 @@ pkgs.testers.runNixOSTest {
         assert "FAIL" not in out
         machine.succeed("${factory} destroy probe && ${factory} check-clean probe")
 
-    timings = {}
+    timings: dict[str, dict[str, object]] = {}
     for run in ("cold", "warm"):
         with subtest(f"{run}: create -> run cargo test as agent -> export -> destroy"):
             t0 = time.monotonic_ns()
@@ -188,8 +188,9 @@ pkgs.testers.runNixOSTest {
             print(out[-2500:])
             assert out.rstrip().endswith("exit=0"), "workload failed"
             assert re.search(r"test result: ok\. \d+ passed", out), "cargo test did not report a pass"
-            started = int(re.search(r"started_ns=(\d+)", out).group(1))
-            finished = int(re.search(r"finished_ns=(\d+)", out).group(1))
+            marks = re.search(r"started_ns=(\d+).*finished_ns=(\d+)", out, re.S)
+            assert marks, "the workload did not print both time marks"
+            started, finished = int(marks.group(1)), int(marks.group(2))
             wall_start = int(machine.succeed("date +%s%N")) - (time.monotonic_ns() - t0)
             timings[run] = {"startup_ms": (started - wall_start) // 1000000, "work_ms": (finished - started) // 1000000, "total_ms": (t1 - t0) // 1000000}
             mem = machine.succeed(f"systemctl show -p MemoryPeak -p CPUUsageNSec agent-runtime-{run}.service || true")
