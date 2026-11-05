@@ -151,8 +151,18 @@ instance id, transient unit per instance); it is not yet that adapter.
    destroys and checks clean.
 5. **Two concurrent instances**: both in `machinectl`; distinct host UIDs for
    guest UID 1000; every namespace but `time` distinct; each sees only its own
-   workspace marker, only its own SysV segment, and cannot signal the other's
-   leader PID.
+   workspace marker, only its own SysV segment and its own credential, and
+   cannot signal the other's leader PID or read its credential.
+5a. **Per-run credential** (slice 2): delivered read-only to `agent` at
+    `/run/agent-runtime/credentials`, the bind is not writable, the secret is
+    `<redacted>` in the printed log, absent from the store, and the export is
+    refused (exit 77) when an output file carries it.
+5b. **Minimal egress** (slice 2): the `egress` template (`network.allow =
+    [ "allowed.test" ]`) resolves both the allowed and a denied name through
+    the allowlisted resolver, reaches `https://allowed.test/` (TLS, 200,
+    `remote=10.9.0.1`), and is refused both a non-allowlisted name and a
+    non-allowlisted IP on 443; after `destroy` the veth and the nft table are
+    gone.
 6. **Admission**: with two rust instances live, a third is refused for memory;
    a `tiny` instance is admitted and a fourth instance is refused for the
    instance count; with a ballast file leaving 612 MiB free, a rust instance
@@ -263,12 +273,23 @@ Fixture findings worth keeping:
    (#138 owns recovery). The UID ranges (64 slots) are per host.
 5. The volumes bound bytes and inodes per mount; the cgroup bounds memory
    (`MemorySwapMax=0`), tasks and CPU. I/O bandwidth is not bounded.
-6. No credentials enter the instance yet (no token, no SSH agent, no HOME from
-   the host). Per-run credential injection is #137's next slice, never through
-   the store or the manifest.
-7. The export is a plain copy out of `/output` before destruction; there is no
+6. A per-run credential (slice 2) is written to a private per-instance tmpfs
+   dir owned by the mapped agent and bound read-only at
+   `/run/agent-runtime/credentials`; it never comes from the manifest or the
+   store. The run log and journal are redacted, and the export refuses an
+   output carrying the secret. Another instance cannot read it: each binds only
+   its own dir, the host dir is not in a peer's mount namespace, and the UID
+   ranges differ. Scope narrowing per capability (github-read vs push) is the
+   consumer's; this proves the delivery, isolation and redaction.
+7. Minimal egress (slice 2): a template with `network.allow` reaches those names
+   over DNS and TLS and nothing else. `run-net` gives the instance a veth,
+   resolves the allowlist once and pins an nft allowlist (DNS to the resolver,
+   `tcp 443` to the resolved IPs, drop the rest); the enforcement is by
+   address at run start, so a name that later moves is not followed within a
+   run. The default template still has no network at all. DNS resolution of a
+   non-allowlisted name succeeds (the resolver is reachable) but egress to its
+   address is dropped: the allowlist governs egress, not name resolution.
+8. The export is a plain copy out of `/output` before destruction; there is no
    retention policy and no crash recovery (#138, devenv-platform #95).
-8. Private network means no network at all. Minimal egress (DNS and TLS to
-   approved endpoints) is #137's next slice.
 9. `--register=yes` lists the instance in `machinectl` while it runs; that is
    diagnostics, not Herdr visibility (#139).
