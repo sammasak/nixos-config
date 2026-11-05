@@ -1,5 +1,8 @@
 """#145/#149: Herdr-started Claude Code workers start in bypassPermissions without a prompt, on worker hosts only;
-plain `claude` and the unattended Coordinator (dontAsk) keep their permissions."""
+plain `claude` and the unattended Coordinator (dontAsk) keep their permissions.
+#157: a worker switches models when safeguards flag a message instead of stopping at the choice dialog: worker
+hosts' settings carry switchModelsOnFlag, and the launcher hands it to any bypass-mode claude, on every host,
+without touching settings.json (lenovo's Coordinator keeps the owner's choice)."""
 import json
 import os
 import pathlib
@@ -27,6 +30,20 @@ def realise(host, path):
     return pathlib.Path(nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", expr)).read_text()
 
 
+def launched(host, args):
+    """The argv the host's `claude` fish function gives the real claude, captured by a stand-in on PATH; HERDR_ENV
+    takes the launcher's native path, as inside a Herdr pane (coord:spawn's `herdr agent start` types into one)."""
+    fn = realise(host, "programs.fish.functions.claude")
+    launcher = re.search(r"/nix/store/[^ ]+/bin/herdr-agent-launcher", fn).group(0)
+    with tempfile.TemporaryDirectory() as d:
+        fake = pathlib.Path(d, "claude")
+        fake.write_text("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n")
+        fake.chmod(0o755)
+        run = subprocess.run([launcher, "claude", *args], env={**os.environ, "PATH": f"{d}:{os.environ['PATH']}", "HERDR_ENV": "1"},
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
+        return run.stdout.splitlines()
+
+
 def check(condition, message):
     if not condition:
         print(f"FAIL: {message}")
@@ -49,7 +66,7 @@ STARTUP_SECONDS = 30
 API_LOOPBACK = "http://127.0.0.1:9"
 
 
-def startup_screen(host):
+def startup_screen(host, extra=()):
     """What `coord:spawn`'s argv shows at startup under the host's rendered settings.json and its pinned Claude Code,
     in a throwaway HOME prepared like a provisioned host (onboarding done, cwd trusted, a dummy API key approved).
 
@@ -67,7 +84,7 @@ def startup_screen(host):
         pathlib.Path(home, ".claude.json").write_text(json.dumps({
             "hasCompletedOnboarding": True, "projects": {str(work): {"hasTrustDialogAccepted": True}},
             "customApiKeyResponses": {"approved": [key[-20:]], "rejected": []}}))
-        argv = f"{claude}/bin/claude {FLAG} --model claude-opus-5-5"
+        argv = " ".join([f"{claude}/bin/claude", *extra, FLAG, "--model", "claude-opus-5-5"])
         env = {"HOME": home, "PATH": os.environ["PATH"], "TERM": "xterm-256color", "ANTHROPIC_API_KEY": key,
                "ANTHROPIC_BASE_URL": API_LOOPBACK}
         run = subprocess.run(["unshare", "--map-current-user", "-n", "timeout", str(STARTUP_SECONDS), "script", "-qfec", argv, "/dev/null"],
@@ -91,8 +108,10 @@ def main():
         settings = hm(host, "programs.claude-code.settings")
         if worker:
             check(settings.get("skipDangerousModePermissionPrompt") is True, f"{host}: settings skip the bypass acknowledgment dialog")
+            check(settings.get("switchModelsOnFlag") is True, f"{host}: settings switch models when safeguards flag a message (#157)")
         else:
             check("skipDangerousModePermissionPrompt" not in settings, f"{host}: settings keep the bypass acknowledgment dialog")
+            check("switchModelsOnFlag" not in settings, f"{host}: settings leave the safeguards model-switch choice to the owner")
         fish = hm(host, "programs.fish.functions")
         check(FLAG not in fish["claude"], f"{host}: plain claude (interactive) gets no bypass flag")
         if worker:
@@ -102,7 +121,14 @@ def main():
             check("claude-worker" not in fish, f"{host}: no claude-worker function")
 
     launcher = pathlib.Path("modules/programs/cli/herdr/agent-launcher.sh").read_text()
-    check(FLAG not in launcher and "skipDangerous" not in launcher, "the launcher only forwards its arguments (the flag is the caller's)")
+    check("skipDangerous" not in launcher and not re.search(r"set -- [^\n]*" + FLAG, launcher),
+          "the launcher never adds the bypass flag (it is the caller's)")
+    for host in (WORKER, COORDINATOR):
+        worker_args, plain_args = launched(host, [FLAG, "--model", "claude-opus-5-5"]), launched(host, ["--model", "claude-opus-5-5"])
+        check(plain_args == ["--model", "claude-opus-5-5"], f"{host}: the launcher passes a non-bypass claude through unchanged ({plain_args})")
+        check(worker_args[:1] == ["--settings"] and worker_args[2:] == [FLAG, "--model", "claude-opus-5-5"]
+              and json.loads(pathlib.Path(worker_args[1]).read_text()) == {"switchModelsOnFlag": True},
+              f"{host}: a bypass-mode claude (coord:spawn's argv) gets --settings switchModelsOnFlag=true from the launcher (#157)")
 
     home, got = trusted_after_activation(WORKER)
     want = {home, "/home/lukas/claude-code-skills", "/home/lukas/nixos-config"}
@@ -121,7 +147,9 @@ def main():
     check("coordinator-wakeup" not in services, f"{WORKER}: no unattended Coordinator on the worker host")
 
     # #149: the coord:spawn argv against each host's rendered settings, the setting itself under test
-    worker_screen, coordinator_screen = startup_screen(WORKER), startup_screen(COORDINATOR)
+    # the worker runs the argv the launcher hands the real claude, --settings included (#157): it must still start
+    worker_extra = launched(WORKER, [FLAG])[:2]
+    worker_screen, coordinator_screen = startup_screen(WORKER, worker_extra), startup_screen(COORDINATOR)
     for host, screen in ((WORKER, worker_screen), (COORDINATOR, coordinator_screen)):
         check("bypasspermissionson" in screen or "Yes,Iaccept" in screen,
               f"{host}: Claude Code drew its first screen within {STARTUP_SECONDS} s with no network (if not: its startup now waits "
