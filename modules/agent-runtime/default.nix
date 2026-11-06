@@ -547,6 +547,12 @@ let
 in
 {
   options.sam.agentRuntime = {
+    pinnedSources = mkOption {
+      type = types.attrsOf types.raw;
+      default = { };
+      description = "Flake inputs a template module may lock to (`flake = false` sources and `skills`); the flake sets them for every host, so a host imports a template module by path (#165).";
+    };
+
     templates = mkOption {
       type = types.attrsOf template;
       default = { };
