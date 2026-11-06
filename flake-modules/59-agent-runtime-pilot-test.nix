@@ -22,11 +22,18 @@
           acer = hosts.acer-swift.config;
           rt = acer.sam.agentRuntime;
           tpl = rt.manifestData.rust-pilot;
+          coder = rt.manifestData.claude-coder;
+          # the real runner store path, read to prove no reintroduced ANTHROPIC_* auth path (#169)
+          coderRun = lib.findFirst (p: lib.getName p == "claude-coder-run")
+            (throw "agent-runtime-acer-pilot: claude-coder-run package missing")
+            acer.sam.agentRuntime.templates.claude-coder.packages;
+          runnerText = builtins.readFile "${coderRun}/bin/claude-coder-run";
           names = map (p: p.name or "") acer.environment.systemPackages;
           others = lib.filter (n: n != "acer-swift" && hosts.${n}.config.sam.agentRuntime.host.enable) (lib.attrNames hosts);
+          othersCoder = lib.filter (n: n != "acer-swift" && lib.elem "claude-coder" hosts.${n}.config.sam.agentRuntime.host.eligibleTemplates) (lib.attrNames hosts);
           expect = cond: msg: lib.assertMsg cond "agent-runtime-acer-pilot: ${msg}";
         in
-        assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" ]) "acer-swift admits exactly rust-pilot";
+        assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" "claude-coder" ]) "acer-swift admits exactly rust-pilot then claude-coder";
         assert expect (rt.host.maxConcurrentInstances == 1) "one instance at a time";
         assert expect (rt.host.reserve == { memoryMiB = 4096; diskMiB = 51200; }) "the reserve keeps 4 GiB and 50 GiB free";
         assert expect (rt.host.allowedMountRoots == [ ]) "no host mounts";
@@ -37,10 +44,20 @@
         assert expect (tpl.sources.factum.writable && tpl.sources.factum.locked.rev == inputs.factum.rev) "factum at the flake's pinned rev, a private writable copy";
         assert expect (lib.all (n: lib.elem n names) [ "agent-runtime-instance" "agent-runtime-preflight" "agent-runtime-pane" "agent-runtime-herdr" ]) "the lifecycle, preflight, pane and Herdr adapter on the host";
         assert expect (others == [ ]) "no other host enables the runtime (got ${toString others})";
+        # The #169 coder template admitted beside rust-pilot: egress is exactly the Claude API host,
+        # no credential, no ANTHROPIC_* auth path in the runner, and admitted on acer-swift only.
+        assert expect (coder.policies.network == { egress = "allowlist"; allow = [ "api.anthropic.com" ]; }) "claude-coder egress is exactly api.anthropic.com (no wildcard, no extra host)";
+        assert expect (coder.policies.capabilities == [ ]) "claude-coder grants no capability (no GitHub token)";
+        assert expect (!(lib.hasInfix "ANTHROPIC_API_KEY=" runnerText) && !(lib.hasInfix "ANTHROPIC_AUTH_TOKEN=" runnerText)) "claude-coder runner assigns no ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN";
+        assert expect (!(lib.hasInfix "apiKeyHelper" runnerText)) "claude-coder runner wires no apiKeyHelper (it would resolve a key from a command, bypassing the subscription-token-only path)";
+        assert expect (!(lib.hasInfix "ANTHROPIC_BASE_URL" runnerText)) "claude-coder runner sets no ANTHROPIC_BASE_URL (it would redirect the API to a non-Anthropic host, an egress path outside the allowlist)";
+        assert expect (lib.hasInfix "unset ANTHROPIC_API_KEY" runnerText) "claude-coder runner unsets the ANTHROPIC_* auth paths";
+        assert expect (othersCoder == [ ]) "no host other than acer-swift admits claude-coder (got ${toString othersCoder})";
         pkgs.runCommand "agent-runtime-acer-pilot" { nativeBuildInputs = [ pkgs.jq ]; } ''
           mkdir $out
           jq -S . ${rt.hostPolicy} > $out/host.json
           jq -S . ${rt.manifestDir}/rust-pilot.json > $out/rust-pilot.json
+          jq -S . ${rt.manifestDir}/claude-coder.json > $out/claude-coder.json
         '';
       };
     };
