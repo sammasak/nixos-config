@@ -83,7 +83,14 @@ mod fixture_169 {
 }
 RS
     cargo test --offline --locked >"$AGENT_RUNTIME_OUTPUT/cargo-test.log" 2>&1
+    printf '{"agent":"model-free-fixture","exit":0}\n' >"$AGENT_RUNTIME_OUTPUT/result.json"
     grep -c 'test result: ok' "$AGENT_RUNTIME_OUTPUT/cargo-test.log"
+  '';
+  # a payload that leaks the delivered token into a tracked file: the export must refuse the patch
+  plantLeak = sh "coder-plant-leak" ''
+    set -eu
+    cd ${repo}
+    printf '// %s\n' "$(cat /run/agent-runtime/credentials/token)" >>src/lib.rs
   '';
   # recompute a bundle's digests after a test edits it, so the verifier's later checks are reached
   reseal = sh "reseal" ''
@@ -137,7 +144,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"test ! -e {V}/{i} -a ! -e /run/agent-runtime/{i}")
 
     def verify(b, flags=""):
-        rc, out = machine.execute(f"${VERIFY} --bundle {b} {flags} 2>&1")
+        rc, out = machine.execute(f"${VERIFY} --bundle {b} --template {M} {flags} 2>&1")
         print(f"verify {b} {flags}: rc={rc}", out.strip()[-400:])
         return rc, out
 
@@ -147,7 +154,8 @@ pkgs.testers.runNixOSTest {
 
     machine.wait_for_unit("multi-user.target")
     machine.succeed("systemd-run --unit=host-sentinel --property=Type=exec sleep 3600")
-    machine.succeed("printf 'sk-ant-api03-DUMMY-not-a-key-169' > /root/dummy-key && chmod 600 /root/dummy-key")
+    # a dummy subscription token in the shape of the SOPS claude_oauth_token, nothing real
+    machine.succeed("printf 'sk-ant-oat01-DUMMY-not-a-token-169' > /root/dummy-token && chmod 600 /root/dummy-token")
 
     with subtest("the instance holds the real binary, the skill and the pinned source; no credential, no network"):
         s = run("probe", "${probe}")
@@ -179,15 +187,34 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"test ! -e {E}/closed/output/claude.json")
         done("closed", "")
 
-    with subtest("with a key but no egress the run is bounded, edits nothing and never leaks the key"):
-        s = run("noegress", "${run} --turn-seconds 20 'add a function'", "--credential /root/dummy-key")
-        assert s["state"] == "failed" and s["result"]["exitStatus"] == 124, s
-        machine.succeed("${I} export noegress")
+    with subtest("with the token but no egress the run is bounded, edits nothing and never leaks the token"):
+        s = run("noegress", "${run} --turn-seconds 20 'add a function'", "--credential /root/dummy-token")
+        assert s["state"] == "failed" and s["result"]["exitStatus"] != 0, s
+        # the run's tmpfs copy gone (as after a reboot): the export fails closed, then takes the re-passed token
+        machine.succeed("rm -f /run/agent-runtime/noegress/cred/token")
+        rc, out = machine.execute("${I} export noegress 2>&1")
+        print("export without the token copy:", rc, out.strip()[-300:])
+        assert rc == 5 and "copy is gone" in out, (rc, out)
+        machine.succeed("${I} export noegress --credential /root/dummy-token")
         r = json.loads(machine.succeed(f"cat {E}/noegress/output/result.json"))
-        assert r["auth"] == "present" and r["timedOut"] and r["testsExit"] == 0, r
-        machine.succeed(f"! grep -rqF DUMMY-not-a-key {E}/noegress")
-        assert machine.succeed(f"cat {E}/noegress/sources/rf-proto.patch") == ""
+        assert r["auth"] == "oauth-token" and r["claudeExit"] != 0 and r["testsExit"] == 0, r
+        machine.succeed(f"! grep -rqF DUMMY-not-a-token {E}/noegress")
+        machine.succeed("! journalctl --no-pager | grep -qF DUMMY-not-a-token")
+        patch = machine.succeed(f"cat {E}/noegress/sources/rf-proto.patch")
+        assert patch == "", patch[:1500]
         done("noegress", "")
+
+    with subtest("a token planted in a tracked file refuses the export: the patch is scanned too"):
+        s = run("leak", "${plantLeak}", "--credential /root/dummy-token")
+        assert s["state"] == "succeeded", s
+        rc, out = machine.execute("${I} export leak 2>&1")
+        print("export of a patch carrying the token:", rc, out.strip()[-300:])
+        assert rc == 5 and "source patch" in out, (rc, out)
+        machine.succeed(f"test ! -e {E}/leak")
+        # a retry is refused the same way: the refused export put the source back as pending, not dropped the patch
+        rc, out = machine.execute("${I} export leak 2>&1")
+        assert rc == 5 and "source patch" in out, (rc, out)
+        done("leak", "--discard")
 
     with subtest("MODEL-FREE fixture edit: a nonempty patch the host verifies against the pinned revision"):
         s = run("edit", "${fixtureEdit}")
@@ -203,7 +230,7 @@ pkgs.testers.runNixOSTest {
         print("VERIFIED", json.dumps(v))
         done("edit", "")
 
-    with subtest("the verifier refuses a tampered, interrupted, escaping, oversized, malformed or foreign bundle"):
+    with subtest("the verifier refuses a tampered, incomplete, unlisted, escaping, oversized, malformed, foreign or mispinned bundle"):
         def copy(name):
             machine.succeed(f"rm -rf /tmp/{name} && cp -r {E}/edit /tmp/{name}")
             return f"/tmp/{name}"
@@ -231,16 +258,32 @@ pkgs.testers.runNixOSTest {
         b = copy("pathlie")
         machine.succeed(f"jq '.changedPaths = [\"README.md\"]' {b}/sources/rf-proto.json > {b}/t && mv {b}/t {b}/sources/rf-proto.json && ${reseal} {b}")
         refused(b, 9, "the record says")
+        b = copy("emptyfiles"); machine.succeed(f"jq '.files = []' {b}/bundle.json > {b}/t && mv {b}/t {b}/bundle.json")
+        refused(b, 9, "lists no files")
+        b = copy("unlisted"); machine.succeed(f"printf x > {b}/output/extra")
+        refused(b, 9, "does not list")
+        b = copy("omitted"); machine.succeed(f"jq '.omittedPatches = [{{\"patch\": \"rf-proto.patch\", \"bytes\": 99999999}}]' {b}/bundle.json > {b}/t && mv {b}/t {b}/bundle.json && ${reseal} {b}")
+        refused(b, 9, "omitted at export")
+        b = copy("pinlie"); machine.succeed(f"jq '.base.rev = \"{'0' * 40}\"' {b}/sources/rf-proto.json > {b}/t && mv {b}/t {b}/sources/rf-proto.json && ${reseal} {b}")
+        refused(b, 9, "does not match the template's pin")
+        b = copy("notinstore"); machine.succeed(f"jq '.base.storePath = \"/nix/store/{'a' * 32}-source\"' {b}/sources/rf-proto.json > {b}/t && mv {b}/t {b}/sources/rf-proto.json && ${reseal} {b}")
+        refused(b, 8, "not in this host's store")
+        b = copy("wrongnar"); machine.succeed(f"jq '.base.storePath = \"${skills}\"' {b}/sources/rf-proto.json > {b}/t && mv {b}/t {b}/sources/rf-proto.json && ${reseal} {b}")
+        refused(b, 8, "has narHash")
+        b = copy("difftree"); machine.succeed(f"jq '.tree = \"{'0' * 40}\"' {b}/sources/rf-proto.json > {b}/t && mv {b}/t {b}/sources/rf-proto.json && ${reseal} {b}")
+        refused(b, 9, "the patched base is tree")
+        b = copy("droprecord"); machine.succeed(f"rm {b}/sources/rf-proto.json {b}/sources/rf-proto.patch && ${reseal} {b}")
+        refused(b, 9, "has no record of it")
 
     with subtest("cancellation: a hanging agent run stops as cancelled, exports a recovery bundle, leaves nothing"):
         machine.succeed(f"${I} create hang --template {M} --host {POLICY} --task {TASK}")
-        machine.succeed("${I} start hang --credential /root/dummy-key -- ${run} --turn-seconds 600 'add a function'")
+        machine.succeed("${I} start hang --credential /root/dummy-token -- ${run} --turn-seconds 600 'add a function'")
         machine.wait_until_succeeds("${I} status hang | jq -e '.state == \"running\"'", timeout=60)
         machine.succeed("${I} cancel hang")
         machine.wait_until_succeeds("${I} status hang | jq -e '.state == \"cancelled\"'", timeout=60)
         machine.succeed("${I} export hang")
         assert json.loads(machine.succeed(f"cat {E}/hang/bundle.json"))["recovery"]
-        machine.succeed(f"! grep -rqF DUMMY-not-a-key {E}/hang")
+        machine.succeed(f"! grep -rqF DUMMY-not-a-token {E}/hang")
         rc, out = verify(f"{E}/hang")
         assert rc == 0, out
         done("hang", "")

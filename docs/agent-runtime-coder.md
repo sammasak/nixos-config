@@ -13,11 +13,11 @@ the promotion path. Nothing here is enabled on a host, and no real credential is
 | agent | `pkgs.claude-code` (2.1.300 at this nixpkgs), the real binary, run by `claude-coder-run` |
 | skills | `rust-engineering` from the pinned skills input |
 | network | none (`egress: none`) |
-| credentials | no GitHub capability at all. The harness key is a per-run `--credential` file (below) |
+| credentials | the template grants no GitHub capability. The harness token is a per-run `--credential` file, the SOPS subscription token (below) |
 | resources | 2 CPUs, 2048 MiB (no swap), 512 tasks, 30 min; volumes 1920 MiB together |
 
 `claude-coder-run [--turn-seconds N] TASK`:
-1. It refuses (exit 77, `result.json` `auth: "missing"`) when `/run/agent-runtime/credentials/token` is absent, so the model is never called without a delivered key.
+1. It refuses (exit 77, `result.json` `auth: "missing"`) when `/run/agent-runtime/credentials/token` is absent, so the model is never called without a delivered token.
 2. Otherwise it runs `claude -p TASK --output-format json --permission-mode acceptEdits --allowedTools <list>` under `timeout` (default 600 s).
 3. It then runs the project's `cargo test --offline --locked`.
 4. It writes `claude.json`, `claude.err`, `cargo-test.log`, `result.json` and `SHA256SUMS` to `/output`.
@@ -29,23 +29,50 @@ The allowlist is Read, Edit, Write, Glob, Grep, `cargo test`/`cargo build`, and 
 - **`-p` with `--output-format json`.** One turn, a machine-readable result: `is_error`, `terminal_reason`, `result`, `num_turns`, `total_cost_usd`.
 - **`--permission-mode acceptEdits` plus `--allowedTools`, not `--dangerously-skip-permissions`.** The bypass flag refuses to run as root, even mapped root in a user namespace (`--dangerously-skip-permissions cannot be used with root/sudo privileges`). It is also more than an edit task needs. The runtime runs the agent as the unprivileged `agent` uid either way.
 - **Without a credential it fails at once:** exit 1 in under a second, with `{"is_error": true, "terminal_reason": "api_error", "result": "Not logged in · Please run /login", "total_cost_usd": 0}`, and no edit (the VM test asserts exactly this).
-- **With a key but no egress it does not fail fast.** It retries the API until killed: 120 s with no answer in a probe. So the runner bounds every call with `timeout`, and the instance's `RuntimeMaxSec` bounds the whole run.
+- **With a credential but no egress it does not fail fast.** It retries the API until killed: 120 s with no answer in a probe. So the runner bounds every call with `timeout`, and the instance's `RuntimeMaxSec` bounds the whole run.
 - **Environment:** `DISABLE_AUTOUPDATER=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, so a live run needs only the API host. HOME is the instance's private home volume; Claude writes its state there and it is never exported.
 
-## Authentication (owner decision; nothing here is provisioned)
+## Authentication: the Claude Code subscription token (owner decision 2026-11-06)
 
-Harness authentication is separate from GitHub credentials. The template declares no capability, so
-no GitHub token can be delivered to it.
+The harness authenticates with the owner's existing **Claude Code Max subscription token**, nothing
+else: no `ANTHROPIC_API_KEY`, no Console key, no pay-as-you-go billing, no new auth service. Harness
+auth is separate from GitHub: the template grants no GitHub capability.
 
-| option | scope | verdict |
-|---|---|---|
-| **A per-run Anthropic API key** from a dedicated Console workspace with a spend limit, delivered by `agent-runtime-instance start --credential FILE` | only API calls, billed to that workspace, revocable in the Console | **recommended**. The existing delivery holds it on tmpfs, read-only to the agent, redacted from logs; export refuses an artifact that contains it (#137) |
-| `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` | the owner's subscription, long-lived | not recommended: broader and longer-lived than one run |
-| mounting the host's `~/.claude`, OAuth files, SSH agent or general API keys | everything the owner's session can do | **refused by design**: no host mount exists in the template |
+**How the token is deployed on worker hosts today** (checked read-only; no value printed):
+- `modules/core/sops.nix` declares `sops.secrets.claude_oauth_token` from `secrets/claude/oauth.yaml`, `owner = <user>`, `mode = "0400"`.
+- sops-nix decrypts it to `/run/secrets/claude_oauth_token`. On acer-swift, `stat` shows a regular file, mode `400`, owner `lukas:users`, 108 bytes (a symlink into `/run/secrets.d/<generation>/`).
+- Interactive sessions get it from `modules/programs/cli/claude-code/mcp.nix`: fish `interactiveShellInit` runs `set -gx CLAUDE_CODE_OAUTH_TOKEN (cat /run/secrets/claude_oauth_token)`.
 
-A live run also needs egress to the API host only: `network.allow = [ "api.anthropic.com" ]`, which
-the #137 egress allowlist pins to the resolved IPs (DNS and TLS 443, nothing else). That is a
-template change and is owner-gated, like the key.
+**How an instance receives it, per run:**
+1. The operator, as root on the host, passes the file to start: `sudo agent-runtime-instance start ID --credential /run/secrets/claude_oauth_token -- <claude-coder-run> '<task>'`.
+2. The start copies it to the run's own tmpfs (`/run/agent-runtime/ID/cred/token`, never `/var/lib`, never the store). It hands it to the instance read-only at `/run/agent-runtime/credentials/token`, owned by the instance's mapped agent uid, mode `0400`.
+3. No host directory is mounted. `~/.claude` and `/run/secrets` stay outside the instance.
+4. `claude-coder-run`:
+   - reads the file and passes the token **only in the `claude` process's environment** (`CLAUDE_CODE_OAUTH_TOKEN=… claude -p …`);
+   - first unsets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`, so no other auth path exists;
+   - does **not** set `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`. Measured: that mode runs tools in bubblewrap and drops 19 empty placeholder files and directories into the working directory (`.env*`, `package.json`, `yarn.lock`, `node_modules/`, `.claude/`, …). Here that means into the repository, so into every patch. Per `mcp.nix`'s note, 2.1.300 withholds `CLAUDE_CODE_OAUTH_TOKEN` from tools even with the scrub off;
+   - adds a `Read(//run/agent-runtime/credentials/**)` deny rule for the Read tool.
+
+   Which processes see the token at runtime is the harness's behaviour and is not tested offline here.
+5. **Logs and artifacts:**
+   - the export redacts it from `run.log`;
+   - it **refuses** an export whose output files *or source patch* contain it;
+   - it refuses an export of a run that had a credential whose tmpfs copy is gone (a reboot) until the token is re-passed: `export ID --credential FILE`.
+6. `destroy` removes the tmpfs copy.
+
+**Residual risk, stated plainly.** The agent's tools run as the same uid as the delivered file and the
+`claude` process. So code the agent writes and runs (`cargo test` on its own edit) can read the file or
+`/proc/<claude>/environ`, and the subscription token is long-lived and broad. The literal-match leak
+gate stops a plain copy in the patch, the output or the log. An *encoded* copy defeats a literal grep.
+The defences then are:
+- no egress except the API host in a live run, so no direct exfiltration;
+- the human review of the patch before promotion.
+
+Separating the tool uid from the credential holder is not done here.
+
+A live run also needs egress to the API host only: `network.allow = [ "api.anthropic.com" ]`. The
+#137 egress allowlist pins it to the resolved IPs (DNS and TLS 443, nothing else). That template
+change, and the run itself, are owner-gated.
 
 ## Export, verification and promotion
 
