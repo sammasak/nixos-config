@@ -105,7 +105,7 @@ admission is the lever:
 | substrate activation fails (a unit does not start) | `switch-to-configuration` fails; deploy-rs rolls the system profile back, deletes the failed generation and re-activates the previous system (after `deploy` has returned) | VM: `broken` |
 | SSH to one host fails in a fleet deploy | deploy-rs pushes before it activates: the deploy fails and no host takes the new profile | VM: sshd stopped on `hostb` |
 | host offline | the deploy fails within `ConnectTimeout` and changes nothing | VM: `hostb` link down |
-| partial fleet after an activation failure on a later node | deploy-rs rolls back the nodes it already activated in that run (its default `--rollback-succeeded true`) | deploy-rs default, not separately exercised |
+| partial fleet after an activation failure on a later node | deploy-rs revokes the nodes it already activated in that run (its default `--rollback-succeeded true`): they return to their previous templates and keep admitting | VM: `tpl-split` (hosta activates, hostb refuses, hosta is revoked) |
 | GC during an in-flight job | the instance's template closure stays (rooted); collected after destroy | VM |
 | a template deploy while an instance runs | the instance keeps its template; new instances get the new one | VM |
 | a reboot | real hosts boot the current system generation; the template profile and the instance records persist (`docs/agent-runtime.md`: ambiguous runs are not replayed) | #138 VM test; a VM test reboot boots the test's own system, so not here |
