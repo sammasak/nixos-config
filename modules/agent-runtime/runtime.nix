@@ -32,4 +32,6 @@ adapter
   # the pilot's host side (#165): read-only no-go checks, and the pane a runtime's handoff lands in
   preflight = standalone "preflight" [ instance pkgs.gawk pkgs.getent pkgs.herdr ];
   pane = standalone "pane" [ instance ];
+  # the trusted host's check of an exported bundle before review or promotion (#169); never runs the patch
+  verify = tool "verify" [ pkgs.gawk ];
 }

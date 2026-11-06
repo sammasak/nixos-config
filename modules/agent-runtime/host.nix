@@ -11,8 +11,8 @@ in
   imports = [ ./default.nix ];
 
   config = lib.mkIf cfg.host.enable {
-    # the lifecycle, the Herdr adapter (#139), and the pilot's read-only preflight and pane (#165)
-    environment.systemPackages = [ tools.instance tools.preflight tools.pane (import ./herdr { inherit pkgs; }) ];
+    # the lifecycle, the Herdr adapter (#139), the pilot's preflight and pane (#165), the bundle verifier (#169)
+    environment.systemPackages = [ tools.instance tools.preflight tools.pane tools.verify (import ./herdr { inherit pkgs; }) ];
     environment.etc."agent-runtime/host.json".source = cfg.hostPolicy;
     # template-profile.nix checks schemaVersion; bump it with any change a template bundle must know about
     environment.etc."agent-runtime/substrate.json".text = builtins.toJSON {

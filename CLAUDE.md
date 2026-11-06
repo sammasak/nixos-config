@@ -38,6 +38,7 @@ nix build -L .#packages.x86_64-linux.agent-runtime-herdr-machines-test  # #139: 
 nix build -L .#packages.x86_64-linux.agent-runtime-deploy-test  # #140: deploy-rs substrate + template profiles, rollback; docs/agent-runtime-deploy.md
 nix build -L .#packages.x86_64-linux.agent-runtime-e2e  # #141: end-to-end pilot + failure matrix, docs/agent-runtime-runbook.md
 nix build -L .#packages.x86_64-linux.agent-runtime-pilot-test  # #165: the acer pilot template (factum, offline) through the E2E path, docs/agent-runtime-pilot.md
+nix build -L .#packages.x86_64-linux.agent-runtime-coder-test  # #169: the real Claude Code in nspawn, fail-closed auth, verified patch (model-free), docs/agent-runtime-coder.md
 
 # ── Deployment (switch is plain nixos-rebuild; build/diff use nh) ──
 just switch [HOST]            # Build and activate
