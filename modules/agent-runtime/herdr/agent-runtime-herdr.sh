@@ -43,6 +43,22 @@ herdr_state() {
   esac
 }
 
+# a mirror's record status is an instance LIFECYCLE state (starting/succeeded/failed/…), not a pane
+# state; map it for Herdr. Shared by `follow` and `reconcile` so a Herdr restart recovers the same
+# done/blocked instead of `unknown`. cancelled/ambiguous surface as blocked so the operator sees them.
+mirror_hs() {
+  case $1 in
+    starting|running) echo working ;;
+    succeeded) echo idle ;;
+    failed|oom-killed|timed-out|cancelled|ambiguous) echo blocked ;;
+    *) echo unknown ;;
+  esac
+}
+# a blocked mirror always carries a one-line reason, even if mirror.status had none
+mirror_reason() { # STATE REASON
+  if [ "$1" = ambiguous ] && [ -z "$2" ]; then echo "ambiguous: decide by hand"; else echo "${2:-$1}"; fi
+}
+
 user_unit=(); [ "$(id -u)" = 0 ] || user_unit=(--user)
 cmd=${1:-}; shift || true
 case $cmd in
@@ -131,12 +147,8 @@ case $cmd in
         if [ -n "$st" ] && [ "$st" != "$last" ]; then
           last=$st
           reason=$(jq -r '.reason // empty' "$sf" 2>/dev/null || true)
-          case $st in
-            starting|running) hs=working ;;
-            succeeded) hs=idle ;;
-            failed|oom-killed|timed-out) hs=blocked ;;
-            *) hs=unknown ;;
-          esac
+          hs=$(mirror_hs "$st")
+          [ "$hs" = blocked ] && reason=$(mirror_reason "$st" "$reason")
           msg=(); [ -z "$reason" ] || msg=(--message "$reason")
           exec 9>"$state_dir/.lock"; flock 9
           seq=$(( $(field "$id" .seq) + 1 ))
@@ -241,6 +253,28 @@ case $cmd in
       id=$(jq -r .runtime_id "$f")
       case $(jq -r .status "$f") in torn_down|lost|finished) continue ;; esac
       pane=$(jq -r .herdr.pane_id "$f")
+      # a status mirror (#169) is not driven by a pane process: its lifecycle lives in the
+      # root-written mirror.status, which survives a Herdr restart. Re-read and re-map it (same
+      # states as `follow`), passing the non-secret reason, so succeeded/failed come back
+      # idle/blocked rather than `unknown`. If mirror.status is gone (tmpfs cleared), it is lost.
+      if [ "$(jq -r '.mirror // false' "$f")" = true ]; then
+        sf=$(jq -r .status_file "$f")
+        st=$(jq -r '.state // empty' "$sf" 2>/dev/null || true)
+        if [ -n "$st" ]; then
+          hs=$(mirror_hs "$st"); reason=$(jq -r '.reason // empty' "$sf" 2>/dev/null || true)
+          [ "$hs" = blocked ] && reason=$(mirror_reason "$st" "$reason")
+          msg=(); [ -z "$reason" ] || msg=(--message "$reason")
+          seq=$(( $(jq -r .seq "$f") + 1 ))
+          herdr pane report-agent "$pane" --source "$source_id" --agent "$agent_label" --state "$hs" --seq "$seq" "${msg[@]}" >/dev/null
+          set_record "$id" '.status = $s | .seq = ($q | tonumber)' --arg s "$st" --arg q "$seq"
+          echo "$id: re-reported mirror ($hs)"
+        else
+          systemctl "${user_unit[@]}" stop "agent-runtime-herdr-follow-$id.service" 2>/dev/null || true
+          set_record "$id" '.status = "lost"'
+          echo "$id: lost (mirror.status is gone; nothing to re-report)"
+        fi
+        continue
+      fi
       # a restored pane is not a live runtime: Herdr restarts a pane with a fresh shell, so the
       # runtime is live only while its pane's foreground is still the launcher attach saw
       now_fg=$(herdr pane process-info --pane "$pane" 2>/dev/null | jq -r '.result.process_info.foreground_processes[0].cmdline // empty') || now_fg=""

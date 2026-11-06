@@ -1,16 +1,9 @@
 # #169 option (b): the Herdr STATUS MIRROR. The credentialed coder run stays the direct root
-# `agent-runtime-instance start --credential` (no pane, no new privilege); this proves it can be made
-# to SHOW in Herdr through the shipped `agent-runtime-herdr` adapter alone, with a dummy token.
-#
-# What it proves, fail-closed:
-#   - root writes a world-readable (0644) `mirror.status` holding only {state, outcome, reason};
-#   - the mirror follower (the unprivileged Herdr user) maps it to Herdr: WORKING during the run,
-#     IDLE (done) after a success, BLOCKED (with the non-secret reason) after a forced failure,
-#     reading ONLY that file — never the instance tool (root), never sudo, never the credential;
-#   - the credential is a SEPARATE 0400 file the unprivileged user cannot read;
-#   - `deliver` to a mirror is REFUSED (exit 75) before any Herdr call: a mirror starts nothing;
-#   - the dummy token appears in NO Herdr state, pane title, `herdr agent get`, mirror.status or log.
-# Real herdr server and CLI, real systemd-nspawn, in QEMU only:
+# `agent-runtime-instance start --credential` (no pane, no new privilege); this proves it SHOWS in
+# Herdr through the shipped `agent-runtime-herdr` adapter run by an ORDINARY non-root user, with a
+# dummy token: root writes the 0644 mirror.status, the unprivileged follower maps it (working/idle/
+# blocked+reason), the 0400 credential stays unreadable, deliver is refused, reconcile recovers the
+# mapping after a restart, and the token reaches no Herdr surface. QEMU only:
 #   nix build .#packages.x86_64-linux.agent-runtime-herdr-mirror-test
 { pkgs, lib, skills }:
 let
@@ -29,8 +22,7 @@ let
           skillsSource = skills;
           skills.lean-code = { };
           packages = with pkgs; [ bash coreutils ];
-          # small budgets: the default workspaceBudget (4096 MiB) would exceed the VM disk at admission,
-          # and the default inode counts (100000/200000) will not fit mkfs.ext4 in these tiny images
+          # small budgets: the defaults would exceed the VM disk / mkfs.ext4 inode limits in tiny images
           filesystem = {
             workspaceBudget = { sizeMiB = 64; inodes = 8000; };
             home = { sizeMiB = 16; inodes = 2000; };
@@ -71,37 +63,54 @@ pkgs.testers.runNixOSTest {
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
     virtualisation.additionalPaths = [ skills env evaluated.manifestDir okRun badRun ];
     environment.systemPackages = with pkgs; [ herdr jq adapter procps util-linux gnugrep coreutils ];
-    # an ordinary (non-root) account, to prove the mirror is world-readable and the credential is not
-    users.users.mirror = { isNormalUser = true; };
-    systemd.services.herdr = {
-      description = "Herdr server of the physical host";
-      environment = { HOME = "/root"; SHELL = "${pkgs.bash}/bin/bash"; };
+    # the SHIPPED path: an ORDINARY (non-root) user runs the server, adapter and follower; uid pinned so
+    # the test can name XDG_RUNTIME_DIR (/run/user/1001)
+    users.users.mirror = { isNormalUser = true; uid = 1001; };
+    systemd.user.services.herdr = {
+      description = "Herdr server of the unprivileged Herdr user";
+      wantedBy = [ "default.target" ];
+      environment = { SHELL = "${pkgs.bash}/bin/bash"; };
       serviceConfig.ExecStart = "${pkgs.herdr}/bin/herdr server";
     };
     nix.settings.experimental-features = [ "nix-command" ];
   };
 
   testScript = ''
-    import json
+    import json, shlex
 
     M = "${manifest}"
     POLICY = "${evaluated.hostPolicy}"
     REF = "sammasak/nixos-config#169"
     TOKEN = "sk-ant-oat01-DUMMY-mirror-169-secret"
+    MUID = 1001
+    HSTATE = "/home/mirror/.local/state/agent-runtime-herdr"
+
+    # run a Herdr-side command AS THE UNPRIVILEGED mirror user, with the env the adapter and the
+    # systemd --user follower need (its own registry, the user manager socket on XDG_RUNTIME_DIR).
+    def am(cmd):
+        menv = f"XDG_RUNTIME_DIR=/run/user/{MUID} AGENT_RUNTIME_HERDR_STATE={HSTATE} HOME=/home/mirror PATH=/run/wrappers/bin:/run/current-system/sw/bin"
+        return f"runuser -u mirror -- env {menv} bash -c {shlex.quote(cmd)}"
+
+    def mrun(cmd):
+        return machine.succeed(am(cmd))
+
+    def mexec(cmd):
+        return machine.execute(am(cmd))
 
     def rec(i):
-        return json.loads(machine.succeed(f"cat /var/lib/agent-runtime-herdr/{i}.json"))
+        # the registry is the mirror user's; root may read it
+        return json.loads(machine.succeed(f"cat {HSTATE}/{i}.json"))
 
     def pane(i):
         return rec(i)["herdr"]["pane_id"]
 
     def fg(i):
-        return machine.succeed(
+        return mrun(
             f"herdr pane process-info --pane {pane(i)} | jq -r '.result.process_info.foreground_processes[0].cmdline // empty'"
         ).strip()
 
     def agent_get(i):
-        return machine.succeed(f"herdr agent get {pane(i)} > /tmp/get.{i} 2>&1; cat /tmp/get.{i}")
+        return mrun(f"herdr agent get {pane(i)} > /tmp/get.{i} 2>&1; cat /tmp/get.{i}")
 
     def hs(i):
         return json.loads(agent_get(i))["result"]["agent"]["agent_status"]
@@ -111,24 +120,29 @@ pkgs.testers.runNixOSTest {
         want = '["idle","done"]' if state == "idle" else f'["{state}"]'
         try:
             machine.wait_until_succeeds(
-                f"herdr agent get {pane(i)} | jq -e --argjson w '{want}' '.result.agent.agent_status as $s | $w | index($s)'",
+                am(f"herdr agent get {pane(i)} | jq -e --argjson w '{want}' '.result.agent.agent_status as $s | $w | index($s)'"),
                 timeout=timeout,
             )
         except Exception:
-            print(f"--- diagnose {i}", machine.execute(f"herdr agent get {pane(i)} 2>&1; cat /var/lib/agent-runtime-herdr/{i}.json; cat /run/agent-runtime/{i}/mirror.status 2>&1; journalctl -b -o cat -u agent-runtime-herdr-follow-{i} | tail -20")[1])
+            print(f"--- diagnose {i}", mexec(f"herdr agent get {pane(i)} 2>&1")[1], machine.execute(f"cat /run/agent-runtime/{i}/mirror.status 2>&1; journalctl -b _UID={MUID} -o cat | tail -30")[1])
             raise
 
     machine.wait_for_unit("multi-user.target")
-    machine.systemctl("start herdr.service")
-    machine.wait_until_succeeds("herdr agent list", timeout=30)
-    print("=== versions ===\n" + machine.succeed("herdr --version; uname -r"))
+    # bring up the UNPRIVILEGED user's systemd manager and its Herdr server
+    machine.succeed("loginctl enable-linger mirror")
+    machine.wait_until_succeeds(f"test -S /run/user/{MUID}/bus", timeout=30)
+    mrun("systemctl --user start herdr.service")
+    machine.wait_until_succeeds(am("herdr agent list"), timeout=30)
+    print("=== versions ===\n" + mrun("herdr --version; uname -r"))
+    # the follower must be a mirror-user unit, not a system one
+    assert machine.execute("systemctl is-active herdr.service")[0] != 0, "herdr must not run as a system service here"
     # a dummy subscription token in the shape of the SOPS claude_oauth_token, nothing real
     machine.succeed(f"printf '%s' '{TOKEN}' > /root/dummy-token && chmod 600 /root/dummy-token")
 
-    with subtest("mirror attach starts nothing; the direct root run shows working, then idle (done)"):
+    with subtest("mirror attach (unprivileged) starts nothing; the direct root run shows working, then idle (done)"):
         machine.succeed(f"${I} create ok --template {M} --host {POLICY} --task {REF}")
-        # attach the mirror BEFORE the start, pointing at the path root will write
-        print(machine.succeed(f"agent-runtime-herdr attach ok {M} {REF} /run/agent-runtime/ok/mirror.status --mirror"))
+        # attach the mirror BEFORE the start, as the mirror user, pointing at the path root will write
+        print(mrun(f"agent-runtime-herdr attach ok {M} {REF} /run/agent-runtime/ok/mirror.status --mirror"))
         r = rec("ok")
         assert r["mirror"] is True, r
         # the pane foreground is the benign placeholder, NOT a run of the instance
@@ -145,6 +159,10 @@ pkgs.testers.runNixOSTest {
         wait_hs("ok", "working", 40)
         print("DURING the run, Herdr status:", hs("ok"), "| registry:", rec("ok")["status"])
         assert hs("ok") == "working"
+        # the follower is the UNPRIVILEGED user's unit, end to end: active under the mirror manager,
+        # and no system unit of that name exists
+        assert mrun("systemctl --user is-active agent-runtime-herdr-follow-ok.service").strip() == "active"
+        assert machine.execute("systemctl is-active agent-runtime-herdr-follow-ok.service")[0] != 0, "follower must not be a system unit"
 
         # the mirror file is world-readable; the credential is a SEPARATE 0400 file
         assert machine.succeed("stat -c %a /run/agent-runtime/ok/mirror.status").strip() == "644"
@@ -153,8 +171,7 @@ pkgs.testers.runNixOSTest {
         print("mirror.status during:", json.dumps(mir))
         assert set(mir) == {"state", "outcome", "reason"}, mir
         assert TOKEN not in machine.succeed("cat /run/agent-runtime/ok/mirror.status")
-        # an UNPRIVILEGED user reads the mirror but CANNOT read the credential (absolute paths: su -c
-        # need not inherit a PATH with jq/cat)
+        # the unprivileged user reads the mirror but CANNOT read the credential
         mir_u = machine.succeed("su mirror -c '${pkgs.coreutils}/bin/cat /run/agent-runtime/ok/mirror.status'")
         assert json.loads(mir_u)["state"] in ("starting", "running"), mir_u
         rc, out = machine.execute("su mirror -c '${pkgs.coreutils}/bin/cat /run/agent-runtime/ok/cred/token' 2>&1")
@@ -169,7 +186,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("deliver to the mirror is refused before any Herdr call; nothing is started"):
         before = fg("ok")
-        rc, out = machine.execute("agent-runtime-herdr deliver ok 'go run something' 2>&1")
+        rc, out = mexec("agent-runtime-herdr deliver ok 'go run something' 2>&1")
         print("deliver to a mirror:", rc, out.strip())
         assert rc == 75 and "status mirror" in out and "not delivering" in out, (rc, out)
         # nothing was started: the pane still holds the placeholder, the instance is untouched
@@ -178,7 +195,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("a forced failure shows blocked with its non-secret reason"):
         machine.succeed(f"${I} create bad --template {M} --host {POLICY} --task {REF}")
-        print(machine.succeed(f"agent-runtime-herdr attach bad {M} {REF} /run/agent-runtime/bad/mirror.status --mirror"))
+        print(mrun(f"agent-runtime-herdr attach bad {M} {REF} /run/agent-runtime/bad/mirror.status --mirror"))
         machine.succeed("${I} start bad --credential /root/dummy-token -- ${badRun}")
         wait_hs("bad", "working", 40)
         print("DURING the failing run:", hs("bad"))
@@ -191,29 +208,54 @@ pkgs.testers.runNixOSTest {
         print("mirror.status after failure:", json.dumps(mir))
         assert mir["state"] == "failed" and mir["reason"], mir
 
-    with subtest("the dummy token appears in NO Herdr state, mirror.status, agent get, or run log"):
-        # the Herdr state dir (registry records)
-        machine.succeed(f"! grep -rqF -- '{TOKEN}' /var/lib/agent-runtime-herdr")
+    with subtest("the dummy token appears in NO Herdr surface (registry, state, screen, journals, log)"):
+        # the mirror user's registry and all of Herdr's own on-disk state (config + session state)
+        machine.succeed(f"! grep -rsqIF -- '{TOKEN}' {HSTATE} /home/mirror/.config /home/mirror/.local /home/mirror/.cache /run/user/{MUID}")
+        # the legacy root registry path must not exist / must be clean either
+        machine.succeed(f"! grep -rsqIF -- '{TOKEN}' /var/lib/agent-runtime-herdr")
         for i in ("ok", "bad"):
             machine.succeed(f"! grep -qF -- '{TOKEN}' /run/agent-runtime/{i}/mirror.status")
-            machine.succeed(f"herdr agent get {pane(i)} > /tmp/get.{i} 2>&1")
+            mrun(f"herdr agent get {pane(i)} > /tmp/get.{i} 2>&1")
             machine.succeed(f"! grep -qF -- '{TOKEN}' /tmp/get.{i}")
-            machine.succeed(f"herdr pane get {pane(i)} > /tmp/pget.{i} 2>&1")
+            mrun(f"herdr pane get {pane(i)} > /tmp/pget.{i} 2>&1")
             machine.succeed(f"! grep -qF -- '{TOKEN}' /tmp/pget.{i}")
+            # the pane SCREEN itself
+            mrun(f"herdr agent read {pane(i)} > /tmp/read.{i} 2>&1 || true")
+            machine.succeed(f"! grep -qF -- '{TOKEN}' /tmp/read.{i}")
             machine.succeed(f"${I} logs {i} > /tmp/log.{i} 2>&1")
             machine.succeed(f"! grep -qF -- '{TOKEN}' /tmp/log.{i}")
-        machine.succeed("herdr agent list > /tmp/alist 2>&1")
+        mrun("herdr agent list > /tmp/alist 2>&1")
         machine.succeed(f"! grep -qF -- '{TOKEN}' /tmp/alist")
-        print("no token in: registry, both mirror.status, both agent get, both pane get, both logs, agent list")
+        # the journals: the mirror user's (the Herdr server AND the follower units run under it) and the
+        # system/instance units
+        machine.succeed(f"! journalctl -b _UID={MUID} -o cat | grep -qF -- '{TOKEN}'")
+        machine.succeed(f"! journalctl -b -u 'agent-runtime*' -o cat | grep -qF -- '{TOKEN}'")
+        print("no token in: registry, Herdr on-disk state, mirror.status, agent get, pane get, agent read, logs, agent list, user+instance journals")
 
-    with subtest("teardown: the follower, the workspace and the instances leave nothing"):
+    with subtest("reconcile re-maps a mirror after a Herdr restart: idle/blocked with reason, never unknown"):
+        # the records carry an instance LIFECYCLE state, which the generic pane mapping would call `unknown`
+        assert rec("ok")["status"] == "succeeded" and rec("bad")["status"] == "failed", (rec("ok")["status"], rec("bad")["status"])
+        mrun("systemctl --user restart herdr.service")
+        machine.wait_until_succeeds(am("herdr agent list"), timeout=30)
+        out = mrun("agent-runtime-herdr reconcile")
+        print("reconcile after restart:\n" + out)
+        assert "ok: re-reported mirror (idle)" in out, out
+        assert "bad: re-reported mirror (blocked)" in out, out
+        wait_hs("ok", "idle", 40)
+        assert hs("ok") in ("idle", "done"), hs("ok")
+        wait_hs("bad", "blocked", 40)
+        g = json.loads(agent_get("bad"))["result"]["agent"]
+        print("bad after reconcile:", json.dumps({k: g.get(k) for k in ("agent_status", "message")}))
+        assert g["agent_status"] == "blocked" and g.get("message"), g
+
+    with subtest("teardown (unprivileged detach): no mirror agent, workspace or follower unit is left"):
         for i in ("ok", "bad"):
-            print(machine.succeed(f"agent-runtime-herdr detach {i}"))
+            print(mrun(f"agent-runtime-herdr detach {i}"))
             machine.succeed(f"${I} destroy {i} --discard")
             machine.succeed(f"test ! -e /run/agent-runtime/{i}")
-        machine.succeed("! herdr agent list | jq -e '.result.agents[] | select(.name | startswith(\"rt-\"))'")
-        machine.succeed("! systemctl list-units --all --no-legend 'agent-runtime-herdr-follow-*' | grep -q .")
-        statuses = machine.succeed("agent-runtime-herdr status --json | jq -r '[.[].status] | unique | join(\",\")'").strip()
+        mrun("! herdr agent list | jq -e '.result.agents[] | select(.name | startswith(\"rt-\"))'")
+        machine.succeed(am("! systemctl --user list-units --all --no-legend 'agent-runtime-herdr-follow-*' | grep -q ."))
+        statuses = mrun("agent-runtime-herdr status --json | jq -r '[.[].status] | unique | join(\",\")'").strip()
         assert statuses == "torn_down", statuses
   '';
 }

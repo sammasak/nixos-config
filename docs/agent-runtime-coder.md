@@ -179,6 +179,17 @@ sudo agent-runtime-instance destroy coder        # removes the tmpfs credential 
 sudo grep -rlIFf "$CRED" /run/agent-runtime /var/lib/agent-runtime "$B" 2>/dev/null   # expect: no output
 sudo journalctl -b -u 'agent-runtime*' | grep -cFf "$CRED"                            # expect: 0
 
+# 8b. Detach the status mirror — AS LUKAS (the Herdr user, same AGENT_RUNTIME_HERDR_STATE as step 3b),
+#     NOT root. `detach` stops the follower unit (agent-runtime-herdr-follow-coder) and closes the
+#     mirror's workspace, so no `rt-coder (mirror)` agent or workspace is left listed in Herdr. Do this
+#     after the leak checks and before the final preflight; a run that skips it leaves the mirror agent
+#     listed at idle/blocked forever:
+agent-runtime-herdr detach coder                 # stops the follower, closes the workspace
+# teardown checks — nothing of the mirror remains:
+herdr agent list | jq -e '[.result.agents[] | select(.name == "rt-coder")] | length == 0'   # expect: true
+systemctl --user list-units --all 'agent-runtime-herdr-follow-coder.service' | grep -q . && echo LEFTOVER || echo "no follower unit"
+agent-runtime-herdr status | grep -E '^coder\s' || true   # expect: coder ... torn_down
+
 # 9. Preflight is clean again, then release the lock:
 sudo agent-runtime-preflight --template "$T" --herdr-user lukas   # go again: nothing left
 exit                                             # releases the heavy-work lock
@@ -209,7 +220,9 @@ the Herdr user, `agent-runtime-herdr attach coder "$T" "$REF" "$MIRROR_STATUS" -
   world-readable** `/run/agent-runtime/coder/mirror.status` (mode 0644). It never calls
   `agent-runtime-instance status` (which needs root), never `sudo`, and never the credential — the
   token lives at `/run/agent-runtime/coder/cred/token` (0400), a **different file**. The mirror carries
-  only non-secret lifecycle state `{state, outcome, reason}`;
+  only non-secret lifecycle state `{state, outcome, reason}`. The mirror's read path depends on
+  `/run/agent-runtime/<id>/` being world-traversable; what protects the credential is `cred/` (0700)
+  and `cred/token` (0400), so **never loosen `cred/`** to make anything else readable;
 - `instance.sh` (root) writes that file at the run's state transitions — `starting` at launch, the
   recorded outcome at `record-exit` — and the follower maps it to Herdr: `starting`/`running` →
   **working** (during the run), `succeeded` → **idle** (Herdr shows it done), and
@@ -219,7 +232,7 @@ the Herdr user, `agent-runtime-herdr attach coder "$T" "$REF" "$MIRROR_STATUS" -
 - **`deliver` to the mirror is refused.** `agent-runtime-herdr deliver coder …` dies 75
   (`runtime coder is a status mirror; it starts nothing — not delivering`) **before any Herdr call**:
   a mirror starts nothing, so a stray handoff can never trigger a second, credential-less run.
-- **Never `deliver` to this instance** by any path, and do not `detach` mid-run.
+- **Never `deliver` to this instance** by any path, and do not `detach` mid-run — `detach` belongs in teardown (step 8b), where it stops the follower and closes the mirror's workspace so nothing is left listed.
 - Threading `--credential` through the pane / the #172 pane launcher (now merged, `df4049d`) so a
   credentialed run can be *driven* through Herdr is a separate code change, **not done here** — do
   not improvise a token path around the pane. The mirror only *reflects* state; the run stays the
