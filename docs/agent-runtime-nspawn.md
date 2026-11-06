@@ -321,7 +321,14 @@ Findings worth keeping:
    policy or size cap beyond each part's own bound (patches up to the output
    budget, the log's last 1 MiB, the output volume); retention is
    devenv-platform #95.
-8. The default template has no network at all. An `allowlist` template gets a
+8. Off-host egress (#169) is forwarded and source-NATed: each allowlist instance's `art_<id>` table also
+   holds a `postrouting` masquerade for its `10.x.y.0/24`, removed with the table. Without it, a reply to
+   the private instance address never returns and the connect hangs; that was the live coder run's 600 s
+   timeout. A host with `net.ipv4.ip_forward=0` refuses allowlist egress at start, rather than having the
+   runtime change the sysctl. `packages.x86_64-linux.agent-runtime-egress-forward-test` proves it against
+   an off-host endpoint: it reproduces the hang with the masquerade removed, shows success with it,
+   refuses without forwarding, and shows the coder runner's fast egress probe.
+9. The default template has no network at all. An `allowlist` template gets a
    veth, and once its leader is up the host resolves `network.allow` once,
    pins the names into the instance's `/etc/hosts` (`hosts: files` in nsswitch,
    delivered as a read-only bind so nspawn's boot-time rewrite cannot clobber

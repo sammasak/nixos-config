@@ -37,6 +37,18 @@ let
         echo "claude-coder-run: no Claude Code token at $cred; refusing to run the agent" >&2
         exit 77
       fi
+      # every pinned egress host must accept TCP 443 within seconds, or the run stops at once with a clear
+      # error instead of claude retrying until the turn bound (#169: a live run hung 600 s with no egress)
+      while read -r ip name _; do
+        case $ip in 127.* | ::1 | "") continue ;; esac   # loopback (nspawn's own entries), not egress
+        # shellcheck disable=SC2016  # $1 expands in the inner bash, by design
+        if ! timeout 8 bash -c 'exec 3<>"/dev/tcp/$1/443"' _ "$name" 2>/dev/null; then
+          jq -n --arg h "$name" --arg ip "$ip" '{agent: "claude-code", auth: "oauth-token", egress: "unreachable", host: $h, ip: $ip, claudeExit: null, testsExit: null, exit: 75}' >"$out/result.json"
+          seal
+          echo "claude-coder-run: egress to $name ($ip):443 did not connect within 8 s; not starting the agent" >&2
+          exit 75
+        fi
+      done < <(grep -v '^[[:space:]]*#' /etc/hosts)
       rc=0
       # the token goes to the claude process's environment only (no file the agent writes); the credential
       # file itself is denied to the Read tool

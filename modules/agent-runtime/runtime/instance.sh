@@ -359,6 +359,9 @@ case $cmd in
       # Resolve the allowlist and pin it as the container's /etc/hosts via a read-only bind: nspawn rewrites
       # a container's rootfs /etc/hosts at boot, so the names must arrive as a bind mount it will not touch.
       # Port 53 is never opened, so the pinned names are the only resolvable egress targets.
+      # off-host egress is forwarded and masqueraded (below): without IPv4 forwarding nothing leaves (#169)
+      [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = 1 ] \
+        || fail state "$id: allowlist egress needs IPv4 forwarding on the host (net.ipv4.ip_forward=1); nothing was started"
       hostsfile=$rundir/$id/hosts
       printf '127.0.0.1 localhost\n' >"$hostsfile"
       while IFS= read -r n; do
@@ -489,6 +492,11 @@ case $cmd in
         for aip in $allow_ips; do nft add rule inet "$tbl" "$hook" iifname "$veth" ip daddr "$aip" tcp dport 443 accept; done
         nft add rule inet "$tbl" "$hook" iifname "$veth" drop
       done
+      # source NAT for what the filter forwards off the host (#169): the instance's 10.x source is private,
+      # so without it a reply to an off-host endpoint never comes back and the connect hangs. In the same
+      # table, so teardown's `nft delete table` removes it with the filter
+      nft add chain inet "$tbl" postrouting "{ type nat hook postrouting priority srcnat; policy accept; }"
+      nft add rule inet "$tbl" postrouting ip saddr "$sub.0/24" oifname != "$veth" masquerade
       touch "$base/vol/tmp/.net-ready"
     fi
     ns='{}' uid_map=null
