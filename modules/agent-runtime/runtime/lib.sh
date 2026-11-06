@@ -37,6 +37,8 @@ run_capture() {
   # shellcheck disable=SC2034  # read by the caller
   captured=$("$@" 2>"$err") || rc=$?
   detail=$(<"$err")
+  # shellcheck disable=SC2034  # read by the caller (start: systemd-run's invocation line)
+  captured_err=$detail
   rm -f "$err"
   [ -z "${GH_TOKEN:-}" ] || detail=${detail//"$GH_TOKEN"/<redacted>}
   detail=${detail//$'\n'/ }
