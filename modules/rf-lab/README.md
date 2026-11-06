@@ -41,6 +41,9 @@ analysis workstation, never on the 1 GiB board. Protocol parsers live in
   `rf-*` unit;
 - a seeded naked-pi with `binwalk` and `nodejs` added is caught.
 
+It reads declared packages, not the built closure: a tool pulled in transitively
+by another package is not seen.
+
 ## Crafted pcap fixtures
 
 `fixtures/` holds tiny **synthetic** beacon / deauth / disassoc pcaps built offline
