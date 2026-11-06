@@ -10,4 +10,4 @@ scapy=$(nix build --no-link --print-out-paths nixpkgs#python3Packages.scapy)
 py=$(nix build --no-link --print-out-paths nixpkgs#python314)
 site=$(echo "$scapy"/lib/python3.*/site-packages)
 
-PYTHONPATH="$site" "$py/bin/python3" modules/rf-lab/fixtures/craft-fixtures.py
+PYTHONPATH="$site" "$py/bin/python3" modules/rf-lab/fixtures/craft-fixtures.py "$@"  # fixture names; none regenerates all

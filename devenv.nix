@@ -102,7 +102,7 @@ let
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
     lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
     coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest agentRuntimeTest
-    rfLabBoundaryTest
+    rfLabBoundaryTest rfBeaconsTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
@@ -132,14 +132,8 @@ let
     scp -q "naked-pi:$out" "$dest/"
     f="$dest/$(basename "$out")"
     hdr=$(printf '%-18s %3s %5s %5s  %s' BSSID CH dBm beac SSID)
-    body=$(tshark -r "$f" -Y 'wlan.fc.type_subtype==0x08' -T fields \
-             -e wlan.bssid -e wlan.ssid -e wlan_radio.channel -e wlan_radio.signal_dbm 2>/dev/null \
-           | gawk -F'\t' '
-               function h2a(s,  r,i){r="";for(i=1;i<=length(s);i+=2)r=r sprintf("%c",strtonum("0x" substr(s,i,2)));return r}
-               {b=$1; if(b=="")next; n[b]++; ch[b]=$3; s=h2a($2); if(s=="")s="<hidden>"; name[b]=s;
-                if(sig[b]==""||($4+0)>(sig[b]+0))sig[b]=$4}
-               END{for(b in n) printf "%-18s %3s %5s %5s  %s\n",b,ch[b],sig[b],n[b],name[b]}' \
-           | sort -k2 -n)
+    # the table, SSIDs escaped (untrusted radio bytes): scripts/rf-beacons-table.sh, tested by rf:beacons-test
+    body=$(bash scripts/rf-beacons-table.sh "$f")
     printf '%s\n%s\n' "$hdr" "$body"
     echo "($(printf '%s\n' "$body" | grep -c . || true) APs; pcap: $f)"
   '';
@@ -273,6 +267,10 @@ let
 
   # Offline classification test: assert rf:analyze's decode recognises each
   # crafted fixture (beacon count, deauth/disassoc reason codes). No device.
+  rfBeaconsTest = gate "rf-beacons-test" (with pkgs; [ bash wireshark-cli gawk coreutils gnugrep ]) ''
+    bash scripts/rf-beacons-test.sh
+  '';
+
   rfAnalyzeTest = gate "rf-analyze-test" (with pkgs; [ bash wireshark-cli coreutils gnugrep ]) ''
     bash scripts/rf-analyze-test.sh
   '';
@@ -358,6 +356,7 @@ in
     "rf:btscan" = task "naked-pi: passive Bluetooth/BLE discovery (RF_SECONDS)" rfBtScan;
     "rf:list" = task "naked-pi: list captures on the Pi and locally" rfList;
     "rf:analyze" = task "offline pcap analysis: mgmt frames + deauth/disassoc reason codes (RF_PCAP)" rfAnalyze;
+    "rf:beacons-test" = task "offline: rf:beacons' AP table on the crafted fixtures: hidden SSIDs, escaped control bytes (#42)" rfBeaconsTest;
     "rf:analyze-test" = task "offline: assert rf:analyze classifies the crafted pcap fixtures" rfAnalyzeTest;
     "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
     "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
