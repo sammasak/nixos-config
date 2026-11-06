@@ -96,6 +96,12 @@ unit_live() {  # the unit is up by name (the invocation isn't recorded yet durin
 lock_held() {  # a start (or another op) holds the instance lock right now; a non-blocking probe, lock untouched
   ! ( flock -n 7 ) 7>"$base/.lock" 2>/dev/null
 }
+invocation_of() {  # the run's journal key: started.json's, else the one record-exit saw
+  local inv
+  inv=$(jq -r '.invocation // empty' "$base/started.json" 2>/dev/null || true)
+  [ -n "$inv" ] || inv=$(jq -r '.invocation // empty' "$base/result.json" 2>/dev/null || true)
+  printf '%s' "$inv"
+}
 state_of() {
   if [ ! -f "$base/instance.json" ]; then
     if [ -d "$base" ]; then echo incomplete; else echo absent; fi
@@ -221,6 +227,8 @@ case $cmd in
     mem_reserve=$(jq -r .reserve.memoryMiB "$host")
     [ $((mem_used + mem)) -le $((mem_total - mem_reserve)) ] \
       || fail admission "memory $mem_used+$mem MiB over $mem_total-$mem_reserve MiB"
+    # the sum above covers admitted-but-not-started instances; MemAvailable covers what other host
+    # workloads use now, for this instance only. Both must hold.
     mem_available=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
     [ $((mem_available - mem)) -ge "$mem_reserve" ] \
       || fail admission "memory $mem MiB would leave $((mem_available - mem)) MiB available, under the $mem_reserve MiB reserve"
@@ -413,7 +421,9 @@ case $cmd in
     else
       exec_tail+=("$@")
     fi
-    args=(systemd-run --unit="$unit" --collect --service-type=exec --quiet
+    # not --quiet: systemd-run reports the invocation id itself, so a payload that exits before
+    # `systemctl show` asks (and --collect drops the unit) still has its journal key (#138)
+    args=(systemd-run --unit="$unit" --collect --service-type=exec
       --description="agent-runtime instance $id ($(jq -r .task "$base/instance.json"))"
       -p MemoryMax="$(jq -r .policies.resources.memoryMiB "$t")M" -p MemorySwapMax=0
       -p TasksMax="$(jq -r .policies.resources.tasksMax "$t")"
@@ -440,7 +450,8 @@ case $cmd in
     jq -nc --arg at "$(now)" '{at: $at}' | atomic_json "$base/starting"
     systemctl reset-failed "$unit" 2>/dev/null || true
     run_capture state "systemd-run failed" "${args[@]}"
-    invocation=$(systemctl show -p InvocationID --value "$unit" 2>/dev/null || true)
+    invocation=$(sed -n 's/.*invocation ID: \([0-9a-f]\{32\}\).*/\1/p' <<<"$captured_err")
+    [ -n "$invocation" ] || invocation=$(systemctl show -p InvocationID --value "$unit" 2>/dev/null || true)
     leader=''
     for _ in $(seq 1 50); do
       leader=$(machinectl show -p Leader --value "$machine" 2>/dev/null || true)
@@ -508,6 +519,8 @@ case $cmd in
     # the kernel's count, not SERVICE_RESULT: with Delegate the payload often exits (137) before
     # systemd acts on the OOM event, and the unit's result is then exit-code
     oom_kills=$(awk '$1 == "oom_kill" {print $2}' "/sys/fs/cgroup$(show ControlGroup)/memory.events" 2>/dev/null || echo 0)
+    # a cancel wins even over an exit 0: a payload that traps SIGTERM and exits 0 was still stopped, and
+    # one that finished in the instant before the cancel reads cancelled too; exitStatus keeps the truth
     if [ -e "$base/cancel-requested" ]; then outcome=cancelled
     elif [ "$service_result" = timeout ]; then outcome=timed-out
     elif [ "$service_result" = success ] && [ "$exit_code" = exited ] && [ "$exit_status" = 0 ]; then outcome=succeeded
@@ -545,8 +558,9 @@ case $cmd in
 
   logs)  # the payload's journal for its one invocation, the last 1 MiB
     take_id "$@"
-    inv=$(jq -r '.invocation // empty' "$base/started.json" 2>/dev/null || true)
-    [ -n "$inv" ] || fail state "$id has not been started"
+    [ -f "$base/started.json" ] || fail state "$id has not been started"
+    inv=$(invocation_of)
+    [ -n "$inv" ] || fail state "$id has no recorded invocation"
     journalctl --sync 2>/dev/null || true
     cred=$(cat "$rundir/$id/cred/token" 2>/dev/null || true)
     if [ -n "$cred" ]; then
@@ -614,7 +628,7 @@ case $cmd in
       fi
     done
     cp -r "$base/vol/output/." "$tmp/output"
-    inv=$(jq -r '.invocation // empty' "$base/started.json" 2>/dev/null || true)
+    inv=$(invocation_of)
     log_bytes=0 truncated=false
     if [ -n "$inv" ]; then
       journalctl --sync 2>/dev/null || true

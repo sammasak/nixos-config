@@ -143,6 +143,8 @@ ranges, network links) is printed before, during and after.
 5. **Duplicates**: create with the same task returns the record, another task
    is `conflict`; a second start does not re-run (same invocation, the
    marker payload never runs); cancel, export and destroy twice are no-ops.
+   A started record with its invocation blanked (planted) still yields the
+   payload's log from `logs` and `export`, through `result.json`'s invocation.
 6. **Cancellation**: destroy refuses a running instance; cancel twice; the
    outcome is `cancelled`; destroy refuses it unexported; the export is a
    recovery bundle.
@@ -293,8 +295,9 @@ Findings worth keeping:
    are locked in the user namespace); a bind with `idmap` depends on the backing
    filesystem supporting idmapped mounts (the run records which one it used).
 4. Admission compares the sum of reservations against `MemTotal - reserve` and
-   checks that `MemAvailable` minus the new instance still covers the reserve;
-   a later surge of other host workloads is not re-checked while instances run.
+   checks that `MemAvailable` minus the new instance still covers the reserve.
+   The sum covers admitted-but-not-started instances; `MemAvailable` covers what
+   other host workloads use now. A later surge of other host workloads is not re-checked while instances run.
    The reservations are durable files in `/var/lib/agent-runtime`: a crashed or
    ambiguous instance stays counted until it is destroyed. The UID ranges (64
    slots) are per host; nothing coordinates hosts.

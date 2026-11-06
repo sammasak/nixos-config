@@ -374,7 +374,9 @@ agent-runtime-instance reconcile                      # after a supervisor crash
   `EXIT_CODE` and `EXIT_STATUS` plus the unit's memory peak, CPU time and runtime, so the
   outcome does not depend on the calling process. `start` writes a `starting` marker before
   the unit and `started.json` after it (invocation id, control group, leader PID, every
-  namespace id and the UID map of the running instance). A second start of a started instance
+  namespace id and the UID map of the running instance). The invocation id is the one
+  `systemd-run` reports, so a payload that exits at once still has it; `logs` and `export`
+  fall back to `result.json`'s when a record lacks it. A second start of a started instance
   changes nothing.
 - **State** is derived, never stored: `created`, `running`, `cancelling`, then `succeeded`,
   `failed`, `timed-out`, `oom-killed` or `cancelled` from `result.json`; `ambiguous` when the
@@ -382,7 +384,10 @@ agent-runtime-instance reconcile                      # after a supervisor crash
   crash between the marker and the unit). An ambiguous instance is reported, exported and
   destroyed, never started again (class `ambiguous`).
 - **cancel** of a running instance marks it and stops the unit (bounded by `TimeoutStopSec=30`);
-  of a created one it records `cancelled` without starting; otherwise it does nothing.
+  of a created one it records `cancelled` without starting; otherwise it does nothing. A marked
+  run is `cancelled` even when it exits 0: a payload that traps SIGTERM and exits cleanly was
+  still stopped, and one that finished in the instant before the mark reads `cancelled` as well;
+  `exitStatus` in `result.json` keeps what the payload returned.
 - **export** (after the run has ended) runs `export` for the writable sources (patches,
   binary and untracked files included, `droppedPaths` named), copies the output volume, the
   payload's journal for its invocation (the last 1 MiB, the cut recorded) and the records, and

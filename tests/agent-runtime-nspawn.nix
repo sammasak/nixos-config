@@ -510,6 +510,8 @@ pkgs.testers.runNixOSTest {
         t0 = time.monotonic_ns()
         s = run("idle", "${pkgs.coreutils}/bin/true", "--root")
         assert s["state"] == "succeeded", s
+        # #138: a payload that exits at once still has its invocation, from systemd-run's own report
+        assert re.fullmatch(r"[0-9a-f]{32}", s["started"]["invocation"]) and s["started"]["invocation"] == s["result"]["invocation"], s
         timings["idle"] = {"create_ms": c, "start_to_end_ms": ms(t0, time.monotonic_ns()),
                            "memory_peak_bytes": s["result"]["memoryPeakBytes"], "runtime_us": s["result"]["runtimeUSec"],
                            "teardown_ms": destroy("idle", "--discard")}
@@ -632,6 +634,19 @@ pkgs.testers.runNixOSTest {
         assert machine.succeed(f"cat {V}/dup/exported.json") == first
         destroy("dup")
         machine.succeed(f"{I} destroy dup")
+
+    with subtest("a started record without its invocation: logs and export fall back to the result's"):
+        # planted: the record of a start whose invocation lookup came back empty (pre-#138 a unit dropped by
+        # --collect before `systemctl show` asked); the outcome record's INVOCATION_ID still names the journal
+        create("noinv", TINY)
+        s = run("noinv", "${pkgs.coreutils}/bin/echo agent-runtime-noinv-line")
+        assert s["state"] == "succeeded", s
+        machine.succeed(f"jq -c '.invocation = \"\"' {V}/noinv/started.json > /tmp/noinv.json && mv /tmp/noinv.json {V}/noinv/started.json")
+        assert "agent-runtime-noinv-line" in machine.succeed(f"{I} logs noinv")
+        machine.succeed(f"{I} export noinv")
+        machine.succeed(f"grep -q agent-runtime-noinv-line {V}/exports/noinv/run.log")
+        assert json.loads(machine.succeed(f"cat {V}/exports/noinv/bundle.json"))["log"]["bytes"] > 0
+        destroy("noinv")
 
     with subtest("cancellation: a running instance stops as cancelled; export is a recovery bundle"):
         create("cancel", TINY)
