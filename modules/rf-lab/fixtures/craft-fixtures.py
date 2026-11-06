@@ -15,6 +15,7 @@ Link type is DLT_IEEE802_11 (105), exactly what tshark's wlan.* fields decode;
 no radiotap header, matching how rf:analyze reads a bare 802.11 pcap.
 """
 import pathlib
+import sys
 
 from scapy.all import Dot11, Dot11Beacon, Dot11Deauth, Dot11Disas, Dot11Elt, wrpcap
 
@@ -59,12 +60,40 @@ def disassoc():
     ]
 
 
-def main():
-    for name, frames in (("beacon", beacon()), ("deauth", deauth()), ("disassoc", disassoc())):
+def beacon_hidden():
+    """SSIDs rf:beacons must not print raw: hidden (empty, and NUL-filled) and hostile (a newline
+    that would forge a table row, a terminal title escape, a UTF-8 C1 CSI), plus plain UTF-8 that must
+    survive. Fixed timestamps, so a rerun is byte-identical."""
+    ssids = [
+        ("02:00:00:00:00:11", b""),
+        ("02:00:00:00:00:12", b"\x00" * 8),
+        ("02:00:00:00:00:13", b"x\n\x1b]0;pwn\x07"),
+        ("02:00:00:00:00:14", b"a\xc2\x9bb"),
+        ("02:00:00:00:00:15", "café".encode()),
+    ]
+    frames = []
+    for i, (ap, ssid) in enumerate(ssids):
+        frame = (
+            Dot11(type=0, subtype=BEACON_SUBTYPE, addr1="ff:ff:ff:ff:ff:ff", addr2=ap, addr3=ap)
+            / Dot11Beacon(cap="ESS")
+            / Dot11Elt(ID="SSID", info=ssid)
+            / Dot11Elt(ID="DSset", info=bytes([1]))
+        )
+        frame.time = 1700000000 + i
+        frames.append(frame)
+    return frames
+
+
+FIXTURES = {"beacon": beacon, "deauth": deauth, "disassoc": disassoc, "beacon-hidden": beacon_hidden}
+
+
+def main(names):
+    for name in names or FIXTURES:
+        frames = FIXTURES[name]()
         out = HERE / f"{name}.pcap"
         wrpcap(str(out), frames)
         print(f"wrote {out} ({len(frames)} frame(s))")
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
