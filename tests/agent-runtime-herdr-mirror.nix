@@ -245,8 +245,10 @@ pkgs.testers.runNixOSTest {
         assert hs("ok") in ("idle", "done"), hs("ok")
         wait_hs("bad", "blocked", 40)
         g = json.loads(agent_get("bad"))["result"]["agent"]
-        print("bad after reconcile:", json.dumps({k: g.get(k) for k in ("agent_status", "message")}))
-        assert g["agent_status"] == "blocked" and g.get("message"), g
+        print("bad after reconcile:", g["agent_status"])
+        assert g["agent_status"] == "blocked", g
+        # reconcile re-passes the non-secret reason via --message; mirror.status still carries it
+        assert json.loads(machine.succeed("cat /run/agent-runtime/bad/mirror.status"))["reason"], "blocked mirror lost its reason"
 
     with subtest("teardown (unprivileged detach): no mirror agent, workspace or follower unit is left"):
         for i in ("ok", "bad"):
