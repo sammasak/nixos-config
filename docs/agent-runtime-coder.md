@@ -94,6 +94,103 @@ change, and the run itself, are owner-gated.
 3. **An independent reviewer** reads the verified patch against the pinned revision, re-runs the project's tests on it in a fresh instance, and grades it.
 4. **Promotion is the trusted host's:** apply the verified patch to a clean clone at the base rev, commit, and push a branch with the host's own `gh`, then open the PR. The runtime never holds a GitHub token, and nothing is pushed or merged from inside it.
 
+## The supervised live run (owner-gated, not performed here)
+
+**This run uses the real subscription token and real egress; it is the owner's to perform, and it is
+not done in this change.** It is armed only once acer-swift is deployed with `claude-coder` eligible
+and the egress allowlist set (both in `hosts/acer-swift/configuration.nix`: `eligibleTemplates =
+[ "rust-pilot" "claude-coder" ]` and `templates.claude-coder.network.allow = [ "api.anthropic.com" ]`).
+`checks.x86_64-linux.agent-runtime-acer-pilot` pins exactly that shape, so a widened allowlist, an
+extra host, a credential capability or a reintroduced `ANTHROPIC_*` auth path fails `nixos:qa`.
+
+The run holds acer's heavy-work lock the whole time, so no agent gate (VM tests, `nixos:qa`, nix
+builds) runs beside it; the 4 GiB reserve covers a k3s surge, not a second heavy job. Root steps are
+`sudo` on acer; driven from a trusted workstation they are `ssh deploy@acer-swift sudo …`. The
+commands are bash; your login shell is fish.
+
+```
+flock --verbose /tmp/acer-swift-heavy-work.lock bash   # on acer; holds the lock until this shell exits
+H=/etc/agent-runtime/host.json
+T=/nix/var/nix/profiles/agent-runtime/templates/templates/claude-coder.json
+RUN=$(jq -r '.packages[] | select(.name == "claude-coder-run") | .storePath' "$T")/bin/claude-coder-run
+CRED=/run/secrets/claude_oauth_token
+TASK='<the one-line, test-backed edit, below>'
+export AGENT_RUNTIME_HERDR_STATE=$HOME/.local/state/agent-runtime-herdr   # the adapter runs as you, Herdr's user
+S=$XDG_RUNTIME_DIR/rt-coder.status
+
+# 1. Preflight (read-only; must end "preflight: go"). --herdr-user is the user whose Herdr answers.
+sudo agent-runtime-preflight --template "$T" --herdr-user lukas
+
+# 2. The SOPS subscription token — owner/mode check ONLY, never printed:
+stat -c '%U %G %a' "$CRED"                       # expect: lukas users 400 (sops-nix, modules/core/sops.nix)
+
+# 3. Create and make it visible in Herdr as lukas (attach/deliver, like the rust-pilot pilot):
+sudo agent-runtime-instance create coder --template "$T" --host "$H" --task "$TASK"
+agent-runtime-herdr attach coder "$T" "$TASK" "$S" -- agent-runtime-pane coder "$S" -- "$RUN" "$TASK"
+agent-runtime-herdr status --json                # coder: idle
+
+# 4. Deliver the credential and run. See the note below: agent-runtime-pane's embedded start carries
+#    no --credential, so the token is delivered by a direct root start (the mechanism in Authentication
+#    above), and Herdr provides the pane and status. `start --credential` copies the token to the run's
+#    own tmpfs (/run/agent-runtime/coder/cred/token), binds it read-only at
+#    /run/agent-runtime/credentials/token (mode 0400, the mapped agent uid), and claude-coder-run exports
+#    it as CLAUDE_CODE_OAUTH_TOKEN for the claude process only — no host dir, ~/.claude or /run/secrets
+#    is mounted:
+sudo agent-runtime-instance start coder --credential "$CRED" --wait -- "$RUN" "$TASK"
+sudo agent-runtime-instance status coder         # record runtimeUSec, memoryPeakBytes, uidBase; succeeded
+
+# 5. Export (redacts the token from run.log; refuses an export whose outputs or source patch contain it):
+sudo agent-runtime-instance export coder
+agent-runtime-herdr detach coder
+sudo agent-runtime-instance destroy coder        # removes the tmpfs credential copy
+sudo agent-runtime-preflight --template "$T" --herdr-user lukas   # go again: nothing left
+exit                                             # releases the heavy-work lock
+```
+
+**The task** is a single one-line, test-backed edit to `sammasak/rf-proto` at the pinned
+`inputs.rf-proto` rev (`d878c58e…`): a change the repo's existing `cargo test --offline --locked`
+suite already covers (so the run's own `cargo test` step is the oracle, no new test to trust), and
+small enough to review by eye. The source is zero-dependency, so it builds and tests with no network.
+
+**Credential delivery vs the Herdr pane — flagged.** `agent-runtime-pane` runs `start ID --wait --
+PROGRAM` with no `--credential` (`modules/agent-runtime/runtime/pane.sh`), so delivering the handoff
+through `agent-runtime-herdr deliver` would start the coder fail-closed (exit 77, `auth: "missing"`).
+The live credential-bearing run is therefore the direct root `start --credential` above; Herdr gives
+the pane and status. Threading `--credential` through the pane is a code change, out of this offline
+slice — do not improvise a token path around it.
+
+### Trusted-side verification (on lenovo, not inside the runtime)
+
+```
+B=/var/lib/agent-runtime/exports/coder            # 0700 root; copy the bundle to the trusted host
+sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change   # prints agent-runtime-verified
+# then re-run the repo's own tests on the verified patch, on the trusted side, in a fresh checkout:
+#   clone rf-proto at the recorded base rev, `git apply sources/rf-proto.patch`, `cargo test --offline --locked`
+```
+
+`agent-runtime-verify` never runs the patch; it checks every file's sha256 against `bundle.json`,
+that the patch applies at the recorded base narHash and reproduces the recorded tree, that no path
+is outside the repo or under `.git`, and (with `--require-change`) that the patch is nonempty.
+
+### Leak checks after destroy
+
+- `sudo agent-runtime-instance status` shows no instance; `ls /run/agent-runtime/` has no `coder/`,
+  so the tmpfs `cred/token` copy is gone; `findmnt` shows no leftover instance mounts.
+- Grep the exported bundle for the token (it must not appear in any output file, the patch or the log):
+  `sudo grep -rIF "$(cat "$CRED")" "$B"` returns nothing (the export already refuses one that does).
+  An *encoded* copy defeats a literal grep; the human patch review before promotion is the backstop.
+
+### Rollback
+
+1. **Drain:** `sudo agent-runtime-instance status` shows nothing running; otherwise `cancel`, `export`
+   and `destroy` the instance (`docs/agent-runtime-runbook.md`, Stop and tear down).
+2. **Disable:** drop `"claude-coder"` from `eligibleTemplates` (back to `[ "rust-pilot" ]`) and remove
+   the `templates.claude-coder.network.allow` line, then `just deploy-acer`. (Set `eligibleTemplates =
+   [ ]` to disarm both templates.)
+3. **Or roll back what deploy-rs activated:** `ssh deploy@acer-swift sudo nix-env -p
+   /nix/var/nix/profiles/agent-runtime/templates --rollback` for the templates, and the deploy-rs
+   `--rollback` / system-profile rollback for the host (`docs/agent-runtime-deploy.md`, Rollback).
+
 ## Status of #169's acceptance
 
 - **Disposable VM evidence:** `packages.x86_64-linux.agent-runtime-coder-test`, model-free.
