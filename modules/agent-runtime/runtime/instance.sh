@@ -129,6 +129,18 @@ state_of() {
   fi
 }
 terminal() { [[ $1 =~ ^(succeeded|failed|timed-out|oom-killed|cancelled|ambiguous)$ ]]; }
+# write_mirror STATE [OUTCOME] [REASON] (#169): the world-readable (0644) lifecycle mirror a Herdr
+# status follower reads so the direct run shows in Herdr with no new privilege. A different file from
+# the credential ($rundir/$id/cred/token, 0400), written only at launch ("starting") and at the
+# recorded outcome, so the two writers never clobber. It carries ONLY non-secret lifecycle state.
+write_mirror() {
+  local m=$rundir/$id/mirror.status
+  mkdir -p "$rundir/$id"
+  jq -nc --arg s "$1" --arg o "${2:-}" --arg r "${3:-}" \
+    '{state: $s, outcome: (($o | select(. != "")) // null), reason: (($r | select(. != "")) // null)}' >"$m.tmp"
+  chmod 0644 "$m.tmp"
+  mv "$m.tmp" "$m"
+}
 status_json() {
   local s
   s=$(state_of)
@@ -448,6 +460,8 @@ case $cmd in
     printf -v command '%q ' "$@"
     # the marker comes first: a crash between it and the unit is reported as ambiguous, never re-run
     jq -nc --arg at "$(now)" '{at: $at}' | atomic_json "$base/starting"
+    # the Herdr status mirror (#169): "starting" now, the outcome at record-exit; maps to `working`
+    write_mirror starting
     systemctl reset-failed "$unit" 2>/dev/null || true
     run_capture state "systemd-run failed" "${args[@]}"
     invocation=$(sed -n 's/.*invocation ID: \([0-9a-f]\{32\}\).*/\1/p' <<<"$captured_err")
@@ -536,6 +550,10 @@ case $cmd in
        memoryPeakBytes: ($peak | num), cpuUsageNSec: ($cpu | num), oomKills: ($oom | num),
        runtimeUSec: (if ($a | num) and ($b | num) and ($b | num) > 0 then ($b | num) - ($a | num) else null end)}' \
       | atomic_json "$base/result.json"
+    # the Herdr status mirror (#169): the recorded outcome and its non-secret reason, never the token
+    reason=$service_result
+    [ -z "$exit_status" ] || reason="$service_result (exit $exit_status)"
+    write_mirror "$outcome" "$outcome" "$reason"
     ;;
 
   wait)

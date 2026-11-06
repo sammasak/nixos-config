@@ -47,8 +47,20 @@ user_unit=(); [ "$(id -u)" = 0 ] || user_unit=(--user)
 cmd=${1:-}; shift || true
 case $cmd in
   attach)
-    [ $# -ge 5 ] && [ "$5" = -- ] || die "usage: attach <runtime_id> <manifest.json> <OWNER/REPO#N> <status-file> -- <pane argv...>" 64
-    id=$1 manifest=$2 task_ref=$3 status_file=$4; shift 5
+    # --mirror (#169): a status mirror whose pane starts NOTHING. The real credentialed run is the
+    # direct root `start` elsewhere; this only makes it show in Herdr, the follower reading the
+    # root-written world-readable mirror.status. Any other attach takes a `-- <pane argv>` as before.
+    mirror=false
+    if [ "${5:-}" = --mirror ]; then
+      [ $# -eq 5 ] || die "usage: attach <runtime_id> <manifest.json> <OWNER/REPO#N> <status-file> --mirror" 64
+      mirror=true id=$1 manifest=$2 task_ref=$3 status_file=$4; shift 5
+      # a benign placeholder that only waits: it holds the pane so Herdr lists the agent, and it is
+      # never `agent-runtime-pane … -- <RUN>` (which would run the instance)
+      set -- "$(command -v sleep)" infinity   # absolute path: the pane need not have coreutils on PATH
+    else
+      [ $# -ge 5 ] && [ "$5" = -- ] || die "usage: attach <runtime_id> <manifest.json> <OWNER/REPO#N> <status-file> [--mirror | -- <pane argv...>]" 64
+      id=$1 manifest=$2 task_ref=$3 status_file=$4; shift 5
+    fi
     valid_id "$id" || die "runtime id must be a DNS label of at most 29 characters: $id" 64
     [[ $task_ref =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$ ]] || die "task_ref must be OWNER/REPO#N: $task_ref" 64
     [ "$#" -gt 0 ] || die "no pane command" 64
@@ -64,13 +76,15 @@ case $cmd in
     fi
     name="rt-$id"
     title="$task_ref rt=$id tpl=${digest:0:12}"
+    if [ "$mirror" = true ]; then title="$title (mirror)"; fi
     ws=$(herdr workspace create --cwd / --label "$name" --no-focus) || die "herdr workspace create failed" 69
     workspace_id=$(jq -er .result.workspace.workspace_id <<<"$ws")
     pane_id=$(jq -er .result.root_pane.pane_id <<<"$ws")
     jq -n --arg id "$id" --arg host "$(hostname)" --arg ws "$workspace_id" --arg pane "$pane_id" --arg name "$name" \
       --arg tpl "$template" --arg dg "$digest" --arg ref "$task_ref" --arg sf "$status_file" --arg harness "$harness" --arg now "$(now)" \
+      --argjson mirror "$mirror" \
       '{schemaVersion: 1, runtime_id: $id, host: $host, herdr: {workspace_id: $ws, pane_id: $pane, name: $name},
-        template: $tpl, template_digest: $dg, harness: $harness, task_ref: $ref, status_file: $sf,
+        template: $tpl, template_digest: $dg, harness: $harness, task_ref: $ref, status_file: $sf, mirror: $mirror,
         status: "started", seq: 0, deliveries: [], started_at: $now, updated_at: $now}' > "$f.tmp" && mv "$f.tmp" "$f"
     # a failed attach leaves no workspace and no live record behind, so a retry is not refused
     attached=0
@@ -104,6 +118,37 @@ case $cmd in
   follow)
     id=$1; f=$(record "$id")
     [ -e "$f" ] || die "no record for $id" 66
+    if [ "$(field "$id" .mirror)" = true ]; then
+      # a status mirror (#169): the ROOT-written, world-readable JSON lifecycle file drives Herdr.
+      # This follower runs as the unprivileged Herdr user and reads ONLY that file via jq — never
+      # `agent-runtime-instance status` (root), never sudo, never the credential. starting/running
+      # -> working; succeeded -> idle (Herdr shows it done); failed/oom-killed/timed-out -> blocked
+      # with the non-secret reason; anything else or unreadable -> unknown.
+      pane=$(field "$id" .herdr.pane_id); sf=$(field "$id" .status_file); last=''
+      while :; do
+        case $(field "$id" .status) in torn_down|lost) exit 0 ;; esac
+        st=$(jq -r '.state // empty' "$sf" 2>/dev/null || true)
+        if [ -n "$st" ] && [ "$st" != "$last" ]; then
+          last=$st
+          reason=$(jq -r '.reason // empty' "$sf" 2>/dev/null || true)
+          case $st in
+            starting|running) hs=working ;;
+            succeeded) hs=idle ;;
+            failed|oom-killed|timed-out) hs=blocked ;;
+            *) hs=unknown ;;
+          esac
+          msg=(); [ -z "$reason" ] || msg=(--message "$reason")
+          exec 9>"$state_dir/.lock"; flock 9
+          seq=$(( $(field "$id" .seq) + 1 ))
+          herdr pane report-agent "$pane" --source "$source_id" --agent "$agent_label" --state "$hs" --seq "$seq" "${msg[@]}" >/dev/null || true
+          set_record "$id" '.status = $s | .seq = ($q | tonumber)' --arg s "$st" --arg q "$seq"
+          exec 9>&-
+          # a terminal outcome is the last word: stop polling, leaving the agent listed at idle/blocked
+          case $st in succeeded|failed|oom-killed|timed-out|cancelled|ambiguous) exit 0 ;; esac
+        fi
+        sleep 0.3
+      done
+    fi
     # keyed on the line count, not the last line: a turn that goes working -> idle between two
     # polls still ends with idle, and must still move an assigned runtime on
     seen=0
@@ -137,6 +182,8 @@ case $cmd in
     [ $# -eq 2 ] || die "usage: deliver <runtime_id> <text>" 64
     id=$1 text=$2; f=$(record "$id")
     [ -e "$f" ] || die "no record for $id" 66
+    # a status mirror starts nothing: refuse BEFORE any Herdr call (#169)
+    if [ "$(field "$id" .mirror)" = true ]; then die "runtime $id is a status mirror; it starts nothing — not delivering" 75; fi
     # Enter submits: a newline inside the text would submit part of it early
     case $text in *$'\n'*|*$'\r'*) die "a handoff is one line" 64 ;; esac
     exec 9>"$state_dir/.lock"; flock 9

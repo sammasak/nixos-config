@@ -143,6 +143,16 @@ stat -c '%U %G %a' "$CRED"                       # expect: lukas users 400 (sops
 # 3. Create the instance against the tracking REF:
 sudo agent-runtime-instance create coder --template "$T" --host "$H" --task "$REF"
 
+# 3b. (Herdr visibility) As the HERDR USER — not root — attach a status MIRROR, so the run shows in
+#     Herdr with NO new privilege. It starts nothing: its pane holds a benign placeholder that only
+#     waits, and a follower maps the root-written, world-readable mirror.status to Herdr. The follower
+#     needs no sudo, no root and no credential. Do this BEFORE the start so Herdr shows `working` the
+#     moment the run begins. The single attach also launches the follower (unit agent-runtime-herdr-
+#     follow-coder). Run as lukas (the Herdr user), e.g. from the user's own session:
+MIRROR_STATUS=/run/agent-runtime/coder/mirror.status             # root writes it 0644 at start and exit
+export AGENT_RUNTIME_HERDR_STATE=$HOME/.local/state/agent-runtime-herdr
+agent-runtime-herdr attach coder "$T" "$REF" "$MIRROR_STATUS" --mirror
+
 # 4. Deliver the credential and run — the direct root start. The token reaches the run ONLY this way:
 #    `start --credential` copies it to the run's own tmpfs (/run/agent-runtime/coder/cred/token), binds
 #    it read-only at /run/agent-runtime/credentials/token (mode 0400, the mapped agent uid), and
@@ -150,7 +160,8 @@ sudo agent-runtime-instance create coder --template "$T" --host "$H" --task "$RE
 #    ~/.claude or /run/secrets is mounted. The PROMPT is the runner's argument (not the REF):
 sudo agent-runtime-instance start coder --credential "$CRED" --wait -- "$RUN" "$PROMPT"
 
-# 5. Watch progress with the instance tool — NOT Herdr (see "Herdr visibility" below):
+# 5. Watch progress with the instance tool (authoritative, root). Herdr also now reflects the run
+#    via the step-3b mirror (working during, idle/blocked after); the instance tool is the truth:
 sudo agent-runtime-instance status coder         # record runtimeUSec, memoryPeakBytes, uidBase; succeeded
 sudo agent-runtime-instance logs coder           # the run's log (during or after)
 
@@ -186,25 +197,33 @@ both, so the run's own `cargo test` step is the oracle (no new test to trust). T
 nonempty, and reviewable by eye. rf-proto is a single zero-dependency crate, so it builds and tests
 with no network.
 
-**Herdr visibility — stated honestly.** This credentialed run does **not** go through a Herdr pane.
-`agent-runtime-pane` runs `start ID --wait -- PROGRAM` with **no `--credential`**
-(`modules/agent-runtime/runtime/pane.sh`), and the pane blocks on `read -r handoff` until
-`agent-runtime-herdr deliver` types one line into its PTY. A pane therefore shows `idle` for the whole
-run and never carries the token. So the run is the direct root `start --credential` above, and progress
-is `sudo agent-runtime-instance status coder` / `logs coder`, not Herdr.
+**Herdr visibility — the status mirror (#169).** The credentialed run is still the direct root
+`start --credential` above; it does **not** run inside a Herdr pane, and the token never reaches
+Herdr. To make it *show* in Herdr with **no new privilege**, attach a **status mirror** (step 3b): as
+the Herdr user, `agent-runtime-herdr attach coder "$T" "$REF" "$MIRROR_STATUS" --mirror`. This:
 
-- **Never `deliver` to this instance.** A stray `deliver` would make the idle pane run its embedded
-  `start` with no credential — a second, credential-less, fail-closed run (exit 77, `auth: "missing"`).
-  (`start` acts only on a `created` instance, so after the direct start a pane's `start` would in fact
-  be refused — but do not rely on that; simply do not deliver.)
-- **If a visible Herdr placeholder is wanted**, you may, before step 4 and as the Herdr user
-  (`export AGENT_RUNTIME_HERDR_STATE=$HOME/.local/state/agent-runtime-herdr; S=$XDG_RUNTIME_DIR/rt-coder.status`),
-  `agent-runtime-herdr attach coder "$T" "$REF" "$S" -- agent-runtime-pane coder "$S" -- "$RUN" "$PROMPT"`
-  — note the **`$REF`** (OWNER/REPO#N) is attach's third argument, or it dies 64. Then **do not deliver,
-  and do not detach mid-run**. The block above drops `attach`/`detach` entirely, which is simpler.
+- creates a Herdr agent `rt-coder (mirror)` whose pane foreground is a **benign placeholder that only
+  waits** — it starts nothing, and is *not* `agent-runtime-pane … -- "$RUN"` (which would run the
+  instance) — and starts a follower;
+- the follower runs as the **unprivileged Herdr user** and reads ONLY the **root-written,
+  world-readable** `/run/agent-runtime/coder/mirror.status` (mode 0644). It never calls
+  `agent-runtime-instance status` (which needs root), never `sudo`, and never the credential — the
+  token lives at `/run/agent-runtime/coder/cred/token` (0400), a **different file**. The mirror carries
+  only non-secret lifecycle state `{state, outcome, reason}`;
+- `instance.sh` (root) writes that file at the run's state transitions — `starting` at launch, the
+  recorded outcome at `record-exit` — and the follower maps it to Herdr: `starting`/`running` →
+  **working** (during the run), `succeeded` → **idle** (Herdr shows it done), and
+  `failed`/`oom-killed`/`timed-out` → **blocked** with the non-secret reason. So Herdr now reflects
+  the **real** run (working during, idle or blocked after), not a fixed `idle`.
+
+- **`deliver` to the mirror is refused.** `agent-runtime-herdr deliver coder …` dies 75
+  (`runtime coder is a status mirror; it starts nothing — not delivering`) **before any Herdr call**:
+  a mirror starts nothing, so a stray handoff can never trigger a second, credential-less run.
+- **Never `deliver` to this instance** by any path, and do not `detach` mid-run.
 - Threading `--credential` through the pane / the #172 pane launcher (now merged, `df4049d`) so a
-  credentialed run can be driven through Herdr is a separate code change, **not done here** — do not
-  improvise a token path around the pane.
+  credentialed run can be *driven* through Herdr is a separate code change, **not done here** — do
+  not improvise a token path around the pane. The mirror only *reflects* state; the run stays the
+  direct root `start --credential`.
 
 ### Trusted-side verification
 
