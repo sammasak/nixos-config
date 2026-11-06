@@ -2,18 +2,21 @@
 {
   perSystem =
     { pkgs, system, ... }:
-    lib.optionalAttrs (system == "x86_64-linux") {
+    {
       # The #165 pilot template through the E2E path; a package like the other agent-runtime VM tests,
       # run explicitly: `nix build .#packages.x86_64-linux.agent-runtime-pilot-test` (acer, heavy lock).
-      packages.agent-runtime-pilot-test = import ../tests/agent-runtime-pilot.nix {
-        inherit pkgs lib;
-        inherit (inputs) factum skills;
+      packages = lib.optionalAttrs (system == "x86_64-linux") {
+        agent-runtime-pilot-test = import ../tests/agent-runtime-pilot.nix {
+          inherit pkgs lib;
+          inherit (inputs) factum skills;
+        };
       };
 
       # What acer-swift renders for the pilot, at evaluation (part of `nixos:qa` through flake check):
       # the one-instance policy, the credential-free, network-off template and its budgets, the tools
       # on the host, and no other host enabled. The output is the rendered policy and manifest.
-      checks.agent-runtime-acer-pilot =
+      checks = lib.optionalAttrs (system == "x86_64-linux") {
+        agent-runtime-acer-pilot =
         let
           hosts = config.flake.nixosConfigurations;
           acer = hosts.acer-swift.config;
@@ -39,5 +42,6 @@
           jq -S . ${rt.hostPolicy} > $out/host.json
           jq -S . ${rt.manifestDir}/rust-pilot.json > $out/rust-pilot.json
         '';
+      };
     };
 }
