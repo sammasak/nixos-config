@@ -157,6 +157,11 @@ def main():
           and "is eligible again, so hand it to a free worker and name the earlier handoff in the scope" in script
           and "When herdr:message refuses agent_busy, draft the item for another free worker and send that; with none free, move on: the refusal is parked and coord:changed prints a retry line once a worker is free." in script,
           "the prompt re-opens an approved item whose handoffs are closed and sends a busy-refused item to another free worker (skills#28, the 06:19Z wake skipped three items and lost two drafts)")
+    check("An open PR head is work of its own only while it is unreviewed, no signed grade on that head and no open review handoff for it" in script
+          and "review OWNER/REPO#N@<head sha>" in script
+          and "A head already graded below 9 gets no second review: hand its findings back to the implementer the brief names, as a fix-up" in script
+          and "a merged or closed PR is never reviewed" in script and "without an independent grade of 9 or more on its current head is work of its own" not in script,
+          "the prompt offers a review only for an unreviewed head, names the head in coord:handoff, routes findings to the implementer and never reviews a merged PR (skills#77: PRs re-reviewed 4-6 times on unchanged heads)")
     check("expected_evidence a comment Grade: N/10 (head <sha>) on that head, signed -- <host> <agent>," in script,
           "a review handoff asks for the grade in the form coord:brief parses: Grade: N/10 (head <sha>), signed (skills#28 defect 4: merges without a parsed grade)")
     check(': > "$pending"; rm -f "$attempts"' in script and 'if [ "$rc" -eq 0 ]; then' in script
