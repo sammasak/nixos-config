@@ -2,7 +2,8 @@
 plain `claude` and the unattended Coordinator (dontAsk) keep their permissions.
 #157: a worker switches models when safeguards flag a message instead of stopping at the choice dialog: worker
 hosts' settings carry switchModelsOnFlag, and the launcher hands it to any bypass-mode claude, on every host,
-without touching settings.json (lenovo's Coordinator keeps the owner's choice)."""
+without touching settings.json (lenovo's Coordinator keeps the owner's choice). The pinned Claude Code must
+still recognise the setting name, or a version bump would silently bring the stall back."""
 import json
 import os
 import pathlib
@@ -42,6 +43,13 @@ def launched(host, args):
         run = subprocess.run([launcher, "claude", *args], env={**os.environ, "PATH": f"{d}:{os.environ['PATH']}", "HERDR_ENV": "1"},
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
         return run.stdout.splitlines()
+
+
+def claude_wrapped(host):
+    """The bun-compiled binary of the Claude Code the host pins, realised so its embedded setting schema can be read."""
+    out = nix("build", "--no-link", "--print-out-paths",
+              f".#nixosConfigurations.{host}.config.home-manager.users.lukas.programs.claude-code.package")
+    return pathlib.Path(out.splitlines()[-1])
 
 
 def check(condition, message):
@@ -129,6 +137,13 @@ def main():
         check(worker_args[:1] == ["--settings"] and worker_args[2:] == [FLAG, "--model", "claude-opus-5-5"]
               and json.loads(pathlib.Path(worker_args[1]).read_text()) == {"switchModelsOnFlag": True},
               f"{host}: a bypass-mode claude (coord:spawn's argv) gets --settings switchModelsOnFlag=true from the launcher (#157)")
+
+    # #157 only works if the pinned Claude Code still reads switchModelsOnFlag: a version bump that drops or renames it
+    # would leave every check above green while workers silently stall at the safeguards dialog again. Grep the binary.
+    wrapped = claude_wrapped(WORKER)
+    found = subprocess.run(["grep", "-rqa", "switchModelsOnFlag", str(wrapped)]).returncode == 0
+    check(found, f"the pinned Claude Code ({wrapped.name}) recognises switchModelsOnFlag; if this fails a Claude Code "
+                 "upgrade dropped or renamed the setting and #157 workers will stop at the model-switch dialog again")
 
     home, got = trusted_after_activation(WORKER)
     want = {home, "/home/lukas/claude-code-skills", "/home/lukas/nixos-config"}
