@@ -160,7 +160,7 @@ sudo agent-runtime-instance export coder
 # 7. Verify on acer, IN THIS SAME LOCKED SHELL — so $T/$CRED/$B are in scope and the lock is still held
 #    (w12: do not run verify/leak in a shell that has exited the one where T/CRED were set). First record
 #    the transfer digest over bundle.json AND every file it lists (for the lenovo re-run below):
-sudo sh -c 'cd "$B" && sha256sum bundle.json $(jq -r ".files[].path" bundle.json)'   # record every value
+sudo sh -c 'cd "$1" && sha256sum bundle.json $(jq -r ".files[].path" bundle.json)' _ "$B"   # record every value
 sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change
 
 # 8. Destroy, then the leak checks — still this shell, so $CRED/$B are set; the export at $B survives destroy:
@@ -223,7 +223,7 @@ re-derive the variables (they do not survive the run shell's `exit`):
 # on acer (a fresh session): re-derive what the locked shell set, then verify:
 T=/nix/var/nix/profiles/agent-runtime/templates/templates/claude-coder.json
 B=/var/lib/agent-runtime/exports/coder                   # 0700 root
-sudo sh -c 'cd "$B" && sha256sum bundle.json $(jq -r ".files[].path" bundle.json)'   # record every value
+sudo sh -c 'cd "$1" && sha256sum bundle.json $(jq -r ".files[].path" bundle.json)' _ "$B"   # record every value
 sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change
 # prints: {kind: "agent-runtime-verified", bundleSha256, sources: {rf-proto: {base, patchSha256, tree, changedPaths}}}
 ```
