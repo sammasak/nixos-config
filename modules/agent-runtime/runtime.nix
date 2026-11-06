@@ -25,10 +25,19 @@ let
     lib.attrValues adapter
     ++ (with pkgs; [ bash gawk gnugrep gnused diffutils e2fsprogs procps systemd inetutils iproute2 nftables getent ])
   );
+  # #170: the narrow privileged entry point. It derives the payload from the manifest, so the
+  # instance store path is substituted in (not a PATH lookup) and jq/coreutils are its only inputs.
+  authorizedStart = pkgs.writeShellApplication {
+    name = "agent-runtime-authorized-start";
+    runtimeInputs = [ pkgs.coreutils pkgs.jq ];
+    text = builtins.replaceStrings [ "@instance@" ] [ "${lib.getExe instance}" ] (
+      builtins.readFile ./runtime/authorized-start.sh
+    );
+  };
 in
 adapter
 // {
-  inherit instance;
+  inherit instance authorizedStart;
   # the pilot's host side (#165): read-only no-go checks, and the pane a runtime's handoff lands in
   preflight = standalone "preflight" [ instance pkgs.gawk pkgs.getent pkgs.herdr ];
   pane = standalone "pane" [ instance ];
