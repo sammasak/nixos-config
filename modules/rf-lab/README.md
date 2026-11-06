@@ -28,6 +28,22 @@ Captures land in `/var/lib/rf-lab/captures` on the Pi and age out after 14 days.
 | `devenv tasks run rf:analyze-test` | Offline, deterministic: run the `rf:analyze` decode over the crafted fixtures in `fixtures/` and assert beacon count + deauth/disassoc reason codes. No device. |
 | `devenv tasks run rf:sim` | Fully-virtual `mac80211_hwsim` lab (two netns): real hostapd+wpa_supplicant association, an iperf3 throughput measurement over the virtual link, optional `tc-netem` packet loss (`RF_LOSS` percent), and a disconnect/reconnect recovery (`RF_OUTAGE` seconds). Emits a JSON artifact; no physical radio. |
 
+## Boundary (#42)
+
+The Pi is a narrow capture and command node. Reverse engineering (REA and the
+tools it drives: Ghidra, Binwalk, Unblob, JADX, a Node toolchain) runs on the
+analysis workstation, never on the 1 GiB board. Protocol parsers live in
+`sammasak/rf-proto`. `devenv tasks run nixos:rf-lab-boundary-test` (part of
+`nixos:qa`) checks this by evaluation:
+- naked-pi declares none of those tools in its system or Home Manager packages
+  and is not a k3s node;
+- no other host (black-pi, the k3s nodes) imports this module or carries an
+  `rf-*` unit;
+- a seeded naked-pi with `binwalk` and `nodejs` added is caught.
+
+It reads declared packages, not the built closure: a tool pulled in transitively
+by another package is not seen.
+
 ## Crafted pcap fixtures
 
 `fixtures/` holds tiny **synthetic** beacon / deauth / disassoc pcaps built offline
