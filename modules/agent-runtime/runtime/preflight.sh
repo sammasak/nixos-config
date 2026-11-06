@@ -35,10 +35,12 @@ if [ "$n" -gt 0 ] && unshare --user --map-root-user true 2>/dev/null; then
 else
   nogo user-namespaces "max_user_namespaces=$n or unshare --user failed: start would fail closed"
 fi
-missing=''
-for f in /proc/self/ns/{mnt,pid,ipc,uts,net}; do [ -e "$f" ] || missing="$missing $f"; done
-if [ -z "$missing" ]; then pass namespaces "mount, pid, ipc, uts and net namespaces present"
-else nogo namespaces "missing:$missing"; fi
+# every namespace an instance gets, created together once and thrown away
+if unshare --user --map-root-user --mount --pid --fork --ipc --uts --net true 2>/dev/null; then
+  pass namespaces "user, mount, pid, ipc, uts and net namespaces can be created together"
+else
+  nogo namespaces "unshare of the user, mount, pid, ipc, uts and net namespaces together failed"
+fi
 # instances map 64 ranges of 65536 ids from 1048576; no host account may live in them
 lo=1048576 hi=$((1048576 + 64 * 65536))
 clash=$( { getent passwd; getent group; } | awk -F: -v lo="$lo" -v hi="$hi" '$3 >= lo && $3 < hi {print $1 ":" $3}' | head -3 || true)
@@ -100,12 +102,17 @@ fi
 # --- no instance running or unresolved: the pilot runs alone, and an ambiguous run is decided by hand
 if [ ! -d "$state" ]; then
   pass instances "no state directory yet ($state)"
-elif st=$(agent-runtime-instance --state "$state" status 2>/dev/null); then
+elif st=$(agent-runtime-instance --state "$state" status 2>/dev/null) && jq -e 'type == "array"' >/dev/null 2>&1 <<<"$st"; then
   busy=$(jq -r '[.[] | select(.state | IN("running", "starting", "cancelling", "ambiguous", "incomplete")) | "\(.id)=\(.state)"] | join(" ")' <<<"$st")
   if [ -z "$busy" ]; then pass instances "$(jq length <<<"$st") instance(s), none running or unresolved"
   else nogo instances "running or unresolved: $busy"; fi
+  # a leftover instance (even only created) holds a reservation, and create refuses at the cap
+  live=$(cat "$state"/*/reservation 2>/dev/null | wc -l || true)
+  max=$(jq -r .maxConcurrentInstances "$host")
+  if [ "$live" -lt "$max" ]; then pass capacity "$live of $max instance slot(s) reserved"
+  else nogo capacity "$live of $max instance slot(s) reserved: destroy the leftover first ($(jq -r '[.[].id] | join(" ")' <<<"$st"))"; fi
 else
-  nogo instances "agent-runtime-instance status failed (run as root)"
+  nogo instances "agent-runtime-instance status failed or did not print a JSON list (run as root)"
 fi
 
 if [ "$failed" = 0 ]; then echo "preflight: go"; else echo "preflight: NO-GO"; fi

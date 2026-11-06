@@ -89,7 +89,9 @@ pkgs.testers.runNixOSTest {
         assert s["state"] == "created" and s["template"]["digests"]["template"] == "${m.digests.template}", s
         src = json.loads(machine.succeed(f"cat {V}/pilot/run/run.json"))
         assert src["sources"]["factum"]["resolved"]["rev"] == "${factum.rev}", src
-        # once created, the preflight sees the reservation; nothing runs yet
+        # once created, the reservation holds the only slot: the preflight is no-go on capacity, nothing runs yet
+        rc, out = machine.execute(f"${P} --host {POLICY} --template {M}")
+        assert rc == 1 and "FAIL capacity: 1 of 1" in out and "pilot" in out, (rc, out)
         machine.succeed(f"${H} attach pilot {M} {TASK} /tmp/pilot.status -- ${pane} pilot /tmp/pilot.status -- ${run}")
         machine.wait_until_succeeds("${H} status --json | jq -e '.[] | select(.runtime_id==\"pilot\" and .status==\"idle\")'", timeout=60)
         assert any(a.get("name") == "rt-pilot" for a in json.loads(machine.succeed("herdr agent list"))["result"]["agents"])

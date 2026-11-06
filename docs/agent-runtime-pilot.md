@@ -76,7 +76,13 @@ Then on acer-swift: `jq . /etc/agent-runtime/host.json`, and
 
 ## The pilot run (owner-supervised, on acer-swift)
 
+The whole run happens in one bash shell that holds acer's heavy-work lock, so no agent gate (VM
+tests, `nixos:qa`, nix builds) starts beside it: the 4 GiB reserve covers a k3s surge, not a second
+heavy job. The first line waits until a running gate ends; `exit` at the end releases the lock. (The
+commands are bash; your login shell is fish.)
+
 ```
+flock --verbose /tmp/acer-swift-heavy-work.lock bash   # holds the lock until this shell exits
 H=/etc/agent-runtime/host.json
 T=/nix/var/nix/profiles/agent-runtime/templates/templates/rust-pilot.json
 RUN=$(jq -r '.packages[] | select(.name == "rust-pilot-run") | .storePath' "$T")/bin/rust-pilot-run
@@ -93,11 +99,15 @@ agent-runtime-herdr deliver pilot 'run the assigned task'
 sudo agent-runtime-instance wait pilot                          # until it ends; status shows succeeded
 sudo agent-runtime-instance status pilot                        # record runtimeUSec, memoryPeakBytes, uidBase
 sudo agent-runtime-instance export pilot
-(cd /var/lib/agent-runtime/exports/pilot/output && sha256sum -c SHA256SUMS && cat result.json)
+sudo sh -c 'cd /var/lib/agent-runtime/exports/pilot/output && sha256sum -c SHA256SUMS && cat result.json'   # 0700 root
 agent-runtime-herdr detach pilot
 sudo agent-runtime-instance destroy pilot
 sudo agent-runtime-preflight --template "$T"                    # go again: nothing left
+exit                                                            # releases the heavy-work lock
 ```
+
+After `detach`, the adapter's follower may log `agent-runtime-herdr: pane … not found`: it noticed
+the closed pane and stops. That line is expected, not a failure.
 
 Record for #165: the host generation (`readlink /run/current-system`), the flake rev, these
 commands' output, `result.json` and the export's `bundle.json` digests.
