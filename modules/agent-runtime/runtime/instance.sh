@@ -6,7 +6,7 @@
 # process surviving; export bundles patches, output and a bounded log; destroy
 # tears down in order and releases the reservation last. An outcome that was never
 # recorded (supervisor or host crash) is reported as ambiguous and never replayed.
-USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--root] [--timeout-sec N] [--idmap] [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID | destroy ID [--discard] | reconcile | record-exit ID'
+USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--root] [--timeout-sec N] [--idmap] [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID [--credential FILE] | destroy ID [--discard] | reconcile | record-exit ID'
 state=/var/lib/agent-runtime
 if [ "${1:-}" = --state ]; then
   [ $# -ge 2 ] || usage
@@ -603,6 +603,9 @@ case $cmd in
 
   export)
     take_id "$@"
+    shift
+    recheck=''
+    if [ "${1:-}" = --credential ]; then [ $# -ge 2 ] && [ -r "$2" ] || usage; recheck=$2; shift 2; fi
     [ -d "$base" ] || fail state "$id does not exist"
     lock_instance
     s=$(state_of)
@@ -612,10 +615,25 @@ case $cmd in
     out=$state/exports/$id
     [ ! -e "$out" ] || fail conflict "$out exists but $id has no export record"
     mkdir -p "$state/exports"
+    # a run that had a credential whose copy is gone (a reboot) is not exported unchecked: re-pass it
+    cred=$(cat "$rundir/$id/cred/token" 2>/dev/null || true)
+    [ -n "$cred" ] || [ -z "$recheck" ] || cred=$(<"$recheck")
+    if [ -z "$cred" ] && jq -e '.credential != null' "$base/started.json" >/dev/null 2>&1; then
+      fail credential "$id ran with a credential whose copy is gone, so the export cannot be checked for it; re-pass it: export $id --credential FILE"
+    fi
     tmp=$(mktemp -d "$state/exports/.$id.XXXXXX")
-    trap 'rm -rf "$tmp"' EXIT
     ws=$base/vol/workspace
+    # a failed export after the source export ran puts the sources back as pending, so a retry exports (and
+    # scans) the patch again instead of leaving it out
+    restore_pending() {
+      if [ -f "$tmp/.export-pending" ] && [ ! -e "$ws/export-pending" ]; then
+        cp "$tmp/.export-pending" "$ws/export-pending" && rm -f "$ws/exported.json"
+      fi
+      rm -rf "$tmp"
+    }
+    trap restore_pending EXIT
     if [ -f "$ws/export-pending" ]; then
+      cp "$ws/export-pending" "$tmp/.export-pending"
       run_capture export "source export failed" agent-runtime-export --root "$ws" --out "$tmp/sources"
     fi
     cap=$(( $(jq -r .filesystem.output.sizeMiB "$base/template.json") * 1024 * 1024 ))
@@ -640,14 +658,15 @@ case $cmd in
         truncated=true
       fi
     fi
-    # the credential leak gate (#137): the per-run secret is still on its tmpfs here (export precedes destroy),
-    # so this needs no re-passing by the caller. The diagnostic log is redacted in place; an artifact that
-    # carries the secret refuses the export, because a well-behaved payload never writes it to /output.
-    cred=$(cat "$rundir/$id/cred/token" 2>/dev/null || true)
+    # the credential leak gate (#137, #169): the diagnostic log is redacted in place; an output file or a source
+    # patch that carries the run's secret refuses the export
     if [ -n "$cred" ]; then
       [ -f "$tmp/run.log" ] && redact_file "$cred" "$tmp/run.log"
-      ! grep -rqF -- "$cred" "$tmp/output" 2>/dev/null || fail credential "$id: the run credential appears in an exported artifact"
+      ! grep -rqF -- "$cred" "$tmp/output" "$tmp/sources" 2>/dev/null \
+        || fail credential "$id: the run credential appears in an exported artifact (an output file or a source patch)"
     fi
+    # past every refusal: the backup is not part of the bundle
+    rm -f "$tmp/.export-pending"
     for f in instance.json started.json result.json; do
       if [ -f "$base/$f" ]; then cp "$base/$f" "$tmp/$f"; fi
     done

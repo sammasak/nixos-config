@@ -47,7 +47,7 @@ let
             ];
             sam.userConfig = users.${username} or { };
             # what a host's agent-runtime template modules lock to (modules/agent-runtime/templates)
-            sam.agentRuntime.pinnedSources = { inherit (inputs) factum skills; };
+            sam.agentRuntime.pinnedSources = { inherit (inputs) factum skills rf-proto; };
 
             home-manager = {
               useGlobalPkgs = true;
