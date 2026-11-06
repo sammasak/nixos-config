@@ -3,7 +3,11 @@
 The step after the #165 cargo pilot: one real Claude Code coding task inside the runtime, ending in
 a nonempty patch the trusted host verifies before anyone reviews or promotes it. This file is the
 template, what non-interactive Claude Code needs, the authentication options for the owner, and
-the promotion path. Nothing here is enabled on a host, and no real credential is used.
+the promotion path. The template's own defaults are inert — no egress, no credential — but this PR
+makes **acer-swift the one host that admits it**: it renders `eligibleTemplates = [ "rust-pilot"
+"claude-coder" ]` with `templates.claude-coder.network.allow = [ "api.anthropic.com" ]`
+(`hosts/acer-swift/configuration.nix`). No credential is delivered and no live run is performed in
+this change; the supervised live run below is the owner's and is owner-gated.
 
 ## The template: `claude-coder` (`modules/agent-runtime/templates/claude-coder.nix`)
 
@@ -12,7 +16,7 @@ the promotion path. Nothing here is enabled on a host, and no real credential is
 | source | `sammasak/rf-proto` at the flake's pinned `inputs.rf-proto` rev, a private writable copy at `/workspace/rf-proto`. Zero dependencies, so `cargo test --offline --locked` builds with no network |
 | agent | `pkgs.claude-code` (2.1.300 at this nixpkgs), the real binary, run by `claude-coder-run` |
 | skills | `rust-engineering` from the pinned skills input |
-| network | none (`egress: none`) |
+| network | the template's **default** is none (`egress: none`); acer-swift overrides it to `egress: allowlist`, `allow = [ "api.anthropic.com" ]` (the #137 allowlist pins the resolved IPs, TLS 443 only). acer is the only host that admits this template |
 | credentials | the template grants no GitHub capability. The harness token is a per-run `--credential` file, the SOPS subscription token (below) |
 | resources | 2 CPUs, 2048 MiB (no swap), 512 tasks, 30 min; volumes 1920 MiB together |
 
@@ -23,6 +27,15 @@ the promotion path. Nothing here is enabled on a host, and no real credential is
 4. It writes `claude.json`, `claude.err`, `cargo-test.log`, `result.json` and `SHA256SUMS` to `/output`.
 
 The allowlist is Read, Edit, Write, Glob, Grep, `cargo test`/`cargo build`, and `git diff`/`git status`; anything else is refused in `-p` mode.
+
+**Recommended hardening (not yet wired in):** add `--strict-mcp-config` to the runner's `claude -p`
+line so Claude Code ignores any MCP server config it would otherwise discover on disk (the runner
+passes no `--mcp-config`, so this means no MCP servers at all — one fewer uncontrolled subprocess and
+egress path). It is left out of the runner here because its acceptance by this exact binary (2.1.300)
+is a live-binary behaviour not exercised by the offline `agent-runtime-coder-test` (the VM test drives
+its own `claude -p` probes, not `claude-coder-run`); add it to `claude-coder-run` once confirmed
+against the deployed binary. The offline eval check (`agent-runtime-acer-pilot`) would still pass with
+the flag present, since it adds no `ANTHROPIC_*`/`apiKeyHelper`/`ANTHROPIC_BASE_URL` string.
 
 ## Non-interactive Claude Code: what it needs (measured with 2.1.300)
 
@@ -114,9 +127,11 @@ H=/etc/agent-runtime/host.json
 T=/nix/var/nix/profiles/agent-runtime/templates/templates/claude-coder.json
 RUN=$(jq -r '.packages[] | select(.name == "claude-coder-run") | .storePath' "$T")/bin/claude-coder-run
 CRED=/run/secrets/claude_oauth_token
-TASK='<the one-line, test-backed edit, below>'
-export AGENT_RUNTIME_HERDR_STATE=$HOME/.local/state/agent-runtime-herdr   # the adapter runs as you, Herdr's user
-S=$XDG_RUNTIME_DIR/rt-coder.status
+# create/attach take the tracking REF (OWNER/REPO#N); the model is given the PROMPT. They are NOT the
+# same string: `agent-runtime-herdr attach` dies 64 on a ref that is not OWNER/REPO#N, and `create
+# --task` records that same ref. The PROMPT (below) is the runner's argument, i.e. `claude -p`'s task.
+REF=sammasak/nixos-config#169
+PROMPT='In src/lib.rs, add a #[must_use] attribute to the public `varint` function (the one-line fixture helper, "/// Encode a varint length prefix (test/fixture helper)."). Change nothing else.'
 
 # 1. Preflight (read-only; must end "preflight: go"). --herdr-user is the user whose Herdr answers.
 sudo agent-runtime-preflight --template "$T" --herdr-user lukas
@@ -124,61 +139,124 @@ sudo agent-runtime-preflight --template "$T" --herdr-user lukas
 # 2. The SOPS subscription token — owner/mode check ONLY, never printed:
 stat -c '%U %G %a' "$CRED"                       # expect: lukas users 400 (sops-nix, modules/core/sops.nix)
 
-# 3. Create and make it visible in Herdr as lukas (attach/deliver, like the rust-pilot pilot):
-sudo agent-runtime-instance create coder --template "$T" --host "$H" --task "$TASK"
-agent-runtime-herdr attach coder "$T" "$TASK" "$S" -- agent-runtime-pane coder "$S" -- "$RUN" "$TASK"
-agent-runtime-herdr status --json                # coder: idle
+# 3. Create the instance against the tracking REF:
+sudo agent-runtime-instance create coder --template "$T" --host "$H" --task "$REF"
 
-# 4. Deliver the credential and run. See the note below: agent-runtime-pane's embedded start carries
-#    no --credential, so the token is delivered by a direct root start (the mechanism in Authentication
-#    above), and Herdr provides the pane and status. `start --credential` copies the token to the run's
-#    own tmpfs (/run/agent-runtime/coder/cred/token), binds it read-only at
-#    /run/agent-runtime/credentials/token (mode 0400, the mapped agent uid), and claude-coder-run exports
-#    it as CLAUDE_CODE_OAUTH_TOKEN for the claude process only — no host dir, ~/.claude or /run/secrets
-#    is mounted:
-sudo agent-runtime-instance start coder --credential "$CRED" --wait -- "$RUN" "$TASK"
+# 4. Deliver the credential and run — the direct root start. The token reaches the run ONLY this way:
+#    `start --credential` copies it to the run's own tmpfs (/run/agent-runtime/coder/cred/token), binds
+#    it read-only at /run/agent-runtime/credentials/token (mode 0400, the mapped agent uid), and
+#    claude-coder-run exports it as CLAUDE_CODE_OAUTH_TOKEN for the claude process only — no host dir,
+#    ~/.claude or /run/secrets is mounted. The PROMPT is the runner's argument (not the REF):
+sudo agent-runtime-instance start coder --credential "$CRED" --wait -- "$RUN" "$PROMPT"
+
+# 5. Watch progress with the instance tool — NOT Herdr (see "Herdr visibility" below):
 sudo agent-runtime-instance status coder         # record runtimeUSec, memoryPeakBytes, uidBase; succeeded
+sudo agent-runtime-instance logs coder           # the run's log (during or after)
 
-# 5. Export (redacts the token from run.log; refuses an export whose outputs or source patch contain it):
+# 6. Export (redacts the token from run.log; refuses an export whose outputs or source patch contain it):
 sudo agent-runtime-instance export coder
-agent-runtime-herdr detach coder
 sudo agent-runtime-instance destroy coder        # removes the tmpfs credential copy
 sudo agent-runtime-preflight --template "$T" --herdr-user lukas   # go again: nothing left
 exit                                             # releases the heavy-work lock
 ```
 
-**The task** is a single one-line, test-backed edit to `sammasak/rf-proto` at the pinned
-`inputs.rf-proto` rev (`d878c58e…`): a change the repo's existing `cargo test --offline --locked`
-suite already covers (so the run's own `cargo test` step is the oracle, no new test to trust), and
-small enough to review by eye. The source is zero-dependency, so it builds and tests with no network.
+**The task (`$PROMPT`).** A single behaviour-preserving, test-backed one-line edit to
+`sammasak/rf-proto` at the pinned `inputs.rf-proto` rev `d878c58ebaca9c5281ef522b6fbd1761e122dfb6`
+(flake.lock): **add `#[must_use]` to the public `varint` function in `src/lib.rs`** (at that rev it is
+line 66, `pub fn varint(mut v: u64) -> Vec<u8>` — the fixture helper that encodes a base-128 varint
+length prefix). It returns `Vec<u8>`, which is not already `#[must_use]`, and every existing caller
+consumes the result, so the attribute adds no `unused_must_use` warning (and the crate sets no
+`-D warnings`), keeping the build clean. The existing unit test **`decodes_multibyte_varint_length`**
+(`src/lib.rs`, the `#[cfg(test)] mod tests`) covers it directly — it asserts `varint(200) == vec![0xc8,
+0x01]` — and `decodes_two_short_frames` exercises it too; `cargo test --offline --locked` already runs
+both, so the run's own `cargo test` step is the oracle (no new test to trust). The patch is one line,
+nonempty, and reviewable by eye. rf-proto is a single zero-dependency crate, so it builds and tests
+with no network.
 
-**Credential delivery vs the Herdr pane — flagged.** `agent-runtime-pane` runs `start ID --wait --
-PROGRAM` with no `--credential` (`modules/agent-runtime/runtime/pane.sh`), so delivering the handoff
-through `agent-runtime-herdr deliver` would start the coder fail-closed (exit 77, `auth: "missing"`).
-The live credential-bearing run is therefore the direct root `start --credential` above; Herdr gives
-the pane and status. Threading `--credential` through the pane is a code change, out of this offline
-slice — do not improvise a token path around it.
+**Herdr visibility — stated honestly.** This credentialed run does **not** go through a Herdr pane.
+`agent-runtime-pane` runs `start ID --wait -- PROGRAM` with **no `--credential`**
+(`modules/agent-runtime/runtime/pane.sh`), and the pane blocks on `read -r handoff` until
+`agent-runtime-herdr deliver` types one line into its PTY. A pane therefore shows `idle` for the whole
+run and never carries the token. So the run is the direct root `start --credential` above, and progress
+is `sudo agent-runtime-instance status coder` / `logs coder`, not Herdr.
 
-### Trusted-side verification (on lenovo, not inside the runtime)
+- **Never `deliver` to this instance.** A stray `deliver` would make the idle pane run its embedded
+  `start` with no credential — a second, credential-less, fail-closed run (exit 77, `auth: "missing"`).
+  (`start` acts only on a `created` instance, so after the direct start a pane's `start` would in fact
+  be refused — but do not rely on that; simply do not deliver.)
+- **If a visible Herdr placeholder is wanted**, you may, before step 4 and as the Herdr user
+  (`export AGENT_RUNTIME_HERDR_STATE=$HOME/.local/state/agent-runtime-herdr; S=$XDG_RUNTIME_DIR/rt-coder.status`),
+  `agent-runtime-herdr attach coder "$T" "$REF" "$S" -- agent-runtime-pane coder "$S" -- "$RUN" "$PROMPT"`
+  — note the **`$REF`** (OWNER/REPO#N) is attach's third argument, or it dies 64. Then **do not deliver,
+  and do not detach mid-run**. The block above drops `attach`/`detach` entirely, which is simpler.
+- Threading `--credential` through the pane / the #172 pane launcher (now merged, `df4049d`) so a
+  credentialed run can be driven through Herdr is a separate code change, **not done here** — do not
+  improvise a token path around the pane.
+
+### Trusted-side verification
+
+The verifier and the template manifest both live on **acer**. `agent-runtime-verify` is on acer's PATH
+from the host closure (`modules/agent-runtime/host.nix` ships `tools.verify`, i.e. the `verify`
+attribute of `modules/agent-runtime/runtime.nix`); it is **not** exposed as a flake package output —
+`flake-modules/25-agent-runtime.nix` exports only `agent-runtime-{assign,materialize,export,reclaim,instance}`,
+not `verify`, `preflight` or `pane`. So **lenovo cannot `nix build` the verifier** without first adding
+it to that packages list (a one-line flake change, out of this offline slice). Two honest options:
+
+**(a) Verify on acer, as root** — the verifier and the `$T` manifest are already there, pinned by the
+deployed generation. Record the bundle digest first (so a later transfer can be checked against it):
 
 ```
-B=/var/lib/agent-runtime/exports/coder            # 0700 root; copy the bundle to the trusted host
-sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change   # prints agent-runtime-verified
-# then re-run the repo's own tests on the verified patch, on the trusted side, in a fresh checkout:
-#   clone rf-proto at the recorded base rev, `git apply sources/rf-proto.patch`, `cargo test --offline --locked`
+# on acer:
+B=/var/lib/agent-runtime/exports/coder                   # 0700 root
+sudo sha256sum "$B/bundle.json"                           # record this value
+ssh deploy@acer-swift sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change
+# prints: {kind: "agent-runtime-verified", bundleSha256, sources: {rf-proto: {base, patchSha256, tree, changedPaths}}}
 ```
 
-`agent-runtime-verify` never runs the patch; it checks every file's sha256 against `bundle.json`,
-that the patch applies at the recorded base narHash and reproduces the recorded tree, that no path
-is outside the repo or under `.git`, and (with `--require-change`) that the patch is nonempty.
+`agent-runtime-verify --bundle DIR --template MANIFEST --require-change` is the exact signature
+(`modules/agent-runtime/runtime/verify.sh`); `$T` is the same claude-coder manifest path as above.
+
+**(b) Re-run rf-proto's own tests on lenovo** (verification itself stays on acer per (a), unless you
+make the flake change). The bundle is `0700 root`, so move it as root, re-check the recorded digest,
+then apply the verified patch to a fresh checkout at the recorded base rev:
+
+```
+# on acer, stream the root-only bundle to lenovo:
+sudo tar -C /var/lib/agent-runtime/exports -c coder | ssh lenovo 'mkdir -p /tmp/coder-bundle && tar -C /tmp/coder-bundle -x'
+# on lenovo:
+sha256sum /tmp/coder-bundle/coder/bundle.json            # must equal the value recorded on acer
+git clone https://github.com/sammasak/rf-proto /tmp/rf-proto-verify   # private repo; uses your git/gh credentials
+git -C /tmp/rf-proto-verify checkout d878c58ebaca9c5281ef522b6fbd1761e122dfb6
+git -C /tmp/rf-proto-verify apply /tmp/coder-bundle/coder/sources/rf-proto.patch
+( cd /tmp/rf-proto-verify && cargo test --offline --locked )   # rf-proto's own test command; stays green
+```
+
+`d878c58ebaca9c5281ef522b6fbd1761e122dfb6` is the pinned `inputs.rf-proto` rev (flake.lock); `--locked`
+keeps the committed `Cargo.lock` and the zero-dependency crate needs no network, so `--offline` holds.
+
+`agent-runtime-verify` never runs the patch; it checks every file's sha256 against `bundle.json`, that
+the patch applies at the recorded base narHash and reproduces the recorded tree, that the touched paths
+match the record, that no path is outside the repo or under `.git`, and (with `--require-change`) that
+the patch is nonempty.
 
 ### Leak checks after destroy
 
 - `sudo agent-runtime-instance status` shows no instance; `ls /run/agent-runtime/` has no `coder/`,
   so the tmpfs `cred/token` copy is gone; `findmnt` shows no leftover instance mounts.
-- Grep the exported bundle for the token (it must not appear in any output file, the patch or the log):
-  `sudo grep -rIF "$(cat "$CRED")" "$B"` returns nothing (the export already refuses one that does).
-  An *encoded* copy defeats a literal grep; the human patch review before promotion is the backstop.
+- Grep for the token **without ever putting it on a command line** — `grep -f FILE` reads the pattern
+  *from the file*, so the token never reaches `argv`, `/proc/<pid>/cmdline` or the sudo log (unlike
+  `grep -F "$(cat "$CRED")"`, which passes the token itself as an argument):
+
+```
+# names-only (-l), recursive (-r), skip binaries (-I), fixed-string (-F), pattern read from the file (-f):
+sudo grep -rlIFf "$CRED" /run/agent-runtime /var/lib/agent-runtime "$B" 2>/dev/null   # expect: no output
+# the journal of every agent-runtime unit this boot, counting matches rather than printing them:
+sudo journalctl -b -u 'agent-runtime*' | grep -cFf "$CRED"                            # expect: 0
+```
+
+  The export already refuses a bundle whose output files or source patch contain the token; these
+  checks widen that to the run's tmpfs, the persistent state and the journal. An *encoded* copy defeats
+  any literal grep; the human patch review before promotion is the backstop.
 
 ### Rollback
 
@@ -201,5 +279,5 @@ is outside the repo or under `.git`, and (with `--require-change`) that the patc
   - a nonempty patch verified against the pinned rev;
   - the verifier's refusals;
   - cancellation, and the host unaffected.
-- **A real model turn producing a patch:** **not done**. It needs the owner's key (option above) and the egress allowlist, and it is a live run on a host. The VM's nonempty patch comes from a labelled model-free fixture edit, not from Claude.
+- **A real model turn producing a patch:** **not done**. It needs the owner's Claude Code subscription token (the SOPS `claude_oauth_token`, Authentication above) delivered per run and the egress allowlist, and it is a live run on a host. The VM's nonempty patch comes from a labelled model-free fixture edit, not from Claude.
 - **Independent review and promotion of a real artifact, with SHA, digest and cost:** after that live run.

@@ -49,6 +49,8 @@
         assert expect (coder.policies.network == { egress = "allowlist"; allow = [ "api.anthropic.com" ]; }) "claude-coder egress is exactly api.anthropic.com (no wildcard, no extra host)";
         assert expect (coder.policies.capabilities == [ ]) "claude-coder grants no capability (no GitHub token)";
         assert expect (!(lib.hasInfix "ANTHROPIC_API_KEY=" runnerText) && !(lib.hasInfix "ANTHROPIC_AUTH_TOKEN=" runnerText)) "claude-coder runner assigns no ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN";
+        assert expect (!(lib.hasInfix "apiKeyHelper" runnerText)) "claude-coder runner wires no apiKeyHelper (it would resolve a key from a command, bypassing the subscription-token-only path)";
+        assert expect (!(lib.hasInfix "ANTHROPIC_BASE_URL" runnerText)) "claude-coder runner sets no ANTHROPIC_BASE_URL (it would redirect the API to a non-Anthropic host, an egress path outside the allowlist)";
         assert expect (lib.hasInfix "unset ANTHROPIC_API_KEY" runnerText) "claude-coder runner unsets the ANTHROPIC_* auth paths";
         assert expect (othersCoder == [ ]) "no host other than acer-swift admits claude-coder (got ${toString othersCoder})";
         pkgs.runCommand "agent-runtime-acer-pilot" { nativeBuildInputs = [ pkgs.jq ]; } ''
