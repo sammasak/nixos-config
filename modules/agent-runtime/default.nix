@@ -522,6 +522,9 @@ let
           name = lib.getName p;
           storePath = "${p}";
         }) t.packages;
+        # The root-run payload, digest-covered: the first package's main program, the
+        # convention a start derives from the manifest (never from the caller, #170).
+        entrypoint = if t.packages == [ ] then null else lib.getExe (lib.head t.packages);
         policies = {
           inherit (t) resources;
           privateSources = lib.attrNames (lib.filterAttrs (_: r: r.access == "private") t.repositories);

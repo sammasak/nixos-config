@@ -8,7 +8,7 @@ let
   tools = import ./runtime.nix { inherit lib pkgs; };
 in
 {
-  imports = [ ./default.nix ];
+  imports = [ ./default.nix ./authorized-launch.nix ];
 
   config = lib.mkIf cfg.host.enable {
     # the lifecycle, the Herdr adapter (#139), and the pilot's read-only preflight and pane (#165)
