@@ -61,6 +61,7 @@ auth is separate from GitHub: the template grants no GitHub capability.
 2. The start copies it to the run's own tmpfs (`/run/agent-runtime/ID/cred/token`, never `/var/lib`, never the store). It hands it to the instance read-only at `/run/agent-runtime/credentials/token`, owned by the instance's mapped agent uid, mode `0400`.
 3. No host directory is mounted. `~/.claude` and `/run/secrets` stay outside the instance.
 4. `claude-coder-run`:
+   - first probes every pinned egress host (the instance's `/etc/hosts`, loopback skipped) on TCP 443 for 8 s. One that does not connect stops the run at once: exit 75, `result.json` `egress: "unreachable"` with the host and IP. That replaces a 600 s `claude` retry loop (#169);
    - reads the file and passes the token **only in the `claude` process's environment** (`CLAUDE_CODE_OAUTH_TOKEN=… claude -p …`);
    - first unsets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`, so no other auth path exists;
    - does **not** set `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`. Measured: that mode runs tools in bubblewrap and drops 19 empty placeholder files and directories into the working directory (`.env*`, `package.json`, `yarn.lock`, `node_modules/`, `.claude/`, …). Here that means into the repository, so into every patch. Per `mcp.nix`'s note, 2.1.300 withholds `CLAUDE_CODE_OAUTH_TOKEN` from tools even with the scrub off;
