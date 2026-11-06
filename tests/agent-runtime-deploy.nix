@@ -74,6 +74,9 @@ let
       # templates that need a substrate the hosts do not have: the activation refuses them
       tpl-bad.hosta.agent-runtime = tpl "hosta" 3 2;
       tpl3 = { hosta.agent-runtime = tpl "hosta" 3 1; hostb.agent-runtime = tpl "hostb" 3 1; };
+      # one fleet run in which hosta activates fine and hostb (activated after it) refuses its
+      # templates: deploy-rs must revoke hosta's (--rollback-succeeded, its default)
+      tpl-split = { hosta.agent-runtime = tpl "hosta" 3 1; hostb.agent-runtime = tpl "hostb" 3 2; };
     };
   # deploy-rs builds each profile's drvPath before it copies it. The deployer evaluates a wrapper
   # per profile from the profile already in its store (builtins.storePath; deploy-rs evaluates in
@@ -309,6 +312,20 @@ pkgs.testers.runNixOSTest {
           hostb.succeed("ip link set eth1 up")
           deployer.wait_until_succeeds("ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=5 deploy@hostb true", timeout=60)
           assert current(hostb, TPL) == before["hostb"]["templates"]
+
+      with subtest("a later node's failed activation revokes the earlier node's (--rollback-succeeded)"):
+          before = {h: state(m, "before the split deploy") for h, m in hosts.items()}
+          rc, out = deploy("tpl-split", "hosta.agent-runtime", "hostb.agent-runtime")
+          assert rc != 0 and "need substrate schemaVersion 2" in out, out
+          # hosta was activated (its activation ran) and then revoked by deploy-rs, not skipped
+          assert out.index("templates active") < out.index("Revoking previous deploys"), out
+          for h, m in hosts.items():
+              after = state(m, "after the split deploy")
+              assert after["templates"] == before[h]["templates"], (h, before[h], after)
+          assert digest(hosta, f"{TPL}/templates/tiny.json") == v2 and digest(hostb, f"{TPL}/templates/tiny.json") == v1
+          s = run(hosta, "post-split", "${pkgs.coreutils}/bin/true")
+          assert s["state"] == "succeeded" and s["template"]["digests"]["template"] == v2, s
+          hosta.succeed(f"{I} destroy post-split --discard")
 
       with subtest("the whole fleet then takes v3; the systems never moved"):
           rc, out = deploy("tpl3", "hosta.agent-runtime", "hostb.agent-runtime")
