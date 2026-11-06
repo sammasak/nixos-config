@@ -46,6 +46,8 @@ let
               inputs.nur.overlays.default
             ];
             sam.userConfig = users.${username} or { };
+            # what a host's agent-runtime template modules lock to (modules/agent-runtime/templates)
+            sam.agentRuntime.pinnedSources = { inherit (inputs) factum skills; };
 
             home-manager = {
               useGlobalPkgs = true;

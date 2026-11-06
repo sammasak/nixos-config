@@ -8,7 +8,19 @@ in
     (import ../../modules/hardware/disko-single-ext4.nix "/dev/disk/by-id/nvme-INTEL_SSDPEKNW010T8_BTNH014425J11P0B")
 
     ../../modules/hardware/video/${vars.videoDriver}.nix
+    # the #165 pilot template; its host policy is below
+    ../../modules/agent-runtime/templates/rust-pilot.nix
   ];
+
+  # The supervised agent-runtime pilot (#165): one instance of one credential-free template, admitted
+  # only while acer keeps 4 GiB free beyond its 3 GiB cap, sized from k3s's measured peak. The sizing,
+  # deploy, run and rollback are in docs/agent-runtime-pilot.md.
+  sam.agentRuntime.host = {
+    enable = true;
+    eligibleTemplates = [ "rust-pilot" ];
+    maxConcurrentInstances = 1;
+    reserve = { memoryMiB = 4096; diskMiB = 51200; };
+  };
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;

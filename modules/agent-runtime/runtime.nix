@@ -10,12 +10,26 @@ let
       runtimeInputs = [ pkgs.coreutils pkgs.findutils pkgs.git pkgs.jq pkgs.util-linux nix ] ++ inputs;
       text = builtins.readFile ./runtime/lib.sh + builtins.readFile ./runtime/${name}.sh;
     };
+  # without lib.sh's prelude: its ERR trap would stop the preflight at the first failing check
+  standalone =
+    name: inputs:
+    pkgs.writeShellApplication {
+      name = "agent-runtime-${name}";
+      runtimeInputs = [ pkgs.coreutils pkgs.jq pkgs.util-linux ] ++ inputs;
+      text = builtins.readFile ./runtime/${name}.sh;
+    };
   adapter = lib.genAttrs [ "assign" "materialize" "export" "reclaim" ] (name: tool name [ ]);
+  # gnused: start parses systemd-run's invocation line and the veth peer with sed; without it a
+  # lean-PATH caller (a Herdr pane) died after the unit had started (#161 review)
+  instance = tool "instance" (
+    lib.attrValues adapter
+    ++ (with pkgs; [ bash gawk gnugrep gnused diffutils e2fsprogs procps systemd inetutils iproute2 nftables getent ])
+  );
 in
 adapter
 // {
-  instance = tool "instance" (
-    lib.attrValues adapter
-    ++ (with pkgs; [ bash gawk gnugrep diffutils e2fsprogs procps systemd inetutils iproute2 nftables getent ])
-  );
+  inherit instance;
+  # the pilot's host side (#165): read-only no-go checks, and the pane a runtime's handoff lands in
+  preflight = standalone "preflight" [ instance pkgs.gawk pkgs.getent pkgs.herdr ];
+  pane = standalone "pane" [ instance ];
 }

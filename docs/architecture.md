@@ -16,6 +16,7 @@
 - `56-agent-runtime-herdr-test.nix` — the #139 Herdr adapter package and its VM test packages (one host; coordinator plus runtime host)
 - `57-agent-runtime-deploy-test.nix` — the #140 deploy-rs rollout VM test package (three VMs)
 - `58-agent-runtime-e2e-test.nix` — the #141 end-to-end pilot VM test package
+- `59-agent-runtime-pilot-test.nix` — the #165 acer pilot: its VM test package and `checks.agent-runtime-acer-pilot` (acer-swift's rendered policy)
 - `60-templates.nix` — devenv templates stamped by `dev-init`
 - `70-deploy.nix` — deploy-rs push targets; a host with `sam.agentRuntime.host.enable` also gets the `agent-runtime` template profile (#140)
 - `hosts/<name>.nix` — per-host distribution declarations
