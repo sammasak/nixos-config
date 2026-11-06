@@ -127,6 +127,7 @@ H=/etc/agent-runtime/host.json
 T=/nix/var/nix/profiles/agent-runtime/templates/templates/claude-coder.json
 RUN=$(jq -r '.packages[] | select(.name == "claude-coder-run") | .storePath' "$T")/bin/claude-coder-run
 CRED=/run/secrets/claude_oauth_token
+B=/var/lib/agent-runtime/exports/coder           # the export lands here (survives destroy; 0700 root)
 # create/attach take the tracking REF (OWNER/REPO#N); the model is given the PROMPT. They are NOT the
 # same string: `agent-runtime-herdr attach` dies 64 on a ref that is not OWNER/REPO#N, and `create
 # --task` records that same ref. The PROMPT (below) is the runner's argument, i.e. `claude -p`'s task.
@@ -155,7 +156,19 @@ sudo agent-runtime-instance logs coder           # the run's log (during or afte
 
 # 6. Export (redacts the token from run.log; refuses an export whose outputs or source patch contain it):
 sudo agent-runtime-instance export coder
+
+# 7. Verify on acer, IN THIS SAME LOCKED SHELL — so $T/$CRED/$B are in scope and the lock is still held
+#    (w12: do not run verify/leak in a shell that has exited the one where T/CRED were set). First record
+#    the transfer digest over bundle.json AND every file it lists (for the lenovo re-run below):
+sudo sh -c 'cd "$B" && sha256sum bundle.json $(jq -r ".files[].path" bundle.json)'   # record every value
+sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change
+
+# 8. Destroy, then the leak checks — still this shell, so $CRED/$B are set; the export at $B survives destroy:
 sudo agent-runtime-instance destroy coder        # removes the tmpfs credential copy
+sudo grep -rlIFf "$CRED" /run/agent-runtime /var/lib/agent-runtime "$B" 2>/dev/null   # expect: no output
+sudo journalctl -b -u 'agent-runtime*' | grep -cFf "$CRED"                            # expect: 0
+
+# 9. Preflight is clean again, then release the lock:
 sudo agent-runtime-preflight --template "$T" --herdr-user lukas   # go again: nothing left
 exit                                             # releases the heavy-work lock
 ```
@@ -202,14 +215,16 @@ attribute of `modules/agent-runtime/runtime.nix`); it is **not** exposed as a fl
 not `verify`, `preflight` or `pane`. So **lenovo cannot `nix build` the verifier** without first adding
 it to that packages list (a one-line flake change, out of this offline slice). Two honest options:
 
-**(a) Verify on acer, as root** — the verifier and the `$T` manifest are already there, pinned by the
-deployed generation. Record the bundle digest first (so a later transfer can be checked against it):
+**(a) Verify on acer, as root** — this is **step 7 of the locked shell above**, where `$T`/`$CRED`/`$B`
+are already set and the lock is still held. If you instead verify in a separate acer-root session, first
+re-derive the variables (they do not survive the run shell's `exit`):
 
 ```
-# on acer:
+# on acer (a fresh session): re-derive what the locked shell set, then verify:
+T=/nix/var/nix/profiles/agent-runtime/templates/templates/claude-coder.json
 B=/var/lib/agent-runtime/exports/coder                   # 0700 root
-sudo sha256sum "$B/bundle.json"                           # record this value
-ssh deploy@acer-swift sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change
+sudo sh -c 'cd "$B" && sha256sum bundle.json $(jq -r ".files[].path" bundle.json)'   # record every value
+sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change
 # prints: {kind: "agent-runtime-verified", bundleSha256, sources: {rf-proto: {base, patchSha256, tree, changedPaths}}}
 ```
 
@@ -221,10 +236,14 @@ make the flake change). The bundle is `0700 root`, so move it as root, re-check 
 then apply the verified patch to a fresh checkout at the recorded base rev:
 
 ```
-# on acer, stream the root-only bundle to lenovo:
-sudo tar -C /var/lib/agent-runtime/exports -c coder | ssh lenovo 'mkdir -p /tmp/coder-bundle && tar -C /tmp/coder-bundle -x'
-# on lenovo:
-sha256sum /tmp/coder-bundle/coder/bundle.json            # must equal the value recorded on acer
+# on lenovo, PULL the root-only bundle from acer. Do not push from acer: acer cannot resolve `lenovo`
+# and lenovo rejects acer's key; `ssh deploy@acer-swift` (the lenovo->acer deploy account, the direction
+# that works) with `sudo tar` reads the 0700 export:
+mkdir -p /tmp/coder-bundle
+ssh deploy@acer-swift 'sudo tar -C /var/lib/agent-runtime/exports -c coder' | tar -C /tmp/coder-bundle -x
+# re-check the digest of bundle.json AND every file it lists (not bundle.json alone, so a swapped
+# file+bundle.json pair is caught); every line must equal what acer printed in step 7 / option (a):
+( cd /tmp/coder-bundle/coder && sha256sum bundle.json $(jq -r '.files[].path' bundle.json) )
 git clone https://github.com/sammasak/rf-proto /tmp/rf-proto-verify   # private repo; uses your git/gh credentials
 git -C /tmp/rf-proto-verify checkout d878c58ebaca9c5281ef522b6fbd1761e122dfb6
 git -C /tmp/rf-proto-verify apply /tmp/coder-bundle/coder/sources/rf-proto.patch
@@ -247,8 +266,14 @@ the patch is nonempty.
   *from the file*, so the token never reaches `argv`, `/proc/<pid>/cmdline` or the sudo log (unlike
   `grep -F "$(cat "$CRED")"`, which passes the token itself as an argument):
 
+These are **step 8 of the locked shell** above, where `$CRED`/`$B` are set. If run in a separate
+acer-root session, re-derive them first (they do not survive the run shell's `exit`):
+
 ```
-# names-only (-l), recursive (-r), skip binaries (-I), fixed-string (-F), pattern read from the file (-f):
+# on acer: re-derive, then the leak checks (names-only -l, recursive -r, skip binaries -I,
+# fixed-string -F, pattern read from the file -f so the token never reaches argv/cmdline/the sudo log):
+CRED=/run/secrets/claude_oauth_token
+B=/var/lib/agent-runtime/exports/coder
 sudo grep -rlIFf "$CRED" /run/agent-runtime /var/lib/agent-runtime "$B" 2>/dev/null   # expect: no output
 # the journal of every agent-runtime unit this boot, counting matches rather than printing them:
 sudo journalctl -b -u 'agent-runtime*' | grep -cFf "$CRED"                            # expect: 0
