@@ -3,15 +3,16 @@
 # check before a pilot run (#165). Every check prints PASS or FAIL with what it saw; a check that
 # cannot be evaluated is a FAIL, never a pass. Exit 0 only when every check passes. It changes
 # nothing: no create, no reservation, no unit (the user-namespace probe is a throwaway `unshare`).
-USAGE='agent-runtime-preflight [--state DIR] [--host POLICY.json] --template MANIFEST.json [--herdr-user USER]'
+USAGE='agent-runtime-preflight [--state DIR] [--host POLICY.json] --template MANIFEST.json [--herdr-user USER] [--credential FILE]'
 usage() { echo "usage: $USAGE" >&2; exit 2; }
-state=/var/lib/agent-runtime host=/etc/agent-runtime/host.json template='' herdr_user=${SUDO_USER:-}
+state=/var/lib/agent-runtime host=/etc/agent-runtime/host.json template='' herdr_user=${SUDO_USER:-} cred=''
 while [ $# -gt 0 ]; do
   case $1 in
     --state) [ $# -ge 2 ] || usage; state=$2; shift 2 ;;
     --host) [ $# -ge 2 ] || usage; host=$2; shift 2 ;;
     --template) [ $# -ge 2 ] || usage; template=$2; shift 2 ;;
     --herdr-user) [ $# -ge 2 ] || usage; herdr_user=$2; shift 2 ;;
+    --credential) [ $# -ge 2 ] || usage; cred=$2; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -26,6 +27,31 @@ if [ -r "$host" ] && [ -r "$template" ] && jq -e . "$host" "$template" >/dev/nul
 else
   nogo inputs "cannot read the host policy $host or the template $template as JSON"
   exit 1
+fi
+
+# --- the subscription credential (#169 item 3): only with --credential, for a run that will deliver one.
+# Present, a regular file, owner-only (0400/0600), non-empty, and owned by the operator who presents it
+# (--herdr-user when given). The token is never read or printed -- only its metadata is inspected, so this
+# verification leaks nothing. This turns the runbook's manual `stat` into an exit-gated check.
+if [ -n "$cred" ]; then
+  if [ ! -e "$cred" ]; then
+    nogo credential "$cred does not exist (sops-nix decrypts claude_oauth_token to /run/secrets)"
+  elif ! real=$(readlink -f "$cred" 2>/dev/null) || [ ! -f "$real" ]; then
+    nogo credential "$cred is not a regular file"
+  else
+    perm=$(stat -Lc '%a' "$cred" 2>/dev/null); owner=$(stat -Lc '%U' "$cred" 2>/dev/null); size=$(stat -Lc '%s' "$cred" 2>/dev/null)
+    case $perm in
+      400 | 600)
+        if [ -n "$herdr_user" ] && [ "$owner" != "$herdr_user" ]; then
+          nogo credential "$cred owner is $owner, not $herdr_user (the operator who presents it); token not printed"
+        elif [ "${size:-0}" -le 0 ]; then
+          nogo credential "$cred is empty; token not printed"
+        else
+          pass credential "$cred: regular file, owner $owner, mode $perm, $size bytes (owner-only; token not read)"
+        fi ;;
+      *) nogo credential "$cred mode is $perm, not owner-only (need 0400 or 0600; group and other must have no access); token not printed" ;;
+    esac
+  fi
 fi
 
 # --- namespaces and the UID mapping the instance needs

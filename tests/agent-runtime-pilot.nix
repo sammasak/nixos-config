@@ -82,6 +82,25 @@ pkgs.testers.runNixOSTest {
         print(out)
         assert rc == 1 and "FAIL panic-on-oom" in out and "preflight: NO-GO" in out, (rc, out)
 
+    with subtest("preflight --credential (#169): owner-only present passes, weak or missing fails, token never printed"):
+        secret = "sk-ant-oat01-PREFLIGHT-169-secret-value"
+        machine.succeed(f"printf %s {secret} > /root/good-token && chmod 400 /root/good-token")
+        out = machine.succeed(f"${P} --host {POLICY} --template {M} --credential /root/good-token")
+        assert "PASS credential" in out and "preflight: go" in out, out
+        assert secret not in out, "the token value must never appear in preflight output"
+        # world/group-readable: refused
+        machine.succeed("cp /root/good-token /root/weak-token && chmod 444 /root/weak-token")
+        rc, out = machine.execute(f"${P} --host {POLICY} --template {M} --credential /root/weak-token")
+        assert rc == 1 and "FAIL credential" in out and "owner-only" in out and secret not in out, (rc, out)
+        # missing: refused
+        rc, out = machine.execute(f"${P} --host {POLICY} --template {M} --credential /root/nope-token")
+        assert rc == 1 and "FAIL credential" in out and "does not exist" in out, (rc, out)
+        # empty: refused
+        machine.succeed("install -m400 /dev/null /root/empty-token")
+        rc, out = machine.execute(f"${P} --host {POLICY} --template {M} --credential /root/empty-token")
+        assert rc == 1 and "FAIL credential" in out and "empty" in out, (rc, out)
+        machine.succeed("rm -f /root/good-token /root/weak-token /root/empty-token")
+
     with subtest("pilot: create -> Herdr agent -> one handoff -> offline cargo test of factum -> export -> teardown clean"):
         t0 = time.monotonic_ns()
         machine.succeed(f"${I} create pilot --template {M} --host {POLICY} --task {TASK}")

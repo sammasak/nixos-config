@@ -61,7 +61,10 @@ take 3.4 GiB and 50 GiB stay free. `checks.x86_64-linux.agent-runtime-acer-pilot
 list and changes nothing: user namespaces and the instance UID ranges (no account or subuid inside
 them), the other namespaces, `vm.panic_on_oom` 0 or 1, memory and disk against the reserve as
 `create` admits, the template eligible, Herdr answering (as the user who ran sudo), and no instance
-running or unresolved. Every check prints PASS or FAIL; it exits 0 only when all pass.
+running or unresolved. With `--credential FILE` it also verifies the subscription token the run will
+deliver -- present, a regular file, owner-only (0400/0600), non-empty, owned by the operator -- from
+its metadata only, never reading or printing the token (#169). Every check prints PASS or FAIL; it
+exits 0 only when all pass.
 
 ## Deploy (owner, from lenovo)
 

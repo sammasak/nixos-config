@@ -136,9 +136,11 @@ REF=sammasak/nixos-config#169
 PROMPT='In src/lib.rs, add a #[must_use] attribute to the public `varint` function (the one-line fixture helper, "/// Encode a varint length prefix (test/fixture helper)."). Change nothing else.'
 
 # 1. Preflight (read-only; must end "preflight: go"). --herdr-user is the user whose Herdr answers.
-sudo agent-runtime-preflight --template "$T" --herdr-user lukas
+#    --credential adds the subscription-token check: present, a regular file, owner-only (0400/0600),
+#    non-empty and owned by the operator -- metadata only, the token is never read or printed (#169).
+sudo agent-runtime-preflight --template "$T" --herdr-user lukas --credential "$CRED"
 
-# 2. The SOPS subscription token — owner/mode check ONLY, never printed:
+# 2. (optional, same facts by eye) owner/mode of the token; never prints it:
 stat -c '%U %G %a' "$CRED"                       # expect: lukas users 400 (sops-nix, modules/core/sops.nix)
 
 # 3. Create the instance against the tracking REF:
