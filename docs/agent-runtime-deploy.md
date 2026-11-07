@@ -116,7 +116,7 @@ admission is the lever:
 |---|---|---|
 | lenovo | coordinator, deployer; not an instance host while #109's bounded builds are its headroom | owner decision, measured headroom |
 | acer-swift | the only k3s worker: the first candidate, behind capacity gates (`reserve`) | owner approval after a quiet window; `just deploy-acer` |
-| msi-ms7758 | power window only | owner, Mon-Fri ~09:00-21:00 |
+| msi-ms7758 | credential-free `rust-pilot`, at most two instances, 8 GiB memory / 50 GiB disk reserved | owner, Mon-Fri ~09:00-21:00; live RAM/disk/CPU and Ollama/k3s headroom still unverified |
 | black-pi | aarch64, builds on itself | untested; the template profile carries `remoteBuild` |
 
 ## Test

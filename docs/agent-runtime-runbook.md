@@ -92,11 +92,13 @@ bundle at `exports/<id>` stays where it is.
 - **Host activation is owner-gated and deploy-rs only.** Enabling the runtime on
   a physical host is a `just deploy-<host>` from lenovo after review and merge,
   never a direct switch on the host. No agent deploys or switches a host.
-  Every host imports the substrate (`nixosModules.agent-runtime-host`, #155),
-  but no host enables it yet. Enabling is a host-config change (import the
-  template module, set `sam.agentRuntime.host.enable` and an
-  `eligibleTemplates`/`reserve` policy) followed by `just deploy-<host>`, which
-  deploys the `system` and `agent-runtime` profiles in order
+  Every host imports the substrate (`nixosModules.agent-runtime-host`, #155).
+  Acer and MSI declare the runtime enabled in Nix; until an owner runs
+  `just deploy-<host>`, that declaration does not activate it on the physical
+  host. Enabling is a host-config change (import the template module, set
+  `sam.agentRuntime.host.enable` and an `eligibleTemplates`/`reserve` policy)
+  followed by `just deploy-<host>`, which deploys the `system` and
+  `agent-runtime` profiles in order
   (`docs/agent-runtime-deploy.md`, Rollout). The host policy is then
   `/etc/agent-runtime/host.json` and the templates are under
   `/nix/var/nix/profiles/agent-runtime/templates/templates/`.

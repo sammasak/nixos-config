@@ -8,10 +8,23 @@ in
     ../../modules/hardware/video/${vars.videoDriver}.nix
     # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
     ../../modules/homelab/msi-power-schedule.nix
+    # A credential-free, offline Rust workload; admission remains bounded by
+    # live memory/disk checks and the host policy below.
+    ../../modules/agent-runtime/templates/rust-pilot.nix
   ];
 
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
   homelab.msiPowerSchedule.selfShutdown.enable = true;
+
+  # The existing inventory lists 32 GiB RAM, but is not a live capacity
+  # reading. Runtime admission checks MemAvailable and free disk before each
+  # create; measure CPU, disk and Ollama/k3s headroom before activation.
+  sam.agentRuntime.host = {
+    enable = true;
+    eligibleTemplates = [ "rust-pilot" ];
+    maxConcurrentInstances = 2;
+    reserve = { memoryMiB = 8192; diskMiB = 51200; };
+  };
 
   sam.profile = vars;
 

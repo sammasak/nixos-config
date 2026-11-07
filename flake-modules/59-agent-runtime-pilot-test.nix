@@ -14,8 +14,33 @@
 
       # What acer-swift renders for the pilot, at evaluation (part of `nixos:qa` through flake check):
       # the one-instance policy, the credential-free, network-off template and its budgets, the tools
-      # on the host, and no other host enabled. The output is the rendered policy and manifest.
+      # on the host, and MSI as the only other enabled runtime host. The output is the rendered policy and manifest.
       checks = lib.optionalAttrs (system == "x86_64-linux") {
+        agent-runtime-msi-pilot =
+        let
+          hosts = config.flake.nixosConfigurations;
+          msi = hosts.msi-ms7758.config;
+          rt = msi.sam.agentRuntime;
+          tpl = rt.manifestData.rust-pilot;
+          flags = msi.homelab.k3s.extraFlags;
+          expect = cond: msg: lib.assertMsg cond "agent-runtime-msi-pilot: ${msg}";
+        in
+        assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" ]) "MSI admits only the credential-free Rust pilot";
+        assert expect (rt.host.maxConcurrentInstances == 2) "bounded two-instance admission";
+        assert expect (rt.host.reserve == { memoryMiB = 8192; diskMiB = 51200; }) "retain 8 GiB RAM and 50 GiB disk for host workloads";
+        assert expect (tpl.policies.network == { egress = "none"; allow = [ ]; }) "no network egress";
+        assert expect (tpl.policies.capabilities == [ ] && tpl.policies.privateSources == [ ]) "no credentials or privileged capabilities";
+        assert expect (tpl.policies.resources.memoryMiB == 3072 && tpl.policies.resources.cpus == 2) "reuse the pilot template resource cap (MSI headroom still needs live validation)";
+        assert expect msi.homelab.msiPowerSchedule.selfShutdown.enable "preserve the scheduled shutdown";
+        assert expect (lib.elem "--node-label=node-pool=workers" flags && lib.elem "--node-taint=sammasak.dev/intermittent=true:NoSchedule" flags) "preserve MSI's worker label and intermittent taint";
+        assert expect (!msi.system.autoUpgrade.allowReboot) "keep unattended reboots disabled";
+        assert expect (lib.elem "agent-runtime-instance" (map (p: p.name or "") msi.environment.systemPackages)) "install the existing runtime lifecycle tool";
+        pkgs.runCommand "agent-runtime-msi-pilot" { nativeBuildInputs = [ pkgs.jq ]; } ''
+          mkdir $out
+          jq -S . ${rt.hostPolicy} > $out/host.json
+          jq -S . ${rt.manifestDir}/rust-pilot.json > $out/rust-pilot.json
+        '';
+
         agent-runtime-acer-pilot =
         let
           hosts = config.flake.nixosConfigurations;
@@ -43,7 +68,7 @@
         assert expect (tpl.filesystem.mounts == [ ]) "no extra mounts";
         assert expect (tpl.sources.factum.writable && tpl.sources.factum.locked.rev == inputs.factum.rev) "factum at the flake's pinned rev, a private writable copy";
         assert expect (lib.all (n: lib.elem n names) [ "agent-runtime-instance" "agent-runtime-preflight" "agent-runtime-pane" "agent-runtime-herdr" ]) "the lifecycle, preflight, pane and Herdr adapter on the host";
-        assert expect (others == [ ]) "no other host enables the runtime (got ${toString others})";
+        assert expect (others == [ "msi-ms7758" ]) "MSI is the only other enabled runtime host (got ${toString others})";
         # The #169 coder template admitted beside rust-pilot: egress is exactly the Claude API host,
         # no credential, no ANTHROPIC_* auth path in the runner, and admitted on acer-swift only.
         assert expect (coder.policies.network == { egress = "allowlist"; allow = [ "api.anthropic.com" ]; }) "claude-coder egress is exactly api.anthropic.com (no wildcard, no extra host)";
