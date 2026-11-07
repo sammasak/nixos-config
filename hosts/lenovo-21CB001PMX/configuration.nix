@@ -18,13 +18,7 @@ in
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
-  # The coordinator host: the only one whose Herdr reaches the workers
-  # (`herdr --machine acer-swift`, `herdr --machine msi-ms7758`). MSI (#185) is
-  # intermittently powered (Mon-Fri 09:00-21:00, see the msi-power-schedule import
-  # above); outside that window `herdr --machine msi-ms7758 agent list` fails, which
-  # the coordinator inventory surfaces as offline, never an empty fleet. Host keys
-  # for both are already pinned in modules/core/ssh-known-hosts.nix. A worker
-  # declares no machines; only this coordinator does (#186).
+  # Only the coordinator saves worker targets; once saved, scheduled-off MSI stays visible as unreachable.
   sam.herdr.machines = [
     { label = "acer-swift"; target = "acer-swift"; }
     { label = "msi-ms7758"; target = "msi-ms7758"; }

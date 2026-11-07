@@ -58,6 +58,28 @@ mirror_hs() {
 mirror_reason() { # STATE REASON
   if [ "$1" = ambiguous ] && [ -z "$2" ]; then echo "ambiguous: decide by hand"; else echo "${2:-$1}"; fi
 }
+# report-agent messages are not in Herdr list/get; a native metadata token makes the concise reason observable.
+report_reason() { # PANE HERDR-STATE REASON
+  local pane=$1 state=$2 reason=$3
+  local meta=(--clear-token blocked_reason)
+  [ "$state" != blocked ] || meta=(--token "blocked_reason=$reason")
+  herdr pane report-metadata "$pane" --source "$source_id" --agent "$agent_label" "${meta[@]}" >/dev/null
+}
+# Herdr binds a report to the foreground process; wait until the replacement has settled.
+foreground() { herdr pane process-info --pane "$1" | jq -r '.result.process_info.foreground_processes[0].cmdline // empty'; }
+run_pane() { # PANE ARGV...; print the settled foreground command
+  local pane=$1; shift
+  local previous pg='' stable=0 current
+  previous=$(foreground "$pane")
+  herdr pane run "$pane" "exec $(printf '%q ' "$@")" >/dev/null
+  for _ in $(seq 200); do
+    current=$(foreground "$pane")
+    if [ -n "$current" ] && [ "$current" != "$previous" ] && [ "$current" = "$pg" ]; then stable=$((stable + 1)); else stable=0; fi
+    pg=$current; [ "$stable" -lt 10 ] || break; sleep 0.1
+  done
+  [ "$stable" -ge 10 ] || die "the pane command did not settle in $pane (foreground: ${pg:-none})" 70
+  printf '%s\n' "$pg"
+}
 
 user_unit=(); [ "$(id -u)" = 0 ] || user_unit=(--user)
 cmd=${1:-}; shift || true
@@ -107,17 +129,7 @@ case $cmd in
     trap '[ "$attached" = 1 ] || { herdr workspace close "$workspace_id" >/dev/null 2>&1 || true; set_record "$id" ".status = \"torn_down\""; }' EXIT
     # Herdr binds a reported agent to the pane's foreground process at report time, so the
     # launcher replaces the pane's shell (exec, same pid) and the report waits until it runs
-    fg() { herdr pane process-info --pane "$pane_id" | jq -r '.result.process_info.foreground_processes[0].cmdline // empty'; }
-    shell_pg=$(fg)
-    herdr pane run "$pane_id" "exec $(printf '%q ' "$@")" >/dev/null
-    # the launcher may exec through several programs; report once the foreground has settled
-    pg="" stable=0
-    for _ in $(seq 200); do
-      now_pg=$(fg)
-      if [ -n "$now_pg" ] && [ "$now_pg" != "$shell_pg" ] && [ "$now_pg" = "$pg" ]; then stable=$((stable + 1)); else stable=0; fi
-      pg=$now_pg; [ "$stable" -lt 10 ] || break; sleep 0.1
-    done
-    [ "$stable" -ge 10 ] || die "the pane command did not settle in $pane_id (foreground: ${pg:-none})" 70
+    pg=$(run_pane "$pane_id" "$@")
     herdr pane report-agent "$pane_id" --source "$source_id" --agent "$agent_label" --state unknown --seq 1 >/dev/null
     herdr agent rename "$pane_id" "$name" >/dev/null
     herdr pane report-metadata "$pane_id" --source "$source_id" --agent "$agent_label" --title "$title" >/dev/null
@@ -152,6 +164,7 @@ case $cmd in
           msg=(); [ -z "$reason" ] || msg=(--message "$reason")
           exec 9>"$state_dir/.lock"; flock 9
           seq=$(( $(field "$id" .seq) + 1 ))
+          report_reason "$pane" "$hs" "$reason" || true
           herdr pane report-agent "$pane" --source "$source_id" --agent "$agent_label" --state "$hs" --seq "$seq" "${msg[@]}" >/dev/null || true
           set_record "$id" '.status = $s | .seq = ($q | tonumber)' --arg s "$st" --arg q "$seq"
           exec 9>&-
@@ -261,12 +274,34 @@ case $cmd in
         sf=$(jq -r .status_file "$f")
         st=$(jq -r '.state // empty' "$sf" 2>/dev/null || true)
         if [ -n "$st" ]; then
+          info=$(herdr pane process-info --pane "$pane" 2>/dev/null) || info='{}'
+          pg=$(jq -r '.result.process_info.foreground_processes[0].cmdline // empty' <<<"$info")
+          if [ -z "$pg" ] || [ "$pg" != "$(jq -r '.herdr.foreground // empty' "$f")" ]; then
+            # A restored shell cannot hold a custom agent: Herdr releases it on the next idle
+            # shell check. Restore only the inert mirror placeholder, never a runtime or a
+            # command in a foreign foreground process. pane run itself has no shell guard.
+            if jq -e '.result.process_info | .shell_pid as $pid | .foreground_processes |
+                length == 1 and .[0].pid == $pid and (.[0].name | IN("bash", "zsh", "fish", "sh", "dash", "ksh"))' <<<"$info" >/dev/null; then
+              pg=$(run_pane "$pane" "$(command -v sleep)" infinity)
+            else
+              systemctl "${user_unit[@]}" stop "agent-runtime-herdr-follow-$id.service" 2>/dev/null || true
+              set_record "$id" '.status = "lost"'
+              echo "$id: lost (mirror pane is missing or has a foreign command; nothing re-assigned)"
+              continue
+            fi
+          fi
           hs=$(mirror_hs "$st"); reason=$(jq -r '.reason // empty' "$sf" 2>/dev/null || true)
           [ "$hs" = blocked ] && reason=$(mirror_reason "$st" "$reason")
           msg=(); [ -z "$reason" ] || msg=(--message "$reason")
           seq=$(( $(jq -r .seq "$f") + 1 ))
+          report_reason "$pane" "$hs" "$reason"
           herdr pane report-agent "$pane" --source "$source_id" --agent "$agent_label" --state "$hs" --seq "$seq" "${msg[@]}" >/dev/null
-          set_record "$id" '.status = $s | .seq = ($q | tonumber)' --arg s "$st" --arg q "$seq"
+          # Names belong to the old foreground process and do not survive Herdr's restored shell.
+          herdr agent rename "$pane" "$(jq -r .herdr.name "$f")" >/dev/null
+          digest=$(jq -r .template_digest "$f")
+          title="$(jq -r .task_ref "$f") rt=$id tpl=${digest:0:12} (mirror)"
+          herdr pane report-metadata "$pane" --source "$source_id" --agent "$agent_label" --title "$title" >/dev/null
+          set_record "$id" '.status = $s | .seq = ($q | tonumber) | .herdr.foreground = $fg' --arg s "$st" --arg q "$seq" --arg fg "$pg"
           echo "$id: re-reported mirror ($hs)"
         else
           systemctl "${user_unit[@]}" stop "agent-runtime-herdr-follow-$id.service" 2>/dev/null || true
