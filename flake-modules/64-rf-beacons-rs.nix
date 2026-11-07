@@ -31,7 +31,7 @@
           { nativeBuildInputs = with pkgs; [ bash wireshark-cli gawk coreutils gnugrep diffutils rfBeaconsRs ]; }
           ''
             cd ${../.}
-            for f in beacon beacon-hidden; do
+            for f in beacon beacon-hidden beacon-escape; do
               p=modules/rf-lab/fixtures/$f.pcap
               rust=$(rf-beacons-rs "$p" ${rfBeaconsRs}/share/rf-beacons-rs/oui-sample.csv --text)
               shark=$(bash scripts/rf-beacons-table.sh "$p")

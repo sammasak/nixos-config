@@ -84,7 +84,41 @@ def beacon_hidden():
     return frames
 
 
-FIXTURES = {"beacon": beacon, "deauth": deauth, "disassoc": disassoc, "beacon-hidden": beacon_hidden}
+def beacon_escape():
+    """SSIDs the Rust table escapes beyond C0/C1 (rf-proto#6 escape_ssid), which rf:beacons must render
+    the same: a literal backslash (so "\\x0a" cannot pass for an escaped newline), a bidi override that
+    would reorder the operator's line, invisible marks (zero-width space, soft hyphen, BOM), a line
+    separator, an SSID that is not UTF-8 (every byte \\xNN), and CJK text that must survive. Fixed
+    timestamps, so a rerun is byte-identical."""
+    ssids = [
+        ("02:00:00:00:00:21", b"a\\x0ab"),
+        ("02:00:00:00:00:22", "invoice\u202efdp.exe".encode()),
+        ("02:00:00:00:00:23", "a\u200bb\u00adc\ufeffd".encode()),
+        ("02:00:00:00:00:24", "line\u2028break".encode()),
+        ("02:00:00:00:00:25", b"\xff\xfeok"),
+        ("02:00:00:00:00:26", b"\xed\xa0\x80x"),
+        ("02:00:00:00:00:27", "日本-ap".encode()),
+    ]
+    frames = []
+    for i, (ap, ssid) in enumerate(ssids):
+        frame = (
+            Dot11(type=0, subtype=BEACON_SUBTYPE, addr1="ff:ff:ff:ff:ff:ff", addr2=ap, addr3=ap)
+            / Dot11Beacon(cap="ESS")
+            / Dot11Elt(ID="SSID", info=ssid)
+            / Dot11Elt(ID="DSset", info=bytes([1]))
+        )
+        frame.time = 1700000100 + i
+        frames.append(frame)
+    return frames
+
+
+FIXTURES = {
+    "beacon": beacon,
+    "deauth": deauth,
+    "disassoc": disassoc,
+    "beacon-hidden": beacon_hidden,
+    "beacon-escape": beacon_escape,
+}
 
 
 def main(names):
