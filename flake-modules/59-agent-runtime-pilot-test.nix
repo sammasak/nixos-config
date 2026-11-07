@@ -27,7 +27,7 @@
         in
         assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" ]) "MSI admits only the credential-free Rust pilot";
         assert expect (rt.host.maxConcurrentInstances == 2) "bounded two-instance admission";
-        assert expect (rt.host.reserve == { memoryMiB = 8192; diskMiB = 51200; }) "retain 8 GiB RAM and 50 GiB disk for host workloads";
+        assert expect (rt.host.reserve == { cpus = 2; memoryMiB = 8192; diskMiB = 51200; }) "retain 2 logical CPUs, 8 GiB RAM and 50 GiB disk for host workloads";
         assert expect (tpl.policies.network == { egress = "none"; allow = [ ]; }) "no network egress";
         assert expect (tpl.policies.capabilities == [ ] && tpl.policies.privateSources == [ ]) "no credentials or privileged capabilities";
         assert expect (tpl.policies.resources.memoryMiB == 3072 && tpl.policies.resources.cpus == 2) "reuse the pilot template resource cap (MSI headroom still needs live validation)";
@@ -60,7 +60,7 @@
         in
         assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" "claude-coder" ]) "acer-swift admits exactly rust-pilot then claude-coder";
         assert expect (rt.host.maxConcurrentInstances == 1) "one instance at a time";
-        assert expect (rt.host.reserve == { memoryMiB = 4096; diskMiB = 51200; }) "the reserve keeps 4 GiB and 50 GiB free";
+        assert expect (rt.host.reserve == { cpus = 0; memoryMiB = 4096; diskMiB = 51200; }) "the reserve keeps 4 GiB and 50 GiB free and does not cap host CPUs";
         assert expect (rt.host.allowedMountRoots == [ ]) "no host mounts";
         assert expect (tpl.policies.network == { egress = "none"; allow = [ ]; }) "no network";
         assert expect (tpl.policies.capabilities == [ ] && tpl.policies.privateSources == [ ]) "no credential";

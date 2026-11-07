@@ -371,7 +371,9 @@ pkgs.testers.runNixOSTest {
 
   nodes.machine = {
     virtualisation.memorySize = 4096;
-    virtualisation.cores = 2;
+    # Three concurrent instances each reserve one logical CPU; leave one host
+    # CPU available so admission exercises the configured concurrency cap.
+    virtualisation.cores = 4;
     virtualisation.diskSize = 4096;
     # assign roots the sources with nix build --out-link, which needs them registered in the VM's store;
     # the egress template's package closure must be present too (the manifest only names it as a string)

@@ -17,13 +17,13 @@ in
   homelab.msiPowerSchedule.selfShutdown.enable = true;
 
   # The existing inventory lists 32 GiB RAM, but is not a live capacity
-  # reading. Runtime admission checks MemAvailable and free disk before each
-  # create; measure CPU, disk and Ollama/k3s headroom before activation.
+  # reading. Runtime admission checks CPU, MemAvailable and free disk before
+  # each create; measure Ollama/k3s headroom before activation.
   sam.agentRuntime.host = {
     enable = true;
     eligibleTemplates = [ "rust-pilot" ];
     maxConcurrentInstances = 2;
-    reserve = { memoryMiB = 8192; diskMiB = 51200; };
+    reserve = { cpus = 2; memoryMiB = 8192; diskMiB = 51200; };
   };
 
   sam.profile = vars;
