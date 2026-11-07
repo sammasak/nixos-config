@@ -70,10 +70,10 @@ foreground() { herdr pane process-info --pane "$1" | jq -r '.result.process_info
 run_pane() { # PANE ARGV...; print the settled foreground command
   local pane=$1; shift
   local previous pg='' stable=0 current
-  previous=$(foreground "$pane")
-  herdr pane run "$pane" "exec $(printf '%q ' "$@")" >/dev/null
+  previous=$(foreground "$pane") || return
+  herdr pane run "$pane" "exec $(printf '%q ' "$@")" >/dev/null || return
   for _ in $(seq 200); do
-    current=$(foreground "$pane")
+    current=$(foreground "$pane") || return
     if [ -n "$current" ] && [ "$current" != "$previous" ] && [ "$current" = "$pg" ]; then stable=$((stable + 1)); else stable=0; fi
     pg=$current; [ "$stable" -lt 10 ] || break; sleep 0.1
   done
