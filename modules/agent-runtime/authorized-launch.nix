@@ -34,10 +34,12 @@ in
     }
     (lib.mkIf cfg.authorizedLaunch.enable {
       environment.systemPackages = [ tools.authorizedStart ];
-      # Exactly one command, the wrapper's store path: no wildcard, no agent-runtime-instance.
+      # Exactly one command, the wrapper's store path, as root only: no wildcard, no
+      # agent-runtime-instance, and not the extraRules default runAs "ALL:ALL" (any user or group).
       security.sudo.extraRules = [
         {
           users = [ cfg.authorizedLaunch.user ];
+          runAs = "root";
           commands = [
             {
               command = wrapper;

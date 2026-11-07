@@ -12,22 +12,28 @@ host_policy=/etc/agent-runtime/host.json
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# A single structured audit line to stdout for every decision; nothing here is secret.
+# A single structured audit line for every decision, to stdout for the caller and to the journal
+# (tag agent-runtime-authorized-start), so the host keeps the record whatever the caller does with its
+# output; nothing here is secret. Returns the journal write's status: an authorized start refuses
+# without a record (below), a refusal or no-op is reported regardless.
 audit() {  # ID TEMPLATE TASK DIGESTS DECISION REASON
-  jq -nc --arg at "$(now)" --arg id "$1" --arg template "$2" --arg task "$3" \
+  local line
+  line=$(jq -nc --arg at "$(now)" --arg id "$1" --arg template "$2" --arg task "$3" \
     --argjson digests "$4" --arg decision "$5" --arg reason "$6" \
     '{kind: "agent-runtime-authorized-start", at: $at, id: $id, template: $template,
-      task: $task, digests: $digests, decision: $decision, reason: $reason}'
+      task: $task, digests: $digests, decision: $decision, reason: $reason}')
+  printf '%s\n' "$line"
+  logger -t agent-runtime-authorized-start -- "$line"
 }
 
 id='' tmpl='' task='' digests=null
 refuse() {  # REASON: audit the refusal and exit non-zero, having started nothing
-  audit "$id" "$tmpl" "$task" "$digests" refused "$1"
+  audit "$id" "$tmpl" "$task" "$digests" refused "$1" || true
   exit 1
 }
 
 # Exactly one argument, a runtime id: no flags, no payload, no second path.
-[ $# -eq 1 ] || { audit "" "" "" null refused "exactly one argument (a runtime id) is required"; exit 2; }
+[ $# -eq 1 ] || { audit "" "" "" null refused "exactly one argument (a runtime id) is required" || true; exit 2; }
 id=$1
 
 # The same strict id charset as agent-runtime-instance (a DNS label, no `/`, no `..`).
@@ -45,7 +51,7 @@ case $state in
   # Already acted on: never re-start (start would refuse anyway). Idempotent no-op, exit 0.
   starting | running | cancelling | succeeded | failed | timed-out | oom-killed | cancelled)
     audit "$id" "$(jq -r '.template.name // ""' <<<"$s")" "$(jq -r '.task // ""' <<<"$s")" \
-      "$(jq -c '.template.digests // null' <<<"$s")" noop "instance is already $state; not re-started"
+      "$(jq -c '.template.digests // null' <<<"$s")" noop "instance is already $state; not re-started" || true
     exit 0 ;;
   *) refuse "instance is $state, not created" ;;
 esac
@@ -75,6 +81,8 @@ entrypoint=$(jq -r '.entrypoint // ""' "$manifest")
 [[ $entrypoint == /nix/store/* ]] || refuse "entrypoint is not in the store"
 [ -x "$entrypoint" ] || refuse "entrypoint $entrypoint is not an executable file"
 
-audit "$id" "$tmpl" "$task" "$digests" authorized "starting with the manifest entrypoint $entrypoint"
+# no start without its audit record on the host
+audit "$id" "$tmpl" "$task" "$digests" authorized "starting with the manifest entrypoint $entrypoint" \
+  || { echo "agent-runtime-authorized-start: could not write the audit record to the journal; starting nothing" >&2; exit 1; }
 # --wait so the sudo caller gets the run's outcome as the exit code; no other argument is passed.
 exec "$instance" start "$id" --wait -- "$entrypoint"
