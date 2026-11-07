@@ -76,3 +76,11 @@ tree_of() {
   # shellcheck disable=SC2034  # the nameref target
   tree_out=$(git write-tree)
 }
+# #184: a bundle argument as the export directory: the bundle itself, or an exports/<id>.runs directory
+# (its `latest`), resolved once to the real path so a later `latest` move cannot change it mid-check
+resolve_bundle() {
+  if [ -f "$1/bundle.json" ]; then readlink -f "$1"
+  elif [ -f "$1/latest/bundle.json" ]; then readlink -f "$1/latest"
+  else printf '%s' "$1"
+  fi
+}
