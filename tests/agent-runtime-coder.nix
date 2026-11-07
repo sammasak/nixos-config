@@ -31,6 +31,7 @@ let
   manifest = "${evaluated.manifestDir}/claude-coder.json";
   I = lib.getExe runtime.tools.instance;
   VERIFY = lib.getExe runtime.tools.verify;
+  PROMOTE = lib.getExe runtime.tools.promote;
   env = pkgsU.buildEnv { name = "agent-runtime-coder-env"; paths = tpl.packages; };
   run = lib.getExe (builtins.head tpl.packages);
   repo = tpl.repositories.rf-proto.path;
@@ -228,6 +229,28 @@ pkgs.testers.runNixOSTest {
         assert src["base"]["rev"] == "${rfProto.rev}", src
         assert "test result: ok" in machine.succeed(f"cat {E}/edit/output/cargo-test.log")
         print("VERIFIED", json.dumps(v))
+
+        # PROMOTION (#169 acceptance 3): the trusted host applies the VERIFIED patch onto a clean checkout
+        # at the pinned base, commits it on a branch, and records the commit sha + bundle digest -- no push,
+        # no gh, no token. The checkout is the pinned source content as a local git repo.
+        machine.succeed("rm -rf /tmp/wt && cp -rp ${rfProto} /tmp/wt && chmod -R u+w /tmp/wt")
+        # add -A -f to mirror the verifier's tree_of (force, ignoring .gitignore), so the base tree matches
+        machine.succeed("git -C /tmp/wt init -q && git -C /tmp/wt add -A -f && git -C /tmp/wt -c user.name=t -c user.email=t@t commit -q -m base")
+        out = machine.succeed(f"${PROMOTE} --bundle {E}/edit --template {M} --into /tmp/wt --branch promote-169")
+        p = json.loads(out)
+        assert p["kind"] == "agent-runtime-promoted" and p["source"] == "rf-proto", p
+        assert p["pushed"] is False and p["changedPaths"] == ["src/lib.rs"] and p["bundleSha256"], p
+        # the promoted branch holds exactly the verified artifact: its tree is the verifier's tree
+        assert machine.succeed("git -C /tmp/wt rev-parse --abbrev-ref HEAD").strip() == "promote-169"
+        assert machine.succeed("git -C /tmp/wt rev-parse 'HEAD^{tree}'").strip() == p["tree"] == src["tree"], p
+        assert machine.succeed("git -C /tmp/wt show HEAD:src/lib.rs") != machine.succeed("git -C /tmp/wt show HEAD~1:src/lib.rs"), "the promoted file must differ from the base"
+        assert "No GitHub token entered the runtime" in machine.succeed("git -C /tmp/wt log -1 --format=%B")
+        # promote refuses an UNVERIFIED (tampered) bundle: verify runs first, the worktree is untouched
+        machine.succeed(f"rm -rf /tmp/tb && cp -r {E}/edit /tmp/tb && printf x >> /tmp/tb/sources/rf-proto.patch")
+        rc, out = machine.execute(f"${PROMOTE} --bundle /tmp/tb --template {M} --into /tmp/wt --branch nope 2>&1")
+        assert rc == 9 and "sha256" in out, (rc, out)
+        machine.succeed("! git -C /tmp/wt rev-parse --verify nope 2>/dev/null")
+        machine.succeed("rm -rf /tmp/wt /tmp/tb")
         done("edit", "")
 
     with subtest("the verifier refuses a tampered, incomplete, unlisted, escaping, oversized, malformed, foreign or mispinned bundle"):
