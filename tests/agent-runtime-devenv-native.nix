@@ -192,11 +192,11 @@ pkgs.testers.runNixOSTest {
         s = st("mb")
         # the payload asserts the nix build failed, so a succeeded state proves cold realization is impossible here
         assert s["state"] == "succeeded", s  # payload exits 0 only when `nix build` FAILED (test "$rc" != 0)
-        log = machine.succeed(f"cat {V}/mb/vol/output/mode-b.log")
-        assert "daemon_socket_present=no" in log and "store_writable=no" in log and "net_ifaces=lo" in log, log
-        assert "nix build exit=" in log and "nix build exit=0" not in log, log
+        outlog = machine.succeed(f"cat {V}/mb/vol/output/mode-b.log")
+        assert "daemon_socket_present=no" in outlog and "store_writable=no" in outlog and "net_ifaces=lo" in outlog, outlog
+        assert "nix build exit=" in outlog and "nix build exit=0" not in outlog, outlog
         measures["mode_b"] = "unsupported: no nix daemon socket, read-only /nix/store, no network"
-        print("mode(b) record:\n" + log)
+        print("mode(b) record:\n" + outlog)
         machine.succeed("${Itool} destroy mb --discard"); clean("mb")
 
     with subtest("boundary: a no-capability container root cannot write the store, remount, or escape; only lo; secrets denied"):
@@ -212,8 +212,8 @@ pkgs.testers.runNixOSTest {
         machine.succeed("${Itool} start fl --wait -- ${fill} || true")
         s = st("fl")
         assert s["state"] in ("failed", "succeeded"), s
-        log = machine.succeed("${Itool} logs fl")
-        assert "No space left on device" in log, log
+        outlog = machine.succeed("${Itool} logs fl")
+        assert "No space left on device" in outlog, outlog
         after = int(machine.succeed(f"df -m --output=used {V} | tail -1").strip())
         assert after - before <= 96, (before, after)   # the fixed-size image caps host growth
         print("fill: host /var/lib MiB delta", after - before)
