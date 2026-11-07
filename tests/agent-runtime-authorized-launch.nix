@@ -13,11 +13,17 @@ let
     touch "$AGENT_RUNTIME_OUTPUT/launched"
     echo "authorized-launch probe ran as $(id -u):$(id -g)"
   '';
-  tiny = {
+  # a run that stays up until cancelled: marks that it started, then sleeps past any test step
+  slowProbe = pkgs.writeShellScriptBin "agent-launch-slow" ''
+    touch "$AGENT_RUNTIME_OUTPUT/started"
+    sleep 600
+    touch "$AGENT_RUNTIME_OUTPUT/finished"
+  '';
+  template = entry: {
     role = { name = "quality"; harness = "codex"; };
     skillsSource = skills;
     skills.lean-code = { };
-    packages = [ probe pkgs.bash pkgs.coreutils ];
+    packages = [ entry pkgs.bash pkgs.coreutils ];
     filesystem = {
       workspaceBudget = { sizeMiB = 16; inodes = 1000; };
       home = { sizeMiB = 16; inodes = 1000; };
@@ -27,23 +33,29 @@ let
     };
     resources = { cpus = 1; memoryMiB = 64; tasksMax = 64; timeoutMinutes = 5; };
   };
+  tiny = template probe;
+  slow = template slowProbe;
   # host policy and templates, shared by the standalone manifest eval (for the shipped closure)
   # and the node config (which also enables authorizedLaunch through the real module).
   baseRt = {
     sam.agentRuntime = {
       host = {
         enable = true;
-        eligibleTemplates = [ "tiny" ];
+        eligibleTemplates = [ "tiny" "slow" ];
         maxConcurrentInstances = 1;
         reserve = { memoryMiB = 256; diskMiB = 512; };
       };
-      templates.tiny = tiny;
+      templates = { inherit tiny slow; };
     };
   };
   evaluated = runtime.evalManifests { modules = [ baseRt ]; };
   m = evaluated.manifestData.tiny;
   M = "${evaluated.manifestDir}/tiny.json";
-  env = pkgs.buildEnv { name = "agent-runtime-authorized-launch-env"; paths = evaluated.templates.tiny.packages; };
+  MS = "${evaluated.manifestDir}/slow.json";
+  env = pkgs.buildEnv {
+    name = "agent-runtime-authorized-launch-env";
+    paths = evaluated.templates.tiny.packages ++ evaluated.templates.slow.packages;
+  };
 in
 pkgs.testers.runNixOSTest {
   name = "agent-runtime-authorized-launch";
@@ -68,6 +80,7 @@ pkgs.testers.runNixOSTest {
     import json
 
     M = "${M}"
+    MS = "${MS}"
     HOST = "/etc/agent-runtime/host.json"
     V = "/var/lib/agent-runtime"
     SENTINEL = "/etc/agent-runtime-host-sentinel"
@@ -88,10 +101,32 @@ pkgs.testers.runNixOSTest {
         # the coordinator user, non-interactive sudo: NOPASSWD only for the wrapper's exact path
         return f"runuser -u coordinator -- sudo -n {cmd}"
 
+    # config drift: what the host trusts, hashed before every subtest and compared after the last
+    def trusted():
+        return machine.succeed(
+            f"readlink -f {HOST}; sha256sum $(readlink -f {HOST}) /etc/sudoers {M} {MS} {W} {I}"
+        )
+    before = trusted()
+
     def clean(i):
         machine.succeed(f"! findmnt -rn | grep -qE 'agent-runtime[-/]{i}(/| |$)'")
         machine.succeed(f"! systemctl list-units --all --no-legend 'agent-runtime-{i}.service' | grep -q .")
         machine.succeed(f"test ! -e {V}/{i} -a ! -e /run/agent-runtime/{i}")
+
+    with subtest("least privilege: the coordinator's sudo grants exactly the wrapper, nothing else"):
+        listing = machine.succeed("runuser -u coordinator -- sudo -n -l")
+        granted = [l.strip() for l in listing.splitlines() if l.strip().startswith("(")]
+        assert granted == [f"(root) NOPASSWD: {W}"], listing
+        machine.fail("id -nG coordinator | grep -qw wheel")
+        # as root only: the wrapper as another user or group is not granted
+        for runas in ["-u nobody", "-u coordinator", "-g wheel"]:
+            rc, out = machine.execute(f"runuser -u coordinator -- sudo -n {runas} {W} good")
+            assert rc != 0, (runas, rc, out)
+        for cmd in [f"{I} status good", f"{I} create x --template {M} --host {HOST} --task t-x",
+                    "true", "/bin/sh -c id", f"{I} cancel good", f"{I} destroy good --discard"]:
+            rc, out = machine.execute(coord(cmd))
+            assert rc != 0, (cmd, rc, out)
+        machine.succeed(f"test ! -e {V}/x")
 
     with subtest("valid: the wrapper starts a created, eligible instance and it succeeds"):
         machine.succeed(f"{I} create good --template {M} --host {HOST} --task sammasak/nixos-config#170")
@@ -154,6 +189,42 @@ pkgs.testers.runNixOSTest {
         assert s2["started"]["invocation"] == inv, (s1, s2)
         machine.succeed(f"{I} destroy dup --discard")
         clean("dup")
+
+    with subtest("cancellation: root cancels a wrapper-started run; it is cleaned up and never re-started"):
+        machine.succeed(f"{I} create slow --template {MS} --host {HOST} --task t-slow")
+        # the coordinator's sudo call blocks for the run (--wait); run it detached and keep its exit code
+        machine.succeed(
+            "systemd-run --unit=coord-slow --property=RemainAfterExit=yes --property=Type=exec "
+            "--setenv=PATH=/run/wrappers/bin:/run/current-system/sw/bin "
+            f"sh -c '{coord(W + ' slow')} >/tmp/slow.out 2>&1; echo $? >/tmp/slow.rc'"
+        )
+        machine.wait_until_succeeds(
+            f"{I} status slow | jq -e '.state == \"running\"' || test -s /tmp/slow.rc", timeout=120)
+        print(machine.succeed("cat /tmp/slow.out /tmp/slow.rc 2>/dev/null || true"))
+        assert st("slow")["state"] == "running", (st("slow"), machine.succeed(f"{I} logs slow || true"))
+        machine.wait_until_succeeds(f"test -f {V}/slow/vol/output/started", timeout=60)
+        machine.succeed(f"{I} cancel slow")
+        machine.wait_until_succeeds("test -s /tmp/slow.rc", timeout=120)
+        rc = int(machine.succeed("cat /tmp/slow.rc").strip())
+        assert rc != 0, (rc, machine.succeed("cat /tmp/slow.out"))
+        assert st("slow")["state"] == "cancelled", st("slow")
+        machine.succeed(f"test ! -e {V}/slow/vol/output/finished")
+        # the cancelled run is acted on: a second wrapper call is a no-op, it never restarts it
+        out = machine.succeed(coord(f"{W} slow"))
+        assert '"decision":"noop"' in out, out
+        assert st("slow")["state"] == "cancelled", st("slow")
+        machine.succeed(f"{I} destroy slow --discard")
+        clean("slow")
+
+    with subtest("audit: every decision is in the journal, not only the caller's stdout"):
+        lines = machine.succeed("journalctl -b -t agent-runtime-authorized-start -o cat").splitlines()
+        seen = {(r["id"], r["decision"]) for r in map(json.loads, lines)}
+        for want in [("good", "authorized"), ("stale", "refused"), ("forge", "refused"),
+                     ("dup", "authorized"), ("dup", "noop"), ("slow", "authorized"), ("slow", "noop")]:
+            assert want in seen, (want, sorted(seen))
+
+    with subtest("no config drift: host policy, sudoers, manifests and tools are as installed"):
+        assert trusted() == before, (before, trusted())
 
     with subtest("cleanup: no instance is left and the host sentinel is untouched"):
         machine.succeed(f"test -z \"$(ls -A {V} 2>/dev/null | grep -v '^exports$' || true)\"")

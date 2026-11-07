@@ -26,10 +26,11 @@ let
     ++ (with pkgs; [ bash gawk gnugrep gnused diffutils e2fsprogs procps systemd inetutils iproute2 nftables getent ])
   );
   # #170: the narrow privileged entry point. It derives the payload from the manifest, so the
-  # instance store path is substituted in (not a PATH lookup) and jq/coreutils are its only inputs.
+  # instance store path is substituted in (not a PATH lookup); jq/coreutils, and logger for the
+  # journal copy of each audit line, are its only inputs.
   authorizedStart = pkgs.writeShellApplication {
     name = "agent-runtime-authorized-start";
-    runtimeInputs = [ pkgs.coreutils pkgs.jq ];
+    runtimeInputs = [ pkgs.coreutils pkgs.jq pkgs.util-linux ];
     text = builtins.replaceStrings [ "@instance@" ] [ "${lib.getExe instance}" ] (
       builtins.readFile ./runtime/authorized-start.sh
     );

@@ -67,7 +67,11 @@ unless all hold:
 Only then does it `exec agent-runtime-instance start <id> --wait -- <entrypoint>`,
 where `<entrypoint>` is read from the manifest and the instance tool's path is
 Nix-interpolated (never a PATH lookup). It emits one structured JSON audit line
-(`at`, `id`, `template`, `task`, `digests`, `decision`, `reason`) per invocation.
+(`at`, `id`, `template`, `task`, `digests`, `decision`, `reason`) per invocation,
+to the caller's stdout and to the host journal
+(`journalctl -t agent-runtime-authorized-start`), so the host keeps the record
+whatever the caller does with its output. An authorized start whose journal write
+fails starts nothing.
 The `entrypoint` field itself is a first-class, **digest-covered** manifest field
 (`manifestOf` in `modules/agent-runtime/default.nix`), so a payload swap changes
 the template digest and is caught by the digest re-check.
@@ -90,6 +94,7 @@ which, and only which, installs the wrapper and adds:
 # rendered by modules/agent-runtime/authorized-launch.nix
 security.sudo.extraRules = [{
   users = [ "coordinator" ];
+  runAs = "root";
   commands = [{
     command = "/nix/store/<hash>-agent-runtime-authorized-start/bin/agent-runtime-authorized-start";
     options = [ "NOPASSWD" ];
@@ -97,8 +102,8 @@ security.sudo.extraRules = [{
 }];
 ```
 
-Exactly one command, the wrapper's exact store path — no wildcard, no
-`agent-runtime-instance`, no `start`. When `authorizedLaunch.enable` is false (the
+Exactly one command, the wrapper's exact store path, as root only — no wildcard, no
+`agent-runtime-instance`, no `start`, no other target user or group. When `authorizedLaunch.enable` is false (the
 default on every host), nothing is installed and no sudo rule is added. The
 module asserts `authorizedLaunch.enable -> host.enable` and that `user` is set.
 
@@ -127,4 +132,20 @@ tiny, offline, credential-free template: a valid start succeeds; a `start`-level
 payload the coordinator might pass (`start <id> -- /bin/sh -c 'touch /host-pwned'`)
 is refused by sudo and leaves no file; a forged id, a non-eligible template, and a
 tampered recorded digest each fail closed; a duplicate run starts nothing; and the
-host sentinel is untouched with no instance left behind.
+host sentinel is untouched with no instance left behind. It also checks:
+
+- **least privilege:** `sudo -l` for the coordinator lists exactly
+  `(root) NOPASSWD: <wrapper store path>` (the rule sets `runAs = "root"`: the
+  `extraRules` default `ALL:ALL` would let it run the wrapper as any user or
+  group); `sudo -u nobody`/`-u coordinator`/`-g wheel` with the wrapper is
+  refused; the coordinator is not in `wheel`, and
+  `agent-runtime-instance status`/`create`/`cancel`/`destroy`, `true` and
+  `/bin/sh -c id` through `sudo -n` are all refused;
+- **cancellation:** a long-running instance the wrapper started is cancelled by
+  root; the coordinator's blocked call returns non-zero, the run never finishes,
+  a second wrapper call is a no-op (a cancelled instance is never re-started), and
+  `destroy` leaves no mount, unit or state behind;
+- **audit:** the journal holds the `authorized`, `refused` and `noop` decisions of
+  the runs above;
+- **no config drift:** the host policy (path and hash), `/etc/sudoers`, both
+  manifests and the two tools hash the same after every subtest as before them.
