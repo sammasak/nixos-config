@@ -157,7 +157,8 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"test -f {V}/good/vol/workspace/workspace/fixture/.hook-ran-in-guest")
         machine.succeed("test ! -e ${dn.fixtureSrc}/.devenv-shell-hook-ran -a ! -e ${dn.fixtureSrc}/.hook-ran-in-guest")
         measures["cold"] = {"runtimeUSec": s["result"]["runtimeUSec"], "memPeakBytes": s["result"]["memoryPeakBytes"],
-                            "disk_bytes": int(machine.succeed(f"du -sbx {V}/good/vol | cut -f1").strip())}
+                            "workspace_kib": int(machine.succeed(f"du -sk {V}/good/vol/workspace/workspace 2>/dev/null | cut -f1").strip() or "0"),
+                            "store_closure_bytes": int(machine.succeed("${pkgs.nix}/bin/nix --extra-experimental-features nix-command path-info -S ${env} 2>/dev/null | awk '{print $NF}'").strip() or "0")}
         print("mode(a) cold:", measures["cold"])
         print(machine.succeed(f"cat {o}/result.json"))
         machine.succeed("${Itool} destroy good --discard"); clean("good")
@@ -248,7 +249,6 @@ pkgs.testers.runNixOSTest {
         machine.succeed("! machinectl list --no-legend | grep -q agent-runtime-")
         machine.succeed("! losetup -l -n -O BACK-FILE | grep -q agent-runtime")
 
-    measures["store_closure_bytes"] = int(machine.succeed("du -sbx /nix/store/*-devenv-native-env 2>/dev/null | cut -f1 || echo 0").strip() or "0")
     print("=== DEVENV-NATIVE MEASURES ==="); print(json.dumps(measures, indent=2))
   '';
 }
