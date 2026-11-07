@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The AP table rf:beacons prints for a capture: one row per BSSID (channel, strongest dBm, beacon
 # count, SSID), from tshark's fields. The SSID is untrusted bytes from anyone in radio range, so it is
-# never printed raw: control bytes (C0, DEL, and C1 in its UTF-8 form) become \xNN, and an empty
+# never printed raw: C0/DEL controls become \xNN and a UTF-8 C1 (U+0080-009F) becomes \u{00NN} (rf-proto#6, disjoint from a raw high byte), and an empty
 # (`<MISSING>` from tshark) or all-zero SSID is `<hidden>`. Rows sort by channel, then BSSID.
 #
 # usage: rf-beacons-table.sh CAPTURE.pcap   (tshark and gawk on PATH)
@@ -16,7 +16,7 @@ tshark -r "$1" -Y 'wlan.fc.type_subtype==0x08' -T fields \
           c = strtonum("0x" substr(h, i, 2))
           d = strtonum("0x" substr(h, i + 2, 2))
           if (c < 32 || c == 127) r = r sprintf("\\x%02x", c)
-          else if (c == 194 && d >= 128 && d <= 159) { r = r sprintf("\\x%02x", d); i += 2 }
+          else if (c == 194 && d >= 128 && d <= 159) { r = r sprintf("\\u{00%02x}", d); i += 2 }
           else r = r sprintf("%c", c)
         }
         return r
