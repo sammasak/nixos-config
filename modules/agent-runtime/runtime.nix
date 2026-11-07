@@ -44,4 +44,6 @@ adapter
   pane = standalone "pane" [ instance ];
   # the trusted host's check of an exported bundle before review or promotion (#169); never runs the patch
   verify = tool "verify" [ pkgs.gawk ];
+  # verify-gated promotion of a bundle onto a checkout (#169); records the commit sha, no fetch/push/token
+  promote = tool "promote" [ (tool "verify" [ pkgs.gawk ]) ];
 }

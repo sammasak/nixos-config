@@ -106,7 +106,7 @@ change, and the run itself, are owner-gated.
 
    It prints `{kind: "agent-runtime-verified", bundleSha256, sources: {name: {base, patchSha256, tree, changedPaths}}}`.
 3. **An independent reviewer** reads the verified patch against the pinned revision, re-runs the project's tests on it in a fresh instance, and grades it.
-4. **Promotion is the trusted host's:** apply the verified patch to a clean clone at the base rev, commit, and push a branch with the host's own `gh`, then open the PR. The runtime never holds a GitHub token, and nothing is pushed or merged from inside it.
+4. **Promotion is the trusted host's:** `agent-runtime-promote --bundle <dir> --template <manifest> --into <clean clone at the base rev> --branch <name>` re-verifies the bundle (refusing an unverified or no-op one), applies the verified patch, confirms the staged tree equals the verifier's, commits it on the branch, and prints a record with the new commit sha and the bundle digest. Then push that branch with the host's own `gh` and open the PR. The tool never fetches, pushes, or holds a GitHub token; nothing is pushed or merged from inside the runtime.
 
 ## The supervised live run (owner-gated, not performed here)
 
@@ -283,6 +283,16 @@ git clone https://github.com/sammasak/rf-proto /tmp/rf-proto-verify   # private 
 git -C /tmp/rf-proto-verify checkout d878c58ebaca9c5281ef522b6fbd1761e122dfb6
 git -C /tmp/rf-proto-verify apply /tmp/coder-bundle/coder/sources/rf-proto.patch
 ( cd /tmp/rf-proto-verify && cargo test --offline --locked )   # rf-proto's own test command; stays green
+```
+
+To promote the reviewed artifact, let `agent-runtime-promote` do the apply/commit onto that checkout
+(it re-verifies first and records the commit sha), then push:
+
+```
+git -C /tmp/rf-proto-verify checkout d878c58ebaca9c5281ef522b6fbd1761e122dfb6   # back to the base rev, clean
+agent-runtime-promote --bundle /tmp/coder-bundle/coder --template "$T" \
+  --into /tmp/rf-proto-verify --branch coder/<issue>   # prints the promotion record; no push, no gh
+git -C /tmp/rf-proto-verify push -u origin coder/<issue> && gh pr create ...   # the trusted host's gh
 ```
 
 `d878c58ebaca9c5281ef522b6fbd1761e122dfb6` is the pinned `inputs.rf-proto` rev (flake.lock); `--locked`
