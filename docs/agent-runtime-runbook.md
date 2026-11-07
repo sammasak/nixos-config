@@ -104,7 +104,7 @@ bundle at `exports/<id>` stays where it is.
   `/nix/var/nix/profiles/agent-runtime/templates/templates/`.
 - **Capacity is the host policy**, not per-call: `maxConcurrentInstances`,
   `reserve.cpus`/`memoryMiB`/`diskMiB`. Admission refuses (exit 10) before any mount or
-  unit when memory, instance count or disk would breach it, and after a failed
+  unit when CPU, memory, instance count or disk would breach it, and after a failed
   start or teardown the reservation stays until `destroy`.
 
 ## Host drain and rollback
