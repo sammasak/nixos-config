@@ -143,7 +143,7 @@ pkgs.testers.runNixOSTest {
         src = json.loads(machine.succeed(f"cat {V}/good/run/run.json"))
         assert src["sources"]["fixture"]["resolved"]["rev"] == "${dn.fixtureRev}", src
         assert src["sources"]["fixture"]["resolved"]["by"] == "lock", src
-        machine.succeed("${Itool} start good --wait -- ${dn.run}")
+        machine.succeed("${Itool} start good --wait -- ${lib.getExe dn.run}")
         s = st("good")
         assert s["state"] == "succeeded" and s["result"]["exitStatus"] == 0, s
         o = f"{V}/good/vol/output"
@@ -165,7 +165,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("warm re-run: the projected closure is already in the store, so the second run is faster to start"):
         t0 = time.monotonic_ns()
-        create("warm"); machine.succeed("${Itool} start warm --wait -- ${dn.run}")
+        create("warm"); machine.succeed("${Itool} start warm --wait -- ${lib.getExe dn.run}")
         assert st("warm")["state"] == "succeeded", st("warm")
         measures["warm_total_ms"] = (time.monotonic_ns() - t0) // 1000000
         # host /nix/store growth across a warm run is ~0 (nothing is realized guest-side)
@@ -174,7 +174,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("broken source: the project check fails but the editing shell (projected toolchain) still works"):
         create("brk")
-        rc, out = machine.execute("${Itool} start brk --wait -- ${dn.run} broken")
+        rc, out = machine.execute("${Itool} start brk --wait -- ${lib.getExe dn.run} broken")
         s = st("brk")
         assert s["state"] == "failed" and s["result"]["exitStatus"] != 0, s
         o = f"{V}/brk/vol/output"
