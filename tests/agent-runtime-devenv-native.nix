@@ -207,16 +207,18 @@ pkgs.testers.runNixOSTest {
         machine.succeed("${Itool} destroy pb --discard"); clean("pb")
 
     with subtest("volume bounds: filling the workspace hits ENOSPC inside the instance; host /var/lib stays bounded"):
-        before = int(machine.succeed(f"df -m --output=used {V} | tail -1").strip())
         create("fl")
+        # after create the five fixed-size images are already allocated; filling the
+        # workspace to ENOSPC must not grow the host past that fixed size
+        before = int(machine.succeed(f"df -m --output=used {V} | tail -1").strip())
         machine.succeed("${Itool} start fl --wait -- ${fill} || true")
         s = st("fl")
         assert s["state"] in ("failed", "succeeded"), s
         outlog = machine.succeed("${Itool} logs fl")
         assert "No space left on device" in outlog, outlog
         after = int(machine.succeed(f"df -m --output=used {V} | tail -1").strip())
-        assert after - before <= 96, (before, after)   # the fixed-size image caps host growth
-        print("fill: host /var/lib MiB delta", after - before)
+        assert after - before <= 16, (before, after)   # a full workspace image cannot grow the host beyond its fixed size
+        print("fill: host /var/lib MiB delta across the fill", after - before)
         machine.succeed("${Itool} destroy fl --discard"); clean("fl")
 
     with subtest("single cgroup: every build descendant stays under the run's delegated unit cgroup"):
