@@ -169,7 +169,7 @@ pkgs.testers.runNixOSTest {
         assert r["egress"] == "unreachable" and r["host"] == "remote.test" and r["claudeExit"] is None, r
         machine.succeed(f"test ! -s {V}/probe/vol/output/claude.json")
         machine.succeed("${I} export probe")
-        machine.succeed(f"! grep -rqF DUMMY-egress-169 {V}/exports/probe")
+        machine.succeed(f"! grep -rqF DUMMY-egress-169 {V}/exports/probe.runs")
         machine.succeed("${I} destroy probe")
         machine.succeed("! findmnt -rn | grep -q agent-runtime")
         machine.succeed("! nft list tables | grep -q art_")
