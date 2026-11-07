@@ -705,6 +705,13 @@ case $cmd in
       rm -rf "$tmp"
     }
     trap restore_pending EXIT
+    # SIGKILL or a reboot cannot run restore_pending. Until the outer bundle is published, the
+    # materialization record remains the durable source list even if the inner export consumed it.
+    if [ ! -f "$ws/export-pending" ] && [ -f "$ws/materialized.json" ]; then
+      jq -r '.sources | to_entries[] | select(.value.mode == "rw") | .key' "$ws/materialized.json" \
+        | atomic_json "$ws/export-pending"
+      rm -f "$ws/exported.json"
+    fi
     if [ -f "$ws/export-pending" ]; then
       cp "$ws/export-pending" "$tmp/.export-pending"
       run_capture export "source export failed" agent-runtime-export --root "$ws" --out "$tmp/sources"

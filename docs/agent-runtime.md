@@ -402,7 +402,9 @@ agent-runtime-instance reconcile                      # after a supervisor crash
   between that rename and its record (`ID/exported.json`), the next export adopts the published
   bundle, but only if it is intact (every file matches `bundle.json`, nothing unlisted) and names
   this id and `runId`. Anything else at that path is refused (class `conflict`) and kept, never
-  replaced. `agent-runtime-verify` and `agent-runtime-promote` take a bundle directory, its
+  replaced. If interrupted before publication, a retry reconstructs a consumed source list from
+  the durable materialization record and exports the patch again; a consumed list never means
+  there were no sources. `agent-runtime-verify` and `agent-runtime-promote` take a bundle directory, its
   `latest` link, or the `ID.runs` directory (its `latest`), resolved once to the real path. A
   bundle from before #184, at `STATE/exports/ID`, is left in place; `.` is outside the id
   charset, so the two layouts never meet.

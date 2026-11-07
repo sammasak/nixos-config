@@ -30,6 +30,12 @@ let
   tpl = evaluated.templates.claude-coder;
   manifest = "${evaluated.manifestDir}/claude-coder.json";
   I = lib.getExe runtime.tools.instance;
+  # Kill after the inner export consumed export-pending, before the outer bundle is published.
+  interruptedExport = pkgs.runCommand "agent-runtime-interrupted-export" { } ''
+    substitute ${I} "$out" --replace-fail \
+      'cp -r "$base/vol/output/." "$tmp/output"' 'kill -KILL $$'
+    chmod +x "$out"
+  '';
   VERIFY = lib.getExe runtime.tools.verify;
   PROMOTE = lib.getExe runtime.tools.promote;
   env = pkgsU.buildEnv { name = "agent-runtime-coder-env"; paths = tpl.packages; };
@@ -282,6 +288,10 @@ pkgs.testers.runNixOSTest {
         assert st("again")["export"] == a and runs("again") == [ra], (st("again")["export"], runs("again"))
         before = digest(A)
         done("again", "")
+        # An old flat bundle can coexist with the new layout, without the new metadata fields.
+        legacy = f"{E}/again"
+        machine.succeed(f"cp -rp {A} {legacy} && jq 'del(.runId, .invocation)' {legacy}/bundle.json > /tmp/legacy-bundle.json && mv /tmp/legacy-bundle.json {legacy}/bundle.json")
+        legacy_before = digest(legacy)
         # run B: the same id again
         assert run("again", "${fixtureEdit}")["state"] == "succeeded"
         machine.succeed("${I} export again")
@@ -295,19 +305,68 @@ pkgs.testers.runNixOSTest {
             assert bj["runId"] == r and bj["id"] == "again" and bj["invocation"], bj
         # each verifies against its own source, by its path, through latest, and through the runs dir
         trees = {}
-        for d in [A, B, f"{E}/again.runs/latest", f"{E}/again.runs"]:
+        for d in [A, B, f"{E}/again.runs/latest", f"{E}/again.runs", legacy]:
             rc, out = verify(d, "--require-change")
             assert rc == 0, (d, out)
             trees[d] = json.loads(out)["sources"]["rf-proto"]["tree"]
         assert len(set(trees.values())) == 1, trees  # the same fixture edit: one tree, from each bundle
         assert promote(A, "promote-a")["bundleSha256"] != promote(B, "promote-b")["bundleSha256"]
+        assert promote(legacy, "promote-legacy")["tree"] == trees[legacy]
+        assert promote(f"{E}/again.runs/latest", "promote-latest")["tree"] == trees[B]
+        assert promote(f"{E}/again.runs", "promote-runs")["tree"] == trees[B]
         # an export interrupted after its publish but before its record: the retry adopts the published bundle
         machine.succeed(f"rm {V}/again/exported.json")
+        # A damaged published bundle is kept and refused, without blessing it via exported.json.
+        patch = f"{B}/sources/rf-proto.patch"
+        machine.succeed(f"cp {patch} /tmp/intact.patch && printf x >> {patch}")
+        damaged = digest(B)
+        rc, out = machine.execute("${I} export again 2>&1")
+        assert rc == 12 and "is kept, not replaced" in out, (rc, out)
+        machine.succeed(f"test ! -e {V}/again/exported.json")
+        assert digest(B) == damaged, "refused adoption must preserve the damaged evidence"
+        machine.succeed(f"cp /tmp/intact.patch {patch}")
         machine.succeed("${I} export again")
         assert st("again")["export"]["dir"] == B and runs("again") == sorted([ra, rb]), st("again")["export"]
         assert machine.succeed(f"readlink {E}/again.runs/latest").strip() == rb
         done("again", "")
         assert digest(A) == before and runs("again") == sorted([ra, rb]), "destroy must keep every bundle"
+        assert digest(legacy) == legacy_before, "the legacy flat bundle must stay unchanged"
+
+    with subtest("an instance created before runId support persists its identity across export recovery"):
+        assert run("legacy-instance", "${fixtureEdit}")["state"] == "succeeded"
+        record = f"{V}/legacy-instance/instance.json"
+        machine.succeed(f"jq 'del(.runId)' {record} > /tmp/legacy-instance.json && mv /tmp/legacy-instance.json {record}")
+        machine.succeed("${I} export legacy-instance")
+        original = st("legacy-instance")["export"]
+        rid = original["runId"]
+        assert len(rid) == 32 and machine.succeed(f"cat {V}/legacy-instance/run-id").strip() == rid, original
+        rc, out = verify(original["dir"], "--require-change")
+        assert rc == 0, out
+        machine.succeed(f"rm {V}/legacy-instance/exported.json")
+        machine.succeed("${I} reconcile && ${I} export legacy-instance")
+        assert st("legacy-instance")["export"]["dir"] == original["dir"]
+        assert st("legacy-instance")["export"]["runId"] == rid
+        done("legacy-instance", "")
+
+    with subtest("SIGKILL after the source export preserves the patch on retry, including after reconciliation"):
+        assert run("interrupted", "${fixtureEdit}")["state"] == "succeeded"
+        rc, out = machine.execute("${interruptedExport} export interrupted 2>&1")
+        assert rc == 137, (rc, out)
+        ws = f"{V}/interrupted/vol/workspace"
+        machine.succeed(f"test ! -e {ws}/export-pending -a -f {ws}/exported.json")
+        machine.succeed(f"test ! -e {V}/interrupted/exported.json -a ! -e {E}/interrupted.runs/latest")
+        rc, out = machine.execute("${I} destroy interrupted 2>&1")
+        assert rc == 12 and "has not been exported" in out, (rc, out)
+        machine.succeed("${I} reconcile")
+        machine.succeed("${I} export interrupted")
+        b = st("interrupted")["export"]["dir"]
+        rc, out = verify(b, "--require-change")
+        assert rc == 0, out
+        assert json.loads(out)["sources"]["rf-proto"]["changedPaths"] == ["src/lib.rs"], out
+        original = st("interrupted")["export"]
+        machine.succeed("${I} export interrupted")
+        assert st("interrupted")["export"] == original
+        done("interrupted", "")
 
     with subtest("a foreign directory at a run's bundle path is kept and refused, never replaced"):
         assert run("clash", "${fixtureEdit}")["state"] == "succeeded"
