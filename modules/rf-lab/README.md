@@ -25,6 +25,7 @@ Captures land in `/var/lib/rf-lab/captures` on the Pi and age out after 14 days.
 | `devenv tasks run rf:btscan` | Passive Bluetooth/BLE device discovery. `RF_SECONDS` (default 15). |
 | `devenv tasks run rf:list` | List captures on the Pi and locally. |
 | `devenv tasks run rf:analyze` | Offline analysis of a pcap (`RF_PCAP`, default newest local): management-frame breakdown and any deauth/disassoc reason codes. |
+| `devenv tasks run rf:beacon-table` | Offline: the same AP table from rf-proto's Rust parser (#42 slice 6) for a local pcap (`RF_PCAP`, default newest local). `checks.rf-beacons-parity` (in `nixos:qa` via the flake check) requires it to equal `rf:beacons`' tshark table on the crafted fixtures, so the two cannot drift apart unnoticed. |
 | `devenv tasks run rf:analyze-test` | Offline, deterministic: run the `rf:analyze` decode over the crafted fixtures in `fixtures/` and assert beacon count + deauth/disassoc reason codes. No device. |
 | `devenv tasks run rf:sim` | Fully-virtual `mac80211_hwsim` lab (two netns): real hostapd+wpa_supplicant association, an iperf3 throughput measurement over the virtual link, optional `tc-netem` packet loss (`RF_LOSS` percent), and a disconnect/reconnect recovery (`RF_OUTAGE` seconds). Emits a JSON artifact; no physical radio. |
 

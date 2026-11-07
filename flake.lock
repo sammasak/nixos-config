@@ -403,16 +403,16 @@
     "rf-proto": {
       "flake": false,
       "locked": {
-        "lastModified": 1793797698,
-        "narHash": "sha256-F/QIeyHBdyeIjDg2rr1XIMv++oXmuVcjW3AYm9Arwe0=",
+        "lastModified": 1794002060,
+        "narHash": "sha256-jtqMR+E0wPDfYpnpEkoZD6m8klu0XbUlPFF267e+mCQ=",
         "ref": "refs/heads/main",
-        "rev": "d878c58ebaca9c5281ef522b6fbd1761e122dfb6",
-        "revCount": 6,
+        "rev": "e44228c6d878d34d17fc6c761963a38812be5032",
+        "revCount": 17,
         "type": "git",
         "url": "ssh://git@github.com/sammasak/rf-proto"
       },
       "original": {
-        "rev": "d878c58ebaca9c5281ef522b6fbd1761e122dfb6",
+        "rev": "e44228c6d878d34d17fc6c761963a38812be5032",
         "type": "git",
         "url": "ssh://git@github.com/sammasak/rf-proto"
       }

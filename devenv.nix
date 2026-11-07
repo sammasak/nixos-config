@@ -267,6 +267,18 @@ let
 
   # Offline classification test: assert rf:analyze's decode recognises each
   # crafted fixture (beacon count, deauth/disassoc reason codes). No device.
+  # the Rust beacon table of rf-proto (#42 slice 6) on a local capture; reads the file only. Its parity with
+  # rf:beacons' tshark table is checks.rf-beacons-parity (flake check, so nixos:qa)
+  rfBeaconTable = gate "rf-beacon-table" (with pkgs; [ nix coreutils ]) ''
+    exec >&2
+    # shellcheck disable=SC2012
+    f=''${RF_PCAP:-$(ls -t "$HOME"/rf-lab-captures/*.pcap* 2>/dev/null | head -1)}
+    [ -n "$f" ] && [ -r "$f" ] || { echo "no capture: set RF_PCAP=<file.pcap> (or run rf:beacons first)"; exit 1; }
+    b=$(nix build --no-link --print-out-paths .#rf-beacons-rs)
+    printf '%-18s %3s %5s %5s  %s\n' BSSID CH dBm beac SSID
+    "$b/bin/rf-beacons-rs" "$f" "$b/share/rf-beacons-rs/oui-sample.csv" --text
+  '';
+
   rfBeaconsTest = gate "rf-beacons-test" (with pkgs; [ bash wireshark-cli gawk coreutils gnugrep ]) ''
     bash scripts/rf-beacons-test.sh
   '';
@@ -357,6 +369,7 @@ in
     "rf:list" = task "naked-pi: list captures on the Pi and locally" rfList;
     "rf:analyze" = task "offline pcap analysis: mgmt frames + deauth/disassoc reason codes (RF_PCAP)" rfAnalyze;
     "rf:beacons-test" = task "offline: rf:beacons' AP table on the crafted fixtures: hidden SSIDs, escaped control bytes (#42)" rfBeaconsTest;
+    "rf:beacon-table" = task "offline: the Rust (rf-proto) beacon table of a local pcap (RF_PCAP, default newest)" rfBeaconTable;
     "rf:analyze-test" = task "offline: assert rf:analyze classifies the crafted pcap fixtures" rfAnalyzeTest;
     "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
     "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
