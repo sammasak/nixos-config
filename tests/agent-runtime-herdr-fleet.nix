@@ -114,9 +114,9 @@ pkgs.testers.runNixOSTest {
 
     with subtest("two runtimes that share the instance id `coder` are told apart by host, task and template"):
         # both hosts run an instance literally named `coder`; nothing but the host distinguishes the id
-        acer.succeed(f"${prepare} coder 1048576")
+        acer.succeed("${prepare} coder 1048576")
         acer.succeed(f"agent-runtime-herdr attach coder {MANIFESTS}/worker-a.json sammasak/nixos-config#901 /var/lib/rt/coder/output/status -- ${launch} coder 1048576")
-        msi.succeed(f"${prepare} coder 1048576")
+        msi.succeed("${prepare} coder 1048576")
         msi.succeed(f"agent-runtime-herdr attach coder {MANIFESTS}/worker-b.json sammasak/skills#902 /var/lib/rt/coder/output/status -- ${launch} coder 1048576")
         wait_remote("acer", "rt-coder", ["idle", "done"])
         wait_remote("msi", "rt-coder", ["idle", "done"])
