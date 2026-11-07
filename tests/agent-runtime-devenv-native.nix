@@ -27,7 +27,7 @@ let
   # boundary and tries to break out. `chk` must pass, `deny` must fail.
   probe = sh "devenv-native-probe" ''
     set -u
-    export PATH=${env}/bin:${pkgs.util-linux}/bin:${pkgs.coreutils}/bin
+    export PATH=${pkgs.coreutils}/bin:${pkgs.gnugrep}/bin:${pkgs.gawk}/bin:${pkgs.util-linux}/bin:${pkgs.hostname-debian}/bin:${env}/bin
     fail=0
     chk() { if "$@"; then echo "ok   $*"; else echo "FAIL $*"; fail=1; fi; }
     deny() { if "$@" 2>/dev/null; then echo "FAIL (succeeded) $*"; fail=1; else echo "denied $*"; fi; }
