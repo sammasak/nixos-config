@@ -128,7 +128,7 @@ H=/etc/agent-runtime/host.json
 T=/nix/var/nix/profiles/agent-runtime/templates/templates/claude-coder.json
 RUN=$(jq -r '.packages[] | select(.name == "claude-coder-run") | .storePath' "$T")/bin/claude-coder-run
 CRED=/run/secrets/claude_oauth_token
-B=/var/lib/agent-runtime/exports/coder           # the export lands here (survives destroy; 0700 root)
+# B, the run's own bundle (exports/coder.runs/<runId>, #184; survives destroy; 0700 root), is set at export (step 6)
 # create/attach take the tracking REF (OWNER/REPO#N); the model is given the PROMPT. They are NOT the
 # same string: `agent-runtime-herdr attach` dies 64 on a ref that is not OWNER/REPO#N, and `create
 # --task` records that same ref. The PROMPT (below) is the runner's argument, i.e. `claude -p`'s task.
@@ -170,6 +170,7 @@ sudo agent-runtime-instance logs coder           # the run's log (during or afte
 
 # 6. Export (redacts the token from run.log; refuses an export whose outputs or source patch contain it):
 sudo agent-runtime-instance export coder
+B=$(sudo agent-runtime-instance status coder | jq -r .export.dir)   # this run's bundle; a rerun of `coder` gets a new one
 
 # 7. Verify on acer, IN THIS SAME LOCKED SHELL — so $T/$CRED/$B are in scope and the lock is still held
 #    (w12: do not run verify/leak in a shell that has exited the one where T/CRED were set). First record
@@ -257,7 +258,7 @@ re-derive the variables (they do not survive the run shell's `exit`):
 ```
 # on acer (a fresh session): re-derive what the locked shell set, then verify:
 T=/nix/var/nix/profiles/agent-runtime/templates/templates/claude-coder.json
-B=/var/lib/agent-runtime/exports/coder                   # 0700 root
+B=/var/lib/agent-runtime/exports/coder.runs/latest     # the newest run of coder (#184); or the exact exports/coder.runs/<runId>
 sudo sh -c 'cd "$1" && sha256sum bundle.json $(jq -r ".files[].path" bundle.json)' _ "$B"   # record every value
 sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change
 # prints: {kind: "agent-runtime-verified", bundleSha256, sources: {rf-proto: {base, patchSha256, tree, changedPaths}}}
@@ -318,7 +319,7 @@ acer-root session, re-derive them first (they do not survive the run shell's `ex
 # on acer: re-derive, then the leak checks (names-only -l, recursive -r, skip binaries -I,
 # fixed-string -F, pattern read from the file -f so the token never reaches argv/cmdline/the sudo log):
 CRED=/run/secrets/claude_oauth_token
-B=/var/lib/agent-runtime/exports/coder
+B=/var/lib/agent-runtime/exports/coder.runs/latest     # the newest run of coder (#184); or the exact exports/coder.runs/<runId>
 sudo grep -rlIFf "$CRED" /run/agent-runtime /var/lib/agent-runtime "$B" 2>/dev/null   # expect: no output
 # the journal of every agent-runtime unit this boot, counting matches rather than printing them:
 sudo journalctl -b -u 'agent-runtime*' | grep -cFf "$CRED"                            # expect: 0

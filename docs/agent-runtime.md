@@ -348,7 +348,7 @@ agent-runtime-instance wait ID [--timeout-sec N]     # status JSON; exit 0 only 
 agent-runtime-instance status [ID]                    # one instance, or a JSON array of all
 agent-runtime-instance logs ID                        # the payload's journal for its invocation, last 1 MiB
 agent-runtime-instance cancel ID
-agent-runtime-instance export ID                      # bundle under STATE/exports/ID
+agent-runtime-instance export ID                      # bundle under STATE/exports/ID.runs/RUNID; ID.runs/latest the newest
 agent-runtime-instance destroy ID [--discard]
 agent-runtime-instance reconcile                      # after a supervisor crash or reboot
 ```
@@ -363,8 +363,8 @@ agent-runtime-instance reconcile                      # after a supervisor crash
   `ID/run/gcroots`; the template manifest, and through it the template's closure, is rooted at
   `ID/template-root`, so a template profile update or a GC cannot take a live instance's packages), allocates one `fallocate`d ext4 image per writable mount (bytes and inodes
   from the template), loop-mounts them, runs `materialize` into the workspace volume, and
-  writes `ID/instance.json` (template name and digests, run digest, task, host, UID base,
-  unit, machine, volumes) last. A failure rolls everything back; a SIGKILLed create is left
+  writes `ID/instance.json` (template name and digests, run digest, a fresh random 128-bit
+  `runId`, task, host, UID base, unit, machine, volumes) last. A failure rolls everything back; a SIGKILLed create is left
   `incomplete` for `reconcile`. The same id and task again returns the existing record; another
   task under the id is `conflict`.
 - **start** runs `systemd-nspawn` in a detached transient unit `agent-runtime-ID.service` with
@@ -392,8 +392,22 @@ agent-runtime-instance reconcile                      # after a supervisor crash
   binary and untracked files included, `droppedPaths` named), copies the output volume, the
   payload's journal for its invocation (the last 1 MiB, the cut recorded) and the records, and
   writes `bundle.json` (`agent-runtime-instance-export`: outcome, `recovery` for anything but
-  `succeeded`, every file with its sha256). A patch larger than the output budget is omitted
-  and named. Exporting again is a no-op.
+  `succeeded`, every file with its sha256, the `runId` and invocation). A patch larger than the
+  output budget is omitted and named. Exporting again returns the same bundle.
+  **Layout (#184):** every run gets its own immutable bundle, `STATE/exports/ID.runs/RUNID`. The
+  `runId` is minted at `create`, so a later instance under the same id never reuses it. It is not
+  wall time, and a run cancelled before it started has one too. `ID.runs/latest` is a relative
+  symlink to the newest run's bundle, replaced by an atomic rename. The bundle is staged in
+  `ID.runs/.tmp.*` and published by one rename onto its absent path. If an export was interrupted
+  between that rename and its record (`ID/exported.json`), the next export adopts the published
+  bundle, but only if it is intact (every file matches `bundle.json`, nothing unlisted) and names
+  this id and `runId`. Anything else at that path is refused (class `conflict`) and kept, never
+  replaced. `agent-runtime-verify` and `agent-runtime-promote` take a bundle directory, its
+  `latest` link, or the `ID.runs` directory (its `latest`), resolved once to the real path. A
+  bundle from before #184, at `STATE/exports/ID`, is left in place; `.` is outside the id
+  charset, so the two layouts never meet.
+  **Retention:** no command removes a bundle (`destroy` included). The operator owns them;
+  a failed run's recovery bundle and a later successful run's bundle sit side by side.
 - **destroy** refuses a running instance and, unless `--discard`, one that ran and was not
   exported. It runs `reclaim`, stops the unit, unmounts every volume (`timeout 30`; a busy
   mount fails the destroy), removes the images, the run directory (the GC roots) and the
