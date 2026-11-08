@@ -16,7 +16,7 @@ let
   ];
   runner = pkgs.writeShellApplication {
     name = "agent-runtime-devenv-run";
-    runtimeInputs = [ pkgs.bash pkgs.coreutils pkgs.jq ];
+    runtimeInputs = [ pkgs.bash pkgs.coreutils pkgs.git pkgs.jq ];
     text = ''
       set -euo pipefail
       env_json="''${1:-${lib.escapeShellArg envPath}}"
@@ -59,6 +59,7 @@ let
           and .executionRequest.environment.shell == "devenv"
           and .executionRequest.target_system == $expected.target_system
           and (.executionRequest.provenance.plan_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+          and ([.executionRequest.provenance.lockfiles[] | select(.path == $expected.lockfile)] | length == 1)
           and any(.executionRequest.provenance.lockfiles[]; .path == $expected.lockfile and (.blob | test("^[0-9a-f]{40}$")))
           and (.executionRequest.check.argv | type == "array" and length > 0 and length <= 128
             and all(.[]; type == "string" and length > 0 and length <= 4096 and (test("[\\x00-\\x1f\\x7f]") | not)))
@@ -69,6 +70,17 @@ let
         echo "devenv projection rejected: incomplete, blocked, mismatched, credential-bearing, or host-local input" >&2
         exit 65
       }
+
+      ${if requestMode then ''
+      lockfile="$repo/${expectedRequestData.lockfile}"
+      expected_blob="$(${pkgs.jq}/bin/jq -er --arg path '${expectedRequestData.lockfile}' \
+        '[.executionRequest.provenance.lockfiles[] | select(.path == $path) | .blob] | if length == 1 then .[0] else error("missing or duplicate lockfile provenance") end' \
+        "$env_json")" || exit 65
+      if [ -L "$lockfile" ] || [ ! -f "$lockfile" ] || [ "$(git hash-object "$lockfile")" != "$expected_blob" ]; then
+        echo "execution request rejected: lockfile blob differs from the pinned source" >&2
+        exit 65
+      fi
+      '' else ""}
 
       mkdir -p "$repo/.devenv/state"
       export DEVENV_ROOT="$repo"
