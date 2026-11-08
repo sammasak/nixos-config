@@ -39,6 +39,12 @@ Pure evaluation at `018e881` (2026-11-08) reports:
 - MSI's self-shutdown timer, Lenovo's MSI wake timer and MSI's k3s service are
   enabled.
 
+The evaluated timers are `Mon-Fri 21:00` on MSI and `Mon-Fri 09:00` on Lenovo,
+both with `Persistent=false`. The MSI shutdown service stops `k3s.service`,
+waits five seconds and powers off. MSI retains Cilium and the worker-pool label
+plus `sammasak.dev/intermittent=true:NoSchedule` taint. These are the baseline
+semantics the onboarding regression must preserve.
+
 This proves the checked-in Herdr server and linger configuration, not that
 Herdr is active or reachable on the installed MSI generation. It also confirms
 that no worker bypass permission or remote Herdr registration is currently
