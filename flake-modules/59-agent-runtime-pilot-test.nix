@@ -45,8 +45,10 @@
         assert expect (lib.elem "--node-label=node-pool=workers" flags && lib.elem "--node-taint=sammasak.dev/intermittent=true:NoSchedule" flags) "preserve MSI's worker label and intermittent taint";
         assert expect (!msi.system.autoUpgrade.allowReboot) "keep unattended reboots disabled";
         assert expect (lib.all (n: lib.elem n names) [ "agent-runtime-instance" "agent-runtime-preflight" "agent-runtime-pane" "agent-runtime-herdr" ]) "install the lifecycle, preflight, pane and Herdr adapter tools";
+        assert expect msi.sam.profile.devTools "retain the shared Herdr CLI configuration";
         assert expect msi.users.users.${username}.linger "keep the Herdr user service available without an interactive login";
         assert expect (hm.systemd.user.services.herdr.Install.WantedBy == [ "default.target" ]) "declare the per-user Herdr server service";
+        assert expect (!msi.sam.herdr.worker.enable) "the credential-free pilot does not grant worker bypass permissions";
         pkgs.runCommand "agent-runtime-msi-pilot" { nativeBuildInputs = [ pkgs.jq ]; } ''
           mkdir $out
           jq -S . ${rt.hostPolicy} > $out/host.json
