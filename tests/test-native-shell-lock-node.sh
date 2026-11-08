@@ -21,7 +21,7 @@ sed \
 
 nix flake lock --impure "$project" >/dev/null
 dep_node=$(jq -er '.nodes.root.inputs.dep' "$project/flake.lock")
-expected_locked=$(jq -cer --arg node "$dep_node" '.nodes[$node].locked' "$project/flake.lock")
+expected_metadata=$(jq -cer --arg node "$dep_node" '.nodes[$node].locked | { type, narHash }' "$project/flake.lock")
 jq -e --arg node "$dep_node" '
   .nodes[$node].locked.type == "path" and
   (.nodes[$node].locked.narHash | type == "string") and
@@ -30,10 +30,11 @@ jq -e --arg node "$dep_node" '
 
 info_path=$(NATIVE_SHELL_TEST_SOURCE="$project" nix build \
   --impure --no-link --print-out-paths --file tests/native-shell-lock-node-eval.nix)
-jq -e --argjson expected "$expected_locked" '
+jq -e --argjson expected "$expected_metadata" '
   .shell == "devShells.x86_64-linux.default" and
   .drvPath != "" and
-  .lock.dep == $expected
+  .lock.dep == $expected and
+  (.lock.dep | has("rev") | not)
 ' "$info_path" >/dev/null
 printf 'PASS: resolver built a shell and preserved exact no-rev lock provenance\n'
 
