@@ -1,11 +1,11 @@
-# The devenv shell definition. `packages` is the selected toolchain; `enterShell`
-# and `scripts.*` are hooks. Hooks only ever execute inside the guest instance,
-# never on the trusted host during preparation.
+# The real Devenv project definition evaluated by the test derivation. The
+# script itself runs only in the isolated guest, never during host preparation.
 { pkgs, ... }:
 {
   packages = [ pkgs.gnumake pkgs.gcc pkgs.coreutils ];
-  enterShell = ''
-    echo "entered devenv shell" > "$DEVENV_ROOT/.devenv-shell-hook-ran"
+  scripts.check.exec = ''
+    test "$DEVENV_IMPORT_MARKER" = "tooling-import-loaded"
+    echo "devenv-script:$DEVENV_IMPORT_MARKER" > "$DEVENV_ROOT/.devenv-script-ran"
+    make check
   '';
-  scripts.check.exec = "make check";
 }

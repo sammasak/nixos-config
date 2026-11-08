@@ -1,8 +1,6 @@
-# devenv inputs and imports; prepare:plan (devenv-platform#92) detects these
-# statically. The runtime realizes the shell host-side; devenv itself is never
-# run in the guest (no nix daemon there).
+require_version: "=2.4.0"
 inputs:
   nixpkgs:
-    url: "github:NixOS/nixpkgs/nixos-unstable"
+    url: github:NixOS/nixpkgs/fe13242281a67641c0102cdb1087f0ebe586c7df
 imports:
   - ./tooling

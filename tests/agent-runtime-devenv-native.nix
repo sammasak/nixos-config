@@ -1,13 +1,6 @@
-# devenv-platform#93: validate a real pinned native devShell inside the EXISTING
-# systemd-nspawn agent runtime (nixos-config #138/#144/#148/#152), without giving
-# repository hooks host access or permitting unbounded Nix writes. One QEMU VM,
-# real nspawn, offline. The shared template/fixture is tests/agent-runtime/devenv-native.nix.
-#
-# Mode (a) host-realized pinned shell projected read-only is exercised end to end.
-# Mode (b) cold guest-side Nix realization is PROVEN UNSUPPORTED by the runtime
-# (no nix daemon socket, read-only /nix/store, no network) and its exact failing
-# command is recorded -- the runtime never silently selects it.
-#
+# devenv-platform#93: evaluate a pinned Devenv project, then run its configured
+# check inside the systemd-nspawn guest. Mode (b) records why cold guest-side
+# evaluation is unsupported (no daemon, read-only store, no network).
 # nix build .#packages.x86_64-linux.agent-runtime-devenv-native
 { pkgs, lib, skills }:
 let
@@ -44,7 +37,7 @@ let
     for c in CapInh CapPrm CapEff CapBnd CapAmb; do chk grep -qE "^$c:\s+0+$" /proc/self/status; done
     chk grep -qE '^NoNewPrivs:\s+1$' /proc/self/status
     chk grep -qE '^Seccomp:\s+2$' /proc/self/status
-    chk test -f /workspace/fixture/flake.nix
+    chk test -f /workspace/fixture/devenv.yaml -a -f /workspace/fixture/devenv.nix
     # the projected toolchain is usable (editing shell)
     chk gcc --version
     chk make --version
@@ -64,18 +57,19 @@ let
     exit $fail
   '';
 
-  # Mode (b): attempt genuinely cold guest-side Nix realization. It MUST fail --
+  # Mode (b): attempt genuinely cold guest-side Devenv evaluation. It MUST fail --
   # there is no daemon socket, the store is read-only, and there is no network.
   # The exact failing command and message are recorded.
   modeb = sh "devenv-native-modeb" ''
-    export PATH=${pkgs.coreutils}/bin
+    export PATH=${pkgs.coreutils}/bin:${pkgs.devenv}/bin:${pkgs.nix}/bin
     out=''${AGENT_RUNTIME_OUTPUT:?}
-    nix=${pkgs.nix}/bin/nix
-    echo "=== mode (b) cold guest-side realization attempt ===" > "$out/mode-b.log"
+    echo "=== mode (b) cold guest-side Devenv evaluation attempt ===" > "$out/mode-b.log"
     rc=0
-    "$nix" --extra-experimental-features 'nix-command flakes' build --no-link \
-      /workspace/fixture#devShells.x86_64-linux.default >> "$out/mode-b.log" 2>&1 || rc=$?
-    echo "nix build exit=$rc" >> "$out/mode-b.log"
+    devenv --offline \
+      --override-input nixpkgs path:${dn.fixtureNixpkgsPackage}/share/nixpkgs \
+      --override-input devenv path:${dn.devenvSourcePackage}/share/devenv/modules \
+      eval scripts.check.exec >> "$out/mode-b.log" 2>&1 || rc=$?
+    echo "devenv eval exit=$rc" >> "$out/mode-b.log"
     # record the structural reason too
     { echo "daemon_socket_present=$(test -e /nix/var/nix/daemon-socket/socket && echo yes || echo no)"
       echo "store_writable=$(touch /nix/store/.art-write 2>/dev/null && echo yes || echo no)"
@@ -105,9 +99,19 @@ pkgs.testers.runNixOSTest {
     boot.kernel.sysctl."vm.panic_on_oom" = 0;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    # offline VM: the fixture, skills, package closure, manifest and the nix CLI
-    # (for the mode-(b) failure probe) must all be in the store
-    virtualisation.additionalPaths = [ dn.fixtureSrc skills env evaluated.manifestDir pkgs.nix ];
+    # offline VM: the fixture, config evaluator inputs, skills, package closure,
+    # manifest, Devenv CLI and Nix CLI must all be in the store
+    virtualisation.additionalPaths = [
+      dn.fixtureSrc
+      dn.fixtureNixpkgs
+      dn.devenvSource
+      dn.devenvConfig
+      skills
+      env
+      evaluated.manifestDir
+      pkgs.nix
+      pkgs.devenv
+    ];
     environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils jq ];
   };
   testScript = ''
@@ -149,13 +153,13 @@ pkgs.testers.runNixOSTest {
         o = f"{V}/good/vol/output"
         # the project check built and ran the C program with the projected toolchain
         machine.succeed(f"grep -q native-devenv-ok {o}/make.log")
-        machine.succeed(f"grep -q 'selected_devshell=devShells.x86_64-linux.default' {o}/toolchain.txt")
+        machine.succeed(f"grep -q 'selected_devshell=devenv.yaml + devenv.nix scripts.check.exec' {o}/toolchain.txt")
         r = json.loads(machine.succeed(f"cat {o}/result.json"))
         assert r["mode"] == "good" and r["check_exit"] == 0 and r["editing_shell"] == "ok", r
-        # the devenv hook ran ONLY in the guest: its marker is in the writable workspace,
+        # the configured script ran ONLY in the guest: its marker is in the writable workspace,
         # never in the read-only projected source store path
-        machine.succeed(f"test -f {V}/good/vol/workspace/workspace/fixture/.hook-ran-in-guest")
-        machine.succeed("test ! -e ${dn.fixtureSrc}/.devenv-shell-hook-ran -a ! -e ${dn.fixtureSrc}/.hook-ran-in-guest")
+        machine.succeed(f"grep -q 'devenv-script:tooling-import-loaded' {V}/good/vol/workspace/workspace/fixture/.devenv-script-ran")
+        machine.succeed("test ! -e ${dn.fixtureSrc}/.devenv-script-ran")
         measures["cold"] = {"runtimeUSec": s["result"]["runtimeUSec"], "memPeakBytes": s["result"]["memoryPeakBytes"],
                             "workspace_kib": int(machine.succeed(f"du -sk {V}/good/vol/workspace/workspace 2>/dev/null | cut -f1").strip() or "0"),
                             "store_closure_bytes": int(machine.succeed("${pkgs.nix}/bin/nix --extra-experimental-features nix-command path-info -S ${env} 2>/dev/null | awk '{print $NF}'").strip() or "0")}
@@ -187,15 +191,15 @@ pkgs.testers.runNixOSTest {
         print("broken-source editing shell:", machine.succeed(f"cat {o}/toolchain.txt"))
         machine.succeed("${Itool} destroy brk --discard"); clean("brk")
 
-    with subtest("mode (b): cold guest-side Nix realization is UNSUPPORTED by the runtime; the exact failing command is recorded"):
+    with subtest("mode (b): cold guest-side Devenv evaluation is UNSUPPORTED by the runtime; the exact failing command is recorded"):
         create("mb")
         rc, out = machine.execute("${Itool} start mb --wait -- ${modeb}")
         s = st("mb")
-        # the payload asserts the nix build failed, so a succeeded state proves cold realization is impossible here
-        assert s["state"] == "succeeded", s  # payload exits 0 only when `nix build` FAILED (test "$rc" != 0)
+        # the payload asserts Devenv evaluation failed, so success proves the cold path is unavailable
+        assert s["state"] == "succeeded", s
         outlog = machine.succeed(f"cat {V}/mb/vol/output/mode-b.log")
         assert "daemon_socket_present=no" in outlog and "store_writable=no" in outlog and "net_ifaces=lo" in outlog, outlog
-        assert "nix build exit=" in outlog and "nix build exit=0" not in outlog, outlog
+        assert "devenv eval exit=" in outlog and "devenv eval exit=0" not in outlog, outlog
         measures["mode_b"] = "unsupported: no nix daemon socket, read-only /nix/store, no network"
         print("mode(b) record:\n" + outlog)
         machine.succeed("${Itool} destroy mb --discard"); clean("mb")

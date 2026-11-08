@@ -1,3 +1,5 @@
-# Imported by ../devenv.yaml; kept trivial. Proves devenv imports resolve to a
-# real path (prepare:plan reads this statically; nothing here executes on the host).
-{ ... }: { }
+# This imported module is observable through Devenv eval and required by the
+# configured check script. Removing the import makes the guest check fail.
+{ ... }: {
+  env.DEVENV_IMPORT_MARKER = "tooling-import-loaded";
+}
