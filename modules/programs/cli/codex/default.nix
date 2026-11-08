@@ -114,11 +114,6 @@ let
   codexConfig = ''
     personality = "pragmatic"
     model_reasoning_effort = "xhigh"
-    # Authorized repository tasks run without an interactive approval loop,
-    # while filesystem access stays inside the normal workspace-write sandbox.
-    approval_policy = "never"
-    sandbox_mode = "workspace-write"
-    sandbox_workspace_write.network_access = true
     approvals_reviewer = "user"
     check_for_update_on_startup = false
     cli_auth_credentials_store = "file"
