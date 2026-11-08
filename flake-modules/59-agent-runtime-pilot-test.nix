@@ -19,12 +19,16 @@
         let
           hosts = config.flake.nixosConfigurations;
           msi = hosts.msi-ms7758.config;
+          lenovo = hosts.lenovo.config;
           rt = msi.sam.agentRuntime;
           tpl = rt.manifestData.rust-pilot;
           username = msi.sam.profile.username;
           hm = msi.home-manager.users.${username};
           flags = msi.homelab.k3s.extraFlags;
           names = map (p: p.name or "") msi.environment.systemPackages;
+          shutdownTimer = msi.systemd.timers.msi-scheduled-shutdown.timerConfig;
+          wakeTimer = lenovo.systemd.timers.msi-wake.timerConfig;
+          shutdownScript = msi.systemd.services.msi-scheduled-shutdown.serviceConfig.ExecStart;
           expect = cond: msg: lib.assertMsg cond "agent-runtime-msi-pilot: ${msg}";
         in
         assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" ]) "MSI admits only the credential-free Rust pilot";
@@ -34,6 +38,10 @@
         assert expect (tpl.policies.capabilities == [ ] && tpl.policies.privateSources == [ ]) "no credentials or privileged capabilities";
         assert expect (tpl.policies.resources.memoryMiB == 3072 && tpl.policies.resources.cpus == 2) "reuse the pilot template resource cap (MSI headroom still needs live validation)";
         assert expect msi.homelab.msiPowerSchedule.selfShutdown.enable "preserve the scheduled shutdown";
+        assert expect (shutdownTimer.OnCalendar == "Mon-Fri 21:00" && shutdownTimer.Persistent == false) "preserve MSI's weekday 21:00 shutdown without catch-up";
+        assert expect lenovo.homelab.msiPowerSchedule.waker.enable "preserve Lenovo's MSI wake configuration";
+        assert expect (wakeTimer.OnCalendar == "Mon-Fri 09:00" && wakeTimer.Persistent == false) "preserve weekday 09:00 wake without catch-up";
+        assert expect (msi.services.k3s.enable && msi.homelab.k3s.cni == "cilium") "preserve the active Cilium k3s worker";
         assert expect (lib.elem "--node-label=node-pool=workers" flags && lib.elem "--node-taint=sammasak.dev/intermittent=true:NoSchedule" flags) "preserve MSI's worker label and intermittent taint";
         assert expect (!msi.system.autoUpgrade.allowReboot) "keep unattended reboots disabled";
         assert expect (lib.all (n: lib.elem n names) [ "agent-runtime-instance" "agent-runtime-preflight" "agent-runtime-pane" "agent-runtime-herdr" ]) "install the lifecycle, preflight, pane and Herdr adapter tools";
@@ -43,6 +51,9 @@
           mkdir $out
           jq -S . ${rt.hostPolicy} > $out/host.json
           jq -S . ${rt.manifestDir}/rust-pilot.json > $out/rust-pilot.json
+          grep -Fq 'systemctl stop k3s.service' ${shutdownScript}
+          grep -Fq 'sleep 5' ${shutdownScript}
+          grep -Fq 'systemctl poweroff' ${shutdownScript}
         '';
 
         agent-runtime-acer-pilot =
