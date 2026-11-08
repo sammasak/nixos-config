@@ -129,6 +129,10 @@ pkgs.testers.runNixOSTest {
   nodes.machine = {
     virtualisation.memorySize = 12288;
     virtualisation.cores = 4;
+    # NixOS test VMs default to panic_on_oom=2, which panics the whole VM on
+    # an instance cgroup OOM. Match the runtime preflight's supported host
+    # values so the test can observe and report a contained instance failure.
+    boot.kernel.sysctl."vm.panic_on_oom" = 1;
     virtualisation.diskSize = 98304;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
@@ -137,6 +141,7 @@ pkgs.testers.runNixOSTest {
   };
   testScript = ''
     import json
+    import time
     M = "${manifest}"
     POLICY = "${manifestData.hostPolicy}"
     I = "${I}"
@@ -153,8 +158,50 @@ pkgs.testers.runNixOSTest {
     workspace = f"{V}/factum/vol/workspace/workspace/factum"
     machine.succeed(f"printf '[safe]\\n\\tdirectory = /workspace/factum\\n' > {V}/factum/vol/home/.gitconfig")
     machine.succeed(f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={workspace} git -C {workspace} init -q && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={workspace} git -C {workspace} add -A -f && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={workspace} git -C {workspace} -c user.name=agent -c user.email=agent@example.invalid commit -q -m workspace")
-    machine.succeed(f"{I} start factum --wait -- {RUNNER}", timeout=2700)
+    volume_mounts = {name: f"{V}/factum/vol/{name}" for name in ("workspace", "home", "tmp", "cache", "output")}
+    filesystem = json.loads(machine.succeed(f"cat {M}"))["filesystem"]
+    budgets = {
+        name: filesystem["workspaceBudget" if name == "workspace" else name]
+        for name in volume_mounts
+    }
+    peaks = {name: {"used_bytes": 0, "used_inodes": 0} for name in volume_mounts}
+
+    def sample_volumes():
+        for name, path in volume_mounts.items():
+            used_bytes, used_inodes = map(
+                int,
+                machine.succeed(f"df -B1 --output=used,iused {path} | tail -n1").split(),
+            )
+            peaks[name]["used_bytes"] = max(peaks[name]["used_bytes"], used_bytes)
+            peaks[name]["used_inodes"] = max(peaks[name]["used_inodes"], used_inodes)
+
+    def assert_within_budgets():
+        for name, peak in peaks.items():
+            budget = budgets[name]
+            assert peak["used_bytes"] < budget["sizeMiB"] * 1024 * 1024, (name, peak, budget)
+            assert peak["used_inodes"] < budget["inodes"], (name, peak, budget)
+
+    sample_volumes()
+    started = time.monotonic()
+    machine.succeed(f"{I} start factum -- {RUNNER}")
     s = status("factum")
+    while s["state"] in ("starting", "running"):
+        sample_volumes()
+        if time.monotonic() - started > 2700:
+            raise AssertionError(f"Factum runtime exceeded 2700 seconds: {s}")
+        time.sleep(10)
+        s = status("factum")
+    sample_volumes()
+    assert_within_budgets()
+    print("Factum nspawn volume peak usage:", json.dumps({
+        name: {
+            **usage,
+            "budget_bytes": budgets[name]["sizeMiB"] * 1024 * 1024,
+            "budget_inodes": budgets[name]["inodes"],
+        }
+        for name, usage in peaks.items()
+    }, sort_keys=True))
+    print("Factum runtime terminal status:", json.dumps(s, sort_keys=True))
     assert s["state"] == "succeeded", s
     output = f"{V}/factum/vol/output"
     result = json.loads(machine.succeed(f"cat {output}/result.json"))
