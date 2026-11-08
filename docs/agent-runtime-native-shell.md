@@ -75,7 +75,7 @@ a QEMU VM. Its subtests:
   guest task; neither result claims Factum acceptance.
 - **Typed `devenv-platform/execution-request` consumption** is covered by the focused follow-up
   on `feat/96-runtime-request-consumer`: a ready request must match the pinned repository, commit,
-  project root, target system, environment kind and lockfile provenance before its `check.argv` is
+  project root, target system, environment kind and the presence of lockfile provenance for the expected lockfile before its `check.argv` is
   executed inside nspawn. The guest test also proves that a request marked `blocked` is refused
   before `enterShell`. This uses the real request shape with the generated-environment fixture;
   Factum's current-main request is blocked because its tracked tree has no `devenv.lock`, so no
