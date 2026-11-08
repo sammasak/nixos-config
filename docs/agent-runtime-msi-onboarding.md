@@ -28,6 +28,22 @@ If the diagnostics cannot establish safe headroom, leave admission disabled.
 Do not change the existing 09:00 wake or 21:00 shutdown schedule to make a test
 pass.
 
+## Declarative prerequisites on `origin/main`
+
+Pure evaluation at `018e881` (2026-11-08) reports:
+
+- `sam.agentRuntime.host.enable = false` and `eligibleTemplates = []`;
+- `sam.profile.devTools = true` and `users.users.lukas.linger = true`;
+- Home Manager declares the Herdr user service under `default.target`;
+- `sam.herdr.worker.enable = false` and `sam.herdr.machines = []`;
+- MSI's self-shutdown timer, Lenovo's MSI wake timer and MSI's k3s service are
+  enabled.
+
+This proves the checked-in Herdr server and linger configuration, not that
+Herdr is active or reachable on the installed MSI generation. It also confirms
+that no worker bypass permission or remote Herdr registration is currently
+declared. Keep those separate from host capacity and live acceptance.
+
 ## Offline validation and staged rollout
 
 After the host policy and template imports are reviewed, validate the exact
