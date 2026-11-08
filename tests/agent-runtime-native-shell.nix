@@ -65,6 +65,42 @@ let
     cargo --version >"$AGENT_RUNTIME_OUTPUT/shell-still-works.txt" 2>&1 || { echo "the shell broke"; exit 90; }
     exec ${run}
   '';
+  # Sample compiler process cgroups continuously while the transient unit exists. A separate
+  # wait-for-pgrep followed by a second pgrep can miss a short-lived rustc process between calls.
+  cgroupSampler = sh "native-shell-cgroup-sampler" ''
+    set -u
+    output=$1
+    unit=$2
+    deadline=$((SECONDS + 1200))
+    unit_cgroup=
+    : >"$output"
+    while (( SECONDS < deadline )); do
+      rel=$(systemctl show -p ControlGroup --value "$unit" 2>/dev/null || true)
+      if [ -n "$rel" ] && [ -d "/sys/fs/cgroup$rel" ]; then
+        unit_cgroup="/sys/fs/cgroup$rel"
+        break
+      fi
+      sleep 0.01
+    done
+    [ -n "$unit_cgroup" ] || { echo "unit cgroup did not appear: $unit" >&2; exit 1; }
+    while [ -d "$unit_cgroup" ] && (( SECONDS < deadline )); do
+      for comm_file in /proc/[0-9]*/comm; do
+        [ -r "$comm_file" ] || continue
+        IFS= read -r comm <"$comm_file" || continue
+        case "$comm" in
+          cargo|rustc|clippy-driver)
+            pid=''${comm_file#/proc/}
+            pid=''${pid%/comm}
+            cgroups=$(cat "/proc/$pid/cgroup" 2>/dev/null) || continue
+            printf '%s\t%s\t%s\n' "$comm" "$pid" "$cgroups" >>"$output"
+            ;;
+        esac
+      done
+      sleep 0.01
+    done
+    [ ! -d "$unit_cgroup" ] || { echo "unit cgroup outlived timeout: $unit" >&2; exit 1; }
+    : >"$output.done"
+  '';
 in
 pkgs.testers.runNixOSTest {
   name = "agent-runtime-native-shell";
@@ -74,7 +110,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 12288;
     boot.kernel.sysctl."vm.panic_on_oom" = 0;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ rfProto skills env evaluated.manifestDir probe broken sentinel ];
+    virtualisation.additionalPaths = [ rfProto skills env evaluated.manifestDir probe broken sentinel cgroupSampler ];
     environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils jq findutils ];
   };
   testScript = ''
@@ -115,15 +151,12 @@ pkgs.testers.runNixOSTest {
 
     with subtest("the repository's own gate runs inside the instance with the pinned shell: cold then warm pass, all exit 0"):
         machine.succeed(f"${I} create gate --template {M} --host {POLICY} --task {TASK}")
+        machine.succeed("rm -f /tmp/gate-cgroups.tsv /tmp/gate-cgroups.tsv.done; nohup ${cgroupSampler} /tmp/gate-cgroups.tsv agent-runtime-gate.service >/tmp/gate-cgroup-sampler.log 2>&1 </dev/null &")
         machine.succeed("${I} start gate -- ${run} --passes 2")
-        # every build descendant is in the instance's one cgroup, seen from the host while it builds
-        # by exact process name (-x), so the probing shell's own command line never matches
-        machine.wait_until_succeeds("pgrep -x 'rustc|clippy-driver' >/dev/null", timeout=300)
-        pids = machine.succeed("pgrep -x 'cargo|rustc|clippy-driver' || true").split()
-        cg = [machine.succeed(f"cat /proc/{p}/cgroup 2>/dev/null || true").strip() for p in pids]
-        cg = [c for c in cg if c]
-        print("build process cgroups:", sorted(set(cg)))
-        assert cg and all("agent-runtime-gate.service" in c for c in cg), cg
+        machine.wait_until_succeeds("test -f /tmp/gate-cgroups.tsv.done", timeout=1200)
+        samples = machine.succeed("cat /tmp/gate-cgroups.tsv").splitlines()
+        print("build process cgroup samples:", sorted(set(samples)))
+        assert samples and all("agent-runtime-gate.service" in line for line in samples), samples
         machine.wait_until_succeeds("${I} status gate | jq -e '.state | IN(\"succeeded\", \"failed\", \"timed-out\", \"oom-killed\")'", timeout=1100)
         s = st("gate")
         print("gate:", json.dumps(s.get("result")))
@@ -150,7 +183,8 @@ pkgs.testers.runNixOSTest {
         assert out("broken", "shell-still-works.txt").startswith("cargo "), out("broken", "shell-still-works.txt")
         assert all(x["exit"] != 0 for x in steps("broken")), steps("broken")
         machine.succeed("${I} export broken")
-        machine.succeed(f"grep -q 'pub fn broken' {V}/exports/broken/sources/rf-proto.patch")
+        export_dir = st("broken")["export"]["dir"]
+        machine.succeed(f"grep -q 'pub fn broken' {export_dir}/sources/rf-proto.patch")
         done("broken")
 
     with subtest("clean teardown: no mounts, units or state; the store did not grow; the sentinel is unchanged"):
