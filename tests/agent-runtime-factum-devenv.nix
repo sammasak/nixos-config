@@ -240,6 +240,39 @@ pkgs.testers.runNixOSTest {
     machine.succeed("! systemctl list-units --all --no-legend agent-runtime-factum.service | grep -q .")
     machine.succeed(f"test ! -e {V}/factum -a ! -e /run/agent-runtime/factum")
 
+    # Cancel a real long-running Factum request after its Cargo process and
+    # check log exist. The finished failure case below covers check errors;
+    # this one covers an operator interruption while the requested command is
+    # still running.
+    machine.succeed(f"{I} create factum-cancel --template {M} --host {POLICY} --task sammasak/factum#{REVISION}")
+    cancel_workspace = f"{V}/factum-cancel/vol/workspace/workspace/factum"
+    machine.succeed(f"printf '[safe]\\n\\tdirectory = /workspace/factum\\n' > {V}/factum-cancel/vol/home/.gitconfig")
+    machine.succeed(f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={cancel_workspace} git -C {cancel_workspace} init -q && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={cancel_workspace} git -C {cancel_workspace} add -A -f && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={cancel_workspace} git -C {cancel_workspace} -c user.name=agent -c user.email=agent@example.invalid commit -q -m workspace")
+    machine.succeed(f"{I} start factum-cancel -- {RUNNER}")
+    machine.wait_until_succeeds(f"{I} status factum-cancel | jq -e '.state == \"running\"'", timeout=60)
+    machine.wait_until_succeeds("pgrep -x cargo >/dev/null", timeout=120)
+    machine.wait_until_succeeds(f"test -e {V}/factum-cancel/vol/output/check.log", timeout=30)
+    cargo_pids = machine.succeed("pgrep -x cargo").split()
+    cargo_cgroups = [machine.succeed(f"cat /proc/{pid}/cgroup").strip() for pid in cargo_pids]
+    assert any("agent-runtime-factum-cancel.service" in group for group in cargo_cgroups), cargo_cgroups
+    machine.succeed(f"{I} cancel factum-cancel")
+    cancelled = status("factum-cancel")
+    assert cancelled["state"] == "cancelled" and cancelled["result"]["serviceResult"], cancelled
+    cancelled_retry = json.loads(machine.succeed(f"{I} start factum-cancel -- {RUNNER}"))
+    assert cancelled_retry["state"] == "cancelled" and cancelled_retry["result"]["invocation"] == cancelled["result"]["invocation"], cancelled_retry
+    machine.succeed(f"{I} export factum-cancel")
+    cancel_bundle = f"{V}/exports/factum-cancel"
+    cancel_verification = json.loads(machine.succeed(f"{VERIFY} --bundle {cancel_bundle} --template {M}"))
+    assert cancel_verification["kind"] == "agent-runtime-verified", cancel_verification
+    assert cancel_verification["outcome"] == "cancelled", cancel_verification
+    cancel_record = json.loads(machine.succeed(f"cat {cancel_bundle}/bundle.json"))
+    assert cancel_record["recovery"] and any(item["path"] == "output/check.log" for item in cancel_record["files"]), cancel_record
+    machine.succeed(f"{I} destroy factum-cancel")
+    machine.succeed(f"test -s {cancel_bundle}/bundle.json -a -e {cancel_bundle}/output/check.log")
+    machine.succeed("! findmnt -rn | grep -qE 'agent-runtime[-/]factum-cancel(/| |$)'")
+    machine.succeed("! systemctl list-units --all --no-legend agent-runtime-factum-cancel.service | grep -q .")
+    machine.succeed(f"test ! -e {V}/factum-cancel -a ! -e /run/agent-runtime/factum-cancel")
+
     # Exercise a source-bound explicit command failure against the same real
     # Factum environment. This absent Cargo target fails before compilation.
     machine.succeed(f"{I} create factum-failure --template {M} --host {POLICY} --task sammasak/factum#{REVISION}")
