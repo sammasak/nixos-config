@@ -12,9 +12,8 @@
         };
       };
 
-      # What acer-swift renders for the pilot, at evaluation (part of `nixos:qa` through flake check):
-      # the one-instance policy, the credential-free, network-off template and its budgets, the tools
-      # on the host, and MSI as the only other enabled runtime host. The output is the rendered policy and manifest.
+      # What Acer and MSI render for the pilot at evaluation (part of `nixos:qa` through flake check):
+      # host policies, credential-free network-off template, required host/Herdr tools, and preserved host policy.
       checks = lib.optionalAttrs (system == "x86_64-linux") {
         agent-runtime-msi-pilot =
         let
@@ -22,7 +21,10 @@
           msi = hosts.msi-ms7758.config;
           rt = msi.sam.agentRuntime;
           tpl = rt.manifestData.rust-pilot;
+          username = msi.sam.profile.username;
+          hm = msi.home-manager.users.${username};
           flags = msi.homelab.k3s.extraFlags;
+          names = map (p: p.name or "") msi.environment.systemPackages;
           expect = cond: msg: lib.assertMsg cond "agent-runtime-msi-pilot: ${msg}";
         in
         assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" ]) "MSI admits only the credential-free Rust pilot";
@@ -34,7 +36,9 @@
         assert expect msi.homelab.msiPowerSchedule.selfShutdown.enable "preserve the scheduled shutdown";
         assert expect (lib.elem "--node-label=node-pool=workers" flags && lib.elem "--node-taint=sammasak.dev/intermittent=true:NoSchedule" flags) "preserve MSI's worker label and intermittent taint";
         assert expect (!msi.system.autoUpgrade.allowReboot) "keep unattended reboots disabled";
-        assert expect (lib.elem "agent-runtime-instance" (map (p: p.name or "") msi.environment.systemPackages)) "install the existing runtime lifecycle tool";
+        assert expect (lib.all (n: lib.elem n names) [ "agent-runtime-instance" "agent-runtime-preflight" "agent-runtime-pane" "agent-runtime-herdr" ]) "install the lifecycle, preflight, pane and Herdr adapter tools";
+        assert expect msi.users.users.${username}.linger "keep the Herdr user service available without an interactive login";
+        assert expect (hm.systemd.user.services.herdr.Install.WantedBy == [ "default.target" ]) "declare the per-user Herdr server service";
         pkgs.runCommand "agent-runtime-msi-pilot" { nativeBuildInputs = [ pkgs.jq ]; } ''
           mkdir $out
           jq -S . ${rt.hostPolicy} > $out/host.json
