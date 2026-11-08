@@ -1,0 +1,170 @@
+# Exercise the published Factum #38 execution request inside the existing nspawn lifecycle.
+{ pkgs, lib, skills, factumEnvJsonPath, factumProfilePath, factumRequestPath }:
+let
+  requestPath = builtins.storePath factumRequestPath;
+  request = builtins.fromJSON (builtins.readFile requestPath);
+  envJson = builtins.storePath factumEnvJsonPath;
+  profile = builtins.storePath factumProfilePath;
+  source = builtins.fetchTree {
+    type = "git";
+    url = "ssh://git@github.com/sammasak/factum";
+    rev = "0caf25dbb2ae9bc37bcc208b20a7b9ba0b551780";
+  };
+  project = builtins.storePath (toString source);
+  vendor = pkgs.rustPlatform.importCargoLock { lockFile = "${project}/Cargo.lock"; };
+  env = builtins.fromJSON (builtins.readFile envJson);
+  validStorePath = path:
+    builtins.match "/nix/store/[0-9abcdfghijklmnpqrsvwxyz]{32}-[^ /:\t\n]+" path != null
+    && builtins.pathExists path;
+  before = delimiter: value: builtins.head (lib.splitString delimiter value);
+  storeBase = part: before "'" (before "\"" (before " " (before "/" (before ":" part))));
+  storeRefs = value:
+    if !builtins.isString value then [ ] else
+    map builtins.storePath (lib.filter validStorePath (map (part: "/nix/store/${storeBase part}")
+      (lib.drop 1 (lib.splitString "/nix/store/" value))));
+  envStoreRefs = lib.unique (lib.concatMap
+    (variable: if variable.type == "exported" then storeRefs variable.value else [ ])
+    (builtins.attrValues env.variables));
+  profileBootstrap = pkgs.runCommand "factum-devenv-runtime-tools" { } ''
+    mkdir -p "$out/bin"
+    ln -s ${pkgs.git}/bin/git "$out/bin/git"
+    ln -s ${profile} "$out/devenv-profile"
+  '';
+  expectedRequest = {
+    repo = "sammasak/factum";
+    sha = "0caf25dbb2ae9bc37bcc208b20a7b9ba0b551780";
+    root = ".";
+    environment_index = 0;
+    target_system = "x86_64-linux";
+    lockfile = "devenv.lock";
+  };
+  envClosure = pkgs.runCommand "factum-devenv-exported-store-closure" { } ''
+    mkdir -p "$out"
+    printf '%s\n' ${lib.escapeShellArgs envStoreRefs} > "$out/references"
+  '';
+  cargoHook = ''
+    export CARGO_HOME=/var/cache/agent/cargo
+    export CARGO_NET_OFFLINE=true
+    export CARGO_BUILD_JOBS=1
+    mkdir -p "$CARGO_HOME"
+    cat >"$CARGO_HOME/config.toml" <<'CARGO_CONFIG'
+    [source.crates-io]
+    replace-with = "vendored-sources"
+    [source.vendored-sources]
+    directory = "${vendor}"
+    [net]
+    offline = true
+    CARGO_CONFIG
+  '';
+  projectedEnv = pkgs.runCommand "factum-devenv-projected-env.json" { nativeBuildInputs = [ pkgs.jq ]; } ''
+    ${pkgs.jq}/bin/jq --slurpfile request ${requestPath} --arg hook ${lib.escapeShellArg cargoHook} \
+      --arg gitBin ${lib.escapeShellArg "${pkgs.git}/bin"} '
+      .executionRequest = $request[0]
+      | .variables.PATH.value = ($gitBin + ":" + .variables.PATH.value)
+      | .variables.CARGO_HOME = { type: "exported", value: "/var/cache/agent/cargo" }
+      | .variables.CARGO_NET_OFFLINE = { type: "exported", value: "true" }
+      | .variables.CARGO_BUILD_JOBS = { type: "exported", value: "1" }
+      | .variables.shellHook.value += ("\n" + $hook)
+    ' ${envJson} > "$out"
+  '';
+  fixtureNar = lib.fileContents (pkgs.runCommand "factum-devenv-narhash" { nativeBuildInputs = [ pkgs.nix ]; } ''
+    nix --extra-experimental-features nix-command hash path ${project} > "$out"
+  '');
+  runtime = import ../modules/agent-runtime/lib.nix { inherit lib pkgs; };
+  runnerModule = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    envJson = projectedEnv;
+    inherit profile;
+    projectRoot = "/workspace/factum";
+    inherit expectedRequest;
+  };
+  I = lib.getExe runtime.tools.instance;
+  runner = lib.getExe runnerModule.runner;
+  manifestData = runtime.evalManifests {
+    modules = [
+      {
+        sam.agentRuntime.host = {
+          enable = true;
+          eligibleTemplates = [ "factum-devenv" ];
+          maxConcurrentInstances = 1;
+          reserve = { memoryMiB = 512; diskMiB = 1024; };
+        };
+        sam.agentRuntime.templates.factum-devenv = {
+          role = { name = "factum-devenv"; harness = "codex"; };
+          repositories.factum = {
+            github = "sammasak/factum";
+            ref = { type = "commit"; value = expectedRequest.sha; };
+            lock = { rev = expectedRequest.sha; narHash = fixtureNar; outPath = "${project}"; };
+            path = "/workspace/factum";
+            writable = true;
+          };
+          skillsSource = skills;
+          packages = [ runnerModule.runner profileBootstrap envClosure ];
+          filesystem = {
+            # Factum's nested test-plan cases each create Cargo targets under target/tmp;
+            # a 16 GiB workspace filled before the complete `cargo test --locked` finished.
+            workspaceBudget = { sizeMiB = 65536; inodes = 1200000; };
+            home = { sizeMiB = 64; inodes = 4000; };
+            tmp = { sizeMiB = 1024; inodes = 50000; };
+            cache = { sizeMiB = 2048; inodes = 50000; };
+            output = { sizeMiB = 64; inodes = 4000; };
+          };
+          resources = { cpus = 2; memoryMiB = 8192; tasksMax = 1024; timeoutMinutes = 45; };
+        };
+      }
+    ];
+  };
+  manifest = "${manifestData.manifestDir}/factum-devenv.json";
+  template = manifestData.manifestData.factum-devenv;
+in
+assert request.status == "ready" && request.blockers == [ ];
+assert request.source.sha == expectedRequest.sha && request.source.repo == expectedRequest.repo;
+assert request.check.argv == [ "cargo" "test" "--locked" ];
+assert template.policies.network == { egress = "none"; allow = [ ]; };
+assert template.policies.capabilities == [ ] && template.policies.privateSources == [ ];
+assert template.sources.factum.ref.value == expectedRequest.sha;
+assert template.filesystem.workspaceBudget.sizeMiB == 65536 && template.filesystem.cache.sizeMiB == 2048;
+pkgs.testers.runNixOSTest {
+  name = "agent-runtime-factum-devenv-projection";
+  nodes.machine = {
+    virtualisation.memorySize = 12288;
+    virtualisation.cores = 4;
+    virtualisation.diskSize = 98304;
+    networking.firewall.enable = false;
+    networking.dhcpcd.denyInterfaces = [ "ve-*" ];
+    virtualisation.additionalPaths = [ projectedEnv profileBootstrap project manifest skills vendor ];
+    environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git ];
+  };
+  testScript = ''
+    import json
+    M = "${manifest}"
+    POLICY = "${manifestData.hostPolicy}"
+    I = "${I}"
+    REVISION = "${expectedRequest.sha}"
+    RUNNER = "${runner}"
+    V = "/var/lib/agent-runtime"
+
+    def status(i):
+        return json.loads(machine.succeed(f"{I} status {i}"))
+
+    machine.wait_for_unit("multi-user.target")
+    machine.succeed(f"{I} create factum --template {M} --host {POLICY} --task sammasak/factum#{REVISION}")
+    workspace = f"{V}/factum/vol/workspace/workspace/factum"
+    machine.succeed(f"printf '[safe]\\n\\tdirectory = /workspace/factum\\n' > {V}/factum/vol/home/.gitconfig")
+    machine.succeed(f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={workspace} git -C {workspace} init -q && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={workspace} git -C {workspace} add -A -f && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={workspace} git -C {workspace} -c user.name=agent -c user.email=agent@example.invalid commit -q -m workspace")
+    machine.succeed(f"{I} start factum --wait -- {RUNNER}", timeout=2700)
+    s = status("factum")
+    assert s["state"] == "succeeded", s
+    output = f"{V}/factum/vol/output"
+    result = json.loads(machine.succeed(f"cat {output}/result.json"))
+    assert result["check_exit"] == 0, result
+    assert result["environment"]["profile"].startswith("/nix/store/"), result
+    machine.succeed(f"test -s {output}/check.log")
+    machine.succeed(f"grep -q 'test result: ok' {output}/check.log")
+    machine.succeed(f"{I} destroy factum --discard")
+    machine.succeed("! findmnt -rn | grep -qE 'agent-runtime[-/]factum(/| |$)'")
+    machine.succeed("! systemctl list-units --all --no-legend agent-runtime-factum.service | grep -q .")
+    machine.succeed(f"test ! -e {V}/factum -a ! -e /run/agent-runtime/factum")
+    machine.succeed("! machinectl list --no-legend | grep -q agent-runtime-")
+    machine.succeed("! losetup -l -n -O BACK-FILE | grep -q agent-runtime")
+  '';
+}
