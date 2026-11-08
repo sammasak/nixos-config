@@ -78,6 +78,7 @@ let
     inherit expectedRequest;
   };
   I = lib.getExe runtime.tools.instance;
+  VERIFY = lib.getExe runtime.tools.verify;
   runner = lib.getExe runnerModule.runner;
   manifestData = runtime.evalManifests {
     modules = [
@@ -132,13 +133,14 @@ pkgs.testers.runNixOSTest {
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
     virtualisation.additionalPaths = [ projectedEnv profileBootstrap project manifest skills vendor ];
-    environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git ];
+    environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git runtime.tools.verify ];
   };
   testScript = ''
     import json
     M = "${manifest}"
     POLICY = "${manifestData.hostPolicy}"
     I = "${I}"
+    VERIFY = "${VERIFY}"
     REVISION = "${expectedRequest.sha}"
     RUNNER = "${runner}"
     V = "/var/lib/agent-runtime"
@@ -160,7 +162,20 @@ pkgs.testers.runNixOSTest {
     assert result["environment"]["profile"].startswith("/nix/store/"), result
     machine.succeed(f"test -s {output}/check.log")
     machine.succeed(f"grep -q 'test result: ok' {output}/check.log")
-    machine.succeed(f"{I} destroy factum --discard")
+    # Factum's nested test-plan cases create temporary Git repos under ignored target/;
+    # remove build scratch before the runtime's source exporter rejects nested .git trees.
+    machine.succeed(f"rm -rf {workspace}/target")
+    machine.succeed(f"{I} export factum")
+    bundle = f"{V}/exports/factum"
+    verification = json.loads(machine.succeed(f"{VERIFY} --bundle {bundle} --template {M}"))
+    assert verification["kind"] == "agent-runtime-verified", verification
+    record = json.loads(machine.succeed(f"cat {bundle}/bundle.json"))
+    assert record["outcome"] == "succeeded", record
+    files = {entry["path"]: entry for entry in record["files"]}
+    assert files.get("output/check.log", {}).get("bytes", 0) > 0, record
+    assert files.get("output/result.json", {}).get("bytes", 0) > 0, record
+    machine.succeed(f"{I} destroy factum")
+    machine.succeed(f"test -s {bundle}/bundle.json -a -s {bundle}/output/check.log -a -s {bundle}/output/result.json")
     machine.succeed("! findmnt -rn | grep -qE 'agent-runtime[-/]factum(/| |$)'")
     machine.succeed("! systemctl list-units --all --no-legend agent-runtime-factum.service | grep -q .")
     machine.succeed(f"test ! -e {V}/factum -a ! -e /run/agent-runtime/factum")
