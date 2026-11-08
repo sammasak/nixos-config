@@ -27,6 +27,62 @@ let
     inherit envJson profile;
     projectRoot = "/workspace/projection";
   };
+  request = {
+    schema_version = 1;
+    kind = "devenv-platform/execution-request";
+    status = "ready";
+    source = {
+      repo = "sammasak/native-devenv-projection-fixture";
+      ref = "main";
+      sha = fixtureRev;
+      root = ".";
+      url = "https://github.com/sammasak/native-devenv-projection-fixture";
+    };
+    environment = { index = 0; kind = "devenv"; root = "."; shell = "devenv"; evidence = [ "e1" ]; };
+    target_system = pkgs.stdenv.hostPlatform.system;
+    check = { index = 0; argv = [ "make" "check" ]; evidence = [ "e1" ]; selection = "plan"; };
+    provenance = {
+      plan_sha256 = builtins.hashString "sha256" "fixture-plan";
+      lockfiles = [ { path = "devenv.lock"; blob = builtins.hashString "sha1" "fixture-devenv-lock"; evidence = [ "e1" ]; } ];
+    };
+    blockers = [ ];
+  };
+  readyRequest = pkgs.writeText "execution-request-ready.json" (builtins.toJSON request);
+  blockedRequest = pkgs.writeText "execution-request-blocked.json" (builtins.toJSON (request // {
+    status = "blocked";
+    blockers = [ { kind = "envrc_present"; detail = "environment activation is unsupported"; evidence = [ "e1" ]; } ];
+  }));
+  withRequest = name: requestPath: pkgs.runCommand name { nativeBuildInputs = [ pkgs.jq ]; } ''
+    ${pkgs.jq}/bin/jq --slurpfile request ${requestPath} '. + { executionRequest: $request[0] }' ${envJson} > "$out"
+  '';
+  readyEnv = withRequest "devenv-environment-ready-request.json" readyRequest;
+  blockedEnv = withRequest "devenv-environment-blocked-request.json" blockedRequest;
+  requestProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    envJson = readyEnv;
+    inherit profile;
+    projectRoot = "/workspace/projection";
+    expectedRequest = {
+      repo = "sammasak/native-devenv-projection-fixture";
+      sha = fixtureRev;
+      root = ".";
+      target_system = pkgs.stdenv.hostPlatform.system;
+      environment_index = 0;
+      lockfile = "devenv.lock";
+    };
+  };
+  blockedProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    envJson = blockedEnv;
+    inherit profile;
+    projectRoot = "/workspace/projection";
+    expectedRequest = {
+      repo = "sammasak/native-devenv-projection-fixture";
+      sha = fixtureRev;
+      root = ".";
+      target_system = pkgs.stdenv.hostPlatform.system;
+      environment_index = 0;
+      lockfile = "devenv.lock";
+    };
+  };
   runtime = import ../modules/agent-runtime/lib.nix { inherit lib pkgs; };
   I = lib.getExe runtime.tools.instance;
   runner = lib.getExe projection.runner;
@@ -49,7 +105,7 @@ let
             writable = true;
           };
           skillsSource = skills;
-          packages = [ projection.runner ];
+          packages = [ projection.runner requestProjection.runner blockedProjection.runner ];
           filesystem = {
             workspaceBudget = { sizeMiB = 64; inodes = 4000; };
             home = { sizeMiB = 32; inodes = 2000; };
@@ -76,7 +132,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 4096;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson ];
+  virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv blockedEnv ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps ];
   };
   testScript = ''
@@ -117,6 +173,26 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"test -f {V}/projected/vol/workspace/workspace/projection/check.result")
         machine.succeed("test ! -e ${fixtureSrc}/.devenv-enterShell-ran")
         clean("projected")
+
+    with subtest("a ready typed execution request matches the pinned project and runs its argv inside nspawn"):
+        create("request-ready")
+        machine.succeed(f"{I} start request-ready --wait -- ${lib.getExe requestProjection.runner}")
+        s = status("request-ready")
+        assert s["state"] == "succeeded", s
+        o = f"{V}/request-ready/vol/output"
+        result = json.loads(machine.succeed(f"cat {o}/result.json"))
+        assert result["check_exit"] == 0, result
+        machine.succeed(f"grep -q 'guest-check:generated-devenv-environment:generated-devenv-import' {o}/check.log")
+        machine.succeed(f"test -f {V}/request-ready/vol/workspace/workspace/projection/check.result")
+        clean("request-ready")
+
+    with subtest("a blocked typed execution request is rejected before project activation"):
+        create("request-blocked")
+        machine.execute(f"{I} start request-blocked --wait -- ${lib.getExe blockedProjection.runner}")
+        s = status("request-blocked")
+        assert s["state"] == "failed" and s["result"]["exitStatus"] == 65, s
+        machine.succeed(f"test ! -e {V}/request-blocked/vol/workspace/workspace/projection/.devenv-enterShell-ran")
+        clean("request-blocked")
 
     with subtest("unsafe host-local profile is rejected before the hook or project check runs"):
         create("unsafe")

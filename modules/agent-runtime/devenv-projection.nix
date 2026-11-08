@@ -2,10 +2,12 @@
 # The JSON is produced by the trusted host preparer; the shell hook remains data
 # here and is evaluated only by this command inside an agent-runtime instance.
 { lib, pkgs }:
-{ envJson, profile, projectRoot }:
+{ envJson, profile, projectRoot, expectedRequest ? null }:
 let
   envPath = toString envJson;
   profilePath = toString profile;
+  requestMode = expectedRequest != null;
+  expectedRequestData = if requestMode then expectedRequest else { };
   ignored = [
     "BASHOPTS" "EUID" "HOME" "NIX_BUILD_TOP" "NIX_ENFORCE_PURITY" "NIX_LOG_FD" "NIX_REMOTE"
     "NIX_SSL_CERT_FILE" "OLDPWD" "PPID" "PWD" "SHELLOPTS" "SHLVL" "SSL_CERT_FILE" "TEMP"
@@ -26,10 +28,10 @@ let
 
       # Validate the entire projection before activation. Host credentials and
       # host-local paths are never copied into the guest environment.
-      ${pkgs.jq}/bin/jq -e --arg profile "$profile" '
+      ${pkgs.jq}/bin/jq -e --arg profile "$profile" \
+        --argjson expected '${builtins.toJSON expectedRequestData}' '
         def sensitive: test("(SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|AUTH|API_KEY|PRIVATE_KEY|COOKIE|SSH_)"; "i");
         type == "object" and .schema_version == 1
-        and (.check | type == "string" and length > 0)
         and (.variables | type == "object")
         and (.variables.DEVENV_PROFILE.type == "exported" and .variables.DEVENV_PROFILE.value == $profile and ($profile | startswith("/nix/store/")))
         and (.variables.DEVENV_ROOT.value == "__PROJECT_ROOT__")
@@ -40,8 +42,31 @@ let
           and ((.key | sensitive) | not)
           and (.value.type != "exported" or (.value.value | type) == "string")
           and (.value.type != "exported" or (.value.value | test("/home/|/run/user/|/tmp/|/var/tmp/") | not)))
+        and ${if requestMode then ''
+          (.executionRequest | type == "object")
+          and .executionRequest.schema_version == 1
+          and .executionRequest.kind == "devenv-platform/execution-request"
+          and .executionRequest.status == "ready"
+          and .executionRequest.blockers == []
+          and .executionRequest.source.repo == $expected.repo
+          and .executionRequest.source.url == ("https://github.com/" + $expected.repo)
+          and (.executionRequest.source.ref | type == "string" and length > 0 and length <= 255)
+          and .executionRequest.source.sha == $expected.sha
+          and .executionRequest.source.root == $expected.root
+          and .executionRequest.environment.kind == "devenv"
+          and .executionRequest.environment.index == $expected.environment_index
+          and .executionRequest.environment.root == $expected.root
+          and .executionRequest.environment.shell == "devenv"
+          and .executionRequest.target_system == $expected.target_system
+          and (.executionRequest.provenance.plan_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+          and any(.executionRequest.provenance.lockfiles[]; .path == $expected.lockfile and (.blob | test("^[0-9a-f]{40}$")))
+          and (.executionRequest.check.argv | type == "array" and length > 0 and length <= 128
+            and all(.[]; type == "string" and length > 0 and length <= 4096 and (test("[\\x00-\\x1f\\x7f]") | not)))
+        '' else ''
+          (.check | type == "string" and length > 0)
+        ''}
       ' "$env_json" >/dev/null || {
-        echo "devenv projection rejected: incomplete, credential-bearing, or host-local environment" >&2
+        echo "devenv projection rejected: incomplete, blocked, mismatched, credential-bearing, or host-local input" >&2
         exit 65
       }
 
@@ -76,9 +101,19 @@ let
       # `out`; capture the runtime output directory after hook activation.
       output_dir=''${AGENT_RUNTIME_OUTPUT:?not in an agent-runtime instance}
 
+      ${if requestMode then ''
+      argv=()
+      while IFS= read -r -d $'\0' arg; do argv+=("$arg"); done < <(
+        ${pkgs.jq}/bin/jq -j '.executionRequest.check.argv[] | ., "\u0000"' "$env_json"
+      )
+      [ "''${#argv[@]}" -gt 0 ] || exit 65
+      rc=0
+      "''${argv[@]}" >"$output_dir/check.log" 2>&1 || rc=$?
+      '' else ''
       check="$(${pkgs.jq}/bin/jq -er '.check | strings' "$env_json")" || exit 65
       rc=0
       bash --noprofile --norc -euo pipefail -c "$check" >"$output_dir/check.log" 2>&1 || rc=$?
+      ''}
       ${pkgs.jq}/bin/jq -n --arg marker "''${PROJECT_NATIVE_MARKER:-}" --arg import "''${PROJECT_NATIVE_IMPORT:-}" \
         --arg profile "$profile" --argjson check_exit "$rc" \
         '{environment: {marker: $marker, imported: $import, profile: $profile}, check_exit: $check_exit}' >"$output_dir/result.json"

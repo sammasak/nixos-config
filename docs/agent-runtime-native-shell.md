@@ -73,5 +73,12 @@ a QEMU VM. Its subtests:
 - **Factum acceptance and measured cold/warm host-side realization times** remain follow-ups. The
   fixture proves the projection mechanism, while llm-gateway proves one real project's offline
   guest task; neither result claims Factum acceptance.
+- **Typed `devenv-platform/execution-request` consumption** is covered by the focused follow-up
+  on `feat/96-runtime-request-consumer`: a ready request must match the pinned repository, commit,
+  project root, target system, environment kind and lockfile provenance before its `check.argv` is
+  executed inside nspawn. The guest test also proves that a request marked `blocked` is refused
+  before `enterShell`. This uses the real request shape with the generated-environment fixture;
+  Factum's current-main request is blocked because its tracked tree has no `devenv.lock`, so no
+  real Factum request has been executed yet.
 - **The devenv-platform `prepare` glue**, from a plan's `selected_environment`/`check_argv` to this
   template, waits on devenv-platform#117 (prepare detection, in review).
