@@ -27,9 +27,12 @@ nixpkgs_source=$(jq -er .nixpkgs <<<"$inputs")
 test -d "$devenv_source" -a -d "$nixpkgs_source"
 
 devenv_project() {
-  env -u DEVENV_ROOT -u DEVENV_DOTFILE -u DEVENV_STATE -u DEVENV_PROFILE -u DEVENV_RUNTIME \
-    DEVENV_USER_CONFIG=/dev/null DEVENV_NO_AI_AGENT=1 \
-    devenv --from "path:$project" --offline "$@"
+  (
+    cd "$project"
+    env -u DEVENV_ROOT -u DEVENV_DOTFILE -u DEVENV_STATE -u DEVENV_PROFILE -u DEVENV_RUNTIME \
+      DEVENV_USER_CONFIG=/dev/null DEVENV_NO_AI_AGENT=1 \
+      devenv --offline "$@"
+  )
 }
 devenv_project print-dev-env --json >"$test_root/print-dev-env.json"
 devenv_project eval scripts.check.exec >"$test_root/check.json"
