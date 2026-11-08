@@ -54,9 +54,15 @@ a QEMU VM. Its subtests:
 ## Not covered here
 
 - **Mode (b), guest-side cold realization** with a private store and bounded writes, is not attempted.
-- **devenv shells** (`devenv.nix`/`devenv.yaml` imports) are not covered: rf-proto is a flake
-  `mkShell`, and `native-shell.nix` refuses a non-mkShell devShell.
-- **The `factum`/`llm-gateway` pins and the measured cold/warm host-side realization times** are
-  follow-ups.
+- **The fixture-level Devenv projection proof** now lives alongside the flake-shell proof. Run
+  `scripts/test-agent-runtime-devenv-projection.sh` on x86_64-linux. It evaluates the fixture's
+  committed `devenv.lock`, captures `devenv print-dev-env --json` and its configured check without
+  entering the host shell, sanitizes the generated environment, and builds a QEMU test which runs
+  that environment, imported configuration, `enterShell`, and the check inside the existing
+  nspawn instance. The negative case rejects a host-local profile before evaluating the hook or
+  check. The fixture asserts its lockfile stays unchanged and the host hook marker stays absent.
+- **The `factum`/`llm-gateway` pins, measurements against those real projects, and measured
+  cold/warm host-side realization times** remain follow-ups. The fixture proves the projection
+  mechanism; it does not claim acceptance of either project.
 - **The devenv-platform `prepare` glue**, from a plan's `selected_environment`/`check_argv` to this
   template, waits on devenv-platform#117 (prepare detection, in review).
