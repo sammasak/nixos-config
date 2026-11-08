@@ -47,17 +47,45 @@ let
     chmod -R u+w "$TMPDIR/project"
     cd "$TMPDIR/project"
     export DEVENV_ROOT="$TMPDIR/project"
-    devenv --offline \
+    devenv_eval() {
+      devenv --offline \
       --override-input nixpkgs path:${fixtureNixpkgs} \
       --override-input devenv path:${devenvSource}/src/modules \
-      eval scripts.check.exec > "$TMPDIR/task.json"
+      eval "$@"
+    }
+    devenv_eval scripts.check.exec > "$TMPDIR/task.json"
     jq -er '.["scripts.check.exec"] | strings | select(length > 0)' "$TMPDIR/task.json" > "$TMPDIR/check"
-    devenv --offline \
-      --override-input nixpkgs path:${fixtureNixpkgs} \
-      --override-input devenv path:${devenvSource}/src/modules \
-      eval env.DEVENV_IMPORT_MARKER > "$TMPDIR/import-marker.json"
+    devenv_eval env.DEVENV_IMPORT_MARKER > "$TMPDIR/import-marker.json"
     jq -e '."env.DEVENV_IMPORT_MARKER" == "tooling-import-loaded"' "$TMPDIR/import-marker.json" >/dev/null
     test ! -e "$DEVENV_ROOT/.devenv-enterShell-ran"
+
+    # Prove the normal evaluator rejects the two ignored-configuration cases.
+    # Keep each mutation isolated from the positive fixture and require the
+    # expected missing Devenv attribute, not just any arbitrary command error.
+    cp -R "$TMPDIR/project" "$TMPDIR/no-import"
+    chmod -R u+w "$TMPDIR/no-import"
+    sed -i '/^imports:/,$d' "$TMPDIR/no-import/devenv.yaml"
+    if (cd "$TMPDIR/no-import" && devenv_eval env.DEVENV_IMPORT_MARKER > "$TMPDIR/no-import.json" 2> "$TMPDIR/no-import.err"); then
+      if jq -e '."env.DEVENV_IMPORT_MARKER" == "tooling-import-loaded"' "$TMPDIR/no-import.json" >/dev/null 2>&1; then
+        echo 'devenv-native: removing the YAML import unexpectedly preserved the marker' >&2
+        exit 1
+      fi
+    else
+      grep -Fq "Failed to get attribute 'devenv.config.env.DEVENV_IMPORT_MARKER'" "$TMPDIR/no-import.err"
+    fi
+    cp -R "$TMPDIR/project" "$TMPDIR/no-script"
+    chmod -R u+w "$TMPDIR/no-script"
+    sed -i '/^  scripts.check.exec =/,$d' "$TMPDIR/no-script/devenv.nix"
+    printf '}\n' >> "$TMPDIR/no-script/devenv.nix"
+    if (cd "$TMPDIR/no-script" && devenv_eval scripts.check.exec > "$TMPDIR/no-script.json" 2> "$TMPDIR/no-script.err"); then
+      if jq -er '.["scripts.check.exec"] | strings | select(length > 0)' "$TMPDIR/no-script.json" >/dev/null 2>&1; then
+        echo 'devenv-native: removing scripts.check.exec unexpectedly preserved a runnable script' >&2
+        exit 1
+      fi
+    else
+      grep -Fq "Failed to get attribute 'devenv.config.scripts.check.exec'" "$TMPDIR/no-script.err"
+    fi
+    echo 'devenv-native: missing YAML import and missing configured script both rejected'
     mkdir -p "$out"
     cp "$TMPDIR/check" "$out/check"
     cp "$TMPDIR/import-marker.json" "$out/import-marker.json"

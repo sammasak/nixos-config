@@ -27,10 +27,14 @@ the exact script there. The script checks the imported marker, writes
 `.devenv-script-ran`, and runs `make check`. The harness does not create that
 Devenv-defined marker.
 
-The test fails during config preparation if `devenv.nix` or the YAML import is
-removed: the script extraction or imported-marker assertion fails. A mutation
-probe from the published fixture also confirmed that removing either the YAML
-import or `devenv.nix` makes the corresponding Devenv evaluation exit non-zero.
+The offline evaluator now also runs two isolated mutation probes on every
+build: it removes the YAML import and requires the imported marker lookup to
+fail with the missing `DEVENV_IMPORT_MARKER`; then it removes only
+`scripts.check.exec` while retaining `devenv.nix` and requires both Devenv
+evaluation and the non-empty script extraction guard to fail. This prevents a
+stale fixture, ignored YAML imports or a missing project check from passing the
+normal test entrypoint. Separate manual mutations against published `9342aae`
+previously demonstrated the same boundaries.
 
 ## Runtime behavior and limits
 
