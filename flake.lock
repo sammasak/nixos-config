@@ -284,6 +284,23 @@
         "type": "github"
       }
     },
+    "llm-gateway": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1794007838,
+        "narHash": "sha256-V1U3q8PlItSBdoqXbn7kmThDhhtqLO1lJyrFr0O9xUM=",
+        "ref": "refs/heads/main",
+        "rev": "4a17b9241d8ad3702777ea85001597910e169e5b",
+        "revCount": 38,
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/llm-gateway"
+      },
+      "original": {
+        "rev": "4a17b9241d8ad3702777ea85001597910e169e5b",
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/llm-gateway"
+      }
+    },
     "nix-audit": {
       "flake": false,
       "locked": {
@@ -426,6 +443,7 @@
         "flake-parts": "flake-parts",
         "home-manager": "home-manager",
         "import-tree": "import-tree",
+        "llm-gateway": "llm-gateway",
         "nix-audit": "nix-audit",
         "nix-index-database": "nix-index-database",
         "nixpkgs": "nixpkgs",

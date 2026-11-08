@@ -54,15 +54,24 @@ a QEMU VM. Its subtests:
 ## Not covered here
 
 - **Mode (b), guest-side cold realization** with a private store and bounded writes, is not attempted.
-- **The fixture-level Devenv projection proof** now lives alongside the flake-shell proof. Run
+- **The fixture-level Devenv projection proof** runs with
   `scripts/test-agent-runtime-devenv-projection.sh` on x86_64-linux. It evaluates the fixture's
   committed `devenv.lock`, captures `devenv print-dev-env --json` and its configured check without
   entering the host shell, sanitizes the generated environment, and builds a QEMU test which runs
   that environment, imported configuration, `enterShell`, and the check inside the existing
   nspawn instance. The negative case rejects a host-local profile before evaluating the hook or
   check. The fixture asserts its lockfile stays unchanged and the host hook marker stays absent.
-- **The `factum`/`llm-gateway` pins, measurements against those real projects, and measured
-  cold/warm host-side realization times** remain follow-ups. The fixture proves the projection
-  mechanism; it does not claim acceptance of either project.
+- **The real-project Devenv acceptance test** runs with
+  `scripts/test-agent-runtime-llm-gateway-devenv-projection.sh`. It prepares the committed Devenv
+  lock from the exact `sammasak/llm-gateway` pin in `flake.lock`, captures the project's generated
+  environment and `rust:test` task without entering its host shell, then runs that task in the
+  existing nspawn instance with egress denied and Cargo in offline mode. The temporary writable
+  guest checkout gets Git metadata because the project's `enterShell` uses Git. The environment's
+  referenced store paths, Cargo vendor tree, and task executable are pinned into the guest closure.
+  At the recorded pin, all 419 tests passed; `destroy --discard` then left no runtime mounts, unit,
+  state directory, machine registration, or loop device. The full `nixos:qa` gate is still pending.
+- **Factum acceptance and measured cold/warm host-side realization times** remain follow-ups. The
+  fixture proves the projection mechanism, while llm-gateway proves one real project's offline
+  guest task; neither result claims Factum acceptance.
 - **The devenv-platform `prepare` glue**, from a plan's `selected_environment`/`check_argv` to this
   template, waits on devenv-platform#117 (prepare detection, in review).
