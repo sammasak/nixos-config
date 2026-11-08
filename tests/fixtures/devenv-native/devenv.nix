@@ -3,6 +3,11 @@
 { pkgs, ... }:
 {
   packages = [ pkgs.gnumake pkgs.gcc pkgs.coreutils ];
+  # Host preparation may evaluate this project, but must never enter its shell.
+  # The evaluator derivation asserts this marker is not created on the host.
+  enterShell = ''
+    printf '%s\n' host-shell-hook-ran > "$DEVENV_ROOT/.devenv-enterShell-ran"
+  '';
   scripts.check.exec = ''
     test "$DEVENV_IMPORT_MARKER" = "tooling-import-loaded"
     echo "devenv-script:$DEVENV_IMPORT_MARKER" > "$DEVENV_ROOT/.devenv-script-ran"

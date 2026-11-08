@@ -46,6 +46,7 @@ let
     cp -R ${../fixtures/devenv-native}/. "$TMPDIR/project/"
     chmod -R u+w "$TMPDIR/project"
     cd "$TMPDIR/project"
+    export DEVENV_ROOT="$TMPDIR/project"
     devenv --offline \
       --override-input nixpkgs path:${fixtureNixpkgs} \
       --override-input devenv path:${devenvSource}/src/modules \
@@ -56,6 +57,7 @@ let
       --override-input devenv path:${devenvSource}/src/modules \
       eval env.DEVENV_IMPORT_MARKER > "$TMPDIR/import-marker.json"
     jq -e '."env.DEVENV_IMPORT_MARKER" == "tooling-import-loaded"' "$TMPDIR/import-marker.json" >/dev/null
+    test ! -e "$DEVENV_ROOT/.devenv-enterShell-ran"
     mkdir -p "$out"
     cp "$TMPDIR/check" "$out/check"
     cp "$TMPDIR/import-marker.json" "$out/import-marker.json"

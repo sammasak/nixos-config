@@ -10,12 +10,17 @@ listed from the same pinned nixpkgs packages as the fixture.
 `tests/fixtures/devenv-native` requires Devenv `2.4.0`. Its `devenv.lock` pins
 the Devenv module input to `9655d320b8f9df74dbecf681f52a7334574606c3` and
 nixpkgs to `fe13242281a67641c0102cdb1087f0ebe586c7df`. The YAML imports
-`./tooling`; that module exports `DEVENV_IMPORT_MARKER`.
+`./tooling`; that module exports `DEVENV_IMPORT_MARKER`. The project also
+defines an `enterShell` hook that writes `.devenv-enterShell-ran` under
+`DEVENV_ROOT`. Host-side evaluation sets `DEVENV_ROOT` to its temporary
+fixture and asserts that this marker was not created, so the test checks that
+preparation did not enter the project shell.
 
 The test derivation copies the fixture to a temporary project and, offline,
 uses Devenv to evaluate `scripts.check.exec` and
 `env.DEVENV_IMPORT_MARKER`. It asserts both are present and that the imported
-marker has the expected value. This evaluation does not enter the shell or run
+marker has the expected value. It also asserts the `enterShell` marker is
+absent after evaluation. This evaluation does not enter the shell or run
 project hooks on the host. The VM runner loads the evaluated script and marker,
 sets `DEVENV_ROOT` to the guest's writable `/workspace/fixture`, then executes
 the exact script there. The script checks the imported marker, writes
