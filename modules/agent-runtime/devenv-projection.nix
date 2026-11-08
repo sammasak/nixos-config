@@ -29,7 +29,7 @@ let
       # Validate the entire projection before activation. Host credentials and
       # host-local paths are never copied into the guest environment.
       ${pkgs.jq}/bin/jq -e --arg profile "$profile" \
-        --argjson expected '${builtins.toJSON expectedRequestData}' '
+        --argjson expected ${lib.escapeShellArg (builtins.toJSON expectedRequestData)} '
         def sensitive: test("(SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|AUTH|API_KEY|PRIVATE_KEY|COOKIE|SSH_)"; "i");
         type == "object" and .schema_version == 1
         and (.variables | type == "object")
@@ -59,6 +59,9 @@ let
           and .executionRequest.environment.shell == "devenv"
           and .executionRequest.target_system == $expected.target_system
           and (.executionRequest.provenance.plan_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+          and ($expected.lockfile | type == "string" and length > 0 and (startswith("/") | not)
+            and (test("[\\x00-\\x1f\\x7f\\\\]") | not)
+            and (split("/") | all(. != "" and . != "." and . != "..")))
           and ([.executionRequest.provenance.lockfiles[] | select(.path == $expected.lockfile)] | length == 1)
           and any(.executionRequest.provenance.lockfiles[]; .path == $expected.lockfile and (.blob | test("^[0-9a-f]{40}$")))
           and (.executionRequest.check.argv | type == "array" and length > 0 and length <= 128
@@ -72,8 +75,10 @@ let
       }
 
       ${if requestMode then ''
-      lockfile="$repo/${expectedRequestData.lockfile}"
-      expected_blob="$(${pkgs.jq}/bin/jq -er --arg path '${expectedRequestData.lockfile}' \
+      # shellcheck disable=SC2016 # Nix emits this as a shell-escaped literal path.
+      lockfile="$repo"/${lib.escapeShellArg expectedRequestData.lockfile}
+      # shellcheck disable=SC2016 # Nix emits this as a shell-escaped jq argument.
+      expected_blob="$(${pkgs.jq}/bin/jq -er --arg path ${lib.escapeShellArg expectedRequestData.lockfile} \
         '[.executionRequest.provenance.lockfiles[] | select(.path == $path) | .blob] | if length == 1 then .[0] else error("missing or duplicate lockfile provenance") end' \
         "$env_json")" || exit 65
       if [ -L "$lockfile" ] || [ ! -f "$lockfile" ] || [ "$(git hash-object "$lockfile")" != "$expected_blob" ]; then
