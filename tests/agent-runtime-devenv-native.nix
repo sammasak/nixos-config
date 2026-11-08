@@ -57,19 +57,19 @@ let
     exit $fail
   '';
 
-  # Mode (b): attempt genuinely cold guest-side Devenv evaluation. It MUST fail --
-  # there is no daemon socket, the store is read-only, and there is no network.
-  # The exact failing command and message are recorded.
+  # Mode (b): attempt guest-side Devenv shell activation from the fixture root.
+  # It must fail under the no-daemon, read-only-store, no-network policy.
   modeb = sh "devenv-native-modeb" ''
     export PATH=${pkgs.coreutils}/bin:${pkgs.devenv}/bin:${pkgs.nix}/bin
     out=''${AGENT_RUNTIME_OUTPUT:?}
-    echo "=== mode (b) cold guest-side Devenv evaluation attempt ===" > "$out/mode-b.log"
+    echo "=== mode (b) cold guest-side Devenv shell activation attempt ===" > "$out/mode-b.log"
+    cd /workspace/fixture
     rc=0
     devenv --offline \
       --override-input nixpkgs path:${dn.fixtureNixpkgsPackage}/share/nixpkgs \
       --override-input devenv path:${dn.devenvSourcePackage}/share/devenv/modules \
-      eval scripts.check.exec >> "$out/mode-b.log" 2>&1 || rc=$?
-    echo "devenv eval exit=$rc" >> "$out/mode-b.log"
+      shell -- true >> "$out/mode-b.log" 2>&1 || rc=$?
+    echo "devenv shell exit=$rc" >> "$out/mode-b.log"
     # record the structural reason too
     { echo "daemon_socket_present=$(test -e /nix/var/nix/daemon-socket/socket && echo yes || echo no)"
       echo "store_writable=$(touch /nix/store/.art-write 2>/dev/null && echo yes || echo no)"
@@ -191,15 +191,17 @@ pkgs.testers.runNixOSTest {
         print("broken-source editing shell:", machine.succeed(f"cat {o}/toolchain.txt"))
         machine.succeed("${Itool} destroy brk --discard"); clean("brk")
 
-    with subtest("mode (b): cold guest-side Devenv evaluation is UNSUPPORTED by the runtime; the exact failing command is recorded"):
+    with subtest("mode (b): cold guest-side Devenv shell activation is UNSUPPORTED; the exact failing command is recorded"):
         create("mb")
         rc, out = machine.execute("${Itool} start mb --wait -- ${modeb}")
         s = st("mb")
-        # the payload asserts Devenv evaluation failed, so success proves the cold path is unavailable
+        # the payload asserts Devenv shell activation failed, so success proves the cold path is unavailable
         assert s["state"] == "succeeded", s
         outlog = machine.succeed(f"cat {V}/mb/vol/output/mode-b.log")
         assert "daemon_socket_present=no" in outlog and "store_writable=no" in outlog and "net_ifaces=lo" in outlog, outlog
-        assert "devenv eval exit=" in outlog and "devenv eval exit=0" not in outlog, outlog
+        assert "devenv shell exit=" in outlog and "devenv shell exit=0" not in outlog, outlog
+        assert "File devenv.nix does not exist" not in outlog, outlog
+        assert "No space left on device" in outlog, outlog
         measures["mode_b"] = "unsupported: no nix daemon socket, read-only /nix/store, no network"
         print("mode(b) record:\n" + outlog)
         machine.succeed("${Itool} destroy mb --discard"); clean("mb")
