@@ -8,8 +8,10 @@ deploys it. This branch adds diagnostics only and does not change host policy.
 
 ## Read-only capacity snapshot
 
-From a workstation with the existing pinned SSH identity, during MSI's normal
-Mon–Fri 09:00–21:00 power window, run:
+Run this on Lenovo, or another owner-approved machine on the key's allowed
+source network, during MSI's normal Mon–Fri 09:00–21:00 power window. The
+pinned SSH identity is source-restricted; Acer Swift is not an authorized route.
+Do not change the key restriction or firewall to collect this snapshot:
 
 ```bash
 ssh -o BatchMode=yes msi-ms7758 'bash -s' \
