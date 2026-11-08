@@ -67,6 +67,19 @@ let
       | .variables.shellHook.value += ("\n" + $hook)
     ' ${envJson} > "$out"
   '';
+  failureRequest = request // {
+    check = request.check // {
+      argv = [ "cargo" "test" "--locked" "--test" "agent_runtime_missing_acceptance_target" ];
+      evidence = [ ];
+      index = null;
+      selection = "explicit";
+    };
+  };
+  failureRequestJson = pkgs.writeText "factum-failure-injection-request.json" (builtins.toJSON failureRequest);
+  failureProjectedEnv = pkgs.runCommand "factum-devenv-failure-projected-env.json" { nativeBuildInputs = [ pkgs.jq ]; } ''
+    ${pkgs.jq}/bin/jq --slurpfile request ${failureRequestJson} \
+      '.executionRequest = $request[0]' ${projectedEnv} > "$out"
+  '';
   fixtureNar = lib.fileContents (pkgs.runCommand "factum-devenv-narhash" { nativeBuildInputs = [ pkgs.nix ]; } ''
     nix --extra-experimental-features nix-command hash path ${project} > "$out"
   '');
@@ -136,7 +149,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 98304;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ projectedEnv profileBootstrap project manifest skills vendor ];
+    virtualisation.additionalPaths = [ projectedEnv failureProjectedEnv profileBootstrap project manifest skills vendor ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git runtime.tools.verify ];
   };
   testScript = ''
@@ -226,6 +239,39 @@ pkgs.testers.runNixOSTest {
     machine.succeed("! findmnt -rn | grep -qE 'agent-runtime[-/]factum(/| |$)'")
     machine.succeed("! systemctl list-units --all --no-legend agent-runtime-factum.service | grep -q .")
     machine.succeed(f"test ! -e {V}/factum -a ! -e /run/agent-runtime/factum")
+
+    # Exercise a source-bound explicit command failure against the same real
+    # Factum environment. This absent Cargo target fails before compilation.
+    machine.succeed(f"{I} create factum-failure --template {M} --host {POLICY} --task sammasak/factum#{REVISION}")
+    failure_workspace = f"{V}/factum-failure/vol/workspace/workspace/factum"
+    machine.succeed(f"printf '[safe]\\n\\tdirectory = /workspace/factum\\n' > {V}/factum-failure/vol/home/.gitconfig")
+    machine.succeed(f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={failure_workspace} git -C {failure_workspace} init -q && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={failure_workspace} git -C {failure_workspace} add -A -f && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={failure_workspace} git -C {failure_workspace} -c user.name=agent -c user.email=agent@example.invalid commit -q -m workspace")
+    machine.succeed(f"{I} start factum-failure -- {RUNNER} ${failureProjectedEnv}")
+    failed = status("factum-failure")
+    while failed["state"] in ("starting", "running"):
+        time.sleep(1)
+        failed = status("factum-failure")
+    assert failed["state"] == "failed" and failed["result"]["exitStatus"] == 101, failed
+    failed_invocation = failed["result"]["invocation"]
+    retry_status = json.loads(machine.succeed(f"{I} start factum-failure -- {RUNNER} ${failureProjectedEnv}"))
+    assert retry_status["state"] == "failed" and retry_status["result"]["invocation"] == failed_invocation, retry_status
+    failure_output = f"{V}/factum-failure/vol/output"
+    machine.succeed(f"grep -q 'no test target named' {failure_output}/check.log")
+    machine.succeed(f"rm -rf {failure_workspace}/target")
+    machine.succeed(f"{I} export factum-failure")
+    failure_bundle = f"{V}/exports/factum-failure"
+    failure_verification = json.loads(machine.succeed(f"{VERIFY} --bundle {failure_bundle} --template {M}"))
+    assert failure_verification["kind"] == "agent-runtime-verified", failure_verification
+    assert failure_verification["outcome"] == "failed", failure_verification
+    failure_record = json.loads(machine.succeed(f"cat {failure_bundle}/bundle.json"))
+    assert failure_record["outcome"] == "failed", failure_record
+    failure_files = {entry["path"]: entry for entry in failure_record["files"]}
+    assert failure_files.get("output/check.log", {}).get("bytes", 0) > 0, failure_record
+    machine.succeed(f"{I} destroy factum-failure")
+    machine.succeed(f"test -s {failure_bundle}/bundle.json -a -s {failure_bundle}/output/check.log")
+    machine.succeed("! findmnt -rn | grep -qE 'agent-runtime[-/]factum-failure(/| |$)'")
+    machine.succeed("! systemctl list-units --all --no-legend agent-runtime-factum-failure.service | grep -q .")
+    machine.succeed(f"test ! -e {V}/factum-failure -a ! -e /run/agent-runtime/factum-failure")
     machine.succeed("! machinectl list --no-legend | grep -q agent-runtime-")
     machine.succeed("! losetup -l -n -O BACK-FILE | grep -q agent-runtime")
   '';
