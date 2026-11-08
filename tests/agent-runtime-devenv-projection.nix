@@ -51,6 +51,11 @@ let
     blockers = [ ];
   };
   readyRequest = pkgs.writeText "execution-request-ready.json" (builtins.toJSON request);
+  argvBoundaryRequest = pkgs.writeText "execution-request-argv-boundary.json" (builtins.toJSON (request // {
+    check = request.check // {
+      argv = [ "printf" "%s\\n" "literal; touch /workspace/projection/.argv-injection-ran" ];
+    };
+  }));
   blockedRequest = pkgs.writeText "execution-request-blocked.json" (builtins.toJSON (request // {
     status = "blocked";
     blockers = [ { kind = "envrc_present"; detail = "environment activation is unsupported"; evidence = [ "e1" ]; } ];
@@ -64,10 +69,24 @@ let
     ${pkgs.jq}/bin/jq --slurpfile request ${requestPath} '. + { executionRequest: $request[0] }' ${envJson} > "$out"
   '';
   readyEnv = withRequest "devenv-environment-ready-request.json" readyRequest;
+  argvBoundaryEnv = withRequest "devenv-environment-argv-boundary-request.json" argvBoundaryRequest;
   blockedEnv = withRequest "devenv-environment-blocked-request.json" blockedRequest;
   mismatchedEnv = withRequest "devenv-environment-mismatched-request.json" mismatchedRequest;
   requestProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
     envJson = readyEnv;
+    inherit profile;
+    projectRoot = "/workspace/projection";
+    expectedRequest = {
+      repo = "sammasak/native-devenv-projection-fixture";
+      sha = fixtureRev;
+      root = ".";
+      target_system = pkgs.stdenv.hostPlatform.system;
+      environment_index = 0;
+      lockfile = "devenv.lock";
+    };
+  };
+  argvBoundaryProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    envJson = argvBoundaryEnv;
     inherit profile;
     projectRoot = "/workspace/projection";
     expectedRequest = {
@@ -127,7 +146,7 @@ let
             writable = true;
           };
           skillsSource = skills;
-          packages = [ projection.runner requestProjection.runner blockedProjection.runner mismatchedProjection.runner ];
+          packages = [ projection.runner requestProjection.runner argvBoundaryProjection.runner blockedProjection.runner mismatchedProjection.runner ];
           filesystem = {
             workspaceBudget = { sizeMiB = 64; inodes = 4000; };
             home = { sizeMiB = 32; inodes = 2000; };
@@ -154,7 +173,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 4096;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-  virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv blockedEnv mismatchedEnv ];
+  virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv argvBoundaryEnv blockedEnv mismatchedEnv ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps ];
   };
   testScript = ''
@@ -207,6 +226,16 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"grep -q 'guest-check:generated-devenv-environment:generated-devenv-import' {o}/check.log")
         machine.succeed(f"test -f {V}/request-ready/vol/workspace/workspace/projection/check.result")
         clean("request-ready")
+
+    with subtest("argv metacharacters remain literal and are not interpreted by a shell"):
+        create("request-argv-boundary")
+        machine.succeed(f"{I} start request-argv-boundary --wait -- ${lib.getExe argvBoundaryProjection.runner}")
+        s = status("request-argv-boundary")
+        assert s["state"] == "succeeded", s
+        o = f"{V}/request-argv-boundary/vol/output"
+        machine.succeed(f"grep -Fx 'literal; touch /workspace/projection/.argv-injection-ran' {o}/check.log")
+        machine.succeed(f"test ! -e {V}/request-argv-boundary/vol/workspace/workspace/projection/.argv-injection-ran")
+        clean("request-argv-boundary")
 
     with subtest("a blocked typed execution request is rejected before project activation"):
         create("request-blocked")
