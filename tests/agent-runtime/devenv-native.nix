@@ -61,15 +61,12 @@ let
 
     # Prove the normal evaluator rejects the two ignored-configuration cases.
     # Keep each mutation isolated from the positive fixture and require the
-    # expected missing Devenv attribute, not just any arbitrary command error.
+    # expected missing Devenv attribute or missing value, not just malformed output.
     cp -R "$TMPDIR/project" "$TMPDIR/no-import"
     chmod -R u+w "$TMPDIR/no-import"
     sed -i '/^imports:/,$d' "$TMPDIR/no-import/devenv.yaml"
     if (cd "$TMPDIR/no-import" && devenv_eval env.DEVENV_IMPORT_MARKER > "$TMPDIR/no-import.json" 2> "$TMPDIR/no-import.err"); then
-      if jq -e '."env.DEVENV_IMPORT_MARKER" == "tooling-import-loaded"' "$TMPDIR/no-import.json" >/dev/null 2>&1; then
-        echo 'devenv-native: removing the YAML import unexpectedly preserved the marker' >&2
-        exit 1
-      fi
+      jq -e 'type == "object" and (."env.DEVENV_IMPORT_MARKER" != "tooling-import-loaded")' "$TMPDIR/no-import.json" >/dev/null
     else
       grep -Fq "Failed to get attribute 'devenv.config.env.DEVENV_IMPORT_MARKER'" "$TMPDIR/no-import.err"
     fi
@@ -78,10 +75,7 @@ let
     sed -i '/^  scripts.check.exec =/,$d' "$TMPDIR/no-script/devenv.nix"
     printf '}\n' >> "$TMPDIR/no-script/devenv.nix"
     if (cd "$TMPDIR/no-script" && devenv_eval scripts.check.exec > "$TMPDIR/no-script.json" 2> "$TMPDIR/no-script.err"); then
-      if jq -er '.["scripts.check.exec"] | strings | select(length > 0)' "$TMPDIR/no-script.json" >/dev/null 2>&1; then
-        echo 'devenv-native: removing scripts.check.exec unexpectedly preserved a runnable script' >&2
-        exit 1
-      fi
+      jq -e 'type == "object" and ((.["scripts.check.exec"] // "") | (type != "string" or length == 0))' "$TMPDIR/no-script.json" >/dev/null
     else
       grep -Fq "Failed to get attribute 'devenv.config.scripts.check.exec'" "$TMPDIR/no-script.err"
     fi
