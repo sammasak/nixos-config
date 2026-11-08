@@ -2,8 +2,9 @@
 
 MSI is an intermittent k3s/Ollama worker. Its agent-runtime admission policy
 must be based on MSI's own measured headroom while those workloads are active;
-do not copy Acer's limits. Keep runtime admission disabled until the evidence
-below is reviewed and a policy is committed.
+do not copy Acer's limits. PR #191 proposes a bounded `rust-pilot` policy, but
+that candidate must be checked against MSI's measured headroom before an owner
+deploys it. This branch adds diagnostics only and does not change host policy.
 
 ## Read-only capacity snapshot
 
@@ -24,9 +25,9 @@ busy period before setting `reserve` or `maxConcurrentInstances`.
 
 The MSI policy should admit only explicitly named templates, remain within the
 measured CPU/memory/disk headroom, and keep enough reserve for k3s and Ollama.
-If the diagnostics cannot establish safe headroom, leave admission disabled.
-Do not change the existing 09:00 wake or 21:00 shutdown schedule to make a test
-pass.
+If the diagnostics cannot establish safe headroom, do not deploy the candidate
+admission policy. Do not change the existing 09:00 wake or 21:00 shutdown
+schedule to make a test pass.
 
 ## Declarative prerequisites on `origin/main`
 
@@ -52,20 +53,28 @@ declared. Keep those separate from host capacity and live acceptance.
 
 ## Offline validation and staged rollout
 
-After the host policy and template imports are reviewed, validate the exact
-MSI system and template profiles before any activation:
+PR #191 supplies the MSI policy-evaluation check: it asserts the candidate
+`rust-pilot` eligibility, two-instance cap, 2-CPU/8-GiB/50-GiB reserve, no
+network or credentials, and unchanged shutdown, k3s worker and auto-reboot
+settings. It also adds generic aggregate CPU/memory/disk admission checks. The
+policy is declarative; it is not evidence that MSI has the required live
+headroom. This branch does not duplicate or modify those reviewed checks.
+The existing `agent-runtime-preflight` checks whether a proposed instance fits
+the host policy at run time; this report complements it with workload and
+filesystem measurements needed to assess that policy.
+
+Before any activation, validate the exact MSI system and template profiles:
 
 ```bash
 nix eval .#nixosConfigurations.msi-ms7758.config.sam.agentRuntime.host --json
+nix build --no-link --print-build-logs .#checks.x86_64-linux.agent-runtime-msi-pilot
 nix build --no-link --print-build-logs .#nixosConfigurations.msi-ms7758.config.system.build.toplevel
 nix build --no-link --print-build-logs .#packages.x86_64-linux.agent-runtime-nspawn
 ```
 
-The MSI policy change should add a focused eval regression check asserting the
-selected template eligibility, concurrency and reserve; the runtime substrate
-and Herdr worker prerequisites; and unchanged MSI shutdown, Lenovo wake and
-k3s/Ollama semantics. The existing runtime VM test covers generic admission and
-lifecycle behavior; host-policy assertions must cover MSI's actual values.
+The existing runtime VM test covers generic admission and lifecycle behavior;
+the host-policy assertions cover the candidate values. A live measurement still
+needs to confirm they preserve MSI's actual k3s/Ollama workload headroom.
 
 Live activation remains an owner decision. After a reviewed PR and explicit
 go-ahead, `just deploy-msi` uses deploy-rs with pinned host-key verification,
