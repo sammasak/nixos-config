@@ -98,6 +98,19 @@ let
       lockfile = "devenv.lock";
     };
   };
+  quotedLockfileProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    envJson = readyEnv;
+    inherit profile;
+    projectRoot = "/workspace/projection";
+    expectedRequest = {
+      repo = "sammasak/native-devenv-projection-fixture";
+      sha = fixtureRev;
+      root = ".";
+      target_system = pkgs.stdenv.hostPlatform.system;
+      environment_index = 0;
+      lockfile = "devenv.lock'$(touch /workspace/projection/.lockfile-injection-ran)";
+    };
+  };
   blockedProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
     envJson = blockedEnv;
     inherit profile;
@@ -146,7 +159,7 @@ let
             writable = true;
           };
           skillsSource = skills;
-          packages = [ projection.runner requestProjection.runner argvBoundaryProjection.runner blockedProjection.runner mismatchedProjection.runner ];
+          packages = [ projection.runner requestProjection.runner argvBoundaryProjection.runner quotedLockfileProjection.runner blockedProjection.runner mismatchedProjection.runner ];
           filesystem = {
             workspaceBudget = { sizeMiB = 64; inodes = 4000; };
             home = { sizeMiB = 32; inodes = 2000; };
@@ -236,6 +249,15 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"grep -Fx 'literal; touch /workspace/projection/.argv-injection-ran' {o}/check.log")
         machine.succeed(f"test ! -e {V}/request-argv-boundary/vol/workspace/workspace/projection/.argv-injection-ran")
         clean("request-argv-boundary")
+
+    with subtest("quoted lockfile path is passed as data and rejected before activation"):
+        create("request-quoted-lockfile")
+        machine.execute(f"{I} start request-quoted-lockfile --wait -- ${lib.getExe quotedLockfileProjection.runner}")
+        s = status("request-quoted-lockfile")
+        assert s["state"] == "failed" and s["result"]["exitStatus"] == 65, s
+        machine.succeed(f"test ! -e {V}/request-quoted-lockfile/vol/workspace/workspace/projection/.lockfile-injection-ran")
+        machine.succeed(f"test ! -e {V}/request-quoted-lockfile/vol/workspace/workspace/projection/.devenv-enterShell-ran")
+        clean("request-quoted-lockfile")
 
     with subtest("a blocked typed execution request is rejected before project activation"):
         create("request-blocked")
