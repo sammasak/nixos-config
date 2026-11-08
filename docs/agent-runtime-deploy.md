@@ -119,6 +119,42 @@ admission is the lever:
 | msi-ms7758 | credential-free `rust-pilot`, at most two instances, 2 logical CPUs / 8 GiB memory / 50 GiB disk reserved | owner, Mon-Fri ~09:00-21:00; live CPU/RAM/disk and Ollama/k3s headroom still unverified |
 | black-pi | aarch64, builds on itself | untested; the template profile carries `remoteBuild` |
 
+### MSI read-only readiness snapshot
+
+Before an owner-approved activation, collect a timestamped snapshot during MSI's
+normal powered-on window. On MSI, these commands report the same logical CPU
+count used by runtime admission, available memory, filesystem byte/inode headroom,
+and current k3s/Herdr service usage without starting an instance:
+
+```bash
+date --iso-8601=seconds
+hostnamectl --static
+nproc
+awk '/^(MemTotal|MemAvailable):/ { print }' /proc/meminfo
+df -B1 --output=source,size,used,avail,itotal,iused,iavail / /var/lib/rancher/k3s
+systemctl show k3s.service --no-pager --property=ActiveState,MemoryCurrent,CPUUsageNSec,TasksCurrent
+systemctl --user show herdr.service --no-pager --property=ActiveState,MemoryCurrent,CPUUsageNSec,TasksCurrent
+```
+
+From Lenovo, capture the worker and Ollama placement/load with
+`kubectl describe node msi-ms7758`, `kubectl top node msi-ms7758`, and
+`kubectl top pods --all-namespaces --sort-by=memory`; retain the Ollama pod's
+row and the surrounding workload rows. Compare the measurements with the
+declared 2-CPU, 8192-MiB memory and 51200-MiB disk reserves and the 3072-MiB
+per-instance cap. Record gaps or peak-time pressure as no-go evidence rather
+than treating one quiet snapshot as proof of sustained headroom.
+
+After a separately authorized activation, this read-only preflight reports
+whether the host currently meets the policy:
+
+```bash
+sudo agent-runtime-preflight \
+  --template /nix/var/nix/profiles/agent-runtime/templates/templates/rust-pilot.json
+```
+
+A `go` result only permits an operator to decide whether to start the
+credential-free pilot.
+
 ## Test
 
 `nix build -L .#packages.x86_64-linux.agent-runtime-deploy-test` (acer, heavy
