@@ -1,0 +1,14 @@
+{
+  inputs.dep.url = "path:@NATIVE_SHELL_DEP_PATH@";
+  inputs.nixpkgs.url = "path:@NATIVE_SHELL_NIXPKGS_PATH@";
+
+  outputs = { self, dep, nixpkgs }:
+    let
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+    in
+    {
+      devShells.x86_64-linux.default = pkgs.mkShell {
+        name = dep.nativeShellFixture;
+      };
+    };
+}

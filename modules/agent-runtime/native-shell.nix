@@ -42,7 +42,11 @@ let
     jq -nS --arg rev ${lib.escapeShellArg (src.rev or "")} --arg narHash ${lib.escapeShellArg (src.narHash or "")} \
       --arg shell ${lib.escapeShellArg "devShells.${system}.${shell}"} --arg drvPath ${lib.escapeShellArg (builtins.unsafeDiscardStringContext drv.drvPath)} \
       --arg shellPath ${drv} --arg env ${env} --arg nix ${lib.escapeShellArg builtins.nixVersion} \
-      --argjson lock ${lib.escapeShellArg (builtins.toJSON (lib.mapAttrs (_: n: { inherit (n.locked) rev narHash; type = n.locked.type; })
+      --argjson lock ${lib.escapeShellArg (builtins.toJSON (lib.mapAttrs (_: n:
+        {
+          narHash = n.locked.narHash;
+          type = n.locked.type;
+        } // lib.optionalAttrs (n.locked ? rev) { inherit (n.locked) rev; })
         (lib.filterAttrs (n: _: n != lock.root) lock.nodes)))} \
       --argjson paths "$(wc -l <${closure}/store-paths)" --argjson narSize "$(cat ${closure}/total-nar-size)" \
       '{source: {rev: $rev, narHash: $narHash}, lock: $lock, shell: $shell, drvPath: $drvPath, shellPath: $shellPath,
