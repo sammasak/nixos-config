@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Project configuration is untrusted; use only the root-managed system path
+# while evaluating its generated environment, and invoke the system Devenv by
+# its absolute path so a caller's profile cannot shadow it.
+system_bin=/run/current-system/sw/bin
+trusted_path="$system_bin"
+devenv_bin="$system_bin/devenv"
+for tool in devenv nix nix-store jq git; do
+  if [[ ! -x "$system_bin/$tool" ]]; then
+    echo "required system tool is unavailable: $system_bin/$tool" >&2
+    exit 1
+  fi
+done
+export PATH="$trusted_path"
+
 repo_root=$(git rev-parse --show-toplevel)
 fixture="$repo_root/tests/fixtures/native-devenv-projection"
 test_root=$(mktemp -d /tmp/agent-runtime-devenv-projection.XXXXXX)
@@ -11,10 +25,12 @@ cp -R "$fixture"/. "$project/"
 chmod -R u+w "$project"
 mkdir -p "$test_root/host-home"
 
-version=$(env -u DEVENV_ROOT -u DEVENV_DOTFILE -u DEVENV_STATE -u DEVENV_PROFILE -u DEVENV_RUNTIME devenv --version | awk '{print $2}')
+version=$(env -u DEVENV_ROOT -u DEVENV_DOTFILE -u DEVENV_STATE -u DEVENV_PROFILE -u DEVENV_RUNTIME "$devenv_bin" --version | awk '{print $2}')
 [ "$version" = 2.4.0 ] || { echo "expected devenv 2.4.0, got $version" >&2; exit 1; }
 lock_before=$(sha256sum "$project/devenv.lock" | awk '{print $1}')
-inputs=$(FIXTURE_LOCK="$project/devenv.lock" nix eval --impure --json --expr '
+inputs=$(env -i PATH="$trusted_path" HOME="$test_root/host-home" \
+  NIX_USER_CONF_FILES=/dev/null FIXTURE_LOCK="$project/devenv.lock" \
+  "$system_bin/nix" eval --impure --json --expr '
   let
     lock = builtins.fromJSON (builtins.readFile (builtins.getEnv "FIXTURE_LOCK"));
     getSource = node: builtins.toString (builtins.fetchTree (builtins.removeAttrs node.locked [ "dir" ]));
@@ -27,18 +43,40 @@ devenv_source=$(jq -er .devenv <<<"$inputs")
 nixpkgs_source=$(jq -er .nixpkgs <<<"$inputs")
 test -d "$devenv_source" -a -d "$nixpkgs_source"
 
+# Prove host preparation ignores a caller-provided executable with the same
+# name as Devenv or Nix. The real binaries above remain root-managed.
+untrusted_bin="$test_root/untrusted-bin"
+mkdir -p "$untrusted_bin"
+cat >"$untrusted_bin/devenv" <<EOF
+#!/bin/sh
+: >"$test_root/ambient-devenv-ran"
+exit 97
+EOF
+cat >"$untrusted_bin/nix" <<EOF
+#!/bin/sh
+: >"$test_root/ambient-nix-ran"
+exit 97
+EOF
+chmod +x "$untrusted_bin/devenv" "$untrusted_bin/nix"
+export PATH="$untrusted_bin:$trusted_path"
+
 devenv_project() {
   (
     cd "$project"
-    env -i PATH="$PATH" HOME="$test_root/host-home" NIX_USER_CONF_FILES=/dev/null \
+    env -i PATH="$trusted_path" HOME="$test_root/host-home" NIX_USER_CONF_FILES=/dev/null \
       DEVENV_USER_CONFIG=/dev/null DEVENV_NO_AI_AGENT=1 \
-      devenv --offline "$@"
+      "$devenv_bin" --offline "$@"
   )
 }
 host_eval_probe=agent-runtime-host-env-probe-7384f0
 export AGENT_RUNTIME_HOST_EVAL_PROBE="$host_eval_probe"
 devenv_project print-dev-env --json >"$test_root/print-dev-env.json"
 devenv_project eval scripts.check.exec >"$test_root/check.json"
+if [[ -e "$test_root/ambient-devenv-ran" || -e "$test_root/ambient-nix-ran" ]]; then
+  echo "host preparation executed a caller-provided Devenv or Nix binary" >&2
+  exit 1
+fi
+export PATH="$trusted_path"
 
 if ! jq -e --arg probe "$host_eval_probe" '
   .variables.PROJECT_CAPTURE_PROBE.type == "exported"
