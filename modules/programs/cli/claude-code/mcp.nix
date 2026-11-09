@@ -122,7 +122,14 @@ in
                 command = "${skillsSrc}/hooks/check-loop.sh";
                 timeout = 15;
               }
-            ];
+            ]
+            # skills#28: a bypassPermissions worker has no classifier before `gh pr merge`; this refuses an
+            # unreviewed or implementer merge (present once the skills pin carries it)
+            ++ lib.optional (worker.enable && builtins.pathExists "${skillsSrc}/hooks/check-merge.sh") {
+              type = "command";
+              command = "PATH=${lib.makeBinPath [ pkgs.gh pkgs.python3 pkgs.coreutils ]}:$PATH ${skillsSrc}/hooks/check-merge.sh";
+              timeout = 30;
+            };
           }
         ];
         PostToolUse = [{

@@ -3,16 +3,6 @@ set -euo pipefail
 agent_kind=$1
 shift
 
-# a worker's own settings (#157), prepended so they apply on every path below, native or through Herdr
-if [[ $agent_kind == claude && -n ${HERDR_CLAUDE_WORKER_SETTINGS:-} ]]; then
-  for arg in "$@"; do
-    if [[ $arg == --dangerously-skip-permissions ]]; then
-      set -- --settings "$HERDR_CLAUDE_WORKER_SETTINGS" "$@"
-      break
-    fi
-  done
-fi
-
 run_native() {
   exec "$agent_kind" "$@"
 }
@@ -99,6 +89,29 @@ resume_reference() {
     *) return 1 ;;
   esac
 }
+
+# skills#28: on a worker host every interactive claude in a Herdr pane is a worker. Herdr's session restore
+# relaunches a pane as a bare `claude --resume <id>`, dropping the caller's flag, and Claude Code then starts in
+# auto mode; so the flag is supplied here unless the call names its own permission mode
+if [[ $agent_kind == claude && -n ${HERDR_CLAUDE_WORKER_HOST:-} && -n ${HERDR_ENV:-} ]] && ! is_noninteractive_mode claude "$@"; then
+  own_mode=0
+  for arg in "$@"; do
+    case "$arg" in
+      --dangerously-skip-permissions|--allow-dangerously-skip-permissions|--permission-mode|--permission-mode=*) own_mode=1 ;;
+    esac
+  done
+  ((own_mode)) || set -- --dangerously-skip-permissions "$@"
+fi
+
+# a worker's own settings (#157), prepended so they apply on every path below, native or through Herdr
+if [[ $agent_kind == claude && -n ${HERDR_CLAUDE_WORKER_SETTINGS:-} ]]; then
+  for arg in "$@"; do
+    if [[ $arg == --dangerously-skip-permissions ]]; then
+      set -- --settings "$HERDR_CLAUDE_WORKER_SETTINGS" "$@"
+      break
+    fi
+  done
+fi
 
 if [[ ! -t 0 || ! -t 1 ]] \
   || [[ -n "${HERDR_ENV:-}" || -n "${HERDR_AUTOATTACH_DISABLED:-}" || -n "${CI:-}" ]] \
