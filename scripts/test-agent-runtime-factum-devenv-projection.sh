@@ -8,7 +8,7 @@ request=${AGENT_RUNTIME_FACTUM_REQUEST_JSON:?set AGENT_RUNTIME_FACTUM_REQUEST_JS
 work=$(mktemp -d /tmp/agent-runtime-factum.XXXXXX)
 trap 'rm -rf "$work"' EXIT
 project="$work/project"
-mkdir -p "$project"
+mkdir -p "$project" "$work/host-home"
 
 jq -e --arg rev "$expected_rev" '
   .schema_version == 1 and .kind == "devenv-platform/execution-request"
@@ -35,8 +35,9 @@ lock_before=$(sha256sum "$project/devenv.lock" | awk '{print $1}')
 devenv_project() {
   (
     cd "$project"
-    env -u DEVENV_ROOT -u DEVENV_DOTFILE -u DEVENV_STATE -u DEVENV_PROFILE -u DEVENV_RUNTIME \
-      DEVENV_USER_CONFIG=/dev/null DEVENV_NO_AI_AGENT=1 devenv --offline "$@"
+    env -i PATH="$PATH" HOME="$work/host-home" NIX_USER_CONF_FILES=/dev/null \
+      DEVENV_USER_CONFIG=/dev/null DEVENV_NO_AI_AGENT=1 \
+      devenv --offline "$@"
   )
 }
 devenv_project print-dev-env --json >"$work/print-dev-env.json"
@@ -79,6 +80,11 @@ jq -e --arg profile "$profile" '
   .schema_version == 1 and .variables.DEVENV_PROFILE.value == $profile
   and ([.variables[] | select(.type == "exported") | .value | strings | select(test("/home/|/run/user/|/tmp/|/var/tmp/"))] | length == 0)
 ' "$work/projected.json" >/dev/null
+
+if [ "${AGENT_RUNTIME_DEENV_PREPARE_ONLY:-0}" = 1 ]; then
+  echo "Factum Devenv host preparation passed with a scrubbed environment"
+  exit 0
+fi
 
 profile_root="$work/profile-root"
 nix-store --add-root "$profile_root" --indirect --realise "$profile" >/dev/null
