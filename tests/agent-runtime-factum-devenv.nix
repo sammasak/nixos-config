@@ -84,6 +84,15 @@ let
     };
   };
   failureRequestJson = pkgs.writeText "factum-failure-injection-request.json" (builtins.toJSON failureRequest);
+  brokenSourceRequest = request // {
+    check = request.check // {
+      argv = [ "bash" "-c" "cargo --version && printf '\\npub fn broken( {\\n' >> src/lib.rs && cargo --version && cargo fmt --all --check" ];
+      evidence = [ ];
+      index = null;
+      selection = "explicit";
+    };
+  };
+  brokenSourceRequestJson = pkgs.writeText "factum-broken-source-request.json" (builtins.toJSON brokenSourceRequest);
   fixtureNar = lib.fileContents (pkgs.runCommand "factum-devenv-narhash" { nativeBuildInputs = [ pkgs.nix ]; } ''
     nix --extra-experimental-features nix-command hash path ${project} > "$out"
   '');
@@ -155,7 +164,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 98304;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ projectedEnv requestPath failureRequestJson profileBootstrap project manifest skills vendor ];
+    virtualisation.additionalPaths = [ projectedEnv requestPath failureRequestJson brokenSourceRequestJson profileBootstrap project manifest skills vendor ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git runtime.tools.verify ];
   };
   testScript = ''
@@ -170,6 +179,7 @@ pkgs.testers.runNixOSTest {
     REQUEST = "${requestPath}"
     CAPTURED_RUST_VERSION = ${builtins.toJSON capturedRustVersion}
     FAILURE_REQUEST = "${failureRequestJson}"
+    BROKEN_SOURCE_REQUEST = "${brokenSourceRequestJson}"
     V = "/var/lib/agent-runtime"
 
     def status(i):
@@ -320,6 +330,39 @@ pkgs.testers.runNixOSTest {
     machine.succeed("! findmnt -rn | grep -qE 'agent-runtime[-/]factum-failure(/| |$)'")
     machine.succeed("! systemctl list-units --all --no-legend agent-runtime-factum-failure.service | grep -q .")
     machine.succeed(f"test ! -e {V}/factum-failure -a ! -e /run/agent-runtime/factum-failure")
+
+    # Model a rescue editing shell against a broken candidate: edit the source
+    # through the active guest shell, prove cargo still runs, then let the
+    # source-format check fail on that exact edited file and export the patch.
+    machine.succeed(f"{I} create factum-broken --template {M} --host {POLICY} --task sammasak/factum#{REVISION}")
+    broken_workspace = f"{V}/factum-broken/vol/workspace/workspace/factum"
+    machine.succeed(f"printf '[safe]\\n\\tdirectory = /workspace/factum\\n' > {V}/factum-broken/vol/home/.gitconfig")
+    machine.succeed(f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={broken_workspace} git -C {broken_workspace} init -q && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={broken_workspace} git -C {broken_workspace} add -A -f && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={broken_workspace} git -C {broken_workspace} -c user.name=agent -c user.email=agent@example.invalid commit -q -m workspace")
+    source_blob_before = machine.succeed(f"git hash-object {broken_workspace}/src/lib.rs").strip()
+    machine.succeed(f"{I} start factum-broken --request {BROKEN_SOURCE_REQUEST} -- {RUNNER}")
+    broken = status("factum-broken")
+    while broken["state"] in ("starting", "running"):
+        time.sleep(1)
+        broken = status("factum-broken")
+    assert broken["state"] == "failed" and broken["result"]["exitStatus"] != 0, broken
+    broken_output = f"{V}/factum-broken/vol/output"
+    broken_log = machine.succeed(f"cat {broken_output}/check.log")
+    cargo_versions = [line for line in broken_log.splitlines() if line.startswith("cargo ")]
+    assert len(cargo_versions) == 2 and all("1.99.0" in line for line in cargo_versions), broken_log
+    assert "error:" in broken_log.lower(), broken_log
+    source_blob_after = machine.succeed(f"git hash-object {broken_workspace}/src/lib.rs").strip()
+    assert source_blob_before != source_blob_after, (source_blob_before, source_blob_after)
+    machine.succeed(f"{I} export factum-broken")
+    broken_bundle = f"{V}/exports/factum-broken"
+    broken_verification = json.loads(machine.succeed(f"{VERIFY} --bundle {broken_bundle} --template {M}"))
+    assert broken_verification["kind"] == "agent-runtime-verified", broken_verification
+    assert broken_verification["outcome"] == "failed", broken_verification
+    machine.succeed(f"grep -Fq '+pub fn broken( {{' {broken_bundle}/sources/factum.patch")
+    machine.succeed(f"{I} destroy factum-broken")
+    machine.succeed(f"test -s {broken_bundle}/bundle.json -a -s {broken_bundle}/sources/factum.patch -a -s {broken_bundle}/output/check.log")
+    machine.succeed("! findmnt -rn | grep -qE 'agent-runtime[-/]factum-broken(/| |$)'")
+    machine.succeed("! systemctl list-units --all --no-legend agent-runtime-factum-broken.service | grep -q .")
+    machine.succeed(f"test ! -e {V}/factum-broken -a ! -e /run/agent-runtime/factum-broken")
     machine.succeed("! machinectl list --no-legend | grep -q agent-runtime-")
     machine.succeed("! losetup -l -n -O BACK-FILE | grep -q agent-runtime")
   '';
