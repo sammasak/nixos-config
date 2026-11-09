@@ -48,6 +48,7 @@ let
     };
     environment = { index = 0; kind = "devenv"; root = "."; shell = "devenv"; evidence = [ "e1" ]; };
     target_system = pkgs.stdenv.hostPlatform.system;
+    tools = [ { name = "rust"; version = pkgs.rustc.version; evidence = [ "e1" ]; } ];
     check = { index = 0; argv = [ "make" "check" ]; evidence = [ "e1" ]; selection = "plan"; };
     provenance = {
       plan_sha256 = builtins.hashString "sha256" "fixture-plan";
@@ -92,6 +93,9 @@ let
       lockfiles = [ { path = "devenv.lock"; blob = builtins.hashString "sha1" "incorrect-lockfile-blob"; evidence = [ "e1" ]; } ];
     };
   }));
+  mismatchedToolRequest = pkgs.writeText "execution-request-mismatched-tool.json" (builtins.toJSON (request // {
+    tools = [ { name = "rust"; version = "0.0.0"; evidence = [ "e1" ]; } ];
+  }));
   withRequest = name: requestPath: pkgs.runCommand name { nativeBuildInputs = [ pkgs.jq ]; } ''
     ${pkgs.jq}/bin/jq --slurpfile request ${requestPath} '. + { executionRequest: $request[0] }' ${envJson} > "$out"
   '';
@@ -99,6 +103,7 @@ let
   argvBoundaryEnv = withRequest "devenv-environment-argv-boundary-request.json" argvBoundaryRequest;
   blockedEnv = withRequest "devenv-environment-blocked-request.json" blockedRequest;
   mismatchedEnv = withRequest "devenv-environment-mismatched-request.json" mismatchedRequest;
+  mismatchedToolEnv = withRequest "devenv-environment-mismatched-tool-request.json" mismatchedToolRequest;
   requestProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
     envJson = readyEnv;
     inherit profile;
@@ -182,6 +187,19 @@ let
       lockfile = "devenv.lock";
     };
   };
+  mismatchedToolProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    envJson = mismatchedToolEnv;
+    inherit profile;
+    projectRoot = "/workspace/projection";
+    expectedRequest = {
+      repo = "sammasak/native-devenv-projection-fixture";
+      sha = fixtureRev;
+      root = ".";
+      target_system = pkgs.stdenv.hostPlatform.system;
+      environment_index = 0;
+      lockfile = "devenv.lock";
+    };
+  };
   runtime = import ../modules/agent-runtime/lib.nix { inherit lib pkgs; };
   I = lib.getExe runtime.tools.instance;
   runner = lib.getExe projection.runner;
@@ -204,7 +222,7 @@ let
             writable = true;
           };
           skillsSource = skills;
-          packages = [ projection.runner requestProjection.runner externalRequestProjection.runner nestedRequestProjection.runner argvBoundaryProjection.runner quotedLockfileProjection.runner blockedProjection.runner mismatchedProjection.runner ];
+          packages = [ projection.runner requestProjection.runner externalRequestProjection.runner nestedRequestProjection.runner argvBoundaryProjection.runner quotedLockfileProjection.runner blockedProjection.runner mismatchedProjection.runner mismatchedToolProjection.runner ];
           filesystem = {
             workspaceBudget = { sizeMiB = 64; inodes = 4000; };
             home = { sizeMiB = 32; inodes = 2000; };
@@ -231,7 +249,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 4096;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv readyRequest blockedRequest wrongSourceRequest nestedReadyRequest unsafeRootRequest symlinkRootRequest argvBoundaryEnv blockedEnv mismatchedEnv ];
+          virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv readyRequest blockedRequest wrongSourceRequest nestedReadyRequest unsafeRootRequest symlinkRootRequest argvBoundaryEnv blockedEnv mismatchedEnv mismatchedToolEnv mismatchedToolRequest ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps ];
   };
   testScript = ''
@@ -281,6 +299,9 @@ pkgs.testers.runNixOSTest {
         o = f"{V}/request-ready/vol/output"
         result = json.loads(machine.succeed(f"cat {o}/result.json"))
         assert result["check_exit"] == 0, result
+        assert len(result["tool_versions"]) == 1 and result["tool_versions"][0]["name"] == "rust", result
+        assert result["tool_versions"][0]["declared"] == "${pkgs.rustc.version}", result
+        assert result["tool_versions"][0]["actual"].startswith("rustc ${pkgs.rustc.version}"), result
         machine.succeed(f"grep -q 'guest-check:generated-devenv-environment:generated-devenv-import' {o}/check.log")
         machine.succeed(f"test -f {V}/request-ready/vol/workspace/workspace/projection/check.result")
         clean("request-ready")
@@ -374,6 +395,16 @@ pkgs.testers.runNixOSTest {
         assert s["state"] == "failed" and s["result"]["exitStatus"] == 65, s
         machine.succeed(f"test ! -e {V}/request-mismatch/vol/workspace/workspace/projection/.devenv-enterShell-ran")
         clean("request-mismatch")
+
+    with subtest("a captured Rust tool version must match the projected guest before the check runs"):
+        create("request-tool-mismatch")
+        machine.execute(f"{I} start request-tool-mismatch --wait -- ${lib.getExe mismatchedToolProjection.runner}")
+        s = status("request-tool-mismatch")
+        assert s["state"] == "failed" and s["result"]["exitStatus"] == 65, s
+        machine.succeed(f"test -f {V}/request-tool-mismatch/vol/workspace/workspace/projection/.devenv-enterShell-ran")
+        machine.succeed(f"test ! -e {V}/request-tool-mismatch/vol/workspace/workspace/projection/check.result")
+        machine.succeed(f"test ! -e {V}/request-tool-mismatch/vol/output/check.log")
+        clean("request-tool-mismatch")
 
     with subtest("unsafe host-local profile is rejected before the hook or project check runs"):
         create("unsafe")

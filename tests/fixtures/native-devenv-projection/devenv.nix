@@ -1,6 +1,6 @@
 { pkgs, ... }:
 {
-  packages = [ pkgs.coreutils pkgs.gnumake pkgs.gcc ];
+  packages = [ pkgs.coreutils pkgs.gnumake pkgs.gcc pkgs.rustc ];
   env.PROJECT_NATIVE_MARKER = "generated-devenv-environment";
   enterShell = ''
     printf '%s\n' "$PROJECT_NATIVE_MARKER" > "$DEVENV_ROOT/.devenv-enterShell-ran"
