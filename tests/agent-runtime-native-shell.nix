@@ -129,6 +129,14 @@ pkgs.testers.runNixOSTest {
     def steps(i):
         return [json.loads(l) for l in out(i, "steps.jsonl").splitlines()]
 
+    def exported(i):
+        # #189: one immutable bundle per run at exports/<id>.runs/<runId>, and <id>.runs/latest naming it
+        e = st(i)["export"]
+        assert e["dir"] == f"{V}/exports/{i}.runs/{e['runId']}", e
+        assert machine.succeed(f"readlink {V}/exports/{i}.runs/latest").strip() == e["runId"], e
+        machine.succeed(f"test -f {e['dir']}/bundle.json")
+        return e["dir"]
+
     def done(i):
         machine.succeed(f"${I} destroy {i} --discard")
         machine.succeed(f"! findmnt -rn | grep -qE 'agent-runtime[-/]{i}(/| |$)'")
@@ -169,6 +177,7 @@ pkgs.testers.runNixOSTest {
         assert json.loads(out("gate", "versions.json"))["cargoPath"].startswith("/nix/store/"), out("gate", "versions.json")
         assert json.loads(out("gate", "shell.json"))["source"]["rev"] == "${rfProto.rev}"
         machine.succeed("${I} export gate")
+        print("gate export:", exported("gate"))
         done("gate")
 
     with subtest("a broken source: the editing shell still works and the gate fails on the source, not the shell"):
@@ -183,8 +192,7 @@ pkgs.testers.runNixOSTest {
         assert out("broken", "shell-still-works.txt").startswith("cargo "), out("broken", "shell-still-works.txt")
         assert all(x["exit"] != 0 for x in steps("broken")), steps("broken")
         machine.succeed("${I} export broken")
-        export_dir = st("broken")["export"]["dir"]
-        machine.succeed(f"grep -q 'pub fn broken' {export_dir}/sources/rf-proto.patch")
+        machine.succeed(f"grep -q 'pub fn broken' {exported('broken')}/sources/rf-proto.patch")
         done("broken")
 
     with subtest("clean teardown: no mounts, units or state; the store did not grow; the sentinel is unchanged"):

@@ -54,8 +54,9 @@ a QEMU VM. Its subtests:
 ## Not covered here
 
 - **Mode (b), guest-side cold realization** with a private store and bounded writes, is not attempted.
-- **devenv shells** (`devenv.nix`/`devenv.yaml` imports) are not covered: rf-proto is a flake
-  `mkShell`, and `native-shell.nix` refuses a non-mkShell devShell.
+- **devenv shells** (`devenv.nix`/`devenv.yaml` imports) are not this layer: `native-shell.nix`
+  refuses a non-mkShell devShell. The generated Devenv environment is the layer stacked on this
+  one (nixos-config#192, then #193/#194 for llm-gateway and factum).
 - **The `factum`/`llm-gateway` pins and the measured cold/warm host-side realization times** are
   follow-ups.
 - **The devenv-platform `prepare` glue**, from a plan's `selected_environment`/`check_argv` to this
