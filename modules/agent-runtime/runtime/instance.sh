@@ -366,7 +366,10 @@ case $cmd in
           and .source.url == ("https://github.com/" + .source.repo)
           and (.source.ref | type == "string" and length > 0 and length <= 255)
           and (.source.sha | type == "string" and test("^[0-9a-f]{40}$"))
-          and .source.root == "."
+          and (.source.root | type == "string" and length > 0 and length <= 1024
+            and (. == "." or ((test("[\\x00-\\x1f\\x7f\\\\]") | not)
+              and (startswith("/") | not)
+              and (split("/") | all(. != "" and . != "." and . != "..")))))
           and .environment.kind == "devenv"
           and (.environment.index | type == "number" and . >= 0 and floor == .)
           and .environment.root == .source.root and .environment.shell == "devenv"

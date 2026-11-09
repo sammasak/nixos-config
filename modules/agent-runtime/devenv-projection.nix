@@ -23,7 +23,8 @@ let
       [ "$#" -eq 0 ] || shift
       [ "$#" -eq 0 ] || { echo "usage: agent-runtime-devenv-run [projected-env.json]" >&2; exit 64; }
       profile=${lib.escapeShellArg profilePath}
-      repo=${lib.escapeShellArg projectRoot}
+      checkout_root=${lib.escapeShellArg projectRoot}
+      repo=$checkout_root
       instance=''${AGENT_RUNTIME_INSTANCE:?not in an agent-runtime instance}
 
       # Requests supplied to `agent-runtime-instance start --request` arrive as
@@ -70,7 +71,7 @@ let
           and (.executionRequest.source.ref | type == "string" and length > 0 and length <= 255)
           and (.executionRequest.source.sha | type == "string" and test("^[0-9a-f]{40}$"))
           and ($expected.sha == null or .executionRequest.source.sha == $expected.sha)
-          and (.executionRequest.source.root | type == "string" and
+          and (.executionRequest.source.root | type == "string" and length > 0 and length <= 1024 and
             (. == "." or ((test("[\\x00-\\x1f\\x7f\\\\]") | not) and (split("/") | all(. != "" and . != "." and . != "..")))))
           and ($expected.root == null or .executionRequest.source.root == $expected.root)
           and .executionRequest.environment.kind == "devenv"
@@ -97,11 +98,23 @@ let
       }
 
       ${if requestMode then ''
+      project_root_rel="$(${pkgs.jq}/bin/jq -er '.executionRequest.source.root' "$env_json")" || exit 65
+      if [ "$project_root_rel" != "." ]; then
+        repo="$checkout_root/$project_root_rel"
+        resolved_repo="$(realpath -e -- "$repo")" || {
+          echo "execution request rejected: selected project root is missing" >&2
+          exit 65
+        }
+        if [ "$resolved_repo" != "$repo" ]; then
+          echo "execution request rejected: selected project root is not canonical" >&2
+          exit 65
+        fi
+      fi
       lockfile_rel="$(${pkgs.jq}/bin/jq -er '
         .executionRequest.source.root as $root
         | if $root == "." then "devenv.lock" else $root + "/devenv.lock" end
       ' "$env_json")" || exit 65
-      lockfile="$repo/$lockfile_rel"
+      lockfile="$checkout_root/$lockfile_rel"
       expected_blob="$(${pkgs.jq}/bin/jq -er --arg path "$lockfile_rel" \
         '[.executionRequest.provenance.lockfiles[] | select(.path == $path) | .blob] | if length == 1 then .[0] else error("missing or duplicate lockfile provenance") end' \
         "$env_json")" || exit 65

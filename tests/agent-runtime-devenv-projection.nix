@@ -7,7 +7,11 @@ let
   envJson = builtins.storePath envJsonPath;
   profile = builtins.storePath profilePath;
   fixtureSrc = pkgs.runCommandLocal "native-devenv-projection-fixture" { } ''
-    cp -r ${./fixtures/native-devenv-projection} $out
+    mkdir -p "$TMPDIR/fixture/nested"
+    cp -r ${./fixtures/native-devenv-projection}/. "$TMPDIR/fixture/"
+    chmod -R u+w "$TMPDIR/fixture"
+    cp "$TMPDIR/fixture/devenv.lock" "$TMPDIR/fixture/Makefile" "$TMPDIR/fixture/nested/"
+    mv "$TMPDIR/fixture" "$out"
   '';
   fixtureRev = builtins.substring 0 40 (builtins.hashString "sha1" (baseNameOf (toString fixtureSrc)));
   fixtureNar = lib.fileContents (pkgs.runCommand "native-devenv-projection-narhash" { nativeBuildInputs = [ pkgs.nix ]; } ''
@@ -63,6 +67,18 @@ let
   wrongSourceRequest = pkgs.writeText "execution-request-wrong-source.json" (builtins.toJSON (request // {
     source = request.source // { sha = builtins.hashString "sha1" "another-commit"; };
   }));
+  nestedRequest = request // {
+    source = request.source // { root = "nested"; };
+    environment = request.environment // { root = "nested"; };
+    provenance = request.provenance // {
+      lockfiles = [ { path = "nested/devenv.lock"; blob = fixtureLockBlob; evidence = [ "e1" ]; } ];
+    };
+  };
+  nestedReadyRequest = pkgs.writeText "execution-request-nested-root.json" (builtins.toJSON nestedRequest);
+  unsafeRootRequest = pkgs.writeText "execution-request-unsafe-root.json" (builtins.toJSON (request // {
+    source = request.source // { root = "../outside"; };
+    environment = request.environment // { root = "../outside"; };
+  }));
   mismatchedRequest = pkgs.writeText "execution-request-mismatched-lock.json" (builtins.toJSON (request // {
     provenance = request.provenance // {
       lockfiles = [ { path = "devenv.lock"; blob = builtins.hashString "sha1" "incorrect-lockfile-blob"; evidence = [ "e1" ]; } ];
@@ -100,6 +116,11 @@ let
       environment_index = 0;
       lockfile = "devenv.lock";
     };
+  };
+  nestedRequestProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    inherit envJson profile;
+    projectRoot = "/workspace/projection";
+    consumeRequest = true;
   };
   argvBoundaryProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
     envJson = argvBoundaryEnv;
@@ -175,7 +196,7 @@ let
             writable = true;
           };
           skillsSource = skills;
-          packages = [ projection.runner requestProjection.runner externalRequestProjection.runner argvBoundaryProjection.runner quotedLockfileProjection.runner blockedProjection.runner mismatchedProjection.runner ];
+          packages = [ projection.runner requestProjection.runner externalRequestProjection.runner nestedRequestProjection.runner argvBoundaryProjection.runner quotedLockfileProjection.runner blockedProjection.runner mismatchedProjection.runner ];
           filesystem = {
             workspaceBudget = { sizeMiB = 64; inodes = 4000; };
             home = { sizeMiB = 32; inodes = 2000; };
@@ -202,7 +223,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 4096;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv readyRequest blockedRequest wrongSourceRequest argvBoundaryEnv blockedEnv mismatchedEnv ];
+    virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv readyRequest blockedRequest wrongSourceRequest nestedReadyRequest unsafeRootRequest argvBoundaryEnv blockedEnv mismatchedEnv ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps ];
   };
   testScript = ''
@@ -269,6 +290,15 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"test -f {V}/request-bound/vol/workspace/workspace/projection/check.result")
         clean("request-bound")
 
+    with subtest("persisted request selects a safe nested project root"):
+        create("request-nested-root")
+        machine.succeed(f"{I} start request-nested-root --request ${nestedReadyRequest} --wait -- ${lib.getExe nestedRequestProjection.runner}")
+        s = status("request-nested-root")
+        assert s["state"] == "succeeded", s
+        machine.succeed(f"test -f {V}/request-nested-root/vol/workspace/workspace/projection/nested/.devenv-enterShell-ran")
+        machine.succeed(f"test -f {V}/request-nested-root/vol/workspace/workspace/projection/nested/check.result")
+        clean("request-nested-root")
+
     with subtest("instance start rejects a request for a different assigned source before launching a unit"):
         create("request-wrong-source")
         rc, out = machine.execute(f"{I} start request-wrong-source --request ${wrongSourceRequest} --wait -- ${lib.getExe externalRequestProjection.runner} 2>&1")
@@ -284,6 +314,14 @@ pkgs.testers.runNixOSTest {
         assert status("request-blocked-start")["state"] == "created"
         machine.succeed("! systemctl list-units --all --no-legend agent-runtime-request-blocked-start.service | grep -q .")
         clean("request-blocked-start")
+
+    with subtest("instance start rejects a traversal project root before launching a unit"):
+        create("request-unsafe-root")
+        rc, out = machine.execute(f"{I} start request-unsafe-root --request ${unsafeRootRequest} --wait -- ${lib.getExe externalRequestProjection.runner} 2>&1")
+        assert rc != 0 and "ready, supported" in out, (rc, out)
+        assert status("request-unsafe-root")["state"] == "created"
+        machine.succeed("! systemctl list-units --all --no-legend agent-runtime-request-unsafe-root.service | grep -q .")
+        clean("request-unsafe-root")
 
     with subtest("argv metacharacters remain literal and are not interpreted by a shell"):
         create("request-argv-boundary")
