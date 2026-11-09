@@ -247,7 +247,10 @@ pkgs.testers.runNixOSTest {
         machine.wait_until_succeeds("${Itool} status rk | jq -e '.state==\"failed\"'", timeout=60)
         s = st("rk"); assert s["result"]["serviceResult"] == "signal", s
         machine.succeed("${Itool} export rk")
-        machine.succeed(f"test -f {V}/exports/rk/bundle.json")
+        s = st("rk")
+        assert s["export"]["dir"].endswith(f"/exports/rk.runs/{s['runId']}"), s
+        machine.succeed(f"test -f {s['export']['dir']}/bundle.json")
+        machine.succeed(f"test -L {V}/exports/rk.runs/latest")
         machine.succeed("${Itool} destroy rk"); clean("rk")
 
     with subtest("host unchanged: nothing of any instance is left behind"):
