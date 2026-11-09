@@ -52,6 +52,21 @@ atomic_json() {  # FILE: stdin into FILE via a fsynced temporary sibling, then t
   sync "$(dirname "$1")"
 }
 reservations() { cat "$state"/*/reservation 2>/dev/null || true; }
+reserved_cpus() {
+  local file value total=0
+  for file in "$state"/*/reservation; do
+    [ -f "$file" ] || continue
+    value=$(awk '{print $5}' "$file")
+    if [ -z "$value" ]; then
+      [ -r "${file%/reservation}/template.json" ] || fail state "legacy reservation $file has no template to recover its CPU budget"
+      value=$(jq -er '.policies.resources.cpus' "${file%/reservation}/template.json") \
+        || fail state "legacy reservation $file has no valid CPU budget"
+    fi
+    [[ $value =~ ^[0-9]+$ ]] || fail state "reservation $file has an invalid CPU budget"
+    total=$((total + value))
+  done
+  printf '%s\n' "$total"
+}
 vol_json() {  # the template's writable volumes as {name: {path, sizeMiB, inodes, mode, owner}}
   jq -c '.filesystem as $f | {
     workspace: {path: $f.workspace, sizeMiB: $f.workspaceBudget.sizeMiB, inodes: $f.workspaceBudget.inodes, mode: "0755", owner: 0},
@@ -263,6 +278,7 @@ case $cmd in
       || fail unsupported "$name: a writable source must sit at /workspace/<its name>"
     vols=$(vol_json "$template")
     mem=$(jq -r .policies.resources.memoryMiB "$template")
+    cpus=$(jq -r .policies.resources.cpus "$template")
     disk=$(jq -r '[.[].sizeMiB] | add' <<<"$vols")
     max=$(jq -r .maxConcurrentInstances "$host")
     live=$(reservations | wc -l)
@@ -277,6 +293,11 @@ case $cmd in
     mem_available=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
     [ $((mem_available - mem)) -ge "$mem_reserve" ] \
       || fail admission "memory $mem MiB would leave $((mem_available - mem)) MiB available, under the $mem_reserve MiB reserve"
+    cpu_total=$(nproc)
+    cpu_reserve=$(jq -r .reserve.cpus "$host")
+    cpu_used=$(reserved_cpus)
+    [ $((cpu_used + cpus)) -le $((cpu_total - cpu_reserve)) ] \
+      || fail admission "CPU $cpu_used+$cpus logical CPUs over $cpu_total-$cpu_reserve available after host reserve"
     disk_free=$(df --output=avail -BM "$state" | tail -1 | tr -dc 0-9)
     disk_reserve=$(jq -r .reserve.diskMiB "$host")
     [ $((disk + disk_reserve)) -le "$disk_free" ] || fail admission "disk $disk+$disk_reserve MiB over $disk_free MiB free"
@@ -290,7 +311,7 @@ case $cmd in
     done
     [ -n "$uidbase" ] || fail admission "no free UID range"
     mkdir -p "$base/img" "$base/vol"
-    echo "$mem $disk $uidbase $name" | atomic_json "$base/reservation"
+    echo "$mem $disk $uidbase $name $cpus" | atomic_json "$base/reservation"
     trap 'trap - ERR; echo "create $id failed, rolling back" >&2; teardown 2>/dev/null || true' EXIT
     cp "$template" "$base/template.json"
     cp "$host" "$base/host.json"

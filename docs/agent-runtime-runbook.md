@@ -92,17 +92,19 @@ bundle at `exports/<id>` stays where it is.
 - **Host activation is owner-gated and deploy-rs only.** Enabling the runtime on
   a physical host is a `just deploy-<host>` from lenovo after review and merge,
   never a direct switch on the host. No agent deploys or switches a host.
-  Every host imports the substrate (`nixosModules.agent-runtime-host`, #155),
-  but no host enables it yet. Enabling is a host-config change (import the
-  template module, set `sam.agentRuntime.host.enable` and an
-  `eligibleTemplates`/`reserve` policy) followed by `just deploy-<host>`, which
-  deploys the `system` and `agent-runtime` profiles in order
+  Every host imports the substrate (`nixosModules.agent-runtime-host`, #155).
+  Acer and MSI declare the runtime enabled in Nix; until an owner runs
+  `just deploy-<host>`, that declaration does not activate it on the physical
+  host. Enabling is a host-config change (import the template module, set
+  `sam.agentRuntime.host.enable` and an `eligibleTemplates`/`reserve` policy)
+  followed by `just deploy-<host>`, which deploys the `system` and
+  `agent-runtime` profiles in order
   (`docs/agent-runtime-deploy.md`, Rollout). The host policy is then
   `/etc/agent-runtime/host.json` and the templates are under
   `/nix/var/nix/profiles/agent-runtime/templates/templates/`.
 - **Capacity is the host policy**, not per-call: `maxConcurrentInstances`,
-  `reserve.memoryMiB`/`diskMiB`. Admission refuses (exit 10) before any mount or
-  unit when memory, instance count or disk would breach it, and after a failed
+  `reserve.cpus`/`memoryMiB`/`diskMiB`. Admission refuses (exit 10) before any mount or
+  unit when CPU, memory, instance count or disk would breach it, and after a failed
   start or teardown the reservation stays until `destroy`.
 
 ## Host drain and rollback
@@ -165,7 +167,9 @@ repositories. Do **not** run a runtime when any of these holds:
 - the workload is hostile or untrusted, or needs a credential the host cannot
   scope and expire;
 - the host is under memory or disk pressure that admission cannot see (admission
-  reserves `MemTotal`/free-disk headroom, not live third-party spikes).
+  reserves logical CPU capacity, `MemTotal`/`MemAvailable`, and free-disk
+  headroom; the reserve protects capacity from admitted instances while the
+  live memory and disk checks account for other host workloads.
 
 When in doubt, keep the instance disposable: `--discard` on destroy, and never
 treat a Herdr `idle`/`done` or a green CI as proof a task actually succeeded —
