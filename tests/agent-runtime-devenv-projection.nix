@@ -11,6 +11,7 @@ let
     cp -r ${./fixtures/native-devenv-projection}/. "$TMPDIR/fixture/"
     chmod -R u+w "$TMPDIR/fixture"
     cp "$TMPDIR/fixture/devenv.lock" "$TMPDIR/fixture/Makefile" "$TMPDIR/fixture/nested/"
+    ln -s nested "$TMPDIR/fixture/alias"
     mv "$TMPDIR/fixture" "$out"
   '';
   fixtureRev = builtins.substring 0 40 (builtins.hashString "sha1" (baseNameOf (toString fixtureSrc)));
@@ -78,6 +79,13 @@ let
   unsafeRootRequest = pkgs.writeText "execution-request-unsafe-root.json" (builtins.toJSON (request // {
     source = request.source // { root = "../outside"; };
     environment = request.environment // { root = "../outside"; };
+  }));
+  symlinkRootRequest = pkgs.writeText "execution-request-symlink-root.json" (builtins.toJSON (request // {
+    source = request.source // { root = "alias"; };
+    environment = request.environment // { root = "alias"; };
+    provenance = request.provenance // {
+      lockfiles = [ { path = "alias/devenv.lock"; blob = fixtureLockBlob; evidence = [ "e1" ]; } ];
+    };
   }));
   mismatchedRequest = pkgs.writeText "execution-request-mismatched-lock.json" (builtins.toJSON (request // {
     provenance = request.provenance // {
@@ -223,7 +231,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 4096;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv readyRequest blockedRequest wrongSourceRequest nestedReadyRequest unsafeRootRequest argvBoundaryEnv blockedEnv mismatchedEnv ];
+    virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv readyRequest blockedRequest wrongSourceRequest nestedReadyRequest unsafeRootRequest symlinkRootRequest argvBoundaryEnv blockedEnv mismatchedEnv ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps ];
   };
   testScript = ''
@@ -322,6 +330,15 @@ pkgs.testers.runNixOSTest {
         assert status("request-unsafe-root")["state"] == "created"
         machine.succeed("! systemctl list-units --all --no-legend agent-runtime-request-unsafe-root.service | grep -q .")
         clean("request-unsafe-root")
+
+    with subtest("Devenv runner rejects a non-canonical symlink project root"):
+        create("request-symlink-root")
+        machine.execute(f"{I} start request-symlink-root --request ${symlinkRootRequest} --wait -- ${lib.getExe externalRequestProjection.runner}")
+        s = status("request-symlink-root")
+        assert s["state"] == "failed" and s["result"]["exitStatus"] == 65, s
+        machine.succeed(f"test ! -e {V}/request-symlink-root/vol/workspace/workspace/projection/.devenv-enterShell-ran")
+        machine.succeed(f"test ! -e {V}/request-symlink-root/vol/workspace/workspace/projection/check.result")
+        clean("request-symlink-root")
 
     with subtest("argv metacharacters remain literal and are not interpreted by a shell"):
         create("request-argv-boundary")
