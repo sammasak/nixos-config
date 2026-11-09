@@ -7,7 +7,7 @@ expected_rev=4a17b9241d8ad3702777ea85001597910e169e5b
 work=$(mktemp -d /tmp/agent-runtime-llm-gateway.XXXXXX)
 trap 'rm -rf "$work"' EXIT
 project="$work/project"
-mkdir -p "$project"
+mkdir -p "$project" "$work/host-home"
 
 source_path=$(EXPECTED_REV="$expected_rev" nix eval --impure --raw --expr '
   let
@@ -26,8 +26,9 @@ lock_before=$(sha256sum "$project/devenv.lock" | awk '{print $1}')
 devenv_project() {
   (
     cd "$project"
-    env -u DEVENV_ROOT -u DEVENV_DOTFILE -u DEVENV_STATE -u DEVENV_PROFILE -u DEVENV_RUNTIME \
-      DEVENV_USER_CONFIG=/dev/null DEVENV_NO_AI_AGENT=1 devenv --offline "$@"
+    env -i PATH="$PATH" HOME="$work/host-home" NIX_USER_CONF_FILES=/dev/null \
+      DEVENV_USER_CONFIG=/dev/null DEVENV_NO_AI_AGENT=1 \
+      devenv --offline "$@"
   )
 }
 devenv_project print-dev-env --json >"$work/print-dev-env.json"
@@ -82,6 +83,11 @@ jq -e --arg profile "$profile" '
   echo "projected environment contains host-local paths or invalid generated values" >&2
   exit 1
 }
+
+if [ "${AGENT_RUNTIME_DEENV_PREPARE_ONLY:-0}" = 1 ]; then
+  echo "llm-gateway Devenv host preparation passed with a scrubbed environment"
+  exit 0
+fi
 
 profile_root="$work/profile-root"
 nix-store --add-root "$profile_root" --indirect --realise "$profile" >/dev/null
