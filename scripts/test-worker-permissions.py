@@ -1,4 +1,6 @@
 """#145/#149: Herdr-started Claude Code workers start in bypassPermissions without a prompt, on worker hosts only;
+skills#28: including a pane Herdr's session restore relaunches as a bare `claude --resume <id>` (the launcher supplies
+the flag on worker hosts inside Herdr; before, a restored worker came back in auto mode);
 plain `claude` and the unattended Coordinator (dontAsk) keep their permissions.
 #157: a worker switches models when safeguards flag a message instead of stopping at the choice dialog: worker
 hosts' settings carry switchModelsOnFlag, and the launcher hands it to any bypass-mode claude, on every host,
@@ -31,7 +33,7 @@ def realise(host, path):
     return pathlib.Path(nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", expr)).read_text()
 
 
-def launched(host, args):
+def launched(host, args, herdr=True):
     """The argv the host's `claude` fish function gives the real claude, captured by a stand-in on PATH; HERDR_ENV
     takes the launcher's native path, as inside a Herdr pane (coord:spawn's `herdr agent start` types into one)."""
     fn = realise(host, "programs.fish.functions.claude")
@@ -40,7 +42,9 @@ def launched(host, args):
         fake = pathlib.Path(d, "claude")
         fake.write_text("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n")
         fake.chmod(0o755)
-        run = subprocess.run([launcher, "claude", *args], env={**os.environ, "PATH": f"{d}:{os.environ['PATH']}", "HERDR_ENV": "1"},
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")}
+        env.update({"PATH": f"{d}:{os.environ['PATH']}"}, **({"HERDR_ENV": "1"} if herdr else {}))
+        run = subprocess.run([launcher, "claude", *args], env=env,
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
         return run.stdout.splitlines()
 
@@ -74,7 +78,7 @@ STARTUP_SECONDS = 30
 API_LOOPBACK = "http://127.0.0.1:9"
 
 
-def startup_screen(host, extra=()):
+def startup_screen(host, extra=(), flag=True):
     """What `coord:spawn`'s argv shows at startup under the host's rendered settings.json and its pinned Claude Code,
     in a throwaway HOME prepared like a provisioned host (onboarding done, cwd trusted, a dummy API key approved).
 
@@ -92,7 +96,7 @@ def startup_screen(host, extra=()):
         pathlib.Path(home, ".claude.json").write_text(json.dumps({
             "hasCompletedOnboarding": True, "projects": {str(work): {"hasTrustDialogAccepted": True}},
             "customApiKeyResponses": {"approved": [key[-20:]], "rejected": []}}))
-        argv = " ".join([f"{claude}/bin/claude", *extra, FLAG, "--model", "claude-opus-5-5"])
+        argv = " ".join([f"{claude}/bin/claude", *extra, *([FLAG] if flag else []), "--model", "claude-opus-5-5"])
         env = {"HOME": home, "PATH": os.environ["PATH"], "TERM": "xterm-256color", "ANTHROPIC_API_KEY": key,
                "ANTHROPIC_BASE_URL": API_LOOPBACK}
         run = subprocess.run(["unshare", "--map-current-user", "-n", "timeout", str(STARTUP_SECONDS), "script", "-qfec", argv, "/dev/null"],
@@ -129,11 +133,25 @@ def main():
             check("claude-worker" not in fish, f"{host}: no claude-worker function")
 
     launcher = pathlib.Path("modules/programs/cli/herdr/agent-launcher.sh").read_text()
-    check("skipDangerous" not in launcher and not re.search(r"set -- [^\n]*" + FLAG, launcher),
-          "the launcher never adds the bypass flag (it is the caller's)")
+    check("skipDangerous" not in launcher, "the launcher never skips the acknowledgment dialog itself (settings do)")
+    ws = None
+    for args in (["--resume", "2438c230-e5ab-4232-9869-9115883906ec"], [], ["--model", "claude-opus-5-5"]):
+        got = launched(WORKER, args)
+        ws = got[1] if got[:1] == ["--settings"] else ws
+        check(got == ["--settings", ws, FLAG, *args],
+              f"{WORKER}: inside a Herdr pane `claude {' '.join(args)}` (a session restore's argv) starts with {FLAG} (got {got})")
+    for args in (["--permission-mode", "plan"], ["--permission-mode=default"], ["-p", "hi"], ["--version"]):
+        got = launched(WORKER, args)
+        check(got == args, f"{WORKER}: `claude {' '.join(args)}` names its own mode or is non-interactive: unchanged (got {got})")
+    got = launched(WORKER, ["--resume", "x"], herdr=False)
+    check(got == ["--resume", "x"], f"{WORKER}: outside a Herdr pane (SSH, a plain shell) claude is unchanged (got {got})")
+    for args in (["--resume", "87ad883f-5df1-4946-94d8-4714fae05c49"], []):
+        got = launched(COORDINATOR, args)
+        check(got == args, f"{COORDINATOR}: a restored or bare claude in a Herdr pane keeps the owner's mode (got {got})")
     for host in (WORKER, COORDINATOR):
         worker_args, plain_args = launched(host, [FLAG, "--model", "claude-opus-5-5"]), launched(host, ["--model", "claude-opus-5-5"])
-        check(plain_args == ["--model", "claude-opus-5-5"], f"{host}: the launcher passes a non-bypass claude through unchanged ({plain_args})")
+        if host == COORDINATOR:
+            check(plain_args == ["--model", "claude-opus-5-5"], f"{host}: the launcher passes a non-bypass claude through unchanged ({plain_args})")
         check(worker_args[:1] == ["--settings"] and worker_args[2:] == [FLAG, "--model", "claude-opus-5-5"]
               and json.loads(pathlib.Path(worker_args[1]).read_text()) == {"switchModelsOnFlag": True},
               f"{host}: a bypass-mode claude (coord:spawn's argv) gets --settings switchModelsOnFlag=true from the launcher (#157)")
@@ -165,6 +183,11 @@ def main():
     # the worker runs the argv the launcher hands the real claude, --settings included (#157): it must still start
     worker_extra = launched(WORKER, [FLAG])[:2]
     worker_screen, coordinator_screen = startup_screen(WORKER, worker_extra), startup_screen(COORDINATOR)
+    # skills#28: the bare argv a Herdr restore types, through the worker's launcher, must also land in bypassPermissions
+    restored_screen = startup_screen(WORKER, launched(WORKER, []), flag=False)
+    print(f"{WORKER} restored-pane screen: {restored_screen[-160:]}")
+    check("bypasspermissionson" in restored_screen and "Yes,Iaccept" not in restored_screen and "automodeon" not in restored_screen,
+          f"{WORKER}: a bare `claude` in a Herdr pane (a session restore) reaches its prompt in bypassPermissions, no dialog, not auto mode")
     for host, screen in ((WORKER, worker_screen), (COORDINATOR, coordinator_screen)):
         check("bypasspermissionson" in screen or "Yes,Iaccept" in screen,
               f"{host}: Claude Code drew its first screen within {STARTUP_SECONDS} s with no network (if not: its startup now waits "
