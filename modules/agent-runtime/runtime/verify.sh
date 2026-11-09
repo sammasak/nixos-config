@@ -20,6 +20,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$bundle" ] && [ -n "$template" ] && [[ $max =~ ^[1-9][0-9]*$ ]] || usage
+bundle=$(resolve_bundle "$bundle")  # a bundle dir, its `latest` link, or an exports/<id>.runs dir (#184)
 # the trusted side: the template manifest from this host's store pins every source (rev, narHash)
 jq -e '.kind == "agent-runtime-template" and (.sources | type == "object")' "$template" >/dev/null 2>&1 \
   || fail usage "$template is not an agent-runtime template manifest"

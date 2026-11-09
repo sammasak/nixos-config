@@ -52,6 +52,21 @@ atomic_json() {  # FILE: stdin into FILE via a fsynced temporary sibling, then t
   sync "$(dirname "$1")"
 }
 reservations() { cat "$state"/*/reservation 2>/dev/null || true; }
+reserved_cpus() {
+  local file value total=0
+  for file in "$state"/*/reservation; do
+    [ -f "$file" ] || continue
+    value=$(awk '{print $5}' "$file")
+    if [ -z "$value" ]; then
+      [ -r "${file%/reservation}/template.json" ] || fail state "legacy reservation $file has no template to recover its CPU budget"
+      value=$(jq -er '.policies.resources.cpus' "${file%/reservation}/template.json") \
+        || fail state "legacy reservation $file has no valid CPU budget"
+    fi
+    [[ $value =~ ^[0-9]+$ ]] || fail state "reservation $file has an invalid CPU budget"
+    total=$((total + value))
+  done
+  printf '%s\n' "$total"
+}
 vol_json() {  # the template's writable volumes as {name: {path, sizeMiB, inodes, mode, owner}}
   jq -c '.filesystem as $f | {
     workspace: {path: $f.workspace, sizeMiB: $f.workspaceBudget.sizeMiB, inodes: $f.workspaceBudget.inodes, mode: "0755", owner: 0},
@@ -101,6 +116,39 @@ invocation_of() {  # the run's journal key: started.json's, else the one record-
   inv=$(jq -r '.invocation // empty' "$base/started.json" 2>/dev/null || true)
   [ -n "$inv" ] || inv=$(jq -r '.invocation // empty' "$base/result.json" 2>/dev/null || true)
   printf '%s' "$inv"
+}
+# #184: an export's identity. Each create is one attempt (start never repeats on an instance), so a random
+# 128-bit id minted at create names that attempt's bundle: never reused when a later instance takes the
+# same id, and present even for a run cancelled before it started (no invocation). Not wall time.
+mint_run_id() { tr -d - </proc/sys/kernel/random/uuid; }
+run_id_of() {  # the instance's runId; one created before #184 mints it once, under the instance lock
+  local r
+  r=$(jq -r '.runId // empty' "$base/instance.json" 2>/dev/null || true)
+  [ -n "$r" ] || r=$(cat "$base/run-id" 2>/dev/null || true)
+  if [ -z "$r" ]; then r=$(mint_run_id); printf '%s\n' "$r" | atomic_json "$base/run-id"; fi
+  [[ $r =~ ^[0-9a-f]{32}$ ]] || fail state "$id has a malformed runId: $r"
+  printf '%s' "$r"
+}
+bundle_intact() {  # DIR RUN-ID: an export of this instance's run whose files all match bundle.json, and nothing more
+  local dir=$1 listed on_disk
+  jq -e --arg id "$id" --arg r "$2" '.kind == "agent-runtime-instance-export" and .id == $id and .runId == $r
+    and (.files | type == "array" and length > 0)' "$dir/bundle.json" >/dev/null 2>&1 || return 1
+  listed=$(jq -r '.files[] | [.path, .sha256] | @tsv' "$dir/bundle.json") || return 1
+  while IFS=$'\t' read -r path sum; do
+    case $path in /* | ../* | */../* | ..) return 1 ;; esac
+    [ -f "$dir/$path" ] && [ "$(sha256sum "$dir/$path" | cut -d' ' -f1)" = "$sum" ] || return 1
+  done <<<"$listed"
+  on_disk=$(cd "$dir" && find . -type f ! -path ./bundle.json -printf '%P\n' | sort)
+  [ "$on_disk" = "$(cut -f1 <<<"$listed" | sort)" ]
+}
+publish_latest() {  # RUNS-DIR RUN-ID: point RUNS-DIR/latest at the run, by an atomic rename of a fresh symlink
+  ln -sfn "$2" "$1/.latest.$$"
+  mv -Tf "$1/.latest.$$" "$1/latest"
+  sync "$1"
+}
+record_export() {  # DIR RUN-ID OUTCOME: the export record, written last
+  jq -nc --arg out "$1" --arg r "$2" --arg at "$(now)" --arg s "$3" '{dir: $out, runId: $r, at: $at, outcome: $s}' \
+    | atomic_json "$base/exported.json"
 }
 state_of() {
   if [ ! -f "$base/instance.json" ]; then
@@ -154,7 +202,7 @@ status_json() {
     --argjson result "$(cat "$base/result.json" 2>/dev/null || echo null)" \
     --argjson exported "$(cat "$base/exported.json" 2>/dev/null || echo null)" \
     '{schemaVersion: 1, kind: "agent-runtime-instance-status", id: $id, state: $s, host: $host}
-     + (if $rec then $rec | {task, template, run, uidBase, unit, machine, volumes, createdAt} else {} end)
+     + (if $rec then $rec | {task, template, run, runId, uidBase, unit, machine, volumes, createdAt} else {} end)
      + {started: $started, result: $result, export: $exported}'
 }
 revoke_token() {  # ISSUER TOKEN-FILE: best effort (the token expires anyway), but a failure is reported, not hidden
@@ -230,6 +278,7 @@ case $cmd in
       || fail unsupported "$name: a writable source must sit at /workspace/<its name>"
     vols=$(vol_json "$template")
     mem=$(jq -r .policies.resources.memoryMiB "$template")
+    cpus=$(jq -r .policies.resources.cpus "$template")
     disk=$(jq -r '[.[].sizeMiB] | add' <<<"$vols")
     max=$(jq -r .maxConcurrentInstances "$host")
     live=$(reservations | wc -l)
@@ -244,6 +293,11 @@ case $cmd in
     mem_available=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
     [ $((mem_available - mem)) -ge "$mem_reserve" ] \
       || fail admission "memory $mem MiB would leave $((mem_available - mem)) MiB available, under the $mem_reserve MiB reserve"
+    cpu_total=$(nproc)
+    cpu_reserve=$(jq -r .reserve.cpus "$host")
+    cpu_used=$(reserved_cpus)
+    [ $((cpu_used + cpus)) -le $((cpu_total - cpu_reserve)) ] \
+      || fail admission "CPU $cpu_used+$cpus logical CPUs over $cpu_total-$cpu_reserve available after host reserve"
     disk_free=$(df --output=avail -BM "$state" | tail -1 | tr -dc 0-9)
     disk_reserve=$(jq -r .reserve.diskMiB "$host")
     [ $((disk + disk_reserve)) -le "$disk_free" ] || fail admission "disk $disk+$disk_reserve MiB over $disk_free MiB free"
@@ -257,7 +311,7 @@ case $cmd in
     done
     [ -n "$uidbase" ] || fail admission "no free UID range"
     mkdir -p "$base/img" "$base/vol"
-    echo "$mem $disk $uidbase $name" | atomic_json "$base/reservation"
+    echo "$mem $disk $uidbase $name $cpus" | atomic_json "$base/reservation"
     trap 'trap - ERR; echo "create $id failed, rolling back" >&2; teardown 2>/dev/null || true' EXIT
     cp "$template" "$base/template.json"
     cp "$host" "$base/host.json"
@@ -288,9 +342,10 @@ case $cmd in
     sync -f "$base"
     jq -n --arg id "$id" --arg task "$task" --arg host "$(hostname)" --arg at "$(now)" --argjson uid "$uidbase" \
       --arg unit "$unit" --arg machine "$machine" --argjson vols "$vols" --arg b "$base" \
-      --slurpfile t "$template" --slurpfile r "$base/run/run.json" --arg ts "$template_store" '
+      --slurpfile t "$template" --slurpfile r "$base/run/run.json" --arg ts "$template_store" --arg rid "$(mint_run_id)" '
       {schemaVersion: 1, kind: "agent-runtime-instance-record", id: $id, task: $task, host: $host,
        template: {name: $t[0].template.name, digests: $t[0].digests, manifest: $ts}, run: {digest: $r[0].digests.run},
+       runId: $rid,
        uidBase: $uid, unit: $unit, machine: $machine, createdAt: $at,
        volumes: ($vols | with_entries(.value |= {path, sizeMiB, inodes} + {image: ($b + "/img/" + .key + ".img"), mount: ($b + "/vol/" + .key)}))}' \
       | atomic_json "$base/instance.json"
@@ -637,17 +692,30 @@ case $cmd in
     s=$(state_of)
     if [ -f "$base/exported.json" ]; then status_json; exit 0; fi
     terminal "$s" || fail conflict "$id is $s; export after it has ended"
+    # #184: every run its own immutable bundle, exports/<id>.runs/<runId>, and <id>.runs/latest the newest. A
+    # bundle is never replaced or removed (not here, not by destroy): the operator owns its retention. A
+    # pre-#184 bundle at exports/<id> is left where it is; `.` is outside the id charset, so the two never meet.
+    rid=$(run_id_of)
+    runs=$state/exports/$id.runs
+    out=$runs/$rid
+    mkdir -p "$runs"
+    if [ -e "$out" ]; then
+      # published but never recorded (an export interrupted between its rename and its record): adopt it only
+      # if it is intact and this run's; anything else at that path is kept and refused, never replaced
+      bundle_intact "$out" "$rid" || fail conflict "$out exists but is not an intact export of $id run $rid; it is kept, not replaced"
+      publish_latest "$runs" "$rid"
+      record_export "$out" "$rid" "$s"
+      status_json
+      exit 0
+    fi
     mount_volumes
-    out=$state/exports/$id
-    [ ! -e "$out" ] || fail conflict "$out exists but $id has no export record"
-    mkdir -p "$state/exports"
     # a run that had a credential whose copy is gone (a reboot) is not exported unchecked: re-pass it
     cred=$(cat "$rundir/$id/cred/token" 2>/dev/null || true)
     [ -n "$cred" ] || [ -z "$recheck" ] || cred=$(<"$recheck")
     if [ -z "$cred" ] && jq -e '.credential != null' "$base/started.json" >/dev/null 2>&1; then
       fail credential "$id ran with a credential whose copy is gone, so the export cannot be checked for it; re-pass it: export $id --credential FILE"
     fi
-    tmp=$(mktemp -d "$state/exports/.$id.XXXXXX")
+    tmp=$(mktemp -d "$runs/.tmp.XXXXXX")
     ws=$base/vol/workspace
     # a failed export after the source export ran puts the sources back as pending, so a retry exports (and
     # scans) the patch again instead of leaving it out
@@ -658,6 +726,13 @@ case $cmd in
       rm -rf "$tmp"
     }
     trap restore_pending EXIT
+    # SIGKILL or a reboot cannot run restore_pending. Until the outer bundle is published, the
+    # materialization record remains the durable source list even if the inner export consumed it.
+    if [ ! -f "$ws/export-pending" ] && [ -f "$ws/materialized.json" ]; then
+      jq -r '.sources | to_entries[] | select(.value.mode == "rw") | .key' "$ws/materialized.json" \
+        | atomic_json "$ws/export-pending"
+      rm -f "$ws/exported.json"
+    fi
     if [ -f "$ws/export-pending" ]; then
       cp "$ws/export-pending" "$tmp/.export-pending"
       run_capture export "source export failed" agent-runtime-export --root "$ws" --out "$tmp/sources"
@@ -700,15 +775,18 @@ case $cmd in
       jq -nc --arg f "$f" --arg s "$(sha256sum "$f" | cut -d' ' -f1)" --argjson b "$(stat -c %s "$f")" '{path: $f, sha256: $s, bytes: $b}'
     done | jq -sc .)
     jq -n --arg id "$id" --arg s "$s" --arg at "$(now)" --argjson files "$files" --argjson omitted "$omitted" \
-      --argjson lb "$log_bytes" --argjson tr "$truncated" --slurpfile rec "$base/instance.json" \
-      '{schemaVersion: 1, kind: "agent-runtime-instance-export", id: $id, task: $rec[0].task, template: $rec[0].template,
+      --argjson lb "$log_bytes" --argjson tr "$truncated" --slurpfile rec "$base/instance.json" --arg rid "$rid" --arg inv "$inv" \
+      '{schemaVersion: 1, kind: "agent-runtime-instance-export", id: $id, runId: $rid,
+        invocation: (if $inv == "" then null else $inv end), task: $rec[0].task, template: $rec[0].template,
         outcome: $s, recovery: ($s != "succeeded"), exportedAt: $at, log: {bytes: $lb, truncatedTo: (if $tr then 1048576 else null end)},
         omittedPatches: $omitted, files: $files}' >"$tmp/bundle.json"
     sync -f "$tmp"
-    mv "$tmp" "$out"
-    sync "$state/exports"
+    # publish: one rename of the staged directory onto the run's own (absent, checked above under the lock) path
+    mv -T "$tmp" "$out"
+    sync "$runs"
     trap - EXIT
-    jq -nc --arg out "$out" --arg at "$(now)" --arg s "$s" '{dir: $out, at: $at, outcome: $s}' | atomic_json "$base/exported.json"
+    publish_latest "$runs" "$rid"
+    record_export "$out" "$rid" "$s"
     status_json
     ;;
 
