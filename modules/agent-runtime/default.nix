@@ -575,6 +575,11 @@ in
         description = "Aggregate instance cap for this host (#138).";
       };
       reserve = {
+        cpus = mkOption {
+          type = types.ints.unsigned;
+          default = 0;
+          description = "Host logical CPU capacity kept free of instances (admission, #137).";
+        };
         memoryMiB = mkOption {
           type = types.ints.positive;
           default = 2048;

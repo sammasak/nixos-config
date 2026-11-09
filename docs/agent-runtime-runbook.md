@@ -46,7 +46,7 @@ agent-runtime-herdr attach <id> <template.json> OWNER/REPO#N <status-file> -- <p
 agent-runtime-herdr deliver <id> '<one-line prompt>'
 # 5. follow and collect
 agent-runtime-instance wait <id>
-agent-runtime-instance export <id>        # bundle: sources/*.patch, output/, run.log, bundle.json; integrity-checked
+agent-runtime-instance export <id>        # bundle at exports/<id>.runs/<runId> (latest -> newest): sources/*.patch, output/, run.log, bundle.json; integrity-checked
 ```
 
 `<id>` must be a DNS label of **at most 29** characters (a Herdr agent name is
@@ -77,6 +77,12 @@ everything else is gone. `destroy` refuses to tear down an unexported terminal
 run unless `--discard` is given. An `ambiguous` run is never restarted automatically:
 inspect it (`status`, `logs`, the recovery bundle) and decide by hand.
 
+**Bundles are kept (#184).** `destroy` never touches `exports/`. Each run's bundle is its
+own `exports/<id>.runs/<runId>`, so recreating an id and exporting again adds a bundle beside
+the earlier one (a failed run's recovery bundle included), and `latest` moves to the newest.
+Removing old bundles is the operator's decision; nothing does it automatically. A pre-#184
+bundle at `exports/<id>` stays where it is.
+
 ## Approval boundaries
 
 - **No self-authorization.** A runtime runs only an owner-approved template on a
@@ -86,17 +92,19 @@ inspect it (`status`, `logs`, the recovery bundle) and decide by hand.
 - **Host activation is owner-gated and deploy-rs only.** Enabling the runtime on
   a physical host is a `just deploy-<host>` from lenovo after review and merge,
   never a direct switch on the host. No agent deploys or switches a host.
-  Every host imports the substrate (`nixosModules.agent-runtime-host`, #155),
-  but no host enables it yet. Enabling is a host-config change (import the
-  template module, set `sam.agentRuntime.host.enable` and an
-  `eligibleTemplates`/`reserve` policy) followed by `just deploy-<host>`, which
-  deploys the `system` and `agent-runtime` profiles in order
+  Every host imports the substrate (`nixosModules.agent-runtime-host`, #155).
+  Acer and MSI declare the runtime enabled in Nix; until an owner runs
+  `just deploy-<host>`, that declaration does not activate it on the physical
+  host. Enabling is a host-config change (import the template module, set
+  `sam.agentRuntime.host.enable` and an `eligibleTemplates`/`reserve` policy)
+  followed by `just deploy-<host>`, which deploys the `system` and
+  `agent-runtime` profiles in order
   (`docs/agent-runtime-deploy.md`, Rollout). The host policy is then
   `/etc/agent-runtime/host.json` and the templates are under
   `/nix/var/nix/profiles/agent-runtime/templates/templates/`.
 - **Capacity is the host policy**, not per-call: `maxConcurrentInstances`,
-  `reserve.memoryMiB`/`diskMiB`. Admission refuses (exit 10) before any mount or
-  unit when memory, instance count or disk would breach it, and after a failed
+  `reserve.cpus`/`memoryMiB`/`diskMiB`. Admission refuses (exit 10) before any mount or
+  unit when CPU, memory, instance count or disk would breach it, and after a failed
   start or teardown the reservation stays until `destroy`.
 
 ## Host drain and rollback
@@ -159,7 +167,9 @@ repositories. Do **not** run a runtime when any of these holds:
 - the workload is hostile or untrusted, or needs a credential the host cannot
   scope and expire;
 - the host is under memory or disk pressure that admission cannot see (admission
-  reserves `MemTotal`/free-disk headroom, not live third-party spikes).
+  reserves logical CPU capacity, `MemTotal`/`MemAvailable`, and free-disk
+  headroom; the reserve protects capacity from admitted instances while the
+  live memory and disk checks account for other host workloads.
 
 When in doubt, keep the instance disposable: `--discard` on destroy, and never
 treat a Herdr `idle`/`done` or a green CI as proof a task actually succeeded —

@@ -20,6 +20,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$bundle" ] && [ -n "$template" ] && [ -n "$into" ] && [ -n "$branch" ] && [[ $max =~ ^[1-9][0-9]*$ ]] || usage
+bundle=$(resolve_bundle "$bundle")  # a bundle dir, its `latest` link, or an exports/<id>.runs dir (#184)
 
 # 1. verify first: promote only a reviewed, reproducible artifact. --require-change refuses a no-op.
 verr=$(mktemp)
