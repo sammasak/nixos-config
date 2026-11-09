@@ -207,6 +207,7 @@ pkgs.testers.runNixOSTest {
         mir = json.loads(machine.succeed("cat /run/agent-runtime/bad/mirror.status"))
         print("mirror.status after failure:", json.dumps(mir))
         assert mir["state"] == "failed" and mir["reason"], mir
+        assert g.get("tokens", {}).get("blocked_reason") == mir["reason"][:80], g
 
     with subtest("the dummy token appears in NO Herdr surface (registry, state, screen, journals, log)"):
         # the mirror user's registry and all of Herdr's own on-disk state (config + session state)
@@ -241,14 +242,30 @@ pkgs.testers.runNixOSTest {
         print("reconcile after restart:\n" + out)
         assert "ok: re-reported mirror (idle)" in out, out
         assert "bad: re-reported mirror (blocked)" in out, out
+        machine.sleep(2)
         wait_hs("ok", "idle", 40)
         assert hs("ok") in ("idle", "done"), hs("ok")
         wait_hs("bad", "blocked", 40)
         g = json.loads(agent_get("bad"))["result"]["agent"]
         print("bad after reconcile:", g["agent_status"])
         assert g["agent_status"] == "blocked", g
-        # reconcile re-passes the non-secret reason via --message; mirror.status still carries it
-        assert json.loads(machine.succeed("cat /run/agent-runtime/bad/mirror.status"))["reason"], "blocked mirror lost its reason"
+        reason = json.loads(machine.succeed("cat /run/agent-runtime/bad/mirror.status"))["reason"]
+        assert g.get("tokens", {}).get("blocked_reason") == reason[:80] and reason, g
+        for i in ("ok", "bad"):
+            restored = json.loads(mrun(f"herdr agent get rt-{i}"))["result"]["agent"]
+            assert restored["title"] == f"{REF} rt={i} tpl={rec(i)['template_digest'][:12]} (mirror)", restored
+            assert "sleep" in fg(i) and "infinity" in fg(i), fg(i)
+
+    with subtest("reconcile never replaces a foreign foreground command in a mirror pane"):
+        mrun("systemctl --user restart herdr.service")
+        machine.wait_until_succeeds(am("herdr agent list"), timeout=30)
+        mrun(f"herdr pane run {pane('bad')} 'exec ${pkgs.coreutils}/bin/sleep 43200'")
+        machine.wait_until_succeeds(am(f"herdr pane process-info --pane {pane('bad')} | jq -e '.result.process_info.foreground_processes[0].cmdline | contains(\"43200\")'"), timeout=30)
+        before = fg("bad")
+        out = mrun("agent-runtime-herdr reconcile")
+        assert "bad: lost" in out and rec("bad")["status"] == "lost", out
+        assert fg("bad") == before, (before, fg("bad"))
+        assert json.loads(machine.succeed("${I} status bad"))["state"] == "failed"
 
     with subtest("teardown (unprivileged detach): no mirror agent, workspace or follower unit is left"):
         for i in ("ok", "bad"):

@@ -102,7 +102,7 @@ agent-runtime-herdr deliver pilot 'run the assigned task'
 sudo agent-runtime-instance wait pilot                          # until it ends; status shows succeeded
 sudo agent-runtime-instance status pilot                        # record runtimeUSec, memoryPeakBytes, uidBase
 sudo agent-runtime-instance export pilot
-sudo sh -c 'cd /var/lib/agent-runtime/exports/pilot/output && sha256sum -c SHA256SUMS && cat result.json'   # 0700 root
+sudo sh -c 'cd /var/lib/agent-runtime/exports/pilot.runs/latest/output && sha256sum -c SHA256SUMS && cat result.json'   # 0700 root
 agent-runtime-herdr detach pilot
 sudo agent-runtime-instance destroy pilot
 sudo agent-runtime-preflight --template "$T"                    # go again: nothing left

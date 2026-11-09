@@ -167,7 +167,7 @@ pkgs.testers.runNixOSTest {
         print(machine.succeed("${I} logs e2e")[-800:])
         # export: a verifiable bundle
         print(machine.succeed("${I} export e2e"))
-        b = f"{V}/exports/e2e"
+        b = f"{V}/exports/e2e.runs/latest"
         machine.succeed(f"test -f {b}/output/rf_proto-test -a -f {b}/output/SHA256SUMS -a -f {b}/sources/rf-proto.patch -a -f {b}/bundle.json")
         machine.succeed(f"cd {b}/output && sha256sum -c SHA256SUMS")
         # teardown: Herdr, then the instance; nothing left in either. The cleanup result is recorded.
@@ -216,7 +216,7 @@ pkgs.testers.runNixOSTest {
         assert s["state"] == "failed" and s["result"]["serviceResult"] == "signal", s
         print("kill outcome:", s["state"], s["result"]["serviceResult"])
         print(machine.succeed("${I} export fk"))
-        machine.succeed(f"test -f {V}/exports/fk/bundle.json")
+        machine.succeed(f"test -f {V}/exports/fk.runs/latest/bundle.json")
         machine.succeed("${I} destroy fk"); clean("fk")
 
     with subtest("failure: Herdr down during deliver is refused (69); local status answers idle; nothing re-assigned"):
@@ -258,13 +258,14 @@ pkgs.testers.runNixOSTest {
         create("fx")
         machine.succeed("${I} start fx --wait -- ${lightwork}")
         assert st("fx")["state"] == "succeeded", st("fx")
-        # SIGKILL the export mid-run: the atomic mv into exports/<id> is the last step and never runs, so
-        # there is no partial final bundle to serve. export writes to a temp dir first (mktemp .fx.XXXXXX).
+        # SIGKILL the export mid-run: the atomic mv into exports/<id>.runs/<runId> is the last step and never
+        # runs, so there is no partial final bundle to serve. export stages in a temp dir (.tmp.XXXXXX) first.
         machine.execute("${I} export fx & p=$!; kill -9 $p 2>/dev/null; wait $p 2>/dev/null; true")
-        machine.succeed(f"test ! -e {V}/exports/fx")  # the kill left no committed export
+        machine.succeed(f"test ! -e {V}/exports/fx.runs/latest")  # the kill left no committed export
+        machine.succeed(f"test -z \"$(ls -A {V}/exports/fx.runs 2>/dev/null | grep -v '^\\.tmp\\.' || true)\"")
         # a clean re-export produces a verified bundle (export is recoverable: a fresh temp, a fresh commit)
         machine.succeed("${I} export fx")
-        b = f"{V}/exports/fx"
+        b = f"{V}/exports/fx.runs/latest"
         machine.succeed(f"test -f {b}/output/SHA256SUMS -a -f {b}/bundle.json")
         machine.succeed(f"cd {b}/output && sha256sum -c SHA256SUMS")
         machine.succeed("${I} destroy fx --discard"); clean("fx")

@@ -46,7 +46,7 @@ agent-runtime-herdr attach <id> <template.json> OWNER/REPO#N <status-file> -- <p
 agent-runtime-herdr deliver <id> '<one-line prompt>'
 # 5. follow and collect
 agent-runtime-instance wait <id>
-agent-runtime-instance export <id>        # bundle: sources/*.patch, output/, run.log, bundle.json; integrity-checked
+agent-runtime-instance export <id>        # bundle at exports/<id>.runs/<runId> (latest -> newest): sources/*.patch, output/, run.log, bundle.json; integrity-checked
 ```
 
 `<id>` must be a DNS label of **at most 29** characters (a Herdr agent name is
@@ -76,6 +76,12 @@ again once the holder is gone), and only removes the reservation after
 everything else is gone. `destroy` refuses to tear down an unexported terminal
 run unless `--discard` is given. An `ambiguous` run is never restarted automatically:
 inspect it (`status`, `logs`, the recovery bundle) and decide by hand.
+
+**Bundles are kept (#184).** `destroy` never touches `exports/`. Each run's bundle is its
+own `exports/<id>.runs/<runId>`, so recreating an id and exporting again adds a bundle beside
+the earlier one (a failed run's recovery bundle included), and `latest` moves to the newest.
+Removing old bundles is the operator's decision; nothing does it automatically. A pre-#184
+bundle at `exports/<id>` stays where it is.
 
 ## Approval boundaries
 

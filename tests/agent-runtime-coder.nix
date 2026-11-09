@@ -30,6 +30,12 @@ let
   tpl = evaluated.templates.claude-coder;
   manifest = "${evaluated.manifestDir}/claude-coder.json";
   I = lib.getExe runtime.tools.instance;
+  # Kill after the inner export consumed export-pending, before the outer bundle is published.
+  interruptedExport = pkgs.runCommand "agent-runtime-interrupted-export" { } ''
+    substitute ${I} "$out" --replace-fail \
+      'cp -r "$base/vol/output/." "$tmp/output"' 'kill -KILL $$'
+    chmod +x "$out"
+  '';
   VERIFY = lib.getExe runtime.tools.verify;
   PROMOTE = lib.getExe runtime.tools.promote;
   env = pkgsU.buildEnv { name = "agent-runtime-coder-env"; paths = tpl.packages; };
@@ -171,21 +177,21 @@ pkgs.testers.runNixOSTest {
         s = run("noauth", "${realNoAuth}")
         assert s["state"] == "failed" and s["result"]["exitStatus"] == 1, s
         machine.succeed("${I} export noauth")
-        c = json.loads(machine.succeed(f"cat {E}/noauth/output/claude.json"))
+        c = json.loads(machine.succeed(f"cat {E}/noauth.runs/latest/output/claude.json"))
         print("claude -p without auth:", json.dumps({k: c.get(k) for k in ("is_error", "terminal_reason", "result", "total_cost_usd")}))
         assert c["is_error"] and c["terminal_reason"] == "api_error" and "Not logged in" in c["result"] and c["total_cost_usd"] == 0, c
-        assert machine.succeed(f"cat {E}/noauth/sources/rf-proto.patch") == "", "an edit without auth"
-        verify(f"{E}/noauth")  # an empty patch verifies; it is refused only when a change is required
-        refused(f"{E}/noauth", 9, "empty patch", "--require-change")
+        assert machine.succeed(f"cat {E}/noauth.runs/latest/sources/rf-proto.patch") == "", "an edit without auth"
+        verify(f"{E}/noauth.runs/latest")  # an empty patch verifies; it is refused only when a change is required
+        refused(f"{E}/noauth.runs", 9, "empty patch", "--require-change")  # the runs dir resolves to its latest (#184)
         done("noauth", "")
 
     with subtest("the runner fails closed without a credential: the model is never called"):
         s = run("closed", "${run} 'add a function'")
         assert s["state"] == "failed" and s["result"]["exitStatus"] == 77, s
         machine.succeed("${I} export closed")
-        r = json.loads(machine.succeed(f"cat {E}/closed/output/result.json"))
+        r = json.loads(machine.succeed(f"cat {E}/closed.runs/latest/output/result.json"))
         assert r["auth"] == "missing" and r["exit"] == 77, r
-        machine.succeed(f"test ! -e {E}/closed/output/claude.json")
+        machine.succeed(f"test ! -e {E}/closed.runs/latest/output/claude.json")
         done("closed", "")
 
     with subtest("with the token but no egress the run is bounded, edits nothing and never leaks the token"):
@@ -197,11 +203,11 @@ pkgs.testers.runNixOSTest {
         print("export without the token copy:", rc, out.strip()[-300:])
         assert rc == 5 and "copy is gone" in out, (rc, out)
         machine.succeed("${I} export noegress --credential /root/dummy-token")
-        r = json.loads(machine.succeed(f"cat {E}/noegress/output/result.json"))
+        r = json.loads(machine.succeed(f"cat {E}/noegress.runs/latest/output/result.json"))
         assert r["auth"] == "oauth-token" and r["claudeExit"] != 0 and r["testsExit"] == 0, r
-        machine.succeed(f"! grep -rqF DUMMY-not-a-token {E}/noegress")
+        machine.succeed(f"! grep -rqF DUMMY-not-a-token {E}/noegress.runs")
         machine.succeed("! journalctl --no-pager | grep -qF DUMMY-not-a-token")
-        patch = machine.succeed(f"cat {E}/noegress/sources/rf-proto.patch")
+        patch = machine.succeed(f"cat {E}/noegress.runs/latest/sources/rf-proto.patch")
         assert patch == "", patch[:1500]
         done("noegress", "")
 
@@ -211,7 +217,8 @@ pkgs.testers.runNixOSTest {
         rc, out = machine.execute("${I} export leak 2>&1")
         print("export of a patch carrying the token:", rc, out.strip()[-300:])
         assert rc == 5 and "source patch" in out, (rc, out)
-        machine.succeed(f"test ! -e {E}/leak")
+        machine.succeed(f"test ! -e {E}/leak.runs/latest")
+        machine.succeed(f"test -z \"$(ls -A {E}/leak.runs 2>/dev/null | grep -v '^\\.tmp\\.' || true)\"")
         # a retry is refused the same way: the refused export put the source back as pending, not dropped the patch
         rc, out = machine.execute("${I} export leak 2>&1")
         assert rc == 5 and "source patch" in out, (rc, out)
@@ -221,13 +228,14 @@ pkgs.testers.runNixOSTest {
         s = run("edit", "${fixtureEdit}")
         assert s["state"] == "succeeded", s
         machine.succeed("${I} export edit")
-        rc, out = verify(f"{E}/edit", "--require-change")
+        EDIT = st("edit")["export"]["dir"]  # the run's own bundle, exports/edit.runs/<runId> (#184)
+        rc, out = verify(EDIT, "--require-change")
         assert rc == 0, out
         v = json.loads(out)
         src = v["sources"]["rf-proto"]
         assert v["kind"] == "agent-runtime-verified" and src["changedPaths"] == ["src/lib.rs"] and src["patchBytes"] > 0, v
         assert src["base"]["rev"] == "${rfProto.rev}", src
-        assert "test result: ok" in machine.succeed(f"cat {E}/edit/output/cargo-test.log")
+        assert "test result: ok" in machine.succeed(f"cat {EDIT}/output/cargo-test.log")
         print("VERIFIED", json.dumps(v))
 
         # PROMOTION (#169 acceptance 3): the trusted host applies the VERIFIED patch onto a clean checkout
@@ -236,7 +244,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed("rm -rf /tmp/wt && cp -rp ${rfProto} /tmp/wt && chmod -R u+w /tmp/wt")
         # add -A -f to mirror the verifier's tree_of (force, ignoring .gitignore), so the base tree matches
         machine.succeed("git -C /tmp/wt init -q && git -C /tmp/wt add -A -f && git -C /tmp/wt -c user.name=t -c user.email=t@t commit -q -m base")
-        out = machine.succeed(f"${PROMOTE} --bundle {E}/edit --template {M} --into /tmp/wt --branch promote-169")
+        out = machine.succeed(f"${PROMOTE} --bundle {EDIT} --template {M} --into /tmp/wt --branch promote-169")
         p = json.loads(out)
         assert p["kind"] == "agent-runtime-promoted" and p["source"] == "rf-proto", p
         assert p["pushed"] is False and p["changedPaths"] == ["src/lib.rs"] and p["bundleSha256"], p
@@ -246,16 +254,137 @@ pkgs.testers.runNixOSTest {
         assert machine.succeed("git -C /tmp/wt show HEAD:src/lib.rs") != machine.succeed("git -C /tmp/wt show HEAD~1:src/lib.rs"), "the promoted file must differ from the base"
         assert "No GitHub token entered the runtime" in machine.succeed("git -C /tmp/wt log -1 --format=%B")
         # promote refuses an UNVERIFIED (tampered) bundle: verify runs first, the worktree is untouched
-        machine.succeed(f"rm -rf /tmp/tb && cp -r {E}/edit /tmp/tb && printf x >> /tmp/tb/sources/rf-proto.patch")
+        machine.succeed(f"rm -rf /tmp/tb && cp -r {EDIT} /tmp/tb && printf x >> /tmp/tb/sources/rf-proto.patch")
         rc, out = machine.execute(f"${PROMOTE} --bundle /tmp/tb --template {M} --into /tmp/wt --branch nope 2>&1")
         assert rc == 9 and "sha256" in out, (rc, out)
         machine.succeed("! git -C /tmp/wt rev-parse --verify nope 2>/dev/null")
         machine.succeed("rm -rf /tmp/wt /tmp/tb")
         done("edit", "")
 
+    with subtest("a repeated instance id keeps every run's bundle: both intact, latest the newest, verify and promote both"):
+        def runs(i):  # the run directories under exports/<id>.runs (not latest, not a staging dir)
+            return sorted(x for x in machine.succeed(f"ls -A {E}/{i}.runs").split() if x != "latest" and not x.startswith("."))
+
+        def digest(b):
+            return machine.succeed(f"cd {b} && find . -type f -print0 | sort -z | xargs -0 sha256sum")
+
+        def promote(b, branch):
+            machine.succeed("rm -rf /tmp/wt && cp -rp ${rfProto} /tmp/wt && chmod -R u+w /tmp/wt")
+            machine.succeed("git -C /tmp/wt init -q && git -C /tmp/wt add -A -f && git -C /tmp/wt -c user.name=t -c user.email=t@t commit -q -m base")
+            p = json.loads(machine.succeed(f"${PROMOTE} --bundle {b} --template {M} --into /tmp/wt --branch {branch}"))
+            assert p["kind"] == "agent-runtime-promoted" and p["changedPaths"] == ["src/lib.rs"], p
+            assert machine.succeed("git -C /tmp/wt rev-parse 'HEAD^{tree}'").strip() == p["tree"], p
+            machine.succeed("rm -rf /tmp/wt")
+            return p
+
+        # run A: create, run, export, destroy
+        assert run("again", "${fixtureEdit}")["state"] == "succeeded"
+        machine.succeed("${I} export again")
+        a = st("again")["export"]
+        A, ra = a["dir"], a["runId"]
+        assert A == f"{E}/again.runs/{ra}" and len(ra) == 32, a
+        # the same instance exported again: the same bundle, never a second
+        machine.succeed("${I} export again")
+        assert st("again")["export"] == a and runs("again") == [ra], (st("again")["export"], runs("again"))
+        before = digest(A)
+        done("again", "")
+        # An old flat bundle can coexist with the new layout, without the new metadata fields.
+        legacy = f"{E}/again"
+        machine.succeed(f"cp -rp {A} {legacy} && jq 'del(.runId, .invocation)' {legacy}/bundle.json > /tmp/legacy-bundle.json && mv /tmp/legacy-bundle.json {legacy}/bundle.json")
+        legacy_before = digest(legacy)
+        # run B: the same id again
+        assert run("again", "${fixtureEdit}")["state"] == "succeeded"
+        machine.succeed("${I} export again")
+        b = st("again")["export"]
+        B, rb = b["dir"], b["runId"]
+        assert rb != ra and B == f"{E}/again.runs/{rb}" and runs("again") == sorted([ra, rb]), (a, b, runs("again"))
+        assert digest(A) == before, "run A's bundle changed when run B exported"
+        assert machine.succeed(f"readlink {E}/again.runs/latest").strip() == rb
+        for d, r in [(A, ra), (B, rb)]:
+            bj = json.loads(machine.succeed(f"cat {d}/bundle.json"))
+            assert bj["runId"] == r and bj["id"] == "again" and bj["invocation"], bj
+        # each verifies against its own source, by its path, through latest, and through the runs dir
+        trees = {}
+        for d in [A, B, f"{E}/again.runs/latest", f"{E}/again.runs", legacy]:
+            rc, out = verify(d, "--require-change")
+            assert rc == 0, (d, out)
+            trees[d] = json.loads(out)["sources"]["rf-proto"]["tree"]
+        assert len(set(trees.values())) == 1, trees  # the same fixture edit: one tree, from each bundle
+        assert promote(A, "promote-a")["bundleSha256"] != promote(B, "promote-b")["bundleSha256"]
+        assert promote(legacy, "promote-legacy")["tree"] == trees[legacy]
+        assert promote(f"{E}/again.runs/latest", "promote-latest")["tree"] == trees[B]
+        assert promote(f"{E}/again.runs", "promote-runs")["tree"] == trees[B]
+        # an export interrupted after its publish but before its record: the retry adopts the published bundle
+        machine.succeed(f"rm {V}/again/exported.json")
+        # A damaged published bundle is kept and refused, without blessing it via exported.json.
+        patch = f"{B}/sources/rf-proto.patch"
+        machine.succeed(f"cp {patch} /tmp/intact.patch && printf x >> {patch}")
+        damaged = digest(B)
+        rc, out = machine.execute("${I} export again 2>&1")
+        assert rc == 12 and "is kept, not replaced" in out, (rc, out)
+        machine.succeed(f"test ! -e {V}/again/exported.json")
+        assert digest(B) == damaged, "refused adoption must preserve the damaged evidence"
+        machine.succeed(f"cp /tmp/intact.patch {patch}")
+        machine.succeed("${I} export again")
+        assert st("again")["export"]["dir"] == B and runs("again") == sorted([ra, rb]), st("again")["export"]
+        assert machine.succeed(f"readlink {E}/again.runs/latest").strip() == rb
+        done("again", "")
+        assert digest(A) == before and runs("again") == sorted([ra, rb]), "destroy must keep every bundle"
+        assert digest(legacy) == legacy_before, "the legacy flat bundle must stay unchanged"
+
+    with subtest("an instance created before runId support persists its identity across export recovery"):
+        assert run("legacy-instance", "${fixtureEdit}")["state"] == "succeeded"
+        record = f"{V}/legacy-instance/instance.json"
+        machine.succeed(f"jq 'del(.runId)' {record} > /tmp/legacy-instance.json && mv /tmp/legacy-instance.json {record}")
+        machine.succeed("${I} export legacy-instance")
+        original = st("legacy-instance")["export"]
+        rid = original["runId"]
+        assert len(rid) == 32 and machine.succeed(f"cat {V}/legacy-instance/run-id").strip() == rid, original
+        rc, out = verify(original["dir"], "--require-change")
+        assert rc == 0, out
+        machine.succeed(f"rm {V}/legacy-instance/exported.json")
+        machine.succeed("${I} reconcile && ${I} export legacy-instance")
+        assert st("legacy-instance")["export"]["dir"] == original["dir"]
+        assert st("legacy-instance")["export"]["runId"] == rid
+        done("legacy-instance", "")
+
+    with subtest("SIGKILL after the source export preserves the patch on retry, including after reconciliation"):
+        assert run("interrupted", "${fixtureEdit}")["state"] == "succeeded"
+        rc, out = machine.execute("${interruptedExport} export interrupted 2>&1")
+        assert rc == 137, (rc, out)
+        ws = f"{V}/interrupted/vol/workspace"
+        machine.succeed(f"test ! -e {ws}/export-pending -a -f {ws}/exported.json")
+        machine.succeed(f"test ! -e {V}/interrupted/exported.json -a ! -e {E}/interrupted.runs/latest")
+        rc, out = machine.execute("${I} destroy interrupted 2>&1")
+        assert rc == 12 and "has not been exported" in out, (rc, out)
+        machine.succeed("${I} reconcile")
+        machine.succeed("${I} export interrupted")
+        b = st("interrupted")["export"]["dir"]
+        rc, out = verify(b, "--require-change")
+        assert rc == 0, out
+        assert json.loads(out)["sources"]["rf-proto"]["changedPaths"] == ["src/lib.rs"], out
+        original = st("interrupted")["export"]
+        machine.succeed("${I} export interrupted")
+        assert st("interrupted")["export"] == original
+        done("interrupted", "")
+
+    with subtest("a foreign directory at a run's bundle path is kept and refused, never replaced"):
+        assert run("clash", "${fixtureEdit}")["state"] == "succeeded"
+        rc_ = st("clash")["runId"]
+        machine.succeed(f"mkdir -p {E}/clash.runs/{rc_} && echo planted > {E}/clash.runs/{rc_}/note")
+        rc, out = machine.execute("${I} export clash 2>&1")
+        assert rc == 12 and "is kept, not replaced" in out, (rc, out)
+        assert machine.succeed(f"cat {E}/clash.runs/{rc_}/note").strip() == "planted"
+        machine.succeed(f"test ! -e {V}/clash/exported.json -a ! -e {E}/clash.runs/latest")
+        # the planted directory moved aside by the operator, the export completes
+        machine.succeed(f"mv {E}/clash.runs/{rc_} /tmp/clash-aside")
+        machine.succeed("${I} export clash")
+        assert st("clash")["export"]["dir"] == f"{E}/clash.runs/{rc_}"
+        done("clash", "")
+
     with subtest("the verifier refuses a tampered, incomplete, unlisted, escaping, oversized, malformed, foreign or mispinned bundle"):
         def copy(name):
-            machine.succeed(f"rm -rf /tmp/{name} && cp -r {E}/edit /tmp/{name}")
+            machine.succeed(f"rm -rf /tmp/{name} && cp -r {EDIT} /tmp/{name}")
             return f"/tmp/{name}"
         b = copy("tampered"); machine.succeed(f"printf x >> {b}/sources/rf-proto.patch")
         refused(b, 9, "does not match its sha256 in bundle.json")
@@ -305,9 +434,10 @@ pkgs.testers.runNixOSTest {
         machine.succeed("${I} cancel hang")
         machine.wait_until_succeeds("${I} status hang | jq -e '.state == \"cancelled\"'", timeout=60)
         machine.succeed("${I} export hang")
-        assert json.loads(machine.succeed(f"cat {E}/hang/bundle.json"))["recovery"]
-        machine.succeed(f"! grep -rqF DUMMY-not-a-token {E}/hang")
-        rc, out = verify(f"{E}/hang")
+        hang = st("hang")["export"]["dir"]
+        assert json.loads(machine.succeed(f"cat {hang}/bundle.json"))["recovery"]
+        machine.succeed(f"! grep -rqF DUMMY-not-a-token {E}/hang.runs")
+        rc, out = verify(hang)
         assert rc == 0, out
         done("hang", "")
 

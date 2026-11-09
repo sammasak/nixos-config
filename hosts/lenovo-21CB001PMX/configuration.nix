@@ -18,8 +18,11 @@ in
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
-  # The coordinator host: the only one whose Herdr reaches the worker (`herdr --machine acer-swift`).
-  sam.herdr.machines = [ { label = "acer-swift"; target = "acer-swift"; } ];
+  # Only the coordinator saves worker targets; once saved, scheduled-off MSI stays visible as unreachable.
+  sam.herdr.machines = [
+    { label = "acer-swift"; target = "acer-swift"; }
+    { label = "msi-ms7758"; target = "msi-ms7758"; }
+  ];
   sam.herdr.coordinatorWakeup = {
     enable = true;
     # Delegated approval (the comment every delegated gh:label act cites) and the interactive
