@@ -31,6 +31,11 @@
     factum.url = "git+ssh://git@github.com/sammasak/factum?rev=5bb7fa304db7d8ae7d422e8d6356bf06b90d3b41";
     factum.flake = false;
 
+    # Real native-Devenv acceptance target for agent-runtime #93. Keep this
+    # source pin exact; its own devenv.lock pins the environment inputs.
+    llm-gateway.url = "git+ssh://git@github.com/sammasak/llm-gateway?rev=4a17b9241d8ad3702777ea85001597910e169e5b";
+    llm-gateway.flake = false;
+
     nix-audit.url = "git+ssh://git@github.com/sammasak/nix-audit?rev=38789c530998164335637c6b6982b5ddc9e0fda1";
     nix-audit.flake = false;
 

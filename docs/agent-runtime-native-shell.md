@@ -54,10 +54,28 @@ a QEMU VM. Its subtests:
 ## Not covered here
 
 - **Mode (b), guest-side cold realization** with a private store and bounded writes, is not attempted.
-- **devenv shells** (`devenv.nix`/`devenv.yaml` imports) are not this layer: `native-shell.nix`
-  refuses a non-mkShell devShell. The generated Devenv environment is the layer stacked on this
-  one (nixos-config#192, then #193/#194 for llm-gateway and factum).
-- **The `factum`/`llm-gateway` pins and the measured cold/warm host-side realization times** are
-  follow-ups.
+- **The fixture-level Devenv projection proof** runs with
+  `scripts/test-agent-runtime-devenv-projection.sh` on x86_64-linux. It evaluates the fixture's
+  committed `devenv.lock`, captures `devenv print-dev-env --json` and its configured check without
+  entering the host shell, and launches both Devenv evaluations with an allowlisted environment
+  and isolated temporary home. A regression fixture proves `builtins.getEnv` cannot capture a
+  parent-process variable into the projection. Nix evaluation itself is not sandboxed from host
+  files, so this preparation path remains for trusted pinned repositories. It sanitizes the
+  generated environment and builds a QEMU test which runs
+  that environment, imported configuration, `enterShell`, and the check inside the existing
+  nspawn instance. The negative case rejects a host-local profile before evaluating the hook or
+  check. The fixture asserts its lockfile stays unchanged and the host hook marker stays absent.
+- **The real-project Devenv acceptance test** runs with
+  `scripts/test-agent-runtime-llm-gateway-devenv-projection.sh`. It prepares the committed Devenv
+  lock from the exact `sammasak/llm-gateway` pin in `flake.lock`, captures the project's generated
+  environment and `rust:test` task without entering its host shell, then runs that task in the
+  existing nspawn instance with egress denied and Cargo in offline mode. The temporary writable
+  guest checkout gets Git metadata because the project's `enterShell` uses Git. The environment's
+  referenced store paths, Cargo vendor tree, and task executable are pinned into the guest closure.
+  At the recorded pin, all 419 tests passed; `destroy --discard` then left no runtime mounts, unit,
+  state directory, machine registration, or loop device. The full `nixos:qa` gate is still pending.
+- **Factum acceptance and measured cold/warm host-side realization times** remain follow-ups. The
+  fixture proves the projection mechanism, while llm-gateway proves one real project's offline
+  guest task; neither result claims Factum acceptance.
 - **The devenv-platform `prepare` glue**, from a plan's `selected_environment`/`check_argv` to this
   template, waits on devenv-platform#117 (prepare detection, in review).
