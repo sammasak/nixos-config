@@ -86,6 +86,7 @@ esac
 
 # --- memory and disk against the reserve, the way `create` admits
 mem=$(jq -r .policies.resources.memoryMiB "$template")
+cpus=$(jq -r .policies.resources.cpus "$template")
 disk=$(jq -r '[.filesystem.workspaceBudget.sizeMiB, .filesystem.home.sizeMiB, .filesystem.tmp.sizeMiB, .filesystem.cache.sizeMiB, .filesystem.output.sizeMiB] | add' "$template")
 mem_reserve=$(jq -r .reserve.memoryMiB "$host") disk_reserve=$(jq -r .reserve.diskMiB "$host")
 mem_total=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
@@ -100,6 +101,32 @@ if [ $((mem_used + mem)) -le $((mem_total - mem_reserve)) ] && [ $((mem_availabl
   pass memory "MemAvailable $mem_available MiB - $mem MiB instance >= $mem_reserve MiB reserve; reserved $mem_used+$mem <= $mem_total-$mem_reserve MiB"
 else
   nogo memory "MemAvailable $mem_available MiB - $mem MiB instance under the $mem_reserve MiB reserve, or reserved $mem_used+$mem over $mem_total-$mem_reserve MiB"
+fi
+cpu_total=$(nproc)
+cpu_reserve=$(jq -r .reserve.cpus "$host")
+cpu_used=0 cpu_valid=1
+for reservation in "$state"/*/reservation; do
+  [ -f "$reservation" ] || continue
+  reserved=$(awk '{print $5}' "$reservation")
+  if [ -z "$reserved" ]; then
+    template_file="${reservation%/reservation}/template.json"
+    if [ -r "$template_file" ]; then
+      reserved=$(jq -r '.policies.resources.cpus // empty' "$template_file")
+    fi
+  fi
+  if [[ ! $reserved =~ ^[0-9]+$ ]]; then
+    nogo cpu "cannot recover a valid CPU reservation from $reservation"
+    cpu_valid=0
+  else
+    cpu_used=$((cpu_used + reserved))
+  fi
+done
+if [ "$cpu_valid" = 1 ] && [ $((cpu_used + cpus)) -le $((cpu_total - cpu_reserve)) ]; then
+  pass cpu "$cpu_used+$cpus logical CPUs within $cpu_total-$cpu_reserve available after host reserve"
+elif [ "$cpu_valid" = 1 ]; then
+  nogo cpu "$cpu_used+$cpus logical CPUs over $cpu_total-$cpu_reserve available after host reserve"
+else
+  : # the recovery failure was already reported above
 fi
 probe=$state; [ -d "$probe" ] || probe=$(dirname "$state")
 disk_free=$(df --output=avail -BM "$probe" 2>/dev/null | tail -1 | tr -dc 0-9 || true)
