@@ -3,6 +3,10 @@
 let
   requestPath = builtins.storePath factumRequestPath;
   request = builtins.fromJSON (builtins.readFile requestPath);
+  capturedRustVersion =
+    let rustTools = builtins.filter (tool: tool.name == "rust") (request.tools or [ ]);
+    in if builtins.length rustTools == 1 then (builtins.head rustTools).version else
+      throw "Factum execution request must contain exactly one captured Rust version";
   envJson = builtins.storePath factumEnvJsonPath;
   profile = builtins.storePath factumProfilePath;
   source = builtins.fetchTree {
@@ -133,6 +137,7 @@ let
 in
 assert request.status == "ready" && request.blockers == [ ];
 assert request.source.sha == expectedRequest.sha && request.source.repo == expectedRequest.repo;
+assert builtins.isString capturedRustVersion && builtins.stringLength capturedRustVersion > 0;
 assert request.check.argv == [ "cargo" "test" "--locked" ];
 assert template.policies.network == { egress = "none"; allow = [ ]; };
 assert template.policies.capabilities == [ ] && template.policies.privateSources == [ ];
@@ -163,6 +168,7 @@ pkgs.testers.runNixOSTest {
     REVISION = "${expectedRequest.sha}"
     RUNNER = "${runner}"
     REQUEST = "${requestPath}"
+    CAPTURED_RUST_VERSION = ${builtins.toJSON capturedRustVersion}
     FAILURE_REQUEST = "${failureRequestJson}"
     V = "/var/lib/agent-runtime"
 
@@ -226,6 +232,9 @@ pkgs.testers.runNixOSTest {
     result = json.loads(machine.succeed(f"cat {output}/result.json"))
     assert result["check_exit"] == 0, result
     assert result["environment"]["profile"].startswith("/nix/store/"), result
+    assert len(result["tool_versions"]) == 1 and result["tool_versions"][0]["name"] == "rust", result
+    assert result["tool_versions"][0]["declared"] == CAPTURED_RUST_VERSION, result
+    assert CAPTURED_RUST_VERSION in result["tool_versions"][0]["actual"], result
     machine.succeed(f"test -s {output}/check.log")
     machine.succeed(f"grep -q 'test result: ok' {output}/check.log")
     # Factum's nested test-plan cases create temporary Git repos under ignored target/;

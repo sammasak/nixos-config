@@ -16,6 +16,7 @@ jq -e --arg rev "$expected_rev" '
   and .source.repo == "sammasak/factum" and .source.sha == $rev
   and .environment.kind == "devenv" and .environment.index == 0
   and .check.argv == ["cargo", "test", "--locked"]
+  and ([.tools[] | select(.name == "rust" and (.version | type == "string" and length > 0))] | length == 1)
   and any(.provenance.lockfiles[]; .path == "devenv.lock" and .blob == "3c7daea5845839ed1723ed074a9231fe1a9f9705")
 ' "$request" >/dev/null
 
@@ -85,7 +86,7 @@ env_json=$(nix store add --mode flat --name factum-devenv-env.json "$work/projec
 request_json=$(nix store add --mode flat --name factum-execution-request.json "$request")
 echo "Factum revision: $expected_rev"
 echo "Devenv profile: $profile"
-echo "execution request: ready, cargo test --locked, devenv.lock provenance verified"
+echo "execution request: ready, cargo test --locked, captured Rust version and devenv.lock provenance verified"
 echo "committed devenv.lock unchanged; host enterShell absent"
 
 flock -w 900 /tmp/acer-swift-heavy-work.lock \
