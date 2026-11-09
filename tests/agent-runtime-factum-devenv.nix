@@ -7,7 +7,7 @@ let
   profile = builtins.storePath factumProfilePath;
   source = builtins.fetchTree {
     type = "git";
-    url = "ssh://git@github.com/sammasak/factum";
+    url = "https://github.com/sammasak/factum";
     rev = "0caf25dbb2ae9bc37bcc208b20a7b9ba0b551780";
   };
   project = builtins.storePath (toString source);

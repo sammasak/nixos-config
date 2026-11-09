@@ -22,7 +22,7 @@ jq -e --arg rev "$expected_rev" '
 source_path=$(EXPECTED_REV="$expected_rev" nix eval --impure --raw --expr '
   toString (builtins.fetchTree {
     type = "git";
-    url = "ssh://git@github.com/sammasak/factum";
+    url = "https://github.com/sammasak/factum";
     rev = builtins.getEnv "EXPECTED_REV";
   })
 ')
