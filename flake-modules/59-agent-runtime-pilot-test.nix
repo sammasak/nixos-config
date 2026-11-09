@@ -27,6 +27,7 @@
           flags = msi.homelab.k3s.extraFlags;
           names = map (p: p.name or "") msi.environment.systemPackages;
           shutdownTimer = msi.systemd.timers.msi-scheduled-shutdown.timerConfig;
+          wakeService = lenovo.systemd.services.msi-wake.serviceConfig.ExecStart;
           wakeTimer = lenovo.systemd.timers.msi-wake.timerConfig;
           shutdownScript = msi.systemd.services.msi-scheduled-shutdown.serviceConfig.ExecStart;
           expect = cond: msg: lib.assertMsg cond "agent-runtime-msi-pilot: ${msg}";
@@ -40,6 +41,7 @@
         assert expect msi.homelab.msiPowerSchedule.selfShutdown.enable "preserve the scheduled shutdown";
         assert expect (shutdownTimer.OnCalendar == "Mon-Fri 21:00" && shutdownTimer.Persistent == false) "preserve MSI's weekday 21:00 shutdown without catch-up";
         assert expect lenovo.homelab.msiPowerSchedule.waker.enable "preserve Lenovo's MSI wake configuration";
+        assert expect (lib.hasInfix "/bin/wakeonlan d4:3d:7e:4a:f9:3d" wakeService) "preserve the MSI Wake-on-LAN target";
         assert expect (wakeTimer.OnCalendar == "Mon-Fri 09:00" && wakeTimer.Persistent == false) "preserve weekday 09:00 wake without catch-up";
         assert expect (msi.services.k3s.enable && msi.homelab.k3s.cni == "cilium") "preserve the active Cilium k3s worker";
         assert expect (lib.elem "--node-label=node-pool=workers" flags && lib.elem "--node-taint=sammasak.dev/intermittent=true:NoSchedule" flags) "preserve MSI's worker label and intermittent taint";
