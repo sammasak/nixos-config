@@ -74,9 +74,20 @@ a QEMU VM. Its subtests:
   referenced store paths, Cargo vendor tree, and task executable are pinned into the guest closure.
   At the recorded pin, all 419 tests passed; `destroy --discard` then left no runtime mounts, unit,
   state directory, machine registration, or loop device. The full `nixos:qa` gate is still pending.
-- **Factum acceptance** is now covered by the open follow-up in nixos-config#194, which runs the
-  pinned Factum PR #38 source and its `cargo test --locked` request inside nspawn. A fresh run that
-  consumes the request's captured tool versions remains pending.
+- **Factum acceptance** is covered by the open nixos-config#194 follow-up. At parent commit
+  `aab678194700b4b073860b5ad461bcab914b4b03`, the targeted NixOS guest run consumed a fresh typed
+  request for Factum PR #38, matched its captured Rust `1.99.0` against guest `rustc`, and passed
+  the exact `cargo test --locked` check in 1,586.28 seconds. Cancellation, deliberate missing-target
+  failure, verified success/cancellation/failure bundles, no-replay retry, artifact persistence,
+  and teardown assertions also passed. The test-only `CARGO_PROFILE_TEST_DEBUG=0` setting keeps
+  this full suite within the unchanged 8 GiB runtime cap. At follow-up head
+  `f1b2ee9f4b984ab343f860c879d1308d34f0a016`, the isolated broken-source case passed in 23.88
+  seconds: it edits `crates/facts-domain/src/lib.rs` inside nspawn, confirms `cargo` still runs,
+  observes `cargo fmt --all --check` fail on the edited source, and verifies an exported failure
+  bundle contains the patch. Run that focused case with
+  `AGENT_RUNTIME_FACTUM_BROKEN_ONLY=1 AGENT_RUNTIME_FACTUM_REQUEST_JSON=/path/to/request.json bash scripts/test-agent-runtime-factum-devenv-projection.sh`;
+  omit `BROKEN_ONLY` to run the full acceptance suite. The full `nixos:qa` gate and formal PR review
+  remain pending.
 - **Typed `devenv-platform/execution-request` consumption** is covered by the focused follow-up
   on `feat/96-runtime-request-consumer`: a ready request must match the pinned repository, commit,
   project root, target system and environment kind, then verifies that the request's lockfile blob
@@ -84,7 +95,8 @@ a QEMU VM. Its subtests:
   compares a captured `rust` version against `rustc --version` after guest activation and before
   the check, then records the declared and observed versions in `result.json`. The guest test
   covers a matching version, a mismatch that prevents the check, blocked requests and forged
-  lockfile hashes. A fresh Factum run using the newer version-bearing request remains pending.
+  lockfile hashes. The fresh Factum request described above exercises the same consumer with its
+  evidence-bound Rust tool version.
 - For an assigned instance, `agent-runtime-instance start ID --request REQUEST.json -- PROGRAM [ARG...]`
   binds a stable copy of the ready request read-only at `/etc/agent-runtime/execution-request.json`
   and records its SHA-256 in `started.json`. Before launch, the lifecycle checks the request's
@@ -92,6 +104,8 @@ a QEMU VM. Its subtests:
   with its separately prepared environment JSON in guest tmpfs, verifies the pinned `devenv.lock`
   blob, then executes the request argv directly. The focused VM test covers successful handoff,
   source mismatch and blocked-request refusal without starting a unit.
-- **Plan-to-request glue** is implemented in open devenv-platform#118. Its current request includes
-  evidence-bound tool declarations; the real Factum request consumer still needs a fresh end-to-end
-  run with that new field.
+- **Plan-to-request glue** is implemented in open devenv-platform#118 at
+  `db50f6f1b73087255540687db9e863c13fd3d268`. It carries evidence-bound declared tool versions into
+  ready requests. The Factum request above was generated from a persisted `prepare:plan` result and
+  consumed the captured Rust version in the guest. PR review and aggregate quality gates remain
+  pending.
