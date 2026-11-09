@@ -89,6 +89,12 @@ let
               and any(.executionRequest.provenance.lockfiles[]; .path == $lock and (.blob | test("^[0-9a-f]{40}$"))))
           and (.executionRequest.check.argv | type == "array" and length > 0 and length <= 128
             and all(.[]; type == "string" and length > 0 and length <= 4096 and (test("[\\x00-\\x1f\\x7f]") | not)))
+          and ((.executionRequest.tools // []) | type == "array" and length <= 64
+            and ([.[] | .name] | length == (unique | length))
+            and all(.[];
+              (.name | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"))
+              and ((.version == null) or (.name == "rust" and (.version | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+([.-][A-Za-z0-9.-]+)?$"))))
+              and (.evidence | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))))
         '' else ''
           (.check | type == "string" and length > 0)
         ''}
@@ -156,6 +162,24 @@ let
       output_dir=''${AGENT_RUNTIME_OUTPUT:?not in an agent-runtime instance}
 
       ${if requestMode then ''
+      tool_versions='[]'
+      while IFS= read -r -d $'\0' tool_name && IFS= read -r -d $'\0' tool_version; do
+        [ -n "$tool_version" ] || continue
+        case "$tool_name" in
+          rust) tool_command=rustc ;;
+          *) echo "execution request declares a version for an unsupported tool: $tool_name" >&2; exit 65 ;;
+        esac
+        actual_version=$("$tool_command" --version) || {
+          echo "execution request tool is unavailable in the projected environment: $tool_name" >&2
+          exit 65
+        }
+        case " $actual_version " in
+          *" $tool_version "*) ;;
+          *) echo "execution request tool version mismatch for $tool_name: expected $tool_version, got $actual_version" >&2; exit 65 ;;
+        esac
+        tool_versions="$(${pkgs.jq}/bin/jq -c --arg name "$tool_name" --arg version "$tool_version" --arg actual "$actual_version" '. + [{name:$name, declared:$version, actual:$actual}]' <<<"$tool_versions")"
+      done < <(${pkgs.jq}/bin/jq -j '.executionRequest.tools[]? | .name, "\u0000", (.version // ""), "\u0000"' "$env_json")
+      printf '%s\n' "$tool_versions" >"$output_dir/tool-versions.json"
       argv=()
       while IFS= read -r -d $'\0' arg; do argv+=("$arg"); done < <(
         ${pkgs.jq}/bin/jq -j '.executionRequest.check.argv[] | ., "\u0000"' "$env_json"
@@ -170,7 +194,8 @@ let
       ''}
       ${pkgs.jq}/bin/jq -n --arg marker "''${PROJECT_NATIVE_MARKER:-}" --arg import "''${PROJECT_NATIVE_IMPORT:-}" \
         --arg profile "$profile" --argjson check_exit "$rc" \
-        '{environment: {marker: $marker, imported: $import, profile: $profile}, check_exit: $check_exit}' >"$output_dir/result.json"
+        --argjson tool_versions "''${tool_versions:-[]}" \
+        '{environment: {marker: $marker, imported: $import, profile: $profile}, tool_versions: $tool_versions, check_exit: $check_exit}' >"$output_dir/result.json"
       cat "$output_dir/check.log"
       exit "$rc"
     '';

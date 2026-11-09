@@ -70,17 +70,17 @@ a QEMU VM. Its subtests:
   referenced store paths, Cargo vendor tree, and task executable are pinned into the guest closure.
   At the recorded pin, all 419 tests passed; `destroy --discard` then left no runtime mounts, unit,
   state directory, machine registration, or loop device. The full `nixos:qa` gate is still pending.
-- **Factum acceptance and measured cold/warm host-side realization times** remain follow-ups. The
-  fixture proves the projection mechanism, while llm-gateway proves one real project's offline
-  guest task; neither result claims Factum acceptance.
+- **Factum acceptance** is now covered by the open follow-up in nixos-config#194, which runs the
+  pinned Factum PR #38 source and its `cargo test --locked` request inside nspawn. A fresh run that
+  consumes the request's captured tool versions remains pending.
 - **Typed `devenv-platform/execution-request` consumption** is covered by the focused follow-up
   on `feat/96-runtime-request-consumer`: a ready request must match the pinned repository, commit,
   project root, target system and environment kind, then verifies that the request's lockfile blob
-  matches the materialized pinned checkout before its `check.argv` is executed inside nspawn. The
-  guest test also proves that blocked requests and forged lockfile hashes are refused before
-  `enterShell`. This uses the real request shape with the generated-environment fixture;
-  Factum's current-main request is blocked because its tracked tree has no `devenv.lock`, so no
-  real Factum request has been executed yet.
+  matches the materialized pinned checkout before its `check.argv` is executed inside nspawn. It
+  compares a captured `rust` version against `rustc --version` after guest activation and before
+  the check, then records the declared and observed versions in `result.json`. The guest test
+  covers a matching version, a mismatch that prevents the check, blocked requests and forged
+  lockfile hashes. A fresh Factum run using the newer version-bearing request remains pending.
 - For an assigned instance, `agent-runtime-instance start ID --request REQUEST.json -- PROGRAM [ARG...]`
   binds a stable copy of the ready request read-only at `/etc/agent-runtime/execution-request.json`
   and records its SHA-256 in `started.json`. Before launch, the lifecycle checks the request's
@@ -88,5 +88,6 @@ a QEMU VM. Its subtests:
   with its separately prepared environment JSON in guest tmpfs, verifies the pinned `devenv.lock`
   blob, then executes the request argv directly. The focused VM test covers successful handoff,
   source mismatch and blocked-request refusal without starting a unit.
-- **The devenv-platform `prepare` glue**, from a plan's `selected_environment`/`check_argv` to this
-  template, waits on devenv-platform#117 (prepare detection, in review).
+- **Plan-to-request glue** is implemented in open devenv-platform#118. Its current request includes
+  evidence-bound tool declarations; the real Factum request consumer still needs a fresh end-to-end
+  run with that new field.
