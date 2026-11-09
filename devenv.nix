@@ -8,7 +8,7 @@ let
   '';
 
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
-    shellcheck scripts/*.sh
+    shellcheck scripts/*.sh tests/test-native-shell-lock-node.sh
   '';
 
   # Skips (exit 0) on hosts without the age key; only lenovo enforces it.
@@ -36,6 +36,10 @@ let
 
   flakeCheck = gate "nixos-flake-check" [ pkgs.nix ] ''
     nix flake check --all-systems --no-write-lock-file
+  '';
+
+  nativeShellLockNodeTest = gate "native-shell-lock-node-test" (with pkgs; [ nix jq git coreutils gnused gnugrep ]) ''
+    bash tests/test-native-shell-lock-node.sh
   '';
 
   verifyHosts = gate "nixos-verify" (with pkgs; [ bash nix coreutils ]) ''
@@ -100,7 +104,7 @@ let
   '';
 
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
-    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
+    lintComments lintShell secretsVerify nvimCheck flakeCheck nativeShellLockNodeTest verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
     coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest agentRuntimeTest
     rfLabBoundaryTest rfBeaconsTest
   ]);
@@ -350,6 +354,7 @@ in
     "nixos:secrets-verify" = task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
     "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
+    "nixos:native-shell-lock-node-test" = task "native-shell resolver accepts narHash-pinned lock nodes without rev" nativeShellLockNodeTest;
     "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:agent-runtime-test" = task "agent-runtime module: external consumer fixture, manifests, negative cases" agentRuntimeTest;
