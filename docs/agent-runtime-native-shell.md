@@ -57,7 +57,11 @@ a QEMU VM. Its subtests:
 - **The fixture-level Devenv projection proof** runs with
   `scripts/test-agent-runtime-devenv-projection.sh` on x86_64-linux. It evaluates the fixture's
   committed `devenv.lock`, captures `devenv print-dev-env --json` and its configured check without
-  entering the host shell, sanitizes the generated environment, and builds a QEMU test which runs
+  entering the host shell, and launches both Devenv evaluations with an allowlisted environment
+  and isolated temporary home. A regression fixture proves `builtins.getEnv` cannot capture a
+  parent-process variable into the projection. Nix evaluation itself is not sandboxed from host
+  files, so this preparation path remains for trusted pinned repositories. It sanitizes the
+  generated environment and builds a QEMU test which runs
   that environment, imported configuration, `enterShell`, and the check inside the existing
   nspawn instance. The negative case rejects a host-local profile before evaluating the hook or
   check. The fixture asserts its lockfile stays unchanged and the host hook marker stays absent.

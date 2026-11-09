@@ -9,6 +9,7 @@ project="$test_root/project"
 mkdir -p "$project"
 cp -R "$fixture"/. "$project/"
 chmod -R u+w "$project"
+mkdir -p "$test_root/host-home"
 
 version=$(env -u DEVENV_ROOT -u DEVENV_DOTFILE -u DEVENV_STATE -u DEVENV_PROFILE -u DEVENV_RUNTIME devenv --version | awk '{print $2}')
 [ "$version" = 2.4.0 ] || { echo "expected devenv 2.4.0, got $version" >&2; exit 1; }
@@ -29,13 +30,21 @@ test -d "$devenv_source" -a -d "$nixpkgs_source"
 devenv_project() {
   (
     cd "$project"
-    env -u DEVENV_ROOT -u DEVENV_DOTFILE -u DEVENV_STATE -u DEVENV_PROFILE -u DEVENV_RUNTIME \
+    env -i PATH="$PATH" HOME="$test_root/host-home" NIX_USER_CONF_FILES=/dev/null \
       DEVENV_USER_CONFIG=/dev/null DEVENV_NO_AI_AGENT=1 \
       devenv --offline "$@"
   )
 }
+host_eval_probe=agent-runtime-host-env-probe-7384f0
+export AGENT_RUNTIME_HOST_EVAL_PROBE="$host_eval_probe"
 devenv_project print-dev-env --json >"$test_root/print-dev-env.json"
 devenv_project eval scripts.check.exec >"$test_root/check.json"
+
+if jq -e --arg probe "$host_eval_probe" '.variables.PROJECT_CAPTURE_PROBE.value == $probe' \
+  "$test_root/print-dev-env.json" >/dev/null; then
+  echo "host environment variable reached the generated Devenv projection" >&2
+  exit 1
+fi
 
 test ! -e "$project/.devenv-enterShell-ran" || {
   echo "host preparation executed the project's enterShell" >&2
@@ -101,6 +110,11 @@ then
     hostPaths: [.variables[] | select(.type == "exported") | .value | strings | select(test("/home/|/run/user/|/tmp/|/var/tmp/"))]
   }' "$test_root/projected.json" >&2
   exit 1
+fi
+
+if [ "${AGENT_RUNTIME_DEENV_PREPARE_ONLY:-0}" = 1 ]; then
+  echo "devenv host preparation passed with a scrubbed environment"
+  exit 0
 fi
 
 profile_root="$test_root/profile-root"
