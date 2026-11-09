@@ -46,6 +46,10 @@ let
     export CARGO_HOME=/var/cache/agent/cargo
     export CARGO_NET_OFFLINE=true
     export CARGO_BUILD_JOBS=1
+    # Cargo's default test debuginfo writes over 17 GiB through the bounded
+    # loop-backed workspace volume during the full Factum suite. Its charged
+    # page cache alone exceeded the 8 GiB runtime budget in the acceptance VM.
+    export CARGO_PROFILE_TEST_DEBUG=0
     mkdir -p "$CARGO_HOME"
     cat >"$CARGO_HOME/config.toml" <<'CARGO_CONFIG'
     [source.crates-io]
@@ -57,13 +61,13 @@ let
     CARGO_CONFIG
   '';
   projectedEnv = pkgs.runCommand "factum-devenv-projected-env.json" { nativeBuildInputs = [ pkgs.jq ]; } ''
-    ${pkgs.jq}/bin/jq --slurpfile request ${requestPath} --arg hook ${lib.escapeShellArg cargoHook} \
+    ${pkgs.jq}/bin/jq --arg hook ${lib.escapeShellArg cargoHook} \
       --arg gitBin ${lib.escapeShellArg "${pkgs.git}/bin"} '
-      .executionRequest = $request[0]
-      | .variables.PATH.value = ($gitBin + ":" + .variables.PATH.value)
+      .variables.PATH.value = ($gitBin + ":" + .variables.PATH.value)
       | .variables.CARGO_HOME = { type: "exported", value: "/var/cache/agent/cargo" }
       | .variables.CARGO_NET_OFFLINE = { type: "exported", value: "true" }
       | .variables.CARGO_BUILD_JOBS = { type: "exported", value: "1" }
+      | .variables.CARGO_PROFILE_TEST_DEBUG = { type: "exported", value: "0" }
       | .variables.shellHook.value += ("\n" + $hook)
     ' ${envJson} > "$out"
   '';
@@ -76,10 +80,6 @@ let
     };
   };
   failureRequestJson = pkgs.writeText "factum-failure-injection-request.json" (builtins.toJSON failureRequest);
-  failureProjectedEnv = pkgs.runCommand "factum-devenv-failure-projected-env.json" { nativeBuildInputs = [ pkgs.jq ]; } ''
-    ${pkgs.jq}/bin/jq --slurpfile request ${failureRequestJson} \
-      '.executionRequest = $request[0]' ${projectedEnv} > "$out"
-  '';
   fixtureNar = lib.fileContents (pkgs.runCommand "factum-devenv-narhash" { nativeBuildInputs = [ pkgs.nix ]; } ''
     nix --extra-experimental-features nix-command hash path ${project} > "$out"
   '');
@@ -88,6 +88,7 @@ let
     envJson = projectedEnv;
     inherit profile;
     projectRoot = "/workspace/factum";
+    consumeRequest = true;
     inherit expectedRequest;
   };
   I = lib.getExe runtime.tools.instance;
@@ -149,7 +150,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 98304;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ projectedEnv failureProjectedEnv profileBootstrap project manifest skills vendor ];
+    virtualisation.additionalPaths = [ projectedEnv requestPath failureRequestJson profileBootstrap project manifest skills vendor ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git runtime.tools.verify ];
   };
   testScript = ''
@@ -161,6 +162,8 @@ pkgs.testers.runNixOSTest {
     VERIFY = "${VERIFY}"
     REVISION = "${expectedRequest.sha}"
     RUNNER = "${runner}"
+    REQUEST = "${requestPath}"
+    FAILURE_REQUEST = "${failureRequestJson}"
     V = "/var/lib/agent-runtime"
 
     def status(i):
@@ -196,7 +199,10 @@ pkgs.testers.runNixOSTest {
 
     sample_volumes()
     started = time.monotonic()
-    machine.succeed(f"{I} start factum -- {RUNNER}")
+    machine.succeed(f"{I} start factum --request {REQUEST} -- {RUNNER}")
+    started_record = json.loads(machine.succeed(f"cat {V}/factum/started.json"))
+    request_sha = machine.succeed(f"sha256sum {REQUEST} | cut -d' ' -f1").strip()
+    assert started_record["requestSha256"] == request_sha, started_record
     s = status("factum")
     while s["state"] in ("starting", "running"):
         sample_volumes()
@@ -248,7 +254,7 @@ pkgs.testers.runNixOSTest {
     cancel_workspace = f"{V}/factum-cancel/vol/workspace/workspace/factum"
     machine.succeed(f"printf '[safe]\\n\\tdirectory = /workspace/factum\\n' > {V}/factum-cancel/vol/home/.gitconfig")
     machine.succeed(f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={cancel_workspace} git -C {cancel_workspace} init -q && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={cancel_workspace} git -C {cancel_workspace} add -A -f && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={cancel_workspace} git -C {cancel_workspace} -c user.name=agent -c user.email=agent@example.invalid commit -q -m workspace")
-    machine.succeed(f"{I} start factum-cancel -- {RUNNER}")
+    machine.succeed(f"{I} start factum-cancel --request {REQUEST} -- {RUNNER}")
     machine.wait_until_succeeds(f"{I} status factum-cancel | jq -e '.state == \"running\"'", timeout=60)
     machine.wait_until_succeeds("pgrep -x cargo >/dev/null", timeout=120)
     machine.wait_until_succeeds(f"test -e {V}/factum-cancel/vol/output/check.log", timeout=30)
@@ -258,7 +264,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed(f"{I} cancel factum-cancel")
     cancelled = status("factum-cancel")
     assert cancelled["state"] == "cancelled" and cancelled["result"]["serviceResult"], cancelled
-    cancelled_retry = json.loads(machine.succeed(f"{I} start factum-cancel -- {RUNNER}"))
+    cancelled_retry = json.loads(machine.succeed(f"{I} start factum-cancel --request {REQUEST} -- {RUNNER}"))
     assert cancelled_retry["state"] == "cancelled" and cancelled_retry["result"]["invocation"] == cancelled["result"]["invocation"], cancelled_retry
     machine.succeed(f"{I} export factum-cancel")
     cancel_bundle = f"{V}/exports/factum-cancel"
@@ -279,14 +285,14 @@ pkgs.testers.runNixOSTest {
     failure_workspace = f"{V}/factum-failure/vol/workspace/workspace/factum"
     machine.succeed(f"printf '[safe]\\n\\tdirectory = /workspace/factum\\n' > {V}/factum-failure/vol/home/.gitconfig")
     machine.succeed(f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={failure_workspace} git -C {failure_workspace} init -q && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={failure_workspace} git -C {failure_workspace} add -A -f && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={failure_workspace} git -C {failure_workspace} -c user.name=agent -c user.email=agent@example.invalid commit -q -m workspace")
-    machine.succeed(f"{I} start factum-failure -- {RUNNER} ${failureProjectedEnv}")
+    machine.succeed(f"{I} start factum-failure --request {FAILURE_REQUEST} -- {RUNNER}")
     failed = status("factum-failure")
     while failed["state"] in ("starting", "running"):
         time.sleep(1)
         failed = status("factum-failure")
     assert failed["state"] == "failed" and failed["result"]["exitStatus"] == 101, failed
     failed_invocation = failed["result"]["invocation"]
-    retry_status = json.loads(machine.succeed(f"{I} start factum-failure -- {RUNNER} ${failureProjectedEnv}"))
+    retry_status = json.loads(machine.succeed(f"{I} start factum-failure --request {FAILURE_REQUEST} -- {RUNNER}"))
     assert retry_status["state"] == "failed" and retry_status["result"]["invocation"] == failed_invocation, retry_status
     failure_output = f"{V}/factum-failure/vol/output"
     machine.succeed(f"grep -q 'no test target named' {failure_output}/check.log")
