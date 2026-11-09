@@ -40,9 +40,11 @@ export AGENT_RUNTIME_HOST_EVAL_PROBE="$host_eval_probe"
 devenv_project print-dev-env --json >"$test_root/print-dev-env.json"
 devenv_project eval scripts.check.exec >"$test_root/check.json"
 
-if jq -e --arg probe "$host_eval_probe" '.variables.PROJECT_CAPTURE_PROBE.value == $probe' \
-  "$test_root/print-dev-env.json" >/dev/null; then
-  echo "host environment variable reached the generated Devenv projection" >&2
+if ! jq -e --arg probe "$host_eval_probe" '
+  .variables.PROJECT_CAPTURE_PROBE.type == "exported"
+  and .variables.PROJECT_CAPTURE_PROBE.value != $probe
+' "$test_root/print-dev-env.json" >/dev/null; then
+  echo "Devenv projection omitted the probe or captured the host environment" >&2
   exit 1
 fi
 
