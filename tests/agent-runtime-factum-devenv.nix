@@ -187,6 +187,14 @@ pkgs.testers.runNixOSTest {
     def status(i):
         return json.loads(machine.succeed(f"{I} status {i}"))
 
+    def exported(i):
+        # #189: one immutable bundle per run at exports/<id>.runs/<runId>, and <id>.runs/latest naming it
+        e = status(i)["export"]
+        assert e["dir"] == f"{V}/exports/{i}.runs/{e['runId']}", e
+        assert machine.succeed(f"readlink {V}/exports/{i}.runs/latest").strip() == e["runId"], e
+        print(f"{i} export: {e['dir']}")
+        return e["dir"]
+
     machine.wait_for_unit("multi-user.target")
     if BROKEN_ONLY:
         machine.succeed(f"{I} create factum-broken --template {M} --host {POLICY} --task sammasak/factum#{REVISION}")
@@ -209,7 +217,7 @@ pkgs.testers.runNixOSTest {
         source_blob_after = machine.succeed(f"git hash-object {source_file}").strip()
         assert source_blob_before != source_blob_after, (source_blob_before, source_blob_after)
         machine.succeed(f"{I} export factum-broken")
-        broken_bundle = f"{V}/exports/factum-broken"
+        broken_bundle = exported("factum-broken")
         broken_verification = json.loads(machine.succeed(f"{VERIFY} --bundle {broken_bundle} --template {M}"))
         assert broken_verification["kind"] == "agent-runtime-verified", broken_verification
         assert broken_verification["outcome"] == "failed", broken_verification
@@ -287,7 +295,7 @@ pkgs.testers.runNixOSTest {
         # remove build scratch before the runtime's source exporter rejects nested .git trees.
         machine.succeed(f"rm -rf {workspace}/target")
         machine.succeed(f"{I} export factum")
-        bundle = f"{V}/exports/factum"
+        bundle = exported("factum")
         verification = json.loads(machine.succeed(f"{VERIFY} --bundle {bundle} --template {M}"))
         assert verification["kind"] == "agent-runtime-verified", verification
         record = json.loads(machine.succeed(f"cat {bundle}/bundle.json"))
@@ -322,7 +330,7 @@ pkgs.testers.runNixOSTest {
         cancelled_retry = json.loads(machine.succeed(f"{I} start factum-cancel --request {REQUEST} -- {RUNNER}"))
         assert cancelled_retry["state"] == "cancelled" and cancelled_retry["result"]["invocation"] == cancelled["result"]["invocation"], cancelled_retry
         machine.succeed(f"{I} export factum-cancel")
-        cancel_bundle = f"{V}/exports/factum-cancel"
+        cancel_bundle = exported("factum-cancel")
         cancel_verification = json.loads(machine.succeed(f"{VERIFY} --bundle {cancel_bundle} --template {M}"))
         assert cancel_verification["kind"] == "agent-runtime-verified", cancel_verification
         assert cancel_verification["outcome"] == "cancelled", cancel_verification
@@ -353,7 +361,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"grep -q 'no test target named' {failure_output}/check.log")
         machine.succeed(f"rm -rf {failure_workspace}/target")
         machine.succeed(f"{I} export factum-failure")
-        failure_bundle = f"{V}/exports/factum-failure"
+        failure_bundle = exported("factum-failure")
         failure_verification = json.loads(machine.succeed(f"{VERIFY} --bundle {failure_bundle} --template {M}"))
         assert failure_verification["kind"] == "agent-runtime-verified", failure_verification
         assert failure_verification["outcome"] == "failed", failure_verification
@@ -389,7 +397,7 @@ pkgs.testers.runNixOSTest {
         source_blob_after = machine.succeed(f"git hash-object {broken_workspace}/crates/facts-domain/src/lib.rs").strip()
         assert source_blob_before != source_blob_after, (source_blob_before, source_blob_after)
         machine.succeed(f"{I} export factum-broken")
-        broken_bundle = f"{V}/exports/factum-broken"
+        broken_bundle = exported("factum-broken")
         broken_verification = json.loads(machine.succeed(f"{VERIFY} --bundle {broken_bundle} --template {M}"))
         assert broken_verification["kind"] == "agent-runtime-verified", broken_verification
         assert broken_verification["outcome"] == "failed", broken_verification
