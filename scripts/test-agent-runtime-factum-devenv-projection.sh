@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Project configuration is untrusted; use only the root-managed system path
+# while evaluating its generated environment, and invoke the system Devenv by
+# its absolute path so a caller's profile cannot shadow it.
+system_bin=/run/current-system/sw/bin
+trusted_path="$system_bin"
+devenv_bin="$system_bin/devenv"
+for tool in devenv nix nix-store jq git; do
+  if [[ ! -x "$system_bin/$tool" ]]; then
+    echo "required system tool is unavailable: $system_bin/$tool" >&2
+    exit 1
+  fi
+done
+export PATH="$trusted_path"
+
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 expected_rev=0caf25dbb2ae9bc37bcc208b20a7b9ba0b551780
@@ -20,7 +34,7 @@ jq -e --arg rev "$expected_rev" '
   and any(.provenance.lockfiles[]; .path == "devenv.lock" and .blob == "3c7daea5845839ed1723ed074a9231fe1a9f9705")
 ' "$request" >/dev/null
 
-source_path=$(EXPECTED_REV="$expected_rev" nix eval --impure --raw --expr '
+source_path=$(EXPECTED_REV="$expected_rev" "$system_bin/nix" eval --impure --raw --expr '
   toString (builtins.fetchTree {
     type = "git";
     url = "https://github.com/sammasak/factum";
@@ -32,15 +46,37 @@ cp -R "$source_path"/. "$project"/
 chmod -R u+w "$project"
 lock_before=$(sha256sum "$project/devenv.lock" | awk '{print $1}')
 
+# Prove host preparation ignores a caller-provided executable with the same
+# name as Devenv or Nix. The real binaries above remain root-managed.
+untrusted_bin="$work/untrusted-bin"
+mkdir -p "$untrusted_bin"
+cat >"$untrusted_bin/devenv" <<EOF
+#!/bin/sh
+: >"$work/ambient-devenv-ran"
+exit 97
+EOF
+cat >"$untrusted_bin/nix" <<EOF
+#!/bin/sh
+: >"$work/ambient-nix-ran"
+exit 97
+EOF
+chmod +x "$untrusted_bin/devenv" "$untrusted_bin/nix"
+export PATH="$untrusted_bin:$trusted_path"
+
 devenv_project() {
   (
     cd "$project"
-    env -i PATH="$PATH" HOME="$work/host-home" NIX_USER_CONF_FILES=/dev/null \
+    env -i PATH="$trusted_path" HOME="$work/host-home" NIX_USER_CONF_FILES=/dev/null \
       DEVENV_USER_CONFIG=/dev/null DEVENV_NO_AI_AGENT=1 \
-      devenv --offline "$@"
+      "$devenv_bin" --offline "$@"
   )
 }
 devenv_project print-dev-env --json >"$work/print-dev-env.json"
+if [[ -e "$work/ambient-devenv-ran" || -e "$work/ambient-nix-ran" ]]; then
+  echo "host preparation executed a caller-provided Devenv or Nix binary" >&2
+  exit 1
+fi
+export PATH="$trusted_path"
 test ! -e "$project/.devenv-enterShell-ran" || {
   echo "host preparation executed Factum's enterShell" >&2
   exit 1
