@@ -6,7 +6,7 @@
 # process surviving; export bundles patches, output and a bounded log; destroy
 # tears down in order and releases the reservation last. An outcome that was never
 # recorded (supervisor or host crash) is reported as ambiguous and never replayed.
-USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--root] [--timeout-sec N] [--idmap] [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID [--credential FILE] | destroy ID [--discard] | reconcile | record-exit ID'
+USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--request REQUEST.json] [--root] [--timeout-sec N] [--idmap] [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID [--credential FILE] | destroy ID [--discard] | reconcile | record-exit ID'
 state=/var/lib/agent-runtime
 if [ "${1:-}" = --state ]; then
   [ $# -ge 2 ] || usage
@@ -79,6 +79,7 @@ build_root() {  # idempotent: the root tree lives in /run and is gone after a re
   printf 'root:x:0:\nagent:x:1000:\nnogroup:x:65534:\n' >"$root/etc/group"
   printf 'passwd: files\ngroup: files\nhosts: files\n' >"$root/etc/nsswitch.conf"
   touch "$root/etc/agent-runtime/template.json"
+  touch "$root/etc/agent-runtime/execution-request.json"
   ln -sfn "$sh" "$root/bin/sh"
   ln -sfn "$(realpath "$(command -v env)")" "$root/usr/bin/env"
 }
@@ -301,9 +302,10 @@ case $cmd in
   start)
     take_id "$@"
     shift
-    uid=1000 timeout_sec='' opt='' wait=0 cred_file='' issuer='' cred_ttl=''
+    uid=1000 timeout_sec='' opt='' wait=0 cred_file='' issuer='' cred_ttl='' request_file=''
     while [ $# -gt 0 ]; do
       case $1 in
+        --request) [ $# -ge 2 ] || usage; request_file=$2; shift 2 ;;
         --root) uid=0; shift ;;
         --timeout-sec) [ $# -ge 2 ] || usage; timeout_sec=$2; shift 2 ;;
         --idmap) opt=:idmap; shift ;;
@@ -321,6 +323,10 @@ case $cmd in
     [ -z "$cred_file" ] || [ -f "$cred_file" ] || fail usage "--credential $cred_file not found"
     [ -z "$cred_file" ] || [ -z "$issuer" ] || fail usage "--credential and --credential-issuer exclude each other"
     [ -z "$issuer" ] || [ -x "$issuer" ] || fail usage "--credential-issuer $issuer is not executable"
+    if [ -n "$request_file" ]; then
+      [ -f "$request_file" ] && [ ! -L "$request_file" ] || fail usage "--request must be a regular non-symlink JSON file"
+      request_file=$(realpath -e -- "$request_file") || fail usage "--request file does not resolve"
+    fi
     # absolute (not symlink-resolved): teardown runs it from whatever directory destroy is called in
     [ -z "$issuer" ] || issuer=$(realpath -s -- "$issuer")
     [ -n "$issuer" ] || [ -z "$cred_ttl" ] || fail usage "--credential-ttl needs --credential-issuer"
@@ -343,11 +349,61 @@ case $cmd in
       [[ $timeout_sec =~ ^[1-9][0-9]*$ ]] && [ "$timeout_sec" -le "$limit" ] || fail usage "--timeout-sec must be 1..$limit (the template's timeoutMinutes)"
       limit=$timeout_sec
     fi
+    request_sha=''
+    if [ -n "$request_file" ]; then
+      request_target=$rundir/$id/execution-request.json
+      request_tmp=$request_target.tmp.$$
+      mkdir -p "$rundir/$id"
+      install -m 0400 -- "$request_file" "$request_tmp"
+      if ! jq -e --slurpfile run "$base/run/run.json" '
+        def argv: type == "array" and length > 0 and length <= 128
+          and all(.[]; type == "string" and length > 0 and length <= 4096 and (test("[\\x00-\\x1f\\x7f]") | not));
+        . as $request
+        | .schema_version == 1
+          and .kind == "devenv-platform/execution-request"
+          and .status == "ready" and .blockers == []
+          and (.source.repo | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))
+          and .source.url == ("https://github.com/" + .source.repo)
+          and (.source.ref | type == "string" and length > 0 and length <= 255)
+          and (.source.sha | type == "string" and test("^[0-9a-f]{40}$"))
+          and (.source.root | type == "string" and length > 0 and length <= 1024
+            and (. == "." or ((test("[\\x00-\\x1f\\x7f\\\\]") | not)
+              and (startswith("/") | not)
+              and (split("/") | all(. != "" and . != "." and . != "..")))))
+          and .environment.kind == "devenv"
+          and (.environment.index | type == "number" and . >= 0 and floor == .)
+          and .environment.root == .source.root and .environment.shell == "devenv"
+          and (.target_system | type == "string" and test("^[a-z0-9_]+-[a-z0-9_]+$"))
+          and (.provenance.plan_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+          and (.provenance.lockfiles | type == "array" and length > 0
+            and all(.[]; (.path | type == "string" and length > 0 and (test("[\\x00-\\x1f\\x7f\\\\]") | not)
+              and (split("/") | all(. != "" and . != "." and . != "..")))
+              and (.blob | type == "string" and test("^[0-9a-f]{40}$"))))
+          and (.check.argv | argv)
+          and ([$run[0].sources[] | select((.github | ascii_downcase) == ($request.source.repo | ascii_downcase)
+            and .resolved.rev == $request.source.sha)] | length == 1)
+          and ([$run[0].sources[] | select((.github | ascii_downcase) == ($request.source.repo | ascii_downcase)
+            and .resolved.rev == $request.source.sha)
+            | select(.resolved.by != "plan" or
+              (.resolved.plan == $request.provenance.plan_sha256 and .ref.value == $request.source.ref))] | length == 1)
+      ' "$request_tmp" >/dev/null; then
+        rm -f -- "$request_tmp"
+        fail plan "$id: request must be ready, supported, and match the assigned repository commit and plan"
+      fi
+      mv -f -- "$request_tmp" "$request_target"
+      chmod 0444 "$request_target"
+      request_sha=$(sha256sum "$request_target" | cut -d' ' -f1)
+    fi
     uidbase=$(awk '{print $3}' "$base/reservation")
     mount_volumes
     build_root
     path=$(jq -r '[.packages[].storePath + "/bin"] | join(":")' "$t")
     binds=(--bind-ro="/nix/store:/nix/store$opt" --bind-ro="$base/template.json:/etc/agent-runtime/template.json")
+    request_env=()
+    if [ -n "$request_sha" ]; then
+      binds+=(--bind-ro="$request_target:/etc/agent-runtime/execution-request.json")
+      request_env+=(--setenv=AGENT_RUNTIME_EXECUTION_REQUEST=/etc/agent-runtime/execution-request.json)
+    fi
     while IFS=$'\t' read -r from to; do binds+=(--bind-ro="$from:$to$opt"); done < <(
       jq -r '.skills.names | to_entries[] | [.value.path, "/skills/" + .key] | @tsv' "$t"
       jq -r '.sources[] | select(.mode == "ro") | [.storePath, .path] | @tsv' "$base/vol/workspace/materialized.json")
@@ -457,6 +513,7 @@ case $cmd in
         --drop-capability="$drop"
         "${binds[@]}" "${credbind[@]}" "${netbind[@]}"
         --setenv=PATH="$path" --setenv=HOME="$(jq -r .filesystem.home.path "$t")"
+        "${request_env[@]}"
         --setenv=TMPDIR="$(jq -r .filesystem.tmp.path "$t")" --setenv=AGENT_RUNTIME_INSTANCE="$id"
         --setenv=AGENT_RUNTIME_OUTPUT="$(jq -r .filesystem.output.path "$t")"
         -- "${exec_tail[@]}")
@@ -521,9 +578,11 @@ case $cmd in
       uid_map=$(jq -Rc 'split(" ") | map(select(length > 0) | tonumber)' <"/proc/$leader/uid_map" 2>/dev/null || echo null)
     fi
     jq -nc --arg at "$(jq -r .at "$base/starting")" --arg inv "$invocation" --argjson uid "$uid" --argjson timeout "$limit" \
+      --arg request_sha "$request_sha" \
       --arg command "${command% }" --arg cg "$(systemctl show -p ControlGroup --value "$unit" 2>/dev/null || true)" \
       --arg leader "$leader" --argjson ns "$ns" --argjson map "$uid_map" --arg store "${opt:-plain}" --argjson cm "$cred_meta" \
       '{startedAt: $at, invocation: $inv, uid: $uid, timeoutSec: $timeout, command: $command, controlGroup: $cg,
+        requestSha256: (if $request_sha == "" then null else $request_sha end),
         leaderPid: ($leader | if . == "" then null else tonumber end), namespaces: $ns, uidMap: $map, storeBind: $store,
         credential: $cm}' \
       | atomic_json "$base/started.json"

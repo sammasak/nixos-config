@@ -7,7 +7,12 @@ let
   envJson = builtins.storePath envJsonPath;
   profile = builtins.storePath profilePath;
   fixtureSrc = pkgs.runCommandLocal "native-devenv-projection-fixture" { } ''
-    cp -r ${./fixtures/native-devenv-projection} $out
+    mkdir -p "$TMPDIR/fixture/nested"
+    cp -r ${./fixtures/native-devenv-projection}/. "$TMPDIR/fixture/"
+    chmod -R u+w "$TMPDIR/fixture"
+    cp "$TMPDIR/fixture/devenv.lock" "$TMPDIR/fixture/Makefile" "$TMPDIR/fixture/nested/"
+    ln -s nested "$TMPDIR/fixture/alias"
+    mv "$TMPDIR/fixture" "$out"
   '';
   fixtureRev = builtins.substring 0 40 (builtins.hashString "sha1" (baseNameOf (toString fixtureSrc)));
   fixtureNar = lib.fileContents (pkgs.runCommand "native-devenv-projection-narhash" { nativeBuildInputs = [ pkgs.nix ]; } ''
@@ -60,6 +65,28 @@ let
     status = "blocked";
     blockers = [ { kind = "envrc_present"; detail = "environment activation is unsupported"; evidence = [ "e1" ]; } ];
   }));
+  wrongSourceRequest = pkgs.writeText "execution-request-wrong-source.json" (builtins.toJSON (request // {
+    source = request.source // { sha = builtins.hashString "sha1" "another-commit"; };
+  }));
+  nestedRequest = request // {
+    source = request.source // { root = "nested"; };
+    environment = request.environment // { root = "nested"; };
+    provenance = request.provenance // {
+      lockfiles = [ { path = "nested/devenv.lock"; blob = fixtureLockBlob; evidence = [ "e1" ]; } ];
+    };
+  };
+  nestedReadyRequest = pkgs.writeText "execution-request-nested-root.json" (builtins.toJSON nestedRequest);
+  unsafeRootRequest = pkgs.writeText "execution-request-unsafe-root.json" (builtins.toJSON (request // {
+    source = request.source // { root = "../outside"; };
+    environment = request.environment // { root = "../outside"; };
+  }));
+  symlinkRootRequest = pkgs.writeText "execution-request-symlink-root.json" (builtins.toJSON (request // {
+    source = request.source // { root = "alias"; };
+    environment = request.environment // { root = "alias"; };
+    provenance = request.provenance // {
+      lockfiles = [ { path = "alias/devenv.lock"; blob = fixtureLockBlob; evidence = [ "e1" ]; } ];
+    };
+  }));
   mismatchedRequest = pkgs.writeText "execution-request-mismatched-lock.json" (builtins.toJSON (request // {
     provenance = request.provenance // {
       lockfiles = [ { path = "devenv.lock"; blob = builtins.hashString "sha1" "incorrect-lockfile-blob"; evidence = [ "e1" ]; } ];
@@ -84,6 +111,24 @@ let
       environment_index = 0;
       lockfile = "devenv.lock";
     };
+  };
+  externalRequestProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    inherit envJson profile;
+    projectRoot = "/workspace/projection";
+    consumeRequest = true;
+    expectedRequest = {
+      repo = "sammasak/native-devenv-projection-fixture";
+      sha = fixtureRev;
+      root = ".";
+      target_system = pkgs.stdenv.hostPlatform.system;
+      environment_index = 0;
+      lockfile = "devenv.lock";
+    };
+  };
+  nestedRequestProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    inherit envJson profile;
+    projectRoot = "/workspace/projection";
+    consumeRequest = true;
   };
   argvBoundaryProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
     envJson = argvBoundaryEnv;
@@ -159,7 +204,7 @@ let
             writable = true;
           };
           skillsSource = skills;
-          packages = [ projection.runner requestProjection.runner argvBoundaryProjection.runner quotedLockfileProjection.runner blockedProjection.runner mismatchedProjection.runner ];
+          packages = [ projection.runner requestProjection.runner externalRequestProjection.runner nestedRequestProjection.runner argvBoundaryProjection.runner quotedLockfileProjection.runner blockedProjection.runner mismatchedProjection.runner ];
           filesystem = {
             workspaceBudget = { sizeMiB = 64; inodes = 4000; };
             home = { sizeMiB = 32; inodes = 2000; };
@@ -186,7 +231,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 4096;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-  virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv argvBoundaryEnv blockedEnv mismatchedEnv ];
+    virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv readyRequest blockedRequest wrongSourceRequest nestedReadyRequest unsafeRootRequest symlinkRootRequest argvBoundaryEnv blockedEnv mismatchedEnv ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps ];
   };
   testScript = ''
@@ -239,6 +284,61 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"grep -q 'guest-check:generated-devenv-environment:generated-devenv-import' {o}/check.log")
         machine.succeed(f"test -f {V}/request-ready/vol/workspace/workspace/projection/check.result")
         clean("request-ready")
+
+    with subtest("instance start binds a persisted request to its assigned source for the Devenv runner"):
+        create("request-bound")
+        machine.succeed(f"{I} start request-bound --request ${readyRequest} --wait -- ${lib.getExe externalRequestProjection.runner}")
+        s = status("request-bound")
+        assert s["state"] == "succeeded", s
+        started = json.loads(machine.succeed(f"cat {V}/request-bound/started.json"))
+        expected_request_sha = machine.succeed("sha256sum ${readyRequest} | cut -d' ' -f1").strip()
+        assert started["requestSha256"] == expected_request_sha, started
+        o = f"{V}/request-bound/vol/output"
+        machine.succeed(f"grep -q 'guest-check:generated-devenv-environment:generated-devenv-import' {o}/check.log")
+        machine.succeed(f"test -f {V}/request-bound/vol/workspace/workspace/projection/check.result")
+        clean("request-bound")
+
+    with subtest("persisted request selects a safe nested project root"):
+        create("request-nested-root")
+        machine.succeed(f"{I} start request-nested-root --request ${nestedReadyRequest} --wait -- ${lib.getExe nestedRequestProjection.runner}")
+        s = status("request-nested-root")
+        assert s["state"] == "succeeded", s
+        machine.succeed(f"test -f {V}/request-nested-root/vol/workspace/workspace/projection/nested/.devenv-enterShell-ran")
+        machine.succeed(f"test -f {V}/request-nested-root/vol/workspace/workspace/projection/nested/check.result")
+        clean("request-nested-root")
+
+    with subtest("instance start rejects a request for a different assigned source before launching a unit"):
+        create("request-wrong-source")
+        rc, out = machine.execute(f"{I} start request-wrong-source --request ${wrongSourceRequest} --wait -- ${lib.getExe externalRequestProjection.runner} 2>&1")
+        assert rc != 0 and "match the assigned repository commit" in out, (rc, out)
+        assert status("request-wrong-source")["state"] == "created"
+        machine.succeed("! systemctl list-units --all --no-legend agent-runtime-request-wrong-source.service | grep -q .")
+        clean("request-wrong-source")
+
+    with subtest("instance start rejects a blocked persisted request before launching a unit"):
+        create("request-blocked-start")
+        rc, out = machine.execute(f"{I} start request-blocked-start --request ${blockedRequest} --wait -- ${lib.getExe externalRequestProjection.runner} 2>&1")
+        assert rc != 0 and "ready, supported" in out, (rc, out)
+        assert status("request-blocked-start")["state"] == "created"
+        machine.succeed("! systemctl list-units --all --no-legend agent-runtime-request-blocked-start.service | grep -q .")
+        clean("request-blocked-start")
+
+    with subtest("instance start rejects a traversal project root before launching a unit"):
+        create("request-unsafe-root")
+        rc, out = machine.execute(f"{I} start request-unsafe-root --request ${unsafeRootRequest} --wait -- ${lib.getExe externalRequestProjection.runner} 2>&1")
+        assert rc != 0 and "ready, supported" in out, (rc, out)
+        assert status("request-unsafe-root")["state"] == "created"
+        machine.succeed("! systemctl list-units --all --no-legend agent-runtime-request-unsafe-root.service | grep -q .")
+        clean("request-unsafe-root")
+
+    with subtest("Devenv runner rejects a non-canonical symlink project root"):
+        create("request-symlink-root")
+        machine.execute(f"{I} start request-symlink-root --request ${symlinkRootRequest} --wait -- ${lib.getExe externalRequestProjection.runner}")
+        s = status("request-symlink-root")
+        assert s["state"] == "failed" and s["result"]["exitStatus"] == 65, s
+        machine.succeed(f"test ! -e {V}/request-symlink-root/vol/workspace/workspace/projection/.devenv-enterShell-ran")
+        machine.succeed(f"test ! -e {V}/request-symlink-root/vol/workspace/workspace/projection/check.result")
+        clean("request-symlink-root")
 
     with subtest("argv metacharacters remain literal and are not interpreted by a shell"):
         create("request-argv-boundary")

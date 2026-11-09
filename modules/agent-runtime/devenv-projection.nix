@@ -2,11 +2,11 @@
 # The JSON is produced by the trusted host preparer; the shell hook remains data
 # here and is evaluated only by this command inside an agent-runtime instance.
 { lib, pkgs }:
-{ envJson, profile, projectRoot, expectedRequest ? null }:
+{ envJson, profile, projectRoot, expectedRequest ? null, consumeRequest ? false }:
 let
   envPath = toString envJson;
   profilePath = toString profile;
-  requestMode = expectedRequest != null;
+  requestMode = expectedRequest != null || consumeRequest;
   expectedRequestData = if requestMode then expectedRequest else { };
   ignored = [
     "BASHOPTS" "EUID" "HOME" "NIX_BUILD_TOP" "NIX_ENFORCE_PURITY" "NIX_LOG_FD" "NIX_REMOTE"
@@ -23,13 +23,30 @@ let
       [ "$#" -eq 0 ] || shift
       [ "$#" -eq 0 ] || { echo "usage: agent-runtime-devenv-run [projected-env.json]" >&2; exit 64; }
       profile=${lib.escapeShellArg profilePath}
-      repo=${lib.escapeShellArg projectRoot}
+      checkout_root=${lib.escapeShellArg projectRoot}
+      repo=$checkout_root
       instance=''${AGENT_RUNTIME_INSTANCE:?not in an agent-runtime instance}
+
+      # Requests supplied to `agent-runtime-instance start --request` arrive as
+      # a separate read-only bind. Merge that data with the host-prepared
+      # projection in guest tmpfs; project activation remains guest-only.
+      if [ -n "''${AGENT_RUNTIME_EXECUTION_REQUEST:-}" ]; then
+        [ -r "$AGENT_RUNTIME_EXECUTION_REQUEST" ] || {
+          echo "execution request is not readable inside the instance" >&2
+          exit 65
+        }
+        merged_json=$(mktemp "''${TMPDIR:-/tmp}/agent-runtime-devenv.XXXXXX")
+        trap 'rm -f -- "$merged_json"' EXIT
+        ${pkgs.jq}/bin/jq --slurpfile request "$AGENT_RUNTIME_EXECUTION_REQUEST" \
+          '. + {executionRequest: $request[0]}' "$env_json" >"$merged_json"
+        env_json=$merged_json
+      fi
 
       # Validate the entire projection before activation. Host credentials and
       # host-local paths are never copied into the guest environment.
       ${pkgs.jq}/bin/jq -e --arg profile "$profile" \
-        --argjson expected ${lib.escapeShellArg (builtins.toJSON expectedRequestData)} '
+        --argjson expected ${lib.escapeShellArg (builtins.toJSON expectedRequestData)} \
+        --arg system ${lib.escapeShellArg (expectedRequestData.target_system or pkgs.stdenv.hostPlatform.system)} '
         def sensitive: test("(SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|AUTH|API_KEY|PRIVATE_KEY|COOKIE|SSH_)"; "i");
         type == "object" and .schema_version == 1
         and (.variables | type == "object")
@@ -48,22 +65,28 @@ let
           and .executionRequest.kind == "devenv-platform/execution-request"
           and .executionRequest.status == "ready"
           and .executionRequest.blockers == []
-          and .executionRequest.source.repo == $expected.repo
-          and .executionRequest.source.url == ("https://github.com/" + $expected.repo)
+          and (.executionRequest.source.repo | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))
+          and .executionRequest.source.url == ("https://github.com/" + .executionRequest.source.repo)
+          and ($expected.repo == null or .executionRequest.source.repo == $expected.repo)
           and (.executionRequest.source.ref | type == "string" and length > 0 and length <= 255)
-          and .executionRequest.source.sha == $expected.sha
-          and .executionRequest.source.root == $expected.root
+          and (.executionRequest.source.sha | type == "string" and test("^[0-9a-f]{40}$"))
+          and ($expected.sha == null or .executionRequest.source.sha == $expected.sha)
+          and (.executionRequest.source.root | type == "string" and length > 0 and length <= 1024 and
+            (. == "." or ((test("[\\x00-\\x1f\\x7f\\\\]") | not) and (split("/") | all(. != "" and . != "." and . != "..")))))
+          and ($expected.root == null or .executionRequest.source.root == $expected.root)
           and .executionRequest.environment.kind == "devenv"
-          and .executionRequest.environment.index == $expected.environment_index
-          and .executionRequest.environment.root == $expected.root
+          and (.executionRequest.environment.index | type == "number" and . >= 0 and floor == .)
+          and ($expected.environment_index == null or .executionRequest.environment.index == $expected.environment_index)
+          and .executionRequest.environment.root == .executionRequest.source.root
           and .executionRequest.environment.shell == "devenv"
-          and .executionRequest.target_system == $expected.target_system
+          and .executionRequest.target_system == $system
           and (.executionRequest.provenance.plan_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
-          and ($expected.lockfile | type == "string" and length > 0 and (startswith("/") | not)
-            and (test("[\\x00-\\x1f\\x7f\\\\]") | not)
-            and (split("/") | all(. != "" and . != "." and . != "..")))
-          and ([.executionRequest.provenance.lockfiles[] | select(.path == $expected.lockfile)] | length == 1)
-          and any(.executionRequest.provenance.lockfiles[]; .path == $expected.lockfile and (.blob | test("^[0-9a-f]{40}$")))
+          and (.executionRequest.provenance.lockfiles | type == "array")
+          and (.executionRequest.source.root as $root
+            | (if $root == "." then "devenv.lock" else $root + "/devenv.lock" end) as $lock
+            | ($expected.lockfile == null or $expected.lockfile == $lock)
+              and ([.executionRequest.provenance.lockfiles[] | select(.path == $lock)] | length == 1)
+              and any(.executionRequest.provenance.lockfiles[]; .path == $lock and (.blob | test("^[0-9a-f]{40}$"))))
           and (.executionRequest.check.argv | type == "array" and length > 0 and length <= 128
             and all(.[]; type == "string" and length > 0 and length <= 4096 and (test("[\\x00-\\x1f\\x7f]") | not)))
         '' else ''
@@ -75,10 +98,24 @@ let
       }
 
       ${if requestMode then ''
-      # shellcheck disable=SC2016 # Nix emits this as a shell-escaped literal path.
-      lockfile="$repo"/${lib.escapeShellArg expectedRequestData.lockfile}
-      # shellcheck disable=SC2016 # Nix emits this as a shell-escaped jq argument.
-      expected_blob="$(${pkgs.jq}/bin/jq -er --arg path ${lib.escapeShellArg expectedRequestData.lockfile} \
+      project_root_rel="$(${pkgs.jq}/bin/jq -er '.executionRequest.source.root' "$env_json")" || exit 65
+      if [ "$project_root_rel" != "." ]; then
+        repo="$checkout_root/$project_root_rel"
+        resolved_repo="$(realpath -e -- "$repo")" || {
+          echo "execution request rejected: selected project root is missing" >&2
+          exit 65
+        }
+        if [ "$resolved_repo" != "$repo" ]; then
+          echo "execution request rejected: selected project root is not canonical" >&2
+          exit 65
+        fi
+      fi
+      lockfile_rel="$(${pkgs.jq}/bin/jq -er '
+        .executionRequest.source.root as $root
+        | if $root == "." then "devenv.lock" else $root + "/devenv.lock" end
+      ' "$env_json")" || exit 65
+      lockfile="$checkout_root/$lockfile_rel"
+      expected_blob="$(${pkgs.jq}/bin/jq -er --arg path "$lockfile_rel" \
         '[.executionRequest.provenance.lockfiles[] | select(.path == $path) | .blob] | if length == 1 then .[0] else error("missing or duplicate lockfile provenance") end' \
         "$env_json")" || exit 65
       if [ -L "$lockfile" ] || [ ! -f "$lockfile" ] || [ "$(git hash-object "$lockfile")" != "$expected_blob" ]; then
