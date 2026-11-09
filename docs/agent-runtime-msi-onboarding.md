@@ -2,9 +2,9 @@
 
 MSI is an intermittent k3s/Ollama worker. Its agent-runtime admission policy
 must be based on MSI's own measured headroom while those workloads are active;
-do not copy Acer's limits. PR #191 proposes a bounded `rust-pilot` policy, but
-that candidate must be checked against MSI's measured headroom before an owner
-deploys it. This branch adds diagnostics only and does not change host policy.
+do not copy Acer's limits. #191 (merged) sets a bounded `rust-pilot` policy,
+which must be checked against MSI's measured headroom before an owner deploys
+it. This branch adds diagnostics only and does not change host policy.
 
 ## Read-only capacity snapshot
 
@@ -18,11 +18,35 @@ ssh -o BatchMode=yes msi-ms7758 'bash -s' \
   < scripts/agent-runtime-msi-capacity-report.sh
 ```
 
-The script reads CPU and memory totals, filesystem capacity and mounts, active
-service state/resource counters, top process memory and the systemd cgroup
-snapshot. It prints no environment variables, command arguments, credentials,
+The script reads:
+- the host's current generation (`readlink /run/current-system`) and load (`uptime`);
+- CPU and memory totals, filesystem capacity and mounts;
+- the k3s service counters;
+- Herdr as the Home Manager **user** unit it is (`loginctl show-user <user> -p Linger`,
+  `systemctl --user -M <user>@ is-active herdr.service`; the user defaults to `lukas`,
+  `'bash -s -- <user>'` names another);
+- running `agent-runtime-*` instance units (names only);
+- the shutdown timer's state and next trigger (`systemctl list-timers msi-scheduled-shutdown.timer`);
+- top process memory and the systemd cgroup snapshot. It prints no environment variables, command arguments, credentials,
 model contents or file listings. Save the output with the measurement time and
-record whether k3s and Ollama were carrying their normal workload. Repeat at a
+record whether k3s and Ollama were carrying their normal workload.
+
+Ollama is **not** a host service here: it is the k3s pod `llm/ollama-msi`
+(`ollama.service` reads inactive), and the 8 GiB memory reserve is calibrated to
+that pod's limit. A k3s agent has no admin kubeconfig, so take the cluster side
+from Lenovo in the same window:
+
+```bash
+kubectl get node msi-ms7758 -o wide
+kubectl top node msi-ms7758
+kubectl get pods -A -o wide --field-selector spec.nodeName=msi-ms7758
+kubectl -n llm get pod -l app=ollama-msi -o jsonpath='{range .items[*].spec.containers[*]}{.name} {.resources}{"\n"}{end}'
+kubectl -n llm top pod
+```
+
+Together the two outputs give the full #185 snapshot: generation, load,
+node/pod usage, the Ollama pod's requests and limits, the Herdr state and the
+shutdown timer. Repeat at a
 busy period before setting `reserve` or `maxConcurrentInstances`.
 
 The MSI policy should admit only explicitly named templates, remain within the
@@ -33,9 +57,13 @@ schedule to make a test pass.
 
 ## Declarative prerequisites on `origin/main`
 
-Pure evaluation at `018e881` (2026-11-08) reports:
+On `main` since #191 (`9df8c53`, 2026-11-09), `hosts/msi-ms7758/configuration.nix` declares:
 
-- `sam.agentRuntime.host.enable = false` and `eligibleTemplates = []`;
+- `sam.agentRuntime.host.enable = true`, `eligibleTemplates = [ "rust-pilot" ]`,
+  `maxConcurrentInstances = 2` and `reserve = { cpus = 2; memoryMiB = 8192; diskMiB = 51200; }`;
+
+The rest, from pure evaluation at `018e881` (2026-11-08), is unchanged by #191:
+
 - `sam.profile.devTools = true` and `users.users.lukas.linger = true`;
 - Home Manager declares the Herdr user service under `default.target`;
 - `sam.herdr.worker.enable = false` and `sam.herdr.machines = []`;
@@ -49,13 +77,14 @@ plus `sammasak.dev/intermittent=true:NoSchedule` taint. These are the baseline
 semantics the onboarding regression must preserve.
 
 This proves the checked-in Herdr server and linger configuration, not that
-Herdr is active or reachable on the installed MSI generation. It also confirms
-that no worker bypass permission or remote Herdr registration is currently
+Herdr is active or reachable on the installed MSI generation (the script's
+Herdr line is that live check). It also confirms that no worker bypass
+permission (`sam.herdr.worker`) or remote Herdr registration is currently
 declared. Keep those separate from host capacity and live acceptance.
 
 ## Offline validation and staged rollout
 
-PR #191 supplies the MSI policy-evaluation check: it asserts the candidate
+#191 supplies the MSI policy-evaluation check: it asserts the candidate
 `rust-pilot` eligibility, two-instance cap, 2-CPU/8-GiB/50-GiB reserve, no
 network or credentials, and unchanged shutdown, k3s worker and auto-reboot
 settings. It also adds generic aggregate CPU/memory/disk admission checks. The

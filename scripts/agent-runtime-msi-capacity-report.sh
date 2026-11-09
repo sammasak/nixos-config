@@ -2,7 +2,10 @@
 # Read-only MSI host snapshot for sizing agent-runtime admission policy (#185).
 # Run during the normal power window. This prints no environment variables,
 # command arguments, credentials, model contents, or filesystem file listings.
+#   ssh -o BatchMode=yes msi-ms7758 'bash -s' < this-script        # user: lukas
+#   ssh -o BatchMode=yes msi-ms7758 'bash -s -- <user>' < this-script
 set -uo pipefail
+user=${1:-lukas}
 
 section() {
   printf '\n## %s\n' "$1"
@@ -13,6 +16,8 @@ printf 'timestamp='; date --iso-8601=seconds 2>/dev/null || date
 printf 'hostname='; hostname --fqdn 2>/dev/null || hostname
 printf 'kernel='; uname -r
 awk -F= '/^PRETTY_NAME=/ {gsub(/"/, "", $2); print "os=" $2; exit}' /etc/os-release 2>/dev/null || true
+printf 'generation='; readlink /run/current-system 2>/dev/null || printf 'unavailable\n'
+printf 'uptime='; uptime 2>/dev/null || printf 'unavailable\n'
 
 section 'cpu'
 printf 'available_processors='; nproc 2>/dev/null || printf 'unavailable\n'
@@ -33,16 +38,26 @@ for path in / /var /var/lib /var/lib/agent-runtime /var/lib/rancher/k3s /var/lib
 done
 
 section 'services'
-for unit in k3s.service ollama.service agent-runtime-instance.service herdr.service; do
-  if command -v systemctl >/dev/null 2>&1; then
-    printf 'unit=%s ' "$unit"
-    systemctl show "$unit" --no-pager \
-      --property=LoadState --property=ActiveState --property=SubState \
-      --property=MemoryCurrent --property=CPUUsageNSec 2>/dev/null \
-      | tr '\n' ' '
-    printf '\n'
-  fi
+# Ollama runs as the k3s pod llm/ollama-msi, not as ollama.service; its requests/limits come from
+# the Lenovo-side kubectl step in docs/agent-runtime-msi-onboarding.md (an agent has no admin kubeconfig)
+for unit in k3s.service ollama.service; do
+  printf 'unit=%s ' "$unit"
+  systemctl show "$unit" --no-pager \
+    --property=LoadState --property=ActiveState --property=SubState \
+    --property=MemoryCurrent --property=CPUUsageNSec 2>/dev/null \
+    | tr '\n' ' '
+  printf '\n'
 done
+# Herdr is a Home Manager user unit; the system manager never knows it
+printf 'user=%s ' "$user"; loginctl show-user "$user" --property=Linger 2>/dev/null || printf 'Linger=unknown\n'
+printf 'unit=herdr.service (user %s) active=' "$user"
+systemctl --user -M "$user@" is-active herdr.service 2>/dev/null || true
+# runtime instances run as agent-runtime-<id>.service; list them, names only
+printf 'agent_runtime_units:\n'
+systemctl list-units 'agent-runtime-*' --all --no-legend --no-pager --plain 2>/dev/null || true
+
+section 'power'
+systemctl list-timers msi-scheduled-shutdown.timer --all --no-pager 2>/dev/null || true
 
 section 'largest_processes'
 if command -v ps >/dev/null 2>&1; then
