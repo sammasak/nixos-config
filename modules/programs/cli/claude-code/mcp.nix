@@ -127,7 +127,7 @@ in
             # unreviewed or implementer merge (present once the skills pin carries it)
             ++ lib.optional (worker.enable && builtins.pathExists "${skillsSrc}/hooks/check-merge.sh") {
               type = "command";
-              command = "PATH=${lib.makeBinPath [ pkgs.gh pkgs.jq pkgs.coreutils pkgs.gnused pkgs.gnugrep ]}:$PATH ${skillsSrc}/hooks/check-merge.sh";
+              command = "PATH=${lib.makeBinPath [ pkgs.gh pkgs.python3 pkgs.coreutils ]}:$PATH ${skillsSrc}/hooks/check-merge.sh";
               timeout = 30;
             };
           }
