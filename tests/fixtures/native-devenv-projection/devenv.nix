@@ -1,6 +1,6 @@
 { pkgs, ... }:
 {
-  packages = [ pkgs.coreutils pkgs.gnumake pkgs.gcc ];
+  packages = [ pkgs.coreutils pkgs.gnumake pkgs.gcc pkgs.rustc ];
   env.PROJECT_CAPTURE_PROBE = builtins.getEnv "AGENT_RUNTIME_HOST_EVAL_PROBE";
   env.PROJECT_NATIVE_MARKER = "generated-devenv-environment";
   enterShell = ''
