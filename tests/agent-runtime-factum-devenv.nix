@@ -86,7 +86,7 @@ let
   failureRequestJson = pkgs.writeText "factum-failure-injection-request.json" (builtins.toJSON failureRequest);
   brokenSourceRequest = request // {
     check = request.check // {
-      argv = [ "bash" "-c" "cargo --version && printf '\\npub fn broken( {\\n' >> src/lib.rs && cargo --version && cargo fmt --all --check" ];
+      argv = [ "bash" "-c" "cargo --version && printf '\\npub fn broken( {\\n' >> crates/facts-domain/src/lib.rs && cargo --version && cargo fmt --all --check" ];
       evidence = [ ];
       index = null;
       selection = "explicit";
@@ -338,7 +338,7 @@ pkgs.testers.runNixOSTest {
     broken_workspace = f"{V}/factum-broken/vol/workspace/workspace/factum"
     machine.succeed(f"printf '[safe]\\n\\tdirectory = /workspace/factum\\n' > {V}/factum-broken/vol/home/.gitconfig")
     machine.succeed(f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={broken_workspace} git -C {broken_workspace} init -q && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={broken_workspace} git -C {broken_workspace} add -A -f && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={broken_workspace} git -C {broken_workspace} -c user.name=agent -c user.email=agent@example.invalid commit -q -m workspace")
-    source_blob_before = machine.succeed(f"git hash-object {broken_workspace}/src/lib.rs").strip()
+    source_blob_before = machine.succeed(f"git hash-object {broken_workspace}/crates/facts-domain/src/lib.rs").strip()
     machine.succeed(f"{I} start factum-broken --request {BROKEN_SOURCE_REQUEST} -- {RUNNER}")
     broken = status("factum-broken")
     while broken["state"] in ("starting", "running"):
@@ -350,7 +350,7 @@ pkgs.testers.runNixOSTest {
     cargo_versions = [line for line in broken_log.splitlines() if line.startswith("cargo ")]
     assert len(cargo_versions) == 2 and all("1.99.0" in line for line in cargo_versions), broken_log
     assert "error:" in broken_log.lower(), broken_log
-    source_blob_after = machine.succeed(f"git hash-object {broken_workspace}/src/lib.rs").strip()
+    source_blob_after = machine.succeed(f"git hash-object {broken_workspace}/crates/facts-domain/src/lib.rs").strip()
     assert source_blob_before != source_blob_after, (source_blob_before, source_blob_after)
     machine.succeed(f"{I} export factum-broken")
     broken_bundle = f"{V}/exports/factum-broken"
