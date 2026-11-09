@@ -41,10 +41,14 @@ let
     ];
   };
   hostPolicy = evaluated.hostPolicy;
+  cpuPolicy = pkgs.runCommand "agent-runtime-e2e-cpu-reserve.json" { nativeBuildInputs = [ pkgs.jq ]; } ''
+    jq '.reserve.cpus = 1' ${hostPolicy} > $out
+  '';
   manifest = "${evaluated.manifestDir}/rust-worker.json";
   m = evaluated.manifestData.rust-worker;
   fs = m.filesystem;
   I = lib.getExe runtime.tools.instance;
+  P = lib.getExe runtime.tools.preflight;
   H = lib.getExe (import ../modules/agent-runtime/herdr { inherit pkgs; });
   env = pkgs.buildEnv { name = "agent-runtime-e2e-env"; paths = evaluated.templates.rust-worker.packages; };
 
@@ -97,7 +101,7 @@ pkgs.testers.runNixOSTest {
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
     # the VM has no network: the locked source, the skills tree, the package closure and the manifest
     # itself (#155's create GC-roots it with `nix build`) must be in its store so `create` works offline
-    virtualisation.additionalPaths = [ rfProto skills env evaluated.manifestDir ];
+    virtualisation.additionalPaths = [ rfProto skills env evaluated.manifestDir cpuPolicy ];
     environment.systemPackages = with pkgs; [ util-linux procps gnugrep gawk coreutils jq herdr ];
     systemd.services.herdr = {
       description = "Herdr server of the host";
@@ -110,6 +114,7 @@ pkgs.testers.runNixOSTest {
     M = "${manifest}"
     DIGEST = "${m.digests.template}"
     POLICY = "${hostPolicy}"
+    CPU_POLICY = "${cpuPolicy}"
     V = "/var/lib/agent-runtime"
 
     def ist(i, *a):
@@ -137,6 +142,15 @@ pkgs.testers.runNixOSTest {
     with subtest("E2E: create -> Herdr agent -> one handoff -> real cargo test -> export -> teardown clean"):
         t0 = time.monotonic_ns()
         create("e2e")
+        # A pre-CPU-policy runtime generation wrote four-column reservations.
+        # Keep its live CPU budget accounted for by reading the template record.
+        machine.succeed(f"awk '{{print $1, $2, $3, $4}}' {V}/e2e/reservation > {V}/e2e/reservation.legacy && mv {V}/e2e/reservation.legacy {V}/e2e/reservation")
+        # With a one-CPU reserve, a second 1-CPU instance would leave only one
+        # of the VM's two CPUs for agents. Other host limits still allow it.
+        rc, out = machine.execute(f"${I} create cpu-denied --template {M} --host {CPU_POLICY} --task sammasak/rf-proto#1 2>&1")
+        assert rc != 0 and "cpu" in out.lower(), (rc, out)
+        rc, out = machine.execute(f"${P} --state {V} --host {CPU_POLICY} --template {M} 2>&1")
+        assert rc != 0 and "FAIL cpu:" in out, (rc, out)
         s = st("e2e")
         # telemetry/correlation: the structured record carries runtime id, host, template digest, task, source commit
         assert s["state"] == "created" and s["id"] == "e2e" and s["host"], s
