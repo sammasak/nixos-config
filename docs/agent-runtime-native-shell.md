@@ -81,5 +81,12 @@ a QEMU VM. Its subtests:
   `enterShell`. This uses the real request shape with the generated-environment fixture;
   Factum's current-main request is blocked because its tracked tree has no `devenv.lock`, so no
   real Factum request has been executed yet.
+- For an assigned instance, `agent-runtime-instance start ID --request REQUEST.json -- PROGRAM [ARG...]`
+  binds a stable copy of the ready request read-only at `/etc/agent-runtime/execution-request.json`
+  and records its SHA-256 in `started.json`. Before launch, the lifecycle checks the request's
+  repository and exact commit against the assigned source. The Devenv runner merges the request
+  with its separately prepared environment JSON in guest tmpfs, verifies the pinned `devenv.lock`
+  blob, then executes the request argv directly. The focused VM test covers successful handoff,
+  source mismatch and blocked-request refusal without starting a unit.
 - **The devenv-platform `prepare` glue**, from a plan's `selected_environment`/`check_argv` to this
   template, waits on devenv-platform#117 (prepare detection, in review).

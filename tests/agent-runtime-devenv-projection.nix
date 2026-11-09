@@ -60,6 +60,9 @@ let
     status = "blocked";
     blockers = [ { kind = "envrc_present"; detail = "environment activation is unsupported"; evidence = [ "e1" ]; } ];
   }));
+  wrongSourceRequest = pkgs.writeText "execution-request-wrong-source.json" (builtins.toJSON (request // {
+    source = request.source // { sha = builtins.hashString "sha1" "another-commit"; };
+  }));
   mismatchedRequest = pkgs.writeText "execution-request-mismatched-lock.json" (builtins.toJSON (request // {
     provenance = request.provenance // {
       lockfiles = [ { path = "devenv.lock"; blob = builtins.hashString "sha1" "incorrect-lockfile-blob"; evidence = [ "e1" ]; } ];
@@ -76,6 +79,19 @@ let
     envJson = readyEnv;
     inherit profile;
     projectRoot = "/workspace/projection";
+    expectedRequest = {
+      repo = "sammasak/native-devenv-projection-fixture";
+      sha = fixtureRev;
+      root = ".";
+      target_system = pkgs.stdenv.hostPlatform.system;
+      environment_index = 0;
+      lockfile = "devenv.lock";
+    };
+  };
+  externalRequestProjection = import ../modules/agent-runtime/devenv-projection.nix { inherit lib pkgs; } {
+    inherit envJson profile;
+    projectRoot = "/workspace/projection";
+    consumeRequest = true;
     expectedRequest = {
       repo = "sammasak/native-devenv-projection-fixture";
       sha = fixtureRev;
@@ -159,7 +175,7 @@ let
             writable = true;
           };
           skillsSource = skills;
-          packages = [ projection.runner requestProjection.runner argvBoundaryProjection.runner quotedLockfileProjection.runner blockedProjection.runner mismatchedProjection.runner ];
+          packages = [ projection.runner requestProjection.runner externalRequestProjection.runner argvBoundaryProjection.runner quotedLockfileProjection.runner blockedProjection.runner mismatchedProjection.runner ];
           filesystem = {
             workspaceBudget = { sizeMiB = 64; inodes = 4000; };
             home = { sizeMiB = 32; inodes = 2000; };
@@ -186,7 +202,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 4096;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-  virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv argvBoundaryEnv blockedEnv mismatchedEnv ];
+    virtualisation.additionalPaths = [ envJson profile fixtureSrc manifest badJson readyEnv readyRequest blockedRequest wrongSourceRequest argvBoundaryEnv blockedEnv mismatchedEnv ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps ];
   };
   testScript = ''
@@ -239,6 +255,35 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"grep -q 'guest-check:generated-devenv-environment:generated-devenv-import' {o}/check.log")
         machine.succeed(f"test -f {V}/request-ready/vol/workspace/workspace/projection/check.result")
         clean("request-ready")
+
+    with subtest("instance start binds a persisted request to its assigned source for the Devenv runner"):
+        create("request-bound")
+        machine.succeed(f"{I} start request-bound --request ${readyRequest} --wait -- ${lib.getExe externalRequestProjection.runner}")
+        s = status("request-bound")
+        assert s["state"] == "succeeded", s
+        started = json.loads(machine.succeed(f"cat {V}/request-bound/started.json"))
+        expected_request_sha = machine.succeed("sha256sum ${readyRequest} | cut -d' ' -f1").strip()
+        assert started["requestSha256"] == expected_request_sha, started
+        o = f"{V}/request-bound/vol/output"
+        machine.succeed(f"grep -q 'guest-check:generated-devenv-environment:generated-devenv-import' {o}/check.log")
+        machine.succeed(f"test -f {V}/request-bound/vol/workspace/workspace/projection/check.result")
+        clean("request-bound")
+
+    with subtest("instance start rejects a request for a different assigned source before launching a unit"):
+        create("request-wrong-source")
+        rc, out = machine.execute(f"{I} start request-wrong-source --request ${wrongSourceRequest} --wait -- ${lib.getExe externalRequestProjection.runner} 2>&1")
+        assert rc != 0 and "match the assigned repository commit" in out, (rc, out)
+        assert status("request-wrong-source")["state"] == "created"
+        machine.succeed("! systemctl list-units --all --no-legend agent-runtime-request-wrong-source.service | grep -q .")
+        clean("request-wrong-source")
+
+    with subtest("instance start rejects a blocked persisted request before launching a unit"):
+        create("request-blocked-start")
+        rc, out = machine.execute(f"{I} start request-blocked-start --request ${blockedRequest} --wait -- ${lib.getExe externalRequestProjection.runner} 2>&1")
+        assert rc != 0 and "ready, supported" in out, (rc, out)
+        assert status("request-blocked-start")["state"] == "created"
+        machine.succeed("! systemctl list-units --all --no-legend agent-runtime-request-blocked-start.service | grep -q .")
+        clean("request-blocked-start")
 
     with subtest("argv metacharacters remain literal and are not interpreted by a shell"):
         create("request-argv-boundary")
