@@ -126,7 +126,7 @@ pkgs.testers.runNixOSTest {
         measures = {"runtimeUSec": s["result"]["runtimeUSec"], "memoryPeakBytes": s["result"]["memoryPeakBytes"],
                     "startup_window": [s["createdAt"], s["started"]["startedAt"]]}
         print(machine.succeed("${I} export pilot"))
-        b = f"{V}/exports/pilot"
+        b = f"{V}/exports/pilot.runs/latest"
         machine.succeed(f"cd {b}/output && sha256sum -c SHA256SUMS")
         result = json.loads(machine.succeed(f"cat {b}/output/result.json"))
         assert result["exit"] == 0 and result["rev"] == "${factum.rev}", result

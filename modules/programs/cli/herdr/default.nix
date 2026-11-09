@@ -20,7 +20,12 @@ let
     # #157: an unattended worker (any claude started with --dangerously-skip-permissions, as coord:spawn starts
     # them) switches models when safeguards flag a message instead of waiting at a dialog; settings.json, and so
     # the choice of every other session (lenovo's Coordinator), is left alone
-    runtimeEnv.HERDR_CLAUDE_WORKER_SETTINGS = pkgs.writeText "claude-worker-settings.json" (builtins.toJSON { switchModelsOnFlag = true; });
+    runtimeEnv = {
+      HERDR_CLAUDE_WORKER_SETTINGS = pkgs.writeText "claude-worker-settings.json" (builtins.toJSON { switchModelsOnFlag = true; });
+    } // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
+      # skills#28: a worker host's Herdr panes start claude in bypassPermissions, a restored one included
+      HERDR_CLAUDE_WORKER_HOST = "1";
+    };
     text = builtins.readFile ./agent-launcher.sh;
   };
   integrationFiles = pkgs.runCommand "herdr-agent-integrations" {
@@ -51,7 +56,7 @@ in
       command ${herdrAgentLauncher}/bin/herdr-agent-launcher codex $argv
     '';
   } // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
-    # The worker start by hand, through the same launcher; plain `claude` stays interactive and asks.
+    # The worker start by hand, through the same launcher; outside a Herdr pane plain `claude` still asks.
     claude-worker = ''
       command ${herdrAgentLauncher}/bin/herdr-agent-launcher claude --dangerously-skip-permissions $argv
     '';

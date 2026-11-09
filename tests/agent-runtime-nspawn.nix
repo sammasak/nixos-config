@@ -371,7 +371,9 @@ pkgs.testers.runNixOSTest {
 
   nodes.machine = {
     virtualisation.memorySize = 4096;
-    virtualisation.cores = 2;
+    # Three concurrent instances each reserve one logical CPU; leave one host
+    # CPU available so admission exercises the configured concurrency cap.
+    virtualisation.cores = 4;
     virtualisation.diskSize = 4096;
     # assign roots the sources with nix build --out-link, which needs them registered in the VM's store;
     # the egress template's package closure must be present too (the manifest only names it as a string)
@@ -591,7 +593,7 @@ pkgs.testers.runNixOSTest {
                                "memory_peak_bytes": s["result"]["memoryPeakBytes"], "cpu_ns": s["result"]["cpuUsageNSec"],
                                "disk_bytes": int(machine.succeed(f"du -sbx {V}/{i}/vol/* | awk '{{s+=$1}} END {{print s}}'"))})
             machine.succeed(f"{I} export {i}")
-            e = f"{V}/exports/{i}"
+            e = f"{V}/exports/{i}.runs/latest"
             bundle = json.loads(machine.succeed(f"cat {e}/bundle.json"))
             print(i, "bundle:", json.dumps({k: bundle[k] for k in ("outcome", "recovery", "log", "omittedPatches")}), [f["path"] for f in bundle["files"]])
             assert bundle["outcome"] == "succeeded" and not bundle["recovery"]
@@ -644,8 +646,8 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"jq -c '.invocation = \"\"' {V}/noinv/started.json > /tmp/noinv.json && mv /tmp/noinv.json {V}/noinv/started.json")
         assert "agent-runtime-noinv-line" in machine.succeed(f"{I} logs noinv")
         machine.succeed(f"{I} export noinv")
-        machine.succeed(f"grep -q agent-runtime-noinv-line {V}/exports/noinv/run.log")
-        assert json.loads(machine.succeed(f"cat {V}/exports/noinv/bundle.json"))["log"]["bytes"] > 0
+        machine.succeed(f"grep -q agent-runtime-noinv-line {V}/exports/noinv.runs/latest/run.log")
+        assert json.loads(machine.succeed(f"cat {V}/exports/noinv.runs/latest/bundle.json"))["log"]["bytes"] > 0
         destroy("noinv")
 
     with subtest("cancellation: a running instance stops as cancelled; export is a recovery bundle"):
@@ -657,7 +659,7 @@ pkgs.testers.runNixOSTest {
         assert status("cancel")["state"] == "cancelled"
         refused(f"{I} destroy cancel", 12, "has not been exported")
         machine.succeed(f"{I} export cancel")
-        assert json.loads(machine.succeed(f"cat {V}/exports/cancel/bundle.json"))["recovery"]
+        assert json.loads(machine.succeed(f"cat {V}/exports/cancel.runs/latest/bundle.json"))["recovery"]
         destroy("cancel")
 
     with subtest("timeout: the unit's runtime limit ends the run as timed-out"):
@@ -746,7 +748,7 @@ pkgs.testers.runNixOSTest {
         s = run("oom", "${hog}")
         assert s["state"] == "oom-killed", s
         machine.succeed(f"{I} export oom")
-        b = json.loads(machine.succeed(f"cat {V}/exports/oom/bundle.json"))
+        b = json.loads(machine.succeed(f"cat {V}/exports/oom.runs/latest/bundle.json"))
         assert b["recovery"] and b["outcome"] == "oom-killed", b
         timings["oom"] = {"memory_peak_bytes": s["result"]["memoryPeakBytes"], "teardown_ms": destroy("oom")}
 
@@ -793,7 +795,7 @@ pkgs.testers.runNixOSTest {
         s = run("reboot-new", "${pkgs.coreutils}/bin/true")
         assert s["state"] == "succeeded", s
         machine.succeed(f"{I} export reboot-run")
-        assert json.loads(machine.succeed(f"cat {V}/exports/reboot-run/bundle.json"))["outcome"] == "ambiguous"
+        assert json.loads(machine.succeed(f"cat {V}/exports/reboot-run.runs/latest/bundle.json"))["outcome"] == "ambiguous"
         destroy("reboot-run")
         destroy("reboot-new", "--discard")
 
@@ -815,7 +817,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"! grep -rqF {secret} {V}/crd 2>/dev/null")  # not at rest in persistent state
         machine.succeed(f"! grep -rqF {secret} /nix/store/*agent-runtime* 2>/dev/null")  # not in the store
         print(machine.succeed(f"{I} export crd"))
-        machine.succeed(f"! grep -rqF {secret} {V}/exports/crd")
+        machine.succeed(f"! grep -rqF {secret} {V}/exports/crd.runs")
         machine.succeed(f"{I} destroy crd --discard"); clean("crd")
         # a payload that leaks the secret to its output: export refuses (credential class, exit 5), caller re-passes nothing
         machine.succeed(f"{I} create crl {TINY} --task sammasak/x#2")
