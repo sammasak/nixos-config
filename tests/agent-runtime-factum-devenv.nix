@@ -98,8 +98,9 @@ let
     };
   };
   # Probed from inside the guest with bash builtins only, so the result cannot depend on which
-  # tools the project's environment happens to put on PATH.
-  isolationProbe = ''
+  # tools the project's environment happens to put on PATH. A store file, because a request's
+  # argv may hold no control characters (newlines included).
+  isolationProbe = pkgs.writeText "factum-isolation-probe.sh" ''
     fail=0
     ok() { echo "ok     $1"; }
     bad() { echo "FAIL   $1"; fail=1; }
@@ -124,7 +125,7 @@ let
   '';
   isolationProbeRequest = request // {
     check = request.check // {
-      argv = [ "bash" "-c" isolationProbe ];
+      argv = [ "bash" "${isolationProbe}" ];
       evidence = [ ];
       index = null;
       selection = "explicit";
@@ -203,7 +204,7 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 98304;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ projectedEnv requestPath failureRequestJson brokenSourceRequestJson isolationProbeRequestJson profileBootstrap project manifest skills vendor ];
+    virtualisation.additionalPaths = [ projectedEnv requestPath failureRequestJson brokenSourceRequestJson isolationProbeRequestJson isolationProbe profileBootstrap project manifest skills vendor ];
     environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git runtime.tools.verify ];
   };
   testScript = ''
