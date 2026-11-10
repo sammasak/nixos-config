@@ -29,14 +29,22 @@ out=$(timeout 30 bash "$work/heavy.sh") || fail "bare run failed"
 out=$(timeout 30 flock "$lock" bash "$work/heavy.sh") || fail "nested run deadlocked or failed"
 [ "$out" = locked ] || fail "nested run ran outside the caller's lock (got '$out')"
 
-# 3. contended: another holder keeps it; the script waits WAIT seconds, then gives up.
+# 3. contended: another holder keeps it; the script waits WAIT seconds, then gives up with 75.
 flock "$lock" sleep 5 &
 holder=$!
 sleep 0.5
-if WAIT=1 timeout 30 bash "$work/heavy.sh" >/dev/null 2>&1; then
-  fail "contended run did not wait for the lock"
-fi
+rc=0
+WAIT=1 timeout 30 bash "$work/heavy.sh" >/dev/null 2>"$work/contended.err" || rc=$?
+[ "$rc" = 75 ] || fail "contended run did not time out on the lock (exit $rc)"
+grep -qF "heavy-lock: timed out after 1s waiting for $lock" "$work/contended.err" \
+  || fail "contended run timed out without saying so"
 wait "$holder"
+
+# 3b. a script that itself exits non-zero keeps its own exit code through the lock.
+printf 'exit 3\n' >>"$work/heavy.sh"
+rc=0
+timeout 30 bash "$work/heavy.sh" >/dev/null 2>&1 || rc=$?
+[ "$rc" = 3 ] || fail "the script's own exit code was lost (got $rc)"
 
 # 4. the Factum acceptance script: one acquisition, before host preparation.
 factum=scripts/test-agent-runtime-factum-devenv-projection.sh
@@ -45,4 +53,4 @@ prep_line=$(grep -n 'devenv_project print-dev-env' "$factum" | head -n1 | cut -d
 [ -n "$lock_line" ] && [ -n "$prep_line" ] && [ "$lock_line" -lt "$prep_line" ] \
   || fail "$factum must take the heavy lock before host preparation"
 ! grep -qE '^[^#]*\bflock -w' "$factum" || fail "$factum still takes a second, nested flock"
-echo "heavy-lock-test: bare, nested and contended runs and the Factum script ordering pass"
+echo "heavy-lock-test: bare, nested, contended (75 + message) and exit-code runs and the Factum script ordering pass"

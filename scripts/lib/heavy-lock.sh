@@ -6,8 +6,8 @@
 # - **Inherited:** if an ancestor already holds the lock through a descriptor we inherited (a
 #   caller ran `flock LOCK bash script`), return and keep going under it. Taking it again on a
 #   new descriptor would wait on ourselves forever (the nested-lock deadlock).
-# - **Otherwise:** re-exec the script under `flock -w`, so host preparation and the build that
-#   follows both run inside one lock acquisition.
+# - **Otherwise:** re-run the script under `flock -w`, so host preparation and the build that
+#   follows both run inside one lock acquisition. A wait that expires exits 75 with a message.
 #
 # `flock` must be on PATH.
 heavy_lock_hold() {
@@ -21,5 +21,12 @@ heavy_lock_hold() {
       return 0
     fi
   done
-  exec flock -w "$wait" "$lock" "$@"
+  # Not `exec`: a wait that times out must say so instead of exiting 1 without a word. The
+  # script itself runs as flock's child, holding the lock, and finds it inherited above.
+  local rc=0
+  flock -w "$wait" -E 75 "$lock" "$@" || rc=$?
+  if [ "$rc" = 75 ]; then
+    echo "heavy-lock: timed out after ${wait}s waiting for $lock" >&2
+  fi
+  exit "$rc"
 }

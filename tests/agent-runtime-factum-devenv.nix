@@ -97,35 +97,16 @@ let
       selection = "explicit";
     };
   };
-  # Probed from inside the guest with bash builtins only, so the result cannot depend on which
-  # tools the project's environment happens to put on PATH. A store file, because a request's
-  # argv may hold no control characters (newlines included).
-  isolationProbe = pkgs.writeText "factum-isolation-probe.sh" ''
-    fail=0
-    ok() { echo "ok     $1"; }
-    bad() { echo "FAIL   $1"; fail=1; }
-    deny() { if ( eval "$1" ) 2>/dev/null; then bad "allowed: $1"; else echo "denied $1"; fi; }
-    nets=(/sys/class/net/*)
-    [[ ''${nets[*]} == /sys/class/net/lo ]] && ok "only loopback" || bad "interfaces: ''${nets[*]##*/}"
-    while IFS=$':\t ' read -r key value _; do
-      case $key in
-        CapInh|CapPrm|CapEff|CapBnd|CapAmb) [[ $value =~ ^0+$ ]] && ok "$key empty" || bad "$key $value" ;;
-        NoNewPrivs) [[ $value == 1 ]] && ok "no_new_privs" || bad "NoNewPrivs $value" ;;
-      esac
-    done </proc/self/status
-    [[ ! -e /run/agent-runtime/credentials ]] && ok "no credential mount" || bad "credential mount present"
-    [[ ! -e /nix/var/nix/daemon-socket/socket ]] && ok "no nix daemon socket" || bad "nix daemon socket reachable"
-    [[ -z ''${SSH_AUTH_SOCK:-} ]] && ok "no ssh agent" || bad "SSH_AUTH_SOCK set"
-    ( : >"$TMPDIR/agent-runtime-isolation-probe" ) && ok "tmp writable" || bad "tmp not writable"
-    deny ': >/nix/store/agent-runtime-isolation-probe'
-    deny ': >>/etc/agent-runtime/execution-request.json'
-    deny 'exec 3<>/dev/tcp/1.1.1.1/443'
-    [[ $fail == 0 ]] && echo "isolation-probe: ok"
-    exit "$fail"
-  '';
+  # The probe script is shared with scripts/test-agent-runtime-isolation-probe.sh, which checks it
+  # discriminates. It is a store file because a request's argv may hold no control characters.
+  # Its network check connects to a listener on the VM host's own address: reachable from any
+  # shared netns, never from the instance's private one.
+  isolationProbe = ../scripts/agent-runtime-isolation-probe.sh;
+  probeTarget = "10.213.0.1";
+  probePort = "47011";
   isolationProbeRequest = request // {
     check = request.check // {
-      argv = [ "bash" "${isolationProbe}" ];
+      argv = [ "bash" "${isolationProbe}" probeTarget probePort ];
       evidence = [ ];
       index = null;
       selection = "explicit";
@@ -205,7 +186,7 @@ pkgs.testers.runNixOSTest {
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
     virtualisation.additionalPaths = [ projectedEnv requestPath failureRequestJson brokenSourceRequestJson isolationProbeRequestJson isolationProbe profileBootstrap project manifest skills vendor ];
-    environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git runtime.tools.verify ];
+    environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git netcat-openbsd runtime.tools.verify ];
   };
   testScript = ''
     import json
@@ -221,6 +202,9 @@ pkgs.testers.runNixOSTest {
     FAILURE_REQUEST = "${failureRequestJson}"
     BROKEN_SOURCE_REQUEST = "${brokenSourceRequestJson}"
     ISOLATION_PROBE_REQUEST = "${isolationProbeRequestJson}"
+    PROBE = "${isolationProbe}"
+    PROBE_TARGET = "${probeTarget}"
+    PROBE_PORT = "${probePort}"
     BROKEN_ONLY = ${if brokenOnly then "True" else "False"}
     V = "/var/lib/agent-runtime"
 
@@ -245,6 +229,19 @@ pkgs.testers.runNixOSTest {
     def isolation_probe():
         # Direct in-guest evidence for this template's policies (network none, no capabilities,
         # no credentials, read-only store and request), not only their evaluated values.
+        machine.succeed(f"ip link add probe0 type dummy && ip addr add {PROBE_TARGET}/32 dev probe0 && ip link set probe0 up")
+        machine.succeed(f"systemd-run --unit=isolation-probe-listener nc -lk {PROBE_TARGET} {PROBE_PORT}")
+        machine.wait_until_succeeds(f"bash -c 'exec 3<>/dev/tcp/{PROBE_TARGET}/{PROBE_PORT}'", timeout=30)
+        # The negative case: the same probe in the VM host's own namespaces, as an unprivileged
+        # user, must fail, on the shared netns above all. This is what makes the in-guest pass
+        # evidence rather than an artefact of an offline VM.
+        host_status, host_log = machine.execute(
+            f"runuser -u nobody -- env TMPDIR=/tmp bash {PROBE} {PROBE_TARGET} {PROBE_PORT}"
+        )
+        print("Isolation probe in the VM host's namespaces (must fail):", host_log)
+        assert host_status != 0 and "isolation-probe: ok" not in host_log, host_log
+        assert f"FAIL   allowed: exec 3<>/dev/tcp/{PROBE_TARGET}/{PROBE_PORT}" in host_log, host_log
+        assert "FAIL   interfaces: " in host_log, host_log
         prepared("factum-probe")
         machine.succeed(f"{I} start factum-probe --request {ISOLATION_PROBE_REQUEST} -- {RUNNER}")
         probe = status("factum-probe")
@@ -255,6 +252,9 @@ pkgs.testers.runNixOSTest {
         print("Factum in-guest isolation probe:", probe_log)
         assert probe["state"] == "succeeded", (probe, probe_log)
         assert "isolation-probe: ok" in probe_log and "FAIL" not in probe_log, probe_log
+        assert f"denied exec 3<>/dev/tcp/{PROBE_TARGET}/{PROBE_PORT}" in probe_log, probe_log
+        assert "ok     only loopback" in probe_log, probe_log
+        machine.succeed("systemctl stop isolation-probe-listener && ip link del probe0")
         machine.succeed(f"{I} destroy factum-probe --discard")
         machine.succeed(f"test ! -e {V}/factum-probe -a ! -e /run/agent-runtime/factum-probe")
 

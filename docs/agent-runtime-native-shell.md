@@ -72,16 +72,26 @@ a QEMU VM. Its subtests:
   existing nspawn instance with egress denied and Cargo in offline mode. The temporary writable
   guest checkout gets Git metadata because the project's `enterShell` uses Git. The environment's
   referenced store paths, Cargo vendor tree, and task executable are pinned into the guest closure.
-  At the recorded pin, all 419 tests passed; `destroy --discard` then left no runtime mounts, unit,
-  state directory, machine registration, or loop device. The full `nixos:qa` gate is still pending.
+  It asserts the task passes and that `destroy --discard` leaves no runtime mounts, unit, state
+  directory, machine registration or loop device.
 - **Factum acceptance** (`tests/agent-runtime-factum-devenv.nix`, run by
   `scripts/test-agent-runtime-factum-devenv-projection.sh`) consumes a ready typed request for
   Factum's pinned revision inside the existing nspawn lifecycle. It asserts:
   - **The request:** its captured Rust version matches guest `rustc`, and the exact
     `cargo test --locked` check passes.
-  - **In-guest isolation, probed from inside the guest:** only loopback, empty capability sets,
-    `no_new_privs`, no credential mount, no Nix daemon socket and no SSH agent. The store and
-    the bound request are read-only, and an outbound TCP connect is refused.
+  - **In-guest isolation, probed from inside the guest** (`scripts/agent-runtime-isolation-probe.sh`):
+    - **What it checks:** only loopback in the probe's own netns, empty capability sets,
+      `no_new_privs`, no credential mount, no Nix daemon socket and no SSH agent. The store
+      and the bound request are read-only.
+    - **The network check:** the VM host runs a listener on its own address, and a connect to
+      it is refused from inside the instance.
+    - **The negative case:** the same probe run in the VM host's own namespaces must fail on
+      that connect and on the interfaces. Without it, an offline VM would make the network
+      check pass vacuously.
+    - **Discrimination:** `scripts/test-agent-runtime-isolation-probe.sh` (task
+      `nixos:isolation-probe-test`) checks the probe passes under a local emulation of the
+      policy and fails when any one property is broken: a shared netns, kept capabilities, a
+      visible daemon socket, or an SSH agent.
   - **Resources:** sampled every 2 s from the instance cgroup, anonymous memory stays at or
     below half of the unchanged memory cap, with no OOM event or kill. The reported
     `memoryPeakBytes` includes reclaimable page cache: a suite whose files outgrow the cap

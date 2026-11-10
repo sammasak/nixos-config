@@ -104,13 +104,19 @@ let
     bash scripts/test-agent-runtime-heavy-lock.sh
   '';
 
+  # nixos-config#198: the Factum in-guest isolation probe passes under the emulated policy and
+  # fails on each broken property (needs unprivileged user namespaces)
+  isolationProbeTest = gate "isolation-probe-test" (with pkgs; [ bash util-linux netcat-openbsd coreutils gnugrep ]) ''
+    bash scripts/test-agent-runtime-isolation-probe.sh
+  '';
+
   agentRuntimeTest = gate "nixos-agent-runtime-test" (with pkgs; [ bash nix jq git coreutils gnugrep ]) ''
     bash scripts/test-agent-runtime.sh
   '';
 
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
     lintComments lintShell secretsVerify nvimCheck flakeCheck nativeShellLockNodeTest verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest agentRuntimeTest heavyLockTest
+    coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest agentRuntimeTest heavyLockTest isolationProbeTest
     rfLabBoundaryTest rfBeaconsTest
   ]);
 
@@ -364,6 +370,7 @@ in
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:agent-runtime-test" = task "agent-runtime module: external consumer fixture, manifests, negative cases" agentRuntimeTest;
     "nixos:heavy-lock-test" = task "Heavy scripts take the heavy-work lock once: bare, nested, contended" heavyLockTest;
+    "nixos:isolation-probe-test" = task "Factum isolation probe passes under the emulated policy, fails on each broken property" isolationProbeTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:worker-permissions-test" = task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
