@@ -55,6 +55,9 @@ let
     # loop-backed workspace volume during the full Factum suite. Its charged
     # page cache alone exceeded the 8 GiB runtime budget in the acceptance VM.
     export CARGO_PROFILE_TEST_DEBUG=0
+    # Incremental artifacts roughly double target/ for a one-shot suite, and every written page
+    # is charged to the instance cgroup: with them the run sat at its 8 GiB cap (#198).
+    export CARGO_INCREMENTAL=0
     mkdir -p "$CARGO_HOME"
     cat >"$CARGO_HOME/config.toml" <<'CARGO_CONFIG'
     [source.crates-io]
@@ -73,6 +76,7 @@ let
       | .variables.CARGO_NET_OFFLINE = { type: "exported", value: "true" }
       | .variables.CARGO_BUILD_JOBS = { type: "exported", value: "1" }
       | .variables.CARGO_PROFILE_TEST_DEBUG = { type: "exported", value: "0" }
+      | .variables.CARGO_INCREMENTAL = { type: "exported", value: "0" }
       | .variables.shellHook.value += ("\n" + $hook)
     ' ${envJson} > "$out"
   '';
@@ -93,6 +97,22 @@ let
       selection = "explicit";
     };
   };
+  # The probe script is shared with scripts/test-agent-runtime-isolation-probe.sh, which checks it
+  # discriminates. It is a store file because a request's argv may hold no control characters.
+  # Its network check connects to a listener on the VM host's own address: reachable from any
+  # shared netns, never from the instance's private one.
+  isolationProbe = ../scripts/agent-runtime-isolation-probe.sh;
+  probeTarget = "10.213.0.1";
+  probePort = "47011";
+  isolationProbeRequest = request // {
+    check = request.check // {
+      argv = [ "bash" "${isolationProbe}" probeTarget probePort ];
+      evidence = [ ];
+      index = null;
+      selection = "explicit";
+    };
+  };
+  isolationProbeRequestJson = pkgs.writeText "factum-isolation-probe-request.json" (builtins.toJSON isolationProbeRequest);
   brokenSourceRequestJson = pkgs.writeText "factum-broken-source-request.json" (builtins.toJSON brokenSourceRequest);
   fixtureNar = lib.fileContents (pkgs.runCommand "factum-devenv-narhash" { nativeBuildInputs = [ pkgs.nix ]; } ''
     nix --extra-experimental-features nix-command hash path ${project} > "$out"
@@ -165,8 +185,8 @@ pkgs.testers.runNixOSTest {
     virtualisation.diskSize = 98304;
     networking.firewall.enable = false;
     networking.dhcpcd.denyInterfaces = [ "ve-*" ];
-    virtualisation.additionalPaths = [ projectedEnv requestPath failureRequestJson brokenSourceRequestJson profileBootstrap project manifest skills vendor ];
-    environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git runtime.tools.verify ];
+    virtualisation.additionalPaths = [ projectedEnv requestPath failureRequestJson brokenSourceRequestJson isolationProbeRequestJson isolationProbe profileBootstrap project manifest skills vendor ];
+    environment.systemPackages = with pkgs; [ util-linux coreutils jq procps git netcat-openbsd runtime.tools.verify ];
   };
   testScript = ''
     import json
@@ -181,6 +201,10 @@ pkgs.testers.runNixOSTest {
     CAPTURED_RUST_VERSION = ${builtins.toJSON capturedRustVersion}
     FAILURE_REQUEST = "${failureRequestJson}"
     BROKEN_SOURCE_REQUEST = "${brokenSourceRequestJson}"
+    ISOLATION_PROBE_REQUEST = "${isolationProbeRequestJson}"
+    PROBE = "${isolationProbe}"
+    PROBE_TARGET = "${probeTarget}"
+    PROBE_PORT = "${probePort}"
     BROKEN_ONLY = ${if brokenOnly then "True" else "False"}
     V = "/var/lib/agent-runtime"
 
@@ -195,7 +219,47 @@ pkgs.testers.runNixOSTest {
         print(f"{i} export: {e['dir']}")
         return e["dir"]
 
+    def prepared(i):
+        machine.succeed(f"{I} create {i} --template {M} --host {POLICY} --task sammasak/factum#{REVISION}")
+        ws = f"{V}/{i}/vol/workspace/workspace/factum"
+        machine.succeed(f"printf '[safe]\\n\\tdirectory = /workspace/factum\\n' > {V}/{i}/vol/home/.gitconfig")
+        git = f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0={ws} git -C {ws}"
+        machine.succeed(f"{git} init -q && {git} add -A -f && {git} -c user.name=agent -c user.email=agent@example.invalid commit -q -m workspace")
+
+    def isolation_probe():
+        # Direct in-guest evidence for this template's policies (network none, no capabilities,
+        # no credentials, read-only store and request), not only their evaluated values.
+        machine.succeed(f"ip link add probe0 type dummy && ip addr add {PROBE_TARGET}/32 dev probe0 && ip link set probe0 up")
+        machine.succeed(f"systemd-run --unit=isolation-probe-listener nc -lk {PROBE_TARGET} {PROBE_PORT}")
+        machine.wait_until_succeeds(f"bash -c 'exec 3<>/dev/tcp/{PROBE_TARGET}/{PROBE_PORT}'", timeout=30)
+        # The negative case: the same probe in the VM host's own namespaces, as an unprivileged
+        # user, must fail, on the shared netns above all. This is what makes the in-guest pass
+        # evidence rather than an artefact of an offline VM.
+        host_status, host_log = machine.execute(
+            f"runuser -u nobody -- env TMPDIR=/tmp bash {PROBE} {PROBE_TARGET} {PROBE_PORT}"
+        )
+        print("Isolation probe in the VM host's namespaces (must fail):", host_log)
+        assert host_status != 0 and "isolation-probe: ok" not in host_log, host_log
+        assert f"FAIL   allowed: exec 3<>/dev/tcp/{PROBE_TARGET}/{PROBE_PORT}" in host_log, host_log
+        assert "FAIL   interfaces: " in host_log, host_log
+        prepared("factum-probe")
+        machine.succeed(f"{I} start factum-probe --request {ISOLATION_PROBE_REQUEST} -- {RUNNER}")
+        probe = status("factum-probe")
+        while probe["state"] in ("starting", "running"):
+            time.sleep(1)
+            probe = status("factum-probe")
+        probe_log = machine.succeed(f"cat {V}/factum-probe/vol/output/check.log")
+        print("Factum in-guest isolation probe:", probe_log)
+        assert probe["state"] == "succeeded", (probe, probe_log)
+        assert "isolation-probe: ok" in probe_log and "FAIL" not in probe_log, probe_log
+        assert f"denied exec 3<>/dev/tcp/{PROBE_TARGET}/{PROBE_PORT}" in probe_log, probe_log
+        assert "ok     only loopback" in probe_log, probe_log
+        machine.succeed("systemctl stop isolation-probe-listener && ip link del probe0")
+        machine.succeed(f"{I} destroy factum-probe --discard")
+        machine.succeed(f"test ! -e {V}/factum-probe -a ! -e /run/agent-runtime/factum-probe")
+
     machine.wait_for_unit("multi-user.target")
+    isolation_probe()
     if BROKEN_ONLY:
         machine.succeed(f"{I} create factum-broken --template {M} --host {POLICY} --task sammasak/factum#{REVISION}")
         broken_workspace = f"{V}/factum-broken/vol/workspace/workspace/factum"
@@ -257,6 +321,28 @@ pkgs.testers.runNixOSTest {
                 assert peak["used_bytes"] < budget["sizeMiB"] * 1024 * 1024, (name, peak, budget)
                 assert peak["used_inodes"] < budget["inodes"], (name, peak, budget)
 
+        memory_cap = json.loads(machine.succeed(f"cat {M}"))["policies"]["resources"]["memoryMiB"] * 1024 * 1024
+        memory: dict[str, int] = {"current_peak": 0, "anon_peak": 0, "file_at_anon_peak": 0}
+        memory_events: dict[str, int] = {}
+
+        def sample_memory():
+            # The unit cgroup's own counters: memory.peak alone cannot tell reclaimable page
+            # cache from the anonymous memory that an OOM kill would actually be about.
+            cg = machine.succeed("systemctl show -P ControlGroup agent-runtime-factum.service || true").strip()
+            if not cg:
+                return
+            out = machine.succeed(f"cat /sys/fs/cgroup{cg}/memory.current /sys/fs/cgroup{cg}/memory.stat /sys/fs/cgroup{cg}/memory.events 2>/dev/null || true").split("\n")
+            if not out or not out[0].strip().isdigit():
+                return
+            memory["current_peak"] = max(memory["current_peak"], int(out[0]))
+            stat = dict(line.split() for line in out[1:] if len(line.split()) == 2)
+            anon = int(stat.get("anon", 0))
+            if anon > memory["anon_peak"]:
+                memory["anon_peak"], memory["file_at_anon_peak"] = anon, int(stat.get("file", 0))
+            for key in ("low", "high", "max", "oom", "oom_kill"):
+                if key in stat:
+                    memory_events[key] = int(stat[key])
+
         sample_volumes()
         started = time.monotonic()
         machine.succeed(f"{I} start factum --request {REQUEST} -- {RUNNER}")
@@ -266,9 +352,12 @@ pkgs.testers.runNixOSTest {
         s = status("factum")
         while s["state"] in ("starting", "running"):
             sample_volumes()
+            sample_memory()
             if time.monotonic() - started > 2700:
                 raise AssertionError(f"Factum runtime exceeded 2700 seconds: {s}")
-            time.sleep(10)
+            for _ in range(5):
+                sample_memory()
+                time.sleep(2)
             s = status("factum")
         sample_volumes()
         assert_within_budgets()
@@ -281,7 +370,23 @@ pkgs.testers.runNixOSTest {
             for name, usage in peaks.items()
         }, sort_keys=True))
         print("Factum runtime terminal status:", json.dumps(s, sort_keys=True))
+        memory_peak = s["result"]["memoryPeakBytes"]
+        print("Factum memory:", json.dumps({
+            **memory,
+            "events": memory_events,
+            "memory_peak_bytes": memory_peak,
+            "cap_bytes": memory_cap,
+            "margin_bytes": memory_cap - memory_peak,
+            "anon_margin_bytes": memory_cap - memory["anon_peak"],
+        }, sort_keys=True))
         assert s["state"] == "succeeded", s
+        # #198: memoryPeakBytes counts reclaimable page cache, so a suite that writes and reads
+        # more files than the cap reaches it under ordinary reclaim. The headroom that decides an
+        # OOM kill is anonymous memory: require half the cap free of it, and no OOM event.
+        assert s["result"]["oomKills"] == 0, s
+        assert memory_events.get("oom", 0) == 0 and memory_events.get("oom_kill", 0) == 0, memory_events
+        assert memory["anon_peak"] > 0, ("anonymous memory was never sampled", memory)
+        assert memory["anon_peak"] <= memory_cap // 2, ("anonymous memory above half the cap", memory, memory_cap)
         output = f"{V}/factum/vol/output"
         result = json.loads(machine.succeed(f"cat {output}/result.json"))
         assert result["check_exit"] == 0, result

@@ -7,7 +7,7 @@ set -euo pipefail
 system_bin=/run/current-system/sw/bin
 trusted_path="$system_bin"
 devenv_bin="$system_bin/devenv"
-for tool in devenv nix nix-store jq git; do
+for tool in devenv nix nix-store jq git flock; do
   if [[ ! -x "$system_bin/$tool" ]]; then
     echo "required system tool is unavailable: $system_bin/$tool" >&2
     exit 1
@@ -17,6 +17,12 @@ export PATH="$trusted_path"
 
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
+# One heavy-lock acquisition covers host preparation and the VM build (nixos-config#198). Run
+# this script bare, or under a caller's `flock` on the same file: an inherited holder is reused.
+# shellcheck disable=SC1091  # sourced helper; nixos:lint-shell checks scripts/lib/*.sh itself
+source "$repo_root/scripts/lib/heavy-lock.sh"
+heavy_lock_hold "${AGENT_RUNTIME_HEAVY_LOCK:-/tmp/acer-swift-heavy-work.lock}" \
+  "${AGENT_RUNTIME_HEAVY_LOCK_WAIT:-900}" "$system_bin/bash" "$repo_root/scripts/test-agent-runtime-factum-devenv-projection.sh" "$@"
 expected_rev=0caf25dbb2ae9bc37bcc208b20a7b9ba0b551780
 request=${AGENT_RUNTIME_FACTUM_REQUEST_JSON:?set AGENT_RUNTIME_FACTUM_REQUEST_JSON to a ready Factum execution-request JSON}
 work=$(mktemp -d /tmp/agent-runtime-factum.XXXXXX)
@@ -131,8 +137,7 @@ echo "Devenv profile: $profile"
 echo "execution request: ready, cargo test --locked, captured Rust version and devenv.lock provenance verified"
 echo "committed devenv.lock unchanged; host enterShell absent"
 
-flock -w 900 /tmp/acer-swift-heavy-work.lock \
-  env AGENT_RUNTIME_FACTUM_DEVENV_ENV_JSON="$env_json" \
+env AGENT_RUNTIME_FACTUM_DEVENV_ENV_JSON="$env_json" \
       AGENT_RUNTIME_FACTUM_DEVENV_PROFILE="$profile" \
       AGENT_RUNTIME_FACTUM_REQUEST_JSON="$request_json" \
   nix build --impure --no-link --print-build-logs \

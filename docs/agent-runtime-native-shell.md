@@ -72,22 +72,41 @@ a QEMU VM. Its subtests:
   existing nspawn instance with egress denied and Cargo in offline mode. The temporary writable
   guest checkout gets Git metadata because the project's `enterShell` uses Git. The environment's
   referenced store paths, Cargo vendor tree, and task executable are pinned into the guest closure.
-  At the recorded pin, all 419 tests passed; `destroy --discard` then left no runtime mounts, unit,
-  state directory, machine registration, or loop device. The full `nixos:qa` gate is still pending.
-- **Factum acceptance** is covered by the open nixos-config#194 follow-up. At parent commit
-  `aab678194700b4b073860b5ad461bcab914b4b03`, the targeted NixOS guest run consumed a fresh typed
-  request for Factum PR #38, matched its captured Rust `1.99.0` against guest `rustc`, and passed
-  the exact `cargo test --locked` check in 1,586.28 seconds. Cancellation, deliberate missing-target
-  failure, verified success/cancellation/failure bundles, no-replay retry, artifact persistence,
-  and teardown assertions also passed. The test-only `CARGO_PROFILE_TEST_DEBUG=0` setting keeps
-  this full suite within the unchanged 8 GiB runtime cap. At follow-up head
-  `f1b2ee9f4b984ab343f860c879d1308d34f0a016`, the isolated broken-source case passed in 23.88
-  seconds: it edits `crates/facts-domain/src/lib.rs` inside nspawn, confirms `cargo` still runs,
-  observes `cargo fmt --all --check` fail on the edited source, and verifies an exported failure
-  bundle contains the patch. Run that focused case with
-  `AGENT_RUNTIME_FACTUM_BROKEN_ONLY=1 AGENT_RUNTIME_FACTUM_REQUEST_JSON=/path/to/request.json bash scripts/test-agent-runtime-factum-devenv-projection.sh`;
-  omit `BROKEN_ONLY` to run the full acceptance suite. The full `nixos:qa` gate and formal PR review
-  remain pending.
+  It asserts the task passes and that `destroy --discard` leaves no runtime mounts, unit, state
+  directory, machine registration or loop device.
+- **Factum acceptance** (`tests/agent-runtime-factum-devenv.nix`, run by
+  `scripts/test-agent-runtime-factum-devenv-projection.sh`) consumes a ready typed request for
+  Factum's pinned revision inside the existing nspawn lifecycle. It asserts:
+  - **The request:** its captured Rust version matches guest `rustc`, and the exact
+    `cargo test --locked` check passes.
+  - **In-guest isolation, probed from inside the guest** (`scripts/agent-runtime-isolation-probe.sh`):
+    - **What it checks:** only loopback in the probe's own netns, empty capability sets,
+      `no_new_privs`, no credential mount, no Nix daemon socket and no SSH agent. The store
+      and the bound request are read-only.
+    - **The network check:** the VM host runs a listener on its own address, and a connect to
+      it is refused from inside the instance.
+    - **The negative case:** the same probe run in the VM host's own namespaces must fail on
+      that connect and on the interfaces. Without it, an offline VM would make the network
+      check pass vacuously.
+    - **Discrimination:** `scripts/test-agent-runtime-isolation-probe.sh` (task
+      `nixos:isolation-probe-test`) checks the probe passes under a local emulation of the
+      policy and fails when any one property is broken: a shared netns, kept capabilities, a
+      visible daemon socket, or an SSH agent.
+  - **Resources:** sampled every 2 s from the instance cgroup, anonymous memory stays at or
+    below half of the unchanged memory cap, with no OOM event or kill. The reported
+    `memoryPeakBytes` includes reclaimable page cache: a suite whose files outgrow the cap
+    reaches it under ordinary reclaim, so it is printed, not asserted. The test-only
+    `CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_INCREMENTAL=0` cut what Cargo writes, and every page
+    written is charged to that cgroup. Every volume stays within its byte and inode budget.
+  - **Failure handling and lifecycle:** cancellation of a running check, a deliberate
+    missing-target failure, a broken-source edit whose patch is exported, verified bundles for
+    each outcome, no-replay retries and complete teardown.
+
+  The script takes the host's heavy-work lock once, around host preparation and the VM build. It
+  may also run under a caller's `flock` on the same file, and reuses that lock. Set
+  `AGENT_RUNTIME_FACTUM_BROKEN_ONLY=1` to run only the probe and the broken-source case.
+  Per-run measurements (wall time, memory and volume peaks) belong in the PR that produced them,
+  not here.
 - **Typed `devenv-platform/execution-request` consumption** is covered by the focused follow-up
   on `feat/96-runtime-request-consumer`: a ready request must match the pinned repository, commit,
   project root, target system and environment kind, then verifies that the request's lockfile blob
