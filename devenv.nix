@@ -8,7 +8,7 @@ let
   '';
 
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
-    shellcheck scripts/*.sh tests/test-native-shell-lock-node.sh
+    shellcheck scripts/*.sh scripts/lib/*.sh tests/test-native-shell-lock-node.sh
   '';
 
   # Skips (exit 0) on hosts without the age key; only lenovo enforces it.
@@ -99,13 +99,18 @@ let
     ${pkgs.python3}/bin/python scripts/test-native-otel-rollback.py
   '';
 
+  # nixos-config#198: heavy scripts take the host's heavy-work lock once (bare, nested, contended)
+  heavyLockTest = gate "heavy-lock-test" (with pkgs; [ bash util-linux coreutils gnugrep ]) ''
+    bash scripts/test-agent-runtime-heavy-lock.sh
+  '';
+
   agentRuntimeTest = gate "nixos-agent-runtime-test" (with pkgs; [ bash nix jq git coreutils gnugrep ]) ''
     bash scripts/test-agent-runtime.sh
   '';
 
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
     lintComments lintShell secretsVerify nvimCheck flakeCheck nativeShellLockNodeTest verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest agentRuntimeTest
+    coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest agentRuntimeTest heavyLockTest
     rfLabBoundaryTest rfBeaconsTest
   ]);
 
@@ -358,6 +363,7 @@ in
     "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:agent-runtime-test" = task "agent-runtime module: external consumer fixture, manifests, negative cases" agentRuntimeTest;
+    "nixos:heavy-lock-test" = task "Heavy scripts take the heavy-work lock once: bare, nested, contended" heavyLockTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:worker-permissions-test" = task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
