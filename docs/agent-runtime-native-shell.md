@@ -82,10 +82,12 @@ a QEMU VM. Its subtests:
   - **In-guest isolation, probed from inside the guest:** only loopback, empty capability sets,
     `no_new_privs`, no credential mount, no Nix daemon socket and no SSH agent. The store and
     the bound request are read-only, and an outbound TCP connect is refused.
-  - **Resources:** the run leaves at least 10% of its unchanged memory cap unused, with no OOM
-    kill. The test-only `CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_INCREMENTAL=0` keep Cargo's
-    written artifacts, which are charged to the instance cgroup, under that cap. Every volume
-    stays within its byte and inode budget.
+  - **Resources:** sampled every 2 s from the instance cgroup, anonymous memory stays at or
+    below half of the unchanged memory cap, with no OOM event or kill. The reported
+    `memoryPeakBytes` includes reclaimable page cache: a suite whose files outgrow the cap
+    reaches it under ordinary reclaim, so it is printed, not asserted. The test-only
+    `CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_INCREMENTAL=0` cut what Cargo writes, and every page
+    written is charged to that cgroup. Every volume stays within its byte and inode budget.
   - **Failure handling and lifecycle:** cancellation of a running check, a deliberate
     missing-target failure, a broken-source edit whose patch is exported, verified bundles for
     each outcome, no-replay retries and complete teardown.
