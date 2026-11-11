@@ -52,8 +52,24 @@ Append; move a line to fixed when its change lands.
 - 2026-11-11 `dp93`: a store-cold run cannot be measured from an environment (shared store, no purge); `du` on
   `/nix/store` is unusable there, `nix path-info --all -s` works. Briefs should say "cold = first shell in this home".
 
+- 2026-11-11 `f44`: reviewer grades on one axis moved 8, 8, 7 across rounds on near-identical trees, so a "9 on
+  every axis" bar can be missed by noise alone. One review round plus one fix round is the limit a brief should set.
+- 2026-11-11 `f44`: artifacts named in an issue as a path on another host (a bundle under lenovo `~/exports`) are
+  unreachable from an environment. Hand-overs between hosts go through a pushed branch.
+- 2026-11-11 `dp120`: repos without a CLAUDE.md cost the agent a long README read; `devenv shell` warns
+  "devenv 2.4.0 newer than lock input 2.2.2" on every run in devenv-platform.
+
+- 2026-11-11 `dp121`: the guest's own `nix.conf` shows max-jobs 8, cores 0; the daemon's real 2 x 2 limit is not
+  visible from inside, and builds run by the daemon have no per-environment CPU or memory accounting. Benchmarks
+  taken in an environment must say so; identical rebuilds varied 3:54 to 7:20 beside another environment's gate.
+- 2026-11-11 `dp121`, `nc200`, `dp93`: "cold" cannot be produced in an environment (shared store). Benchmark issues
+  that need cold runs need msi with nothing else running, or the owner's go for a throwaway store.
+
 ## Fixed
 
+- 2026-11-11 `dp121` on acer (devenv-platform #121, G0 and G1): baseline measured and the RFC comment posted in 33 minutes beside herman's gate in `f44`; pool at its 7G cap, 370M swap, no OOM kill. Stopped at owner gate D1. Retired the same sitting. Every approved issue is now at an owner gate, so the pools are empty by design, not idle.
+- 2026-11-11 `f44` on acer (factum #44 slice 3): PR #49 pushed through factum's own gate at review grade 8 and left for the owner (project bar 9). Before retiring it served as the push vehicle: two nixos-config gates (22 and 21 min) and the herman #2 branch. Retired after pushing its own retirement.
+- 2026-11-11 `dp120` on acer (devenv-platform #120, G1 parity evidence): issue to merged docs PR #123 in 14 minutes while a second environment ran the nixos-config gate; pool at 2.1G of 7G. D1 stays with the owner. Retired the same sitting.
 - 2026-11-11 `dp93` on lenovo (devenv-platform #93, research): first `devenv shell` of llm-gateway in a fresh home 33.9 s and +0.26 MiB of host store (closure already there), warm 5 s, zero new paths. That is the shared store doing its job. Guests now have `bc` and an empty `~/ENV-FEEDBACK.md`. Retired the same sitting.
 - 2026-11-11 `h2` on lenovo (herman #2, docs and issue template): declared to reviewed commits in about 2 minutes on a warm host, no gate run on lenovo. Retired the same sitting; the branch went out through an acer environment.
 - 2026-11-11 `nc201` on lenovo (nixos-config #201, G0 inventory, research only): issue to reviewed commit in a 4G pool beside k3s with no gate run on lenovo; the coordinator fetched the branch over ssh and pushed it through an acer environment's gate. Retired the same sitting.
