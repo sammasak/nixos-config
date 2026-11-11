@@ -42,8 +42,13 @@ Append; move a line to fixed when its change lands.
 - 2026-11-11 `nc201`: the issue's baseline code and links were stale against main. Briefs now say to check an
   issue's references against HEAD first.
 
+- 2026-11-11 `h2`: an acceptance criterion like "the template renders in `gh issue create`" cannot be checked before
+  merge (gh reads the remote default branch and wants a TTY). Not an environment gap; issues should word such
+  criteria as post-merge checks.
+
 ## Fixed
 
+- 2026-11-11 `h2` on lenovo (herman #2, docs and issue template): declared to reviewed commits in about 2 minutes on a warm host, no gate run on lenovo. Retired the same sitting; the branch went out through an acer environment.
 - 2026-11-11 `nc201` on lenovo (nixos-config #201, G0 inventory, research only): issue to reviewed commit in a 4G pool beside k3s with no gate run on lenovo; the coordinator fetched the branch over ssh and pushed it through an acer environment's gate. Retired the same sitting.
 - 2026-11-11 The full nixos-config pre-push gate ran inside an environment (`nc200` on acer, nixos-config #219): green in 38 m 16 s beside a second environment's Rust gate (11 min on msi alone), peak 5.5G at the 6G cap with the 3G swap allowance full, throttled, no OOM. Pushes no longer need msi awake. `nc200` retired after pushing its own retirement.
 - 2026-11-11 Results: llm-gateway#88 follow-up (PR #92) merged from `gw88` on lenovo in 14 min. Its `rust:ci` (427 tests) ran inside the 4G pool: peak 3.7G, throttled at MemoryHigh, 340M to swap, no OOM, host never below 9G available. `gw88` retired; lenovo keeps the pool settings so the next one is one line.
