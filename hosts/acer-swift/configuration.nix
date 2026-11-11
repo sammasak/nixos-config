@@ -14,16 +14,12 @@ in
   # k3s pods take ~4.6G here: a 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
   sam.workers = {
     instances = {
-      nc200 = {
-        model = "sonnet";
-        prompt = "You are in a fresh nspawn developer environment named nc200 on host acer-swift. Task: nixos-config issue #200 (approved). Clone git@github.com:sammasak/nixos-config.git into ~/nixos-config, read its entry doc (CLAUDE.md if present, else README or CONTRIBUTING), and run gh issue view 200. This environment shares the host Nix store read-only through the host daemon, so measure from here what the issue asks to baseline; do not run nix flake check or VM tests, and do not deploy anything. Check for an existing branch or open PR for the issue first; if one exists take it to mergeable instead of starting over. Follow the issue's own scope and gates exactly; where it says a decision is the owner's, stop there and report. Run gates and heavy commands one at a time. Before pushing, spawn ONE independent subagent to review your diff, fix what is real, push, open the PR with gh, and finish with a five line summary. Append any friction with this environment to ~/ENV-FEEDBACK.md. Stop and ask if a decision is not yours.";
-      };
       f44 = {
         model = "sonnet";
         prompt = "You are in a fresh nspawn developer environment named f44 on host acer-swift. Task: factum issue #44 (approved). Clone git@github.com:sammasak/factum.git into ~/factum, read its entry doc (CLAUDE.md if present, else README or CONTRIBUTING), and run gh issue view 44. Check for an existing branch or open PR for the issue first; if one exists take it to mergeable instead of starting over. Follow the issue's own scope and gates exactly; where it says a decision is the owner's, stop there and report. Run gates and heavy commands one at a time. Before pushing, spawn ONE independent subagent to review your diff, fix what is real, push, open the PR with gh, and finish with a five line summary. Append any friction with this environment to ~/ENV-FEEDBACK.md. Stop and ask if a decision is not yours.";
       };
     };
-    retired = [ "demo" "dp93" ];
+    retired = [ "demo" "dp93" "nc200" ];
     labelPrefix = "acer";
     pool = { memory = "7G"; cores = 8; };
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
