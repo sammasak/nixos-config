@@ -83,13 +83,13 @@ TYPED = [
     ("retired name", '{ services.devEnvironments.retired = [ "Bad" ]; }', "retired.\"[definition 1-entry 1]\"' is not of type"),
 ]
 
-# the fleet adapter (modules/workers/default.nix) on msi, which declares an instance: lazy, so still cheap
+# the fleet adapter (modules/workers/default.nix) on msi with an instance of the test's own (the host may declare none): lazy, so still cheap
 FLEET = r"""
 let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: %(case)s) ]; }).config;
 in map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions)
 """
 FLEET_CASES = [
-    ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; }", "claude instance logs in with the host's sops secret"),
+    ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance logs in with the host's sops secret"),
 ]
 
 # the unit whose change restarts an instance: no nixpkgs bump, resize or prompt edit may change it, a model change must
