@@ -32,6 +32,7 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-11 Results: llm-gateway#88 follow-up (PR #92) merged from `gw88` on lenovo in 14 min. Its `rust:ci` (427 tests) ran inside the 4G pool: peak 3.7G, throttled at MemoryHigh, 340M to swap, no OOM, host never below 9G available. `gw88` retired; lenovo keeps the pool settings so the next one is one line.
 - 2026-11-11 Parallel work on acer failed with "Could not resolve host: github.com" (the nixos-config gate's nvim plugin clones, run from `nc200`): AdGuard Home on lenovo rate-limits each client to 20 queries/s by default. 40 parallel lookups: 20 failed on the acer host, 18 in the guest; with `ratelimit = 0` both 0. Not an environment defect, but environments make it likely by running more at once.
 - 2026-11-11 Results: nixos-config#200 G1 baseline (PR #218) merged from `nc200` in 5 m 42 s from declaration to PR. `gw88` declared on lenovo (4G pool) for llm-gateway#88: first environment on the control plane.
 - 2026-11-11 Results: devenv-platform#93 evidence (PR #122) merged from `dp93`: started from its declared prompt with no hand-off, cold `devenv tasks list` 83 s on a repo new to the host, `platform:verify` 21 checks green in 20 m 32 s run alone. `dp93` retired.
