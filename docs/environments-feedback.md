@@ -67,6 +67,8 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-11 A fresh home re-downloaded and re-unpacked every flake input although the store held the result: Nix's fetcher cache is per user home. Measured on acer with llm-gateway, warm store: 31 s with an empty `~/.cache/nix`, 6.8 s with a warm one. `~/.cache/nix` is now one host directory bound into every environment; a brand-new environment's first `devenv shell` took 5.9 s. Cost: environments share that cache (same trust domain as the shared daemon).
+- 2026-11-11 Gate timing on acer from inside an environment: 9 m 53 s alone, 21 to 38 min beside another environment's gate.
 - 2026-11-11 `dp121` on acer (devenv-platform #121, G0 and G1): baseline measured and the RFC comment posted in 33 minutes beside herman's gate in `f44`; pool at its 7G cap, 370M swap, no OOM kill. Stopped at owner gate D1. Retired the same sitting. Every approved issue is now at an owner gate, so the pools are empty by design, not idle.
 - 2026-11-11 `f44` on acer (factum #44 slice 3): PR #49 pushed through factum's own gate at review grade 8 and left for the owner (project bar 9). Before retiring it served as the push vehicle: two nixos-config gates (22 and 21 min) and the herman #2 branch. Retired after pushing its own retirement.
 - 2026-11-11 `dp120` on acer (devenv-platform #120, G1 parity evidence): issue to merged docs PR #123 in 14 minutes while a second environment ran the nixos-config gate; pool at 2.1G of 7G. D1 stays with the owner. Retired the same sitting.

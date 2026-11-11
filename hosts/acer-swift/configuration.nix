@@ -15,7 +15,7 @@ in
   sam.workers = {
     # reboot test: must be back with its agent in Herdr after a host cold boot (docs/nspawn-workers.md)
     instances.boot = { model = "sonnet"; };
-    retired = [ "demo" "dp93" "nc200" "dp120" "f44" "dp121" ];
+    retired = [ "demo" "dp93" "nc200" "dp120" "f44" "dp121" "boot2" ];
     labelPrefix = "acer";
     pool = { memory = "7G"; cores = 8; };
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";

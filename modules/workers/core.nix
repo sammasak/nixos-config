@@ -87,6 +87,9 @@ let
 
   binds = w: {
     "${home}" = { hostPath = "${cfg.stateDir}/${w.name}/home"; isReadOnly = false; };
+    # Nix's per-user fetcher and tarball caches, one per host: a fresh home re-downloads and re-unpacks every flake
+    # input the store already holds (31 s against 7 s for the first devenv shell on acer).
+    "${home}/.cache/nix" = { hostPath = "${cfg.stateDir}/.nix-cache"; isReadOnly = false; };
     "${creds}/ssh_host_ed25519_key" = { hostPath = "${cfg.stateDir}/ssh_host_ed25519_key"; isReadOnly = true; };
     "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
   } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; }) cfg.credentials;
@@ -248,12 +251,14 @@ in
             rm -rf --one-file-system "$d/$n" "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
           done
           install -d -m 0711 "$d"
+          install -d -m 0700 -o ${user} -g ${group} "$d/.nix-cache"
           [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
           echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
           chmod 0644 "$d/known_hosts"
           ${lib.concatMapStrings (w: ''
             install -d -m 0700 "$d/${w.name}"
             [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/home"
+            install -d -m 0755 -o ${user} -g ${group} "$d/${w.name}/home/.cache"
           '') instances}
         '';
       };
