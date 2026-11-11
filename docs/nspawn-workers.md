@@ -69,11 +69,11 @@ host's swap.
 
 | Step | How | Measured (msi) |
 |------|-----|----------------|
-| Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 6.8 s |
+| Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
 | First use of a repo | clone, `devenv shell` | 25 s (skills), 32 s (herman): evaluation only, every store path comes from the host's store; 0.1 to 0.3 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
 | Host reboot or redeploy | nothing | container autostarts, agent resumes its conversation |
-| Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (resize needs a runtime check) |
+| Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
 | Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later | 23 s; home, profile and GC roots deleted |
@@ -153,7 +153,7 @@ Manager activates on it at every boot (collisions are kept as `*.backup`).
 |-------|--------|
 | Deploy that changes nothing of it | nothing restarts |
 | Fleet-wide guest change (a module, Home Manager, nixpkgs) | `reloadIfChanged`: the stock `ExecReload` switches the running guest live; the agent keeps running |
-| Change of `memory` or `cpu` | the container unit's cgroup properties change at the daemon-reload, live (needs a runtime check) |
+| Change of `memory` or `cpu` | the container unit's cgroup properties change at the daemon-reload, live |
 | Change of `prompt` | nothing restarts; the prompt is only sent on a fresh start |
 | Change of `agent`, `model`, credentials or bind mounts | `worker-<name>` restarts and, through `PartOf`, the container: a restart |
 | Restart or host reboot | home kept; the workspace comes back and runs `claude --continue` when a transcript of `$HOME` exists, else a fresh `claude` with the prompt |
