@@ -13,13 +13,8 @@ in
   sam.profile = vars;
   # k3s pods take ~4.6G here: a 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
   sam.workers = {
-    instances = {
-      dp93 = {
-        model = "sonnet";
-        prompt = "You are in a fresh nspawn developer environment named dp93 on host acer-swift. Task: devenv-platform issue #93 (approved). Clone git@github.com:sammasak/devenv-platform.git into ~/devenv-platform, read its CLAUDE.md, run gh issue view 93 and also read issue 120 for context. Check for an existing branch or open PR for #93 first; if one exists take it to mergeable instead of starting over. Then do what #93 asks: validate native Nix and devenv execution inside this environment with real evidence (commands, timings, what fails), and deliver it the way the issue asks. Run gates and heavy commands one at a time. Before pushing, spawn ONE independent subagent to review your diff, fix what is real, push, open the PR with gh, and finish with a five line summary. Append any friction with this environment to ~/ENV-FEEDBACK.md. Stop and ask if a decision is not yours.";
-      };
-    };
-    retired = [ "demo" ];
+    instances = { };
+    retired = [ "demo" "dp93" ];
     labelPrefix = "acer";
     pool = { memory = "7G"; cores = 8; };
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
