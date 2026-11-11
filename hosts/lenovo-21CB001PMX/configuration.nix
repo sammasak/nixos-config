@@ -27,6 +27,8 @@ in
     { label = "acer-swift"; target = "acer-swift"; }
     { label = "msi-ms7758"; target = "msi-ms7758"; }
   ];
+  # `ssh <name>.msi` / `ssh <name>.acer` into an environment declared on that host (sam.workers.labelPrefix there).
+  sam.workers.jumpHosts = { acer = "acer-swift"; msi = "msi-ms7758"; };
   sam.herdr.coordinatorWakeup = {
     enable = true;
     # Delegated approval (the comment every delegated gh:label act cites) and the interactive

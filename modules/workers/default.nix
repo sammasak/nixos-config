@@ -1,6 +1,6 @@
-# Declared nspawn worker environments (docs/nspawn-workers.md): each `sam.workers.instances.<name>` is a stock
-# `containers.<name>` that a deploy starts and a deploy without it removes, running claude or codex from the
-# host's /nix/store and nix daemon as a workspace in the host's own Herdr, ephemeral.
+# Declared developer environments (docs/nspawn-workers.md): each `sam.workers.instances.<name>` is a stock
+# `containers.<name>` with an ephemeral root and a persistent home, running claude or codex from the host's
+# /nix/store and nix daemon as a workspace in the host's own Herdr; a deploy without it deletes its home.
 { config, lib, pkgs, ... }:
 let
   inherit (lib) mkOption types;
@@ -9,6 +9,8 @@ let
   user = profile.username;
   home = "/home/${user}";
   creds = "/var/lib/host-credentials";
+  # Only this module writes here; a name under it that is no longer declared is deleted at activation.
+  stateDir = "/var/lib/workers";
   uid = if config.users.users.${user}.uid != null then config.users.users.${user}.uid else 1000;
 
   memSize = types.strMatching "[1-9][0-9]*[MG]";
@@ -25,17 +27,22 @@ let
     address = "10.233.${toString index}.2";
   }) cfg.instances;
 
-  remoteCommand = w: {
-    claude = "fish -il -c 'claude --dangerously-skip-permissions${lib.optionalString (w.model != null) " --model ${w.model}"}'";
+  remoteCommand = w: resume: {
+    claude = "fish -il -c 'claude --dangerously-skip-permissions${lib.optionalString resume " --continue"}${lib.optionalString (w.model != null) " --model ${w.model}"}'";
     codex = "fish -il -c 'codex --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust${lib.optionalString (w.model != null) " --model ${w.model}"}'";
   }.${w.agent};
+
+  # Claude Code keeps a session's transcript under the project dir of the cwd it started in, the home here.
+  transcripts = ".claude/projects/${lib.replaceStrings [ "/" ] [ "-" ] home}";
 
   # Herdr detects the agent from the pane's foreground argv[0]: the ssh process is named after it, and the
   # agent's status then comes from the screen and terminal title, which ssh passes through.
   session = w: pkgs.writeShellScript "worker-${w.name}-session" ''
+    cmd=${lib.optionalString (w.agent != "none") (lib.escapeShellArg (remoteCommand w false))}
+    if [[ ''${1-} == continue ]]; then cmd=${lib.optionalString (w.agent != "none") (lib.escapeShellArg (remoteCommand w true))}; fi
     exec ${lib.optionalString (w.agent != "none") "-a ${w.agent}"} ${pkgs.openssh}/bin/ssh -tt \
       -o HostKeyAlias=${config.networking.hostName} -o ConnectTimeout=10 -o ServerAliveInterval=30 -o LogLevel=ERROR \
-      ${user}@${w.address} ${lib.optionalString (w.agent != "none") (lib.escapeShellArg (remoteCommand w))}
+      ${user}@${w.address} ''${cmd:+"$cmd"}
   '';
 
   hook = w: pkgs.writeShellApplication {
@@ -55,9 +62,16 @@ let
           ${user}@${w.address} true 2>/dev/null && break
         sleep 1
       done
+      mode="fresh"
+      ${lib.optionalString (w.agent == "claude") ''
+        if [[ -n $(ssh -o BatchMode=yes -o HostKeyAlias=${config.networking.hostName} -o LogLevel=ERROR ${user}@${w.address} \
+          find ${transcripts} -maxdepth 1 -name "'*.jsonl'" -print -quit 2>/dev/null) ]]; then
+          mode="continue"
+        fi
+      ''}
       close
       pane=$(herdr workspace create --label "$label" --no-focus | jq -er '.result.root_pane.pane_id')
-      herdr pane run "$pane" ${session w} >/dev/null
+      herdr pane run "$pane" "${session w} $mode" >/dev/null
       ${lib.optionalString (w.agent != "none") ''
         # past this point a failure must not fail the unit, or its stop (closing the workspace) never runs
         for _ in $(seq 180); do
@@ -71,7 +85,9 @@ let
           :
           ${lib.optionalString (w.prompt != null) ''
             # an agent that only just drew its prompt box can drop the submitting Enter, leaving the text typed
-            if ! herdr agent prompt "$pane" ${lib.escapeShellArg w.prompt} --wait --until working --until "done" \
+            if [[ $mode == continue ]]; then
+              :
+            elif ! herdr agent prompt "$pane" ${lib.escapeShellArg w.prompt} --wait --until working --until "done" \
               --timeout 15000 >/dev/null 2>&1; then
               herdr agent send-keys "$pane" Enter >/dev/null || true
             fi
@@ -106,7 +122,7 @@ let
     services.openssh = {
       enable = true;
       startWhenNeeded = false;
-      # the host's own key, bound read-only: stable across ephemeral boots and already pinned on the coordinator
+      # the host's own key, bound read-only: stable across boots and already pinned on every fleet host
       hostKeys = [{ path = "${creds}/ssh_host_ed25519_key"; type = "ed25519"; }];
       # the host user's own key, so the host's Herdr pane can open the worker's agent
       authorizedKeysFiles = lib.optional (cfg.sshKey != null) "${creds}/id_ed25519.pub";
@@ -144,7 +160,7 @@ let
         description = "Agent the Herdr pane runs in the environment, without approval prompts; `none` is a shell.";
       };
       model = mkOption { type = types.nullOr (types.strMatching "[][A-Za-z0-9._:-]+"); default = null; description = "The agent's `--model`."; };
-      prompt = mkOption { type = types.nullOr types.str; default = null; description = "Sent to the agent once it is idle, at every start."; };
+      prompt = mkOption { type = types.nullOr types.str; default = null; description = "Sent to the agent once idle, on a start with no earlier Claude session to continue."; };
       memoryMax = mkOption { type = memSize; default = cfg.memoryMax; description = "MemoryMax (its nix builds run in the host daemon, outside it)."; };
       cpuQuota = mkOption { type = types.str; default = cfg.cpuQuota; description = "CPUQuota."; };
     };
@@ -156,12 +172,12 @@ in
       type = types.attrsOf (types.submodule instanceModule);
       default = { };
       example = { fix-ci = { agent = "claude"; model = "sonnet"; prompt = "Fix the failing test and push a branch."; }; };
-      description = "The declared environments: each is running while declared and gone, with all it wrote, once not.";
+      description = "The declared environments: each runs, with a home that persists, while declared, and is deleted once not.";
     };
     labelPrefix = mkOption {
       type = types.strMatching "[a-z][a-z0-9-]*";
       default = profile.hostname;
-      description = "Hostname and SSH-alias prefix: instance x is `<prefix>-x`.";
+      description = "Instance x is hostname `<prefix>-x` inside and `ssh x.<prefix>` from lenovo (jumpHosts).";
     };
     memoryMax = mkOption { type = memSize; default = "4G"; description = "Default MemoryMax of one instance."; };
     cpuQuota = mkOption { type = types.str; default = "300%"; description = "Default CPUQuota of one instance."; };
@@ -186,22 +202,37 @@ in
       internal = true;
       description = "Home Manager wiring the fleet's hosts get (flake-modules/40-outputs-nixos.nix), reused in every worker.";
     };
-    aliases = mkOption {
-      type = types.listOf types.attrs;
-      readOnly = true;
-      internal = true;
-      default = map (w: { inherit (w) label address; }) instances;
-      description = "The instances as { label, address }, for the coordinator's SSH aliases.";
-    };
-    remotes = mkOption {
-      type = types.attrsOf (types.listOf types.attrs);
+    jumpHosts = mkOption {
+      type = types.attrsOf types.str;
       default = { };
-      internal = true;
-      description = "Coordinator side: each worker host's `aliases`, as SSH aliases (`ssh msi-x`) for debugging.";
+      example = { msi = "msi-ms7758"; };
+      description = "Client side: `ssh <name>.<prefix>` reaches instance <name> through the worker host this maps <prefix> to.";
     };
   };
 
   config = lib.mkMerge [
+    {
+      # After the switch stopped a removed instance: its home and the stock module's per-container dirs go; a
+      # still-running container (a failed stop) is left alone.
+      system.activationScripts.workers = {
+        deps = [ "users" ];
+        text = ''
+          for d in ${stateDir}/*; do
+            [[ -d $d ]] || continue
+            n=''${d##*/}
+            case " ${lib.concatMapStringsSep " " (w: w.name) instances} " in *" $n "*) continue ;; esac
+            ${config.systemd.package}/bin/systemctl is-active --quiet "container@$n.service" && continue
+            rm -rf --one-file-system "$d" "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
+          done
+          ${if instances == [ ] then "rmdir ${stateDir} 2>/dev/null || true" else "install -d -m 0700 ${stateDir}"}
+          ${lib.concatMapStrings (w: ''
+            install -d -m 0700 ${stateDir}/${w.name}
+            [[ -d ${stateDir}/${w.name}/home ]] || install -d -m 0700 -o ${user} -g users ${stateDir}/${w.name}/home
+          '') instances}
+        '';
+      };
+    }
+
     (lib.mkIf (cfg.instances != { }) {
       assertions = map (w: {
         assertion = builtins.match "[a-z][a-z0-9-]{0,10}" w.name != null;
@@ -224,6 +255,7 @@ in
         inherit (w) hostAddress;
         localAddress = w.address;
         bindMounts = {
+          "${home}" = { hostPath = "${stateDir}/${w.name}/home"; isReadOnly = false; };
           "${creds}/ssh_host_ed25519_key" = { hostPath = "/etc/ssh/ssh_host_ed25519_key"; isReadOnly = true; };
         } // lib.optionalAttrs (cfg.sshKey != null) {
           "${creds}/id_ed25519" = { hostPath = cfg.sshKey; isReadOnly = true; };
@@ -239,13 +271,33 @@ in
       systemd.services = lib.listToAttrs (lib.concatMap (w: [
         (lib.nameValuePair "container@${w.name}" {
           wants = [ "worker-herdr-${w.name}.service" ];
-          # the instance's own options recreate it; its hook below never restarts on its own
-          restartTriggers = [ (builtins.toJSON { inherit (w) agent model prompt; }) ];
+          # A changed guest (any fleet module, nixpkgs) switches live through the stock ExecReload, which runs the new
+          # system's switch-to-configuration inside: the agent's ssh session keeps running.
+          reloadIfChanged = true;
+          partOf = [ "worker-${w.name}.service" ];
           serviceConfig = {
             MemoryMax = w.memoryMax;
             CPUQuota = w.cpuQuota;
-            # the stock module's per-container profile and gcroot dirs, so a removed instance leaves nothing
-            ExecStopPost = "-${pkgs.coreutils}/bin/rm -rf /nix/var/nix/profiles/per-container/${w.name} /nix/var/nix/gcroots/per-container/${w.name}";
+            # The stock pre-start copies the host's resolv.conf, the guest's only DNS: at boot or while a switch
+            # restarts NetworkManager it can have no nameserver yet, and the guest would boot without DNS.
+            ExecStartPre = lib.mkBefore [
+              "-${pkgs.writeShellScript "worker-wait-resolv-conf" ''
+                for _ in {1..30}; do ${pkgs.gnugrep}/bin/grep -q ^nameserver /etc/resolv.conf && exit; ${pkgs.coreutils}/bin/sleep 1; done
+              ''}"
+            ];
+          };
+        })
+        # The instance's own declaration: a change restarts this unit, and so (PartOf) the container and its agent.
+        (lib.nameValuePair "worker-${w.name}" {
+          description = "Declaration of nspawn worker ${w.name}";
+          wantedBy = [ "machines.target" ];
+          wants = [ "container@${w.name}.service" ];
+          restartTriggers = [ (builtins.toJSON { inherit (w) agent model prompt memoryMax cpuQuota; }) ];
+          stopIfChanged = false;
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStart = "${pkgs.coreutils}/bin/true";
           };
         })
         # The instance's workspace in the host user's Herdr (the session the coordinator attaches to as a saved
@@ -274,19 +326,26 @@ in
       networking.nat = { enable = true; internalIPs = [ "10.233.0.0/16" ]; };
       networking.localCommands = "${pkgs.iproute2}/bin/ip route replace unreachable 10.233.0.0/16";
       networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
+
+      networking.hosts = lib.listToAttrs (map (w: lib.nameValuePair w.address [ w.name "${w.name}.${cfg.labelPrefix}" ]) instances);
+      # the worker presents its host's key (bound read-only), pinned under the host's name
+      programs.ssh.extraConfig = lib.concatMapStrings (w: ''
+        Host ${w.name} ${w.name}.${cfg.labelPrefix}
+          User ${user}
+          HostKeyAlias ${config.networking.hostName}
+          LogLevel ERROR
+      '') instances;
     })
 
-    (lib.mkIf (cfg.remotes != { }) {
-      # Through the worker host; the worker presents its host's key, checked under the host's pinned name.
-      programs.ssh.extraConfig = lib.concatStrings (lib.concatLists (lib.mapAttrsToList (host: map (w: ''
-        Host ${w.label}
-          HostName ${w.address}
+    (lib.mkIf (cfg.jumpHosts != { }) {
+      programs.ssh.extraConfig = lib.concatStrings (lib.mapAttrsToList (prefix: host: ''
+        Host *.${prefix}
           ProxyJump ${host}
           User ${user}
-          ConnectTimeout 10
           HostKeyAlias ${host}
+          ConnectTimeout 10
           LogLevel ERROR
-      '')) cfg.remotes));
+      '') cfg.jumpHosts);
     })
   ];
 }

@@ -24,7 +24,7 @@ an agent session that is already registered attaches to that pane instead of
 opening the same conversation a second time.
 
 Workers run unattended in `bypassPermissions` on worker hosts only
-(`sam.herdr.worker`, set inside the ephemeral nspawn workers and on no physical
+(`sam.herdr.worker`, set inside the nspawn developer environments and on no physical
 host, docs/nspawn-workers.md): Claude Code's settings carry
 `skipDangerousModePermissionPrompt`, so a `--dangerously-skip-permissions`
 start no longer stops at the acknowledgment dialog. On every host activation

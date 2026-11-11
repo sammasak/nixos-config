@@ -1,5 +1,6 @@
 """#145/#149: Herdr-started Claude Code workers start in bypassPermissions without a prompt, in the nspawn workers only
-(docs/nspawn-workers.md; the worker "host" below is acer's worker-1 container config);
+(docs/nspawn-workers.md; the worker "host" below is the guest of a probe instance added to acer at eval time, the committed
+config declaring none);
 skills#28: including a pane Herdr's session restore relaunches as a bare `claude --resume <id>` (the launcher supplies
 the flag on worker hosts inside Herdr; before, a restored worker came back in auto mode);
 plain `claude` and the unattended Coordinator (dontAsk) keep their permissions.
@@ -16,7 +17,20 @@ import sys
 import tempfile
 
 FLAG = "--dangerously-skip-permissions"
-WORKER, COORDINATOR = "acer-swift.config.containers.worker-1", "lenovo"
+WORKER, COORDINATOR = "acer-swift/probe", "lenovo"
+FLAKE = "(builtins.getFlake (toString ./.))"
+
+
+def config_of(host):
+    """The host's evaluated NixOS config as a Nix expression; WORKER is the guest of an instance declared only here."""
+    if host == WORKER:
+        return (f"({FLAKE}.nixosConfigurations.acer-swift.extendModules "
+                "{ modules = [ { sam.workers.instances.probe = { }; } ]; }).config.containers.probe.config")
+    return f"{FLAKE}.nixosConfigurations.{host}.config"
+
+
+def hm_expr(host, path):
+    return f"({config_of(host)}).home-manager.users.lukas.{path}"
 
 
 def nix(*args):
@@ -24,13 +38,12 @@ def nix(*args):
 
 
 def hm(host, path):
-    return json.loads(nix("eval", "--json", f".#nixosConfigurations.{host}.config.home-manager.users.lukas.{path}"))
+    return json.loads(nix("eval", "--impure", "--json", "--expr", hm_expr(host, path)))
 
 
 def realise(host, path):
     """The text of a Home Manager string with store context (a script path, an ExecStart), with its context built."""
-    expr = (f'let f = (builtins.getFlake (toString ./.)); c = f.nixosConfigurations.{host}; '
-            f'in f.nixosConfigurations.{COORDINATOR}.pkgs.writeText "worker-permissions-probe" c.config.home-manager.users.lukas.{path}')
+    expr = f'{FLAKE}.nixosConfigurations.{COORDINATOR}.pkgs.writeText "worker-permissions-probe" {hm_expr(host, path)}'
     return pathlib.Path(nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", expr)).read_text()
 
 
@@ -52,8 +65,7 @@ def launched(host, args, herdr=True, home=None):
 
 def claude_wrapped(host):
     """The bun-compiled binary of the Claude Code the host pins, realised so its embedded setting schema can be read."""
-    out = nix("build", "--no-link", "--print-out-paths",
-              f".#nixosConfigurations.{host}.config.home-manager.users.lukas.programs.claude-code.package")
+    out = nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", hm_expr(host, "programs.claude-code.package"))
     return pathlib.Path(out.splitlines()[-1])
 
 
@@ -87,8 +99,8 @@ def startup_screen(host, extra=(), flag=True):
     the non-essential-traffic switches do not skip it). So the check runs Claude Code in its own network namespace
     (`unshare --map-current-user -n`: loopback only, the uid stays the caller's, as bypass mode requires) with
     ANTHROPIC_BASE_URL on a closed loopback port: the call fails at once and the dummy key never leaves the host."""
-    files = nix("build", "--no-link", "--print-out-paths", f".#nixosConfigurations.{host}.config.home-manager.users.lukas.home-files")
-    claude = nix("build", "--no-link", "--print-out-paths", f".#nixosConfigurations.{host}.config.home-manager.users.lukas.programs.claude-code.finalPackage")
+    files = nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", hm_expr(host, "home-files"))
+    claude = nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", hm_expr(host, "programs.claude-code.finalPackage"))
     key = "sk-ant-api03-hermetic-startup-check-00000000"
     with tempfile.TemporaryDirectory() as home:
         work = pathlib.Path(home, "work"); work.mkdir()
