@@ -47,8 +47,9 @@ system closure would make each template change a host switch.
 Owner commands, from lenovo in `~/nixos-config` after `git pull` (each is an
 owner decision; no agent runs them):
 
-1. Enable on a host: in `hosts/<host>/configuration.nix`, import the host's
-   template module(s) and set the policy, e.g.
+1. Enable on a host (msi-ms7758 and acer-swift get the imports, `enable` and `eligibleTemplates` from
+   the `runtime-host` role and set only the capacity): in `hosts/<host>/configuration.nix`, import
+   the host's template module(s) and set the policy, e.g.
    ```nix
    imports = [ ../../modules/agent-runtime/templates/<template>.nix ];
    sam.agentRuntime.host = {

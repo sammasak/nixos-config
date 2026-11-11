@@ -46,9 +46,11 @@ runtime.
 - `CARGO_TARGET_DIR` in the environment reaches the fixture workspaces factum's tests build, which
   then share one target directory and fail at random; the run passes `--target-dir` instead.
 
-## The host policy (`hosts/acer-swift/configuration.nix`)
+## The host policy
 
-`enable = true`, `eligibleTemplates = [ "rust-pilot" ]`, `maxConcurrentInstances = 1`,
+`enable = true` and the eligible templates (`rust-pilot`, and `claude-coder` since #169) come from
+the role (`modules/roles/runtime-host.nix`); the capacity is acer's own
+(`hosts/acer-swift/configuration.nix`): `maxConcurrentInstances = 1`,
 `reserve = { memoryMiB = 4096; diskMiB = 51200; }`. Admission then needs `MemAvailable` of at least
 7168 MiB (the 3 GiB cap plus the reserve) and the reserve stays free for the host after it.
 Measured 2026-11-06: MemTotal 15 672 MiB, MemAvailable ~9 000 MiB, k3s 3.0 GiB now and 7.4 GiB at
@@ -119,8 +121,9 @@ commands' output, `result.json` and the export's `bundle.json` digests.
 
 1. **Drain:** `sudo agent-runtime-instance status` shows nothing running; cancel, export and destroy
    any instance (`docs/agent-runtime-runbook.md`, Stop and tear down).
-2. **Disable:** set `eligibleTemplates = [ ]` (admission refuses, the substrate stays) or remove the
-   `sam.agentRuntime.host` block and the template import, then `just deploy-acer`.
+2. **Disable:** in `hosts/acer-swift/configuration.nix` set `sam.agentRuntime.host.eligibleTemplates =
+   lib.mkForce [ ]` (admission refuses, the substrate stays; the same edit in the role,
+   `modules/roles/runtime-host.nix`, disarms msi too), then `just deploy-acer`.
 3. **Or roll back what deploy-rs activated:** templates
    `ssh deploy@acer-swift sudo nix-env -p /nix/var/nix/profiles/agent-runtime/templates --rollback`;
    the system `ssh deploy@acer-swift 'sudo nix-env -p /nix/var/nix/profiles/system --rollback && sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch'`

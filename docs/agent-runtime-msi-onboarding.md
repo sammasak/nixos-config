@@ -57,7 +57,9 @@ schedule to make a test pass.
 
 ## Declarative prerequisites on `origin/main`
 
-On `main` since #191 (`9df8c53`, 2026-11-09), `hosts/msi-ms7758/configuration.nix` declares:
+On `main` since #191 (`9df8c53`, 2026-11-09), `hosts/msi-ms7758/configuration.nix` declares (the
+enablement and the template set have since moved to `modules/roles/runtime-host.nix`; the capacity
+stays in the host file):
 
 - `sam.agentRuntime.host.enable = true`, `eligibleTemplates = [ "rust-pilot" ]`,
   `maxConcurrentInstances = 2` and `reserve = { cpus = 2; memoryMiB = 8192; diskMiB = 51200; }`;

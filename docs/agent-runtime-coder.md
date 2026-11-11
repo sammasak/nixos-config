@@ -5,9 +5,9 @@ a nonempty patch the trusted host verifies before anyone reviews or promotes it.
 template, what non-interactive Claude Code needs, the authentication options for the owner, and
 the promotion path. The template's own defaults are inert — no egress, no credential. **acer-swift
 and msi-ms7758 are the two hosts that admit it**: each renders `eligibleTemplates = [ "rust-pilot"
-"claude-coder" ]` with `templates.claude-coder.network.allow = [ "api.anthropic.com" ]`
-(`hosts/<host>/configuration.nix`) and holds the SOPS subscription token (`sam.hostSecrets`; msi is
-a recipient of `claude/oauth.yaml` only). The supervised live run below is written for acer; on msi
+"claude-coder" ]` with `templates.claude-coder.network.allow = [ "api.anthropic.com" ]` and holds the
+SOPS subscription token (`sam.hostSecrets`; msi is a recipient of `claude/oauth.yaml` only), all
+from the role both carry (`modules/roles/runtime-host.nix`). The supervised live run below is written for acer; on msi
 the steps are the same without the acer heavy-work lock.
 
 ## The template: `claude-coder` (`modules/agent-runtime/templates/claude-coder.nix`)
@@ -113,7 +113,7 @@ change, and the run itself, are owner-gated.
 
 **This run uses the real subscription token and real egress; it is the owner's to perform, and it is
 not done in this change.** It is armed only once acer-swift is deployed with `claude-coder` eligible
-and the egress allowlist set (both in `hosts/acer-swift/configuration.nix`: `eligibleTemplates =
+and the egress allowlist set (both in the role, `modules/roles/runtime-host.nix`: `eligibleTemplates =
 [ "rust-pilot" "claude-coder" ]` and `templates.claude-coder.network.allow = [ "api.anthropic.com" ]`).
 `checks.x86_64-linux.agent-runtime-acer-pilot` pins exactly that shape, so a widened allowlist, an
 extra host, a credential capability or a reintroduced `ANTHROPIC_*` auth path fails `nixos:qa`.
@@ -334,10 +334,14 @@ sudo journalctl -b -u 'agent-runtime*' | grep -cFf "$CRED"                      
 
 1. **Drain:** `sudo agent-runtime-instance status` shows nothing running; otherwise `cancel`, `export`
    and `destroy` the instance (`docs/agent-runtime-runbook.md`, Stop and tear down).
-2. **Disable:** drop `"claude-coder"` from `eligibleTemplates` (back to `[ "rust-pilot" ]`) and remove
-   the `templates.claude-coder.network.allow` line, then `just deploy-acer` (on msi also drop
-   `sam.hostSecrets.enable`, then `just deploy-msi`). (Set `eligibleTemplates =
-   [ ]` to disarm both templates.)
+2. **Disable:** the policy is the role's (`modules/roles/runtime-host.nix`), so an edit there disarms
+   acer and msi together. For one host, override it in `hosts/<host>/configuration.nix`:
+   ```nix
+   sam.agentRuntime.host.eligibleTemplates = lib.mkForce [ "rust-pilot" ];
+   sam.agentRuntime.templates.claude-coder.network.allow = lib.mkForce null;
+   ```
+   then `just deploy-acer` or `just deploy-msi` (on msi also `sam.hostSecrets.enable = lib.mkForce
+   false;`). `eligibleTemplates = lib.mkForce [ ]` disarms both templates.
 3. **Or roll back what deploy-rs activated:** `ssh deploy@acer-swift sudo nix-env -p
    /nix/var/nix/profiles/agent-runtime/templates --rollback` for the templates, and the deploy-rs
    `--rollback` / system-profile rollback for the host (`docs/agent-runtime-deploy.md`, Rollback).
