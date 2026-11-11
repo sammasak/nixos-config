@@ -991,7 +991,9 @@ case $cmd in
       fi
       by=$(jq -r '.interruptedBy // empty' "$base/result.json")
       cred_args=()
-      if jq -e '.credential != null' "$base/started.json" >/dev/null 2>&1 && [ ! -s "$rundir/$id/cred/token" ]; then
+      # cred-source or cred-issuer without started.json: a start that died after delivering the token
+      if { jq -e '.credential != null' "$base/started.json" >/dev/null 2>&1 || [ -e "$base/cred-source" ] || [ -e "$base/cred-issuer" ]; } \
+        && [ ! -s "$rundir/$id/cred/token" ]; then
         # fail closed: an export that cannot be checked for the run's secret is not made, and nothing is discarded
         src=$(jq -r '.path // empty' "$base/cred-source" 2>/dev/null || true)
         if [ -n "$src" ] && [ -r "$src" ] && [ "$(sha256sum <"$src" | cut -d' ' -f1)" = "$(jq -r .sha256 "$base/cred-source")" ]; then
