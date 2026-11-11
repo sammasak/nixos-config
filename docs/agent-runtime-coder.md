@@ -3,11 +3,12 @@
 The step after the #165 cargo pilot: one real Claude Code coding task inside the runtime, ending in
 a nonempty patch the trusted host verifies before anyone reviews or promotes it. This file is the
 template, what non-interactive Claude Code needs, the authentication options for the owner, and
-the promotion path. The template's own defaults are inert — no egress, no credential — but this PR
-makes **acer-swift the one host that admits it**: it renders `eligibleTemplates = [ "rust-pilot"
+the promotion path. The template's own defaults are inert — no egress, no credential. **acer-swift
+and msi-ms7758 are the two hosts that admit it**: each renders `eligibleTemplates = [ "rust-pilot"
 "claude-coder" ]` with `templates.claude-coder.network.allow = [ "api.anthropic.com" ]`
-(`hosts/acer-swift/configuration.nix`). No credential is delivered and no live run is performed in
-this change; the supervised live run below is the owner's and is owner-gated.
+(`hosts/<host>/configuration.nix`) and holds the SOPS subscription token (`sam.hostSecrets`; msi is
+a recipient of `claude/oauth.yaml` only). The supervised live run below is written for acer; on msi
+the steps are the same without the acer heavy-work lock.
 
 ## The template: `claude-coder` (`modules/agent-runtime/templates/claude-coder.nix`)
 
@@ -16,7 +17,7 @@ this change; the supervised live run below is the owner's and is owner-gated.
 | source | `sammasak/rf-proto` at the flake's pinned `inputs.rf-proto` rev, a private writable copy at `/workspace/rf-proto`. Zero dependencies, so `cargo test --offline --locked` builds with no network |
 | agent | `pkgs.claude-code` (2.1.300 at this nixpkgs), the real binary, run by `claude-coder-run` |
 | skills | `rust-engineering` from the pinned skills input |
-| network | the template's **default** is none (`egress: none`); acer-swift overrides it to `egress: allowlist`, `allow = [ "api.anthropic.com" ]` (the #137 allowlist pins the resolved IPs, TLS 443 only). acer is the only host that admits this template |
+| network | the template's **default** is none (`egress: none`); acer-swift overrides it to `egress: allowlist`, `allow = [ "api.anthropic.com" ]` (the #137 allowlist pins the resolved IPs, TLS 443 only). acer and msi are the only hosts that admit this template (msi sets the same override) |
 | credentials | the template grants no GitHub capability. The harness token is a per-run `--credential` file, the SOPS subscription token (below) |
 | resources | 2 CPUs, 2048 MiB (no swap), 512 tasks, 30 min; volumes 1920 MiB together |
 

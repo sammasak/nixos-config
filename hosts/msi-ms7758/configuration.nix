@@ -11,6 +11,7 @@ in
     # A credential-free, offline Rust workload; admission remains bounded by
     # live memory/disk checks and the host policy below.
     ../../modules/agent-runtime/templates/rust-pilot.nix
+    ../../modules/agent-runtime/templates/claude-coder.nix
   ];
 
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
@@ -21,12 +22,17 @@ in
   # each create; measure Ollama/k3s headroom before activation.
   sam.agentRuntime.host = {
     enable = true;
-    eligibleTemplates = [ "rust-pilot" ];
+    eligibleTemplates = [ "rust-pilot" "claude-coder" ];
     maxConcurrentInstances = 2;
     reserve = { cpus = 2; memoryMiB = 8192; diskMiB = 51200; };
   };
 
+  # Same single egress host as on acer; the template grants no GitHub capability.
+  sam.agentRuntime.templates.claude-coder.network.allow = [ "api.anthropic.com" ];
+
   sam.profile = vars;
+  # The coder run's per-run credential is this host's SOPS subscription token.
+  sam.hostSecrets.enable = true;
 
   # Keep this host manual until the existing Windows/EFI layout is verified.
   system.autoUpgrade.enable = lib.mkForce false;

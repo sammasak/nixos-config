@@ -32,7 +32,10 @@
           shutdownScript = msi.systemd.services.msi-scheduled-shutdown.serviceConfig.ExecStart;
           expect = cond: msg: lib.assertMsg cond "agent-runtime-msi-pilot: ${msg}";
         in
-        assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" ]) "MSI admits only the credential-free Rust pilot";
+        assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" "claude-coder" ]) "MSI admits exactly rust-pilot then claude-coder";
+        assert expect (rt.manifestData.claude-coder.policies.network == { egress = "allowlist"; allow = [ "api.anthropic.com" ]; }) "MSI's claude-coder egress is exactly api.anthropic.com";
+        assert expect (rt.manifestData.claude-coder.policies.capabilities == [ ]) "MSI's claude-coder grants no capability";
+        assert expect (msi.sops.secrets.claude_oauth_token.mode == "0400" && msi.sops.secrets.claude_oauth_token.owner == username) "the subscription token is owner-only on MSI";
         assert expect (rt.host.maxConcurrentInstances == 2) "bounded two-instance admission";
         assert expect (rt.host.reserve == { cpus = 2; memoryMiB = 8192; diskMiB = 51200; }) "retain 2 logical CPUs, 8 GiB RAM and 50 GiB disk for host workloads";
         assert expect (tpl.policies.network == { egress = "none"; allow = [ ]; }) "no network egress";
@@ -53,7 +56,7 @@
         assert expect msi.sam.profile.devTools "retain the shared Herdr CLI configuration";
         assert expect msi.users.users.${username}.linger "keep the Herdr user service available without an interactive login";
         assert expect (hm.systemd.user.services.herdr.Install.WantedBy == [ "default.target" ]) "declare the per-user Herdr server service";
-        assert expect (!msi.sam.herdr.worker.enable) "the credential-free pilot does not grant worker bypass permissions";
+        assert expect (!msi.sam.herdr.worker.enable) "a runtime host does not grant worker bypass permissions";
         pkgs.runCommand "agent-runtime-msi-pilot" { nativeBuildInputs = [ pkgs.jq ]; } ''
           mkdir $out
           jq -S . ${rt.hostPolicy} > $out/host.json
@@ -92,14 +95,14 @@
         assert expect (lib.all (n: lib.elem n names) [ "agent-runtime-instance" "agent-runtime-preflight" "agent-runtime-pane" "agent-runtime-herdr" ]) "the lifecycle, preflight, pane and Herdr adapter on the host";
         assert expect (others == [ "msi-ms7758" ]) "MSI is the only other enabled runtime host (got ${toString others})";
         # The #169 coder template admitted beside rust-pilot: egress is exactly the Claude API host,
-        # no credential, no ANTHROPIC_* auth path in the runner, and admitted on acer-swift only.
+        # no credential, no ANTHROPIC_* auth path in the runner, and admitted on acer-swift and MSI only.
         assert expect (coder.policies.network == { egress = "allowlist"; allow = [ "api.anthropic.com" ]; }) "claude-coder egress is exactly api.anthropic.com (no wildcard, no extra host)";
         assert expect (coder.policies.capabilities == [ ]) "claude-coder grants no capability (no GitHub token)";
         assert expect (!(lib.hasInfix "ANTHROPIC_API_KEY=" runnerText) && !(lib.hasInfix "ANTHROPIC_AUTH_TOKEN=" runnerText)) "claude-coder runner assigns no ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN";
         assert expect (!(lib.hasInfix "apiKeyHelper" runnerText)) "claude-coder runner wires no apiKeyHelper (it would resolve a key from a command, bypassing the subscription-token-only path)";
         assert expect (!(lib.hasInfix "ANTHROPIC_BASE_URL" runnerText)) "claude-coder runner sets no ANTHROPIC_BASE_URL (it would redirect the API to a non-Anthropic host, an egress path outside the allowlist)";
         assert expect (lib.hasInfix "unset ANTHROPIC_API_KEY" runnerText) "claude-coder runner unsets the ANTHROPIC_* auth paths";
-        assert expect (othersCoder == [ ]) "no host other than acer-swift admits claude-coder (got ${toString othersCoder})";
+        assert expect (othersCoder == [ "msi-ms7758" ]) "MSI is the only other host that admits claude-coder (got ${toString othersCoder})";
         pkgs.runCommand "agent-runtime-acer-pilot" { nativeBuildInputs = [ pkgs.jq ]; } ''
           mkdir $out
           jq -S . ${rt.hostPolicy} > $out/host.json
