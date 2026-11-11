@@ -64,12 +64,12 @@ in
   flake.deploy.nodes = {
     lenovo = mkNode "lenovo" x86 { } // { hostname = "localhost"; };
 
-    # False (the deploy-rs default too): building on acer, the sole k3s
-    # worker, would I/O-storm the node mid-deploy. Build stays on lenovo.
-    acer-swift = mkNode "acer-swift" x86 { remoteBuild = false; };
+    # True: lenovo, memory-constrained, has crashed building these closures; acer's
+    # build I/O mid-deploy is the lesser risk to the cluster.
+    acer-swift = mkNode "acer-swift" x86 { remoteBuild = true; };
 
-    # Only reachable in its Mon-Fri ~09:00-21:00 power window.
-    msi-ms7758 = mkNode "msi-ms7758" x86 { remoteBuild = false; };
+    # True for the same reason; only reachable in its Mon-Fri ~09:00-21:00 power window.
+    msi-ms7758 = mkNode "msi-ms7758" x86 { remoteBuild = true; };
 
     # True, unlike acer: lenovo has no aarch64 builder, so the Pi builds its
     # own closure (untrusted lukas is enough: .drv and sources are CA paths).

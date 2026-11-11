@@ -21,6 +21,15 @@ in
     reserve = { cpus = 2; memoryMiB = 8192; diskMiB = 51200; };
   };
 
+  # Two ephemeral nspawn workers in the 6 CPUs / ~8 GiB left beside the reserve (docs/nspawn-workers.md).
+  # No ghHostsFile: msi's lukas has no gh login (git push still works, over the bound SSH key).
+  sam.workers = {
+    count = 2;
+    labelPrefix = "msi";
+    memoryMax = "3584M";
+    cpuQuota = "300%";
+  };
+
   sam.profile = vars;
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "nixos-config" ".cache/wt" ];
 

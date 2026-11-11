@@ -2,6 +2,42 @@
 let
   users = import ../lib/users.nix;
 
+  # Home Manager as every host gets it; a worker container (modules/workers) reuses it under host name "worker".
+  fleetHome =
+    host: os:
+    {
+      home-manager = {
+        useGlobalPkgs = true;
+        useUserPackages = true;
+        backupFileExtension = "backup";
+        sharedModules = [
+          inputs.nix-index-database.homeModules.default
+        ]
+        ++ lib.optionals os.config.sam.profile.devTools [
+          ../modules/programs/cli/claude-code/default.nix
+          (import ../modules/programs/cli/claude-code/mcp.nix inputs.skills os.config.sam.profile.nativeOtel os.config.sam.profile.hostname)
+          (import ../modules/programs/cli/claude-code/skills.nix inputs.skills)
+          (import ../modules/programs/cli/codex/default.nix inputs.skills os.config.sam.profile.nativeOtel)
+          ../modules/programs/cli/coordinator-wakeup.nix
+        ]
+        ++ lib.optionals os.config.sam.profile.nativeOtel [
+          (import ../modules/programs/cli/native-otel.nix os.config.sam.profile.hostname)
+        ]
+        ++ lib.optionals os.config.sam.profile.pi [
+          (import ../modules/programs/cli/pi inputs.devenv-platform)
+        ]
+        ++ lib.optionals (host == "lenovo") [
+          ../modules/programs/cli/factum-lenovo.nix
+        ]
+        ++ lib.optionals (lib.elem host [ "lenovo" "acer-swift" "msi-ms7758" ]) [
+          ../modules/programs/cli/nix-audit.nix
+        ];
+        users.${os.config.sam.profile.username} =
+          config.flake.modules.homeManager.default
+          or (throw "Missing shared home-manager module at modules/home/default.nix");
+      };
+    };
+
   mkNixosDistribution =
     name:
     {
@@ -39,7 +75,8 @@ let
           inputs.disko.nixosModules.disko
           # off until a host sets sam.agentRuntime.host.enable (#140); then 70-deploy.nix adds its profile
           ../modules/agent-runtime/host.nix
-          (nixos: {
+          ../modules/workers
+          ({
             nixpkgs.overlays = [
               config.flake.overlays.default
               # pkgs.nur.* — keeps modules on plain pkgs, no specialArgs.
@@ -53,37 +90,12 @@ let
               lib.genAttrs [ "acer-swift" "msi-ms7758" ] (h: config.flake.nixosConfigurations.${h}.config.sam.agentRuntime.manifestDir)
             );
 
-            home-manager = {
-              useGlobalPkgs = true;
-              useUserPackages = true;
-              backupFileExtension = "backup";
-              sharedModules = [
-                inputs.nix-index-database.homeModules.default
-              ]
-              ++ lib.optionals nixos.config.sam.profile.devTools [
-                ../modules/programs/cli/claude-code/default.nix
-                (import ../modules/programs/cli/claude-code/mcp.nix inputs.skills nixos.config.sam.profile.nativeOtel nixos.config.sam.profile.hostname)
-                (import ../modules/programs/cli/claude-code/skills.nix inputs.skills)
-                (import ../modules/programs/cli/codex/default.nix inputs.skills nixos.config.sam.profile.nativeOtel)
-                ../modules/programs/cli/coordinator-wakeup.nix
-              ]
-              ++ lib.optionals nixos.config.sam.profile.nativeOtel [
-                (import ../modules/programs/cli/native-otel.nix nixos.config.sam.profile.hostname)
-              ]
-              ++ lib.optionals nixos.config.sam.profile.pi [
-                (import ../modules/programs/cli/pi inputs.devenv-platform)
-              ]
-              ++ lib.optionals (name == "lenovo") [
-                ../modules/programs/cli/factum-lenovo.nix
-              ]
-              ++ lib.optionals (lib.elem name [ "lenovo" "acer-swift" "msi-ms7758" ]) [
-                ../modules/programs/cli/nix-audit.nix
-              ];
-              users.${username} =
-                config.flake.modules.homeManager.default
-                or (throw "Missing shared home-manager module at modules/home/default.nix");
-            };
+            sam.workers.guestModules = [ inputs.home-manager.nixosModules.home-manager (fleetHome "worker") ];
+            sam.workers.remotes = lib.optionalAttrs (name == "lenovo") (
+              lib.genAttrs [ "acer-swift" "msi-ms7758" ] (h: config.flake.nixosConfigurations.${h}.config.sam.workers.instances)
+            );
           })
+          (fleetHome name)
         ];
     };
 in

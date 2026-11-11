@@ -22,11 +22,8 @@ in
     "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
     "nixos-config" "rf-proto" ".cache/wt"
   ];
-  # Only the coordinator saves worker targets; once saved, scheduled-off MSI stays visible as unreachable.
-  sam.herdr.machines = [
-    { label = "acer-swift"; target = "acer-swift"; }
-    { label = "msi-ms7758"; target = "msi-ms7758"; }
-  ];
+  # The Herdr machines are the hosts' nspawn workers (acer-w1, msi-w1, msi-w2), saved from sam.workers.remotes
+  # (flake-modules/40-outputs-nixos.nix); a stopped worker stays visible as unreachable.
   sam.herdr.coordinatorWakeup = {
     enable = true;
     # Delegated approval (the comment every delegated gh:label act cites) and the interactive

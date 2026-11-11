@@ -20,8 +20,14 @@ in
   };
 
   sam.profile = vars;
-  # The worker host: Herdr-started workers run in bypassPermissions, trusted in these checkouts and $HOME.
-  sam.herdr.worker.enable = true;
+  # One ephemeral nspawn worker (docs/nspawn-workers.md), inside the 4 GiB k3s reserve; the host is no worker itself.
+  sam.workers = {
+    count = 1;
+    labelPrefix = "acer";
+    memoryMax = "6G";
+    cpuQuota = "400%";
+    ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
+  };
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 
   # Headless shell mode remains the default for the always-on worker. The GUI

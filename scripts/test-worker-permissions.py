@@ -1,4 +1,5 @@
-"""#145/#149: Herdr-started Claude Code workers start in bypassPermissions without a prompt, on worker hosts only;
+"""#145/#149: Herdr-started Claude Code workers start in bypassPermissions without a prompt, in the nspawn workers only
+(docs/nspawn-workers.md; the worker "host" below is acer's worker-1 container config);
 skills#28: including a pane Herdr's session restore relaunches as a bare `claude --resume <id>` (the launcher supplies
 the flag on worker hosts inside Herdr; before, a restored worker came back in auto mode);
 plain `claude` and the unattended Coordinator (dontAsk) keep their permissions.
@@ -15,7 +16,7 @@ import sys
 import tempfile
 
 FLAG = "--dangerously-skip-permissions"
-WORKER, COORDINATOR = "acer-swift", "lenovo"
+WORKER, COORDINATOR = "acer-swift.config.containers.worker-1", "lenovo"
 
 
 def nix(*args):
@@ -28,8 +29,8 @@ def hm(host, path):
 
 def realise(host, path):
     """The text of a Home Manager string with store context (a script path, an ExecStart), with its context built."""
-    expr = (f'let c = (builtins.getFlake (toString ./.)).nixosConfigurations.{host}; '
-            f'in c.pkgs.writeText "worker-permissions-probe" c.config.home-manager.users.lukas.{path}')
+    expr = (f'let f = (builtins.getFlake (toString ./.)); c = f.nixosConfigurations.{host}; '
+            f'in f.nixosConfigurations.{COORDINATOR}.pkgs.writeText "worker-permissions-probe" c.config.home-manager.users.lukas.{path}')
     return pathlib.Path(nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", expr)).read_text()
 
 
@@ -218,10 +219,10 @@ def main():
           f"{COORDINATOR}: the same argv still stops at the acceptance dialog (the setting is what skips it, worker hosts only)")
 
     failed = json.loads(nix("eval", "--impure", "--json", "--expr",
-                            f'let c = (builtins.getFlake (toString ./.)).nixosConfigurations.{WORKER}; '
-                            'e = c.extendModules { modules = [ { sam.herdr.coordinatorWakeup.enable = true; } ]; }; '
+                            f'let c = (builtins.getFlake (toString ./.)).nixosConfigurations.{COORDINATOR}; '
+                            'e = c.extendModules { modules = [ { sam.herdr.worker.enable = true; } ]; }; '
                             'in map (a: a.message) (builtins.filter (a: !a.assertion) e.config.assertions)'))
-    check(any("cannot both be enabled" in m for m in failed), "a worker host cannot also run the unattended Coordinator (assertion)")
+    check(any("cannot both be enabled" in m for m in failed), "the Coordinator's host cannot also be a worker (assertion)")
 
 
 if __name__ == "__main__":
