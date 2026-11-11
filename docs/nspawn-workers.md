@@ -5,8 +5,11 @@ configuration: a stock NixOS container (`containers.<name>`, systemd-nspawn) on
 acer-swift or msi-ms7758 with the fleet's tooling (Claude Code, Codex, git, gh,
 devenv), its own persistent home, and a workspace in the host's Herdr with the
 agent running in it. It runs while declared and is deleted, files included,
-once a deploy no longer declares it. There is no operator command. Module:
-`modules/workers/default.nix`.
+once a deploy no longer declares it. There is no operator command. Modules:
+`modules/workers/core.nix` (`services.devEnvironments`, nothing of this
+fleet: the part meant for publishing) and `modules/workers/default.nix`, the
+fleet adapter (`sam.workers.*`, the fleet's guest modules, credentials and the
+Herdr workspace as the session surface).
 
 ## Declare one
 
@@ -25,18 +28,64 @@ sam.workers.instances = {
 | `agent` | `"claude"` | `claude` (`--dangerously-skip-permissions`), `codex` (not signed in on these hosts), or `none` (a fish shell) |
 | `model` | `null` | the agent's `--model` |
 | `prompt` | `null` | sent once the agent is idle, only on a start with no earlier Claude session |
-| `memoryMax`, `cpuQuota` | the host's `sam.workers.memoryMax` / `cpuQuota` | unit limits |
+| `memory.reserved` | `"2G"` | `MemoryLow`: guaranteed, kept from reclaim |
+| `memory.max` | `"6G"` | `MemoryMax`, the spike ceiling; `MemoryHigh` (reclaim and throttle first) is 90% of it |
+| `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
+| `cpu.max` | `null` | a hard `CPUQuota` in cores, only when set |
 
-Names: at most 11 of `[a-z0-9-]`. Instances whose `memoryMax` adds up to more
-than the host's `memoryBudget` fail eval:
+Every environment of a host runs in `environments.slice`, whose `MemoryMax` is
+the host's `sam.workers.pool.memory` (protecting k3s and the host) and whose
+`MemoryLow` is the sum of the reserves. Swap (zram) stays allowed. nix builds
+run in the host's daemon, outside all of this. msi powers off at 21:00
+(Mon-Fri window); its environments come back at its next boot.
 
-| Host | Budget | Default per instance (so at most) | Prefix |
-|------|--------|-----------------------------------|--------|
-| acer-swift | 6G | 6G, 400% CPU (1) | `acer` |
-| msi-ms7758 | 7G | 3584M, 300% CPU (2) | `msi` |
+## Sizing
 
-nix builds run in the host's daemon, outside these limits. msi powers off at
-21:00 (Mon-Fri window); its environments come back at its next boot.
+Reserved per environment, spiking allowed. Measured on both hosts (8 cores,
+16G RAM, 7.8G zram) under the earlier hard caps: acer `demo` (6G cap,
+CPUQuota 390%) peaked at 5.2G of which 1.1G anon, the rest page cache, and was
+CPU-throttled 947 s of 1275 s used while cores sat idle; msi `skills91`
+(3584M cap, 300%) hit `memory.max` 20138 times, swapped 218M and was throttled
+591 s of 869 s. Hard caps cost real time and bought nothing on an idle host.
+
+| Host | Pool | Prefix | Host's own use | At most (by reserve) | Recommended |
+|------|------|--------|----------------|----------------------|-------------|
+| acer-swift | 7G, 8 cores | `acer` | k3s pods 4.6G, system 2.9G | 3 | 2 |
+| msi-ms7758 | 10G, 8 cores | `msi` | about 2.8G | 5 | 3 |
+
+The reserve sum is what eval enforces; the recommendation is lower because a
+build in an environment spikes to 4 to 5G.
+
+## What fails at build
+
+A wrong declaration fails evaluation with a message naming the option, never
+at runtime (`nixos:workers-eval-test` holds one case per line):
+
+- a name that is not `[a-z][a-z0-9-]`, longer than 11, the host's own name,
+  already in `networking.hosts` or another `containers.<name>`, or hashing to
+  another instance's address;
+- an unknown `agent`; `model` or `prompt` with `agent = "none"`; an empty
+  prompt; a model outside `[][A-Za-z0-9._:-]`; a `prompt` with no session
+  surface to deliver it;
+- sizes not in systemd syntax (`[1-9][0-9]*[KMGT]?`); `reserved` above `max`,
+  `max` above the pool, reserves summing above the pool, reserved cores
+  summing above `pool.cores`, `cpu.max` below the reserve or above the cores;
+  instances on a host without `pool.memory` or `pool.cores`;
+- the address `/16` overlapping the host's interfaces or `sam.profile.lanCidr`;
+- the user missing, its declared uid differing, no linger (the surface runs in
+  its user manager), the host's sshd off, the host's name not pinned in
+  `programs.ssh.knownHosts`, a guest module turning sshd off, a relative key
+  or credential path;
+- a claude instance on a host without the `claude_oauth_token` sops secret,
+  or no Herdr user service in the host's Home Manager;
+- a `jumpHosts` target not pinned in `programs.ssh.knownHosts`, or a bad prefix;
+- a unit of the module wanting a unit that is not declared; the removed
+  `memoryBudget`, `memoryMax`, `cpuQuota`.
+
+The generated shell is `writeShellApplication` (shellcheck at build). The
+agent's command line is a file in the store sourced by the guest's login shell,
+so no user string is quoted through ssh; the prompt crosses one bash quoting
+layer to Herdr.
 
 ## Reach it
 
@@ -66,7 +115,7 @@ Manager activates on it at every boot (collisions are kept as `*.backup`).
 |-------|--------|
 | Deploy that changes nothing of it | nothing restarts |
 | Fleet-wide guest change (a module, Home Manager, nixpkgs) | `reloadIfChanged`: the stock `ExecReload` switches the running guest live; the agent keeps running |
-| Change to its own declaration (`agent`, `model`, `prompt`, limits) | `worker-<name>` restarts and, through `PartOf`, the container: a restart |
+| Change to its own declaration (`agent`, `model`, `prompt`, `memory`, `cpu`) | `worker-<name>` restarts and, through `PartOf`, the container: a restart |
 | Restart or host reboot | home kept; the workspace comes back and runs `claude --continue` when a transcript of `$HOME` exists, else a fresh `claude` with the prompt |
 | Removed from the config, deployed | units stop, the workspace closes, and activation deletes `/var/lib/workers/<name>` and its `/nix/var/nix/{profiles,gcroots}/per-container/<name>` |
 
@@ -83,13 +132,37 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 - The guest imports the fleet's `core/system.nix`, `core/users.nix`,
   `core/packages.nix`, the pinned known hosts and the Home Manager wiring
   every host gets (`fleetHome` in `flake-modules/40-outputs-nixos.nix`).
+- `<nixpkgs>` in a guest is the nixpkgs its system is built from (`nix.nixPath`,
+  no channels).
 - Network: a veth pair, `10.233.<i>.1` host side and `10.233.<i>.2` inside,
   `i` hashed from the name (a collision fails eval); NAT for egress. DNS is
   the host's `resolv.conf` at start; the container waits up to 30 s for it to
   carry a nameserver.
+- Herdr's pane runs `worker-<name> attach [fresh|continue]` (the instance's
+  entry point, also on the host's PATH): ssh, argv[0] named after the agent,
+  into `fish -il -c 'source <store file>'`.
 - Credentials, bound read-only, nothing new: the host's
   `/run/secrets/claude_oauth_token`, the host user's `~/.ssh/id_ed25519`
   (`git push`), and on acer `~/.config/gh/hosts.yml` (msi's `lukas` has no gh
   login). A rotated token reaches an environment at its next start.
 
 The committed config declares none.
+
+## Working an issue in one
+
+The declaration is the record of what runs where: commit the instance with the
+issue it serves, deploy, and remove it when the work has landed.
+
+1. Pick an issue; check it has no open PR already (`gh pr list --search "<n> in:body"`).
+2. Declare the environment (name it after the issue), commit, deploy the host.
+3. Hand over the brief from lenovo: `herdr --machine <host> agent prompt <name> '<brief>'`.
+   The brief says: read the issue, clone, work through the repo's `devenv tasks`
+   (`sdlc:*` where the repo has `platform.sdlc`), heavy steps one at a time,
+   log friction to `~/ENV-FEEDBACK.md`, stop with a written blocker when stuck.
+4. A `blocked` agent is waiting on a question; answer it in its pane.
+5. Review is one independent subagent the agent spawns on its own diff. No
+   second environment, no comment trail.
+6. The agent pushes and opens the PR; the session driving it from lenovo merges.
+7. Copy what `~/ENV-FEEDBACK.md` taught into `docs/environments-feedback.md`
+   (one line each, with the fix or the open gap), then remove the declaration
+   and deploy.

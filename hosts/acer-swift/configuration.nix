@@ -11,13 +11,11 @@ in
   ];
 
   sam.profile = vars;
-  # Room for one 6G nspawn worker (docs/nspawn-workers.md), inside the 4 GiB k3s reserve; the host is no worker itself.
+  # k3s pods take ~4.6G here: a 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
   sam.workers = {
-    instances = { };
+    instances = { demo = { model = "sonnet"; }; };
     labelPrefix = "acer";
-    memoryBudget = "6G";
-    memoryMax = "6G";
-    cpuQuota = "400%";
+    pool = { memory = "7G"; cores = 8; };
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
   };
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
