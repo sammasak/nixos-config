@@ -119,6 +119,7 @@ must leave k3s/Ollama and the power schedule intact.
 
 - MSI's measured peak k3s/Ollama resource use and writable filesystem headroom.
 - The installed Herdr server, user linger and worker availability.
-- One credential-free runtime start, verified export and clean teardown.
+- A credentialed `claude-coder` run on MSI (credential-free starts, verified exports and clean
+  teardowns are evidenced on #186).
 - Offline visibility during the scheduled shutdown and recovery after the next
   permitted wake, observed from Lenovo.

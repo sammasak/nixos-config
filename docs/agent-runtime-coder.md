@@ -335,7 +335,8 @@ sudo journalctl -b -u 'agent-runtime*' | grep -cFf "$CRED"                      
 1. **Drain:** `sudo agent-runtime-instance status` shows nothing running; otherwise `cancel`, `export`
    and `destroy` the instance (`docs/agent-runtime-runbook.md`, Stop and tear down).
 2. **Disable:** drop `"claude-coder"` from `eligibleTemplates` (back to `[ "rust-pilot" ]`) and remove
-   the `templates.claude-coder.network.allow` line, then `just deploy-acer`. (Set `eligibleTemplates =
+   the `templates.claude-coder.network.allow` line, then `just deploy-acer` (on msi also drop
+   `sam.hostSecrets.enable`, then `just deploy-msi`). (Set `eligibleTemplates =
    [ ]` to disarm both templates.)
 3. **Or roll back what deploy-rs activated:** `ssh deploy@acer-swift sudo nix-env -p
    /nix/var/nix/profiles/agent-runtime/templates --rollback` for the templates, and the deploy-rs

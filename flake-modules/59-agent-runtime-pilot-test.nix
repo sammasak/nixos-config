@@ -13,7 +13,7 @@
       };
 
       # What Acer and MSI render for the pilot at evaluation (part of `nixos:qa` through flake check):
-      # host policies, credential-free network-off template, required host/Herdr tools, and preserved host policy.
+      # host policies, the network-off pilot and the single-egress coder template, required host/Herdr tools, and preserved host policy.
       checks = lib.optionalAttrs (system == "x86_64-linux") {
         agent-runtime-msi-pilot =
         let
