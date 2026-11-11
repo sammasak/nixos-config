@@ -603,9 +603,10 @@ in
               type = types.strMatching "^[A-Za-z0-9:_.@-]+\\.timer$";
               description = "The systemd timer whose next elapse is this host's scheduled shutdown (must be declared in `systemd.timers`).";
             };
-            refuseWithinMinutes = mkOption {
+            stopExportMarginMinutes = mkOption {
               type = types.ints.positive;
-              description = "The preflight refuses a run when the timer elapses within this many minutes (a run longer than this would be cut off).";
+              default = 10;
+              description = "Minutes kept after a run's full `timeoutMinutes` for the instance to stop and export. The preflight refuses a run when the timer elapses sooner than the template's `timeoutMinutes` plus this margin.";
             };
           };
         });

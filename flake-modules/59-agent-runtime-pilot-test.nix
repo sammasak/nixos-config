@@ -44,7 +44,7 @@
         assert expect msi.homelab.msiPowerSchedule.selfShutdown.enable "preserve the scheduled shutdown";
         assert expect (shutdownTimer.OnCalendar == "Mon-Fri 21:00" && shutdownTimer.Persistent == false) "preserve MSI's weekday 21:00 shutdown without catch-up";
         # #185 item 4: the shutdown does not drain instances, so the preflight refuses runs near it
-        assert expect (rt.host.scheduledShutdown == { timerUnit = "msi-scheduled-shutdown.timer"; refuseWithinMinutes = 30; }) "MSI's preflight refuses runs within 30 minutes of the scheduled shutdown";
+        assert expect (rt.host.scheduledShutdown == { timerUnit = "msi-scheduled-shutdown.timer"; stopExportMarginMinutes = 10; }) "MSI's preflight keeps a 10 minute stop and export margin after a run's full timeout before the scheduled shutdown";
         assert expect lenovo.homelab.msiPowerSchedule.waker.enable "preserve Lenovo's MSI wake configuration";
         assert expect (lib.hasInfix "/bin/wakeonlan d4:3d:7e:4a:f9:3d" wakeService) "preserve the MSI Wake-on-LAN target";
         assert expect (wakeTimer.OnCalendar == "Mon-Fri 09:00" && wakeTimer.Persistent == false) "preserve weekday 09:00 wake without catch-up";

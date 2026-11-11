@@ -57,10 +57,16 @@ schedule to make a test pass.
 
 The 21:00 shutdown stops k3s but does not drain agent-runtime instances. MSI
 therefore declares `sam.agentRuntime.host.scheduledShutdown` (timer
-`msi-scheduled-shutdown.timer`, 30 minutes), and `agent-runtime-preflight`
-fails with a `shutdown` line for a run started inside that window. Start such
-a run after the next morning's wake. The check guards the preflight only, and
-a run that is already going at 20:30 is still cut off at 21:00.
+`msi-scheduled-shutdown.timer`, default 10 minute `stopExportMarginMinutes`),
+and `agent-runtime-preflight` fails with a `shutdown` line when 21:00 is
+sooner than the template's `timeoutMinutes` plus that margin: 40 minutes for
+claude-coder (30 + 10) and 30 for rust-pilot (20 + 10). The window follows the
+template, so raising a `timeoutMinutes` widens it. Start such a run after the
+next morning's wake. The check guards the preflight only: a run started later
+without a fresh preflight, or via `authorized-start` alone, is not covered. A
+stopped `msi-scheduled-shutdown.timer` makes the preflight fail (`cannot read
+the next elapse`) until the timer is re-enabled, so keeping msi up for an
+evening run means no preflight-gated run until then.
 
 ## Declarative prerequisites on `origin/main`
 

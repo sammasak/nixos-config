@@ -82,20 +82,25 @@ pkgs.testers.runNixOSTest {
         print(out)
         assert rc == 1 and "FAIL panic-on-oom" in out and "preflight: NO-GO" in out, (rc, out)
 
-    with subtest("preflight: a scheduled shutdown inside the window is refused, outside passes (#185)"):
-        def guarded(minutes, window):
+    with subtest("preflight: a scheduled shutdown sooner than the run budget plus margin is refused (#185)"):
+        # the window is the template's own timeoutMinutes plus the host's stop and export margin
+        BUDGET = ${toString m.policies.resources.timeoutMinutes}
+        def guarded(minutes, margin):
             machine.succeed("systemctl stop fake-shutdown.timer 2>/dev/null || true")
             if minutes is not None:
                 machine.succeed(f"systemd-run --unit=fake-shutdown --on-calendar=\"$(date -d '+{minutes} min' '+%F %T')\" true")
-            machine.succeed(f"jq '. + {{scheduledShutdown: {{timerUnit: \"fake-shutdown.timer\", refuseWithinMinutes: {window}}}}}' {POLICY} > /root/guarded.json")
+            machine.succeed(f"jq '. + {{scheduledShutdown: {{timerUnit: \"fake-shutdown.timer\", stopExportMarginMinutes: {margin}}}}}' {POLICY} > /root/guarded.json")
             return machine.execute(f"${P} --host /root/guarded.json --template {M}")
-        rc, out = guarded(10, 30)
+        rc, out = guarded(10, 10)
         print(out)
-        assert rc == 1 and "FAIL shutdown" in out and "inside the 30 min" in out and "preflight: NO-GO" in out, (rc, out)
-        rc, out = guarded(120, 30)
+        assert rc == 1 and "FAIL shutdown" in out and f"under the {BUDGET} min run budget + 10 min stop and export margin" in out and "preflight: NO-GO" in out, (rc, out)
+        # past the run budget but inside the margin: still refused, the export would be cut off
+        rc, out = guarded(BUDGET + 5, 10)
+        assert rc == 1 and "FAIL shutdown" in out, (rc, out)
+        rc, out = guarded(BUDGET + 60, 10)
         assert rc == 0 and "PASS shutdown" in out and "preflight: go" in out, (rc, out)
         # no active timer: unknown is a refusal, never a pass
-        rc, out = guarded(None, 30)
+        rc, out = guarded(None, 10)
         assert rc == 1 and "FAIL shutdown" in out and "cannot read" in out, (rc, out)
         machine.succeed("systemctl stop fake-shutdown.timer 2>/dev/null || true")
 

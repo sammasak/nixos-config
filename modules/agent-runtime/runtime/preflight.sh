@@ -144,21 +144,28 @@ else
 fi
 
 # --- a scheduled shutdown that does not drain instances (#185): refuse a run it would cut off.
+# The run may use the template's whole timeoutMinutes, then needs the host's declared margin to stop and
+# export, so the window is derived from this template and cannot fall behind a raised timeout.
 # The timer's next elapse comes from systemd; no elapse (stopped timer, unreadable) is a FAIL, not a pass.
 if jq -e '.scheduledShutdown != null' "$host" >/dev/null; then
-  timer=$(jq -r .scheduledShutdown.timerUnit "$host") window=$(jq -r .scheduledShutdown.refuseWithinMinutes "$host")
+  timer=$(jq -r .scheduledShutdown.timerUnit "$host") margin=$(jq -r .scheduledShutdown.stopExportMarginMinutes "$host")
+  budget=$(jq -r .policies.resources.timeoutMinutes "$template")
+  window=$((budget + margin))
   next=$(systemctl show --timestamp=unix -p NextElapseUSecRealtime --value "$timer" 2>/dev/null || true)
   next=${next#@}
   if [[ ! $next =~ ^[0-9]+$ ]]; then
     nogo shutdown "cannot read the next elapse of $timer (timer not active?): the time to the scheduled shutdown is unknown"
   else
-    left=$(( (next - $(date +%s)) / 60 ))
-    if [ "$left" -ge "$window" ]; then
-      pass shutdown "$timer elapses in $left min, outside the $window min no-new-runs window"
+    left_s=$((next - $(date +%s)))
+    left=$((left_s / 60))
+    if [ "$left_s" -ge $((window * 60)) ]; then
+      pass shutdown "$timer elapses in $left min, at least the $budget min run budget + $margin min stop and export margin"
     else
-      nogo shutdown "$timer elapses in $left min, inside the $window min no-new-runs window: the shutdown does not drain instances, so a run started now could be cut off; start after the shutdown and the next boot"
+      nogo shutdown "$timer elapses in $left min, under the $budget min run budget + $margin min stop and export margin: the shutdown does not drain instances, so a run started now could be cut off; start after the shutdown and the next boot"
     fi
   fi
+else
+  pass shutdown "no scheduled shutdown declared for this host"
 fi
 
 # --- Herdr answers (the handoff goes through it); as the user whose server it is when run under sudo
