@@ -93,3 +93,22 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   login). A rotated token reaches an environment at its next start.
 
 The committed config declares none.
+
+## Working an issue in one
+
+The declaration is the record of what runs where: commit the instance with the
+issue it serves, deploy, and remove it when the work has landed.
+
+1. Pick an issue; check it has no open PR already (`gh pr list --search "<n> in:body"`).
+2. Declare the environment (name it after the issue), commit, deploy the host.
+3. Hand over the brief from lenovo: `herdr --machine <host> agent prompt <name> '<brief>'`.
+   The brief says: read the issue, clone, work through the repo's `devenv tasks`
+   (`sdlc:*` where the repo has `platform.sdlc`), heavy steps one at a time,
+   log friction to `~/ENV-FEEDBACK.md`, stop with a written blocker when stuck.
+4. A `blocked` agent is waiting on a question; answer it in its pane.
+5. Review is one independent subagent the agent spawns on its own diff. No
+   second environment, no comment trail.
+6. The agent pushes and opens the PR; the session driving it from lenovo merges.
+7. Copy what `~/ENV-FEEDBACK.md` taught into `docs/environments-feedback.md`
+   (one line each, with the fix or the open gap), then remove the declaration
+   and deploy.

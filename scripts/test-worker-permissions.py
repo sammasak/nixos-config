@@ -25,7 +25,7 @@ def config_of(host):
     """The host's evaluated NixOS config as a Nix expression; WORKER is the guest of an instance declared only here."""
     if host == WORKER:
         return (f"({FLAKE}.nixosConfigurations.acer-swift.extendModules "
-                "{ modules = [ { sam.workers.instances.probe = { }; } ]; }).config.containers.probe.config")
+                "{ modules = [ ({ lib, ... }: { sam.workers.instances = lib.mkForce { probe = { }; }; }) ]; }).config.containers.probe.config")
     return f"{FLAKE}.nixosConfigurations.{host}.config"
 
 

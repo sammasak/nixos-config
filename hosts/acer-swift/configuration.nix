@@ -13,7 +13,7 @@ in
   sam.profile = vars;
   # Room for one 6G nspawn worker (docs/nspawn-workers.md), inside the 4 GiB k3s reserve; the host is no worker itself.
   sam.workers = {
-    instances = { };
+    instances = { demo = { model = "sonnet"; cpuQuota = "390%"; }; };
     labelPrefix = "acer";
     memoryBudget = "6G";
     memoryMax = "6G";

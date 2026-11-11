@@ -17,7 +17,7 @@ in
   # 6 CPUs / ~8 GiB left after keeping 2 CPUs and 8 GiB for those (docs/nspawn-workers.md).
   # No ghHostsFile: msi's lukas has no gh login (git push still works, over the bound SSH key).
   sam.workers = {
-    instances = { };
+    instances = { skills91 = { model = "sonnet"; }; };
     labelPrefix = "msi";
     memoryBudget = "7G";
     memoryMax = "3584M";
