@@ -7,6 +7,8 @@ verifies a manifest's sources for one instance. Nothing here starts a container,
 adds a service, or touches a live host; the nspawn proof (#135,
 `docs/agent-runtime-nspawn.md`), security and admission (#137)
 and lifecycle (#138) consume the manifests, the run manifests and the instance records.
+Interactive sessions (`environment`, `homeFiles`, `session`, the host's Claude Code in an instance)
+are in `docs/agent-runtime-session.md`.
 
 Terms: a **template** is a declaration under `sam.agentRuntime.templates.<name>`. A
 **source** is one of its `repositories.<name>` entries (emitted under `sources` in the

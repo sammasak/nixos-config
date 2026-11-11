@@ -4,8 +4,7 @@ The step after the #165 cargo pilot: one real Claude Code coding task inside the
 a nonempty patch the trusted host verifies before anyone reviews or promotes it. This file is the
 template, what non-interactive Claude Code needs, the authentication options for the owner, and
 the promotion path. The template's own defaults are inert — no egress, no credential. **acer-swift
-and msi-ms7758 are the two hosts that admit it**: each renders `eligibleTemplates = [ "rust-pilot"
-"claude-coder" ]` with `templates.claude-coder.network.allow = [ "api.anthropic.com" ]`
+and msi-ms7758 are the two hosts that admit it**: each lists `claude-coder` in `eligibleTemplates` with `templates.claude-coder.network.allow = [ "api.anthropic.com" ]`
 (`hosts/<host>/configuration.nix`) and holds the SOPS subscription token (`sam.hostSecrets`; msi is
 a recipient of `claude/oauth.yaml` only). The supervised live run below is written for acer; on msi
 the steps are the same without the acer heavy-work lock.
