@@ -143,6 +143,24 @@ else
   nogo eligible "the host policy does not enable $name"
 fi
 
+# --- a scheduled shutdown that does not drain instances (#185): refuse a run it would cut off.
+# The timer's next elapse comes from systemd; no elapse (stopped timer, unreadable) is a FAIL, not a pass.
+if jq -e '.scheduledShutdown != null' "$host" >/dev/null; then
+  timer=$(jq -r .scheduledShutdown.timerUnit "$host") window=$(jq -r .scheduledShutdown.refuseWithinMinutes "$host")
+  next=$(systemctl show --timestamp=unix -p NextElapseUSecRealtime --value "$timer" 2>/dev/null || true)
+  next=${next#@}
+  if [[ ! $next =~ ^[0-9]+$ ]]; then
+    nogo shutdown "cannot read the next elapse of $timer (timer not active?): the time to the scheduled shutdown is unknown"
+  else
+    left=$(( (next - $(date +%s)) / 60 ))
+    if [ "$left" -ge "$window" ]; then
+      pass shutdown "$timer elapses in $left min, outside the $window min no-new-runs window"
+    else
+      nogo shutdown "$timer elapses in $left min, inside the $window min no-new-runs window: the shutdown does not drain instances, so a run started now could be cut off; start after the shutdown and the next boot"
+    fi
+  fi
+fi
+
 # --- Herdr answers (the handoff goes through it); as the user whose server it is when run under sudo
 herdr_cmd=(herdr agent list)
 [ -z "$herdr_user" ] || [ "$(id -u)" != 0 ] || herdr_cmd=(runuser -u "$herdr_user" -- herdr agent list)

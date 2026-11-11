@@ -480,6 +480,11 @@ let
         message = "sam.agentRuntime.host.eligibleTemplates is set but host.enable is false";
       }
       {
+        # the standalone manifest evaluation has no systemd option set, so only a NixOS host can be checked
+        assertion = cfg.host.scheduledShutdown == null || !(config ? systemd) || config.systemd.timers ? ${lib.removeSuffix ".timer" cfg.host.scheduledShutdown.timerUnit};
+        message = "sam.agentRuntime.host.scheduledShutdown.timerUnit names a timer that is not declared in systemd.timers";
+      }
+      {
         assertion = deniedRoots == [ ];
         message = "sam.agentRuntime.host.allowedMountRoots: ${lib.concatStringsSep ", " deniedRoots} is on a denied host root (${lib.concatStringsSep " " deniedHostRoots})";
       }
@@ -591,6 +596,22 @@ in
           description = "Host disk kept free of instances (admission, #137).";
         };
       };
+      scheduledShutdown = mkOption {
+        type = types.nullOr (types.submodule {
+          options = {
+            timerUnit = mkOption {
+              type = types.strMatching "^[A-Za-z0-9:_.@-]+\\.timer$";
+              description = "The systemd timer whose next elapse is this host's scheduled shutdown (must be declared in `systemd.timers`).";
+            };
+            refuseWithinMinutes = mkOption {
+              type = types.ints.positive;
+              description = "The preflight refuses a run when the timer elapses within this many minutes (a run longer than this would be cut off).";
+            };
+          };
+        });
+        default = null;
+        description = "A declared scheduled shutdown that does not drain instances: `agent-runtime-preflight` refuses new runs shortly before it (#185). Null: the host is not shut down on a schedule.";
+      };
       allowedMountRoots = mkOption {
         type = types.listOf mountRoot;
         default = [ ];
@@ -623,7 +644,7 @@ in
       hostPolicy = json.generate "agent-runtime-host.json" {
         schemaVersion = 1;
         kind = "agent-runtime-host";
-        inherit (cfg.host) enable eligibleTemplates maxConcurrentInstances reserve;
+        inherit (cfg.host) enable eligibleTemplates maxConcurrentInstances reserve scheduledShutdown;
       };
       manifestDir = pkgs.linkFarm "agent-runtime-manifests" (
         lib.mapAttrsToList (n: m: {

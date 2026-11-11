@@ -82,6 +82,23 @@ pkgs.testers.runNixOSTest {
         print(out)
         assert rc == 1 and "FAIL panic-on-oom" in out and "preflight: NO-GO" in out, (rc, out)
 
+    with subtest("preflight: a scheduled shutdown inside the window is refused, outside passes (#185)"):
+        def guarded(minutes, window):
+            machine.succeed("systemctl stop fake-shutdown.timer 2>/dev/null || true")
+            if minutes is not None:
+                machine.succeed(f"systemd-run --unit=fake-shutdown --on-calendar=\"$(date -d '+{minutes} min' '+%F %T')\" true")
+            machine.succeed(f"jq '. + {{scheduledShutdown: {{timerUnit: \"fake-shutdown.timer\", refuseWithinMinutes: {window}}}}}' {POLICY} > /root/guarded.json")
+            return machine.execute(f"${P} --host /root/guarded.json --template {M}")
+        rc, out = guarded(10, 30)
+        print(out)
+        assert rc == 1 and "FAIL shutdown" in out and "inside the 30 min" in out and "preflight: NO-GO" in out, (rc, out)
+        rc, out = guarded(120, 30)
+        assert rc == 0 and "PASS shutdown" in out and "preflight: go" in out, (rc, out)
+        # no active timer: unknown is a refusal, never a pass
+        rc, out = guarded(None, 30)
+        assert rc == 1 and "FAIL shutdown" in out and "cannot read" in out, (rc, out)
+        machine.succeed("systemctl stop fake-shutdown.timer 2>/dev/null || true")
+
     with subtest("preflight --credential (#169): owner-only present passes, weak or missing fails, token never printed"):
         secret = "sk-ant-oat01-PREFLIGHT-169-secret-value"
         machine.succeed(f"printf %s {secret} > /root/good-token && chmod 400 /root/good-token")

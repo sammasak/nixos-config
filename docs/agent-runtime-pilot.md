@@ -63,7 +63,10 @@ them), the other namespaces, `vm.panic_on_oom` 0 or 1, memory and disk against t
 `create` admits, the template eligible, Herdr answering (as the user who ran sudo), and no instance
 running or unresolved. With `--credential FILE` it also verifies the subscription token the run will
 deliver -- present, a regular file, owner-only (0400/0600), non-empty, owned by the operator -- from
-its metadata only, never reading or printing the token (#169). Every check prints PASS or FAIL; it
+its metadata only, never reading or printing the token (#169). On a host that declares
+`sam.agentRuntime.host.scheduledShutdown` (a systemd timer plus `refuseWithinMinutes`) it also
+refuses a run inside that window before the timer's next elapse, and when the elapse cannot be
+read (#185): a scheduled shutdown does not drain instances, so such a run would be cut off. Every check prints PASS or FAIL; it
 exits 0 only when all pass.
 
 ## Deploy (owner, from lenovo)

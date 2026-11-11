@@ -55,6 +55,13 @@ If the diagnostics cannot establish safe headroom, do not deploy the candidate
 admission policy. Do not change the existing 09:00 wake or 21:00 shutdown
 schedule to make a test pass.
 
+The 21:00 shutdown stops k3s but does not drain agent-runtime instances. MSI
+therefore declares `sam.agentRuntime.host.scheduledShutdown` (timer
+`msi-scheduled-shutdown.timer`, 30 minutes), and `agent-runtime-preflight`
+fails with a `shutdown` line for a run started inside that window. Start such
+a run after the next morning's wake. The check guards the preflight only, and
+a run that is already going at 20:30 is still cut off at 21:00.
+
 ## Declarative prerequisites on `origin/main`
 
 On `main` since #191 (`9df8c53`, 2026-11-09), `hosts/msi-ms7758/configuration.nix` declares:
