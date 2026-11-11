@@ -56,6 +56,31 @@ CPU-throttled 947 s of 1275 s used while cores sat idle; msi `skills91`
 The reserve sum is what eval enforces; the recommendation is lower because a
 build in an environment spikes to 4 to 5G.
 
+Burst, measured on msi 2026-11-11 with the 2G reserve / 6G max defaults: a
+process allocating 5G ran untouched (peak 5.4G, no events); one allocating 7G
+also finished (8.5 s against 2.4 s: reclaim began at `MemoryHigh`, 1.9G went to
+zram swap, 0 OOM kills, container and agent stayed up). Swap per environment is
+capped at half its max, so a true runaway (past max plus swap, 9G by default)
+loses that one process to the kernel, never the container, and cannot fill the
+host's swap.
+
+## Lifecycle
+
+| Step | How | Measured (msi) |
+|------|-----|----------------|
+| Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 6.8 s |
+| First use of a repo | clone, `devenv shell` | 25 s (skills), 32 s (herman): evaluation only, every store path comes from the host's store; 0.1 to 0.3 s after that |
+| Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
+| Host reboot or redeploy | nothing | container autostarts, agent resumes its conversation |
+| Resize or change | edit the declaration, deploy | restarts that one environment, home kept |
+| Retire | remove the declaration, deploy | 23 s; home, profile and GC roots deleted |
+
+The store is the host's, read-only, with builds going through the host's
+daemon, so anything one environment or the host built is there for the next.
+The host's weekly/monthly collection would not see an environment's devenv
+roots (the daemon records them under the guest's path), so
+`dev-environments-gcroots` roots them from each home right before `nix-gc`.
+
 ## What fails at build
 
 A wrong declaration fails evaluation with a message naming the option, never

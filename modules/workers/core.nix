@@ -150,7 +150,7 @@ let
       model = mkOption { type = types.nullOr (types.strMatching "[][A-Za-z0-9._:-]+"); default = null; description = "The agent's model."; };
       prompt = mkOption { type = types.nullOr types.nonEmptyStr; default = null; description = "Sent by the session surface once the agent is ready, on a start with no session to resume."; };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryLow: kept from reclaim, and what the pool must fit."; };
-      memory.max = mkOption { type = size; default = "6G"; description = "MemoryMax, the spike ceiling; MemoryHigh, where reclaim starts, is 90% of it."; };
+      memory.max = mkOption { type = size; default = "6G"; description = "MemoryMax, the spike ceiling; MemoryHigh, where reclaim starts, is 90% of it and swap is capped at half of it."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
       cpu.max = mkOption { type = types.nullOr types.ints.positive; default = null; description = "A hard CPUQuota in cores; null spikes to every core."; };
     };
@@ -243,6 +243,14 @@ in
             ${config.systemd.package}/bin/systemctl is-active --quiet "container@$n.service" && continue
             rm -rf --one-file-system "$d" "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
           done
+          # per-container dirs whose home is already gone (an earlier naming scheme, a hand-removed home)
+          for d in /nix/var/nix/profiles/per-container/* /nix/var/nix/gcroots/per-container/*; do
+            [[ -d $d ]] || continue
+            n=''${d##*/}
+            case " ${lib.concatStringsSep " " (lib.attrNames config.containers)} " in *" $n "*) continue ;; esac
+            ${config.systemd.package}/bin/systemctl is-active --quiet "container@$n.service" && continue
+            rm -rf --one-file-system "$d"
+          done
           ${if instances == [ ] then "rmdir ${cfg.stateDir} 2>/dev/null || true" else "install -d -m 0700 ${cfg.stateDir}"}
           ${lib.concatMapStrings (w: ''
             install -d -m 0700 ${cfg.stateDir}/${w.name}
@@ -251,6 +259,29 @@ in
         '';
       };
     }
+
+    # The host's daemon registers an environment's devenv roots under the guest's path, which dangles on the
+    # host: without this the host's collection deletes every environment's built shells.
+    (lib.mkIf (cfg.instances != { } && config.nix.gc.automatic) {
+      systemd.services.dev-environments-gcroots = {
+        description = "Root the developer environments' devenv closures before garbage collection";
+        requiredBy = [ "nix-gc.service" ];
+        before = [ "nix-gc.service" ];
+        serviceConfig.Type = "oneshot";
+        script = ''
+          for home in ${cfg.stateDir}/*/home; do
+            n=''${home%/home}; n=''${n##*/}
+            roots=/nix/var/nix/gcroots/per-container/$n
+            [[ -d $roots ]] || continue
+            rm -f "$roots"/home-*
+            ${pkgs.findutils}/bin/find "$home" -maxdepth 5 -path '*/.devenv/gc/*' -type l 2>/dev/null | while read -r l; do
+              t=$(readlink "$l")
+              [[ $t == /nix/store/* && -e $t ]] && ln -sfn "$t" "$roots/home-$(echo -n "$l" | sha1sum | cut -c1-16)"
+            done
+          done
+        '';
+      };
+    })
 
     (lib.mkIf (cfg.instances != { }) {
       assertions =
@@ -351,6 +382,8 @@ in
             MemoryLow = w.memory.reserved;
             MemoryHigh = w.memory.max / 10 * 9;
             MemoryMax = w.memory.max;
+            # Bounded so one runaway cannot fill the host's zram swap; past max + this the kernel kills the process, not the container.
+            MemorySwapMax = w.memory.max / 2;
             CPUWeight = lib.min 10000 (100 * w.cpu.reserved);
           } // lib.optionalAttrs (w.cpu.max != null) { CPUQuota = "${toString (100 * w.cpu.max)}%"; } // {
             # The stock pre-start copies the host's resolv.conf, the guest's only DNS: at boot or while a switch
