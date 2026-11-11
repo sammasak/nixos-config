@@ -18,6 +18,10 @@ in
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
+  sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [
+    "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
+    "nixos-config" "rf-proto" ".cache/wt"
+  ];
   # Only the coordinator saves worker targets; once saved, scheduled-off MSI stays visible as unreachable.
   sam.herdr.machines = [
     { label = "acer-swift"; target = "acer-swift"; }

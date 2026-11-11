@@ -18,10 +18,10 @@ let
     name = "herdr-agent-launcher";
     runtimeInputs = [ pkgs.coreutils pkgs.herdr pkgs.jq ];
     # #157: an unattended worker (any claude started with --dangerously-skip-permissions, as coord:spawn starts
-    # them) switches models when safeguards flag a message instead of waiting at a dialog; settings.json, and so
-    # the choice of every other session (lenovo's Coordinator), is left alone
+    # them) switches models when safeguards flag a message and skips the bypass acknowledgment instead of waiting
+    # at a dialog (2.1.300 honours both from --settings); settings.json, and so lenovo's Coordinator, is left alone
     runtimeEnv = {
-      HERDR_CLAUDE_WORKER_SETTINGS = pkgs.writeText "claude-worker-settings.json" (builtins.toJSON { switchModelsOnFlag = true; });
+      HERDR_CLAUDE_WORKER_SETTINGS = pkgs.writeText "claude-worker-settings.json" (builtins.toJSON { switchModelsOnFlag = true; skipDangerousModePermissionPrompt = true; });
     } // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
       # skills#28: a worker host's Herdr panes start claude in bypassPermissions, a restored one included
       HERDR_CLAUDE_WORKER_HOST = "1";
