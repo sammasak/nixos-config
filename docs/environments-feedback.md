@@ -21,6 +21,12 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-11 Host GC would have deleted environments' devenv shells (roots dangled on the host): `dev-environments-gcroots` before `nix-gc`.
+- 2026-11-11 Pushes dropped by GitHub during long pre-push gates (seen three times): ssh keepalive in every environment.
+- 2026-11-11 An environment could fill the host's zram swap: swap capped at half its memory max.
+- 2026-11-11 Per-container dirs of names from an earlier scheme needed root to remove: the activation script removes any that no container declares.
+- 2026-11-11 Hard caps throttled idle hosts: reserve plus spike in one slice; without the CPU cap herman web-dist went 151 s to 142 s (mostly serial compile, small win), 7G allocation in a 6G environment survives.
+
 - Every nix command in an environment warned about root's missing channels on stderr (broke a test capturing stderr): guests pin `nix.nixPath` to the store's nixpkgs, channels off (`modules/workers/core.nix`).
 - `/usr/bin/time` missing: guests carry `pkgs.time` (`modules/workers/default.nix`).
 - Done in environments and merged, each with one in-session subagent review that found real bugs in two of three: herman#5 (PR #34), skills#91 (PR #95), a red-main test fix (skills PR #96).

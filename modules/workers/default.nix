@@ -71,6 +71,8 @@ let
     sam.userConfig = config.sam.userConfig;
 
     environment.systemPackages = [ pkgs.time ];
+    # a pre-push gate runs for minutes with the connection idle, and GitHub drops it
+    programs.ssh.extraConfig = "ServerAliveInterval 15\nServerAliveCountMax 200\n";
     sam.herdr.worker.enable = true;
     sam.herdr.trustedDirs = map (d: "${home}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 
