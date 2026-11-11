@@ -31,12 +31,8 @@ in
   sam.workers.jumpHosts = { acer = "acer-swift"; msi = "msi-ms7758"; };
   # One environment beside the control plane: a 4G pool keeps it and its bursts clear of k3s and the coordinator.
   sam.workers = {
-    instances.h2 = {
-      model = "sonnet";
-      memory.max = "4G";
-      prompt = "You are in a fresh nspawn developer environment named h2 on host lenovo, the always-on control plane: it is memory constrained, so never run cargo builds, test suites, nix flake check or the pre-push gate here. Task: herman issue #2 (ready-for-agent, docs and an issue template only). Clone git@github.com:sammasak/herman.git into ~/herman, read its entry doc (CLAUDE.md if present, else README or CONTRIBUTING), and run gh issue view 2. Check the issue's links and file references against HEAD before relying on them, and check for an existing branch or open PR for the issue first; if one exists take it to mergeable instead of starting over. Follow the issue's own scope and gates exactly; where it says a decision is the owner's, stop there and report. Run gates and heavy commands one at a time, with their output sent to a log file. Commit on a branch, write the PR title and body to ~/PR.md, and stop without pushing; the coordinator pushes through a gate on another host. Before that, spawn ONE independent subagent to review your diff and fix what is real. Finish with a five line summary and append friction with this environment to ~/ENV-FEEDBACK.md.";
-    };
-    retired = [ "gw88" "nc201" ];
+    instances = { };
+    retired = [ "gw88" "nc201" "h2" "dp93" ];
     labelPrefix = "lenovo";
     pool = { memory = "4G"; cores = 16; };
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
