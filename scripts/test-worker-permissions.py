@@ -123,11 +123,8 @@ def startup_screen(host, extra=(), flag=True):
 
 
 def main():
-    skills = pathlib.Path(nix("eval", "--raw", "--impure", "--expr",
-                              "(builtins.getFlake (toString ./.)).inputs.skills.outPath"))
-    spawn = (skills / "agents/coordinator/spawn.nix").read_text()
-    check(re.search(r"agent start \"\$name\" --kind claude [^\n]*-- " + FLAG + " --model", spawn) is not None,
-          "coord:spawn (pinned skills) starts every Coordinator-created Claude worker with " + FLAG)
+    module = (pathlib.Path(__file__).parent.parent / "modules/workers/default.nix").read_text()
+    check(f"'claude {FLAG}" in module, "the workers module starts every environment's Claude with " + FLAG)
 
     for host, worker in ((WORKER, True), (COORDINATOR, False)):
         settings = hm(host, "programs.claude-code.settings")
