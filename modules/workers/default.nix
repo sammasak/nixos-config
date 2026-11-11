@@ -28,8 +28,8 @@ let
   }) cfg.instances;
 
   remoteCommand = w: resume: {
-    claude = "fish -il -c 'claude --dangerously-skip-permissions${lib.optionalString resume " --continue"}${lib.optionalString (w.model != null) " --model ${w.model}"}'";
-    codex = "fish -il -c 'codex --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust${lib.optionalString (w.model != null) " --model ${w.model}"}'";
+    claude = "fish -il -c 'claude --dangerously-skip-permissions${lib.optionalString resume " --continue"}${lib.optionalString (w.model != null) " --model ${w.model}"}; exec fish -il'";
+    codex = "fish -il -c 'codex --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust${lib.optionalString (w.model != null) " --model ${w.model}"}; exec fish -il'";
   }.${w.agent};
 
   # Claude Code keeps a session's transcript under the project dir of the cwd it started in, the home here.
