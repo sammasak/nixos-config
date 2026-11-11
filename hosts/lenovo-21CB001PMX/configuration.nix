@@ -31,7 +31,11 @@ in
   sam.workers.jumpHosts = { acer = "acer-swift"; msi = "msi-ms7758"; };
   # One environment beside the control plane: a 4G pool keeps it and its bursts clear of k3s and the coordinator.
   sam.workers = {
-    instances = { };
+    instances.nc201 = {
+      model = "sonnet";
+      memory.max = "4G";
+      prompt = "You are in a fresh nspawn developer environment named nc201 on host lenovo, the always-on control plane: it is memory constrained, so run heavy commands strictly one at a time; never run nix flake check, VM tests, the repo QA suite or a deploy here. Task: nixos-config issue #201 (approved, research only). Clone git@github.com:sammasak/nixos-config.git into ~/nixos-config, run devenv shell once so the git hooks are installed, read CLAUDE.md, and run gh issue view 201 (it is long: read it with --json body). Check for an existing branch or open PR for the issue first; if one exists take it to mergeable instead of starting over. Do the current phase the issue names (G0 inventory) and nothing beyond it; this environment itself is a live example of host-realized closures with a read-only store mount, so measure from here where that is honest and say so. Deliver the way the issue asks. Where it says a decision is the owner's, stop there and report. The pre-push gate of this repo is too heavy for this host: commit on a branch, write the PR title and body to ~/PR.md, and stop without pushing; the coordinator pushes. Before that, spawn ONE independent subagent to review your diff and fix what is real. Finish with a five line summary and append friction with this environment to ~/ENV-FEEDBACK.md.";
+    };
     retired = [ "gw88" ];
     labelPrefix = "lenovo";
     pool = { memory = "4G"; cores = 16; };

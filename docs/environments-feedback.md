@@ -6,6 +6,8 @@ Append; move a line to fixed when its change lands.
 
 ## Open
 
+- Herdr reports `done` while an agent waits on its own background shell or subagent (`f44` three times in one issue); a watcher keyed on status alone wakes for nothing or, worse, retires too early. The coordinator reads the pane tail first (docs/nspawn-workers.md step 4).
+- Two environments on acer running Rust gates plus the nixos-config gate share the host daemon's two build cores: the nixos-config gate that takes 11 min on msi alone was past 35 min. One heavy gate per host at a time, or raise the daemon's cores when the pool is the only load.
 - A fresh clone has no git hooks until `devenv shell` runs once, so `nc200` pushed its nixos-config branch with no pre-push gate at all (docs only, so harmless this time). The brief should say "enter the devenv shell once before the first commit", or the guest should refuse a push from a repo with a devenv.nix and no hooks.
 - On acer and in its environments `lenovo-21CB001PMX` resolves to 127.0.0.2, and an environment has no key for other fleet hosts: an artifact that lives only on another host (a bundle) is unreachable. Hand-offs between hosts go through a pushed branch; the coordinator copied the factum#44 bundle in by hand.
 - A path is cold once per host store, so an issue asking for three cold repetitions cannot be met from an environment.

@@ -201,12 +201,21 @@ The declaration is the record of what runs where: commit the instance with the
 issue it serves, deploy, and remove it when the work has landed.
 
 1. Pick an issue; check it has no open PR already (`gh pr list --search "<n> in:body"`).
-2. Declare the environment (name it after the issue), commit, deploy the host.
-3. Hand over the brief from lenovo: `herdr --machine <host> agent prompt <name> '<brief>'`.
-   The brief says: read the issue, clone, work through the repo's `devenv tasks`
-   (`sdlc:*` where the repo has `platform.sdlc`), heavy steps one at a time,
-   log friction to `~/ENV-FEEDBACK.md`, stop with a written blocker when stuck.
-4. A `blocked` agent is waiting on a question; answer it in its pane.
+2. Declare the environment (name it after the issue) with the brief as its
+   `prompt`, commit, deploy the host: the agent starts on it with no hand-over.
+3. The brief says: read the issue, clone, run `devenv shell` once before the
+   first commit (a fresh clone has no git hooks until then, so its push would
+   skip the gate), read the repo's entry doc, work through the repo's
+   `devenv tasks` (`sdlc:*` where the repo has `platform.sdlc`), heavy steps
+   one at a time, log friction to `~/ENV-FEEDBACK.md`, stop with a written
+   blocker when stuck. A follow-up goes in with
+   `herdr --machine <host> agent prompt <name> '<text>'`.
+4. A `blocked` agent is waiting on a question; answer it in its pane. `done`
+   is not always finished: an agent that parked on a background gate reports
+   `done` and resumes by itself, so read the pane (`shell still running`,
+   `Waiting for N background`) before merging or retiring.
+   Keep every host's pool busy: when an environment is retired and an approved
+   issue is ready, declare the next one in the same deploy.
 5. Review is one independent subagent the agent spawns on its own diff. No
    second environment, no comment trail.
 6. The agent pushes and opens the PR; the session driving it from lenovo merges.
