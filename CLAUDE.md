@@ -20,6 +20,7 @@ devenv tasks run nixos:verify          # build every x86 host, evaluate black-pi
 devenv tasks run nixos:claude-settings-test  # generated Claude settings: default mode, bypass on request
 devenv tasks run nixos:coordinator-test  # coordinator adapters on lenovo only; Codex's agent declared via config_file, no model pin
 devenv tasks run nixos:worker-permissions-test  # #145/#157/skills#28: Herdr workers (restored panes too) start in bypassPermissions and switch models on a safeguards flag; the Coordinator unchanged
+devenv tasks run nixos:workers-eval-test  # modules/workers/core.nix: each wrong config fails eval with its message; agent argv survives the guest shell
 devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer
 devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
 devenv tasks run nixos:build-bounds-test  # lenovo's nix-daemon builds bounded (#109); acer keeps defaults

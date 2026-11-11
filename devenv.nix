@@ -68,6 +68,10 @@ let
     ${pkgs.python3}/bin/python scripts/test-worker-permissions.py
   '';
 
+  workersEvalTest = gate "workers-eval-test" (with pkgs; [ nix python3 fish bash ]) ''
+    ${pkgs.python3}/bin/python scripts/test-workers-eval.py
+  '';
+
   # #42 DoD: no heavyweight RE tooling on naked-pi, no k3s there, no rf-lab module on any other host (eval only)
   rfLabBoundaryTest = gate "rf-lab-boundary-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-rf-lab-boundary.py
@@ -104,7 +108,7 @@ let
 
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
     lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest
+    coordinatorWiringTest workerPermissionsTest workersEvalTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest
     rfLabBoundaryTest runtimeHostTest rfBeaconsTest
   ]);
 
@@ -358,6 +362,7 @@ in
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:worker-permissions-test" = task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
+    "nixos:workers-eval-test" = task "The developer-environment module rejects each wrong configuration at eval; agent argv survives the guest shell" workersEvalTest;
     "nixos:known-hosts-test" = task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed" knownHostsTest;
     "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" = task "lenovo's nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max); acer keeps defaults" buildBoundsTest;

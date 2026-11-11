@@ -123,8 +123,8 @@ def startup_screen(host, extra=(), flag=True):
 
 
 def main():
-    module = (pathlib.Path(__file__).parent.parent / "modules/workers/default.nix").read_text()
-    check(f"'claude {FLAG}" in module, "the workers module starts every environment's Claude with " + FLAG)
+    module = (pathlib.Path(__file__).parent.parent / "modules/workers/core.nix").read_text()
+    check(f'[ "claude" "{FLAG}" ]' in module, "the workers module starts every environment's Claude with " + FLAG)
 
     for host, worker in ((WORKER, True), (COORDINATOR, False)):
         settings = hm(host, "programs.claude-code.settings")

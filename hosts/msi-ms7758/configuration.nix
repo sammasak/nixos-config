@@ -13,15 +13,12 @@ in
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
   homelab.msiPowerSchedule.selfShutdown.enable = true;
 
-  # 15.9 GiB RAM, shared with k3s and the ollama pod: two nspawn workers at 3584M fit in the
-  # 6 CPUs / ~8 GiB left after keeping 2 CPUs and 8 GiB for those (docs/nspawn-workers.md).
-  # No ghHostsFile: msi's lukas has no gh login (git push still works, over the bound SSH key).
+  # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
+  # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
   sam.workers = {
     instances = { skills91 = { model = "sonnet"; }; };
     labelPrefix = "msi";
-    memoryBudget = "7G";
-    memoryMax = "3584M";
-    cpuQuota = "300%";
+    pool = { memory = "10G"; cores = 8; };
   };
 
   sam.profile = vars;
