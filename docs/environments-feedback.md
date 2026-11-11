@@ -52,8 +52,16 @@ Append; move a line to fixed when its change lands.
 - 2026-11-11 `dp93`: a store-cold run cannot be measured from an environment (shared store, no purge); `du` on
   `/nix/store` is unusable there, `nix path-info --all -s` works. Briefs should say "cold = first shell in this home".
 
+- 2026-11-11 `f44`: reviewer grades on one axis moved 8, 8, 7 across rounds on near-identical trees, so a "9 on
+  every axis" bar can be missed by noise alone. One review round plus one fix round is the limit a brief should set.
+- 2026-11-11 `f44`: artifacts named in an issue as a path on another host (a bundle under lenovo `~/exports`) are
+  unreachable from an environment. Hand-overs between hosts go through a pushed branch.
+- 2026-11-11 `dp120`: repos without a CLAUDE.md cost the agent a long README read; `devenv shell` warns
+  "devenv 2.4.0 newer than lock input 2.2.2" on every run in devenv-platform.
+
 ## Fixed
 
+- 2026-11-11 `dp120` on acer (devenv-platform #120, G1 parity evidence): issue to merged docs PR #123 in 14 minutes while a second environment ran the nixos-config gate; pool at 2.1G of 7G. D1 stays with the owner. Retired the same sitting.
 - 2026-11-11 `dp93` on lenovo (devenv-platform #93, research): first `devenv shell` of llm-gateway in a fresh home 33.9 s and +0.26 MiB of host store (closure already there), warm 5 s, zero new paths. That is the shared store doing its job. Guests now have `bc` and an empty `~/ENV-FEEDBACK.md`. Retired the same sitting.
 - 2026-11-11 `h2` on lenovo (herman #2, docs and issue template): declared to reviewed commits in about 2 minutes on a warm host, no gate run on lenovo. Retired the same sitting; the branch went out through an acer environment.
 - 2026-11-11 `nc201` on lenovo (nixos-config #201, G0 inventory, research only): issue to reviewed commit in a 4G pool beside k3s with no gate run on lenovo; the coordinator fetched the branch over ssh and pushed it through an acer environment's gate. Retired the same sitting.
