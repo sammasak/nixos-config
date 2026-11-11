@@ -37,6 +37,9 @@ let
     upgradeHooks = with c.systemd.services.nixos-upgrade; onSuccess ++ onFailure;
     upgradeAfter = c.systemd.services.nixos-upgrade.after;
     optimiseAfter = c.systemd.services.nix-optimise.after;
+    # a clock that never synchronises may hold calendar timers, never a service (acer's NTP comes over wifi)
+    heldByClock = lib.attrNames (lib.filterAttrs
+      (_: s: s.enable && lib.elem "time-sync.target" (s.after ++ s.requires ++ s.wants)) c.systemd.services);
   };
   failing = c: map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
   host = n: f.nixosConfigurations.${n};
@@ -73,6 +76,7 @@ for name, h in sorted(r["hosts"].items()):
     check(h["persistent"] == [False, False, False],
           f"{name}: nix-gc, nix-optimise and nixos-upgrade do not catch up at boot ({h['persistent']})")
     check(h["upgradeHooks"] == [], f"{name}: nixos-upgrade has no desktop-notification hook {h['upgradeHooks']}")
+    check(h["heldByClock"] == [], f"{name}: no service waits for time-sync.target {h['heldByClock']}")
     check("nix-gc.service" in h["optimiseAfter"] and {"nix-gc.service", "nix-optimise.service"} <= set(h["upgradeAfter"]),
           f"{name}: optimise waits for GC, the upgrade for both")
 
