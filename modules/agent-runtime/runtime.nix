@@ -35,12 +35,13 @@ let
       builtins.readFile ./runtime/authorized-start.sh
     );
   };
+  # the pilot's host side (#165): read-only no-go checks, and the pane a runtime's handoff lands in
+  preflight = standalone "preflight" [ instance pkgs.gawk pkgs.getent pkgs.herdr ];
 in
 adapter
 // {
-  inherit instance authorizedStart;
-  # the pilot's host side (#165): read-only no-go checks, and the pane a runtime's handoff lands in
-  preflight = standalone "preflight" [ instance pkgs.gawk pkgs.getent pkgs.herdr ];
+  inherit instance authorizedStart preflight;
+  boot = standalone "boot" [ instance preflight ];
   pane = standalone "pane" [ instance ];
   # the trusted host's check of an exported bundle before review or promotion (#169); never runs the patch
   verify = tool "verify" [ pkgs.gawk ];
