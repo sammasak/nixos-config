@@ -65,6 +65,9 @@ in
           port = 53;
           upstream_dns = [ "1.1.1.1" "8.8.8.8" ];
           bootstrap_dns = [ "1.1.1.1" "8.8.8.8" ];
+          # LAN-only resolver: the default 20 queries/s per client drops a build host's parallel lookups
+          # (40 at once from acer: 20 fail with "Could not resolve host").
+          ratelimit = 0;
         };
 
         tls = mkIf cfg.tls.enable {
