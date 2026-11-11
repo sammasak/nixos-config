@@ -83,7 +83,7 @@ let
             sam.userConfig = users.${username} or { };
             sam.workers.guestModules = [ inputs.home-manager.nixosModules.home-manager (fleetHome "worker") ];
             sam.workers.remotes = lib.optionalAttrs (name == "lenovo") (
-              lib.genAttrs [ "acer-swift" "msi-ms7758" ] (h: config.flake.nixosConfigurations.${h}.config.sam.workers.instances)
+              lib.genAttrs [ "acer-swift" "msi-ms7758" ] (h: config.flake.nixosConfigurations.${h}.config.sam.workers.aliases)
             );
           })
           (fleetHome name)

@@ -22,7 +22,7 @@ in
     "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
     "nixos-config" "rf-proto" ".cache/wt"
   ];
-  # The worker hosts; their running nspawn workers are workspaces in the host's Herdr (docs/nspawn-workers.md).
+  # The worker hosts; their declared nspawn workers are workspaces in the host's Herdr (docs/nspawn-workers.md).
   sam.herdr.machines = [
     { label = "acer-swift"; target = "acer-swift"; }
     { label = "msi-ms7758"; target = "msi-ms7758"; }

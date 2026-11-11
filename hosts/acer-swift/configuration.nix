@@ -11,10 +11,11 @@ in
   ];
 
   sam.profile = vars;
-  # One ephemeral nspawn worker (docs/nspawn-workers.md), inside the 4 GiB k3s reserve; the host is no worker itself.
+  # Room for one 6G nspawn worker (docs/nspawn-workers.md), inside the 4 GiB k3s reserve; the host is no worker itself.
   sam.workers = {
-    count = 1;
+    instances = { };
     labelPrefix = "acer";
+    memoryBudget = "6G";
     memoryMax = "6G";
     cpuQuota = "400%";
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";

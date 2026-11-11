@@ -1,6 +1,6 @@
-# Ephemeral nspawn workers (docs/nspawn-workers.md): stock `containers.worker-<n>` that boot on demand
-# (`systemctl start container@worker-<n>`), run Claude Code from the host's /nix/store and nix daemon, show up
-# as a workspace in the host's own Herdr while they run, and leave nothing behind when stopped.
+# Declared nspawn worker environments (docs/nspawn-workers.md): each `sam.workers.instances.<name>` is a stock
+# `containers.<name>` that a deploy starts and a deploy without it removes, running claude or codex from the
+# host's /nix/store and nix daemon as a workspace in the host's own Herdr, ephemeral.
 { config, lib, pkgs, ... }:
 let
   inherit (lib) mkOption types;
@@ -9,62 +9,77 @@ let
   user = profile.username;
   home = "/home/${user}";
   creds = "/var/lib/host-credentials";
-
-  instance = n: rec {
-    name = "worker-${toString n}";
-    label = "${cfg.labelPrefix}-w${toString n}";
-    hostAddress = "10.233.${toString n}.1";
-    address = "10.233.${toString n}.2";
-  };
-  instances = map instance (lib.range 1 cfg.count);
   uid = if config.users.users.${user}.uid != null then config.users.users.${user}.uid else 1000;
 
-  # The pane's foreground process is ssh, named `claude` (argv[0]) so Herdr detects a Claude agent there; its
-  # status then comes from the screen and terminal title, which ssh passes through.
-  session = pkgs.writeShellScript "worker-claude-session" ''
-    model=()
-    if [[ -n ''${2:-} ]]; then model=(--model "$2"); fi
-    exec -a claude ${pkgs.openssh}/bin/ssh -tt -o HostKeyAlias=${config.networking.hostName} -o ConnectTimeout=10 \
-      -o ServerAliveInterval=30 -o LogLevel=ERROR "${user}@10.233.$1.2" \
-      "fish -il -c 'claude --dangerously-skip-permissions ''${model[*]}'"
+  memSize = types.strMatching "[1-9][0-9]*[MG]";
+  toMiB = s: lib.toInt (lib.substring 0 (lib.stringLength s - 1) s) * (if lib.hasSuffix "G" s then 1024 else 1);
+
+  # From the name alone, so declaring or removing another instance never renumbers (and restarts) this one.
+  indexOf = name: lib.mod (lib.fromHexString (lib.substring 0 4 (builtins.hashString "sha256" name))) 254 + 1;
+
+  instances = lib.mapAttrsToList (name: i: i // rec {
+    inherit name;
+    index = indexOf name;
+    label = "${cfg.labelPrefix}-${name}";
+    hostAddress = "10.233.${toString index}.1";
+    address = "10.233.${toString index}.2";
+  }) cfg.instances;
+
+  remoteCommand = w: {
+    claude = "fish -il -c 'claude --dangerously-skip-permissions${lib.optionalString (w.model != null) " --model ${w.model}"}'";
+    codex = "fish -il -c 'codex --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust${lib.optionalString (w.model != null) " --model ${w.model}"}'";
+  }.${w.agent};
+
+  # Herdr detects the agent from the pane's foreground argv[0]: the ssh process is named after it, and the
+  # agent's status then comes from the screen and terminal title, which ssh passes through.
+  session = w: pkgs.writeShellScript "worker-${w.name}-session" ''
+    exec ${lib.optionalString (w.agent != "none") "-a ${w.agent}"} ${pkgs.openssh}/bin/ssh -tt \
+      -o HostKeyAlias=${config.networking.hostName} -o ConnectTimeout=10 -o ServerAliveInterval=30 -o LogLevel=ERROR \
+      ${user}@${w.address} ${lib.optionalString (w.agent != "none") (lib.escapeShellArg (remoteCommand w))}
   '';
-  hook = pkgs.writeShellApplication {
-    name = "worker-herdr";
+
+  hook = w: pkgs.writeShellApplication {
+    name = "worker-herdr-${w.name}";
     runtimeInputs = [ pkgs.coreutils pkgs.herdr pkgs.jq pkgs.openssh ];
     text = ''
-      action=$1 n=$2 label=worker-$2
+      label=${w.name}
       close() {
         herdr workspace list 2>/dev/null | jq -r --arg l "$label" '.result.workspaces[]? | select(.label == $l) | .workspace_id' \
           | while read -r id; do herdr workspace close "$id" >/dev/null || true; done
       }
-      if [[ $action == stop ]]; then close; exit 0; fi
+      if [[ $1 == stop ]]; then close; exit 0; fi
 
       for _ in $(seq 60); do herdr status --json 2>/dev/null | jq -e '.server.running' >/dev/null && break; sleep 1; done
       for _ in $(seq 120); do
         ssh -o BatchMode=yes -o HostKeyAlias=${config.networking.hostName} -o ConnectTimeout=2 -o LogLevel=ERROR \
-          "${user}@10.233.$n.2" true 2>/dev/null && break
+          ${user}@${w.address} true 2>/dev/null && break
         sleep 1
       done
       close
       pane=$(herdr workspace create --label "$label" --no-focus | jq -er '.result.root_pane.pane_id')
-      model_re='^[][A-Za-z0-9._:-]+$'
-      if [[ -n ''${WORKER_MODEL:-} && ! $WORKER_MODEL =~ $model_re ]]; then
-        echo "ignoring WORKER_MODEL=$WORKER_MODEL" >&2; WORKER_MODEL=
-      fi
-      herdr pane run "$pane" "${session} $n ''${WORKER_MODEL:-}" >/dev/null
-      # past this point a failure must not fail the unit, or its stop (closing the workspace) never runs
-      # Herdr calls the pane idle on the host's fish prompt already; claude takes input once its footer is drawn
-      if herdr pane wait-output "$pane" --match "bypass permissions on" --source visible --timeout 180000 >/dev/null \
-        && herdr agent wait "$pane" --until idle --timeout 30000 >/dev/null; then
-        herdr agent rename "$pane" "$label" >/dev/null || true
-        # a claude that only just drew its prompt box can drop the submitting Enter, leaving the text typed
-        if [[ -n ''${WORKER_PROMPT:-} ]] && ! herdr agent prompt "$pane" "$WORKER_PROMPT" --wait --until working --until "done" \
-          --timeout 15000 >/dev/null 2>&1; then
-          herdr agent send-keys "$pane" Enter >/dev/null || true
+      herdr pane run "$pane" ${session w} >/dev/null
+      ${lib.optionalString (w.agent != "none") ''
+        # past this point a failure must not fail the unit, or its stop (closing the workspace) never runs
+        for _ in $(seq 180); do
+          herdr agent list 2>/dev/null | jq -e --arg p "$pane" '.result.agents[]? | select(.pane_id == $p)' >/dev/null && break
+          sleep 1
+        done
+        herdr agent rename "$pane" "$label" >/dev/null || echo "Herdr detected no ${w.agent} in $label" >&2
+        # Herdr calls the pane idle on the host's fish prompt already; claude takes input once its footer is drawn
+        if ${lib.optionalString (w.agent == "claude") ''herdr pane wait-output "$pane" --match "bypass permissions on" --source visible --timeout 180000 >/dev/null &&''} \
+          herdr agent wait "$pane" --until idle --timeout 30000 >/dev/null; then
+          :
+          ${lib.optionalString (w.prompt != null) ''
+            # an agent that only just drew its prompt box can drop the submitting Enter, leaving the text typed
+            if ! herdr agent prompt "$pane" ${lib.escapeShellArg w.prompt} --wait --until working --until "done" \
+              --timeout 15000 >/dev/null 2>&1; then
+              herdr agent send-keys "$pane" Enter >/dev/null || true
+            fi
+          ''}
+        else
+          echo "${w.agent} in $label did not reach idle; see the workspace" >&2
         fi
-      else
-        echo "claude in $label did not reach idle; see the workspace" >&2
-      fi
+      ''}
     '';
   };
 
@@ -93,7 +108,7 @@ let
       startWhenNeeded = false;
       # the host's own key, bound read-only: stable across ephemeral boots and already pinned on the coordinator
       hostKeys = [{ path = "${creds}/ssh_host_ed25519_key"; type = "ed25519"; }];
-      # the host user's own key, so the host's Herdr pane can open the worker's claude
+      # the host user's own key, so the host's Herdr pane can open the worker's agent
       authorizedKeysFiles = lib.optional (cfg.sshKey != null) "${creds}/id_ed25519.pub";
       settings = {
         PasswordAuthentication = false;
@@ -120,22 +135,41 @@ let
     services.udisks2.enable = false;
     xdg.sounds.enable = false;
   };
+
+  instanceModule = { ... }: {
+    options = {
+      agent = mkOption {
+        type = types.enum [ "claude" "codex" "none" ];
+        default = "claude";
+        description = "Agent the Herdr pane runs in the environment, without approval prompts; `none` is a shell.";
+      };
+      model = mkOption { type = types.nullOr (types.strMatching "[][A-Za-z0-9._:-]+"); default = null; description = "The agent's `--model`."; };
+      prompt = mkOption { type = types.nullOr types.str; default = null; description = "Sent to the agent once it is idle, at every start."; };
+      memoryMax = mkOption { type = memSize; default = cfg.memoryMax; description = "MemoryMax (its nix builds run in the host daemon, outside it)."; };
+      cpuQuota = mkOption { type = types.str; default = cfg.cpuQuota; description = "CPUQuota."; };
+    };
+  };
 in
 {
   options.sam.workers = {
-    count = mkOption {
-      type = types.ints.between 0 200;
-      default = 0;
-      description = "Number of ephemeral nspawn workers `worker-1..N` this host can start.";
+    instances = mkOption {
+      type = types.attrsOf (types.submodule instanceModule);
+      default = { };
+      example = { fix-ci = { agent = "claude"; model = "sonnet"; prompt = "Fix the failing test and push a branch."; }; };
+      description = "The declared environments: each is running while declared and gone, with all it wrote, once not.";
     };
     labelPrefix = mkOption {
       type = types.strMatching "[a-z][a-z0-9-]*";
       default = profile.hostname;
-      description = "Hostname and SSH-alias prefix: worker n is `<prefix>-w<n>`.";
+      description = "Hostname and SSH-alias prefix: instance x is `<prefix>-x`.";
     };
-    memoryMax = mkOption { type = types.str; default = "4G"; description = "MemoryMax of one worker (its nix builds run in the host daemon, outside it)."; };
-    cpuQuota = mkOption { type = types.str; default = "300%"; description = "CPUQuota of one worker."; };
-    runtimeMaxSec = mkOption { type = types.str; default = "8h"; description = "A worker left running is stopped, and so wiped, after this long."; };
+    memoryMax = mkOption { type = memSize; default = "4G"; description = "Default MemoryMax of one instance."; };
+    cpuQuota = mkOption { type = types.str; default = "300%"; description = "Default CPUQuota of one instance."; };
+    memoryBudget = mkOption {
+      type = types.nullOr memSize;
+      default = null;
+      description = "What all instances' memoryMax may add up to on this host; more fails eval.";
+    };
     sshKey = mkOption {
       type = types.nullOr types.str;
       default = "${home}/.ssh/id_ed25519";
@@ -152,25 +186,40 @@ in
       internal = true;
       description = "Home Manager wiring the fleet's hosts get (flake-modules/40-outputs-nixos.nix), reused in every worker.";
     };
-    instances = mkOption {
+    aliases = mkOption {
       type = types.listOf types.attrs;
       readOnly = true;
-      default = instances;
-      description = "The workers as { name, label, address }, for the coordinator's SSH aliases.";
+      internal = true;
+      default = map (w: { inherit (w) label address; }) instances;
+      description = "The instances as { label, address }, for the coordinator's SSH aliases.";
     };
     remotes = mkOption {
       type = types.attrsOf (types.listOf types.attrs);
       default = { };
       internal = true;
-      description = "Coordinator side: each worker host's `instances`, as SSH aliases (`ssh msi-w1`) for debugging.";
+      description = "Coordinator side: each worker host's `aliases`, as SSH aliases (`ssh msi-x`) for debugging.";
     };
   };
 
   config = lib.mkMerge [
-    (lib.mkIf (cfg.count > 0) {
+    (lib.mkIf (cfg.instances != { }) {
+      assertions = map (w: {
+        assertion = builtins.match "[a-z][a-z0-9-]{0,10}" w.name != null;
+        message = "sam.workers.instances.${w.name}: at most 11 of [a-z0-9-], starting with a letter (its veth is ve-<name>).";
+      }) instances ++ [
+        {
+          assertion = lib.allUnique (map (w: w.index) instances);
+          message = "sam.workers.instances: two names hash to one address (10.233.<index>); rename one.";
+        }
+        {
+          assertion = cfg.memoryBudget == null || lib.foldl' (s: w: s + toMiB w.memoryMax) 0 instances <= toMiB cfg.memoryBudget;
+          message = "sam.workers.instances: their memoryMax adds up to more than this host's memoryBudget ${toString cfg.memoryBudget}.";
+        }
+      ];
+
       containers = lib.listToAttrs (map (w: lib.nameValuePair w.name {
         ephemeral = true;
-        autoStart = false;
+        autoStart = true;
         privateNetwork = true;
         inherit (w) hostAddress;
         localAddress = w.address;
@@ -187,51 +236,44 @@ in
         config = guest w;
       }) instances);
 
-      systemd.services = lib.listToAttrs (map (w: lib.nameValuePair "container@${w.name}" {
-        wants = [ "worker-herdr@${lib.removePrefix "worker-" w.name}.service" ];
-        serviceConfig = {
-          MemoryMax = cfg.memoryMax;
-          CPUQuota = cfg.cpuQuota;
-          RuntimeMaxSec = cfg.runtimeMaxSec;
-        };
-      }) instances) // {
-        # A running worker is a workspace `worker-<n>` in the host user's Herdr (the session the coordinator
-        # attaches to as a saved machine), its pane running the worker's claude; it closes when the worker stops.
-        "worker-herdr@" = {
-          description = "Herdr workspace of nspawn worker-%i";
-          bindsTo = [ "container@worker-%i.service" ];
-          # after user@: on shutdown it stops first, so the Herdr server is still there to close the workspace
-          after = [ "container@worker-%i.service" "user@${toString uid}.service" ];
-          environment.XDG_RUNTIME_DIR = "/run/user/${toString uid}";
+      systemd.services = lib.listToAttrs (lib.concatMap (w: [
+        (lib.nameValuePair "container@${w.name}" {
+          wants = [ "worker-herdr-${w.name}.service" ];
+          # the instance's own options recreate it; its hook below never restarts on its own
+          restartTriggers = [ (builtins.toJSON { inherit (w) agent model prompt; }) ];
           serviceConfig = {
-            Type = "oneshot";
+            MemoryMax = w.memoryMax;
+            CPUQuota = w.cpuQuota;
+            # the stock module's per-container profile and gcroot dirs, so a removed instance leaves nothing
+            ExecStopPost = "-${pkgs.coreutils}/bin/rm -rf /nix/var/nix/profiles/per-container/${w.name} /nix/var/nix/gcroots/per-container/${w.name}";
+          };
+        })
+        # The instance's workspace in the host user's Herdr (the session the coordinator attaches to as a saved
+        # machine), its pane running the agent; it closes when the container stops or the instance is removed.
+        (lib.nameValuePair "worker-herdr-${w.name}" {
+          description = "Herdr workspace of nspawn worker ${w.name}";
+          bindsTo = [ "container@${w.name}.service" ];
+          # after user@: on shutdown it stops first, so the Herdr server is still there to close the workspace
+          after = [ "container@${w.name}.service" "user@${toString uid}.service" ];
+          environment.XDG_RUNTIME_DIR = "/run/user/${toString uid}";
+          # a restart would kill the running agent (its ssh): a deploy that only changes this module or pkgs.herdr
+          # leaves it be, and a restart of the container brings it back
+          restartIfChanged = false;
+          serviceConfig = {
+            # simple, not oneshot: a deploy that adds an instance does not wait for its agent to come up
+            Type = "simple";
             RemainAfterExit = true;
             User = user;
-            # WORKER_MODEL (claude --model) and WORKER_PROMPT (sent once claude is idle), read at every start
-            EnvironmentFile = "-${home}/.config/workers/worker-%i.env";
-            ExecStart = "${lib.getExe hook} start %i";
-            ExecStop = "${lib.getExe hook} stop %i";
-            TimeoutStartSec = "6min";
+            ExecStart = "${lib.getExe (hook w)} start";
+            ExecStop = "${lib.getExe (hook w)} stop";
           };
-        };
-      };
+        })
+      ]) instances);
 
       # egress for the workers' 10.233.0.0/16; an address with no running worker fails at once, not on a timeout
       networking.nat = { enable = true; internalIPs = [ "10.233.0.0/16" ]; };
       networking.localCommands = "${pkgs.iproute2}/bin/ip route replace unreachable 10.233.0.0/16";
       networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
-
-      # the host user (and so the coordinator over ssh) starts and stops the workers, nothing else
-      security.polkit.enable = true;
-      security.polkit.extraConfig = ''
-        polkit.addRule(function(action, subject) {
-          if (action.id == "org.freedesktop.systemd1.manage-units" && subject.user == "${user}"
-              && /^container@worker-[0-9]+\.service$/.test(action.lookup("unit"))
-              && ["start", "stop", "restart"].indexOf(action.lookup("verb")) >= 0) {
-            return polkit.Result.YES;
-          }
-        });
-      '';
     })
 
     (lib.mkIf (cfg.remotes != { }) {
