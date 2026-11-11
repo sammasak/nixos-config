@@ -5,18 +5,25 @@
 # unit whose own ExecStopPost records the outcome, so nothing depends on this
 # process surviving; export bundles patches, output and a bounded log; destroy
 # tears down in order and releases the reservation last. An outcome that was never
-# recorded (supervisor or host crash) is reported as ambiguous and never replayed.
-USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--request REQUEST.json] [--root] [--timeout-sec N] [--idmap] [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID [--credential FILE] | destroy ID [--discard] | reconcile | record-exit ID'
+# recorded (supervisor or host crash) is reported as ambiguous and never replayed;
+# a run the host itself took down (shutdown, reboot) ends as interrupted, and settle
+# exports and destroys it after the boot.
+USAGE='agent-runtime-instance [--state DIR] [--run DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--request REQUEST.json] [--root] [--timeout-sec N] [--idmap] [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID [--credential FILE] | destroy ID [--discard] | reconcile | settle | host-status [--host POLICY] | record-exit ID'
 state=/var/lib/agent-runtime
 if [ "${1:-}" = --state ]; then
   [ $# -ge 2 ] || usage
   state=$2
   shift 2
 fi
+rundir=/run/agent-runtime
+if [ "${1:-}" = --run ]; then
+  [ $# -ge 2 ] || usage
+  rundir=$2
+  shift 2
+fi
 [ $# -ge 1 ] || usage
 cmd=$1
 shift
-rundir=/run/agent-runtime
 self=$(realpath "$0")
 log_cap=$((1024 * 1024))
 volume_names=(workspace home tmp cache output)
@@ -177,7 +184,7 @@ state_of() {
     echo created
   fi
 }
-terminal() { [[ $1 =~ ^(succeeded|failed|timed-out|oom-killed|cancelled|ambiguous)$ ]]; }
+terminal() { [[ $1 =~ ^(succeeded|failed|timed-out|oom-killed|cancelled|interrupted|ambiguous)$ ]]; }
 # write_mirror STATE [OUTCOME] [REASON] (#169): the world-readable (0644) lifecycle mirror a Herdr
 # status follower reads so the direct run shows in Herdr with no new privilege. A different file from
 # the credential ($rundir/$id/cred/token, 0400), written only at launch ("starting") and at the
@@ -206,6 +213,37 @@ status_json() {
      + (if $rec then $rec | {task, template, run, runId, uidBase, unit, machine, volumes, createdAt} else {} end)
      + {started: $started, result: $result, export: $exported}'
 }
+# The non-root view of this host (0644 under /run): ids, states and counts only, nothing from a record
+# that could carry a secret. A reader without access to the 0700 state directory sees here what
+# `status` shows root; settle.json and preflight.json are the boot unit's reports, carried as written.
+write_host_status() {  # POLICY
+  local policy=$1 f=$rundir/status.json d n
+  mkdir -p "$rundir"
+  for d in "$state"/*/; do
+    [ -d "$d" ] || continue
+    n=$(basename "$d")
+    valid_id "$n" || continue
+    take_id "$n"
+    jq -nc --arg id "$id" --arg s "$(state_of)" --arg r "$(cat "$base/reservation" 2>/dev/null || true)" \
+      '($r | split(" ")) as $f | {id: $id, state: $s, template: ($f[3] // null),
+        reserved: (if ($f | length) >= 3 then {memoryMiB: ($f[0] | tonumber), diskMiB: ($f[1] | tonumber)} else null end)}'
+  done | jq -sc --arg host "$(hostname)" --arg at "$(now)" \
+    --argjson policy "$(jq -c '{enable, maxConcurrentInstances}' "$policy" 2>/dev/null || echo null)" \
+    --argjson settle "$(cat "$rundir/settle.json" 2>/dev/null || echo null)" \
+    --argjson preflight "$(cat "$rundir/preflight.json" 2>/dev/null || echo null)" '
+    [.[] | select(.reserved)] as $held
+    | [.[] | select(.state | IN("ambiguous", "incomplete", "interrupted")) | .id] as $unresolved
+    | {schemaVersion: 1, kind: "agent-runtime-host-status", host: $host, at: $at, instances: .,
+       reservations: {count: ($held | length), max: ($policy.maxConcurrentInstances // null),
+         memoryMiB: ([$held[].reserved.memoryMiB] | add // 0), diskMiB: ([$held[].reserved.diskMiB] | add // 0)},
+       unresolved: $unresolved,
+       admitReady: (if $policy then $policy.enable and ($unresolved | length) == 0 and ($held | length) < $policy.maxConcurrentInstances else null end),
+       settle: $settle, preflight: $preflight}' >"$f.$$"
+  chmod 0644 "$f.$$"
+  mv "$f.$$" "$f"
+}
+# best effort after a lifecycle step: a status that cannot be written never fails the step itself
+refresh_host_status() { (write_host_status /etc/agent-runtime/host.json) >/dev/null 2>&1 || true; }
 revoke_token() {  # ISSUER TOKEN-FILE: best effort (the token expires anyway), but a failure is reported, not hidden
   local rc=0 detail
   detail=$(timeout 30 "$1" revoke --instance "$id" --token-file "$2" 2>&1 >/dev/null) || rc=$?
@@ -391,7 +429,7 @@ case $cmd in
     s=$(state_of)
     case $s in
       created) ;;
-      running | cancelling | succeeded | failed | timed-out | oom-killed | cancelled)
+      running | cancelling | succeeded | failed | timed-out | oom-killed | cancelled | interrupted)
         echo "$id is already $s; a start is not repeated" >&2
         status_json
         exit 0 ;;
@@ -505,6 +543,7 @@ case $cmd in
       if [ -f "$rundir/$id/cred/token" ]; then revoke_token "$(cat "$base/cred-issuer")" "$rundir/$id/cred/token"; fi
       rm -f "$base/cred-issuer" "$rundir/$id/cred/token"
     fi
+    rm -f "$base/cred-source"
     if [ -n "$issuer" ]; then
       caps=$(jq -c '.policies.capabilities' "$t")
       [ "$(jq length <<<"$caps")" -gt 0 ] || fail credential "$id: the template declares no capabilities; there is nothing to mint"
@@ -529,6 +568,10 @@ case $cmd in
       printf '%s\n' "$issuer" | atomic_json "$base/cred-issuer"
     elif [ -n "$cred_file" ]; then
       cred_meta='{"kind":"file","scopes":null,"expiresAt":null}'
+      # where the token came from and its digest, never the token: after a reboot the tmpfs copy is gone, and
+      # settle re-reads this path for the export's leak check only while it still holds the same token
+      jq -nc --arg p "$(realpath -s -- "$cred_file")" --arg h "$(sha256sum <"$cred_file" | cut -d' ' -f1)" '{path: $p, sha256: $h}' \
+        | atomic_json "$base/cred-source"
     fi
     if [ -n "$minted" ] || [ -n "$cred_file" ]; then
       creddir=$rundir/$id/cred
@@ -558,7 +601,7 @@ case $cmd in
       # nspawn builds a cgroup subtree under the unit; with Delegate systemd runs ExecStopPost in
       # .control, without it the hook cannot be spawned (EBUSY) and the outcome is lost
       -p Delegate=yes
-      -p ExecStopPost="$self --state $state record-exit $id"
+      -p ExecStopPost="$self --state $state --run $rundir record-exit $id"
       # console: stderr is the unit's journal stream, so nspawn's own errors carry the invocation id
       --setenv=SYSTEMD_LOG_TARGET=console
       systemd-nspawn --quiet --keep-unit --settings=no --register=yes --console=pipe
@@ -642,7 +685,8 @@ case $cmd in
         credential: $cm}' \
       | atomic_json "$base/started.json"
     exec 9>&-
-    if [ "$wait" = 1 ]; then exec "$self" --state "$state" wait "$id"; fi
+    refresh_host_status
+    if [ "$wait" = 1 ]; then exec "$self" --state "$state" --run "$rundir" wait "$id"; fi
     status_json
     ;;
 
@@ -657,7 +701,12 @@ case $cmd in
     oom_kills=$(awk '$1 == "oom_kill" {print $2}' "/sys/fs/cgroup$(show ControlGroup)/memory.events" 2>/dev/null || echo 0)
     # a cancel wins even over an exit 0: a payload that traps SIGTERM and exits 0 was still stopped, and
     # one that finished in the instant before the cancel reads cancelled too; exitStatus keeps the truth
+    # the host going down ended it, not the payload: settle exports and destroys it after the boot. A run
+    # that finished in the same instant reads interrupted too; exitStatus keeps the truth
+    stopping=$(systemctl is-system-running 2>/dev/null || true)
+    interrupted_by=''
     if [ -e "$base/cancel-requested" ]; then outcome=cancelled
+    elif [ "$stopping" = stopping ]; then outcome=interrupted interrupted_by=host-shutdown
     elif [ "$service_result" = timeout ]; then outcome=timed-out
     elif [ "$service_result" = success ] && [ "$exit_code" = exited ] && [ "$exit_status" = 0 ]; then outcome=succeeded
     elif [ "$service_result" = oom-kill ] || [ "${oom_kills:-0}" -gt 0 ]; then outcome=oom-killed
@@ -666,15 +715,16 @@ case $cmd in
     started_us=$(show ExecMainStartTimestampMonotonic) exited_us=$(show ExecMainExitTimestampMonotonic)
     jq -nc --arg o "$outcome" --arg r "$service_result" --arg c "$exit_code" --arg s "$exit_status" --arg at "$(now)" \
       --arg inv "${INVOCATION_ID:-}" --arg peak "$(show MemoryPeak)" --arg cpu "$(show CPUUsageNSec)" \
-      --arg a "$started_us" --arg b "$exited_us" --arg oom "${oom_kills:-0}" '
+      --arg a "$started_us" --arg b "$exited_us" --arg oom "${oom_kills:-0}" --arg by "$interrupted_by" '
       def num: tonumber? // null;
-      {outcome: $o, serviceResult: $r, exitCode: $c, exitStatus: ($s | tonumber? // $s), finishedAt: $at, invocation: $inv,
+      (if $by == "" then {} else {interruptedBy: $by} end) + {outcome: $o, serviceResult: $r, exitCode: $c, exitStatus: ($s | tonumber? // $s), finishedAt: $at, invocation: $inv,
        memoryPeakBytes: ($peak | num), cpuUsageNSec: ($cpu | num), oomKills: ($oom | num),
        runtimeUSec: (if ($a | num) and ($b | num) and ($b | num) > 0 then ($b | num) - ($a | num) else null end)}' \
       | atomic_json "$base/result.json"
     # the Herdr status mirror (#169): the recorded outcome and its non-secret reason, never the token
     reason=$service_result
     [ -z "$exit_status" ] || reason="$service_result (exit $exit_status)"
+    [ -z "$interrupted_by" ] || reason=$interrupted_by
     write_mirror "$outcome" "$outcome" "$reason"
     ;;
 
@@ -891,5 +941,85 @@ case $cmd in
     done | jq -sc .
     ;;
 
+  settle)  # after a boot: end the runs the host took down, keep their output, free their slots; start nothing
+    boot=$(awk '$1 == "btime" {print $2}' /proc/stat)
+    step() {  # ARGS...: one lifecycle step on the instance; a refusal's message lands in $why
+      local err rc=0
+      err=$(mktemp)
+      "$self" --state "$state" --run "$rundir" "$@" >/dev/null 2>"$err" || rc=$?
+      why=$(tail -n 1 "$err" | jq -r '.error.message // empty' 2>/dev/null || true)
+      rm -f "$err"
+      [ -n "$why" ] || why="exit $rc"
+      return "$rc"
+    }
+    report() { jq -nc --arg id "$id" --arg a "$1" --arg s "$2" --arg r "${3:-}" '{id: $id, action: $a, state: $s} + (if $r == "" then {} else {detail: $r} end)'; }
+    for d in "$state"/*/; do
+      [ -d "$d" ] || continue
+      n=$(basename "$d")
+      valid_id "$n" || continue
+      take_id "$n"
+      s=$(state_of)
+      if [ "$s" = incomplete ]; then
+        if step destroy "$id"; then report rolled-back incomplete "create never finished"; else report held incomplete "destroy: $why"; fi
+        continue
+      fi
+      if [ "$s" = ambiguous ]; then
+        # only a run started before this boot is the reboot's: one whose outcome was lost while the host
+        # stayed up (a supervisor crash) stays ambiguous and is decided by hand
+        at=$(jq -r '.at // empty' "$base/starting" 2>/dev/null || true)
+        began=''
+        [ -z "$at" ] || began=$(date -d "$at" +%s 2>/dev/null || true)
+        if [ -z "$began" ] || [ "$began" -ge "$boot" ]; then
+          report untouched ambiguous "started in this boot: not a reboot orphan"
+          continue
+        fi
+        if ! (
+          lock_instance
+          [ ! -f "$base/result.json" ] || exit 0
+          jq -nc --arg at "$(now)" '{outcome: "interrupted", interruptedBy: "host-restart", serviceResult: "never-recorded",
+            exitCode: "", exitStatus: "", finishedAt: null, settledAt: $at}' | atomic_json "$base/result.json" || exit 1
+          write_mirror interrupted interrupted host-restart
+        ) 2>/dev/null; then
+          report held ambiguous "the interrupted outcome could not be recorded (locked by another operation?)"
+          continue
+        fi
+        s=$(state_of)
+      fi
+      if [ "$s" != interrupted ]; then
+        report untouched "$s"
+        continue
+      fi
+      by=$(jq -r '.interruptedBy // empty' "$base/result.json")
+      cred_args=()
+      if jq -e '.credential != null' "$base/started.json" >/dev/null 2>&1 && [ ! -s "$rundir/$id/cred/token" ]; then
+        # fail closed: an export that cannot be checked for the run's secret is not made, and nothing is discarded
+        src=$(jq -r '.path // empty' "$base/cred-source" 2>/dev/null || true)
+        if [ -n "$src" ] && [ -r "$src" ] && [ "$(sha256sum <"$src" | cut -d' ' -f1)" = "$(jq -r .sha256 "$base/cred-source")" ]; then
+          cred_args=(--credential "$src")
+        else
+          report held interrupted "$by: the run's credential cannot be re-read for the export's leak check; export $id --credential FILE, then destroy $id"
+          continue
+        fi
+      fi
+      if ! step export "$id" "${cred_args[@]}"; then report held interrupted "$by: export: $why"; continue; fi
+      bundle=$(jq -r .dir "$base/exported.json")
+      if ! step destroy "$id"; then report held interrupted "$by: exported to $bundle; destroy: $why"; continue; fi
+      report settled interrupted "$by: exported to $bundle"
+    done | jq -sc --arg host "$(hostname)" --arg at "$(now)" \
+      '{schemaVersion: 1, kind: "agent-runtime-settle", host: $host, at: $at, instances: .}'
+    ;;
+
+  host-status)
+    policy=/etc/agent-runtime/host.json
+    if [ "${1:-}" = --host ]; then [ $# -ge 2 ] || usage; policy=$2; fi
+    write_host_status "$policy"
+    cat "$rundir/status.json"
+    ;;
+
   *) usage ;;
+esac
+case $cmd in
+  create | cancel | destroy | reconcile | settle) refresh_host_status ;;
+  # not while the host goes down: /run dies with it, and the unit's stop timeout is the budget
+  record-exit) [ "${stopping:-}" = stopping ] || refresh_host_status ;;
 esac
