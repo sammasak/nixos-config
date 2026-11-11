@@ -13,9 +13,10 @@ deploy := "nix run --inputs-from . deploy-rs --"
 
 # --install-bootloader re-runs bootctl install every switch, syncing the ESP's
 # systemd-boot binary to the running generation. nh's inline diff is dropped
-# here; preview first with `just diff`.
+# here; preview first with `just diff`. --sudo evaluates and builds as the user,
+# whose SSH key fetches the private git+ssh inputs; only activation runs as root.
 switch HOST=host:
-    sudo nixos-rebuild switch --flake .#{{HOST}} --install-bootloader
+    nixos-rebuild switch --sudo --flake .#{{HOST}} --install-bootloader
 
 # Update one flake input (default: the Claude skills repo); pair with `just switch`
 bump input='skills':
