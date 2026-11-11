@@ -101,6 +101,8 @@ def main():
     etc = json.loads(nix("eval", "--json", ".#nixosConfigurations.lenovo.config.environment.etc", "--apply", "builtins.attrNames"))
     check(not lenovo_pkgs & {"agent-runtime-instance", "agent-runtime-preflight", "agent-runtime-pane"} and "agent-runtime/host.json" not in etc,
           "lenovo gets no instance lifecycle, preflight, pane or host policy")
+    check({"agent-runtime/client-templates/acer-swift", "agent-runtime/client-templates/msi-ms7758"} <= set(etc),
+          "lenovo links the runtime hosts' store manifests verify trusts")
     check(rt("acer-swift", "sam.agentRuntime.host.enable") is True and rt("acer-swift", "sam.agentRuntime.clientTools.enable") is False,
           "acer stays the runtime host and does not opt into the client-only tools")
 

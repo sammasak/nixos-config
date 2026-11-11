@@ -12,7 +12,10 @@ in
 
   config = lib.mkMerge [
     # the promote/verify client alone, for a coordinator that must not admit instances (docs/agent-runtime-coder.md)
-    (lib.mkIf cfg.clientTools.enable { environment.systemPackages = [ tools.verify tools.promote ]; })
+    (lib.mkIf cfg.clientTools.enable {
+      environment.systemPackages = [ tools.verify tools.promote ];
+      environment.etc = lib.mapAttrs' (h: dir: lib.nameValuePair "agent-runtime/client-templates/${h}" { source = dir; }) cfg.clientTools.templateManifests;
+    })
     (lib.mkIf cfg.host.enable {
       # the lifecycle, the Herdr adapter (#139), the pilot's preflight and pane (#165), the bundle verifier (#169)
       environment.systemPackages = [ tools.instance tools.preflight tools.pane tools.verify (import ./herdr { inherit pkgs; }) ];
