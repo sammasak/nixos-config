@@ -36,7 +36,7 @@ the tie-breaker.
 | `flake-modules/` | Top-level flake composition | Numbered for load order (see docs/architecture.md); `hosts/<name>.nix` declares each host |
 | `hosts/<name>/` | Per-machine facts only | `variables.nix` (choices), `configuration.nix` (host-only modules), `hardware-configuration.nix` (generated) |
 | `modules/core/` | System baseline on every host | boot, users, network, services, packages, automation, sops, wifi, resource-hygiene |
-| `modules/roles/` | Composition | `base`, `laptop`, `homelab-agent`, `homelab-server`, `rf-lab`, `embedded`; selected in `variables.nix` |
+| `modules/roles/` | Composition | `base`, `laptop`, `homelab-agent`, `homelab-server`, `runtime-host`, `rf-lab`, `embedded`; selected in `variables.nix` |
 | `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |
 | `modules/desktop/` | The GUI stack | niri, Waybar, Rofi; gated on `sam.desktop.enable` |
 | `modules/specialisations/` | Boot-menu variants | Currently only `desktop.nix` |
