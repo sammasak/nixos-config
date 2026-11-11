@@ -288,7 +288,7 @@ in
         chmod 600 "$tmp"
         ${pkgs.jq}/bin/jq \
           --arg home "$HOME" --argjson dirs ${lib.escapeShellArg (builtins.toJSON osConfig.sam.herdr.trustedDirs)} \
-          '.bypassPermissionsModeAccepted = true | .hasSeenAutoDefaultNudge = true | reduce ([$home] + $dirs)[] as $d (.; .projects[$d].hasTrustDialogAccepted = true)' \
+          '.bypassPermissionsModeAccepted = true | .hasSeenAutoDefaultNudge = true | .hasCompletedOnboarding = true | .lastOnboardingVersion //= "2.1.300" | .theme //= "dark" | .hasSeenAutoModeEntryWarning = true | reduce ([$home] + $dirs)[] as $d (.; .projects[$d].hasTrustDialogAccepted = true)' \
           "$stateFile" > "$tmp" && mv "$tmp" "$stateFile"
       '';
     in
