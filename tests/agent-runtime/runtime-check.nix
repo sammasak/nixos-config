@@ -461,7 +461,10 @@ pkgs.runCommand "agent-runtime-runtime"
       "$(verdicts store pf | tr -d ' ' | sed 's/FAIL/FAIL /') $(has pf 00000000000000000000000000000000-gone)"
     jq '.policies.network = {egress: "allowlist", allow: ["api.example.org"]}' template.json >template-egress.json
     preflight --state pf-open --template template-egress.json >pf
-    expect "an egress allowlist without IPv4 forwarding (the sandbox has none) is a no-go" "FAIL egress-forwarding " "$(verdicts egress-forwarding pf)"
+    # the builder's own setting decides which way: the sandbox may or may not share the host's network namespace
+    if [ "$(cat /proc/sys/net/ipv4/ip_forward)" = 1 ]; then want=PASS; else want=FAIL; fi
+    expect "an egress allowlist is a go only with IPv4 forwarding, read from the host" "$want egress-forwarding true" \
+      "$(verdicts egress-forwarding pf)$(has pf 'egress-forwarding: net.ipv4.ip_forward=')"
 
     # settle (#reboot): instance directories as a boot finds them, built by hand (create needs loop mounts
     # and real root); a user namespace gives the mounts and the ownership the lifecycle expects
@@ -475,9 +478,9 @@ pkgs.runCommand "agent-runtime-runtime"
       n=$((n + 1))
       mkdir -p "$b/img" "$b/vol"
       for v in workspace home tmp cache output; do mkdir "$b/vol/$v"; mount -t tmpfs tmpfs "$b/vol/$v"; done
+      umount "$b/vol/workspace" && mount --bind "$PWD/ws/$1" "$b/vol/workspace"
       echo "512 320 $((1048576 + 65536 * n)) fixture 1" >"$b/reservation"
       cp template.json "$b/template.json"
-      FAKE_NIX_FAIL=github materialize --run o1 --template template.json --root "$b/vol/workspace"
       jq -n --arg id "$1" --arg r "$(printf '%032x' "$n")" '{schemaVersion: 1, kind: "agent-runtime-instance-record", id: $id,
         task: "sammasak/factum#1", template: {name: "fixture"}, runId: $r}' >"$b/instance.json"
     }
@@ -535,8 +538,12 @@ pkgs.runCommand "agent-runtime-runtime"
     expect "with the leftovers destroyed by hand the host is admit-ready" "true 0 " \
       "$(inst host-status --host host.json | jq -r '"\(.admitReady) \(.reservations.count) \(.unresolved | join(","))"')"
     SETTLE
-    export -f fail expect class holds exists has leaks materialize
-    export materializeTool instanceTool bootTool
+    # materialized out here: root of a one-id namespace cannot keep a store path's ownership on a copy
+    for i in crashed fresh keyed rotated leaky made ended; do
+      FAKE_NIX_FAIL=github materialize --run o1 --template template.json --root "ws/$i"
+    done
+    export -f fail expect class holds exists has leaks
+    export instanceTool bootTool
     unshare --user --map-root-user --mount bash -euo pipefail settle.sh
 
     rc=0; env PATH=/var/empty "$shippedReclaim" 2>err || rc=$?

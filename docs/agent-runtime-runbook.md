@@ -22,13 +22,17 @@ agent-runtime-instance status            # every instance on this host, as JSON
 agent-runtime-instance status <id>       # one instance: state, started, result, export
 agent-runtime-instance logs <id>         # the payload's journal for its one invocation (<= 1 MiB)
 agent-runtime-herdr status --json        # the runtime -> Herdr registry (works with Herdr down)
+jq . /run/agent-runtime/status.json      # no root: ids, states, reservations, the boot's settle report and preflight verdicts
 ```
 
 `state` is one of `created`, `starting`, `running`, `cancelling`, `succeeded`,
-`failed`, `timed-out`, `oom-killed`, `cancelled`, `ambiguous`, `incomplete`,
-`absent`. `starting` is the brief start window and is **not** final; only
-`ambiguous` (started, outcome never recorded — a supervisor or host crash) is a
-terminal unknown that is **reported, never replayed**.
+`failed`, `timed-out`, `oom-killed`, `cancelled`, `interrupted`, `ambiguous`,
+`incomplete`, `absent`. `starting` is the brief start window and is **not**
+final. `interrupted` is a run the host itself took down (a shutdown, or a reboot
+or crash found at the next boot); it is exported and destroyed by the boot
+unit, never started again. `ambiguous` (started, outcome never recorded while
+the host stayed up: a supervisor crash) is a terminal unknown that is
+**reported, never replayed**.
 
 ## Spawn and hand off
 
@@ -67,6 +71,7 @@ agent-runtime-instance export <id>        # a failed/cancelled/oom/timed-out run
 agent-runtime-instance destroy <id>       # tear down in order; releases the reservation LAST
 agent-runtime-instance destroy <id> --discard   # skip the export (only when the artifacts are not wanted)
 agent-runtime-instance reconcile          # after a crash: roll back an incomplete create; report, never replay, an ambiguous run
+agent-runtime-instance settle             # what the boot unit runs: export + destroy runs the host interrupted; starts nothing
 agent-runtime-herdr reconcile             # after a Herdr restart: re-report live runtimes, mark vanished ones lost
 ```
 
@@ -111,7 +116,7 @@ bundle at `exports/<id>` stays where it is.
 
 ```
 agent-runtime-instance status | jq -r '.[] | select(.state=="running" or .state=="starting") | .id'
-# drain: cancel + export + destroy each, oldest first, before a host reboot or a runtime-closure change
+# drain: cancel + export + destroy each, oldest first, before a runtime-closure change (a reboot settles itself, below)
 # a deploy-rs rollback of the host plumbing does NOT roll back a run's output or a live instance;
 # drain first. In-flight work is never silently re-run.
 ```
@@ -122,9 +127,49 @@ either profile, and what a template deploy does to a running instance, are in
 `docs/agent-runtime-deploy.md` (Drain, Rollback, Failure outcomes; proven by
 `agent-runtime-deploy-test`).
 
-A host reboot leaves started-but-unfinished runs `ambiguous` (reported, not
-replayed) and `created` ones startable; volumes survive, the `/run` root and
-loop mounts do not and are rebuilt by `start`/`mount` idempotently.
+## Reboot and shutdown
+
+Nothing has to be drained by hand before a shutdown, a scheduled poweroff or a
+reboot, and no other module needs to know about the runtime.
+
+- **Shutdown.** systemd stops every instance unit (`TimeoutStopSec=30`). Its
+  `record-exit` sees the host going down and records `interrupted`
+  (`interruptedBy: host-shutdown`) instead of `failed`. A cancel requested
+  before the shutdown still reads `cancelled`.
+- **Boot.** `agent-runtime.service` runs `agent-runtime-boot` once: `settle`,
+  then a preflight (`--no-herdr`) per eligible template, then the status file.
+  `settle` rolls back an incomplete create, turns a run that was started before
+  this boot and has no outcome (a crash or power loss) into `interrupted`
+  (`interruptedBy: host-restart`), and for every `interrupted` run exports the
+  recovery bundle and destroys the instance, which releases its reservation.
+  It starts nothing and replays nothing; a `created` instance stays startable
+  (volumes survive; the `/run` root and loop mounts are rebuilt by `start`).
+- **Held, not discarded.** A run is left `interrupted` with its reservation when
+  its export cannot be made safely: it had a credential whose host file is gone
+  or changed since the start (or the token was minted), or the credential shows
+  up in an output file or patch. The settle report names it and the command to
+  run. `settle` never uses `--discard`.
+- **Credentials.** `start --credential FILE` records the file's path and the
+  sha256 of the token (never the token) in the 0700 state directory. After a
+  reboot the tmpfs copy is gone; `settle` re-reads that path for the export's
+  leak check only while the digest still matches.
+
+Post-reboot check, as the operator, no root:
+
+```
+systemctl is-active agent-runtime.service        # active (a oneshot that stays active)
+jq '{admitReady, unresolved, reservations, settle: .settle.instances, preflight: .preflight.templates}' /run/agent-runtime/status.json
+```
+
+`admitReady: true` means the host admits, no instance is unresolved and a slot
+is free. `preflight.templates[].verdict` is the boot's `go`/`no-go` per eligible
+template with the failed checks; `settle.instances[]` lists what was `settled`
+(with its bundle), `held`, `rolled-back` or left `untouched`. The file is a
+snapshot (`at`); lifecycle commands refresh the instance part. Root reruns the
+whole thing with `systemctl restart agent-runtime.service`, or just
+`agent-runtime-instance settle`. On a host that stayed up it changes nothing
+that is still running, and an `ambiguous` run of the current boot is left for a
+decision by hand.
 
 ## Store and credentials caveats
 
