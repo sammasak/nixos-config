@@ -42,7 +42,7 @@ branch or a rebase changes them, so rebuild and compare before switching.
 ## Switch (owner)
 
 Lenovo first, then acer. Both commands need a real terminal: `just switch`
-runs `sudo nixos-rebuild`, and lukas has no passwordless sudo.
+runs `nixos-rebuild --sudo`, and lukas has no passwordless sudo.
 
 ```sh
 # on lenovo, in ~/nixos-config at the merged commit
