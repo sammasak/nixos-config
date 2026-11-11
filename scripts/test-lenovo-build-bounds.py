@@ -1,4 +1,4 @@
-"""lenovo's nix-daemon builds stay bounded (nixos-config#109); acer, the build host, keeps its defaults."""
+"""lenovo's nix-daemon builds stay bounded (nixos-config#109), and so do the environment hosts' (acer, msi)."""
 import json
 import subprocess
 import sys
@@ -40,8 +40,9 @@ check(cap is not None and measured < cap,
 ram = 15.3 * 2**30
 check(cap is not None and cap <= ram / 2,
       "MemoryMax leaves at least half of lenovo's 15.3 GiB to k3s, the agents and the desktop")
-acer = ev(cfg("acer-swift") + ".systemd.services.nix-daemon.serviceConfig") or {}
-acer_settings = ev(cfg("acer-swift") + ".nix.settings") or {}
-check("MemoryMax" not in acer and acer_settings.get("cores") != 2,
-      "acer, where heavy gates belong, keeps its build parallelism and no daemon cap")
+for host in ("acer-swift", "msi-ms7758"):
+    daemon = ev(cfg(host) + ".systemd.services.nix-daemon.serviceConfig") or {}
+    high, cap = size(daemon.get("MemoryHigh")), size(daemon.get("MemoryMax"))
+    check(high is not None and cap is not None and high < cap <= 6 * 2**30,
+          f"{host}, whose environments build in its daemon, bounds it at most 6G ({daemon.get('MemoryHigh')}, {daemon.get('MemoryMax')})")
 sys.exit(1 if failed else 0)

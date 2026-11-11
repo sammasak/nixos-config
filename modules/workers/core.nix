@@ -1,6 +1,6 @@
 # Declared developer environments, free of this fleet (modules/workers/default.nix is its adapter): each
 # `services.devEnvironments.instances.<name>` is a stock `containers.<name>` with an ephemeral root, a persistent home
-# and an agent reached over ssh; a deploy that no longer declares one deletes its home.
+# and an agent reached over ssh; an instance moved to `retired` has its home deleted.
 { config, lib, pkgs, options, ... }:
 let
   inherit (lib) mkOption types;
@@ -19,6 +19,8 @@ let
   showSize = b: "${toString (b / 1048576)}M";
   octet = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
   cidr = types.strMatching "${octet}\\.${octet}\\.${octet}\\.${octet}/([0-9]|[12][0-9]|3[0-2])";
+  nameType = types.strMatching "[a-z][a-z0-9-]{0,10}";
+  keyAlias = "environments.${cfg.prefix}";
   # a fish single-quoted word reads \\ and \' as escapes, a POSIX one does not
   escape = if cfg.shell == "fish"
     then s: "'" + lib.replaceStrings [ "\\" "'" ] [ "\\\\" "\\'" ] s + "'"
@@ -26,21 +28,12 @@ let
 
   # From the name alone, so declaring or removing another instance never renumbers (and restarts) this one.
   indexOf = name: lib.mod (lib.fromHexString (lib.substring 0 4 (builtins.hashString "sha256" name))) 254 + 1;
-  subnetBits = lib.foldl' (a: o: a * 256 + lib.toInt o) 0 (lib.splitString "." cfg.subnet);
-  # true when the CIDR shares an address with <subnet>.0.0/16
-  overlaps = c:
-    let
-      p = lib.splitString "/" c;
-      o = map lib.toInt (lib.splitString "." (lib.head p));
-      len = lib.min 16 (lib.toInt (lib.elemAt p 1));
-      div = lib.foldl' (a: _: a * 2) 1 (lib.range 1 (16 - len));
-    in (lib.elemAt o 0 * 256 + lib.elemAt o 1) / div == subnetBits / div;
 
   instances = lib.mapAttrsToList (_: i: i // rec {
     index = indexOf i.name;
     hostName = "${cfg.prefix}-${i.name}";
-    hostAddress = "${cfg.subnet}.${toString index}.1";
-    address = "${cfg.subnet}.${toString index}.2";
+    hostAddress = "10.233.${toString index}.1";
+    address = "10.233.${toString index}.2";
     agentDef = cfg.agents.${i.agent} or null;
   }) cfg.instances;
 
@@ -61,7 +54,8 @@ let
     '';
   };
 
-  ssh = w: opts: "ssh ${opts} -o HostKeyAlias=${hostName} -o LogLevel=ERROR ${user}@${w.address}";
+  knownHosts = "-o HostKeyAlias=${keyAlias} -o UserKnownHostsFile=${cfg.stateDir}/known_hosts -o StrictHostKeyChecking=yes";
+  ssh = w: opts: "ssh ${opts} ${knownHosts} -o LogLevel=ERROR ${user}@${w.address}";
   # The instance's one entry point on the host: a session surface (or a person) runs `attach` in a terminal.
   ctl = w: pkgs.writeShellApplication {
     name = "${cfg.unitPrefix}-${w.name}";
@@ -91,6 +85,12 @@ let
     '';
   };
 
+  binds = w: {
+    "${home}" = { hostPath = "${cfg.stateDir}/${w.name}/home"; isReadOnly = false; };
+    "${creds}/ssh_host_ed25519_key" = { hostPath = "${cfg.stateDir}/ssh_host_ed25519_key"; isReadOnly = true; };
+    "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
+  } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; }) cfg.credentials;
+
   guest = w: { ... }: {
     imports = cfg.guestModules;
     _module.args.devEnvironment = { inherit (w) name hostName address; };
@@ -102,7 +102,7 @@ let
     services.openssh = {
       enable = true;
       startWhenNeeded = false;
-      # the host's own key, bound read-only: stable across boots and already pinned where the host is
+      # one key per host, generated at activation under stateDir and bound read-only: never the host's own sshd key
       hostKeys = [{ path = "${creds}/ssh_host_ed25519_key"; type = "ed25519"; }];
       authorizedKeysFiles = [ "${creds}/${baseNameOf cfg.clientKey}.pub" ];
       settings = {
@@ -116,6 +116,9 @@ let
     # the default NIX_PATH names root's channels, which a guest has none of: every nix command warned on stderr
     nix.channel.enable = false;
     nix.nixPath = [ "nixpkgs=${pkgs.path}" ];
+    # an empty registry fetched the global one on every cold cache
+    nix.settings.flake-registry = "";
+    nix.registry.nixpkgs.to = { type = "path"; path = pkgs.path; };
 
     # lean: the boot is the start latency
     documentation.enable = false;
@@ -141,7 +144,7 @@ let
   instanceModule = { name, ... }: {
     options = {
       name = mkOption {
-        type = types.strMatching "[a-z][a-z0-9-]{0,10}";
+        type = nameType;
         default = name;
         readOnly = true;
         description = "At most 11 of [a-z0-9-], starting with a letter: the veth is ve-<name>.";
@@ -152,7 +155,6 @@ let
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryLow: kept from reclaim, and what the pool must fit."; };
       memory.max = mkOption { type = size; default = "6G"; description = "MemoryMax, the spike ceiling; MemoryHigh, where reclaim starts, is 90% of it and swap is capped at half of it."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
-      cpu.max = mkOption { type = types.nullOr types.ints.positive; default = null; description = "A hard CPUQuota in cores; null spikes to every core."; };
     };
   };
 in
@@ -162,7 +164,12 @@ in
       type = types.attrsOf (types.submodule instanceModule);
       default = { };
       example = { fix-ci = { model = "sonnet"; prompt = "Fix the failing test and push a branch."; }; };
-      description = "Each runs, with a home that persists, while declared, and is deleted once not.";
+      description = "Each runs, with a home that persists, while declared; once not, it is stopped and its home kept.";
+    };
+    retired = mkOption {
+      type = types.listOf nameType;
+      default = [ ];
+      description = "Names whose home, profile and GC roots activation deletes, once their container is stopped.";
     };
     agents = mkOption { type = types.attrsOf (types.submodule agentModule); default = { }; description = "Agents an instance can run; claude and codex are predefined."; };
     user = mkOption { type = types.passwdEntry types.str; description = "The host user owning the environments; the guest gets the same user and uid."; };
@@ -174,7 +181,6 @@ in
       defaultText = "~user/.ssh/id_ed25519";
       description = "The host user's SSH key; its `.pub` is bound into the guest as the authorized key.";
     };
-    hostKey = mkOption { type = types.externalPath; description = "The host's ed25519 key the guest presents; defaults to the host sshd's."; };
     credentials = mkOption {
       type = types.attrsOf types.externalPath;
       default = { };
@@ -197,9 +203,13 @@ in
     };
     prefix = mkOption { type = types.strMatching "[a-z][a-z0-9-]*"; default = hostName; defaultText = "networking.hostName"; description = "Instance x is hostname `<prefix>-x` inside and `x.<prefix>` on the host."; };
     unitPrefix = mkOption { type = types.strMatching "[a-z][a-z0-9-]*"; default = "dev-env"; description = "Units and the entry point are <unitPrefix>-<name>."; };
-    stateDir = mkOption { type = types.externalPath; default = "/var/lib/dev-environments"; description = "Homes; a name under it no longer declared is deleted at activation."; };
-    subnet = mkOption { type = types.strMatching "${octet}\\.${octet}"; default = "10.233"; description = "The /16 the instances' veth pairs take addresses from."; };
-    hostSubnets = mkOption { type = types.listOf cidr; default = [ ]; description = "Networks of the host that `subnet` must not overlap, beside its interfaces' addresses."; };
+    stateDir = mkOption { type = types.strMatching "/var/lib/[a-z0-9-]+"; default = "/var/lib/dev-environments"; description = "Homes and the guests' host key."; };
+    blockedNetworks = mkOption {
+      type = types.listOf cidr;
+      default = [ ];
+      example = [ "192.168.10.0/24" ];
+      description = "Networks the instances cannot reach through the host, DNS (port 53) excepted; iptables firewall backend.";
+    };
     jumpHosts = mkOption {
       type = types.attrsOf types.str;
       default = { };
@@ -209,7 +219,6 @@ in
     pool = {
       memory = mkOption { type = types.nullOr size; default = null; description = "MemoryMax of the environments' slice; every instance's reserve fits in it."; };
       cores = mkOption { type = types.nullOr types.ints.positive; default = null; description = "The host's cores, which the instances' reserved cores fit in."; };
-      cpuWeight = mkOption { type = types.ints.between 1 10000; default = 100; description = "CPUWeight of the slice against the host's other slices."; };
     };
   };
 
@@ -217,8 +226,6 @@ in
     {
       services.devEnvironments = {
         uid = lib.mkIf ((hostUser.uid or null) != null) (lib.mkDefault hostUser.uid);
-        hostKey = let k = lib.findFirst (k: k.type == "ed25519") null config.services.openssh.hostKeys;
-          in lib.mkIf (k != null) (lib.mkDefault k.path);
         agents = {
           claude = {
             command = lib.mkDefault [ "claude" "--dangerously-skip-permissions" ];
@@ -231,30 +238,22 @@ in
         };
       };
 
-      # After the switch stopped a removed instance: its home and the stock module's per-container dirs go; a
-      # still-running container (a failed stop) is left alone.
-      system.activationScripts.devEnvironments = {
+      # Deletes only what `retired` names: a rollback or an older checkout that lacks an instance just stops it.
+      system.activationScripts.devEnvironments = lib.mkIf (cfg.instances != { } || cfg.retired != [ ]) {
         deps = [ "users" ];
         text = ''
-          for d in ${cfg.stateDir}/*; do
-            [[ -d $d ]] || continue
-            n=''${d##*/}
-            case " ${lib.concatMapStringsSep " " (w: w.name) instances} " in *" $n "*) continue ;; esac
+          d=${lib.escapeShellArg cfg.stateDir}
+          for n in ${lib.escapeShellArgs cfg.retired}; do
             ${config.systemd.package}/bin/systemctl is-active --quiet "container@$n.service" && continue
-            rm -rf --one-file-system "$d" "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
+            rm -rf --one-file-system "$d/$n" "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
           done
-          # per-container dirs whose home is already gone (an earlier naming scheme, a hand-removed home)
-          for d in /nix/var/nix/profiles/per-container/* /nix/var/nix/gcroots/per-container/*; do
-            [[ -d $d ]] || continue
-            n=''${d##*/}
-            case " ${lib.concatStringsSep " " (lib.attrNames config.containers)} " in *" $n "*) continue ;; esac
-            ${config.systemd.package}/bin/systemctl is-active --quiet "container@$n.service" && continue
-            rm -rf --one-file-system "$d"
-          done
-          ${if instances == [ ] then "rmdir ${cfg.stateDir} 2>/dev/null || true" else "install -d -m 0700 ${cfg.stateDir}"}
+          install -d -m 0711 "$d"
+          [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
+          echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
+          chmod 0644 "$d/known_hosts"
           ${lib.concatMapStrings (w: ''
-            install -d -m 0700 ${cfg.stateDir}/${w.name}
-            [[ -d ${cfg.stateDir}/${w.name}/home ]] || install -d -m 0700 -o ${user} -g ${group} ${cfg.stateDir}/${w.name}/home
+            install -d -m 0700 "$d/${w.name}"
+            [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/home"
           '') instances}
         '';
       };
@@ -269,12 +268,13 @@ in
         before = [ "nix-gc.service" ];
         serviceConfig.Type = "oneshot";
         script = ''
-          for home in ${cfg.stateDir}/*/home; do
+          for home in ${lib.escapeShellArg cfg.stateDir}/*/home; do
             n=''${home%/home}; n=''${n##*/}
             roots=/nix/var/nix/gcroots/per-container/$n
             [[ -d $roots ]] || continue
             rm -f "$roots"/home-*
-            ${pkgs.findutils}/bin/find "$home" -maxdepth 5 -path '*/.devenv/gc/*' -type l 2>/dev/null | while read -r l; do
+            ${pkgs.findutils}/bin/find "$home" \( -name node_modules -o -name target -o -name .git \) -prune \
+              -o -path '*/.devenv/gc/*' -type l -print 2>/dev/null | while read -r l; do
               t=$(readlink "$l")
               [[ $t == /nix/store/* && -e $t ]] && ln -sfn "$t" "$roots/home-$(echo -n "$l" | sha1sum | cut -c1-16)"
             done
@@ -286,17 +286,13 @@ in
     (lib.mkIf (cfg.instances != { }) {
       assertions =
         let
-          known = lib.concatMap (k: k.hostNames) (lib.attrValues config.programs.ssh.knownHosts);
           reservedMem = lib.foldl' (s: w: s + w.memory.reserved) 0 instances;
           reservedCpu = lib.foldl' (s: w: s + w.cpu.reserved) 0 instances;
           ours = map (w: w.address) instances;
           otherHosts = lib.concatLists (lib.attrValues (lib.filterAttrs (a: _: !lib.elem a ours) config.networking.hosts));
-          hostCidrs = cfg.hostSubnets ++ lib.concatMap (i: map (a: "${a.address}/${toString a.prefixLength}") i.ipv4.addresses)
-            (lib.attrValues config.networking.interfaces);
-          referenced = lib.concatMap (s: s.wants ++ s.after ++ s.bindsTo ++ s.partOf ++ s.wantedBy)
-            (lib.attrValues (lib.filterAttrs (n: _: lib.hasPrefix "${cfg.unitPrefix}-" n) config.systemd.services));
-          missingUnits = lib.filter (u: lib.hasSuffix ".service" u && !(config.systemd.units ? ${u})
-            && builtins.match "user@[0-9]+\\.service" u == null) referenced;
+          clashing = lib.filter (lib.hasPrefix "10.233.") (lib.concatMap (i: map (a: a.address) i.ipv4.addresses)
+            (lib.attrValues config.networking.interfaces));
+          bothRetired = lib.intersectLists cfg.retired (lib.attrNames cfg.instances);
           p = "services.devEnvironments";
         in
         [
@@ -306,10 +302,10 @@ in
             assertion = cfg.sessionSurface == null || hostUser.linger or false == true;
             message = "${p}.sessionSurface runs as ${user} in their user manager, which needs users.users.${user}.linger = true.";
           }
-          { assertion = config.services.openssh.enable; message = "${p}: the guests present the host's sshd key (hostKey), so services.openssh must be enabled here."; }
+          { assertion = bothRetired == [ ]; message = "${p}.retired: ${lib.concatStringsSep ", " bothRetired} is also declared in instances."; }
           {
-            assertion = lib.elem hostName known;
-            message = "${p}: the host's own ssh checks a guest's key under ${hostName} (HostKeyAlias), which programs.ssh.knownHosts does not pin.";
+            assertion = cfg.blockedNetworks == [ ] || config.networking.firewall.enable && config.networking.firewall.backend == "iptables";
+            message = "${p}.blockedNetworks needs the iptables firewall backend.";
           }
           { assertion = cfg.pool.memory != null; message = "${p}.pool.memory: a host that declares instances sets the memory pool they share."; }
           { assertion = cfg.pool.cores != null; message = "${p}.pool.cores: a host that declares instances sets its core count."; }
@@ -321,9 +317,8 @@ in
             assertion = cfg.pool.cores == null || reservedCpu <= cfg.pool.cores;
             message = "${p}.instances: their cpu.reserved adds up to ${toString reservedCpu} cores, more than pool.cores ${toString cfg.pool.cores}.";
           }
-          { assertion = lib.allUnique (map (w: w.index) instances); message = "${p}.instances: two names hash to one address (${cfg.subnet}.<index>); rename one."; }
-          { assertion = !lib.any overlaps hostCidrs; message = "${p}.subnet ${cfg.subnet}.0.0/16 overlaps a network of this host (${lib.concatStringsSep ", " (lib.filter overlaps hostCidrs)})."; }
-          { assertion = missingUnits == [ ]; message = "${p}: units reference undeclared units: ${lib.concatStringsSep ", " missingUnits}."; }
+          { assertion = lib.allUnique (map (w: w.index) instances); message = "${p}.instances: two names hash to one address (10.233.<index>); rename one."; }
+          { assertion = clashing == [ ]; message = "${p}: the instances' 10.233.0.0/16 holds an address of this host (${lib.concatStringsSep ", " clashing})."; }
         ]
         ++ lib.mapAttrsToList (n: _: {
           assertion = builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]*" n != null && n != "ssh_host_ed25519_key";
@@ -338,10 +333,6 @@ in
             assertion = cfg.pool.memory == null || w.memory.max <= cfg.pool.memory;
             message = "${i}.memory.max ${showSize w.memory.max} is above pool.memory ${showSize cfg.pool.memory}.";
           }
-          {
-            assertion = w.cpu.max == null || (w.cpu.max >= w.cpu.reserved && (cfg.pool.cores == null || w.cpu.max <= cfg.pool.cores));
-            message = "${i}.cpu.max must be at least cpu.reserved and at most pool.cores.";
-          }
           { assertion = w.name != hostName; message = "${i}: the name is this host's own."; }
           { assertion = !lib.elem w.name otherHosts && !lib.elem "${w.name}.${cfg.prefix}" otherHosts; message = "${i}: networking.hosts already maps the name to another address."; }
           { assertion = lib.length (lib.filter (d: d ? ${w.name}) options.containers.definitions) == 1; message = "${i}: containers.${w.name} is also declared elsewhere."; }
@@ -355,25 +346,21 @@ in
         privateNetwork = true;
         inherit (w) hostAddress;
         localAddress = w.address;
-        bindMounts = {
-          "${home}" = { hostPath = "${cfg.stateDir}/${w.name}/home"; isReadOnly = false; };
-          "${creds}/ssh_host_ed25519_key" = { hostPath = cfg.hostKey; isReadOnly = true; };
-          "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
-        } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; }) cfg.credentials;
+        bindMounts = binds w;
         config = guest w;
       }) instances);
 
       systemd.slices.${slice}.sliceConfig = {
         MemoryMax = cfg.pool.memory;
         MemoryLow = lib.foldl' (s: w: s + w.memory.reserved) 0 instances;
-        CPUWeight = cfg.pool.cpuWeight;
       };
 
       systemd.services = lib.listToAttrs (lib.concatMap (w: [
         (lib.nameValuePair "container@${w.name}" {
           wants = lib.optional (cfg.sessionSurface != null) "${cfg.unitPrefix}-${cfg.sessionSurface.name}-${w.name}.service";
           # A changed guest (any guest module, nixpkgs) switches live through the stock ExecReload, which runs the new
-          # system's switch-to-configuration inside: the agent's ssh session keeps running.
+          # system's switch-to-configuration inside: the agent's ssh session keeps running. Changed memory and CPU
+          # properties take effect at the daemon-reload, also without a restart.
           reloadIfChanged = true;
           partOf = [ "${cfg.unitPrefix}-${w.name}.service" ];
           serviceConfig = {
@@ -385,7 +372,6 @@ in
             # Bounded so one runaway cannot fill the host's zram swap; past max + this the kernel kills the process, not the container.
             MemorySwapMax = w.memory.max / 2;
             CPUWeight = lib.min 10000 (100 * w.cpu.reserved);
-          } // lib.optionalAttrs (w.cpu.max != null) { CPUQuota = "${toString (100 * w.cpu.max)}%"; } // {
             # The stock pre-start copies the host's resolv.conf, the guest's only DNS: at boot or while a switch
             # restarts NetworkManager it can have no nameserver yet, and the guest would boot without DNS.
             ExecStartPre = lib.mkBefore [
@@ -395,23 +381,28 @@ in
             ];
           };
         })
-        # The instance's own declaration: a change restarts this unit, and so (PartOf) the container and its agent.
+        # A change of this unit file restarts it and so (PartOf) the container and its agent: it holds only what a
+        # running container cannot take live, and no store path, which every nixpkgs bump would move (restartTriggers
+        # is one too).
         (lib.nameValuePair "${cfg.unitPrefix}-${w.name}" {
           description = "Declaration of developer environment ${w.name}";
           wantedBy = [ "machines.target" ];
           wants = [ "container@${w.name}.service" ];
-          restartTriggers = [ (builtins.toJSON { inherit (w) agent model prompt memory cpu; }) ];
+          path = lib.mkForce [ ];
+          environment = lib.mapAttrs (_: _: null) config.systemd.globalEnvironment;
+          unitConfig.X-Declaration = builtins.toJSON { inherit (w) agent model address; binds = binds w; };
           stopIfChanged = false;
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
-            ExecStart = "${pkgs.coreutils}/bin/true";
+            ExecStart = "/bin/sh -c true";
           };
         })
       ] ++ lib.optional (cfg.sessionSurface != null) (lib.nameValuePair "${cfg.unitPrefix}-${cfg.sessionSurface.name}-${w.name}" (
         let surface = cfg.sessionSurface.script (w // { ctl = lib.getExe (ctl w); }); in {
           description = "Session surface of developer environment ${w.name}";
           bindsTo = [ "container@${w.name}.service" ];
+          wants = [ "user@${toString cfg.uid}.service" ];
           # after user@: on shutdown it stops first, so the user's session server is still there to close it
           after = [ "container@${w.name}.service" "user@${toString cfg.uid}.service" ];
           environment.XDG_RUNTIME_DIR = "/run/user/${toString cfg.uid}";
@@ -423,6 +414,9 @@ in
             Type = "simple";
             RemainAfterExit = true;
             User = user;
+            # at a cold boot the user's session server can come up after the start gave up waiting for it
+            Restart = "on-failure";
+            RestartSec = 10;
             ExecStart = "${lib.getExe surface} start";
             ExecStop = "${lib.getExe surface} stop";
           };
@@ -433,16 +427,29 @@ in
         // lib.optionalAttrs (w.agentDef != null) { start = agentScript w false; continue = agentScript w true; })) instances);
 
       # egress for the instances' /16; an address with no running instance fails at once, not on a timeout
-      networking.nat = { enable = true; internalIPs = [ "${cfg.subnet}.0.0/16" ]; };
-      networking.localCommands = "${pkgs.iproute2}/bin/ip route replace unreachable ${cfg.subnet}.0.0/16";
+      networking.nat = { enable = true; internalIPs = [ "10.233.0.0/16" ]; };
+      networking.localCommands = "${pkgs.iproute2}/bin/ip route replace unreachable 10.233.0.0/16";
+      networking.firewall = lib.mkIf (cfg.blockedNetworks != [ ]) {
+        extraCommands = ''
+          iptables -w -D FORWARD -i ve-+ -j dev-env-forward 2>/dev/null || true
+          iptables -w -F dev-env-forward 2>/dev/null || iptables -w -N dev-env-forward
+          iptables -w -A dev-env-forward -p udp --dport 53 -j RETURN
+          iptables -w -A dev-env-forward -p tcp --dport 53 -j RETURN
+          ${lib.concatMapStrings (c: "iptables -w -A dev-env-forward -d ${c} -j DROP
+") cfg.blockedNetworks}
+          iptables -w -I FORWARD -i ve-+ -j dev-env-forward
+        '';
+        extraStopCommands = "iptables -w -D FORWARD -i ve-+ -j dev-env-forward 2>/dev/null || true\n";
+      };
       networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
 
       networking.hosts = lib.listToAttrs (map (w: lib.nameValuePair w.address [ w.name "${w.name}.${cfg.prefix}" ]) instances);
-      # the guest presents its host's key (bound read-only), pinned under the host's name
       programs.ssh.extraConfig = lib.concatMapStrings (w: ''
         Host ${w.name} ${w.name}.${cfg.prefix}
           User ${user}
-          HostKeyAlias ${hostName}
+          HostKeyAlias ${keyAlias}
+          UserKnownHostsFile ${cfg.stateDir}/known_hosts
+          StrictHostKeyChecking yes
           LogLevel ERROR
       '') instances;
     })
@@ -451,13 +458,17 @@ in
       assertions = lib.mapAttrsToList (prefix: host: {
         assertion = builtins.match "[a-z][a-z0-9-]*" prefix != null
           && lib.elem host (lib.concatMap (k: k.hostNames) (lib.attrValues config.programs.ssh.knownHosts));
-        message = "services.devEnvironments.jumpHosts.${prefix}: the prefix is [a-z][a-z0-9-]*, and ${host} must be pinned in programs.ssh.knownHosts (HostKeyAlias).";
+        message = "services.devEnvironments.jumpHosts.${prefix}: the prefix is [a-z][a-z0-9-]*, and ${host} must be pinned in programs.ssh.knownHosts.";
       }) cfg.jumpHosts;
+      # The environments' key is generated on their host, so it cannot be pinned here: it is trusted on first use,
+      # over a jump through the pinned host, and kept apart from known_hosts.
       programs.ssh.extraConfig = lib.concatStrings (lib.mapAttrsToList (prefix: host: ''
         Host *.${prefix}
           ProxyJump ${host}
           User ${user}
-          HostKeyAlias ${host}
+          HostKeyAlias environments.${prefix}
+          UserKnownHostsFile ~/.ssh/known_hosts_environments
+          StrictHostKeyChecking accept-new
           ConnectTimeout 10
           LogLevel ERROR
       '') cfg.jumpHosts);

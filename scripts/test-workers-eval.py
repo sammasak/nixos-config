@@ -50,25 +50,22 @@ ASSERTED = [
     ("max above pool", '{ services.devEnvironments.instances.ok.memory.max = "9G"; }', "memory.max 9216M is above pool.memory 8192M"),
     ("reserves above pool", "{ services.devEnvironments.instances = { a = { }; b = { }; c = { }; d = { }; }; }", "adds up to 10240M, more than pool.memory 8192M"),
     ("cores above host", "{ services.devEnvironments.instances.b.cpu.reserved = 3; }", "cpu.reserved adds up to 5 cores"),
-    ("cpu.max below reserve", "{ services.devEnvironments.instances.ok.cpu.max = 1; }", "cpu.max must be at least cpu.reserved"),
     ("no memory pool", "{ services.devEnvironments.pool.memory = lib.mkForce null; }", "pool.memory: a host that declares instances"),
     ("no core count", "{ services.devEnvironments.pool.cores = lib.mkForce null; }", "pool.cores: a host that declares instances"),
     ("hash collision", "{ services.devEnvironments.instances = { eal = { }; ea1 = { }; }; }", "two names hash to one address"),
     ("host's own name", "{ networking.hostName = lib.mkForce \"ok\"; programs.ssh.knownHosts.box.hostNames = [ \"ok\" ]; }", "the name is this host's own"),
     ("networking.hosts clash", '{ networking.hosts."192.168.1.5" = [ "ok.box" ]; }', "networking.hosts already maps the name"),
     ("container declared twice", "{ containers.ok.extraFlags = [ ]; }", "containers.ok is also declared elsewhere"),
-    ("subnet in a host network", '{ services.devEnvironments.hostSubnets = [ "10.0.0.0/8" ]; }', "overlaps a network of this host (10.0.0.0/8)"),
-    ("subnet on an interface", '{ networking.interfaces.eth0.ipv4.addresses = [ { address = "10.233.7.1"; prefixLength = 24; } ]; }', "overlaps a network of this host (10.233.7.1/24)"),
+    ("subnet on an interface", '{ networking.interfaces.eth0.ipv4.addresses = [ { address = "10.233.7.1"; prefixLength = 24; } ]; }', "10.233.0.0/16 holds an address of this host (10.233.7.1)"),
+    ("retired and declared", '{ services.devEnvironments.retired = [ "ok" ]; }', "retired: ok is also declared in instances"),
+    ("blocked networks on nftables", '{ networking.nftables.enable = true; services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; }', "blockedNetworks needs the iptables"),
     ("unknown user", '{ services.devEnvironments = { user = lib.mkForce "bob"; uid = 1000; }; }', "bob is not a normal user"),
     ("uid differs", "{ services.devEnvironments.uid = 1001; }", "uid 1001 is not users.users.alice.uid"),
     ("no linger", "{ users.users.alice.linger = lib.mkForce false; }", "needs users.users.alice.linger = true"),
-    ("host sshd off", "{ services.openssh.enable = lib.mkForce false; }", "services.openssh must be enabled"),
-    ("host key not pinned", "{ programs.ssh.knownHosts = lib.mkForce { }; }", "programs.ssh.knownHosts does not pin"),
     ("jump to an unknown host", '{ services.devEnvironments.jumpHosts.far = "nowhere"; }', "nowhere must be pinned"),
     ("jump prefix", '{ services.devEnvironments.jumpHosts.Far = "box"; }', "jumpHosts.Far: the prefix is"),
     ("guest without sshd", "{ services.devEnvironments.guestModules = [ { services.openssh.enable = lib.mkForce false; } ]; }", "a guest module disabled sshd"),
     ("credential name", '{ services.devEnvironments.credentials."a b" = "/etc/x"; }', 'credentials.a b: a file name'),
-    ("dangling unit", '{ systemd.services.dev-env-ok.wants = [ "nope.service" ]; }', "undeclared units: nope.service"),
 ]
 
 # (name, module, expected stderr substring); each must fail the evaluation on its type
@@ -81,7 +78,9 @@ TYPED = [
     ("empty prompt", '{ services.devEnvironments.instances.ok.prompt = ""; }', "instances.ok.prompt' is not of type"),
     ("zero cores", "{ services.devEnvironments.instances.ok.cpu.reserved = 0; }", "cpu.reserved' is not of type"),
     ("relative key", '{ services.devEnvironments.clientKey = "id_ed25519"; }', "clientKey' is not of type"),
-    ("cidr syntax", '{ services.devEnvironments.hostSubnets = [ "10.0.0.0" ]; }', "hostSubnets"),
+    ("cidr syntax", '{ services.devEnvironments.blockedNetworks = [ "10.0.0.0" ]; }', "blockedNetworks"),
+    ("state dir outside /var/lib", '{ services.devEnvironments.stateDir = "/home"; }', "stateDir' is not of type"),
+    ("retired name", '{ services.devEnvironments.retired = [ "Bad" ]; }', "retired.\"[definition 1-entry 1]\"' is not of type"),
 ]
 
 # the fleet adapter (modules/workers/default.nix) on msi, which declares an instance: lazy, so still cheap
@@ -91,8 +90,20 @@ in map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions)
 """
 FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; }", "claude instance logs in with the host's sops secret"),
-    ("a removed limit option", '{ sam.workers.memoryBudget = "7G"; }', "Use sam.workers.pool.memory"),
 ]
+
+# the unit whose change restarts an instance: no nixpkgs bump, resize or prompt edit may change it, a model change must
+DECLARATION = r"""
+let
+  unit = c: c.systemd.units."dev-env-ok.service".text;
+  with_ = m: unit (sys.extendModules { modules = [ m ]; }).config;
+  base = unit sys.config;
+in {
+  storeFree = builtins.length (builtins.split "/nix/store" base) == 1;
+  live = base == with_ ({ lib, ... }: { services.devEnvironments.instances.ok = { memory.max = "5G"; cpu.reserved = 1; prompt = lib.mkForce "other"; }; });
+  restarts = base != with_ ({ lib, ... }: { services.devEnvironments.instances.ok.model = lib.mkForce "opus"; });
+}
+"""
 
 NASTY = ["it's", "a\\b", "two\nlines", '$HOME;"x" (y)']
 VALID_ARGV = r"""{
@@ -122,10 +133,16 @@ def nix_string(s):
 def main():
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
-    out = nix_eval("{ }", "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; channel = g.nix.channel.enable; }")
+    out = nix_eval("{ }", "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; channel = g.nix.channel.enable; "
+                   "registry = g.nix.settings.flake-registry; }")
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got.get("channel") is False and len(got.get("nixPath", [])) == 1 and got["nixPath"][0].startswith("nixpkgs=/nix/store/"),
-          f"a guest resolves <nixpkgs> to the store's nixpkgs, with no channels to warn about ({got or out.stderr.strip()[-300:]})")
+    check(got.get("channel") is False and len(got.get("nixPath", [])) == 1 and got["nixPath"][0].startswith("nixpkgs=/nix/store/")
+          and got.get("registry") == "",
+          f"a guest resolves <nixpkgs> to the store's nixpkgs, with no channels or global registry to fetch ({got or out.stderr.strip()[-300:]})")
+    out = nix_eval("{ }", DECLARATION)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got == {"storeFree": True, "live": True, "restarts": True},
+          f"the declaration unit holds no store path, a resize or prompt edit leaves it, a model change moves it ({got or out.stderr.strip()[-300:]})")
     for name, case, want in ASSERTED:
         out = nix_eval(case)
         got = json.loads(out.stdout) if out.returncode == 0 else [out.stderr.strip()[-600:]]

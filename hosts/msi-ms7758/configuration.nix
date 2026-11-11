@@ -20,6 +20,10 @@ in
     labelPrefix = "msi";
     pool = { memory = "10G"; cores = 8; };
   };
+  # An environment's builds run in this daemon, outside the pool: bounded like lenovo's (a cores-2 build peaked at
+  # 6.1G), past MemoryHigh it reclaims and swaps, past MemoryMax the build fails, never k3s or the host.
+  nix.settings = { max-jobs = 2; cores = 2; };
+  systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "4G"; MemoryMax = "6G"; };
 
   sam.profile = vars;
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "nixos-config" ".cache/wt" ];
