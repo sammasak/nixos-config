@@ -46,8 +46,15 @@ Append; move a line to fixed when its change lands.
   merge (gh reads the remote default branch and wants a TTY). Not an environment gap; issues should word such
   criteria as post-merge checks.
 
+- 2026-11-11 `dp93` (lenovo): an environment deployed from the coordinator's branch is ahead of main, so the agent
+  finds itself undeclared at HEAD. Cause: the gate takes 38 min on acer, so deploys run before the merge. Goes away
+  when msi (11 min gate) is up, or the brief names the branch.
+- 2026-11-11 `dp93`: a store-cold run cannot be measured from an environment (shared store, no purge); `du` on
+  `/nix/store` is unusable there, `nix path-info --all -s` works. Briefs should say "cold = first shell in this home".
+
 ## Fixed
 
+- 2026-11-11 `dp93` on lenovo (devenv-platform #93, research): first `devenv shell` of llm-gateway in a fresh home 33.9 s and +0.26 MiB of host store (closure already there), warm 5 s, zero new paths. That is the shared store doing its job. Guests now have `bc` and an empty `~/ENV-FEEDBACK.md`. Retired the same sitting.
 - 2026-11-11 `h2` on lenovo (herman #2, docs and issue template): declared to reviewed commits in about 2 minutes on a warm host, no gate run on lenovo. Retired the same sitting; the branch went out through an acer environment.
 - 2026-11-11 `nc201` on lenovo (nixos-config #201, G0 inventory, research only): issue to reviewed commit in a 4G pool beside k3s with no gate run on lenovo; the coordinator fetched the branch over ssh and pushed it through an acer environment's gate. Retired the same sitting.
 - 2026-11-11 The full nixos-config pre-push gate ran inside an environment (`nc200` on acer, nixos-config #219): green in 38 m 16 s beside a second environment's Rust gate (11 min on msi alone), peak 5.5G at the 6G cap with the 3G swap allowance full, throttled, no OOM. Pushes no longer need msi awake. `nc200` retired after pushing its own retirement.

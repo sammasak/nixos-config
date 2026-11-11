@@ -31,12 +31,8 @@ in
   sam.workers.jumpHosts = { acer = "acer-swift"; msi = "msi-ms7758"; };
   # One environment beside the control plane: a 4G pool keeps it and its bursts clear of k3s and the coordinator.
   sam.workers = {
-    instances.dp93 = {
-      model = "sonnet";
-      memory.max = "4G";
-      prompt = "You are in a fresh nspawn developer environment named dp93 on host lenovo, the always-on control plane: it is memory constrained, so run heavy commands strictly one at a time with their output sent to a log file, and never run nix flake check, VM tests, a repo QA suite or a pre-push gate here. Task: devenv-platform issue #93 (approved), research and measurement only. Read it with gh issue view 93 -R sammasak/devenv-platform --json body,comments. Its evidence describes the agent-runtime that nixos-config #210 removed; the runtime today is the stock nspawn environment you are in (clone git@github.com:sammasak/nixos-config.git into ~/nixos-config and read docs/nspawn-workers.md and modules/workers). Check every reference in the issue against HEAD first. Then, for each unchecked acceptance item, say whether today's environment meets it, cannot meet it, or makes it moot, with file:line or command evidence. Measure the one thing only a real host can show: host Nix store growth and wall time for a cold and a warm devenv shell of one small pinned repo (git@github.com:sammasak/llm-gateway.git) from inside this environment (nix path-info and du on /nix/store are readable here; say what you could not measure). Write the result as an issue comment draft in ~/COMMENT.md, at most 60 lines, no em dashes. Do not post it, push, or change any config; whether #93 closes is the owner's decision. Spawn ONE independent subagent to check the draft's claims against the evidence and fix what is real. Finish with a five line summary and append friction with this environment to ~/ENV-FEEDBACK.md.";
-    };
-    retired = [ "gw88" "nc201" "h2" ];
+    instances = { };
+    retired = [ "gw88" "nc201" "h2" "dp93" ];
     labelPrefix = "lenovo";
     pool = { memory = "4G"; cores = 16; };
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";

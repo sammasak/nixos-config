@@ -75,7 +75,7 @@ let
     sam.profile = profile // { hostname = devEnvironment.hostName; roles = [ "base" ]; pi = false; };
     sam.userConfig = config.sam.userConfig;
 
-    environment.systemPackages = [ pkgs.time ];
+    environment.systemPackages = [ pkgs.time pkgs.bc ];
     # a pre-push gate runs for minutes with the connection idle, and GitHub drops it
     programs.ssh.extraConfig = "ServerAliveInterval 15\nServerAliveCountMax 200\n";
     sam.herdr.worker.enable = true;
@@ -96,6 +96,8 @@ let
       "d ${home}/.ssh 0700 ${user} users -"
       "d ${home}/.config 0700 ${user} users -"
       "L+ ${home}/.ssh/id_ed25519 - - - - ${creds}/id_ed25519"
+      # where the agent logs friction with the environment (docs/environments-feedback.md)
+      "f ${home}/ENV-FEEDBACK.md 0644 ${user} users -"
     ]
     ++ lib.optionals (cfg.ghHostsFile != null) [
       "d ${home}/.config/gh 0700 ${user} users -"
