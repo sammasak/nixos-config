@@ -6,6 +6,8 @@ Append; move a line to fixed when its change lands.
 
 ## Open
 
+- The `playwright-login` MCP server fails in an environment (`ENOENT .../claude-playwright-login/state.json`); one Playwright MCP with an isolated context per device works. Either seed the state file or drop that server from the guest.
+- Playwright MCP screenshots resolve `filename` against the agent's start directory (the home), not the repo; files had to be moved.
 - msi environments have no `gh` login (acer binds the host's `hosts.yml`): the agent cannot read issues or open PRs, the issue text is copied in and the PR opened from lenovo. Needs a GitHub token bound into every environment.
 - Declaring an environment is a nixos-config commit, and every push runs the full `nixos:qa` (about 20 minutes, only safe from msi). Too slow for routine add/remove; instances are deployed from uncommitted edits meanwhile.
 - A second `exit` in an environment's pane (from the shell left after the agent quits) returns the pane to the host shell.
@@ -25,6 +27,7 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-11 Results: herman#4 (PR #39, baseline G1 to G10 run with 58 screenshots) merged from `demo`, issue closed; `demo` retired after three issues (herman#5, #18, #4).
 - 2026-11-11 Finished environments sat idle holding their reserve (`skills91` for hours after skills#97 merged). Rule added to the process (docs/nspawn-workers.md, "Tear down when done"): retire in the same sitting once clones are clean and feedback is copied out. `skills91` retired.
 - 2026-11-11 Results: herman#18 (PR #37, after a dependency PR #38 for advisories) merged from `demo`; without the CPU cap its warm rust:ci went 253 s to 170 s, verify-web 828 s to 479 s, web-dist 142 s to 63 s. A second acer environment (`dp93`) started from its declared prompt with `demo` untouched.
 - 2026-11-11 Verified on msi: live resize with no restart; undeclare keeps the home, `retired` deletes it; four deploys in a row left the neighbouring environment's start time unchanged; guest boot 6.8 s to 1.9 s.
