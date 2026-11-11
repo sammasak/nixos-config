@@ -41,6 +41,8 @@ let
     services.openssh = {
       enable = true;
       startWhenNeeded = false;
+      # the host's own key, bound read-only: stable across ephemeral boots and already pinned on the coordinator
+      hostKeys = [{ path = "${creds}/ssh_host_ed25519_key"; type = "ed25519"; }];
       settings = {
         PasswordAuthentication = false;
         KbdInteractiveAuthentication = false;
@@ -120,7 +122,9 @@ in
         privateNetwork = true;
         inherit (w) hostAddress;
         localAddress = w.address;
-        bindMounts = lib.optionalAttrs (cfg.sshKey != null) {
+        bindMounts = {
+          "${creds}/ssh_host_ed25519_key" = { hostPath = "/etc/ssh/ssh_host_ed25519_key"; isReadOnly = true; };
+        } // lib.optionalAttrs (cfg.sshKey != null) {
           "${creds}/id_ed25519" = { hostPath = cfg.sshKey; isReadOnly = true; };
         } // lib.optionalAttrs (cfg.ghHostsFile != null) {
           "${creds}/gh-hosts.yml" = { hostPath = cfg.ghHostsFile; isReadOnly = true; };
@@ -158,16 +162,14 @@ in
 
     (lib.mkIf (cfg.remotes != { }) {
       sam.herdr.machines = lib.concatLists (lib.mapAttrsToList (_: map (w: { inherit (w) label; target = w.label; })) cfg.remotes);
-      # Through the worker host, whose key is pinned: the hop to the worker is the host's own veth, and the worker's
-      # key is new every boot, so it is not checked.
+      # Through the worker host; the worker presents its host's key, checked under the host's pinned name.
       programs.ssh.extraConfig = lib.concatStrings (lib.concatLists (lib.mapAttrsToList (host: map (w: ''
         Host ${w.label}
           HostName ${w.address}
           ProxyJump ${host}
           User ${user}
           ConnectTimeout 10
-          StrictHostKeyChecking no
-          UserKnownHostsFile /dev/null
+          HostKeyAlias ${host}
           LogLevel ERROR
       '')) cfg.remotes));
     })
