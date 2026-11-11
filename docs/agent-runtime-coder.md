@@ -245,16 +245,24 @@ the Herdr user, `agent-runtime-herdr attach coder "$T" "$REF" "$MIRROR_STATUS" -
 
 ### Trusted-side verification
 
-The verifier and the template manifest both live on **acer**. `agent-runtime-verify` is on acer's PATH
-from the host closure (`modules/agent-runtime/host.nix` ships `tools.verify`, i.e. the `verify`
-attribute of `modules/agent-runtime/runtime.nix`); it is **not** exposed as a flake package output —
-`flake-modules/25-agent-runtime.nix` exports only `agent-runtime-{assign,materialize,export,reclaim,instance}`,
-not `verify`, `preflight` or `pane`. So **lenovo cannot `nix build` the verifier** without first adding
-it to that packages list (a one-line flake change, out of this offline slice). Two honest options:
+`agent-runtime-verify` and `agent-runtime-promote` run on acer (the runtime host, from its host
+closure) and on lenovo (`sam.agentRuntime.clientTools.enable`: only those two tools, no instance
+lifecycle, host policy or state dirs; lenovo is not a runtime host). Verify trusts the template
+manifest it is given, so it refuses a `--template` that does not resolve into `/nix/store`. The
+trusted manifest is:
 
-**(a) Verify on acer, as root** — this is **step 7 of the locked shell above**, where `$T`/`$CRED`/`$B`
-are already set and the lock is still held. If you instead verify in a separate acer-root session, first
-re-derive the variables (they do not survive the run shell's `exit`):
+- on acer: `/nix/var/nix/profiles/agent-runtime/templates/templates/claude-coder.json` (the deployed
+  template profile);
+- on lenovo: `/etc/agent-runtime/client-templates/acer-swift/claude-coder.json`, a link to the
+  `sam.agentRuntime.manifestDir` that acer deploys, built from this flake into lenovo's store
+  (`flake-modules/40-outputs-nixos.nix`; msi's is under `client-templates/msi-ms7758`). It matches
+  acer's deployed manifest only while both run the same flake revision.
+
+Never pass a manifest copied from acer or next to the bundle: the bundle would then choose its own pin.
+
+**(a) Verify on acer, as root.** This is **step 7 of the locked shell above**, where `$T`/`$CRED`/`$B`
+are already set and the lock is still held. In a separate acer-root session, re-derive the variables
+first (they do not survive the run shell's `exit`):
 
 ```
 # on acer (a fresh session): re-derive what the locked shell set, then verify:
@@ -266,33 +274,37 @@ sudo agent-runtime-verify --bundle "$B" --template "$T" --require-change
 ```
 
 `agent-runtime-verify --bundle DIR --template MANIFEST --require-change` is the exact signature
-(`modules/agent-runtime/runtime/verify.sh`); `$T` is the same claude-coder manifest path as above.
+(`modules/agent-runtime/runtime/verify.sh`).
 
-**(b) Re-run rf-proto's own tests on lenovo** (verification itself stays on acer per (a), unless you
-make the flake change). The bundle is `0700 root`, so move it as root, re-check the recorded digest,
-then apply the verified patch to a fresh checkout at the recorded base rev:
+**(b) Verify, test and promote on lenovo.** The bundle is `0700 root` on acer, so pull it as root,
+re-check the recorded digests, verify it against lenovo's own store manifest, then run rf-proto's
+tests on a fresh checkout at the recorded base rev:
 
 ```
 # on lenovo, PULL the root-only bundle from acer. Do not push from acer: acer cannot resolve `lenovo`
 # and lenovo rejects acer's key; `ssh deploy@acer-swift` (the lenovo->acer deploy account, the direction
 # that works) with `sudo tar` reads the 0700 export:
+T=/etc/agent-runtime/client-templates/acer-swift/claude-coder.json
+B=/tmp/coder-bundle/coder
 mkdir -p /tmp/coder-bundle
 ssh deploy@acer-swift 'sudo tar -C /var/lib/agent-runtime/exports -c coder' | tar -C /tmp/coder-bundle -x
 # re-check the digest of bundle.json AND every file it lists (not bundle.json alone, so a swapped
 # file+bundle.json pair is caught); every line must equal what acer printed in step 7 / option (a):
-( cd /tmp/coder-bundle/coder && sha256sum bundle.json $(jq -r '.files[].path' bundle.json) )
+( cd "$B" && sha256sum bundle.json $(jq -r '.files[].path' bundle.json) )
+agent-runtime-verify --bundle "$B" --template "$T" --require-change
 git clone https://github.com/sammasak/rf-proto /tmp/rf-proto-verify   # private repo; uses your git/gh credentials
 git -C /tmp/rf-proto-verify checkout d878c58ebaca9c5281ef522b6fbd1761e122dfb6
-git -C /tmp/rf-proto-verify apply /tmp/coder-bundle/coder/sources/rf-proto.patch
+git -C /tmp/rf-proto-verify apply "$B/sources/rf-proto.patch"
 ( cd /tmp/rf-proto-verify && cargo test --offline --locked )   # rf-proto's own test command; stays green
 ```
 
-To promote the reviewed artifact, let `agent-runtime-promote` do the apply/commit onto that checkout
-(it re-verifies first and records the commit sha), then push:
+To promote the reviewed artifact, let
+`agent-runtime-promote` do the apply/commit onto that checkout (it re-verifies first and records the
+commit sha), then push:
 
 ```
-git -C /tmp/rf-proto-verify checkout d878c58ebaca9c5281ef522b6fbd1761e122dfb6   # back to the base rev, clean
-agent-runtime-promote --bundle /tmp/coder-bundle/coder --template "$T" \
+git -C /tmp/rf-proto-verify reset --hard d878c58ebaca9c5281ef522b6fbd1761e122dfb6 && git -C /tmp/rf-proto-verify clean -fd   # drop the test apply: back to the base rev, clean
+agent-runtime-promote --bundle "$B" --template "$T" \
   --into /tmp/rf-proto-verify --branch coder/<issue>   # prints the promotion record; no push, no gh
 git -C /tmp/rf-proto-verify push -u origin coder/<issue> && gh pr create ...   # the trusted host's gh
 ```

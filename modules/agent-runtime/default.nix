@@ -567,6 +567,16 @@ in
       description = "Named templates (names are lowercase labels); each describes possible ephemeral instances, never a booted container.";
     };
 
+    # a coordinator promotes bundles a worker exported: verify and promote need no instance state
+    clientTools = {
+      enable = mkEnableOption "agent-runtime-verify and agent-runtime-promote without making this host a runtime host";
+      templateManifests = mkOption {
+        type = types.attrsOf types.package;
+        default = { };
+        description = "Per runtime host, the manifest directory it deploys (its `sam.agentRuntime.manifestDir`), linked at /etc/agent-runtime/client-templates/<host>: the store-resident manifests verify trusts here.";
+      };
+    };
+
     host = {
       enable = mkEnableOption "admitting agent-runtime instances on this host (required before any template is eligible; #138 starts nothing without it)";
       eligibleTemplates = mkOption {

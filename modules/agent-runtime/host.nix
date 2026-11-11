@@ -10,21 +10,28 @@ in
 {
   imports = [ ./default.nix ./authorized-launch.nix ];
 
-  config = lib.mkIf cfg.host.enable {
-    # the lifecycle, the Herdr adapter (#139), the pilot's preflight and pane (#165), the bundle verifier (#169)
-    environment.systemPackages = [ tools.instance tools.preflight tools.pane tools.verify (import ./herdr { inherit pkgs; }) ];
-    environment.etc."agent-runtime/host.json".source = cfg.hostPolicy;
-    # template-profile.nix checks schemaVersion; bump it with any change a template bundle must know about
-    environment.etc."agent-runtime/substrate.json".text = builtins.toJSON {
-      schemaVersion = 1;
-      kind = "agent-runtime-substrate";
-      manifestSchema = 1;
-      instance = "${tools.instance}";
-    };
-    systemd.tmpfiles.rules = [
-      "d /var/lib/agent-runtime 0700 root root -"
-      # nix-env does not create a profile's parent: without it the first template deploy fails
-      "d /nix/var/nix/profiles/agent-runtime 0755 root root -"
-    ];
-  };
+  config = lib.mkMerge [
+    # the promote/verify client alone, for a coordinator that must not admit instances (docs/agent-runtime-coder.md)
+    (lib.mkIf cfg.clientTools.enable {
+      environment.systemPackages = [ tools.verify tools.promote ];
+      environment.etc = lib.mapAttrs' (h: dir: lib.nameValuePair "agent-runtime/client-templates/${h}" { source = dir; }) cfg.clientTools.templateManifests;
+    })
+    (lib.mkIf cfg.host.enable {
+      # the lifecycle, the Herdr adapter (#139), the pilot's preflight and pane (#165), the bundle verifier (#169)
+      environment.systemPackages = [ tools.instance tools.preflight tools.pane tools.verify (import ./herdr { inherit pkgs; }) ];
+      environment.etc."agent-runtime/host.json".source = cfg.hostPolicy;
+      # template-profile.nix checks schemaVersion; bump it with any change a template bundle must know about
+      environment.etc."agent-runtime/substrate.json".text = builtins.toJSON {
+        schemaVersion = 1;
+        kind = "agent-runtime-substrate";
+        manifestSchema = 1;
+        instance = "${tools.instance}";
+      };
+      systemd.tmpfiles.rules = [
+        "d /var/lib/agent-runtime 0700 root root -"
+        # nix-env does not create a profile's parent: without it the first template deploy fails
+        "d /nix/var/nix/profiles/agent-runtime 0755 root root -"
+      ];
+    })
+  ];
 }

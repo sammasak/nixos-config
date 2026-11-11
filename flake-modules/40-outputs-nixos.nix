@@ -48,6 +48,10 @@ let
             sam.userConfig = users.${username} or { };
             # what a host's agent-runtime template modules lock to (modules/agent-runtime/templates)
             sam.agentRuntime.pinnedSources = { inherit (inputs) factum skills rf-proto; };
+            # the coordinator verifies against the exact manifests the runtime hosts deploy, from this flake
+            sam.agentRuntime.clientTools.templateManifests = lib.optionalAttrs (name == "lenovo") (
+              lib.genAttrs [ "acer-swift" "msi-ms7758" ] (h: config.flake.nixosConfigurations.${h}.config.sam.agentRuntime.manifestDir)
+            );
 
             home-manager = {
               useGlobalPkgs = true;
