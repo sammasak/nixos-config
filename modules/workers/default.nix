@@ -21,9 +21,14 @@ let
         herdr workspace list 2>/dev/null | jq -r --arg l "$label" '.result.workspaces[]? | select(.label == $l) | .workspace_id' \
           | while read -r id; do herdr workspace close "$id" >/dev/null || true; done
       }
-      if [[ $1 == stop ]]; then close; exit 0; fi
+      # at shutdown Herdr can be gone already
+      if [[ $1 == stop ]]; then close || true; exit 0; fi
 
-      for _ in $(seq 60); do herdr status --json 2>/dev/null | jq -e '.server.running' >/dev/null && break; sleep 1; done
+      n=0
+      until herdr status --json 2>/dev/null | jq -e '.server.running' >/dev/null; do
+        (( ++n < 60 )) || exit 1
+        sleep 1
+      done
       ${w.ctl} wait || true
       mode="fresh"
       if ${w.ctl} resumable; then mode="continue"; fi
@@ -74,6 +79,16 @@ let
     # a pre-push gate runs for minutes with the connection idle, and GitHub drops it
     programs.ssh.extraConfig = "ServerAliveInterval 15\nServerAliveCountMax 200\n";
     sam.herdr.worker.enable = true;
+    # Headless, reached over ssh from the host's Herdr: no session server, no firewall behind the veth, no gpg-agent
+    # in front of the ssh key; the weekly repo-sweep would reclaim the agent's own clones.
+    home-manager.users.${user}.systemd.user = {
+      services.herdr.Install.WantedBy = lib.mkForce [ ];
+      timers.repo-sweep.Install.WantedBy = lib.mkForce [ ];
+      timers.nixos-config-flake-update.Install.WantedBy = lib.mkForce [ ];
+    };
+    programs.gnupg.agent.enable = lib.mkForce false;
+    programs.dconf.enable = lib.mkForce false;
+    networking.firewall.enable = false;
     sam.herdr.trustedDirs = map (d: "${home}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 
     # The host's credentials, bound read-only under ${creds}, where the host's own tools look for them.
@@ -93,12 +108,10 @@ in
   imports = [
     ./core.nix
     (lib.mkAliasOptionModule [ "sam" "workers" "instances" ] [ "services" "devEnvironments" "instances" ])
+    (lib.mkAliasOptionModule [ "sam" "workers" "retired" ] [ "services" "devEnvironments" "retired" ])
     (lib.mkAliasOptionModule [ "sam" "workers" "labelPrefix" ] [ "services" "devEnvironments" "prefix" ])
     (lib.mkAliasOptionModule [ "sam" "workers" "pool" ] [ "services" "devEnvironments" "pool" ])
     (lib.mkAliasOptionModule [ "sam" "workers" "jumpHosts" ] [ "services" "devEnvironments" "jumpHosts" ])
-    (lib.mkRemovedOptionModule [ "sam" "workers" "memoryBudget" ] "Use sam.workers.pool.memory (docs/nspawn-workers.md, Sizing).")
-    (lib.mkRemovedOptionModule [ "sam" "workers" "memoryMax" ] "Use the instances' memory.reserved and memory.max.")
-    (lib.mkRemovedOptionModule [ "sam" "workers" "cpuQuota" ] "Use the instances' cpu.reserved, and cpu.max for a hard cap.")
   ];
 
   options.sam.workers = {
@@ -130,7 +143,6 @@ in
       unitPrefix = "worker";
       stateDir = "/var/lib/workers";
       prefix = lib.mkDefault profile.hostname;
-      hostSubnets = [ profile.lanCidr ];
       guestModules = [ fleetGuest ];
       credentials = {
         id_ed25519 = cfg.sshKey;

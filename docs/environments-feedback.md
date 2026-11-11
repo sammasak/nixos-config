@@ -17,14 +17,26 @@ Append; move a line to fixed when its change lands.
 - skills `skills:test` runs its suites in parallel: run suites one at a time in an environment.
 - skopeo and buildah are on PATH only inside `devenv shell` (by design, note only).
 - Herdr's `agent prompt` with a multi-line prompt is untested: the shell layer keeps the newlines, whether Herdr types them as Enter is not known.
-- The host user's uid is assumed 1000 (mutableUsers, no declared uid); `sshKey` and `ghHostsFile` are home files whose existence only shows at container start.
+- The host user's uid is assumed 1000 (mutableUsers, no declared uid); `sshKey` and `ghHostsFile` are home files whose existence only shows at container start. Not declared fleet-wide: black-pi's user is uid 1001. Side find: `core/automation.nix` reads the same undeclared uid, so its upgrade notice looks in `/run/user/`.
+- Owner decision: guests hold the user's GitHub ssh key and gh token, so an agent can push to nixos-config `main`, which acer auto-upgrades from weekly as root. Mitigation: branch protection on `main`, or a scoped key.
+- acer still has `/nix/var/nix/{profiles,gcroots}/per-container/worker-1` from the old naming (the cleanup loop that removed msi's is gone): `sudo rm -rf /nix/var/nix/profiles/per-container/worker-1 /nix/var/nix/gcroots/per-container/worker-1`.
+- Needs runtime check: a `memory`/`cpu` change applies live at the daemon-reload with no container restart (`systemctl show container@<name> -p MemoryMax` before and after, uptime unchanged).
+- `blockedNetworks` (forward drop to the LAN, DNS excepted) is wired but off: needs a runtime check that GitHub, DNS and host-to-guest ssh still work and the k3s API does not, on the iptables backend next to Cilium.
+- First `devenv shell` in a new environment is 25 to 32 s of evaluation. Seeding a new home's `~/.cache/nix` from the host user's was not done: copying the live sqlite fetcher cache can corrupt it, and the cost looks like devenv's per-repo evaluation, not fetching. The empty `flake-registry` only removes the global registry fetch.
 
 ## Fixed
 
+- 2026-11-11 Any deploy that lacked an instance (a rollback, an older checkout, acer's weekly auto-upgrade from `main`) deleted its home: only names in `retired` are deleted.
+- 2026-11-11 Every nixpkgs bump restarted every environment (store paths in `worker-<name>`'s unit): the unit now holds only the instance's agent, model, address and binds; resize and prompt edits do not restart.
+- 2026-11-11 Guests presented the host's own sshd key, so root in a guest could pose as the host: one generated environments key per host, trusted on first use from lenovo.
+- 2026-11-11 GC roots missed `~/.cache/wt/<repo>/.devenv/gc` (depth limit): a pruned search of the whole home.
+- 2026-11-11 At a cold boot the Herdr hook could give up before the user's Herdr was up: it wants `user@`, fails on timeout and restarts.
+- 2026-11-11 Guests booted an unused Herdr server, repo-sweep (which would reclaim the agent's clones), flake-update, gpg-agent, dconf and a firewall: all off in the guest.
+- 2026-11-11 Builds from environments ran in an unbounded host daemon: acer and msi bound it like lenovo.
 - 2026-11-11 Host GC would have deleted environments' devenv shells (roots dangled on the host): `dev-environments-gcroots` before `nix-gc`.
 - 2026-11-11 Pushes dropped by GitHub during long pre-push gates (seen three times): ssh keepalive in every environment.
 - 2026-11-11 An environment could fill the host's zram swap: swap capped at half its memory max.
-- 2026-11-11 Per-container dirs of names from an earlier scheme needed root to remove: the activation script removes any that no container declares.
+- 2026-11-11 Per-container dirs of names from an earlier scheme needed root to remove: a one-time activation loop cleared msi's (since removed; acer's are in Open).
 - 2026-11-11 Hard caps throttled idle hosts: reserve plus spike in one slice; without the CPU cap herman web-dist went 151 s to 142 s (mostly serial compile, small win), 7G allocation in a 6G environment survives.
 
 - Every nix command in an environment warned about root's missing channels on stderr (broke a test capturing stderr): guests pin `nix.nixPath` to the store's nixpkgs, channels off (`modules/workers/core.nix`).
