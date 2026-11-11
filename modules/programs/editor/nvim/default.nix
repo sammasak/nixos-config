@@ -59,7 +59,12 @@ in
   };
 
   # Stylix's base16 nvim target injects a broken require("mini.base16"); LazyVim owns colours.
-  stylix.targets.neovim.enable = false;
+  # A host with Stylix off (roles/runtime-host.nix) has no such option to set.
+  imports = [
+    ({ lib, options, ... }: {
+      config = lib.optionalAttrs (options ? stylix) { stylix.targets.neovim.enable = false; };
+    })
+  ];
 
   # Nix-provided debugpy interpreter for the live Lua config (Mason is off).
   xdg.configFile."nvim/nix.lua".text = ''

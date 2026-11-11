@@ -73,7 +73,8 @@ with a manual Windows Boot Manager entry (dual-boot preserved).
 does not import that module is headless. Fonts, GUI packages, desktop services
 and the Home Manager desktop imports all key off it. Do not gate new
 desktop-only config on `programs.niri.enable` — that ties it to one
-compositor.
+compositor. Stylix is the exception: it comes with `base`, so a headless host
+is themed unless its role turns it off, which `runtime-host` does (and asserts).
 
 ### Profile System (`sam.profile`)
 
@@ -107,6 +108,11 @@ Composable role modules assigned per-host via `variables.nix`:
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node; disables sleep/suspend
 - **homelab-server** — k3s control plane
+- **runtime-host** — headless agent-runtime (nspawn) host, msi-ms7758 and acer-swift: the shared template set,
+  egress allowlist and run credential, the deploy-rs target, no Stylix outside a desktop specialisation, and
+  nix-gc / nix-optimise / nixos-upgrade that wait for a synchronised clock (`systemd-time-wait-sync`), never
+  catch up at boot and run one at a time. The host file keeps only its measured capacity
+  (`sam.agentRuntime.host`, asserted to be set) and its hardware facts
 - **rf-lab** — headless Wi-Fi learning appliance (naked-pi)
 - **embedded** — ESP32 development host (USB-serial, debug probes)
 

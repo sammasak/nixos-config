@@ -1,6 +1,6 @@
 # Always-on semantics for homelab nodes: never sleep, ignore the lid,
-# power button still works. Imported by the homelab-agent and
-# homelab-server roles — NOT by base (laptops in non-homelab roles keep
+# power button still works. Imported by the homelab-agent,
+# homelab-server and runtime-host roles — NOT by base (laptops in non-homelab roles keep
 # normal power behaviour).
 { lib, ... }:
 {
