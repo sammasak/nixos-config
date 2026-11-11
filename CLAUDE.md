@@ -119,7 +119,7 @@ These are available across all projects without manual `/plugin install`.
 # In ~/claude-code-skills: add/edit skills or agents, push to GitHub
 # In ~/nixos-config:
 nix flake update skills
-sudo nixos-rebuild switch --flake .#<hostname>
+just switch
 ```
 
 ### Codex
