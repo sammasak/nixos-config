@@ -173,6 +173,10 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   trusted user on acer and msi. On lenovo the host user is trusted (it signs
   and deploys), and so is its guest: an environment there can do to the store
   what the owner can.
+- `~/.cache/nix` (Nix's fetcher and tarball caches) is one directory per host,
+  bound into every environment: the first `devenv shell` in a new environment
+  took 5.9 s on acer with it, 28 to 31 s without, for a repo the host had seen.
+  A revision the host has not seen still builds once (238 s on acer).
 - The guest imports the fleet's `core/system.nix`, `core/users.nix`,
   `core/packages.nix`, the pinned known hosts and the Home Manager wiring
   every host gets (`fleetHome` in `flake-modules/40-outputs-nixos.nix`).
