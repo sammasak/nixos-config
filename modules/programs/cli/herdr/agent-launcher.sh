@@ -103,6 +103,18 @@ if [[ $agent_kind == claude && -n ${HERDR_CLAUDE_WORKER_HOST:-} && -n ${HERDR_EN
   ((own_mode)) || set -- --dangerously-skip-permissions "$@"
 fi
 
+# on any host, a Herdr restore brings a session back in bypassPermissions only when its transcript's last recorded
+# permission mode was bypassPermissions (Claude Code itself resumes in the default mode)
+if [[ $agent_kind == claude && -n ${HERDR_ENV:-} ]] && session_id=$(resume_reference "$@") \
+  && [[ $session_id =~ ^[0-9a-f-]+$ ]]; then
+  for transcript in "$HOME"/.claude/projects/*/"$session_id".jsonl; do
+    [[ -f $transcript ]] || continue
+    last_mode=$(grep -E '"type": ?"permission-mode"' "$transcript" | jq -r '.permissionMode // empty' 2>/dev/null | tail -n 1) || true
+    [[ $last_mode == bypassPermissions ]] && set -- --dangerously-skip-permissions "$@"
+    break
+  done
+fi
+
 # a worker's own settings (#157), prepended so they apply on every path below, native or through Herdr
 if [[ $agent_kind == claude && -n ${HERDR_CLAUDE_WORKER_SETTINGS:-} ]]; then
   for arg in "$@"; do

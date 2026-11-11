@@ -33,7 +33,7 @@ def realise(host, path):
     return pathlib.Path(nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", expr)).read_text()
 
 
-def launched(host, args, herdr=True):
+def launched(host, args, herdr=True, home=None):
     """The argv the host's `claude` fish function gives the real claude, captured by a stand-in on PATH; HERDR_ENV
     takes the launcher's native path, as inside a Herdr pane (coord:spawn's `herdr agent start` types into one)."""
     fn = realise(host, "programs.fish.functions.claude")
@@ -43,7 +43,7 @@ def launched(host, args, herdr=True):
         fake.write_text("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n")
         fake.chmod(0o755)
         env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")}
-        env.update({"PATH": f"{d}:{os.environ['PATH']}"}, **({"HERDR_ENV": "1"} if herdr else {}))
+        env.update({"PATH": f"{d}:{os.environ['PATH']}", "HOME": home or d}, **({"HERDR_ENV": "1"} if herdr else {}))
         run = subprocess.run([launcher, "claude", *args], env=env,
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
         return run.stdout.splitlines()
@@ -153,8 +153,23 @@ def main():
         if host == COORDINATOR:
             check(plain_args == ["--model", "claude-opus-5-5"], f"{host}: the launcher passes a non-bypass claude through unchanged ({plain_args})")
         check(worker_args[:1] == ["--settings"] and worker_args[2:] == [FLAG, "--model", "claude-opus-5-5"]
-              and json.loads(pathlib.Path(worker_args[1]).read_text()) == {"switchModelsOnFlag": True},
-              f"{host}: a bypass-mode claude (coord:spawn's argv) gets --settings switchModelsOnFlag=true from the launcher (#157)")
+              and json.loads(pathlib.Path(worker_args[1]).read_text()) == {"switchModelsOnFlag": True, "skipDangerousModePermissionPrompt": True},
+              f"{host}: a bypass-mode claude (coord:spawn's argv) gets --settings switchModelsOnFlag and the skipped acknowledgment from the launcher")
+    # a Herdr restore keeps the mode the session's transcript last recorded, on every host
+    sid = "5c783685-567d-4e43-8a42-8a6f1dac2283"
+    for mode, want_flag in (("bypassPermissions", True), ("default", False), ("auto", False)):
+        with tempfile.TemporaryDirectory() as home:
+            proj = pathlib.Path(home, ".claude/projects/-home-lukas-x"); proj.mkdir(parents=True)
+            proj.joinpath(f"{sid}.jsonl").write_text("".join(json.dumps(e) + "\n" for e in (
+                {"type": "permission-mode", "permissionMode": "bypassPermissions" if mode != "bypassPermissions" else "default", "sessionId": sid},
+                {"type": "user", "permissionMode": mode, "sessionId": sid},
+                {"type": "permission-mode", "permissionMode": mode, "sessionId": sid})))
+            for host in (COORDINATOR, "msi-ms7758"):
+                got = launched(host, ["--resume", sid], home=home)
+                want = ["--settings", got[1], FLAG, "--resume", sid] if want_flag else ["--resume", sid]
+                check(got == want, f"{host}: a restored session last in {mode} comes back {'in' if want_flag else 'without'} bypass (got {got})")
+            got = launched(COORDINATOR, ["--resume", sid], herdr=False, home=home)
+            check(got == ["--resume", sid], f"{COORDINATOR}: outside a Herdr pane a resume is unchanged (got {got})")
 
     # #157 only works if the pinned Claude Code still reads switchModelsOnFlag: a version bump that drops or renames it
     # would leave every check above green while workers silently stall at the safeguards dialog again. Grep the binary.
@@ -164,12 +179,14 @@ def main():
                  "upgrade dropped or renamed the setting and #157 workers will stop at the model-switch dialog again")
 
     home, got = trusted_after_activation(WORKER)
-    want = {home, "/home/lukas/claude-code-skills", "/home/lukas/nixos-config"}
+    want = {home, *(f"/home/lukas/{d}" for d in ("claude-code-skills", "knowledge", "nixos-config", ".cache/wt"))}
     trusted = {d for d, p in got["projects"].items() if p.get("hasTrustDialogAccepted")}
-    check(trusted == want, f"{WORKER}: activation trusts $HOME and the declared worker dirs only (got {sorted(trusted)})")
+    check(trusted == want, f"{WORKER}: activation trusts $HOME and the declared dirs only (got {sorted(trusted)})")
+    check(got.get("hasSeenAutoDefaultNudge") is True, f"{WORKER}: activation dismisses the auto-mode default nudge")
     home, got = trusted_after_activation(COORDINATOR)
     trusted = {d for d, p in got["projects"].items() if p.get("hasTrustDialogAccepted")}
-    check(trusted == {home}, f"{COORDINATOR}: activation trusts $HOME only (got {sorted(trusted)})")
+    want = {home, *json.loads(nix("eval", "--json", f".#nixosConfigurations.{COORDINATOR}.config.sam.herdr.trustedDirs"))}
+    check(trusted == want and "/home/lukas/.cache/wt" in want, f"{COORDINATOR}: activation trusts $HOME and its declared dirs only (got {sorted(trusted)})")
 
     exec_start = hm(COORDINATOR, "systemd.user.services.coordinator-wakeup.Service.ExecStart")
     wakeup = pathlib.Path(realise(COORDINATOR, "systemd.user.services.coordinator-wakeup.Service.ExecStart")).read_text()

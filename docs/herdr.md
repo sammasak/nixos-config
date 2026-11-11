@@ -26,14 +26,17 @@ opening the same conversation a second time.
 Workers run unattended in `bypassPermissions` on worker hosts only
 (`sam.herdr.worker`, acer-swift): Claude Code's settings carry
 `skipDangerousModePermissionPrompt`, so a `--dangerously-skip-permissions`
-start no longer stops at the acknowledgment dialog, and activation pre-trusts
-`$HOME` plus `sam.herdr.worker.trustedDirs`, nothing else. The flag itself comes
+start no longer stops at the acknowledgment dialog. On every host activation
+pre-trusts `$HOME` plus `sam.herdr.trustedDirs` (and their subdirectories),
+nothing else. The flag itself comes
 from the caller: skills `coord:spawn`, or `claude-worker` (the `claude` wrapper
 with the flag) by hand. Herdr's session restore (`resume_agents_on_restore`)
 relaunches a pane as a bare `claude --resume <id>`, which drops that flag, and
 Claude Code then starts in auto mode (skills#28). So on a worker host the
 launcher supplies the flag itself to every interactive `claude` in a Herdr pane
-that names no permission mode of its own. Outside Herdr (SSH, a plain shell)
+that names no permission mode of its own. On any host, a restored session whose
+transcript last recorded `bypassPermissions` comes back with the flag, and the
+launcher's `--settings` skips the acknowledgment for it. Outside Herdr (SSH, a plain shell)
 plain `claude` still asks, and a host running the
 unattended Coordinator (`coordinatorWakeup`, `--permission-mode dontAsk`)
 cannot be a worker host. `nixos:worker-permissions-test` pins all of it.

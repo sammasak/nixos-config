@@ -34,6 +34,7 @@ in
   # Delivers the coder run's credential; it also brings nix_access_token and the
   # fish CLAUDE_CODE_OAUTH_TOKEN export, as on acer.
   sam.hostSecrets.enable = true;
+  sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "nixos-config" ".cache/wt" ];
 
   # Keep this host manual until the existing Windows/EFI layout is verified.
   system.autoUpgrade.enable = lib.mkForce false;
