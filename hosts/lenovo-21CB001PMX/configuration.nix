@@ -29,6 +29,17 @@ in
   ];
   # `ssh <name>.msi` / `ssh <name>.acer` into an environment declared on that host (sam.workers.labelPrefix there).
   sam.workers.jumpHosts = { acer = "acer-swift"; msi = "msi-ms7758"; };
+  # One environment beside the control plane: a 4G pool keeps it and its bursts clear of k3s and the coordinator.
+  sam.workers = {
+    instances.gw88 = {
+      model = "sonnet";
+      memory.max = "4G";
+      prompt = "You are in a fresh nspawn developer environment named gw88 on host lenovo, the always-on control plane: it is memory constrained, so run builds, tests and gates strictly one at a time and never start a second heavy command while one runs. Task: llm-gateway issue #88 (approved). Clone git@github.com:sammasak/llm-gateway.git into ~/llm-gateway, read its entry doc (CLAUDE.md if present, else README or CONTRIBUTING), and run gh issue view 88. Check for an existing branch or open PR for the issue first; if one exists take it to mergeable instead of starting over. Follow the issue's own scope and gates exactly; do not create, change or guess any credential or secret, and where the issue says a decision is the owner's, stop there and report. Before pushing, spawn ONE independent subagent to review your diff, fix what is real, push, open the PR with gh, and finish with a five line summary. Append any friction with this environment to ~/ENV-FEEDBACK.md. Stop and ask if a decision is not yours.";
+    };
+    labelPrefix = "lenovo";
+    pool = { memory = "4G"; cores = 16; };
+    ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
+  };
   sam.herdr.coordinatorWakeup = {
     enable = true;
     # Delegated approval (the comment every delegated gh:label act cites) and the interactive

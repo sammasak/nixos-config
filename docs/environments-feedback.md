@@ -6,6 +6,9 @@ Append; move a line to fixed when its change lands.
 
 ## Open
 
+- A fresh clone has no git hooks until `devenv shell` runs once, so `nc200` pushed its nixos-config branch with no pre-push gate at all (docs only, so harmless this time). The brief should say "enter the devenv shell once before the first commit", or the guest should refuse a push from a repo with a devenv.nix and no hooks.
+- On acer and in its environments `lenovo-21CB001PMX` resolves to 127.0.0.2, and an environment has no key for other fleet hosts: an artifact that lives only on another host (a bundle) is unreachable. Hand-offs between hosts go through a pushed branch; the coordinator copied the factum#44 bundle in by hand.
+- A path is cold once per host store, so an issue asking for three cold repetitions cannot be met from an environment.
 - The host's Nix daemon socket is reachable from an environment (by design: that is what makes the shared store instant), so the devenv-platform#120 invariant "daemon socket inaccessible" does not hold here. An environment isolates files and resources, not the daemon.
 - Task prompts said "read CLAUDE.md" for repos that have none (herman, devenv-platform); the coordinator's brief should say "the repo's entry doc".
 - The `playwright-login` MCP server fails in an environment (`ENOENT .../claude-playwright-login/state.json`); one Playwright MCP with an isolated context per device works. Either seed the state file or drop that server from the guest.
@@ -29,6 +32,7 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-11 Results: nixos-config#200 G1 baseline (PR #218) merged from `nc200` in 5 m 42 s from declaration to PR. `gw88` declared on lenovo (4G pool) for llm-gateway#88: first environment on the control plane.
 - 2026-11-11 Results: devenv-platform#93 evidence (PR #122) merged from `dp93`: started from its declared prompt with no hand-off, cold `devenv tasks list` 83 s on a repo new to the host, `platform:verify` 21 checks green in 20 m 32 s run alone. `dp93` retired.
 - 2026-11-11 Results: herman#4 (PR #39, baseline G1 to G10 run with 58 screenshots) merged from `demo`, issue closed; `demo` retired after three issues (herman#5, #18, #4).
 - 2026-11-11 Finished environments sat idle holding their reserve (`skills91` for hours after skills#97 merged). Rule added to the process (docs/nspawn-workers.md, "Tear down when done"): retire in the same sitting once clones are clean and feedback is copied out. `skills91` retired.
