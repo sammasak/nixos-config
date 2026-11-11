@@ -6,7 +6,7 @@
 # process surviving; export bundles patches, output and a bounded log; destroy
 # tears down in order and releases the reservation last. An outcome that was never
 # recorded (supervisor or host crash) is reported as ambiguous and never replayed.
-USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--request REQUEST.json] [--root] [--timeout-sec N] [--idmap] [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] [--wait] -- PROGRAM [ARG]... | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID [--credential FILE] | destroy ID [--discard] | reconcile | record-exit ID'
+USAGE='agent-runtime-instance [--state DIR] create ID --template MANIFEST [--host POLICY] --task REF [--plan PLAN.json]... | start ID [--request REQUEST.json] [--root] [--timeout-sec N] [--idmap] [--credential FILE | --credential-issuer PROGRAM [--credential-ttl SEC]] [--wait] [-- PROGRAM [ARG]...] | wait ID [--timeout-sec N] | status [ID] | logs ID | cancel ID | export ID [--credential FILE] | destroy ID [--discard] | reconcile | record-exit ID'
 state=/var/lib/agent-runtime
 if [ "${1:-}" = --state ]; then
   [ $# -ge 2 ] || usage
@@ -206,6 +206,28 @@ status_json() {
      + (if $rec then $rec | {task, template, run, runId, uidBase, unit, machine, volumes, createdAt} else {} end)
      + {started: $started, result: $result, export: $exported}'
 }
+# The template's homeFiles, placed by root before anything has run in the instance (a start is never
+# repeated), so no path below HOME can have been swapped for a symlink by the payload.
+place_home_files() {
+  local home=$base/vol/home owner=$((uidbase + 1000)) rel src mode dir part parts
+  while IFS=$'\t' read -r rel src mode; do
+    [ -e "$src" ] || fail state "$id: homeFiles.$rel: $src does not exist"
+    dir=$home
+    IFS=/ read -ra parts <<<"$rel"
+    for part in "${parts[@]:0:${#parts[@]}-1}"; do
+      dir=$dir/$part
+      [ ! -L "$dir" ] || fail state "$id: homeFiles.$rel: $dir is itself a linked entry"
+      if [ ! -d "$dir" ]; then mkdir "$dir"; chown "$owner:$owner" "$dir"; fi
+    done
+    if [ "$mode" = copy ]; then
+      [ -f "$src" ] || fail state "$id: homeFiles.$rel: a copy needs a regular file, not $src"
+      install -m 0600 -o "$owner" -g "$owner" -- "$src" "$home/$rel"
+    else
+      ln -sfn -- "$src" "$home/$rel"
+      chown -h "$owner:$owner" "$home/$rel"
+    fi
+  done < <(jq -r '(.homeFiles // {}) | to_entries[] | [.key, .value.source, .value.mode] | @tsv' "$base/template.json")
+}
 revoke_token() {  # ISSUER TOKEN-FILE: best effort (the token expires anyway), but a failure is reported, not hidden
   local rc=0 detail
   detail=$(timeout 30 "$1" revoke --instance "$id" --token-file "$2" 2>&1 >/dev/null) || rc=$?
@@ -385,7 +407,8 @@ case $cmd in
     # absolute (not symlink-resolved): teardown runs it from whatever directory destroy is called in
     [ -z "$issuer" ] || issuer=$(realpath -s -- "$issuer")
     [ -n "$issuer" ] || [ -z "$cred_ttl" ] || fail usage "--credential-ttl needs --credential-issuer"
-    [ $# -ge 1 ] || usage
+    # only a session template names its own payload (the manifest entrypoint and session.args)
+    [ $# -ge 1 ] || jq -e '.session != null and .entrypoint != null' "$base/template.json" >/dev/null 2>&1 || usage
     [ -d "$base" ] || fail state "$id does not exist"
     lock_instance
     s=$(state_of)
@@ -399,6 +422,14 @@ case $cmd in
       *) fail state "$id is $s" ;;
     esac
     t=$base/template.json
+    session=$(jq -c '.session // null' "$t")
+    if [ "$session" != null ]; then
+      [ "$uid" = 1000 ] || fail usage "$id: --root does not apply to a session template"
+      if [ $# -eq 0 ]; then
+        mapfile -d '' -t session_argv < <(jq -j '.entrypoint, .session.args[] | . + "\u0000"' "$t")
+        set -- "${session_argv[@]}"
+      fi
+    fi
     limit=$(( $(jq -r .policies.resources.timeoutMinutes "$t") * 60 ))
     if [ -n "$timeout_sec" ]; then
       [[ $timeout_sec =~ ^[1-9][0-9]*$ ]] && [ "$timeout_sec" -le "$limit" ] || fail usage "--timeout-sec must be 1..$limit (the template's timeoutMinutes)"
@@ -452,6 +483,8 @@ case $cmd in
     uidbase=$(awk '{print $3}' "$base/reservation")
     mount_volumes
     build_root
+    place_home_files
+    mapfile -d '' -t template_env < <(jq -j '(.environment // {}) | to_entries[] | "--setenv=" + .key + "=" + .value + "\u0000"' "$t")
     path=$(jq -r '[.packages[].storePath + "/bin"] | join(":")' "$t")
     binds=(--bind-ro="/nix/store:/nix/store$opt" --bind-ro="$base/template.json:/etc/agent-runtime/template.json")
     request_env=()
@@ -539,13 +572,47 @@ case $cmd in
       chown -R "$((uidbase + uid)):$((uidbase + uid))" "$creddir"
       credbind=(--bind-ro="$creddir:/run/agent-runtime/credentials")
     fi
+    # a session: the payload runs under a dtach PTY whose socket sits in a per-instance tmpfs directory. The
+    # directory is root's (the payload cannot widen it); ACLs let the instance user write there and the host's
+    # attachUser traverse it, so the socket is reachable by exactly those two and root.
+    payload=("$@") session_args=() sessdir=$rundir/$id/session
+    if [ "$session" != null ]; then
+      attach_user=$(jq -r '.session.attachUser // empty' "$base/host.json")
+      [ -z "$attach_user" ] || id -u "$attach_user" >/dev/null 2>&1 \
+        || fail state "$id: the host policy's session.attachUser $attach_user is not a user on this host; nothing was started"
+      rm -rf --one-file-system "$sessdir"
+      mkdir -p "$sessdir"
+      chmod 0700 "$sessdir"
+      setfacl -m "u:$((uidbase + uid)):rwx" "$sessdir"
+      [ -z "$attach_user" ] || setfacl -m "u:$attach_user:--x" "$sessdir"
+      # what the attach client needs and cannot read from root's state: non-secret, world-readable like mirror.status
+      jq -c --arg id "$id" --arg task "$(jq -r .task "$base/instance.json")" \
+        '{id: $id, template: .template.name, task: $task, paneProcessName: .session.paneProcessName}' "$t" >"$rundir/$id/session.json"
+      chmod 0644 "$rundir/$id/session.json"
+      session_args=(--bind="$sessdir:/run/agent-runtime/session"
+        --setenv=TERM=xterm-256color --setenv=LANG=C.UTF-8 --setenv=LC_ALL=C.UTF-8)
+      workdir=$(jq -r '.session.workdir // empty' "$t")
+      [ -z "$workdir" ] || session_args+=(--chdir="$workdir")
+      # dtach creates its socket 0600 and no client has sized the PTY yet. Inside the instance, as its user
+      # (root never touches a payload-writable path): the outer shell opens the socket up to the directory's
+      # ACL from a double-forked helper (a direct child would be the status dtach reaps), the inner one
+      # exports the delivered credential under the template's name (read there, so it is in no argv) and
+      # sets a first size.
+      sock=/run/agent-runtime/session/pty.sock
+      outer="( ( while [ ! -S $sock ]; do $(command -v sleep) 0.1; done; $(command -v chmod) 0666 $sock ) & )"
+      outer+="; exec $(command -v dtach) -N $sock -r winch \"\$@\""
+      # shellcheck disable=SC2016  # expands inside the container shell, not here
+      inner='if [ -n "$1" ] && [ -r /run/agent-runtime/credentials/token ]; then export "$1=$(</run/agent-runtime/credentials/token)"; fi
+        "$0" rows 40 cols 120 2>/dev/null; shift; exec "$@"'
+      payload=(/bin/sh -c "$outer" session /bin/sh -c "$inner" "$(command -v stty)" "$(jq -r '.session.credentialEnv // empty' "$t")" "$@")
+    fi
     setpriv=$(realpath "$(command -v setpriv)")
     exec_tail=("$setpriv" --reuid="$uid" --regid="$uid" --clear-groups --bounding-set=-all --inh-caps=-all --no-new-privs --)
     if [ -n "$netready" ]; then
       # shellcheck disable=SC2016  # $0/$@ expand inside the container shell, not here
-      exec_tail+=(/bin/sh -c 'while [ ! -e "$0" ]; do sleep 0.1; done; exec "$@"' "$netready" "$@")
+      exec_tail+=(/bin/sh -c 'while [ ! -e "$0" ]; do sleep 0.1; done; exec "$@"' "$netready" "${payload[@]}")
     else
-      exec_tail+=("$@")
+      exec_tail+=("${payload[@]}")
     fi
     # not --quiet: systemd-run reports the invocation id itself, so a payload that exits before
     # `systemctl show` asks (and --collect drops the unit) still has its journal key (#138)
@@ -571,6 +638,7 @@ case $cmd in
         "${request_env[@]}"
         --setenv=TMPDIR="$(jq -r .filesystem.tmp.path "$t")" --setenv=AGENT_RUNTIME_INSTANCE="$id"
         --setenv=AGENT_RUNTIME_OUTPUT="$(jq -r .filesystem.output.path "$t")"
+        "${template_env[@]}" "${session_args[@]}"
         -- "${exec_tail[@]}")
     printf -v command '%q ' "$@"
     # the marker comes first: a crash between it and the unit is reported as ambiguous, never re-run
@@ -624,6 +692,13 @@ case $cmd in
       nft add chain inet "$tbl" postrouting "{ type nat hook postrouting priority srcnat; policy accept; }"
       nft add rule inet "$tbl" postrouting ip saddr "$sub.0/24" oifname != "$veth" masquerade
       touch "$base/vol/tmp/.net-ready"
+    fi
+    # a session start returns once the socket accepts the attach user (or the payload is already gone)
+    if [ "$session" != null ]; then
+      for _ in $(seq 1 100); do
+        if [ -n "$(find "$sessdir/pty.sock" -maxdepth 0 -type s -perm -0006 2>/dev/null)" ] || ! unit_live; then break; fi
+        sleep 0.1
+      done
     fi
     ns='{}' uid_map=null
     if [ -n "$leader" ]; then

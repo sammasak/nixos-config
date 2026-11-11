@@ -295,6 +295,46 @@ in
     module = bad { repositories."Factum Main" = lockedMain { }; };
   }
   {
+    name = "environment-reserved-name";
+    expect = "environment: not a variable name, or one the runtime owns";
+    module = bad { environment.PATH = "/evil"; };
+  }
+  {
+    name = "environment-runtime-prefix";
+    expect = "environment: not a variable name, or one the runtime owns";
+    module = bad { environment.AGENT_RUNTIME_OUTPUT = "/elsewhere"; };
+  }
+  {
+    name = "home-file-escapes-home";
+    expect = "homeFiles: keys are paths relative to HOME";
+    module = bad { homeFiles.".claude/../../etc/passwd".source = "${skills}/skills"; };
+  }
+  {
+    name = "home-file-absolute";
+    expect = "homeFiles: keys are paths relative to HOME";
+    module = bad { homeFiles."/etc/passwd".source = "${skills}/skills"; };
+  }
+  {
+    name = "home-file-source-outside-store";
+    expect = "source' is not of type";
+    module = bad { homeFiles.".x".source = "/etc/shadow"; };
+  }
+  {
+    name = "session-options-without-enable";
+    expect = "need session.enable";
+    module = bad { session.credentialEnv = "TOKEN"; };
+  }
+  {
+    name = "session-without-entrypoint";
+    expect = "session.enable needs a package";
+    module = bad { session.enable = true; };
+  }
+  {
+    name = "session-credential-env-reserved";
+    expect = "credentialEnv";
+    module = bad { session = { enable = true; credentialEnv = "HOME"; }; };
+  }
+  {
     name = "host-eligible-unknown-template";
     expect = "names unknown template";
     module = { sam.agentRuntime.host.eligibleTemplates = [ "no-such-template" ]; };

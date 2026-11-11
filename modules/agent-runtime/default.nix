@@ -51,6 +51,17 @@ let
     merge = lib.mergeEqualOption;
   };
 
+  # A store path or a path inside one (`<skills source>/skills/x`).
+  storeSubpath = types.strMatching "^/nix/store/[a-z0-9]{32}-[^/]+(/[A-Za-z0-9._+@-]+)*$";
+  envNamePattern = "^[A-Za-z_][A-Za-z0-9_]*$";
+  envName = types.strMatching envNamePattern;
+  # Set by the runtime for every payload; a template value would shadow them.
+  reservedEnv = n: lib.elem n [ "PATH" "HOME" "TMPDIR" ] || lib.hasPrefix "AGENT_RUNTIME_" n;
+  homeRelative =
+    p:
+    lib.match "^[A-Za-z0-9._+@-]+(/[A-Za-z0-9._+@-]+)*$" p != null
+    && !lib.any (c: c == "." || c == "..") (lib.splitString "/" p);
+
   within = root: p: p == root || lib.hasPrefix "${root}/" p;
   overlaps = a: b: within a b || within b a;
 
@@ -331,6 +342,58 @@ let
         default = [ ];
         description = "Declared capabilities; credential grants are separate and never in the store.";
       };
+      environment = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        description = "Extra environment of the payload (never a secret: it lands in the manifest and the store). `PATH`, `HOME`, `TMPDIR` and `AGENT_RUNTIME_*` are the runtime's.";
+      };
+      homeFiles = mkOption {
+        type = types.attrsOf (
+          types.submodule {
+            options = {
+              source = mkOption {
+                type = storeSubpath;
+                description = "Store path (or a path inside one) the entry comes from.";
+              };
+              mode = mkOption {
+                type = types.enum [ "link" "copy" ];
+                default = "link";
+                description = "`link`: a symlink to `source`. `copy`: a private writable copy of a regular file (mode 0600), for state the payload rewrites.";
+              };
+            };
+          }
+        );
+        default = { };
+        description = "Files `start` places in the private HOME before the payload runs, keyed by their path relative to HOME; owned by the instance user, parents created.";
+      };
+      session = {
+        enable = mkEnableOption "running the payload under a runtime-owned PTY (dtach) the host's `session.attachUser` can attach to; without it the payload runs headless";
+        args = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = "Arguments after the manifest entrypoint when `start` is given no payload (never a secret).";
+        };
+        credentialEnv = mkOption {
+          type = types.nullOr envName;
+          default = null;
+          description = "Environment variable the delivered per-run credential is exported as, inside the instance only; the value never enters argv, a record or the manifest.";
+        };
+        workdir = mkOption {
+          type = types.nullOr normalizedPath;
+          default = null;
+          description = "Working directory of the session payload inside the instance.";
+        };
+        paneProcessName = mkOption {
+          type = types.nullOr (types.strMatching "^[A-Za-z0-9][A-Za-z0-9._-]{0,14}$");
+          default = null;
+          description = ''
+            File name the host-side attach client runs under (its `comm` and `argv[0]`); `null` is
+            plain `dtach`. Herdr binds a known agent kind to the name of a pane's foreground
+            process, so a session whose screen is Claude Code sets `claude` and Herdr tracks its
+            state natively.
+          '';
+        };
+      };
     };
   };
 
@@ -434,6 +497,9 @@ let
       onReserved = map (p: p.path) (onRoots reservedRoots paths);
       known = skillsOf t.skillsSource;
       badNames = lib.filter (n: !isLabel n) (lib.attrNames t.repositories);
+      envNames = lib.attrNames t.environment;
+      badEnv = lib.filter (n: lib.match envNamePattern n == null || reservedEnv n) envNames;
+      badHome = lib.filter (p: !homeRelative p) (lib.attrNames t.homeFiles);
     in
     lib.concatMap (r: repoChecks "${at}.repositories.${r.name}" t.filesystem.workspace r) repos
     ++ [
@@ -456,6 +522,26 @@ let
       {
         assertion = onReserved == [ ];
         message = "${at}: instance path on a reserved root (${lib.concatStringsSep " " reservedRoots}): ${lib.concatStringsSep ", " onReserved}";
+      }
+      {
+        assertion = badEnv == [ ];
+        message = "${at}.environment: not a variable name, or one the runtime owns (PATH, HOME, TMPDIR, AGENT_RUNTIME_*): ${lib.concatStringsSep ", " badEnv}";
+      }
+      {
+        assertion = badHome == [ ];
+        message = "${at}.homeFiles: keys are paths relative to HOME (no leading `/`, no `.` or `..` component): ${lib.concatStringsSep ", " badHome}";
+      }
+      {
+        assertion = t.session.credentialEnv == null || !(reservedEnv t.session.credentialEnv || lib.elem t.session.credentialEnv envNames);
+        message = "${at}.session.credentialEnv ${toString t.session.credentialEnv} is owned by the runtime or already set in `environment`";
+      }
+      {
+        assertion = t.session.enable || (t.session.credentialEnv == null && t.session.workdir == null && t.session.args == [ ] && t.session.paneProcessName == null);
+        message = "${at}.session: credentialEnv, workdir, args and paneProcessName need session.enable";
+      }
+      {
+        assertion = !t.session.enable || t.packages != [ ];
+        message = "${at}.session.enable needs a package: the first one's main program is the session payload";
       }
     ]
     # Membership first: a name with `/` must never reach the path below.
@@ -534,6 +620,12 @@ let
           };
           capabilities = lib.naturalSort (lib.unique t.capabilities);
         };
+      }
+      # Absent when unset, so a template without them keeps its manifest and digest.
+      // lib.optionalAttrs (t.environment != { }) { inherit (t) environment; }
+      // lib.optionalAttrs (t.homeFiles != { }) { inherit (t) homeFiles; }
+      // lib.optionalAttrs t.session.enable {
+        session = { inherit (t.session) args credentialEnv workdir paneProcessName; };
       };
       lockedSources = {
         sources = lib.mapAttrs (_: s: lib.mapNullable (l: { inherit (l) rev narHash; }) s.locked) body.sources;
@@ -598,6 +690,37 @@ in
       };
     };
 
+    session = {
+      attachUser = mkOption {
+        type = types.nullOr (types.strMatching "^[a-z_][a-z0-9_-]*$");
+        default = null;
+        description = "Host user `start` lets traverse each session's directory (an ACL on that one directory, which holds the PTY socket); `null` leaves sessions reachable by root only.";
+      };
+      credentialFile = mkOption {
+        type = types.nullOr normalizedPath;
+        default = null;
+        description = "Host file (a sops-nix secret path, never a store path) the session launcher delivers as the per-run credential; only the path is recorded.";
+      };
+      defaultTask = mkOption {
+        type = types.nullOr (types.strMatching "^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9._-]*#[1-9][0-9]*$");
+        default = null;
+        description = "Task reference (`OWNER/REPO#N`) `agent-runtime-session run` records when given none.";
+      };
+      hooks = lib.genAttrs [ "start" "end" ] (
+        event:
+        mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = "Commands (`sh -c` strings, normally one store path) the session watcher runs at a session's ${event}, as the session user on the host, never as root and never inside the instance. Each gets `AGENT_RUNTIME_SESSION_{EVENT,ID,HOST,TEMPLATE,TASK,OUTCOME,BUNDLE,ERROR}`; its failure is logged and changes nothing.";
+        }
+      );
+      hookTimeoutSec = mkOption {
+        type = types.ints.between 1 300;
+        default = 20;
+        description = "Bound on each session hook; a hook still running then is killed.";
+      };
+    };
+
     manifestData = mkOption {
       type = types.lazyAttrsOf types.raw;
       readOnly = true;
@@ -620,11 +743,16 @@ in
 
     sam.agentRuntime = {
       manifestData = guarded (lib.mapAttrs manifestOf cfg.templates);
-      hostPolicy = json.generate "agent-runtime-host.json" {
-        schemaVersion = 1;
-        kind = "agent-runtime-host";
-        inherit (cfg.host) enable eligibleTemplates maxConcurrentInstances reserve;
-      };
+      hostPolicy = json.generate "agent-runtime-host.json" (
+        {
+          schemaVersion = 1;
+          kind = "agent-runtime-host";
+          inherit (cfg.host) enable eligibleTemplates maxConcurrentInstances reserve;
+        }
+        // lib.optionalAttrs (cfg.session.attachUser != null) {
+          session = { inherit (cfg.session) attachUser credentialFile defaultTask hooks hookTimeoutSec; };
+        }
+      );
       manifestDir = pkgs.linkFarm "agent-runtime-manifests" (
         lib.mapAttrsToList (n: m: {
           name = "${n}.json";

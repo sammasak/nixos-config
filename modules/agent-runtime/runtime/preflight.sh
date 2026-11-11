@@ -3,9 +3,9 @@
 # check before a pilot run (#165). Every check prints PASS or FAIL with what it saw; a check that
 # cannot be evaluated is a FAIL, never a pass. Exit 0 only when every check passes. It changes
 # nothing: no create, no reservation, no unit (the user-namespace probe is a throwaway `unshare`).
-USAGE='agent-runtime-preflight [--state DIR] [--host POLICY.json] --template MANIFEST.json [--herdr-user USER] [--credential FILE]'
+USAGE='agent-runtime-preflight [--state DIR] [--host POLICY.json] --template MANIFEST.json [--herdr-user USER] [--no-herdr] [--credential FILE]'
 usage() { echo "usage: $USAGE" >&2; exit 2; }
-state=/var/lib/agent-runtime host=/etc/agent-runtime/host.json template='' herdr_user=${SUDO_USER:-} cred=''
+state=/var/lib/agent-runtime host=/etc/agent-runtime/host.json template='' herdr_user=${SUDO_USER:-} cred='' herdr=1
 while [ $# -gt 0 ]; do
   case $1 in
     --state) [ $# -ge 2 ] || usage; state=$2; shift 2 ;;
@@ -13,6 +13,8 @@ while [ $# -gt 0 ]; do
     --template) [ $# -ge 2 ] || usage; template=$2; shift 2 ;;
     --herdr-user) [ $# -ge 2 ] || usage; herdr_user=$2; shift 2 ;;
     --credential) [ $# -ge 2 ] || usage; cred=$2; shift 2 ;;
+    # a session is attached to from the caller's own terminal: no handoff goes through Herdr
+    --no-herdr) herdr=0; shift ;;
     *) usage ;;
   esac
 done
@@ -146,7 +148,9 @@ fi
 # --- Herdr answers (the handoff goes through it); as the user whose server it is when run under sudo
 herdr_cmd=(herdr agent list)
 [ -z "$herdr_user" ] || [ "$(id -u)" != 0 ] || herdr_cmd=(runuser -u "$herdr_user" -- herdr agent list)
-if out=$(timeout 10 "${herdr_cmd[@]}" 2>&1) && jq -e '.result.agents' >/dev/null 2>&1 <<<"$out"; then
+if [ "$herdr" = 0 ]; then
+  pass herdr "not checked (--no-herdr)"
+elif out=$(timeout 10 "${herdr_cmd[@]}" 2>&1) && jq -e '.result.agents' >/dev/null 2>&1 <<<"$out"; then
   pass herdr "server answers (${herdr_user:-$(id -un)}): $(jq '.result.agents | length' <<<"$out") agent(s)"
 else
   nogo herdr "herdr agent list failed as ${herdr_user:-$(id -un)}: $(head -c 160 <<<"$out")"
