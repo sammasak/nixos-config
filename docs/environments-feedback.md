@@ -20,11 +20,13 @@ Append; move a line to fixed when its change lands.
 - The host user's uid is assumed 1000 (mutableUsers, no declared uid); `sshKey` and `ghHostsFile` are home files whose existence only shows at container start. Not declared fleet-wide: black-pi's user is uid 1001. Side find: `core/automation.nix` reads the same undeclared uid, so its upgrade notice looks in `/run/user/`.
 - Owner decision: guests hold the user's GitHub ssh key and gh token, so an agent can push to nixos-config `main`, which acer auto-upgrades from weekly as root. Mitigation: branch protection on `main`, or a scoped key.
 - acer still has `/nix/var/nix/{profiles,gcroots}/per-container/worker-1` from the old naming (the cleanup loop that removed msi's is gone): `sudo rm -rf /nix/var/nix/profiles/per-container/worker-1 /nix/var/nix/gcroots/per-container/worker-1`.
-- Needs runtime check: a `memory`/`cpu` change applies live at the daemon-reload with no container restart (`systemctl show container@<name> -p MemoryMax` before and after, uptime unchanged).
 - `blockedNetworks` (forward drop to the LAN, DNS excepted) is wired but off: needs a runtime check that GitHub, DNS and host-to-guest ssh still work and the k3s API does not, on the iptables backend next to Cilium.
 - First `devenv shell` in a new environment is 25 to 32 s of evaluation. Seeding a new home's `~/.cache/nix` from the host user's was not done: copying the live sqlite fetcher cache can corrupt it, and the cost looks like devenv's per-repo evaluation, not fetching. The empty `flake-registry` only removes the global registry fetch.
 
 ## Fixed
+
+- 2026-11-11 Results: herman#18 (PR #37, after a dependency PR #38 for advisories) merged from `demo`; without the CPU cap its warm rust:ci went 253 s to 170 s, verify-web 828 s to 479 s, web-dist 142 s to 63 s. A second acer environment (`dp93`) started from its declared prompt with `demo` untouched.
+- 2026-11-11 Verified on msi: live resize with no restart; undeclare keeps the home, `retired` deletes it; four deploys in a row left the neighbouring environment's start time unchanged; guest boot 6.8 s to 1.9 s.
 
 - 2026-11-11 Any deploy that lacked an instance (a rollback, an older checkout, acer's weekly auto-upgrade from `main`) deleted its home: only names in `retired` are deleted.
 - 2026-11-11 Every nixpkgs bump restarted every environment (store paths in `worker-<name>`'s unit): the unit now holds only the instance's agent, model, address and binds; resize and prompt edits do not restart.
