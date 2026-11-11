@@ -20,17 +20,17 @@ Fixture 2's test (`agent-runtime-native-shell`) was removed in #210; its doc sur
 
 | | Fixture 1 | Fixture 2 |
 |---|---|---|
-| Cold (path absent from the host store) | 35.9 s, devenv eval plus a local build of the crate, 656 MB RSS (n=1) | 74.9 s, 74 paths substituted from cache.nixos.org (811.7 MiB download, 2.7 GiB unpacked) and one local build, 43 MB RSS (n=1) |
-| Warm | 6.2, 2.9, 1.6 s (devenv eval only) | 0.30, 0.34, 0.29 s |
+| Cold (path absent from the host store) | 35.9 s, devenv eval plus a ~2 s local build of the crate, 656 MB RSS (n=1); the ~34 s of eval and input fetch is not attributed | 74.9 s, 74 paths substituted from cache.nixos.org (811.7 MiB download, 2.7 GiB unpacked) and one local build, 43 MB RSS (n=1) |
+| Warm | 6.2, 2.9, 1.6 s (devenv eval only; still falling, so not steady state) | 0.30, 0.34, 0.29 s |
 | Build of the crate alone (`nix build --rebuild`, n=3) | 2.10, 1.97, 1.92 s | none |
 | `nix eval` of the derivation | not separated | 15.0 s cold (fetches the nixpkgs source), 0.73 and 0.67 s warm |
-| Closure | 7 paths, 139.7 MB NAR; the output is 0.6 MB, the rest is glibc and gcc libs | 89 paths, 2.90 GB NAR |
-| Substitution | not recorded by devenv | 74 of 75 paths (98.7%) from the public cache; the one local build is the `mkShell` |
+| Closure | 7 paths, 48.8 MB NAR; the output is 0.6 MB, the rest is glibc (35 MB) and gcc libs | 89 paths, 2.90 GB NAR (the G0 comment and the old doc said 90) |
+| Substitution | not recorded by devenv | 74 of the 75 paths missing from the host store (98.7%) came from the public cache; the other 14 closure paths were already present; the one local build is the `mkShell` |
 | Host store growth, cold | not isolated | about 2.8 GB on a shared filesystem (noisy) |
 
 ## What this shows
 
-- Neither fixture has a not-publicly-cached path that is expensive to build. Fixture 1's crate builds in
+- Indicative only (n=1 cold, two fixtures, these hosts): neither fixture has a not-publicly-cached path that is expensive to build. Fixture 1's crate builds in
   about 2 s and its closure is glibc and gcc libs; fixture 2 is 98.7% public-cache hits. Repeated
   realization of these fixtures is bounded by download, not compilation, so a LAN cache (C) or
   a builder (B) has little to remove.
