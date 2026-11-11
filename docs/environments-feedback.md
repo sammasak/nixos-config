@@ -61,6 +61,7 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-11 `f44` on acer (factum #44 slice 3): PR #49 pushed through factum's own gate at review grade 8 and left for the owner (project bar 9). Before retiring it served as the push vehicle: two nixos-config gates (22 and 21 min) and the herman #2 branch. Retired after pushing its own retirement.
 - 2026-11-11 `dp120` on acer (devenv-platform #120, G1 parity evidence): issue to merged docs PR #123 in 14 minutes while a second environment ran the nixos-config gate; pool at 2.1G of 7G. D1 stays with the owner. Retired the same sitting.
 - 2026-11-11 `dp93` on lenovo (devenv-platform #93, research): first `devenv shell` of llm-gateway in a fresh home 33.9 s and +0.26 MiB of host store (closure already there), warm 5 s, zero new paths. That is the shared store doing its job. Guests now have `bc` and an empty `~/ENV-FEEDBACK.md`. Retired the same sitting.
 - 2026-11-11 `h2` on lenovo (herman #2, docs and issue template): declared to reviewed commits in about 2 minutes on a warm host, no gate run on lenovo. Retired the same sitting; the branch went out through an acer environment.
