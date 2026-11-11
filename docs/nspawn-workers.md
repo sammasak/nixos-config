@@ -18,9 +18,10 @@ Three stock commands, as `lukas` (a polkit rule allows exactly the
 lenovo:
 
 ```sh
-ssh acer-swift systemctl start container@worker-1   # only an nspawn boot: the system is already in the host store
-herdr --machine acer-w1 ...                          # or spawn a worker agent there as on any Herdr machine
-ssh acer-swift systemctl stop container@worker-1    # everything the worker wrote is gone
+ssh acer-swift systemctl start container@worker-1            # only an nspawn boot: the system is already in the host store
+herdr machine add acer-w1 --label acer-w1 --remote-session default   # it now shows in Herdr; spawn agents with herdr --machine acer-w1
+herdr machine remove "$(herdr machine list | awk '$2=="acer-w1"{print $1}')"   # take it out of Herdr
+ssh acer-swift systemctl stop container@worker-1             # everything the worker wrote is gone
 ```
 
 Work leaves a worker only by `git push` from inside it. A worker still running
@@ -67,14 +68,13 @@ token reaches a worker at its next start.
 
 ## Reach it
 
-lenovo saves every worker as a Herdr machine and an SSH alias (from each host's
-`sam.workers`, `sam.workers.remotes`): `ssh acer-w1` goes through `acer-swift`
-(`ProxyJump`, whose key is pinned) to the worker's private address. The worker's
-host key is new every boot, so those aliases check none: the last hop is the
-host's own veth. The Home Manager activation on lenovo saves a label only while
-the worker answers; for one that was down then, run once with it up:
-`herdr machine add acer-w1 --label acer-w1 --remote-session default`. A saved
-worker that is stopped is simply an unreachable machine.
+lenovo has an SSH alias per worker (from each host's `sam.workers`,
+`sam.workers.remotes`): `ssh acer-w1` goes through `acer-swift` (`ProxyJump`) to
+the worker's private address. A worker presents its host's SSH key, bound
+read-only, and the alias checks it under the host's pinned name
+(`HostKeyAlias`), so Herdr's strict checking passes. Workers are not declared
+Herdr machines: save one when it starts and remove it when it stops, so a
+stopped worker never sits in the sidebar.
 
 ## Add one, deploy
 

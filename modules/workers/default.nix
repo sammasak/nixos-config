@@ -161,7 +161,8 @@ in
     })
 
     (lib.mkIf (cfg.remotes != { }) {
-      sam.herdr.machines = lib.concatLists (lib.mapAttrsToList (_: map (w: { inherit (w) label; target = w.label; })) cfg.remotes);
+      # Not in sam.herdr.machines: a worker is saved in Herdr when it starts (`herdr machine add`) and removed when
+      # it stops, so a stopped worker never sits in the sidebar.
       # Through the worker host; the worker presents its host's key, checked under the host's pinned name.
       programs.ssh.extraConfig = lib.concatStrings (lib.concatLists (lib.mapAttrsToList (host: map (w: ''
         Host ${w.label}
