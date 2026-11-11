@@ -252,6 +252,11 @@ attribute of `modules/agent-runtime/runtime.nix`); it is **not** exposed as a fl
 not `verify`, `preflight` or `pane`. So **lenovo cannot `nix build` the verifier** without first adding
 it to that packages list (a one-line flake change, out of this offline slice). Two honest options:
 
+**Update:** lenovo sets `sam.agentRuntime.clientTools.enable`, which installs only `agent-runtime-verify` and
+`agent-runtime-promote` (no instance lifecycle, host policy or state dirs; lenovo is still not a runtime host).
+Both read the copied bundle directory, the template manifest and the pinned base in the local store, so a
+bundle copied from acer can be verified and promoted on lenovo once those store paths exist there.
+
 **(a) Verify on acer, as root** — this is **step 7 of the locked shell above**, where `$T`/`$CRED`/`$B`
 are already set and the lock is still held. If you instead verify in a separate acer-root session, first
 re-derive the variables (they do not survive the run shell's `exit`):

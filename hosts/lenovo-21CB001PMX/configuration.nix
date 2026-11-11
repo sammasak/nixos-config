@@ -33,6 +33,9 @@ in
     # No wake session while the interactive Coordinator worked in the last 10 minutes (skills#66).
     interactiveQuietSeconds = 600;
   };
+  # The coordinator promotes bundles the workers export: the verify/promote client only, never a runtime host.
+  sam.agentRuntime.clientTools.enable = true;
+
   # As the always-on control plane, lenovo sends msi its Mon-Fri 09:00 wake.
   homelab.msiPowerSchedule.waker.enable = true;
 

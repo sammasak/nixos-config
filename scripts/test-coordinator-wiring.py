@@ -86,6 +86,24 @@ def main():
     check(agent["description"].strip() != "", "the Codex agent has a description")
 
 
+    # the promote/verify client rides on the coordinator without making it a runtime host
+    def sys_pkgs(host):
+        attr = f".#nixosConfigurations.{host}.config.environment.systemPackages"
+        return set(json.loads(nix("eval", "--json", attr, "--apply", 'ps: map (p: p.pname or p.name or "") ps')))
+
+    def rt(host, opt):
+        return json.loads(nix("eval", "--json", f".#nixosConfigurations.{host}.config.{opt}"))
+
+    lenovo_pkgs = sys_pkgs("lenovo")
+    check({"agent-runtime-promote", "agent-runtime-verify"} <= lenovo_pkgs, "lenovo has agent-runtime-promote and agent-runtime-verify on PATH")
+    check(rt("lenovo", "sam.agentRuntime.clientTools.enable") is True and rt("lenovo", "sam.agentRuntime.host.enable") is False,
+          "lenovo enables the runtime client tools and is not a runtime host")
+    etc = json.loads(nix("eval", "--json", ".#nixosConfigurations.lenovo.config.environment.etc", "--apply", "builtins.attrNames"))
+    check(not lenovo_pkgs & {"agent-runtime-instance", "agent-runtime-preflight", "agent-runtime-pane"} and "agent-runtime/host.json" not in etc,
+          "lenovo gets no instance lifecycle, preflight, pane or host policy")
+    check(rt("acer-swift", "sam.agentRuntime.host.enable") is True and rt("acer-swift", "sam.agentRuntime.clientTools.enable") is False,
+          "acer stays the runtime host and does not opt into the client-only tools")
+
     def user_units(host, kind):
         attr = f".#nixosConfigurations.{host}.config.home-manager.users.lukas.systemd.user.{kind}"
         return json.loads(nix("eval", "--json", attr))

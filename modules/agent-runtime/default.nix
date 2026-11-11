@@ -562,6 +562,8 @@ in
       description = "Named templates (names are lowercase labels); each describes possible ephemeral instances, never a booted container.";
     };
 
+    clientTools.enable = mkEnableOption "the trusted-host client tools (agent-runtime-verify and agent-runtime-promote) without making this host a runtime host: they read an exported bundle, the template manifest and the pinned base from the local store, and need no instance state, so a coordinator can promote a bundle a worker exported";
+
     host = {
       enable = mkEnableOption "admitting agent-runtime instances on this host (required before any template is eligible; #138 starts nothing without it)";
       eligibleTemplates = mkOption {
