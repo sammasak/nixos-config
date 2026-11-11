@@ -178,6 +178,9 @@ pkgs.runCommand "agent-runtime-runtime"
     exportTool = lib.getExe tools.export;
     reclaimTool = lib.getExe tools.reclaim;
     shippedReclaim = lib.getExe shipped.reclaim;
+    instanceTool = lib.getExe tools.instance;
+    preflightTool = lib.getExe tools.preflight;
+    bootTool = lib.getExe tools.boot;
     planJq = "${devenvPlatform}/modules/prepare/plan.jq";
   }
   ''
@@ -435,6 +438,113 @@ pkgs.runCommand "agent-runtime-runtime"
     rc=0; materialize --run o1 --template template.json --root i11 2>err || rc=$?
     expect "materialize refuses a root held by another materialize, export or reclaim" "1 state false" "$rc $(class err) $(exists i11/workspace)"
     wait
+
+    # preflight is honest about what it cannot see (no root here: a 0000 state directory is unreadable)
+    jq -n '{kind: "agent-runtime-host", schemaVersion: 1, enable: true, eligibleTemplates: ["fixture"], maxConcurrentInstances: 1,
+      reserve: {cpus: 0, memoryMiB: 0, diskMiB: 0}}' >host.json
+    preflight() { env PATH=/var/empty "$preflightTool" --host host.json --no-herdr "$@" || true; }
+    verdicts() { grep -E "^(PASS|FAIL) ($1):" "$2" | cut -d: -f1 | tr '\n' ' '; }
+    mkdir -p pf-open pf-closed && chmod 000 pf-closed
+    preflight --state pf-open --template template.json >pf
+    expect "preflight on a readable, empty state directory: no instance, a free slot, Herdr skipped on request" \
+      "PASS herdr PASS instances PASS capacity " "$(verdicts 'herdr|instances|capacity' pf)"
+    expect "preflight: every store path the manifest names exists; a template without egress needs no forwarding" \
+      "PASS store PASS egress-forwarding " "$(verdicts 'store|egress-forwarding' pf)"
+    preflight --state pf-closed --template template.json >pf
+    expect "an unreadable state directory fails everything that depends on the reservations, and the verdict" \
+      "FAIL reservations FAIL memory FAIL cpu FAIL instances FAIL capacity NO-GO" \
+      "$(verdicts 'reservations|memory|cpu|instances|capacity' pf)$(tail -n 1 pf | cut -d' ' -f2)"
+    chmod 700 pf-closed
+    jq '.skills.source.storePath = "/nix/store/00000000000000000000000000000000-gone"' template.json >template-gone.json
+    preflight --state pf-open --template template-gone.json >pf
+    expect "a store path the manifest names but the host lacks is a no-go, named" "FAIL store true" \
+      "$(verdicts store pf | tr -d ' ' | sed 's/FAIL/FAIL /') $(has pf 00000000000000000000000000000000-gone)"
+    jq '.policies.network = {egress: "allowlist", allow: ["api.example.org"]}' template.json >template-egress.json
+    preflight --state pf-open --template template-egress.json >pf
+    # the builder's own setting decides which way: the sandbox may or may not share the host's network namespace
+    if [ "$(cat /proc/sys/net/ipv4/ip_forward)" = 1 ]; then want=PASS; else want=FAIL; fi
+    expect "an egress allowlist is a go only with IPv4 forwarding, read from the host" "$want egress-forwarding true" \
+      "$(verdicts egress-forwarding pf)$(has pf 'egress-forwarding: net.ipv4.ip_forward=')"
+
+    # settle (#reboot): instance directories as a boot finds them, built by hand (create needs loop mounts
+    # and real root); a user namespace gives the mounts and the ownership the lifecycle expects
+    printf 'ghp_testsecret4711' >tok
+    cat >settle.sh <<'SETTLE'
+    S=$PWD/st R=$PWD/rn
+    inst() { env PATH=/var/empty "$instanceTool" --state "$S" --run "$R" "$@"; }
+    n=0
+    mk() {  # ID: a created instance
+      local b=$S/$1 v
+      n=$((n + 1))
+      mkdir -p "$b/img" "$b/vol"
+      for v in workspace home tmp cache output; do mkdir "$b/vol/$v"; mount -t tmpfs tmpfs "$b/vol/$v"; done
+      umount "$b/vol/workspace" && mount --bind "$PWD/ws/$1" "$b/vol/workspace"
+      echo "512 320 $((1048576 + 65536 * n)) fixture 1" >"$b/reservation"
+      cp template.json "$b/template.json"
+      jq -n --arg id "$1" --arg r "$(printf '%032x' "$n")" '{schemaVersion: 1, kind: "agent-runtime-instance-record", id: $id,
+        task: "sammasak/factum#1", template: {name: "fixture"}, runId: $r}' >"$b/instance.json"
+    }
+    began() { jq -n --arg at "$2" '{at: $at}' >"$S/$1/starting"; }  # ID AT: the start marker
+    ran() { jq -n --argjson c "$2" '{invocation: "", credential: $c}' >"$S/$1/started.json"; }  # ID CREDENTIAL
+    down() { jq -n '{outcome: "interrupted", interruptedBy: "host-shutdown", serviceResult: "success"}' >"$S/$1/result.json"; }
+    source_of() { jq -n --arg p "$PWD/tok" --arg h "$2" '{path: $p, sha256: $h}' >"$S/$1/cred-source"; }  # ID DIGEST
+    file_cred='{"kind":"file","scopes":null,"expiresAt":null}'
+    digest=$(sha256sum <tok | cut -d' ' -f1)
+    # crashed: started before this boot, outcome never recorded. fresh: the same, but started in this boot
+    mk crashed; began crashed 2020-01-01T00:00:00Z; ran crashed null
+    echo result >"$S/crashed/vol/output/report.txt"; echo change >>"$S/crashed/vol/workspace/workspace/factum/README"
+    mk fresh; began fresh "$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)"
+    # recorded by record-exit while the host went down, with a credential read from a host file
+    mk keyed; began keyed 2020-01-01T00:00:00Z; ran keyed "$file_cred"; down keyed; source_of keyed "$digest"
+    mk rotated; began rotated 2020-01-01T00:00:00Z; ran rotated "$file_cred"; down rotated; source_of rotated "''${digest//[0-9]/a}"
+    mk leaky; began leaky 2020-01-01T00:00:00Z; ran leaky "$file_cred"; down leaky; source_of leaky "$digest"
+    cp tok "$S/leaky/vol/output/stolen"
+    mk made
+    mkdir -p "$S/half" && echo "512 320 1048576 fixture 1" >"$S/half/reservation"
+    mk ended; began ended 2020-01-01T00:00:00Z; ran ended null
+    SERVICE_RESULT=success EXIT_CODE=exited EXIT_STATUS=0 inst record-exit ended
+    expect "record-exit on a host that is not going down is unchanged: succeeded, no interruptedBy" "succeeded false" \
+      "$(jq -r '"\(.outcome) \(has("interruptedBy"))"' "$S/ended/result.json")"
+
+    mkdir profile && cp template.json profile/fixture.json
+    env PATH=/var/empty "$bootTool" --state "$S" --run "$R" --host host.json --profile profile
+    expect "boot: each instance settled, rolled back, held or left, by what the boot found" \
+      "$(printf '%s\n' "crashed settled interrupted" "ended untouched succeeded" "fresh untouched ambiguous" "half rolled-back incomplete" \
+        "keyed settled interrupted" "leaky held interrupted" "made untouched created" "rotated held interrupted")" \
+      "$(jq -r '.instances[] | "\(.id) \(.action) \(.state)"' "$R/settle.json")"
+    expect "a settled run is gone from the state and the runtime directory, and its reservation with it" "false false false false" \
+      "$(exists "$S/crashed") $(exists "$R/crashed") $(exists "$S/keyed") $(exists "$S/half")"
+    bundle=$S/exports/crashed.runs/latest
+    expect "the crashed run's bundle: outcome interrupted by the host restart, a recovery bundle with its output and patch" \
+      "interrupted true interrupted host-restart result true" \
+      "$(jq -r '"\(.outcome) \(.recovery)"' "$bundle/bundle.json") $(jq -r '"\(.outcome) \(.interruptedBy)"' "$bundle/result.json") $(cat "$bundle/output/report.txt") $(has "$bundle/sources/factum.patch" '^+change')"
+    expect "the run a shutdown interrupted keeps record-exit's word (host-shutdown); its credential was re-read from the host path" \
+      "host-shutdown true" "$(jq -r .interruptedBy "$S/exports/keyed.runs/latest/result.json") $(has "$R/settle.json" 'keyed.runs')"
+    expect "held, fail closed: a credential that changed since the start, and one found in the output; neither exported nor destroyed" \
+      "true true false false true true" \
+      "$(has "$R/settle.json" 'cannot be re-read') $(has "$R/settle.json" 'appears in an exported artifact') $(exists "$S/exports/rotated.runs") $(exists "$S/leaky/exported.json") $(exists "$S/rotated/reservation") $(exists "$S/leaky/reservation")"
+    expect "nothing was started, and a run of this boot stays ambiguous for the operator" "ambiguous created false" \
+      "$(inst status fresh | jq -r .state) $(inst status made | jq -r .state) $(exists "$S/made/starting")"
+    expect "status.json: world-readable, states and counts without root, not admit-ready while runs are unresolved" \
+      "644 agent-runtime-host-status false 5 1 fresh,leaky,rotated go" \
+      "$(stat -c %a "$R/status.json") $(jq -r '"\(.kind) \(.admitReady) \(.reservations.count) \(.reservations.max) \(.unresolved | join(","))"' "$R/status.json") $(jq -r '.preflight.templates[0] | if (.failed | map(select(startswith("instances") or startswith("capacity"))) | length) == 2 then "go" else "bad" end' "$R/status.json")"
+    expect "the token is in no status, report, bundle or record" "$S/leaky/vol/output/stolen" "$(leaks "$R" "$S" | sort | tr '\n' ' ' | sed 's/ $//')"
+    before=$(jq -c '[.instances[] | {id, action, state}]' "$R/settle.json")
+    again=$(inst settle | jq -c '[.instances[] | {id, action, state}]')
+    expect "settle again: the settled ones are gone, everything else is found and left as before" \
+      "$(jq -c 'map(select(.action != "settled" and .action != "rolled-back"))' <<<"$before")" "$again"
+    expect "settle again publishes no second bundle" "1" "$(find "$S/exports/crashed.runs" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+    for i in fresh leaky rotated made ended; do inst destroy "$i" --discard >/dev/null; done
+    expect "with the leftovers destroyed by hand the host is admit-ready" "true 0 " \
+      "$(inst host-status --host host.json | jq -r '"\(.admitReady) \(.reservations.count) \(.unresolved | join(","))"')"
+    SETTLE
+    # materialized out here: root of a one-id namespace cannot keep a store path's ownership on a copy
+    for i in crashed fresh keyed rotated leaky made ended; do
+      FAKE_NIX_FAIL=github materialize --run o1 --template template.json --root "ws/$i"
+    done
+    export -f fail expect class holds exists has leaks
+    export instanceTool bootTool
+    unshare --user --map-root-user --mount bash -euo pipefail settle.sh
 
     rc=0; env PATH=/var/empty "$shippedReclaim" 2>err || rc=$?
     expect "the shipped tool (real nix) builds and reports usage the same way" "2 usage" "$rc $(class err)"

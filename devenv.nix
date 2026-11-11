@@ -76,6 +76,11 @@ let
     ${pkgs.python3}/bin/python scripts/test-rf-lab-boundary.py
   '';
 
+  # msi and acer through the runtime-host role: shared runtime policy, headless and unthemed, maintenance off the boot path (eval only)
+  runtimeHostTest = gate "runtime-host-test" (with pkgs; [ nix python3 ]) ''
+    ${pkgs.python3}/bin/python scripts/test-runtime-host-role.py
+  '';
+
   ollamaPortforwardTest = gate "ollama-portforward-test" (with pkgs; [ nix python3 procps ]) ''
     ${pkgs.python3}/bin/python scripts/test-ollama-portforward.py
   '';
@@ -110,14 +115,19 @@ let
     bash scripts/test-agent-runtime-isolation-probe.sh
   '';
 
+  # verify refuses a template manifest outside /nix/store, so a bundle cannot bring its own pin
+  verifyTrustTest = gate "verify-trust-test" (with pkgs; [ bash jq git coreutils findutils gnugrep ]) ''
+    bash scripts/test-agent-runtime-verify-trust.sh
+  '';
+
   agentRuntimeTest = gate "nixos-agent-runtime-test" (with pkgs; [ bash nix jq git coreutils gnugrep ]) ''
     bash scripts/test-agent-runtime.sh
   '';
 
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
     lintComments lintShell secretsVerify nvimCheck flakeCheck nativeShellLockNodeTest verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest agentRuntimeTest heavyLockTest isolationProbeTest
-    rfLabBoundaryTest rfBeaconsTest
+    coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest agentRuntimeTest verifyTrustTest heavyLockTest isolationProbeTest
+    rfLabBoundaryTest runtimeHostTest rfBeaconsTest
   ]);
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
@@ -370,6 +380,7 @@ in
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:agent-runtime-test" = task "agent-runtime module: external consumer fixture, manifests, negative cases" agentRuntimeTest;
     "nixos:heavy-lock-test" = task "Heavy scripts take the heavy-work lock once: bare, nested, contended" heavyLockTest;
+    "nixos:verify-trust-test" = task "agent-runtime-verify refuses a template manifest outside /nix/store" verifyTrustTest;
     "nixos:isolation-probe-test" = task "Factum isolation probe passes under the emulated policy, fails on each broken property" isolationProbeTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
@@ -379,6 +390,7 @@ in
     "nixos:build-bounds-test" = task "lenovo's nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max); acer keeps defaults" buildBoundsTest;
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
     "nixos:rf-lab-boundary-test" = task "#42: naked-pi carries no heavyweight RE tooling and no k3s; no other host imports rf-lab" rfLabBoundaryTest;
+    "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: shared runtime policy, headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;

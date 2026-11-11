@@ -60,11 +60,17 @@ take 3.4 GiB and 50 GiB stay free. `checks.x86_64-linux.agent-runtime-acer-pilot
 `agent-runtime-preflight` (`modules/agent-runtime/runtime/preflight.sh`) checks the runbook's no-go
 list and changes nothing: user namespaces and the instance UID ranges (no account or subuid inside
 them), the other namespaces, `vm.panic_on_oom` 0 or 1, memory and disk against the reserve as
-`create` admits, the template eligible, Herdr answering (as the user who ran sudo), and no instance
-running or unresolved. With `--credential FILE` it also verifies the subscription token the run will
+`create` admits, the template eligible, every store path the manifest names present, IPv4
+forwarding when the template has an egress allowlist, Herdr answering (as the user who ran sudo;
+skipped with `--no-herdr`), and no instance running or unresolved. A state directory it cannot read
+(no root) fails every check that depends on the reservations instead of passing them. With `--credential FILE` it also verifies the subscription token the run will
 deliver -- present, a regular file, owner-only (0400/0600), non-empty, owned by the operator -- from
-its metadata only, never reading or printing the token (#169). Every check prints PASS or FAIL; it
-exits 0 only when all pass.
+its metadata only, never reading or printing the token (#169). On a host that declares
+`sam.agentRuntime.host.scheduledShutdown` (a systemd timer plus `stopExportMarginMinutes`, default
+10) it refuses a run when the timer's next elapse is sooner than the template's `timeoutMinutes`
+plus that margin, and refuses when the next elapse cannot be read (#185): a scheduled shutdown does
+not drain instances, so such a run could be cut off before stop and export. Every check prints PASS
+or FAIL; it exits 0 only when all pass.
 
 ## Deploy (owner, from lenovo)
 

@@ -21,7 +21,12 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$bundle" ] && [ -n "$template" ] && [[ $max =~ ^[1-9][0-9]*$ ]] || usage
 bundle=$(resolve_bundle "$bundle")  # a bundle dir, its `latest` link, or an exports/<id>.runs dir (#184)
-# the trusted side: the template manifest from this host's store pins every source (rev, narHash)
+# the trusted side: the template manifest from this host's store pins every source (rev, narHash); a
+# manifest outside /nix/store (one copied next to the bundle) would let the bundle choose its own pin
+case $(readlink -f -- "$template" 2>/dev/null) in
+  /nix/store/?*) ;;
+  *) fail usage "$template does not resolve into /nix/store: verify only against a deployed or flake-built manifest (on lenovo: /etc/agent-runtime/client-templates/<host>/<template>.json)" ;;
+esac
 jq -e '.kind == "agent-runtime-template" and (.sources | type == "object")' "$template" >/dev/null 2>&1 \
   || fail usage "$template is not an agent-runtime template manifest"
 [ -f "$bundle/bundle.json" ] || fail export "$bundle has no bundle.json: the export did not finish"

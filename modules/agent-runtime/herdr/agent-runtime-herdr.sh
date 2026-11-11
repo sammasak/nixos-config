@@ -50,7 +50,7 @@ mirror_hs() {
   case $1 in
     starting|running) echo working ;;
     succeeded) echo idle ;;
-    failed|oom-killed|timed-out|cancelled|ambiguous) echo blocked ;;
+    failed|oom-killed|timed-out|cancelled|interrupted|ambiguous) echo blocked ;;
     *) echo unknown ;;
   esac
 }
@@ -169,7 +169,7 @@ case $cmd in
           set_record "$id" '.status = $s | .seq = ($q | tonumber)' --arg s "$st" --arg q "$seq"
           exec 9>&-
           # a terminal outcome is the last word: stop polling, leaving the agent listed at idle/blocked
-          case $st in succeeded|failed|oom-killed|timed-out|cancelled|ambiguous) exit 0 ;; esac
+          case $st in succeeded|failed|oom-killed|timed-out|cancelled|interrupted|ambiguous) exit 0 ;; esac
         fi
         sleep 0.3
       done

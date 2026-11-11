@@ -3,9 +3,9 @@
 # check before a pilot run (#165). Every check prints PASS or FAIL with what it saw; a check that
 # cannot be evaluated is a FAIL, never a pass. Exit 0 only when every check passes. It changes
 # nothing: no create, no reservation, no unit (the user-namespace probe is a throwaway `unshare`).
-USAGE='agent-runtime-preflight [--state DIR] [--host POLICY.json] --template MANIFEST.json [--herdr-user USER] [--credential FILE]'
+USAGE='agent-runtime-preflight [--state DIR] [--host POLICY.json] --template MANIFEST.json [--herdr-user USER] [--credential FILE] [--no-herdr]'
 usage() { echo "usage: $USAGE" >&2; exit 2; }
-state=/var/lib/agent-runtime host=/etc/agent-runtime/host.json template='' herdr_user=${SUDO_USER:-} cred=''
+state=/var/lib/agent-runtime host=/etc/agent-runtime/host.json template='' herdr_user=${SUDO_USER:-} cred='' herdr=1
 while [ $# -gt 0 ]; do
   case $1 in
     --state) [ $# -ge 2 ] || usage; state=$2; shift 2 ;;
@@ -13,6 +13,8 @@ while [ $# -gt 0 ]; do
     --template) [ $# -ge 2 ] || usage; template=$2; shift 2 ;;
     --herdr-user) [ $# -ge 2 ] || usage; herdr_user=$2; shift 2 ;;
     --credential) [ $# -ge 2 ] || usage; cred=$2; shift 2 ;;
+    # a session is attached to from the caller's own terminal: no handoff goes through Herdr
+    --no-herdr) herdr=0; shift ;;
     *) usage ;;
   esac
 done
@@ -91,13 +93,17 @@ disk=$(jq -r '[.filesystem.workspaceBudget.sizeMiB, .filesystem.home.sizeMiB, .f
 mem_reserve=$(jq -r .reserve.memoryMiB "$host") disk_reserve=$(jq -r .reserve.diskMiB "$host")
 mem_total=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
 mem_available=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
-if [ -d "$state" ] && [ ! -r "$state" ]; then
-  nogo reservations "$state is not readable (run as root)"
-  mem_used=0
+# an unreadable state directory hides every reservation: what depends on them is unknown, so a FAIL
+state_ok=1
+if [ -d "$state" ] && { [ ! -r "$state" ] || [ ! -x "$state" ]; }; then
+  nogo reservations "$state is not readable (run as root; /run/agent-runtime/status.json is the non-root view)"
+  state_ok=0
 else
   mem_used=$(cat "$state"/*/reservation 2>/dev/null | awk '{s += $1} END {print s + 0}' || true)
 fi
-if [ $((mem_used + mem)) -le $((mem_total - mem_reserve)) ] && [ $((mem_available - mem)) -ge "$mem_reserve" ]; then
+if [ "$state_ok" = 0 ]; then
+  nogo memory "the reserved memory is unknown: $state is not readable"
+elif [ $((mem_used + mem)) -le $((mem_total - mem_reserve)) ] && [ $((mem_available - mem)) -ge "$mem_reserve" ]; then
   pass memory "MemAvailable $mem_available MiB - $mem MiB instance >= $mem_reserve MiB reserve; reserved $mem_used+$mem <= $mem_total-$mem_reserve MiB"
 else
   nogo memory "MemAvailable $mem_available MiB - $mem MiB instance under the $mem_reserve MiB reserve, or reserved $mem_used+$mem over $mem_total-$mem_reserve MiB"
@@ -121,7 +127,9 @@ for reservation in "$state"/*/reservation; do
     cpu_used=$((cpu_used + reserved))
   fi
 done
-if [ "$cpu_valid" = 1 ] && [ $((cpu_used + cpus)) -le $((cpu_total - cpu_reserve)) ]; then
+if [ "$state_ok" = 0 ]; then
+  nogo cpu "the reserved CPUs are unknown: $state is not readable"
+elif [ "$cpu_valid" = 1 ] && [ $((cpu_used + cpus)) -le $((cpu_total - cpu_reserve)) ]; then
   pass cpu "$cpu_used+$cpus logical CPUs within $cpu_total-$cpu_reserve available after host reserve"
 elif [ "$cpu_valid" = 1 ]; then
   nogo cpu "$cpu_used+$cpus logical CPUs over $cpu_total-$cpu_reserve available after host reserve"
@@ -143,20 +151,70 @@ else
   nogo eligible "the host policy does not enable $name"
 fi
 
+# --- a scheduled shutdown that does not drain instances (#185): refuse a run it would cut off.
+# The run may use the template's whole timeoutMinutes, then needs the host's declared margin to stop and
+# export, so the window is derived from this template and cannot fall behind a raised timeout.
+# The timer's next elapse comes from systemd; no elapse (stopped timer, unreadable) is a FAIL, not a pass.
+if jq -e '.scheduledShutdown != null' "$host" >/dev/null; then
+  timer=$(jq -r .scheduledShutdown.timerUnit "$host") margin=$(jq -r .scheduledShutdown.stopExportMarginMinutes "$host")
+  budget=$(jq -r .policies.resources.timeoutMinutes "$template")
+  window=$((budget + margin))
+  next=$(systemctl show --timestamp=unix -p NextElapseUSecRealtime --value "$timer" 2>/dev/null || true)
+  next=${next#@}
+  if [[ ! $next =~ ^[0-9]+$ ]]; then
+    nogo shutdown "cannot read the next elapse of $timer (timer not active?): the time to the scheduled shutdown is unknown"
+  else
+    left_s=$((next - $(date +%s)))
+    left=$((left_s / 60))
+    if [ "$left_s" -ge $((window * 60)) ]; then
+      pass shutdown "$timer elapses in $left min, at least the $budget min run budget + $margin min stop and export margin"
+    else
+      nogo shutdown "$timer elapses in $left min, under the $budget min run budget + $margin min stop and export margin: the shutdown does not drain instances, so a run started now could be cut off; start after the shutdown and the next boot"
+    fi
+  fi
+else
+  pass shutdown "no scheduled shutdown declared for this host"
+fi
+
+# --- the store side an instance binds read-only: every path the manifest names is on this host. A
+# template profile that was rolled back or collected while the manifest stayed readable fails here,
+# not at the first exec inside the instance.
+paths=$(jq -r '[.packages[].storePath, (.skills.names[]?.path), (.skills.source.storePath? // empty), (.sources[] | .locked.storePath? // empty)] | unique[]' "$template" 2>/dev/null || true)
+missing=$(while IFS= read -r p; do [ -z "$p" ] || [ -e "$p" ] || echo "$p"; done <<<"$paths" | head -3)
+if [ -n "$paths" ] && [ -z "$missing" ]; then
+  pass store "$(wc -l <<<"$paths") store path(s) named by $(readlink -f "$template") exist"
+else
+  nogo store "the manifest names no store path, or some are missing: ${missing//$'\n'/ } (deploy the agent-runtime profile again)"
+fi
+
+# --- allowlist egress is forwarded off the host: without IPv4 forwarding `start` refuses
+if [ "$(jq -r .policies.network.egress "$template")" = allowlist ]; then
+  fwd=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo unknown)
+  if [ "$fwd" = 1 ]; then pass egress-forwarding "net.ipv4.ip_forward=1 for the egress allowlist"
+  else nogo egress-forwarding "net.ipv4.ip_forward=$fwd: $name declares an egress allowlist and start would refuse"; fi
+else
+  pass egress-forwarding "$name has no egress: forwarding is not needed"
+fi
+
 # --- Herdr answers (the handoff goes through it); as the user whose server it is when run under sudo
 herdr_cmd=(herdr agent list)
 [ -z "$herdr_user" ] || [ "$(id -u)" != 0 ] || herdr_cmd=(runuser -u "$herdr_user" -- herdr agent list)
-if out=$(timeout 10 "${herdr_cmd[@]}" 2>&1) && jq -e '.result.agents' >/dev/null 2>&1 <<<"$out"; then
+if [ "$herdr" = 0 ]; then
+  pass herdr "not checked (--no-herdr)"
+elif out=$(timeout 10 "${herdr_cmd[@]}" 2>&1) && jq -e '.result.agents' >/dev/null 2>&1 <<<"$out"; then
   pass herdr "server answers (${herdr_user:-$(id -un)}): $(jq '.result.agents | length' <<<"$out") agent(s)"
 else
   nogo herdr "herdr agent list failed as ${herdr_user:-$(id -un)}: $(head -c 160 <<<"$out")"
 fi
 
 # --- no instance running or unresolved: the pilot runs alone, and an ambiguous run is decided by hand
-if [ ! -d "$state" ]; then
+if [ "$state_ok" = 0 ]; then
+  nogo instances "unknown: $state is not readable (run as root)"
+  nogo capacity "unknown: $state is not readable (run as root)"
+elif [ ! -d "$state" ]; then
   pass instances "no state directory yet ($state)"
 elif st=$(agent-runtime-instance --state "$state" status 2>/dev/null) && jq -e 'type == "array"' >/dev/null 2>&1 <<<"$st"; then
-  busy=$(jq -r '[.[] | select(.state | IN("running", "starting", "cancelling", "ambiguous", "incomplete")) | "\(.id)=\(.state)"] | join(" ")' <<<"$st")
+  busy=$(jq -r '[.[] | select(.state | IN("running", "starting", "cancelling", "interrupted", "ambiguous", "incomplete")) | "\(.id)=\(.state)"] | join(" ")' <<<"$st")
   if [ -z "$busy" ]; then pass instances "$(jq length <<<"$st") instance(s), none running or unresolved"
   else nogo instances "running or unresolved: $busy"; fi
   # a leftover instance (even only created) holds a reservation, and create refuses at the cap

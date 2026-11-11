@@ -24,16 +24,20 @@ an agent session that is already registered attaches to that pane instead of
 opening the same conversation a second time.
 
 Workers run unattended in `bypassPermissions` on worker hosts only
-(`sam.herdr.worker`, acer-swift): Claude Code's settings carry
+(`sam.herdr.worker`, set inside the ephemeral nspawn workers and on no physical
+host, docs/nspawn-workers.md): Claude Code's settings carry
 `skipDangerousModePermissionPrompt`, so a `--dangerously-skip-permissions`
-start no longer stops at the acknowledgment dialog, and activation pre-trusts
-`$HOME` plus `sam.herdr.worker.trustedDirs`, nothing else. The flag itself comes
+start no longer stops at the acknowledgment dialog. On every host activation
+pre-trusts `$HOME` plus `sam.herdr.trustedDirs` (and their subdirectories),
+nothing else. The flag itself comes
 from the caller: skills `coord:spawn`, or `claude-worker` (the `claude` wrapper
 with the flag) by hand. Herdr's session restore (`resume_agents_on_restore`)
 relaunches a pane as a bare `claude --resume <id>`, which drops that flag, and
 Claude Code then starts in auto mode (skills#28). So on a worker host the
 launcher supplies the flag itself to every interactive `claude` in a Herdr pane
-that names no permission mode of its own. Outside Herdr (SSH, a plain shell)
+that names no permission mode of its own. On any host, a restored session whose
+transcript last recorded `bypassPermissions` comes back with the flag, and the
+launcher's `--settings` skips the acknowledgment for it. Outside Herdr (SSH, a plain shell)
 plain `claude` still asks, and a host running the
 unattended Coordinator (`coordinatorWakeup`, `--permission-mode dontAsk`)
 cannot be a worker host. `nixos:worker-permissions-test` pins all of it.
@@ -63,9 +67,9 @@ conversations referenced by Herdr.
 Herdr itself is the fleet view: a host sees its own agents, and any Herdr
 **saved machine** it has (`herdr machine list --json`) through command
 forwarding (`herdr --machine <label> agent list` and friends). Workers save
-nothing and so see themselves only. The coordinator host (lenovo) declares its
-workers as `sam.herdr.machines = [ { label = "acer-swift"; target =
-"acer-swift"; } ]`; at activation Home Manager runs `herdr machine add
+nothing and so see themselves only. The coordinator host (lenovo) saves the
+hosts' nspawn workers (`acer-w1`, `msi-w1`, `msi-w2`, derived from each host's
+`sam.workers`, docs/nspawn-workers.md) as `sam.herdr.machines`; at activation Home Manager runs `herdr machine add
 <target> --label <label> --remote-session default` for each label Herdr does
 not know yet, with the user's own SSH key and `known_hosts` (a failed add is
 reported, not fatal; a passphrase-protected key has no agent inside the

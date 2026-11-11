@@ -49,7 +49,7 @@ state=$(jq -r '.state' <<<"$s")
 case $state in
   created) ;;
   # Already acted on: never re-start (start would refuse anyway). Idempotent no-op, exit 0.
-  starting | running | cancelling | succeeded | failed | timed-out | oom-killed | cancelled)
+  starting | running | cancelling | succeeded | failed | timed-out | oom-killed | cancelled | interrupted)
     audit "$id" "$(jq -r '.template.name // ""' <<<"$s")" "$(jq -r '.task // ""' <<<"$s")" \
       "$(jq -c '.template.digests // null' <<<"$s")" noop "instance is already $state; not re-started" || true
     exit 0 ;;

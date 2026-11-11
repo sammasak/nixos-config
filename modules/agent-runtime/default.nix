@@ -480,6 +480,11 @@ let
         message = "sam.agentRuntime.host.eligibleTemplates is set but host.enable is false";
       }
       {
+        # the standalone manifest evaluation has no systemd option set, so only a NixOS host can be checked
+        assertion = cfg.host.scheduledShutdown == null || !(config ? systemd) || config.systemd.timers ? ${lib.removeSuffix ".timer" cfg.host.scheduledShutdown.timerUnit};
+        message = "sam.agentRuntime.host.scheduledShutdown.timerUnit names a timer that is not declared in systemd.timers";
+      }
+      {
         assertion = deniedRoots == [ ];
         message = "sam.agentRuntime.host.allowedMountRoots: ${lib.concatStringsSep ", " deniedRoots} is on a denied host root (${lib.concatStringsSep " " deniedHostRoots})";
       }
@@ -562,6 +567,16 @@ in
       description = "Named templates (names are lowercase labels); each describes possible ephemeral instances, never a booted container.";
     };
 
+    # a coordinator promotes bundles a worker exported: verify and promote need no instance state
+    clientTools = {
+      enable = mkEnableOption "agent-runtime-verify and agent-runtime-promote without making this host a runtime host";
+      templateManifests = mkOption {
+        type = types.attrsOf types.package;
+        default = { };
+        description = "Per runtime host, the manifest directory it deploys (its `sam.agentRuntime.manifestDir`), linked at /etc/agent-runtime/client-templates/<host>: the store-resident manifests verify trusts here.";
+      };
+    };
+
     host = {
       enable = mkEnableOption "admitting agent-runtime instances on this host (required before any template is eligible; #138 starts nothing without it)";
       eligibleTemplates = mkOption {
@@ -590,6 +605,23 @@ in
           default = 10240;
           description = "Host disk kept free of instances (admission, #137).";
         };
+      };
+      scheduledShutdown = mkOption {
+        type = types.nullOr (types.submodule {
+          options = {
+            timerUnit = mkOption {
+              type = types.strMatching "^[A-Za-z0-9:_.@-]+\\.timer$";
+              description = "The systemd timer whose next elapse is this host's scheduled shutdown (must be declared in `systemd.timers`).";
+            };
+            stopExportMarginMinutes = mkOption {
+              type = types.ints.positive;
+              default = 10;
+              description = "Minutes kept after a run's full `timeoutMinutes` for the instance to stop and export. The preflight refuses a run when the timer elapses sooner than the template's `timeoutMinutes` plus this margin.";
+            };
+          };
+        });
+        default = null;
+        description = "A declared scheduled shutdown that does not drain instances: `agent-runtime-preflight` refuses new runs shortly before it (#185). Null: the host is not shut down on a schedule.";
       };
       allowedMountRoots = mkOption {
         type = types.listOf mountRoot;
@@ -623,7 +655,7 @@ in
       hostPolicy = json.generate "agent-runtime-host.json" {
         schemaVersion = 1;
         kind = "agent-runtime-host";
-        inherit (cfg.host) enable eligibleTemplates maxConcurrentInstances reserve;
+        inherit (cfg.host) enable eligibleTemplates maxConcurrentInstances reserve scheduledShutdown;
       };
       manifestDir = pkgs.linkFarm "agent-runtime-manifests" (
         lib.mapAttrsToList (n: m: {

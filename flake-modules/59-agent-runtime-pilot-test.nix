@@ -43,15 +43,17 @@
         assert expect (tpl.policies.resources.memoryMiB == 3072 && tpl.policies.resources.cpus == 2) "reuse the pilot template resource cap (MSI headroom still needs live validation)";
         assert expect msi.homelab.msiPowerSchedule.selfShutdown.enable "preserve the scheduled shutdown";
         assert expect (shutdownTimer.OnCalendar == "Mon-Fri 21:00" && shutdownTimer.Persistent == false) "preserve MSI's weekday 21:00 shutdown without catch-up";
+        # #185 item 4: the shutdown does not drain instances, so the preflight refuses runs near it
+        assert expect (rt.host.scheduledShutdown == { timerUnit = "msi-scheduled-shutdown.timer"; stopExportMarginMinutes = 10; }) "MSI's preflight keeps a 10 minute stop and export margin after a run's full timeout before the scheduled shutdown";
         assert expect lenovo.homelab.msiPowerSchedule.waker.enable "preserve Lenovo's MSI wake configuration";
         assert expect (lib.hasInfix "/bin/wakeonlan d4:3d:7e:4a:f9:3d" wakeService) "preserve the MSI Wake-on-LAN target";
         assert expect (wakeTimer.OnCalendar == "Mon-Fri 09:00" && wakeTimer.Persistent == false) "preserve weekday 09:00 wake without catch-up";
         assert expect (msi.services.k3s.enable && msi.homelab.k3s.cni == "cilium") "preserve the active Cilium k3s worker";
         assert expect (lib.elem "--node-label=node-pool=workers" flags && lib.elem "--node-taint=sammasak.dev/intermittent=true:NoSchedule" flags) "preserve MSI's worker label and intermittent taint";
         assert expect (!msi.system.autoUpgrade.allowReboot) "keep unattended reboots disabled";
-        # #185: a headless host renders no Qt/Kvantum theme; that tree failed MSI's Home Manager activation
-        assert expect (!(lib.any (lib.hasPrefix "Kvantum") (lib.attrNames hm.xdg.configFile)) && !hm.stylix.targets.qt.enable)
-          "no Stylix Qt/Kvantum theme in MSI's Home Manager (no desktop to theme)";
+        # #185: a headless host renders no theme; the Qt/Kvantum tree failed MSI's Home Manager activation
+        assert expect (!(lib.any (lib.hasPrefix "Kvantum") (lib.attrNames hm.xdg.configFile)) && !msi.stylix.enable && !(hm ? stylix))
+          "no Stylix, so no Qt/Kvantum theme, in MSI's Home Manager (no desktop to theme)";
         assert expect (lib.all (n: lib.elem n names) [ "agent-runtime-instance" "agent-runtime-preflight" "agent-runtime-pane" "agent-runtime-herdr" ]) "install the lifecycle, preflight, pane and Herdr adapter tools";
         assert expect msi.sam.profile.devTools "retain the shared Herdr CLI configuration";
         assert expect msi.users.users.${username}.linger "keep the Herdr user service available without an interactive login";

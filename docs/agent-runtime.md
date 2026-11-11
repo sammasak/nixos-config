@@ -350,7 +350,9 @@ agent-runtime-instance logs ID                        # the payload's journal fo
 agent-runtime-instance cancel ID
 agent-runtime-instance export ID                      # bundle under STATE/exports/ID.runs/RUNID; ID.runs/latest the newest
 agent-runtime-instance destroy ID [--discard]
-agent-runtime-instance reconcile                      # after a supervisor crash or reboot
+agent-runtime-instance reconcile                      # after a supervisor crash
+agent-runtime-instance settle                         # after a boot (agent-runtime.service): export + destroy interrupted runs
+agent-runtime-instance host-status [--host POLICY]    # write and print /run/agent-runtime/status.json (0644, no secrets)
 ```
 
 - **create** refuses ids that are not a DNS label of at most 29 characters (the Herdr runtime id
@@ -379,10 +381,12 @@ agent-runtime-instance reconcile                      # after a supervisor crash
   fall back to `result.json`'s when a record lacks it. A second start of a started instance
   changes nothing.
 - **State** is derived, never stored: `created`, `running`, `cancelling`, then `succeeded`,
-  `failed`, `timed-out`, `oom-killed` or `cancelled` from `result.json`; `ambiguous` when the
+  `failed`, `timed-out`, `oom-killed`, `cancelled` or `interrupted` from `result.json`; `ambiguous` when the
   instance was started but its unit is gone and no outcome was recorded (a host crash, or a
   crash between the marker and the unit). An ambiguous instance is reported, exported and
-  destroyed, never started again (class `ambiguous`).
+  destroyed, never started again (class `ambiguous`). `interrupted` (`interruptedBy`
+  `host-shutdown` or `host-restart`) is the host's doing: `record-exit` writes it while the
+  system is stopping, `settle` writes it for an ambiguous run started before the current boot.
 - **cancel** of a running instance marks it and stops the unit (bounded by `TimeoutStopSec=30`);
   of a created one it records `cancelled` without starting; otherwise it does nothing. A marked
   run is `cancelled` even when it exits 0: a payload that traps SIGTERM and exits cleanly was
@@ -418,6 +422,12 @@ agent-runtime-instance reconcile                      # after a supervisor crash
 - **reconcile** reports every instance and rolls back incomplete creates. It starts and re-runs
   nothing: after a reboot a created instance can still be started (its volumes are mounted
   again), a running one is `ambiguous`.
+- **settle** is reconcile plus the reboot's cleanup, run by `agent-runtime.service` at boot
+  (`host.nix`): incomplete creates are destroyed, an ambiguous run started before this boot
+  becomes `interrupted`, and every interrupted run is exported and destroyed, so its
+  reservation is free again. A run whose export cannot be checked for its credential, or
+  fails, is held as it is and named in the report. It starts nothing and is idempotent
+  (`docs/agent-runtime-runbook.md`, Reboot and shutdown).
 
 New error classes: `admission` 10, `ambiguous` 11, `conflict` 12, `unsupported` 13.
 `status` prints `agent-runtime-instance-status` JSON (schemaVersion 1) for the Herdr adapter

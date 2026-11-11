@@ -16,5 +16,5 @@
   pi = true;
 
   # Roles
-  roles = [ "base" "laptop" "homelab-agent" ];
+  roles = [ "base" "laptop" "homelab-agent" "runtime-host" ];
 }

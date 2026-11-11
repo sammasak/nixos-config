@@ -133,12 +133,13 @@ in
           running `coordinatorWakeup` cannot be a worker host.
         '';
       };
-      trustedDirs = mkOption {
-        type = types.listOf (types.strMatching "/[A-Za-z0-9_./-]*");
-        default = [ ];
-        example = [ "/home/lukas/claude-code-skills" ];
-        description = "Worker startup directories whose Claude Code trust dialog is pre-accepted in `~/.claude.json` before launch; only these, besides the `$HOME` every host trusts.";
-      };
+    };
+
+    herdr.trustedDirs = mkOption {
+      type = types.listOf (types.strMatching "/[A-Za-z0-9_./-]*");
+      default = [ ];
+      example = [ "/home/lukas/nixos-config" "/home/lukas/.cache/wt" ];
+      description = "Directories whose Claude Code trust dialog is pre-accepted in `~/.claude.json`, besides the `$HOME` every host trusts; the trust covers their subdirectories too.";
     };
 
     herdr.coordinatorWakeup = {
@@ -213,9 +214,6 @@ in
       # the unattended Coordinator stays on dontAsk: it must never share a settings.json that skips the bypass dialog
       assertion = !(config.sam.herdr.worker.enable && config.sam.herdr.coordinatorWakeup.enable);
       message = "sam.herdr.worker and sam.herdr.coordinatorWakeup cannot both be enabled on one host (the Coordinator must not inherit worker permissions).";
-    } {
-      assertion = config.sam.herdr.worker.trustedDirs != [ ] -> config.sam.herdr.worker.enable;
-      message = "sam.herdr.worker.trustedDirs is for worker hosts only (set sam.herdr.worker.enable).";
     }];
 
     programs = {

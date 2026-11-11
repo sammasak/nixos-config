@@ -23,6 +23,7 @@ devenv tasks run nixos:worker-permissions-test  # #145/#157/skills#28: Herdr wor
 devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer
 devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
 devenv tasks run nixos:build-bounds-test  # lenovo's nix-daemon builds bounded (#109); acer keeps defaults
+devenv tasks run nixos:runtime-host-test  # msi + acer through the runtime-host role: shared runtime policy, headless and unthemed, maintenance off the boot path
 devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward supervisor restarts a wedged forward, not an HTTP error
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
@@ -46,7 +47,7 @@ just build  [HOST]            # Build only
 just diff   [HOST]            # Build and print the package diff vs the running system
 
 # Push from lenovo with deploy-rs (magic-rollback; logs in as `deploy`, no password)
-just deploy-acer              # builds on lenovo
+just deploy-acer              # builds on acer (remoteBuild)
 just deploy-pi                # builds on the Pi (remoteBuild); run inside zellij, it takes hours on a cache miss
 just deploy-lenovo            # loopback self-push, proves the deploy-rs path
 just deploy-msi               # only in its Mon-Fri ~09:00-21:00 power window
