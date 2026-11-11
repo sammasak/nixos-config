@@ -8,9 +8,10 @@ in
     ../../modules/hardware/video/${vars.videoDriver}.nix
     # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
     ../../modules/homelab/msi-power-schedule.nix
-    # A credential-free, offline Rust workload; admission remains bounded by
-    # live memory/disk checks and the host policy below.
+    # the agent-runtime templates msi admits; admission stays bounded by live
+    # memory/disk checks and the host policy below
     ../../modules/agent-runtime/templates/rust-pilot.nix
+    ../../modules/agent-runtime/templates/claude-coder.nix
   ];
 
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
@@ -21,12 +22,18 @@ in
   # each create; measure Ollama/k3s headroom before activation.
   sam.agentRuntime.host = {
     enable = true;
-    eligibleTemplates = [ "rust-pilot" ];
+    eligibleTemplates = [ "rust-pilot" "claude-coder" ];
     maxConcurrentInstances = 2;
     reserve = { cpus = 2; memoryMiB = 8192; diskMiB = 51200; };
   };
 
+  # Without this the coder template renders egress none and a credentialed run stops at its probe (exit 75).
+  sam.agentRuntime.templates.claude-coder.network.allow = [ "api.anthropic.com" ];
+
   sam.profile = vars;
+  # Delivers the coder run's credential; it also brings nix_access_token and the
+  # fish CLAUDE_CODE_OAUTH_TOKEN export, as on acer.
+  sam.hostSecrets.enable = true;
 
   # Keep this host manual until the existing Windows/EFI layout is verified.
   system.autoUpgrade.enable = lib.mkForce false;
