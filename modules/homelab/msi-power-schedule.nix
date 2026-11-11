@@ -43,9 +43,6 @@ in
     })
 
     (mkIf cfg.selfShutdown.enable {
-      # The shutdown stops k3s but does not drain agent-runtime instances (#185): the preflight
-      # refuses a run that could still be going (its full timeout plus stop and export) when the timer fires.
-      sam.agentRuntime.host.scheduledShutdown.timerUnit = "msi-scheduled-shutdown.timer";
       systemd.services.msi-scheduled-shutdown = {
         description = "Graceful scheduled shutdown of msi (drain workloads, then poweroff)";
         serviceConfig = {

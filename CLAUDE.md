@@ -23,7 +23,7 @@ devenv tasks run nixos:worker-permissions-test  # #145/#157/skills#28: Herdr wor
 devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer
 devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
 devenv tasks run nixos:build-bounds-test  # lenovo's nix-daemon builds bounded (#109); acer keeps defaults
-devenv tasks run nixos:runtime-host-test  # msi + acer through the runtime-host role: shared runtime policy, headless and unthemed, maintenance off the boot path
+devenv tasks run nixos:runtime-host-test  # msi + acer through the runtime-host role: headless and unthemed, maintenance off the boot path
 devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward supervisor restarts a wedged forward, not an HTTP error
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
@@ -32,14 +32,8 @@ devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward s
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
 
-# QEMU proofs (packages, not checks; acer under the heavy-work lock):
-nix build -L .#packages.x86_64-linux.agent-runtime-nspawn  # #135/#137/#138: nspawn instances, enforcement, lifecycle; docs/agent-runtime-nspawn.md
-nix build -L .#packages.x86_64-linux.agent-runtime-herdr-test  # #139: runtimes as Herdr agents, docs/agent-runtime-herdr.md
-nix build -L .#packages.x86_64-linux.agent-runtime-herdr-machines-test  # #139: the coordinator sees them through a saved Herdr machine (two VMs)
-nix build -L .#packages.x86_64-linux.agent-runtime-deploy-test  # #140: deploy-rs substrate + template profiles, rollback; docs/agent-runtime-deploy.md
-nix build -L .#packages.x86_64-linux.agent-runtime-e2e  # #141: end-to-end pilot + failure matrix, docs/agent-runtime-runbook.md
-nix build -L .#packages.x86_64-linux.agent-runtime-pilot-test  # #165: the acer pilot template (factum, offline) through the E2E path, docs/agent-runtime-pilot.md
-nix build -L .#packages.x86_64-linux.agent-runtime-coder-test  # #169: the real Claude Code in nspawn, fail-closed auth, verified patch (model-free), docs/agent-runtime-coder.md
+# QEMU proof (a package, not a check):
+nix build -L .#packages.x86_64-linux.rf-hwsim-dataplane
 
 # ── Deployment (switch is plain nixos-rebuild; build/diff use nh) ──
 just switch [HOST]            # Build and activate

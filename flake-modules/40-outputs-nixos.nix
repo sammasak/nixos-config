@@ -73,8 +73,6 @@ let
           inputs.sops-nix.nixosModules.sops
           inputs.home-manager.nixosModules.home-manager
           inputs.disko.nixosModules.disko
-          # off until a host sets sam.agentRuntime.host.enable (#140); then 70-deploy.nix adds its profile
-          ../modules/agent-runtime/host.nix
           ../modules/workers
           ({
             nixpkgs.overlays = [
@@ -83,13 +81,6 @@ let
               inputs.nur.overlays.default
             ];
             sam.userConfig = users.${username} or { };
-            # what a host's agent-runtime template modules lock to (modules/agent-runtime/templates)
-            sam.agentRuntime.pinnedSources = { inherit (inputs) factum skills rf-proto; };
-            # the coordinator verifies against the exact manifests the runtime hosts deploy, from this flake
-            sam.agentRuntime.clientTools.templateManifests = lib.optionalAttrs (name == "lenovo") (
-              lib.genAttrs [ "acer-swift" "msi-ms7758" ] (h: config.flake.nixosConfigurations.${h}.config.sam.agentRuntime.manifestDir)
-            );
-
             sam.workers.guestModules = [ inputs.home-manager.nixosModules.home-manager (fleetHome "worker") ];
             sam.workers.remotes = lib.optionalAttrs (name == "lenovo") (
               lib.genAttrs [ "acer-swift" "msi-ms7758" ] (h: config.flake.nixosConfigurations.${h}.config.sam.workers.instances)
