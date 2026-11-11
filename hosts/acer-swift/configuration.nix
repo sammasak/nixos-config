@@ -13,13 +13,8 @@ in
   sam.profile = vars;
   # k3s pods take ~4.6G here: a 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
   sam.workers = {
-    instances = {
-      dp121 = {
-        model = "sonnet";
-        prompt = "You are in a fresh nspawn developer environment named dp121 on host acer-swift (deployed from the coordinator's branch, so main may not declare it yet). Task: devenv-platform issue #121 (approved): gates G0 and G1 only, then stop at owner gate D1. Clone git@github.com:sammasak/devenv-platform.git into ~/devenv-platform, run devenv shell once so the git hooks are installed (commits need a Why: line), read the README's first section, and read the issue with gh issue view 121 --json body,comments. Check the issue's links and file references against HEAD before relying on them, and check for an existing branch, PR or RFC comment for the issue first; continue from it instead of starting over. Follow the issue's binding instructions exactly: baseline A with existing commands only, B and C on paper only, no plugin installs, no host changes. This environment shares the host Nix store through the host daemon (2 build jobs, 2 cores each, shared with other environments), so a path is cold only once: say which runs were truly cold and mark what you could not measure UNTESTED. Run builds strictly one at a time with output sent to a log file. Before posting, spawn ONE independent subagent to check your tables against the raw logs and fix what is real. Then post the one RFC comment the issue asks for on #121 (no em dashes), propose but do not choose D1, and finish with a five line summary. Append friction with this environment to ~/ENV-FEEDBACK.md.";
-      };
-    };
-    retired = [ "demo" "dp93" "nc200" "dp120" "f44" ];
+    instances = { };
+    retired = [ "demo" "dp93" "nc200" "dp120" "f44" "dp121" ];
     labelPrefix = "acer";
     pool = { memory = "7G"; cores = 8; };
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
