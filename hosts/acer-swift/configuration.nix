@@ -8,28 +8,18 @@ in
     (import ../../modules/hardware/disko-single-ext4.nix "/dev/disk/by-id/nvme-INTEL_SSDPEKNW010T8_BTNH014425J11P0B")
 
     ../../modules/hardware/video/${vars.videoDriver}.nix
-    # the agent-runtime templates acer admits; their host policy is below
-    ../../modules/agent-runtime/templates/rust-pilot.nix
-    ../../modules/agent-runtime/templates/claude-coder.nix
   ];
 
-  # The supervised agent-runtime pilot (#165/#169): one instance of one template at a time, admitted
-  # only while acer keeps 4 GiB free beyond the 3 GiB cap, sized from k3s's measured peak. The sizing,
-  # deploy, run and rollback are in docs/agent-runtime-pilot.md and docs/agent-runtime-coder.md.
+  # The supervised agent-runtime pilot (#165/#169): one instance at a time, admitted only while acer
+  # keeps 4 GiB free beyond the 3 GiB cap, sized from k3s's measured peak. The sizing, deploy, run
+  # and rollback are in docs/agent-runtime-pilot.md and docs/agent-runtime-coder.md; the templates
+  # and their egress allowlist are the runtime-host role's.
   sam.agentRuntime.host = {
-    enable = true;
-    eligibleTemplates = [ "rust-pilot" "claude-coder" ];
     maxConcurrentInstances = 1;
     reserve = { memoryMiB = 4096; diskMiB = 51200; };
   };
 
-  # The coder template's only egress in a live run is the Claude API host; #137 pins the allowlist to
-  # the resolved IPs (TLS 443). No wildcard, no extra host. The run itself is owner-gated
-  # (docs/agent-runtime-coder.md); the template still grants no GitHub capability.
-  sam.agentRuntime.templates.claude-coder.network.allow = [ "api.anthropic.com" ];
-
   sam.profile = vars;
-  sam.hostSecrets.enable = true;
   # The worker host: Herdr-started workers run in bypassPermissions, trusted in these checkouts and $HOME.
   sam.herdr.worker = {
     enable = true;

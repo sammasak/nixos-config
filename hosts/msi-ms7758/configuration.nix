@@ -8,32 +8,25 @@ in
     ../../modules/hardware/video/${vars.videoDriver}.nix
     # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
     ../../modules/homelab/msi-power-schedule.nix
-    # the agent-runtime templates msi admits; admission stays bounded by live
-    # memory/disk checks and the host policy below
-    ../../modules/agent-runtime/templates/rust-pilot.nix
-    ../../modules/agent-runtime/templates/claude-coder.nix
   ];
 
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
   homelab.msiPowerSchedule.selfShutdown.enable = true;
 
-  # The existing inventory lists 32 GiB RAM, but is not a live capacity
-  # reading. Runtime admission checks CPU, MemAvailable and free disk before
-  # each create; measure Ollama/k3s headroom before activation.
+  # 15.9 GiB RAM, shared with k3s and the ollama pod: 8 GiB and 2 CPUs stay free of instances, which
+  # leaves room for two at the templates' 3 GiB cap. Admission still checks CPU, MemAvailable and
+  # free disk before each create (roles/runtime-host.nix has the shared policy).
   sam.agentRuntime.host = {
-    enable = true;
-    eligibleTemplates = [ "rust-pilot" "claude-coder" ];
     maxConcurrentInstances = 2;
     reserve = { cpus = 2; memoryMiB = 8192; diskMiB = 51200; };
   };
 
-  # Without this the coder template renders egress none and a credentialed run stops at its probe (exit 75).
-  sam.agentRuntime.templates.claude-coder.network.allow = [ "api.anthropic.com" ];
-
   sam.profile = vars;
-  # Delivers the coder run's credential; it also brings nix_access_token and the
-  # fish CLAUDE_CODE_OAUTH_TOKEN export, as on acer.
-  sam.hostSecrets.enable = true;
+
+  # Off at midnight, when the fleet's GC and optimise slots fall, and the runtime-host role drops
+  # their catch-up at boot: both run inside the Mon-Fri power window instead.
+  nix.gc.dates = lib.mkForce "Mon *-*-01..07 12:00";
+  nix.optimise.dates = lib.mkForce [ "Wed 12:00" ];
 
   # Keep this host manual until the existing Windows/EFI layout is verified.
   system.autoUpgrade.enable = lib.mkForce false;
