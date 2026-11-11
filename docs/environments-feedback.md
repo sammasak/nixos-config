@@ -32,8 +32,19 @@ Append; move a line to fixed when its change lands.
 - `blockedNetworks` (forward drop to the LAN, DNS excepted) is wired but off: needs a runtime check that GitHub, DNS and host-to-guest ssh still work and the k3s API does not, on the iptables backend next to Cilium.
 - First `devenv shell` in a new environment is 25 to 32 s of evaluation. Seeding a new home's `~/.cache/nix` from the host user's was not done: copying the live sqlite fetcher cache can corrupt it, and the cost looks like devenv's per-repo evaluation, not fetching. The empty `flake-registry` only removes the global registry fetch.
 
+- 2026-11-11 `nc201`: on lenovo the guest is `Trusted: 1` on the host daemon, because the guest user is the host
+  user and lenovo keeps that user trusted. The doc said otherwise; corrected. Untrusting needs a different guest uid
+  or a host without a trusted login user; owner decision with the nested /proc one.
+- 2026-11-11 `nc201`: host ssh key, gh token and OAuth token are bound into every guest, so "research only, do not
+  push" is held by the brief, not the environment. A per-instance `credentials` subset would make it structural.
+- 2026-11-11 `nc201`: `devenv shell` bootstrap prints about 10k characters of git progress into the agent's tool
+  output. Briefs now say to send heavy command output to a log file.
+- 2026-11-11 `nc201`: the issue's baseline code and links were stale against main. Briefs now say to check an
+  issue's references against HEAD first.
+
 ## Fixed
 
+- 2026-11-11 `nc201` on lenovo (nixos-config #201, G0 inventory, research only): issue to reviewed commit in a 4G pool beside k3s with no gate run on lenovo; the coordinator fetched the branch over ssh and pushed it through an acer environment's gate. Retired the same sitting.
 - 2026-11-11 The full nixos-config pre-push gate ran inside an environment (`nc200` on acer, nixos-config #219): green in 38 m 16 s beside a second environment's Rust gate (11 min on msi alone), peak 5.5G at the 6G cap with the 3G swap allowance full, throttled, no OOM. Pushes no longer need msi awake. `nc200` retired after pushing its own retirement.
 - 2026-11-11 Results: llm-gateway#88 follow-up (PR #92) merged from `gw88` on lenovo in 14 min. Its `rust:ci` (427 tests) ran inside the 4G pool: peak 3.7G, throttled at MemoryHigh, 340M to swap, no OOM, host never below 9G available. `gw88` retired; lenovo keeps the pool settings so the next one is one line.
 - 2026-11-11 Parallel work on acer failed with "Could not resolve host: github.com" (the nixos-config gate's nvim plugin clones, run from `nc200`): AdGuard Home on lenovo rate-limits each client to 20 queries/s by default. 40 parallel lookups: 20 failed on the acer host, 18 in the guest; with `ratelimit = 0` both 0. Not an environment defect, but environments make it likely by running more at once.

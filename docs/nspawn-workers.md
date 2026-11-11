@@ -170,7 +170,9 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 
 - `/nix/store`, the nix db and the daemon socket are the host's (stock
   containers), so `nix build` and devenv use the host's store; `lukas` is not a
-  trusted user there.
+  trusted user on acer and msi. On lenovo the host user is trusted (it signs
+  and deploys), and so is its guest: an environment there can do to the store
+  what the owner can.
 - The guest imports the fleet's `core/system.nix`, `core/users.nix`,
   `core/packages.nix`, the pinned known hosts and the Home Manager wiring
   every host gets (`fleetHome` in `flake-modules/40-outputs-nixos.nix`).
