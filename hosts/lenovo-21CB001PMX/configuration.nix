@@ -22,11 +22,13 @@ in
     "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
     "nixos-config" "rf-proto" ".cache/wt"
   ];
-  # The worker hosts; their running nspawn workers are workspaces in the host's Herdr (docs/nspawn-workers.md).
+  # The worker hosts; their declared nspawn workers are workspaces in the host's Herdr (docs/nspawn-workers.md).
   sam.herdr.machines = [
     { label = "acer-swift"; target = "acer-swift"; }
     { label = "msi-ms7758"; target = "msi-ms7758"; }
   ];
+  # `ssh <name>.msi` / `ssh <name>.acer` into an environment declared on that host (sam.workers.labelPrefix there).
+  sam.workers.jumpHosts = { acer = "acer-swift"; msi = "msi-ms7758"; };
   sam.herdr.coordinatorWakeup = {
     enable = true;
     # Delegated approval (the comment every delegated gh:label act cites) and the interactive

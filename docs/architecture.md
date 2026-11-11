@@ -101,7 +101,7 @@ Composable role modules assigned per-host via `variables.nix`:
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node; disables sleep/suspend
 - **homelab-server** — k3s control plane
-- **runtime-host** — headless worker host, msi-ms7758 and acer-swift, running the ephemeral nspawn workers
+- **runtime-host** — headless worker host, msi-ms7758 and acer-swift, running the declared nspawn developer environments
   (`sam.workers`, docs/nspawn-workers.md): the run credential, the deploy-rs target, no Stylix outside a
   desktop specialisation, and nix-gc / nix-optimise / nixos-upgrade that wait for a synchronised clock
   (`systemd-time-wait-sync`), never catch up at boot and run one at a time

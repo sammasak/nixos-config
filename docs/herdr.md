@@ -24,7 +24,7 @@ an agent session that is already registered attaches to that pane instead of
 opening the same conversation a second time.
 
 Workers run unattended in `bypassPermissions` on worker hosts only
-(`sam.herdr.worker`, set inside the ephemeral nspawn workers and on no physical
+(`sam.herdr.worker`, set inside the nspawn developer environments and on no physical
 host, docs/nspawn-workers.md): Claude Code's settings carry
 `skipDangerousModePermissionPrompt`, so a `--dangerously-skip-permissions`
 start no longer stops at the acknowledgment dialog. On every host activation
@@ -68,8 +68,9 @@ Herdr itself is the fleet view: a host sees its own agents, and any Herdr
 **saved machine** it has (`herdr machine list --json`) through command
 forwarding (`herdr --machine <label> agent list` and friends). Workers save
 nothing and so see themselves only. The coordinator host (lenovo) saves the
-worker hosts (`acer-swift`, `msi-ms7758`) as `sam.herdr.machines`; a running
-nspawn worker is a workspace `worker-<n>` on its host (docs/nspawn-workers.md).
+worker hosts (`acer-swift`, `msi-ms7758`) as `sam.herdr.machines`; each nspawn worker a
+host declares (`sam.workers.instances.<name>`) is a workspace and agent
+`<name>` on that host (docs/nspawn-workers.md).
 At activation Home Manager runs `herdr machine add
 <target> --label <label> --remote-session default` for each label Herdr does
 not know yet, with the user's own SSH key and `known_hosts` (a failed add is
