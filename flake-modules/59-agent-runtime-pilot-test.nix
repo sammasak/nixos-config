@@ -49,9 +49,9 @@
         assert expect (msi.services.k3s.enable && msi.homelab.k3s.cni == "cilium") "preserve the active Cilium k3s worker";
         assert expect (lib.elem "--node-label=node-pool=workers" flags && lib.elem "--node-taint=sammasak.dev/intermittent=true:NoSchedule" flags) "preserve MSI's worker label and intermittent taint";
         assert expect (!msi.system.autoUpgrade.allowReboot) "keep unattended reboots disabled";
-        # #185: a headless host renders no Qt/Kvantum theme; that tree failed MSI's Home Manager activation
-        assert expect (!(lib.any (lib.hasPrefix "Kvantum") (lib.attrNames hm.xdg.configFile)) && !hm.stylix.targets.qt.enable)
-          "no Stylix Qt/Kvantum theme in MSI's Home Manager (no desktop to theme)";
+        # #185: a headless host renders no theme; the Qt/Kvantum tree failed MSI's Home Manager activation
+        assert expect (!(lib.any (lib.hasPrefix "Kvantum") (lib.attrNames hm.xdg.configFile)) && !msi.stylix.enable && !(hm ? stylix))
+          "no Stylix, so no Qt/Kvantum theme, in MSI's Home Manager (no desktop to theme)";
         assert expect (lib.all (n: lib.elem n names) [ "agent-runtime-instance" "agent-runtime-preflight" "agent-runtime-pane" "agent-runtime-herdr" ]) "install the lifecycle, preflight, pane and Herdr adapter tools";
         assert expect msi.sam.profile.devTools "retain the shared Herdr CLI configuration";
         assert expect msi.users.users.${username}.linger "keep the Herdr user service available without an interactive login";
