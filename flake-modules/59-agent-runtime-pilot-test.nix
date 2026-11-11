@@ -2,6 +2,45 @@
 {
   perSystem =
     { pkgs, system, ... }:
+    let
+      # What "the same Claude Code as on the host" means for claude-session, per host: every failed
+      # claim as a message. The manifest's files are compared with the host's Home Manager sources.
+      sessionChecks =
+        hostName:
+        let
+          c = config.flake.nixosConfigurations.${hostName}.config;
+          hostPkgs = config.flake.nixosConfigurations.${hostName}.pkgs;
+          rt = c.sam.agentRuntime;
+          user = c.sam.profile.username;
+          hm = c.home-manager.users.${user};
+          m = rt.manifestData.claude-session;
+          settings = builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile m.homeFiles.".claude/settings.json".source));
+          hostSettings = hm.programs.claude-code.settings;
+          hostFiles = lib.filter (f: lib.any (p: lib.hasPrefix p f.target) [ ".claude/skills/" ".claude/agents/" ]) (lib.attrValues hm.home.file);
+          commands = lib.concatMap (g: map (h: h.command or "") g.hooks) (lib.concatLists (lib.attrValues settings.hooks));
+        in
+        lib.mapAttrsToList (msg: _: msg) (lib.filterAttrs (_: ok: !ok) {
+          "the entrypoint is the host's claude-code binary" = m.entrypoint == "${hm.programs.claude-code.package}/bin/claude" && hm.programs.claude-code.package == hostPkgs.claude-code;
+          "the payload is claude in bypass mode, no wrapper" = m.session.args == [ "--dangerously-skip-permissions" ];
+          "CLAUDE.md is the host's" = m.homeFiles.".claude/CLAUDE.md" == { source = toString hm.home.file.".claude/CLAUDE.md".source; mode = "link"; };
+          "every host skill and agent is carried at the host's store path" = hostFiles != [ ] && lib.all (f: (m.homeFiles.${f.target}.source or null) == toString f.source) hostFiles;
+          "at least one skill is carried" = lib.any (lib.hasPrefix ".claude/skills/") (lib.attrNames m.homeFiles);
+          "settings differ from the host's only in hooks, env, permissions.deny and the bypass prompt" =
+            removeAttrs settings [ "hooks" "env" "permissions" "skipDangerousModePermissionPrompt" ] == removeAttrs hostSettings [ "hooks" "env" "permissions" "skipDangerousModePermissionPrompt" ]
+            && removeAttrs settings.permissions [ "deny" ] == removeAttrs hostSettings.permissions [ "deny" ];
+          "the credential directory is denied to the Read tool" = lib.elem "Read(//run/agent-runtime/credentials/**)" settings.permissions.deny && lib.all (d: lib.elem d settings.permissions.deny) (hostSettings.permissions.deny or [ ]);
+          "bypass mode does not stop at its dialog" = settings.skipDangerousModePermissionPrompt;
+          "no telemetry, no error reporting, no OTEL" = settings.env.DISABLE_TELEMETRY == "1" && settings.env.DISABLE_ERROR_REPORTING == "1" && !(lib.any (lib.hasPrefix "OTEL_") (lib.attrNames settings.env));
+          "the host's skill hooks are kept, hooks into the host home are not" = commands != [ ] && !(lib.any (lib.hasInfix "/home/") commands);
+          ".claude.json is a writable copy" = m.homeFiles.".claude.json".mode == "copy";
+          "the credential is exported as CLAUDE_CODE_OAUTH_TOKEN, and the pane process is claude" = m.session.credentialEnv == "CLAUDE_CODE_OAUTH_TOKEN" && m.session.paneProcessName == "claude";
+          "egress is exactly api.anthropic.com, no capability" = m.policies.network == { egress = "allowlist"; allow = [ "api.anthropic.com" ]; } && m.policies.capabilities == [ ];
+          "the session user is the Herdr user, with the sops token and the one sudo rule" =
+            rt.session.attachUser == user && rt.session.credentialFile == c.sops.secrets.claude_oauth_token.path && rt.session.launch.enable
+            && lib.any (r: r.users == [ user ] && map (x: x.command) r.commands == [ (lib.getExe (import ../modules/agent-runtime/runtime.nix { inherit lib; pkgs = hostPkgs; }).sessionLaunch) ]) c.security.sudo.extraRules;
+          "the session tool is installed" = lib.elem "agent-runtime-session" (map (p: p.name or "") c.environment.systemPackages);
+        });
+    in
     {
       # The #165 pilot template through the E2E path; a package like the other agent-runtime VM tests,
       # run explicitly: `nix build .#packages.x86_64-linux.agent-runtime-pilot-test` (acer, heavy lock).
@@ -32,7 +71,8 @@
           shutdownScript = msi.systemd.services.msi-scheduled-shutdown.serviceConfig.ExecStart;
           expect = cond: msg: lib.assertMsg cond "agent-runtime-msi-pilot: ${msg}";
         in
-        assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" "claude-coder" ]) "MSI admits exactly rust-pilot then claude-coder";
+        assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" "claude-coder" "claude-session" ]) "MSI admits exactly rust-pilot, claude-coder, claude-session";
+        assert expect (sessionChecks "msi-ms7758" == [ ]) "claude-session on MSI: ${toString (sessionChecks "msi-ms7758")}";
         assert expect (rt.manifestData.claude-coder.policies.network == { egress = "allowlist"; allow = [ "api.anthropic.com" ]; }) "MSI's claude-coder egress is exactly api.anthropic.com";
         assert expect (rt.manifestData.claude-coder.policies.capabilities == [ ]) "MSI's claude-coder grants no capability";
         assert expect (msi.sops.secrets.claude_oauth_token.mode == "0400" && msi.sops.secrets.claude_oauth_token.owner == username) "the subscription token is owner-only on MSI";
@@ -83,7 +123,8 @@
           othersCoder = lib.filter (n: n != "acer-swift" && lib.elem "claude-coder" hosts.${n}.config.sam.agentRuntime.host.eligibleTemplates) (lib.attrNames hosts);
           expect = cond: msg: lib.assertMsg cond "agent-runtime-acer-pilot: ${msg}";
         in
-        assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" "claude-coder" ]) "acer-swift admits exactly rust-pilot then claude-coder";
+        assert expect (rt.host.enable && rt.host.eligibleTemplates == [ "rust-pilot" "claude-coder" "claude-session" ]) "acer-swift admits exactly rust-pilot, claude-coder, claude-session";
+        assert expect (sessionChecks "acer-swift" == [ ]) "claude-session on acer-swift: ${toString (sessionChecks "acer-swift")}";
         assert expect (rt.host.maxConcurrentInstances == 1) "one instance at a time";
         assert expect (rt.host.reserve == { cpus = 0; memoryMiB = 4096; diskMiB = 51200; }) "the reserve keeps 4 GiB and 50 GiB free and does not cap host CPUs";
         assert expect (rt.host.allowedMountRoots == [ ]) "no host mounts";

@@ -11,6 +11,7 @@ in
     # the agent-runtime templates acer admits; their host policy is below
     ../../modules/agent-runtime/templates/rust-pilot.nix
     ../../modules/agent-runtime/templates/claude-coder.nix
+    ../../modules/agent-runtime/templates/claude-session.nix
   ];
 
   # The supervised agent-runtime pilot (#165/#169): one instance of one template at a time, admitted
@@ -18,7 +19,7 @@ in
   # deploy, run and rollback are in docs/agent-runtime-pilot.md and docs/agent-runtime-coder.md.
   sam.agentRuntime.host = {
     enable = true;
-    eligibleTemplates = [ "rust-pilot" "claude-coder" ];
+    eligibleTemplates = [ "rust-pilot" "claude-coder" "claude-session" ];
     maxConcurrentInstances = 1;
     reserve = { memoryMiB = 4096; diskMiB = 51200; };
   };
@@ -27,6 +28,16 @@ in
   # the resolved IPs (TLS 443). No wildcard, no extra host. The run itself is owner-gated
   # (docs/agent-runtime-coder.md); the template still grants no GitHub capability.
   sam.agentRuntime.templates.claude-coder.network.allow = [ "api.anthropic.com" ];
+
+  # The host's own Claude Code as an interactive instance session (docs/agent-runtime-session.md):
+  # same single egress host; the Herdr user attaches, and starts and ends sessions through the one
+  # sudo-ruled helper, which delivers the subscription token itself.
+  sam.agentRuntime.templates.claude-session.network.allow = [ "api.anthropic.com" ];
+  sam.agentRuntime.session = {
+    attachUser = vars.username;
+    credentialFile = "/run/secrets/claude_oauth_token";
+    launch.enable = true;
+  };
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;

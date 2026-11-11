@@ -12,6 +12,7 @@ in
     # memory/disk checks and the host policy below
     ../../modules/agent-runtime/templates/rust-pilot.nix
     ../../modules/agent-runtime/templates/claude-coder.nix
+    ../../modules/agent-runtime/templates/claude-session.nix
   ];
 
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
@@ -22,13 +23,23 @@ in
   # each create; measure Ollama/k3s headroom before activation.
   sam.agentRuntime.host = {
     enable = true;
-    eligibleTemplates = [ "rust-pilot" "claude-coder" ];
+    eligibleTemplates = [ "rust-pilot" "claude-coder" "claude-session" ];
     maxConcurrentInstances = 2;
     reserve = { cpus = 2; memoryMiB = 8192; diskMiB = 51200; };
   };
 
   # Without this the coder template renders egress none and a credentialed run stops at its probe (exit 75).
   sam.agentRuntime.templates.claude-coder.network.allow = [ "api.anthropic.com" ];
+
+  # The host's own Claude Code as an interactive instance session (docs/agent-runtime-session.md):
+  # same single egress host; the Herdr user attaches, and starts and ends sessions through the one
+  # sudo-ruled helper, which delivers the subscription token itself.
+  sam.agentRuntime.templates.claude-session.network.allow = [ "api.anthropic.com" ];
+  sam.agentRuntime.session = {
+    attachUser = vars.username;
+    credentialFile = "/run/secrets/claude_oauth_token";
+    launch.enable = true;
+  };
 
   sam.profile = vars;
   # Delivers the coder run's credential; it also brings nix_access_token and the
