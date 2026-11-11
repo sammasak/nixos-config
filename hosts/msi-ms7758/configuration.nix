@@ -16,7 +16,8 @@ in
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
   sam.workers = {
-    instances = { skills91 = { model = "sonnet"; }; };
+    instances = { };
+    retired = [ "skills91" ];
     labelPrefix = "msi";
     pool = { memory = "10G"; cores = 8; };
   };

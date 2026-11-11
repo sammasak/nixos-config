@@ -213,3 +213,11 @@ issue it serves, deploy, and remove it when the work has landed.
 7. Copy what `~/ENV-FEEDBACK.md` taught into `docs/environments-feedback.md`
    (one line each, with the fix or the open gap), then move the name to
    `retired` and deploy.
+
+Tear down when done: an environment whose agent reports done and has no
+approved follow-up issue is retired in the same sitting, after two checks in
+its home: `git status` and `git log origin/main..` are empty in every clone
+(nothing unpushed dies with the home), and `~/ENV-FEEDBACK.md` is copied out.
+An idle environment still holds its 2G reserve and a slot in the pool. Hand it
+the next approved issue only when one is ready now; otherwise retire and
+declare a fresh one later (37 s).

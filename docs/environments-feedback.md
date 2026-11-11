@@ -25,6 +25,7 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-11 Finished environments sat idle holding their reserve (`skills91` for hours after skills#97 merged). Rule added to the process (docs/nspawn-workers.md, "Tear down when done"): retire in the same sitting once clones are clean and feedback is copied out. `skills91` retired.
 - 2026-11-11 Results: herman#18 (PR #37, after a dependency PR #38 for advisories) merged from `demo`; without the CPU cap its warm rust:ci went 253 s to 170 s, verify-web 828 s to 479 s, web-dist 142 s to 63 s. A second acer environment (`dp93`) started from its declared prompt with `demo` untouched.
 - 2026-11-11 Verified on msi: live resize with no restart; undeclare keeps the home, `retired` deletes it; four deploys in a row left the neighbouring environment's start time unchanged; guest boot 6.8 s to 1.9 s.
 
