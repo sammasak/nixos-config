@@ -8,7 +8,7 @@ let
   '';
 
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
-    shellcheck scripts/*.sh scripts/lib/*.sh tests/test-native-shell-lock-node.sh
+    shellcheck scripts/*.sh
   '';
 
   # Skips (exit 0) on hosts without the age key; only lenovo enforces it.
@@ -38,9 +38,6 @@ let
     nix flake check --all-systems --no-write-lock-file
   '';
 
-  nativeShellLockNodeTest = gate "native-shell-lock-node-test" (with pkgs; [ nix jq git coreutils gnused gnugrep ]) ''
-    bash tests/test-native-shell-lock-node.sh
-  '';
 
   verifyHosts = gate "nixos-verify" (with pkgs; [ bash nix coreutils ]) ''
     bash scripts/verify-all-hosts.sh
@@ -76,7 +73,7 @@ let
     ${pkgs.python3}/bin/python scripts/test-rf-lab-boundary.py
   '';
 
-  # msi and acer through the runtime-host role: shared runtime policy, headless and unthemed, maintenance off the boot path (eval only)
+  # msi and acer through the runtime-host role: headless and unthemed, maintenance off the boot path (eval only)
   runtimeHostTest = gate "runtime-host-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-runtime-host-role.py
   '';
@@ -104,29 +101,10 @@ let
     ${pkgs.python3}/bin/python scripts/test-native-otel-rollback.py
   '';
 
-  # nixos-config#198: heavy scripts take the host's heavy-work lock once (bare, nested, contended)
-  heavyLockTest = gate "heavy-lock-test" (with pkgs; [ bash util-linux coreutils gnugrep ]) ''
-    bash scripts/test-agent-runtime-heavy-lock.sh
-  '';
-
-  # nixos-config#198: the Factum in-guest isolation probe passes under the emulated policy and
-  # fails on each broken property (needs unprivileged user namespaces)
-  isolationProbeTest = gate "isolation-probe-test" (with pkgs; [ bash util-linux netcat-openbsd coreutils gnugrep ]) ''
-    bash scripts/test-agent-runtime-isolation-probe.sh
-  '';
-
-  # verify refuses a template manifest outside /nix/store, so a bundle cannot bring its own pin
-  verifyTrustTest = gate "verify-trust-test" (with pkgs; [ bash jq git coreutils findutils gnugrep ]) ''
-    bash scripts/test-agent-runtime-verify-trust.sh
-  '';
-
-  agentRuntimeTest = gate "nixos-agent-runtime-test" (with pkgs; [ bash nix jq git coreutils gnugrep ]) ''
-    bash scripts/test-agent-runtime.sh
-  '';
 
   qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
-    lintComments lintShell secretsVerify nvimCheck flakeCheck nativeShellLockNodeTest verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest agentRuntimeTest verifyTrustTest heavyLockTest isolationProbeTest
+    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
+    coordinatorWiringTest workerPermissionsTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest
     rfLabBoundaryTest runtimeHostTest rfBeaconsTest
   ]);
 
@@ -375,13 +353,8 @@ in
     "nixos:secrets-verify" = task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
     "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
-    "nixos:native-shell-lock-node-test" = task "native-shell resolver accepts narHash-pinned lock nodes without rev" nativeShellLockNodeTest;
     "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
-    "nixos:agent-runtime-test" = task "agent-runtime module: external consumer fixture, manifests, negative cases" agentRuntimeTest;
-    "nixos:heavy-lock-test" = task "Heavy scripts take the heavy-work lock once: bare, nested, contended" heavyLockTest;
-    "nixos:verify-trust-test" = task "agent-runtime-verify refuses a template manifest outside /nix/store" verifyTrustTest;
-    "nixos:isolation-probe-test" = task "Factum isolation probe passes under the emulated policy, fails on each broken property" isolationProbeTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:worker-permissions-test" = task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
@@ -390,7 +363,7 @@ in
     "nixos:build-bounds-test" = task "lenovo's nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max); acer keeps defaults" buildBoundsTest;
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
     "nixos:rf-lab-boundary-test" = task "#42: naked-pi carries no heavyweight RE tooling and no k3s; no other host imports rf-lab" rfLabBoundaryTest;
-    "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: shared runtime policy, headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
+    "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;

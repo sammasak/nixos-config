@@ -22,8 +22,11 @@ in
     "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
     "nixos-config" "rf-proto" ".cache/wt"
   ];
-  # The Herdr machines are the hosts' nspawn workers (acer-w1, msi-w1, msi-w2), saved from sam.workers.remotes
-  # (flake-modules/40-outputs-nixos.nix); a stopped worker stays visible as unreachable.
+  # The worker hosts; their running nspawn workers are workspaces in the host's Herdr (docs/nspawn-workers.md).
+  sam.herdr.machines = [
+    { label = "acer-swift"; target = "acer-swift"; }
+    { label = "msi-ms7758"; target = "msi-ms7758"; }
+  ];
   sam.herdr.coordinatorWakeup = {
     enable = true;
     # Delegated approval (the comment every delegated gh:label act cites) and the interactive
@@ -34,8 +37,6 @@ in
     # No wake session while the interactive Coordinator worked in the last 10 minutes (skills#66).
     interactiveQuietSeconds = 600;
   };
-  # The coordinator promotes bundles the workers export: the verify/promote client only, never a runtime host.
-  sam.agentRuntime.clientTools.enable = true;
 
   # As the always-on control plane, lenovo sends msi its Mon-Fri 09:00 wake.
   homelab.msiPowerSchedule.waker.enable = true;

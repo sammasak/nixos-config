@@ -8,18 +8,11 @@
 - `05-overlays.nix` — exposes `pkgs/` through an overlay
 - `10-systems.nix` — supported systems
 - `20-module-registry.nix` — auto-generates module registries from filesystem
-- `25-agent-runtime.nix` — the agent-runtime module (set by hand, published as `nixosModules.agent-runtime`; `flake.modules` itself is stripped from the outputs), its evaluator, eval check, option reference and the runtime adapter executables with their check (docs/agent-runtime.md)
 - `30-configurations-options.nix` — typed host declaration options
 - `40-outputs-nixos.nix` — transforms declarations into `nixosConfigurations`
 - `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
-- `55-agent-runtime-test.nix` — the agent-runtime nspawn VM test package (#135, #137, #138)
-- `56-agent-runtime-herdr-test.nix` — the #139 Herdr adapter package and its VM test packages (one host; coordinator plus runtime host)
-- `57-agent-runtime-deploy-test.nix` — the #140 deploy-rs rollout VM test package (three VMs)
-- `58-agent-runtime-e2e-test.nix` — the #141 end-to-end pilot VM test package
-- `59-agent-runtime-pilot-test.nix` — the #165 acer pilot: its VM test package and `checks.agent-runtime-acer-pilot` (acer-swift's rendered policy)
-- `61-agent-runtime-coder-test.nix` — the #169 coding-agent template (real Claude Code) and the bundle verifier, in a VM
 - `60-templates.nix` — devenv templates stamped by `dev-init`
-- `70-deploy.nix` — deploy-rs push targets; a host with `sam.agentRuntime.host.enable` also gets the `agent-runtime` template profile (#140)
+- `70-deploy.nix` — deploy-rs push targets
 - `hosts/<name>.nix` — per-host distribution declarations
 
 ### Module Registry (`20-module-registry.nix`)
@@ -108,11 +101,10 @@ Composable role modules assigned per-host via `variables.nix`:
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node; disables sleep/suspend
 - **homelab-server** — k3s control plane
-- **runtime-host** — headless agent-runtime (nspawn) host, msi-ms7758 and acer-swift: the shared template set,
-  egress allowlist and run credential, the deploy-rs target, no Stylix outside a desktop specialisation, and
-  nix-gc / nix-optimise / nixos-upgrade that wait for a synchronised clock (`systemd-time-wait-sync`), never
-  catch up at boot and run one at a time. The host file keeps only its measured capacity
-  (`sam.agentRuntime.host`, asserted to be set) and its hardware facts
+- **runtime-host** — headless worker host, msi-ms7758 and acer-swift, running the ephemeral nspawn workers
+  (`sam.workers`, docs/nspawn-workers.md): the run credential, the deploy-rs target, no Stylix outside a
+  desktop specialisation, and nix-gc / nix-optimise / nixos-upgrade that wait for a synchronised clock
+  (`systemd-time-wait-sync`), never catch up at boot and run one at a time
 - **rf-lab** — headless Wi-Fi learning appliance (naked-pi)
 - **embedded** — ESP32 development host (USB-serial, debug probes)
 

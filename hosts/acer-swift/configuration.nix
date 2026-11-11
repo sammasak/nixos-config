@@ -10,15 +10,6 @@ in
     ../../modules/hardware/video/${vars.videoDriver}.nix
   ];
 
-  # The supervised agent-runtime pilot (#165/#169): one instance at a time, admitted only while acer
-  # keeps 4 GiB free beyond the 3 GiB cap, sized from k3s's measured peak. The sizing, deploy, run
-  # and rollback are in docs/agent-runtime-pilot.md and docs/agent-runtime-coder.md; the templates
-  # and their egress allowlist are the runtime-host role's.
-  sam.agentRuntime.host = {
-    maxConcurrentInstances = 1;
-    reserve = { memoryMiB = 4096; diskMiB = 51200; };
-  };
-
   sam.profile = vars;
   # One ephemeral nspawn worker (docs/nspawn-workers.md), inside the 4 GiB k3s reserve; the host is no worker itself.
   sam.workers = {

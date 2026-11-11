@@ -13,15 +13,8 @@ in
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
   homelab.msiPowerSchedule.selfShutdown.enable = true;
 
-  # 15.9 GiB RAM, shared with k3s and the ollama pod: 8 GiB and 2 CPUs stay free of instances, which
-  # leaves room for two at the templates' 3 GiB cap. Admission still checks CPU, MemAvailable and
-  # free disk before each create (roles/runtime-host.nix has the shared policy).
-  sam.agentRuntime.host = {
-    maxConcurrentInstances = 2;
-    reserve = { cpus = 2; memoryMiB = 8192; diskMiB = 51200; };
-  };
-
-  # Two ephemeral nspawn workers in the 6 CPUs / ~8 GiB left beside the reserve (docs/nspawn-workers.md).
+  # 15.9 GiB RAM, shared with k3s and the ollama pod: two ephemeral nspawn workers fit in the
+  # 6 CPUs / ~8 GiB left after keeping 2 CPUs and 8 GiB for those (docs/nspawn-workers.md).
   # No ghHostsFile: msi's lukas has no gh login (git push still works, over the bound SSH key).
   sam.workers = {
     count = 2;
