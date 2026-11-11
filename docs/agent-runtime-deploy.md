@@ -108,7 +108,7 @@ admission is the lever:
 | partial fleet after an activation failure on a later node | deploy-rs revokes the nodes it already activated in that run (its default `--rollback-succeeded true`): they return to their previous templates and keep admitting | VM: `tpl-split` (hosta activates, hostb refuses, hosta is revoked) |
 | GC during an in-flight job | the instance's template closure stays (rooted); collected after destroy | VM |
 | a template deploy while an instance runs | the instance keeps its template; new instances get the new one | VM |
-| a reboot | real hosts boot the current system generation; the template profile and the instance records persist (`docs/agent-runtime.md`: ambiguous runs are not replayed) | #138 VM test; a VM test reboot boots the test's own system, so not here |
+| a reboot | real hosts boot the current system generation; the template profile and the instance records persist (`docs/agent-runtime.md`: ambiguous runs are not replayed; `agent-runtime.service` settles the interrupted ones, `docs/agent-runtime-runbook.md`) | #138 VM test; a VM test reboot boots the test's own system, so not here |
 
 ## Hosts
 
