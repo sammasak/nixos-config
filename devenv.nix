@@ -126,6 +126,7 @@ let
   # documentation (docs/ or a top-level *.md) since origin/main gets the lints; no
   # merge-base means the full gate, and so does a doc a test reads (scripts/test-*
   # names it: docs/ssh-host-keys.md) and a nested *.md, which can be deployed config.
+  # A docs-only push on top of a main merged on GitHub skips that combined tree's first full gate.
   qaPush = gate "nixos-qa-push" (with pkgs; [ git coreutils gnugrep ]) ''
     rev=''${PRE_COMMIT_TO_REF:-HEAD}
     case $rev in 0000000000000000000000000000000000000000) exit 0 ;; esac
