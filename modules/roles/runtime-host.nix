@@ -51,6 +51,12 @@ in
     onFailure = lib.mkIf (!desktop) (lib.mkForce [ ]);
   };
 
+  # Host networking that does not depend on whether an environment exists (modules/workers/core.nix): the first or last
+  # one must not change NetworkManager.conf, sysctl or modules-load, whose units restart NetworkManager and drop wifi.
+  networking.nat.enable = true; # forwarding and nf_nat_ftp; core.nix adds the instances' /16
+  boot.enableContainers = true; # bridge, macvlan, tap, tun
+  networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
+
   assertions = [
     {
       assertion = desktop || !(config.stylix.enable || config.services.displayManager.enable || config.services.xserver.enable);

@@ -665,6 +665,16 @@ in flake.nixosConfigurations.msi-ms7758.pkgs.writeText "pre" (builtins.concatStr
 """
 
 
+def check_host_network():
+    """The runtime-host's NetworkManager.conf, sysctl and modules-load are the same with no environment and with one:
+    a change in them restarts NetworkManager (wifi drops) and the deploy's confirmation session with it."""
+    expr = ('let b = (builtins.getFlake %s).nixosConfigurations.acer-swift; f = i: (b.extendModules { modules = [ ({ lib, ... }: { sam.workers.instances = lib.mkForce i; }) ]; }).config.environment.etc; '
+            'g = e: map (n: e.${n}.source.outPath) [ "NetworkManager/NetworkManager.conf" "sysctl.d/60-nixos.conf" "modules-load.d/nixos.conf" ]; in [ (g (f { })) (g (f { x = { }; })) ]' % nix_string(ROOT))
+    out = run_eval(expr)
+    zero, one = json.loads(out.stdout) if out.returncode == 0 else ([0], [1])
+    check(zero == one, f"a runtime-host's NetworkManager.conf, sysctl and modules-load do not depend on any environment existing ({out.stderr.strip()[-300:] or zero})")
+
+
 def check_id_check():
     out = subprocess.run(["nix", "build", "--impure", "--no-link", "--print-out-paths", "--expr", IDCHECK_BUILD % {"root": json.dumps(ROOT)}],
                          capture_output=True, text=True)
@@ -795,6 +805,7 @@ def main():
           f"the host daemon allows exactly the rootInGuest guests' users, not their root, not the other instance, and trusts none ({allowed}, {trusted})")
     check(ok.get("privateUsers") == "no" and not ok.get("extraFlags") and ok.get("binds") and not any(":" in b["dst"] for b in ok["binds"]) and ok.get("sudoPassword") is True,
           f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
+    check_host_network()
     out = nix_eval("{ }", NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("allowed") == ["*"] and got.get("mounts") == want_mounts,
