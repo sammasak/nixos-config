@@ -190,6 +190,19 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 - `/nix/store`, the nix db and the daemon socket are the host's (stock
   containers), so `nix build` and devenv use the host's store; `lukas` is not a
   trusted user on acer and msi.
+- A nested sandbox cannot mount a full procfs in a guest (nspawn masks parts of
+  `/proc`), so `modules/workers/nested-sandbox.nix` packages two wrappers that
+  mount `subset=pid`: one for Claude's `sandbox.bwrapPath` (managed settings,
+  which leave `sandbox.enabled` alone) and one as podman's `crun`. Verified
+  in a deployed guest on acer (2026-11-12): a sandboxed `claude -p` Bash call
+  sees only its own processes and cannot write to the home directory.
+  `podman run` and `podman build` work with `--network=none` only (no
+  `/dev/net/tun`); buildah is not on the guest's PATH. Inside, `free`, `uptime`
+  and `sysctl` fail. The bwrap sandbox runs as mapped uid 0 holding only
+  `CAP_SETFCAP` (more inside Claude's own nested namespace), not as the user and
+  not capability-free: `id -u` prints 0, `tar --same-owner` and chown-like
+  tools act as root, some tools refuse to run as root, and ssh picks root as its
+  default user.
 - lenovo hosts no environment, and eval refuses one: an environment holds its
   host user's SSH key, and lenovo's is the fleet's deploy key (`deploy` with
   passwordless sudo on every host, accepted from lenovo's address, which a

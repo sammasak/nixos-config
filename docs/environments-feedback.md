@@ -8,9 +8,9 @@ Append; move a line to fixed when its change lands.
 
 - `MemoryLow` protects nothing on acer and msi: cgroup2 is mounted without `memory_recursiveprot` (a second cgroup2 mount at `/run/cilium/cgroupv2`), and `environments.slice` counts `low 0`. The 2G reserve is a number, not a reserve (docs/environments-plan.md, item 3).
 - Nested sandboxes (acer `push`, 2026-11-12): nspawn's masks on `/proc` make the kernel refuse a full procfs in any nested user and pid namespace; the clean fix is nspawn's (systemd#34226, open). `subset=pid` works but has no `/proc/sys`, `meminfo`, `cpuinfo`, `stat`: `free`, `uptime`, `sysctl` fail; `nproc`, cargo and daemon `nix build` work.
-  - bwrap 0.12 cannot start on a subset proc (reads `/proc/sys/kernel/overflowuid`). Works: bind the outer `/proc`, mount `subset=pid` from inside as mapped uid 0, then drop all capabilities (wrapper verified by hand).
-  - podman 5.8 and buildah: no flag for the proc mount options. Works: an OCI runtime wrapper adding `subset=pid` to the bundle's `/proc` mount (`run` and `bud` verified), with the vfs driver (no `/dev/fuse`), cgroupfs, and `--network=none` (no `/dev/net/tun`).
-  - Claude Code `/sandbox`: `sandbox.enableWeakerNestedSandbox` binds the outer `/proc` (pid view of the whole guest); `sandbox.bwrapPath` can point at the wrapper. Neither run end to end yet.
+  - bwrap 0.12 cannot start on a subset proc (reads `/proc/sys/kernel/overflowuid`). Works: bind the outer `/proc`, mount `subset=pid` from inside as mapped uid 0, then run the command as mapped root with only `CAP_SETFCAP` and no-new-privs (wrapper verified by hand, also under `claude -p` with the sandbox on).
+  - podman 5.8 and buildah: no flag for the proc mount options. Works: an OCI runtime wrapper named crun in `containers.conf` via `engine.runtimes`, adding `subset=pid` to the bundle's `/proc` mount (`podman run`, `podman build` and `buildah bud` verified by hand), with the vfs driver (no `/dev/fuse`), cgroupfs, and `--network=none` (no `/dev/net/tun`).
+  - Claude Code `/sandbox`: `sandbox.enableWeakerNestedSandbox` binds the outer `/proc` (pid view of the whole guest); `sandbox.bwrapPath` (managed settings only) points at the wrapper, which ran under a real `claude -p`; the wrapper is packaged (#239) and verified in a deployed guest on acer.
 - A guest's own nix client (devenv, a local `--store`) asks the substituters itself; with the LAN blocked each lookup waited out the timeout: `delegation-test` 12 s to 467 s on msi, about 75 s per local-store command on acer. The caches' port is now excepted and the guest takes the host's `connect-timeout` (not yet measured after).
 - Guest `nix.conf` lists substituters and keys twice (the guest's defaults plus the inherited ones).
 - `nixos:nvim-check` rewrites `dotfiles/nvim/lazy-lock.json` in the working tree; a hook that fails to build leaves the previous pre-push gate active with no warning; `nixos:qa` prints no per-step timings; `file` and `strings` are not on a guest's PATH.
@@ -76,6 +76,8 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- Nested sandboxes (#239): open friction from the round that built it, kept for the next one: the placeholder Claude token is in the login environment but not in tool shells; Claude's wrapper puts its own bubblewrap first on PATH, so only managed settings can swap it; `--settings` ignores `sandbox.bwrapPath` without a warning; a fresh clone has no gate hooks until `devenv shell` has run once. One `podman run` right after the deploy failed with rootful storage paths and did not reproduce.
+
 - 2026-11-12 A guest's builds ignored the host's build bounds: the daemon takes a client's `max-jobs`/`cores` over its own, and a guest sent 8 jobs on all cores against the host's 2 x 2. Four independent 20 s derivations from an acer guest: 21 s with `NIX_BUILD_CORES=8` before, 41 s with 2 after the guest inherited the host's values (#230). The nixos-config gate is no slower bounded (9m09s against 9m02s to 9m24s).
 - 2026-11-12 The shared `~/.cache/nix` held Nix's evaluation cache, unsigned rows naming the derivation to build; each environment now mounts its own over `eval-cache-v6` (#230), the fetcher and tarball caches stay shared.
 - 2026-11-12 `blockedNetworks` at runtime on acer next to Cilium (#231): from a guest the host's sshd and k3s API (veth and LAN address), harmonia, lenovo, the Traefik address and a cluster service address are all closed; DNS, github.com over https and ssh, and the host's nix daemon work; cluster and host healthy after the deploy.
@@ -139,6 +141,9 @@ Append; move a line to fixed when its change lands.
   left to remove there; acer's 2913 is the case it addresses, to be re-counted at the next gate on acer.
 
 ## Gate timing
+
+After #237 (msi `gate`, bounded builds, fresh clone): `nixos:delegation-test` 16 s (was 467 s with the LAN caches blocked, 12 s before bounds), full `nixos:qa` 221 s (was 671 s, 204 s before bounds). `memory.events` all zero, peak 5.2 GiB.
+
 
 `nixos:qa` per step on msi-gate, warm store, seconds, before (`f4f6b87`) and after `feat/gate-speed-tests`, both with unbounded builds (max-jobs 8, cores 0).
 Total 690 s before, 218 s after (207 s before workers-eval's type cases went to two at a time after the batch, for memory). Every PASS line is unchanged but one

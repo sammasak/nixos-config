@@ -62,10 +62,10 @@ permission, what a host deploys, repo settings, money).
    resumed agent reads facts, not memory.
 6. **Nested sandboxes**: investigated (ledger, 2026-11-12). No tool asks for
    `subset=pid` itself; two wrappers work (bwrap: mount the subset from
-   inside, then drop capabilities; podman: an OCI runtime wrapper). Next:
-   package both in the guest, set `sandbox.bwrapPath`, and run Claude's
-   `/sandbox` and a `buildah bud` end to end. The real fix is upstream
-   (systemd#34226).
+   inside, then drop capabilities; podman: an OCI runtime wrapper). Both
+   are packaged in every guest (#239) and verified in a deployed one: a
+   sandboxed `claude -p` call, `podman run` and `podman build`. The real fix
+   is upstream (systemd#34226).
 
 ### Next (design work, each a day)
 
