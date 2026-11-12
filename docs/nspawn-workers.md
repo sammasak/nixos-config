@@ -33,7 +33,7 @@ sam.workers.instances = {
 | `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it |
 | `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
-| `rootInGuest` | `false` | its own 65536 uids (`--private-users`): guest root is an unprivileged host uid, and the user gets passwordless sudo. Its home and caches are owned on disk by its mapped ids (not id-mapped), it has its own sshd key and HostKeyAlias `<name>.environments.<prefix>`, and the state dir and per-container profiles and roots are mounted nosuid. Ran on msi (root1). From lenovo, `<name>.<prefix>` still expects the host's shared key |
+| `rootInGuest` | `false` | its own 65536 uids (`--private-users`): guest root is an unprivileged host uid, and the user gets passwordless sudo. Its home and caches are owned on disk by its mapped ids (not id-mapped; turning the option on or off shifts every id of them once, at the next container start), it has its own sshd key and HostKeyAlias `<name>.environments.<prefix>`, and the state dir and per-container profiles and roots are mounted nosuid. Ran on msi (root1, root2) |
 
 Host-wide: `sam.workers.pool.memory` (below) and `sam.workers.ntfyUrl` (null, or the ntfy topic that hears of failures, see Alerts).
 
@@ -152,6 +152,18 @@ of a PV or namespace meets validate-bash and Kyverno, and a guest has no kubecon
 gate (`--no-verify`, `-c core.hooksPath=`) meets the guests' own `no-verify-guard` PreToolUse hook, beside
 validate-bash in the same Bash hook list, which denies with exit 2 and never asks (an asking hook would turn the
 variable off for removals). The remote has no ruleset yet.
+
+### Guest root and the host
+
+nixpkgs' container module binds `/nix/var/nix/{profiles,gcroots}/per-container/<name>` read-write with an identity
+idmap, so guest root there can create files owned by any host uid below 65536, root included. Both parents are
+mounted `nosuid,nodev,noexec` while any instance has `rootInGuest`, which makes such a file inert; the host's root
+readers there only follow links (the daemon's root scan, the gcroots unit's `ln -sfn` and `mv -T`), and what is left
+is a disk-filling the guest already has through the daemon. Removing the last `rootInGuest` instance unmounts those
+binds and the state dir's during the switch, which can fail with EBUSY while a container still runs; a reboot or the
+next switch finishes it. From another host, `ssh <name>.<prefix>` trusts each name's key on first use
+(`~/.ssh/known_hosts_environments`), so a `rootInGuest` instance's own key is accepted there too; a name retired and
+declared again with a new key is refused until `ssh-keygen -R <name>.<prefix> -f ~/.ssh/known_hosts_environments`.
 
 ## What fails at build
 

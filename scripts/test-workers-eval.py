@@ -72,6 +72,8 @@ ASSERTED = [
     ("guest without sshd", "{ services.devEnvironments.guestModules = [ { services.openssh.enable = lib.mkForce false; } ]; }", "a guest module disabled sshd"),
     ("unknown credential", '{ services.devEnvironments.instances.ok.credentials = [ "nope" ]; }', "credentials names one that"),
     ("rootInGuest on the default allowed-users", "{ services.devEnvironments.instances.ok.rootInGuest = true; }", "rootInGuest adds its guest user to nix.settings.allowed-users"),
+    ("rootInGuest without a gid", '{ services.devEnvironments.instances.ok.rootInGuest = true; nix.settings.allowed-users = [ "alice" ]; users.groups.users.gid = lib.mkForce null; }',
+     "rootInGuest maps alice's group users, which declares no gid"),
     ("credential name", '{ services.devEnvironments.credentials."a b" = "/etc/x"; }', 'credentials.a b: a file name'),
 ]
 
@@ -233,7 +235,8 @@ GUEST = "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; 
 # two instances with rootInGuest next to one without: uid blocks, binds, host keys, mounts, the daemon's users
 ROOT_IN_GUEST_CASE = '{ services.devEnvironments.instances = { r.rootInGuest = true; s.rootInGuest = true; }; nix.settings.allowed-users = [ "alice" ]; }'
 ROOT_IN_GUEST = ('{ allowed = sys.config.nix.settings.allowed-users; trusted = sys.config.nix.settings.trusted-users or [ ]; '
-                 'nosuid = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); '
+                 'mounts = builtins.mapAttrs (_: f: f.options) (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); '
+                 'pre = builtins.listToAttrs (map (n: { name = n; value = sys.config.systemd.services."container@${n}".serviceConfig.ExecStartPre; }) [ "r" "s" "ok" ]); '
                  'act = sys.config.system.activationScripts.devEnvironments.text; ssh = sys.config.programs.ssh.extraConfig; } // ('
                  'let f = n: let c = sys.config.containers.${n}; in { inherit (c) privateUsers extraFlags; '
                  'binds = map (b: { src = b.hostPath; dst = b.mountPoint; ro = b.isReadOnly; }) (builtins.attrValues c.bindMounts); '
@@ -575,6 +578,43 @@ def check_no_verify():
     check(got == cases, f"the guard denies (exit 2) a push that skips the pre-push gate, and nothing else ({got})")
 
 
+# the id shift run for real on a tree of this user's files, with chown printed instead of done (the target ids are
+# outside any namespace a test can map): each file once, recorded, and nothing when the marker already agrees
+SHIFT_BUILD = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t.rootInGuest = true; } ]; }).config;
+in flake.nixosConfigurations.msi-ms7758.pkgs.writeText "pre" (builtins.concatStringsSep "
+" c.systemd.services."container@t".serviceConfig.ExecStartPre)
+"""
+
+
+def check_shift_ids(_):
+    out = subprocess.run(["nix", "build", "--impure", "--no-link", "--print-out-paths", "--expr", SHIFT_BUILD % {"root": json.dumps(ROOT)}],
+                         capture_output=True, text=True)
+    pre = pathlib.Path(out.stdout.strip()).read_text() if out.returncode == 0 else ""
+    exe = next((w for w in pre.split() if w.endswith("/bin/dev-env-shift-ids")), None)
+    script = pathlib.Path(exe).read_text() if exe else ""
+    if not script:
+        check(False, f"the id shift script builds ({out.stderr.strip()[-300:]})")
+        return
+    script = script.replace('chown -h "$nu:$ng" "$path"', 'echo "$nu:$ng ${path##*/}"')
+    with tempfile.TemporaryDirectory() as t:
+        d = pathlib.Path(t)
+        for sub in ("home/a", "eval-cache"):
+            (d / sub).mkdir(parents=True)
+        (d / "home/a/f").write_text("x")
+        uid, gid = os.getuid(), os.getgid()
+        run = lambda base: subprocess.run(["bash", "-c", script, "shift", str(d), str(base)], capture_output=True, text=True)
+        on, again = run(1885143040), run(1885143040)
+        (d / ".id-base").write_text("1885143040\n")
+        off = run(0)
+        want_on = {f"{1885143040 + uid}:{1885143040 + gid} {n}" for n in ("home", "a", "f", "eval-cache")}
+        check(set(on.stdout.splitlines()) == want_on and (d / ".id-base").read_text().strip() == "0" and again.stdout == ""
+              and off.stdout == "" and on.returncode == 0,
+              f"the id shift moves every file of the dirs into the block once and records it; a second run does nothing ({on.stdout.splitlines()}, {again.stdout!r}, {on.stderr.strip()[-200:]})")
+
+
 def check_scripts():
     """Runs both wrappers against stubs that print their argv."""
     out = run_eval(SCRIPTS % {"root": json.dumps(ROOT)})
@@ -661,8 +701,19 @@ def main():
     check(all(f'echo "{n}.environments.box ' in act and f"HostKeyAlias {n}.environments.box" in ssh for n in ("r", "s"))
           and "HostKeyAlias environments.box" in ssh,
           f"each rootInGuest instance has its own host key and HostKeyAlias in known_hosts and the ssh config; the others keep the shared one")
-    check(sorted(got.get("nosuid", [])) == ["/nix/var/nix/gcroots/per-container", "/nix/var/nix/profiles/per-container", "/var/lib/dev-environments"],
-          f"the state dir and the per-container profiles and roots are mounted nosuid ({got.get('nosuid')})")
+    want_mounts = {"/var/lib/dev-environments": ["bind", "nosuid", "nodev", "x-mount.mkdir"],
+                   "/nix/var/nix/profiles/per-container": ["bind", "nosuid", "nodev", "x-mount.mkdir", "noexec"],
+                   "/nix/var/nix/gcroots/per-container": ["bind", "nosuid", "nodev", "x-mount.mkdir", "noexec"]}
+    check(got.get("mounts") == want_mounts,
+          f"the state dir is bound nosuid,nodev and the per-container profiles and roots nosuid,nodev,noexec, nothing else ({got.get('mounts')})")
+    base = r.get("privateUsers")
+    owners = re.findall(r'install -d -m 0700 -o (\S+) -g (\S+) "\$d/(r|ok)/home"', act)
+    shifts = {n: next((c for c in got.get("pre", {}).get(n, []) if "dev-env-shift-ids" in c), "").split()[1:] for n in ("r", "ok")}
+    check(isinstance(base, int) and sorted(owners) == sorted([(str(base + 1000), str(base + 100), "r"), ("alice", "users", "ok")])
+          and shifts == {"r": ["/var/lib/dev-environments/r", str(base)], "ok": ["/var/lib/dev-environments/ok", "0"]}
+          and "chown -hR" not in act,
+          f"a rootInGuest home is made with its mapped ids and its container start shifts its dirs to its block, a plain one to the host ids ({owners}, {shifts})")
+    check_shift_ids(next((c for c in got.get("pre", {}).get("r", []) if "dev-env-shift-ids" in c), "").split()[0])
     allowed, trusted = got.get("allowed", []), got.get("trusted", [])
     check({"vu-r-1000", "vu-s-1000", "alice"} <= set(allowed) and not any(u.startswith(("vu-r-0", "vu-s-0", "vu-ok-", "@")) for u in allowed)
           and not any(u.startswith("vu-") for u in trusted),

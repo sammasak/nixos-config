@@ -29,6 +29,24 @@ let
   # Under rootInGuest the writable binds are not id-mapped: on disk they belong to the guest user's mapped ids, so guest
   # root writes as baseOf w, never as a host user; its own host key and alias keep it from posing as another instance.
   owner = w: if w.rootInGuest then { u = toString (baseOf w + cfg.uid); g = toString (baseOf w + gid); } else { u = user; g = group; };
+  # Moves an instance's writable dirs to the id block it runs in (0: the host's ids), keeping each id's low 16 bits,
+  # so whatever any guest uid made follows. Once per change: the marker names the block the dirs are in.
+  shiftIds = pkgs.writeShellApplication {
+    name = "dev-env-shift-ids";
+    runtimeInputs = [ pkgs.coreutils pkgs.findutils ];
+    text = ''
+      dir=$1 base=$2
+      [[ $(cat "$dir/.id-base" 2>/dev/null || echo 0) == "$base" ]] && exit 0
+      for sub in home eval-cache nix-cache; do
+        [[ -d $dir/$sub && ! -L $dir/$sub ]] || continue
+        find "$dir/$sub" -xdev -printf '%U %G %p\0' | while IFS=' ' read -r -d "" u g path; do
+          nu=$(( base + u % 65536 )) ng=$(( base + g % 65536 ))
+          [[ $u == "$nu" && $g == "$ng" ]] || chown -h "$nu:$ng" "$path"
+        done
+      done
+      echo "$base" > "$dir/.id-base"
+    '';
+  };
   aliasOf = w: if w.rootInGuest then "${w.name}.${keyAlias}" else keyAlias;
   hostKeyOf = w: if w.rootInGuest then "${cfg.stateDir}/${w.name}/ssh_host_ed25519_key" else "${cfg.stateDir}/ssh_host_ed25519_key";
   # a fish single-quoted word reads \\ and \' as escapes, a POSIX one does not
@@ -357,12 +375,9 @@ in
           [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
           echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
           chmod 0644 "$d/known_hosts"
-          ${lib.concatMapStrings (w: let o = owner w; hostIds = "${toString cfg.uid}:${toString gid}"; mapped = "${toString (baseOf w + cfg.uid)}:${toString (baseOf w + gid)}"; in ''
+          ${lib.concatMapStrings (w: let o = owner w; in ''
             install -d -m 0700 "$d/${w.name}"
             [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/home"
-            # turning rootInGuest on or off moves the user's own files between the host user's ids and the mapped ones
-            [[ $(stat -c %u:%g "$d/${w.name}/home") == ${if w.rootInGuest then mapped else hostIds} ]] \
-              || chown -hR --from=${if w.rootInGuest then hostIds else mapped} ${if w.rootInGuest then mapped else hostIds} "$d/${w.name}/home"
             # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
             mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
             install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
@@ -494,6 +509,7 @@ in
           { assertion = !lib.elem w.name otherHosts && !lib.elem "${w.name}.${cfg.prefix}" otherHosts; message = "${i}: networking.hosts already maps the name to another address."; }
           { assertion = lib.length (lib.filter (d: d ? ${w.name}) options.containers.definitions) == (if w.paused then 0 else 1); message = "${i}: containers.${w.name} is also declared elsewhere."; }
           { assertion = lib.stringLength w.hostName <= 63; message = "${i}: hostname ${w.hostName} is longer than 63."; }
+          { assertion = !w.rootInGuest || gid != null; message = "${i}.rootInGuest maps ${user}'s group ${group}, which declares no gid."; }
           {
             assertion = !w.rootInGuest || lib.elem user config.nix.settings.allowed-users || lib.elem "*" config.nix.settings.allowed-users;
             message = "${i}.rootInGuest adds its guest user to nix.settings.allowed-users, which replaces the default \"*\": list every host user that runs nix there (${user} at least).";
@@ -561,6 +577,8 @@ in
               "-${pkgs.writeShellScript "worker-wait-resolv-conf" ''
                 for _ in {1..30}; do ${pkgs.gnugrep}/bin/grep -q ^nameserver /etc/resolv.conf && exit; ${pkgs.coreutils}/bin/sleep 1; done
               ''}"
+              # here, not in activation: the guest is stopped, so nothing it writes keeps the old ids
+              "${lib.getExe shiftIds} ${cfg.stateDir}/${w.name} ${toString (if w.rootInGuest then baseOf w else 0)}"
             ];
           };
         })
@@ -697,13 +715,13 @@ in
           && lib.elem host (lib.concatMap (k: k.hostNames) (lib.attrValues config.programs.ssh.knownHosts));
         message = "services.devEnvironments.jumpHosts.${prefix}: the prefix is [a-z][a-z0-9-]*, and ${host} must be pinned in programs.ssh.knownHosts.";
       }) cfg.jumpHosts;
-      # The environments' key is generated on their host, so it cannot be pinned here: it is trusted on first use,
-      # over a jump through the pinned host, and kept apart from known_hosts.
+      # The environments' keys are generated on their host, so they cannot be pinned here: each name's is trusted on
+      # first use, over a jump through the pinned host, kept apart from known_hosts. One entry per name, not one alias
+      # per host: a rootInGuest instance has a key of its own, which this host cannot know of.
       programs.ssh.extraConfig = lib.concatStrings (lib.mapAttrsToList (prefix: host: ''
         Host *.${prefix}
           ProxyJump ${host}
           User ${user}
-          HostKeyAlias environments.${prefix}
           UserKnownHostsFile ~/.ssh/known_hosts_environments
           StrictHostKeyChecking accept-new
           ConnectTimeout 10
