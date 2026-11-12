@@ -342,7 +342,7 @@ def check_gcroots(facts):
 
 
 ACT = "{ inherit (sys.config.services.devEnvironments) stateDir; text = sys.config.system.activationScripts.devEnvironments.text; }"
-RETIRED = '{ services.devEnvironments.retired = [ "gone" "live" ]; }'
+RETIRED = '{ services.devEnvironments.retired = [ "gone" "live" "link" ]; }'
 
 
 def userns(*argv, **kw):
@@ -414,12 +414,18 @@ def check_activation():
 
             files = pathlib.Path(fresh_state())
             for n in ("gone", "live", "kept"):
-                (files / n).mkdir()
+                (files / n / "home").mkdir(parents=True)
+                (files / n / "home" / "work").write_text("unpushed")
                 (state / "profiles" / n).mkdir(parents=True)
+            (files / "link").symlink_to(victim)
             rc, tree, err = run("retired", active=["live"])
-            check(rc == 0 and "gone" not in tree and "live" in tree and "kept" in tree and not (state / "profiles" / "gone").exists()
-                  and (state / "profiles" / "live").exists(),
-                  f"a retired instance is removed with its profiles unless its container is active (rc {rc}, {sorted(tree)}, {err.strip()[-200:]})")
+            trash = [p for p in tree if p.startswith(".trash/gone-") and p.count("/") == 1]
+            check(rc == 0 and "gone" not in tree and len(trash) == 1 and (files / trash[0] / "home/work").read_text() == "unpushed"
+                  and "live" in tree and "kept" in tree and (files / "link").is_symlink() and victim.is_dir()
+                  and not (state / "profiles" / "gone").exists() and (state / "profiles" / "live").exists(),
+                  f"a retired home moves to the trash and its profiles go, unless its container is active; a symlink is left (rc {rc}, {sorted(tree)}, {err.strip()[-200:]})")
+            rc2, tree2, err2 = run("retired", active=["live"])
+            check(rc2 == 0 and tree2 == tree, f"retiring again changes nothing and exits 0 (rc {rc2}, {err2.strip()[-200:]})")
         finally:
             userns("rm", "-rf", str(state))
 

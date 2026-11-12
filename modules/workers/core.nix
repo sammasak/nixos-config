@@ -1,6 +1,6 @@
 # Declared developer environments, free of this fleet (modules/workers/default.nix is its adapter): each
 # `services.devEnvironments.instances.<name>` is a stock `containers.<name>` with an ephemeral root, a persistent home
-# and an agent reached over ssh; an instance moved to `retired` has its home deleted.
+# and an agent reached over ssh; an instance moved to `retired` has its home trashed for a week.
 { config, lib, pkgs, options, ... }:
 let
   inherit (lib) mkOption types;
@@ -319,15 +319,21 @@ in
         };
       };
 
-      # Deletes only what `retired` names: a rollback or an older checkout that lacks an instance just stops it.
+      # Trashes only what `retired` names: a rollback or an older checkout that lacks an instance just stops it.
       system.activationScripts.devEnvironments = lib.mkIf (cfg.instances != { } || cfg.retired != [ ]) {
         deps = [ "users" ];
         text = ''
           d=${lib.escapeShellArg cfg.stateDir}
+          [[ -d $d ]] && install -d -m 0700 "$d/.trash"
           for n in ${lib.escapeShellArgs cfg.retired}; do
             ${config.systemd.package}/bin/systemctl is-active --quiet "container@$n.service" && continue
-            rm -rf --one-file-system "$d/$n" "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
+            # a rename on the state dir's filesystem, never a copy, and never through a link
+            [[ ! -L $d/$n && -d $d/$n ]] && mv -T --no-copy "$d/$n" "$d/.trash/$n-$(date +%Y%m%d-%H%M%S)"
+            rm -rf --one-file-system "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
           done
+          # Aged by when it was trashed (the rename sets the entry's ctime), not by tmpfiles: that ages each file by its
+          # own times, so a retired home's old files would go at its next clean.
+          [[ -d $d/.trash ]] && ${pkgs.findutils}/bin/find "$d/.trash" -mindepth 1 -maxdepth 1 -cmin +10080 -exec rm -rf --one-file-system {} +
           install -d -m 0711 "$d"
           install -d -m 0700 -o ${user} -g ${group} "$d/.nix-cache"
           [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"

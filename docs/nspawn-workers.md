@@ -84,7 +84,7 @@ neighbour was reclaimed to 59M.
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
-| Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later | 23 s; home, profile and GC roots deleted |
+| Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later | 23 s; profile and GC roots deleted, the home moved to `<stateDir>/.trash/<name>-<date>` and deleted at the first activation a week later (recover it with `mv` meanwhile) |
 
 Removing a declaration only stops the environment: a rollback, a deploy from
 an older checkout or acer's weekly auto-upgrade from GitHub `main` lacks
@@ -190,7 +190,7 @@ Manager activates on it at every boot (collisions are kept as `*.backup`).
 | Change of `agent`, `model`, credentials or bind mounts | `worker-<name>` restarts and, through `PartOf`, the container: a restart |
 | Restart or host reboot | home kept; the workspace comes back and runs `claude --continue` when a transcript of `$HOME` exists, followed by a notice that its running work was killed, else a fresh `claude` with the prompt |
 | Removed from the config, deployed | units stop, the workspace closes, the home is kept |
-| Named in `retired`, deployed | activation deletes `/var/lib/workers/<name>` and its `/nix/var/nix/{profiles,gcroots}/per-container/<name>` |
+| Named in `retired`, deployed | activation moves `/var/lib/workers/<name>` to `/var/lib/workers/.trash/` (deleted a week later) and deletes its `/nix/var/nix/{profiles,gcroots}/per-container/<name>` |
 
 `worker-<name>`'s unit file holds the instance's agent, model, address and bind
 mounts and no store path, so a nixpkgs bump or a fleet-wide change never
