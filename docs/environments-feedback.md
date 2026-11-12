@@ -117,3 +117,28 @@ Append; move a line to fixed when its change lands.
 - herman#5 was handed out although PR #34 already implemented it; the agent caught it. Step 1 of the process now checks for an open PR.
 - The brief named `CLAUDE.md`, which herman does not have: briefs name no file, the agent finds the repo's guidance.
 - `nixos:worker-permissions-test` read `spawn.nix` from the skills input and a numbered container; it now checks the workers module and a probe instance that replaces the committed ones.
+
+## Gate timing
+
+`nixos:qa` per step on msi-gate, warm store, seconds, before (`f4f6b87`) and after `feat/gate-speed-tests`, both with unbounded builds (max-jobs 8, cores 0).
+Total 690 s before, 218 s after (207 s before workers-eval's type cases went to two at a time after the batch, for memory). Every PASS line is unchanged but one
+(workers-eval's nftables case now lists only the module's own assertion). A docs-only push now runs the lints alone.
+
+| Step | Before | After | Change |
+|------|-------:|------:|--------|
+| lint-comments, lint-shell, secrets-verify | 1 | 1 | |
+| nvim-check | 19 | 0 | values from the probe |
+| flake-check | 56 | 57 | unchanged; it already built every x86 host (deploy-activate) and evaluated the Pis |
+| verify | 59 | — | removed: repeated flake-check |
+| gate-probe (new) | — | 28 | one evaluation of every value the tests read (`scripts/gate-probe.nix`) |
+| native-otel-relay, native-otel-fish | 4 | 2 | relay helper from the probe |
+| claude-settings | 14 | 2 | paths from the probe |
+| coordinator-wiring | 56 | 21 | 12 nix calls to the probe; 20 s of it is the script's own lock wait |
+| worker-permissions | 245 | 32 | ~25 nix calls to the probe; the three 30 s startup screens side by side |
+| workers-eval | 134 | 46 | non-type cases in one process (only core.nix's assertions), then the type cases two at a time |
+| ollama-portforward | 16 | 11 | the rest is the test's own sleeps |
+| known-hosts | 14 | 1 | 10 nix calls to the probe |
+| build-bounds | 5 | 0 | |
+| delegation | 16 | 12 | the rest is devenv |
+| otel-rollback | 30 | 5 | 15 nix calls to the probe plus one evaluation of the rolled-back copy |
+| rf-lab-boundary, runtime-host, rf-beacons | 18 | 0 | |

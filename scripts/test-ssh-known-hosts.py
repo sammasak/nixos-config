@@ -2,13 +2,14 @@
 """Wiring test for modules/core/ssh-known-hosts.nix (nixos-config#86): the pinned host keys are the verified ones
 (fingerprints recorded here and in docs/ssh-host-keys.md), every name and address of each host is covered, a host
 pins loopback to its own key only, every client fails closed, deploy-rs too, and the old github pin is gone."""
-import json
 import os
 import pathlib
 import re
 import subprocess
 import sys
 import tempfile
+
+import gate_probe
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FAILED = False
@@ -40,13 +41,6 @@ def check(condition, message):
         print(f"FAIL: {message}")
     else:
         print(f"PASS: {message}")
-
-
-def nix_json(attr):
-    out = subprocess.run(["nix", "eval", "--json", attr], cwd=ROOT, capture_output=True, text=True)
-    if out.returncode != 0:
-        sys.exit(f"nix eval {attr} failed:\n{out.stderr}")
-    return json.loads(out.stdout)
 
 
 def ssh_to_age(public_key):
@@ -99,7 +93,8 @@ def verify_script_checks(known_hosts_text):
 
 
 def main():
-    hosts = nix_json(".#nixosConfigurations.lenovo.config.programs.ssh.knownHosts")
+    P = gate_probe.section("known-hosts")
+    hosts = P["pinned"]["lenovo"]
     check(set(hosts) == set(EXPECTED), f"exactly the verified hosts are pinned (got {sorted(hosts)})")
     for name, (names, fp) in EXPECTED.items():
         entry = hosts.get(name) or {}
@@ -115,11 +110,11 @@ def main():
         age = ssh_to_age(hosts[name]["publicKey"])
         check(age == recipient and re.search(rf"- {re.escape(recipient)}\s+# {re.escape(name)}\b", sops) is not None,
               f"{name}: the pinned key is the host's sops recipient in secrets/.sops.yaml (evidence independent of ssh)")
-    acer = nix_json(".#nixosConfigurations.acer-swift.config.programs.ssh.knownHosts")
+    acer = P["pinned"]["acer-swift"]
     check(acer["acer-swift"]["hostNames"] == EXPECTED["acer-swift"][0] + LOOPBACK
           and acer["lenovo-21CB001PMX"]["hostNames"] == EXPECTED["lenovo-21CB001PMX"][0],
           "a host pins localhost to its own key only (acer's entry carries loopback on acer, lenovo's does not)")
-    known = nix_json('.#nixosConfigurations.lenovo.config.environment.etc."ssh/ssh_known_hosts".text')
+    known = P["knownHostsFile"]
     lines = [l for l in known.splitlines() if l.strip()]
     check(len(lines) == len(EXPECTED), f"/etc/ssh/ssh_known_hosts has one line per host ({len(lines)})")
     for name, (names, _) in EXPECTED.items():
@@ -127,7 +122,7 @@ def main():
         check(line is not None and all(n in line.split(" ", 1)[0].split(",") for n in names),
               f"{name}: the generated line lists every name and address")
     for host in ("lenovo", "acer-swift"):
-        rendered = nix_json(f'.#nixosConfigurations.{host}.config.environment.etc."ssh/ssh_config".text')
+        rendered = P["sshConfig"][host]
         strict = re.search(r"Host \*\n\s*StrictHostKeyChecking yes\n\s*UpdateHostKeys no", rendered)
         check(strict is not None and strict.start() < rendered.index("# Generated options"),
               f"{host}: the rendered ssh_config fails closed for every host, ahead of nixpkgs' generated Host * block")
@@ -143,11 +138,10 @@ def main():
         check(run.returncode == 0 and "stricthostkeychecking true" in eff and "updatehostkeys false" in eff
               and "globalknownhostsfile /etc/ssh/ssh_known_hosts" in eff,
               f"{host}: ssh -G on the rendered file resolves to strict checking against the pinned file")
-    check(nix_json(".#nixosConfigurations.lenovo.options.sam.sshKnownHosts.strict.default") is True
-          and nix_json(".#nixosConfigurations.lenovo.options.sam.sshKnownHosts.enable.default") is True,
+    check(P["defaults"]["strict"] is True and P["defaults"]["enable"] is True,
           "the module is one switch (enable) plus one for strictness, both on by default")
     for node in ("lenovo", "acer-swift", "black-pi"):
-        opts = nix_json(f".#deploy.nodes.{node}.sshOpts")
+        opts = P["sshOpts"][node]
         check(opts == ["-o", "StrictHostKeyChecking=yes"], f"deploy-rs node {node} refuses unknown or changed host keys")
     verify_script_checks(known)
     services = (ROOT / "modules/core/services.nix").read_text()

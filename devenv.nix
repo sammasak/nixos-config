@@ -19,39 +19,41 @@ let
   # Isolated config from the generated files, not ~/.config/nvim: +qa against
   # the live dir would exercise the deployed (possibly stale) generation and
   # mask errors, since +qa exits 0 even on an init throw.
-  nvimCheck = gate "nixos-nvim-check" (with pkgs; [ nix gnugrep coreutils ]) ''
-    hm='.#nixosConfigurations.lenovo.config.home-manager.users.lukas'
-    NV=$(nix build "$hm.programs.neovim.finalPackage" --no-link --print-out-paths)
+  nvimCheck = gate "nixos-nvim-check" (with pkgs; [ nix python3 jq gnugrep coreutils ]) ''
+    p=$(python3 scripts/gate_probe.py nvim-check)
+    NV=$(jq -r .nvim <<<"$p")
     cfg=$(mktemp -d); trap 'rm -rf "$cfg"' EXIT
     mkdir -p "$cfg/nvim"
     ln -s "$PWD/dotfiles/nvim/lua" "$cfg/nvim/lua"
     ln -s "$PWD/dotfiles/nvim/lazy-lock.json" "$cfg/nvim/lazy-lock.json"
-    nix eval --raw "$hm.xdg.configFile.\"nvim/init.lua\".text" > "$cfg/nvim/init.lua"
-    nix eval --raw "$hm.xdg.configFile.\"nvim/nix.lua\".text" > "$cfg/nvim/nix.lua"
+    jq -j .init <<<"$p" > "$cfg/nvim/init.lua"
+    jq -j .nix <<<"$p" > "$cfg/nvim/nix.lua"
     out=$(XDG_CONFIG_HOME="$cfg" "$NV/bin/nvim" --headless +qa 2>&1 || true)
     if printf '%s' "$out" | grep -qiE 'error|stack traceback|E[0-9]{3,}:'; then
       printf '%s\n' "$out"; echo "nvim-check: startup errored" >&2; exit 1
     fi
   '';
 
+  # Also builds every x86 host (deploy-rs' deploy-activate check holds their toplevels) and, with
+  # --all-systems, evaluates the aarch64 Pis: the one place a host build is checked.
   flakeCheck = gate "nixos-flake-check" [ pkgs.nix ] ''
     nix flake check --all-systems --no-write-lock-file
   '';
 
-
-  verifyHosts = gate "nixos-verify" (with pkgs; [ bash nix coreutils ]) ''
-    bash scripts/verify-all-hosts.sh
+  # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
+  # its own builds only its section.
+  probe = gate "nixos-gate-probe" [ pkgs.nix ] ''
+    nix build --impure --no-link --print-out-paths --expr '(import ./scripts/gate-probe.nix { }).json'
   '';
 
-  claudeSettingsTest = gate "claude-settings-test" (with pkgs; [ nix python3 ]) ''
-    hm='.#nixosConfigurations.lenovo.config.home-manager.users.lukas'
-    files=$(nix build "$hm.home-files" --no-link --print-out-paths)
-    CLAUDE_BIN=$(nix build "$hm.programs.claude-code.package" --no-link --print-out-paths)/bin/claude \
-      python3 scripts/test-native-otel-subprocess-env.py "$files/.claude/settings.json"
+  claudeSettingsTest = gate "claude-settings-test" (with pkgs; [ nix python3 jq ]) ''
+    p=$(python3 scripts/gate_probe.py claude-settings)
+    CLAUDE_BIN=$(jq -r .package <<<"$p")/bin/claude \
+      python3 scripts/test-native-otel-subprocess-env.py "$(jq -r '."home-files"' <<<"$p")/.claude/settings.json"
   '';
 
-  nativeOtelRelayTest = gate "native-otel-relay-test" (with pkgs; [ nginx nix python3 ]) ''
-    helper=$(nix eval --raw .#nixosConfigurations.lenovo.config.systemd.services.native-otel-relay.serviceConfig.ExecStartPre)
+  nativeOtelRelayTest = gate "native-otel-relay-test" (with pkgs; [ nginx nix python3 jq ]) ''
+    helper=$(python3 scripts/gate_probe.py native-otel-relay | jq -r .helper)
     ${pkgs.python3}/bin/python scripts/test-native-otel-relay.py "$helper" "${pkgs.nginx}/bin/nginx"
   '';
 
@@ -106,22 +108,40 @@ let
   '';
 
 
-  qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
-    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest workerPermissionsTest workersEvalTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest
-    rfLabBoundaryTest runtimeHostTest rfBeaconsTest
-  ]);
+  run = lib.concatMapStringsSep "\n" lib.getExe;
+  lints = [ lintComments lintShell ];
+  qa = gate "nixos-qa" [ ] ''
+    ${run (lints ++ [ secretsVerify flakeCheck ])}
+    GATE_PROBE=$(${lib.getExe probe})
+    export GATE_PROBE
+    ${run [
+      nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest
+      ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest rfBeaconsTest
+    ]}
+  '';
 
-  # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
+  # Runs the gate on the PUSHED commit in a throwaway worktree, so neither
   # unstaged edits nor a different checked-out branch can make it pass.
-  # prek exposes only the first ref of a multi-ref push.
-  qaPush = gate "nixos-qa-push" [ pkgs.git pkgs.coreutils ] ''
+  # prek exposes only the first ref of a multi-ref push. A push that changes only
+  # documentation (docs/ or a top-level *.md) since origin/main gets the lints; no
+  # merge-base means the full gate, and so does a doc a test reads (scripts/test-*
+  # names it: docs/ssh-host-keys.md) and a nested *.md, which can be deployed config.
+  # A docs-only push on top of a main merged on GitHub skips that combined tree's first full gate.
+  qaPush = gate "nixos-qa-push" (with pkgs; [ git coreutils gnugrep ]) ''
     rev=''${PRE_COMMIT_TO_REF:-HEAD}
     case $rev in 0000000000000000000000000000000000000000) exit 0 ;; esac
     tree=$(mktemp -d)
     trap 'git worktree remove --force "$tree"' EXIT
     git worktree add --quiet --detach "$tree" "$rev"
     cd "$tree"
+    # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
+    # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
+    if base=$(git merge-base HEAD origin/main) && changed=$(git diff --no-renames --name-only "$base" HEAD) \
+      && ! grep -qvE '^docs/|^[^/]+\.md$' <<<"$changed" && ! grep -rqF -f - --include='test-*' scripts <<<"$changed"; then
+      echo "nixos-qa: $(git rev-parse --short HEAD) changes only documentation since origin/main, lints only"
+      ${run lints}
+      exit
+    fi
     echo "nixos-qa on pushed commit $(git rev-parse --short HEAD)"
     ${lib.getExe qa}
   '';
@@ -356,8 +376,7 @@ in
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
     "nixos:secrets-verify" = task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
-    "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
-    "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
+    "nixos:flake-check" = task "nix flake check over all systems: builds every x86 host, evaluates the Pis" flakeCheck;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
