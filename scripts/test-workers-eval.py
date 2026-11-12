@@ -341,6 +341,17 @@ def check_gcroots(facts):
         check(run.returncode != 0 and (roots / "n" / "home-stale").is_symlink(),
               f"a scan that fails fails the refresh, and with it the garbage collection, and drops no root ({run.returncode})")
         check("find \"$home\" -ignore_readdir_race" in facts["gcroots"], "the scan ignores a directory a running guest deletes under it")
+        # an overlay instance's db lists host paths: each that exists is rooted, a stale root of it goes
+        nix = pathlib.Path(d, "stubnix")
+        nix.mkdir()
+        nix.joinpath("nix").write_text(f"#!/bin/sh\nprintf '%s\\n' {store} /nix/store/zzz-gone\n")
+        nix.joinpath("nix").chmod(0o755)
+        (state / "n" / "store" / "state" / "db").mkdir(parents=True)
+        (roots / "n" / "overlay-old").symlink_to(store)
+        run = refresh(f"{nix}:{os.environ['PATH']}")
+        rooted = sorted(p.name for p in (roots / "n").glob("overlay-*"))
+        check(run.returncode == 0 and rooted == [f"overlay-{store.name}"] and not (roots / "n" / "overlay-zzz-gone").exists(),
+              f"a path an overlay instance's db refers to is rooted when it exists on the host, and its stale root is dropped ({run.returncode}, {rooted}, {run.stderr.strip()[-200:]})")
 
 
 ACT = "{ inherit (sys.config.services.devEnvironments) stateDir; text = sys.config.system.activationScripts.devEnvironments.text; }"
@@ -527,17 +538,31 @@ def check_paused():
 
 STORE = ('let g = n: sys.config.containers.${n}.config; in { flags = builtins.mapAttrs (_: x: x.extraFlags) sys.config.containers;'
          ' ro = { store = (g "ro").nix.settings.store; features = (g "ro").nix.settings.experimental-features; daemon = (g "ro").nix.daemon.enable; };'
-         ' plain = { store = (g "ok").nix.settings.store or null; daemon = (g "ok").nix.daemon.enable; }; }')
+         ' ov = { conf = (g "ov").systemd.services.nix-daemon.environment.NIX_CONFIG or null; features = (g "ov").nix.settings.experimental-features;'
+         ' optimise = (g "ov").nix.settings.auto-optimise-store; sandbox = (g "ov").nix.settings.sandbox; tier = sys.config.containers.ov.bindMounts ? "/var/lib/dev-environments/ov/store"; daemon = (g "ov").nix.daemon.enable; };'
+         ' plain = { store = (g "ok").nix.settings.store or null; daemon = (g "ok").nix.daemon.enable; conf = (g "ok").systemd.services.nix-daemon.environment.NIX_CONFIG or null;'
+         ' tier = sys.config.containers.ok.bindMounts ? "/var/lib/dev-environments/ok/store"; };'
+         ' act = builtins.match ".*install -d -m 0755 \\"[^\\"]*/ov/store/upper\\" \\"[^\\"]*/ov/store/state\\".*" sys.config.system.activationScripts.devEnvironments.text != null; }')
+STORE_CASE = '{ services.devEnvironments.instances = { ro.store = "read-only"; ov.store = "overlay"; }; }'
+HIDE = ["--tmpfs=/nix/var/nix/daemon-socket", "--tmpfs=/nix/var/nix/temproots:mode=1777"]
 
 
 def check_store():
-    """store = "read-only" hides the daemon socket and opens the store read-only in that guest alone."""
-    out = nix_eval('{ services.devEnvironments.instances.ro.store = "read-only"; }', STORE)
+    """read-only hides the daemon socket and opens the store read-only; overlay also gives that guest's own daemon a local-overlay
+    store over the host's, its tier mounted by nspawn; the default instance is unchanged."""
+    out = nix_eval(STORE_CASE, STORE)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got.get("flags") == {"ok": [], "ro": ["--tmpfs=/nix/var/nix/daemon-socket", "--tmpfs=/nix/var/nix/temproots:mode=1777"]}
+    upper = "--overlay=/nix/store:/var/lib/dev-environments/ov/store/upper:/nix/store"
+    check(got.get("flags") == {"ok": [], "ro": HIDE, "ov": HIDE + [upper]}
           and got.get("ro", {}).get("store") == "local?read-only=true" and "read-only-local-store" in got["ro"]["features"] and got["ro"]["daemon"] is False
-          and got.get("plain") == {"store": None, "daemon": True},
-          f"a read-only instance hides the daemon socket, opens the store read-only and runs no nix daemon; the default instance is unchanged ({got or out.stderr.strip()[-300:]})")
+          and got.get("plain") == {"store": None, "daemon": True, "conf": None, "tier": False},
+          f"a read-only instance hides the daemon socket and opens the store read-only; the default instance is unchanged ({got or out.stderr.strip()[-300:]})")
+    ov = got.get("ov", {})
+    conf = ov.get("conf") or ""
+    check("store = local-overlay://?" in conf and "lower-store=local%%3Fread-only%%3Dtrue" in conf and "upper-layer=/var/lib/dev-environments/ov/store/upper" in conf
+          and "state=/var/lib/dev-environments/ov/store/state" in conf and "local-overlay-store" in ov.get("features", []) and ov.get("optimise") is False and ov.get("sandbox") is False
+          and ov.get("tier") is True and ov.get("daemon") is True and got.get("act") is True,
+          f"an overlay instance's own daemon opens a local-overlay store over the read-only host store, without auto-optimise or a build sandbox (no /proc in a nested namespace), the tier bound and created ({ov}, {got.get('act')})")
 
 
 def check_nested(facts):
@@ -635,7 +660,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr('{ services.devEnvironments.instances.ro.store = "read-only"; }', STORE), stub_expr("{ }", LIMITS), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr(STORE_CASE, STORE), stub_expr("{ }", LIMITS), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")

@@ -113,6 +113,9 @@ let
   # costs every such command the connect timeout, so those at a LAN address stay reachable.
   lanCaches = lib.filter (m: m != null) (map (builtins.match "http://([0-9.]+):([0-9]+)/?") config.nix.settings.substituters);
 
+  # an overlay instance's upper layer and nix db, at the same path in the guest
+  tier = w: "${cfg.stateDir}/${w.name}/store";
+
   binds = w: {
     "${home}" = { hostPath = "${cfg.stateDir}/${w.name}/home"; isReadOnly = false; };
     # Nix's per-user fetcher and tarball caches, one per host: a fresh home re-downloads and re-unpacks every flake
@@ -125,7 +128,8 @@ let
     "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
   } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; })
     (lib.filterAttrs (n: _: w.credentials == null || lib.elem n w.credentials) cfg.credentials)
-    // lib.optionalAttrs (egressOf w != [ ]) { "/run/egress" = { hostPath = "${egressDir}/${w.name}"; isReadOnly = true; }; };
+    // lib.optionalAttrs (egressOf w != [ ]) { "/run/egress" = { hostPath = "${egressDir}/${w.name}"; isReadOnly = true; }; }
+    // lib.optionalAttrs (w.store == "overlay") { ${tier w} = { hostPath = tier w; isReadOnly = false; }; };
 
   guest = w: { ... }: {
     imports = cfg.guestModules ++ map (s: s.guest.config) (egressOf w);
@@ -159,7 +163,11 @@ let
     # host's build bounds. An empty flake-registry fetched the global one on every cold cache.
     nix.settings = { flake-registry = ""; inherit (config.nix.settings) substituters trusted-public-keys max-jobs cores; }
       // lib.optionalAttrs (config.nix.settings ? connect-timeout) { inherit (config.nix.settings) connect-timeout; }
-      // lib.optionalAttrs (w.store == "read-only") { store = "local?read-only=true"; experimental-features = [ "read-only-local-store" ]; };
+      // lib.optionalAttrs (w.store == "read-only") { store = "local?read-only=true"; experimental-features = [ "read-only-local-store" ]; }
+      # the guest's daemon builds in a container: its sandbox needs a /proc a nested namespace cannot mount, and
+      # auto-optimise would hard-link into the lower layer
+      // lib.optionalAttrs (w.store == "overlay") { experimental-features = [ "local-overlay-store" "read-only-local-store" ]; auto-optimise-store = lib.mkForce false; sandbox = false; };
+
 
     nix.daemon.enable = lib.mkIf (w.store == "read-only") false;
 
@@ -173,7 +181,12 @@ let
     # the guest holds placeholders, not the tokens: the proxy adds the login to each call
     environment.variables = lib.mkMerge (map (s: s.guest.env) (egressOf w));
     systemd.sockets = lib.listToAttrs (map (s: lib.nameValuePair "${s.name}-egress" { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString s.port}" ]; }) (egressOf w));
-    systemd.services = lib.listToAttrs (map (s: lib.nameValuePair "${s.name}-egress" { serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${s.socket}"; }; }) (egressOf w));
+    systemd.services = lib.listToAttrs (map (s: lib.nameValuePair "${s.name}-egress" { serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${s.socket}"; }; }) (egressOf w))
+      # only the guest's own daemon opens the overlay store: an unprivileged client of it must not (it cannot write it);
+      # %% is systemd's escape, and the lower store is the host's, read-only, its db bound read-only
+      // lib.optionalAttrs (w.store == "overlay") {
+        nix-daemon.environment.NIX_CONFIG = "store = local-overlay://?lower-store=local%%3Fread-only%%3Dtrue&upper-layer=${tier w}/upper&state=${tier w}/state&check-mount=true";
+      };
 
     # the guest's cgroup files read max: the host's limits, read from the units that set them. Shell key=value,
     # so a job sources it (`. /etc/dev-environment`) or greps it without a parser; sizes in bytes.
@@ -233,9 +246,9 @@ let
         description = "Which of `credentials` this instance gets; null is all of them.";
       };
       store = mkOption {
-        type = types.enum [ "daemon" "read-only" ];
+        type = types.enum [ "daemon" "read-only" "overlay" ];
         default = "daemon";
-        description = "How the guest reaches the host's /nix/store: through the host's nix daemon, or read-only with no daemon socket, so nothing it runs can add a path to the host store.";
+        description = "How the guest reaches the host's /nix/store: through the host's nix daemon, read-only with no daemon socket, or as the lower layer of its own writable store (a local-overlay store under the instance's state directory). The last two cannot add a path to the host store.";
       };
       paused = mkOption { type = types.bool; default = false; description = "Stopped, its container undeclared: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session."; };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryMin: never reclaimed for a neighbour, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
@@ -356,6 +369,7 @@ in
             # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
             mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${user}:${group} "$d/${w.name}/home/.cache" || true
             install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/eval-cache"
+            ${lib.optionalString (w.store == "overlay") ''install -d -m 0755 "$d/${w.name}/store/upper" "$d/${w.name}/store/state"''}
           '') instances}
         '';
       };
@@ -369,6 +383,7 @@ in
         requiredBy = [ "nix-gc.service" ];
         before = [ "nix-gc.service" ];
         serviceConfig.Type = "oneshot";
+        path = [ config.nix.package ];
         script = ''
           rc=0
           for home in ${lib.escapeShellArg cfg.stateDir}/*/home; do
@@ -376,7 +391,7 @@ in
             roots=/nix/var/nix/gcroots/per-container/$n
             [[ -d $roots ]] || continue
             ok=1
-            rm -f "$roots"/.home-*
+            rm -f "$roots"/.home-* "$roots"/.overlay-*
             found=$(find "$home" -ignore_readdir_race \( -name node_modules -o -name target -o -name .git \) -prune \
               -o -path '*/.devenv/gc/*' -type l -print) || { ok=0; rc=1; }
             declare -A keep=()
@@ -387,9 +402,19 @@ in
               ln -sfn "$t" "$roots/.$name" && mv -T "$roots/.$name" "$roots/$name" || rc=1
               keep[$name]=1
             done <<< "$found"
+            # the host paths an overlay instance's own db refers to: collected from under it, its closure would dangle
+            tier=''${home%/home}/store
+            if [[ -d $tier/state/db ]]; then
+              lower=$(nix --extra-experimental-features 'nix-command read-only-local-store' path-info --all --store "local?state=$tier/state&read-only=true") || { ok=0; rc=1; }
+              while IFS= read -r p; do
+                [[ $p == /nix/store/* && $p != *..* && -e $p ]] || continue
+                ln -sfn "$p" "$roots/.overlay-''${p##*/}" && mv -T "$roots/.overlay-''${p##*/}" "$roots/overlay-''${p##*/}" || rc=1
+                keep[overlay-''${p##*/}]=1
+              done <<< "$lower"
+            fi
             # only a complete scan may drop a root; a failed one keeps what it had and fails the unit, and with it nix-gc
             if (( ok )); then
-              for r in "$roots"/home-*; do
+              for r in "$roots"/home-* "$roots"/overlay-*; do
                 [[ -L $r && -z ''${keep[''${r##*/}]-} ]] && rm -f "$r"
               done
             fi
@@ -490,7 +515,9 @@ in
         bindMounts = binds w;
         # nspawn mounts a tmpfs over the start script's own bind of the daemon socket (a tmpfs sorts after a bind of the
         # same path); nix still needs a place for its temporary roots
-        extraFlags = lib.optionals (w.store == "read-only") [ "--tmpfs=/nix/var/nix/daemon-socket" "--tmpfs=/nix/var/nix/temproots:mode=1777" ];
+        extraFlags = lib.optionals (w.store != "daemon") [ "--tmpfs=/nix/var/nix/daemon-socket" "--tmpfs=/nix/var/nix/temproots:mode=1777" ]
+          # a bind sorts before an overlay of the same path too: the host store, read-only, is the lower layer
+          ++ lib.optional (w.store == "overlay") "--overlay=/nix/store:${tier w}/upper:/nix/store";
         config = guest w;
       }) running);
 
