@@ -76,6 +76,13 @@ Append; move a line to fixed when its change lands.
 - 2026-11-11 `dp121`, `nc200`, `dp93`: "cold" cannot be produced in an environment (shared store). Benchmark issues
   that need cold runs need msi with nothing else running, or the owner's go for a throwaway store.
 
+- 2026-11-12 nested sandbox, acer and msi: `ps -e` inside Claude's sandbox fails with `fatal library error, lookup
+  self`. Likely cause, not confirmed: the `subset=pid` proc mount has no `/proc/stat` or `/proc/uptime`, which procps
+  reads. `pgrep`, `pkill`, `top` and `free` not yet checked. `ls /proc`, `nproc` and `/proc/self` work. No fix yet:
+  a file cannot be bound into procfs and a full proc mount is what the guest refuses.
+- 2026-11-12 msi at #242: sandboxed commands run as mapped uid 0 with 10 process entries and 8 CPUs, a home write
+  outside the working directory is refused, `podman run --network=none` works. Same as acer.
+
 ## Fixed
 
 - Nested sandboxes (#239): open friction from the round that built it, kept for the next one: the placeholder Claude token is in the login environment but not in tool shells; Claude's wrapper puts its own bubblewrap first on PATH, so only managed settings can swap it; `--settings` ignores `sandbox.bwrapPath` without a warning; a fresh clone has no gate hooks until `devenv shell` has run once. One `podman run` right after the deploy failed with rootful storage paths and did not reproduce.
@@ -141,6 +148,25 @@ Append; move a line to fixed when its change lands.
 - 2026-11-12 bounded builds (max-jobs 2, cores 2) cost the nixos-config gate nothing on msi: every step within 1 s
   of the unbounded run, peak 5.5G, `memory.events high 0`. #233 (reclaim threshold at the pool) has no throttling
   left to remove there; acer's 2913 is the case it addresses, to be re-counted at the next gate on acer.
+
+## Time to shell
+
+msi `gate`, 2026-11-12, bounded builds, `devenv shell -- true`, one run at a time (nixos-config #200). Fresh = new
+clone, no `.devenv`, emptied eval cache; the host store cannot be emptied from a guest.
+
+| Repo | Fresh 1 | Fresh 2 / 3 | Warm |
+|------|------:|------:|------:|
+| devenv-platform `examples/rust-service` | 101.7 s | 9.5 / 9.3 s | 7.2 s |
+| factum | 6.7 s | 6.4 / 6.6 s | 1.0 s |
+| nixos-config | 7.5 s | 7.6 / 7.8 s | 0.4 s |
+
+- With the closure in the host store a fresh repo costs 6 to 10 s, nearly all one uncached evaluation.
+- The 101.7 s run: about 50 s of Rust toolchain from acer's cache, 29 s building `devenv-nixpkgs-patched` locally
+  (no cache had it), 10 s of flake inputs. Nothing from cache.nixos.org. Building that path once on a serving host
+  when the pin moves removes the 29 s elsewhere.
+- devenv-platform's example misses devenv's eval cache on every warm run (7.2 s). Suspected, not confirmed: its
+  `path:../..` input includes the example's own `.devenv`.
+- `memory.events` all zero over the 18 runs.
 
 ## Gate timing
 
