@@ -188,6 +188,10 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 - `/nix/store`, the nix db and the daemon socket are the host's (stock
   containers), so `nix build` and devenv use the host's store; `lukas` is not a
   trusted user on acer and msi.
+- A nested sandbox cannot mount a full procfs in a guest (nspawn masks parts of
+  `/proc`), so `modules/workers/nested-sandbox.nix` mounts `subset=pid`: Claude's
+  `/sandbox` (via managed `bwrapPath`), `podman run` and `buildah bud` work, with
+  `--network=none`; `free`, `uptime` and `sysctl` fail inside them.
 - lenovo hosts no environment, and eval refuses one: an environment holds its
   host user's SSH key, and lenovo's is the fleet's deploy key (`deploy` with
   passwordless sudo on every host, accepted from lenovo's address, which a

@@ -96,6 +96,26 @@ FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
 ]
 
+# what a fresh guest gets for nested sandboxes (modules/workers/nested-sandbox.nix); the host itself gets none of it
+NESTED = r"""
+let
+  c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config;
+  g = c.containers.t.config;
+  e = g.virtualisation.containers.containersConf.settings.engine;
+in {
+  claude = (builtins.fromJSON (builtins.unsafeDiscardStringContext g.environment.etc."claude-code/managed-settings.json".text)).sandbox.bwrapPath
+    == builtins.unsafeDiscardStringContext g.sam.workers.nestedSandbox.bwrap;
+  bwrap = builtins.match ".*/bin/bwrap-subset-proc" g.sam.workers.nestedSandbox.bwrap != null;
+  crun = builtins.match ".*/bin/crun-subset-pid" e.runtime != null && e.runtime == g.sam.workers.nestedSandbox.crun;
+  engine = { inherit (e) cgroup_manager events_logger; };
+  storage = g.virtualisation.containers.storage.settings.storage.driver;
+  podman = g.virtualisation.podman.enable;
+  hostUntouched = !(c.environment.etc ? "claude-code/managed-settings.json") && !c.virtualisation.podman.enable;
+}
+"""
+NESTED_WANT = {"claude": True, "bwrap": True, "crun": True, "engine": {"cgroup_manager": "cgroupfs", "events_logger": "file"},
+               "storage": "vfs", "podman": True, "hostUntouched": True}
+
 # the unit whose change restarts an instance: no nixpkgs bump, resize or prompt edit may change it, a model change must
 DECLARATION = r"""
 let
@@ -166,7 +186,7 @@ def fleet(case):
 
 def main():
     prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
-              fleet("{ }"), fleet(FLEET_INSTANCE), *(fleet(case) for _, case, _ in FLEET_CASES)])
+              fleet("{ }"), fleet(FLEET_INSTANCE), NESTED % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES)])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
@@ -193,6 +213,9 @@ def main():
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = run_eval(fleet(FLEET_INSTANCE))
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 with a claude instance fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
+    out = run_eval(NESTED % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got == NESTED_WANT, f"a guest has Claude pointed at the subset-proc bwrap, podman on vfs and cgroupfs with the subset-pid crun, the host none ({got or out.stderr.strip()[-300:]})")
     for name, case, want in FLEET_CASES:
         out = run_eval(fleet(case))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
