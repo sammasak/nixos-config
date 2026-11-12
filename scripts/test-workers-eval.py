@@ -92,7 +92,7 @@ let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.
 in map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions)
 """
 FLEET_CASES = [
-    ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance logs in with the host's sops secret"),
+    ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
 ]
 
 # the unit whose change restarts an instance: no nixpkgs bump, resize or prompt edit may change it, a model change must

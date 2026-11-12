@@ -11,6 +11,27 @@ let
   creds = "/var/lib/host-credentials";
   usesClaude = lib.any (w: w.agent == "claude") (lib.attrValues dev.instances);
   hasToken = config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token;
+  egress = "/run/dev-env-egress";
+  egressPort = 4100;
+  # The token is read from the unit's credential at request time: this file is in the store every guest reads.
+  egressConfig = pkgs.writeText "dev-env-egress.Caddyfile" ''
+    {
+      admin off
+      auto_https off
+    }
+    http:// {
+      bind unix/${egress}/anthropic.sock
+      log
+      @other not path /v1/*
+      respond @other 403
+      reverse_proxy https://api.anthropic.com {
+        header_up Host {upstream_hostport}
+        header_up Authorization "Bearer {file./run/credentials/dev-env-egress.service/claude_oauth_token}"
+        header_up -X-Api-Key
+        flush_interval -1
+      }
+    }
+  '';
 
   agentNames = lib.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
   restartNotice = "This environment restarted: whatever you had running here, background shells and gates included, was killed and nothing restarted it. Check what finished (git status and unpushed commits in each clone), re-run what did not, and carry on; if your task was already done, say so and stop.";
@@ -95,6 +116,17 @@ let
     networking.firewall.enable = false;
     sam.herdr.trustedDirs = map (d: "${home}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 
+    # the guest holds a placeholder, not the token: the host's proxy adds the login to each call
+    environment.variables = lib.mkIf usesClaude {
+      ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString egressPort}";
+      CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host";
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+    };
+    systemd.sockets.claude-egress = lib.mkIf usesClaude { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString egressPort}" ]; };
+    systemd.services.claude-egress = lib.mkIf usesClaude {
+      serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${creds}/egress/anthropic.sock"; };
+    };
+
     # The host's credentials, bound read-only under ${creds}, where the host's own tools look for them.
     systemd.tmpfiles.rules = [
       "d ${home}/.ssh 0700 ${user} users -"
@@ -106,8 +138,7 @@ let
     ++ lib.optionals (cfg.ghHostsFile != null) [
       "d ${home}/.config/gh 0700 ${user} users -"
       "L+ ${home}/.config/gh/hosts.yml - - - - ${creds}/gh-hosts.yml"
-    ]
-    ++ lib.optional hasToken "L+ /run/secrets/claude_oauth_token - - - - ${creds}/claude_oauth_token";
+    ];
   };
 in
 {
@@ -154,22 +185,61 @@ in
         id_ed25519 = dev.clientKey;
       } // lib.optionalAttrs (cfg.ghHostsFile != null) {
         "gh-hosts.yml" = cfg.ghHostsFile;
-      } // lib.optionalAttrs hasToken {
-        claude_oauth_token = config.sops.secrets.claude_oauth_token.path;
-      };
+      } // lib.optionalAttrs usesClaude { inherit egress; };
       sessionSurface = { name = "herdr"; script = hook; };
     };
 
-    systemd = lib.mkIf (cfg.shutdownNotice != null && agentNames != [ ]) {
-      timers.worker-shutdown-notice = { wantedBy = [ "timers.target" ]; timerConfig.OnCalendar = cfg.shutdownNotice; };
-      services.worker-shutdown-notice = {
-        description = "Tell the environments' agents the host is about to power off";
-        environment.XDG_RUNTIME_DIR = "/run/user/${toString dev.uid}";
-        serviceConfig = { Type = "oneshot"; User = user; };
-        path = [ pkgs.herdr ];
-        script = lib.concatMapStrings (n: "herdr agent prompt ${n} ${lib.escapeShellArg shutdownNotice} >/dev/null || true\n") agentNames;
-      };
-    };
+    systemd = lib.mkMerge [
+      (lib.mkIf (cfg.shutdownNotice != null && agentNames != [ ]) {
+        timers.worker-shutdown-notice = { wantedBy = [ "timers.target" ]; timerConfig.OnCalendar = cfg.shutdownNotice; };
+        services.worker-shutdown-notice = {
+          description = "Tell the environments' agents the host is about to power off";
+          environment.XDG_RUNTIME_DIR = "/run/user/${toString dev.uid}";
+          serviceConfig = { Type = "oneshot"; User = user; };
+          path = [ pkgs.herdr ];
+          script = lib.concatMapStrings (n: "herdr agent prompt ${n} ${lib.escapeShellArg shutdownNotice} >/dev/null || true\n") agentNames;
+        };
+      })
+      (lib.mkIf (usesClaude && hasToken) {
+        services = {
+          dev-env-egress = {
+            description = "Adds the Claude login to the environments' API calls";
+            wantedBy = [ "multi-user.target" ];
+            environment.HOME = "/tmp";
+            serviceConfig = {
+              ExecStart = "${pkgs.caddy}/bin/caddy run --adapter caddyfile --config ${egressConfig}";
+              LoadCredential = "claude_oauth_token:${config.sops.secrets.claude_oauth_token.path}";
+              User = user;
+              RuntimeDirectory = baseNameOf egress;
+              # the guests bind this directory: removed at a restart, they would keep the old, empty one
+              RuntimeDirectoryPreserve = true;
+              Restart = "on-failure";
+              # it parses the guests' requests as the host user: keep that user's other secrets and the guests' homes from it
+              InaccessiblePaths = [ "/run/secrets.d" dev.stateDir ];
+              PrivateTmp = true;
+              PrivateDevices = true;
+              ProtectHome = true;
+              ProtectSystem = "strict";
+              ProtectProc = "invisible";
+              ProtectKernelTunables = true;
+              ProtectControlGroups = true;
+              NoNewPrivileges = true;
+              CapabilityBoundingSet = "";
+              RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+              RestrictNamespaces = true;
+              SystemCallFilter = [ "@system-service" ];
+            };
+          };
+        } // lib.genAttrs (map (n: "container@${n}") (lib.attrNames dev.instances)) (_: {
+          # the bind's source must exist when the container starts
+          wants = [ "dev-env-egress.service" ];
+          after = [ "dev-env-egress.service" ];
+        });
+      })
+    ];
+
+    # LoadCredential copies the token at start
+    sops.secrets = lib.mkIf (usesClaude && hasToken) { claude_oauth_token.restartUnits = [ "dev-env-egress.service" ]; };
 
     assertions = lib.optionals (dev.instances != { }) [
       {
@@ -178,12 +248,12 @@ in
         message = "sam.workers: an instance holds the host user's SSH key, and this host's is the fleet's deploy key.";
       }
       {
-        assertion = lib.all (i: i.agent != "claude" || i.credentials == null || lib.elem "claude_oauth_token" i.credentials) (lib.attrValues dev.instances);
-        message = "sam.workers: a claude instance with a credentials subset keeps claude_oauth_token, its login.";
+        assertion = lib.all (i: i.agent != "claude" || i.credentials == null || lib.elem "egress" i.credentials) (lib.attrValues dev.instances);
+        message = "sam.workers: a claude instance with a credentials subset keeps egress, the way to its login.";
       }
       {
         assertion = !usesClaude || hasToken;
-        message = "sam.workers: a claude instance logs in with the host's sops secret claude_oauth_token (sam.hostSecrets.enable), which this host does not declare.";
+        message = "sam.workers: a claude instance's calls are signed with the host's sops secret claude_oauth_token (sam.hostSecrets.enable), which this host does not declare.";
       }
       {
         assertion = config.home-manager.users.${user}.systemd.user.services ? herdr;

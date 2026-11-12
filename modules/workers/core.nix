@@ -168,7 +168,7 @@ let
       credentials = mkOption {
         type = types.nullOr (types.listOf types.str);
         default = null;
-        example = [ "claude_oauth_token" ];
+        example = [ "gh-hosts.yml" ];
         description = "Which of `credentials` this instance gets; null is all of them.";
       };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryLow: kept from reclaim, and what the pool must fit."; };
@@ -204,7 +204,7 @@ in
       type = types.attrsOf types.externalPath;
       default = { };
       example = { gh-hosts.yml = "/home/alice/.config/gh/hosts.yml"; };
-      description = "Host files bound read-only at ${creds}/<name> in every guest.";
+      description = "Host paths bound read-only at ${creds}/<name> in every guest.";
     };
     guestModules = mkOption { type = types.listOf types.deferredModule; default = [ ]; description = "NixOS modules of every guest; `devEnvironment` (name, hostName, address) is their argument."; };
     sessionSurface = mkOption {
