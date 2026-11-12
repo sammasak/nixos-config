@@ -603,17 +603,24 @@ def check_hygiene(facts):
           f"the gc-roots unit runs at boot and every 15 min and still runs before nix-gc ({gc}, {facts.get('gcUnit')})")
 
 
-BOUNDED = ('{ burst = sys.config.systemd.services."container@ok".startLimitBurst; interval = sys.config.systemd.services."container@ok".startLimitIntervalSec;'
-           ' timeout = sys.config.containers.ok.timeoutStartSec; }')
+BOUNDED = ('let u = sys.config.systemd.services."container@ok"; in { burst = u.startLimitBurst; interval = u.startLimitIntervalSec;'
+           ' start = u.serviceConfig.TimeoutStartSec or null; stop = u.serviceConfig.TimeoutStopSec or null; }')
+
+
+def seconds(value):
+    """A systemd time span of the forms the units use: 30, "90", "1min", "90s"."""
+    m = re.fullmatch(r"(\d+)\s*(s|min)?", str(value))
+    return int(m.group(1)) * (60 if m.group(2) == "min" else 1) if m else None
 
 
 def check_bounded():
-    """A container that never gets ready ends its start jobs: the limit window outlasts the attempts it allows."""
+    """A container that never gets ready ends its start jobs: the window outlasts the attempts it allows, each a failed start
+    (the unit's own start timeout) and the stop that follows it (its stop timeout, systemd's 90 s when unset)."""
     out = nix_eval("{ }", BOUNDED)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    minutes = int(re.fullmatch(r"(\d+)min", got.get("timeout", "")).group(1)) if re.fullmatch(r"\d+min", got.get("timeout", "")) else None
-    check(minutes is not None and got["burst"] == 3 and got["interval"] > got["burst"] * minutes * 60,
-          f"container@ stops restarting after {got.get('burst')} starts of {got.get('timeout')} each within {got.get('interval')} s ({got or out.stderr.strip()[-300:]})")
+    start, stop = seconds(got.get("start")), seconds(got["stop"]) if got.get("stop") is not None else 90
+    check(start is not None and stop is not None and got["burst"] == 3 and got["interval"] > got["burst"] * (start + stop),
+          f"container@ stops restarting after {got.get('burst')} starts of {start} s (stop {stop} s) each within {got.get('interval')} s ({got or out.stderr.strip()[-300:]})")
 
 
 def check_nested(facts):
