@@ -22,7 +22,7 @@ devenv tasks run nixos:worker-permissions-test  # #145/#157/skills#28: Herdr wor
 devenv tasks run nixos:workers-eval-test  # modules/workers/core.nix: each wrong config fails eval with its message; agent argv survives the guest shell
 devenv tasks run nixos:bulk-reader-test  # sam.claude.bulkReader: shunt hooks only when on and pinned, after the existing Bash hooks; guests via a guest module
 devenv tasks run nixos:harness-telemetry-test  # sam.claude.telemetry: Claude's OTLP through the local relay, session + repository attributes, emit-work-ref.sh only when on and pinned
-devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer
+devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer with the switch off
 devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
 devenv tasks run nixos:build-bounds-test  # nix-daemon builds bounded on lenovo (#109) and the environment hosts (acer, msi)
 devenv tasks run nixos:runtime-host-test  # msi + acer through the runtime-host role: headless and unthemed, maintenance off the boot path
@@ -89,7 +89,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, wifi, GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
 | `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, black-pi | Claude OAuth token |
-| `claude/native-otlp-auth.yaml` | Personal + lenovo | OTLP auth |
+| `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
 | `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Pi's gateway key |
 | `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
 

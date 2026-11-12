@@ -13,11 +13,17 @@ in
   sam.profile = vars;
   # k3s pods take ~4.6G here: a 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
   sam.workers = {
-    instances = { };
+    instances.tel1 = { model = "haiku"; telemetry = true; credentials = [ ]; prompt = "Run `git --version` with the Bash tool, then reply with exactly: ok"; };
     retired = [ "demo" "dp93" "nc200" "dp120" "f44" "dp121" "boot2" "boot" ];
     labelPrefix = "acer";
     pool.memory = "7G";
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
+  };
+  sops.secrets."native_otlp_auth" = lib.mkIf vars.nativeOtel {
+    sopsFile = ../../secrets/claude/native-otlp-auth.yaml;
+    key = "token";
+    owner = vars.username;
+    mode = "0400";
   };
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 

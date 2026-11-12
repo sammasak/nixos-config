@@ -94,7 +94,7 @@ TYPED = [
 
 # the fleet adapter (modules/workers/default.nix) on msi with an instance of the test's own (the host may declare none): lazy, so still cheap
 FLEET = r"""
-let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: %(case)s) ]; }).config;
+let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.%(host)s.extendModules { modules = [ ({ lib, ... }: %(case)s) ]; }).config;
 in map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions)
 """
 FLEET_INSTANCE = "{ sam.workers.instances.t = { }; }"
@@ -103,12 +103,13 @@ FLEET_CASES = [
     ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile"),
     ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
-    ("telemetry without nativeOtel", "{ sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
+    ("telemetry without nativeOtel", "{ sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
     ("telemetry from a guest module", "{ sam.workers.instances.t = { }; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
      "a guest module turned on sam.claude.telemetry"),
     ("telemetry on a non-claude instance", '{ sam.workers.instances.t = { agent = "none"; telemetry = true; }; }', "an instance with it has another agent"),
-    ("nativeOtel without the relay's secret", "{ sam.profile.nativeOtel = lib.mkForce true; }", "native-otel-relay loads the sops secret native_otlp_auth, which this host does not declare"),
 ]
+# black-pi declares no native_otlp_auth (msi and acer do), so the relay's own assertion is seen there
+NO_SECRET = ("nativeOtel without the relay's secret", "{ sam.profile.nativeOtel = lib.mkForce true; }", "native-otel-relay loads the sops secret native_otlp_auth, which this host does not declare")
 # msi with two instances behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
 GITHUB = r"""
 let
@@ -130,13 +131,11 @@ in {
 }
 """
 
-# msi as a nativeOtel host with one instance sending telemetry and one not: what each guest gets, and the proxy's site
+# msi (a nativeOtel host) with one instance sending telemetry and one not: what each guest gets, and the proxy's site
 TELEMETRY = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
   c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: {
-    sam.profile.nativeOtel = lib.mkForce true;
-    sops.secrets.native_otlp_auth = { sopsFile = "${flake}/secrets/claude/native-otlp-auth.yaml"; key = "token"; };
     sam.workers.instances = lib.mkForce { tel.telemetry = true; plain = { }; };
   }) ]; }).config;
   egress = c.systemd.services.dev-env-egress.serviceConfig;
@@ -295,8 +294,8 @@ LIMITS = ('{ text = sys.config.containers.ok.config.environment.etc."dev-environ
 PROMPT = 'Use $HOME and "$(date)" and `id`, \'single\', a\\b, $$ and a trailing $'
 
 
-def fleet(case, template=FLEET):
-    return template % {"root": json.dumps(ROOT), "case": case, "prompt": json.dumps(PROMPT)}
+def fleet(case, template=FLEET, host="msi-ms7758"):
+    return template % {"root": json.dumps(ROOT), "case": case, "prompt": json.dumps(PROMPT), "host": host}
 
 
 # (method, path, allowed) against the repository o/r.s; allowed requests reach the dead upstream and fail with 502, the rest are 403
@@ -863,7 +862,7 @@ def check_scripts():
 
 def main():
     prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", BOUNDED), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
-              fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
+              fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES), fleet(NO_SECRET[1], host="black-pi"),
               GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
@@ -969,8 +968,8 @@ def main():
     check(host.get("env") is None and any(r.startswith("Bash(git push") for r in host.get("deny", [])),
           f"the host keeps its Bash deny rules and its own claude without the variable ({host})")
     check_no_verify()
-    for name, case, want in FLEET_CASES:
-        out = run_eval(fleet(case))
+    for name, case, want, host in [(*c, "msi-ms7758") for c in FLEET_CASES] + [(*NO_SECRET, "black-pi")]:
+        out = run_eval(fleet(case, host=host))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
     out = run_eval(GITHUB % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}

@@ -1,6 +1,6 @@
 # Native OTLP canary
 
-The Lenovo profile enables the native telemetry canary. Traces are
+lenovo, acer-swift and msi-ms7758 enable native telemetry (`nativeOtel = true`). Traces are
 disabled, Codex logs are disabled, and Claude log forwarding is limited to
 collector-sanitized tool-result events. The client configuration is gated on
 the private OTLP receiver being reviewed and live; this change does not alter
@@ -134,7 +134,7 @@ then start a fresh shell. `devenv tasks run nixos:otel-rollback-test` (part of
 `nixos:qa`) proves the evaluated result before any switch: it flips that one
 switch in a copy of the tree and checks that no Claude telemetry variable,
 Codex `[otel]` stanza, codex wrapper (only plain `pkgs.codex`), relay or receiver secret is left, and that
-lenovo's Claude environment then equals acer's, which never had the canary. The standard Claude telemetry-disable setting is
+lenovo's Claude environment then equals acer's with the same switch off. The standard Claude telemetry-disable setting is
 restored, Codex's OTLP exporter stanza and telemetry preludes are removed, and
 the host secret and relay are no longer installed. Verify no new requests
 arrive at the receiver. Keep the prior NixOS generation available until

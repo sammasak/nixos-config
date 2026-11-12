@@ -17,4 +17,5 @@
 
   # Roles
   roles = [ "base" "laptop" "homelab-agent" "runtime-host" ];
+  nativeOtel = true;
 }

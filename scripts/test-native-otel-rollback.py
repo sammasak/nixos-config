@@ -2,7 +2,7 @@
 
 Copies the tracked tree, flips the one switch the runbook names, and evaluates both trees. The live canary must carry
 every telemetry surface (so the test can tell the states apart); the rolled-back tree must carry none of them and must
-match acer, a host that never had the canary, on the Claude environment.
+match acer with the same switch off on the Claude environment.
 """
 import json
 import pathlib
@@ -60,7 +60,7 @@ def main():
     check([p["path"] for p in back["codex"]] == [back["plain_codex"]], f"rolled back: the only codex package is plain pkgs.codex ({back['codex']})")
     check(not back["relay"] and not back["secret"], "rolled back: the relay service and the receiver secret are no longer installed")
     acer = P["acer"]
-    check(back["env"] == acer, f"rolled back: lenovo's Claude environment equals acer's, a host that never had the canary (diff: {sorted(set(back['env'].items()) ^ set(acer.items()))})")
+    check(back["env"] == acer, f"rolled back: lenovo's Claude environment equals acer's with the switch off (diff: {sorted(set(back['env'].items()) ^ set(acer.items()))})")
     sys.exit(1 if failed else 0)
 
 

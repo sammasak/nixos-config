@@ -24,6 +24,12 @@ in
   };
 
   sam.profile = vars;
+  sops.secrets."native_otlp_auth" = lib.mkIf vars.nativeOtel {
+    sopsFile = ../../secrets/claude/native-otlp-auth.yaml;
+    key = "token";
+    owner = vars.username;
+    mode = "0400";
+  };
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "nixos-config" ".cache/wt" ];
 
   # Off at midnight, when the fleet's GC and optimise slots fall, and the runtime-host role drops
