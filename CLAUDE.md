@@ -85,8 +85,10 @@ Secret scopes in `secrets/.sops.yaml`:
 |--------------|-----------|---------|
 | `homelab/nix-signing-key.yaml` | Personal + lenovo | deploy-rs closure-signing private key (workers trust the public half) |
 | `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, wifi, GitHub access token |
-| `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys, incl. its llm-gateway project key. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
-| `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Claude Code OAuth token; Pi's llm-gateway project key (`llm-gateway.yaml`) |
+| `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
+| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, black-pi | Claude OAuth token |
+| `claude/native-otlp-auth.yaml` | Personal + lenovo | OTLP auth |
+| `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Pi's gateway key |
 | `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in fish shell init via `modules/programs/cli/claude-code/mcp.nix`.
@@ -109,7 +111,6 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 - `agents/<name>.md` → `~/.claude/agents/<name>.md` (role adapters included: plain subagents whose prompt states the one allowed command form; Claude Code's permission prompt is the gate, see `docs/herdr.md` and the skills repo `docs/operator-runbook.md`)
 - The coordinator adapter only on the coordinator host (the one with `sam.herdr.machines`, lenovo), which also declares Codex's `[agents.coordinator] config_file` in `~/.codex/config.toml` as the skills input's `agents/coordinator/codex.toml` (never a symlink under `~/.codex/agents`: Codex opens it with O_NOFOLLOW); rollout in `docs/rollout-coordinator.md`
 
-These are available across all projects without manual `/plugin install`.
 
 **Update workflow**:
 ```bash
