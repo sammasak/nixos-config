@@ -28,6 +28,7 @@ sam.workers.instances = {
 | `agent` | `"claude"` | `claude` (`--dangerously-skip-permissions`), `codex` (not signed in on these hosts), or `none` (a fish shell) |
 | `model` | `null` | the agent's `--model` |
 | `prompt` | `null` | sent once the agent is idle, only on a start with no earlier Claude session |
+| `credentials` | `null` | which of the host's credentials it gets (`id_ed25519`, `gh-hosts.yml`, `claude_oauth_token`); `null` is all. `[ "claude_oauth_token" ]` is an agent that cannot push |
 | `memory.reserved` | `"2G"` | `MemoryLow`: guaranteed, kept from reclaim |
 | `memory.max` | `"6G"` | `MemoryMax`, the spike ceiling; `MemoryHigh` (reclaim and throttle first) is 90% of it |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
@@ -36,7 +37,7 @@ Every environment of a host runs in `environments.slice`, whose `MemoryMax` is
 the host's `sam.workers.pool.memory` (protecting k3s and the host) and whose
 `MemoryLow` is the sum of the reserves. Swap (zram) stays allowed. nix builds
 run in the host's daemon, outside the pool; acer and msi bound that daemon
-like lenovo (2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
+(2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
 fails before k3s or the host does. msi powers off at 21:00
 (Mon-Fri window); its environments come back at its next boot.
 
@@ -72,7 +73,7 @@ host's swap.
 | Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
 | First use of a repo | clone, `devenv shell` | 25 s (skills), 32 s (herman): evaluation only, every store path comes from the host's store; 0.1 to 0.3 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
-| Host reboot or redeploy | nothing | container autostarts, agent resumes its conversation (acer rebooted 2026-11-12: container starting 7 s into userspace, agent back in Herdr at 15 s, home and the shared `~/.cache/nix` intact, first `devenv shell` 7.4 s; a second reboot brought the agent back in its conversation, and killed a gated push running in the environment, which has to be started again; msi the same day: two environments starting 6 s into userspace, both agents in Herdr at 14 s, conversation resumed, `devenv shell` 8 to 10 s) |
+| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so and re-checks its work. msi tells its agents at 20:40 (`sam.workers.shutdownNotice`) to push before the 21:00 poweroff |
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
@@ -91,6 +92,21 @@ roots (the daemon records them under the guest's path), so
 (only `nix-gc.service` runs it; it searches the whole home, pruning
 `node_modules`, `target` and `.git`).
 
+Across hosts, lenovo, acer and msi each serve their store to the LAN as a
+binary cache (`modules/core/store-cache.nix`, harmonia on port 5000) and
+substitute from the other two ahead of cache.nixos.org: what one machine built
+the others download. Each cache signs with a key its host generated on first
+start (`/var/lib/store-cache/`, never in git); the public halves are in the
+module. An absent cache (msi at night) costs a 3 s connect timeout, then Nix
+builds. An environment's nix is a client of its host's daemon, so its builds
+and downloads go through the same caches; its own nix.conf carries the
+host's substituter list, because the daemon takes a client's list when it
+trusts every entry and a shorter one skipped the LAN caches. Checked
+2026-11-12: a `devenv shell` needing a package no public cache has took 71 s
+on msi (66 s of it the build) and 2.7 s in an acer environment afterwards,
+the package signed `msi-ms7758-store-1`. Evaluation is not shared: a first
+`devenv shell` still evaluates on each host (54 s for factum on msi).
+
 ## What fails at build
 
 A wrong declaration fails evaluation with a message naming the option, never
@@ -103,9 +119,8 @@ at runtime (`nixos:workers-eval-test` holds one case per line):
   prompt; a model outside `[][A-Za-z0-9._:-]`; a `prompt` with no session
   surface to deliver it;
 - sizes not in systemd syntax (`[1-9][0-9]*[KMGT]?`); `reserved` above `max`,
-  `max` above the pool, reserves summing above the pool, reserved cores
-  summing above `pool.cores`; instances on a host without `pool.memory` or
-  `pool.cores`;
+  `max` above the pool, reserves summing above the pool; instances on a host
+  without `pool.memory`;
 - a host interface address in `10.233.0.0/16`; a name both in `instances` and
   `retired`, or a `retired` name that is not a valid name; a `stateDir` outside
   `/var/lib/<name>`; `blockedNetworks` without the iptables firewall backend;
@@ -156,7 +171,7 @@ Manager activates on it at every boot (collisions are kept as `*.backup`).
 | Change of `memory` or `cpu` | the container unit's cgroup properties change at the daemon-reload, live |
 | Change of `prompt` | nothing restarts; the prompt is only sent on a fresh start |
 | Change of `agent`, `model`, credentials or bind mounts | `worker-<name>` restarts and, through `PartOf`, the container: a restart |
-| Restart or host reboot | home kept; the workspace comes back and runs `claude --continue` when a transcript of `$HOME` exists, else a fresh `claude` with the prompt |
+| Restart or host reboot | home kept; the workspace comes back and runs `claude --continue` when a transcript of `$HOME` exists, followed by a notice that its running work was killed, else a fresh `claude` with the prompt |
 | Removed from the config, deployed | units stop, the workspace closes, the home is kept |
 | Named in `retired`, deployed | activation deletes `/var/lib/workers/<name>` and its `/nix/var/nix/{profiles,gcroots}/per-container/<name>` |
 
@@ -170,13 +185,23 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 
 - `/nix/store`, the nix db and the daemon socket are the host's (stock
   containers), so `nix build` and devenv use the host's store; `lukas` is not a
-  trusted user on acer and msi. On lenovo the host user is trusted (it signs
-  and deploys), and so is its guest: an environment there can do to the store
-  what the owner can.
+  trusted user on acer and msi.
+- lenovo hosts no environment, and eval refuses one: an environment holds its
+  host user's SSH key, and lenovo's is the fleet's deploy key (`deploy` with
+  passwordless sudo on every host, accepted from lenovo's address, which a
+  guest's traffic leaves by). Its user is also a trusted Nix user.
 - `~/.cache/nix` (Nix's fetcher and tarball caches) is one directory per host,
-  bound into every environment: the first `devenv shell` in a new environment
-  took 5.9 s on acer with it, 28 to 31 s without, for a repo the host had seen.
-  A revision the host has not seen still builds once (238 s on acer).
+  bound writable into every environment: the first `devenv shell` in a new
+  environment took 5.9 s on acer with it, 28 to 31 s without, for a repo the
+  host had seen. A revision the host has not seen still builds once (238 s on
+  acer). The price: environments of one host are not isolated from each other
+  there, one can plant a fetcher-cache entry another reads (a locked input is
+  checked against its hash, so that fails the fetch, it does not swap the
+  source). The evaluation cache inside it is per environment: its rows are
+  unsigned and name the derivation to build.
+- The guest's nix sends the host's `max-jobs`, `cores`, substituters and keys:
+  the daemon takes a client's values over its own, so a guest left on defaults
+  lifts the host's build bounds and skips the fleet's store caches.
 - The guest imports the fleet's `core/system.nix`, `core/users.nix`,
   `core/packages.nix`, the pinned known hosts and the Home Manager wiring
   every host gets (`fleetHome` in `flake-modules/40-outputs-nixos.nix`).
@@ -214,12 +239,14 @@ issue it serves, deploy, and remove it when the work has landed.
    skip the gate), read the repo's entry doc, work through the repo's
    `devenv tasks` (`sdlc:*` where the repo has `platform.sdlc`), heavy steps
    one at a time, log friction to `~/ENV-FEEDBACK.md`, stop with a written
-   blocker when stuck. A follow-up goes in with
+   blocker when stuck, and when finished write `~/RESULT.md` (the PR's URL or
+   the blocker). A follow-up goes in with
    `herdr --machine <host> agent prompt <name> '<text>'`.
 4. A `blocked` agent is waiting on a question; answer it in its pane. `done`
    is not always finished: an agent that parked on a background gate reports
    `done` and resumes by itself, so read the pane (`shell still running`,
-   `Waiting for N background`) before merging or retiring.
+   `Waiting for N background`) and `ssh <name>.<prefix> cat RESULT.md` before
+   merging or retiring.
    Keep every host's pool busy: when an environment is retired and an approved
    issue is ready, declare the next one in the same deploy.
 5. Review is one independent subagent the agent spawns on its own diff. No

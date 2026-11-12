@@ -14,6 +14,9 @@ in
   # Delivers the workers' credential (claude_oauth_token), and nix_access_token.
   sam.hostSecrets.enable = true;
 
+  # What an environment builds here, the other hosts download (modules/core/store-cache.nix).
+  sam.storeCache.enable = true;
+
   # Theming only where a desktop boots (#185): headless, Stylix has nothing to theme and its
   # Home Manager half has failed an activation. A desktop specialisation gets it back.
   stylix.enable = lib.mkForce desktop;

@@ -12,6 +12,10 @@ let
   usesClaude = lib.any (w: w.agent == "claude") (lib.attrValues dev.instances);
   hasToken = config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token;
 
+  agentNames = lib.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
+  restartNotice = "This environment restarted: whatever you had running here, background shells and gates included, was killed and nothing restarted it. Check what finished (git status and unpushed commits in each clone), re-run what did not, and carry on; if your task was already done, say so and stop.";
+  shutdownNotice = "This host powers off soon and is back at its next scheduled wake. Commit and push work in progress to a wip branch now and start no long gate; after the restart you are told to resume.";
+
   hook = w: pkgs.writeShellApplication {
     name = "worker-herdr-${w.name}";
     runtimeInputs = [ pkgs.coreutils pkgs.herdr pkgs.jq ];
@@ -45,16 +49,16 @@ let
         # Herdr calls the pane idle on the host's fish prompt already; the agent takes input once it draws readyText
         if ${lib.optionalString (w.agentDef.readyText != null) ''herdr pane wait-output "$pane" --match ${lib.escapeShellArg w.agentDef.readyText} --source visible --timeout 180000 >/dev/null &&''} \
           herdr agent wait "$pane" --until idle --timeout 30000 >/dev/null; then
-          :
-          ${lib.optionalString (w.prompt != null) ''
-            # an agent that only just drew its prompt box can drop the submitting Enter, leaving the text typed
-            if [[ $mode == continue ]]; then
-              :
-            elif ! herdr agent prompt "$pane" ${lib.escapeShellArg w.prompt} --wait --until working --until "done" \
-              --timeout 15000 >/dev/null 2>&1; then
-              herdr agent send-keys "$pane" Enter >/dev/null || true
-            fi
-          ''}
+          # an agent that only just drew its prompt box can drop the submitting Enter, leaving the text typed
+          send() {
+            herdr agent prompt "$pane" "$1" --wait --until working --until "done" --timeout 15000 >/dev/null 2>&1 \
+              || herdr agent send-keys "$pane" Enter >/dev/null || true
+          }
+          # a resumed session is a restarted agent: what it had running died with the container
+          if [[ $mode == continue ]]; then
+            send ${lib.escapeShellArg restartNotice}
+          ${lib.optionalString (w.prompt != null) "else send ${lib.escapeShellArg w.prompt}"}
+          fi
         else
           echo "${w.agent} in $label did not reach idle; see the workspace" >&2
         fi
@@ -117,10 +121,11 @@ in
   ];
 
   options.sam.workers = {
-    sshKey = mkOption {
-      type = types.externalPath;
-      default = "${home}/.ssh/id_ed25519";
-      description = "The host user's SSH key: its `.pub` lets the host's Herdr pane in, and it is the worker's own for `git push`.";
+    shutdownNotice = mkOption {
+      type = types.nullOr types.nonEmptyStr;
+      default = null;
+      example = "Mon-Fri 20:40";
+      description = "A systemd calendar time, ahead of the host's scheduled poweroff, at which every agent is told to push its work.";
     };
     ghHostsFile = mkOption {
       type = types.nullOr types.externalPath;
@@ -141,13 +146,12 @@ in
       # mutableUsers leaves the host's uid undeclared; the first normal user is allocated 1000
       uid = lib.mkIf (config.users.users.${user}.uid == null) 1000;
       shell = "fish";
-      clientKey = cfg.sshKey;
       unitPrefix = "worker";
       stateDir = "/var/lib/workers";
-      prefix = lib.mkDefault profile.hostname;
       guestModules = [ fleetGuest ];
       credentials = {
-        id_ed25519 = cfg.sshKey;
+        # the host user's own key is also the environment's, for `git push`
+        id_ed25519 = dev.clientKey;
       } // lib.optionalAttrs (cfg.ghHostsFile != null) {
         "gh-hosts.yml" = cfg.ghHostsFile;
       } // lib.optionalAttrs hasToken {
@@ -156,7 +160,27 @@ in
       sessionSurface = { name = "herdr"; script = hook; };
     };
 
+    systemd = lib.mkIf (cfg.shutdownNotice != null && agentNames != [ ]) {
+      timers.worker-shutdown-notice = { wantedBy = [ "timers.target" ]; timerConfig.OnCalendar = cfg.shutdownNotice; };
+      services.worker-shutdown-notice = {
+        description = "Tell the environments' agents the host is about to power off";
+        environment.XDG_RUNTIME_DIR = "/run/user/${toString dev.uid}";
+        serviceConfig = { Type = "oneshot"; User = user; };
+        path = [ pkgs.herdr ];
+        script = lib.concatMapStrings (n: "herdr agent prompt ${n} ${lib.escapeShellArg shutdownNotice} >/dev/null || true\n") agentNames;
+      };
+    };
+
     assertions = lib.optionals (dev.instances != { }) [
+      {
+        # homelab/deploy-target.nix: that key, from that host's address (a guest's traffic leaves by it), is root fleet-wide
+        assertion = profile.hostname != "lenovo-21CB001PMX";
+        message = "sam.workers: an instance holds the host user's SSH key, and this host's is the fleet's deploy key.";
+      }
+      {
+        assertion = lib.all (i: i.agent != "claude" || i.credentials == null || lib.elem "claude_oauth_token" i.credentials) (lib.attrValues dev.instances);
+        message = "sam.workers: a claude instance with a credentials subset keeps claude_oauth_token, its login.";
+      }
       {
         assertion = !usesClaude || hasToken;
         message = "sam.workers: a claude instance logs in with the host's sops secret claude_oauth_token (sam.hostSecrets.enable), which this host does not declare.";
