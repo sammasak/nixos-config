@@ -55,6 +55,8 @@ in
       # msi sleeps at night: give up on an absent cache quickly and build
       connect-timeout = 3;
       fallback = true;
+      # the default hour hides a path a neighbour built a minute after it was asked for
+      narinfo-cache-negative-ttl = 300;
     };
   };
 }

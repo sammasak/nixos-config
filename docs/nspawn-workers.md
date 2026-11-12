@@ -195,7 +195,13 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   environment took 5.9 s on acer with it, 28 to 31 s without, for a repo the
   host had seen. A revision the host has not seen still builds once (238 s on
   acer). The price: environments of one host are not isolated from each other
-  there, one can plant a fetcher-cache entry another reads.
+  there, one can plant a fetcher-cache entry another reads (a locked input is
+  checked against its hash, so that fails the fetch, it does not swap the
+  source). The evaluation cache inside it is per environment: its rows are
+  unsigned and name the derivation to build.
+- The guest's nix sends the host's `max-jobs`, `cores`, substituters and keys:
+  the daemon takes a client's values over its own, so a guest left on defaults
+  lifts the host's build bounds and skips the fleet's store caches.
 - The guest imports the fleet's `core/system.nix`, `core/users.nix`,
   `core/packages.nix`, the pinned known hosts and the Home Manager wiring
   every host gets (`fleetHome` in `flake-modules/40-outputs-nixos.nix`).

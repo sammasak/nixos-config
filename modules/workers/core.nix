@@ -92,6 +92,9 @@ let
     # Nix's per-user fetcher and tarball caches, one per host: a fresh home re-downloads and re-unpacks every flake
     # input the store already holds (31 s against 7 s for the first devenv shell on acer).
     "${home}/.cache/nix" = { hostPath = "${cfg.stateDir}/.nix-cache"; isReadOnly = false; };
+    # Not the evaluation cache in it: its rows are unsigned, so a neighbour could plant the derivation another
+    # environment then builds. The name is Nix's (2.34); a version that renames it shares the cache again.
+    "${home}/.cache/nix/eval-cache-v6" = { hostPath = "${cfg.stateDir}/${w.name}/eval-cache"; isReadOnly = false; };
     "${creds}/ssh_host_ed25519_key" = { hostPath = "${cfg.stateDir}/ssh_host_ed25519_key"; isReadOnly = true; };
     "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
   } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; })
@@ -126,9 +129,10 @@ let
     nix.settings.flake-registry = "";
     nix.registry.nixpkgs.to = { type = "path"; path = pkgs.path; };
 
-    # The guest's nix is a client of the host's daemon, which takes a client's substituters when it trusts each of
-    # them: a list of the guest's own replaced the host's, and skipped the fleet's store caches.
-    nix.settings = { inherit (config.nix.settings) substituters trusted-public-keys; };
+    # The guest's nix is a client of the host's daemon, which takes a client's substituters (when it trusts each of
+    # them), max-jobs and cores over its own: the guest's defaults skipped the fleet's store caches and lifted the
+    # host's build bounds.
+    nix.settings = { inherit (config.nix.settings) substituters trusted-public-keys max-jobs cores; };
 
     # lean: the boot is the start latency
     documentation.enable = false;
@@ -268,6 +272,7 @@ in
             install -d -m 0700 "$d/${w.name}"
             [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/home"
             install -d -m 0755 -o ${user} -g ${group} "$d/${w.name}/home/.cache"
+            install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/eval-cache"
           '') instances}
         '';
       };
