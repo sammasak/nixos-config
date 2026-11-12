@@ -3,13 +3,14 @@
 The fake forward serves HTTP, then wedges like kubectl after its pod is gone:
 still running and listening, but every connection closes without a reply.
 """
-import json
 import os
 import socket
 import subprocess
 import sys
 import tempfile
 import time
+
+import gate_probe
 
 FAKE = r'''
 import socket, sys, time
@@ -48,13 +49,8 @@ def free_port():
         return s.getsockname()[1]
 
 
-def nix(*args):
-    return subprocess.run(["nix", *args], check=True, capture_output=True, text=True).stdout.strip()
-
-
-host = ".#nixosConfigurations.lenovo"
-exe = nix("build", f"{host}.pkgs.ollama-portforward", "--no-link", "--print-out-paths") + "/bin/ollama-portforward"
-unit = json.loads(nix("eval", "--json", f"{host}.config.systemd.user.services.ollama-portforward.serviceConfig"))
+P = gate_probe.section("ollama-portforward")
+exe, unit = P["exe"], P["unit"]
 argv = unit["ExecStart"].split()
 check(argv[0] == exe and argv[1] == "http://127.0.0.1:8080/api/tags" and argv[2].endswith("/bin/kubectl")
       and argv[3:6] == ["port-forward", "--address", "127.0.0.1"] and "deploy/llm-gateway" in argv

@@ -6,16 +6,9 @@ import subprocess
 import sys
 import tomllib
 
+import gate_probe
+
 COORDINATOR_FILES = {".claude/agents/coordinator.md"}
-
-
-def nix(*args):
-    return subprocess.run(["nix", *args], check=True, capture_output=True, text=True).stdout.strip()
-
-
-def home_files(host):
-    attr = f".#nixosConfigurations.{host}.config.home-manager.users.lukas.home.file"
-    return set(json.loads(nix("eval", "--json", attr, "--apply", "builtins.attrNames")))
 
 
 def check(condition, message):
@@ -26,8 +19,8 @@ def check(condition, message):
 
 
 def main():
-    skills = pathlib.Path(nix("eval", "--raw", "--impure", "--expr",
-                              "(builtins.getFlake (toString ./.)).inputs.skills.outPath"))
+    P = gate_probe.section("coordinator-wiring")
+    skills = pathlib.Path(P["skills"])
     role_path = skills / "agents/coordinator/ROLE.md"
     front = json.loads(subprocess.run(["yq", "--front-matter=extract", "-o=json", ".", str(role_path)],
                                       check=True, capture_output=True, text=True).stdout)
@@ -41,13 +34,11 @@ def main():
     check("options.coordinator.interactiveQuietSeconds = lib.mkOption {" in changed and "type = lib.types.ints.unsigned;" in changed.split("interactiveQuietSeconds", 1)[1][:200],
           "the pinned skills input declares coordinator.interactiveQuietSeconds (unsigned int, skills#66), the type lenovo's flag uses")
 
-    lenovo, acer = home_files("lenovo"), home_files("acer-swift")
+    lenovo, acer = set(P["files"]["lenovo"]), set(P["files"]["acer-swift"])
     check(COORDINATOR_FILES <= lenovo, "lenovo links the Claude and Codex coordinator adapters")
     # the same options for an interactive session: devenv.local.nix in the checkout, evaluated as Nix so a malformed value
     # fails here, not at the Coordinator's next act; nothing else is written into the checkout
-    local_text = nix("eval", "--raw", '.#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.file."claude-code-skills/devenv.local.nix".text')
-    local_cfg = json.loads(subprocess.run(["nix", "eval", "--json", "--impure", "--expr", f"import (builtins.toFile \"devenv.local.nix\" {json.dumps(local_text)})"],
-                                          check=True, capture_output=True, text=True).stdout)
+    local_cfg = P["local"]
     check(local_cfg == {"coordinator": {"mayApprove": True, "approvalDecision": "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996",
                                         "panes": "lenovo-21CB001PMX/wM:p1"}},
           f"lenovo's devenv.local.nix carries exactly the delegation, the decision comment and the Coordinator pane the wrappers pass (got {local_cfg})")
@@ -64,11 +55,7 @@ def main():
         check(not any(f.startswith(".codex/agents/") for f in files),
               f"{host} links nothing into ~/.codex/agents (Codex refuses a symlinked role file at spawn)")
 
-    def codex_config(host):
-        attr = f'.#nixosConfigurations.{host}.config.home-manager.users.lukas.home.file.".codex/config.toml".text'
-        return tomllib.loads(nix("eval", "--raw", attr))
-
-    lenovo_cfg, acer_cfg = codex_config("lenovo"), codex_config("acer-swift")
+    lenovo_cfg, acer_cfg = tomllib.loads(P["codex"]["lenovo"]), tomllib.loads(P["codex"]["acer-swift"])
     for host, cfg in (("lenovo", lenovo_cfg), ("acer-swift", acer_cfg)):
         check("model" not in cfg, f"{host}'s Codex config pins no model (the account default applies)")
     check("coordinator" not in acer_cfg.get("agents", {}), "acer's Codex declares no coordinator agent")
@@ -85,12 +72,8 @@ def main():
     check("agents/coordinator/ROLE.md" in agent["developer_instructions"], "the Codex instructions point at the pinned ROLE.md")
     check(agent["description"].strip() != "", "the Codex agent has a description")
 
-    def user_units(host, kind):
-        attr = f".#nixosConfigurations.{host}.config.home-manager.users.lukas.systemd.user.{kind}"
-        return json.loads(nix("eval", "--json", attr))
-
-    lenovo_timers, acer_timers = user_units("lenovo", "timers"), user_units("acer-swift", "timers")
-    lenovo_services = user_units("lenovo", "services")
+    lenovo_timers, acer_timers = P["timers"]["lenovo"], P["timers"]["acer-swift"]
+    lenovo_services = P["services"]
     check("coordinator-wakeup" in lenovo_timers and "coordinator-wakeup" in lenovo_services,
           "lenovo has the coordinator-wakeup timer and service")
     check("coordinator-wakeup" not in acer_timers, "acer, a worker, has no coordinator-wakeup timer")
@@ -103,8 +86,7 @@ def main():
           "the service is a oneshot running the coordinator-wakeup script")
     check(any(e.startswith("PATH=/run/current-system/sw/bin:") for e in service["Environment"]),
           "the service sees devenv and claude through the system and user profiles")
-    script = nix("eval", "--raw", ".#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages",
-                 "--apply", 'ps: (builtins.head (builtins.filter (p: (p.name or "") == "coordinator-wakeup") ps)).text')
+    wakeup, script = P["wakeup"], P["script"]
     check('devenv tasks run coord:changed --input-json \'{"consume":true}\'' in script, "the timer runs coord:changed in its consuming form")
     # the owner's skills config for the host rides on every devenv call as fixed --option flags (sam.herdr.coordinatorWakeup);
     # the exact flags are the contract: the delegation, the decision it cites, the Coordinator's pane
@@ -188,10 +170,6 @@ def main():
           "parked lines stop every later session until the owner clears pending.failed")
     wrapper_dirs = re.findall(r"/nix/store/[a-z0-9]+-coordinator-read/bin", script)
     check(wrapper_dirs != [], "coordinator-read is on the wake-up script's PATH")
-    # realise the script (this also runs its shellcheck) so the wrapper can be read and the script exercised for real
-    wakeup = nix("build", "--no-link", "--print-out-paths", "--impure", "--expr",
-                 'builtins.head (builtins.filter (p: (p.name or "") == "coordinator-wakeup")'
-                 ' (builtins.getFlake (toString ./.)).nixosConfigurations.lenovo.config.home-manager.users.lukas.home.packages)')
     wrapper = pathlib.Path(wrapper_dirs[0], "coordinator-read").read_text()
     check("coord:brief|coord:changed|coord:capacity|work:status|herdr:inventory|herdr:inspect|herdr:await|gh:work|gh:repos|git:recent|harness:session-summary) ;;" in wrapper
           and wrapper.count("--option") == 2 * OPTS.count("--option") and wrapper.count(OPTS) == 2 and '[ "$#" -le 2 ]' in wrapper

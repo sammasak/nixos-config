@@ -15,42 +15,19 @@ import re
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+
+import gate_probe
 
 FLAG = "--dangerously-skip-permissions"
 WORKER, COORDINATOR = "acer-swift/probe", "lenovo"
-FLAKE = "(builtins.getFlake (toString ./.))"
-
-
-def config_of(host):
-    """The host's evaluated NixOS config as a Nix expression; WORKER is the guest of an instance declared only here."""
-    if host == WORKER:
-        return (f"({FLAKE}.nixosConfigurations.acer-swift.extendModules "
-                "{ modules = [ ({ lib, ... }: { sam.workers.instances = lib.mkForce { probe = { }; }; }) ]; }).config.containers.probe.config")
-    return f"{FLAKE}.nixosConfigurations.{host}.config"
-
-
-def hm_expr(host, path):
-    return f"({config_of(host)}).home-manager.users.lukas.{path}"
-
-
-def nix(*args):
-    return subprocess.run(["nix", *args], check=True, capture_output=True, text=True).stdout.strip()
-
-
-def hm(host, path):
-    return json.loads(nix("eval", "--impure", "--json", "--expr", hm_expr(host, path)))
-
-
-def realise(host, path):
-    """The text of a Home Manager string with store context (a script path, an ExecStart), with its context built."""
-    expr = f'{FLAKE}.nixosConfigurations.{COORDINATOR}.pkgs.writeText "worker-permissions-probe" {hm_expr(host, path)}'
-    return pathlib.Path(nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", expr)).read_text()
+P = gate_probe.section("worker-permissions")
 
 
 def launched(host, args, herdr=True, home=None):
     """The argv the host's `claude` fish function gives the real claude, captured by a stand-in on PATH; HERDR_ENV
     takes the launcher's native path, as inside a Herdr pane (coord:spawn's `herdr agent start` types into one)."""
-    fn = realise(host, "programs.fish.functions.claude")
+    fn = P[host]["fish"]["claude"]
     launcher = re.search(r"/nix/store/[^ ]+/bin/herdr-agent-launcher", fn).group(0)
     with tempfile.TemporaryDirectory() as d:
         fake = pathlib.Path(d, "claude")
@@ -63,12 +40,6 @@ def launched(host, args, herdr=True, home=None):
         return run.stdout.splitlines()
 
 
-def claude_wrapped(host):
-    """The bun-compiled binary of the Claude Code the host pins, realised so its embedded setting schema can be read."""
-    out = nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", hm_expr(host, "programs.claude-code.package"))
-    return pathlib.Path(out.splitlines()[-1])
-
-
 def check(condition, message):
     if not condition:
         print(f"FAIL: {message}")
@@ -77,7 +48,7 @@ def check(condition, message):
 
 
 def trusted_after_activation(host):
-    data = realise(host, "home.activation.acceptClaudeStartupDialogs.data")
+    data = P[host]["activation"]
     script = re.search(r"/nix/store/[^ ]+-accept-claude-startup-dialogs", data).group(0)
     with tempfile.TemporaryDirectory() as home:
         state = pathlib.Path(home, ".claude.json")
@@ -99,8 +70,7 @@ def startup_screen(host, extra=(), flag=True):
     the non-essential-traffic switches do not skip it). So the check runs Claude Code in its own network namespace
     (`unshare --map-current-user -n`: loopback only, the uid stays the caller's, as bypass mode requires) with
     ANTHROPIC_BASE_URL on a closed loopback port: the call fails at once and the dummy key never leaves the host."""
-    files = nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", hm_expr(host, "home-files"))
-    claude = nix("build", "--impure", "--no-link", "--print-out-paths", "--expr", hm_expr(host, "programs.claude-code.finalPackage"))
+    files, claude = P[host]["home-files"], P[host]["finalPackage"]
     key = "sk-ant-api03-hermetic-startup-check-00000000"
     with tempfile.TemporaryDirectory() as home:
         work = pathlib.Path(home, "work"); work.mkdir()
@@ -127,14 +97,14 @@ def main():
     check(f'[ "claude" "{FLAG}" ]' in module, "the workers module starts every environment's Claude with " + FLAG)
 
     for host, worker in ((WORKER, True), (COORDINATOR, False)):
-        settings = hm(host, "programs.claude-code.settings")
+        settings = P[host]["settings"]
         if worker:
             check(settings.get("skipDangerousModePermissionPrompt") is True, f"{host}: settings skip the bypass acknowledgment dialog")
             check(settings.get("switchModelsOnFlag") is True, f"{host}: settings switch models when safeguards flag a message (#157)")
         else:
             check("skipDangerousModePermissionPrompt" not in settings, f"{host}: settings keep the bypass acknowledgment dialog")
             check("switchModelsOnFlag" not in settings, f"{host}: settings leave the safeguards model-switch choice to the owner")
-        fish = hm(host, "programs.fish.functions")
+        fish = P[host]["fish"]
         check(FLAG not in fish["claude"], f"{host}: plain claude (interactive) gets no bypass flag")
         if worker:
             check(re.search(r"herdr-agent-launcher claude " + FLAG + r" \$argv", fish.get("claude-worker", "")) is not None,
@@ -183,7 +153,7 @@ def main():
 
     # #157 only works if the pinned Claude Code still reads switchModelsOnFlag: a version bump that drops or renames it
     # would leave every check above green while workers silently stall at the safeguards dialog again. Grep the binary.
-    wrapped = claude_wrapped(WORKER)
+    wrapped = pathlib.Path(P[WORKER]["package"])
     found = subprocess.run(["grep", "-rqa", "switchModelsOnFlag", str(wrapped)]).returncode == 0
     check(found, f"the pinned Claude Code ({wrapped.name}) recognises switchModelsOnFlag; if this fails a Claude Code "
                  "upgrade dropped or renamed the setting and #157 workers will stop at the model-switch dialog again")
@@ -195,23 +165,26 @@ def main():
     check(got.get("hasSeenAutoDefaultNudge") is True, f"{WORKER}: activation dismisses the auto-mode default nudge")
     home, got = trusted_after_activation(COORDINATOR)
     trusted = {d for d, p in got["projects"].items() if p.get("hasTrustDialogAccepted")}
-    want = {home, *json.loads(nix("eval", "--json", f".#nixosConfigurations.{COORDINATOR}.config.sam.herdr.trustedDirs"))}
+    want = {home, *P[COORDINATOR]["trustedDirs"]}
     check(trusted == want and "/home/lukas/.cache/wt" in want, f"{COORDINATOR}: activation trusts $HOME and its declared dirs only (got {sorted(trusted)})")
 
-    exec_start = hm(COORDINATOR, "systemd.user.services.coordinator-wakeup.Service.ExecStart")
-    wakeup = pathlib.Path(realise(COORDINATOR, "systemd.user.services.coordinator-wakeup.Service.ExecStart")).read_text()
+    exec_start = P[COORDINATOR]["wakeup"]
+    wakeup = pathlib.Path(" ".join(exec_start)).read_text()
     calls = re.findall(r"\| claude -p [^\n]*", wakeup)
     check(len(calls) == 1 and "--permission-mode dontAsk" in calls[0], f"{COORDINATOR}: the unattended Coordinator runs claude -p in dontAsk ({exec_start})")
     check(FLAG not in wakeup and "bypassPermissions" not in wakeup, f"{COORDINATOR}: the Coordinator wake-up never asks for bypassPermissions")
-    services = hm(WORKER, "systemd.user.services")
+    services = P[WORKER]["services"]
     check("coordinator-wakeup" not in services, f"{WORKER}: no unattended Coordinator on the worker host")
 
     # #149: the coord:spawn argv against each host's rendered settings, the setting itself under test
     # the worker runs the argv the launcher hands the real claude, --settings included (#157): it must still start
     worker_extra = launched(WORKER, [FLAG])[:2]
-    worker_screen, coordinator_screen = startup_screen(WORKER, worker_extra), startup_screen(COORDINATOR)
     # skills#28: the bare argv a Herdr restore types, through the worker's launcher, must also land in bypassPermissions
-    restored_screen = startup_screen(WORKER, launched(WORKER, []), flag=False)
+    # the three startups wait out their timeout, so they run side by side
+    with ThreadPoolExecutor() as pool:
+        worker_screen, coordinator_screen, restored_screen = (f.result() for f in [
+            pool.submit(startup_screen, WORKER, worker_extra), pool.submit(startup_screen, COORDINATOR),
+            pool.submit(startup_screen, WORKER, launched(WORKER, []), flag=False)])
     print(f"{WORKER} restored-pane screen: {restored_screen[-160:]}")
     check("bypasspermissionson" in restored_screen and "Yes,Iaccept" not in restored_screen and "automodeon" not in restored_screen,
           f"{WORKER}: a bare `claude` in a Herdr pane (a session restore) reaches its prompt in bypassPermissions, no dialog, not auto mode")
@@ -227,10 +200,7 @@ def main():
     check("BypassPermissionsmode" in coordinator_screen and "Yes,Iaccept" in coordinator_screen,
           f"{COORDINATOR}: the same argv still stops at the acceptance dialog (the setting is what skips it, worker hosts only)")
 
-    failed = json.loads(nix("eval", "--impure", "--json", "--expr",
-                            f'let c = (builtins.getFlake (toString ./.)).nixosConfigurations.{COORDINATOR}; '
-                            'e = c.extendModules { modules = [ { sam.herdr.worker.enable = true; } ]; }; '
-                            'in map (a: a.message) (builtins.filter (a: !a.assertion) e.config.assertions)'))
+    failed = P["coordinatorAsWorker"]
     check(any("cannot both be enabled" in m for m in failed), "the Coordinator's host cannot also be a worker (assertion)")
 
 

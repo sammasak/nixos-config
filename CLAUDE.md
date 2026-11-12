@@ -29,6 +29,7 @@ devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward s
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
 #   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree.
+# The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link

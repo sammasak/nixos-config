@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.getcwd()
 failed = 0
@@ -40,6 +41,10 @@ let
 in %(what)s
 """
 FAILING = "map (a: a.message) (builtins.filter (a: !a.assertion) sys.config.assertions)"
+# the same, of the module under test only: every message ASSERTED expects is its own, and the host's other
+# assertions are what make a case cost seconds
+OWN = ('map (a: a.message) (builtins.filter (a: !a.assertion) (builtins.concatMap (d: d.value) (builtins.filter '
+       '(d: builtins.match ".*/modules/workers/core.nix" d.file != null) sys.options.assertions.definitionsWithLocations)))')
 
 # (name, module, expected message substring); each must fail an assertion
 ASSERTED = [
@@ -121,20 +126,53 @@ def check(ok, what):
     failed += not ok
 
 
-def nix_eval(case, what=FAILING):
-    expr = EXPR % {"root": json.dumps(ROOT), "base": BASE, "case": case, "what": what}
+FAST = {}
+
+
+def prefetch(exprs):
+    """Evaluates every expression in one process; one that throws (or all, if that process fails) is left to run_eval()
+    to run on its own, so its check reports the error as before."""
+    tried = " ".join(f"(let v = ({e}); r = builtins.tryEval (builtins.deepSeq v v); in if r.success then r.value else null)" for e in exprs)
+    out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", f"[ {tried} ]"], capture_output=True, text=True)
+    if out.returncode == 0:
+        FAST.update((e, v) for e, v in zip(exprs, json.loads(out.stdout)) if v is not None)
+
+
+def run_eval(expr):
+    if expr in FAST:
+        return subprocess.CompletedProcess([], 0, json.dumps(FAST[expr]), "")
     return subprocess.run(["nix", "eval", "--impure", "--json", "--expr", expr], capture_output=True, text=True)
+
+
+def stub_expr(case, what=FAILING):
+    return EXPR % {"root": json.dumps(ROOT), "base": BASE, "case": case, "what": what}
+
+
+def nix_eval(case, what=FAILING):
+    return run_eval(stub_expr(case, what))
 
 
 def nix_string(s):
     return json.dumps(s).replace("${", "\\${")
 
 
+GUEST = "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; channel = g.nix.channel.enable; registry = g.nix.settings.flake-registry; }"
+
+
+def fleet(case):
+    return FLEET % {"root": json.dumps(ROOT), "case": case}
+
+
 def main():
+    # a type error ends an evaluation, so each TYPED case is a process of its own (about 230 MB), four at a time,
+    # beside the one evaluation of everything else
+    pool = ThreadPoolExecutor(4)
+    typed = pool.map(lambda c: nix_eval(c[1], "sys.config.system.build.toplevel.drvPath"), TYPED)
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+              fleet("{ }"), *(fleet(case) for _, case, _ in FLEET_CASES)])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
-    out = nix_eval("{ }", "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; channel = g.nix.channel.enable; "
-                   "registry = g.nix.settings.flake-registry; }")
+    out = nix_eval("{ }", GUEST)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("channel") is False and len(got.get("nixPath", [])) == 1 and got["nixPath"][0].startswith("nixpkgs=/nix/store/")
           and got.get("registry") == "",
@@ -144,19 +182,16 @@ def main():
     check(got == {"storeFree": True, "live": True, "restarts": True},
           f"the declaration unit holds no store path, a resize or prompt edit leaves it, a model change moves it ({got or out.stderr.strip()[-300:]})")
     for name, case, want in ASSERTED:
-        out = nix_eval(case)
+        out = nix_eval(case, OWN)
         got = json.loads(out.stdout) if out.returncode == 0 else [out.stderr.strip()[-600:]]
         check(any(want in m for m in got), f"{name}: rejected with \"{want}\" (got {got})")
-    for name, case, want in TYPED:
-        out = nix_eval(case, "sys.config.system.build.toplevel.drvPath")
+    for (name, case, want), out in zip(TYPED, typed):
         check(out.returncode != 0 and want in out.stderr, f"{name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
 
-    out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", FLEET % {"root": json.dumps(ROOT), "case": "{ }"}],
-                         capture_output=True, text=True)
+    out = run_eval(fleet("{ }"))
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     for name, case, want in FLEET_CASES:
-        out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", FLEET % {"root": json.dumps(ROOT), "case": case}],
-                             capture_output=True, text=True)
+        out = run_eval(fleet(case))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
 
     real = {s: shutil.which(s) for s in ("fish", "bash")}

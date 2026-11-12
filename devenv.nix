@@ -19,15 +19,15 @@ let
   # Isolated config from the generated files, not ~/.config/nvim: +qa against
   # the live dir would exercise the deployed (possibly stale) generation and
   # mask errors, since +qa exits 0 even on an init throw.
-  nvimCheck = gate "nixos-nvim-check" (with pkgs; [ nix gnugrep coreutils ]) ''
-    hm='.#nixosConfigurations.lenovo.config.home-manager.users.lukas'
-    NV=$(nix build "$hm.programs.neovim.finalPackage" --no-link --print-out-paths)
+  nvimCheck = gate "nixos-nvim-check" (with pkgs; [ nix python3 jq gnugrep coreutils ]) ''
+    p=$(python3 scripts/gate_probe.py nvim-check)
+    NV=$(jq -r .nvim <<<"$p")
     cfg=$(mktemp -d); trap 'rm -rf "$cfg"' EXIT
     mkdir -p "$cfg/nvim"
     ln -s "$PWD/dotfiles/nvim/lua" "$cfg/nvim/lua"
     ln -s "$PWD/dotfiles/nvim/lazy-lock.json" "$cfg/nvim/lazy-lock.json"
-    nix eval --raw "$hm.xdg.configFile.\"nvim/init.lua\".text" > "$cfg/nvim/init.lua"
-    nix eval --raw "$hm.xdg.configFile.\"nvim/nix.lua\".text" > "$cfg/nvim/nix.lua"
+    jq -j .init <<<"$p" > "$cfg/nvim/init.lua"
+    jq -j .nix <<<"$p" > "$cfg/nvim/nix.lua"
     out=$(XDG_CONFIG_HOME="$cfg" "$NV/bin/nvim" --headless +qa 2>&1 || true)
     if printf '%s' "$out" | grep -qiE 'error|stack traceback|E[0-9]{3,}:'; then
       printf '%s\n' "$out"; echo "nvim-check: startup errored" >&2; exit 1
@@ -38,20 +38,24 @@ let
     nix flake check --all-systems --no-write-lock-file
   '';
 
-
   verifyHosts = gate "nixos-verify" (with pkgs; [ bash nix coreutils ]) ''
     bash scripts/verify-all-hosts.sh
   '';
 
-  claudeSettingsTest = gate "claude-settings-test" (with pkgs; [ nix python3 ]) ''
-    hm='.#nixosConfigurations.lenovo.config.home-manager.users.lukas'
-    files=$(nix build "$hm.home-files" --no-link --print-out-paths)
-    CLAUDE_BIN=$(nix build "$hm.programs.claude-code.package" --no-link --print-out-paths)/bin/claude \
-      python3 scripts/test-native-otel-subprocess-env.py "$files/.claude/settings.json"
+  # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
+  # its own builds only its section.
+  probe = gate "nixos-gate-probe" [ pkgs.nix ] ''
+    nix build --impure --no-link --print-out-paths --expr '(import ./scripts/gate-probe.nix { }).json'
   '';
 
-  nativeOtelRelayTest = gate "native-otel-relay-test" (with pkgs; [ nginx nix python3 ]) ''
-    helper=$(nix eval --raw .#nixosConfigurations.lenovo.config.systemd.services.native-otel-relay.serviceConfig.ExecStartPre)
+  claudeSettingsTest = gate "claude-settings-test" (with pkgs; [ nix python3 jq ]) ''
+    p=$(python3 scripts/gate_probe.py claude-settings)
+    CLAUDE_BIN=$(jq -r .package <<<"$p")/bin/claude \
+      python3 scripts/test-native-otel-subprocess-env.py "$(jq -r '."home-files"' <<<"$p")/.claude/settings.json"
+  '';
+
+  nativeOtelRelayTest = gate "native-otel-relay-test" (with pkgs; [ nginx nix python3 jq ]) ''
+    helper=$(python3 scripts/gate_probe.py native-otel-relay | jq -r .helper)
     ${pkgs.python3}/bin/python scripts/test-native-otel-relay.py "$helper" "${pkgs.nginx}/bin/nginx"
   '';
 
@@ -106,11 +110,16 @@ let
   '';
 
 
-  qa = gate "nixos-qa" [ ] (lib.concatMapStringsSep "\n" lib.getExe [
-    lintComments lintShell secretsVerify nvimCheck flakeCheck verifyHosts nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest
-    coordinatorWiringTest workerPermissionsTest workersEvalTest ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest
-    rfLabBoundaryTest runtimeHostTest rfBeaconsTest
-  ]);
+  run = lib.concatMapStringsSep "\n" lib.getExe;
+  qa = gate "nixos-qa" [ ] ''
+    ${run [ lintComments lintShell secretsVerify flakeCheck verifyHosts ]}
+    GATE_PROBE=$(${lib.getExe probe})
+    export GATE_PROBE
+    ${run [
+      nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest
+      ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest rfBeaconsTest
+    ]}
+  '';
 
   # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
   # unstaged edits nor a different checked-out branch can make it pass.

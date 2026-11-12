@@ -19,3 +19,4 @@ hosts/lenovo-21CB001PMX/facter.json
 devenv.local.nix
 devenv.local.yaml
 .pre-commit-config.yaml
+__pycache__/

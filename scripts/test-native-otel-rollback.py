@@ -11,9 +11,10 @@ import subprocess
 import sys
 import tempfile
 
+import gate_probe
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VARS = "hosts/lenovo-21CB001PMX/variables.nix"
-HM = "config.home-manager.users.lukas"
 failed = 0
 
 
@@ -23,27 +24,18 @@ def check(ok, what):
     failed += not ok
 
 
-def ev(flake, host, attr, raw=False, apply=None):
-    cmd = ["nix", "eval", "--raw" if raw else "--json", f"{flake}#nixosConfigurations.{host}.{attr}"]
-    if apply:
-        cmd += ["--apply", apply]
-    out = subprocess.run(cmd, capture_output=True, text=True)
+def surfaces(tree):
+    """lenovo's telemetry surfaces in a copy of the tree (scripts/gate-probe.nix, the section the live tree's probe holds)."""
+    out = subprocess.run(["nix", "eval", "--json", "--impure", "--expr", f'(import {tree}/scripts/gate-probe.nix {{ }}).sections.otel-rollback.live'],
+                         capture_output=True, text=True)
     if out.returncode != 0:
-        sys.exit(f"nix eval {host}.{attr} failed:\n{out.stderr[-800:]}")
-    return out.stdout if raw else json.loads(out.stdout)
-
-
-def surfaces(flake, host):
-    env = ev(flake, host, f"{HM}.programs.claude-code.settings.env")
-    codex = ev(flake, host, f'{HM}.home.file.".codex/config.toml".text', raw=True)
-    fish = " ".join(ev(flake, host, f"{HM}.programs.fish.functions.{f}", raw=True) for f in ("claude", "codex"))
-    relay = ev(flake, host, "config.systemd.services", apply='s: s ? "native-otel-relay"')
-    secret = ev(flake, host, "config.sops.secrets", apply='s: s ? "native_otlp_auth"')
-    return {"env": env, "codex_otel": "[otel]" in codex, "fish_otel": "OTEL_" in fish, "relay": relay, "secret": secret}
+        sys.exit(f"nix eval of lenovo in {tree} failed:\n{out.stderr[-800:]}")
+    return json.loads(out.stdout)
 
 
 def main():
-    live = surfaces(f"path:{ROOT}", "lenovo")
+    P = gate_probe.section("otel-rollback")
+    live = P["live"]
     otel_keys = sorted(k for k in live["env"] if k.startswith("OTEL_") or k == "CLAUDE_CODE_ENABLE_TELEMETRY")
     check(otel_keys and live["codex_otel"] and live["fish_otel"] and live["relay"] and live["secret"] and "DISABLE_TELEMETRY" not in live["env"],
           f"control: the live canary carries every surface ({len(otel_keys)} Claude telemetry keys, Codex [otel], Fish preludes, relay, secret)")
@@ -56,14 +48,14 @@ def main():
         text, n = re.subn(r"nativeOtel = true;", "nativeOtel = false;", vars_file.read_text())
         check(n == 1, f"the runbook's switch exists exactly once in {VARS}")
         vars_file.write_text(text)
-        back = surfaces(f"path:{tmp}", "lenovo")
+        back = surfaces(tmp)
     leftover = sorted(k for k in back["env"] if k.startswith("OTEL_") or k == "CLAUDE_CODE_ENABLE_TELEMETRY")
     check(not leftover, f"rolled back: no Claude telemetry variable is left (left: {leftover})")
     check(back["env"].get("DISABLE_TELEMETRY") == "1", "rolled back: Claude's standard telemetry-disable setting is restored")
     check(not back["codex_otel"], "rolled back: Codex's [otel] exporter stanza is gone")
     check(not back["fish_otel"], "rolled back: the claude and codex Fish functions set no OTEL_ variable")
     check(not back["relay"] and not back["secret"], "rolled back: the relay service and the receiver secret are no longer installed")
-    acer = ev(f"path:{ROOT}", "acer-swift", f"{HM}.programs.claude-code.settings.env")
+    acer = P["acer"]
     check(back["env"] == acer, f"rolled back: lenovo's Claude environment equals acer's, a host that never had the canary (diff: {sorted(set(back['env'].items()) ^ set(acer.items()))})")
     sys.exit(1 if failed else 0)
 

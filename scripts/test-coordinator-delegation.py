@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 
+import gate_probe
+
 DECISION = "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996"
 APPROVE = '{"repo":"sammasak/skills","number":36,"label":"approved","action":"add","reason":"fits a worker: no live hardware"}'
 failed = 0
@@ -24,22 +26,19 @@ def check(ok, what):
     failed += not ok
 
 
-def nix(*args):
-    return subprocess.run(["nix", *args], check=True, capture_output=True, text=True).stdout.strip()
-
-
 def main():
     global failed
     if shutil.which("devenv") is None:
         check(False, "devenv is on PATH (the system profile)")
         sys.exit(1)
-    text = nix("eval", "--raw", '.#nixosConfigurations.lenovo.config.home-manager.users.lukas.home.file."claude-code-skills/devenv.local.nix".text')
+    P = gate_probe.section("delegation")
+    text = P["local"]
     check(f'coordinator.mayApprove = true;' in text and f'coordinator.approvalDecision = "{DECISION}";' in text
           and 'coordinator.panes = "lenovo-21CB001PMX/wM:p1";' in text and "do not add it" in text,
           "lenovo renders devenv.local.nix with the delegation, the owner's decision comment and the Coordinator pane")
     off = text.replace("coordinator.mayApprove = true;", "coordinator.mayApprove = false;")
     check(off != text, "the off variant differs only in mayApprove")
-    skills = nix("eval", "--raw", "--impure", "--expr", "(builtins.getFlake (toString ./.)).inputs.skills.outPath")
+    skills = P["skills"]
     with tempfile.TemporaryDirectory() as tmp:
         tmp = pathlib.Path(tmp)
         copy = tmp / "skills"

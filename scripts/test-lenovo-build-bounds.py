@@ -1,7 +1,7 @@
 """lenovo's nix-daemon builds stay bounded (nixos-config#109), and so do the environment hosts' (acer, msi)."""
-import json
-import subprocess
 import sys
+
+import gate_probe
 
 failed = 0
 
@@ -12,22 +12,14 @@ def check(ok, what):
     failed += not ok
 
 
-def ev(attr):
-    out = subprocess.run(["nix", "eval", "--json", attr], capture_output=True, text=True)
-    return json.loads(out.stdout) if out.returncode == 0 else None
-
-
 def size(v):
     units = {"K": 2**10, "M": 2**20, "G": 2**30}
     return int(v[:-1]) * units[v[-1]] if v and v[-1] in units else None
 
 
-def cfg(host):
-    return f".#nixosConfigurations.{host}.config"
-
-
-lenovo = ev(cfg("lenovo") + ".systemd.services.nix-daemon.serviceConfig") or {}
-settings = ev(cfg("lenovo") + ".nix.settings") or {}
+P = gate_probe.section("build-bounds")
+lenovo = P["daemon"]["lenovo"] or {}
+settings = P["settings"] or {}
 check(settings.get("max-jobs") == 2 and settings.get("cores") == 2,
       f"lenovo builds at most 2 derivations at once, 2 cores each ({settings.get('max-jobs')}, {settings.get('cores')})")
 high, cap = size(lenovo.get("MemoryHigh")), size(lenovo.get("MemoryMax"))
@@ -41,7 +33,7 @@ ram = 15.3 * 2**30
 check(cap is not None and cap <= ram / 2,
       "MemoryMax leaves at least half of lenovo's 15.3 GiB to k3s, the agents and the desktop")
 for host in ("acer-swift", "msi-ms7758"):
-    daemon = ev(cfg(host) + ".systemd.services.nix-daemon.serviceConfig") or {}
+    daemon = P["daemon"][host] or {}
     high, cap = size(daemon.get("MemoryHigh")), size(daemon.get("MemoryMax"))
     check(high is not None and cap is not None and high < cap <= 6 * 2**30,
           f"{host}, whose environments build in its daemon, bounds it at most 6G ({daemon.get('MemoryHigh')}, {daemon.get('MemoryMax')})")
