@@ -7,7 +7,14 @@ Append; move a line to fixed when its change lands.
 ## Open
 
 - `MemoryLow` protects nothing on acer and msi: cgroup2 is mounted without `memory_recursiveprot` (a second cgroup2 mount at `/run/cilium/cgroupv2`), and `environments.slice` counts `low 0`. The 2G reserve is a number, not a reserve (docs/environments-plan.md, item 3).
-- `mount -t proc -o subset=pid` works in a guest's user namespace on kernel 7.2.10 (acer); a full proc is still "too revealing". bwrap and podman need to ask for the subset.
+- Nested sandboxes (acer `push`, 2026-11-12): nspawn's masks on `/proc` make the kernel refuse a full procfs in any nested user and pid namespace; the clean fix is nspawn's (systemd#34226, open). `subset=pid` works but has no `/proc/sys`, `meminfo`, `cpuinfo`, `stat`: `free`, `uptime`, `sysctl` fail; `nproc`, cargo and daemon `nix build` work.
+  - bwrap 0.12 cannot start on a subset proc (reads `/proc/sys/kernel/overflowuid`). Works: bind the outer `/proc`, mount `subset=pid` from inside as mapped uid 0, then drop all capabilities (wrapper verified by hand).
+  - podman 5.8 and buildah: no flag for the proc mount options. Works: an OCI runtime wrapper adding `subset=pid` to the bundle's `/proc` mount (`run` and `bud` verified), with the vfs driver (no `/dev/fuse`), cgroupfs, and `--network=none` (no `/dev/net/tun`).
+  - Claude Code `/sandbox`: `sandbox.enableWeakerNestedSandbox` binds the outer `/proc` (pid view of the whole guest); `sandbox.bwrapPath` can point at the wrapper. Neither run end to end yet.
+- A guest's own nix client (devenv, a local `--store`) asks the substituters itself; with the LAN blocked each lookup waited out the timeout: `delegation-test` 12 s to 467 s on msi, about 75 s per local-store command on acer. The caches' port is now excepted and the guest takes the host's `connect-timeout` (not yet measured after).
+- Guest `nix.conf` lists substituters and keys twice (the guest's defaults plus the inherited ones).
+- `nixos:nvim-check` rewrites `dotfiles/nvim/lazy-lock.json` in the working tree; a hook that fails to build leaves the previous pre-push gate active with no warning; `nixos:qa` prints no per-step timings; `file` and `strings` are not on a guest's PATH.
+- `pkill -f <pattern>` from an agent's tool shell matches the shell's own command line and kills it (exit 144, twice today): use `pgrep -x` or a pid.
 - Herdr reports `done` while an agent waits on its own background shell or subagent (`f44` three times in one issue); a watcher keyed on status alone wakes for nothing or, worse, retires too early. The coordinator reads the pane tail first (docs/nspawn-workers.md step 4).
 - Two environments on acer running Rust gates plus the nixos-config gate share the host daemon's two build cores: the nixos-config gate that takes 11 min on msi alone was past 35 min. One heavy gate per host at a time, or raise the daemon's cores when the pool is the only load.
 - A fresh clone has no git hooks until `devenv shell` runs once, so `nc200` pushed its nixos-config branch with no pre-push gate at all (docs only, so harmless this time). The brief should say "enter the devenv shell once before the first commit", or the guest should refuse a push from a repo with a devenv.nix and no hooks.
@@ -122,6 +129,14 @@ Append; move a line to fixed when its change lands.
 - herman#5 was handed out although PR #34 already implemented it; the agent caught it. Step 1 of the process now checks for an open PR.
 - The brief named `CLAUDE.md`, which herman does not have: briefs name no file, the agent finds the repo's guidance.
 - `nixos:worker-permissions-test` read `spawn.nix` from the skills input and a numbered container; it now checks the workers module and a probe instance that replaces the committed ones.
+
+- 2026-11-12 the Claude login left the guests (#235, #236), acer and msi: `claude -p` answers through the host
+  proxy with the placeholder token; no token file under `/var/lib/host-credentials` or `/run/secrets`, none in any
+  process environment the guest user can read, none in the home (`sk-ant-oat` matches only a plugin's docs). The proxy's
+  journal shows `POST /v1/messages` 200. The token the guests read before is still valid: rotation is the owner's.
+- 2026-11-12 bounded builds (max-jobs 2, cores 2) cost the nixos-config gate nothing on msi: every step within 1 s
+  of the unbounded run, peak 5.5G, `memory.events high 0`. #233 (reclaim threshold at the pool) has no throttling
+  left to remove there; acer's 2913 is the case it addresses, to be re-counted at the next gate on acer.
 
 ## Gate timing
 

@@ -87,6 +87,10 @@ let
     '';
   };
 
+  # A guest's nix asks its substituters itself as well as through the daemon (devenv does): one it cannot reach
+  # costs every such command the connect timeout, so those at a LAN address stay reachable.
+  lanCaches = lib.filter (m: m != null) (map (builtins.match "http://([0-9.]+):([0-9]+)/?") config.nix.settings.substituters);
+
   binds = w: {
     "${home}" = { hostPath = "${cfg.stateDir}/${w.name}/home"; isReadOnly = false; };
     # Nix's per-user fetcher and tarball caches, one per host: a fresh home re-downloads and re-unpacks every flake
@@ -125,14 +129,13 @@ let
     # the default NIX_PATH names root's channels, which a guest has none of: every nix command warned on stderr
     nix.channel.enable = false;
     nix.nixPath = [ "nixpkgs=${pkgs.path}" ];
-    # an empty registry fetched the global one on every cold cache
-    nix.settings.flake-registry = "";
     nix.registry.nixpkgs.to = { type = "path"; path = pkgs.path; };
 
     # The guest's nix is a client of the host's daemon, which takes a client's substituters (when it trusts each of
     # them), max-jobs and cores over its own: the guest's defaults skipped the fleet's store caches and lifted the
-    # host's build bounds.
-    nix.settings = { inherit (config.nix.settings) substituters trusted-public-keys max-jobs cores; };
+    # host's build bounds. An empty flake-registry fetched the global one on every cold cache.
+    nix.settings = { flake-registry = ""; inherit (config.nix.settings) substituters trusted-public-keys max-jobs cores; }
+      // lib.optionalAttrs (config.nix.settings ? connect-timeout) { inherit (config.nix.settings) connect-timeout; };
 
     # lean: the boot is the start latency
     documentation.enable = false;
@@ -227,7 +230,7 @@ in
       type = types.listOf cidr;
       default = [ ];
       example = [ "192.168.10.0/24" ];
-      description = "Networks the instances cannot reach through the host, and with any set not the host itself either, DNS (port 53) excepted; iptables firewall backend.";
+      description = "Networks the instances cannot reach through the host, and with any set not the host itself either, DNS (port 53) and the host's `http://<address>:<port>` substituters excepted; iptables firewall backend.";
     };
     jumpHosts = mkOption {
       type = types.attrsOf types.str;
@@ -458,6 +461,7 @@ in
           for c in dev-env-forward dev-env-input; do
             iptables -w -A $c -p udp --dport 53 -j RETURN
             iptables -w -A $c -p tcp --dport 53 -j RETURN
+            ${lib.concatMapStrings (m: "iptables -w -A $c -d ${lib.head m} -p tcp --dport ${lib.last m} -j RETURN\n            ") lanCaches}
           done
           ${lib.concatMapStrings (c: "iptables -w -A dev-env-forward -d ${c} -j DROP
 ") cfg.blockedNetworks}

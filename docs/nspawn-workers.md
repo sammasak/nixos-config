@@ -214,9 +214,9 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   the host's `resolv.conf` at start; the container waits up to 30 s for it to
   carry a nameserver. `services.devEnvironments.blockedNetworks` (the private
   and link-local ranges on acer and msi) drops forwarding from `ve-*` to those
-  networks and new connections from a guest to the host itself, DNS excepted:
-  an environment reaches the internet, not the LAN, the cluster, another
-  environment or its host.
+  networks and new connections from a guest to the host itself, DNS and the
+  fleet's store caches (port 5000) excepted: an environment reaches the
+  internet, not the LAN, the cluster, another environment or its host.
 - Headless guest: no Herdr server, repo-sweep or flake-update timers,
   gpg-agent, dconf or guest firewall; `flake-registry` is empty and `nixpkgs`
   resolves to the store's.
