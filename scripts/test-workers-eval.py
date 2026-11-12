@@ -23,7 +23,7 @@ BASE = r"""
   services.devEnvironments = {
     user = "alice";
     guestModules = [ { system.stateVersion = "25.11"; } ];
-    pool = { memory = "8G"; cores = 4; };
+    pool.memory = "8G";
     sessionSurface = { name = "surface"; script = w: pkgs.writeShellScriptBin "surface-${w.name}" "true"; };
     instances.ok = { model = "sonnet"; prompt = "Fix it's \"quoted\"\nand go."; };
   };
@@ -49,9 +49,6 @@ ASSERTED = [
     ("reserve above max", '{ services.devEnvironments.instances.ok.memory = { reserved = "4G"; max = "3G"; }; }', "reserved 4096M is above max 3072M"),
     ("max above pool", '{ services.devEnvironments.instances.ok.memory.max = "9G"; }', "memory.max 9216M is above pool.memory 8192M"),
     ("reserves above pool", "{ services.devEnvironments.instances = { a = { }; b = { }; c = { }; d = { }; }; }", "adds up to 10240M, more than pool.memory 8192M"),
-    ("cores above host", "{ services.devEnvironments.instances.b.cpu.reserved = 3; }", "cpu.reserved adds up to 5 cores"),
-    ("no memory pool", "{ services.devEnvironments.pool.memory = lib.mkForce null; }", "pool.memory: a host that declares instances"),
-    ("no core count", "{ services.devEnvironments.pool.cores = lib.mkForce null; }", "pool.cores: a host that declares instances"),
     ("hash collision", "{ services.devEnvironments.instances = { eal = { }; ea1 = { }; }; }", "two names hash to one address"),
     ("host's own name", "{ networking.hostName = lib.mkForce \"ok\"; programs.ssh.knownHosts.box.hostNames = [ \"ok\" ]; }", "the name is this host's own"),
     ("networking.hosts clash", '{ networking.hosts."192.168.1.5" = [ "ok.box" ]; }', "networking.hosts already maps the name"),

@@ -18,7 +18,7 @@ in
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
-  sam.storeCache = { serve = true; use = true; };
+  sam.storeCache.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [
     "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
     "nixos-config" "rf-proto" ".cache/wt"
@@ -30,14 +30,6 @@ in
   ];
   # `ssh <name>.msi` / `ssh <name>.acer` into an environment declared on that host (sam.workers.labelPrefix there).
   sam.workers.jumpHosts = { acer = "acer-swift"; msi = "msi-ms7758"; };
-  # One environment beside the control plane: a 4G pool keeps it and its bursts clear of k3s and the coordinator.
-  sam.workers = {
-    instances = { };
-    retired = [ "gw88" "nc201" "h2" "dp93" ];
-    labelPrefix = "lenovo";
-    pool = { memory = "4G"; cores = 16; };
-    ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
-  };
   sam.herdr.coordinatorWakeup = {
     enable = true;
     # Delegated approval (the comment every delegated gh:label act cites) and the interactive

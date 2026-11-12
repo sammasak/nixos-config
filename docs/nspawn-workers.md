@@ -36,7 +36,7 @@ Every environment of a host runs in `environments.slice`, whose `MemoryMax` is
 the host's `sam.workers.pool.memory` (protecting k3s and the host) and whose
 `MemoryLow` is the sum of the reserves. Swap (zram) stays allowed. nix builds
 run in the host's daemon, outside the pool; acer and msi bound that daemon
-like lenovo (2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
+(2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
 fails before k3s or the host does. msi powers off at 21:00
 (Mon-Fri window); its environments come back at its next boot.
 
@@ -72,7 +72,7 @@ host's swap.
 | Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
 | First use of a repo | clone, `devenv shell` | 25 s (skills), 32 s (herman): evaluation only, every store path comes from the host's store; 0.1 to 0.3 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
-| Host reboot or redeploy | nothing | container autostarts, agent resumes its conversation (acer rebooted 2026-11-12: container starting 7 s into userspace, agent back in Herdr at 15 s, home and the shared `~/.cache/nix` intact, first `devenv shell` 7.4 s; a second reboot brought the agent back in its conversation, and killed a gated push running in the environment, which has to be started again; msi the same day: two environments starting 6 s into userspace, both agents in Herdr at 14 s, conversation resumed, `devenv shell` 8 to 10 s) |
+| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted |
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
@@ -118,9 +118,8 @@ at runtime (`nixos:workers-eval-test` holds one case per line):
   prompt; a model outside `[][A-Za-z0-9._:-]`; a `prompt` with no session
   surface to deliver it;
 - sizes not in systemd syntax (`[1-9][0-9]*[KMGT]?`); `reserved` above `max`,
-  `max` above the pool, reserves summing above the pool, reserved cores
-  summing above `pool.cores`; instances on a host without `pool.memory` or
-  `pool.cores`;
+  `max` above the pool, reserves summing above the pool; instances on a host
+  without `pool.memory`;
 - a host interface address in `10.233.0.0/16`; a name both in `instances` and
   `retired`, or a `retired` name that is not a valid name; a `stateDir` outside
   `/var/lib/<name>`; `blockedNetworks` without the iptables firewall backend;
@@ -185,13 +184,17 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 
 - `/nix/store`, the nix db and the daemon socket are the host's (stock
   containers), so `nix build` and devenv use the host's store; `lukas` is not a
-  trusted user on acer and msi. On lenovo the host user is trusted (it signs
-  and deploys), and so is its guest: an environment there can do to the store
-  what the owner can.
+  trusted user on acer and msi.
+- lenovo hosts no environment, and eval refuses one: an environment holds its
+  host user's SSH key, and lenovo's is the fleet's deploy key (`deploy` with
+  passwordless sudo on every host, accepted from lenovo's address, which a
+  guest's traffic leaves by). Its user is also a trusted Nix user.
 - `~/.cache/nix` (Nix's fetcher and tarball caches) is one directory per host,
-  bound into every environment: the first `devenv shell` in a new environment
-  took 5.9 s on acer with it, 28 to 31 s without, for a repo the host had seen.
-  A revision the host has not seen still builds once (238 s on acer).
+  bound writable into every environment: the first `devenv shell` in a new
+  environment took 5.9 s on acer with it, 28 to 31 s without, for a repo the
+  host had seen. A revision the host has not seen still builds once (238 s on
+  acer). The price: environments of one host are not isolated from each other
+  there, one can plant a fetcher-cache entry another reads.
 - The guest imports the fleet's `core/system.nix`, `core/users.nix`,
   `core/packages.nix`, the pinned known hosts and the Home Manager wiring
   every host gets (`fleetHome` in `flake-modules/40-outputs-nixos.nix`).

@@ -16,10 +16,10 @@ in
     instances = { };
     retired = [ "demo" "dp93" "nc200" "dp120" "f44" "dp121" "boot2" "boot" ];
     labelPrefix = "acer";
-    pool = { memory = "7G"; cores = 8; };
+    pool.memory = "7G";
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
   };
-  # An environment's builds run in this daemon, outside the pool: bounded like lenovo's (a cores-2 build peaked at
+  # An environment's builds run in this daemon, outside the pool: bounded (a cores-2 build peaked at
   # 6.1G), past MemoryHigh it reclaims and swaps, past MemoryMax the build fails, never k3s or the host.
   nix.settings = { max-jobs = 2; cores = 2; };
   systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "4G"; MemoryMax = "6G"; };
