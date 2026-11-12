@@ -671,7 +671,6 @@ in
           ip6tables -w -D INPUT -i ve-+ -j dev-env-input 2>/dev/null || true
         '';
       };
-      networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
 
       networking.hosts = lib.listToAttrs (map (w: lib.nameValuePair w.address [ w.name "${w.name}.${cfg.prefix}" ]) instances);
       programs.ssh.extraConfig = lib.concatMapStrings (w: ''

@@ -51,6 +51,12 @@ in
     onFailure = lib.mkIf (!desktop) (lib.mkForce [ ]);
   };
 
+  # NetworkManager.conf must not change with the first or last environment (modules/workers/core.nix): it is the restart
+  # trigger, and the restart drops wifi. nat and enableContainers keep sysctl and modules-load from flipping too.
+  networking.nat.enable = true; # forwarding and nf_nat_ftp; core.nix adds the instances' /16
+  boot.enableContainers = true; # bridge, macvlan, tap, tun
+  networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
+
   assertions = [
     {
       assertion = desktop || !(config.stylix.enable || config.services.displayManager.enable || config.services.xserver.enable);
