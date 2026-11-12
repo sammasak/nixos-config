@@ -2,7 +2,7 @@
 # home-manager.sharedModules. Takes the skills flake input as its
 # first argument, so it is imported applied:
 #   (import .../claude-code/mcp.nix inputs.skills)
-skillsSrc: nativeOtel: hostName:
+skillsSrc:
 { pkgs, lib, config, osConfig, ... }:
 let
   worker = osConfig.sam.herdr.worker;
@@ -14,6 +14,16 @@ let
     type = "command";
     command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.findutils ]}:$PATH ${skillsSrc}/hooks/${name}";
     timeout = 15;
+  };
+  telemetry = osConfig.sam.claude.telemetry;
+  otel = telemetry.enable;
+  relay = "http://127.0.0.1:4319";
+  resourceAttributes = lib.concatStringsSep "," (lib.mapAttrsToList (k: v: "${k}=${v}") telemetry.resourceAttributes);
+  workRef = otel && builtins.pathExists "${skillsSrc}/hooks/emit-work-ref.sh";
+  workRefHook = {
+    type = "command";
+    command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.curl pkgs.git ]}:$PATH ${skillsSrc}/hooks/emit-work-ref.sh";
+    timeout = 5;
   };
 in
 {
@@ -60,7 +70,7 @@ in
       enableArtifact = false;
       # Keeps the default mode these hosts had under scrubbing (below); 2.1.300
       # otherwise starts in auto. --dangerously-skip-permissions overrides it.
-      permissions = lib.optionalAttrs nativeOtel { defaultMode = "default"; };
+      permissions = lib.optionalAttrs otel { defaultMode = "default"; };
     } // lib.optionalAttrs worker.enable {
       # Worker hosts only: a --dangerously-skip-permissions start no longer stops at the acknowledgment dialog
       # (2.1.300 ignores ~/.claude.json's bypassPermissionsModeAccepted); a session without the flag is unaffected.
@@ -70,9 +80,9 @@ in
     } // {
       env = {
         DISABLE_ERROR_REPORTING = "1";
-      } // lib.optionalAttrs (!nativeOtel) {
+      } // lib.optionalAttrs (!otel) {
         DISABLE_TELEMETRY = "1";
-      } // lib.optionalAttrs nativeOtel {
+      } // lib.optionalAttrs otel {
         CLAUDE_CODE_ENABLE_TELEMETRY = "1";
         # "1" forces every session to the default permission mode, ignoring
         # --dangerously-skip-permissions (claude-code 2.1.300). With "0", tools
@@ -81,16 +91,23 @@ in
         CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "0";
         OTEL_METRICS_EXPORTER = "otlp";
         OTEL_LOGS_EXPORTER = "otlp";
-        OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp.sammasak.dev";
+        # The relay adds the gateway token: a headless `claude -p` from a script or another session's Bash
+        # tool never passes a shell wrapper, so a token in the environment would miss it.
+        OTEL_EXPORTER_OTLP_ENDPOINT = relay;
         OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf";
         OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE = "cumulative";
-        OTEL_RESOURCE_ATTRIBUTES = "host.name=${lib.toLower hostName}";
-        OTEL_METRICS_INCLUDE_SESSION_ID = "false";
+        OTEL_RESOURCE_ATTRIBUTES = resourceAttributes;
+        # On events only: the gateway strips session.id from metrics
+        OTEL_METRICS_INCLUDE_SESSION_ID = "true";
+        OTEL_METRICS_INCLUDE_REPOSITORY = "true";
         OTEL_METRICS_INCLUDE_ACCOUNT_UUID = "false";
         OTEL_LOG_USER_PROMPTS = "0";
         OTEL_LOG_TOOL_CONTENT = "0";
         OTEL_LOG_TOOL_DETAILS = "0";
         OTEL_LOG_RAW_API_BODIES = "0";
+        # Claude strips OTEL_* from hook environments; emit-work-ref.sh reads these instead.
+        HARNESS_OTLP_ENDPOINT = relay;
+        HARNESS_RESOURCE_ATTRIBUTES = resourceAttributes;
       } // lib.optionalAttrs (shunt && bulkReader.minTokens != null) {
         SHUNT_MIN_TOKENS = toString bulkReader.minTokens;
       } // lib.optionalAttrs (shunt && bulkReader.model != null) {
@@ -117,7 +134,7 @@ in
               command = "${skillsSrc}/hooks/check-git-state.sh";
               timeout = 10;
             }
-          ];
+          ] ++ lib.optional workRef workRefHook;
         }];
         PreToolUse = [
           {
@@ -174,6 +191,8 @@ in
             }
           ];
         }];
+      } // lib.optionalAttrs workRef {
+        SessionStart = [{ hooks = [ workRefHook ]; }];
       };
     };
   };

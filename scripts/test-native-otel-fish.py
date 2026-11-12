@@ -38,7 +38,9 @@ sys.exit(17)
         functions = json.loads(result)
         if dev_tools and native_otel:
             composed_functions = functions
-        for agent in ['codex', 'claude']:
+        # Claude's telemetry is its settings.env and the relay's token: the module adds no claude function
+        assert ('claude' in functions) == dev_tools, (dev_tools, native_otel, sorted(functions))
+        for agent in [a for a in ['codex', 'claude'] if a in functions]:
             for token_present in [True, False]:
                 body = functions[agent].replace('/run/secrets/native_otlp_auth',
                                                str(token if token_present else root / 'missing'))
@@ -59,15 +61,12 @@ sys.exit(17)
                 records = [json.loads(line) for line in capture.read_text().splitlines()]
                 assert len(records) == 1, (agent, dev_tools, native_otel, len(records))
                 assert records[0]['args'] == [agent, '--version', 'argument with spaces'], records
-                if dev_tools and native_otel:
+                if agent == 'codex' and dev_tools and native_otel:
                     assert records[0]['host'] == 'host.name=lenovo-21cb001pmx', records
-                    if agent == 'codex':
-                        assert records[0]['temporality'] == 'cumulative', records
-                        assert not records[0]['has_header'], records
-                    else:
-                        assert records[0]['has_header'] == token_present, records
-                elif not native_otel:
+                    assert records[0]['temporality'] == 'cumulative', records
+                elif agent == 'claude' or not native_otel:
                     assert records[0]['host'] is None, records
+                assert not records[0]['has_header'], records
         print(f'PASS: devTools={dev_tools}, nativeOtel={native_otel}; one dispatch, arguments and status preserved')
 
     launcher = fixture.parent.parent / 'modules/programs/cli/herdr/agent-launcher.sh'
@@ -87,9 +86,10 @@ sys.exit(17)
         records = [json.loads(line) for line in capture.read_text().splitlines()]
         assert len(records) == 1, (agent, records)
         assert records[0]['args'] == ['--version', 'argument with spaces'], records
-        assert records[0]['host'] == 'host.name=lenovo-21cb001pmx', records
+        assert not records[0]['has_header'], records
         if agent == 'codex':
+            assert records[0]['host'] == 'host.name=lenovo-21cb001pmx', records
             assert records[0]['temporality'] == 'cumulative', records
         else:
-            assert records[0]['has_header'], records
+            assert records[0]['host'] is None, records
     print('PASS: real Herdr non-TTY launcher executes each client stub once and preserves status')

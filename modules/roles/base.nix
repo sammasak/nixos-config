@@ -13,6 +13,7 @@
     ../core/sops.nix
     ../core/resource-hygiene.nix
     ../core/store-cache.nix
+    ../homelab/native-otel-relay.nix
     ../themes/Catppuccin  # Always apply theming (includes GRUB)
   ];
 }

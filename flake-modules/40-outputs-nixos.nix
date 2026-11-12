@@ -15,7 +15,7 @@ let
         ]
         ++ lib.optionals os.config.sam.profile.devTools [
           ../modules/programs/cli/claude-code/default.nix
-          (import ../modules/programs/cli/claude-code/mcp.nix inputs.skills os.config.sam.profile.nativeOtel os.config.sam.profile.hostname)
+          (import ../modules/programs/cli/claude-code/mcp.nix inputs.skills)
           (import ../modules/programs/cli/claude-code/skills.nix inputs.skills)
           (import ../modules/programs/cli/codex/default.nix inputs.skills os.config.sam.profile.nativeOtel)
           ../modules/programs/cli/coordinator-wakeup.nix
