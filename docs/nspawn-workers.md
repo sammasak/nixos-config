@@ -210,9 +210,11 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 - Network: a veth pair, `10.233.<i>.1` host side and `10.233.<i>.2` inside,
   `i` hashed from the name (a collision fails eval); NAT for egress. DNS is
   the host's `resolv.conf` at start; the container waits up to 30 s for it to
-  carry a nameserver. `services.devEnvironments.blockedNetworks` (off; set it
-  to `[ "192.168.10.0/24" ]` to cut the LAN and the k3s API, DNS excepted)
-  drops forwarding from `ve-*` to those networks.
+  carry a nameserver. `services.devEnvironments.blockedNetworks` (the private
+  and link-local ranges on acer and msi) drops forwarding from `ve-*` to those
+  networks and new connections from a guest to the host itself, DNS excepted:
+  an environment reaches the internet, not the LAN, the cluster, another
+  environment or its host.
 - Headless guest: no Herdr server, repo-sweep or flake-update timers,
   gpg-agent, dconf or guest firewall; `flake-registry` is empty and `nixpkgs`
   resolves to the store's.
