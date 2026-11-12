@@ -17,6 +17,8 @@ let
   };
   telemetry = osConfig.sam.claude.telemetry;
   otel = telemetry.enable;
+  # The sandbox posture (scrub, default mode) stays the host profile's: a guest's telemetry must not change it
+  hostOtel = osConfig.sam.profile.nativeOtel;
   relay = "http://127.0.0.1:4319";
   resourceAttributes = lib.concatStringsSep "," (lib.mapAttrsToList (k: v: "${k}=${v}") telemetry.resourceAttributes);
   workRef = otel && builtins.pathExists "${skillsSrc}/hooks/emit-work-ref.sh";
@@ -70,7 +72,7 @@ in
       enableArtifact = false;
       # Keeps the default mode these hosts had under scrubbing (below); 2.1.300
       # otherwise starts in auto. --dangerously-skip-permissions overrides it.
-      permissions = lib.optionalAttrs otel { defaultMode = "default"; };
+      permissions = lib.optionalAttrs hostOtel { defaultMode = "default"; };
     } // lib.optionalAttrs worker.enable {
       # Worker hosts only: a --dangerously-skip-permissions start no longer stops at the acknowledgment dialog
       # (2.1.300 ignores ~/.claude.json's bypassPermissionsModeAccepted); a session without the flag is unaffected.
@@ -80,15 +82,16 @@ in
     } // {
       env = {
         DISABLE_ERROR_REPORTING = "1";
-      } // lib.optionalAttrs (!otel) {
-        DISABLE_TELEMETRY = "1";
-      } // lib.optionalAttrs otel {
-        CLAUDE_CODE_ENABLE_TELEMETRY = "1";
+      } // lib.optionalAttrs hostOtel {
         # "1" forces every session to the default permission mode, ignoring
         # --dangerously-skip-permissions (claude-code 2.1.300). With "0", tools
         # inherit credential-shaped env and run outside the bubblewrap sandbox;
         # OTEL_* and CLAUDE_CODE_OAUTH_TOKEN are still withheld.
         CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "0";
+      } // lib.optionalAttrs (!otel) {
+        DISABLE_TELEMETRY = "1";
+      } // lib.optionalAttrs otel {
+        CLAUDE_CODE_ENABLE_TELEMETRY = "1";
         OTEL_METRICS_EXPORTER = "otlp";
         OTEL_LOGS_EXPORTER = "otlp";
         # The relay adds the gateway token: a headless `claude -p` from a script or another session's Bash

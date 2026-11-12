@@ -26,10 +26,15 @@ let
         access_log off;
         client_body_temp_path $RUNTIME_DIRECTORY/client_body_temp;
         proxy_temp_path $RUNTIME_DIRECTORY/proxy_temp;
+        # One bucket per environment (its egress proxy stamps X-Otel-Worker) and one for the host's own clients
+        map \$http_x_otel_worker \$otlp_bucket { "" host; default w-\$http_x_otel_worker; }
+        limit_req_zone \$otlp_bucket zone=otlp:1m rate=20r/s;
         server {
           listen 127.0.0.1:4319;
           server_tokens off;
           client_max_body_size 1m;
+          limit_req zone=otlp burst=50 nodelay;
+          limit_req_status 429;
           proxy_http_version 1.1;
           proxy_pass_request_headers off;
           proxy_set_header Host otlp.sammasak.dev;
@@ -37,6 +42,7 @@ let
           proxy_set_header Content-Type \$http_content_type;
           proxy_set_header Content-Encoding \$http_content_encoding;
           proxy_set_header Accept \$http_accept;
+          proxy_set_header X-Otel-Worker \$http_x_otel_worker;
           proxy_ssl_server_name on;
           proxy_ssl_name otlp.sammasak.dev;
           proxy_ssl_verify on;

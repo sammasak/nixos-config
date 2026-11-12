@@ -53,7 +53,7 @@ def env_checks(P):
     check(on.get("OTEL_EXPORTER_OTLP_ENDPOINT") == RELAY and on.get("OTEL_EXPORTER_OTLP_PROTOCOL") == "http/protobuf"
           and on.get("OTEL_METRICS_EXPORTER") == on.get("OTEL_LOGS_EXPORTER") == "otlp" and "OTEL_EXPORTER_OTLP_HEADERS" not in on,
           f"on: metrics and logs go to the loopback relay over http/protobuf, with no header of Claude's own ({on.get('OTEL_EXPORTER_OTLP_ENDPOINT')})")
-    check(on.get("OTEL_METRICS_INCLUDE_SESSION_ID", "true") == "true" and on.get("OTEL_METRICS_INCLUDE_REPOSITORY") == "true",
+    check(on.get("OTEL_METRICS_INCLUDE_SESSION_ID") == "true" and on.get("OTEL_METRICS_INCLUDE_REPOSITORY") == "true",
           "on: events carry session.id, events and metrics the repository")
     check(all(on.get(k) == "0" for k in ("OTEL_LOG_USER_PROMPTS", "OTEL_LOG_TOOL_CONTENT", "OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_RAW_API_BODIES")),
           "on: every content flag is 0")

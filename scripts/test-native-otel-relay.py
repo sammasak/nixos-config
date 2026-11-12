@@ -130,14 +130,19 @@ def main():
                 },
             ) != 200:
                 raise AssertionError("relay did not forward the synthetic metrics body")
-            if request_status(f"{endpoint}/v1/logs", data=body, headers={"Content-Type": "application/x-protobuf"}) != 200:
+            if request_status(f"{endpoint}/v1/logs", data=body, headers={"Content-Type": "application/x-protobuf", "X-Otel-Worker": ""}) != 200:
                 raise AssertionError("relay did not forward the synthetic logs body")
+            if request_status(f"{endpoint}/v1/logs", data=body, headers={"Content-Type": "application/x-protobuf", "X-Otel-Worker": "tel"}) != 200:
+                raise AssertionError("relay did not forward an environment's logs body")
 
             with received_lock:
                 forwarded = list(received)
-            if [path for path, _, _ in forwarded] != ["/v1/metrics", "/v1/logs"]:
+            if [path for path, _, _ in forwarded] != ["/v1/metrics", "/v1/logs", "/v1/logs"]:
                 raise AssertionError("relay forwarded requests outside the metrics and logs POSTs")
-            want_types = ["application/json", "application/x-protobuf"]
+            workers = [[v for k, v in headers.items() if k.lower() == "x-otel-worker"] for _, headers, _ in forwarded]
+            if workers != [[], [], ["tel"]]:
+                raise AssertionError(f"relay forwarded X-Otel-Worker other than as sent, or an empty one ({workers})")
+            want_types = ["application/json", "application/x-protobuf", "application/x-protobuf"]
             for (path, headers, forwarded_body), want_type in zip(forwarded, want_types):
                 if headers.get("Authorization") != f"Bearer {token}":
                     raise AssertionError(f"relay did not replace authorization with its credential on {path}")
@@ -147,7 +152,15 @@ def main():
                     raise AssertionError("relay forwarded an unrelated caller header")
                 if forwarded_body != body:
                     raise AssertionError(f"relay changed the {path} payload")
-            print("native OTLP relay: metrics and logs POST only, header filtering, and fake auth passed")
+            flood = [request_status(f"{endpoint}/v1/metrics", data=body, headers={"X-Otel-Worker": "flood"}) for _ in range(120)]
+            if 429 not in flood or flood[:50] != [200] * 50:
+                raise AssertionError(f"one environment is not limited to its burst of 50, then 429 ({flood.count(200)} passed)")
+            if request_status(f"{endpoint}/v1/metrics", data=body) != 200:
+                raise AssertionError("an environment's flood starved the host's own clients")
+            if request_status(f"{endpoint}/v1/metrics", data=body, headers={"X-Otel-Worker": "calm"}) != 200:
+                raise AssertionError("an environment's flood starved another environment")
+            print("native OTLP relay: metrics and logs POST only, header filtering, X-Otel-Worker passed through, "
+                  "per-environment rate limit, and fake auth passed")
     finally:
         if nginx_process and nginx_process.poll() is None:
             nginx_process.terminate()

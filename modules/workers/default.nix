@@ -330,12 +330,18 @@ in
         # A path to the host's relay, which adds the token; the guest's Claude sends to the same 127.0.0.1:4319.
         otlp = {
           for = i: i.telemetry;
-          site = _: ''
+          # The exact path: Caddy's path matcher ignores case and merges slashes. The relay keys its rate limit and
+          # the gateway worker.name on the stamped header, never the guest's.
+          site = i: ''
           @other not {
             method POST
-            path /v1/metrics /v1/logs
+            expression `{path} in ["/v1/metrics", "/v1/logs"]`
           }
           respond @other 403
+          request_header X-Otel-Worker ${i.name}
+          request_body {
+            max_size 1MB
+          }
           reverse_proxy http://127.0.0.1:4319
           '';
           port = 4319;
@@ -383,6 +389,10 @@ in
       {
         assertion = profile.nativeOtel || !lib.any (i: i.telemetry) (lib.attrValues dev.instances);
         message = "sam.workers: an instance with telemetry sends through this host's native-otel-relay, which runs only with sam.profile.nativeOtel (and the sops secret native_otlp_auth).";
+      }
+      {
+        assertion = lib.all (i: !i.telemetry || i.agent == "claude") (lib.attrValues dev.instances);
+        message = "sam.workers: telemetry exports Claude Code's OTLP, and an instance with it has another agent.";
       }
       {
         assertion = lib.all (i: i.paused || i.telemetry || !config.containers.${i.name}.config.sam.claude.telemetry.enable) (lib.attrValues dev.instances);

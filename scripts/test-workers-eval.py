@@ -5,12 +5,14 @@ import json
 import os
 import pathlib
 import http.client
+import http.server
 import re
 import socket
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -104,6 +106,8 @@ FLEET_CASES = [
     ("telemetry without nativeOtel", "{ sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
     ("telemetry from a guest module", "{ sam.workers.instances.t = { }; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
      "a guest module turned on sam.claude.telemetry"),
+    ("telemetry on a non-claude instance", '{ sam.workers.instances.t = { agent = "none"; telemetry = true; }; }', "an instance with it has another agent"),
+    ("nativeOtel without the relay's secret", "{ sam.profile.nativeOtel = lib.mkForce true; }", "native-otel-relay loads the sops secret native_otlp_auth, which this host does not declare"),
 ]
 # msi with two instances behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
 GITHUB = r"""
@@ -138,6 +142,7 @@ let
   egress = c.systemd.services.dev-env-egress.serviceConfig;
   guest = n: let g = c.containers.${n}.config; s = g.home-manager.users.lukas.programs.claude-code.settings; in {
     env = s.env;
+    mode = s.permissions.defaultMode or null;
     hooks = builtins.concatMap (e: map (h: h.command) e.hooks) (s.hooks.Stop ++ s.hooks.SessionStart);
     binds = map (b: b.hostPath) (builtins.attrValues c.containers.${n}.bindMounts);
     variables = g.environment.variables;
@@ -313,9 +318,9 @@ GITHUB_CASES = [
 ]
 
 
-def site_wrong(site, upstream, cases):
-    """Runs the generated site of one instance in Caddy with its upstreams pointed at a closed port: no network is needed.
-    The requests of cases that are not 403 exactly when they should be allowed, or None without caddy."""
+def site_wrong(site, upstream, cases, to="http://127.0.0.1:1"):
+    """Runs the generated site of one instance in Caddy with its upstreams pointed at to (a closed port): no network is
+    needed. The requests of cases that are not 403 exactly when they should be allowed, or None without caddy."""
     caddy = shutil.which("caddy")
     if caddy is None:
         return None
@@ -323,7 +328,7 @@ def site_wrong(site, upstream, cases):
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     body = site.split("\n", 2)[2]
-    body = re.sub(upstream, "http://127.0.0.1:1", body)
+    body = re.sub(upstream, to, body)
     with tempfile.TemporaryDirectory() as d:
         conf = pathlib.Path(d, "Caddyfile")
         conf.write_text("{\n admin off\n auto_https off\n}\nhttp://127.0.0.1:%d {\n%s" % (port, body))
@@ -336,9 +341,10 @@ def site_wrong(site, upstream, cases):
                 except OSError:
                     time.sleep(0.1)
             wrong = []
-            for method, path, allowed in cases:
+            for method, path, allowed, *more in cases:
+                headers, size = more or ({}, 2)
                 conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-                conn.request(method, path, body=b"{}" if method == "POST" else None)
+                conn.request(method, path, body=b"x" * size if method == "POST" else None, headers=headers)
                 status = conn.getresponse().status
                 conn.close()
                 if (status != 403) != allowed:
@@ -355,7 +361,24 @@ def check_github_proxy(site):
 
 
 OTLP_CASES = [("POST", "/v1/metrics", True), ("POST", "/v1/logs", True), ("GET", "/v1/metrics", False), ("POST", "/v1/traces", False),
-              ("POST", "/v1/metrics/x", False), ("POST", "/", False), ("PUT", "/v1/logs", False)]
+              ("POST", "/v1/metrics/x", False), ("POST", "/", False), ("PUT", "/v1/logs", False), ("HEAD", "/v1/metrics", False),
+              ("OPTIONS", "/v1/logs", False), ("POST", "/V1/METRICS", False), ("POST", "/v1//logs", False), ("POST", "/v1/metrics/../logs", False),
+              ("POST", "/v1/logs", True, {"X-Otel-Worker": "other"}, 2), ("POST", "/v1/logs", True, {}, (1 << 20) + 1)]
+
+
+class Recorder(http.server.BaseHTTPRequestHandler):
+    """The relay as the OTLP site sees it: what reached it, with the worker it was stamped with and the body's size."""
+    seen = []
+
+    def do_POST(self):
+        size = len(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+        Recorder.seen.append((self.path, self.headers.get_all("X-Otel-Worker"), size))
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *_):
+        pass
 
 
 def check_telemetry(got, out):
@@ -380,12 +403,23 @@ def check_telemetry(got, out):
     left = sorted(k for k in p_env if k.startswith(("OTEL_", "HARNESS_")) or k == "CLAUDE_CODE_ENABLE_TELEMETRY")
     check(not left and "otlp-egress" not in plain.get("sockets", {}) and not any(h.endswith("emit-work-ref.sh") for h in plain.get("hooks", [])),
           f"a guest without telemetry, on that nativeOtel host, gets none of it ({left})")
+    posture = lambda g: (g.get("env", {}).get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"), g.get("mode"))
+    check(bool(env) and posture(tel) == posture(plain), f"telemetry leaves a guest's CLAUDE_CODE_SUBPROCESS_ENV_SCRUB and defaultMode as they are without it ({posture(tel)} vs {posture(plain)})")
     sites = {b.split("\n", 2)[1].strip(): b for b in got.get("caddy", "").split("http:// {")[1:]}
     site = sites.get("bind unix//run/dev-env-egress/tel/otlp.sock", "")
-    check(bool(site) and "bind unix//run/dev-env-egress/plain/otlp.sock" not in sites and "reverse_proxy http://127.0.0.1:4319" in site,
-          f"only the telemetry instance has an OTLP site, and it forwards to the host's relay ({sorted(sites)})")
-    wrong = site_wrong(site, r"http://127\.0\.0\.1:4319", OTLP_CASES)
+    check(bool(site) and "bind unix//run/dev-env-egress/plain/otlp.sock" not in sites and "reverse_proxy http://127.0.0.1:4319" in site
+          and "request_header X-Otel-Worker tel\n" in site and "max_size 1MB" in site,
+          f"only the telemetry instance has an OTLP site; it forwards to the host's relay stamped X-Otel-Worker tel, bodies to 1MB ({sorted(sites)})")
+    relay = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Recorder)
+    threading.Thread(target=relay.serve_forever, daemon=True).start()
+    try:
+        wrong = site_wrong(site, r"http://127\.0\.0\.1:4319", OTLP_CASES, f"http://127.0.0.1:{relay.server_port}")
+    finally:
+        relay.shutdown()
     check(wrong == [], f"the OTLP site passes POST /v1/metrics and /v1/logs and refuses everything else ({'no caddy on PATH' if wrong is None else wrong})")
+    seen = Recorder.seen
+    check(len(seen) >= 3 and all(p in ("/v1/metrics", "/v1/logs") and w == ["tel"] and n <= 1 << 20 for p, w, n in seen),
+          f"the relay sees only the exact paths, X-Otel-Worker tel even when the guest sent its own, and no body over 1MB ({seen})")
 
 
 def check_eval_cache(facts):

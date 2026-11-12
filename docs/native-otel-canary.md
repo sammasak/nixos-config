@@ -18,6 +18,15 @@ Neither client nor its tool subprocesses receive the receiver credential.
 The upstream certificate chain is verified to depth 3; Nginx's default depth
 of 1 rejects the receiver's valid certificate chain.
 
+Any local process reaches `127.0.0.1:4319`, hostNetwork pods included, and
+since this change it takes `/v1/logs` as well as `/v1/metrics`, signed with
+the host's token. It forwards `X-Otel-Worker` as sent (an environment's egress
+proxy overwrites it with the instance name) and rate-limits per value of that
+header, 20 requests/s with a burst of 50 (then 429); requests without it share
+one host bucket, so a flooding environment cannot starve the host's clients. A
+local process can set the header itself, so a value is trustworthy only when
+it came through an environment's proxy.
+
 Claude's endpoint is the relay, not the receiver, because a headless
 `claude -p` started by a script or by another session's Bash tool never passes
 a shell wrapper, so a header exported there was missing and the receiver
@@ -39,6 +48,13 @@ same attributes) for the skills hook `emit-work-ref.sh`, registered on `Stop`
 `nixos:harness-telemetry-test` checks all of this. A developer environment
 sends through its host's relay only with
 `sam.workers.instances.<name>.telemetry` ([nspawn-workers.md](nspawn-workers.md)).
+A guest's Claude also has `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. With it
+set, OTel events and metrics are still exported; only `DISABLE_TELEMETRY`-style
+product analytics stop. Verified on a host session 2026-11-12 against a local
+OTLP receiver; not yet verified inside a guest, which stays unverified until
+one environment is enabled. A guest's telemetry leaves its
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` and `permissions.defaultMode` as they are
+without it: both follow `sam.profile.nativeOtel`, which is off in every guest.
 
 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is `"0"`. In Claude Code 2.1.300, `"1"`
 forces every session into the default permission mode, so
