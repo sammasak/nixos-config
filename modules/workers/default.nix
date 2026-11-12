@@ -11,27 +11,108 @@ let
   creds = "/var/lib/host-credentials";
   usesClaude = lib.any (w: w.agent == "claude") (lib.attrValues dev.instances);
   hasToken = config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token;
+  onGithub = i: i.egress.github.repos != [ ];
+  usesGithub = lib.any onGithub (lib.attrValues dev.instances);
+  # an instance's sockets: its identity to the proxy is the directory it is given
+  sockets = i: lib.optional (i.agent == "claude") "anthropic" ++ lib.optional (onGithub i) "github";
+  egressed = lib.filter (i: sockets i != [ ]) (lib.attrValues dev.instances);
   egress = "/run/dev-env-egress";
-  egressPort = 4100;
-  # The token is read from the unit's credential at request time: this file is in the store every guest reads.
-  egressConfig = pkgs.writeText "dev-env-egress.Caddyfile" ''
+  guestEgress = "/run/egress";
+  ports = { anthropic = 4100; github = 4102; };
+  # The tokens are read at request time from the unit's credential and its private /tmp: this file is in the store
+  # every guest reads.
+  githubToken = "/tmp/github-token";
+  site = i: s: body: ''
+    http:// {
+      bind unix/${egress}/${i.name}/${s}.sock
+      log ${s}-${i.name}
+      ${body}
+    }
+  '';
+  anthropicSite = i: site i "anthropic" ''
+    @other not path /v1/*
+    respond @other 403
+    reverse_proxy https://api.anthropic.com {
+      header_up Host {upstream_hostport}
+      header_up Authorization "Bearer {file./run/credentials/dev-env-egress.service/claude_oauth_token}"
+      header_up -X-Api-Key
+      flush_interval -1
+    }
+  '';
+  upstream = url: auth: ''
+    reverse_proxy ${url} {
+      header_up Host {upstream_hostport}
+      header_up Authorization "${auth}"
+      header_up -Cookie
+      flush_interval -1
+    }
+  '';
+  # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
+  githubSite = i: let repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})"; in site i "github" ''
+    # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
+    @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|\.\.|//|\\
+    # the owner's token administers the repository: none of that, on any listed repo
+    @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
+    @adminRepo {
+      path_regexp ^/repos/[^/]+/[^/]+/?$
+      method PATCH PUT DELETE
+    }
+    handle @odd {
+      respond 403
+    }
+    handle @admin {
+      respond 403
+    }
+    handle @adminRepo {
+      respond 403
+    }
+    @git {
+      path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
+      method GET POST
+    }
+    @rest {
+      path_regexp ^/repos/${repos}(/.*)?$
+      method GET HEAD POST PATCH PUT
+    }
+    handle @git {
+      ${upstream "https://github.com" "Basic {file.${githubToken}.basic}"}
+    }
+    handle @rest {
+      ${upstream "https://api.github.com" "token {file.${githubToken}}"}
+    }
+    ${lib.optionalString i.egress.github.graphql ''
+      @graphql {
+        path /graphql
+        method POST
+      }
+      handle @graphql {
+        ${upstream "https://api.github.com" "bearer {file.${githubToken}}"}
+      }
+    ''}
+    handle {
+      respond 403
+    }
+  '';
+  egressConfig = pkgs.writeText "dev-env-egress.Caddyfile" (''
     {
       admin off
       auto_https off
     }
-    http:// {
-      bind unix/${egress}/anthropic.sock
-      log
-      @other not path /v1/*
-      respond @other 403
-      reverse_proxy https://api.anthropic.com {
-        header_up Host {upstream_hostport}
-        header_up Authorization "Bearer {file./run/credentials/dev-env-egress.service/claude_oauth_token}"
-        header_up -X-Api-Key
-        flush_interval -1
-      }
-    }
-  '';
+  '' + lib.concatMapStrings (i: lib.optionalString (i.agent == "claude") (anthropicSite i)
+    + lib.optionalString (onGithub i) (githubSite i)) egressed);
+  # gh keeps the token in hosts.yml (no keyring on the hosts); the proxy takes it from there at each start.
+  # Without one the Claude proxy still starts, and GitHub answers 401.
+  githubTokenFromHosts = pkgs.writeShellApplication {
+    name = "dev-env-egress-github-token";
+    runtimeInputs = [ pkgs.coreutils pkgs.gawk ];
+    text = ''
+      tok=$(awk '/^[^ ]/ { gh = $0 == "github.com:" } gh && sub(/^ +oauth_token: */, "") { print; exit }' "$CREDENTIALS_DIRECTORY/gh-hosts.yml")
+      [[ -n $tok ]] || echo "no github.com oauth_token in the gh hosts.yml (a keyring login?): GitHub calls go unsigned" >&2
+      umask 077
+      printf '%s' "$tok" > ${githubToken}
+      printf 'x-access-token:%s' "$tok" | base64 -w0 > ${githubToken}.basic
+    '';
+  };
 
   agentNames = lib.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
   restartNotice = "This environment restarted: whatever you had running here, background shells and gates included, was killed and nothing restarted it. Check what finished (git status and unpushed commits in each clone), re-run what did not, and carry on; if your task was already done, say so and stop.";
@@ -87,7 +168,15 @@ let
     '';
   };
 
-  fleetGuest = { devEnvironment, ... }: {
+  shim = s: {
+    sockets."${s}-egress" = { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString ports.${s}}" ]; };
+    services."${s}-egress".serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${guestEgress}/${s}.sock"; };
+  };
+
+  fleetGuest = { devEnvironment, ... }: let
+    self = dev.instances.${devEnvironment.name};
+    github = onGithub self;
+  in {
     imports = [
       ../core/system.nix
       ../core/users.nix
@@ -107,39 +196,59 @@ let
     sam.herdr.worker.enable = true;
     # Headless, reached over ssh from the host's Herdr: no session server, no firewall behind the veth, no gpg-agent
     # in front of the ssh key; the weekly repo-sweep would reclaim the agent's own clones.
-    home-manager.users.${user}.systemd.user = {
-      services.herdr.Install.WantedBy = lib.mkForce [ ];
-      timers.repo-sweep.Install.WantedBy = lib.mkForce [ ];
-      timers.nixos-config-flake-update.Install.WantedBy = lib.mkForce [ ];
-    };
+    home-manager.users.${user} = lib.mkMerge [
+      {
+        systemd.user = {
+          services.herdr.Install.WantedBy = lib.mkForce [ ];
+          timers.repo-sweep.Install.WantedBy = lib.mkForce [ ];
+          timers.nixos-config-flake-update.Install.WantedBy = lib.mkForce [ ];
+        };
+      }
+      (lib.mkIf github {
+        # mkForce: the fleet's git sends sammasak's repos to ssh, and git applies only the longest rewrite
+        programs.git.settings.url = lib.mkForce {
+          "http://127.0.0.1:${toString ports.github}/".insteadOf = [ "https://github.com/" "git@github.com:" "ssh://git@github.com/" ];
+        };
+        xdg.configFile."gh/config.yml".text = "http_unix_socket: ${guestEgress}/github.sock\n";
+      })
+    ];
     programs.gnupg.agent.enable = lib.mkForce false;
     programs.dconf.enable = lib.mkForce false;
     networking.firewall.enable = false;
     sam.herdr.trustedDirs = map (d: "${home}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 
-    # the guest holds a placeholder, not the token: the host's proxy adds the login to each call
-    environment.variables = lib.mkIf usesClaude {
-      ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString egressPort}";
+    # the guest holds placeholders, not the tokens: the host's proxy adds the login to each call
+    environment.variables = lib.optionalAttrs (self.agent == "claude") {
+      ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString ports.anthropic}";
       CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host";
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
-    };
-    systemd.sockets.claude-egress = lib.mkIf usesClaude { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString egressPort}" ]; };
-    systemd.services.claude-egress = lib.mkIf usesClaude {
-      serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${creds}/egress/anthropic.sock"; };
-    };
+    } // lib.optionalAttrs github { GH_TOKEN = "held-by-the-host"; };
 
-    # The host's credentials, bound read-only under ${creds}, where the host's own tools look for them.
-    systemd.tmpfiles.rules = [
+    systemd = lib.mkMerge (map (s: lib.mkIf (lib.elem s (sockets self)) (shim s)) [ "anthropic" "github" ] ++ [ { tmpfiles.rules = [
       "d ${home}/.ssh 0700 ${user} users -"
       "d ${home}/.config 0700 ${user} users -"
-      "L+ ${home}/.ssh/id_ed25519 - - - - ${creds}/id_ed25519"
       # where the agent logs friction with the environment (docs/environments-feedback.md)
       "f ${home}/ENV-FEEDBACK.md 0644 ${user} users -"
     ]
-    ++ lib.optionals (cfg.ghHostsFile != null) [
+    # the host's credentials, bound read-only under ${creds}, linked where the host's own tools look for them
+    ++ lib.optional (!github) "L+ ${home}/.ssh/id_ed25519 - - - - ${creds}/id_ed25519"
+    ++ lib.optionals (cfg.ghHostsFile != null && !github) [
       "d ${home}/.config/gh 0700 ${user} users -"
       "L+ ${home}/.config/gh/hosts.yml - - - - ${creds}/gh-hosts.yml"
-    ];
+    ]; } ]);
+  };
+
+  instanceModule = { config, ... }: {
+    options.egress.github = {
+      repos = mkOption {
+        type = types.listOf (types.strMatching "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
+        default = [ ];
+        example = [ "sammasak/nixos-config" ];
+        description = "Repositories (owner/repo) the instance reaches through the host's proxy, git and REST; non-empty, the guest holds no GitHub credential.";
+      };
+      graphql = mkOption { type = types.bool; default = false; description = "Also pass GitHub's GraphQL API, which no repository list can bound; most gh pr and issue commands need it."; };
+    };
+    config.credentials = lib.mkIf (onGithub config) (lib.subtractLists [ "id_ed25519" "gh-hosts.yml" ] (lib.attrNames dev.credentials));
   };
 in
 {
@@ -151,6 +260,8 @@ in
     (lib.mkAliasOptionModule [ "sam" "workers" "pool" ] [ "services" "devEnvironments" "pool" ])
     (lib.mkAliasOptionModule [ "sam" "workers" "jumpHosts" ] [ "services" "devEnvironments" "jumpHosts" ])
   ];
+
+  options.services.devEnvironments.instances = mkOption { type = types.attrsOf (types.submodule instanceModule); };
 
   options.sam.workers = {
     shutdownNotice = mkOption {
@@ -186,7 +297,8 @@ in
         id_ed25519 = dev.clientKey;
       } // lib.optionalAttrs (cfg.ghHostsFile != null) {
         "gh-hosts.yml" = cfg.ghHostsFile;
-      } // lib.optionalAttrs usesClaude { inherit egress; };
+      };
+      instanceBinds = i: lib.optionalAttrs (sockets i != [ ]) { ${guestEgress} = "${egress}/${i.name}"; };
       sessionSurface = { name = "herdr"; script = hook; };
     };
 
@@ -201,17 +313,19 @@ in
           script = lib.concatMapStrings (n: "herdr agent prompt ${n} ${lib.escapeShellArg shutdownNotice} >/dev/null || true\n") agentNames;
         };
       })
-      (lib.mkIf (usesClaude && hasToken) {
+      (lib.mkIf (egressed != [ ] && (!usesClaude || hasToken)) {
         services = {
           dev-env-egress = {
-            description = "Adds the Claude login to the environments' API calls";
+            description = "Adds the Claude and GitHub logins to the environments' calls";
             wantedBy = [ "multi-user.target" ];
             environment.HOME = "/tmp";
             serviceConfig = {
               ExecStart = "${pkgs.caddy}/bin/caddy run --adapter caddyfile --config ${egressConfig}";
-              LoadCredential = "claude_oauth_token:${config.sops.secrets.claude_oauth_token.path}";
+              LoadCredential = lib.optional usesClaude "claude_oauth_token:${config.sops.secrets.claude_oauth_token.path}"
+                ++ lib.optional usesGithub "gh-hosts.yml:${cfg.ghHostsFile}";
+              ExecStartPre = lib.mkIf usesGithub (lib.getExe githubTokenFromHosts);
               User = user;
-              RuntimeDirectory = baseNameOf egress;
+              RuntimeDirectory = [ (baseNameOf egress) ] ++ map (i: "${baseNameOf egress}/${i.name}") egressed;
               # the guests bind this directory: removed at a restart, they would keep the old, empty one
               RuntimeDirectoryPreserve = true;
               Restart = "on-failure";
@@ -231,11 +345,17 @@ in
               SystemCallFilter = [ "@system-service" ];
             };
           };
-        } // lib.genAttrs (map (n: "container@${n}") (lib.attrNames dev.instances)) (_: {
+          # gh rewrites hosts.yml on a login or refresh; the token is read at start
+          dev-env-egress-gh = lib.mkIf usesGithub {
+            serviceConfig.Type = "oneshot";
+            script = "${config.systemd.package}/bin/systemctl try-restart dev-env-egress.service";
+          };
+        } // lib.genAttrs (map (i: "container@${i.name}") egressed) (_: {
           # the bind's source must exist when the container starts
           wants = [ "dev-env-egress.service" ];
           after = [ "dev-env-egress.service" ];
         });
+        paths.dev-env-egress-gh = lib.mkIf usesGithub { wantedBy = [ "multi-user.target" ]; pathConfig.PathChanged = cfg.ghHostsFile; };
       })
     ];
 
@@ -249,8 +369,12 @@ in
         message = "sam.workers: an instance holds the host user's SSH key, and this host's is the fleet's deploy key.";
       }
       {
-        assertion = lib.all (i: i.agent != "claude" || i.credentials == null || lib.elem "egress" i.credentials) (lib.attrValues dev.instances);
-        message = "sam.workers: a claude instance with a credentials subset keeps egress, the way to its login.";
+        assertion = !usesGithub || cfg.ghHostsFile != null;
+        message = "sam.workers: an instance with egress.github.repos is signed with the token in sam.workers.ghHostsFile, which this host does not set.";
+      }
+      {
+        assertion = lib.all (i: !onGithub i || !lib.elem "id_ed25519" i.credentials && !lib.elem "gh-hosts.yml" i.credentials) (lib.attrValues dev.instances);
+        message = "sam.workers: an instance with egress.github.repos gets neither id_ed25519 nor gh-hosts.yml.";
       }
       {
         assertion = !usesClaude || hasToken;

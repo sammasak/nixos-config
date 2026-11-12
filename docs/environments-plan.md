@@ -149,9 +149,11 @@ the access log, the proxy log or the output.
 ### What is left exposed
 
 The proxy is a confused deputy: a guest can do whatever the proxy lets its
-socket do. Bounds: the repository allowlist, a method allowlist, a ruleset on
-`nixos-config` main, a rate limit, and an access log per instance (which is
-also the audit trail that is missing today). A guest can still spend Claude
+socket do. Bounds: the repository allowlist, a method allowlist, a deny list
+for repository administration, a ruleset on `nixos-config` main, and an
+access log per instance (which is also the audit trail that is missing
+today). The allowlist bounds which repository, not what is done to it, until
+App tokens (step 4). A guest can still spend Claude
 quota; it can no longer take the token elsewhere.
 
 ### Phases, each with a leak check
@@ -166,12 +168,22 @@ nothing, and the Caddyfile's store path holds no token.
    the per-instance socket and log come with step 2. The token every guest
    has already read must be rotated after rollout: **owner**. Done when an agent works a
    normal task through the proxy and the leak check passes.
-2. **git.** HTTPS remotes through the proxy with a fine-grained token for the
-   named repos; remove the SSH key bind. Done when clone, fetch and a gated
+2. **git.** Built on branch `egress-github` (`egress.github.repos`), not yet
+   run. HTTPS remotes through the proxy with the host user's gh OAuth token
+   (from its `hosts.yml`), limited by the proxy to the named repos; the SSH
+   key bind is gone for those instances. Done when clone, fetch and a gated
    push work and a push to a repo off the list is refused.
-3. **`gh`.** Socket config, REST allowlist, GraphQL off. Done when `gh pr
-   create`, `gh pr view` and `gh issue comment` work (find which commands
-   need GraphQL; `gh pr create` does) and `gh api /user/keys` is refused.
+3. **`gh`.** Built on the same branch, not yet run: socket config, REST
+   allowlist, GraphQL off (`egress.github.graphql`). With GraphQL off every
+   `gh pr`, `gh issue`, `gh repo view`, `release`, `label` and `search`
+   command fails (each sends GraphQL first); `gh run` and `gh api repos/...`
+   work. Done when `gh pr create`, `gh pr view` and `gh issue comment` work
+   (GraphQL on, or through `gh api` REST) and `gh api /user/keys` is refused.
+
+   Rollout: the first deploy restarts every claude instance, its bind moves
+   from `/var/lib/host-credentials/egress` to `/run/egress`. Changing any
+   instance's repos changes the one Caddyfile and restarts the proxy for
+   every instance.
 4. **GitHub App tokens.** A host oneshot and 45 min timer mint installation
    tokens; the token in step 2 goes away. Same as nixos-config#166.
 
