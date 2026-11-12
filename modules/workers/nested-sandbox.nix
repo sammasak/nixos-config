@@ -1,6 +1,15 @@
 # Nested sandboxes in a guest, which cannot mount a full procfs: https://github.com/systemd/systemd/issues/34226
 { lib, pkgs, ... }:
 let
+  # Claude's apply-seccomp helper puts the command in a pid namespace of its own and fails to mount a procfs for it, so
+  # /proc keeps numbering the wrapper's namespace and procps dies with "lookup self". The command's first bash mounts
+  # subset=pid again; it holds the helper's capabilities there. It replaces any BASH_ENV of the caller.
+  remountProc = pkgs.writeText "remount-proc.sh" ''
+    read -r _pid _ < /proc/self/stat
+    [ "$_pid" = "$$" ] || ${pkgs.util-linux}/bin/mount -t proc -o subset=pid proc /proc 2>/dev/null || :
+    unset _pid
+  '';
+
   # The sandbox runs as mapped uid 0 holding only CAP_SETFCAP (Claude's apply-seccomp helper maps uid 0 into a nested
   # user namespace): CAP_SYS_ADMIN is held just long enough to remount procfs subset=pid. bwrap's command starts at the
   # first standalone `--`, so none after the rewritten `--proc /proc` leaves the arguments untouched.
@@ -29,6 +38,7 @@ let
         echo "bwrap-subset-proc: rewrote --proc but found no command separator" >&2
         exit 1
       fi
+      if (( armed == 2 )); then export BASH_ENV=${remountProc}; fi
       exec bwrap "''${args[@]}"
     '';
   };
