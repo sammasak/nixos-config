@@ -72,7 +72,7 @@ host's swap.
 | Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
 | First use of a repo | clone, `devenv shell` | 25 s (skills), 32 s (herman): evaluation only, every store path comes from the host's store; 0.1 to 0.3 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
-| Host reboot or redeploy | nothing | container autostarts, agent resumes its conversation (acer rebooted 2026-11-12: container starting 7 s into userspace, agent back in Herdr at 15 s, home and the shared `~/.cache/nix` intact, first `devenv shell` 7.4 s; a second reboot brought the agent back in its conversation, and killed a gated push running in the environment, which has to be started again) |
+| Host reboot or redeploy | nothing | container autostarts, agent resumes its conversation (acer rebooted 2026-11-12: container starting 7 s into userspace, agent back in Herdr at 15 s, home and the shared `~/.cache/nix` intact, first `devenv shell` 7.4 s; a second reboot brought the agent back in its conversation, and killed a gated push running in the environment, which has to be started again; msi the same day: two environments starting 6 s into userspace, both agents in Herdr at 14 s, conversation resumed, `devenv shell` 8 to 10 s) |
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
