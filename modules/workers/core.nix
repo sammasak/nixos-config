@@ -123,6 +123,10 @@ let
     nix.settings.flake-registry = "";
     nix.registry.nixpkgs.to = { type = "path"; path = pkgs.path; };
 
+    # The guest's nix is a client of the host's daemon, which takes a client's substituters when it trusts each of
+    # them: a list of the guest's own replaced the host's, and skipped the fleet's store caches.
+    nix.settings = { inherit (config.nix.settings) substituters trusted-public-keys; };
+
     # lean: the boot is the start latency
     documentation.enable = false;
     services.udisks2.enable = false;
