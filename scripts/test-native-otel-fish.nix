@@ -14,7 +14,8 @@ let
       outPath = "/stub/herdr";
       meta.mainProgram = "herdr";
     };
-    writeShellApplication = args: "/stub/${args.name}";
+    python3Minimal = "/stub/python3";
+    writeShellApplication = args: args // { outPath = "/stub/${args.name}"; };
   };
   evaluated = lib.evalModules {
     specialArgs = {
@@ -27,10 +28,18 @@ let
         options.programs.fish.functions = lib.mkOption {
           type = lib.types.attrsOf lib.types.lines;
         };
+        options.home.packages = lib.mkOption {
+          type = lib.types.listOf lib.types.raw;
+          default = [ ];
+        };
       }
     ]
     ++ lib.optional devTools ../modules/programs/cli/herdr
     ++ lib.optional nativeOtel (import ../modules/programs/cli/native-otel.nix "LENOVO-21CB001PMX");
   };
+  codex = lib.filter (p: (p.name or null) == "codex") evaluated.config.home.packages;
 in
-evaluated.config.programs.fish.functions
+{
+  inherit (evaluated.config.programs.fish) functions;
+  codex = map (p: { inherit (p) text; inherit (p.meta) priority; }) codex;
+}

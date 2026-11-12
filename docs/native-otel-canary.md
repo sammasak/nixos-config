@@ -93,14 +93,14 @@ python3 scripts/test-native-otel-fish.py "$nixpkgs_source"
 
 Use Fish, Python 3 and Nix from the project environment. This regression also
 runs in `devenv tasks run nixos:qa`; reserve a shared verification slot before
-that full host-build gate. Four `PASS:` lines indicate success; an assertion
+that full host-build gate. Five `PASS:` lines indicate success; an assertion
 failure blocks activation. The no-inference
 test checks that composing Herdr and telemetry produces one Fish dispatch,
 preserves arguments and exit status, and keeps telemetry settings local to
 the function. It covers native telemetry enabled and disabled and hosts
-without Herdr. On Herdr hosts, the Fish telemetry module supplies Codex's
-environment setup before the existing Herdr dispatch; it adds nothing to
-`claude`, and no OTLP header reaches either client.
+without Herdr. The `codex` on PATH is a wrapper (hiPrio over `pkgs.codex`) that
+exports `host.name` and cumulative metrics temporality, so `codex exec` from a
+script or agent exports too; no Fish or Bash function sets `OTEL_`, and no OTLP header reaches either client.
 
 The composition cases substitute local recording stubs for the launcher/binaries.
 A separate non-TTY case executes the real Herdr launcher with client stubs,
@@ -109,7 +109,7 @@ exercise interactive Herdr workspace/attach/fallback branches, launch a real
 CLI, contact an inference endpoint, or read a live credential.
 To reproduce the defect, keep these test scripts but restore the
 parent revision of `modules/programs/cli/native-otel.nix` in a disposable
-worktree: the duplicated dispatch must fail. Restore the fixed module and
+worktree: its Fish prelude must fail. Restore the fixed module and
 rerun for green.
 
 After the receiver and its host credential are approved and deployed, switch
@@ -133,7 +133,7 @@ Set `nativeOtel = false` in
 then start a fresh shell. `devenv tasks run nixos:otel-rollback-test` (part of
 `nixos:qa`) proves the evaluated result before any switch: it flips that one
 switch in a copy of the tree and checks that no Claude telemetry variable,
-Codex `[otel]` stanza, Fish prelude, relay or receiver secret is left, and that
+Codex `[otel]` stanza, codex wrapper (only plain `pkgs.codex`), relay or receiver secret is left, and that
 lenovo's Claude environment then equals acer's, which never had the canary. The standard Claude telemetry-disable setting is
 restored, Codex's OTLP exporter stanza and telemetry preludes are removed, and
 the host secret and relay are no longer installed. Verify no new requests
