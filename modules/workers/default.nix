@@ -238,8 +238,8 @@ in
       })
     ];
 
-    # LoadCredential copies the token at start
-    sops.secrets = lib.mkIf (usesClaude && hasToken) { claude_oauth_token.restartUnits = [ "dev-env-egress.service" ]; };
+    # LoadCredential copies the token at start. Not on hasToken: that reads sops.secrets, which this defines.
+    sops.secrets = lib.mkIf (usesClaude && config.sam.hostSecrets.enable) { claude_oauth_token.restartUnits = [ "dev-env-egress.service" ]; };
 
     assertions = lib.optionals (dev.instances != { }) [
       {
