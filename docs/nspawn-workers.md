@@ -34,6 +34,8 @@ sam.workers.instances = {
 | `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
 
+Host-wide: `sam.workers.pool.memory` (below) and `sam.workers.ntfyUrl` (null, or the ntfy topic that hears of failures, see Alerts).
+
 Every environment of a host runs in `environments.slice`, whose `MemoryMax` is
 the host's `sam.workers.pool.memory` (protecting k3s and the host) and whose
 `MemoryLow` is the sum of the reserves. An environment has no ceiling of its
@@ -110,6 +112,16 @@ trusts every entry and a shorter one skipped the LAN caches. Checked
 on msi (66 s of it the build) and 2.7 s in an acer environment afterwards,
 the package signed `msi-ms7758-store-1`. Evaluation is not shared: a first
 `devenv shell` still evaluates on each host (54 s for factum on msi).
+
+## Alerts
+
+A runtime host (msi, acer) posts to lenovo's ntfy topic `homelab-alerts` when
+`container@<name>` or the egress proxy (`dev-env-egress`) fails, at once; when
+the kernel kills a process in the pool (`oom_kill` of `environments.slice`
+rose), within 2 minutes; and when the state directory or `/nix` has under 10G
+free, within 2 minutes and then at most hourly per directory. A send that fails
+is retried at the next 2 minute run. `sam.workers.ntfyUrl = null` turns all of
+it off (`services.devEnvironments.alert` is the program they call).
 
 ## What fails at build
 
