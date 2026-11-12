@@ -131,7 +131,10 @@ let
     imports = cfg.guestModules ++ map (s: s.guest.config) (egressOf w);
     _module.args.devEnvironment = { inherit (w) name hostName address; };
     # the host user's uid: its credential files and nix daemon identity
-    users.users.${user} = { isNormalUser = true; inherit (cfg) uid; };
+    # sudo is root of this namespace only; subordinate ids must fit the guest's 65536, or rootless podman fails
+    users.users.${user} = { isNormalUser = true; inherit (cfg) uid; } // lib.optionalAttrs w.rootInGuest { extraGroups = [ "wheel" ];
+      autoSubUidGidRange = false; subUidRanges = [ { startUid = 10000; count = 55536; } ]; subGidRanges = [ { startGid = 10000; count = 55536; } ]; };
+    security.sudo.wheelNeedsPassword = lib.mkIf w.rootInGuest false;
     networking.hostName = w.hostName;
     programs.fish.enable = lib.mkIf (cfg.shell == "fish") true;
 
@@ -232,6 +235,7 @@ let
       paused = mkOption { type = types.bool; default = false; description = "Stopped, its container undeclared: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session."; };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryMin: never reclaimed for a neighbour, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
+      rootInGuest = mkOption { type = types.bool; default = false; description = "Its own 65536 uids (guest root is an unprivileged host uid, binds id-mapped) and passwordless sudo."; };
     };
   };
 in
@@ -479,7 +483,9 @@ in
         privateNetwork = true;
         inherit (w) hostAddress;
         localAddress = w.address;
-        bindMounts = binds w;
+        # above nspawn's `pick` range (0x80000 to 0x6fff0000), one 65536 block per index: fixed, so a host check can name it
+        privateUsers = if w.rootInGuest then 1879048192 + w.index * 65536 else "no";
+        bindMounts = lib.mapAttrs (n: b: b // lib.optionalAttrs w.rootInGuest { mountPoint = "${n}:idmap"; }) (binds w);
         config = guest w;
       }) running);
 

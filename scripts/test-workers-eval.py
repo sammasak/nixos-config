@@ -229,6 +229,9 @@ def nix_string(s):
 
 
 GUEST = "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; channel = g.nix.channel.enable; registry = g.nix.settings.flake-registry; }"
+# an instance with rootInGuest next to one without: its uid range, its binds and the guest's sudo
+ROOT_IN_GUEST = ('let f = n: let c = sys.config.containers.${n}; in { inherit (c) privateUsers; binds = map (b: b.mountPoint) (builtins.attrValues c.bindMounts); '
+                 'sudoPassword = c.config.security.sudo.wheelNeedsPassword; sub = c.config.users.users.alice.subUidRanges; }; in { r = f "r"; ok = f "ok"; }')
 # what a job in the guest can read of its limits, next to the host-side values they must equal
 LIMITS = ('{ text = sys.config.containers.ok.config.environment.etc."dev-environment".text; '
           'swap = sys.config.systemd.slices.environments.sliceConfig.MemorySwapMax; inherit (sys.config.nix.settings) max-jobs cores; }')
@@ -620,7 +623,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", LIMITS), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", LIMITS), stub_expr("{ services.devEnvironments.instances.r.rootInGuest = true; }", ROOT_IN_GUEST), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -630,6 +633,16 @@ def main():
     check(got.get("channel") is False and len(got.get("nixPath", [])) == 1 and got["nixPath"][0].startswith("nixpkgs=/nix/store/")
           and got.get("registry") == "",
           f"a guest resolves <nixpkgs> to the store's nixpkgs, with no channels or global registry to fetch ({got or out.stderr.strip()[-300:]})")
+    out = nix_eval("{ services.devEnvironments.instances.r.rootInGuest = true; }", ROOT_IN_GUEST)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    r, ok = got.get("r", {}), got.get("ok", {})
+    sub = (r.get("sub") or [{}])[0]
+    check(isinstance(r.get("privateUsers"), int) and r["privateUsers"] >= 0x70000000 and r["privateUsers"] % 65536 == 0
+          and r.get("binds") and all(b.endswith(":idmap") for b in r["binds"]) and r.get("sudoPassword") is False
+          and sub.get("startUid", 0) > 1000 and sub.get("startUid", 0) + sub.get("count", 1 << 20) <= 65536,
+          f"rootInGuest gives the guest its own uid block above nspawn's pick range, id-maps every bind, and passwordless sudo with subordinate ids inside the block ({r or out.stderr.strip()[-300:]})")
+    check(ok.get("privateUsers") == "no" and ok.get("binds") and not any(b.endswith(":idmap") for b in ok["binds"]) and ok.get("sudoPassword") is True,
+          f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
     out = nix_eval("{ }", LIMITS)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     want = {"memory_reserved": str(2 << 30), "pool_memory": str(8 << 30), "pool_swap": str(got.get("swap")), "cpu_weight": "200",

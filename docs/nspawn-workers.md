@@ -33,6 +33,7 @@ sam.workers.instances = {
 | `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it |
 | `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
+| `rootInGuest` | `false` | its own uid block (`--private-users`, binds id-mapped): guest root is an unprivileged host uid, and the user gets passwordless sudo. Prototype, not yet run on a host |
 
 Host-wide: `sam.workers.pool.memory` (below) and `sam.workers.ntfyUrl` (null, or the ntfy topic that hears of failures, see Alerts).
 
