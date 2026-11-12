@@ -25,11 +25,11 @@ permission, what a host deploys, repo settings, money).
 |---|---------|----------|
 | 1 | Done (#230). Guests sent `max-jobs 8, cores 0` to a daemon bounded at 2 x 2; the daemon takes the client's | guest and host `nix config show` on acer; Nix `daemon.cc` |
 | 2 | `MemoryLow` protects nothing: cgroup2 is mounted without `memory_recursiveprot` on acer and msi (a second cgroup2 mount at `/run/cilium/cgroupv2`) | `/proc/self/mountinfo` on both; `memory.events low 0` |
-| 3 | Done (#245). Per-environment `MemoryHigh` stalls a lone gate while the pool sits idle | `memory.events high` 2913 (acer), 7401 (msi); the 11 to 35 min gate |
-| 4 | Done (#245). Swap is not in the pool: zram is charged to no cgroup, 3 x 3G can exceed the device | kernel docs; zram 7.7G |
+| 3 | Done. Per-environment `MemoryHigh` stalls a lone gate while the pool sits idle | `memory.events high` 2913 (acer), 7401 (msi); the 11 to 35 min gate |
+| 4 | Done. Swap is not in the pool: zram is charged to no cgroup, 3 x 3G can exceed the device | kernel docs; zram 7.7G |
 | 5 | On acer a full pool lands on kubelet's eviction line | 15.6G minus pods, system and a 7G pool |
-| 6 | Every environment holds the owner's SSH key and a classic `gh` token (`repo`, `admin:public_key`); `nixos-config` main is public, unprotected, and acer applies it as root weekly | `gh api`, `modules/core/automation.nix` |
-| 7 | Done (#230). The shared `~/.cache/nix` held the unsigned evaluation cache | Nix `eval-cache.cc` |
+| 6 | Without `egress.github.repos` (all of msi) a guest holds the owner's SSH key and, on acer, a `gh` token (none with it); `nixos-config` main is public, unprotected, and acer applies it as root weekly | `gh api`, `modules/core/automation.nix` |
+| 7 | Done. The shared `~/.cache/nix` held the unsigned evaluation cache | Nix `eval-cache.cc` |
 | 8 | Done (#231). `blockedNetworks` was off and covered forwarded traffic only | iptables semantics; runtime-checked on acer |
 | 9 | lenovo's user is a trusted Nix user and lenovo serves a cache the others prefer | `core/users.nix`, `store-cache.nix` |
 | 10 | Each instance is its own NixOS evaluation and build: deploy time grows with the count | `containers.<n>.config` |
