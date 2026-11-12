@@ -37,13 +37,15 @@ let
     agentDef = cfg.agents.${i.agent} or null;
   }) cfg.instances;
 
-  reservedMem = lib.foldl' (s: w: s + w.memory.reserved) 0 instances;
+  # a paused instance is declared nowhere but here: its units go as a retired one's do, and nothing removes what it holds
+  running = lib.filter (w: !w.paused) instances;
+  reservedMem = lib.foldl' (s: w: s + w.memory.reserved) 0 running;
 
   # The credential proxy: a socket directory per instance (its identity), secrets as unit credentials, never in the store.
   egressDir = "/run/dev-env-egress";
   egressAll = lib.mapAttrsToList (name: s: s // { inherit name; }) cfg.egress;
   egressOf = w: lib.filter (s: s.for w) egressAll;
-  egressed = lib.filter (w: egressOf w != [ ]) instances;
+  egressed = lib.filter (w: egressOf w != [ ]) running;
   egressUsed = lib.filter (s: lib.any s.for instances) egressAll;
   egressSecrets = lib.concatMap (s: lib.mapAttrsToList (n: path: { inherit n path; inherit (s) missing; }) s.secrets) egressUsed;
   caddyfile = pkgs.writeText "dev-env-egress.Caddyfile" (''
@@ -227,6 +229,7 @@ let
         example = [ "gh-hosts.yml" ];
         description = "Which of `credentials` this instance gets; null is all of them.";
       };
+      paused = mkOption { type = types.bool; default = false; description = "Stopped, its container undeclared: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session."; };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryMin: never reclaimed for a neighbour, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
     };
@@ -466,10 +469,9 @@ in
           }
           { assertion = w.name != hostName; message = "${i}: the name is this host's own."; }
           { assertion = !lib.elem w.name otherHosts && !lib.elem "${w.name}.${cfg.prefix}" otherHosts; message = "${i}: networking.hosts already maps the name to another address."; }
-          { assertion = lib.length (lib.filter (d: d ? ${w.name}) options.containers.definitions) == 1; message = "${i}: containers.${w.name} is also declared elsewhere."; }
+          { assertion = lib.length (lib.filter (d: d ? ${w.name}) options.containers.definitions) == (if w.paused then 0 else 1); message = "${i}: containers.${w.name} is also declared elsewhere."; }
           { assertion = lib.stringLength w.hostName <= 63; message = "${i}: hostname ${w.hostName} is longer than 63."; }
-          { assertion = config.containers.${w.name}.config.services.openssh.enable; message = "${i}: a guest module disabled sshd, the only way into it."; }
-        ]) instances;
+        ] ++ lib.optional (!w.paused) { assertion = config.containers.${w.name}.config.services.openssh.enable; message = "${i}: a guest module disabled sshd, the only way into it."; }) instances;
 
       containers = lib.listToAttrs (map (w: lib.nameValuePair w.name {
         ephemeral = true;
@@ -479,7 +481,7 @@ in
         localAddress = w.address;
         bindMounts = binds w;
         config = guest w;
-      }) instances);
+      }) running);
 
       systemd.slices.${slice}.sliceConfig = {
         MemoryMax = cfg.pool.memory;
@@ -556,7 +558,7 @@ in
             ExecStart = "${lib.getExe surface} start";
             ExecStop = "${lib.getExe surface} stop";
           };
-        }))) instances);
+        }))) running);
 
       environment.systemPackages = map ctl instances;
       system.build.devEnvironments = lib.listToAttrs (map (w: lib.nameValuePair w.name { start = agentScript w false; })

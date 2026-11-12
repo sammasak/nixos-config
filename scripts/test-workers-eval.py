@@ -343,6 +343,14 @@ def check_gcroots(facts):
 
 ACT = "{ inherit (sys.config.services.devEnvironments) stateDir; text = sys.config.system.activationScripts.devEnvironments.text; }"
 RETIRED = '{ services.devEnvironments.retired = [ "gone" "live" "link" ]; }'
+PAUSED_ONE = '{ services.devEnvironments.instances.idle.paused = true; }'
+PAUSED = '{ services.devEnvironments.instances = { a = { }; b = { }; c.paused = true; d.paused = true; }; }'
+PAUSED_FACTS = r"""{
+  low = sys.config.systemd.slices.environments.sliceConfig.MemoryLow;
+  containers = builtins.attrNames sys.config.containers;
+  units = builtins.filter (n: builtins.match ".*[-@][cd](\\.service)?" n != null) (builtins.attrNames sys.config.systemd.services);
+  declared = builtins.listToAttrs (map (n: { name = n; value = sys.config.systemd.services ? "${sys.config.services.devEnvironments.unitPrefix}-${n}"; }) [ "ok" "a" "b" "c" "d" ]);
+}"""
 
 
 def userns(*argv, **kw):
@@ -371,7 +379,7 @@ def activation_run(text, state, active=()):
 def check_activation():
     """The activation script, executed: a fresh host, a second run, a planted symlink, retired instances."""
     texts = {}
-    for key, case in (("fresh", "{ }"), ("retired", RETIRED)):
+    for key, case in (("fresh", "{ }"), ("retired", RETIRED), ("paused", PAUSED_ONE)):
         out = nix_eval(case, ACT)
         texts[key] = json.loads(out.stdout) if out.returncode == 0 else None
         if texts[key] is None:
@@ -426,6 +434,14 @@ def check_activation():
                   f"a retired home moves to the trash and its profiles go, unless its container is active; a symlink is left (rc {rc}, {sorted(tree)}, {err.strip()[-200:]})")
             rc2, tree2, err2 = run("retired", active=["live"])
             check(rc2 == 0 and tree2 == tree, f"retiring again changes nothing and exits 0 (rc {rc2}, {err2.strip()[-200:]})")
+
+            files = pathlib.Path(fresh_state())
+            (files / "idle" / "home").mkdir(parents=True)
+            (files / "idle" / "home" / "work").write_text("kept")
+            (state / "profiles" / "idle").mkdir(parents=True)
+            rc, tree, err = run("paused")
+            check(rc == 0 and (files / "idle" / "home" / "work").exists() and (state / "profiles" / "idle").exists() and "idle/eval-cache" in tree,
+                  f"a paused instance is not retired: its home and profiles stay and activation still prepares its directories (rc {rc}, {err.strip()[-200:]})")
         finally:
             userns("rm", "-rf", str(state))
 
@@ -492,6 +508,19 @@ def check_alerts(facts):
             marker.unlink()
         broken = watch(2, 4, broken=True)
         check(broken == (0, []), f"a df that fails raises no alert ({broken})")
+
+
+def check_paused():
+    """A paused instance has no container and no unit (a changed container unit that its declaration's removal stops
+    fails the switch), and reserves nothing."""
+    own = nix_eval(PAUSED, OWN)
+    got = json.loads(own.stdout) if own.returncode == 0 else ["eval failed: " + own.stderr.strip()[-200:]]
+    check(got == [], f"two paused instances leave the pool-fit assertion satisfied (5 declared, 3 active, 2G each, in 8G) ({got})")
+    out = nix_eval(PAUSED, PAUSED_FACTS)
+    facts = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(facts.get("low") == 3 * 2**31 and facts.get("containers") == ["a", "b", "ok"] and facts.get("units") == []
+          and facts.get("declared") == {"ok": True, "a": True, "b": True, "c": False, "d": False},
+          f"paused instances have no container, no unit of any kind, and leave the slice's MemoryLow ({facts or out.stderr.strip()[-300:]})")
 
 
 def check_nested(facts):
@@ -563,7 +592,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", LIMITS), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", LIMITS), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -580,6 +609,7 @@ def main():
     have = dict(l.split("=", 1) for l in got.get("text", "").splitlines() if "=" in l)
     check(have == want, f"/etc/dev-environment gives the guest its reserve, the pool, its CPU weight and the build bounds ({have or out.stderr.strip()[-300:]})")
     check_activation()
+    check_paused()
     blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
     for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
         out = nix_eval(blocked % v6, "sys.config.networking.firewall.extraCommands")
