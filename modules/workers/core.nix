@@ -485,6 +485,9 @@ in
         localAddress = w.address;
         # above nspawn's `pick` range (0x80000 to 0x6fff0000), one 65536 block per index: fixed, so a host check can name it
         privateUsers = if w.rootInGuest then 1879048192 + w.index * 65536 else "no";
+        # a numeric base implies --private-users-ownership=off (only `pick` implies auto): the ephemeral root stays the
+        # host root's, nobody in the guest, and stage 2 can write neither /etc nor /bin, so systemd finds no default.target
+        extraFlags = lib.optional w.rootInGuest "--private-users-ownership=auto";
         bindMounts = lib.mapAttrs (n: b: b // lib.optionalAttrs w.rootInGuest { mountPoint = "${n}:idmap"; }) (binds w);
         config = guest w;
       }) running);
