@@ -68,7 +68,7 @@ let
         (( ++n < 60 )) || exit 1
         sleep 1
       done
-      ${w.ctl} wait || true
+      ${w.ctl} wait
       mode="fresh"
       if ${w.ctl} resumable; then mode="continue"; fi
       close
@@ -97,7 +97,7 @@ let
               send ${lib.escapeShellArg restartNotice}
               echo "$inv" > "$XDG_RUNTIME_DIR/restart-notice-$label"
             fi
-          ${lib.optionalString (w.prompt != null) "else send ${lib.escapeShellArg w.prompt}"}
+          ${lib.optionalString (w.prompt != null) ''else send "$(< ${pkgs.writeText "${w.name}-prompt" w.prompt})"''}
           fi
         else
           echo "${w.agent} in $label did not reach idle; see the workspace" >&2

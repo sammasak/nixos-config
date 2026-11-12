@@ -87,10 +87,16 @@ let
     text = ''
       case ''${1-} in
         wait)
-          for _ in $(seq 120); do
-            ${ssh w "-o BatchMode=yes -o ConnectTimeout=2"} true 2>/dev/null && exit 0
-            sleep 1
+          for _ in $(seq 300); do
+            if st=$(${ssh w "-o BatchMode=yes -o ConnectTimeout=2"} systemctl show --property=LoadState,ActiveState home-manager-${user}.service 2>/dev/null); then
+              case $st in
+                *LoadState=not-found*|*ActiveState=active*) exit 0 ;;
+                *ActiveState=failed*) echo "home-manager-${user}.service failed in ${w.name}" >&2; exit 2 ;;
+              esac
+            fi
+            sleep "''${WORKER_WAIT_TICK-1}" # overridable so the eval test does not wait 300 s
           done
+          case ''${st-} in *ActiveState=activating*) echo "home-manager-${user}.service is still activating in ${w.name}" >&2 ;; esac
           exit 1 ;;
         resumable)
           ${if w.agentDef == null || w.agentDef.resumeWhen == null then "exit 1"
@@ -157,7 +163,8 @@ let
     # The guest's nix is a client of the host's daemon, which takes a client's substituters (when it trusts each of
     # them), max-jobs and cores over its own: the guest's defaults skipped the fleet's store caches and lifted the
     # host's build bounds. An empty flake-registry fetched the global one on every cold cache.
-    nix.settings = { flake-registry = ""; inherit (config.nix.settings) substituters trusted-public-keys max-jobs cores; }
+    # mkForce: the guest's own defaults would list again what the host's already holds
+    nix.settings = { flake-registry = ""; inherit (config.nix.settings) max-jobs cores; substituters = lib.mkForce config.nix.settings.substituters; trusted-public-keys = lib.mkForce config.nix.settings.trusted-public-keys; }
       // lib.optionalAttrs (config.nix.settings ? connect-timeout) { inherit (config.nix.settings) connect-timeout; };
 
     # lean: the boot is the start latency
@@ -354,12 +361,17 @@ in
     }
 
     # The host's daemon registers an environment's devenv roots under the guest's path, which dangles on the
-    # host: without this the host's collection deletes every environment's built shells.
-    (lib.mkIf (cfg.instances != { } && config.nix.gc.automatic) {
+    # host: without this the host's collection deletes every environment's built shells. The daemon also collects
+    # on its own when min-free is set, so the timer refreshes the roots between the scheduled runs too.
+    (lib.mkIf (cfg.instances != { }) {
+      systemd.timers.dev-environments-gcroots = {
+        wantedBy = [ "timers.target" ];
+        timerConfig = { OnBootSec = "2min"; OnUnitActiveSec = "15min"; };
+      };
       systemd.services.dev-environments-gcroots = {
         description = "Root the developer environments' devenv closures before garbage collection";
-        requiredBy = [ "nix-gc.service" ];
-        before = [ "nix-gc.service" ];
+        requiredBy = lib.optionals config.nix.gc.automatic [ "nix-gc.service" ];
+        before = lib.optionals config.nix.gc.automatic [ "nix-gc.service" ];
         serviceConfig.Type = "oneshot";
         script = ''
           rc=0
@@ -547,6 +559,7 @@ in
           # a restart would kill the running agent (its ssh): a deploy that only changes the surface leaves it be,
           # and a restart of the container brings it back
           restartIfChanged = false;
+          onFailure = lib.optional (cfg.alert != null) "dev-env-alert@%n.service";
           serviceConfig = {
             # simple, not oneshot: a deploy that adds an instance does not wait for its agent to come up
             Type = "simple";
@@ -554,6 +567,7 @@ in
             User = user;
             # at a cold boot the user's session server can come up after the start gave up waiting for it
             Restart = "on-failure";
+            RestartPreventExitStatus = 2; # the guest's home setup failed: a retry would start the agent on a first-run screen
             RestartSec = 10;
             ExecStart = "${lib.getExe surface} start";
             ExecStop = "${lib.getExe surface} stop";

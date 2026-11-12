@@ -81,6 +81,8 @@ Append; move a line to fixed when its change lands.
 - A deploy that fails and is rolled back by deploy-rs leaves an environment it stopped (a pause) down, and `/etc/systemd/system` still showed the failed generation; only the next successful deploy brought it back. Mechanism not established from source (the rolled-back `switch-to-configuration` restarts the active targets, which should pull the declaration unit back in); needs the host check of the failed activation's journal.
 
 
+- A deploy that fixes a guest boot failure does not restart that guest: the container keeps running the failed generation until it is restarted by hand (stop and start `container@<name>`, or pause and unpause).
+
 ## Fixed
 
 - 2026-11-12 The restart notice was tied to the session surface starting with a transcript, not to the guest restarting: a retry of the surface, or a restart of it alone, told a live agent its processes were killed. It is sent once per start of `container@<name>` (the unit's `InvocationID`, recorded in the host user's runtime directory after the send). A resume after a host reboot or unpause still gets it once.
