@@ -336,6 +336,10 @@ The committed config declares none.
    store opens the host db immutable and so misses everything in its WAL, so paths the host registered since the
    last checkpoint, the guest's own system among them, are "not valid" and Home Manager fails. It would need a
    frozen lower store (a snapshot), not the live one. Both branches stay unmerged as the record.
+4. **Root-built fetcher-cache seed for a new `rootInGuest` environment** (branch `feat/fetch-cache-seed`, dropped).
+   It warmed a new environment's empty `~/.cache/nix`, but each repo pins its own nixpkgs (six distinct revisions
+   across nixos-config, factum and herman), so a seed made from one lock misses the others. The lever is one shared
+   nixpkgs pin across repos: it shares both the fetched tarball and the built store paths.
 
 ## Working an issue in one
 
