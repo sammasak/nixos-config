@@ -129,8 +129,10 @@ let
   c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config;
   g = c.containers.t.config;
   d = builtins.unsafeDiscardStringContext;
+  ex = c.systemd.services."worker-herdr-t".serviceConfig.ExecStart;
 in {
   assertions = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
+  hook = builtins.readFile (builtins.appendContext (builtins.head (builtins.match "(.*) start" (d ex))) (builtins.getContext ex));
   managed = d g.environment.etc."claude-code/managed-settings.json".text;
   containers = d (builtins.readFile g.environment.etc."containers/containers.conf".source);
   storage = d (builtins.readFile g.environment.etc."containers/storage.conf".source);
@@ -525,6 +527,13 @@ def check_paused():
           f"paused instances have no container, no unit of any kind, and leave the slice's MemoryLow ({facts or out.stderr.strip()[-300:]})")
 
 
+def check_restart_notice(facts):
+    block = facts.get("hook", "").split("[[ $mode == continue ]]; then", 1)[-1].split("\n          else", 1)[0]
+    sent, marked = block.find("send "), block.rfind("restart-notice-$label")
+    check("systemctl show --property=InvocationID --value container@t.service" in block and '!= "$inv"' in block and 0 < sent < marked,
+          f"the restart notice is sent once per start of the container and recorded after the send ({block[:400]})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -666,6 +675,7 @@ def main():
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
     check_nested(facts)
+    check_restart_notice(facts)
     check_alerts(facts)
     check_eval_cache(facts)
     check_gcroots(facts)

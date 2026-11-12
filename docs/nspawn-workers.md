@@ -80,7 +80,7 @@ neighbour was reclaimed to 59M.
 | Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
 | First use of a repo | clone, `devenv shell` | 25 s (skills), 32 s (herman): evaluation only, every store path comes from the host's store; 0.1 to 0.3 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
-| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so and re-checks its work. msi tells its agents at 20:40 (`sam.workers.shutdownNotice`) to push before the 21:00 poweroff |
+| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so, once per start of the container, and re-checks its work. msi tells its agents at 20:40 (`sam.workers.shutdownNotice`) to push before the 21:00 poweroff |
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
@@ -137,7 +137,7 @@ cover it). Its address and ssh alias stay too. Its
 the container starts and the agent is relaunched with `--continue` because the
 transcript is still there. A stop kills what the agent was doing like a reboot
 does: a tool call in flight is cut off (the transcript then ends in a tool use
-without a result) and the resumed agent is told that whatever ran in the
+without a result) and the resumed agent is told, once per start of the container, that whatever ran in the
 environment was killed. There is no shutdown notice on a pause; send the agent
 a "push your work" message first if it holds unpushed commits. A deploy that fails and is rolled back leaves the instance it stopped down until the next successful deploy.
 
