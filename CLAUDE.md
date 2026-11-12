@@ -15,8 +15,7 @@ devenv tasks run nixos:lint-comments   # Comment Policy (density + forbidden sha
 devenv tasks run nixos:lint-shell      # shellcheck scripts/*.sh
 devenv tasks run nixos:secrets-verify  # wifi credentials sanity (skips without an age key)
 devenv tasks run nixos:nvim-check      # lenovo's nvim starts headless clean
-devenv tasks run nixos:flake-check     # nix flake check --all-systems
-devenv tasks run nixos:verify          # build every x86 host, evaluate black-pi
+devenv tasks run nixos:flake-check     # nix flake check --all-systems: builds every x86 host, evaluates the Pis
 devenv tasks run nixos:claude-settings-test  # generated Claude settings: default mode, bypass on request
 devenv tasks run nixos:coordinator-test  # coordinator adapters on lenovo only; Codex's agent declared via config_file, no model pin
 devenv tasks run nixos:worker-permissions-test  # #145/#157/skills#28: Herdr workers (restored panes too) start in bypassPermissions and switch models on a safeguards flag; the Coordinator unchanged

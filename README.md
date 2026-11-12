@@ -46,7 +46,7 @@ the tie-breaker.
 | `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `terminal/` |
 | `modules/themes/` | Catppuccin via Stylix | |
 | `lib/` | Pure helpers, no module semantics | `users.nix` (git identity, SSH keys), `firewall.nix` (dual-backend rule builder) |
-| `scripts/` | Repo tooling | `verify-all-hosts.sh`, `bench.sh`, `nix-comment-metrics.awk` |
+| `scripts/` | Repo tooling | `gate-probe.nix` and the `test-*.py` gates, `bench.sh`, `nix-comment-metrics.awk` |
 | `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
 | `docs/` | Current reference | `architecture.md`, `herdr.md`, `pi.md` |
@@ -72,8 +72,8 @@ just deploy-pi          # black-pi; builds on the Pi, run inside zellij
 just deploy-naked-pi
 just deploy-lenovo      # loopback self-push
 
-just check              # full QA (lint, flake check, every host build)
-just verify             # build every x86 host, evaluate black-pi
+just check              # full QA (lint, flake check with every host build, the tests)
+just verify             # flake check: build every x86 host, evaluate the Pis
 ```
 
 Rollback with `sudo nixos-rebuild switch --rollback`, or pick an older

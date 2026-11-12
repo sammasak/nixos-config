@@ -63,7 +63,7 @@ deploy-naked-pi:
 
 # QA gates live in devenv.nix as tasks; the git hooks run the same ones.
 verify:
-    devenv tasks run nixos:verify
+    devenv tasks run nixos:flake-check
 
 lint-comments:
     devenv tasks run nixos:lint-comments

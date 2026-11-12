@@ -34,12 +34,10 @@ let
     fi
   '';
 
+  # Also builds every x86 host (deploy-rs' deploy-activate check holds their toplevels) and, with
+  # --all-systems, evaluates the aarch64 Pis: the one place a host build is checked.
   flakeCheck = gate "nixos-flake-check" [ pkgs.nix ] ''
     nix flake check --all-systems --no-write-lock-file
-  '';
-
-  verifyHosts = gate "nixos-verify" (with pkgs; [ bash nix coreutils ]) ''
-    bash scripts/verify-all-hosts.sh
   '';
 
   # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
@@ -112,7 +110,7 @@ let
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
   qa = gate "nixos-qa" [ ] ''
-    ${run [ lintComments lintShell secretsVerify flakeCheck verifyHosts ]}
+    ${run [ lintComments lintShell secretsVerify flakeCheck ]}
     GATE_PROBE=$(${lib.getExe probe})
     export GATE_PROBE
     ${run [
@@ -365,8 +363,7 @@ in
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
     "nixos:secrets-verify" = task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
-    "nixos:flake-check" = task "nix flake check over all systems" flakeCheck;
-    "nixos:verify" = task "Build every x86 host, evaluate the Pis" verifyHosts;
+    "nixos:flake-check" = task "nix flake check over all systems: builds every x86 host, evaluates the Pis" flakeCheck;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
