@@ -50,7 +50,7 @@ let
   # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
   githubSite = i: let repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})"; in site i "github" ''
     # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
-    @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|\.\.|//|\\
+    @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|(^|/)\.\.?(/|\?|$)|//|\\
     # the owner's token administers the repository: none of that, on any listed repo
     @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
     @adminRepo {
@@ -70,14 +70,23 @@ let
       path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
       method GET POST
     }
-    @rest {
+    @read {
       path_regexp ^/repos/${repos}(/.*)?$
-      method GET HEAD POST PATCH PUT
+      method GET HEAD
+    }
+    # what an agent does to a repository: issues, comments, labels and pull requests. Merges, refs, contents,
+    # workflows, releases and the rest stay off, and reviews too (an approval would be the owner's).
+    @write {
+      path_regexp ^/repos/${repos}/(issues(/[0-9]+(/(comments|labels|assignees))?|/comments/[0-9]+)?|pulls(/[0-9]+(/(comments|requested_reviewers))?|/comments/[0-9]+)?|labels(/[^/]+)?)/?$
+      method POST PATCH
     }
     handle @git {
       ${upstream "https://github.com" "Basic {file.${githubToken}.basic}"}
     }
-    handle @rest {
+    handle @read {
+      ${upstream "https://api.github.com" "token {file.${githubToken}}"}
+    }
+    handle @write {
       ${upstream "https://api.github.com" "token {file.${githubToken}}"}
     }
     ${lib.optionalString i.egress.github.graphql ''

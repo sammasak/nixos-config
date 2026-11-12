@@ -4,11 +4,14 @@ survives quotes, backslashes and newlines through the guest's login shell (fish 
 import json
 import os
 import pathlib
+import http.client
 import re
+import socket
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.getcwd()
@@ -224,6 +227,61 @@ def fleet(case, template=FLEET):
     return template % {"root": json.dumps(ROOT), "case": case}
 
 
+# (method, path, allowed) against the repository o/r.s; allowed requests reach the dead upstream and fail with 502, the rest are 403
+GITHUB_CASES = [
+    ("GET", "/repos/o/r.s/pulls", True), ("HEAD", "/repos/o/r.s/issues", True), ("GET", "/repos/o/r.s/compare/main...feat/x", True),
+    ("POST", "/repos/o/r.s/pulls", True), ("PATCH", "/repos/o/r.s/pulls/12", True), ("POST", "/repos/o/r.s/issues", True),
+    ("POST", "/repos/o/r.s/issues/12/comments", True), ("PATCH", "/repos/o/r.s/issues/comments/99", True),
+    ("POST", "/repos/o/r.s/issues/12/labels", True), ("POST", "/repos/o/r.s/pulls/12/requested_reviewers", True),
+    ("GET", "/o/r.s/info/refs?service=git-receive-pack", True), ("POST", "/o/r.s.git/git-receive-pack", True),
+    ("GET", "/repos/o/r.s/actions/secrets", False), ("GET", "/repos/o/r.s/./pulls", False), ("GET", "/repos/o/r.s/%2e%2e/pulls", False),
+    ("GET", "/repos/o/other/pulls", False), ("PUT", "/repos/o/r.s/pulls/12/merge", False), ("POST", "/repos/o/r.s/merges", False),
+    ("POST", "/repos/o/r.s/git/refs", False), ("PATCH", "/repos/o/r.s/git/refs/heads/main", False),
+    ("DELETE", "/repos/o/r.s/git/refs/heads/main", False), ("PUT", "/repos/o/r.s/contents/x", False),
+    ("DELETE", "/repos/o/r.s/contents/x", False), ("POST", "/repos/o/r.s/actions/workflows/ci.yml/dispatches", False),
+    ("POST", "/repos/o/r.s/actions/runs/5/rerun", False), ("POST", "/repos/o/r.s/dispatches", False),
+    ("POST", "/repos/o/r.s/releases", False), ("POST", "/repos/o/r.s/branches/main/rename", False),
+    ("POST", "/repos/o/r.s/pulls/12/reviews", False), ("PUT", "/repos/o/r.s/pulls/12/update-branch", False),
+    ("POST", "/repos/o/r.s/pages", False), ("DELETE", "/repos/o/r.s/issues/12", False), ("POST", "/graphql", False),
+]
+
+
+def check_github_proxy(site):
+    """Runs the generated site of one instance in Caddy with its upstreams pointed at a closed port: no network is needed."""
+    caddy = shutil.which("caddy")
+    if caddy is None:
+        check(False, "caddy is on PATH for the GitHub proxy behaviour test")
+        return
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    body = site.split("\n", 2)[2]
+    body = re.sub(r"https://(api\.)?github\.com", "http://127.0.0.1:1", body)
+    with tempfile.TemporaryDirectory() as d:
+        conf = pathlib.Path(d, "Caddyfile")
+        conf.write_text("{\n admin off\n auto_https off\n}\nhttp://127.0.0.1:%d {\n%s" % (port, body))
+        proc = subprocess.Popen([caddy, "run", "--adapter", "caddyfile", "--config", str(conf)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        try:
+            for _ in range(50):
+                try:
+                    socket.create_connection(("127.0.0.1", port), 0.2).close()
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            wrong = []
+            for method, path, allowed in GITHUB_CASES:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.request(method, path)
+                status = conn.getresponse().status
+                conn.close()
+                if (status != 403) != allowed:
+                    wrong.append(f"{method} {path} -> {status}")
+            check(not wrong, f"the GitHub site lets agents do issue, comment, label and pull request work and git, and refuses merges, refs, contents, workflows, releases, reviews and dot segments ({wrong})")
+        finally:
+            proc.terminate()
+            proc.wait(5)
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -303,6 +361,18 @@ def main():
     check(got.get("channel") is False and len(got.get("nixPath", [])) == 1 and got["nixPath"][0].startswith("nixpkgs=/nix/store/")
           and got.get("registry") == "",
           f"a guest resolves <nixpkgs> to the store's nixpkgs, with no channels or global registry to fetch ({got or out.stderr.strip()[-300:]})")
+    out = nix_eval("{ }", "sys.config.system.activationScripts.devEnvironments.text")
+    act = json.loads(out.stdout) if out.returncode == 0 else ""
+    cache = [line for line in act.splitlines() if "home/.cache" in line]
+    check(len(cache) == 1 and re.search(r"setpriv --reuid=\S+ --regid=\S+ --init-groups install -d ", cache[0]) and " -o " not in cache[0],
+          f"root creates a guest's ~/.cache as the user, since install -d follows a symlink the guest planted ({cache or out.stderr.strip()[-300:]})")
+    blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
+    for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
+        out = nix_eval(blocked % v6, "sys.config.networking.firewall.extraCommands")
+        cmds = json.loads(out.stdout) if out.returncode == 0 else ""
+        check(out.returncode == 0 and ("ip6tables -w -I INPUT -i ve-+ -j dev-env-input" in cmds and "ip6tables -w -I FORWARD -i ve-+ -j DROP" in cmds
+              and "ip6tables -w -A dev-env-input -p ipv6-icmp -j RETURN" in cmds) == want and "iptables -w -I INPUT -i ve-+ -j dev-env-input" in cmds,
+              f"blockedNetworks drops new IPv6 connections from the instance interfaces: {want} ({cmds[-200:] or out.stderr.strip()[-300:]})")
     out = nix_eval("{ }", DECLARATION)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got == {"storeFree": True, "live": True, "restarts": True},
@@ -348,6 +418,7 @@ def main():
     check(all(w in gh for w in want) and "x/y" not in gh, f"gh's GitHub site allows o/r.s alone, escaped and anchored, behind the admin and odd-URI denies ({[w for w in want if w not in gh]})")
     check("bind unix//run/dev-env-egress/plain/github.sock" not in sites and "/graphql" not in caddy and "bind unix//run/dev-env-egress/gh2/github.sock" in sites,
           f"no GitHub site for an instance without repos, no GraphQL unless asked for ({sorted(sites)})")
+    check_github_proxy(gh)
     check(got.get("config", "").startswith("/nix/store/") and "/run/secrets" not in caddy,
           f"the proxy's Caddyfile ({got.get('config')}) names no path under /run/secrets")
 

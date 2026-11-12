@@ -70,7 +70,7 @@ let
     ${pkgs.python3}/bin/python scripts/test-worker-permissions.py
   '';
 
-  workersEvalTest = gate "workers-eval-test" (with pkgs; [ nix python3 fish bash ]) ''
+  workersEvalTest = gate "workers-eval-test" (with pkgs; [ nix python3 fish bash caddy ]) ''
     ${pkgs.python3}/bin/python scripts/test-workers-eval.py
   '';
 

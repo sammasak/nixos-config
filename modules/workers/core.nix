@@ -280,7 +280,8 @@ in
           ${lib.concatMapStrings (w: ''
             install -d -m 0700 "$d/${w.name}"
             [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/home"
-            install -d -m 0755 -o ${user} -g ${group} "$d/${w.name}/home/.cache"
+            # as the user: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
+            ${pkgs.util-linux}/bin/setpriv --reuid=${user} --regid=${group} --init-groups install -d -m 0755 "$d/${w.name}/home/.cache"
             install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/eval-cache"
           '') instances}
         '';
@@ -304,7 +305,7 @@ in
             find "$home" \( -name node_modules -o -name target -o -name .git \) -prune \
               -o -path '*/.devenv/gc/*' -type l -print 2>/dev/null | while read -r l; do
               t=$(readlink "$l")
-              [[ $t == /nix/store/* && -e $t ]] && ln -sfn "$t" "$roots/home-$(echo -n "$l" | sha1sum | cut -c1-16)"
+              [[ $t == /nix/store/* && $t != *..* && -e $t ]] && ln -sfn "$t" "$roots/home-$(echo -n "$l" | sha1sum | cut -c1-16)"
             done
           done
         '';
@@ -450,7 +451,9 @@ in
       networking.nat = { enable = true; internalIPs = [ "10.233.0.0/16" ]; };
       networking.localCommands = "${pkgs.iproute2}/bin/ip route replace unreachable 10.233.0.0/16";
       networking.firewall = lib.mkIf (cfg.blockedNetworks != [ ]) {
-        # INPUT too: a guest's connection to one of the host's own addresses (its k3s API, sshd) is never forwarded
+        # INPUT too: a guest's connection to one of the host's own addresses (its k3s API, sshd) is never forwarded.
+        # IPv6 is link-local only (no router advertises a prefix): the host's fe80 address answers ping and some ports
+        # from the guest, so the same chain drops new connections there, with ICMPv6 left for neighbour discovery.
         extraCommands = ''
           iptables -w -D FORWARD -i ve-+ -j dev-env-forward 2>/dev/null || true
           iptables -w -D INPUT -i ve-+ -j dev-env-input 2>/dev/null || true
@@ -466,10 +469,21 @@ in
           iptables -w -A dev-env-input -m conntrack --ctstate NEW -j DROP
           iptables -w -I FORWARD -i ve-+ -j dev-env-forward
           iptables -w -I INPUT -i ve-+ -j dev-env-input
+        '' + lib.optionalString config.networking.enableIPv6 ''
+          ip6tables -w -D INPUT -i ve-+ -j dev-env-input 2>/dev/null || true
+          ip6tables -w -D FORWARD -i ve-+ -j DROP 2>/dev/null || true
+          ip6tables -w -F dev-env-input 2>/dev/null || ip6tables -w -N dev-env-input
+          ip6tables -w -A dev-env-input -p ipv6-icmp -j RETURN
+          ip6tables -w -A dev-env-input -m conntrack --ctstate NEW -j DROP
+          ip6tables -w -I INPUT -i ve-+ -j dev-env-input
+          ip6tables -w -I FORWARD -i ve-+ -j DROP
         '';
         extraStopCommands = ''
           iptables -w -D FORWARD -i ve-+ -j dev-env-forward 2>/dev/null || true
           iptables -w -D INPUT -i ve-+ -j dev-env-input 2>/dev/null || true
+        '' + lib.optionalString config.networking.enableIPv6 ''
+          ip6tables -w -D FORWARD -i ve-+ -j DROP 2>/dev/null || true
+          ip6tables -w -D INPUT -i ve-+ -j dev-env-input 2>/dev/null || true
         '';
       };
       networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
