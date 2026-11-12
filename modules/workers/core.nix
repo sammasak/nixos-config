@@ -246,7 +246,7 @@ in
       example = { work = "build-box"; };
       description = "Client side: `ssh <name>.<prefix>` reaches instance <name> through the host this maps <prefix> to, a known host here.";
     };
-    pool.memory = mkOption { type = size; description = "MemoryMax of the environments' slice, the only ceiling: every instance's reserve fits in it, swap is capped at half of it."; };
+    pool.memory = mkOption { type = size; description = "MemoryMax of the environments' slice, the only ceiling: every instance's reserve fits in it, swap is capped at a quarter of it. The host must have both free: the swap is zram, held in RAM."; };
   };
 
   config = lib.mkMerge [
@@ -378,8 +378,9 @@ in
         # The limit is the pool's, an instance has only its reserve: under an instance MemoryMax the kernel killed a
         # build at 6G in a 10G pool with one instance running. Past the pool and its swap it kills the largest process
         # in the slice. NOT MemoryHigh: a runaway then never reaches the limit and stalls the whole pool instead.
-        # zram is charged to no cgroup: without this the instances' swap adds up past the device
-        MemorySwapMax = cfg.pool.memory / 2;
+        # zram is charged to no cgroup and holds incompressible pages in RAM at full size: at half the pool a runaway
+        # took msi (16G, 10G pool) into a host-wide OOM that killed k3s pods
+        MemorySwapMax = cfg.pool.memory / 4;
       };
 
       systemd.services = lib.listToAttrs (lib.concatMap (w: [

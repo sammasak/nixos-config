@@ -46,7 +46,7 @@ permission, what a host deploys, repo settings, money).
    independent 20 s derivations from a guest take 41 s, not 21.
 2. **Burst at the pool, not the instance** (3, 4): **Done** (#245). An
    environment has no `memory.max` or `MemoryHigh`; `environments.slice` has
-   no `MemoryHigh` either, only `MemoryMax` and a `MemorySwapMax` of half of it.
+   no `MemoryHigh` either, only `MemoryMax` and a `MemorySwapMax` of a quarter of it.
 3. **Restore `memory_recursiveprot`** (2) so the 2G reserve is real: remount
    after Cilium, or stop Cilium mounting its own cgroup2
    (`cgroup.autoMount.enabled=false`, `cgroup.hostRoot=/sys/fs/cgroup`).

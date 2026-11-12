@@ -38,7 +38,7 @@ Every environment of a host runs in `environments.slice`, whose `MemoryMax` is
 the host's `sam.workers.pool.memory` (protecting k3s and the host) and whose
 `MemoryLow` is the sum of the reserves. An environment has no ceiling of its
 own and the pool no `MemoryHigh`: the only limit is the pool's `MemoryMax`,
-with the pool's swap (zram) capped at half of it, so one gate alone uses what
+with the pool's swap (zram) capped at a quarter of it, so one gate alone uses what
 its neighbours leave idle, down to their reserves (`MemoryMin`). nix builds
 run in the host's daemon, outside the pool; acer and msi bound that daemon
 (2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build

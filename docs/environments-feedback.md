@@ -80,6 +80,7 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-12 A runaway with incompressible data took msi itself out of memory: the 10G pool plus its 5G of swap is 15G of real RAM on a 16G host, because zram keeps what does not compress in RAM. The kernel's host-wide OOM killed k3s pods (node_exporter, ollama) and a process in the neighbouring environment at 13:46. The pool's swap is a quarter of the pool now (msi 12.5G worst case). Size a pool so that pool plus a quarter fits beside the host's own use.
 - 2026-11-12 With no ceiling per environment a 17G runaway on msi was not killed: the pool's `MemoryHigh` throttled it for 18 minutes at the limit and the idle neighbour was reclaimed from its 2G `MemoryLow` reserve to 59M. The pool has no `MemoryHigh` now and the reserve is `MemoryMin`: the same runaway was killed after 23 s, that process only, and a neighbour holding 1.5G kept it. Replicated from inside the `mem` environment with incompressible data: killed after 30 s (`oom_kill` +1, `low` +0), a 1.5G working set beside it slowed for one pass (0.11 s to 0.76 s), agent and shell alive.
 - 2026-11-12 `ps -e` in Claude's sandbox failed with `lookup self` (#244): `ps` and `top` run there (acer).
 - 2026-11-12 A guest's own nix client (devenv, a local `--store`) waited out the LAN block per substituter lookup: the caches' port is excepted and the guest takes the host's `connect-timeout`. `delegation-test` on msi 467 s to 16 s (#237).
