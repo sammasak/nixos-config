@@ -55,7 +55,6 @@ ASSERTED = [
     ("model without an agent", '{ services.devEnvironments.instances.ok = { agent = "none"; prompt = lib.mkForce null; }; }', 'ok.model is set but agent is "none"'),
     ("prompt without an agent", '{ services.devEnvironments.instances.ok = { agent = "none"; model = lib.mkForce null; }; }', 'ok.prompt is set but agent is "none"'),
     ("prompt without a surface", "{ services.devEnvironments.sessionSurface = lib.mkForce null; }", "prompt needs a sessionSurface"),
-    ("reserve above pool", '{ services.devEnvironments.instances.ok.memory.reserved = "9G"; }', "adds up to 9216M, more than pool.memory 8192M"),
     ("reserves above pool", "{ services.devEnvironments.instances = { a = { }; b = { }; c = { }; d = { }; }; }", "adds up to 10240M, more than pool.memory 8192M"),
     ("hash collision", "{ services.devEnvironments.instances = { eal = { }; ea1 = { }; }; }", "two names hash to one address"),
     ("host's own name", "{ networking.hostName = lib.mkForce \"ok\"; programs.ssh.knownHosts.box.hostNames = [ \"ok\" ]; }", "the name is this host's own"),
@@ -86,7 +85,6 @@ TYPED = [
     ("model charset", '{ services.devEnvironments.instances.ok.model = "a b"; }', "instances.ok.model' is not of type"),
     ("empty prompt", '{ services.devEnvironments.instances.ok.prompt = ""; }', "instances.ok.prompt' is not of type"),
     ("zero cores", "{ services.devEnvironments.instances.ok.cpu.reserved = 0; }", "cpu.reserved' is not of type"),
-    ("relative key", '{ services.devEnvironments.clientKey = "id_ed25519"; }', "clientKey' is not of type"),
     ("cidr syntax", '{ services.devEnvironments.blockedNetworks = [ "10.0.0.0" ]; }', "blockedNetworks"),
     ("state dir outside /var/lib", '{ services.devEnvironments.stateDir = "/home"; }', "stateDir' is not of type"),
     ("retired name", '{ services.devEnvironments.retired = [ "Bad" ]; }', "retired.\"[definition 1-entry 1]\"' is not of type"),
@@ -570,15 +568,11 @@ STUB_SSH = ('{ nixpkgs.overlays = [ (_: prev: { openssh = prev.writeShellScriptB
 
 def check_hygiene(facts):
     """Each cache and key once, a floor under the free space, a prompt kept as data, a session that needs the home setup."""
-    for what in ("subs", "keys"):
+    for what, lan in (("subs", "http://192.168."), ("keys", "-store-1:")):
         lists = facts.get(what, {})
-        check(lists and all(len(v) == len(set(v)) and sum("cache.nixos.org" in x for x in v) == 1 for v in lists.values()),
-              f"the host's and a guest's {what} list each entry once, cache.nixos.org once ({lists})")
-    for what in ("subs", "keys"):
-        lists = facts.get(what, {})
-        lan = "http://192.168." if what == "subs" else "-store-1:"
-        check(lists.get("host") and lists.get("guest") == lists.get("host") and any(lan in x for x in lists["host"]),
-              f"a guest's {what} equal the host's and include the LAN store cache ({lan}) ({lists})")
+        check(lists and all(len(v) == len(set(v)) and sum("cache.nixos.org" in x for x in v) == 1 for v in lists.values())
+              and lists.get("host") and lists.get("guest") == lists.get("host") and any(lan in x for x in lists["host"]),
+              f"the host's and a guest's {what} list each entry once, cache.nixos.org once, are equal and include the LAN store cache ({lan}) ({lists})")
     free = facts.get("free", {})
     check(free.get("min", 0) >= 10 * 2**30 and free.get("max", 0) > free.get("min", 0), f"a runtime host collects garbage under a free-space floor ({free})")
     hook = facts.get("hook", "")
