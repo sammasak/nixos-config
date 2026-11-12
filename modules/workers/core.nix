@@ -288,6 +288,12 @@ in
       default = null;
       description = "Program run with a message when an instance's container fails, the pool's OOM killer fires or a disk runs low; null, no alerts.";
     };
+    fetchSeed = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "github:NixOS/nixpkgs/<rev>?narHash=sha256-..." ];
+      description = "Locked flake refs the host fetches, each checked against its narHash, into a seed that a new rootInGuest environment's empty ~/.cache/nix starts from; only these refs, never a guest, decide what is in it.";
+    };
     credentials = mkOption {
       type = types.attrsOf types.externalPath;
       default = { };
@@ -367,6 +373,7 @@ in
           [[ -d $d/.trash ]] && ${pkgs.findutils}/bin/find "$d/.trash" -mindepth 1 -maxdepth 1 -cmin +10080 -exec rm -rf --one-file-system {} +
           install -d -m 0711 "$d"
           install -d -m 0700 -o ${user} -g ${group} "$d/.nix-cache"
+          ${lib.optionalString (cfg.fetchSeed != [ ]) ''install -d -m 0700 -o ${user} -g ${group} "$d/.fetch-seed"''}
           [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
           echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
           chmod 0644 "$d/known_hosts"
@@ -380,7 +387,13 @@ in
             mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
             [[ -d $d/${w.name}/eval-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
           '' + lib.optionalString w.rootInGuest ''
-            [[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
+            if [[ ! -d $d/${w.name}/nix-cache ]]; then
+              install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
+              ${lib.optionalString (cfg.fetchSeed != [ ]) ''
+              # copies, no links, none followed: nothing the guest writes reaches the seed; owned by the guest's mapped ids
+              [[ -d $d/.fetch-seed/nix ]] && cp -rP --no-preserve=mode,ownership "$d/.fetch-seed/nix/." "$d/${w.name}/nix-cache/" &&
+                chown -hR ${o.u}:${o.g} "$d/${w.name}/nix-cache" && chmod -R u+rwX,go-rwx "$d/${w.name}/nix-cache" || true''}
+            fi
             [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
             chown ${toString (baseOf w)}:${toString (baseOf w)} "$d/${w.name}/ssh_host_ed25519_key"
             echo "${aliasOf w} $(cut -d' ' -f1,2 "$d/${w.name}/ssh_host_ed25519_key.pub")" >> "$d/known_hosts"
@@ -429,6 +442,33 @@ in
             unset keep
           done
           exit $rc
+        '';
+      };
+    })
+
+    # Rebuilt from nothing each time into a new directory and swapped in by rename; the previous one stays until the next
+    # run, so a copy in progress never sees a tree being deleted.
+    (lib.mkIf (cfg.instances != { } && cfg.fetchSeed != [ ]) {
+      systemd.timers.dev-env-fetch-seed = { wantedBy = [ "timers.target" ]; timerConfig = { OnBootSec = "5min"; OnUnitActiveSec = "1w"; }; };
+      systemd.services.dev-env-fetch-seed = {
+        description = "Fetch the pinned inputs a new rootInGuest environment starts its nix cache from";
+        path = [ config.nix.package pkgs.coreutils ];
+        serviceConfig = {
+          Type = "oneshot"; User = user; Group = group;
+          PrivateTmp = true; ProtectHome = true; ProtectSystem = "strict"; ReadWritePaths = [ "${cfg.stateDir}/.fetch-seed" ]; NoNewPrivileges = true;
+        };
+        script = ''
+          seed=${lib.escapeShellArg cfg.stateDir}/.fetch-seed
+          rm -rf "$seed"/.old
+          new=$(mktemp -d "$seed"/.new.XXXXXX)
+          trap 'rm -rf "$new"' EXIT
+          # prefetch does not enforce a narHash in the ref: compare it with what came
+          for ref in ${lib.escapeShellArgs cfg.fetchSeed}; do
+            out=$(XDG_CACHE_HOME=$new nix flake prefetch --json "$ref")
+            [[ $out =~ \"hash\":\"([^\"]+)\" && ''${BASH_REMATCH[1]} == "''${ref##*narHash=}" ]] || { echo "$ref: fetched $out" >&2; exit 1; }
+          done
+          [[ ! -e $seed/nix ]] || mv -T "$seed"/nix "$seed"/.old
+          mv -T "$new"/nix "$seed"/nix
         '';
       };
     })

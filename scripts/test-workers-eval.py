@@ -396,7 +396,7 @@ def activation_run(text, state, active=()):
     systemctl.chmod(0o755)
     text = re.sub(r"/nix/store/\S+/bin/systemctl", str(systemctl), text)
     text = text.replace("/nix/var/nix/profiles/per-container", f"{state}/profiles").replace("/nix/var/nix/gcroots/per-container", f"{state}/gcroots")
-    text = re.sub(r"-o \S+ -g \S+", "-o 1000 -g 100", re.sub(r"chown -h \S+:\S+", "chown -h 1000:100", text))
+    text = re.sub(r"-o \S+ -g \S+", "-o 1000 -g 100", re.sub(r"chown (-\w+ )?\S+:\S+", lambda m: f"chown {m.group(1) or ''}1000:100", text))
     harness = f"_status=0; trap '_status=1' ERR; set -E\n{text}\nrc=$_status; cd {state}/files && find . -mindepth 1 -printf '%P %m %U:%G\\n' | sort; exit $rc"
     run = userns("bash", "-c", harness)
     return run.returncode, dict((line.split()[0], tuple(line.split()[1:])) for line in run.stdout.splitlines() if line), run.stderr
@@ -405,7 +405,7 @@ def activation_run(text, state, active=()):
 def check_activation():
     """The activation script, executed: a fresh host, a second run, a planted symlink, retired instances."""
     texts = {}
-    for key, case in (("fresh", "{ }"), ("retired", RETIRED), ("paused", PAUSED_ONE)):
+    for key, case in (("fresh", "{ }"), ("retired", RETIRED), ("paused", PAUSED_ONE), ("seeded", SEED_CASE)):
         out = nix_eval(case, ACT)
         texts[key] = json.loads(out.stdout) if out.returncode == 0 else None
         if texts[key] is None:
@@ -474,6 +474,26 @@ def check_activation():
             rc, tree, err = run("paused")
             check(rc == 0 and (files / "idle" / "home" / "work").exists() and (state / "profiles" / "idle").exists() and "idle/eval-cache" in tree,
                   f"a paused instance is not retired: its home and profiles stay and activation still prepares its directories (rc {rc}, {err.strip()[-200:]})")
+
+            files = pathlib.Path(fresh_state())
+            seed = files / ".fetch-seed" / "nix"
+            (seed / "tarball-cache-v2").mkdir(parents=True)
+            (seed / "tarball-cache-v2" / "obj").write_text("tree")
+            (seed / "fetcher-cache-v4.sqlite").write_text("db")
+            (seed / "evil").symlink_to("/etc/passwd")
+            rc, tree, err = run("seeded")
+            cache = files / "rg" / "nix-cache"
+            content = userns("cat", str(cache / "tarball-cache-v2" / "obj")).stdout
+            linked = userns("test", "-L", str(cache / "evil")).returncode == 0
+            check(rc == 0 and content == "tree" and linked
+                  and tree.get("rg/nix-cache/tarball-cache-v2/obj") == ("600", "1000:100") and tree.get("rg/nix-cache") == ("700", "1000:100")
+                  and userns("stat", "-c", "%h", str(seed / "tarball-cache-v2" / "obj")).stdout.strip() == "1",
+                  f"a new rootInGuest cache is a copy of the seed, links kept as links, owned by the guest's mapped ids, nothing linked back to the seed (rc {rc}, {tree.get('rg/nix-cache/tarball-cache-v2/obj')}, {err.strip()[-200:]})")
+            userns("rm", str(cache / "tarball-cache-v2" / "obj"))
+            userns("touch", str(seed / "later"))
+            rc2, tree2, err2 = run("seeded")
+            check(rc2 == 0 and "rg/nix-cache/tarball-cache-v2/obj" not in tree2 and "rg/nix-cache/later" not in tree2,
+                  f"an existing rootInGuest cache is not seeded again ({rc2}, {err2.strip()[-200:]})")
         finally:
             userns("rm", "-rf", str(state))
 
@@ -617,6 +637,60 @@ def check_bounded():
           f"container@ stops restarting after {got.get('burst')} starts of {start} s (stop {stop} s) each within {got.get('interval')} s ({got or out.stderr.strip()[-300:]})")
 
 
+SEED_CASE = ('{ services.devEnvironments.fetchSeed = [ "github:o/r/abc?narHash=sha256-AAAA" "github:o/s/def?narHash=sha256-BBBB" ];'
+             ' services.devEnvironments.instances.rg.rootInGuest = true; nix.settings.allowed-users = [ "alice" ]; }')
+SEED = ('{ svc = { inherit (sys.config.systemd.services.dev-env-fetch-seed) script serviceConfig; }; timer = sys.config.systemd.timers.dev-env-fetch-seed.timerConfig;'
+        ' act = sys.config.system.activationScripts.devEnvironments.text; stateDir = sys.config.services.devEnvironments.stateDir; }')
+
+
+def check_seed():
+    """The seed is fetched by the host from declared, hash-checked refs and copied, as copies, into a new rootInGuest cache."""
+    out = nix_eval(SEED_CASE, SEED)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    svc, act = got.get("svc", {}), got.get("act", "")
+    cfg, script = svc.get("serviceConfig", {}), svc.get("script", "")
+    seed = f"{got.get('stateDir')}/.fetch-seed"
+    check(cfg.get("User") == "alice" and cfg.get("ProtectHome") is True and cfg.get("ReadWritePaths") == [seed] and "OnUnitActiveSec" in got.get("timer", {})
+          and "github:o/r/abc?narHash=sha256-AAAA" in script and "github:o/s/def?narHash=sha256-BBBB" in script and "narHash=}" in script,
+          f"the host fetches the declared refs as its user, without its home, and compares each hash ({cfg}, {got.get('timer')}, {out.stderr.strip()[-200:]})")
+    cp = [line for line in act.splitlines() if "fetch-seed/nix" in line]
+    rg_block = act.split("$d/rg/nix-cache", 1)[-1]
+    check(len(cp) == 1 and "cp -rP --no-preserve=mode,ownership" in cp[0] and "chown -hR" in rg_block and 'install -d -m 0700 -o alice -g users "$d/.fetch-seed"' in act
+          and "--reflink" not in act and " -l " not in cp[0] and "-a " not in cp[0],
+          f"a new rootInGuest cache is a copy of the seed (no links, none followed, owner remapped), made only once ({cp})")
+    off = nix_eval('{ services.devEnvironments.instances.rg.rootInGuest = true; nix.settings.allowed-users = [ "alice" ]; }', SEED)
+    check("fetch-seed" not in (json.loads(off.stdout).get("act", "x") if off.returncode == 0 else "x"), "with no refs there is no seed directory and no copy")
+    # the script, for real, with a stub nix that prints the hash it was asked for (or another)
+    with tempfile.TemporaryDirectory() as d:
+        d = pathlib.Path(d)
+        stub = d / "bin"
+        stub.mkdir()
+        stub.joinpath("nix").write_text('#!/usr/bin/env bash\nmkdir -p "$XDG_CACHE_HOME/nix"; echo "$GEN" > "$XDG_CACHE_HOME/nix/gen"\n'
+                                        'ref=${@: -1}; h=${ref##*narHash=}; [[ -n ${BAD-} ]] && h=sha256-other\n'
+                                        'printf \'{"hash":"%s","locked":{}}\' "$h"\n')
+        stub.joinpath("nix").chmod(0o755)
+        (d / "seed").mkdir()
+        run_script = script.replace(seed, str(d / "seed"))
+        env = {**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"}
+
+        def run(**extra):
+            return subprocess.run(["bash", "-e", "-c", run_script], capture_output=True, text=True, env={**env, **extra})
+
+        def gen(name):
+            f = d / "seed" / name / "gen"
+            return f.read_text().strip() if f.exists() else None
+
+        first = run(GEN="one")
+        seeded = gen("nix")
+        second = run(GEN="two")
+        old = gen(".old")
+        bad = run(GEN="three", BAD="1")
+        leftovers = [p.name for p in (d / "seed").iterdir() if p.name.startswith(".new")]
+        check(first.returncode == 0 and seeded == "one" and second.returncode == 0 and old == "one" and bad.returncode != 0 and gen("nix") == "two" and not leftovers,
+              f"the seed is rebuilt from nothing and swapped in, the previous one kept aside, and a hash that differs ends the run with the seed as it was "
+              f"({first.returncode}, {seeded}, {old}, {bad.returncode}, {gen('nix')}, {leftovers}, {bad.stderr.strip()[-120:]})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -746,7 +820,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", BOUNDED), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr(SEED_CASE, SEED), stub_expr("{ }", BOUNDED), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -811,6 +885,7 @@ def main():
     check_activation()
     check_bounded()
     check_paused()
+    check_seed()
     blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
     for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
         out = nix_eval(blocked % v6, "sys.config.networking.firewall.extraCommands")

@@ -227,6 +227,9 @@ in
         "gh-hosts.yml" = cfg.ghHostsFile;
       };
       sessionSurface = { name = "herdr"; script = hook; };
+      # the devenv shell of this repo is what an agent enters first: its pinned github inputs, each checked against the lock's hash
+      fetchSeed = lib.mapAttrsToList (_: n: "github:${n.locked.owner}/${n.locked.repo}/${n.locked.rev}?narHash=${n.locked.narHash}")
+        (lib.filterAttrs (_: n: (n.locked.type or "") == "github") (builtins.fromJSON (builtins.readFile ../../devenv.lock)).nodes);
       alert = lib.mkIf (cfg.ntfyUrl != null) (pkgs.writeShellScript "dev-env-alert" ''
         ${pkgs.curl}/bin/curl -fsS -m 10 -H "Title: Environment host" -H "Priority: high" -H "Tags: warning" -d "$1" ${lib.escapeShellArg cfg.ntfyUrl}
       '');

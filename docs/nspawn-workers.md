@@ -122,6 +122,11 @@ calls `reset-failed` (clearing the limit) and restarts the active targets, `mach
 it again with a fresh allowance; by hand, `systemctl reset-failed container@<n>` first, because a 4th start inside the
 10 minutes is refused ("repeated too quickly").
 
+A new `rootInGuest` environment starts with an empty `~/.cache/nix` (its own, as the shared one cannot cross uid
+ranges), so its first `devenv shell` fetched every input again (about 20 s). `fetchSeed` lists locked flake refs
+(the fleet uses the github inputs of this repo's `devenv.lock`); a weekly host service fetches them, checking each
+hash, into a seed, and activation copies the seed into the cache of an environment only when that cache is first made.
+
 ## Alerts
 
 A runtime host (msi, acer) posts to lenovo's ntfy topic `homelab-alerts` when
