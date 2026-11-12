@@ -117,6 +117,11 @@ on msi (66 s of it the build) and 2.7 s in an acer environment afterwards,
 the package signed `msi-ms7758-store-1`. Evaluation is not shared: a first
 `devenv shell` still evaluates on each host (54 s for factum on msi).
 
+A container that never gets ready is retried 3 times in 10 minutes and then stays `failed` (start limit). Each switch
+calls `reset-failed` (clearing the limit) and restarts the active targets, `machines.target` among them, which starts
+it again with a fresh allowance; by hand, `systemctl reset-failed container@<n>` first, because a 4th start inside the
+10 minutes is refused ("repeated too quickly").
+
 ## Alerts
 
 A runtime host (msi, acer) posts to lenovo's ntfy topic `homelab-alerts` when

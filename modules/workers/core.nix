@@ -571,6 +571,11 @@ in
           reloadIfChanged = true;
           onFailure = lib.optional (cfg.alert != null) "dev-env-alert@%n.service";
           partOf = [ "${cfg.unitPrefix}-${w.name}.service" ];
+          # Restart=on-failure and a guest that never gets ready cost a TimeoutStartSec per cycle, so the default limit (5 starts
+          # in 10 s) never trips and the loop holds every job of the switch (the session, machines.target) open for good: 3 starts
+          # in 10 minutes end it, and the unit stays failed until started by hand.
+          startLimitIntervalSec = 600;
+          startLimitBurst = 3;
           serviceConfig = {
             # mkForce: the stock unit puts every container in machine.slice
             Slice = lib.mkForce "${slice}.slice";
