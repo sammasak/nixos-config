@@ -29,7 +29,7 @@ sam.workers.instances = {
 | `model` | `null` | the agent's `--model` |
 | `prompt` | `null` | sent once the agent is idle, only on a start with no earlier Claude session |
 | `credentials` | `null` | which of the host's credentials it gets (`id_ed25519`, `gh-hosts.yml`); `null` is all. `[ ]` is an agent that cannot push |
-| `egress.github.repos` | `[ ]` | `owner/repo` the instance reaches through the host's proxy (git and REST); non-empty, it gets neither credential |
+| `egress.github.repos` | `[ ]` | `owner/repo` the instance reaches through the host's proxy (git and REST); non-empty, it gets neither credential; a repo whose devenv imports a private input needs that input listed too (factum and herman need `sammasak/devenv-platform`), else no `devenv shell` works; git and nix fetch it through the proxy rewrite without an SSH key |
 | `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it |
 | `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
@@ -79,7 +79,7 @@ neighbour was reclaimed to 59M.
 | Step | How | Measured (msi) |
 |------|-----|----------------|
 | Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
-| First use of a repo | clone, `devenv shell` | 25 s (skills), 32 s (herman): evaluation only, every store path comes from the host's store; 0.1 to 0.3 s after that |
+| First use of a repo | clone, `devenv shell` | closure already in the host store: 20 s (herman), 26 s (factum), of which 12 to 15 s fetching input tarballs, 5 s evaluation, 2 s small builds, no substitution; closure not yet in the host store: 88 to 92 s (about 63 downloads, 3.9 GB, plus local assembly of the Rust toolchain); fresh clone of a lock the environment has seen: 6.5 s (factum), 17.6 s (herman, msi); 0.2 to 0.6 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
 | Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so, once per start of the container, and re-checks its work. msi tells its agents at 20:40 (`sam.workers.shutdownNotice`) to push before the 21:00 poweroff |
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
@@ -338,8 +338,10 @@ The committed config declares none.
    frozen lower store (a snapshot), not the live one. Both branches stay unmerged as the record.
 4. **Root-built fetcher-cache seed for a new `rootInGuest` environment** (branch `feat/fetch-cache-seed`, dropped).
    It warmed a new environment's empty `~/.cache/nix`, but each repo pins its own nixpkgs (six distinct revisions
-   across nixos-config, factum and herman), so a seed made from one lock misses the others. The lever is one shared
-   nixpkgs pin across repos: it shares both the fetched tarball and the built store paths.
+   across nixos-config, factum and herman), so a seed made from one lock misses the others. Measured: a shared nixpkgs
+   pin alone shares 13 of 262 store paths (the toolchain closure is keyed by nixpkgs and rust-overlay together), and
+   copying an older pin set breaks a repo that needs a newer Rust. The lever is one pin set (nixpkgs, rust-overlay,
+   devenv, git-hooks) owned by devenv-platform at the newest revision any repo needs.
 
 ## Working an issue in one
 

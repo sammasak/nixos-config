@@ -21,40 +21,35 @@ in
   services.devEnvironments.blockedNetworks = [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "169.254.0.0/16" ];
 
   # A guest may override max-jobs and cores per build, so CPUQuota holds the 2 x 2 bound; MemoryMax fails a build, never k3s.
-  # min-free: collect garbage when a build leaves under 15G (the disk alert fires at 10G), down to 40G free
   nix.settings = { max-jobs = 2; cores = 2; min-free = lib.mkDefault (15 * 1024 * 1024 * 1024); max-free = lib.mkDefault (40 * 1024 * 1024 * 1024); };
   systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "4G"; MemoryMax = "6G"; CPUQuota = "400%"; };
 
   # lenovo's ntfy server (homelab.ntfy.baseUrl in its configuration)
   sam.workers.ntfyUrl = lib.mkDefault "http://192.168.10.154:2586/homelab-alerts";
 
-  # Theming only where a desktop boots (#185): headless, Stylix has nothing to theme and its
-  # Home Manager half has failed an activation. A desktop specialisation gets it back.
+  # Headless, Stylix has nothing to theme and its Home Manager half has failed an activation (#185).
   stylix.enable = lib.mkForce desktop;
 
-  # Calendar timers are ordered after time-sync.target, which without this unit is reached on an
-  # unsynchronised clock: a boot with a reset RTC then fires every one of them when NTP steps it.
+  # Without this unit time-sync.target is reached on an unsynchronised clock and a reset RTC fires every calendar timer when NTP steps it.
   systemd.additionalUpstreamSystemUnits = [ "systemd-time-wait-sync.service" ];
   systemd.services.systemd-time-wait-sync.wantedBy = [ "sysinit.target" ];
 
-  # No catch-up run at boot, while k3s and workers start: a missed slot waits for the next one.
+  # No catch-up run at boot, while k3s and workers start.
   nix.gc.persistent = false;
   nix.optimise.persistent = false;
   system.autoUpgrade.persistent = false;
 
-  # One store-heavy job at a time, should their slots ever meet.
   systemd.services.nix-optimise.after = [ "nix-gc.service" ];
   systemd.services.nixos-upgrade = {
     after = [ "nix-gc.service" "nix-optimise.service" ];
-    # notify-send needs a session bus: headless, the hook only adds a failed unit.
+    # notify-send needs a session bus.
     onSuccess = lib.mkIf (!desktop) (lib.mkForce [ ]);
     onFailure = lib.mkIf (!desktop) (lib.mkForce [ ]);
   };
 
-  # NetworkManager.conf must not change with the first or last environment (modules/workers/core.nix): it is the restart
-  # trigger, and the restart drops wifi. nat and enableContainers keep sysctl and modules-load from flipping too.
-  networking.nat.enable = true; # forwarding and nf_nat_ftp; core.nix adds the instances' /16
-  boot.enableContainers = true; # bridge, macvlan, tap, tun
+  # NetworkManager.conf is its restart trigger and a restart drops wifi: keep it, sysctl and modules-load the same with zero or more environments (modules/workers/core.nix).
+  networking.nat.enable = true;
+  boot.enableContainers = true;
   networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
 
   assertions = [
