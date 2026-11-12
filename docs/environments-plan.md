@@ -159,7 +159,10 @@ finds no secret in the environment of any process, `/var/lib/host-credentials`
 is gone, a grep of the guest's home and `/run` for the token prefix finds
 nothing, and the Caddyfile's store path holds no token.
 
-1. **Claude token.** Smallest and already probed. Done when an agent works a
+1. **Claude token.** Smallest and already probed. Built with one socket
+   shared by all environments (under `/var/lib/host-credentials/egress`);
+   the per-instance socket and log come with step 2. The token every guest
+   has already read must be rotated after rollout: **owner**. Done when an agent works a
    normal task through the proxy and the leak check passes.
 2. **git.** HTTPS remotes through the proxy with a fine-grained token for the
    named repos; remove the SSH key bind. Done when clone, fetch and a gated

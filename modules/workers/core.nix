@@ -204,7 +204,7 @@ in
       type = types.attrsOf types.externalPath;
       default = { };
       example = { gh-hosts.yml = "/home/alice/.config/gh/hosts.yml"; };
-      description = "Host files bound read-only at ${creds}/<name> in every guest.";
+      description = "Host paths bound read-only at ${creds}/<name> in every guest.";
     };
     guestModules = mkOption { type = types.listOf types.deferredModule; default = [ ]; description = "NixOS modules of every guest; `devEnvironment` (name, hostName, address) is their argument."; };
     sessionSurface = mkOption {

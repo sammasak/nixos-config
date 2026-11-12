@@ -227,7 +227,9 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   socket bound read-only at `/var/lib/host-credentials/egress`) adds it to
   each API call; the guest holds a placeholder token and
   `ANTHROPIC_BASE_URL=http://127.0.0.1:4100`, which `systemd-socket-proxyd`
-  forwards to the socket. Requests are in `journalctl -u dev-env-egress`.
+  forwards to the socket. Only `/v1/*` is forwarded. Requests are in
+  `journalctl -u dev-env-egress`. A rotated token restarts the proxy; the
+  environments notice nothing.
 - Credentials still bound read-only: the host user's `~/.ssh/id_ed25519`
   (`git push`), and on acer `~/.config/gh/hosts.yml` (msi's `lukas` has no gh
   login). Next to go: `docs/environments-plan.md`, "Secrets stay on the host".

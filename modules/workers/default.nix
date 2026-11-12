@@ -22,6 +22,8 @@ let
     http:// {
       bind unix/${egress}/anthropic.sock
       log
+      @other not path /v1/*
+      respond @other 403
       reverse_proxy https://api.anthropic.com {
         header_up Host {upstream_hostport}
         header_up Authorization "Bearer {file./run/credentials/dev-env-egress.service/claude_oauth_token}"
@@ -114,14 +116,16 @@ let
     networking.firewall.enable = false;
     sam.herdr.trustedDirs = map (d: "${home}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 
-    # Claude's API calls go to the host's proxy, which adds the login: the guest holds a placeholder, not the token.
+    # the guest holds a placeholder, not the token: the host's proxy adds the login to each call
     environment.variables = lib.mkIf usesClaude {
       ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString egressPort}";
       CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host";
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     };
-    systemd.sockets.claude-egress = { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString egressPort}" ]; };
-    systemd.services.claude-egress.serviceConfig.ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${creds}/egress/anthropic.sock";
+    systemd.sockets.claude-egress = lib.mkIf usesClaude { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString egressPort}" ]; };
+    systemd.services.claude-egress = lib.mkIf usesClaude {
+      serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${creds}/egress/anthropic.sock"; };
+    };
 
     # The host's credentials, bound read-only under ${creds}, where the host's own tools look for them.
     systemd.tmpfiles.rules = [
@@ -210,10 +214,20 @@ in
               # the guests bind this directory: removed at a restart, they would keep the old, empty one
               RuntimeDirectoryPreserve = true;
               Restart = "on-failure";
+              # it parses the guests' requests as the host user: keep that user's other secrets and the guests' homes from it
+              InaccessiblePaths = [ "/run/secrets.d" dev.stateDir ];
               PrivateTmp = true;
+              PrivateDevices = true;
               ProtectHome = true;
               ProtectSystem = "strict";
+              ProtectProc = "invisible";
+              ProtectKernelTunables = true;
+              ProtectControlGroups = true;
               NoNewPrivileges = true;
+              CapabilityBoundingSet = "";
+              RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+              RestrictNamespaces = true;
+              SystemCallFilter = [ "@system-service" ];
             };
           };
         } // lib.genAttrs (map (n: "container@${n}") (lib.attrNames dev.instances)) (_: {
@@ -223,6 +237,9 @@ in
         });
       })
     ];
+
+    # LoadCredential copies the token at start
+    sops.secrets = lib.mkIf (usesClaude && hasToken) { claude_oauth_token.restartUnits = [ "dev-env-egress.service" ]; };
 
     assertions = lib.optionals (dev.instances != { }) [
       {
