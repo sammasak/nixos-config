@@ -140,7 +140,7 @@ in {
 SCRIPTS = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
-  stub = pkgs: name: pkgs.writeShellScriptBin name ''printf '%%s\n' "$@"'';
+  stub = pkgs: name: pkgs.writeShellScriptBin name ''printf '%%s\n' "$@"; echo "env:$BASH_ENV"'';
   sys = flake.inputs.nixpkgs.lib.nixosSystem {
     system = "x86_64-linux";
     modules = [
@@ -255,7 +255,9 @@ def check_scripts():
 
     def argv(script, *args):
         run = subprocess.run([str(script), *args], capture_output=True, text=True)
-        return run.returncode, run.stdout.splitlines(), run.stderr
+        lines = run.stdout.splitlines()
+        argv.env = lines.pop()[len("env:"):] if lines else ""
+        return run.returncode, lines, run.stderr
 
     rc, got, _ = argv(exe["bwrap"], "--unshare-user", "--cap-drop", "ALL", "--proc", "/proc", "--dev", "/dev", "--", "make", "-j2")
     inner = got.index("--") if "--" in got else -1
@@ -263,8 +265,12 @@ def check_scripts():
           and got[-2:] == ["make", "-j2"] and got[inner + 2:inner + 4] == ["-p", "-c"] and "subset=pid" in got[inner + 4]
           and "--no-new-privs" in got[inner + 4] and got[inner + 5] == "bash",
           f"bwrap-subset-proc rewrites Claude's shape: mapped root, the host /proc bound, a bash -p mount step before the command ({got})")
+    remount = pathlib.Path(argv.env).read_text() if argv.env else ""
+    check("subset=pid" in remount and "/proc/self/stat" in remount,
+          f"the rewritten command's bash is given a BASH_ENV that remounts subset=pid for its own pid namespace ({argv.env})")
     rc, got, _ = argv(exe["bwrap"], "--unshare-user", "--proc", "/proc", "--dev", "/dev")
-    check(rc == 0 and got == ["--unshare-user", "--proc", "/proc", "--dev", "/dev"], f"no separator after --proc: passed through unchanged ({got})")
+    check(rc == 0 and got == ["--unshare-user", "--proc", "/proc", "--dev", "/dev"] and argv.env == "",
+          f"no separator after --proc: passed through unchanged, no BASH_ENV ({got})")
     rc, got, _ = argv(exe["bwrap"], "--proc", "/proc", "--", "tool", "--", "z", "--proc", "/proc")
     check(rc == 0 and got[-5:] == ["tool", "--", "z", "--proc", "/proc"] and got.count("--") == 2,
           f"a -- inside the command's own arguments is left alone ({got})")
