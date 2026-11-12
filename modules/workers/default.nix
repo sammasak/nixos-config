@@ -93,6 +93,7 @@ let
       ../core/users.nix
       ../core/packages.nix
       ../core/ssh-known-hosts.nix
+      ./nested-sandbox.nix
     ] ++ cfg.guestModules;
 
     # not nixpkgs.pkgs = pkgs: core/system.nix sets nixpkgs.config, which an external instance refuses
