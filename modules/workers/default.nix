@@ -68,7 +68,7 @@ let
         (( ++n < 60 )) || exit 1
         sleep 1
       done
-      ${w.ctl} wait || true
+      ${w.ctl} wait
       mode="fresh"
       if ${w.ctl} resumable; then mode="continue"; fi
       close
@@ -92,7 +92,7 @@ let
           # a resumed session is a restarted agent: what it had running died with the container
           if [[ $mode == continue ]]; then
             send ${lib.escapeShellArg restartNotice}
-          ${lib.optionalString (w.prompt != null) "else send ${lib.escapeShellArg w.prompt}"}
+          ${lib.optionalString (w.prompt != null) ''else send "$(< ${pkgs.writeText "${w.name}-prompt" w.prompt})"''}
           fi
         else
           echo "${w.agent} in $label did not reach idle; see the workspace" >&2
