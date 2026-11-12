@@ -49,6 +49,23 @@ let
   '';
   # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
   githubSite = i: let repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})"; in site i "github" ''
+    # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
+    @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|\.\.|//|\\
+    # the owner's token administers the repository: none of that, on any listed repo
+    @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
+    @adminRepo {
+      path_regexp ^/repos/[^/]+/[^/]+/?$
+      method PATCH PUT DELETE
+    }
+    handle @odd {
+      respond 403
+    }
+    handle @admin {
+      respond 403
+    }
+    handle @adminRepo {
+      respond 403
+    }
     @git {
       path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
       method GET POST
@@ -81,15 +98,16 @@ let
       admin off
       auto_https off
     }
-  '' + lib.concatMapStrings (i: lib.optionalString (i.agent == "claude" && hasToken) (anthropicSite i)
+  '' + lib.concatMapStrings (i: lib.optionalString (i.agent == "claude") (anthropicSite i)
     + lib.optionalString (onGithub i) (githubSite i)) egressed);
-  # gh keeps the token in hosts.yml (no keyring on the hosts); the proxy takes it from there at each start
+  # gh keeps the token in hosts.yml (no keyring on the hosts); the proxy takes it from there at each start.
+  # Without one the Claude proxy still starts, and GitHub answers 401.
   githubTokenFromHosts = pkgs.writeShellApplication {
     name = "dev-env-egress-github-token";
-    runtimeInputs = [ pkgs.coreutils pkgs.gnused ];
+    runtimeInputs = [ pkgs.coreutils pkgs.gawk ];
     text = ''
-      tok=$(sed -n 's/^ *oauth_token: *//p' "$CREDENTIALS_DIRECTORY/gh-hosts.yml" | head -n 1)
-      [[ -n $tok ]] || { echo "no oauth_token in the gh hosts.yml (a keyring login?)" >&2; exit 1; }
+      tok=$(awk '/^[^ ]/ { gh = $0 == "github.com:" } gh && sub(/^ +oauth_token: */, "") { print; exit }' "$CREDENTIALS_DIRECTORY/gh-hosts.yml")
+      [[ -n $tok ]] || echo "no github.com oauth_token in the gh hosts.yml (a keyring login?): GitHub calls go unsigned" >&2
       umask 077
       printf '%s' "$tok" > ${githubToken}
       printf 'x-access-token:%s' "$tok" | base64 -w0 > ${githubToken}.basic
@@ -205,13 +223,13 @@ let
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     } // lib.optionalAttrs github { GH_TOKEN = "held-by-the-host"; };
 
-    # The host's credentials, bound read-only under ${creds}, where the host's own tools look for them.
     systemd = lib.mkMerge (map (s: lib.mkIf (lib.elem s (sockets self)) (shim s)) [ "anthropic" "github" ] ++ [ { tmpfiles.rules = [
       "d ${home}/.ssh 0700 ${user} users -"
       "d ${home}/.config 0700 ${user} users -"
       # where the agent logs friction with the environment (docs/environments-feedback.md)
       "f ${home}/ENV-FEEDBACK.md 0644 ${user} users -"
     ]
+    # the host's credentials, bound read-only under ${creds}, linked where the host's own tools look for them
     ++ lib.optional (!github) "L+ ${home}/.ssh/id_ed25519 - - - - ${creds}/id_ed25519"
     ++ lib.optionals (cfg.ghHostsFile != null && !github) [
       "d ${home}/.config/gh 0700 ${user} users -"
@@ -326,11 +344,17 @@ in
               SystemCallFilter = [ "@system-service" ];
             };
           };
+          # gh rewrites hosts.yml on a login or refresh; the token is read at start
+          dev-env-egress-gh = lib.mkIf usesGithub {
+            serviceConfig.Type = "oneshot";
+            script = "${config.systemd.package}/bin/systemctl try-restart dev-env-egress.service";
+          };
         } // lib.genAttrs (map (i: "container@${i.name}") egressed) (_: {
           # the bind's source must exist when the container starts
           wants = [ "dev-env-egress.service" ];
           after = [ "dev-env-egress.service" ];
         });
+        paths.dev-env-egress-gh = lib.mkIf usesGithub { wantedBy = [ "multi-user.target" ]; pathConfig.PathChanged = cfg.ghHostsFile; };
       })
     ];
 
@@ -348,7 +372,7 @@ in
         message = "sam.workers: an instance with egress.github.repos is signed with the token in sam.workers.ghHostsFile, which this host does not set.";
       }
       {
-        assertion = lib.all (i: !onGithub i || i.credentials != null && !lib.elem "id_ed25519" i.credentials && !lib.elem "gh-hosts.yml" i.credentials) (lib.attrValues dev.instances);
+        assertion = lib.all (i: !onGithub i || !lib.elem "id_ed25519" i.credentials && !lib.elem "gh-hosts.yml" i.credentials) (lib.attrValues dev.instances);
         message = "sam.workers: an instance with egress.github.repos gets neither id_ed25519 nor gh-hosts.yml.";
       }
       {

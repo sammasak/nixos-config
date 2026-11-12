@@ -232,11 +232,18 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (`systemd-socket-proxyd`).
   With `egress.github.repos`, `github.sock` adds the host user's gh token
   (read from `hosts.yml` at each proxy start) to git smart-HTTP and
-  `/repos/<owner>/<repo>` REST calls for those repos, everything else 403;
-  git reaches it through `127.0.0.1:4102` (`insteadOf` for `https://github.com/`
+  `/repos/<owner>/<repo>` REST calls for those repos, everything else 403.
+  It also refuses the repository's administration (rulesets, branch
+  protection, collaborators, keys, hooks, transfer, Actions secrets,
+  variables and runners, environments, invitations; PATCH, PUT and DELETE on
+  the repository itself) and any URI with an encoded slash, backslash, dot or
+  percent, `..` or `//`. Beyond that the list bounds which repository, not
+  what is done to it, until App tokens (plan, phase 4). Git reaches it through `127.0.0.1:4102` (`insteadOf` for `https://github.com/`
   and `git@github.com:`), gh through `http_unix_socket` with a placeholder
   `GH_TOKEN`. Requests are in `journalctl -u dev-env-egress`, logger
-  `<socket>-<name>`. A rotated token restarts the proxy.
+  `<socket>-<name>`. A rotated token restarts the proxy: sops restarts it for
+  the Claude login, a path unit on `hosts.yml` for gh's. Without a GitHub
+  token in `hosts.yml` the proxy still starts and GitHub answers 401.
 - Without `egress.github`, the host user's `~/.ssh/id_ed25519` and on acer
   `~/.config/gh/hosts.yml` are still bound read-only.
 

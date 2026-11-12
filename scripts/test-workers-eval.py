@@ -98,17 +98,22 @@ FLEET_CASES = [
     ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
 ]
-# msi with an instance behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
+# msi with two instances behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
 GITHUB = r"""
 let
-  c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: {
-    sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances = lib.mkForce { gh.egress.github.repos = [ "o/r" ]; plain = { }; }; };
+  flake = builtins.getFlake (toString %(root)s);
+  c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: {
+    sam.workers = {
+      ghHostsFile = "/home/lukas/hosts.yml";
+      instances = lib.mkForce { gh.egress.github.repos = [ "o/r.s" ]; gh2.egress.github.repos = [ "x/y" ]; plain = { }; };
+    };
   }) ]; }).config;
-  start = c.systemd.services.dev-env-egress.serviceConfig.ExecStart;
-  config = builtins.substring (builtins.stringLength start - 68) 68 start;
+  config = flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " c.systemd.services.dev-env-egress.serviceConfig.ExecStart);
 in {
   failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
   binds = builtins.mapAttrs (_: w: builtins.attrNames w.bindMounts) c.containers;
+  egress = builtins.mapAttrs (_: w: w.bindMounts."/run/egress".hostPath or null) c.containers;
+  links = builtins.mapAttrs (_: w: builtins.filter (r: builtins.match ".*id_ed25519.*" r != null) w.config.systemd.tmpfiles.rules) c.containers;
   inherit config;
   caddy = builtins.readFile config;
 }
@@ -221,8 +226,20 @@ def main():
     creds = {"/var/lib/host-credentials/id_ed25519", "/var/lib/host-credentials/gh-hosts.yml"}
     check(not creds & set(binds.get("gh", creds)) and "/run/egress" in binds.get("gh", []) and creds <= set(binds.get("plain", [])),
           f"an egress.github instance binds its egress directory and no GitHub credential; one without keeps both ({binds})")
+    egress = got.get("egress", {})
+    check(egress != {} and all(path == f"/run/dev-env-egress/{n}" for n, path in egress.items()),
+          f"each instance's /run/egress is its own /run/dev-env-egress/<name> ({egress})")
+    links = got.get("links", {})
+    check(links.get("gh") == [] and links.get("gh2") == [] and links.get("plain"), f"only the guest without egress.github links id_ed25519 ({links})")
     caddy = got.get("caddy", "")
-    check(got.get("config", "").startswith("/nix/store/") and "unix//run/dev-env-egress/gh/github.sock" in caddy and "/run/secrets" not in caddy,
+    sites = {b.split("\n", 2)[1].strip(): b for b in caddy.split("http:// {")[1:]}
+    gh = sites.get("bind unix//run/dev-env-egress/gh/github.sock", "")
+    want = [r"path_regexp ^/repos/(?i:o/r\.s)(/.*)?$", r"path_regexp ^/(?i:o/r\.s)(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$",
+            "@admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|", "handle @admin {", "handle @odd {", "respond 403"]
+    check(all(w in gh for w in want) and "x/y" not in gh, f"gh's GitHub site allows o/r.s alone, escaped and anchored, behind the admin and odd-URI denies ({[w for w in want if w not in gh]})")
+    check("bind unix//run/dev-env-egress/plain/github.sock" not in sites and "/graphql" not in caddy and "bind unix//run/dev-env-egress/gh2/github.sock" in sites,
+          f"no GitHub site for an instance without repos, no GraphQL unless asked for ({sorted(sites)})")
+    check(got.get("config", "").startswith("/nix/store/") and "/run/secrets" not in caddy,
           f"the proxy's Caddyfile ({got.get('config')}) names no path under /run/secrets")
 
     real = {s: shutil.which(s) for s in ("fish", "bash")}
