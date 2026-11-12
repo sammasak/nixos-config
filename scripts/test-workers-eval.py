@@ -129,19 +129,26 @@ in {
 # files; the assertions ride along so one evaluation serves both checks
 FLEET_FACTS = r"""
 let
-  c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config;
+  c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { prompt = builtins.fromJSON ''%(prompt)s''; }; } ]; }).config;
   g = c.containers.t.config;
   d = builtins.unsafeDiscardStringContext;
+  ex = c.systemd.services."worker-herdr-t".serviceConfig.ExecStart;
 in {
   assertions = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
   managed = d g.environment.etc."claude-code/managed-settings.json".text;
   containers = d (builtins.readFile g.environment.etc."containers/containers.conf".source);
   storage = d (builtins.readFile g.environment.etc."containers/storage.conf".source);
   hostUntouched = !(c.environment.etc ? "claude-code/managed-settings.json") && !c.virtualisation.podman.enable;
+  subs = { host = c.nix.settings.substituters; guest = g.nix.settings.substituters; };
+  keys = { host = c.nix.settings.trusted-public-keys; guest = g.nix.settings.trusted-public-keys; };
+  free = { min = c.nix.settings.min-free; max = c.nix.settings.max-free; };
+  hook = builtins.readFile (builtins.appendContext (builtins.head (builtins.match "(.*) start" (d ex))) (builtins.getContext ex));
   evalCache = builtins.filter (n: builtins.match ".*/eval-cache.*" n != null) (builtins.attrNames c.containers.t.bindMounts);
   nixDrv = g.nix.package.drvPath;
   gcroots = d c.systemd.services.dev-environments-gcroots.script;
   stateDir = c.services.devEnvironments.stateDir;
+  gcTimer = c.systemd.timers.dev-environments-gcroots.timerConfig;
+  gcUnit = { inherit (c.systemd.services.dev-environments-gcroots) before requiredBy; };
   alert = d (builtins.readFile c.services.devEnvironments.alert);
   onFailure = { container = c.systemd.services."container@t".onFailure; egress = c.systemd.services.dev-env-egress.onFailure or null; };
   rm = map (x: { deny = x.home-manager.users.lukas.programs.claude-code.settings.permissions.deny; claude = x.home-manager.users.lukas.programs.claude-code.package.version;
@@ -248,8 +255,11 @@ LIMITS = ('{ text = sys.config.containers.ok.config.environment.etc."dev-environ
           'swap = sys.config.systemd.slices.environments.sliceConfig.MemorySwapMax; inherit (sys.config.nix.settings) max-jobs cores; }')
 
 
+PROMPT = 'Use $HOME and "$(date)" and `id`, \'single\', a\\b, $$ and a trailing $'
+
+
 def fleet(case, template=FLEET):
-    return template % {"root": json.dumps(ROOT), "case": case}
+    return template % {"root": json.dumps(ROOT), "case": case, "prompt": json.dumps(PROMPT)}
 
 
 # (method, path, allowed) against the repository o/r.s; allowed requests reach the dead upstream and fail with 502, the rest are 403
@@ -545,6 +555,45 @@ def check_paused():
           f"paused instances have no container, no unit of any kind, and leave the slice's MemoryLow ({facts or out.stderr.strip()[-300:]})")
 
 
+CTL = (r'let w = builtins.head (builtins.filter (p: builtins.match ".*-ok" (p.name or "") != null) sys.config.environment.systemPackages); in { drv = w.drvPath; name = w.name; }')
+STUB_SSH = ('{ nixpkgs.overlays = [ (_: prev: { openssh = prev.writeShellScriptBin "ssh" \'\'case "$*" in *"systemctl show"*) printf "%s\\n" "$HM_STATE";; esac\'\'; }) ]; }')
+
+
+def check_hygiene(facts):
+    """Each cache and key once, a floor under the free space, a prompt kept as data, a session that needs the home setup."""
+    for what in ("subs", "keys"):
+        lists = facts.get(what, {})
+        check(lists and all(len(v) == len(set(v)) and sum("cache.nixos.org" in x for x in v) == 1 for v in lists.values()),
+              f"the host's and a guest's {what} list each entry once, cache.nixos.org once ({lists})")
+    for what in ("subs", "keys"):
+        lists = facts.get(what, {})
+        lan = "http://192.168." if what == "subs" else "-store-1:"
+        check(lists.get("host") and lists.get("guest") == lists.get("host") and any(lan in x for x in lists["host"]),
+              f"a guest's {what} equal the host's and include the LAN store cache ({lan}) ({lists})")
+    free = facts.get("free", {})
+    check(free.get("min", 0) >= 10 * 2**30 and free.get("max", 0) > free.get("min", 0), f"a runtime host collects garbage under a free-space floor ({free})")
+    hook = facts.get("hook", "")
+    prompt_file = re.search(r'send "\$\(< (/nix/store/\S+-t-prompt)\)"', hook)
+    check(prompt_file is not None and pathlib.Path(prompt_file.group(1)).read_text() == PROMPT and "wait || true" not in hook,
+          f"the prompt reaches the session script as a file, byte for byte, and a failed wait ends the start ({prompt_file and prompt_file.group(1)})")
+    out = nix_eval(STUB_SSH, CTL)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    real = subprocess.run(["nix-store", "--realise", got.get("drv", "")], capture_output=True, text=True)
+    exe = pathlib.Path(real.stdout.split()[0]) / "bin" / got.get("name", "") if real.returncode == 0 and got else None
+    if exe is None:
+        check(False, f"the instance's control script builds with a stub ssh ({out.stderr.strip()[-300:]})")
+        return
+    for state, code, still in (("LoadState=loaded\nActiveState=active", 0, False), ("LoadState=loaded\nActiveState=failed", 2, False),
+                               ("LoadState=not-found\nActiveState=inactive", 0, False), ("LoadState=loaded\nActiveState=activating", 1, True),
+                               ("LoadState=loaded\nActiveState=inactive", 1, False)):
+        run = subprocess.run([str(exe), "wait"], capture_output=True, text=True, env={**os.environ, "HM_STATE": state, "WORKER_WAIT_TICK": "0"})
+        check(run.returncode == code and (code != 2 or "home-manager-" in run.stderr) and (("still activating" in run.stderr) == still),
+              f"wait with the home setup {state.splitlines()[-1]} exits {code}{', saying it is still activating' if still else ''} ({run.returncode}, {run.stderr.strip()[-100:]})")
+    gc = facts.get("gcTimer", {})
+    check(gc.get("OnBootSec") and gc.get("OnUnitActiveSec") == "15min" and facts.get("gcUnit") == {"before": ["nix-gc.service"], "requiredBy": ["nix-gc.service"]},
+          f"the gc-roots unit runs at boot and every 15 min and still runs before nix-gc ({gc}, {facts.get('gcUnit')})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -674,7 +723,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -763,6 +812,7 @@ def main():
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
     check_nested(facts)
+    check_hygiene(facts)
     check_alerts(facts)
     check_eval_cache(facts)
     check_gcroots(facts)
