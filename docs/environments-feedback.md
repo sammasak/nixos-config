@@ -6,6 +6,8 @@ Append; move a line to fixed when its change lands.
 
 ## Open
 
+- Secretless GitHub rollout (acer `push`, 2026-11-12): an environment moved onto the proxy keeps dangling `~/.ssh/id_ed25519` and `~/.config/gh/hosts.yml` links in its persistent home (harmless, the targets are gone; a tmpfiles `r` rule would remove them), and a retired instance leaves an empty `/run/dev-env-egress/<name>` until the proxy next restarts.
+
 - `MemoryLow` protects nothing on acer and msi: cgroup2 is mounted without `memory_recursiveprot` (a second cgroup2 mount at `/run/cilium/cgroupv2`), and `environments.slice` counts `low 0`. The 2G reserve is a number, not a reserve (docs/environments-plan.md, item 3).
 - Nested sandboxes (acer `push`, 2026-11-12): nspawn's masks on `/proc` make the kernel refuse a full procfs in any nested user and pid namespace; the clean fix is nspawn's (systemd#34226, open). `subset=pid` works but has no `/proc/sys`, `meminfo`, `cpuinfo`, `stat`: `free`, `uptime`, `sysctl` fail; `nproc`, cargo and daemon `nix build` work.
   - bwrap 0.12 cannot start on a subset proc (reads `/proc/sys/kernel/overflowuid`). Works: bind the outer `/proc`, mount `subset=pid` from inside as mapped uid 0, then run the command as mapped root with only `CAP_SETFCAP` and no-new-privs (wrapper verified by hand, also under `claude -p` with the sandbox on).
