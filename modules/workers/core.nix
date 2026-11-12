@@ -140,6 +140,8 @@ let
 
     # lean: the boot is the start latency
     documentation.enable = false;
+    # watches no cgroup in a guest: the kernel kills at the pool limit
+    systemd.oomd.enable = false;
     services.udisks2.enable = false;
     xdg.sounds.enable = false;
   };
