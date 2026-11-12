@@ -31,15 +31,15 @@ sam.workers.instances = {
 | `credentials` | `null` | which of the host's credentials it gets (`id_ed25519`, `gh-hosts.yml`); `null` is all. `[ ]` is an agent that cannot push |
 | `egress.github.repos` | `[ ]` | `owner/repo` the instance reaches through the host's proxy (git and REST); non-empty, it gets neither credential |
 | `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it |
-| `memory.reserved` | `"2G"` | `MemoryLow`: guaranteed, kept from reclaim; above it, whatever the pool has idle |
+| `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
 
 Every environment of a host runs in `environments.slice`, whose `MemoryMax` is
 the host's `sam.workers.pool.memory` (protecting k3s and the host) and whose
 `MemoryLow` is the sum of the reserves. An environment has no ceiling of its
-own: reclaim and throttling (`MemoryHigh`) start at 90% of the pool, the hard
-limit is the pool's, and the pool's swap (zram) is capped at half of it, so one
-gate alone uses what its neighbours leave idle. nix builds
+own and the pool no `MemoryHigh`: the only limit is the pool's `MemoryMax`,
+with the pool's swap (zram) capped at half of it, so one gate alone uses what
+its neighbours leave idle, down to their reserves (`MemoryMin`). nix builds
 run in the host's daemon, outside the pool; acer and msi bound that daemon
 (2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
 fails before k3s or the host does. msi powers off at 21:00
@@ -62,14 +62,13 @@ CPU-throttled 947 s of 1275 s used while cores sat idle; msi `skills91`
 The reserve sum is what eval enforces; the recommendation is lower because a
 build in an environment spikes to 4 to 5G.
 
-Burst: an environment alone on msi (10G pool) can use all 10G and 5G of
-swap before the kernel kills anything; beside others it can push them back to
-their reserves (how well `MemoryLow` holds on these hosts is an open entry in
-`docs/environments-feedback.md`). Past the pool the kernel kills the largest
-process in the slice, usually the runaway itself, never a container. Under the
-earlier 6G ceiling per environment a 5G allocation ran untouched and a 7G one
-finished in swap, but a gate's `nix` process was killed at 6G with 4G of the
-pool idle.
+Burst, measured on msi (10G pool, two environments): one alone reached 10.06G
+with 4.6G in swap and no kill. A 17G runaway was killed by the kernel after
+23 s (that process only; containers and agents stayed up) while a neighbour
+holding 1.5G kept it, its slowest pass over that memory 4.3 s against 0.2 s.
+With `MemoryHigh` on the pool and only `MemoryLow` per environment the same
+runaway was never killed: it stalled for 18 minutes at the limit and the
+neighbour was reclaimed to 59M.
 
 ## Lifecycle
 
