@@ -33,6 +33,20 @@ let
     '';
   };
 
+  # validate-bash refuses force pushes; a hook skip was refused only by the deny rules a guest drops. Quoted spans
+  # go first, as there, so a mention in a commit message is not a push.
+  noVerifyGuard = pkgs.writeShellApplication {
+    name = "no-verify-guard";
+    runtimeInputs = [ pkgs.jq pkgs.gnugrep pkgs.gnused ];
+    text = ''
+      s=$(jq -r '.tool_input.command // ""' | sed -z "s/'[^']*'/Q/g; s/\"[^\"]*\"/Q/g")
+      if grep -qE 'git[[:space:]]+([^|&;]+[[:space:]]+)?push([[:space:]][^|&;]*)?[[:space:]]--no-verify([[:space:]]|$)|git[[:space:]]+([^|&;]*[[:space:]])?-c[[:space:]]*core\.hooksPath' <<<"$s"; then
+        echo "BLOCKED: a push that skips the pre-push gate (--no-verify, core.hooksPath) is not allowed in an environment." >&2
+        exit 2
+      fi
+    '';
+  };
+
   agentNames = lib.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
   restartNotice = "This environment restarted: whatever you had running here, background shells and gates included, was killed and nothing restarted it. Check what finished (git status and unpushed commits in each clone), re-run what did not, and carry on; if your task was already done, say so and stop.";
   shutdownNotice = "This host powers off soon and is back at its next scheduled wake. Commit and push work in progress to a wip branch now and start no long gate; after the restart you are told to resume.";
@@ -97,7 +111,12 @@ let
     ] ++ cfg.guestModules;
 
     # not nixpkgs.pkgs = pkgs: core/system.nix sets nixpkgs.config, which an external instance refuses
-    nixpkgs.overlays = config.nixpkgs.overlays;
+    # FIXME: claude-code 2.1.311 (the stable channel) in guests only, the first to read
+    # CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS; drop once the pinned nixpkgs (2.1.300) carries it.
+    nixpkgs.overlays = config.nixpkgs.overlays ++ [ (_: prev: { claude-code = prev.claude-code.override { manifest = {
+      version = "2.1.311";
+      platforms.linux-x64 = { binary = "claude.zst"; checksum = "d0c00b80761f3030f34cf0812266f6c6f8210ff9af7242f7c6c76c5600499caf"; };
+    }; }; }) ];
     sam.profile = profile // { hostname = devEnvironment.hostName; roles = [ "base" ]; pi = false; };
     sam.userConfig = config.sam.userConfig;
 
@@ -107,10 +126,16 @@ let
     sam.herdr.worker.enable = true;
     # Headless, reached over ssh from the host's Herdr: no session server, no firewall behind the veth, no gpg-agent
     # in front of the ssh key; the weekly repo-sweep would reclaim the agent's own clones.
-    home-manager.users.${user}.systemd.user = {
-      services.herdr.Install.WantedBy = lib.mkForce [ ];
-      timers.repo-sweep.Install.WantedBy = lib.mkForce [ ];
-      timers.nixos-config-flake-update.Install.WantedBy = lib.mkForce [ ];
+    home-manager.users.${user} = {
+      systemd.user = {
+        services.herdr.Install.WantedBy = lib.mkForce [ ];
+        timers.repo-sweep.Install.WantedBy = lib.mkForce [ ];
+        timers.nixos-config-flake-update.Install.WantedBy = lib.mkForce [ ];
+      };
+      # mkForce []: any Bash deny rule turns the variable below off. The guest is the boundary; force pushes still
+      # meet validate-bash and the pre-push guard; the rest is in docs/nspawn-workers.md, Permissions.
+      programs.claude-code.settings.permissions.deny = lib.mkForce [ ];
+      programs.claude-code.settings.hooks.PreToolUse = [ { matcher = "Bash"; hooks = [ { type = "command"; command = lib.getExe noVerifyGuard; timeout = 15; } ]; } ];
     };
     programs.gnupg.agent.enable = lib.mkForce false;
     programs.dconf.enable = lib.mkForce false;
@@ -217,7 +242,9 @@ in
           port = 4100;
           secrets.claude_oauth_token = if config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token then config.sops.secrets.claude_oauth_token.path else null;
           missing = "sam.workers: a claude instance's calls are signed with the host's sops secret claude_oauth_token (sam.hostSecrets.enable), which this host does not declare.";
-          guest.env = { ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString dev.egress.anthropic.port}"; CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host"; CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"; };
+          guest.env = { ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString dev.egress.anthropic.port}"; CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host"; CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+            # bypassPermissions alone still stops at "Dangerous rm operation": an unattended worker would wait there
+            CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS = "1"; };
         };
         github = {
           for = onGithub;
