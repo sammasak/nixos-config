@@ -139,6 +139,8 @@ in {
   nixDrv = g.nix.package.drvPath;
   gcroots = d c.systemd.services.dev-environments-gcroots.script;
   stateDir = c.services.devEnvironments.stateDir;
+  alert = d (builtins.readFile c.services.devEnvironments.alert);
+  onFailure = { container = c.systemd.services."container@t".onFailure; egress = c.systemd.services.dev-env-egress.onFailure or null; };
 }
 """
 
@@ -419,6 +421,70 @@ def check_activation():
             userns("rm", "-rf", str(state))
 
 
+ALERTS = (r'{ onFailure = sys.config.systemd.services."container@ok".onFailure; watch = sys.config.systemd.services ? dev-env-watch;'
+          r' unit = sys.config.systemd.units."dev-env-alert@.service".text or null;'
+          " script = sys.config.systemd.services.dev-env-watch.script or null; }")
+
+
+def check_alerts(facts):
+    """The units that fail into the alert program, and the watch script run against a fake counter, df and alert program."""
+    check(facts.get("onFailure") == {"container": ["dev-env-alert@%n.service"], "egress": ["dev-env-alert@%n.service"]},
+          f"a runtime host's container and egress units alert when they fail ({facts.get('onFailure')})")
+    off = nix_eval("{ }", ALERTS)
+    got = json.loads(off.stdout) if off.returncode == 0 else {}
+    check(got.get("onFailure") == [] and got.get("watch") is False, f"with no alert program an instance has no OnFailure and no watch unit ({got})")
+    on = nix_eval('{ services.devEnvironments.alert = "/alert"; }', ALERTS)
+    got = json.loads(on.stdout) if on.returncode == 0 else {}
+    check(got.get("onFailure") == ["dev-env-alert@%n.service"] and got.get("watch") is True, f"with one, the container unit alerts and the watch unit exists ({got})")
+    # %I would unescape the unit name and read dev/env/egress.service
+    check(re.search(r"^ExecStart=\S+ %i$", got.get("unit") or "", re.M) is not None, f"the alert unit is handed its instance with %i ({(got.get('unit') or '')[-200:]})")
+    with tempfile.TemporaryDirectory() as d:
+        d = pathlib.Path(d)
+        for name, body in (("alert", 'echo "$1" >> "$0.log"; [ ! -e "$0.fail" ]'), ("df", '[ ! -e "$0.broken" ] || exit 1; printf "Avail\nG\n" | sed "s/G/$(cat "$0.free")G/"')):
+            (d / name).write_text(f"#!/bin/sh\n{body}\n")
+            (d / name).chmod(0o755)
+        events = d / "memory.events"
+        script = (got.get("script") or "").replace("/alert", str(d / "alert")).replace("/sys/fs/cgroup/environments.slice/memory.events", str(events))
+        script = script.replace("/var/lib/dev-environments", str(d / "state"))
+        (d / "state").mkdir()
+        (d / "sd").mkdir()
+
+        def watch(oom, free, fail=False, broken=False):
+            events.write_text(f"low 0\nhigh 0\nmax 0\noom 0\noom_kill {oom}\n")
+            (d / "df.free").write_text(str(free))
+            for flag, on_ in (("alert.fail", fail), ("df.broken", broken)):
+                (d / flag).unlink(missing_ok=True)
+                if on_:
+                    (d / flag).touch()
+            log = d / "alert.log"
+            log.unlink(missing_ok=True)
+            run = subprocess.run(["bash", "-e", "-c", script], env={**os.environ, "PATH": f"{d}:{os.environ['PATH']}", "STATE_DIRECTORY": str(d / "sd")}, capture_output=True, text=True)
+            return run.returncode, log.read_text().splitlines() if log.exists() else []
+
+        first, second, third = watch(3, 500), watch(3, 500), watch(5, 500)
+        check(first == (0, []) and second == (0, []) and third[0] == 0 and len(third[1]) == 1 and "2 process(es)" in third[1][0],
+              f"the watch script alerts once when oom_kill rises and not for a counter it has seen ({first}, {second}, {third})")
+        lost = watch(9, 500, fail=True)
+        retried = watch(9, 500)
+        check(lost[0] != 0 and len(lost[1]) == 1 and retried[0] == 0 and len(retried[1]) == 1 and "4 process(es)" in retried[1][0],
+              f"a failed send keeps the counter, so the next run sends it again ({lost}, {retried})")
+        reset = watch(2, 500)
+        check(reset[0] == 0 and len(reset[1]) == 1 and "2 process(es)" in reset[1][0], f"a counter that went down is read from zero ({reset})")
+        low = watch(2, 4)
+        again = watch(2, 4)
+        check(low[0] == 0 and len(low[1]) == 2 and all("G free" in m for m in low[1]) and again == (0, []),
+              f"a low disk alerts once an hour for the state directory and /nix ({low}, {again})")
+        for marker in (d / "sd").glob("disk-*"):
+            marker.unlink()
+        failed = watch(2, 4, fail=True)
+        check(failed[0] != 0 and len(failed[1]) == 2 and not list((d / "sd").glob("disk-*")),
+              f"a failed disk alert does not skip the other directory and is retried ({failed})")
+        for marker in (d / "sd").glob("disk-*"):
+            marker.unlink()
+        broken = watch(2, 4, broken=True)
+        check(broken == (0, []), f"a df that fails raises no alert ({broken})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -488,7 +554,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -527,6 +593,7 @@ def main():
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
     check_nested(facts)
+    check_alerts(facts)
     check_eval_cache(facts)
     check_gcroots(facts)
     check_scripts()
