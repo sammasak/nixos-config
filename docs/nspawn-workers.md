@@ -33,7 +33,7 @@ sam.workers.instances = {
 | `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it |
 | `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
-| `rootInGuest` | `false` | its own uid block (`--private-users`, binds id-mapped): guest root is an unprivileged host uid, and the user gets passwordless sudo. Prototype, not yet run on a host |
+| `rootInGuest` | `false` | its own 65536 uids (`--private-users`): guest root is an unprivileged host uid, and the user gets passwordless sudo. Its home and caches are owned on disk by its mapped ids (not id-mapped), it has its own sshd key and HostKeyAlias `<name>.environments.<prefix>`, and the state dir and per-container profiles and roots are mounted nosuid. Ran on msi (root1). From lenovo, `<name>.<prefix>` still expects the host's shared key |
 
 Host-wide: `sam.workers.pool.memory` (below) and `sam.workers.ntfyUrl` (null, or the ntfy topic that hears of failures, see Alerts).
 

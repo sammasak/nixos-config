@@ -21,6 +21,16 @@ let
   cidr = types.strMatching "${octet}\\.${octet}\\.${octet}\\.${octet}/([0-9]|[12][0-9]|3[0-2])";
   nameType = types.strMatching "[a-z][a-z0-9-]{0,10}";
   keyAlias = "environments.${cfg.prefix}";
+  # 0x70000000, above nspawn's `pick` range (0x80000 to 0x6fff0000): instance index i (1 to 254) owns the 65536 ids
+  # from uidBase + i * 65536, below 2^31
+  uidBase = 1879048192;
+  baseOf = w: uidBase + w.index * 65536;
+  gid = config.users.groups.${group}.gid;
+  # Under rootInGuest the writable binds are not id-mapped: on disk they belong to the guest user's mapped ids, so guest
+  # root writes as baseOf w, never as a host user; its own host key and alias keep it from posing as another instance.
+  owner = w: if w.rootInGuest then { u = toString (baseOf w + cfg.uid); g = toString (baseOf w + gid); } else { u = user; g = group; };
+  aliasOf = w: if w.rootInGuest then "${w.name}.${keyAlias}" else keyAlias;
+  hostKeyOf = w: if w.rootInGuest then "${cfg.stateDir}/${w.name}/ssh_host_ed25519_key" else "${cfg.stateDir}/ssh_host_ed25519_key";
   # a fish single-quoted word reads \\ and \' as escapes, a POSIX one does not
   escape = if cfg.shell == "fish"
     then s: "'" + lib.replaceStrings [ "\\" "'" ] [ "\\\\" "\\'" ] s + "'"
@@ -78,8 +88,8 @@ let
     '';
   };
 
-  hostOptions = { HostKeyAlias = keyAlias; UserKnownHostsFile = "${cfg.stateDir}/known_hosts"; StrictHostKeyChecking = "yes"; LogLevel = "ERROR"; };
-  ssh = w: opts: "ssh ${opts} ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "-o ${k}=${v}") hostOptions)} ${user}@${w.address}";
+  hostOptions = w: { HostKeyAlias = aliasOf w; UserKnownHostsFile = "${cfg.stateDir}/known_hosts"; StrictHostKeyChecking = "yes"; LogLevel = "ERROR"; };
+  ssh = w: opts: "ssh ${opts} ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "-o ${k}=${v}") (hostOptions w))} ${user}@${w.address}";
   # The instance's one entry point on the host: a session surface (or a person) runs `attach` in a terminal.
   ctl = w: pkgs.writeShellApplication {
     name = "${cfg.unitPrefix}-${w.name}";
@@ -117,11 +127,12 @@ let
     "${home}" = { hostPath = "${cfg.stateDir}/${w.name}/home"; isReadOnly = false; };
     # Nix's per-user fetcher and tarball caches, one per host: a fresh home re-downloads and re-unpacks every flake
     # input the store already holds (31 s against 7 s for the first devenv shell on acer).
-    "${home}/.cache/nix" = { hostPath = "${cfg.stateDir}/.nix-cache"; isReadOnly = false; };
+    # rootInGuest: its own, so its root cannot leave entries a neighbour cannot use
+    "${home}/.cache/nix" = { hostPath = if w.rootInGuest then "${cfg.stateDir}/${w.name}/nix-cache" else "${cfg.stateDir}/.nix-cache"; isReadOnly = false; };
     # Not the evaluation cache in it: its rows are unsigned, so a neighbour could plant the derivation another
     # environment then builds. The name is Nix's: workers-eval-test fails when the guest's Nix names it otherwise.
     "${home}/.cache/nix/eval-cache-v6" = { hostPath = "${cfg.stateDir}/${w.name}/eval-cache"; isReadOnly = false; };
-    "${creds}/ssh_host_ed25519_key" = { hostPath = "${cfg.stateDir}/ssh_host_ed25519_key"; isReadOnly = true; };
+    "${creds}/ssh_host_ed25519_key" = { hostPath = hostKeyOf w; isReadOnly = true; };
     "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
   } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; })
     (lib.filterAttrs (n: _: w.credentials == null || lib.elem n w.credentials) cfg.credentials)
@@ -235,7 +246,7 @@ let
       paused = mkOption { type = types.bool; default = false; description = "Stopped, its container undeclared: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session."; };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryMin: never reclaimed for a neighbour, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
-      rootInGuest = mkOption { type = types.bool; default = false; description = "Its own 65536 uids (guest root is an unprivileged host uid, binds id-mapped) and passwordless sudo."; };
+      rootInGuest = mkOption { type = types.bool; default = false; description = "Its own 65536 uids (guest root is an unprivileged host uid), its own host key, cache and sshd alias, and passwordless sudo."; };
     };
   };
 in
@@ -346,12 +357,20 @@ in
           [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
           echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
           chmod 0644 "$d/known_hosts"
-          ${lib.concatMapStrings (w: ''
+          ${lib.concatMapStrings (w: let o = owner w; hostIds = "${toString cfg.uid}:${toString gid}"; mapped = "${toString (baseOf w + cfg.uid)}:${toString (baseOf w + gid)}"; in ''
             install -d -m 0700 "$d/${w.name}"
-            [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/home"
+            [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/home"
+            # turning rootInGuest on or off moves the user's own files between the host user's ids and the mapped ones
+            [[ $(stat -c %u:%g "$d/${w.name}/home") == ${if w.rootInGuest then mapped else hostIds} ]] \
+              || chown -hR --from=${if w.rootInGuest then hostIds else mapped} ${if w.rootInGuest then mapped else hostIds} "$d/${w.name}/home"
             # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
-            mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${user}:${group} "$d/${w.name}/home/.cache" || true
-            install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/eval-cache"
+            mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
+            install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
+          '' + lib.optionalString w.rootInGuest ''
+            install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
+            [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
+            chown ${toString (baseOf w)}:${toString (baseOf w)} "$d/${w.name}/ssh_host_ed25519_key"
+            echo "${aliasOf w} $(cut -d' ' -f1,2 "$d/${w.name}/ssh_host_ed25519_key.pub")" >> "$d/known_hosts"
           '') instances}
         '';
       };
@@ -477,7 +496,7 @@ in
           { assertion = lib.stringLength w.hostName <= 63; message = "${i}: hostname ${w.hostName} is longer than 63."; }
           {
             assertion = !w.rootInGuest || lib.elem user config.nix.settings.allowed-users || lib.elem "*" config.nix.settings.allowed-users;
-            message = "${i}.rootInGuest adds its guest user to nix.settings.allowed-users, which replaces the default \"*\": list ${user} there too.";
+            message = "${i}.rootInGuest adds its guest user to nix.settings.allowed-users, which replaces the default \"*\": list every host user that runs nix there (${user} at least).";
           }
         ] ++ lib.optional (!w.paused) { assertion = config.containers.${w.name}.config.services.openssh.enable; message = "${i}: a guest module disabled sshd, the only way into it."; }) instances;
 
@@ -485,6 +504,10 @@ in
       # a trusted user. Unresolved (machined gone) the daemon compares the bare uid, which matches nothing: it refuses.
       nix.settings.allowed-users = lib.mkIf (lib.any (w: w.rootInGuest) running)
         (map (w: "vu-${w.name}-${toString cfg.uid}") (lib.filter (w: w.rootInGuest) running));
+      # Guest root writes as host root where nixpkgs' container module id-maps a writable bind (its per-container
+      # profiles and roots): no setuid or device there, nor in the state dir.
+      fileSystems = lib.mkIf (lib.any (w: w.rootInGuest) running) (lib.genAttrs [ cfg.stateDir "/nix/var/nix/profiles/per-container" "/nix/var/nix/gcroots/per-container" ]
+        (p: { device = p; fsType = "none"; options = [ "bind" "nosuid" "nodev" "x-mount.mkdir" ] ++ lib.optional (p != cfg.stateDir) "noexec"; }));
 
       containers = lib.listToAttrs (map (w: lib.nameValuePair w.name {
         ephemeral = true;
@@ -493,11 +516,15 @@ in
         inherit (w) hostAddress;
         localAddress = w.address;
         # above nspawn's `pick` range (0x80000 to 0x6fff0000), one 65536 block per index: fixed, so a host check can name it
-        privateUsers = if w.rootInGuest then 1879048192 + w.index * 65536 else "no";
-        # a numeric base implies --private-users-ownership=off (only `pick` implies auto): the ephemeral root stays the
-        # host root's, nobody in the guest, and stage 2 can write neither /etc nor /bin, so systemd finds no default.target
+        privateUsers = if w.rootInGuest then baseOf w else "no";
+        # A numeric base implies --private-users-ownership=off (only `pick` implies auto): the ephemeral root stays the
+        # host root's, nobody in the guest, and stage 2 can write neither /etc nor /bin. auto id-maps the root, which
+        # needs idmapped-mount support from its filesystem (tmpfs, Linux 6.3 and later), and else chowns it.
         extraFlags = lib.optional w.rootInGuest "--private-users-ownership=auto";
-        bindMounts = lib.mapAttrs (n: b: b // lib.optionalAttrs w.rootInGuest { mountPoint = "${n}:idmap"; }) (binds w);
+        # Only read-only binds are id-mapped (identity: host 1000 is guest 1000); the host key is the guest root's own.
+        bindMounts = lib.mapAttrs (n: b: b // lib.optionalAttrs (w.rootInGuest && b.isReadOnly && n != "${creds}/ssh_host_ed25519_key") {
+          mountPoint = "${n}:idmap";
+        }) (binds w);
         config = guest w;
       }) running);
 
@@ -627,7 +654,7 @@ in
       programs.ssh.extraConfig = lib.concatMapStrings (w: ''
         Host ${w.name} ${w.name}.${cfg.prefix}
           User ${user}
-      '' + lib.concatStrings (lib.mapAttrsToList (k: v: "  ${k} ${v}\n") hostOptions)) instances;
+      '' + lib.concatStrings (lib.mapAttrsToList (k: v: "  ${k} ${v}\n") (hostOptions w))) instances;
     })
 
     {

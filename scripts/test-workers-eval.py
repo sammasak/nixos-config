@@ -230,10 +230,16 @@ def nix_string(s):
 
 
 GUEST = "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; channel = g.nix.channel.enable; registry = g.nix.settings.flake-registry; }"
-# an instance with rootInGuest next to one without: its uid range, its binds and the guest's sudo
-ROOT_IN_GUEST = ('{ allowed = sys.config.nix.settings.allowed-users; trusted = sys.config.nix.settings.trusted-users or [ ]; } // ('
-                 'let f = n: let c = sys.config.containers.${n}; in { inherit (c) privateUsers extraFlags; binds = map (b: b.mountPoint) (builtins.attrValues c.bindMounts); '
-                 'sudoPassword = c.config.security.sudo.wheelNeedsPassword; sub = c.config.users.users.alice.subUidRanges; }; in { r = f "r"; ok = f "ok"; })')
+# two instances with rootInGuest next to one without: uid blocks, binds, host keys, mounts, the daemon's users
+ROOT_IN_GUEST_CASE = '{ services.devEnvironments.instances = { r.rootInGuest = true; s.rootInGuest = true; }; nix.settings.allowed-users = [ "alice" ]; }'
+ROOT_IN_GUEST = ('{ allowed = sys.config.nix.settings.allowed-users; trusted = sys.config.nix.settings.trusted-users or [ ]; '
+                 'nosuid = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); '
+                 'act = sys.config.system.activationScripts.devEnvironments.text; ssh = sys.config.programs.ssh.extraConfig; } // ('
+                 'let f = n: let c = sys.config.containers.${n}; in { inherit (c) privateUsers extraFlags; '
+                 'binds = map (b: { src = b.hostPath; dst = b.mountPoint; ro = b.isReadOnly; }) (builtins.attrValues c.bindMounts); '
+                 'sudoPassword = c.config.security.sudo.wheelNeedsPassword; sub = c.config.users.users.alice.subUidRanges; }; in { r = f "r"; s = f "s"; ok = f "ok"; })')
+NO_ROOT = ('{ allowed = sys.config.nix.settings.allowed-users; '
+           'nosuid = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); }')
 # what a job in the guest can read of its limits, next to the host-side values they must equal
 LIMITS = ('{ text = sys.config.containers.ok.config.environment.etc."dev-environment".text; '
           'swap = sys.config.systemd.slices.environments.sliceConfig.MemorySwapMax; inherit (sys.config.nix.settings) max-jobs cores; }')
@@ -625,7 +631,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", LIMITS), stub_expr("{ services.devEnvironments.instances.r.rootInGuest = true; nix.settings.allowed-users = [ \"alice\" ]; }", ROOT_IN_GUEST), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -635,20 +641,38 @@ def main():
     check(got.get("channel") is False and len(got.get("nixPath", [])) == 1 and got["nixPath"][0].startswith("nixpkgs=/nix/store/")
           and got.get("registry") == "",
           f"a guest resolves <nixpkgs> to the store's nixpkgs, with no channels or global registry to fetch ({got or out.stderr.strip()[-300:]})")
-    out = nix_eval("{ services.devEnvironments.instances.r.rootInGuest = true; nix.settings.allowed-users = [ \"alice\" ]; }", ROOT_IN_GUEST)
+    out = nix_eval(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    r, ok = got.get("r", {}), got.get("ok", {})
+    r, s_, ok = got.get("r", {}), got.get("s", {}), got.get("ok", {})
     sub = (r.get("sub") or [{}])[0]
-    check(isinstance(r.get("privateUsers"), int) and r["privateUsers"] >= 0x70000000 and r["privateUsers"] % 65536 == 0
-          and "--private-users-ownership=auto" in r.get("extraFlags", [])
-          and r.get("binds") and all(b.endswith(":idmap") for b in r["binds"]) and r.get("sudoPassword") is False
+    blocks = [x.get("privateUsers") for x in (r, s_)]
+    check(all(isinstance(b, int) and 0x70000000 <= b < 1 << 31 and b % 65536 == 0 for b in blocks) and blocks[0] != blocks[1]
+          and "--private-users-ownership=auto" in r.get("extraFlags", []) and r.get("sudoPassword") is False
           and sub.get("startUid", 0) > 1000 and sub.get("startUid", 0) + sub.get("count", 1 << 20) <= 65536,
-          f"rootInGuest gives the guest its own uid block above nspawn's pick range, its root tree mapped into it, id-maps every bind, and passwordless sudo with subordinate ids inside the block ({r or out.stderr.strip()[-300:]})")
+          f"two rootInGuest instances get distinct 65536-id blocks from 0x70000000, their root tree mapped, and passwordless sudo with subordinate ids inside the block ({blocks}, {r.get('extraFlags')}, {sub})")
+    binds = {b["dst"].split(":")[0]: b for b in r.get("binds", [])}
+    rw = [b for b in binds.values() if not b["ro"]]
+    key = binds.get("/var/lib/host-credentials/ssh_host_ed25519_key", {})
+    check(rw and not any(":" in b["dst"] for b in rw) and all(b["dst"].endswith(":idmap") for b in binds.values() if b["ro"] and b is not key)
+          and key.get("src", "").endswith("/r/ssh_host_ed25519_key") and ":" not in key.get("dst", ":")
+          and binds.get("/home/alice/.cache/nix", {}).get("src", "").endswith("/r/nix-cache"),
+          f"a rootInGuest instance's writable binds and its own host key are not id-mapped, its read-only ones are, and its nix cache is its own ({sorted((b['src'], b['dst']) for b in binds.values())})")
+    act, ssh = got.get("act", ""), got.get("ssh", "")
+    check(all(f'echo "{n}.environments.box ' in act and f"HostKeyAlias {n}.environments.box" in ssh for n in ("r", "s"))
+          and "HostKeyAlias environments.box" in ssh,
+          f"each rootInGuest instance has its own host key and HostKeyAlias in known_hosts and the ssh config; the others keep the shared one")
+    check(sorted(got.get("nosuid", [])) == ["/nix/var/nix/gcroots/per-container", "/nix/var/nix/profiles/per-container", "/var/lib/dev-environments"],
+          f"the state dir and the per-container profiles and roots are mounted nosuid ({got.get('nosuid')})")
     allowed, trusted = got.get("allowed", []), got.get("trusted", [])
-    check("vu-r-1000" in allowed and "alice" in allowed and not any(u.startswith(("vu-r-0", "vu-ok-", "@")) for u in allowed) and not any(u.startswith("vu-") for u in trusted),
-          f"the host daemon allows exactly the rootInGuest guest's user, not its root, not the other instance, and trusts neither ({allowed}, {trusted})")
-    check(ok.get("privateUsers") == "no" and not ok.get("extraFlags") and ok.get("binds") and not any(b.endswith(":idmap") for b in ok["binds"]) and ok.get("sudoPassword") is True,
+    check({"vu-r-1000", "vu-s-1000", "alice"} <= set(allowed) and not any(u.startswith(("vu-r-0", "vu-s-0", "vu-ok-", "@")) for u in allowed)
+          and not any(u.startswith("vu-") for u in trusted),
+          f"the host daemon allows exactly the rootInGuest guests' users, not their root, not the other instance, and trusts none ({allowed}, {trusted})")
+    check(ok.get("privateUsers") == "no" and not ok.get("extraFlags") and ok.get("binds") and not any(":" in b["dst"] for b in ok["binds"]) and ok.get("sudoPassword") is True,
           f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
+    out = nix_eval("{ }", NO_ROOT)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("allowed") == ["*"] and got.get("nosuid") == [],
+          f"with no rootInGuest instance allowed-users keeps its default and no mount is added ({got or out.stderr.strip()[-300:]})")
     out = nix_eval("{ }", LIMITS)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     want = {"memory_reserved": str(2 << 30), "pool_memory": str(8 << 30), "pool_swap": str(got.get("swap")), "cpu_weight": "200",
