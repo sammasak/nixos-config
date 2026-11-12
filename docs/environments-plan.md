@@ -168,13 +168,15 @@ nothing, and the Caddyfile's store path holds no token.
    the per-instance socket and log come with step 2. The token every guest
    has already read must be rotated after rollout: **owner**. Done when an agent works a
    normal task through the proxy and the leak check passes.
-2. **git.** Built on branch `egress-github` (`egress.github.repos`), not yet
-   run. HTTPS remotes through the proxy with the host user's gh OAuth token
+2. **git.** Live on acer (#241, `egress.github.repos`): clone, fetch, push
+   and a ref delete work in a guest with no key; a repo off the list gets 403. HTTPS remotes through the proxy with the host user's gh OAuth token
    (from its `hosts.yml`), limited by the proxy to the named repos; the SSH
    key bind is gone for those instances. Done when clone, fetch and a gated
    push work and a push to a repo off the list is refused.
-3. **`gh`.** Built on the same branch, not yet run: socket config, REST
-   allowlist, GraphQL off (`egress.github.graphql`). With GraphQL off every
+3. **`gh`.** Live on acer (#241): socket config, REST allowlist, GraphQL
+   off (`egress.github.graphql`). Repository administration, `/user`, odd
+   URIs and GraphQL all answered 403 in the guest; the leak check found no
+   token in the guest, the Caddyfile, the journal or the proxy's arguments. With GraphQL off every
    `gh pr`, `gh issue`, `gh repo view`, `release`, `label` and `search`
    command fails (each sends GraphQL first); `gh run` and `gh api repos/...`
    work. Done when `gh pr create`, `gh pr view` and `gh issue comment` work
