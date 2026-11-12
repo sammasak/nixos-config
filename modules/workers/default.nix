@@ -33,6 +33,20 @@ let
     '';
   };
 
+  # validate-bash refuses force pushes; a hook skip was refused only by the deny rules a guest drops. Quoted spans
+  # go first, as there, so a mention in a commit message is not a push.
+  noVerifyGuard = pkgs.writeShellApplication {
+    name = "no-verify-guard";
+    runtimeInputs = [ pkgs.jq pkgs.gnugrep pkgs.gnused ];
+    text = ''
+      s=$(jq -r '.tool_input.command // ""' | sed -z "s/'[^']*'/Q/g; s/\"[^\"]*\"/Q/g")
+      if grep -qE 'git[[:space:]]+([^|&;]+[[:space:]]+)?push([[:space:]][^|&;]*)?[[:space:]]--no-verify([[:space:]]|$)|git[[:space:]]+([^|&;]*[[:space:]])?-c[[:space:]]*core\.hooksPath' <<<"$s"; then
+        echo "BLOCKED: a push that skips the pre-push gate (--no-verify, core.hooksPath) is not allowed in an environment." >&2
+        exit 2
+      fi
+    '';
+  };
+
   agentNames = lib.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
   restartNotice = "This environment restarted: whatever you had running here, background shells and gates included, was killed and nothing restarted it. Check what finished (git status and unpushed commits in each clone), re-run what did not, and carry on; if your task was already done, say so and stop.";
   shutdownNotice = "This host powers off soon and is back at its next scheduled wake. Commit and push work in progress to a wip branch now and start no long gate; after the restart you are told to resume.";
@@ -121,6 +135,7 @@ let
       # mkForce []: any Bash deny rule turns the variable below off. The guest is the boundary; force pushes still
       # meet validate-bash and the pre-push guard; the rest is in docs/nspawn-workers.md, Permissions.
       programs.claude-code.settings.permissions.deny = lib.mkForce [ ];
+      programs.claude-code.settings.hooks.PreToolUse = [ { matcher = "Bash"; hooks = [ { type = "command"; command = lib.getExe noVerifyGuard; timeout = 15; } ]; } ];
     };
     programs.gnupg.agent.enable = lib.mkForce false;
     programs.dconf.enable = lib.mkForce false;

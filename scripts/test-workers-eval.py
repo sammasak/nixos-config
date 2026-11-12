@@ -538,6 +538,32 @@ def check_nested(facts):
     check(facts.get("hostUntouched") is True, "the host itself gets neither the managed Claude settings nor podman")
 
 
+# the guest's own PreToolUse Bash hooks, realised: the no-verify guard is run against commands
+GUARD = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config;
+  hooks = builtins.concatMap (e: e.hooks) c.containers.t.config.home-manager.users.lukas.programs.claude-code.settings.hooks.PreToolUse;
+in flake.nixosConfigurations.msi-ms7758.pkgs.writeText "guest-pretooluse" (builtins.concatStringsSep "\n" (map (h: h.command) hooks))
+"""
+
+
+def check_no_verify():
+    out = subprocess.run(["nix", "build", "--impure", "--no-link", "--print-out-paths", "--expr", GUARD % {"root": json.dumps(ROOT)}],
+                         capture_output=True, text=True)
+    cmds = pathlib.Path(out.stdout.strip()).read_text().splitlines() if out.returncode == 0 else []
+    guard = next((c for c in cmds if c.endswith("/bin/no-verify-guard")), None)
+    check(guard is not None and any(c.endswith("/hooks/validate-bash.sh") for c in cmds),
+          f"a guest's PreToolUse Bash hooks run validate-bash and the no-verify guard ({cmds or out.stderr.strip()[-300:]})")
+    if guard is None:
+        return
+    cases = {"git push --no-verify origin x": 2, "git -C repo push origin HEAD --no-verify": 2, "git -c core.hooksPath=/dev/null push": 2,
+             "cd r && git push --no-verify": 2, "git push origin x": 0, 'git commit -m "skip with --no-verify"': 0,
+             "git commit --no-verify -m x": 0}
+    got = {c: subprocess.run([guard], input=json.dumps({"tool_input": {"command": c}}), capture_output=True, text=True).returncode for c in cases}
+    check(got == cases, f"the guard denies (exit 2) a push that skips the pre-push gate, and nothing else ({got})")
+
+
 def check_scripts():
     """Runs both wrappers against stubs that print their argv."""
     out = run_eval(SCRIPTS % {"root": json.dumps(ROOT)})
@@ -650,6 +676,7 @@ def main():
           f"a guest's claude (2.1.311 or later) starts with CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 and no Bash deny rule that would turn it off ({guest})")
     check(host.get("env") is None and any(r.startswith("Bash(git push") for r in host.get("deny", [])),
           f"the host keeps its Bash deny rules and its own claude without the variable ({host})")
+    check_no_verify()
     for name, case, want in FLEET_CASES:
         out = run_eval(fleet(case))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
