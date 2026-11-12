@@ -12,9 +12,10 @@ let
   caches = {
     lenovo-21CB001PMX = { address = "192.168.10.154"; publicKey = "lenovo-21CB001PMX-store-1:Ifjt/zTBnDw6GFhAw6w6L0JGWHblrWr4V7L/BfphwPU="; };
     acer-swift = { address = "192.168.10.110"; publicKey = "acer-swift-store-1:iDCzz1UQib6s9pZ818Evy6d8naQ+4jaI6YYZmlGsz5A="; };
-    msi-ms7758 = { address = "192.168.10.235"; publicKey = "msi-ms7758-store-1:xIr/Ee7u3rhCm4bhycovNFbfA2UAB6OITroVVWmv7wQ="; };
+    # powered off nights and weekends: an absent cache costs every path lookup the connect timeout, so nobody asks it
+    msi-ms7758 = { address = "192.168.10.235"; publicKey = "msi-ms7758-store-1:xIr/Ee7u3rhCm4bhycovNFbfA2UAB6OITroVVWmv7wQ="; sleeps = true; };
   };
-  peers = lib.attrValues (removeAttrs caches [ host ]);
+  peers = lib.filter (c: !(c.sleeps or false)) (lib.attrValues (removeAttrs caches [ host ]));
 
   rules = mkDualBackendFirewall {
     nftComment = "The store cache answers the LAN only.";
@@ -52,7 +53,7 @@ in
     nix.settings = {
       substituters = map (c: "http://${c.address}:${toString port}") peers;
       trusted-public-keys = map (c: c.publicKey) peers;
-      # msi sleeps at night: give up on an absent cache quickly and build
+      # a peer that is rebooting: give up quickly and build
       connect-timeout = 3;
       fallback = true;
       # the default hour hides a path a neighbour built a minute after it was asked for
