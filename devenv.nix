@@ -123,8 +123,9 @@ let
   # Runs the gate on the PUSHED commit in a throwaway worktree, so neither
   # unstaged edits nor a different checked-out branch can make it pass.
   # prek exposes only the first ref of a multi-ref push. A push that changes only
-  # documentation since origin/main gets the lints; no merge-base means the full gate,
-  # and so does a doc a test reads (scripts/test-* names it: docs/ssh-host-keys.md).
+  # documentation (docs/ or a top-level *.md) since origin/main gets the lints; no
+  # merge-base means the full gate, and so does a doc a test reads (scripts/test-*
+  # names it: docs/ssh-host-keys.md) and a nested *.md, which can be deployed config.
   qaPush = gate "nixos-qa-push" (with pkgs; [ git coreutils gnugrep ]) ''
     rev=''${PRE_COMMIT_TO_REF:-HEAD}
     case $rev in 0000000000000000000000000000000000000000) exit 0 ;; esac
@@ -135,7 +136,7 @@ let
     # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
     # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
     if base=$(git merge-base HEAD origin/main) && changed=$(git diff --no-renames --name-only "$base" HEAD) \
-      && ! grep -qvE '^docs/|\.md$' <<<"$changed" && ! grep -rqF -f - --include='test-*' scripts <<<"$changed"; then
+      && ! grep -qvE '^docs/|^[^/]+\.md$' <<<"$changed" && ! grep -rqF -f - --include='test-*' scripts <<<"$changed"; then
       echo "nixos-qa: $(git rev-parse --short HEAD) changes only documentation since origin/main, lints only"
       ${run lints}
       exit
