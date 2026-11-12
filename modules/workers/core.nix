@@ -455,15 +455,16 @@ in
 
     # Root, so that the owner's own user, which agents run as, cannot write the seed; world-readable, for the guests' ids to copy.
     # Rebuilt from nothing each time and swapped in by rename. The timer also fires a minute after a switch that changes the
-    # refs, so the first seed does not wait a week and the switch never waits for a fetch.
+    # refs, and at boot: pinned refs do not change, so there is no periodic refetch, and the switch never waits for a fetch.
     (lib.mkIf (cfg.instances != { } && cfg.fetchSeed != [ ]) {
       systemd.timers.dev-env-fetch-seed = {
         wantedBy = [ "timers.target" ];
         unitConfig.X-Refs = builtins.hashString "sha256" (builtins.toJSON cfg.fetchSeed);
-        timerConfig = { OnActiveSec = "1min"; OnBootSec = "5min"; OnUnitActiveSec = "1w"; };
+        timerConfig = { OnActiveSec = "1min"; OnBootSec = "5min"; };
       };
       systemd.services.dev-env-fetch-seed = {
         description = "Fetch the pinned inputs a new rootInGuest environment starts its nix cache from";
+        restartIfChanged = false;
         path = [ config.nix.package pkgs.coreutils ];
         serviceConfig = {
           Type = "oneshot";
@@ -474,10 +475,11 @@ in
           rm -rf "$seed"/.new.*
           new=$(mktemp -d "$seed"/.new.XXXXXX)
           trap 'rm -rf "$new"' EXIT
-          # prefetch does not enforce a narHash in the ref (a wrong one exits 0): compare it with what came
+          # prefetch does not enforce a narHash in the ref (a wrong one exits 0): compare it with what came. A failed fetch is
+          # logged and keeps the previous seed; it is retried at boot and when the refs change, not by a failed unit.
           for ref in ${lib.escapeShellArgs cfg.fetchSeed}; do
-            out=$(XDG_CACHE_HOME=$new nix flake prefetch --json "$ref")
-            [[ $out =~ \"hash\":\"([^\"]+)\" && ''${BASH_REMATCH[1]} == "''${ref##*narHash=}" ]] || { echo "$ref: fetched $out" >&2; exit 1; }
+            out=$(XDG_CACHE_HOME=$new nix flake prefetch --json "$ref") || true
+            [[ $out =~ \"hash\":\"([^\"]+)\" && ''${BASH_REMATCH[1]} == "''${ref##*narHash=}" ]] || { echo "dev-env-fetch-seed: $ref: fetched '$out', keeping the previous seed" >&2; exit 0; }
           done
           chmod -R a+rX "$new"/nix
           [[ ! -e $seed/nix ]] || mv -T "$seed"/nix "$new"/old

@@ -662,7 +662,7 @@ def check_bounded():
 
 SEED_CASE = ('{ services.devEnvironments.fetchSeed = [ "github:o/r/abc?narHash=sha256-AAAA" "github:o/s/def?narHash=sha256-BBBB" ];'
              ' services.devEnvironments.instances.rg.rootInGuest = true; nix.settings.allowed-users = [ "alice" ]; }')
-SEED = ('{ svc = { inherit (sys.config.systemd.services.dev-env-fetch-seed) script serviceConfig; wantedBy = sys.config.systemd.services.dev-env-fetch-seed.wantedBy; };'
+SEED = ('{ svc = { inherit (sys.config.systemd.services.dev-env-fetch-seed) script serviceConfig; inherit (sys.config.systemd.services.dev-env-fetch-seed) wantedBy restartIfChanged; };'
         ' timer = sys.config.systemd.timers.dev-env-fetch-seed.timerConfig; refs = sys.config.services.devEnvironments.fetchSeed;'
         ' act = sys.config.system.activationScripts.devEnvironments.text; stateDir = sys.config.services.devEnvironments.stateDir; }')
 
@@ -676,8 +676,9 @@ def check_seed():
     seed = f"{got.get('stateDir')}/.fetch-seed"
     timer = got.get("timer", {})
     check("User" not in cfg and "DynamicUser" not in cfg and cfg.get("ProtectHome") is True and cfg.get("ReadWritePaths") == [seed]
-          and "OnActiveSec" in timer and "OnUnitActiveSec" in timer and got.get("refs") and svc.get("wantedBy") == [],
-          f"the seed is fetched by the unit's own identity (root, not the host user), sandboxed, from a timer that also fires after a change of refs ({cfg}, {timer})")
+          and "OnActiveSec" in timer and "OnBootSec" in timer and "OnUnitActiveSec" not in timer and got.get("refs") and svc.get("wantedBy") == []
+          and svc.get("restartIfChanged") is False,
+          f"the seed is fetched by the unit's own identity (root, not the host user), sandboxed, from a timer that fires at boot and after a change of refs only, never restarted by a switch ({cfg}, {timer})")
     off = nix_eval('{ services.devEnvironments.instances.rg.rootInGuest = true; nix.settings.allowed-users = [ "alice" ]; }', SEED)
     check("fetch-seed" not in (json.loads(off.stdout).get("act", "x") if off.returncode == 0 else "x"), "with no refs there is no seed directory and no copy")
     # the script, for real, with a stub nix that prints the hash it was asked for (or another)
@@ -705,8 +706,9 @@ def check_seed():
         second = run(GEN="two")
         bad = run(GEN="three", BAD="1")
         leftovers = [p.name for p in (d / "seed").iterdir() if p.name.startswith(".new")]
-        check(first.returncode == 0 and seeded == "one" and second.returncode == 0 and bad.returncode != 0 and gen("nix") == "two" and not leftovers,
-              f"the seed is rebuilt from nothing and swapped in, and a hash that differs ends the run with the seed as it was "
+        check(first.returncode == 0 and seeded == "one" and second.returncode == 0 and bad.returncode == 0 and "keeping the previous seed" in bad.stderr
+              and gen("nix") == "two" and not leftovers,
+              f"the seed is rebuilt from nothing and swapped in, and a hash that differs is logged and ends the run, successfully, with the seed as it was "
               f"({first.returncode}, {seeded}, {bad.returncode}, {gen('nix')}, {leftovers}, {bad.stderr.strip()[-120:]})")
 
 

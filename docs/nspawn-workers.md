@@ -125,7 +125,7 @@ it again with a fresh allowance; by hand, `systemctl reset-failed container@<n>`
 A new `rootInGuest` environment starts with an empty `~/.cache/nix` (its own, as the shared one cannot cross uid
 ranges), so its first `devenv shell` fetched every input again (about 20 s). `fetchSeed` lists locked flake refs
 (the fleet uses the github inputs of this repo's `devenv.lock`); a root service fetches them, checking each hash, into
-a seed only it can write, a minute after a switch that changes the list and weekly. When activation first makes an
+a seed only it can write, at boot and a minute after a switch that changes the list; a failed fetch is logged and keeps the previous seed. When activation first makes an
 environment's cache, that environment's own ids copy the seed into a staging directory they own and a rename puts it
 in place; if the copy fails the environment starts with an empty cache.
 
