@@ -168,7 +168,7 @@ let
       credentials = mkOption {
         type = types.nullOr (types.listOf types.str);
         default = null;
-        example = [ "claude_oauth_token" ];
+        example = [ "gh-hosts.yml" ];
         description = "Which of `credentials` this instance gets; null is all of them.";
       };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryLow: kept from reclaim, and what the pool must fit."; };
