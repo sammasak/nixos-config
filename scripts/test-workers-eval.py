@@ -71,6 +71,9 @@ ASSERTED = [
     ("jump prefix", '{ services.devEnvironments.jumpHosts.Far = "box"; }', "jumpHosts.Far: the prefix is"),
     ("guest without sshd", "{ services.devEnvironments.guestModules = [ { services.openssh.enable = lib.mkForce false; } ]; }", "a guest module disabled sshd"),
     ("unknown credential", '{ services.devEnvironments.instances.ok.credentials = [ "nope" ]; }', "credentials names one that"),
+    ("rootInGuest on the default allowed-users", "{ services.devEnvironments.instances.ok.rootInGuest = true; }", "rootInGuest adds its guest user to nix.settings.allowed-users"),
+    ("rootInGuest without a gid", '{ services.devEnvironments.instances.ok.rootInGuest = true; nix.settings.allowed-users = [ "alice" ]; users.groups.users.gid = lib.mkForce null; }',
+     "rootInGuest maps alice's group users, which declares no gid"),
     ("credential name", '{ services.devEnvironments.credentials."a b" = "/etc/x"; }', 'credentials.a b: a file name'),
 ]
 
@@ -126,19 +129,26 @@ in {
 # files; the assertions ride along so one evaluation serves both checks
 FLEET_FACTS = r"""
 let
-  c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config;
+  c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { prompt = builtins.fromJSON ''%(prompt)s''; }; } ]; }).config;
   g = c.containers.t.config;
   d = builtins.unsafeDiscardStringContext;
+  ex = c.systemd.services."worker-herdr-t".serviceConfig.ExecStart;
 in {
   assertions = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
   managed = d g.environment.etc."claude-code/managed-settings.json".text;
   containers = d (builtins.readFile g.environment.etc."containers/containers.conf".source);
   storage = d (builtins.readFile g.environment.etc."containers/storage.conf".source);
   hostUntouched = !(c.environment.etc ? "claude-code/managed-settings.json") && !c.virtualisation.podman.enable;
+  subs = { host = c.nix.settings.substituters; guest = g.nix.settings.substituters; };
+  keys = { host = c.nix.settings.trusted-public-keys; guest = g.nix.settings.trusted-public-keys; };
+  free = { min = c.nix.settings.min-free; max = c.nix.settings.max-free; };
+  hook = builtins.readFile (builtins.appendContext (builtins.head (builtins.match "(.*) start" (d ex))) (builtins.getContext ex));
   evalCache = builtins.filter (n: builtins.match ".*/eval-cache.*" n != null) (builtins.attrNames c.containers.t.bindMounts);
   nixDrv = g.nix.package.drvPath;
   gcroots = d c.systemd.services.dev-environments-gcroots.script;
   stateDir = c.services.devEnvironments.stateDir;
+  gcTimer = c.systemd.timers.dev-environments-gcroots.timerConfig;
+  gcUnit = { inherit (c.systemd.services.dev-environments-gcroots) before requiredBy; };
   alert = d (builtins.readFile c.services.devEnvironments.alert);
   onFailure = { container = c.systemd.services."container@t".onFailure; egress = c.systemd.services.dev-env-egress.onFailure or null; };
   rm = map (x: { deny = x.home-manager.users.lukas.programs.claude-code.settings.permissions.deny; claude = x.home-manager.users.lukas.programs.claude-code.package.version;
@@ -229,13 +239,29 @@ def nix_string(s):
 
 
 GUEST = "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; channel = g.nix.channel.enable; registry = g.nix.settings.flake-registry; }"
+# two instances with rootInGuest next to one without: uid blocks, binds, host keys, mounts, the daemon's users
+ROOT_IN_GUEST_CASE = '{ services.devEnvironments.instances = { r.rootInGuest = true; s.rootInGuest = true; }; nix.settings.allowed-users = [ "alice" ]; }'
+ROOT_IN_GUEST = ('{ allowed = sys.config.nix.settings.allowed-users; trusted = sys.config.nix.settings.trusted-users or [ ]; '
+                 'mounts = builtins.mapAttrs (_: f: f.options) (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); '
+                 'pre = builtins.listToAttrs (map (n: { name = n; value = sys.config.systemd.services."container@${n}".serviceConfig.ExecStartPre; }) [ "r" "s" "ok" ]); '
+                 'act = sys.config.system.activationScripts.devEnvironments.text; ssh = sys.config.programs.ssh.extraConfig; } // ('
+                 'let f = n: let c = sys.config.containers.${n}; in { inherit (c) privateUsers extraFlags; '
+                 'binds = map (b: { src = b.hostPath; dst = b.mountPoint; ro = b.isReadOnly; }) (builtins.attrValues c.bindMounts); '
+                 'sudoPassword = c.config.security.sudo.wheelNeedsPassword; sub = c.config.users.users.alice.subUidRanges; }; in { r = f "r"; s = f "s"; ok = f "ok"; })')
+NONE_DECLARED = "{ services.devEnvironments.instances = lib.mkForce { }; }"
+NO_ROOT = ('{ allowed = sys.config.nix.settings.allowed-users; '
+           'mounts = builtins.mapAttrs (_: f: f.options) (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); '
+           'nosuid = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); }')
 # what a job in the guest can read of its limits, next to the host-side values they must equal
 LIMITS = ('{ text = sys.config.containers.ok.config.environment.etc."dev-environment".text; '
           'swap = sys.config.systemd.slices.environments.sliceConfig.MemorySwapMax; inherit (sys.config.nix.settings) max-jobs cores; }')
 
 
+PROMPT = 'Use $HOME and "$(date)" and `id`, \'single\', a\\b, $$ and a trailing $'
+
+
 def fleet(case, template=FLEET):
-    return template % {"root": json.dumps(ROOT), "case": case}
+    return template % {"root": json.dumps(ROOT), "case": case, "prompt": json.dumps(PROMPT)}
 
 
 # (method, path, allowed) against the repository o/r.s; allowed requests reach the dead upstream and fail with 502, the rest are 403
@@ -352,6 +378,18 @@ def check_gcroots(facts):
         rooted = sorted(p.name for p in (roots / "n").glob("overlay-*"))
         check(run.returncode == 0 and rooted == [f"overlay-{store.name}"] and not (roots / "n" / "overlay-zzz-gone").exists(),
               f"a path an overlay instance's db refers to is rooted when it exists on the host, and its stale root is dropped ({run.returncode}, {rooted}, {run.stderr.strip()[-200:]})")
+        # a path only a root of the guest daemon holds, through an out-link in the guest's home, is rooted too
+        nix.joinpath("nix").write_text("#!/bin/sh\nprintf '%s\\n' /nix/store/zzz-gone\n")
+        guest_home = re.search(r"case \$t in (/home/[^/\s]+)/\*\)", facts["gcroots"]).group(1)
+        (state / "n" / "home" / "result").symlink_to(store)
+        (state / "n" / "store" / "state" / "gcroots" / "auto").mkdir(parents=True)
+        (state / "n" / "store" / "state" / "gcroots" / "auto" / "x").symlink_to(f"{guest_home}/result")
+        for old in (roots / "n").glob("overlay-*"):
+            old.unlink()
+        run = refresh(f"{nix}:{os.environ['PATH']}")
+        rooted = sorted(p.name for p in (roots / "n").glob("overlay-*"))
+        check(run.returncode == 0 and rooted == [f"overlay-{store.name}"],
+              f"a store path held by the guest daemon's root through a link in its home is rooted on the host ({run.returncode}, {rooted}, {run.stderr.strip()[-200:]})")
 
 
 ACT = "{ inherit (sys.config.services.devEnvironments) stateDir; text = sys.config.system.activationScripts.devEnvironments.text; }"
@@ -416,11 +454,17 @@ def check_activation():
             fresh_state()
             rc, tree, err = run("fresh")
             want = {"": None, ".nix-cache": ("700", "1000:100"), "ssh_host_ed25519_key": ("600", None), "known_hosts": ("644", None),
-                    "ok": ("700", "0:0"), "ok/home": ("700", "1000:100"), "ok/home/.cache": ("755", "1000:100"), "ok/eval-cache": ("700", "1000:100")}
+                    "ok": ("700", "0:0"), "ok/home": ("700", "1000:100"), "ok/home/.cache": ("755", "1000:100"), "ok/eval-cache": ("700", "1000:100"),
+                    "ok/.id-base": ("644", "0:0")}
             bad = [p for p, w in want.items() if p and (p not in tree or any(x is not None and x != y for x, y in zip(w, tree[p])))]
             check(rc == 0 and not bad, f"a fresh host's activation exits 0 and leaves each directory with its mode and owner (rc {rc}, wrong {bad}, {err.strip()[-300:]})")
             rc2, tree2, err2 = run("fresh")
             check(rc2 == 0 and tree2 == tree, f"a second activation changes nothing and exits 0 (rc {rc2}, {err2.strip()[-300:]})")
+            # dirs that exist are left as they are: owner, mode and the block their home was made in
+            userns("sh", "-c", f"chmod 0750 {state}/files/ok/eval-cache && chown 1001:100 {state}/files/ok/eval-cache && echo 7 > {state}/files/ok/.id-base")
+            rc3, tree3, err3 = run("fresh")
+            check(rc3 == 0 and tree3.get("ok/eval-cache") == ("750", "1001:100") and (state / "files/ok/.id-base").read_text().strip() == "7",
+                  f"activation leaves an existing eval cache and the home's id-base marker alone (rc {rc3}, {tree3.get('ok/eval-cache')}, {err3.strip()[-200:]})")
 
             files = pathlib.Path(fresh_state())
             victim = pathlib.Path(tmp, "victim")
@@ -542,7 +586,7 @@ STORE = ('let g = n: sys.config.containers.${n}.config; in { flags = builtins.ma
          ' optimise = (g "ov").nix.settings.auto-optimise-store; sandbox = (g "ov").nix.settings.sandbox; tier = sys.config.containers.ov.bindMounts ? "/var/lib/dev-environments/ov/store"; daemon = (g "ov").nix.daemon.enable; };'
          ' plain = { store = (g "ok").nix.settings.store or null; daemon = (g "ok").nix.daemon.enable; conf = (g "ok").systemd.services.nix-daemon.environment.NIX_CONFIG or null;'
          ' tier = sys.config.containers.ok.bindMounts ? "/var/lib/dev-environments/ok/store"; };'
-         ' act = builtins.match ".*install -d -m 0755 \\"[^\\"]*/ov/store/upper\\" \\"[^\\"]*/ov/store/state\\".*" sys.config.system.activationScripts.devEnvironments.text != null; }')
+         ' act = builtins.match ".*install -d -m 0755 -o 0 -g 0 [^\\n]*/ov/store/state[^\\n]*.*" sys.config.system.activationScripts.devEnvironments.text != null; }')
 STORE_CASE = '{ services.devEnvironments.instances = { ro.store = "read-only"; ov.store = "overlay"; }; }'
 HIDE = ["--tmpfs=/nix/var/nix/daemon-socket", "--tmpfs=/nix/var/nix/temproots:mode=1777"]
 
@@ -563,6 +607,70 @@ def check_store():
           and "state=/var/lib/dev-environments/ov/store/state" in conf and "local-overlay-store" in ov.get("features", []) and ov.get("optimise") is False and ov.get("sandbox") is False
           and ov.get("tier") is True and ov.get("daemon") is True and got.get("act") is True,
           f"an overlay instance's own daemon opens a local-overlay store over the read-only host store, without auto-optimise or a build sandbox (no /proc in a nested namespace), the tier bound and created ({ov}, {got.get('act')})")
+
+
+def check_restart_notice(facts):
+    block = facts.get("hook", "").split("[[ $mode == continue ]]; then", 1)[-1].split("\n          else", 1)[0]
+    sent, marked = block.find("send "), block.rfind("restart-notice-$label")
+    check("systemctl show --property=InvocationID --value container@t.service" in block and '!= "$inv"' in block and 0 < sent < marked,
+          f"the restart notice is sent once per start of the container and recorded after the send ({block[:400]})")
+
+
+CTL = (r'let w = builtins.head (builtins.filter (p: builtins.match ".*-ok" (p.name or "") != null) sys.config.environment.systemPackages); in { drv = w.drvPath; name = w.name; }')
+STUB_SSH = ('{ nixpkgs.overlays = [ (_: prev: { openssh = prev.writeShellScriptBin "ssh" \'\'case "$*" in *"systemctl show"*) printf "%s\\n" "$HM_STATE";; esac\'\'; }) ]; }')
+
+
+def check_hygiene(facts):
+    """Each cache and key once, a floor under the free space, a prompt kept as data, a session that needs the home setup."""
+    for what in ("subs", "keys"):
+        lists = facts.get(what, {})
+        check(lists and all(len(v) == len(set(v)) and sum("cache.nixos.org" in x for x in v) == 1 for v in lists.values()),
+              f"the host's and a guest's {what} list each entry once, cache.nixos.org once ({lists})")
+    for what in ("subs", "keys"):
+        lists = facts.get(what, {})
+        lan = "http://192.168." if what == "subs" else "-store-1:"
+        check(lists.get("host") and lists.get("guest") == lists.get("host") and any(lan in x for x in lists["host"]),
+              f"a guest's {what} equal the host's and include the LAN store cache ({lan}) ({lists})")
+    free = facts.get("free", {})
+    check(free.get("min", 0) >= 10 * 2**30 and free.get("max", 0) > free.get("min", 0), f"a runtime host collects garbage under a free-space floor ({free})")
+    hook = facts.get("hook", "")
+    prompt_file = re.search(r'send "\$\(< (/nix/store/\S+-t-prompt)\)"', hook)
+    check(prompt_file is not None and pathlib.Path(prompt_file.group(1)).read_text() == PROMPT and "wait || true" not in hook,
+          f"the prompt reaches the session script as a file, byte for byte, and a failed wait ends the start ({prompt_file and prompt_file.group(1)})")
+    out = nix_eval(STUB_SSH, CTL)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    real = subprocess.run(["nix-store", "--realise", got.get("drv", "")], capture_output=True, text=True)
+    exe = pathlib.Path(real.stdout.split()[0]) / "bin" / got.get("name", "") if real.returncode == 0 and got else None
+    if exe is None:
+        check(False, f"the instance's control script builds with a stub ssh ({out.stderr.strip()[-300:]})")
+        return
+    for state, code, still in (("LoadState=loaded\nActiveState=active", 0, False), ("LoadState=loaded\nActiveState=failed", 2, False),
+                               ("LoadState=not-found\nActiveState=inactive", 0, False), ("LoadState=loaded\nActiveState=activating", 1, True),
+                               ("LoadState=loaded\nActiveState=inactive", 1, False)):
+        run = subprocess.run([str(exe), "wait"], capture_output=True, text=True, env={**os.environ, "HM_STATE": state, "WORKER_WAIT_TICK": "0"})
+        check(run.returncode == code and (code != 2 or "home-manager-" in run.stderr) and (("still activating" in run.stderr) == still),
+              f"wait with the home setup {state.splitlines()[-1]} exits {code}{', saying it is still activating' if still else ''} ({run.returncode}, {run.stderr.strip()[-100:]})")
+    gc = facts.get("gcTimer", {})
+    check(gc.get("OnBootSec") and gc.get("OnUnitActiveSec") == "15min" and facts.get("gcUnit") == {"before": ["nix-gc.service"], "requiredBy": ["nix-gc.service"]},
+          f"the gc-roots unit runs at boot and every 15 min and still runs before nix-gc ({gc}, {facts.get('gcUnit')})")
+
+
+RV_CASE = '{ services.devEnvironments.instances.rv = { rootInGuest = true; store = "overlay"; }; }'
+RV = ('let c = sys.config.containers.rv; in { users = c.privateUsers; flags = c.extraFlags; act = sys.config.system.activationScripts.devEnvironments.text;'
+      ' binds = map (b: { src = b.hostPath; dst = b.mountPoint; ro = b.isReadOnly; }) (builtins.attrValues c.bindMounts); stateDir = sys.config.services.devEnvironments.stateDir; }')
+
+
+def check_rv_tier():
+    """An overlay tier of a rootInGuest instance is owned by the guest root's mapped id, made only when missing, bound plain."""
+    out = nix_eval(RV_CASE, RV)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    base = got.get("users")
+    tier = f"{got.get('stateDir')}/rv/store"
+    line = f'[[ -d $d/rv/store/upper ]] || install -d -m 0755 -o {base} -g {base} "$d/rv/store" "$d/rv/store/upper" "$d/rv/store/state"'
+    tier_bind = [b for b in got.get("binds", []) if b["src"] == tier]
+    check(isinstance(base, int) and line in got.get("act", "") and tier_bind == [{"src": tier, "dst": tier, "ro": False}]
+          and "--private-users-ownership=auto" in got.get("flags", []) and f"--overlay=/nix/store:{tier}/upper:/nix/store" in got.get("flags", []),
+          f"a rootInGuest overlay tier belongs to the mapped guest root {base}, is made only when missing, is a plain bind under the instance directory ({tier_bind}, {got.get('flags')})")
 
 
 def check_nested(facts):
@@ -602,6 +710,40 @@ def check_no_verify():
              "git commit --no-verify -m x": 0}
     got = {c: subprocess.run([guard], input=json.dumps({"tool_input": {"command": c}}), capture_output=True, text=True).returncode for c in cases}
     check(got == cases, f"the guard denies (exit 2) a push that skips the pre-push gate, and nothing else ({got})")
+
+
+# the start check run for real against marker files: the block an instance's dirs were made in must be its own
+IDCHECK_BUILD = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t.rootInGuest = true; } ]; }).config;
+in flake.nixosConfigurations.msi-ms7758.pkgs.writeText "pre" (builtins.concatStringsSep "\n" c.systemd.services."container@t".serviceConfig.ExecStartPre)
+"""
+
+
+def check_id_check():
+    out = subprocess.run(["nix", "build", "--impure", "--no-link", "--print-out-paths", "--expr", IDCHECK_BUILD % {"root": json.dumps(ROOT)}],
+                         capture_output=True, text=True)
+    pre = pathlib.Path(out.stdout.strip()).read_text() if out.returncode == 0 else ""
+    exe = next((w for w in pre.split() if w.endswith("-dev-env-id-check")), None)
+    if exe is None:
+        check(False, f"the id check is in the container's ExecStartPre ({pre or out.stderr.strip()[-300:]})")
+        return
+    base = "1885143040"
+    with tempfile.TemporaryDirectory() as t:
+        def run(marker, want):
+            d = pathlib.Path(t, f"{marker}-{want}")
+            (d / "home").mkdir(parents=True)
+            if marker is not None:
+                (d / ".id-base").write_text(marker + "\n")
+            return subprocess.run([exe, str(d), want], capture_output=True, text=True)
+        cases = {"match": run(base, base), "mismatch": run("0", base), "plain, no marker": run(None, "0"), "plain, empty marker": run("", "0"),
+                 "rootInGuest, home without marker": run(None, base), "plain on a rootInGuest home": run(base, "0")}
+    got = {k: r.returncode for k, r in cases.items()}
+    msg = all("rootInGuest was toggled on an existing environment; retire it (or declare it under a new name)" in cases[k].stderr
+              for k in ("mismatch", "rootInGuest, home without marker", "plain on a rootInGuest home"))
+    check(got == {"match": 0, "mismatch": 1, "plain, no marker": 0, "plain, empty marker": 0, "rootInGuest, home without marker": 1, "plain on a rootInGuest home": 1} and msg,
+          f"a container starts only on dirs made in its own id block, and otherwise says to retire or rename it ({got})")
 
 
 def check_scripts():
@@ -660,7 +802,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr(STORE_CASE, STORE), stub_expr("{ }", LIMITS), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr(STUB_SSH, CTL), stub_expr(STORE_CASE, STORE), stub_expr(RV_CASE, RV), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -670,6 +812,52 @@ def main():
     check(got.get("channel") is False and len(got.get("nixPath", [])) == 1 and got["nixPath"][0].startswith("nixpkgs=/nix/store/")
           and got.get("registry") == "",
           f"a guest resolves <nixpkgs> to the store's nixpkgs, with no channels or global registry to fetch ({got or out.stderr.strip()[-300:]})")
+    out = nix_eval(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    r, s_, ok = got.get("r", {}), got.get("s", {}), got.get("ok", {})
+    sub = (r.get("sub") or [{}])[0]
+    blocks = [x.get("privateUsers") for x in (r, s_)]
+    check(all(isinstance(b, int) and 0x70000000 <= b < 1 << 31 and b % 65536 == 0 for b in blocks) and blocks[0] != blocks[1]
+          and "--private-users-ownership=auto" in r.get("extraFlags", []) and r.get("sudoPassword") is False
+          and sub.get("startUid", 0) > 1000 and sub.get("startUid", 0) + sub.get("count", 1 << 20) <= 65536,
+          f"two rootInGuest instances get distinct 65536-id blocks from 0x70000000, their root tree mapped, and passwordless sudo with subordinate ids inside the block ({blocks}, {r.get('extraFlags')}, {sub})")
+    binds = {b["dst"].split(":")[0]: b for b in r.get("binds", [])}
+    rw = [b for b in binds.values() if not b["ro"]]
+    key = binds.get("/var/lib/host-credentials/ssh_host_ed25519_key", {})
+    check(rw and not any(":" in b["dst"] for b in rw) and all(b["dst"].endswith(":idmap") for b in binds.values() if b["ro"] and b is not key)
+          and key.get("src", "").endswith("/r/ssh_host_ed25519_key") and ":" not in key.get("dst", ":")
+          and binds.get("/home/alice/.cache/nix", {}).get("src", "").endswith("/r/nix-cache"),
+          f"a rootInGuest instance's writable binds and its own host key are not id-mapped, its read-only ones are, and its nix cache is its own ({sorted((b['src'], b['dst']) for b in binds.values())})")
+    act, ssh = got.get("act", ""), got.get("ssh", "")
+    check(all(f'echo "{n}.environments.box ' in act and f"HostKeyAlias {n}.environments.box" in ssh for n in ("r", "s"))
+          and "HostKeyAlias environments.box" in ssh,
+          f"each rootInGuest instance has its own host key and HostKeyAlias in known_hosts and the ssh config; the others keep the shared one")
+    want_mounts = {"/var/lib/dev-environments": ["bind", "nosuid", "nodev", "x-mount.mkdir"],
+                   "/nix/var/nix/profiles/per-container": ["bind", "nosuid", "nodev", "x-mount.mkdir", "noexec"],
+                   "/nix/var/nix/gcroots/per-container": ["bind", "nosuid", "nodev", "x-mount.mkdir", "noexec"]}
+    check(got.get("mounts") == want_mounts,
+          f"the state dir is bound nosuid,nodev and the per-container profiles and roots nosuid,nodev,noexec, nothing else ({got.get('mounts')})")
+    base = r.get("privateUsers")
+    owners = [(u, g, n, b) for b, n, u, g in re.findall(
+        r'echo (\S+) > "\$d/(r|ok)/\.id-base\.new" && mv -f "\$d/(?:r|ok)/\.id-base\.new" "\$d/(?:r|ok)/\.id-base"\n *install -d -m 0700 -o (\S+) -g (\S+) "\$d/(?:r|ok)/home"', act)]
+    checks = {n: next((c for c in got.get("pre", {}).get(n, []) if "dev-env-id-check" in c), "").split()[1:] for n in ("r", "ok")}
+    check(isinstance(base, int) and sorted(owners) == sorted([(str(base + 1000), str(base + 100), "r", str(base)), ("alice", "users", "ok", "0")])
+          and checks == {"r": ["/var/lib/dev-environments/r", str(base)], "ok": ["/var/lib/dev-environments/ok", "0"]}
+          and "chown -hR" not in act and "dev-env-shift-ids" not in act,
+          f"a rootInGuest home is made with its mapped ids and its block in .id-base, which its container start checks; a plain one with the host's and 0 ({owners}, {checks})")
+    check_id_check()
+    allowed, trusted = got.get("allowed", []), got.get("trusted", [])
+    check(sorted(allowed) == ["alice", "vu-r-1000", "vu-s-1000"] and not any(u.startswith("vu-") for u in trusted),
+          f"the host daemon allows exactly the rootInGuest guests' users, not their root, not the other instance, and trusts none ({allowed}, {trusted})")
+    check(ok.get("privateUsers") == "no" and not ok.get("extraFlags") and ok.get("binds") and not any(":" in b["dst"] for b in ok["binds"]) and ok.get("sudoPassword") is True,
+          f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
+    out = nix_eval("{ }", NO_ROOT)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("allowed") == ["*"] and got.get("mounts") == want_mounts,
+          f"with no rootInGuest instance allowed-users keeps its default, and the nosuid mounts stay as long as the host declares instances ({got or out.stderr.strip()[-300:]})")
+    out = nix_eval(NONE_DECLARED, NO_ROOT)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("nosuid") == [], f"a host that declares no instance and no retired name gets no mount ({got or out.stderr.strip()[-300:]})")
     out = nix_eval("{ }", LIMITS)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     want = {"memory_reserved": str(2 << 30), "pool_memory": str(8 << 30), "pool_swap": str(got.get("swap")), "cpu_weight": "200",
@@ -678,6 +866,7 @@ def main():
     check(have == want, f"/etc/dev-environment gives the guest its reserve, the pool, its CPU weight and the build bounds ({have or out.stderr.strip()[-300:]})")
     check_activation()
     check_store()
+    check_rv_tier()
     check_paused()
     blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
     for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
@@ -707,6 +896,8 @@ def main():
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
     check_nested(facts)
+    check_restart_notice(facts)
+    check_hygiene(facts)
     check_alerts(facts)
     check_eval_cache(facts)
     check_gcroots(facts)

@@ -21,6 +21,25 @@ let
   cidr = types.strMatching "${octet}\\.${octet}\\.${octet}\\.${octet}/([0-9]|[12][0-9]|3[0-2])";
   nameType = types.strMatching "[a-z][a-z0-9-]{0,10}";
   keyAlias = "environments.${cfg.prefix}";
+  # 0x70000000, above nspawn's `pick` range (0x80000 to 0x6fff0000): instance index i (1 to 254) owns the 65536 ids
+  # from uidBase + i * 65536, below 2^31
+  uidBase = 1879048192;
+  baseOf = w: uidBase + w.index * 65536;
+  gid = config.users.groups.${group}.gid;
+  # Under rootInGuest the writable binds are not id-mapped: on disk they belong to the guest user's mapped ids, so guest
+  # root writes as baseOf w, never as a host user; its own host key and alias keep it from posing as another instance.
+  owner = w: if w.rootInGuest then { u = toString (baseOf w + cfg.uid); g = toString (baseOf w + gid); } else { u = user; g = group; };
+  # The block an instance's dirs were made in (0: the host's ids) is written once, with them; an instance whose
+  # rootInGuest changed would start on a home of the other block, so it does not start. Nothing is chowned.
+  idCheck = pkgs.writeShellScript "dev-env-id-check" ''
+    have=$(cat "$1/.id-base" 2>/dev/null || true)
+    [[ ''${have:-0} == "$2" ]] && exit 0
+    echo "''${1##*/}: rootInGuest was toggled on an existing environment; retire it (or declare it under a new name) so it starts from a fresh home" >&2
+    exit 1
+  '';
+  rootOf = w: toString (if w.rootInGuest then baseOf w else 0);
+  aliasOf = w: if w.rootInGuest then "${w.name}.${keyAlias}" else keyAlias;
+  hostKeyOf = w: if w.rootInGuest then "${cfg.stateDir}/${w.name}/ssh_host_ed25519_key" else "${cfg.stateDir}/ssh_host_ed25519_key";
   # a fish single-quoted word reads \\ and \' as escapes, a POSIX one does not
   escape = if cfg.shell == "fish"
     then s: "'" + lib.replaceStrings [ "\\" "'" ] [ "\\\\" "\\'" ] s + "'"
@@ -78,8 +97,8 @@ let
     '';
   };
 
-  hostOptions = { HostKeyAlias = keyAlias; UserKnownHostsFile = "${cfg.stateDir}/known_hosts"; StrictHostKeyChecking = "yes"; LogLevel = "ERROR"; };
-  ssh = w: opts: "ssh ${opts} ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "-o ${k}=${v}") hostOptions)} ${user}@${w.address}";
+  hostOptions = w: { HostKeyAlias = aliasOf w; UserKnownHostsFile = "${cfg.stateDir}/known_hosts"; StrictHostKeyChecking = "yes"; LogLevel = "ERROR"; };
+  ssh = w: opts: "ssh ${opts} ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "-o ${k}=${v}") (hostOptions w))} ${user}@${w.address}";
   # The instance's one entry point on the host: a session surface (or a person) runs `attach` in a terminal.
   ctl = w: pkgs.writeShellApplication {
     name = "${cfg.unitPrefix}-${w.name}";
@@ -87,10 +106,16 @@ let
     text = ''
       case ''${1-} in
         wait)
-          for _ in $(seq 120); do
-            ${ssh w "-o BatchMode=yes -o ConnectTimeout=2"} true 2>/dev/null && exit 0
-            sleep 1
+          for _ in $(seq 300); do
+            if st=$(${ssh w "-o BatchMode=yes -o ConnectTimeout=2"} systemctl show --property=LoadState,ActiveState home-manager-${user}.service 2>/dev/null); then
+              case $st in
+                *LoadState=not-found*|*ActiveState=active*) exit 0 ;;
+                *ActiveState=failed*) echo "home-manager-${user}.service failed in ${w.name}" >&2; exit 2 ;;
+              esac
+            fi
+            sleep "''${WORKER_WAIT_TICK-1}" # overridable so the eval test does not wait 300 s
           done
+          case ''${st-} in *ActiveState=activating*) echo "home-manager-${user}.service is still activating in ${w.name}" >&2 ;; esac
           exit 1 ;;
         resumable)
           ${if w.agentDef == null || w.agentDef.resumeWhen == null then "exit 1"
@@ -120,11 +145,12 @@ let
     "${home}" = { hostPath = "${cfg.stateDir}/${w.name}/home"; isReadOnly = false; };
     # Nix's per-user fetcher and tarball caches, one per host: a fresh home re-downloads and re-unpacks every flake
     # input the store already holds (31 s against 7 s for the first devenv shell on acer).
-    "${home}/.cache/nix" = { hostPath = "${cfg.stateDir}/.nix-cache"; isReadOnly = false; };
+    # rootInGuest: its own, so its root cannot leave entries a neighbour cannot use
+    "${home}/.cache/nix" = { hostPath = if w.rootInGuest then "${cfg.stateDir}/${w.name}/nix-cache" else "${cfg.stateDir}/.nix-cache"; isReadOnly = false; };
     # Not the evaluation cache in it: its rows are unsigned, so a neighbour could plant the derivation another
     # environment then builds. The name is Nix's: workers-eval-test fails when the guest's Nix names it otherwise.
     "${home}/.cache/nix/eval-cache-v6" = { hostPath = "${cfg.stateDir}/${w.name}/eval-cache"; isReadOnly = false; };
-    "${creds}/ssh_host_ed25519_key" = { hostPath = "${cfg.stateDir}/ssh_host_ed25519_key"; isReadOnly = true; };
+    "${creds}/ssh_host_ed25519_key" = { hostPath = hostKeyOf w; isReadOnly = true; };
     "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
   } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; })
     (lib.filterAttrs (n: _: w.credentials == null || lib.elem n w.credentials) cfg.credentials)
@@ -135,7 +161,10 @@ let
     imports = cfg.guestModules ++ map (s: s.guest.config) (egressOf w);
     _module.args.devEnvironment = { inherit (w) name hostName address; };
     # the host user's uid: its credential files and nix daemon identity
-    users.users.${user} = { isNormalUser = true; inherit (cfg) uid; };
+    # sudo is root of this namespace only; subordinate ids must fit the guest's 65536, or rootless podman fails
+    users.users.${user} = { isNormalUser = true; inherit (cfg) uid; } // lib.optionalAttrs w.rootInGuest { extraGroups = [ "wheel" ];
+      autoSubUidGidRange = false; subUidRanges = [ { startUid = 10000; count = 55536; } ]; subGidRanges = [ { startGid = 10000; count = 55536; } ]; };
+    security.sudo.wheelNeedsPassword = lib.mkIf w.rootInGuest false;
     networking.hostName = w.hostName;
     programs.fish.enable = lib.mkIf (cfg.shell == "fish") true;
 
@@ -161,14 +190,13 @@ let
     # The guest's nix is a client of the host's daemon, which takes a client's substituters (when it trusts each of
     # them), max-jobs and cores over its own: the guest's defaults skipped the fleet's store caches and lifted the
     # host's build bounds. An empty flake-registry fetched the global one on every cold cache.
-    nix.settings = { flake-registry = ""; inherit (config.nix.settings) substituters trusted-public-keys max-jobs cores; }
+    # mkForce: the guest's own defaults would list again what the host's already holds
+    nix.settings = { flake-registry = ""; inherit (config.nix.settings) max-jobs cores; substituters = lib.mkForce config.nix.settings.substituters; trusted-public-keys = lib.mkForce config.nix.settings.trusted-public-keys; }
       // lib.optionalAttrs (config.nix.settings ? connect-timeout) { inherit (config.nix.settings) connect-timeout; }
       // lib.optionalAttrs (w.store == "read-only") { store = "local?read-only=true"; experimental-features = [ "read-only-local-store" ]; }
       # the guest's daemon builds in a container: its sandbox needs a /proc a nested namespace cannot mount, and
       # auto-optimise would hard-link into the lower layer
       // lib.optionalAttrs (w.store == "overlay") { experimental-features = [ "local-overlay-store" "read-only-local-store" ]; auto-optimise-store = lib.mkForce false; sandbox = false; };
-
-
     nix.daemon.enable = lib.mkIf (w.store == "read-only") false;
 
     # lean: the boot is the start latency
@@ -253,6 +281,7 @@ let
       paused = mkOption { type = types.bool; default = false; description = "Stopped, its container undeclared: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session."; };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryMin: never reclaimed for a neighbour, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
+      rootInGuest = mkOption { type = types.bool; default = false; description = "Its own 65536 uids (guest root is an unprivileged host uid), its own host key, cache and sshd alias, and passwordless sudo. Only on a fresh instance: an existing one toggled refuses to start."; };
     };
   };
 in
@@ -343,6 +372,12 @@ in
         };
       };
 
+      # Guest root writes as host root where nixpkgs' container module id-maps a writable bind (its per-container
+      # profiles and roots): no setuid or device there, nor in the state dir. Not only while a rootInGuest instance
+      # runs: what one planted would turn live once it is paused; retiring deletes its per-container dirs.
+      fileSystems = lib.mkIf (cfg.instances != { } || cfg.retired != [ ]) (lib.genAttrs [ cfg.stateDir "/nix/var/nix/profiles/per-container" "/nix/var/nix/gcroots/per-container" ]
+        (p: { device = p; fsType = "none"; options = [ "bind" "nosuid" "nodev" "x-mount.mkdir" ] ++ lib.optional (p != cfg.stateDir) "noexec"; }));
+
       # Trashes only what `retired` names: a rollback or an older checkout that lacks an instance just stops it.
       system.activationScripts.devEnvironments = lib.mkIf (cfg.instances != { } || cfg.retired != [ ]) {
         deps = [ "users" ];
@@ -363,25 +398,40 @@ in
           [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
           echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
           chmod 0644 "$d/known_hosts"
-          ${lib.concatMapStrings (w: ''
+          ${lib.concatMapStrings (w: let o = owner w; in ''
             install -d -m 0700 "$d/${w.name}"
-            [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/home"
+            if [[ ! -d $d/${w.name}/home ]]; then
+              echo ${toString (if w.rootInGuest then baseOf w else 0)} > "$d/${w.name}/.id-base.new" && mv -f "$d/${w.name}/.id-base.new" "$d/${w.name}/.id-base"
+              install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/home"
+            fi
             # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
-            mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${user}:${group} "$d/${w.name}/home/.cache" || true
-            install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/eval-cache"
-            ${lib.optionalString (w.store == "overlay") ''install -d -m 0755 "$d/${w.name}/store/upper" "$d/${w.name}/store/state"''}
+            mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
+            [[ -d $d/${w.name}/eval-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
+          '' + lib.optionalString (w.store == "overlay") ''
+            # the guest daemon is the guest's root: the mapped base under rootInGuest, else the host's root
+            [[ -d $d/${w.name}/store/upper ]] || install -d -m 0755 -o ${rootOf w} -g ${rootOf w} "$d/${w.name}/store" "$d/${w.name}/store/upper" "$d/${w.name}/store/state"
+          '' + lib.optionalString w.rootInGuest ''
+            [[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
+            [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
+            chown ${toString (baseOf w)}:${toString (baseOf w)} "$d/${w.name}/ssh_host_ed25519_key"
+            echo "${aliasOf w} $(cut -d' ' -f1,2 "$d/${w.name}/ssh_host_ed25519_key.pub")" >> "$d/known_hosts"
           '') instances}
         '';
       };
     }
 
     # The host's daemon registers an environment's devenv roots under the guest's path, which dangles on the
-    # host: without this the host's collection deletes every environment's built shells.
-    (lib.mkIf (cfg.instances != { } && config.nix.gc.automatic) {
+    # host: without this the host's collection deletes every environment's built shells. The daemon also collects
+    # on its own when min-free is set, so the timer refreshes the roots between the scheduled runs too.
+    (lib.mkIf (cfg.instances != { }) {
+      systemd.timers.dev-environments-gcroots = {
+        wantedBy = [ "timers.target" ];
+        timerConfig = { OnBootSec = "2min"; OnUnitActiveSec = "15min"; };
+      };
       systemd.services.dev-environments-gcroots = {
         description = "Root the developer environments' devenv closures before garbage collection";
-        requiredBy = [ "nix-gc.service" ];
-        before = [ "nix-gc.service" ];
+        requiredBy = lib.optionals config.nix.gc.automatic [ "nix-gc.service" ];
+        before = lib.optionals config.nix.gc.automatic [ "nix-gc.service" ];
         serviceConfig.Type = "oneshot";
         path = [ config.nix.package ];
         script = ''
@@ -402,10 +452,16 @@ in
               ln -sfn "$t" "$roots/.$name" && mv -T "$roots/.$name" "$roots/$name" || rc=1
               keep[$name]=1
             done <<< "$found"
-            # the host paths an overlay instance's own db refers to: collected from under it, its closure would dangle
+            # the host paths an overlay instance's own db refers to, and those its daemon's roots hold through a link in its home:
+            # collected from under it, its closure would dangle
             tier=''${home%/home}/store
             if [[ -d $tier/state/db ]]; then
               lower=$(nix --extra-experimental-features 'nix-command read-only-local-store' path-info --all --store "local?state=$tier/state&read-only=true") || { ok=0; rc=1; }
+              lower+=$'\n'$(while IFS= read -r l; do
+                t=$(readlink "$l") || continue
+                case $t in ${home}/*) t=$home/''${t#${home}/} ;; esac
+                [[ -L $t ]] && readlink "$t"
+              done < <(find "$tier/state/gcroots" -type l 2>/dev/null))
               while IFS= read -r p; do
                 [[ $p == /nix/store/* && $p != *..* && -e $p ]] || continue
                 ln -sfn "$p" "$roots/.overlay-''${p##*/}" && mv -T "$roots/.overlay-''${p##*/}" "$roots/overlay-''${p##*/}" || rc=1
@@ -504,7 +560,17 @@ in
           { assertion = !lib.elem w.name otherHosts && !lib.elem "${w.name}.${cfg.prefix}" otherHosts; message = "${i}: networking.hosts already maps the name to another address."; }
           { assertion = lib.length (lib.filter (d: d ? ${w.name}) options.containers.definitions) == (if w.paused then 0 else 1); message = "${i}: containers.${w.name} is also declared elsewhere."; }
           { assertion = lib.stringLength w.hostName <= 63; message = "${i}: hostname ${w.hostName} is longer than 63."; }
+          { assertion = !w.rootInGuest || gid != null; message = "${i}.rootInGuest maps ${user}'s group ${group}, which declares no gid."; }
+          {
+            assertion = !w.rootInGuest || lib.elem user config.nix.settings.allowed-users || lib.elem "*" config.nix.settings.allowed-users;
+            message = "${i}.rootInGuest adds its guest user to nix.settings.allowed-users, which replaces the default \"*\": list every host user that runs nix there (${user} at least).";
+          }
         ] ++ lib.optional (!w.paused) { assertion = config.containers.${w.name}.config.services.openssh.enable; message = "${i}: a guest module disabled sshd, the only way into it."; }) instances;
+
+      # The daemon sees the guest user as the mapped uid, which machined names vu-<machine>-<uid>; neither guest root nor
+      # a trusted user. Unresolved (machined gone) the daemon compares the bare uid, which matches nothing: it refuses.
+      nix.settings.allowed-users = lib.mkIf (lib.any (w: w.rootInGuest) running)
+        (map (w: "vu-${w.name}-${toString cfg.uid}") (lib.filter (w: w.rootInGuest) running));
 
       containers = lib.listToAttrs (map (w: lib.nameValuePair w.name {
         ephemeral = true;
@@ -512,12 +578,21 @@ in
         privateNetwork = true;
         inherit (w) hostAddress;
         localAddress = w.address;
-        bindMounts = binds w;
-        # nspawn mounts a tmpfs over the start script's own bind of the daemon socket (a tmpfs sorts after a bind of the
-        # same path); nix still needs a place for its temporary roots
-        extraFlags = lib.optionals (w.store != "daemon") [ "--tmpfs=/nix/var/nix/daemon-socket" "--tmpfs=/nix/var/nix/temproots:mode=1777" ]
+        # above nspawn's `pick` range (0x80000 to 0x6fff0000), one 65536 block per index: fixed, so a host check can name it
+        privateUsers = if w.rootInGuest then baseOf w else "no";
+        # A numeric base implies --private-users-ownership=off (only `pick` implies auto): the ephemeral root stays the
+        # host root's, nobody in the guest, and stage 2 can write neither /etc nor /bin. auto id-maps the root, which
+        # needs idmapped-mount support from its filesystem (tmpfs, Linux 6.3 and later), and else chowns it.
+        extraFlags = lib.optional w.rootInGuest "--private-users-ownership=auto"
+          # nspawn mounts a tmpfs over the start script's own bind of the daemon socket (a tmpfs sorts after a bind of the
+          # same path); nix still needs a place for its temporary roots
+          ++ lib.optionals (w.store != "daemon") [ "--tmpfs=/nix/var/nix/daemon-socket" "--tmpfs=/nix/var/nix/temproots:mode=1777" ]
           # a bind sorts before an overlay of the same path too: the host store, read-only, is the lower layer
           ++ lib.optional (w.store == "overlay") "--overlay=/nix/store:${tier w}/upper:/nix/store";
+        # Only read-only binds are id-mapped (identity: host 1000 is guest 1000); the host key is the guest root's own.
+        bindMounts = lib.mapAttrs (n: b: b // lib.optionalAttrs (w.rootInGuest && b.isReadOnly && n != "${creds}/ssh_host_ed25519_key") {
+          mountPoint = "${n}:idmap";
+        }) (binds w);
         config = guest w;
       }) running);
 
@@ -554,6 +629,7 @@ in
               "-${pkgs.writeShellScript "worker-wait-resolv-conf" ''
                 for _ in {1..30}; do ${pkgs.gnugrep}/bin/grep -q ^nameserver /etc/resolv.conf && exit; ${pkgs.coreutils}/bin/sleep 1; done
               ''}"
+              "${idCheck} ${cfg.stateDir}/${w.name} ${toString (if w.rootInGuest then baseOf w else 0)}"
             ];
           };
         })
@@ -585,6 +661,7 @@ in
           # a restart would kill the running agent (its ssh): a deploy that only changes the surface leaves it be,
           # and a restart of the container brings it back
           restartIfChanged = false;
+          onFailure = lib.optional (cfg.alert != null) "dev-env-alert@%n.service";
           serviceConfig = {
             # simple, not oneshot: a deploy that adds an instance does not wait for its agent to come up
             Type = "simple";
@@ -592,6 +669,7 @@ in
             User = user;
             # at a cold boot the user's session server can come up after the start gave up waiting for it
             Restart = "on-failure";
+            RestartPreventExitStatus = 2; # the guest's home setup failed: a retry would start the agent on a first-run screen
             RestartSec = 10;
             ExecStart = "${lib.getExe surface} start";
             ExecStop = "${lib.getExe surface} stop";
@@ -647,7 +725,7 @@ in
       programs.ssh.extraConfig = lib.concatMapStrings (w: ''
         Host ${w.name} ${w.name}.${cfg.prefix}
           User ${user}
-      '' + lib.concatStrings (lib.mapAttrsToList (k: v: "  ${k} ${v}\n") hostOptions)) instances;
+      '' + lib.concatStrings (lib.mapAttrsToList (k: v: "  ${k} ${v}\n") (hostOptions w))) instances;
     })
 
     {
@@ -690,13 +768,13 @@ in
           && lib.elem host (lib.concatMap (k: k.hostNames) (lib.attrValues config.programs.ssh.knownHosts));
         message = "services.devEnvironments.jumpHosts.${prefix}: the prefix is [a-z][a-z0-9-]*, and ${host} must be pinned in programs.ssh.knownHosts.";
       }) cfg.jumpHosts;
-      # The environments' key is generated on their host, so it cannot be pinned here: it is trusted on first use,
-      # over a jump through the pinned host, and kept apart from known_hosts.
+      # The environments' keys are generated on their host, so they cannot be pinned here: each name's is trusted on
+      # first use, over a jump through the pinned host, kept apart from known_hosts. One entry per name, not one alias
+      # per host: a rootInGuest instance has a key of its own, which this host cannot know of.
       programs.ssh.extraConfig = lib.concatStrings (lib.mapAttrsToList (prefix: host: ''
         Host *.${prefix}
           ProxyJump ${host}
           User ${user}
-          HostKeyAlias environments.${prefix}
           UserKnownHostsFile ~/.ssh/known_hosts_environments
           StrictHostKeyChecking accept-new
           ConnectTimeout 10

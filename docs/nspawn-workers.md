@@ -33,6 +33,7 @@ sam.workers.instances = {
 | `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it |
 | `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
+| `rootInGuest` | `false` | its own 65536 uids (`--private-users`): guest root is an unprivileged host uid, and the user gets passwordless sudo. Its home and caches are owned on disk by its mapped ids (not id-mapped), so the option needs a fresh instance: an existing environment toggled either way refuses to start until it is retired or declared under a new name, it has its own sshd key and HostKeyAlias `<name>.environments.<prefix>`, and the state dir and per-container profiles and roots are mounted nosuid. Ran on msi (root1, root2) |
 
 Host-wide: `sam.workers.pool.memory` (below) and `sam.workers.ntfyUrl` (null, or the ntfy topic that hears of failures, see Alerts).
 
@@ -80,7 +81,7 @@ neighbour was reclaimed to 59M.
 | Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
 | First use of a repo | clone, `devenv shell` | 25 s (skills), 32 s (herman): evaluation only, every store path comes from the host's store; 0.1 to 0.3 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
-| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so and re-checks its work. msi tells its agents at 20:40 (`sam.workers.shutdownNotice`) to push before the 21:00 poweroff |
+| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so, once per start of the container, and re-checks its work. msi tells its agents at 20:40 (`sam.workers.shutdownNotice`) to push before the 21:00 poweroff |
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
@@ -96,8 +97,10 @@ daemon, so anything one environment or the host built is there for the next.
 The host's weekly/monthly collection would not see an environment's devenv
 roots (the daemon records them under the guest's path), so
 `dev-environments-gcroots` roots them from each home right before `nix-gc`
-(only `nix-gc.service` runs it; it searches the whole home, pruning
-`node_modules`, `target` and `.git`).
+(it searches the whole home, pruning `node_modules`, `target` and `.git`).
+A timer also runs it at boot and every 15 minutes, because the daemon collects
+by itself once `min-free` is set; a path a guest built within the last interval
+is the remaining exposure.
 
 Across hosts, lenovo, acer and msi each serve their store to the LAN as a
 binary cache (`modules/core/store-cache.nix`, harmonia on port 5000) and
@@ -137,7 +140,7 @@ cover it). Its address and ssh alias stay too. Its
 the container starts and the agent is relaunched with `--continue` because the
 transcript is still there. A stop kills what the agent was doing like a reboot
 does: a tool call in flight is cut off (the transcript then ends in a tool use
-without a result) and the resumed agent is told that whatever ran in the
+without a result) and the resumed agent is told, once per start of the container, that whatever ran in the
 environment was killed. There is no shutdown notice on a pause; send the agent
 a "push your work" message first if it holds unpushed commits. A deploy that fails and is rolled back leaves the instance it stopped down until the next successful deploy.
 
@@ -151,6 +154,19 @@ of a PV or namespace meets validate-bash and Kyverno, and a guest has no kubecon
 gate (`--no-verify`, `-c core.hooksPath=`) meets the guests' own `no-verify-guard` PreToolUse hook, beside
 validate-bash in the same Bash hook list, which denies with exit 2 and never asks (an asking hook would turn the
 variable off for removals). The remote has no ruleset yet.
+
+### Guest root and the host
+
+nixpkgs' container module binds `/nix/var/nix/{profiles,gcroots}/per-container/<name>` read-write with an identity
+idmap, so guest root there can create files owned by any host uid below 65536, root included. Both parents are
+mounted `nosuid,nodev,noexec` (the state dir `nosuid,nodev`) on every host that declares instances or retired names,
+whether or not one runs with `rootInGuest`, so such a file stays inert after its instance is paused; retiring an
+instance deletes its per-container dirs; the host's root
+readers there only follow links (the daemon's root scan, the gcroots unit's `ln -sfn` and `mv -T`), and what is left
+is a disk-filling the guest already has through the daemon. Homes are never moved between id blocks: `<stateDir>/<name>/.id-base`, written with the home, must match the instance's block for its container to start. From another host, `ssh <name>.<prefix>` trusts each name's key on first use
+(`~/.ssh/known_hosts_environments`), so a `rootInGuest` instance's own key is accepted there too. A `rootInGuest` name retired and
+declared again gets a new key and is refused until `ssh-keygen -R <name>.<prefix> -f ~/.ssh/known_hosts_environments`;
+plain instances share the host's one environment key, so theirs does not change.
 
 ## What fails at build
 

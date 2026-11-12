@@ -53,7 +53,7 @@ let
 
   hook = w: pkgs.writeShellApplication {
     name = "worker-herdr-${w.name}";
-    runtimeInputs = [ pkgs.coreutils pkgs.herdr pkgs.jq ];
+    runtimeInputs = [ pkgs.coreutils pkgs.herdr pkgs.jq config.systemd.package ];
     text = ''
       label=${w.name}
       close() {
@@ -68,7 +68,7 @@ let
         (( ++n < 60 )) || exit 1
         sleep 1
       done
-      ${w.ctl} wait || true
+      ${w.ctl} wait
       mode="fresh"
       if ${w.ctl} resumable; then mode="continue"; fi
       close
@@ -89,10 +89,15 @@ let
             herdr agent prompt "$pane" "$1" --wait --until working --until "done" --timeout 15000 >/dev/null 2>&1 \
               || herdr agent send-keys "$pane" Enter >/dev/null || true
           }
-          # a resumed session is a restarted agent: what it had running died with the container
+          # Told once per start of the container, not per start of this unit: a retry or a restart of the surface
+          # alone leaves the guest's processes alive. The marker is written after the send, so a failed run tells again.
           if [[ $mode == continue ]]; then
-            send ${lib.escapeShellArg restartNotice}
-          ${lib.optionalString (w.prompt != null) "else send ${lib.escapeShellArg w.prompt}"}
+            inv=$(systemctl show --property=InvocationID --value container@${w.name}.service)
+            if [[ -n $inv && $(cat "$XDG_RUNTIME_DIR/restart-notice-$label" 2>/dev/null) != "$inv" ]]; then
+              send ${lib.escapeShellArg restartNotice}
+              echo "$inv" > "$XDG_RUNTIME_DIR/restart-notice-$label"
+            fi
+          ${lib.optionalString (w.prompt != null) ''else send "$(< ${pkgs.writeText "${w.name}-prompt" w.prompt})"''}
           fi
         else
           echo "${w.agent} in $label did not reach idle; see the workspace" >&2
