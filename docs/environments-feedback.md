@@ -9,11 +9,11 @@ Append; move a line to fixed when its change lands.
 - Secretless GitHub rollout (acer `push`, 2026-11-12): an environment moved onto the proxy keeps dangling `~/.ssh/id_ed25519` and `~/.config/gh/hosts.yml` links in its persistent home (harmless, the targets are gone; a tmpfiles `r` rule would remove them), and a retired instance leaves an empty `/run/dev-env-egress/<name>` until the proxy next restarts.
 
 - `MemoryLow` protects nothing on acer and msi: cgroup2 is mounted without `memory_recursiveprot` (a second cgroup2 mount at `/run/cilium/cgroupv2`), and `environments.slice` counts `low 0`. The 2G reserve is a number, not a reserve (docs/environments-plan.md, item 3).
+- `nix build` fails inside the Claude sandbox: its seccomp helper blocks unix sockets, so the nix daemon is unreachable. `free`, `uptime`, `htop` and the node CPU count still fail there (the subset proc has no `meminfo`, `cpuinfo`, `stat`).
 - Nested sandboxes (acer `push`, 2026-11-12): nspawn's masks on `/proc` make the kernel refuse a full procfs in any nested user and pid namespace; the clean fix is nspawn's (systemd#34226, open). `subset=pid` works but has no `/proc/sys`, `meminfo`, `cpuinfo`, `stat`: `free`, `uptime`, `sysctl` fail; `nproc`, cargo and daemon `nix build` work.
   - bwrap 0.12 cannot start on a subset proc (reads `/proc/sys/kernel/overflowuid`). Works: bind the outer `/proc`, mount `subset=pid` from inside as mapped uid 0, then run the command as mapped root with only `CAP_SETFCAP` and no-new-privs (wrapper verified by hand, also under `claude -p` with the sandbox on).
   - podman 5.8 and buildah: no flag for the proc mount options. Works: an OCI runtime wrapper named crun in `containers.conf` via `engine.runtimes`, adding `subset=pid` to the bundle's `/proc` mount (`podman run`, `podman build` and `buildah bud` verified by hand), with the vfs driver (no `/dev/fuse`), cgroupfs, and `--network=none` (no `/dev/net/tun`).
   - Claude Code `/sandbox`: `sandbox.enableWeakerNestedSandbox` binds the outer `/proc` (pid view of the whole guest); `sandbox.bwrapPath` (managed settings only) points at the wrapper, which ran under a real `claude -p`; the wrapper is packaged (#239) and verified in a deployed guest on acer.
-- A guest's own nix client (devenv, a local `--store`) asks the substituters itself; with the LAN blocked each lookup waited out the timeout: `delegation-test` 12 s to 467 s on msi, about 75 s per local-store command on acer. The caches' port is now excepted and the guest takes the host's `connect-timeout` (not yet measured after).
 - Guest `nix.conf` lists substituters and keys twice (the guest's defaults plus the inherited ones).
 - `nixos:nvim-check` rewrites `dotfiles/nvim/lazy-lock.json` in the working tree; a hook that fails to build leaves the previous pre-push gate active with no warning; `nixos:qa` prints no per-step timings; `file` and `strings` are not on a guest's PATH.
 - `pkill -f <pattern>` from an agent's tool shell matches the shell's own command line and kills it (exit 144, twice today): use `pgrep -x` or a pid.
@@ -26,28 +26,23 @@ Append; move a line to fixed when its change lands.
 - Task prompts said "read CLAUDE.md" for repos that have none (herman, devenv-platform); the coordinator's brief should say "the repo's entry doc".
 - The `playwright-login` MCP server fails in an environment (`ENOENT .../claude-playwright-login/state.json`); one Playwright MCP with an isolated context per device works. Either seed the state file or drop that server from the guest.
 - Playwright MCP screenshots resolve `filename` against the agent's start directory (the home), not the repo; files had to be moved.
-- msi environments have no `gh` login (acer binds the host's `hosts.yml`): the agent cannot read issues or open PRs, the issue text is copied in and the PR opened from lenovo. Needs a GitHub token bound into every environment.
+- msi sets no `ghHostsFile` (its user has no gh login), so its guests hold the SSH key, not the proxy, and the agent cannot read issues or open PRs there: the issue text is copied in and the PR opened from lenovo.
 - Declaring an environment is a nixos-config commit, and every push runs the full `nixos:qa` (about 20 minutes, only safe from msi). Too slow for routine add/remove; instances are deployed from uncommitted edits meanwhile.
 - A second `exit` in an environment's pane (from the shell left after the agent quits) returns the pane to the host shell.
-- Host reboot recovery is checked on acer only (2026-11-12, see Fixed). A host reboot kills whatever runs in an environment (a gated push was lost) and nothing restarts it; the agent resumes its conversation but is not told.
 - Codex is not signed in on acer or msi.
 - The hand-over brief is typed by hand; the coordinator does not yet check for an existing PR or build the brief. Twice the issue already had a PR: every brief must say "check for an existing PR first". Issue texts also go stale against merged work.
-- No fresh /proc mount in a nested user namespace (untested fix, none applied): rootless buildah `RUN` fails "mount proc to proc" (herman uses `--isolation chroot`), bubblewrap fails "Can't mount proc on /proc" (skills bundle-sandbox test). The kernel refuses it because nspawn overmounts parts of /proc (`/proc/sys`, `/proc/sysrq-trigger`, ...), so no fully visible proc exists in the guest. `SYSTEMD_NSPAWN_API_VFS_WRITABLE` only makes those mounts writable, `additionalCapabilities`, `--system-call-filter` and `enableTun` do not remove them, and `privateUsers` keeps them. What works is binding an unmasked proc into the guest (`extraFlags = [ "--bind-ro=/proc:/run/proc" ]` with `/sys` likewise): it shows every host process and its cmdline (k3s included) to agents running with bypass permissions, so it widens the trust boundary and needs an owner decision. Meanwhile: `--isolation chroot`, or run such tests on a host.
 - herman and skills have no `sdlc:*` stages, so agents ran the repos' gates directly.
 - skills `skills:test` runs its suites in parallel: run suites one at a time in an environment.
 - skopeo and buildah are on PATH only inside `devenv shell` (by design, note only).
 - Herdr's `agent prompt` with a multi-line prompt is untested: the shell layer keeps the newlines, whether Herdr types them as Enter is not known.
-- The host user's uid is assumed 1000 (mutableUsers, no declared uid); `sshKey` and `ghHostsFile` are home files whose existence only shows at container start. Not declared fleet-wide: black-pi's user is uid 1001. Side find: `core/automation.nix` reads the same undeclared uid, so its upgrade notice looks in `/run/user/`.
+- The host user's uid is assumed 1000 (mutableUsers, no declared uid); `clientKey` and `ghHostsFile` are home files whose existence only shows at container start. Not declared fleet-wide: black-pi's user is uid 1001. Side find: `core/automation.nix` reads the same undeclared uid, so its upgrade notice looks in `/run/user/`.
 - Owner decision: guests hold the user's GitHub ssh key and gh token, so an agent can push to nixos-config `main`, which acer auto-upgrades from weekly as root. Mitigation: branch protection on `main`, or a scoped key.
 - acer still has `/nix/var/nix/{profiles,gcroots}/per-container/worker-1` from the old naming (the cleanup loop that removed msi's is gone): `sudo rm -rf /nix/var/nix/profiles/per-container/worker-1 /nix/var/nix/gcroots/per-container/worker-1`.
-- `blockedNetworks` (forward drop to the LAN, DNS excepted) is wired but off: needs a runtime check that GitHub, DNS and host-to-guest ssh still work and the k3s API does not, on the iptables backend next to Cilium.
 - First `devenv shell` in a new environment is 25 to 32 s of evaluation. Seeding a new home's `~/.cache/nix` from the host user's was not done: copying the live sqlite fetcher cache can corrupt it, and the cost looks like devenv's per-repo evaluation, not fetching. The empty `flake-registry` only removes the global registry fetch.
 
 - 2026-11-11 `nc201`: on lenovo the guest is `Trusted: 1` on the host daemon, because the guest user is the host
   user and lenovo keeps that user trusted. The doc said otherwise; corrected. Untrusting needs a different guest uid
   or a host without a trusted login user; owner decision with the nested /proc one.
-- 2026-11-11 `nc201`: host ssh key, gh token and OAuth token are bound into every guest, so "research only, do not
-  push" is held by the brief, not the environment. A per-instance `credentials` subset would make it structural.
 - 2026-11-11 `nc201`: `devenv shell` bootstrap prints about 10k characters of git progress into the agent's tool
   output. Briefs now say to send heavy command output to a log file.
 - 2026-11-11 `nc201`: the issue's baseline code and links were stale against main. Briefs now say to check an
@@ -85,6 +80,10 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-12 A guest's own nix client (devenv, a local `--store`) waited out the LAN block per substituter lookup: the caches' port is excepted and the guest takes the host's `connect-timeout`. `delegation-test` on msi 467 s to 16 s (#237).
+- 2026-11-12 Host reboot kills what runs in an environment: a resumed agent now gets a restart notice (`modules/workers/default.nix`); checked on acer and msi.
+- 2026-11-12 No fresh /proc in a nested user namespace: bwrap and podman/buildah wrappers mount `subset=pid` (#239, `modules/workers/nested-sandbox.nix`).
+- 2026-11-12 The Claude token is held by the host proxy (#235, #236) and `credentials` gives an instance a subset of the host's files, so "research only" can be structural.
 - 2026-11-12 An environment's own 6G `MemoryMax` got a gate's `nix` process killed on msi (3.9G anon, `oom_kill 1`, `memory.max` hit 54183 times) with one environment running, 4G of the 10G pool idle and 11G free on the host. `memory.max` and the swap cap per environment are gone: the pool is the only ceiling, the reserve the only setting.
 - Nested sandboxes (#239): open friction from the round that built it, kept for the next one: the placeholder Claude token is in the login environment but not in tool shells; Claude's wrapper puts its own bubblewrap first on PATH, so only managed settings can swap it; `--settings` ignores `sandbox.bwrapPath` without a warning; a fresh clone has no gate hooks until `devenv shell` has run once. One `podman run` right after the deploy failed with rootful storage paths and did not reproduce.
 

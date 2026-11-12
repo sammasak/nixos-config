@@ -23,14 +23,14 @@ permission, what a host deploys, repo settings, money).
 
 | # | Finding | Evidence |
 |---|---------|----------|
-| 1 | Guests sent `max-jobs 8, cores 0` to a daemon bounded at 2 x 2; the daemon takes the client's | guest and host `nix config show` on acer; Nix `daemon.cc` |
+| 1 | Done (#230). Guests sent `max-jobs 8, cores 0` to a daemon bounded at 2 x 2; the daemon takes the client's | guest and host `nix config show` on acer; Nix `daemon.cc` |
 | 2 | `MemoryLow` protects nothing: cgroup2 is mounted without `memory_recursiveprot` on acer and msi (a second cgroup2 mount at `/run/cilium/cgroupv2`) | `/proc/self/mountinfo` on both; `memory.events low 0` |
-| 3 | Per-environment `MemoryHigh` stalls a lone gate while the pool sits idle | `memory.events high` 2913 (acer), 7401 (msi); the 11 to 35 min gate |
-| 4 | Swap is not in the pool: zram is charged to no cgroup, 3 x 3G can exceed the device | kernel docs; zram 7.7G |
+| 3 | Done (#245). Per-environment `MemoryHigh` stalls a lone gate while the pool sits idle | `memory.events high` 2913 (acer), 7401 (msi); the 11 to 35 min gate |
+| 4 | Done (#245). Swap is not in the pool: zram is charged to no cgroup, 3 x 3G can exceed the device | kernel docs; zram 7.7G |
 | 5 | On acer a full pool lands on kubelet's eviction line | 15.6G minus pods, system and a 7G pool |
 | 6 | Every environment holds the owner's SSH key and a classic `gh` token (`repo`, `admin:public_key`); `nixos-config` main is public, unprotected, and acer applies it as root weekly | `gh api`, `modules/core/automation.nix` |
-| 7 | The shared `~/.cache/nix` held the unsigned evaluation cache | Nix `eval-cache.cc` |
-| 8 | `blockedNetworks` is off, and its rule covers forwarded traffic only, not guest to host | iptables semantics; not yet tested at runtime |
+| 7 | Done (#230). The shared `~/.cache/nix` held the unsigned evaluation cache | Nix `eval-cache.cc` |
+| 8 | Done (#231). `blockedNetworks` was off and covered forwarded traffic only | iptables semantics; runtime-checked on acer |
 | 9 | lenovo's user is a trusted Nix user and lenovo serves a cache the others prefer | `core/users.nix`, `store-cache.nix` |
 | 10 | Each instance is its own NixOS evaluation and build: deploy time grows with the count | `containers.<n>.config` |
 | 11 | Whatever ran in an environment dies at a reboot and nothing knows what was in flight | reboot test |
@@ -42,26 +42,24 @@ permission, what a host deploys, repo settings, money).
 ### Now (no owner decision, small)
 
 1. **Guests inherit the host's `max-jobs`/`cores`; per-environment evaluation
-   cache; negative narinfo TTL 300 s.** Done in this branch (findings 1, 7).
-   Verify after deploy: four independent 20 s derivations from a guest take
-   about 40 s, not 20.
-2. **Burst at the pool, not the instance** (3, 4): drop per-instance
-   `MemoryHigh`; `environments.slice` gets `MemoryHigh = pool - 0.5G` and a
-   `MemorySwapMax`. One line each in `core.nix`.
+   cache; negative narinfo TTL 300 s.** Done (#230; findings 1, 7): four
+   independent 20 s derivations from a guest take 41 s, not 21.
+2. **Burst at the pool, not the instance** (3, 4): **Done** (#245). An
+   environment has no `memory.max` or `MemoryHigh`; `environments.slice` has
+   `MemoryHigh` at 90% of the pool and a `MemorySwapMax` of half of it.
 3. **Restore `memory_recursiveprot`** (2) so the 2G reserve is real: remount
    after Cilium, or stop Cilium mounting its own cgroup2
    (`cgroup.autoMount.enabled=false`, `cgroup.hostRoot=/sys/fs/cgroup`).
    Measure first on msi: idle environment A, B fills the pool, compare A's
    major faults with and without. On acer real protection means pods are
    reclaimed before environments: **owner** for acer.
-4. **`blockedNetworks` on, with an INPUT rule** for guest to host (8): RFC1918,
-   link-local, pod and service CIDRs, except DNS. Runtime check next to Cilium
-   on the next acer deploy.
+4. **`blockedNetworks` on, with an INPUT rule** for guest to host (8). **Done**
+   (#231): on in `runtime-host.nix`, checked next to Cilium on acer.
 5. **In-flight marker and shutdown drain** (11): the restart and shutdown
    notices (merged with the port branch) tell the agent; next, a
    PreToolUse/PostToolUse hook writes what is running to `~/.in-flight`, so the
    resumed agent reads facts, not memory.
-6. **Nested sandboxes**: investigated (ledger, 2026-11-12). No tool asks for
+6. **Nested sandboxes**: done (ledger, 2026-11-12). No tool asks for
    `subset=pid` itself; two wrappers work (bwrap: mount the subset from
    inside, then drop capabilities; podman: an OCI runtime wrapper). Both
    are packaged in every guest (#239) and verified in a deployed one: a
@@ -114,9 +112,9 @@ The guest holds a placeholder.
 
 | Secret | Verdict | How |
 |--------|---------|-----|
-| Claude login | Works, probed | `ANTHROPIC_BASE_URL` at the proxy, `CLAUDE_CODE_OAUTH_TOKEN=proxy-injected`; the proxy overwrites `Authorization` |
+| Claude login | Works, probed | `ANTHROPIC_BASE_URL` at the proxy, `CLAUDE_CODE_OAUTH_TOKEN=held-by-the-host`; the proxy overwrites `Authorization` |
 | git over HTTPS | Feasible | `url."http://127.0.0.1:4102/".insteadOf` for GitHub URLs; the proxy adds `Authorization: Basic x-access-token:<token>` |
-| `gh` | Feasible | `http_unix_socket` in gh's config, `GH_TOKEN=proxy-injected`; REST filtered by `/repos/<owner>/<repo>` |
+| `gh` | Feasible | `http_unix_socket` in gh's config, `GH_TOKEN=held-by-the-host`; REST filtered by `/repos/<owner>/<repo>` |
 | SSH remotes, commit signing, sops age keys | Does not fit | The client holds the key by protocol. Use HTTPS remotes; guests do not sign or decrypt |
 
 Probe (lenovo, 2026-11-12): Caddy on `127.0.0.1:4100` injecting the token
@@ -164,9 +162,8 @@ finds no secret in the environment of any process, `/var/lib/host-credentials`
 is gone, a grep of the guest's home and `/run` for the token prefix finds
 nothing, and the Caddyfile's store path holds no token.
 
-1. **Claude token.** Smallest and already probed. Built with one socket
-   shared by all environments (under `/var/lib/host-credentials/egress`);
-   the per-instance socket and log come with step 2. The token every guest
+1. **Claude token.** Smallest and already probed. Live: one
+   socket per instance under `/run/dev-env-egress/<name>/`. The token every guest
    has already read must be rotated after rollout: **owner**. Done when an agent works a
    normal task through the proxy and the leak check passes.
 2. **git.** Live on acer (#241, `egress.github.repos`): clone, fetch, push

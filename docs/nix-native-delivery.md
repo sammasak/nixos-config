@@ -72,7 +72,7 @@ delivery at all.
 | Closure fetched to a node cache | The host's `/nix/store`, mounted read-only; nothing is fetched or copied |
 | Read-write store and database | Host daemon socket, so a build in one environment is there for the next |
 | Regional caches | Signed harmonia caches between the hosts |
-| User namespaces for the Nix sandbox | nspawn user namespaces; the nested sandbox fix is on the `nested-sandbox` branch |
+| User namespaces for the Nix sandbox | nspawn user namespaces; the nested sandbox fix is merged (#239) |
 | Privileged pods refused | Secrets stay on the host (phase 1 live); no privileged guests |
 
 What is still missing compared with their setup:
@@ -82,7 +82,7 @@ What is still missing compared with their setup:
    in the environment's slice; a closure-only mount would break the shared
    daemon.
 2. **Nested sandboxes.** Same failure they hit, same cause (masked `/proc`).
-   The branch needs review, merge and a runtime check.
+   Fixed in #239 and checked in a deployed guest on acer.
 3. **Lifecycle past start and stop.** They say nothing; ours is in
    `environments-plan.md` (parked state, slot pool).
 
