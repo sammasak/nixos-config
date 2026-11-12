@@ -97,8 +97,14 @@ lenovo substitute from them ahead of cache.nixos.org: what one machine built
 the others download. Each cache signs with a key its host generated on first
 start (`/var/lib/store-cache/`, never in git); the public halves are in the
 module. An absent cache (msi at night) costs a 3 s connect timeout, then Nix
-builds. Checked 2026-11-12: acer fetched msi's system closure, signed
-`msi-ms7758-store-1`.
+builds. An environment's nix is a client of its host's daemon, so its builds
+and downloads go through the same caches; its own nix.conf carries the
+host's substituter list, because the daemon takes a client's list when it
+trusts every entry and a shorter one skipped the LAN caches. Checked
+2026-11-12: a `devenv shell` needing a package no public cache has took 71 s
+on msi (66 s of it the build) and 2.7 s in an acer environment afterwards,
+the package signed `msi-ms7758-store-1`. Evaluation is not shared: a first
+`devenv shell` still evaluates on each host (54 s for factum on msi).
 
 ## What fails at build
 
