@@ -135,6 +135,10 @@ in {
   containers = d (builtins.readFile g.environment.etc."containers/containers.conf".source);
   storage = d (builtins.readFile g.environment.etc."containers/storage.conf".source);
   hostUntouched = !(c.environment.etc ? "claude-code/managed-settings.json") && !c.virtualisation.podman.enable;
+  evalCache = builtins.filter (n: builtins.match ".*/eval-cache.*" n != null) (builtins.attrNames c.containers.t.bindMounts);
+  nixDrv = g.nix.package.drvPath;
+  gcroots = d c.systemd.services.dev-environments-gcroots.script;
+  stateDir = c.services.devEnvironments.stateDir;
 }
 """
 
@@ -282,6 +286,57 @@ def check_github_proxy(site):
             proc.wait(5)
 
 
+def check_eval_cache(facts):
+    """The directory the guests' Nix keeps its evaluation cache in is the one bound per instance."""
+    real = subprocess.run(["nix-store", "--realise", facts.get("nixDrv", "")], capture_output=True, text=True)
+    nix = next((o for o in real.stdout.split() if os.access(f"{o}/bin/nix", os.X_OK)), None) if real.returncode == 0 else None
+    bound = [pathlib.PurePath(n).name for n in facts.get("evalCache", [])]
+    with tempfile.TemporaryDirectory() as d:
+        flake = pathlib.Path(d, "flake")
+        flake.mkdir()
+        flake.joinpath("flake.nix").write_text("{ outputs = _: { x = 1; }; }")
+        env = {**os.environ, "HOME": d, "XDG_CACHE_HOME": f"{d}/cache"}
+        run = subprocess.run([f"{nix}/bin/nix", "eval", "--extra-experimental-features", "nix-command flakes", f"path:{flake}#x"],
+                             capture_output=True, text=True, env=env) if nix else None
+        made = sorted(p.name for p in pathlib.Path(d, "cache", "nix").glob("eval-cache-v*")) if run and run.returncode == 0 else []
+    check(made != [] and made == bound, f"the guests' Nix writes its evaluation cache to {made} and that directory is the one bound per instance ({bound})")
+
+
+def check_gcroots(facts):
+    """Runs the root refresh against a scratch state directory and roots."""
+    store = pathlib.Path(os.path.realpath(shutil.which("bash") or "")).parents[1]
+    if store.parent != pathlib.Path("/nix/store"):
+        check(False, "a store path to root exists for the gcroots test")
+        return
+    with tempfile.TemporaryDirectory() as d:
+        state, roots = pathlib.Path(d, "state"), pathlib.Path(d, "roots")
+        script = facts["gcroots"].replace(facts["stateDir"], str(state)).replace("/nix/var/nix/gcroots/per-container", str(roots))
+        gc = state / "n" / "home" / "proj" / ".devenv" / "gc"
+        gc.mkdir(parents=True)
+        (gc / "shell").symlink_to(store)
+        locked = state / "n" / "home" / "locked"
+        locked.mkdir()
+        (roots / "n").mkdir(parents=True)
+        (roots / "n" / "home-stale").symlink_to(store)
+
+        def refresh():
+            return subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+
+        run = refresh()
+        names = sorted(p.name for p in (roots / "n").iterdir())
+        check(run.returncode == 0 and len(names) == 1 and names[0].startswith("home-") and names[0] != "home-stale"
+              and (roots / "n" / names[0]).resolve() == store.resolve(),
+              f"the root refresh adds a root for each devenv link and drops the stale one ({run.returncode}, {names}, {run.stderr.strip()[-200:]})")
+        (roots / "n" / "home-stale").symlink_to(store)
+        locked.chmod(0)
+        try:
+            run = refresh()
+        finally:
+            locked.chmod(0o755)
+        check(run.returncode != 0 and (roots / "n" / "home-stale").is_symlink(),
+              f"a scan that fails fails the refresh, and with it the garbage collection, and drops no root ({run.returncode})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -394,6 +449,8 @@ def main():
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
     check_nested(facts)
+    check_eval_cache(facts)
+    check_gcroots(facts)
     check_scripts()
     for name, case, want in FLEET_CASES:
         out = run_eval(fleet(case))

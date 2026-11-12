@@ -37,4 +37,6 @@ for host in ("acer-swift", "msi-ms7758"):
     high, cap = size(daemon.get("MemoryHigh")), size(daemon.get("MemoryMax"))
     check(high is not None and cap is not None and high < cap <= 6 * 2**30,
           f"{host}, whose environments build in its daemon, bounds it at most 6G ({daemon.get('MemoryHigh')}, {daemon.get('MemoryMax')})")
+    check(daemon.get("CPUQuota") == "400%",
+          f"{host} caps the daemon's CPU at the 2 jobs x 2 cores a guest's -j and --cores cannot lift ({daemon.get('CPUQuota')})")
 sys.exit(1 if failed else 0)

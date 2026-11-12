@@ -56,8 +56,9 @@ let
     '';
   };
 
-  knownHosts = "-o HostKeyAlias=${keyAlias} -o UserKnownHostsFile=${cfg.stateDir}/known_hosts -o StrictHostKeyChecking=yes";
-  ssh = w: opts: "ssh ${opts} ${knownHosts} -o LogLevel=ERROR ${user}@${w.address}";
+  # the pinned guest key, as ssh flags for the scripts and as ssh_config for a person
+  hostOptions = { HostKeyAlias = keyAlias; UserKnownHostsFile = "${cfg.stateDir}/known_hosts"; StrictHostKeyChecking = "yes"; LogLevel = "ERROR"; };
+  ssh = w: opts: "ssh ${opts} ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "-o ${k}=${v}") hostOptions)} ${user}@${w.address}";
   # The instance's one entry point on the host: a session surface (or a person) runs `attach` in a terminal.
   ctl = w: pkgs.writeShellApplication {
     name = "${cfg.unitPrefix}-${w.name}";
@@ -97,7 +98,7 @@ let
     # input the store already holds (31 s against 7 s for the first devenv shell on acer).
     "${home}/.cache/nix" = { hostPath = "${cfg.stateDir}/.nix-cache"; isReadOnly = false; };
     # Not the evaluation cache in it: its rows are unsigned, so a neighbour could plant the derivation another
-    # environment then builds. The name is Nix's (2.34); a version that renames it shares the cache again.
+    # environment then builds. The name is Nix's: workers-eval-test fails when the guest's Nix names it otherwise.
     "${home}/.cache/nix/eval-cache-v6" = { hostPath = "${cfg.stateDir}/${w.name}/eval-cache"; isReadOnly = false; };
     "${creds}/ssh_host_ed25519_key" = { hostPath = "${cfg.stateDir}/ssh_host_ed25519_key"; isReadOnly = true; };
     "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
@@ -199,6 +200,7 @@ in
     user = mkOption { type = types.passwdEntry types.str; description = "The host user owning the environments; the guest gets the same user and uid."; };
     uid = mkOption { type = types.ints.positive; description = "That user's uid; defaults to the declared one."; };
     shell = mkOption { type = types.enum [ "bash" "fish" ]; default = "bash"; description = "The guest login shell the agent starts in."; };
+    paths = mkOption { internal = true; readOnly = true; default = { inherit home creds; }; description = "The guest's home and the directory its host credentials are bound under."; };
     clientKey = mkOption {
       type = types.externalPath;
       default = "${home}/.ssh/id_ed25519";
@@ -299,17 +301,31 @@ in
         before = [ "nix-gc.service" ];
         serviceConfig.Type = "oneshot";
         script = ''
+          rc=0
           for home in ${lib.escapeShellArg cfg.stateDir}/*/home; do
             n=''${home%/home}; n=''${n##*/}
             roots=/nix/var/nix/gcroots/per-container/$n
             [[ -d $roots ]] || continue
-            rm -f "$roots"/home-*
-            find "$home" \( -name node_modules -o -name target -o -name .git \) -prune \
-              -o -path '*/.devenv/gc/*' -type l -print 2>/dev/null | while read -r l; do
-              t=$(readlink "$l")
-              [[ $t == /nix/store/* && $t != *..* && -e $t ]] && ln -sfn "$t" "$roots/home-$(echo -n "$l" | sha1sum | cut -c1-16)"
-            done
+            ok=1
+            found=$(find "$home" \( -name node_modules -o -name target -o -name .git \) -prune \
+              -o -path '*/.devenv/gc/*' -type l -print) || { ok=0; rc=1; }
+            declare -A keep=()
+            while read -r l; do
+              t=$(readlink "$l") || continue
+              [[ $t == /nix/store/* && $t != *..* && -e $t ]] || continue
+              name=home-$(echo -n "$l" | sha1sum | cut -c1-16)
+              ln -sfn "$t" "$roots/.$name" && mv -T "$roots/.$name" "$roots/$name" || rc=1
+              keep[$name]=1
+            done <<< "$found"
+            # only a complete scan may drop a root; a failed one keeps what it had and fails the unit, and with it nix-gc
+            if (( ok )); then
+              for r in "$roots"/home-*; do
+                [[ -L $r && -z ''${keep[''${r##*/}]-} ]] && rm -f "$r"
+              done
+            fi
+            unset keep
           done
+          exit $rc
         '';
       };
     })
@@ -497,11 +513,7 @@ in
       programs.ssh.extraConfig = lib.concatMapStrings (w: ''
         Host ${w.name} ${w.name}.${cfg.prefix}
           User ${user}
-          HostKeyAlias ${keyAlias}
-          UserKnownHostsFile ${cfg.stateDir}/known_hosts
-          StrictHostKeyChecking yes
-          LogLevel ERROR
-      '') instances;
+      '' + lib.concatStrings (lib.mapAttrsToList (k: v: "  ${k} ${v}\n") hostOptions)) instances;
     })
 
     (lib.mkIf (cfg.jumpHosts != { }) {
