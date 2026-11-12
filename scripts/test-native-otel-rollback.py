@@ -37,8 +37,11 @@ def main():
     P = gate_probe.section("otel-rollback")
     live = P["live"]
     otel_keys = sorted(k for k in live["env"] if k.startswith("OTEL_") or k == "CLAUDE_CODE_ENABLE_TELEMETRY")
-    check(otel_keys and live["codex_otel"] and live["fish_otel"] and live["relay"] and live["secret"] and "DISABLE_TELEMETRY" not in live["env"],
-          f"control: the live canary carries every surface ({len(otel_keys)} Claude telemetry keys, Codex [otel], Fish preludes, relay, secret)")
+    wrapped = [p for p in live["codex"] if all(v in p["text"] for v in (
+        'OTEL_RESOURCE_ATTRIBUTES="host.name=lenovo-21cb001pmx"', "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative"))]
+    check(otel_keys and live["codex_otel"] and len(wrapped) == 1 and live["relay"] and live["secret"] and "DISABLE_TELEMETRY" not in live["env"],
+          f"control: the live canary carries every surface ({len(otel_keys)} Claude telemetry keys, Codex [otel], codex wrapper, relay, secret)")
+    check(not live["fish_otel"], "live: no claude or codex Fish function sets an OTEL_ variable (the codex wrapper on PATH does)")
     with tempfile.TemporaryDirectory() as tmp:
         # tracked files as they are in the working tree, so both sides evaluate the same edits
         files = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True).stdout
@@ -54,6 +57,7 @@ def main():
     check(back["env"].get("DISABLE_TELEMETRY") == "1", "rolled back: Claude's standard telemetry-disable setting is restored")
     check(not back["codex_otel"], "rolled back: Codex's [otel] exporter stanza is gone")
     check(not back["fish_otel"], "rolled back: the claude and codex Fish functions set no OTEL_ variable")
+    check([p["path"] for p in back["codex"]] == [back["plain_codex"]], f"rolled back: the only codex package is plain pkgs.codex ({back['codex']})")
     check(not back["relay"] and not back["secret"], "rolled back: the relay service and the receiver secret are no longer installed")
     acer = P["acer"]
     check(back["env"] == acer, f"rolled back: lenovo's Claude environment equals acer's, a host that never had the canary (diff: {sorted(set(back['env'].items()) ^ set(acer.items()))})")

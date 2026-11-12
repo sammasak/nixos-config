@@ -31,6 +31,10 @@ let
     env = (hm c).programs.claude-code.settings.env;
     codex_otel = lib.hasInfix "[otel]" (hm c).home.file.".codex/config.toml".text;
     fish_otel = lib.hasInfix "OTEL_" (toString (map (f: (hm c).programs.fish.functions.${f}) [ "claude" "codex" ]));
+    # context discarded: the probe would otherwise build codex and its wrapper
+    codex = map (p: builtins.mapAttrs (_: builtins.unsafeDiscardStringContext) { text = p.text or ""; path = p.outPath; })
+      (builtins.filter (p: (p.pname or p.name or "") == "codex") (hm c).home.packages);
+    plain_codex = builtins.unsafeDiscardStringContext hosts.lenovo.pkgs.codex.outPath;
     relay = c.systemd.services ? native-otel-relay;
     secret = c.sops.secrets ? native_otlp_auth;
   };
