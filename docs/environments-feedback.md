@@ -9,7 +9,7 @@ Append; move a line to fixed when its change lands.
 - Secretless GitHub rollout (acer `push`, 2026-11-12): an environment moved onto the proxy keeps dangling `~/.ssh/id_ed25519` and `~/.config/gh/hosts.yml` links in its persistent home (harmless, the targets are gone; a tmpfiles `r` rule would remove them), and a retired instance leaves an empty `/run/dev-env-egress/<name>` until the proxy next restarts.
 
 - `MemoryLow` protects nothing on acer and msi: cgroup2 is mounted without `memory_recursiveprot` (a second cgroup2 mount at `/run/cilium/cgroupv2`), and `environments.slice` counts `low 0`. The 2G reserve is a number, not a reserve (docs/environments-plan.md, item 3).
-- `nix build` fails inside the Claude sandbox: its seccomp helper blocks unix sockets, so the nix daemon is unreachable. `free`, `uptime`, `htop` and the node CPU count still fail there (the subset proc has no `meminfo`, `cpuinfo`, `stat`).
+- Inside the Claude sandbox (acer, after #244) these still fail: `nix build nixpkgs#hello` (`cannot create Unix domain socket: Operation not permitted`, so the nix daemon is unreachable), `free` (`Memory information file /proc/meminfo does not exist`), `uptime` (`Cannot get system uptime: No such file or directory`), `htop`. `top` sees 6 tasks. `ps`, `nproc` and `git status` work; `pgrep` sees no host process.
 - Nested sandboxes (acer `push`, 2026-11-12): nspawn's masks on `/proc` make the kernel refuse a full procfs in any nested user and pid namespace; the clean fix is nspawn's (systemd#34226, open). `subset=pid` works but has no `/proc/sys`, `meminfo`, `cpuinfo`, `stat`: `free`, `uptime`, `sysctl` fail; `nproc`, cargo and daemon `nix build` work.
   - bwrap 0.12 cannot start on a subset proc (reads `/proc/sys/kernel/overflowuid`). Works: bind the outer `/proc`, mount `subset=pid` from inside as mapped uid 0, then run the command as mapped root with only `CAP_SETFCAP` and no-new-privs (wrapper verified by hand, also under `claude -p` with the sandbox on).
   - podman 5.8 and buildah: no flag for the proc mount options. Works: an OCI runtime wrapper named crun in `containers.conf` via `engine.runtimes`, adding `subset=pid` to the bundle's `/proc` mount (`podman run`, `podman build` and `buildah bud` verified by hand), with the vfs driver (no `/dev/fuse`), cgroupfs, and `--network=none` (no `/dev/net/tun`).
@@ -36,7 +36,7 @@ Append; move a line to fixed when its change lands.
 - skopeo and buildah are on PATH only inside `devenv shell` (by design, note only).
 - Herdr's `agent prompt` with a multi-line prompt is untested: the shell layer keeps the newlines, whether Herdr types them as Enter is not known.
 - The host user's uid is assumed 1000 (mutableUsers, no declared uid); `clientKey` and `ghHostsFile` are home files whose existence only shows at container start. Not declared fleet-wide: black-pi's user is uid 1001. Side find: `core/automation.nix` reads the same undeclared uid, so its upgrade notice looks in `/run/user/`.
-- Owner decision: guests hold the user's GitHub ssh key and gh token, so an agent can push to nixos-config `main`, which acer auto-upgrades from weekly as root. Mitigation: branch protection on `main`, or a scoped key.
+- Owner decision: msi environments and any instance without `egress.github.repos` still hold the user's GitHub ssh key (msi has no gh token), so an agent can push to nixos-config `main`, which acer applies weekly as root. Mitigation: branch protection on `main`, or a scoped key. With `egress.github.repos` (acer) neither.
 - acer still has `/nix/var/nix/{profiles,gcroots}/per-container/worker-1` from the old naming (the cleanup loop that removed msi's is gone): `sudo rm -rf /nix/var/nix/profiles/per-container/worker-1 /nix/var/nix/gcroots/per-container/worker-1`.
 - First `devenv shell` in a new environment is 25 to 32 s of evaluation. Seeding a new home's `~/.cache/nix` from the host user's was not done: copying the live sqlite fetcher cache can corrupt it, and the cost looks like devenv's per-repo evaluation, not fetching. The empty `flake-registry` only removes the global registry fetch.
 
@@ -71,15 +71,12 @@ Append; move a line to fixed when its change lands.
 - 2026-11-11 `dp121`, `nc200`, `dp93`: "cold" cannot be produced in an environment (shared store). Benchmark issues
   that need cold runs need msi with nothing else running, or the owner's go for a throwaway store.
 
-- 2026-11-12 nested sandbox, acer and msi: `ps -e` inside Claude's sandbox fails with `fatal library error, lookup
-  self`. Likely cause, not confirmed: the `subset=pid` proc mount has no `/proc/stat` or `/proc/uptime`, which procps
-  reads. `pgrep`, `pkill`, `top` and `free` not yet checked. `ls /proc`, `nproc` and `/proc/self` work. No fix yet:
-  a file cannot be bound into procfs and a full proc mount is what the guest refuses.
 - 2026-11-12 msi at #242: sandboxed commands run as mapped uid 0 with 10 process entries and 8 CPUs, a home write
   outside the working directory is refused, `podman run --network=none` works. Same as acer.
 
 ## Fixed
 
+- 2026-11-12 `ps -e` in Claude's sandbox failed with `lookup self` (#244): `ps` and `top` run there (acer).
 - 2026-11-12 A guest's own nix client (devenv, a local `--store`) waited out the LAN block per substituter lookup: the caches' port is excepted and the guest takes the host's `connect-timeout`. `delegation-test` on msi 467 s to 16 s (#237).
 - 2026-11-12 Host reboot kills what runs in an environment: a resumed agent now gets a restart notice (`modules/workers/default.nix`); checked on acer and msi.
 - 2026-11-12 No fresh /proc in a nested user namespace: bwrap and podman/buildah wrappers mount `subset=pid` (#239, `modules/workers/nested-sandbox.nix`).
