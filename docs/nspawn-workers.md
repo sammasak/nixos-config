@@ -139,7 +139,7 @@ transcript is still there. A stop kills what the agent was doing like a reboot
 does: a tool call in flight is cut off (the transcript then ends in a tool use
 without a result) and the resumed agent is told that whatever ran in the
 environment was killed. There is no shutdown notice on a pause; send the agent
-a "push your work" message first if it holds unpushed commits.
+a "push your work" message first if it holds unpushed commits. A deploy that fails and is rolled back leaves the instance it stopped down until the next successful deploy.
 
 ## What fails at build
 
