@@ -14,7 +14,8 @@ permission, what a host deploys, repo settings, money).
   1.9 s; first `devenv shell` 6 to 7 s with the shared fetcher cache.
 - LAN store cache (harmonia, per-host keys): a path one host built is a
   download for the others.
-- Burst: a gate past its reserve is throttled and swaps, 0 OOM kills so far.
+- Burst: an environment has a reserve and no ceiling of its own; the pool is
+  the limit (one OOM kill under the earlier 6G ceiling, msi 2026-11-12).
 - Lifecycle: declare, deploy, brief, hand over, retire; teardown removes home,
   profile and gc roots.
 

@@ -52,8 +52,7 @@ ASSERTED = [
     ("model without an agent", '{ services.devEnvironments.instances.ok = { agent = "none"; prompt = lib.mkForce null; }; }', 'ok.model is set but agent is "none"'),
     ("prompt without an agent", '{ services.devEnvironments.instances.ok = { agent = "none"; model = lib.mkForce null; }; }', 'ok.prompt is set but agent is "none"'),
     ("prompt without a surface", "{ services.devEnvironments.sessionSurface = lib.mkForce null; }", "prompt needs a sessionSurface"),
-    ("reserve above max", '{ services.devEnvironments.instances.ok.memory = { reserved = "4G"; max = "3G"; }; }', "reserved 4096M is above max 3072M"),
-    ("max above pool", '{ services.devEnvironments.instances.ok.memory.max = "9G"; }', "memory.max 9216M is above pool.memory 8192M"),
+    ("reserve above pool", '{ services.devEnvironments.instances.ok.memory.reserved = "9G"; }', "adds up to 9216M, more than pool.memory 8192M"),
     ("reserves above pool", "{ services.devEnvironments.instances = { a = { }; b = { }; c = { }; d = { }; }; }", "adds up to 10240M, more than pool.memory 8192M"),
     ("hash collision", "{ services.devEnvironments.instances = { eal = { }; ea1 = { }; }; }", "two names hash to one address"),
     ("host's own name", "{ networking.hostName = lib.mkForce \"ok\"; programs.ssh.knownHosts.box.hostNames = [ \"ok\" ]; }", "the name is this host's own"),
@@ -77,7 +76,7 @@ TYPED = [
     ("name pattern", "{ services.devEnvironments.instances.Bad = { }; }", "pattern [a-z][a-z0-9-]{0,10}"),
     ("name length", "{ services.devEnvironments.instances.abcdefghijkl = { }; }", "pattern [a-z][a-z0-9-]{0,10}"),
     ("unknown agent", '{ services.devEnvironments.instances.ok.agent = "gpt"; }', "is not of type `one of \"none\", \"claude\", \"codex\""),
-    ("size syntax", '{ services.devEnvironments.instances.ok.memory.max = "6GB"; }', "instances.ok.memory.max' is not of type"),
+    ("size syntax", '{ services.devEnvironments.instances.ok.memory.reserved = "6GB"; }', "instances.ok.memory.reserved' is not of type"),
     ("model charset", '{ services.devEnvironments.instances.ok.model = "a b"; }', "instances.ok.model' is not of type"),
     ("empty prompt", '{ services.devEnvironments.instances.ok.prompt = ""; }', "instances.ok.prompt' is not of type"),
     ("zero cores", "{ services.devEnvironments.instances.ok.cpu.reserved = 0; }", "cpu.reserved' is not of type"),
@@ -165,7 +164,7 @@ let
   base = unit sys.config;
 in {
   storeFree = builtins.length (builtins.split "/nix/store" base) == 1;
-  live = base == with_ ({ lib, ... }: { services.devEnvironments.instances.ok = { memory.max = "5G"; cpu.reserved = 1; prompt = lib.mkForce "other"; }; });
+  live = base == with_ ({ lib, ... }: { services.devEnvironments.instances.ok = { memory.reserved = "1G"; cpu.reserved = 1; prompt = lib.mkForce "other"; }; });
   restarts = base != with_ ({ lib, ... }: { services.devEnvironments.instances.ok.model = lib.mkForce "opus"; });
 }
 """
