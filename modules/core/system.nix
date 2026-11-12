@@ -184,6 +184,31 @@ in
       };
     };
 
+    claude.bulkReader = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Register the skills input's shunt PreToolUse hooks in Claude Code: a
+          whole-file Read, or a cat/head/tail of a file, over `minLines` lines is
+          redirected once to the bulk-reader skill (`scripts/bulk-read.sh`, a
+          headless `claude -p` summary). Registers nothing while the skills pin
+          lacks the hooks. A developer environment's guest does not inherit it
+          from its host (CLAUDE.md, Claude Code, Bulk reader).
+        '';
+      };
+      minLines = mkOption {
+        type = types.nullOr types.ints.positive;
+        default = null;
+        description = "`SHUNT_MIN_LINES`, the line count a read must exceed to be redirected; null leaves the skills default (350).";
+      };
+      model = mkOption {
+        type = types.nullOr (types.strMatching "[A-Za-z0-9._-]+");
+        default = null;
+        description = "`SHUNT_MODEL`, the model bulk-read.sh asks; null leaves the skills default (haiku).";
+      };
+    };
+
     userConfig = mkOption {
       type = types.attrs;
       default = { };
