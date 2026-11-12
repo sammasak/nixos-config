@@ -9,9 +9,10 @@ let
   bulkReader = osConfig.sam.claude.bulkReader;
   # both or neither: an older skills pin evaluates and registers nothing
   shunt = bulkReader.enable && lib.all (h: builtins.pathExists "${skillsSrc}/hooks/${h}") [ "shunt-check-read.sh" "shunt-check-bash-read.sh" ];
+  spill = shunt && bulkReader.spillOutput && builtins.pathExists "${skillsSrc}/hooks/shunt-spill-output.sh";
   shuntHook = name: {
     type = "command";
-    command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.gnugrep ]}:$PATH ${skillsSrc}/hooks/${name}";
+    command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.findutils ]}:$PATH ${skillsSrc}/hooks/${name}";
     timeout = 15;
   };
 in
@@ -90,8 +91,8 @@ in
         OTEL_LOG_TOOL_CONTENT = "0";
         OTEL_LOG_TOOL_DETAILS = "0";
         OTEL_LOG_RAW_API_BODIES = "0";
-      } // lib.optionalAttrs (shunt && bulkReader.minLines != null) {
-        SHUNT_MIN_LINES = toString bulkReader.minLines;
+      } // lib.optionalAttrs (shunt && bulkReader.minTokens != null) {
+        SHUNT_MIN_TOKENS = toString bulkReader.minTokens;
       } // lib.optionalAttrs (shunt && bulkReader.model != null) {
         SHUNT_MODEL = bulkReader.model;
       };
@@ -148,7 +149,10 @@ in
           matcher = "Read";
           hooks = [ (shuntHook "shunt-check-read.sh") ];
         };
-        PostToolUse = [{
+        PostToolUse = lib.optional spill {
+          matcher = "Bash";
+          hooks = [ (shuntHook "shunt-spill-output.sh") ];
+        } ++ [{
           matcher = "Write|Edit";
           hooks = [
             {

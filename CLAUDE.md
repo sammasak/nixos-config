@@ -123,9 +123,12 @@ just switch
 
 **Bulk reader** (`sam.claude.bulkReader`, off by default): registers the skills input's shunt hooks, a `Read`
 PreToolUse entry (`shunt-check-read.sh`) and `shunt-check-bash-read.sh` appended to the `Bash` list after the
-existing hooks. A whole-file read over 350 lines (`minLines`, null = the skills default) is redirected once to
+existing hooks. A whole-file read estimated over 8000 tokens (`minTokens`, null = the skills default; source code and
+instruction files are never redirected) is redirected once to
 `scripts/bulk-read.sh` (bulk-reader skill), which summarises it with headless `claude -p` on `model` (null =
-haiku) under the session's own auth. With a skills pin that lacks the hooks it registers nothing.
+haiku) under the session's own auth. `spillOutput` (default on with `enable`) adds a `Bash` PostToolUse entry
+(`shunt-spill-output.sh`): a successful command output over 12000 chars is saved under `~/.cache/claude-spill/` and
+the session gets the path with a head and tail excerpt; failed commands are untouched. With a skills pin that lacks the hooks it registers nothing.
 - Host: `sam.claude.bulkReader.enable = true;` in `hosts/<host>/configuration.nix`.
 - Environments: a guest does not inherit its host's value; the host adds a guest module, e.g. for one instance
   `services.devEnvironments.guestModules = [ ({ devEnvironment, ... }: { sam.claude.bulkReader.enable = devEnvironment.name == "canary"; }) ];`

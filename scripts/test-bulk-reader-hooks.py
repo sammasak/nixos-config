@@ -13,7 +13,7 @@ import tempfile
 import gate_probe
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-HOOKS = ("shunt-check-read.sh", "shunt-check-bash-read.sh")
+HOOKS = ("shunt-check-read.sh", "shunt-check-bash-read.sh", "shunt-spill-output.sh")
 failed = 0
 
 
@@ -75,11 +75,20 @@ def with_hooks(P, src):
     names = [c.rsplit("/", 1)[-1] for c in after]
     check(names.index("validate-bash.sh") < names.index("check-loop.sh") < names.index("shunt-check-bash-read.sh"),
           f"on: shunt-check-bash-read.sh runs after validate-bash.sh and check-loop.sh ({names})")
-    strip = lambda s: {**s, "PreToolUse": [e for e in s["PreToolUse"] if e.get("matcher") != "Bash" and e.get("matcher") != "Read"]}
+    strip = lambda s: {**s, "PreToolUse": [e for e in s["PreToolUse"] if e.get("matcher") != "Bash" and e.get("matcher") != "Read"],
+                       "PostToolUse": [e for e in s["PostToolUse"] if e.get("matcher") != "Bash"]}
     check(strip(on["hooks"]) == strip(off["hooks"]), "on: every other hook event is unchanged")
-    check(shunt_env(on) == {"SHUNT_MIN_LINES": "400", "SHUNT_MODEL": "sonnet"}
+    spills = [e for e in on["hooks"]["PostToolUse"] if e.get("matcher") == "Bash"]
+    check(len(spills) == 1 and [c.rsplit("/", 1)[-1] for c in commands(spills)] == ["shunt-spill-output.sh"]
+          and not any(e.get("matcher") == "Bash" for e in off["hooks"]["PostToolUse"]),
+          f"on: one PostToolUse Bash entry runs shunt-spill-output.sh, none when off (got {spills})")
+    no = P["noSpill"]
+    check(no["hooks"]["PostToolUse"] == off["hooks"]["PostToolUse"] and no["hooks"]["PreToolUse"] == [
+              e for e in on["hooks"]["PreToolUse"]],
+          "spillOutput = false: PostToolUse is the off one, the read hooks stay")
+    check(shunt_env(on) == {"SHUNT_MIN_TOKENS": "9000", "SHUNT_MODEL": "sonnet"}
           and {k: v for k, v in on["env"].items() if not k.startswith("SHUNT_")} == off["env"],
-          f"on: minLines and model reach settings.env as SHUNT_ variables, nothing else changes ({shunt_env(on)})")
+          f"on: minTokens and model reach settings.env as SHUNT_ variables, nothing else changes ({shunt_env(on)})")
 
     g_on, g_off = P["guestOn"], P["guestOff"]
     check(not any("shunt-" in c for c in commands(g_off["hooks"]["PreToolUse"])) and not shunt_env(g_off),

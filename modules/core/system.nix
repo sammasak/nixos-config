@@ -190,17 +190,22 @@ in
         default = false;
         description = ''
           Register the skills input's shunt PreToolUse hooks in Claude Code: a
-          whole-file Read, or a cat/head/tail of a file, over `minLines` lines is
-          redirected once to the bulk-reader skill (`scripts/bulk-read.sh`, a
+          whole-file Read, or a cat/head/tail of a file, estimated over `minTokens`
+          tokens (source code and instruction files excepted) is redirected once to the bulk-reader skill (`scripts/bulk-read.sh`, a
           headless `claude -p` summary). Registers nothing while the skills pin
           lacks the hooks. A developer environment's guest does not inherit it
           from its host (CLAUDE.md, Claude Code, Bulk reader).
         '';
       };
-      minLines = mkOption {
+      spillOutput = mkOption {
+        type = types.bool;
+        default = true;
+        description = "With `enable`: also register the PostToolUse hook that saves a successful Bash output over 12000 chars to a log under ~/.cache/claude-spill and hands the session a head and tail excerpt with the path.";
+      };
+      minTokens = mkOption {
         type = types.nullOr types.ints.positive;
         default = null;
-        description = "`SHUNT_MIN_LINES`, the line count a read must exceed to be redirected; null leaves the skills default (350).";
+        description = "`SHUNT_MIN_TOKENS`, the estimated token count a read must exceed to be redirected; null leaves the skills default (8000).";
       };
       model = mkOption {
         type = types.nullOr (types.strMatching "[A-Za-z0-9._-]+");

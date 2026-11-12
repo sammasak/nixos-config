@@ -19,6 +19,8 @@ in
   sam.profile = vars;
   sam.hostSecrets.enable = true;
   sam.storeCache.enable = true;
+  # First host on the shunt hooks (CLAUDE.md, Bulk reader); rollback: false, or SHUNT_DISABLE=1.
+  sam.claude.bulkReader.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [
     "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
     "nixos-config" "rf-proto" ".cache/wt"

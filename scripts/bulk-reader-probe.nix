@@ -10,8 +10,9 @@ let
   }) ];
 in
 {
-  off = settingsOf hosts.lenovo.config;
-  on = settingsOf (extend "lenovo" [ { sam.claude.bulkReader = { enable = true; minLines = 400; model = "sonnet"; }; } ]);
+  off = settingsOf (extend "lenovo" [ ({ lib, ... }: { sam.claude.bulkReader.enable = lib.mkForce false; }) ]);
+  on = settingsOf (extend "lenovo" [ { sam.claude.bulkReader = { enable = true; minTokens = 9000; model = "sonnet"; }; } ]);
+  noSpill = settingsOf (extend "lenovo" [ { sam.claude.bulkReader = { enable = true; spillOutput = false; }; } ]);
   guestOn = settingsOf acer.containers.probe.config;
   guestOff = settingsOf acer.containers.other.config;
 }
