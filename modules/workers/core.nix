@@ -373,7 +373,7 @@ in
           [[ -d $d/.trash ]] && ${pkgs.findutils}/bin/find "$d/.trash" -mindepth 1 -maxdepth 1 -cmin +10080 -exec rm -rf --one-file-system {} +
           install -d -m 0711 "$d"
           install -d -m 0700 -o ${user} -g ${group} "$d/.nix-cache"
-          ${lib.optionalString (cfg.fetchSeed != [ ]) ''install -d -m 0700 -o ${user} -g ${group} "$d/.fetch-seed"''}
+          ${lib.optionalString (cfg.fetchSeed != [ ]) ''install -d -m 0755 "$d/.fetch-seed"''}
           [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
           echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
           chmod 0644 "$d/known_hosts"
@@ -387,13 +387,20 @@ in
             mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
             [[ -d $d/${w.name}/eval-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
           '' + lib.optionalString w.rootInGuest ''
+            ${if cfg.fetchSeed == [ ] then ''[[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"'' else ''
             if [[ ! -d $d/${w.name}/nix-cache ]]; then
-              install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
-              ${lib.optionalString (cfg.fetchSeed != [ ]) ''
-              # copies, no links, none followed: nothing the guest writes reaches the seed; owned by the guest's mapped ids
-              [[ -d $d/.fetch-seed/nix ]] && cp -rP --no-preserve=mode,ownership "$d/.fetch-seed/nix/." "$d/${w.name}/nix-cache/" &&
-                chown -hR ${o.u}:${o.g} "$d/${w.name}/nix-cache" && chmod -R u+rwX,go-rwx "$d/${w.name}/nix-cache" || true''}
-            fi
+              # The guest's ids copy it themselves into a directory they own, which a rename then puts in place: root reads
+              # and chowns nothing from the seed, and a copy that fails or is cut short leaves a cold, empty cache.
+              rm -rf "$d/.seed-${w.name}"
+              install -d -m 0700 -o ${o.u} -g ${o.g} "$d/.seed-${w.name}"
+              if [[ -d $d/.fetch-seed/nix && ! -L $d/.fetch-seed/nix ]] && ${pkgs.util-linux}/bin/setpriv --reuid=${o.u} --regid=${o.g} --clear-groups \
+                  ${pkgs.bash}/bin/bash -c 'umask 077; exec cp -rP --no-preserve=mode,ownership "$1/." "$2/"' _ "$d/.fetch-seed/nix" "$d/.seed-${w.name}"; then
+                mv -T "$d/.seed-${w.name}" "$d/${w.name}/nix-cache"
+              else
+                rm -rf "$d/.seed-${w.name}"
+                install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
+              fi
+            fi''}
             [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
             chown ${toString (baseOf w)}:${toString (baseOf w)} "$d/${w.name}/ssh_host_ed25519_key"
             echo "${aliasOf w} $(cut -d' ' -f1,2 "$d/${w.name}/ssh_host_ed25519_key.pub")" >> "$d/known_hosts"
@@ -446,28 +453,34 @@ in
       };
     })
 
-    # Rebuilt from nothing each time into a new directory and swapped in by rename; the previous one stays until the next
-    # run, so a copy in progress never sees a tree being deleted.
+    # Root, so that the owner's own user, which agents run as, cannot write the seed; world-readable, for the guests' ids to copy.
+    # Rebuilt from nothing each time and swapped in by rename. The timer also fires a minute after a switch that changes the
+    # refs, so the first seed does not wait a week and the switch never waits for a fetch.
     (lib.mkIf (cfg.instances != { } && cfg.fetchSeed != [ ]) {
-      systemd.timers.dev-env-fetch-seed = { wantedBy = [ "timers.target" ]; timerConfig = { OnBootSec = "5min"; OnUnitActiveSec = "1w"; }; };
+      systemd.timers.dev-env-fetch-seed = {
+        wantedBy = [ "timers.target" ];
+        unitConfig.X-Refs = builtins.hashString "sha256" (builtins.toJSON cfg.fetchSeed);
+        timerConfig = { OnActiveSec = "1min"; OnBootSec = "5min"; OnUnitActiveSec = "1w"; };
+      };
       systemd.services.dev-env-fetch-seed = {
         description = "Fetch the pinned inputs a new rootInGuest environment starts its nix cache from";
         path = [ config.nix.package pkgs.coreutils ];
         serviceConfig = {
-          Type = "oneshot"; User = user; Group = group;
+          Type = "oneshot";
           PrivateTmp = true; ProtectHome = true; ProtectSystem = "strict"; ReadWritePaths = [ "${cfg.stateDir}/.fetch-seed" ]; NoNewPrivileges = true;
         };
         script = ''
           seed=${lib.escapeShellArg cfg.stateDir}/.fetch-seed
-          rm -rf "$seed"/.old
+          rm -rf "$seed"/.new.*
           new=$(mktemp -d "$seed"/.new.XXXXXX)
           trap 'rm -rf "$new"' EXIT
-          # prefetch does not enforce a narHash in the ref: compare it with what came
+          # prefetch does not enforce a narHash in the ref (a wrong one exits 0): compare it with what came
           for ref in ${lib.escapeShellArgs cfg.fetchSeed}; do
             out=$(XDG_CACHE_HOME=$new nix flake prefetch --json "$ref")
             [[ $out =~ \"hash\":\"([^\"]+)\" && ''${BASH_REMATCH[1]} == "''${ref##*narHash=}" ]] || { echo "$ref: fetched $out" >&2; exit 1; }
           done
-          [[ ! -e $seed/nix ]] || mv -T "$seed"/nix "$seed"/.old
+          chmod -R a+rX "$new"/nix
+          [[ ! -e $seed/nix ]] || mv -T "$seed"/nix "$new"/old
           mv -T "$new"/nix "$seed"/nix
         '';
       };

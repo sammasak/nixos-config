@@ -396,7 +396,7 @@ def activation_run(text, state, active=()):
     systemctl.chmod(0o755)
     text = re.sub(r"/nix/store/\S+/bin/systemctl", str(systemctl), text)
     text = text.replace("/nix/var/nix/profiles/per-container", f"{state}/profiles").replace("/nix/var/nix/gcroots/per-container", f"{state}/gcroots")
-    text = re.sub(r"-o \S+ -g \S+", "-o 1000 -g 100", re.sub(r"chown (-\w+ )?\S+:\S+", lambda m: f"chown {m.group(1) or ''}1000:100", text))
+    text = re.sub(r"--reuid=\S+ --regid=\S+", "--reuid=1000 --regid=100", re.sub(r"-o \S+ -g \S+", "-o 1000 -g 100", re.sub(r"chown (-\w+ )?\S+:\S+", lambda m: f"chown {m.group(1) or ''}1000:100", text)))
     harness = f"_status=0; trap '_status=1' ERR; set -E\n{text}\nrc=$_status; cd {state}/files && find . -mindepth 1 -printf '%P %m %U:%G\\n' | sort; exit $rc"
     run = userns("bash", "-c", harness)
     return run.returncode, dict((line.split()[0], tuple(line.split()[1:])) for line in run.stdout.splitlines() if line), run.stderr
@@ -475,25 +475,48 @@ def check_activation():
             check(rc == 0 and (files / "idle" / "home" / "work").exists() and (state / "profiles" / "idle").exists() and "idle/eval-cache" in tree,
                   f"a paused instance is not retired: its home and profiles stay and activation still prepares its directories (rc {rc}, {err.strip()[-200:]})")
 
-            files = pathlib.Path(fresh_state())
-            seed = files / ".fetch-seed" / "nix"
-            (seed / "tarball-cache-v2").mkdir(parents=True)
-            (seed / "tarball-cache-v2" / "obj").write_text("tree")
-            (seed / "fetcher-cache-v4.sqlite").write_text("db")
-            (seed / "evil").symlink_to("/etc/passwd")
-            rc, tree, err = run("seeded")
-            cache = files / "rg" / "nix-cache"
-            content = userns("cat", str(cache / "tarball-cache-v2" / "obj")).stdout
-            linked = userns("test", "-L", str(cache / "evil")).returncode == 0
-            check(rc == 0 and content == "tree" and linked
-                  and tree.get("rg/nix-cache/tarball-cache-v2/obj") == ("600", "1000:100") and tree.get("rg/nix-cache") == ("700", "1000:100")
-                  and userns("stat", "-c", "%h", str(seed / "tarball-cache-v2" / "obj")).stdout.strip() == "1",
-                  f"a new rootInGuest cache is a copy of the seed, links kept as links, owned by the guest's mapped ids, nothing linked back to the seed (rc {rc}, {tree.get('rg/nix-cache/tarball-cache-v2/obj')}, {err.strip()[-200:]})")
-            userns("rm", str(cache / "tarball-cache-v2" / "obj"))
-            userns("touch", str(seed / "later"))
+            def seeded(setup):
+                files = pathlib.Path(fresh_state())
+                seed = files / ".fetch-seed"
+                (seed / "nix" / "tarball-cache-v2").mkdir(parents=True)
+                (seed / "nix" / "tarball-cache-v2" / "obj").write_text("tree")
+                (seed / "nix" / "evil").symlink_to("/etc/passwd")
+                setup(seed)
+                rc, tree, err = run("seeded")
+                return files, tree, rc, err
+
+            def lone(files, path):
+                return userns("test", "-e", str(files / path)).returncode == 0
+
+            files, tree, rc, err = seeded(lambda seed: None)
+            check(rc == 0 and userns("cat", str(files / "rg/nix-cache/tarball-cache-v2/obj")).stdout == "tree" and userns("test", "-L", str(files / "rg/nix-cache/evil")).returncode == 0
+                  and tree.get("rg/nix-cache/tarball-cache-v2/obj") == ("600", "1000:100") and tree.get("rg/nix-cache") == ("700", "1000:100") and not lone(files, ".seed-rg")
+                  and userns("stat", "-c", "%h", str(files / ".fetch-seed/nix/tarball-cache-v2/obj")).stdout.strip() == "1",
+                  f"a new rootInGuest cache is a copy made by its own ids, a symlink kept as a symlink, no hard link to the seed, no staging left (rc {rc}, {err.strip()[-200:]})")
+            userns("rm", str(files / "rg/nix-cache/tarball-cache-v2/obj"))
+            userns("touch", str(files / ".fetch-seed/nix/later"))
             rc2, tree2, err2 = run("seeded")
             check(rc2 == 0 and "rg/nix-cache/tarball-cache-v2/obj" not in tree2 and "rg/nix-cache/later" not in tree2,
                   f"an existing rootInGuest cache is not seeded again ({rc2}, {err2.strip()[-200:]})")
+
+            def link_out(seed):
+                outside = seed.parent / "outside"
+                outside.mkdir()
+                (outside / "secret").write_text("not for a guest")
+                shutil.rmtree(seed / "nix")
+                (seed / "nix").symlink_to(outside)
+
+            files, tree, rc, err = seeded(link_out)
+            check(rc == 0 and not any(k.startswith("rg/nix-cache/") for k in tree) and tree.get("rg/nix-cache") == ("700", "1000:100") and not lone(files, "rg/nix-cache/secret"),
+                  f"a seed that is a symlink to a directory elsewhere is not copied: the cache starts empty ({rc}, {tree.get('rg/nix-cache')}, {lone(files, 'rg/nix-cache/secret')}, {err.strip()[-200:]})")
+
+            def unreadable(seed):
+                (seed / "nix" / "tarball-cache-v2" / "secret").write_text("root only")
+                (seed / "nix" / "tarball-cache-v2" / "secret").chmod(0)
+
+            files, tree, rc, err = seeded(unreadable)
+            check(rc == 0 and tree.get("rg/nix-cache") == ("700", "1000:100") and not any(k.startswith("rg/nix-cache/") for k in tree) and not lone(files, ".seed-rg"),
+                  f"a copy that fails leaves no partial cache and no staging directory: the environment starts cold ({rc}, {sorted(k for k in tree if k.startswith('rg'))}, {err.strip()[-200:]})")
         finally:
             userns("rm", "-rf", str(state))
 
@@ -639,25 +662,22 @@ def check_bounded():
 
 SEED_CASE = ('{ services.devEnvironments.fetchSeed = [ "github:o/r/abc?narHash=sha256-AAAA" "github:o/s/def?narHash=sha256-BBBB" ];'
              ' services.devEnvironments.instances.rg.rootInGuest = true; nix.settings.allowed-users = [ "alice" ]; }')
-SEED = ('{ svc = { inherit (sys.config.systemd.services.dev-env-fetch-seed) script serviceConfig; }; timer = sys.config.systemd.timers.dev-env-fetch-seed.timerConfig;'
+SEED = ('{ svc = { inherit (sys.config.systemd.services.dev-env-fetch-seed) script serviceConfig; wantedBy = sys.config.systemd.services.dev-env-fetch-seed.wantedBy; };'
+        ' timer = sys.config.systemd.timers.dev-env-fetch-seed.timerConfig; refs = sys.config.services.devEnvironments.fetchSeed;'
         ' act = sys.config.system.activationScripts.devEnvironments.text; stateDir = sys.config.services.devEnvironments.stateDir; }')
 
 
 def check_seed():
-    """The seed is fetched by the host from declared, hash-checked refs and copied, as copies, into a new rootInGuest cache."""
+    """The seed is fetched by a unit the host user cannot write, from declared, hash-checked refs."""
     out = nix_eval(SEED_CASE, SEED)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    svc, act = got.get("svc", {}), got.get("act", "")
+    svc = got.get("svc", {})
     cfg, script = svc.get("serviceConfig", {}), svc.get("script", "")
     seed = f"{got.get('stateDir')}/.fetch-seed"
-    check(cfg.get("User") == "alice" and cfg.get("ProtectHome") is True and cfg.get("ReadWritePaths") == [seed] and "OnUnitActiveSec" in got.get("timer", {})
-          and "github:o/r/abc?narHash=sha256-AAAA" in script and "github:o/s/def?narHash=sha256-BBBB" in script and "narHash=}" in script,
-          f"the host fetches the declared refs as its user, without its home, and compares each hash ({cfg}, {got.get('timer')}, {out.stderr.strip()[-200:]})")
-    cp = [line for line in act.splitlines() if "fetch-seed/nix" in line]
-    rg_block = act.split("$d/rg/nix-cache", 1)[-1]
-    check(len(cp) == 1 and "cp -rP --no-preserve=mode,ownership" in cp[0] and "chown -hR" in rg_block and 'install -d -m 0700 -o alice -g users "$d/.fetch-seed"' in act
-          and "--reflink" not in act and " -l " not in cp[0] and "-a " not in cp[0],
-          f"a new rootInGuest cache is a copy of the seed (no links, none followed, owner remapped), made only once ({cp})")
+    timer = got.get("timer", {})
+    check("User" not in cfg and "DynamicUser" not in cfg and cfg.get("ProtectHome") is True and cfg.get("ReadWritePaths") == [seed]
+          and "OnActiveSec" in timer and "OnUnitActiveSec" in timer and got.get("refs") and svc.get("wantedBy") == [],
+          f"the seed is fetched by the unit's own identity (root, not the host user), sandboxed, from a timer that also fires after a change of refs ({cfg}, {timer})")
     off = nix_eval('{ services.devEnvironments.instances.rg.rootInGuest = true; nix.settings.allowed-users = [ "alice" ]; }', SEED)
     check("fetch-seed" not in (json.loads(off.stdout).get("act", "x") if off.returncode == 0 else "x"), "with no refs there is no seed directory and no copy")
     # the script, for real, with a stub nix that prints the hash it was asked for (or another)
@@ -683,12 +703,11 @@ def check_seed():
         first = run(GEN="one")
         seeded = gen("nix")
         second = run(GEN="two")
-        old = gen(".old")
         bad = run(GEN="three", BAD="1")
         leftovers = [p.name for p in (d / "seed").iterdir() if p.name.startswith(".new")]
-        check(first.returncode == 0 and seeded == "one" and second.returncode == 0 and old == "one" and bad.returncode != 0 and gen("nix") == "two" and not leftovers,
-              f"the seed is rebuilt from nothing and swapped in, the previous one kept aside, and a hash that differs ends the run with the seed as it was "
-              f"({first.returncode}, {seeded}, {old}, {bad.returncode}, {gen('nix')}, {leftovers}, {bad.stderr.strip()[-120:]})")
+        check(first.returncode == 0 and seeded == "one" and second.returncode == 0 and bad.returncode != 0 and gen("nix") == "two" and not leftovers,
+              f"the seed is rebuilt from nothing and swapped in, and a hash that differs ends the run with the seed as it was "
+              f"({first.returncode}, {seeded}, {bad.returncode}, {gen('nix')}, {leftovers}, {bad.stderr.strip()[-120:]})")
 
 
 def check_nested(facts):
