@@ -175,7 +175,7 @@ let
         example = [ "gh-hosts.yml" ];
         description = "Which of `credentials` this instance gets; null is all of them.";
       };
-      memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryLow: kept from reclaim, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
+      memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryMin: never reclaimed for a neighbour, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
     };
   };
@@ -244,7 +244,7 @@ in
       example = { work = "build-box"; };
       description = "Client side: `ssh <name>.<prefix>` reaches instance <name> through the host this maps <prefix> to, a known host here.";
     };
-    pool.memory = mkOption { type = size; description = "MemoryMax of the environments' slice, the only hard ceiling: every instance's reserve fits in it, reclaim starts at 90% of it, swap is capped at half of it."; };
+    pool.memory = mkOption { type = size; description = "MemoryMax of the environments' slice, the only ceiling: every instance's reserve fits in it, swap is capped at half of it."; };
   };
 
   config = lib.mkMerge [
@@ -373,9 +373,9 @@ in
       systemd.slices.${slice}.sliceConfig = {
         MemoryMax = cfg.pool.memory;
         MemoryLow = reservedMem;
-        # The limits are the pool's, an instance has only its reserve: under an instance MemoryMax the kernel killed a
-        # build at 6G in a 10G pool with one instance running. Past the pool it kills the largest process in the slice.
-        MemoryHigh = cfg.pool.memory / 10 * 9;
+        # The limit is the pool's, an instance has only its reserve: under an instance MemoryMax the kernel killed a
+        # build at 6G in a 10G pool with one instance running. Past the pool and its swap it kills the largest process
+        # in the slice. NOT MemoryHigh: a runaway then never reaches the limit and stalls the whole pool instead.
         # zram is charged to no cgroup: without this the instances' swap adds up past the device
         MemorySwapMax = cfg.pool.memory / 2;
       };
@@ -392,6 +392,8 @@ in
             # mkForce: the stock unit puts every container in machine.slice
             Slice = lib.mkForce "${slice}.slice";
             MemoryLow = w.memory.reserved;
+            # MemoryLow alone is given up once a neighbour has nothing left to reclaim: it took an idle instance to 59M
+            MemoryMin = w.memory.reserved;
             CPUWeight = lib.min 10000 (100 * w.cpu.reserved);
             # The stock pre-start copies the host's resolv.conf, the guest's only DNS: at boot or while a switch
             # restarts NetworkManager it can have no nameserver yet, and the guest would boot without DNS.

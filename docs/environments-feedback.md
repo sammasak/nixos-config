@@ -8,7 +8,7 @@ Append; move a line to fixed when its change lands.
 
 - Secretless GitHub rollout (acer `push`, 2026-11-12): an environment moved onto the proxy keeps dangling `~/.ssh/id_ed25519` and `~/.config/gh/hosts.yml` links in its persistent home (harmless, the targets are gone; a tmpfiles `r` rule would remove them), and a retired instance leaves an empty `/run/dev-env-egress/<name>` until the proxy next restarts.
 
-- `MemoryLow` protects nothing on acer and msi: cgroup2 is mounted without `memory_recursiveprot` (a second cgroup2 mount at `/run/cilium/cgroupv2`), and `environments.slice` counts `low 0`. The 2G reserve is a number, not a reserve (docs/environments-plan.md, item 3).
+- The reserve is hard between environments (`MemoryMin`) but soft against the host: `environments.slice` has only `MemoryLow`, and cgroup2 is mounted without `memory_recursiveprot` on acer and msi (a second cgroup2 mount at `/run/cilium/cgroupv2`). Not measured under host pressure (docs/environments-plan.md, item 3).
 - Inside the Claude sandbox (acer, after #244) these still fail: `nix build nixpkgs#hello` (`cannot create Unix domain socket: Operation not permitted`, so the nix daemon is unreachable), `free` (`Memory information file /proc/meminfo does not exist`), `uptime` (`Cannot get system uptime: No such file or directory`), `htop`. `top` sees 6 tasks. `ps`, `nproc` and `git status` work; `pgrep` sees no host process.
 - Nested sandboxes (acer `push`, 2026-11-12): nspawn's masks on `/proc` make the kernel refuse a full procfs in any nested user and pid namespace; the clean fix is nspawn's (systemd#34226, open). `subset=pid` works but has no `/proc/sys`, `meminfo`, `cpuinfo`, `stat`: `free`, `uptime`, `sysctl` fail; `nproc`, cargo and daemon `nix build` work.
   - bwrap 0.12 cannot start on a subset proc (reads `/proc/sys/kernel/overflowuid`). Works: bind the outer `/proc`, mount `subset=pid` from inside as mapped uid 0, then run the command as mapped root with only `CAP_SETFCAP` and no-new-privs (wrapper verified by hand, also under `claude -p` with the sandbox on).
@@ -76,6 +76,7 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-12 With no ceiling per environment a 17G runaway on msi was not killed: the pool's `MemoryHigh` throttled it for 18 minutes at the limit and the idle neighbour was reclaimed from its 2G `MemoryLow` reserve to 59M. The pool has no `MemoryHigh` now and the reserve is `MemoryMin`: the same runaway was killed after 23 s, that process only, and a neighbour holding 1.5G kept it.
 - 2026-11-12 `ps -e` in Claude's sandbox failed with `lookup self` (#244): `ps` and `top` run there (acer).
 - 2026-11-12 A guest's own nix client (devenv, a local `--store`) waited out the LAN block per substituter lookup: the caches' port is excepted and the guest takes the host's `connect-timeout`. `delegation-test` on msi 467 s to 16 s (#237).
 - 2026-11-12 Host reboot kills what runs in an environment: a resumed agent now gets a restart notice (`modules/workers/default.nix`); checked on acer and msi.

@@ -24,7 +24,7 @@ permission, what a host deploys, repo settings, money).
 | # | Finding | Evidence |
 |---|---------|----------|
 | 1 | Done (#230). Guests sent `max-jobs 8, cores 0` to a daemon bounded at 2 x 2; the daemon takes the client's | guest and host `nix config show` on acer; Nix `daemon.cc` |
-| 2 | `MemoryLow` protects nothing: cgroup2 is mounted without `memory_recursiveprot` on acer and msi (a second cgroup2 mount at `/run/cilium/cgroupv2`) | `/proc/self/mountinfo` on both; `memory.events low 0` |
+| 2 | Done for neighbours (`MemoryMin` per environment); against host pressure still open. `MemoryLow` protects nothing: cgroup2 is mounted without `memory_recursiveprot` on acer and msi (a second cgroup2 mount at `/run/cilium/cgroupv2`) | `/proc/self/mountinfo` on both; `memory.events low 0` |
 | 3 | Done. Per-environment `MemoryHigh` stalls a lone gate while the pool sits idle | `memory.events high` 2913 (acer), 7401 (msi); the 11 to 35 min gate |
 | 4 | Done. Swap is not in the pool: zram is charged to no cgroup, 3 x 3G can exceed the device | kernel docs; zram 7.7G |
 | 5 | On acer a full pool lands on kubelet's eviction line | 15.6G minus pods, system and a 7G pool |
@@ -46,7 +46,7 @@ permission, what a host deploys, repo settings, money).
    independent 20 s derivations from a guest take 41 s, not 21.
 2. **Burst at the pool, not the instance** (3, 4): **Done** (#245). An
    environment has no `memory.max` or `MemoryHigh`; `environments.slice` has
-   `MemoryHigh` at 90% of the pool and a `MemorySwapMax` of half of it.
+   no `MemoryHigh` either, only `MemoryMax` and a `MemorySwapMax` of half of it.
 3. **Restore `memory_recursiveprot`** (2) so the 2G reserve is real: remount
    after Cilium, or stop Cilium mounting its own cgroup2
    (`cgroup.autoMount.enabled=false`, `cgroup.hostRoot=/sys/fs/cgroup`).
