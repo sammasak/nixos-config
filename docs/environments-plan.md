@@ -198,3 +198,9 @@ MicroVMs lose the shared daemon, the shared page cache and cgroup burst, and
 roughly halve density. Move only if environments start running code from
 anyone but the owner, or a daemon escalation cannot be patched quickly. Until
 then the daemon's patch level is the root boundary: keep Nix current.
+
+## Store paths on k3s
+
+How Anthropic delivers store paths to pods, how these environments compare,
+and the plan to run the workloads built here without images:
+[nix-native-delivery.md](nix-native-delivery.md).
