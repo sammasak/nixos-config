@@ -200,6 +200,11 @@ in
     uid = mkOption { type = types.ints.positive; description = "That user's uid; defaults to the declared one."; };
     shell = mkOption { type = types.enum [ "bash" "fish" ]; default = "bash"; description = "The guest login shell the agent starts in."; };
     paths = mkOption { internal = true; readOnly = true; default = { inherit home creds; }; description = "The guest's home and the directory its host credentials are bound under."; };
+    alert = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = "Program run with a message when an instance's container fails, the pool's OOM killer fires or a disk runs low; null, no alerts.";
+    };
     clientKey = mkOption {
       type = types.externalPath;
       default = "${home}/.ssh/id_ed25519";
@@ -330,6 +335,40 @@ in
       };
     })
 
+    # A kernel kill or a full disk has no unit to fail: a timer reads the counter and df, so an alert is up to 2 minutes
+    # late, a disk one at most hourly. State follows a sent alert, so a failed send is retried.
+    (lib.mkIf (cfg.instances != { } && cfg.alert != null) (
+      let sandboxed = { DynamicUser = true; ProtectSystem = "strict"; PrivateTmp = true; }; in {
+        systemd.services."dev-env-alert@" = {
+          serviceConfig = sandboxed // { Type = "oneshot"; };
+          scriptArgs = "%i";
+          script = ''${cfg.alert} "$1 failed on ${hostName}"'';
+        };
+        systemd.services.dev-env-watch = {
+          serviceConfig = sandboxed // { Type = "oneshot"; StateDirectory = "dev-env-watch"; };
+          path = [ pkgs.coreutils pkgs.gawk ];
+          script = ''
+            rc=0
+            now=$(awk '$1 == "oom_kill" { print $2 }' /sys/fs/cgroup/${slice}.slice/memory.events 2>/dev/null)
+            if [[ -n $now ]]; then
+              was=$(cat "$STATE_DIRECTORY/oom_kill" 2>/dev/null || echo "$now")
+              (( now >= was )) || was=0
+              if (( now == was )) || ${cfg.alert} "$((now - was)) process(es) in ${hostName}'s pool killed by the OOM killer"; then echo "$now" > "$STATE_DIRECTORY/oom_kill"; else rc=1; fi
+            fi
+            for dir in ${lib.escapeShellArg cfg.stateDir} /nix; do
+              free=$(df --output=avail -BG "$dir" | tail -1 | tr -dc 0-9)
+              seen="$STATE_DIRECTORY/disk-$(echo "$dir" | tr / _)"
+              [[ -n $free ]] && (( free < 10 )) || continue
+              [[ -e $seen ]] && (( $(date +%s) - $(stat -c %Y "$seen") < 3600 )) && continue
+              if ${cfg.alert} "${hostName}: $dir has ''${free}G free"; then touch "$seen"; else rc=1; fi
+            done
+            exit $rc
+          '';
+        };
+        systemd.timers.dev-env-watch = { wantedBy = [ "timers.target" ]; timerConfig = { OnBootSec = "2min"; OnUnitActiveSec = "2min"; }; };
+      }
+    ))
+
     (lib.mkIf (cfg.instances != { }) {
       assertions =
         let
@@ -406,6 +445,7 @@ in
           # system's switch-to-configuration inside: the agent's ssh session keeps running. Changed memory and CPU
           # properties take effect at the daemon-reload, also without a restart.
           reloadIfChanged = true;
+          onFailure = lib.optional (cfg.alert != null) "dev-env-alert@%n.service";
           partOf = [ "${cfg.unitPrefix}-${w.name}.service" ];
           serviceConfig = {
             # mkForce: the stock unit puts every container in machine.slice

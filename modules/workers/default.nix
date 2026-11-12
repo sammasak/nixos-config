@@ -283,6 +283,11 @@ in
       default = null;
       description = "The host user's gh `hosts.yml`, bound read-only; null when the host user has no gh login.";
     };
+    ntfyUrl = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "ntfy topic URL that hears of a failed environment or egress proxy, a kernel kill in the pool and a low disk; null, no alerts.";
+    };
     guestModules = mkOption {
       type = types.listOf types.deferredModule;
       default = [ ];
@@ -308,6 +313,9 @@ in
       };
       instanceBinds = i: lib.optionalAttrs (sockets i != [ ]) { ${guestEgress} = "${egress}/${i.name}"; };
       sessionSurface = { name = "herdr"; script = hook; };
+      alert = lib.mkIf (cfg.ntfyUrl != null) (pkgs.writeShellScript "dev-env-alert" ''
+        ${pkgs.curl}/bin/curl -fsS -m 10 -H "Title: Environment host" -H "Priority: high" -H "Tags: warning" -d "$1" ${lib.escapeShellArg cfg.ntfyUrl}
+      '');
     };
 
     systemd = lib.mkMerge [
@@ -326,6 +334,7 @@ in
           dev-env-egress = {
             description = "Adds the Claude and GitHub logins to the environments' calls";
             wantedBy = [ "multi-user.target" ];
+            onFailure = lib.optional (dev.alert != null) "dev-env-alert@%n.service";
             environment.HOME = "/tmp";
             serviceConfig = {
               ExecStart = "${pkgs.caddy}/bin/caddy run --adapter caddyfile --config ${egressConfig}";
