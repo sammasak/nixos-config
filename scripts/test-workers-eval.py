@@ -344,9 +344,9 @@ PAUSED_ONE = '{ services.devEnvironments.instances.idle.paused = true; }'
 PAUSED = '{ services.devEnvironments.instances = { a = { }; b = { }; c.paused = true; d.paused = true; }; }'
 PAUSED_FACTS = r"""{
   low = sys.config.systemd.slices.environments.sliceConfig.MemoryLow;
-  auto = builtins.mapAttrs (_: x: x.autoStart) sys.config.containers;
+  containers = builtins.attrNames sys.config.containers;
+  units = builtins.filter (n: builtins.match ".*[-@][cd](\\.service)?" n != null) (builtins.attrNames sys.config.systemd.services);
   declared = builtins.listToAttrs (map (n: { name = n; value = sys.config.systemd.services ? "${sys.config.services.devEnvironments.unitPrefix}-${n}"; }) [ "ok" "a" "b" "c" "d" ]);
-  binds = builtins.attrNames sys.config.containers.c.bindMounts;
 }"""
 
 
@@ -502,15 +502,16 @@ def check_alerts(facts):
 
 
 def check_paused():
-    """A paused instance stays declared (binds) but is not started, has no declaration unit, and reserves nothing."""
+    """A paused instance has no container and no unit (a changed container unit that its declaration's removal stops
+    fails the switch), and reserves nothing."""
     own = nix_eval(PAUSED, OWN)
     got = json.loads(own.stdout) if own.returncode == 0 else ["eval failed: " + own.stderr.strip()[-200:]]
     check(got == [], f"two paused instances leave the pool-fit assertion satisfied (5 declared, 3 active, 2G each, in 8G) ({got})")
     out = nix_eval(PAUSED, PAUSED_FACTS)
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(facts.get("low") == 3 * 2**31 and facts.get("auto") == {"ok": True, "a": True, "b": True, "c": False, "d": False}
-          and facts.get("declared") == {"ok": True, "a": True, "b": True, "c": False, "d": False} and facts.get("binds"),
-          f"paused instances are not started at boot, have no declaration unit, keep their binds and leave the slice's MemoryLow ({facts or out.stderr.strip()[-300:]})")
+    check(facts.get("low") == 3 * 2**31 and facts.get("containers") == ["a", "b", "ok"] and facts.get("units") == []
+          and facts.get("declared") == {"ok": True, "a": True, "b": True, "c": False, "d": False},
+          f"paused instances have no container, no unit of any kind, and leave the slice's MemoryLow ({facts or out.stderr.strip()[-300:]})")
 
 
 def check_nested(facts):

@@ -127,9 +127,10 @@ it off (`services.devEnvironments.alert` is the program they call).
 ## Pause and resume
 
 `paused = true` on an instance stops its container at the next deploy and keeps it
-stopped across boots; the instance is not retired, so its home, clone, agent
-transcript, profiles and gcroots stay (the gcroots refresh and the activation
-script still cover it, and its guest closure is part of the host's own). Its
+stopped across boots: the host then declares no container and no unit for it, as
+for a retired one, but nothing is removed, so its home, clone, agent transcript,
+profiles and gcroots stay (the gcroots refresh and the activation script still
+cover it). Its address and ssh alias stay too. Its
 `memory.reserved` no longer counts toward the pool-fit assertion or the slice's
 `MemoryLow`, so the pool's memory goes to the others. Flip it back and deploy:
 the container starts and the agent is relaunched with `--continue` because the
