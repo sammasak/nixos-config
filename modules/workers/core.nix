@@ -37,6 +37,8 @@ let
     agentDef = cfg.agents.${i.agent} or null;
   }) cfg.instances;
 
+  reservedMem = lib.foldl' (s: w: s + w.memory.reserved) 0 instances;
+
   argv = w: resume: w.agentDef.command ++ lib.optionals resume w.agentDef.resumeArgs
     ++ lib.optionals (w.model != null) (w.agentDef.modelArgs w.model);
   # The agent's command line as a file the guest's login shell sources: no user string is ever quoted for ssh.
@@ -133,9 +135,8 @@ let
     xdg.sounds.enable = false;
   };
 
-  agentModule = { name, ... }: {
+  agentModule = {
     options = {
-      name = mkOption { type = types.strMatching "[a-z][a-z0-9-]*"; default = name; readOnly = true; description = "The agent's name, also the argv[0] of its ssh."; };
       command = mkOption { type = types.nonEmptyListOf types.nonEmptyStr; description = "argv started in the guest's login shell; it ends in that shell."; };
       resumeArgs = mkOption { type = types.listOf types.nonEmptyStr; default = [ ]; description = "Appended when resumeWhen matches."; };
       resumeWhen = mkOption {
@@ -223,10 +224,7 @@ in
       example = { work = "build-box"; };
       description = "Client side: `ssh <name>.<prefix>` reaches instance <name> through the host this maps <prefix> to, a known host here.";
     };
-    pool = {
-      memory = mkOption { type = types.nullOr size; default = null; description = "MemoryMax of the environments' slice; every instance's reserve fits in it."; };
-      cores = mkOption { type = types.nullOr types.ints.positive; default = null; description = "The host's cores, which the instances' reserved cores fit in."; };
-    };
+    pool.memory = mkOption { type = size; description = "MemoryMax of the environments' slice; every instance's reserve fits in it."; };
   };
 
   config = lib.mkMerge [
@@ -282,7 +280,7 @@ in
             roots=/nix/var/nix/gcroots/per-container/$n
             [[ -d $roots ]] || continue
             rm -f "$roots"/home-*
-            ${pkgs.findutils}/bin/find "$home" \( -name node_modules -o -name target -o -name .git \) -prune \
+            find "$home" \( -name node_modules -o -name target -o -name .git \) -prune \
               -o -path '*/.devenv/gc/*' -type l -print 2>/dev/null | while read -r l; do
               t=$(readlink "$l")
               [[ $t == /nix/store/* && -e $t ]] && ln -sfn "$t" "$roots/home-$(echo -n "$l" | sha1sum | cut -c1-16)"
@@ -295,8 +293,6 @@ in
     (lib.mkIf (cfg.instances != { }) {
       assertions =
         let
-          reservedMem = lib.foldl' (s: w: s + w.memory.reserved) 0 instances;
-          reservedCpu = lib.foldl' (s: w: s + w.cpu.reserved) 0 instances;
           ours = map (w: w.address) instances;
           otherHosts = lib.concatLists (lib.attrValues (lib.filterAttrs (a: _: !lib.elem a ours) config.networking.hosts));
           clashing = lib.filter (lib.hasPrefix "10.233.") (lib.concatMap (i: map (a: a.address) i.ipv4.addresses)
@@ -316,15 +312,9 @@ in
             assertion = cfg.blockedNetworks == [ ] || config.networking.firewall.enable && config.networking.firewall.backend == "iptables";
             message = "${p}.blockedNetworks needs the iptables firewall backend.";
           }
-          { assertion = cfg.pool.memory != null; message = "${p}.pool.memory: a host that declares instances sets the memory pool they share."; }
-          { assertion = cfg.pool.cores != null; message = "${p}.pool.cores: a host that declares instances sets its core count."; }
           {
-            assertion = cfg.pool.memory == null || reservedMem <= cfg.pool.memory;
+            assertion = reservedMem <= cfg.pool.memory;
             message = "${p}.instances: their memory.reserved adds up to ${showSize reservedMem}, more than pool.memory ${showSize cfg.pool.memory}.";
-          }
-          {
-            assertion = cfg.pool.cores == null || reservedCpu <= cfg.pool.cores;
-            message = "${p}.instances: their cpu.reserved adds up to ${toString reservedCpu} cores, more than pool.cores ${toString cfg.pool.cores}.";
           }
           { assertion = lib.allUnique (map (w: w.index) instances); message = "${p}.instances: two names hash to one address (10.233.<index>); rename one."; }
           { assertion = clashing == [ ]; message = "${p}: the instances' 10.233.0.0/16 holds an address of this host (${lib.concatStringsSep ", " clashing})."; }
@@ -339,7 +329,7 @@ in
           { assertion = w.prompt == null || cfg.sessionSurface != null; message = "${i}.prompt needs a sessionSurface to deliver it."; }
           { assertion = w.memory.reserved <= w.memory.max; message = "${i}.memory: reserved ${showSize w.memory.reserved} is above max ${showSize w.memory.max}."; }
           {
-            assertion = cfg.pool.memory == null || w.memory.max <= cfg.pool.memory;
+            assertion = w.memory.max <= cfg.pool.memory;
             message = "${i}.memory.max ${showSize w.memory.max} is above pool.memory ${showSize cfg.pool.memory}.";
           }
           { assertion = w.name != hostName; message = "${i}: the name is this host's own."; }
@@ -361,7 +351,7 @@ in
 
       systemd.slices.${slice}.sliceConfig = {
         MemoryMax = cfg.pool.memory;
-        MemoryLow = lib.foldl' (s: w: s + w.memory.reserved) 0 instances;
+        MemoryLow = reservedMem;
       };
 
       systemd.services = lib.listToAttrs (lib.concatMap (w: [
@@ -432,8 +422,8 @@ in
         }))) instances);
 
       environment.systemPackages = map ctl instances;
-      system.build.devEnvironments = lib.listToAttrs (map (w: lib.nameValuePair w.name ({ ctl = ctl w; }
-        // lib.optionalAttrs (w.agentDef != null) { start = agentScript w false; continue = agentScript w true; })) instances);
+      system.build.devEnvironments = lib.listToAttrs (map (w: lib.nameValuePair w.name { start = agentScript w false; })
+        (lib.filter (w: w.agentDef != null) instances));
 
       # egress for the instances' /16; an address with no running instance fails at once, not on a timeout
       networking.nat = { enable = true; internalIPs = [ "10.233.0.0/16" ]; };

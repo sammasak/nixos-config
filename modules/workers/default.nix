@@ -117,11 +117,6 @@ in
   ];
 
   options.sam.workers = {
-    sshKey = mkOption {
-      type = types.externalPath;
-      default = "${home}/.ssh/id_ed25519";
-      description = "The host user's SSH key: its `.pub` lets the host's Herdr pane in, and it is the worker's own for `git push`.";
-    };
     ghHostsFile = mkOption {
       type = types.nullOr types.externalPath;
       default = null;
@@ -141,13 +136,12 @@ in
       # mutableUsers leaves the host's uid undeclared; the first normal user is allocated 1000
       uid = lib.mkIf (config.users.users.${user}.uid == null) 1000;
       shell = "fish";
-      clientKey = cfg.sshKey;
       unitPrefix = "worker";
       stateDir = "/var/lib/workers";
-      prefix = lib.mkDefault profile.hostname;
       guestModules = [ fleetGuest ];
       credentials = {
-        id_ed25519 = cfg.sshKey;
+        # the host user's own key is also the environment's, for `git push`
+        id_ed25519 = dev.clientKey;
       } // lib.optionalAttrs (cfg.ghHostsFile != null) {
         "gh-hosts.yml" = cfg.ghHostsFile;
       } // lib.optionalAttrs hasToken {
@@ -157,6 +151,11 @@ in
     };
 
     assertions = lib.optionals (dev.instances != { }) [
+      {
+        # homelab/deploy-target.nix: that key, from that host's address (a guest's traffic leaves by it), is root fleet-wide
+        assertion = profile.hostname != "lenovo-21CB001PMX";
+        message = "sam.workers: an instance holds the host user's SSH key, and this host's is the fleet's deploy key.";
+      }
       {
         assertion = !usesClaude || hasToken;
         message = "sam.workers: a claude instance logs in with the host's sops secret claude_oauth_token (sam.hostSecrets.enable), which this host does not declare.";
