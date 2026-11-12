@@ -94,7 +94,25 @@ in map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions)
 FLEET_INSTANCE = "{ sam.workers.instances.t = { }; }"
 FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
+    ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile"),
+    ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
+     "gets neither id_ed25519 nor gh-hosts.yml"),
 ]
+# msi with an instance behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
+GITHUB = r"""
+let
+  c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: {
+    sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances = lib.mkForce { gh.egress.github.repos = [ "o/r" ]; plain = { }; }; };
+  }) ]; }).config;
+  start = c.systemd.services.dev-env-egress.serviceConfig.ExecStart;
+  config = builtins.substring (builtins.stringLength start - 68) 68 start;
+in {
+  failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
+  binds = builtins.mapAttrs (_: w: builtins.attrNames w.bindMounts) c.containers;
+  inherit config;
+  caddy = builtins.readFile config;
+}
+"""
 
 # the unit whose change restarts an instance: no nixpkgs bump, resize or prompt edit may change it, a model change must
 DECLARATION = r"""
@@ -166,7 +184,7 @@ def fleet(case):
 
 def main():
     prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
-              fleet("{ }"), fleet(FLEET_INSTANCE), *(fleet(case) for _, case, _ in FLEET_CASES)])
+              fleet("{ }"), fleet(FLEET_INSTANCE), *(fleet(case) for _, case, _ in FLEET_CASES), GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
@@ -196,6 +214,16 @@ def main():
     for name, case, want in FLEET_CASES:
         out = run_eval(fleet(case))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
+    out = run_eval(GITHUB % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("failing") == [], f"msi-ms7758 with an egress.github instance and a gh login fails no assertion ({got.get('failing', out.stderr.strip()[-600:])})")
+    binds = got.get("binds", {})
+    creds = {"/var/lib/host-credentials/id_ed25519", "/var/lib/host-credentials/gh-hosts.yml"}
+    check(not creds & set(binds.get("gh", creds)) and "/run/egress" in binds.get("gh", []) and creds <= set(binds.get("plain", [])),
+          f"an egress.github instance binds its egress directory and no GitHub credential; one without keeps both ({binds})")
+    caddy = got.get("caddy", "")
+    check(got.get("config", "").startswith("/nix/store/") and "unix//run/dev-env-egress/gh/github.sock" in caddy and "/run/secrets" not in caddy,
+          f"the proxy's Caddyfile ({got.get('config')}) names no path under /run/secrets")
 
     real = {s: shutil.which(s) for s in ("fish", "bash")}
     for shell in ("fish", "bash"):

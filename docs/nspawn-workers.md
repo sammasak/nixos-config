@@ -28,7 +28,9 @@ sam.workers.instances = {
 | `agent` | `"claude"` | `claude` (`--dangerously-skip-permissions`), `codex` (not signed in on these hosts), or `none` (a fish shell) |
 | `model` | `null` | the agent's `--model` |
 | `prompt` | `null` | sent once the agent is idle, only on a start with no earlier Claude session |
-| `credentials` | `null` | which of the host's credentials it gets (`id_ed25519`, `gh-hosts.yml`, `egress`); `null` is all. `[ "egress" ]` is an agent that cannot push |
+| `credentials` | `null` | which of the host's credentials it gets (`id_ed25519`, `gh-hosts.yml`); `null` is all. `[ ]` is an agent that cannot push |
+| `egress.github.repos` | `[ ]` | `owner/repo` the instance reaches through the host's proxy (git and REST); non-empty, it gets neither credential |
+| `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it |
 | `memory.reserved` | `"2G"` | `MemoryLow`: guaranteed, kept from reclaim |
 | `memory.max` | `"6G"` | `MemoryMax`, the spike ceiling; swap is capped at half of it |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
@@ -223,16 +225,20 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 - Herdr's pane runs `worker-<name> attach [fresh|continue]` (the instance's
   entry point, also on the host's PATH): ssh, argv[0] named after the agent,
   into `fish -il -c 'source <store file>'`.
-- The Claude login stays on the host. `dev-env-egress` (Caddy, on a unix
-  socket bound read-only at `/var/lib/host-credentials/egress`) adds it to
-  each API call; the guest holds a placeholder token and
-  `ANTHROPIC_BASE_URL=http://127.0.0.1:4100`, which `systemd-socket-proxyd`
-  forwards to the socket. Only `/v1/*` is forwarded. Requests are in
-  `journalctl -u dev-env-egress`. A rotated token restarts the proxy; the
-  environments notice nothing.
-- Credentials still bound read-only: the host user's `~/.ssh/id_ed25519`
-  (`git push`), and on acer `~/.config/gh/hosts.yml` (msi's `lukas` has no gh
-  login). Next to go: `docs/environments-plan.md`, "Secrets stay on the host".
+- The logins stay on the host. `dev-env-egress` (Caddy) listens per instance
+  in `/run/dev-env-egress/<name>/`, bound read-only at `/run/egress`: the
+  socket is the instance's identity. `anthropic.sock` adds the Claude login
+  to `/v1/*`; the guest holds a placeholder and
+  `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (`systemd-socket-proxyd`).
+  With `egress.github.repos`, `github.sock` adds the host user's gh token
+  (read from `hosts.yml` at each proxy start) to git smart-HTTP and
+  `/repos/<owner>/<repo>` REST calls for those repos, everything else 403;
+  git reaches it through `127.0.0.1:4102` (`insteadOf` for `https://github.com/`
+  and `git@github.com:`), gh through `http_unix_socket` with a placeholder
+  `GH_TOKEN`. Requests are in `journalctl -u dev-env-egress`, logger
+  `<socket>-<name>`. A rotated token restarts the proxy.
+- Without `egress.github`, the host user's `~/.ssh/id_ed25519` and on acer
+  `~/.config/gh/hosts.yml` are still bound read-only.
 
 The committed config declares none.
 

@@ -98,7 +98,8 @@ let
     "${creds}/ssh_host_ed25519_key" = { hostPath = "${cfg.stateDir}/ssh_host_ed25519_key"; isReadOnly = true; };
     "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
   } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; })
-    (lib.filterAttrs (n: _: w.credentials == null || lib.elem n w.credentials) cfg.credentials);
+    (lib.filterAttrs (n: _: w.credentials == null || lib.elem n w.credentials) cfg.credentials)
+    // lib.mapAttrs (_: src: { hostPath = src; isReadOnly = true; }) (cfg.instanceBinds w);
 
   guest = w: { ... }: {
     imports = cfg.guestModules;
@@ -205,6 +206,12 @@ in
       default = { };
       example = { gh-hosts.yml = "/home/alice/.config/gh/hosts.yml"; };
       description = "Host paths bound read-only at ${creds}/<name> in every guest.";
+    };
+    instanceBinds = mkOption {
+      type = types.functionTo (types.attrsOf types.externalPath);
+      default = _: { };
+      defaultText = "_: { }";
+      description = "Per instance (its declaration is the argument), guest paths bound read-only from these host paths.";
     };
     guestModules = mkOption { type = types.listOf types.deferredModule; default = [ ]; description = "NixOS modules of every guest; `devEnvironment` (name, hostName, address) is their argument."; };
     sessionSurface = mkOption {
