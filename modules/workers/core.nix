@@ -227,7 +227,7 @@ in
       type = types.listOf cidr;
       default = [ ];
       example = [ "192.168.10.0/24" ];
-      description = "Networks the instances cannot reach through the host, DNS (port 53) excepted; iptables firewall backend.";
+      description = "Networks the instances cannot reach through the host, and with any set not the host itself either, DNS (port 53) excepted; iptables firewall backend.";
     };
     jumpHosts = mkOption {
       type = types.attrsOf types.str;
@@ -445,16 +445,26 @@ in
       networking.nat = { enable = true; internalIPs = [ "10.233.0.0/16" ]; };
       networking.localCommands = "${pkgs.iproute2}/bin/ip route replace unreachable 10.233.0.0/16";
       networking.firewall = lib.mkIf (cfg.blockedNetworks != [ ]) {
+        # INPUT too: a guest's connection to one of the host's own addresses (its k3s API, sshd) is never forwarded
         extraCommands = ''
           iptables -w -D FORWARD -i ve-+ -j dev-env-forward 2>/dev/null || true
+          iptables -w -D INPUT -i ve-+ -j dev-env-input 2>/dev/null || true
           iptables -w -F dev-env-forward 2>/dev/null || iptables -w -N dev-env-forward
-          iptables -w -A dev-env-forward -p udp --dport 53 -j RETURN
-          iptables -w -A dev-env-forward -p tcp --dport 53 -j RETURN
+          iptables -w -F dev-env-input 2>/dev/null || iptables -w -N dev-env-input
+          for c in dev-env-forward dev-env-input; do
+            iptables -w -A $c -p udp --dport 53 -j RETURN
+            iptables -w -A $c -p tcp --dport 53 -j RETURN
+          done
           ${lib.concatMapStrings (c: "iptables -w -A dev-env-forward -d ${c} -j DROP
 ") cfg.blockedNetworks}
+          iptables -w -A dev-env-input -m conntrack --ctstate NEW -j DROP
           iptables -w -I FORWARD -i ve-+ -j dev-env-forward
+          iptables -w -I INPUT -i ve-+ -j dev-env-input
         '';
-        extraStopCommands = "iptables -w -D FORWARD -i ve-+ -j dev-env-forward 2>/dev/null || true\n";
+        extraStopCommands = ''
+          iptables -w -D FORWARD -i ve-+ -j dev-env-forward 2>/dev/null || true
+          iptables -w -D INPUT -i ve-+ -j dev-env-input 2>/dev/null || true
+        '';
       };
       networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
 
