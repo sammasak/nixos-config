@@ -7,7 +7,7 @@ lifecycle, permissions, store options tried). This file is the verdict against t
 
 | Goal item | State | Evidence |
 |---|---|---|
-| msi and acer reboot and work as nspawn hosts | Met on msi; acer reboot not exercised | Both use the same runtime-host role: headless, maintenance off the boot path. On msi a reboot was measured: container autostarts 6 to 7 s into userspace, agent back in Herdr at 14 to 15 s and resumes its conversation. A guest that never gets ready is retried 3 times in 10 min, then stays failed instead of wedging the next deploy (#263, seen live on msi). acer was deployed and its environments restarted many times, but the host itself was not rebooted. |
+| msi and acer reboot and work as nspawn hosts | Met | Both use the same runtime-host role: headless, maintenance off the boot path. msi, measured: container autostarts 6 to 7 s into userspace, agent back in Herdr at 14 to 15 s and resumes its conversation. acer, two reboots on 2026-11-12 with one environment declared, from the host journal: container start at 6.8 s, container and its session surface up at 15.0 and 15.2 s, k3s started alongside at 13.6 s, host startup finished at 51 s; the environment then worked for 29 minutes until it was retired. A guest that never gets ready is retried 3 times in 10 min, then stays failed instead of wedging the next deploy (#263, seen live on msi). |
 | Guests use the host nix store, instant access | Met, with a known floor | Store is the host's, read-only bind, builds through the host daemon. Clone 3 to 6 s. Fresh clone of a seen commit: 6 s (factum), 17.6 s (herman), per-checkout evaluation plus 1 to 4 s of small builds. Warm shell under 1 s. A package no public cache has: 71 s on msi, 2.7 s in an acer environment afterwards over the LAN cache. |
 | Lifecycle | Met, one step unobserved | Declare, deploy (37 s), work, resize live, stop, retire (home to trash for a week). Removing a declaration never deletes a home; only `retired` does. Declaring the first and retiring the last environment no longer restarts NetworkManager (#267, checked both directions on acer). The deletion from trash after a week has not been observed, see "Not yet verified". |
 | Resources, burstable | Met | Per environment `MemoryLow` reserve, pool-level limit and swap. One environment alone reached 10.06G of a 10G pool with 4.6G in swap, no kill. A 17G runaway lost only that process; neighbour kept its 1.5G. cargo build of factum on msi: 65 s, 4.7G peak, zero throttle or OOM events. |
@@ -87,7 +87,7 @@ trash is covered by the eval test; the deletion is one `find -cmin +10080` line 
 host. First possible check: after 2026-11-19 on acer, `sudo ls /var/lib/workers/.trash` should list no entry dated
 20261112.
 
-Also not exercised: a reboot of acer (see the first row), and msi with a fresh `rootInGuest` environment after #267.
+Also not exercised: msi with a fresh `rootInGuest` environment after #267.
 
 ## Open items outside this module
 
