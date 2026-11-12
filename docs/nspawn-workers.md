@@ -33,6 +33,7 @@ sam.workers.instances = {
 | `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it |
 | `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
+| `rootInGuest` | `false` | its own 65536 uids (`--private-users`): guest root is an unprivileged host uid, and the user gets passwordless sudo. Its home and caches are owned on disk by its mapped ids (not id-mapped), so the option needs a fresh instance: an existing environment toggled either way refuses to start until it is retired or declared under a new name, it has its own sshd key and HostKeyAlias `<name>.environments.<prefix>`, and the state dir and per-container profiles and roots are mounted nosuid. Ran on msi (root1, root2) |
 
 Host-wide: `sam.workers.pool.memory` (below) and `sam.workers.ntfyUrl` (null, or the ntfy topic that hears of failures, see Alerts).
 
@@ -153,6 +154,19 @@ of a PV or namespace meets validate-bash and Kyverno, and a guest has no kubecon
 gate (`--no-verify`, `-c core.hooksPath=`) meets the guests' own `no-verify-guard` PreToolUse hook, beside
 validate-bash in the same Bash hook list, which denies with exit 2 and never asks (an asking hook would turn the
 variable off for removals). The remote has no ruleset yet.
+
+### Guest root and the host
+
+nixpkgs' container module binds `/nix/var/nix/{profiles,gcroots}/per-container/<name>` read-write with an identity
+idmap, so guest root there can create files owned by any host uid below 65536, root included. Both parents are
+mounted `nosuid,nodev,noexec` (the state dir `nosuid,nodev`) on every host that declares instances or retired names,
+whether or not one runs with `rootInGuest`, so such a file stays inert after its instance is paused; retiring an
+instance deletes its per-container dirs; the host's root
+readers there only follow links (the daemon's root scan, the gcroots unit's `ln -sfn` and `mv -T`), and what is left
+is a disk-filling the guest already has through the daemon. Homes are never moved between id blocks: `<stateDir>/<name>/.id-base`, written with the home, must match the instance's block for its container to start. From another host, `ssh <name>.<prefix>` trusts each name's key on first use
+(`~/.ssh/known_hosts_environments`), so a `rootInGuest` instance's own key is accepted there too. A `rootInGuest` name retired and
+declared again gets a new key and is refused until `ssh-keygen -R <name>.<prefix> -f ~/.ssh/known_hosts_environments`;
+plain instances share the host's one environment key, so theirs does not change.
 
 ## What fails at build
 
