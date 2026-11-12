@@ -102,6 +102,79 @@ permission, what a host deploys, repo settings, money).
 | nixos-config#201 | Keep the whole-store read-only mount | A closure-only view breaks the shared daemon |
 | Stale items | Close or rescope devenv-platform#93, #91, skills PR #92 (written against the removed agent-runtime) | |
 
+## Secrets stay on the host
+
+Today each environment holds three secrets: the Claude login token, the
+owner's SSH key and a `gh` token (finding 6). All three can leave the guest:
+the guest talks to a proxy on the host, and the proxy adds the credential.
+The guest holds a placeholder.
+
+| Secret | Verdict | How |
+|--------|---------|-----|
+| Claude login | Works, probed | `ANTHROPIC_BASE_URL` at the proxy, `CLAUDE_CODE_OAUTH_TOKEN=proxy-injected`; the proxy overwrites `Authorization` |
+| git over HTTPS | Feasible | `url."http://127.0.0.1:4102/".insteadOf` for GitHub URLs; the proxy adds `Authorization: Basic x-access-token:<token>` |
+| `gh` | Feasible | `http_unix_socket` in gh's config, `GH_TOKEN=proxy-injected`; REST filtered by `/repos/<owner>/<repo>` |
+| SSH remotes, commit signing, sops age keys | Does not fit | The client holds the key by protocol. Use HTTPS remotes; guests do not sign or decrypt |
+
+Probe (lenovo, 2026-11-12): Caddy on `127.0.0.1:4100` injecting the token
+from a file, Claude Code started with the placeholder and an empty home;
+`POST /v1/messages?beta=true` returned 200, the reply came back, no token in
+the access log, the proxy log or the output.
+
+### Design
+
+- **One Caddy on the host**, a listener per instance on a unix socket in
+  `/run/dev-env-egress/<name>/` (`anthropic.sock`, `github.sock`). The
+  directory is bound read-only into the guest at `/run/egress`. A socket per
+  instance is the identity: the proxy knows which environment asks without
+  trusting anything the guest sends.
+- **Guest shim**: `systemd-socket-proxyd` units, `127.0.0.1:4100` to
+  `anthropic.sock` and `127.0.0.1:4102` to `github.sock`, for clients that
+  want a TCP address. `gh` talks to the socket directly.
+- **Secrets reach Caddy by `LoadCredential`**, never the Caddyfile: the store
+  is shared with every guest.
+- **Per-instance option** `egress.github = { repos = [ "owner/repo" ];
+  graphql = false; }`. The proxy allows only those repository paths and the
+  git smart-HTTP and REST methods they need.
+- Streaming: `flush_interval -1`, pass `anthropic-beta` through. Guests set
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
+- Replaces the credentials binds and tmpfiles links in
+  `modules/workers/default.nix` and the token assertion. About 110 to 140
+  lines in, about 25 out.
+- `blockedNetworks` stays as is: a unix socket needs no network path to the
+  host.
+
+### What is left exposed
+
+The proxy is a confused deputy: a guest can do whatever the proxy lets its
+socket do. Bounds: the repository allowlist, a method allowlist, a ruleset on
+`nixos-config` main, a rate limit, and an access log per instance (which is
+also the audit trail that is missing today). A guest can still spend Claude
+quota; it can no longer take the token elsewhere.
+
+### Phases, each with a leak check
+
+Leak check, from the host, per instance: `nsenter -t <leader> -m -S 1000`
+finds no secret in the environment of any process, `/var/lib/host-credentials`
+is gone, a grep of the guest's home and `/run` for the token prefix finds
+nothing, and the Caddyfile's store path holds no token.
+
+1. **Claude token.** Smallest and already probed. Done when an agent works a
+   normal task through the proxy and the leak check passes.
+2. **git.** HTTPS remotes through the proxy with a fine-grained token for the
+   named repos; remove the SSH key bind. Done when clone, fetch and a gated
+   push work and a push to a repo off the list is refused.
+3. **`gh`.** Socket config, REST allowlist, GraphQL off. Done when `gh pr
+   create`, `gh pr view` and `gh issue comment` work (find which commands
+   need GraphQL; `gh pr create` does) and `gh api /user/keys` is refused.
+4. **GitHub App tokens.** A host oneshot and 45 min timer mint installation
+   tokens; the token in step 2 goes away. Same as nixos-config#166.
+
+Owner decisions: subscription token behind a proxy or a Console API key
+(proxying a subscription token is not a documented use; an API key at a
+gateway is); create or reuse a GitHub App; the ruleset on `nixos-config`
+main; GraphQL on or off; Codex auth, if Codex agents run in guests.
+
 ## Capacity
 
 - Pool `P` = RAM - host working set (p95) - eviction margin - swap budget /
