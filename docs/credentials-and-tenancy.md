@@ -1,17 +1,21 @@
 # Credentials for any tool, several users, and rented hosts
 
-Research and plan, 2026-11-12. Nothing here is built. It answers three
-questions about the environments in [nspawn-workers.md](nspawn-workers.md):
+Research and plan, 2026-11-12. Nothing here is built, and nothing here is
+scheduled or a gate on other work: it is the preparation, so that each part
+can be picked up later with the problems already understood. It answers
+three questions about the environments in
+[nspawn-workers.md](nspawn-workers.md):
 
 1. How does every tool and protocol use the host's credentials unless a rule
    blocks it, with no secret in the guest?
 2. How does one host serve several users, each with their own credentials?
 3. How does the same setup run on a VPS, declared like the home hosts?
 
-Sources: the current module, read line by line; web research on proxies,
-platforms and providers. Facts about other projects below come from their
-docs as read on this date and are not tested here. Each one that the plan
-depends on is listed under "To verify first".
+Sources: the current module, read line by line; the owner's issues on these
+topics (listed at the end); web research on proxies, platforms and providers,
+with the engine and GitHub facts then checked against the repositories and
+docs themselves. Nothing was run. What is still only read is listed under
+"To verify first".
 
 ## Where we are
 
@@ -68,23 +72,52 @@ Guest side, declared once for every environment:
   closed. UDP 443 blocked so clients fall back from QUIC.
 - Destinations with no credential pass through untouched (no interception).
 
-Engine candidates:
+Engine candidates, checked against their source and issue trackers:
 
 | Engine | For | Against |
 |---|---|---|
-| `srt-proxy` from Anthropic's sandbox-runtime, plus a small decider of ours | Built as a boundary: asks a decider per request before dialling, pins Host to the CONNECT target, strips client credentials, refuses odd paths and TRACE; takes a listening socket, which is our per-environment model | v0.0.x research preview; Node; likely HTTP/1.1 only; websockets unknown; drops private ranges by default |
-| mitmproxy plus a policy addon | Mature; HTTP/2 and websockets | A debugging tool: every safeguard above is ours to write; streaming needs care |
-| NVIDIA OpenShell | Richest policy ready-made (REST and GraphQL deny rules, minting) | Weekly 0.1.x; built around its own sandbox; default is log-only |
+| mitmproxy (12.3) plus a policy addon | Mature; HTTP/2 and websockets; can pass chosen hosts through untouched; in nixpkgs | Its own security policy calls it an inspection tool, not a boundary; no unix socket listener (needs a bridge); buffers event streams unless the addon turns streaming on (#4469); memory growth over days (#7414, #8574) |
+| `srt proxy` from Anthropic's sandbox-runtime (0.0.82, in nixpkgs) plus a decider of ours | Built as a boundary: asks a decider per request over a small framed protocol, fails closed, strips client credentials, takes a pre-bound socket and a CA from the host | Five weeks old. Every allowed host must be listed up front (no pass-through, no wildcard), so default allow is impossible. HTTP/1.1 only, websockets refused. Private ranges always blocked. Open bugs with truncated responses (#606, #756) |
+| iron-proxy, OneCLI, NVIDIA OpenShell | Purpose-built placeholder-swapping proxies; OpenShell and OneCLI filter GraphQL by operation and root field and gate `git push` per repository | Not yet read in depth. OneCLI is now a team product; OpenShell is built around its own sandbox and is moving weekly |
 | Caddy (today) | Already here, no CA in the guest | Cannot intercept; one config per tool |
 
 Rejected: Squid (no HTTP/2), Envoy (heavy), Fly Tokenizer (clients must add
-its header), Infisical Agent Vault (self-hosting deprecated).
+its header), Infisical Agent Vault (standalone version deprecated), Coder
+boundary and httpjail (filter only, no injection).
 
-**Choice: spike `srt-proxy` and mitmproxy side by side on msi, keep Caddy
-until one wins.** Pass criteria: `claude`, `gh`, `git`, `nix`, `cargo`,
-`npm` and `curl` work unchanged with only placeholder tokens; a streamed
-Claude reply is not buffered; the leak check passes; the engine adds no
-always-on memory worth counting against the pool.
+What the trackers say to avoid, whatever the engine:
+
+- **Inject headers only.** Swapping a placeholder inside request bodies lets
+  a guest store the placeholder in a gist and read the real secret back
+  (sandbox-runtime #714), and breaks uploads (#543, #798).
+- **Prefer `HTTPS_PROXY` to a base URL for Claude.** A custom base URL drops
+  features (claude-code #98464). A placeholder swapped on the host for a
+  `setup-token` is reported working and billed to the subscription (#105663).
+  The `anthropic-beta` header must pass unchanged or the call returns 401.
+- **Bind the socket directory, not the socket file**, or a proxy restart
+  leaves the guest with a dead socket (moby #22789). The module does this.
+- **LFS and release downloads redirect to other hosts** with signed URLs
+  (git-lfs #5050). Allow those hosts and inject nothing there.
+
+**Choice: spike mitmproxy first on msi, with `srt proxy`'s safeguards as the
+checklist for the addon, and read iron-proxy and OpenShell before writing a
+decider of our own. Keep Caddy until the spike passes.** `srt proxy` stays
+the reference design; it cannot be the engine while it refuses unlisted
+hosts and the LAN.
+
+Spike tests (each from an upstream issue):
+
+1. A Claude turn longer than 300 s streams without stalling; the guest holds
+   only a placeholder.
+2. `gh pr create`, `pr edit`, `pr merge`, `release upload`, `api /user`, a
+   push, a fetch, and git-lfs push and pull with its redirects.
+3. The placeholder in a body, a query string, and a header to a host with no
+   credential never comes back as the real value.
+4. `/allowed/../denied` and `%2e%2e` spellings are refused.
+5. CA trust per client: Node, Go (`gh`, LFS), curl, git, Python, and the
+   daemon's fetchers.
+6. Proxy restart keeps the guest's socket; a dead policy process fails
+   closed; memory over a 24 h soak.
 
 ### Default allow
 
@@ -98,19 +131,32 @@ The owner's rule: the host's credential is used unless we blocked it.
   variables, runner tokens and permissions; `/app`, `/installation`,
   `/authorizations`; organisation writes.
 - **GraphQL on, filtered.** `gh` sends GraphQL for nearly every `pr`, `issue`
-  and `repo` command. Path rules cannot see inside it, so the decider parses
-  the body and decides on operation type and top-level field names (never the
-  client-chosen operation name). Deny mutations matching the same classes as
-  the REST list; deny batched documents with any denied operation.
-- **Pushes.** The decider reads the ref updates at the start of a push and
-  can deny deletions, tags and protected branches. Force pushes are not
-  visible there; a GitHub ruleset on the branch is the control.
+  and `repo` command. Path rules cannot see inside it, so the policy parses
+  the body and decides on the top-level fields of the operation that will
+  run. GitHub accepts several operations in one document and runs the one
+  named by `operationName`, so the filter selects it the same way or refuses
+  such documents; batched arrays are already refused by GitHub. Deny:
+  `create/update/deleteBranchProtectionRule`,
+  `create/update/deleteRepositoryRuleset`, `archiveRepository`,
+  `updateRepository`. Repository delete, transfer, visibility, deploy keys,
+  collaborators, hooks and secrets exist on REST only.
+- **Pushes.** The policy reads the ref updates at the start of a push and
+  can deny deletions, tags and protected branches; a signed push wraps them
+  and is parsed or refused. Force pushes are not visible there. Refs can
+  also be written with no push at all: GraphQL `updateRefs` (has `force`),
+  `createCommitOnBranch`, `deleteRef`, `mergeBranch`, and REST `/git/refs`,
+  `PUT /contents`, `/merges`. So branch rules belong in a GitHub ruleset
+  (`deletion`, `non_fast_forward`), not only in the proxy.
 - **Responses that carry credentials** are denied or stripped: runner
   registration tokens, installation token endpoints, OAuth refresh.
 - **The real bound is on GitHub's side.** A deny list will miss something. A
   GitHub App installed on chosen repositories, without administration,
   workflows, secrets or members permission, caps the worst case whatever the
-  proxy lets through. Today's token is the owner's full `gh` login.
+  proxy lets through. Today's token is the owner's full `gh` login (scopes
+  `repo`, `read:org`, `gist`, `admin:public_key`). Known costs of an App
+  token with `gh`: `pr merge --auto` fails (cli #7213), some queries ask for
+  fields a narrow token cannot read (#6274, #8910), `/user` is not served,
+  and commits and PRs appear as the App.
 
 Until the engine exists, default allow can only be approximated on Caddy:
 any repository, REST deny list, GraphQL on and unfiltered. That lets a guest
@@ -145,7 +191,10 @@ instances.<name>.credentials = [ "github" "anthropic" ];   # which ones this env
 ```
 
 Other mechanisms use the same entry with a different delivery: `sign` (an
-agent socket), `gateway` (a host unit and a guest socket). What stays code:
+agent socket), `gateway` (a host unit and a guest socket). An agent socket
+in a guest departs from the rule in nixos-config #133 ("never pass host
+HOME, SSH agent, host Nix daemon socket"), so it is an owner decision; git
+over HTTPS through the proxy avoids needing it for GitHub. What stays code:
 reading gh's `hosts.yml`, minting, the GraphQL and push parsers.
 
 This deletes from the adapter: the three copies of the service list, three
@@ -185,8 +234,10 @@ services.devEnvironments.users.alice = {
   directory (XFS project quota or a ZFS dataset); the shared store is not
   covered.
 - **State.** Per user: state directory, Nix cache directory, SSH host key.
-- **Each user brings their own Anthropic login.** Sharing one subscription
-  between people is likely against its terms: owner to check.
+- **Each user brings their own Anthropic login.** The owner's rule (#169) is
+  the Max subscription, no Console keys; the environments plan notes that
+  plan terms assume individual use. Refresh tokens are single-use and
+  rotate (claude-code #88583), so each login has one holder: its proxy.
 
 ### The store and daemon decide who may be a tenant
 
@@ -220,6 +271,13 @@ The generic module evaluates on a bare host today. Missing for a VPS:
 
 ### Install and deploy
 
+Earlier looks at this (nixos-config #83, homelab-gitops #116) were closed
+"not planned" with a gate: name the pain point, the smallest adaptation and
+a rollback test first. Pain point: msi sleeps and acer is the cluster's only
+general worker, so there is no always-on place for environments. Smallest
+adaptation: one host with the generic module and a deploy-rs node. Rollback:
+deleting the host loses nothing, since work leaves by push.
+
 - nixos-anywhere with disko for the install (needs 1.5 GB RAM for kexec);
   the host SSH key is generated beforehand and passed in, so its age key is
   in `.sops.yaml` before first boot.
@@ -251,9 +309,9 @@ two or three environments, 16 GB for four to six. Hetzner Cloud has no nested
 KVM, so the microVM tier needs bare metal; an auction server with 64 GB is
 likely the best value. Prices move; check at order time.
 
-## Phases
+## Phases, if picked up
 
-Each ends with a check; none needs the next.
+Each ends with a check; none needs the next, and none blocks today's setup.
 
 1. **Seam.** Proxy into the generic module, services as data, today's two
    services reproduced, tests unchanged in what they assert. No behaviour
@@ -264,18 +322,20 @@ Each ends with a check; none needs the next.
    parsing; `gh pr create` and `gh issue comment` work in a guest, the deny
    list is refused, leak check passes.
 4. **GitHub App tokens** minted per environment on the host (nixos-config
-   #166). Owner gate.
+   #166). Needs the App created.
 5. **Owner split.** `users.<name>` with per-user slice, state, proxy unit
    and keys; the current single user becomes the first entry. Checked with a
    second local user whose environment cannot reach the first's sockets.
 6. **VPS profile.** One rented host installed with nixos-anywhere, deployed
-   from lenovo, credentials through the home broker. Owner gate (money).
+   from lenovo, credentials through the home broker. Costs money.
 7. **More mechanisms as needed:** SSH agent socket, a database gateway, a
    mail relay. Built when an environment needs one.
 
-## Owner decisions
+## Decisions each part needs when picked up
 
-- Create the GitHub App and its permission set (new privileged credential).
+- Create the GitHub App and its permission set (new privileged credential,
+  nixos-config #166), and a ruleset on `main` of the repos agents push to.
+- Whether a host SSH agent socket may ever be bound into a guest.
 - Who may be a tenant: only the owner, trusted people, or anyone. This
   decides whether the microVM tier is ever built.
 - Whether trusted users may have the host daemon socket.
@@ -287,11 +347,29 @@ Each ends with a check; none needs the next.
 
 Read, not tested:
 
-- `srt-proxy` exists as described (listening socket, decider protocol), and
-  how it handles websockets and HTTP/2.
-- That Claude Code's streaming works through an intercepting proxy with a
-  placeholder token, and which of `nix`, `cargo`, `uv` need extra CA
-  settings in a NixOS guest.
-- GitHub's GraphQL mutation names for the deny classes.
+- Everything in the spike test list.
+- Whether a ruleset binds an App that is not on its bypass list.
+- How `security.pki.certificateFiles` behaves inside a declared container.
+- iron-proxy, OneCLI and OpenShell beyond their READMEs.
 - Provider facts (nested KVM, prices, RAM for kexec).
 - Whether a guest's `resolv.conf` works on a VPS that uses the resolved stub.
+- The isolation gaps raised on nixos-config #137 against the old runtime,
+  re-run against these environments: host `/run` writable from a guest,
+  mount propagation, loopback reach, a scan of reachable host sockets, an
+  operator `GH_TOKEN` reaching a guest.
+
+## Related issues
+
+- nixos-config #166 (App token issuer, owner decision), #169 and #137
+  (subscription token rule, egress probes, isolation gaps), #133 (isolation
+  options, microVMs deferred until untrusted code), #200 and #201 (daemon and
+  store trust), #83 (disko, nixos-anywhere, WireGuard references), #14
+  (host firewall scoping).
+- devenv-platform #120 (invariant "daemon socket inaccessible" fails by
+  design here), #93.
+- homelab-gitops #116 (public gateway and VPS references), #97 (egress
+  policy on the cluster).
+- llm-gateway #71, #72 (Claude and Codex through a gateway: no-go, with the
+  header and auth findings).
+- skills #28, #90 (what agents may do on GitHub; no branch protection is
+  available on these repos' plan, so the merge rule is a local hook).
