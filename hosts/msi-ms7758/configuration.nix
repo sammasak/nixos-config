@@ -19,6 +19,7 @@ in
     instances = { };
     retired = [ "skills91" "boot" "boot2" ];
     labelPrefix = "msi";
+    shutdownNotice = "Mon-Fri 20:40";
     pool.memory = "10G";
   };
   # An environment's builds run in this daemon, outside the pool: bounded (a cores-2 build peaked at

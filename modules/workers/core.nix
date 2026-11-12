@@ -92,9 +92,13 @@ let
     # Nix's per-user fetcher and tarball caches, one per host: a fresh home re-downloads and re-unpacks every flake
     # input the store already holds (31 s against 7 s for the first devenv shell on acer).
     "${home}/.cache/nix" = { hostPath = "${cfg.stateDir}/.nix-cache"; isReadOnly = false; };
+    # Not the evaluation cache in it: its rows are unsigned, so a neighbour could plant the derivation another
+    # environment then builds. The name is Nix's (2.34); a version that renames it shares the cache again.
+    "${home}/.cache/nix/eval-cache-v6" = { hostPath = "${cfg.stateDir}/${w.name}/eval-cache"; isReadOnly = false; };
     "${creds}/ssh_host_ed25519_key" = { hostPath = "${cfg.stateDir}/ssh_host_ed25519_key"; isReadOnly = true; };
     "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
-  } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; }) cfg.credentials;
+  } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; })
+    (lib.filterAttrs (n: _: w.credentials == null || lib.elem n w.credentials) cfg.credentials);
 
   guest = w: { ... }: {
     imports = cfg.guestModules;
@@ -125,9 +129,10 @@ let
     nix.settings.flake-registry = "";
     nix.registry.nixpkgs.to = { type = "path"; path = pkgs.path; };
 
-    # The guest's nix is a client of the host's daemon, which takes a client's substituters when it trusts each of
-    # them: a list of the guest's own replaced the host's, and skipped the fleet's store caches.
-    nix.settings = { inherit (config.nix.settings) substituters trusted-public-keys; };
+    # The guest's nix is a client of the host's daemon, which takes a client's substituters (when it trusts each of
+    # them), max-jobs and cores over its own: the guest's defaults skipped the fleet's store caches and lifted the
+    # host's build bounds.
+    nix.settings = { inherit (config.nix.settings) substituters trusted-public-keys max-jobs cores; };
 
     # lean: the boot is the start latency
     documentation.enable = false;
@@ -160,6 +165,12 @@ let
       agent = mkOption { type = types.enum ([ "none" ] ++ lib.attrNames cfg.agents); default = "claude"; description = "One of `agents`, or `none` for a shell."; };
       model = mkOption { type = types.nullOr (types.strMatching "[][A-Za-z0-9._:-]+"); default = null; description = "The agent's model."; };
       prompt = mkOption { type = types.nullOr types.nonEmptyStr; default = null; description = "Sent by the session surface once the agent is ready, on a start with no session to resume."; };
+      credentials = mkOption {
+        type = types.nullOr (types.listOf types.str);
+        default = null;
+        example = [ "claude_oauth_token" ];
+        description = "Which of `credentials` this instance gets; null is all of them.";
+      };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryLow: kept from reclaim, and what the pool must fit."; };
       memory.max = mkOption { type = size; default = "6G"; description = "MemoryMax, the spike ceiling; MemoryHigh, where reclaim starts, is 90% of it and swap is capped at half of it."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
@@ -261,6 +272,7 @@ in
             install -d -m 0700 "$d/${w.name}"
             [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/home"
             install -d -m 0755 -o ${user} -g ${group} "$d/${w.name}/home/.cache"
+            install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/eval-cache"
           '') instances}
         '';
       };
@@ -327,6 +339,10 @@ in
           { assertion = w.agent != "none" || w.model == null; message = "${i}.model is set but agent is \"none\"."; }
           { assertion = w.agent != "none" || w.prompt == null; message = "${i}.prompt is set but agent is \"none\"."; }
           { assertion = w.prompt == null || cfg.sessionSurface != null; message = "${i}.prompt needs a sessionSurface to deliver it."; }
+          {
+            assertion = w.credentials == null || lib.all (n: cfg.credentials ? ${n}) w.credentials;
+            message = "${i}.credentials names one that ${p}.credentials does not declare.";
+          }
           { assertion = w.memory.reserved <= w.memory.max; message = "${i}.memory: reserved ${showSize w.memory.reserved} is above max ${showSize w.memory.max}."; }
           {
             assertion = w.memory.max <= cfg.pool.memory;

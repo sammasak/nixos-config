@@ -62,6 +62,7 @@ ASSERTED = [
     ("jump to an unknown host", '{ services.devEnvironments.jumpHosts.far = "nowhere"; }', "nowhere must be pinned"),
     ("jump prefix", '{ services.devEnvironments.jumpHosts.Far = "box"; }', "jumpHosts.Far: the prefix is"),
     ("guest without sshd", "{ services.devEnvironments.guestModules = [ { services.openssh.enable = lib.mkForce false; } ]; }", "a guest module disabled sshd"),
+    ("unknown credential", '{ services.devEnvironments.instances.ok.credentials = [ "nope" ]; }', "credentials names one that"),
     ("credential name", '{ services.devEnvironments.credentials."a b" = "/etc/x"; }', 'credentials.a b: a file name'),
 ]
 
