@@ -60,10 +60,12 @@ permission, what a host deploys, repo settings, money).
    notices (merged with the port branch) tell the agent; next, a
    PreToolUse/PostToolUse hook writes what is running to `~/.in-flight`, so the
    resumed agent reads facts, not memory.
-6. **Nested sandboxes**: `mount -t proc -o subset=pid` works in a guest on
-   kernel 7.2.10 (probed on acer); a full proc is still refused. Next: get
-   bwrap and podman to ask for `subset=pid`. No nspawn weakening needed, the
-   host `/proc` bind proposal is dropped.
+6. **Nested sandboxes**: investigated (ledger, 2026-11-12). No tool asks for
+   `subset=pid` itself; two wrappers work (bwrap: mount the subset from
+   inside, then drop capabilities; podman: an OCI runtime wrapper). Next:
+   package both in the guest, set `sandbox.bwrapPath`, and run Claude's
+   `/sandbox` and a `buildah bud` end to end. The real fix is upstream
+   (systemd#34226).
 
 ### Next (design work, each a day)
 
