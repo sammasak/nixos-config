@@ -18,6 +18,7 @@ in
 
   sam.profile = vars;
   sam.hostSecrets.enable = true;
+  sam.storeCache.use = true;
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [
     "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
     "nixos-config" "rf-proto" ".cache/wt"

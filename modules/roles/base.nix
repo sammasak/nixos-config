@@ -12,6 +12,7 @@
     ../core/fonts.nix
     ../core/sops.nix
     ../core/resource-hygiene.nix
+    ../core/store-cache.nix
     ../themes/Catppuccin  # Always apply theming (includes GRUB)
   ];
 }
