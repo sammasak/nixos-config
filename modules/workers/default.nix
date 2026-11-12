@@ -7,18 +7,17 @@ let
   dev = config.services.devEnvironments;
   profile = config.sam.profile;
   user = profile.username;
-  home = "/home/${user}";
-  creds = "/var/lib/host-credentials";
+  inherit (dev.paths) home creds;
   usesClaude = lib.any (w: w.agent == "claude") (lib.attrValues dev.instances);
   hasToken = config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token;
   onGithub = i: i.egress.github.repos != [ ];
   usesGithub = lib.any onGithub (lib.attrValues dev.instances);
   # an instance's sockets: its identity to the proxy is the directory it is given
-  sockets = i: lib.optional (i.agent == "claude") "anthropic" ++ lib.optional (onGithub i) "github";
+  services = { anthropic = { port = 4100; on = i: i.agent == "claude"; }; github = { port = 4102; on = onGithub; }; };
+  sockets = i: lib.filter (s: services.${s}.on i) (lib.attrNames services);
   egressed = lib.filter (i: sockets i != [ ]) (lib.attrValues dev.instances);
   egress = "/run/dev-env-egress";
   guestEgress = "/run/egress";
-  ports = { anthropic = 4100; github = 4102; };
   # The tokens are read at request time from the unit's credential and its private /tmp: this file is in the store
   # every guest reads.
   githubToken = "/tmp/github-token";
@@ -178,7 +177,7 @@ let
   };
 
   shim = s: {
-    sockets."${s}-egress" = { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString ports.${s}}" ]; };
+    sockets."${s}-egress" = { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString services.${s}.port}" ]; };
     services."${s}-egress".serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${guestEgress}/${s}.sock"; };
   };
 
@@ -216,7 +215,7 @@ let
       (lib.mkIf github {
         # mkForce: the fleet's git sends sammasak's repos to ssh, and git applies only the longest rewrite
         programs.git.settings.url = lib.mkForce {
-          "http://127.0.0.1:${toString ports.github}/".insteadOf = [ "https://github.com/" "git@github.com:" "ssh://git@github.com/" ];
+          "http://127.0.0.1:${toString services.github.port}/".insteadOf = [ "https://github.com/" "git@github.com:" "ssh://git@github.com/" ];
         };
         xdg.configFile."gh/config.yml".text = "http_unix_socket: ${guestEgress}/github.sock\n";
       })
@@ -228,12 +227,12 @@ let
 
     # the guest holds placeholders, not the tokens: the host's proxy adds the login to each call
     environment.variables = lib.optionalAttrs (self.agent == "claude") {
-      ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString ports.anthropic}";
+      ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString services.anthropic.port}";
       CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host";
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     } // lib.optionalAttrs github { GH_TOKEN = "held-by-the-host"; };
 
-    systemd = lib.mkMerge (map (s: lib.mkIf (lib.elem s (sockets self)) (shim s)) [ "anthropic" "github" ] ++ [ { tmpfiles.rules = [
+    systemd = lib.mkMerge (map (s: lib.mkIf (lib.elem s (sockets self)) (shim s)) (lib.attrNames services) ++ [ { tmpfiles.rules = [
       "d ${home}/.ssh 0700 ${user} users -"
       "d ${home}/.config 0700 ${user} users -"
       # where the agent logs friction with the environment (docs/environments-feedback.md)

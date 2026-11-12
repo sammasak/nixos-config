@@ -20,6 +20,10 @@ in
   # An agent that is talked into it reaches the internet, not the LAN, the cluster or this host (DNS excepted).
   services.devEnvironments.blockedNetworks = [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "169.254.0.0/16" ];
 
+  # A guest may override max-jobs and cores per build, so CPUQuota holds the 2 x 2 bound; MemoryMax fails a build, never k3s.
+  nix.settings = { max-jobs = 2; cores = 2; };
+  systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "4G"; MemoryMax = "6G"; CPUQuota = "400%"; };
+
   # Theming only where a desktop boots (#185): headless, Stylix has nothing to theme and its
   # Home Manager half has failed an activation. A desktop specialisation gets it back.
   stylix.enable = lib.mkForce desktop;
