@@ -101,6 +101,9 @@ FLEET_CASES = [
     ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile"),
     ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
+    ("telemetry without nativeOtel", "{ sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
+    ("telemetry from a guest module", "{ sam.workers.instances.t = { }; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
+     "a guest module turned on sam.claude.telemetry"),
 ]
 # msi with two instances behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
 GITHUB = r"""
@@ -120,6 +123,35 @@ in {
   links = builtins.mapAttrs (_: w: builtins.filter (r: builtins.match ".*id_ed25519.*" r != null) w.config.systemd.tmpfiles.rules) c.containers;
   inherit config;
   caddy = builtins.readFile config;
+}
+"""
+
+# msi as a nativeOtel host with one instance sending telemetry and one not: what each guest gets, and the proxy's site
+TELEMETRY = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: {
+    sam.profile.nativeOtel = lib.mkForce true;
+    sops.secrets.native_otlp_auth = { sopsFile = "${flake}/secrets/claude/native-otlp-auth.yaml"; key = "token"; };
+    sam.workers.instances = lib.mkForce { tel.telemetry = true; plain = { }; };
+  }) ]; }).config;
+  egress = c.systemd.services.dev-env-egress.serviceConfig;
+  guest = n: let g = c.containers.${n}.config; s = g.home-manager.users.lukas.programs.claude-code.settings; in {
+    env = s.env;
+    hooks = builtins.concatMap (e: map (h: h.command) e.hooks) (s.hooks.Stop ++ s.hooks.SessionStart);
+    binds = map (b: b.hostPath) (builtins.attrValues c.containers.${n}.bindMounts);
+    variables = g.environment.variables;
+    sockets = builtins.mapAttrs (_: k: k.listenStreams) g.systemd.sockets;
+    relay = g.systemd.services ? native-otel-relay;
+    secrets = builtins.attrNames (g.sops.secrets or { });
+  };
+in {
+  failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
+  pinned = builtins.pathExists "${flake.inputs.skills}/hooks/emit-work-ref.sh";
+  credentials = egress.LoadCredential;
+  caddy = builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " egress.ExecStart));
+  tel = guest "tel";
+  plain = guest "plain";
 }
 """
 
@@ -281,17 +313,17 @@ GITHUB_CASES = [
 ]
 
 
-def check_github_proxy(site):
-    """Runs the generated site of one instance in Caddy with its upstreams pointed at a closed port: no network is needed."""
+def site_wrong(site, upstream, cases):
+    """Runs the generated site of one instance in Caddy with its upstreams pointed at a closed port: no network is needed.
+    The requests of cases that are not 403 exactly when they should be allowed, or None without caddy."""
     caddy = shutil.which("caddy")
     if caddy is None:
-        check(False, "caddy is on PATH for the GitHub proxy behaviour test")
-        return
+        return None
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     body = site.split("\n", 2)[2]
-    body = re.sub(r"https://(api\.)?github\.com", "http://127.0.0.1:1", body)
+    body = re.sub(upstream, "http://127.0.0.1:1", body)
     with tempfile.TemporaryDirectory() as d:
         conf = pathlib.Path(d, "Caddyfile")
         conf.write_text("{\n admin off\n auto_https off\n}\nhttp://127.0.0.1:%d {\n%s" % (port, body))
@@ -304,17 +336,56 @@ def check_github_proxy(site):
                 except OSError:
                     time.sleep(0.1)
             wrong = []
-            for method, path, allowed in GITHUB_CASES:
+            for method, path, allowed in cases:
                 conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-                conn.request(method, path)
+                conn.request(method, path, body=b"{}" if method == "POST" else None)
                 status = conn.getresponse().status
                 conn.close()
                 if (status != 403) != allowed:
                     wrong.append(f"{method} {path} -> {status}")
-            check(not wrong, f"the GitHub site lets agents do issue, comment, label and pull request work and git, and refuses merges, refs, contents, workflows, releases, reviews and dot segments ({wrong})")
+            return wrong
         finally:
             proc.terminate()
             proc.wait(5)
+
+
+def check_github_proxy(site):
+    wrong = site_wrong(site, r"https://(api\.)?github\.com", GITHUB_CASES)
+    check(wrong == [], f"the GitHub site lets agents do issue, comment, label and pull request work and git, and refuses merges, refs, contents, workflows, releases, reviews and dot segments ({'no caddy on PATH' if wrong is None else wrong})")
+
+
+OTLP_CASES = [("POST", "/v1/metrics", True), ("POST", "/v1/logs", True), ("GET", "/v1/metrics", False), ("POST", "/v1/traces", False),
+              ("POST", "/v1/metrics/x", False), ("POST", "/", False), ("PUT", "/v1/logs", False)]
+
+
+def check_telemetry(got, out):
+    check(got.get("failing") == [], f"msi as a nativeOtel host with a telemetry instance fails no assertion ({got.get('failing', out.stderr.strip()[-600:])})")
+    tel, plain = got.get("tel", {}), got.get("plain", {})
+    env = tel.get("env", {})
+    attrs = "host.name=msi-ms7758,worker.name=tel"
+    check(env.get("CLAUDE_CODE_ENABLE_TELEMETRY") == "1" and env.get("OTEL_METRICS_EXPORTER") == env.get("OTEL_LOGS_EXPORTER") == "otlp"
+          and env.get("OTEL_EXPORTER_OTLP_PROTOCOL") == "http/protobuf" and env.get("OTEL_EXPORTER_OTLP_ENDPOINT") == env.get("HARNESS_OTLP_ENDPOINT") == "http://127.0.0.1:4319"
+          and env.get("OTEL_RESOURCE_ATTRIBUTES") == env.get("HARNESS_RESOURCE_ATTRIBUTES") == attrs and env.get("OTEL_METRICS_INCLUDE_REPOSITORY") == "true"
+          and all(env.get(k) == "0" for k in ("OTEL_LOG_USER_PROMPTS", "OTEL_LOG_TOOL_CONTENT", "OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_RAW_API_BODIES")),
+          f"a telemetry guest's Claude exports metrics and logs to its loopback 4319 as {attrs}, the HARNESS_ copies set, no content ({ {k: v for k, v in env.items() if 'OTEL' in k or 'HARNESS' in k} })")
+    check(tel.get("sockets", {}).get("otlp-egress") == ["127.0.0.1:4319"] and "/run/dev-env-egress/tel" in tel.get("binds", []),
+          f"a telemetry guest's 127.0.0.1:4319 is a socket to its own egress directory ({tel.get('sockets')})")
+    leak = [x for x in tel.get("binds", []) + list(tel.get("variables", {}).values()) + list(env.values()) if "native_otlp" in x or "/run/secrets" in x]
+    leak += [x for x in got.get("credentials", []) if "native_otlp" in x]
+    check(not leak and not tel.get("relay") and tel.get("secrets") == [] and "native_otlp" not in got.get("caddy", ""),
+          f"no token path reaches a guest, its env or the proxy: no bind, variable or credential names it, no relay or secret in the guest ({leak})")
+    hooks = [h for h in tel.get("hooks", []) if h.endswith("/hooks/emit-work-ref.sh")]
+    check(len(hooks) == (2 if got.get("pinned") else 0), f"a telemetry guest runs emit-work-ref.sh on Stop and SessionStart exactly when the skills pin carries it ({len(hooks)}, pinned {got.get('pinned')})")
+    p_env = plain.get("env", {})
+    left = sorted(k for k in p_env if k.startswith(("OTEL_", "HARNESS_")) or k == "CLAUDE_CODE_ENABLE_TELEMETRY")
+    check(not left and "otlp-egress" not in plain.get("sockets", {}) and not any(h.endswith("emit-work-ref.sh") for h in plain.get("hooks", [])),
+          f"a guest without telemetry, on that nativeOtel host, gets none of it ({left})")
+    sites = {b.split("\n", 2)[1].strip(): b for b in got.get("caddy", "").split("http:// {")[1:]}
+    site = sites.get("bind unix//run/dev-env-egress/tel/otlp.sock", "")
+    check(bool(site) and "bind unix//run/dev-env-egress/plain/otlp.sock" not in sites and "reverse_proxy http://127.0.0.1:4319" in site,
+          f"only the telemetry instance has an OTLP site, and it forwards to the host's relay ({sorted(sites)})")
+    wrong = site_wrong(site, r"http://127\.0\.0\.1:4319", OTLP_CASES)
+    check(wrong == [], f"the OTLP site passes POST /v1/metrics and /v1/logs and refuses everything else ({'no caddy on PATH' if wrong is None else wrong})")
 
 
 def check_eval_cache(facts):
@@ -758,7 +829,7 @@ def check_scripts():
 def main():
     prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", BOUNDED), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
-              GITHUB % {"root": json.dumps(ROOT)}])
+              GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
@@ -889,6 +960,8 @@ def main():
     check_github_proxy(gh)
     check(got.get("config", "").startswith("/nix/store/") and "/run/secrets" not in caddy,
           f"the proxy's Caddyfile ({got.get('config')}) names no path under /run/secrets")
+    out = run_eval(TELEMETRY % {"root": json.dumps(ROOT)})
+    check_telemetry(json.loads(out.stdout) if out.returncode == 0 else {}, out)
 
     real = {s: shutil.which(s) for s in ("fish", "bash")}
     for shell in ("fish", "bash"):
