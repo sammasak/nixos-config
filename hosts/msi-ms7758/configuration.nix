@@ -17,7 +17,7 @@ in
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
   sam.workers = {
     instances = { };
-    retired = [ "skills91" ];
+    retired = [ "skills91" "boot" "boot2" ];
     labelPrefix = "msi";
     pool = { memory = "10G"; cores = 8; };
   };
