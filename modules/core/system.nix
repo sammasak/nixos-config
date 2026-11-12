@@ -214,6 +214,27 @@ in
       };
     };
 
+    claude.telemetry = {
+      enable = mkOption {
+        type = types.bool;
+        default = profile.nativeOtel;
+        defaultText = lib.literalExpression "config.sam.profile.nativeOtel";
+        description = ''
+          Claude Code exports OTLP metrics and events (no prompt or tool content) to
+          the local native-otel-relay at 127.0.0.1:4319, which adds the gateway token,
+          and registers the skills input's emit-work-ref.sh hook once the pin carries it.
+          A developer environment gets it from `sam.workers.instances.<name>.telemetry`,
+          never from its host (docs/native-otel-canary.md).
+        '';
+      };
+      resourceAttributes = mkOption {
+        type = types.attrsOf (types.strMatching "[A-Za-z0-9._-]+");
+        default = { "host.name" = lib.toLower profile.hostname; };
+        defaultText = lib.literalExpression ''{ "host.name" = lib.toLower config.sam.profile.hostname; }'';
+        description = "`OTEL_RESOURCE_ATTRIBUTES` of the export, also `HARNESS_RESOURCE_ATTRIBUTES` for the hook.";
+      };
+    };
+
     userConfig = mkOption {
       type = types.attrs;
       default = { };

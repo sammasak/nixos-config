@@ -123,6 +123,8 @@ let
 
     bulk-reader = import ./bulk-reader-probe.nix hosts // { inherit skills; };
 
+    harness-telemetry = import ./harness-telemetry-probe.nix hosts // { inherit skills; };
+
     otel-rollback = { live = otelSurfaces lenovo; acer = (hm acer).programs.claude-code.settings.env; };
 
     rf-lab-boundary = {

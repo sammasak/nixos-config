@@ -21,6 +21,7 @@ devenv tasks run nixos:coordinator-test  # coordinator adapters on lenovo only; 
 devenv tasks run nixos:worker-permissions-test  # #145/#157/skills#28: Herdr workers (restored panes too) start in bypassPermissions and switch models on a safeguards flag; the Coordinator unchanged
 devenv tasks run nixos:workers-eval-test  # modules/workers/core.nix: each wrong config fails eval with its message; agent argv survives the guest shell
 devenv tasks run nixos:bulk-reader-test  # sam.claude.bulkReader: shunt hooks only when on and pinned, after the existing Bash hooks; guests via a guest module
+devenv tasks run nixos:harness-telemetry-test  # sam.claude.telemetry: Claude's OTLP through the local relay, session + repository attributes, emit-work-ref.sh only when on and pinned
 devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer
 devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
 devenv tasks run nixos:build-bounds-test  # nix-daemon builds bounded on lenovo (#109) and the environment hosts (acer, msi)

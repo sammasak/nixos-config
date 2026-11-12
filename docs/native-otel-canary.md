@@ -6,19 +6,57 @@ collector-sanitized tool-result events. The client configuration is gated on
 the private OTLP receiver being reviewed and live; this change does not alter
 subscriptions, API credentials, or inference routing.
 
-Codex does not consume `OTEL_EXPORTER_OTLP_HEADERS`, so its metrics use a
-localhost-only Nginx relay. The relay runs as a dynamic systemd user, reads the
+Claude and Codex both export through a localhost-only Nginx relay on
+`127.0.0.1:4319` (`modules/homelab/native-otel-relay.nix`, on every host with
+`nativeOtel = true`; evaluation fails if that host does not declare the
+`native_otlp_auth` secret). The relay runs as a dynamic systemd user, reads the
 SOPS credential through `LoadCredential`, and creates its configuration in a
-0700 runtime directory. It accepts only `POST /v1/metrics`, forwards only the
-OTLP content/encoding/accept headers plus its bearer credential over verified
-TLS, and does not log request bodies or headers. Neither Codex nor its tool
-subprocesses receive the receiver credential. The relay is enabled only with
-`nativeOtel = true`.
+0700 runtime directory. It accepts only `POST /v1/metrics` and `POST /v1/logs`,
+forwards only the OTLP content/encoding/accept headers plus its bearer
+credential over verified TLS, and does not log request bodies or headers.
+Neither client nor its tool subprocesses receive the receiver credential.
 The upstream certificate chain is verified to depth 3; Nginx's default depth
 of 1 rejects the receiver's valid certificate chain.
 
-Claude Code removes every `OTEL_*` variable, including the OTLP authorization
-header, from the environment of Bash, hooks and stdio MCP subprocesses.
+Any local process reaches `127.0.0.1:4319`, hostNetwork pods included, and
+since this change it takes `/v1/logs` as well as `/v1/metrics`, signed with
+the host's token. It forwards `X-Otel-Worker` as sent (an environment's egress
+proxy overwrites it with the instance name) and rate-limits per value of that
+header, 20 requests/s with a burst of 50 (then 429); requests without it share
+one host bucket, so a flooding environment cannot starve the host's clients. A
+local process can set the header itself, so a value is trustworthy only when
+it came through an environment's proxy. The per-header limit therefore binds
+only environments: a host process can vary `X-Otel-Worker` per request or
+borrow a guest's name.
+
+Claude's endpoint is the relay, not the receiver, because a headless
+`claude -p` started by a script or by another session's Bash tool never passes
+a shell wrapper, so a header exported there was missing and the receiver
+rejected its telemetry. Claude now holds no credential at all. It sends
+(`sam.claude.telemetry`, on by default with `nativeOtel`):
+- metrics and log events over `http/protobuf`, with
+  `host.name=<host>` and no account UUID;
+- `session.id` on events (`OTEL_METRICS_INCLUDE_SESSION_ID=true`; the gateway
+  strips it from metrics);
+- `vcs.owner.name` and `vcs.repository.name` on both
+  (`OTEL_METRICS_INCLUDE_REPOSITORY=true`);
+- no prompts, tool content, tool details or raw API bodies (all four flags `0`).
+
+Claude Code removes every `OTEL_*` variable from the environment of Bash,
+hooks and stdio MCP subprocesses, so the settings also carry
+`HARNESS_OTLP_ENDPOINT` (the relay) and `HARNESS_RESOURCE_ATTRIBUTES` (the
+same attributes) for the skills hook `emit-work-ref.sh`, registered on `Stop`
+(after `check-git-state.sh`) and `SessionStart` once the skills pin carries it.
+`nixos:harness-telemetry-test` checks all of this. A developer environment
+sends through its host's relay only with
+`sam.workers.instances.<name>.telemetry` ([nspawn-workers.md](nspawn-workers.md)).
+A guest's Claude also has `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. With it
+set, OTel events and metrics are still exported; only `DISABLE_TELEMETRY`-style
+product analytics stop. Verified on a host session 2026-11-12 against a local
+OTLP receiver; not yet verified inside a guest, which stays unverified until
+one environment is enabled. A guest's telemetry leaves its
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` and `permissions.defaultMode` as they are
+without it: both follow `sam.profile.nativeOtel`, which is off in every guest.
 
 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is `"0"`. In Claude Code 2.1.300, `"1"`
 forces every session into the default permission mode, so
@@ -36,7 +74,7 @@ python3 scripts/test-native-otel-subprocess-env.py <generated settings.json>
 ```
 
 It runs the real client with the generated settings against a local mock API
-and a mock OTLP receiver, with a fake OTLP credential. It checks that:
+and a mock OTLP receiver, with a fake OTLP credential in its environment. It checks that:
 - `claude` starts in default mode;
 - `claude --dangerously-skip-permissions` starts in `bypassPermissions`;
 - Bash never sees the credential;
@@ -59,9 +97,10 @@ that full host-build gate. Four `PASS:` lines indicate success; an assertion
 failure blocks activation. The no-inference
 test checks that composing Herdr and telemetry produces one Fish dispatch,
 preserves arguments and exit status, and keeps telemetry settings local to
-the function. It covers native telemetry enabled and disabled, missing
-credentials, and hosts without Herdr. On Herdr hosts, the Fish telemetry
-module supplies environment setup before the existing Herdr dispatch.
+the function. It covers native telemetry enabled and disabled and hosts
+without Herdr. On Herdr hosts, the Fish telemetry module supplies Codex's
+environment setup before the existing Herdr dispatch; it adds nothing to
+`claude`, and no OTLP header reaches either client.
 
 The composition cases substitute local recording stubs for the launcher/binaries.
 A separate non-TTY case executes the real Herdr launcher with client stubs,
@@ -75,7 +114,7 @@ rerun for green.
 
 After the receiver and its host credential are approved and deployed, switch
 to the NixOS generation containing the canary, open a fresh shell, and verify
-the two CLI wrappers still invoke the expected binaries and that
+the CLIs still invoke the expected binaries and that
 `native-otel-relay.service` is active. Run one bounded synthetic command with
 each CLI, then confirm at the receiver that only
 allowlisted metrics arrive with `host.name=lenovo-21cb001pmx`. Confirm

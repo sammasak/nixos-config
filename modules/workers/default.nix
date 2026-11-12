@@ -122,7 +122,8 @@ let
       version = "2.1.311";
       platforms.linux-x64 = { binary = "claude.zst"; checksum = "d0c00b80761f3030f34cf0812266f6c6f8210ff9af7242f7c6c76c5600499caf"; };
     }; }; }) ];
-    sam.profile = profile // { hostname = devEnvironment.hostName; roles = [ "base" ]; pi = false; };
+    # nativeOtel off: the guest has neither the relay nor its secret; sam.workers.instances.<name>.telemetry is its way in
+    sam.profile = profile // { hostname = devEnvironment.hostName; roles = [ "base" ]; pi = false; nativeOtel = false; };
     sam.userConfig = config.sam.userConfig;
 
     environment.systemPackages = [ pkgs.time pkgs.bc ];
@@ -170,6 +171,11 @@ let
         description = "Repositories (owner/repo) the instance reaches through the host's proxy, git and REST; non-empty, the guest holds no GitHub credential.";
       };
       graphql = mkOption { type = types.bool; default = false; description = "Also pass GitHub's GraphQL API, which no repository list can bound; most gh pr and issue commands need it."; };
+    };
+    options.telemetry = mkOption {
+      type = types.bool;
+      default = false;
+      description = "The guest's Claude Code exports OTLP metrics and events (sam.claude.telemetry) through the proxy to this host's native-otel-relay, which needs sam.profile.nativeOtel here; the guest holds no token. The proxy's X-Otel-Worker stamp names the worker on logs only; metrics carry no worker and count under host.name.";
     };
     config.credentials = lib.mkIf (onGithub config) (lib.subtractLists [ "id_ed25519" "gh-hosts.yml" ] (lib.attrNames dev.credentials));
   };
@@ -321,6 +327,28 @@ in
             xdg.configFile."gh/config.yml".text = "http_unix_socket: ${dev.egress.github.socket}\n";
           };
         };
+        # A path to the host's relay, which adds the token; the guest's Claude sends to the same 127.0.0.1:4319.
+        otlp = {
+          for = i: i.telemetry;
+          # The exact path: Caddy's path matcher ignores case and merges slashes. The relay keys its rate limit, and
+          # the gateway the logs' worker.name, on the stamped header, never the guest's; metrics carry no worker.
+          site = i: ''
+          @other not {
+            method POST
+            expression `{path} in ["/v1/metrics", "/v1/logs"]`
+          }
+          respond @other 403
+          request_header X-Otel-Worker ${i.name}
+          request_body {
+            max_size 1MiB
+          }
+          reverse_proxy http://127.0.0.1:4319
+          '';
+          port = 4319;
+          guest.config = { devEnvironment, ... }: {
+            sam.claude.telemetry = { enable = true; resourceAttributes = { "host.name" = lib.toLower profile.hostname; "worker.name" = devEnvironment.name; }; };
+          };
+        };
       };
     };
 
@@ -357,6 +385,18 @@ in
       {
         assertion = lib.all (i: !onGithub i || !lib.elem "id_ed25519" i.credentials && !lib.elem "gh-hosts.yml" i.credentials) (lib.attrValues dev.instances);
         message = "sam.workers: an instance with egress.github.repos gets neither id_ed25519 nor gh-hosts.yml.";
+      }
+      {
+        assertion = profile.nativeOtel || !lib.any (i: i.telemetry) (lib.attrValues dev.instances);
+        message = "sam.workers: an instance with telemetry sends through this host's native-otel-relay, which runs only with sam.profile.nativeOtel (and the sops secret native_otlp_auth).";
+      }
+      {
+        assertion = lib.all (i: !i.telemetry || i.agent == "claude") (lib.attrValues dev.instances);
+        message = "sam.workers: telemetry exports Claude Code's OTLP, and an instance with it has another agent.";
+      }
+      {
+        assertion = lib.all (i: i.paused || i.telemetry || !config.containers.${i.name}.config.sam.claude.telemetry.enable) (lib.attrValues dev.instances);
+        message = "sam.workers: a guest module turned on sam.claude.telemetry, which has no relay to send to there; set sam.workers.instances.<name>.telemetry instead.";
       }
       {
         assertion = config.home-manager.users.${user}.systemd.user.services ? herdr;

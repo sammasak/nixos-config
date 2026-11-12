@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import urllib.error
 import urllib.request
@@ -83,8 +84,8 @@ def main():
             config_text = config_text.replace(
                 "127.0.0.1:4319", f"127.0.0.1:{relay_port}"
             ).replace(
-                "https://otlp.sammasak.dev/v1/metrics",
-                f"http://127.0.0.1:{receiver.server_port}/v1/metrics",
+                "https://otlp.sammasak.dev/",
+                f"http://127.0.0.1:{receiver.server_port}/",
             )
             config_text = "\n".join(
                 line
@@ -115,8 +116,11 @@ def main():
 
             if request_status(f"{endpoint}/v1/metrics") != 405:
                 raise AssertionError("relay accepted a non-POST metrics request")
-            if request_status(f"{endpoint}/not-metrics") != 404:
-                raise AssertionError("relay accepted a non-metrics path")
+            if request_status(f"{endpoint}/v1/logs") != 405:
+                raise AssertionError("relay accepted a non-POST logs request")
+            for other in ("/not-metrics", "/v1/traces", "/v1/metrics/x"):
+                if request_status(f"{endpoint}{other}", data=body) != 404:
+                    raise AssertionError(f"relay accepted {other}")
             if request_status(
                 f"{endpoint}/v1/metrics",
                 data=body,
@@ -127,21 +131,38 @@ def main():
                 },
             ) != 200:
                 raise AssertionError("relay did not forward the synthetic metrics body")
+            if request_status(f"{endpoint}/v1/logs", data=body, headers={"Content-Type": "application/x-protobuf", "X-Otel-Worker": ""}) != 200:
+                raise AssertionError("relay did not forward the synthetic logs body")
+            if request_status(f"{endpoint}/v1/logs", data=body, headers={"Content-Type": "application/x-protobuf", "X-Otel-Worker": "tel"}) != 200:
+                raise AssertionError("relay did not forward an environment's logs body")
 
             with received_lock:
                 forwarded = list(received)
-            if len(forwarded) != 1:
-                raise AssertionError("relay forwarded requests outside the metrics POST")
-            path, headers, forwarded_body = forwarded[0]
-            if path != "/v1/metrics" or headers.get("Authorization") != f"Bearer {token}":
-                raise AssertionError("relay did not replace authorization with its credential")
-            if headers.get("Content-Type") != "application/json":
-                raise AssertionError("relay did not preserve the OTLP content type")
-            if any(key.lower() == "x-sentinel" for key in headers):
-                raise AssertionError("relay forwarded an unrelated caller header")
-            if forwarded_body != body:
-                raise AssertionError("relay changed the metrics payload")
-            print("native OTLP relay: metrics-only route, header filtering, and fake auth passed")
+            if [path for path, _, _ in forwarded] != ["/v1/metrics", "/v1/logs", "/v1/logs"]:
+                raise AssertionError("relay forwarded requests outside the metrics and logs POSTs")
+            workers = [[v for k, v in headers.items() if k.lower() == "x-otel-worker"] for _, headers, _ in forwarded]
+            if workers != [[], [], ["tel"]]:
+                raise AssertionError(f"relay forwarded X-Otel-Worker other than as sent, or an empty one ({workers})")
+            want_types = ["application/json", "application/x-protobuf", "application/x-protobuf"]
+            for (path, headers, forwarded_body), want_type in zip(forwarded, want_types):
+                if headers.get("Authorization") != f"Bearer {token}":
+                    raise AssertionError(f"relay did not replace authorization with its credential on {path}")
+                if headers.get("Content-Type") != want_type:
+                    raise AssertionError(f"relay did not preserve the OTLP content type on {path}")
+                if any(key.lower() == "x-sentinel" for key in headers):
+                    raise AssertionError("relay forwarded an unrelated caller header")
+                if forwarded_body != body:
+                    raise AssertionError(f"relay changed the {path} payload")
+            with ThreadPoolExecutor(12) as pool:
+                flood = list(pool.map(lambda _: request_status(f"{endpoint}/v1/metrics", data=body, headers={"X-Otel-Worker": "flood"}), range(120)))
+            if 429 not in flood or flood.count(200) < 50 or set(flood) - {200, 429}:
+                raise AssertionError(f"one environment is not limited to its burst of 50, then 429 ({flood.count(200)} passed)")
+            if request_status(f"{endpoint}/v1/metrics", data=body) != 200:
+                raise AssertionError("an environment's flood starved the host's own clients")
+            if request_status(f"{endpoint}/v1/metrics", data=body, headers={"X-Otel-Worker": "calm"}) != 200:
+                raise AssertionError("an environment's flood starved another environment")
+            print("native OTLP relay: metrics and logs POST only, header filtering, X-Otel-Worker passed through, "
+                  "per-environment rate limit, and fake auth passed")
     finally:
         if nginx_process and nginx_process.poll() is None:
             nginx_process.terminate()
