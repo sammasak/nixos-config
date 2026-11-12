@@ -123,6 +123,22 @@ free, within 2 minutes and then at most hourly per directory. A send that fails
 is retried at the next 2 minute run. `sam.workers.ntfyUrl = null` turns all of
 it off (`services.devEnvironments.alert` is the program they call).
 
+
+## Pause and resume
+
+`paused = true` on an instance stops its container at the next deploy and keeps it
+stopped across boots; the instance is not retired, so its home, clone, agent
+transcript, profiles and gcroots stay (the gcroots refresh and the activation
+script still cover it, and its guest closure is part of the host's own). Its
+`memory.reserved` no longer counts toward the pool-fit assertion or the slice's
+`MemoryLow`, so the pool's memory goes to the others. Flip it back and deploy:
+the container starts and the agent is relaunched with `--continue` because the
+transcript is still there. A stop kills what the agent was doing like a reboot
+does: a tool call in flight is cut off (the transcript then ends in a tool use
+without a result) and the resumed agent is told that whatever ran in the
+environment was killed. There is no shutdown notice on a pause; send the agent
+a "push your work" message first if it holds unpushed commits.
+
 ## What fails at build
 
 A wrong declaration fails evaluation with a message naming the option, never

@@ -37,7 +37,7 @@ let
     agentDef = cfg.agents.${i.agent} or null;
   }) cfg.instances;
 
-  reservedMem = lib.foldl' (s: w: s + w.memory.reserved) 0 instances;
+  reservedMem = lib.foldl' (s: w: s + w.memory.reserved) 0 (lib.filter (w: !w.paused) instances);
 
   argv = w: resume: w.agentDef.command ++ lib.optionals resume w.agentDef.resumeArgs
     ++ lib.optionals (w.model != null) (w.agentDef.modelArgs w.model);
@@ -177,6 +177,7 @@ let
         example = [ "gh-hosts.yml" ];
         description = "Which of `credentials` this instance gets; null is all of them.";
       };
+      paused = mkOption { type = types.bool; default = false; description = "Stopped and not started at boot: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session."; };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryMin: never reclaimed for a neighbour, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
     };
@@ -419,7 +420,7 @@ in
 
       containers = lib.listToAttrs (map (w: lib.nameValuePair w.name {
         ephemeral = true;
-        autoStart = true;
+        autoStart = !w.paused;
         privateNetwork = true;
         inherit (w) hostAddress;
         localAddress = w.address;
@@ -463,6 +464,8 @@ in
             ];
           };
         })
+      # a paused instance has no declaration unit: removing it stops the container (PartOf) and keeps its home and roots
+      ] ++ lib.optionals (!w.paused) ([
         # A change of this unit file restarts it and so (PartOf) the container and its agent: it holds only what a
         # running container cannot take live, and no store path, which every nixpkgs bump would move (restartTriggers
         # is one too).
@@ -502,7 +505,7 @@ in
             ExecStart = "${lib.getExe surface} start";
             ExecStop = "${lib.getExe surface} stop";
           };
-        }))) instances);
+        })))) instances);
 
       environment.systemPackages = map ctl instances;
       system.build.devEnvironments = lib.listToAttrs (map (w: lib.nameValuePair w.name { start = agentScript w false; })
