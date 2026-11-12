@@ -120,8 +120,8 @@ Append; move a line to fixed when its change lands.
 
 ## Gate timing
 
-`nixos:qa` per step on msi-gate, warm store, seconds, before (`f4f6b87`) and after `feat/gate-speed-tests`.
-Total 690 s before, 207 s after (`devenv tasks run nixos:qa`: 205 s). Every PASS line is unchanged but one
+`nixos:qa` per step on msi-gate, warm store, seconds, before (`f4f6b87`) and after `feat/gate-speed-tests`, both with unbounded builds (max-jobs 8, cores 0).
+Total 690 s before, 218 s after (207 s before workers-eval's type cases went to two at a time after the batch, for memory). Every PASS line is unchanged but one
 (workers-eval's nftables case now lists only the module's own assertion). A docs-only push now runs the lints alone.
 
 | Step | Before | After | Change |
@@ -135,7 +135,7 @@ Total 690 s before, 207 s after (`devenv tasks run nixos:qa`: 205 s). Every PASS
 | claude-settings | 14 | 2 | paths from the probe |
 | coordinator-wiring | 56 | 21 | 12 nix calls to the probe; 20 s of it is the script's own lock wait |
 | worker-permissions | 245 | 32 | ~25 nix calls to the probe; the three 30 s startup screens side by side |
-| workers-eval | 134 | 34 | non-type cases in one process (only core.nix's assertions); type cases 4 at a time beside it |
+| workers-eval | 134 | 46 | non-type cases in one process (only core.nix's assertions), then the type cases two at a time |
 | ollama-portforward | 16 | 11 | the rest is the test's own sleeps |
 | known-hosts | 14 | 1 | 10 nix calls to the probe |
 | build-bounds | 5 | 0 | |
