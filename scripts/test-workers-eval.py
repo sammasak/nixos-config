@@ -337,6 +337,88 @@ def check_gcroots(facts):
               f"a scan that fails fails the refresh, and with it the garbage collection, and drops no root ({run.returncode})")
 
 
+ACT = "{ inherit (sys.config.services.devEnvironments) stateDir; text = sys.config.system.activationScripts.devEnvironments.text; }"
+RETIRED = '{ services.devEnvironments.retired = [ "gone" "live" ]; }'
+
+
+def userns(*argv, **kw):
+    return subprocess.run(["unshare", "-r", "--map-auto", *argv], capture_output=True, text=True,
+                          env={**os.environ, "PATH": f"/run/wrappers/bin:{os.environ['PATH']}"}, **kw)
+
+
+def activation_run(text, state, active=()):
+    """Runs the activation script as the host runs it (an ERR trap marks a failed snippet, as /activate does) as root in
+    a user namespace with the subuid range mapped, so the instance's user is a second uid that root-only directories
+    shut out. Returns the exit status and a listing of what is under the state directory: path, mode, uid:gid."""
+    stubs = pathlib.Path(state, "stubs")
+    stubs.mkdir(exist_ok=True)
+    stubs.joinpath("active").write_text("".join(f"container@{n}.service\n" for n in active))
+    systemctl = stubs / "systemctl"
+    systemctl.write_text(f'#!/bin/sh\ngrep -qx "$3" {stubs}/active\n')
+    systemctl.chmod(0o755)
+    text = re.sub(r"/nix/store/\S+/bin/systemctl", str(systemctl), text)
+    text = text.replace("/nix/var/nix/profiles/per-container", f"{state}/profiles").replace("/nix/var/nix/gcroots/per-container", f"{state}/gcroots")
+    # the stub user is only a name here: numeric ids make a user-run command fail for its permissions, not for its lookup
+    text = re.sub(r"--reuid=\S+ --regid=\S+", "--reuid=1000 --regid=100", re.sub(r"-o \S+ -g \S+", "-o 1000 -g 100", re.sub(r"chown -h \S+:\S+", "chown -h 1000:100", text)))
+    harness = f"_status=0; trap '_status=1' ERR; set -E\n{text}\nrc=$_status; cd {state}/files && find . -mindepth 1 -printf '%P %m %U:%G\\n' | sort; exit $rc"
+    run = userns("bash", "-c", harness)
+    return run.returncode, dict((line.split()[0], tuple(line.split()[1:])) for line in run.stdout.splitlines() if line), run.stderr
+
+
+def check_activation():
+    """The activation script, executed: a fresh host, a second run, a planted symlink, retired instances."""
+    texts = {}
+    for key, case in (("fresh", "{ }"), ("retired", RETIRED)):
+        out = nix_eval(case, ACT)
+        texts[key] = json.loads(out.stdout) if out.returncode == 0 else None
+        if texts[key] is None:
+            check(False, f"the activation script evaluates ({out.stderr.strip()[-300:]})")
+            return
+    # what the script creates belongs to uids only the namespace can remove
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        os.chmod(tmp, 0o755)
+        state = pathlib.Path(tmp, "state")
+
+        def fresh_state():
+            userns("rm", "-rf", str(state))
+            (state / "files").mkdir(parents=True)
+            return str(state / "files")
+
+        def run(key, **kw):
+            text = texts[key]["text"].replace(texts[key]["stateDir"], str(state / "files"))
+            return activation_run(text, state, **kw)
+
+        fresh_state()
+        rc, tree, err = run("fresh")
+        want = {"": None, ".nix-cache": ("700", "1000:100"), "ssh_host_ed25519_key": ("600", None), "known_hosts": ("644", None),
+                "ok": ("700", "0:0"), "ok/home": ("700", "1000:100"), "ok/home/.cache": ("755", "1000:100"), "ok/eval-cache": ("700", "1000:100")}
+        bad = [p for p, w in want.items() if p and (p not in tree or any(x is not None and x != y for x, y in zip(w, tree[p])))]
+        check(rc == 0 and not bad, f"a fresh host's activation exits 0 and leaves each directory with its mode and owner (rc {rc}, wrong {bad}, {err.strip()[-300:]})")
+        rc2, tree2, err2 = run("fresh")
+        check(rc2 == 0 and tree2 == tree, f"a second activation changes nothing and exits 0 (rc {rc2}, {err2.strip()[-300:]})")
+
+        files = pathlib.Path(fresh_state())
+        victim = pathlib.Path(tmp, "victim")
+        victim.mkdir(mode=0o700)
+        (files / "ok" / "home").mkdir(parents=True)
+        (files / "ok" / "home" / ".cache").symlink_to(victim)
+        before = victim.stat()
+        rc, tree, err = run("fresh")
+        after = victim.stat()
+        check(rc == 0 and (before.st_mode, before.st_uid, before.st_gid) == (after.st_mode, after.st_uid, after.st_gid),
+              f"a ~/.cache symlink planted in the home leaves its target's mode and owner alone ({oct(before.st_mode)} to {oct(after.st_mode)}, rc {rc}, {err.strip()[-200:]})")
+
+        files = pathlib.Path(fresh_state())
+        for n in ("gone", "live", "kept"):
+            (files / n).mkdir()
+            (state / "profiles" / n).mkdir(parents=True)
+        rc, tree, err = run("retired", active=["live"])
+        check(rc == 0 and "gone" not in tree and "live" in tree and "kept" in tree and not (state / "profiles" / "gone").exists()
+              and (state / "profiles" / "live").exists(),
+              f"a retired instance is removed with its profiles unless its container is active (rc {rc}, {sorted(tree)}, {err.strip()[-200:]})")
+        userns("rm", "-rf", str(state))
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -406,7 +488,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -416,11 +498,7 @@ def main():
     check(got.get("channel") is False and len(got.get("nixPath", [])) == 1 and got["nixPath"][0].startswith("nixpkgs=/nix/store/")
           and got.get("registry") == "",
           f"a guest resolves <nixpkgs> to the store's nixpkgs, with no channels or global registry to fetch ({got or out.stderr.strip()[-300:]})")
-    out = nix_eval("{ }", "sys.config.system.activationScripts.devEnvironments.text")
-    act = json.loads(out.stdout) if out.returncode == 0 else ""
-    cache = [line for line in act.splitlines() if "home/.cache" in line]
-    check(len(cache) == 1 and re.search(r"^\s*mkdir -m 0755 \S+ 2>/dev/null && chown -h ", cache[0]) and "install" not in cache[0],
-          f"root creates a guest's ~/.cache without following a symlink the guest planted there ({cache or out.stderr.strip()[-300:]})")
+    check_activation()
     blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
     for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
         out = nix_eval(blocked % v6, "sys.config.networking.firewall.extraCommands")
