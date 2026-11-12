@@ -20,8 +20,7 @@ in
   # An agent that is talked into it reaches the internet, not the LAN, the cluster or this host (DNS excepted).
   services.devEnvironments.blockedNetworks = [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "169.254.0.0/16" ];
 
-  # An environment's builds run in this daemon, outside the pool. A guest may override max-jobs and cores per build
-  # (-j 16 --cores 0 took 8 cores), so CPUQuota holds the 2 x 2 bound and MemoryMax fails a build, never k3s.
+  # A guest may override max-jobs and cores per build, so CPUQuota holds the 2 x 2 bound; MemoryMax fails a build, never k3s.
   nix.settings = { max-jobs = 2; cores = 2; };
   systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "4G"; MemoryMax = "6G"; CPUQuota = "400%"; };
 

@@ -56,7 +56,6 @@ let
     '';
   };
 
-  # the pinned guest key, as ssh flags for the scripts and as ssh_config for a person
   hostOptions = { HostKeyAlias = keyAlias; UserKnownHostsFile = "${cfg.stateDir}/known_hosts"; StrictHostKeyChecking = "yes"; LogLevel = "ERROR"; };
   ssh = w: opts: "ssh ${opts} ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "-o ${k}=${v}") hostOptions)} ${user}@${w.address}";
   # The instance's one entry point on the host: a session surface (or a person) runs `attach` in a terminal.
@@ -307,10 +306,11 @@ in
             roots=/nix/var/nix/gcroots/per-container/$n
             [[ -d $roots ]] || continue
             ok=1
-            found=$(find "$home" \( -name node_modules -o -name target -o -name .git \) -prune \
+            rm -f "$roots"/.home-*
+            found=$(find "$home" -ignore_readdir_race \( -name node_modules -o -name target -o -name .git \) -prune \
               -o -path '*/.devenv/gc/*' -type l -print) || { ok=0; rc=1; }
             declare -A keep=()
-            while read -r l; do
+            while IFS= read -r l; do
               t=$(readlink "$l") || continue
               [[ $t == /nix/store/* && $t != *..* && -e $t ]] || continue
               name=home-$(echo -n "$l" | sha1sum | cut -c1-16)

@@ -314,13 +314,15 @@ def check_gcroots(facts):
         gc = state / "n" / "home" / "proj" / ".devenv" / "gc"
         gc.mkdir(parents=True)
         (gc / "shell").symlink_to(store)
-        locked = state / "n" / "home" / "locked"
-        locked.mkdir()
+        stub = pathlib.Path(d, "stub")
+        stub.mkdir()
+        stub.joinpath("find").write_text("#!/bin/sh\nexit 1\n")
+        stub.joinpath("find").chmod(0o755)
         (roots / "n").mkdir(parents=True)
         (roots / "n" / "home-stale").symlink_to(store)
 
-        def refresh():
-            return subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        def refresh(path=os.environ["PATH"]):
+            return subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env={**os.environ, "PATH": path})
 
         run = refresh()
         names = sorted(p.name for p in (roots / "n").iterdir())
@@ -328,13 +330,10 @@ def check_gcroots(facts):
               and (roots / "n" / names[0]).resolve() == store.resolve(),
               f"the root refresh adds a root for each devenv link and drops the stale one ({run.returncode}, {names}, {run.stderr.strip()[-200:]})")
         (roots / "n" / "home-stale").symlink_to(store)
-        locked.chmod(0)
-        try:
-            run = refresh()
-        finally:
-            locked.chmod(0o755)
+        run = refresh(f"{stub}:{os.environ['PATH']}")
         check(run.returncode != 0 and (roots / "n" / "home-stale").is_symlink(),
               f"a scan that fails fails the refresh, and with it the garbage collection, and drops no root ({run.returncode})")
+        check("find \"$home\" -ignore_readdir_race" in facts["gcroots"], "the scan ignores a directory a running guest deletes under it")
 
 
 ACT = "{ inherit (sys.config.services.devEnvironments) stateDir; text = sys.config.system.activationScripts.devEnvironments.text; }"
@@ -358,8 +357,7 @@ def activation_run(text, state, active=()):
     systemctl.chmod(0o755)
     text = re.sub(r"/nix/store/\S+/bin/systemctl", str(systemctl), text)
     text = text.replace("/nix/var/nix/profiles/per-container", f"{state}/profiles").replace("/nix/var/nix/gcroots/per-container", f"{state}/gcroots")
-    # the stub user is only a name here: numeric ids make a user-run command fail for its permissions, not for its lookup
-    text = re.sub(r"--reuid=\S+ --regid=\S+", "--reuid=1000 --regid=100", re.sub(r"-o \S+ -g \S+", "-o 1000 -g 100", re.sub(r"chown -h \S+:\S+", "chown -h 1000:100", text)))
+    text = re.sub(r"-o \S+ -g \S+", "-o 1000 -g 100", re.sub(r"chown -h \S+:\S+", "chown -h 1000:100", text))
     harness = f"_status=0; trap '_status=1' ERR; set -E\n{text}\nrc=$_status; cd {state}/files && find . -mindepth 1 -printf '%P %m %U:%G\\n' | sort; exit $rc"
     run = userns("bash", "-c", harness)
     return run.returncode, dict((line.split()[0], tuple(line.split()[1:])) for line in run.stdout.splitlines() if line), run.stderr
@@ -378,45 +376,47 @@ def check_activation():
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         os.chmod(tmp, 0o755)
         state = pathlib.Path(tmp, "state")
+        try:
 
-        def fresh_state():
+            def fresh_state():
+                userns("rm", "-rf", str(state))
+                (state / "files").mkdir(parents=True)
+                return str(state / "files")
+
+            def run(key, **kw):
+                text = texts[key]["text"].replace(texts[key]["stateDir"], str(state / "files"))
+                return activation_run(text, state, **kw)
+
+            fresh_state()
+            rc, tree, err = run("fresh")
+            want = {"": None, ".nix-cache": ("700", "1000:100"), "ssh_host_ed25519_key": ("600", None), "known_hosts": ("644", None),
+                    "ok": ("700", "0:0"), "ok/home": ("700", "1000:100"), "ok/home/.cache": ("755", "1000:100"), "ok/eval-cache": ("700", "1000:100")}
+            bad = [p for p, w in want.items() if p and (p not in tree or any(x is not None and x != y for x, y in zip(w, tree[p])))]
+            check(rc == 0 and not bad, f"a fresh host's activation exits 0 and leaves each directory with its mode and owner (rc {rc}, wrong {bad}, {err.strip()[-300:]})")
+            rc2, tree2, err2 = run("fresh")
+            check(rc2 == 0 and tree2 == tree, f"a second activation changes nothing and exits 0 (rc {rc2}, {err2.strip()[-300:]})")
+
+            files = pathlib.Path(fresh_state())
+            victim = pathlib.Path(tmp, "victim")
+            victim.mkdir(mode=0o700)
+            (files / "ok" / "home").mkdir(parents=True)
+            (files / "ok" / "home" / ".cache").symlink_to(victim)
+            before = victim.stat()
+            rc, tree, err = run("fresh")
+            after = victim.stat()
+            check(rc == 0 and (before.st_mode, before.st_uid, before.st_gid) == (after.st_mode, after.st_uid, after.st_gid),
+                  f"a ~/.cache symlink planted in the home leaves its target's mode and owner alone ({oct(before.st_mode)} to {oct(after.st_mode)}, rc {rc}, {err.strip()[-200:]})")
+
+            files = pathlib.Path(fresh_state())
+            for n in ("gone", "live", "kept"):
+                (files / n).mkdir()
+                (state / "profiles" / n).mkdir(parents=True)
+            rc, tree, err = run("retired", active=["live"])
+            check(rc == 0 and "gone" not in tree and "live" in tree and "kept" in tree and not (state / "profiles" / "gone").exists()
+                  and (state / "profiles" / "live").exists(),
+                  f"a retired instance is removed with its profiles unless its container is active (rc {rc}, {sorted(tree)}, {err.strip()[-200:]})")
+        finally:
             userns("rm", "-rf", str(state))
-            (state / "files").mkdir(parents=True)
-            return str(state / "files")
-
-        def run(key, **kw):
-            text = texts[key]["text"].replace(texts[key]["stateDir"], str(state / "files"))
-            return activation_run(text, state, **kw)
-
-        fresh_state()
-        rc, tree, err = run("fresh")
-        want = {"": None, ".nix-cache": ("700", "1000:100"), "ssh_host_ed25519_key": ("600", None), "known_hosts": ("644", None),
-                "ok": ("700", "0:0"), "ok/home": ("700", "1000:100"), "ok/home/.cache": ("755", "1000:100"), "ok/eval-cache": ("700", "1000:100")}
-        bad = [p for p, w in want.items() if p and (p not in tree or any(x is not None and x != y for x, y in zip(w, tree[p])))]
-        check(rc == 0 and not bad, f"a fresh host's activation exits 0 and leaves each directory with its mode and owner (rc {rc}, wrong {bad}, {err.strip()[-300:]})")
-        rc2, tree2, err2 = run("fresh")
-        check(rc2 == 0 and tree2 == tree, f"a second activation changes nothing and exits 0 (rc {rc2}, {err2.strip()[-300:]})")
-
-        files = pathlib.Path(fresh_state())
-        victim = pathlib.Path(tmp, "victim")
-        victim.mkdir(mode=0o700)
-        (files / "ok" / "home").mkdir(parents=True)
-        (files / "ok" / "home" / ".cache").symlink_to(victim)
-        before = victim.stat()
-        rc, tree, err = run("fresh")
-        after = victim.stat()
-        check(rc == 0 and (before.st_mode, before.st_uid, before.st_gid) == (after.st_mode, after.st_uid, after.st_gid),
-              f"a ~/.cache symlink planted in the home leaves its target's mode and owner alone ({oct(before.st_mode)} to {oct(after.st_mode)}, rc {rc}, {err.strip()[-200:]})")
-
-        files = pathlib.Path(fresh_state())
-        for n in ("gone", "live", "kept"):
-            (files / n).mkdir()
-            (state / "profiles" / n).mkdir(parents=True)
-        rc, tree, err = run("retired", active=["live"])
-        check(rc == 0 and "gone" not in tree and "live" in tree and "kept" in tree and not (state / "profiles" / "gone").exists()
-              and (state / "profiles" / "live").exists(),
-              f"a retired instance is removed with its profiles unless its container is active (rc {rc}, {sorted(tree)}, {err.strip()[-200:]})")
-        userns("rm", "-rf", str(state))
 
 
 def check_nested(facts):
