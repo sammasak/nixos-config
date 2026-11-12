@@ -117,6 +117,11 @@ on msi (66 s of it the build) and 2.7 s in an acer environment afterwards,
 the package signed `msi-ms7758-store-1`. Evaluation is not shared: a first
 `devenv shell` still evaluates on each host (54 s for factum on msi).
 
+A container that never gets ready is retried 3 times in 10 minutes and then stays `failed` (start limit). Each switch
+calls `reset-failed` (clearing the limit) and restarts the active targets, `machines.target` among them, which starts
+it again with a fresh allowance; by hand, `systemctl reset-failed container@<n>` first, because a 4th start inside the
+10 minutes is refused ("repeated too quickly").
+
 ## Alerts
 
 A runtime host (msi, acer) posts to lenovo's ntfy topic `homelab-alerts` when
@@ -318,6 +323,19 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   `~/.config/gh/hosts.yml` are still bound read-only.
 
 The committed config declares none.
+
+## Store options tried
+
+1. **Shared host daemon (what runs).** A guest sees the host `/nix/store` read-only and builds and fetches through
+   the host's nix daemon. It is the only option that makes a fresh clone's `devenv shell` work, and a path any
+   guest builds is there for all of them. The price is that the daemon is a write path from guest to host store.
+2. **Read-only store, no daemon socket** (branch `feat/no-daemon-socket`). Running binaries, `nix eval`, locked
+   github flakes and a `devenv shell` in an already-entered project work. A fresh clone's `devenv shell` fails: it
+   must add a new `devenv-files.drv` to the store, which nothing can do without a writable store.
+3. **Per-environment `local-overlay` tier** (branch `feat/store-overlay`). Fails on a live host store: the lower
+   store opens the host db immutable and so misses everything in its WAL, so paths the host registered since the
+   last checkpoint, the guest's own system among them, are "not valid" and Home Manager fails. It would need a
+   frozen lower store (a snapshot), not the live one. Both branches stay unmerged as the record.
 
 ## Working an issue in one
 

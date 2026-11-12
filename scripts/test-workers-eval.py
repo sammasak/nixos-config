@@ -603,6 +603,26 @@ def check_hygiene(facts):
           f"the gc-roots unit runs at boot and every 15 min and still runs before nix-gc ({gc}, {facts.get('gcUnit')})")
 
 
+BOUNDED = ('let u = sys.config.systemd.services."container@ok"; in { burst = u.startLimitBurst; interval = u.startLimitIntervalSec;'
+           ' start = u.serviceConfig.TimeoutStartSec or null; stop = u.serviceConfig.TimeoutStopSec or null; }')
+
+
+def seconds(value):
+    """A systemd time span of the forms the units use: 30, "90", "1min", "90s"."""
+    m = re.fullmatch(r"(\d+)\s*(s|min)?", str(value))
+    return int(m.group(1)) * (60 if m.group(2) == "min" else 1) if m else None
+
+
+def check_bounded():
+    """A container that never gets ready ends its start jobs: the window outlasts the attempts it allows, each a failed start
+    (the unit's own start timeout) and the stop that follows it (its stop timeout, systemd's 90 s when unset)."""
+    out = nix_eval("{ }", BOUNDED)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    start, stop = seconds(got.get("start")), seconds(got["stop"]) if got.get("stop") is not None else 90
+    check(start is not None and stop is not None and got["burst"] == 3 and got["interval"] > got["burst"] * (start + stop),
+          f"container@ stops restarting after {got.get('burst')} starts of {start} s (stop {stop} s) each within {got.get('interval')} s ({got or out.stderr.strip()[-300:]})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -732,7 +752,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", BOUNDED), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -795,6 +815,7 @@ def main():
     have = dict(l.split("=", 1) for l in got.get("text", "").splitlines() if "=" in l)
     check(have == want, f"/etc/dev-environment gives the guest its reserve, the pool, its CPU weight and the build bounds ({have or out.stderr.strip()[-300:]})")
     check_activation()
+    check_bounded()
     check_paused()
     blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
     for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
