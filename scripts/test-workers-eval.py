@@ -91,6 +91,7 @@ FLEET = r"""
 let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: %(case)s) ]; }).config;
 in map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions)
 """
+FLEET_INSTANCE = "{ sam.workers.instances.t = { }; }"
 FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
 ]
@@ -165,7 +166,7 @@ def fleet(case):
 
 def main():
     prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
-              fleet("{ }"), *(fleet(case) for _, case, _ in FLEET_CASES)])
+              fleet("{ }"), fleet(FLEET_INSTANCE), *(fleet(case) for _, case, _ in FLEET_CASES)])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
@@ -190,6 +191,8 @@ def main():
 
     out = run_eval(fleet("{ }"))
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
+    out = run_eval(fleet(FLEET_INSTANCE))
+    check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 with a claude instance fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     for name, case, want in FLEET_CASES:
         out = run_eval(fleet(case))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
