@@ -158,7 +158,10 @@ let
     # them), max-jobs and cores over its own: the guest's defaults skipped the fleet's store caches and lifted the
     # host's build bounds. An empty flake-registry fetched the global one on every cold cache.
     nix.settings = { flake-registry = ""; inherit (config.nix.settings) substituters trusted-public-keys max-jobs cores; }
-      // lib.optionalAttrs (config.nix.settings ? connect-timeout) { inherit (config.nix.settings) connect-timeout; };
+      // lib.optionalAttrs (config.nix.settings ? connect-timeout) { inherit (config.nix.settings) connect-timeout; }
+      // lib.optionalAttrs (w.store == "read-only") { store = "local?read-only=true"; experimental-features = [ "read-only-local-store" ]; };
+
+    nix.daemon.enable = lib.mkIf (w.store == "read-only") false;
 
     # lean: the boot is the start latency
     documentation.enable = false;
@@ -228,6 +231,11 @@ let
         default = null;
         example = [ "gh-hosts.yml" ];
         description = "Which of `credentials` this instance gets; null is all of them.";
+      };
+      store = mkOption {
+        type = types.enum [ "daemon" "read-only" ];
+        default = "daemon";
+        description = "How the guest reaches the host's /nix/store: through the host's nix daemon, or read-only with no daemon socket, so nothing it runs can add a path to the host store.";
       };
       paused = mkOption { type = types.bool; default = false; description = "Stopped, its container undeclared: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session."; };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryMin: never reclaimed for a neighbour, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
@@ -480,6 +488,9 @@ in
         inherit (w) hostAddress;
         localAddress = w.address;
         bindMounts = binds w;
+        # nspawn mounts a tmpfs over the start script's own bind of the daemon socket (a tmpfs sorts after a bind of the
+        # same path); nix still needs a place for its temporary roots
+        extraFlags = lib.optionals (w.store == "read-only") [ "--tmpfs=/nix/var/nix/daemon-socket" "--tmpfs=/nix/var/nix/temproots:mode=1777" ];
         config = guest w;
       }) running);
 

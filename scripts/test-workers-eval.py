@@ -525,6 +525,21 @@ def check_paused():
           f"paused instances have no container, no unit of any kind, and leave the slice's MemoryLow ({facts or out.stderr.strip()[-300:]})")
 
 
+STORE = ('let g = n: sys.config.containers.${n}.config; in { flags = builtins.mapAttrs (_: x: x.extraFlags) sys.config.containers;'
+         ' ro = { store = (g "ro").nix.settings.store; features = (g "ro").nix.settings.experimental-features; daemon = (g "ro").nix.daemon.enable; };'
+         ' plain = { store = (g "ok").nix.settings.store or null; daemon = (g "ok").nix.daemon.enable; }; }')
+
+
+def check_store():
+    """store = "read-only" hides the daemon socket and opens the store read-only in that guest alone."""
+    out = nix_eval('{ services.devEnvironments.instances.ro.store = "read-only"; }', STORE)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("flags") == {"ok": [], "ro": ["--tmpfs=/nix/var/nix/daemon-socket", "--tmpfs=/nix/var/nix/temproots:mode=1777"]}
+          and got.get("ro", {}).get("store") == "local?read-only=true" and "read-only-local-store" in got["ro"]["features"] and got["ro"]["daemon"] is False
+          and got.get("plain") == {"store": None, "daemon": True},
+          f"a read-only instance hides the daemon socket, opens the store read-only and runs no nix daemon; the default instance is unchanged ({got or out.stderr.strip()[-300:]})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -620,7 +635,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", LIMITS), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr('{ services.devEnvironments.instances.ro.store = "read-only"; }', STORE), stub_expr("{ }", LIMITS), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -637,6 +652,7 @@ def main():
     have = dict(l.split("=", 1) for l in got.get("text", "").splitlines() if "=" in l)
     check(have == want, f"/etc/dev-environment gives the guest its reserve, the pool, its CPU weight and the build bounds ({have or out.stderr.strip()[-300:]})")
     check_activation()
+    check_store()
     check_paused()
     blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
     for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
