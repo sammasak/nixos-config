@@ -46,6 +46,7 @@ run in the host's daemon, outside the pool; acer and msi bound that daemon
 (2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
 fails before k3s or the host does. msi powers off at 21:00
 (Mon-Fri window); its environments come back at its next boot.
+Inside, the cgroup files read `max`: `/etc/dev-environment` holds these limits as shell `key=value` (bytes: `memory_reserved`, `pool_memory`, `pool_swap`; `cpu_weight`, `nix_max_jobs`, `nix_cores`).
 
 ## Sizing
 
@@ -83,7 +84,7 @@ neighbour was reclaimed to 59M.
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
-| Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later | 23 s; home, profile and GC roots deleted |
+| Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later | 23 s; profile and GC roots deleted, the home moved to `<stateDir>/.trash/<name>-<date>` and deleted at the first activation a week later (recover it with `mv` meanwhile) |
 
 Removing a declaration only stops the environment: a rollback, a deploy from
 an older checkout or acer's weekly auto-upgrade from GitHub `main` lacks
@@ -122,6 +123,23 @@ rose), within 2 minutes; and when the state directory or `/nix` has under 10G
 free, within 2 minutes and then at most hourly per directory. A send that fails
 is retried at the next 2 minute run. `sam.workers.ntfyUrl = null` turns all of
 it off (`services.devEnvironments.alert` is the program they call).
+
+
+## Pause and resume
+
+`paused = true` on an instance stops its container at the next deploy and keeps it
+stopped across boots: the host then declares no container and no unit for it, as
+for a retired one, but nothing is removed, so its home, clone, agent transcript,
+profiles and gcroots stay (the gcroots refresh and the activation script still
+cover it). Its address and ssh alias stay too. Its
+`memory.reserved` no longer counts toward the pool-fit assertion or the slice's
+`MemoryLow`, so the pool's memory goes to the others. Flip it back and deploy:
+the container starts and the agent is relaunched with `--continue` because the
+transcript is still there. A stop kills what the agent was doing like a reboot
+does: a tool call in flight is cut off (the transcript then ends in a tool use
+without a result) and the resumed agent is told that whatever ran in the
+environment was killed. There is no shutdown notice on a pause; send the agent
+a "push your work" message first if it holds unpushed commits.
 
 ## What fails at build
 
@@ -189,7 +207,7 @@ Manager activates on it at every boot (collisions are kept as `*.backup`).
 | Change of `agent`, `model`, credentials or bind mounts | `worker-<name>` restarts and, through `PartOf`, the container: a restart |
 | Restart or host reboot | home kept; the workspace comes back and runs `claude --continue` when a transcript of `$HOME` exists, followed by a notice that its running work was killed, else a fresh `claude` with the prompt |
 | Removed from the config, deployed | units stop, the workspace closes, the home is kept |
-| Named in `retired`, deployed | activation deletes `/var/lib/workers/<name>` and its `/nix/var/nix/{profiles,gcroots}/per-container/<name>` |
+| Named in `retired`, deployed | activation moves `/var/lib/workers/<name>` to `/var/lib/workers/.trash/` (deleted a week later) and deletes its `/nix/var/nix/{profiles,gcroots}/per-container/<name>` |
 
 `worker-<name>`'s unit file holds the instance's agent, model, address and bind
 mounts and no store path, so a nixpkgs bump or a fleet-wide change never

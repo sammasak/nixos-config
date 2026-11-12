@@ -8,36 +8,9 @@ let
   profile = config.sam.profile;
   user = profile.username;
   inherit (dev.paths) home creds;
-  usesClaude = lib.any (w: w.agent == "claude") (lib.attrValues dev.instances);
-  hasToken = config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token;
   onGithub = i: i.egress.github.repos != [ ];
-  usesGithub = lib.any onGithub (lib.attrValues dev.instances);
-  # an instance's sockets: its identity to the proxy is the directory it is given
-  services = { anthropic = { port = 4100; on = i: i.agent == "claude"; }; github = { port = 4102; on = onGithub; }; };
-  sockets = i: lib.filter (s: services.${s}.on i) (lib.attrNames services);
-  egressed = lib.filter (i: sockets i != [ ]) (lib.attrValues dev.instances);
-  egress = "/run/dev-env-egress";
-  guestEgress = "/run/egress";
-  # The tokens are read at request time from the unit's credential and its private /tmp: this file is in the store
-  # every guest reads.
-  githubToken = "/tmp/github-token";
-  site = i: s: body: ''
-    http:// {
-      bind unix/${egress}/${i.name}/${s}.sock
-      log ${s}-${i.name}
-      ${body}
-    }
-  '';
-  anthropicSite = i: site i "anthropic" ''
-    @other not path /v1/*
-    respond @other 403
-    reverse_proxy https://api.anthropic.com {
-      header_up Host {upstream_hostport}
-      header_up Authorization "Bearer {file./run/credentials/dev-env-egress.service/claude_oauth_token}"
-      header_up -X-Api-Key
-      flush_interval -1
-    }
-  '';
+  # The tokens are read at request time from the unit's credential and its private directory.
+  githubToken = "${dev.egressPaths.private}/github-token";
   upstream = url: auth: ''
     reverse_proxy ${url} {
       header_up Host {upstream_hostport}
@@ -46,68 +19,6 @@ let
       flush_interval -1
     }
   '';
-  # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
-  githubSite = i: let repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})"; in site i "github" ''
-    # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
-    @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|(^|/)\.\.?(/|\?|$)|//|\\
-    # the owner's token administers the repository: none of that, on any listed repo
-    @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
-    @adminRepo {
-      path_regexp ^/repos/[^/]+/[^/]+/?$
-      method PATCH PUT DELETE
-    }
-    handle @odd {
-      respond 403
-    }
-    handle @admin {
-      respond 403
-    }
-    handle @adminRepo {
-      respond 403
-    }
-    @git {
-      path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
-      method GET POST
-    }
-    @read {
-      path_regexp ^/repos/${repos}(/.*)?$
-      method GET HEAD
-    }
-    # what an agent does to a repository: issues, comments, labels and pull requests. Merges, refs, contents,
-    # workflows, releases and the rest stay off, and reviews too (an approval would be the owner's).
-    @write {
-      path_regexp ^/repos/${repos}/(issues(/[0-9]+(/(comments|labels|assignees))?|/comments/[0-9]+)?|pulls(/[0-9]+(/(comments|requested_reviewers))?|/comments/[0-9]+)?|labels(/[^/]+)?)/?$
-      method POST PATCH
-    }
-    handle @git {
-      ${upstream "https://github.com" "Basic {file.${githubToken}.basic}"}
-    }
-    handle @read {
-      ${upstream "https://api.github.com" "token {file.${githubToken}}"}
-    }
-    handle @write {
-      ${upstream "https://api.github.com" "token {file.${githubToken}}"}
-    }
-    ${lib.optionalString i.egress.github.graphql ''
-      @graphql {
-        path /graphql
-        method POST
-      }
-      handle @graphql {
-        ${upstream "https://api.github.com" "bearer {file.${githubToken}}"}
-      }
-    ''}
-    handle {
-      respond 403
-    }
-  '';
-  egressConfig = pkgs.writeText "dev-env-egress.Caddyfile" (''
-    {
-      admin off
-      auto_https off
-    }
-  '' + lib.concatMapStrings (i: lib.optionalString (i.agent == "claude") (anthropicSite i)
-    + lib.optionalString (onGithub i) (githubSite i)) egressed);
   # gh keeps the token in hosts.yml (no keyring on the hosts); the proxy takes it from there at each start.
   # Without one the Claude proxy still starts, and GitHub answers 401.
   githubTokenFromHosts = pkgs.writeShellApplication {
@@ -176,15 +87,7 @@ let
     '';
   };
 
-  shim = s: {
-    sockets."${s}-egress" = { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString services.${s}.port}" ]; };
-    services."${s}-egress".serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${guestEgress}/${s}.sock"; };
-  };
-
-  fleetGuest = { devEnvironment, ... }: let
-    self = dev.instances.${devEnvironment.name};
-    github = onGithub self;
-  in {
+  fleetGuest = { devEnvironment, ... }: let github = onGithub dev.instances.${devEnvironment.name}; in {
     imports = [
       ../core/system.nix
       ../core/users.nix
@@ -204,35 +107,17 @@ let
     sam.herdr.worker.enable = true;
     # Headless, reached over ssh from the host's Herdr: no session server, no firewall behind the veth, no gpg-agent
     # in front of the ssh key; the weekly repo-sweep would reclaim the agent's own clones.
-    home-manager.users.${user} = lib.mkMerge [
-      {
-        systemd.user = {
-          services.herdr.Install.WantedBy = lib.mkForce [ ];
-          timers.repo-sweep.Install.WantedBy = lib.mkForce [ ];
-          timers.nixos-config-flake-update.Install.WantedBy = lib.mkForce [ ];
-        };
-      }
-      (lib.mkIf github {
-        # mkForce: the fleet's git sends sammasak's repos to ssh, and git applies only the longest rewrite
-        programs.git.settings.url = lib.mkForce {
-          "http://127.0.0.1:${toString services.github.port}/".insteadOf = [ "https://github.com/" "git@github.com:" "ssh://git@github.com/" ];
-        };
-        xdg.configFile."gh/config.yml".text = "http_unix_socket: ${guestEgress}/github.sock\n";
-      })
-    ];
+    home-manager.users.${user}.systemd.user = {
+      services.herdr.Install.WantedBy = lib.mkForce [ ];
+      timers.repo-sweep.Install.WantedBy = lib.mkForce [ ];
+      timers.nixos-config-flake-update.Install.WantedBy = lib.mkForce [ ];
+    };
     programs.gnupg.agent.enable = lib.mkForce false;
     programs.dconf.enable = lib.mkForce false;
     networking.firewall.enable = false;
     sam.herdr.trustedDirs = map (d: "${home}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 
-    # the guest holds placeholders, not the tokens: the host's proxy adds the login to each call
-    environment.variables = lib.optionalAttrs (self.agent == "claude") {
-      ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString services.anthropic.port}";
-      CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host";
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
-    } // lib.optionalAttrs github { GH_TOKEN = "held-by-the-host"; };
-
-    systemd = lib.mkMerge (map (s: lib.mkIf (lib.elem s (sockets self)) (shim s)) (lib.attrNames services) ++ [ { tmpfiles.rules = [
+    systemd.tmpfiles.rules = [
       "d ${home}/.ssh 0700 ${user} users -"
       "d ${home}/.config 0700 ${user} users -"
       # where the agent logs friction with the environment (docs/environments-feedback.md)
@@ -243,7 +128,7 @@ let
     ++ lib.optionals (cfg.ghHostsFile != null && !github) [
       "d ${home}/.config/gh 0700 ${user} users -"
       "L+ ${home}/.config/gh/hosts.yml - - - - ${creds}/gh-hosts.yml"
-    ]; } ]);
+    ];
   };
 
   instanceModule = { config, ... }: {
@@ -311,11 +196,100 @@ in
       } // lib.optionalAttrs (cfg.ghHostsFile != null) {
         "gh-hosts.yml" = cfg.ghHostsFile;
       };
-      instanceBinds = i: lib.optionalAttrs (sockets i != [ ]) { ${guestEgress} = "${egress}/${i.name}"; };
       sessionSurface = { name = "herdr"; script = hook; };
       alert = lib.mkIf (cfg.ntfyUrl != null) (pkgs.writeShellScript "dev-env-alert" ''
         ${pkgs.curl}/bin/curl -fsS -m 10 -H "Title: Environment host" -H "Priority: high" -H "Tags: warning" -d "$1" ${lib.escapeShellArg cfg.ntfyUrl}
       '');
+      egressInaccessible = [ "/run/secrets.d" ]; # sops-nix: every host secret; the proxy gets its own as a credential
+      egress = {
+        anthropic = {
+          for = i: i.agent == "claude";
+          site = _: ''
+          @other not path /v1/*
+          respond @other 403
+          reverse_proxy https://api.anthropic.com {
+            header_up Host {upstream_hostport}
+            header_up Authorization "Bearer {file.${dev.egressPaths.credentials}/claude_oauth_token}"
+            header_up -X-Api-Key
+            flush_interval -1
+          }
+          '';
+          port = 4100;
+          secrets.claude_oauth_token = if config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token then config.sops.secrets.claude_oauth_token.path else null;
+          missing = "sam.workers: a claude instance's calls are signed with the host's sops secret claude_oauth_token (sam.hostSecrets.enable), which this host does not declare.";
+          guest.env = { ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString dev.egress.anthropic.port}"; CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host"; CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"; };
+        };
+        github = {
+          for = onGithub;
+          # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
+          site = i: let repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})"; in ''
+          # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
+          @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|(^|/)\.\.?(/|\?|$)|//|\\
+          # the owner's token administers the repository: none of that, on any listed repo
+          @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
+          @adminRepo {
+            path_regexp ^/repos/[^/]+/[^/]+/?$
+            method PATCH PUT DELETE
+          }
+          handle @odd {
+            respond 403
+          }
+          handle @admin {
+            respond 403
+          }
+          handle @adminRepo {
+            respond 403
+          }
+          @git {
+            path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
+            method GET POST
+          }
+          @read {
+            path_regexp ^/repos/${repos}(/.*)?$
+            method GET HEAD
+          }
+          # what an agent does to a repository: issues, comments, labels and pull requests. Merges, refs, contents,
+          # workflows, releases and the rest stay off, and reviews too (an approval would be the owner's).
+          @write {
+            path_regexp ^/repos/${repos}/(issues(/[0-9]+(/(comments|labels|assignees))?|/comments/[0-9]+)?|pulls(/[0-9]+(/(comments|requested_reviewers))?|/comments/[0-9]+)?|labels(/[^/]+)?)/?$
+            method POST PATCH
+          }
+          handle @git {
+            ${upstream "https://github.com" "Basic {file.${githubToken}.basic}"}
+          }
+          handle @read {
+            ${upstream "https://api.github.com" "token {file.${githubToken}}"}
+          }
+          handle @write {
+            ${upstream "https://api.github.com" "token {file.${githubToken}}"}
+          }
+          ${lib.optionalString i.egress.github.graphql ''
+            @graphql {
+              path /graphql
+              method POST
+            }
+            handle @graphql {
+              ${upstream "https://api.github.com" "bearer {file.${githubToken}}"}
+            }
+          ''}
+          handle {
+            respond 403
+          }
+          '';
+          port = 4102;
+          secrets."gh-hosts.yml" = cfg.ghHostsFile;
+          missing = "sam.workers: an instance with egress.github.repos is signed with the token in sam.workers.ghHostsFile, which this host does not set.";
+          prepare = [ (lib.getExe githubTokenFromHosts) ];
+          guest.env.GH_TOKEN = "held-by-the-host";
+          # mkForce: the fleet's git sends sammasak's repos to ssh, and git applies only the longest rewrite
+          guest.config.home-manager.users.${user} = {
+            programs.git.settings.url = lib.mkForce {
+              "http://127.0.0.1:${toString dev.egress.github.port}/".insteadOf = [ "https://github.com/" "git@github.com:" "ssh://git@github.com/" ];
+            };
+            xdg.configFile."gh/config.yml".text = "http_unix_socket: ${dev.egress.github.socket}\n";
+          };
+        };
+      };
     };
 
     systemd = lib.mkMerge [
@@ -329,55 +303,18 @@ in
           script = lib.concatMapStrings (n: "herdr agent prompt ${n} ${lib.escapeShellArg shutdownNotice} >/dev/null || true\n") agentNames;
         };
       })
-      (lib.mkIf (egressed != [ ] && (!usesClaude || hasToken)) {
-        services = {
-          dev-env-egress = {
-            description = "Adds the Claude and GitHub logins to the environments' calls";
-            wantedBy = [ "multi-user.target" ];
-            onFailure = lib.optional (dev.alert != null) "dev-env-alert@%n.service";
-            environment.HOME = "/tmp";
-            serviceConfig = {
-              ExecStart = "${pkgs.caddy}/bin/caddy run --adapter caddyfile --config ${egressConfig}";
-              LoadCredential = lib.optional usesClaude "claude_oauth_token:${config.sops.secrets.claude_oauth_token.path}"
-                ++ lib.optional usesGithub "gh-hosts.yml:${cfg.ghHostsFile}";
-              ExecStartPre = lib.mkIf usesGithub (lib.getExe githubTokenFromHosts);
-              User = user;
-              RuntimeDirectory = [ (baseNameOf egress) ] ++ map (i: "${baseNameOf egress}/${i.name}") egressed;
-              # the guests bind this directory: removed at a restart, they would keep the old, empty one
-              RuntimeDirectoryPreserve = true;
-              Restart = "on-failure";
-              # it parses the guests' requests as the host user: keep that user's other secrets and the guests' homes from it
-              InaccessiblePaths = [ "/run/secrets.d" dev.stateDir ];
-              PrivateTmp = true;
-              PrivateDevices = true;
-              ProtectHome = true;
-              ProtectSystem = "strict";
-              ProtectProc = "invisible";
-              ProtectKernelTunables = true;
-              ProtectControlGroups = true;
-              NoNewPrivileges = true;
-              CapabilityBoundingSet = "";
-              RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
-              RestrictNamespaces = true;
-              SystemCallFilter = [ "@system-service" ];
-            };
-          };
-          # gh rewrites hosts.yml on a login or refresh; the token is read at start
-          dev-env-egress-gh = lib.mkIf usesGithub {
-            serviceConfig.Type = "oneshot";
-            script = "${config.systemd.package}/bin/systemctl try-restart dev-env-egress.service";
-          };
-        } // lib.genAttrs (map (i: "container@${i.name}") egressed) (_: {
-          # the bind's source must exist when the container starts
-          wants = [ "dev-env-egress.service" ];
-          after = [ "dev-env-egress.service" ];
-        });
-        paths.dev-env-egress-gh = lib.mkIf usesGithub { wantedBy = [ "multi-user.target" ]; pathConfig.PathChanged = cfg.ghHostsFile; };
+      (lib.mkIf (lib.any onGithub (lib.attrValues dev.instances)) {
+        # gh rewrites hosts.yml on a login or refresh; the token is read at start
+        services.dev-env-egress-gh = {
+          serviceConfig.Type = "oneshot";
+          script = "${config.systemd.package}/bin/systemctl try-restart dev-env-egress.service";
+        };
+        paths.dev-env-egress-gh = { wantedBy = [ "multi-user.target" ]; pathConfig.PathChanged = cfg.ghHostsFile; };
       })
     ];
 
-    # LoadCredential copies the token at start. Not on hasToken: that reads sops.secrets, which this defines.
-    sops.secrets = lib.mkIf (usesClaude && config.sam.hostSecrets.enable) { claude_oauth_token.restartUnits = [ "dev-env-egress.service" ]; };
+    # LoadCredential copies the token at start. Not on the secret's presence: that reads sops.secrets, which this defines.
+    sops.secrets = lib.mkIf (lib.any dev.egress.anthropic.for (lib.attrValues dev.instances) && config.sam.hostSecrets.enable) { claude_oauth_token.restartUnits = [ "dev-env-egress.service" ]; };
 
     assertions = lib.optionals (dev.instances != { }) [
       {
@@ -386,16 +323,8 @@ in
         message = "sam.workers: an instance holds the host user's SSH key, and this host's is the fleet's deploy key.";
       }
       {
-        assertion = !usesGithub || cfg.ghHostsFile != null;
-        message = "sam.workers: an instance with egress.github.repos is signed with the token in sam.workers.ghHostsFile, which this host does not set.";
-      }
-      {
         assertion = lib.all (i: !onGithub i || !lib.elem "id_ed25519" i.credentials && !lib.elem "gh-hosts.yml" i.credentials) (lib.attrValues dev.instances);
         message = "sam.workers: an instance with egress.github.repos gets neither id_ed25519 nor gh-hosts.yml.";
-      }
-      {
-        assertion = !usesClaude || hasToken;
-        message = "sam.workers: a claude instance's calls are signed with the host's sops secret claude_oauth_token (sam.hostSecrets.enable), which this host does not declare.";
       }
       {
         assertion = config.home-manager.users.${user}.systemd.user.services ? herdr;
