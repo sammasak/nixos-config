@@ -29,24 +29,13 @@ let
   # Under rootInGuest the writable binds are not id-mapped: on disk they belong to the guest user's mapped ids, so guest
   # root writes as baseOf w, never as a host user; its own host key and alias keep it from posing as another instance.
   owner = w: if w.rootInGuest then { u = toString (baseOf w + cfg.uid); g = toString (baseOf w + gid); } else { u = user; g = group; };
-  # Moves an instance's writable dirs to the id block it runs in (0: the host's ids), keeping each id's low 16 bits,
-  # so whatever any guest uid made follows. Once per change: the marker names the block the dirs are in.
-  shiftIds = pkgs.writeShellApplication {
-    name = "dev-env-shift-ids";
-    runtimeInputs = [ pkgs.coreutils pkgs.findutils ];
-    text = ''
-      dir=$1 base=$2
-      [[ $(cat "$dir/.id-base" 2>/dev/null || echo 0) == "$base" ]] && exit 0
-      for sub in home eval-cache nix-cache; do
-        [[ -d $dir/$sub && ! -L $dir/$sub ]] || continue
-        find "$dir/$sub" -xdev -printf '%U %G %p\0' | while IFS=' ' read -r -d "" u g path; do
-          nu=$(( base + u % 65536 )) ng=$(( base + g % 65536 ))
-          [[ $u == "$nu" && $g == "$ng" ]] || chown -h "$nu:$ng" "$path"
-        done
-      done
-      echo "$base" > "$dir/.id-base"
-    '';
-  };
+  # The block an instance's dirs were made in (0: the host's ids) is written once, with them; an instance whose
+  # rootInGuest changed would start on a home of the other block, so it does not start. Nothing is chowned.
+  idCheck = pkgs.writeShellScript "dev-env-id-check" ''
+    [[ $(cat "$1/.id-base" 2>/dev/null || echo 0) == "$2" ]] && exit 0
+    echo "''${1##*/}: rootInGuest was toggled on an existing environment; retire it (or declare it under a new name) so it starts from a fresh home" >&2
+    exit 1
+  '';
   aliasOf = w: if w.rootInGuest then "${w.name}.${keyAlias}" else keyAlias;
   hostKeyOf = w: if w.rootInGuest then "${cfg.stateDir}/${w.name}/ssh_host_ed25519_key" else "${cfg.stateDir}/ssh_host_ed25519_key";
   # a fish single-quoted word reads \\ and \' as escapes, a POSIX one does not
@@ -264,7 +253,7 @@ let
       paused = mkOption { type = types.bool; default = false; description = "Stopped, its container undeclared: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session."; };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryMin: never reclaimed for a neighbour, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
-      rootInGuest = mkOption { type = types.bool; default = false; description = "Its own 65536 uids (guest root is an unprivileged host uid), its own host key, cache and sshd alias, and passwordless sudo."; };
+      rootInGuest = mkOption { type = types.bool; default = false; description = "Its own 65536 uids (guest root is an unprivileged host uid), its own host key, cache and sshd alias, and passwordless sudo. Only on a fresh instance: an existing one toggled refuses to start."; };
     };
   };
 in
@@ -377,12 +366,15 @@ in
           chmod 0644 "$d/known_hosts"
           ${lib.concatMapStrings (w: let o = owner w; in ''
             install -d -m 0700 "$d/${w.name}"
-            [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/home"
+            if [[ ! -d $d/${w.name}/home ]]; then
+              install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/home"
+              echo ${toString (if w.rootInGuest then baseOf w else 0)} > "$d/${w.name}/.id-base"
+            fi
             # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
             mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
-            install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
+            [[ -d $d/${w.name}/eval-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
           '' + lib.optionalString w.rootInGuest ''
-            install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
+            [[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
             [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
             chown ${toString (baseOf w)}:${toString (baseOf w)} "$d/${w.name}/ssh_host_ed25519_key"
             echo "${aliasOf w} $(cut -d' ' -f1,2 "$d/${w.name}/ssh_host_ed25519_key.pub")" >> "$d/known_hosts"
@@ -577,8 +569,7 @@ in
               "-${pkgs.writeShellScript "worker-wait-resolv-conf" ''
                 for _ in {1..30}; do ${pkgs.gnugrep}/bin/grep -q ^nameserver /etc/resolv.conf && exit; ${pkgs.coreutils}/bin/sleep 1; done
               ''}"
-              # here, not in activation: the guest is stopped, so nothing it writes keeps the old ids
-              "${lib.getExe shiftIds} ${cfg.stateDir}/${w.name} ${toString (if w.rootInGuest then baseOf w else 0)}"
+              "${idCheck} ${cfg.stateDir}/${w.name} ${toString (if w.rootInGuest then baseOf w else 0)}"
             ];
           };
         })

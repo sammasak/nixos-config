@@ -419,11 +419,17 @@ def check_activation():
             fresh_state()
             rc, tree, err = run("fresh")
             want = {"": None, ".nix-cache": ("700", "1000:100"), "ssh_host_ed25519_key": ("600", None), "known_hosts": ("644", None),
-                    "ok": ("700", "0:0"), "ok/home": ("700", "1000:100"), "ok/home/.cache": ("755", "1000:100"), "ok/eval-cache": ("700", "1000:100")}
+                    "ok": ("700", "0:0"), "ok/home": ("700", "1000:100"), "ok/home/.cache": ("755", "1000:100"), "ok/eval-cache": ("700", "1000:100"),
+                    "ok/.id-base": ("644", "0:0")}
             bad = [p for p, w in want.items() if p and (p not in tree or any(x is not None and x != y for x, y in zip(w, tree[p])))]
             check(rc == 0 and not bad, f"a fresh host's activation exits 0 and leaves each directory with its mode and owner (rc {rc}, wrong {bad}, {err.strip()[-300:]})")
             rc2, tree2, err2 = run("fresh")
             check(rc2 == 0 and tree2 == tree, f"a second activation changes nothing and exits 0 (rc {rc2}, {err2.strip()[-300:]})")
+            # dirs that exist are left as they are: owner, mode and the block their home was made in
+            userns("sh", "-c", f"chmod 0750 {state}/files/ok/eval-cache && chown 1001:100 {state}/files/ok/eval-cache && echo 7 > {state}/files/ok/.id-base")
+            rc3, tree3, err3 = run("fresh")
+            check(rc3 == 0 and tree3.get("ok/eval-cache") == ("750", "1001:100") and (state / "files/ok/.id-base").read_text().strip() == "7",
+                  f"activation leaves an existing eval cache and the home's id-base marker alone (rc {rc3}, {tree3.get('ok/eval-cache')}, {err3.strip()[-200:]})")
 
             files = pathlib.Path(fresh_state())
             victim = pathlib.Path(tmp, "victim")
@@ -578,41 +584,38 @@ def check_no_verify():
     check(got == cases, f"the guard denies (exit 2) a push that skips the pre-push gate, and nothing else ({got})")
 
 
-# the id shift run for real on a tree of this user's files, with chown printed instead of done (the target ids are
-# outside any namespace a test can map): each file once, recorded, and nothing when the marker already agrees
-SHIFT_BUILD = r"""
+# the start check run for real against marker files: the block an instance's dirs were made in must be its own
+IDCHECK_BUILD = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
   c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t.rootInGuest = true; } ]; }).config;
-in flake.nixosConfigurations.msi-ms7758.pkgs.writeText "pre" (builtins.concatStringsSep "
-" c.systemd.services."container@t".serviceConfig.ExecStartPre)
+in flake.nixosConfigurations.msi-ms7758.pkgs.writeText "pre" (builtins.concatStringsSep "\n" c.systemd.services."container@t".serviceConfig.ExecStartPre)
 """
 
 
-def check_shift_ids(_):
-    out = subprocess.run(["nix", "build", "--impure", "--no-link", "--print-out-paths", "--expr", SHIFT_BUILD % {"root": json.dumps(ROOT)}],
+def check_id_check():
+    out = subprocess.run(["nix", "build", "--impure", "--no-link", "--print-out-paths", "--expr", IDCHECK_BUILD % {"root": json.dumps(ROOT)}],
                          capture_output=True, text=True)
     pre = pathlib.Path(out.stdout.strip()).read_text() if out.returncode == 0 else ""
-    exe = next((w for w in pre.split() if w.endswith("/bin/dev-env-shift-ids")), None)
-    script = pathlib.Path(exe).read_text() if exe else ""
-    if not script:
-        check(False, f"the id shift script builds ({out.stderr.strip()[-300:]})")
+    exe = next((w for w in pre.split() if w.endswith("-dev-env-id-check")), None)
+    if exe is None:
+        check(False, f"the id check is in the container's ExecStartPre ({pre or out.stderr.strip()[-300:]})")
         return
-    script = script.replace('chown -h "$nu:$ng" "$path"', 'echo "$nu:$ng ${path##*/}"')
+    base = "1885143040"
     with tempfile.TemporaryDirectory() as t:
-        d = pathlib.Path(t)
-        for sub in ("home/a", "eval-cache"):
-            (d / sub).mkdir(parents=True)
-        (d / "home/a/f").write_text("x")
-        uid, gid = os.getuid(), os.getgid()
-        run = lambda base: subprocess.run(["bash", "-c", script, "shift", str(d), str(base)], capture_output=True, text=True)
-        on, again = run(1885143040), run(1885143040)
-        (d / ".id-base").write_text("1885143040\n")
-        off = run(0)
-        want_on = {f"{1885143040 + uid}:{1885143040 + gid} {n}" for n in ("home", "a", "f", "eval-cache")}
-        check(set(on.stdout.splitlines()) == want_on and (d / ".id-base").read_text().strip() == "0" and again.stdout == ""
-              and off.stdout == "" and on.returncode == 0,
-              f"the id shift moves every file of the dirs into the block once and records it; a second run does nothing ({on.stdout.splitlines()}, {again.stdout!r}, {on.stderr.strip()[-200:]})")
+        def run(marker, want):
+            d = pathlib.Path(t, f"{marker}-{want}")
+            (d / "home").mkdir(parents=True)
+            if marker is not None:
+                (d / ".id-base").write_text(marker + "\n")
+            return subprocess.run([exe, str(d), want], capture_output=True, text=True)
+        cases = {"match": run(base, base), "mismatch": run("0", base), "plain, no marker": run(None, "0"),
+                 "rootInGuest, home without marker": run(None, base), "plain on a rootInGuest home": run(base, "0")}
+    got = {k: r.returncode for k, r in cases.items()}
+    msg = all("rootInGuest was toggled on an existing environment; retire it (or declare it under a new name)" in cases[k].stderr
+              for k in ("mismatch", "rootInGuest, home without marker", "plain on a rootInGuest home"))
+    check(got == {"match": 0, "mismatch": 1, "plain, no marker": 0, "rootInGuest, home without marker": 1, "plain on a rootInGuest home": 1} and msg,
+          f"a container starts only on dirs made in its own id block, and otherwise says to retire or rename it ({got})")
 
 
 def check_scripts():
@@ -707,13 +710,13 @@ def main():
     check(got.get("mounts") == want_mounts,
           f"the state dir is bound nosuid,nodev and the per-container profiles and roots nosuid,nodev,noexec, nothing else ({got.get('mounts')})")
     base = r.get("privateUsers")
-    owners = re.findall(r'install -d -m 0700 -o (\S+) -g (\S+) "\$d/(r|ok)/home"', act)
-    shifts = {n: next((c for c in got.get("pre", {}).get(n, []) if "dev-env-shift-ids" in c), "").split()[1:] for n in ("r", "ok")}
-    check(isinstance(base, int) and sorted(owners) == sorted([(str(base + 1000), str(base + 100), "r"), ("alice", "users", "ok")])
-          and shifts == {"r": ["/var/lib/dev-environments/r", str(base)], "ok": ["/var/lib/dev-environments/ok", "0"]}
-          and "chown -hR" not in act,
-          f"a rootInGuest home is made with its mapped ids and its container start shifts its dirs to its block, a plain one to the host ids ({owners}, {shifts})")
-    check_shift_ids(next((c for c in got.get("pre", {}).get("r", []) if "dev-env-shift-ids" in c), "").split()[0])
+    owners = re.findall(r'install -d -m 0700 -o (\S+) -g (\S+) "\$d/(r|ok)/home"\n *echo (\S+) > "\$d/(?:r|ok)/\.id-base"', act)
+    checks = {n: next((c for c in got.get("pre", {}).get(n, []) if "dev-env-id-check" in c), "").split()[1:] for n in ("r", "ok")}
+    check(isinstance(base, int) and sorted(owners) == sorted([(str(base + 1000), str(base + 100), "r", str(base)), ("alice", "users", "ok", "0")])
+          and checks == {"r": ["/var/lib/dev-environments/r", str(base)], "ok": ["/var/lib/dev-environments/ok", "0"]}
+          and "chown -hR" not in act and "dev-env-shift-ids" not in act,
+          f"a rootInGuest home is made with its mapped ids and its block in .id-base, which its container start checks; a plain one with the host's and 0 ({owners}, {checks})")
+    check_id_check()
     allowed, trusted = got.get("allowed", []), got.get("trusted", [])
     check({"vu-r-1000", "vu-s-1000", "alice"} <= set(allowed) and not any(u.startswith(("vu-r-0", "vu-s-0", "vu-ok-", "@")) for u in allowed)
           and not any(u.startswith("vu-") for u in trusted),
