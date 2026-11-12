@@ -22,7 +22,7 @@ in
 
   # A guest may override max-jobs and cores per build, so CPUQuota holds the 2 x 2 bound; MemoryMax fails a build, never k3s.
   # min-free: collect garbage when a build leaves under 15G (the disk alert fires at 10G), down to 40G free
-  nix.settings = { max-jobs = 2; cores = 2; min-free = 15 * 1024 * 1024 * 1024; max-free = 40 * 1024 * 1024 * 1024; };
+  nix.settings = { max-jobs = 2; cores = 2; min-free = lib.mkDefault (15 * 1024 * 1024 * 1024); max-free = lib.mkDefault (40 * 1024 * 1024 * 1024); };
   systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "4G"; MemoryMax = "6G"; CPUQuota = "400%"; };
 
   # lenovo's ntfy server (homelab.ntfy.baseUrl in its configuration)

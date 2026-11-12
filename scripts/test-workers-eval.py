@@ -144,6 +144,8 @@ in {
   nixDrv = g.nix.package.drvPath;
   gcroots = d c.systemd.services.dev-environments-gcroots.script;
   stateDir = c.services.devEnvironments.stateDir;
+  gcTimer = c.systemd.timers.dev-environments-gcroots.timerConfig;
+  gcUnit = { inherit (c.systemd.services.dev-environments-gcroots) before requiredBy; };
   alert = d (builtins.readFile c.services.devEnvironments.alert);
   onFailure = { container = c.systemd.services."container@t".onFailure; egress = c.systemd.services.dev-env-egress.onFailure or null; };
   rm = map (x: { deny = x.home-manager.users.lukas.programs.claude-code.settings.permissions.deny; claude = x.home-manager.users.lukas.programs.claude-code.package.version;
@@ -543,6 +545,11 @@ def check_hygiene(facts):
         lists = facts.get(what, {})
         check(lists and all(len(v) == len(set(v)) and sum("cache.nixos.org" in x for x in v) == 1 for v in lists.values()),
               f"the host's and a guest's {what} list each entry once, cache.nixos.org once ({lists})")
+    for what in ("subs", "keys"):
+        lists = facts.get(what, {})
+        lan = "http://192.168." if what == "subs" else "-store-1:"
+        check(lists.get("host") and lists.get("guest") == lists.get("host") and any(lan in x for x in lists["host"]),
+              f"a guest's {what} equal the host's and include the LAN store cache ({lan}) ({lists})")
     free = facts.get("free", {})
     check(free.get("min", 0) >= 10 * 2**30 and free.get("max", 0) > free.get("min", 0), f"a runtime host collects garbage under a free-space floor ({free})")
     hook = facts.get("hook", "")
@@ -556,9 +563,15 @@ def check_hygiene(facts):
     if exe is None:
         check(False, f"the instance's control script builds with a stub ssh ({out.stderr.strip()[-300:]})")
         return
-    for state, code in (("LoadState=loaded\nActiveState=active", 0), ("LoadState=loaded\nActiveState=failed", 2), ("LoadState=not-found\nActiveState=inactive", 0)):
-        run = subprocess.run([str(exe), "wait"], capture_output=True, text=True, env={**os.environ, "HM_STATE": state})
-        check(run.returncode == code and (code == 0 or "home-manager-" in run.stderr), f"wait with the home setup {state.splitlines()[-1]} exits {code} ({run.returncode}, {run.stderr.strip()[-100:]})")
+    for state, code, still in (("LoadState=loaded\nActiveState=active", 0, False), ("LoadState=loaded\nActiveState=failed", 2, False),
+                               ("LoadState=not-found\nActiveState=inactive", 0, False), ("LoadState=loaded\nActiveState=activating", 1, True),
+                               ("LoadState=loaded\nActiveState=inactive", 1, False)):
+        run = subprocess.run([str(exe), "wait"], capture_output=True, text=True, env={**os.environ, "HM_STATE": state, "WORKER_WAIT_TICK": "0"})
+        check(run.returncode == code and (code != 2 or "home-manager-" in run.stderr) and (("still activating" in run.stderr) == still),
+              f"wait with the home setup {state.splitlines()[-1]} exits {code}{', saying it is still activating' if still else ''} ({run.returncode}, {run.stderr.strip()[-100:]})")
+    gc = facts.get("gcTimer", {})
+    check(gc.get("OnBootSec") and gc.get("OnUnitActiveSec") == "15min" and facts.get("gcUnit") == {"before": ["nix-gc.service"], "requiredBy": ["nix-gc.service"]},
+          f"the gc-roots unit runs at boot and every 15 min and still runs before nix-gc ({gc}, {facts.get('gcUnit')})")
 
 
 def check_nested(facts):

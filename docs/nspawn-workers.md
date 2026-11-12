@@ -96,8 +96,10 @@ daemon, so anything one environment or the host built is there for the next.
 The host's weekly/monthly collection would not see an environment's devenv
 roots (the daemon records them under the guest's path), so
 `dev-environments-gcroots` roots them from each home right before `nix-gc`
-(only `nix-gc.service` runs it; it searches the whole home, pruning
-`node_modules`, `target` and `.git`).
+(it searches the whole home, pruning `node_modules`, `target` and `.git`).
+A timer also runs it at boot and every 15 minutes, because the daemon collects
+by itself once `min-free` is set; a path a guest built within the last interval
+is the remaining exposure.
 
 Across hosts, lenovo, acer and msi each serve their store to the LAN as a
 binary cache (`modules/core/store-cache.nix`, harmonia on port 5000) and
