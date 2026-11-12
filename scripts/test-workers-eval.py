@@ -666,13 +666,13 @@ in flake.nixosConfigurations.msi-ms7758.pkgs.writeText "pre" (builtins.concatStr
 
 
 def check_host_network():
-    """The runtime-host's NetworkManager.conf, sysctl and modules-load are the same with no environment and with one:
-    a change in them restarts NetworkManager (wifi drops) and the deploy's confirmation session with it."""
-    expr = ('let b = (builtins.getFlake %s).nixosConfigurations.acer-swift; f = i: (b.extendModules { modules = [ ({ lib, ... }: { sam.workers.instances = lib.mkForce i; }) ]; }).config.environment.etc; '
-            'g = e: map (n: e.${n}.source.outPath) [ "NetworkManager/NetworkManager.conf" "sysctl.d/60-nixos.conf" "modules-load.d/nixos.conf" ]; in [ (g (f { })) (g (f { x = { }; })) ]' % nix_string(ROOT))
+    """The runtime-host's NetworkManager.conf (the restart trigger of NetworkManager.service, whose restart drops wifi), sysctl
+    and modules-load, and that unit, are the same with no environment and with one."""
+    expr = ('let b = (builtins.getFlake %s).nixosConfigurations.acer-swift; f = i: (b.extendModules { modules = [ ({ lib, ... }: { sam.workers.instances = lib.mkForce i; }) ]; }).config; '
+            'g = c: map (n: c.environment.etc.${n}.source.outPath) [ "NetworkManager/NetworkManager.conf" "sysctl.d/60-nixos.conf" "modules-load.d/nixos.conf" ] ++ [ c.systemd.units."NetworkManager.service".unit.outPath ]; in [ (g (f { })) (g (f { x = { }; })) ]' % nix_string(ROOT))
     out = run_eval(expr)
     zero, one = json.loads(out.stdout) if out.returncode == 0 else ([0], [1])
-    check(zero == one, f"a runtime-host's NetworkManager.conf, sysctl and modules-load do not depend on any environment existing ({out.stderr.strip()[-300:] or zero})")
+    check(zero == one, f"a runtime-host's NetworkManager.conf, sysctl, modules-load and NetworkManager.service do not depend on any environment existing ({out.stderr.strip()[-300:] or zero})")
 
 
 def check_id_check():

@@ -633,7 +633,7 @@ in
         (lib.filter (w: w.agentDef != null) instances));
 
       # egress for the instances' /16; an address with no running instance fails at once, not on a timeout
-      networking.nat.internalIPs = [ "10.233.0.0/16" ];
+      networking.nat = { enable = true; internalIPs = [ "10.233.0.0/16" ]; };
       networking.localCommands = "${pkgs.iproute2}/bin/ip route replace unreachable 10.233.0.0/16";
       networking.firewall = lib.mkIf (cfg.blockedNetworks != [ ]) {
         # INPUT too: a guest's connection to one of the host's own addresses (its k3s API, sshd) is never forwarded.

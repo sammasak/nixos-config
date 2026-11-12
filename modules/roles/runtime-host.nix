@@ -51,8 +51,8 @@ in
     onFailure = lib.mkIf (!desktop) (lib.mkForce [ ]);
   };
 
-  # Host networking that does not depend on whether an environment exists (modules/workers/core.nix): the first or last
-  # one must not change NetworkManager.conf, sysctl or modules-load, whose units restart NetworkManager and drop wifi.
+  # NetworkManager.conf must not change with the first or last environment (modules/workers/core.nix): it is the restart
+  # trigger, and the restart drops wifi. nat and enableContainers keep sysctl and modules-load from flipping too.
   networking.nat.enable = true; # forwarding and nf_nat_ftp; core.nix adds the instances' /16
   boot.enableContainers = true; # bridge, macvlan, tap, tun
   networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
