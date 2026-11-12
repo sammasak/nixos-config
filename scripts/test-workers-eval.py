@@ -86,7 +86,6 @@ TYPED = [
     ("model charset", '{ services.devEnvironments.instances.ok.model = "a b"; }', "instances.ok.model' is not of type"),
     ("empty prompt", '{ services.devEnvironments.instances.ok.prompt = ""; }', "instances.ok.prompt' is not of type"),
     ("zero cores", "{ services.devEnvironments.instances.ok.cpu.reserved = 0; }", "cpu.reserved' is not of type"),
-    ("relative key", '{ services.devEnvironments.clientKey = "id_ed25519"; }', "clientKey' is not of type"),
     ("cidr syntax", '{ services.devEnvironments.blockedNetworks = [ "10.0.0.0" ]; }', "blockedNetworks"),
     ("state dir outside /var/lib", '{ services.devEnvironments.stateDir = "/home"; }', "stateDir' is not of type"),
     ("retired name", '{ services.devEnvironments.retired = [ "Bad" ]; }', "retired.\"[definition 1-entry 1]\"' is not of type"),

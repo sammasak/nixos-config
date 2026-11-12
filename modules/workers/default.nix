@@ -10,7 +10,7 @@ let
   inherit (dev.paths) home creds;
   onGithub = i: i.egress.github.repos != [ ];
   # The tokens are read at request time from the unit's credential and its private directory.
-  githubToken = "${dev.egressPaths.private}/github-token";
+  githubToken = "${dev.paths.egress.private}/github-token";
   upstream = url: auth: ''
     reverse_proxy ${url} {
       header_up Host {upstream_hostport}
@@ -222,7 +222,7 @@ in
       guestModules = [ fleetGuest ];
       credentials = {
         # the host user's own key is also the environment's, for `git push`
-        id_ed25519 = dev.clientKey;
+        id_ed25519 = dev.paths.clientKey;
       } // lib.optionalAttrs (cfg.ghHostsFile != null) {
         "gh-hosts.yml" = cfg.ghHostsFile;
       };
@@ -239,7 +239,7 @@ in
           respond @other 403
           reverse_proxy https://api.anthropic.com {
             header_up Host {upstream_hostport}
-            header_up Authorization "Bearer {file.${dev.egressPaths.credentials}/claude_oauth_token}"
+            header_up Authorization "Bearer {file.${dev.paths.egress.credentials}/claude_oauth_token}"
             header_up -X-Api-Key
             flush_interval -1
           }

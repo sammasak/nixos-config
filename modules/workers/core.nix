@@ -11,6 +11,7 @@ let
   group = hostUser.group or "users";
   hostName = config.networking.hostName;
   creds = "/var/lib/host-credentials";
+  clientKey = "${home}/.ssh/id_ed25519";
   slice = "environments";
 
   multipliers = { "" = 1; K = 1024; M = 1048576; G = 1073741824; T = 1099511627776; };
@@ -80,7 +81,7 @@ let
   '') (egressOf w)) egressed);
 
   argv = w: resume: w.agentDef.command ++ lib.optionals resume w.agentDef.resumeArgs
-    ++ lib.optionals (w.model != null) (w.agentDef.modelArgs w.model);
+    ++ lib.optionals (w.model != null) [ "--model" w.model ];
   # The agent's command line as a file the guest's login shell sources: no user string is ever quoted for ssh.
   agentScript = w: resume: pkgs.writeText "${w.hostName}-${if resume then "continue" else "start"}.${cfg.shell}" ''
     ${lib.concatMapStringsSep " " escape (argv w resume)}
@@ -147,7 +148,7 @@ let
     # environment then builds. The name is Nix's: workers-eval-test fails when the guest's Nix names it otherwise.
     "${home}/.cache/nix/eval-cache-v6" = { hostPath = "${cfg.stateDir}/${w.name}/eval-cache"; isReadOnly = false; };
     "${creds}/ssh_host_ed25519_key" = { hostPath = hostKeyOf w; isReadOnly = true; };
-    "${creds}/${baseNameOf cfg.clientKey}.pub" = { hostPath = "${cfg.clientKey}.pub"; isReadOnly = true; };
+    "${creds}/${baseNameOf clientKey}.pub" = { hostPath = "${clientKey}.pub"; isReadOnly = true; };
   } // lib.mapAttrs' (n: src: lib.nameValuePair "${creds}/${n}" { hostPath = src; isReadOnly = true; })
     (lib.filterAttrs (n: _: w.credentials == null || lib.elem n w.credentials) cfg.credentials)
     // lib.optionalAttrs (egressOf w != [ ]) { "/run/egress" = { hostPath = "${egressDir}/${w.name}"; isReadOnly = true; }; };
@@ -168,7 +169,7 @@ let
       startWhenNeeded = false;
       # one key per host, generated at activation under stateDir and bound read-only: never the host's own sshd key
       hostKeys = [{ path = "${creds}/ssh_host_ed25519_key"; type = "ed25519"; }];
-      authorizedKeysFiles = [ "${creds}/${baseNameOf cfg.clientKey}.pub" ];
+      authorizedKeysFiles = [ "${creds}/${baseNameOf clientKey}.pub" ];
       settings = {
         PasswordAuthentication = false;
         KbdInteractiveAuthentication = false;
@@ -219,9 +220,9 @@ let
       site = mkOption { type = types.functionTo types.lines; description = "The instance's Caddy site, after its bind and log."; };
       port = mkOption { type = types.port; description = "The guest's loopback port forwarded to the socket."; };
       socket = mkOption { type = types.str; default = "/run/egress/${name}.sock"; readOnly = true; description = "The socket in the guest."; };
-      secrets = mkOption { type = types.attrsOf (types.nullOr types.externalPath); default = { }; description = "Host files loaded as the proxy's credentials, under egressPaths.credentials."; };
+      secrets = mkOption { type = types.attrsOf (types.nullOr types.externalPath); default = { }; description = "Host files loaded as the proxy's credentials, under paths.egress.credentials."; };
       missing = mkOption { type = types.str; description = "The assertion message when one of secrets is null."; };
-      prepare = mkOption { type = types.listOf types.str; default = [ ]; description = "ExecStartPre commands; egressPaths.private is theirs and Caddy's."; };
+      prepare = mkOption { type = types.listOf types.str; default = [ ]; description = "ExecStartPre commands; paths.egress.private is theirs and Caddy's."; };
       guest.env = mkOption { type = types.attrsOf types.str; default = { }; description = "Environment of a guest that gets the service."; };
       guest.config = mkOption { type = types.deferredModule; default = { }; description = "A NixOS module of a guest that gets the service."; };
     };
@@ -236,7 +237,6 @@ let
         default = null;
         description = "A glob under the guest home; a match at start means there is a session to resume.";
       };
-      modelArgs = mkOption { type = types.functionTo (types.listOf types.nonEmptyStr); default = m: [ "--model" m ]; defaultText = "m: [ \"--model\" m ]"; description = "How the instance's model is passed."; };
       readyText = mkOption { type = types.nullOr types.nonEmptyStr; default = null; description = "Text the agent draws once it takes input, for a session surface to wait on."; };
     };
   };
@@ -282,17 +282,11 @@ in
     user = mkOption { type = types.passwdEntry types.str; description = "The host user owning the environments; the guest gets the same user and uid."; };
     uid = mkOption { type = types.ints.positive; description = "That user's uid; defaults to the declared one."; };
     shell = mkOption { type = types.enum [ "bash" "fish" ]; default = "bash"; description = "The guest login shell the agent starts in."; };
-    paths = mkOption { internal = true; readOnly = true; default = { inherit home creds; }; description = "The guest's home and the directory its host credentials are bound under."; };
+    paths = mkOption { internal = true; readOnly = true; default = { inherit home creds clientKey; egress = { credentials = "/run/credentials/dev-env-egress.service"; private = "/tmp"; }; }; description = "The guest's home, where its host credentials are bound, the host user's ssh key, and the proxy's credentials and private directory (no guest sees it)."; };
     alert = mkOption {
       type = types.nullOr types.path;
       default = null;
       description = "Program run with a message when an instance's container fails, the pool's OOM killer fires or a disk runs low; null, no alerts.";
-    };
-    clientKey = mkOption {
-      type = types.externalPath;
-      default = "${home}/.ssh/id_ed25519";
-      defaultText = "~user/.ssh/id_ed25519";
-      description = "The host user's SSH key; its `.pub` is bound into the guest as the authorized key.";
     };
     credentials = mkOption {
       type = types.attrsOf types.externalPath;
@@ -301,8 +295,6 @@ in
       description = "Host paths bound read-only at ${creds}/<name> in every guest.";
     };
     egress = mkOption { type = types.attrsOf (types.submodule egressModule); default = { }; description = "Services the host's proxy signs for the instances."; };
-    egressPaths = mkOption { type = types.attrsOf types.str; readOnly = true; description = "The proxy's credentials, and its private directory (no guest sees it).";
-      default = { credentials = "/run/credentials/dev-env-egress.service"; private = "/tmp"; }; };
     egressInaccessible = mkOption { type = types.listOf types.str; default = [ ]; description = "Host paths the proxy may not read, besides stateDir."; };
     guestModules = mkOption { type = types.listOf types.deferredModule; default = [ ]; description = "NixOS modules of every guest; `devEnvironment` (name, hostName, address) is their argument."; };
     sessionSurface = mkOption {
@@ -699,7 +691,7 @@ in
           description = "Signs the environments' calls to the services of services.devEnvironments.egress";
           wantedBy = [ "multi-user.target" ];
           onFailure = lib.optional (cfg.alert != null) "dev-env-alert@%n.service";
-          environment.HOME = cfg.egressPaths.private;
+          environment.HOME = cfg.paths.egress.private;
           serviceConfig = {
             ExecStart = "${pkgs.caddy}/bin/caddy run --adapter caddyfile --config ${caddyfile}";
             LoadCredential = map (x: "${x.n}:${x.path}") egressSecrets;
