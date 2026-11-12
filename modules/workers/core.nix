@@ -475,7 +475,16 @@ in
           { assertion = !lib.elem w.name otherHosts && !lib.elem "${w.name}.${cfg.prefix}" otherHosts; message = "${i}: networking.hosts already maps the name to another address."; }
           { assertion = lib.length (lib.filter (d: d ? ${w.name}) options.containers.definitions) == (if w.paused then 0 else 1); message = "${i}: containers.${w.name} is also declared elsewhere."; }
           { assertion = lib.stringLength w.hostName <= 63; message = "${i}: hostname ${w.hostName} is longer than 63."; }
+          {
+            assertion = !w.rootInGuest || lib.elem user config.nix.settings.allowed-users || lib.elem "*" config.nix.settings.allowed-users;
+            message = "${i}.rootInGuest adds its guest user to nix.settings.allowed-users, which replaces the default \"*\": list ${user} there too.";
+          }
         ] ++ lib.optional (!w.paused) { assertion = config.containers.${w.name}.config.services.openssh.enable; message = "${i}: a guest module disabled sshd, the only way into it."; }) instances;
+
+      # The daemon sees the guest user as the mapped uid, which machined names vu-<machine>-<uid>; neither guest root nor
+      # a trusted user. Unresolved (machined gone) the daemon compares the bare uid, which matches nothing: it refuses.
+      nix.settings.allowed-users = lib.mkIf (lib.any (w: w.rootInGuest) running)
+        (map (w: "vu-${w.name}-${toString cfg.uid}") (lib.filter (w: w.rootInGuest) running));
 
       containers = lib.listToAttrs (map (w: lib.nameValuePair w.name {
         ephemeral = true;
