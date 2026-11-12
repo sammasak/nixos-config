@@ -1,5 +1,5 @@
-# The environment hosts serve their own /nix/store to the fleet over the LAN (harmonia), so what one machine built
-# the others download. Each signs with a key generated on the host that never leaves it; its public half is below.
+# lenovo and the environment hosts serve their own /nix/store to the fleet over the LAN (harmonia), so what one
+# machine built the others download. Each signs with a key generated on the host that never leaves it; its public half is below.
 { config, lib, pkgs, ... }:
 let
   inherit (lib) mkEnableOption mkIf mkMerge;
@@ -11,6 +11,7 @@ let
 
   # publicKey: `cat ${dir}/public-key` on the host after its first deploy with `serve`; null until then
   caches = {
+    lenovo-21CB001PMX = { address = "192.168.10.154"; publicKey = "lenovo-21CB001PMX-store-1:Ifjt/zTBnDw6GFhAw6w6L0JGWHblrWr4V7L/BfphwPU="; };
     acer-swift = { address = "192.168.10.110"; publicKey = "acer-swift-store-1:iDCzz1UQib6s9pZ818Evy6d8naQ+4jaI6YYZmlGsz5A="; };
     msi-ms7758 = { address = "192.168.10.235"; publicKey = "msi-ms7758-store-1:xIr/Ee7u3rhCm4bhycovNFbfA2UAB6OITroVVWmv7wQ="; };
   };

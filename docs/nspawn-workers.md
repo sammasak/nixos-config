@@ -91,9 +91,9 @@ roots (the daemon records them under the guest's path), so
 (only `nix-gc.service` runs it; it searches the whole home, pruning
 `node_modules`, `target` and `.git`).
 
-Across hosts, acer and msi each serve their store to the LAN as a binary cache
-(`modules/core/store-cache.nix`, harmonia on port 5000), and acer, msi and
-lenovo substitute from them ahead of cache.nixos.org: what one machine built
+Across hosts, lenovo, acer and msi each serve their store to the LAN as a
+binary cache (`modules/core/store-cache.nix`, harmonia on port 5000) and
+substitute from the other two ahead of cache.nixos.org: what one machine built
 the others download. Each cache signs with a key its host generated on first
 start (`/var/lib/store-cache/`, never in git); the public halves are in the
 module. An absent cache (msi at night) costs a 3 s connect timeout, then Nix
