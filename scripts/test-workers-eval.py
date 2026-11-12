@@ -347,7 +347,7 @@ def site_wrong(site, upstream, cases, to="http://127.0.0.1:1"):
                 conn.request(method, path, body=b"x" * size if method == "POST" else None, headers=headers)
                 status = conn.getresponse().status
                 conn.close()
-                if (status != 403) != allowed:
+                if (status != allowed) if type(allowed) is int else (status != 403) != allowed:
                     wrong.append(f"{method} {path} -> {status}")
             return wrong
         finally:
@@ -363,7 +363,8 @@ def check_github_proxy(site):
 OTLP_CASES = [("POST", "/v1/metrics", True), ("POST", "/v1/logs", True), ("GET", "/v1/metrics", False), ("POST", "/v1/traces", False),
               ("POST", "/v1/metrics/x", False), ("POST", "/", False), ("PUT", "/v1/logs", False), ("HEAD", "/v1/metrics", False),
               ("OPTIONS", "/v1/logs", False), ("POST", "/V1/METRICS", False), ("POST", "/v1//logs", False), ("POST", "/v1/metrics/../logs", False),
-              ("POST", "/v1/logs", True, {"X-Otel-Worker": "other"}, 2), ("POST", "/v1/logs", True, {}, (1 << 20) + 1)]
+              ("POST", "/v1/metrics?x=1", True), ("POST", "/v1/metrics/", False),
+              ("POST", "/v1/logs", True, {"X-Otel-Worker": "other"}, 2), ("POST", "/v1/logs", 413, {}, (1 << 20) + 1)]
 
 
 class Recorder(http.server.BaseHTTPRequestHandler):
@@ -404,12 +405,12 @@ def check_telemetry(got, out):
     check(not left and "otlp-egress" not in plain.get("sockets", {}) and not any(h.endswith("emit-work-ref.sh") for h in plain.get("hooks", [])),
           f"a guest without telemetry, on that nativeOtel host, gets none of it ({left})")
     posture = lambda g: (g.get("env", {}).get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"), g.get("mode"))
-    check(bool(env) and posture(tel) == posture(plain), f"telemetry leaves a guest's CLAUDE_CODE_SUBPROCESS_ENV_SCRUB and defaultMode as they are without it ({posture(tel)} vs {posture(plain)})")
+    check(bool(env) and posture(tel) == posture(plain) == (None, None), f"telemetry leaves a guest's CLAUDE_CODE_SUBPROCESS_ENV_SCRUB and defaultMode as they are without it ({posture(tel)} vs {posture(plain)})")
     sites = {b.split("\n", 2)[1].strip(): b for b in got.get("caddy", "").split("http:// {")[1:]}
     site = sites.get("bind unix//run/dev-env-egress/tel/otlp.sock", "")
     check(bool(site) and "bind unix//run/dev-env-egress/plain/otlp.sock" not in sites and "reverse_proxy http://127.0.0.1:4319" in site
-          and "request_header X-Otel-Worker tel\n" in site and "max_size 1MB" in site,
-          f"only the telemetry instance has an OTLP site; it forwards to the host's relay stamped X-Otel-Worker tel, bodies to 1MB ({sorted(sites)})")
+          and "request_header X-Otel-Worker tel\n" in site and "max_size 1MiB" in site,
+          f"only the telemetry instance has an OTLP site; it forwards to the host's relay stamped X-Otel-Worker tel, bodies to 1MiB ({sorted(sites)})")
     relay = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Recorder)
     threading.Thread(target=relay.serve_forever, daemon=True).start()
     try:
@@ -418,8 +419,8 @@ def check_telemetry(got, out):
         relay.shutdown()
     check(wrong == [], f"the OTLP site passes POST /v1/metrics and /v1/logs and refuses everything else ({'no caddy on PATH' if wrong is None else wrong})")
     seen = Recorder.seen
-    check(len(seen) >= 3 and all(p in ("/v1/metrics", "/v1/logs") and w == ["tel"] and n <= 1 << 20 for p, w, n in seen),
-          f"the relay sees only the exact paths, X-Otel-Worker tel even when the guest sent its own, and no body over 1MB ({seen})")
+    check(len(seen) >= 3 and all(p.split("?")[0] in ("/v1/metrics", "/v1/logs") and w == ["tel"] and n <= 1 << 20 for p, w, n in seen),
+          f"the relay sees only the exact paths, X-Otel-Worker tel even when the guest sent its own, and no body over 1MiB ({seen})")
 
 
 def check_eval_cache(facts):

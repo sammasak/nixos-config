@@ -175,7 +175,7 @@ let
     options.telemetry = mkOption {
       type = types.bool;
       default = false;
-      description = "The guest's Claude Code exports OTLP metrics and events (sam.claude.telemetry, tagged worker.name) through the proxy to this host's native-otel-relay, which needs sam.profile.nativeOtel here; the guest holds no token.";
+      description = "The guest's Claude Code exports OTLP metrics and events (sam.claude.telemetry) through the proxy to this host's native-otel-relay, which needs sam.profile.nativeOtel here; the guest holds no token. The proxy's X-Otel-Worker stamp names the worker on logs only; metrics carry no worker and count under host.name.";
     };
     config.credentials = lib.mkIf (onGithub config) (lib.subtractLists [ "id_ed25519" "gh-hosts.yml" ] (lib.attrNames dev.credentials));
   };
@@ -330,8 +330,8 @@ in
         # A path to the host's relay, which adds the token; the guest's Claude sends to the same 127.0.0.1:4319.
         otlp = {
           for = i: i.telemetry;
-          # The exact path: Caddy's path matcher ignores case and merges slashes. The relay keys its rate limit and
-          # the gateway worker.name on the stamped header, never the guest's.
+          # The exact path: Caddy's path matcher ignores case and merges slashes. The relay keys its rate limit, and
+          # the gateway the logs' worker.name, on the stamped header, never the guest's; metrics carry no worker.
           site = i: ''
           @other not {
             method POST
@@ -340,7 +340,7 @@ in
           respond @other 403
           request_header X-Otel-Worker ${i.name}
           request_body {
-            max_size 1MB
+            max_size 1MiB
           }
           reverse_proxy http://127.0.0.1:4319
           '';

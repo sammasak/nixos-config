@@ -25,7 +25,9 @@ proxy overwrites it with the instance name) and rate-limits per value of that
 header, 20 requests/s with a burst of 50 (then 429); requests without it share
 one host bucket, so a flooding environment cannot starve the host's clients. A
 local process can set the header itself, so a value is trustworthy only when
-it came through an environment's proxy.
+it came through an environment's proxy. The per-header limit therefore binds
+only environments: a host process can vary `X-Otel-Worker` per request or
+borrow a guest's name.
 
 Claude's endpoint is the relay, not the receiver, because a headless
 `claude -p` started by a script or by another session's Bash tool never passes

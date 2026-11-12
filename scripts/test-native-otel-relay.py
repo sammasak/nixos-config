@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import urllib.error
 import urllib.request
@@ -152,8 +153,9 @@ def main():
                     raise AssertionError("relay forwarded an unrelated caller header")
                 if forwarded_body != body:
                     raise AssertionError(f"relay changed the {path} payload")
-            flood = [request_status(f"{endpoint}/v1/metrics", data=body, headers={"X-Otel-Worker": "flood"}) for _ in range(120)]
-            if 429 not in flood or flood[:50] != [200] * 50:
+            with ThreadPoolExecutor(12) as pool:
+                flood = list(pool.map(lambda _: request_status(f"{endpoint}/v1/metrics", data=body, headers={"X-Otel-Worker": "flood"}), range(120)))
+            if 429 not in flood or flood.count(200) < 50 or set(flood) - {200, 429}:
                 raise AssertionError(f"one environment is not limited to its burst of 50, then 429 ({flood.count(200)} passed)")
             if request_status(f"{endpoint}/v1/metrics", data=body) != 200:
                 raise AssertionError("an environment's flood starved the host's own clients")
