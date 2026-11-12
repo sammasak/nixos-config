@@ -85,6 +85,7 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-12 An environment's own 6G `MemoryMax` got a gate's `nix` process killed on msi (3.9G anon, `oom_kill 1`, `memory.max` hit 54183 times) with one environment running, 4G of the 10G pool idle and 11G free on the host. `memory.max` and the swap cap per environment are gone: the pool is the only ceiling, the reserve the only setting.
 - Nested sandboxes (#239): open friction from the round that built it, kept for the next one: the placeholder Claude token is in the login environment but not in tool shells; Claude's wrapper puts its own bubblewrap first on PATH, so only managed settings can swap it; `--settings` ignores `sandbox.bwrapPath` without a warning; a fresh clone has no gate hooks until `devenv shell` has run once. One `podman run` right after the deploy failed with rootful storage paths and did not reproduce.
 
 - 2026-11-12 A guest's builds ignored the host's build bounds: the daemon takes a client's `max-jobs`/`cores` over its own, and a guest sent 8 jobs on all cores against the host's 2 x 2. Four independent 20 s derivations from an acer guest: 21 s with `NIX_BUILD_CORES=8` before, 41 s with 2 after the guest inherited the host's values (#230). The nixos-config gate is no slower bounded (9m09s against 9m02s to 9m24s).

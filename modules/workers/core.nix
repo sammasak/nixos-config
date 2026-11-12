@@ -175,8 +175,7 @@ let
         example = [ "gh-hosts.yml" ];
         description = "Which of `credentials` this instance gets; null is all of them.";
       };
-      memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryLow: kept from reclaim, and what the pool must fit."; };
-      memory.max = mkOption { type = size; default = "6G"; description = "MemoryMax, the spike ceiling; swap is capped at half of it. Reclaim starts at 90% of the pool, not per instance."; };
+      memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryLow: kept from reclaim, and what the pool must fit. Above it an instance uses whatever the pool has idle."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
     };
   };
@@ -245,7 +244,7 @@ in
       example = { work = "build-box"; };
       description = "Client side: `ssh <name>.<prefix>` reaches instance <name> through the host this maps <prefix> to, a known host here.";
     };
-    pool.memory = mkOption { type = size; description = "MemoryMax of the environments' slice; every instance's reserve fits in it."; };
+    pool.memory = mkOption { type = size; description = "MemoryMax of the environments' slice, the only hard ceiling: every instance's reserve fits in it, reclaim starts at 90% of it, swap is capped at half of it."; };
   };
 
   config = lib.mkMerge [
@@ -353,11 +352,6 @@ in
             assertion = w.credentials == null || lib.all (n: cfg.credentials ? ${n}) w.credentials;
             message = "${i}.credentials names one that ${p}.credentials does not declare.";
           }
-          { assertion = w.memory.reserved <= w.memory.max; message = "${i}.memory: reserved ${showSize w.memory.reserved} is above max ${showSize w.memory.max}."; }
-          {
-            assertion = w.memory.max <= cfg.pool.memory;
-            message = "${i}.memory.max ${showSize w.memory.max} is above pool.memory ${showSize cfg.pool.memory}.";
-          }
           { assertion = w.name != hostName; message = "${i}: the name is this host's own."; }
           { assertion = !lib.elem w.name otherHosts && !lib.elem "${w.name}.${cfg.prefix}" otherHosts; message = "${i}: networking.hosts already maps the name to another address."; }
           { assertion = lib.length (lib.filter (d: d ? ${w.name}) options.containers.definitions) == 1; message = "${i}: containers.${w.name} is also declared elsewhere."; }
@@ -378,8 +372,8 @@ in
       systemd.slices.${slice}.sliceConfig = {
         MemoryMax = cfg.pool.memory;
         MemoryLow = reservedMem;
-        # Reclaim and throttling start here, for the pool, not per instance: one gate alone uses what its neighbours
-        # leave idle (a 5.1G gate was throttled thousands of times under a 5.4G instance threshold in a 10G pool).
+        # The limits are the pool's, an instance has only its reserve: under an instance MemoryMax the kernel killed a
+        # build at 6G in a 10G pool with one instance running. Past the pool it kills the largest process in the slice.
         MemoryHigh = cfg.pool.memory / 10 * 9;
         # zram is charged to no cgroup: without this the instances' swap adds up past the device
         MemorySwapMax = cfg.pool.memory / 2;
@@ -397,9 +391,6 @@ in
             # mkForce: the stock unit puts every container in machine.slice
             Slice = lib.mkForce "${slice}.slice";
             MemoryLow = w.memory.reserved;
-            MemoryMax = w.memory.max;
-            # Bounded so one runaway cannot fill the host's zram swap; past max + this the kernel kills the process, not the container.
-            MemorySwapMax = w.memory.max / 2;
             CPUWeight = lib.min 10000 (100 * w.cpu.reserved);
             # The stock pre-start copies the host's resolv.conf, the guest's only DNS: at boot or while a switch
             # restarts NetworkManager it can have no nameserver yet, and the guest would boot without DNS.
