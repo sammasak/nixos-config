@@ -218,3 +218,9 @@ then the daemon's patch level is the root boundary: keep Nix current.
 How Anthropic delivers store paths to pods, how these environments compare,
 and the plan to run the workloads built here without images:
 [nix-native-delivery.md](nix-native-delivery.md).
+
+## Credentials, users and rented hosts
+
+Host credentials for any tool with default allow, several users per host,
+and the same setup on a VPS:
+[credentials-and-tenancy.md](credentials-and-tenancy.md).
