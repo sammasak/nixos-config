@@ -169,6 +169,17 @@ let
     environment.variables = lib.mkMerge (map (s: s.guest.env) (egressOf w));
     systemd.sockets = lib.listToAttrs (map (s: lib.nameValuePair "${s.name}-egress" { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString s.port}" ]; }) (egressOf w));
     systemd.services = lib.listToAttrs (map (s: lib.nameValuePair "${s.name}-egress" { serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${s.socket}"; }; }) (egressOf w));
+
+    # the guest's cgroup files read max: the host's limits, read from the units that set them. Shell key=value,
+    # so a job sources it (`. /etc/dev-environment`) or greps it without a parser; sizes in bytes.
+    environment.etc."dev-environment".text = let unit = config.systemd.services."container@${w.name}".serviceConfig; in ''
+      memory_reserved=${toString unit.MemoryMin}
+      pool_memory=${toString config.systemd.slices.${slice}.sliceConfig.MemoryMax}
+      pool_swap=${toString config.systemd.slices.${slice}.sliceConfig.MemorySwapMax}
+      cpu_weight=${toString unit.CPUWeight}
+      nix_max_jobs=${toString config.nix.settings.max-jobs}
+      nix_cores=${toString config.nix.settings.cores}
+    '';
   };
 
   egressModule = { name, ... }: {

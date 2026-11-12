@@ -227,6 +227,9 @@ def nix_string(s):
 
 
 GUEST = "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; channel = g.nix.channel.enable; registry = g.nix.settings.flake-registry; }"
+# what a job in the guest can read of its limits, next to the host-side values they must equal
+LIMITS = ('{ text = sys.config.containers.ok.config.environment.etc."dev-environment".text; '
+          'swap = sys.config.systemd.slices.environments.sliceConfig.MemorySwapMax; inherit (sys.config.nix.settings) max-jobs cores; }')
 
 
 def fleet(case, template=FLEET):
@@ -554,7 +557,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", LIMITS), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -564,6 +567,12 @@ def main():
     check(got.get("channel") is False and len(got.get("nixPath", [])) == 1 and got["nixPath"][0].startswith("nixpkgs=/nix/store/")
           and got.get("registry") == "",
           f"a guest resolves <nixpkgs> to the store's nixpkgs, with no channels or global registry to fetch ({got or out.stderr.strip()[-300:]})")
+    out = nix_eval("{ }", LIMITS)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    want = {"memory_reserved": str(2 << 30), "pool_memory": str(8 << 30), "pool_swap": str(got.get("swap")), "cpu_weight": "200",
+            "nix_max_jobs": str(got.get("max-jobs")), "nix_cores": str(got.get("cores"))}
+    have = dict(l.split("=", 1) for l in got.get("text", "").splitlines() if "=" in l)
+    check(have == want, f"/etc/dev-environment gives the guest its reserve, the pool, its CPU weight and the build bounds ({have or out.stderr.strip()[-300:]})")
     check_activation()
     blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
     for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
