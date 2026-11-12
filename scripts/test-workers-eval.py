@@ -535,6 +535,13 @@ def check_paused():
           f"paused instances have no container, no unit of any kind, and leave the slice's MemoryLow ({facts or out.stderr.strip()[-300:]})")
 
 
+def check_restart_notice(facts):
+    block = facts.get("hook", "").split("[[ $mode == continue ]]; then", 1)[-1].split("\n          else", 1)[0]
+    sent, marked = block.find("send "), block.rfind("restart-notice-$label")
+    check("systemctl show --property=InvocationID --value container@t.service" in block and '!= "$inv"' in block and 0 < sent < marked,
+          f"the restart notice is sent once per start of the container and recorded after the send ({block[:400]})")
+
+
 CTL = (r'let w = builtins.head (builtins.filter (p: builtins.match ".*-ok" (p.name or "") != null) sys.config.environment.systemPackages); in { drv = w.drvPath; name = w.name; }')
 STUB_SSH = ('{ nixpkgs.overlays = [ (_: prev: { openssh = prev.writeShellScriptBin "ssh" \'\'case "$*" in *"systemctl show"*) printf "%s\\n" "$HM_STATE";; esac\'\'; }) ]; }')
 
@@ -715,6 +722,7 @@ def main():
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
     check_nested(facts)
+    check_restart_notice(facts)
     check_hygiene(facts)
     check_alerts(facts)
     check_eval_cache(facts)
