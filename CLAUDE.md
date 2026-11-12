@@ -20,6 +20,7 @@ devenv tasks run nixos:claude-settings-test  # generated Claude settings: defaul
 devenv tasks run nixos:coordinator-test  # coordinator adapters on lenovo only; Codex's agent declared via config_file, no model pin
 devenv tasks run nixos:worker-permissions-test  # #145/#157/skills#28: Herdr workers (restored panes too) start in bypassPermissions and switch models on a safeguards flag; the Coordinator unchanged
 devenv tasks run nixos:workers-eval-test  # modules/workers/core.nix: each wrong config fails eval with its message; agent argv survives the guest shell
+devenv tasks run nixos:bulk-reader-test  # sam.claude.bulkReader: shunt hooks only when on and pinned, after the existing Bash hooks; guests via a guest module
 devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer
 devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
 devenv tasks run nixos:build-bounds-test  # nix-daemon builds bounded on lenovo (#109) and the environment hosts (acer, msi)
@@ -119,6 +120,22 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 nix flake update skills
 just switch
 ```
+
+**Bulk reader** (`sam.claude.bulkReader`, off by default): registers the skills input's shunt hooks, a `Read`
+PreToolUse entry (`shunt-check-read.sh`) and `shunt-check-bash-read.sh` appended to the `Bash` list after the
+existing hooks. A whole-file read estimated over 8000 tokens (`minTokens`, null = the skills default; source code and
+instruction files are never redirected) is redirected once to
+`scripts/bulk-read.sh` (bulk-reader skill), which summarises it with headless `claude -p` on `model` (null =
+haiku) under the session's own auth. `spillOutput` (default on with `enable`) adds a `Bash` PostToolUse entry
+(`shunt-spill-output.sh`): a successful command output over 12000 chars is saved under `~/.cache/claude-spill/` and
+the session gets the path with a head and tail excerpt; failed commands are untouched. With a skills pin that lacks the hooks it registers nothing.
+- Host: `sam.claude.bulkReader.enable = true;` in `hosts/<host>/configuration.nix`.
+- Environments: a guest does not inherit its host's value; the host adds a guest module, e.g. for one instance
+  `services.devEnvironments.guestModules = [ ({ devEnvironment, ... }: { sam.claude.bulkReader.enable = devEnvironment.name == "canary"; }) ];`
+- Rollback: set it false and switch, or `SHUNT_DISABLE=1` in the environment Claude starts from (no rebuild).
+- Running sessions keep the hooks they started with: settings are read at session start, so restart a session to
+  pick up a change. `notifyHookGeneration` pings ntfy only when the skills store path changes (a pin bump), not
+  when this option flips.
 
 ### Codex
 

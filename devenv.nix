@@ -74,6 +74,11 @@ let
     ${pkgs.python3}/bin/python scripts/test-workers-eval.py
   '';
 
+  # sam.claude.bulkReader: shunt hooks only when on and pinned, appended after the fleet's; guests via a guest module
+  bulkReaderTest = gate "bulk-reader-test" (with pkgs; [ nix python3 ]) ''
+    ${pkgs.python3}/bin/python scripts/test-bulk-reader-hooks.py
+  '';
+
   # #42 DoD: no heavyweight RE tooling on naked-pi, no k3s there, no rf-lab module on any other host (eval only)
   rfLabBoundaryTest = gate "rf-lab-boundary-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-rf-lab-boundary.py
@@ -115,7 +120,7 @@ let
     GATE_PROBE=$(${lib.getExe probe})
     export GATE_PROBE
     ${run [
-      nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest
+      nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest
       ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest rfBeaconsTest
     ]}
   '';
@@ -382,6 +387,7 @@ in
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:worker-permissions-test" = task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
     "nixos:workers-eval-test" = task "The developer-environment module rejects each wrong configuration at eval; agent argv survives the guest shell" workersEvalTest;
+    "nixos:bulk-reader-test" = task "sam.claude.bulkReader: shunt hooks only when on and the skills pin has them, after the existing Bash hooks; guests via a guest module" bulkReaderTest;
     "nixos:known-hosts-test" = task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed" knownHostsTest;
     "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" = task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;

@@ -121,6 +121,8 @@ let
 
     delegation = { inherit skills; local = localNix; };
 
+    bulk-reader = import ./bulk-reader-probe.nix hosts // { inherit skills; };
+
     otel-rollback = { live = otelSurfaces lenovo; acer = (hm acer).programs.claude-code.settings.env; };
 
     rf-lab-boundary = {

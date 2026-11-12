@@ -6,6 +6,15 @@ skillsSrc: nativeOtel: hostName:
 { pkgs, lib, config, osConfig, ... }:
 let
   worker = osConfig.sam.herdr.worker;
+  bulkReader = osConfig.sam.claude.bulkReader;
+  # both or neither: an older skills pin evaluates and registers nothing
+  shunt = bulkReader.enable && lib.all (h: builtins.pathExists "${skillsSrc}/hooks/${h}") [ "shunt-check-read.sh" "shunt-check-bash-read.sh" ];
+  spill = shunt && bulkReader.spillOutput && builtins.pathExists "${skillsSrc}/hooks/shunt-spill-output.sh";
+  shuntHook = name: {
+    type = "command";
+    command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.findutils ]}:$PATH ${skillsSrc}/hooks/${name}";
+    timeout = 15;
+  };
 in
 {
   programs.claude-code = {
@@ -82,6 +91,10 @@ in
         OTEL_LOG_TOOL_CONTENT = "0";
         OTEL_LOG_TOOL_DETAILS = "0";
         OTEL_LOG_RAW_API_BODIES = "0";
+      } // lib.optionalAttrs (shunt && bulkReader.minTokens != null) {
+        SHUNT_MIN_TOKENS = toString bulkReader.minTokens;
+      } // lib.optionalAttrs (shunt && bulkReader.model != null) {
+        SHUNT_MODEL = bulkReader.model;
       };
       enabledPlugins = {
         # The complete intended set — anything not listed here is uninstalled.
@@ -129,10 +142,17 @@ in
               type = "command";
               command = "PATH=${lib.makeBinPath [ pkgs.gh pkgs.python3 pkgs.coreutils ]}:$PATH ${skillsSrc}/hooks/check-merge.sh";
               timeout = 30;
-            };
+            }
+            ++ lib.optional shunt (shuntHook "shunt-check-bash-read.sh");
           }
-        ];
-        PostToolUse = [{
+        ] ++ lib.optional shunt {
+          matcher = "Read";
+          hooks = [ (shuntHook "shunt-check-read.sh") ];
+        };
+        PostToolUse = lib.optional spill {
+          matcher = "Bash";
+          hooks = [ (shuntHook "shunt-spill-output.sh") ];
+        } ++ [{
           matcher = "Write|Edit";
           hooks = [
             {
