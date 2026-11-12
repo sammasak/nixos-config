@@ -191,9 +191,9 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 - A nested sandbox cannot mount a full procfs in a guest (nspawn masks parts of
   `/proc`), so `modules/workers/nested-sandbox.nix` packages two wrappers that
   mount `subset=pid`: one for Claude's `sandbox.bwrapPath` (managed settings,
-  which leave `sandbox.enabled` alone) and one as podman's `crun`. The wrappers
-  are verified by hand in an environment, not yet through a deployed guest, and
-  `/sandbox` was run end to end only with the same wrapper outside a guest.
+  which leave `sandbox.enabled` alone) and one as podman's `crun`. Verified
+  in a deployed guest on acer (2026-11-12): a sandboxed `claude -p` Bash call
+  sees only its own processes and cannot write to the home directory.
   `podman run` and `podman build` work with `--network=none` only (no
   `/dev/net/tun`); buildah is not on the guest's PATH. Inside, `free`, `uptime`
   and `sysctl` fail. The bwrap sandbox runs as mapped uid 0 holding only
