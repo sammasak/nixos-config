@@ -159,13 +159,14 @@ variable off for removals). The remote has no ruleset yet.
 
 nixpkgs' container module binds `/nix/var/nix/{profiles,gcroots}/per-container/<name>` read-write with an identity
 idmap, so guest root there can create files owned by any host uid below 65536, root included. Both parents are
-mounted `nosuid,nodev,noexec` while any instance has `rootInGuest`, which makes such a file inert; the host's root
+mounted `nosuid,nodev,noexec` (the state dir `nosuid,nodev`) on every host that declares instances or retired names,
+whether or not one runs with `rootInGuest`, so such a file stays inert after its instance is paused; retiring an
+instance deletes its per-container dirs; the host's root
 readers there only follow links (the daemon's root scan, the gcroots unit's `ln -sfn` and `mv -T`), and what is left
-is a disk-filling the guest already has through the daemon. Homes are never moved between id blocks: `<stateDir>/<name>/.id-base`, written with the home, must match the instance's block for its container to start. Removing the last `rootInGuest` instance unmounts those
-binds and the state dir's during the switch, which can fail with EBUSY while a container still runs; a reboot or the
-next switch finishes it. From another host, `ssh <name>.<prefix>` trusts each name's key on first use
-(`~/.ssh/known_hosts_environments`), so a `rootInGuest` instance's own key is accepted there too; a name retired and
-declared again with a new key is refused until `ssh-keygen -R <name>.<prefix> -f ~/.ssh/known_hosts_environments`.
+is a disk-filling the guest already has through the daemon. Homes are never moved between id blocks: `<stateDir>/<name>/.id-base`, written with the home, must match the instance's block for its container to start. From another host, `ssh <name>.<prefix>` trusts each name's key on first use
+(`~/.ssh/known_hosts_environments`), so a `rootInGuest` instance's own key is accepted there too. A `rootInGuest` name retired and
+declared again gets a new key and is refused until `ssh-keygen -R <name>.<prefix> -f ~/.ssh/known_hosts_environments`;
+plain instances share the host's one environment key, so theirs does not change.
 
 ## What fails at build
 

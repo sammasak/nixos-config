@@ -32,7 +32,8 @@ let
   # The block an instance's dirs were made in (0: the host's ids) is written once, with them; an instance whose
   # rootInGuest changed would start on a home of the other block, so it does not start. Nothing is chowned.
   idCheck = pkgs.writeShellScript "dev-env-id-check" ''
-    [[ $(cat "$1/.id-base" 2>/dev/null || echo 0) == "$2" ]] && exit 0
+    have=$(cat "$1/.id-base" 2>/dev/null || true)
+    [[ ''${have:-0} == "$2" ]] && exit 0
     echo "''${1##*/}: rootInGuest was toggled on an existing environment; retire it (or declare it under a new name) so it starts from a fresh home" >&2
     exit 1
   '';
@@ -351,6 +352,12 @@ in
         };
       };
 
+      # Guest root writes as host root where nixpkgs' container module id-maps a writable bind (its per-container
+      # profiles and roots): no setuid or device there, nor in the state dir. Not only while a rootInGuest instance
+      # runs: what one planted would turn live once it is paused; retiring deletes its per-container dirs.
+      fileSystems = lib.mkIf (cfg.instances != { } || cfg.retired != [ ]) (lib.genAttrs [ cfg.stateDir "/nix/var/nix/profiles/per-container" "/nix/var/nix/gcroots/per-container" ]
+        (p: { device = p; fsType = "none"; options = [ "bind" "nosuid" "nodev" "x-mount.mkdir" ] ++ lib.optional (p != cfg.stateDir) "noexec"; }));
+
       # Trashes only what `retired` names: a rollback or an older checkout that lacks an instance just stops it.
       system.activationScripts.devEnvironments = lib.mkIf (cfg.instances != { } || cfg.retired != [ ]) {
         deps = [ "users" ];
@@ -374,8 +381,8 @@ in
           ${lib.concatMapStrings (w: let o = owner w; in ''
             install -d -m 0700 "$d/${w.name}"
             if [[ ! -d $d/${w.name}/home ]]; then
+              echo ${toString (if w.rootInGuest then baseOf w else 0)} > "$d/${w.name}/.id-base.new" && mv -f "$d/${w.name}/.id-base.new" "$d/${w.name}/.id-base"
               install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/home"
-              echo ${toString (if w.rootInGuest then baseOf w else 0)} > "$d/${w.name}/.id-base"
             fi
             # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
             mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
@@ -524,10 +531,6 @@ in
       # a trusted user. Unresolved (machined gone) the daemon compares the bare uid, which matches nothing: it refuses.
       nix.settings.allowed-users = lib.mkIf (lib.any (w: w.rootInGuest) running)
         (map (w: "vu-${w.name}-${toString cfg.uid}") (lib.filter (w: w.rootInGuest) running));
-      # Guest root writes as host root where nixpkgs' container module id-maps a writable bind (its per-container
-      # profiles and roots): no setuid or device there, nor in the state dir.
-      fileSystems = lib.mkIf (lib.any (w: w.rootInGuest) running) (lib.genAttrs [ cfg.stateDir "/nix/var/nix/profiles/per-container" "/nix/var/nix/gcroots/per-container" ]
-        (p: { device = p; fsType = "none"; options = [ "bind" "nosuid" "nodev" "x-mount.mkdir" ] ++ lib.optional (p != cfg.stateDir) "noexec"; }));
 
       containers = lib.listToAttrs (map (w: lib.nameValuePair w.name {
         ephemeral = true;

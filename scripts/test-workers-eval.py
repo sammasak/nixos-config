@@ -248,7 +248,9 @@ ROOT_IN_GUEST = ('{ allowed = sys.config.nix.settings.allowed-users; trusted = s
                  'let f = n: let c = sys.config.containers.${n}; in { inherit (c) privateUsers extraFlags; '
                  'binds = map (b: { src = b.hostPath; dst = b.mountPoint; ro = b.isReadOnly; }) (builtins.attrValues c.bindMounts); '
                  'sudoPassword = c.config.security.sudo.wheelNeedsPassword; sub = c.config.users.users.alice.subUidRanges; }; in { r = f "r"; s = f "s"; ok = f "ok"; })')
+NONE_DECLARED = "{ services.devEnvironments.instances = lib.mkForce { }; }"
 NO_ROOT = ('{ allowed = sys.config.nix.settings.allowed-users; '
+           'mounts = builtins.mapAttrs (_: f: f.options) (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); '
            'nosuid = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); }')
 # what a job in the guest can read of its limits, next to the host-side values they must equal
 LIMITS = ('{ text = sys.config.containers.ok.config.environment.etc."dev-environment".text; '
@@ -658,12 +660,12 @@ def check_id_check():
             if marker is not None:
                 (d / ".id-base").write_text(marker + "\n")
             return subprocess.run([exe, str(d), want], capture_output=True, text=True)
-        cases = {"match": run(base, base), "mismatch": run("0", base), "plain, no marker": run(None, "0"),
+        cases = {"match": run(base, base), "mismatch": run("0", base), "plain, no marker": run(None, "0"), "plain, empty marker": run("", "0"),
                  "rootInGuest, home without marker": run(None, base), "plain on a rootInGuest home": run(base, "0")}
     got = {k: r.returncode for k, r in cases.items()}
     msg = all("rootInGuest was toggled on an existing environment; retire it (or declare it under a new name)" in cases[k].stderr
               for k in ("mismatch", "rootInGuest, home without marker", "plain on a rootInGuest home"))
-    check(got == {"match": 0, "mismatch": 1, "plain, no marker": 0, "rootInGuest, home without marker": 1, "plain on a rootInGuest home": 1} and msg,
+    check(got == {"match": 0, "mismatch": 1, "plain, no marker": 0, "plain, empty marker": 0, "rootInGuest, home without marker": 1, "plain on a rootInGuest home": 1} and msg,
           f"a container starts only on dirs made in its own id block, and otherwise says to retire or rename it ({got})")
 
 
@@ -723,7 +725,7 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
+    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
               fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES),
               GITHUB % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
@@ -759,7 +761,8 @@ def main():
     check(got.get("mounts") == want_mounts,
           f"the state dir is bound nosuid,nodev and the per-container profiles and roots nosuid,nodev,noexec, nothing else ({got.get('mounts')})")
     base = r.get("privateUsers")
-    owners = re.findall(r'install -d -m 0700 -o (\S+) -g (\S+) "\$d/(r|ok)/home"\n *echo (\S+) > "\$d/(?:r|ok)/\.id-base"', act)
+    owners = [(u, g, n, b) for b, n, u, g in re.findall(
+        r'echo (\S+) > "\$d/(r|ok)/\.id-base\.new" && mv -f "\$d/(?:r|ok)/\.id-base\.new" "\$d/(?:r|ok)/\.id-base"\n *install -d -m 0700 -o (\S+) -g (\S+) "\$d/(?:r|ok)/home"', act)]
     checks = {n: next((c for c in got.get("pre", {}).get(n, []) if "dev-env-id-check" in c), "").split()[1:] for n in ("r", "ok")}
     check(isinstance(base, int) and sorted(owners) == sorted([(str(base + 1000), str(base + 100), "r", str(base)), ("alice", "users", "ok", "0")])
           and checks == {"r": ["/var/lib/dev-environments/r", str(base)], "ok": ["/var/lib/dev-environments/ok", "0"]}
@@ -767,15 +770,17 @@ def main():
           f"a rootInGuest home is made with its mapped ids and its block in .id-base, which its container start checks; a plain one with the host's and 0 ({owners}, {checks})")
     check_id_check()
     allowed, trusted = got.get("allowed", []), got.get("trusted", [])
-    check({"vu-r-1000", "vu-s-1000", "alice"} <= set(allowed) and not any(u.startswith(("vu-r-0", "vu-s-0", "vu-ok-", "@")) for u in allowed)
-          and not any(u.startswith("vu-") for u in trusted),
+    check(sorted(allowed) == ["alice", "vu-r-1000", "vu-s-1000"] and not any(u.startswith("vu-") for u in trusted),
           f"the host daemon allows exactly the rootInGuest guests' users, not their root, not the other instance, and trusts none ({allowed}, {trusted})")
     check(ok.get("privateUsers") == "no" and not ok.get("extraFlags") and ok.get("binds") and not any(":" in b["dst"] for b in ok["binds"]) and ok.get("sudoPassword") is True,
           f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
     out = nix_eval("{ }", NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got.get("allowed") == ["*"] and got.get("nosuid") == [],
-          f"with no rootInGuest instance allowed-users keeps its default and no mount is added ({got or out.stderr.strip()[-300:]})")
+    check(got.get("allowed") == ["*"] and got.get("mounts") == want_mounts,
+          f"with no rootInGuest instance allowed-users keeps its default, and the nosuid mounts stay as long as the host declares instances ({got or out.stderr.strip()[-300:]})")
+    out = nix_eval(NONE_DECLARED, NO_ROOT)
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("nosuid") == [], f"a host that declares no instance and no retired name gets no mount ({got or out.stderr.strip()[-300:]})")
     out = nix_eval("{ }", LIMITS)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     want = {"memory_reserved": str(2 << 30), "pool_memory": str(8 << 30), "pool_swap": str(got.get("swap")), "cpu_weight": "200",
