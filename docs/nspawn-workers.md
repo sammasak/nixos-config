@@ -28,6 +28,7 @@ sam.workers.instances = {
 | `agent` | `"claude"` | `claude` (`--dangerously-skip-permissions`), `codex` (not signed in on these hosts), or `none` (a fish shell) |
 | `model` | `null` | the agent's `--model` |
 | `prompt` | `null` | sent once the agent is idle, only on a start with no earlier Claude session |
+| `credentials` | `null` | which of the host's credentials it gets (`id_ed25519`, `gh-hosts.yml`, `claude_oauth_token`); `null` is all. `[ "claude_oauth_token" ]` is an agent that cannot push |
 | `memory.reserved` | `"2G"` | `MemoryLow`: guaranteed, kept from reclaim |
 | `memory.max` | `"6G"` | `MemoryMax`, the spike ceiling; `MemoryHigh` (reclaim and throttle first) is 90% of it |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
@@ -72,7 +73,7 @@ host's swap.
 | Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
 | First use of a repo | clone, `devenv shell` | 25 s (skills), 32 s (herman): evaluation only, every store path comes from the host's store; 0.1 to 0.3 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
-| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted |
+| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so and re-checks its work. msi tells its agents at 20:40 (`sam.workers.shutdownNotice`) to push before the 21:00 poweroff |
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
@@ -170,7 +171,7 @@ Manager activates on it at every boot (collisions are kept as `*.backup`).
 | Change of `memory` or `cpu` | the container unit's cgroup properties change at the daemon-reload, live |
 | Change of `prompt` | nothing restarts; the prompt is only sent on a fresh start |
 | Change of `agent`, `model`, credentials or bind mounts | `worker-<name>` restarts and, through `PartOf`, the container: a restart |
-| Restart or host reboot | home kept; the workspace comes back and runs `claude --continue` when a transcript of `$HOME` exists, else a fresh `claude` with the prompt |
+| Restart or host reboot | home kept; the workspace comes back and runs `claude --continue` when a transcript of `$HOME` exists, followed by a notice that its running work was killed, else a fresh `claude` with the prompt |
 | Removed from the config, deployed | units stop, the workspace closes, the home is kept |
 | Named in `retired`, deployed | activation deletes `/var/lib/workers/<name>` and its `/nix/var/nix/{profiles,gcroots}/per-container/<name>` |
 
@@ -232,12 +233,14 @@ issue it serves, deploy, and remove it when the work has landed.
    skip the gate), read the repo's entry doc, work through the repo's
    `devenv tasks` (`sdlc:*` where the repo has `platform.sdlc`), heavy steps
    one at a time, log friction to `~/ENV-FEEDBACK.md`, stop with a written
-   blocker when stuck. A follow-up goes in with
+   blocker when stuck, and when finished write `~/RESULT.md` (the PR's URL or
+   the blocker). A follow-up goes in with
    `herdr --machine <host> agent prompt <name> '<text>'`.
 4. A `blocked` agent is waiting on a question; answer it in its pane. `done`
    is not always finished: an agent that parked on a background gate reports
    `done` and resumes by itself, so read the pane (`shell still running`,
-   `Waiting for N background`) before merging or retiring.
+   `Waiting for N background`) and `ssh <name>.<prefix> cat RESULT.md` before
+   merging or retiring.
    Keep every host's pool busy: when an environment is retired and an approved
    issue is ready, declare the next one in the same deploy.
 5. Review is one independent subagent the agent spawns on its own diff. No
