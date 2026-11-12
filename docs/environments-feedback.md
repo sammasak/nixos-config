@@ -6,6 +6,8 @@ Append; move a line to fixed when its change lands.
 
 ## Open
 
+- `MemoryLow` protects nothing on acer and msi: cgroup2 is mounted without `memory_recursiveprot` (a second cgroup2 mount at `/run/cilium/cgroupv2`), and `environments.slice` counts `low 0`. The 2G reserve is a number, not a reserve (docs/environments-plan.md, item 3).
+- `mount -t proc -o subset=pid` works in a guest's user namespace on kernel 7.2.10 (acer); a full proc is still "too revealing". bwrap and podman need to ask for the subset.
 - Herdr reports `done` while an agent waits on its own background shell or subagent (`f44` three times in one issue); a watcher keyed on status alone wakes for nothing or, worse, retires too early. The coordinator reads the pane tail first (docs/nspawn-workers.md step 4).
 - Two environments on acer running Rust gates plus the nixos-config gate share the host daemon's two build cores: the nixos-config gate that takes 11 min on msi alone was past 35 min. One heavy gate per host at a time, or raise the daemon's cores when the pool is the only load.
 - A fresh clone has no git hooks until `devenv shell` runs once, so `nc200` pushed its nixos-config branch with no pre-push gate at all (docs only, so harmless this time). The brief should say "enter the devenv shell once before the first commit", or the guest should refuse a push from a repo with a devenv.nix and no hooks.
@@ -67,6 +69,9 @@ Append; move a line to fixed when its change lands.
 
 ## Fixed
 
+- 2026-11-12 A guest's builds ignored the host's build bounds: the daemon takes a client's `max-jobs`/`cores` over its own, and a guest sent 8 jobs on all cores against the host's 2 x 2. Four independent 20 s derivations from an acer guest: 21 s with `NIX_BUILD_CORES=8` before, 41 s with 2 after the guest inherited the host's values (#230). The nixos-config gate is no slower bounded (9m09s against 9m02s to 9m24s).
+- 2026-11-12 The shared `~/.cache/nix` held Nix's evaluation cache, unsigned rows naming the derivation to build; each environment now mounts its own over `eval-cache-v6` (#230), the fetcher and tarball caches stay shared.
+- 2026-11-12 `blockedNetworks` at runtime on acer next to Cilium (#231): from a guest the host's sshd and k3s API (veth and LAN address), harmonia, lenovo, the Traefik address and a cluster service address are all closed; DNS, github.com over https and ssh, and the host's nix daemon work; cluster and host healthy after the deploy.
 - 2026-11-12 Environments skipped the fleet's store caches: the guest's nix.conf listed only the public substituters, and the host's daemon takes a client's list when it trusts every entry. factum's first `devenv shell` on msi fetched nothing from acer, which had all of it. The guest now carries the host's list.
 - Host reboot on acer (2026-11-12, `systemctl reboot` with one environment declared): system `running` with no failed units, `environments.slice` and the instance's limits back (7G pool, 2G reserved, 6G max, 3G swap), nix-daemon up, container starting 7 s into userspace, its agent idle in the host's Herdr at 15 s, home files kept, host store and shared `~/.cache/nix` mounted, first `devenv shell` in an existing clone 7.4 s. Rebooted again with a conversation in the agent: it came back in that conversation and recalled a token given before the reboot.
 - Host reboot on msi (2026-11-12). Cold boot on the generation it was switched off with: `running`, no failed units, 10G pool back, its one environment starting 7 s into userspace with the agent in its old conversation. Then deployed from main (old environment retired, two new ones) and rebooted: both containers starting 6 s into userspace, both agents in Herdr at 14 s, home files kept, token recalled, `devenv shell` 8 to 10 s.

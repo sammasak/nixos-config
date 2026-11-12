@@ -30,12 +30,14 @@ sam.workers.instances = {
 | `prompt` | `null` | sent once the agent is idle, only on a start with no earlier Claude session |
 | `credentials` | `null` | which of the host's credentials it gets (`id_ed25519`, `gh-hosts.yml`, `claude_oauth_token`); `null` is all. `[ "claude_oauth_token" ]` is an agent that cannot push |
 | `memory.reserved` | `"2G"` | `MemoryLow`: guaranteed, kept from reclaim |
-| `memory.max` | `"6G"` | `MemoryMax`, the spike ceiling; `MemoryHigh` (reclaim and throttle first) is 90% of it |
+| `memory.max` | `"6G"` | `MemoryMax`, the spike ceiling; swap is capped at half of it |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
 
 Every environment of a host runs in `environments.slice`, whose `MemoryMax` is
 the host's `sam.workers.pool.memory` (protecting k3s and the host) and whose
-`MemoryLow` is the sum of the reserves. Swap (zram) stays allowed. nix builds
+`MemoryLow` is the sum of the reserves. Reclaim and throttling (`MemoryHigh`)
+start at 90% of the pool, not per environment, so one gate alone uses what its
+neighbours leave idle; the pool's swap (zram) is capped at half of it. nix builds
 run in the host's daemon, outside the pool; acer and msi bound that daemon
 (2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
 fails before k3s or the host does. msi powers off at 21:00

@@ -172,7 +172,7 @@ let
         description = "Which of `credentials` this instance gets; null is all of them.";
       };
       memory.reserved = mkOption { type = size; default = "2G"; description = "MemoryLow: kept from reclaim, and what the pool must fit."; };
-      memory.max = mkOption { type = size; default = "6G"; description = "MemoryMax, the spike ceiling; MemoryHigh, where reclaim starts, is 90% of it and swap is capped at half of it."; };
+      memory.max = mkOption { type = size; default = "6G"; description = "MemoryMax, the spike ceiling; swap is capped at half of it. Reclaim starts at 90% of the pool, not per instance."; };
       cpu.reserved = mkOption { type = types.ints.positive; default = 2; description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise."; };
     };
   };
@@ -368,6 +368,11 @@ in
       systemd.slices.${slice}.sliceConfig = {
         MemoryMax = cfg.pool.memory;
         MemoryLow = reservedMem;
+        # Reclaim and throttling start here, for the pool, not per instance: one gate alone uses what its neighbours
+        # leave idle (a 5.1G gate was throttled thousands of times under a 5.4G instance threshold in a 10G pool).
+        MemoryHigh = cfg.pool.memory / 10 * 9;
+        # zram is charged to no cgroup: without this the instances' swap adds up past the device
+        MemorySwapMax = cfg.pool.memory / 2;
       };
 
       systemd.services = lib.listToAttrs (lib.concatMap (w: [
@@ -382,7 +387,6 @@ in
             # mkForce: the stock unit puts every container in machine.slice
             Slice = lib.mkForce "${slice}.slice";
             MemoryLow = w.memory.reserved;
-            MemoryHigh = w.memory.max / 10 * 9;
             MemoryMax = w.memory.max;
             # Bounded so one runaway cannot fill the host's zram swap; past max + this the kernel kills the process, not the container.
             MemorySwapMax = w.memory.max / 2;
