@@ -39,12 +39,12 @@ let
 
   reservedMem = lib.foldl' (s: w: s + w.memory.reserved) 0 instances;
 
-  # The host's credential proxy: one Caddy, a socket directory per instance bound read-only at /run/egress (the
-  # socket is the instance's identity). Secrets reach it as unit credentials: the Caddyfile is in the shared store.
+  # The credential proxy: a socket directory per instance (its identity), secrets as unit credentials, never in the store.
   egressDir = "/run/dev-env-egress";
-  egressOf = w: lib.filter (s: s.for w) (lib.mapAttrsToList (name: s: s // { inherit name; }) cfg.egress);
+  egressAll = lib.mapAttrsToList (name: s: s // { inherit name; }) cfg.egress;
+  egressOf = w: lib.filter (s: s.for w) egressAll;
   egressed = lib.filter (w: egressOf w != [ ]) instances;
-  egressUsed = lib.filter (s: lib.any s.for instances) (lib.mapAttrsToList (name: s: s // { inherit name; }) cfg.egress);
+  egressUsed = lib.filter (s: lib.any s.for instances) egressAll;
   egressSecrets = lib.concatMap (s: lib.mapAttrsToList (n: path: { inherit n path; inherit (s) missing; }) s.secrets) egressUsed;
   caddyfile = pkgs.writeText "dev-env-egress.Caddyfile" (''
     {
@@ -168,9 +168,7 @@ let
     # the guest holds placeholders, not the tokens: the proxy adds the login to each call
     environment.variables = lib.mkMerge (map (s: s.guest.env) (egressOf w));
     systemd.sockets = lib.listToAttrs (map (s: lib.nameValuePair "${s.name}-egress" { wantedBy = [ "sockets.target" ]; listenStreams = [ "127.0.0.1:${toString s.port}" ]; }) (egressOf w));
-    systemd.services = lib.listToAttrs (map (s: lib.nameValuePair "${s.name}-egress" {
-      serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${s.socket}"; };
-    }) (egressOf w));
+    systemd.services = lib.listToAttrs (map (s: lib.nameValuePair "${s.name}-egress" { serviceConfig = { User = user; ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${s.socket}"; }; }) (egressOf w));
   };
 
   egressModule = { name, ... }: {
@@ -179,9 +177,9 @@ let
       site = mkOption { type = types.functionTo types.lines; description = "The instance's Caddy site, after its bind and log."; };
       port = mkOption { type = types.port; description = "The guest's loopback port forwarded to the socket."; };
       socket = mkOption { type = types.str; default = "/run/egress/${name}.sock"; readOnly = true; description = "The socket in the guest."; };
-      secrets = mkOption { type = types.attrsOf (types.nullOr types.externalPath); default = { }; description = "Host files loaded as the proxy's credentials (/run/credentials/dev-env-egress.service/<name>)."; };
-      missing = mkOption { type = types.str; default = ""; description = "The assertion message when one of secrets is null."; };
-      prepare = mkOption { type = types.listOf types.str; default = [ ]; description = "ExecStartPre commands; the unit's private /tmp is theirs and Caddy's."; };
+      secrets = mkOption { type = types.attrsOf (types.nullOr types.externalPath); default = { }; description = "Host files loaded as the proxy's credentials, under egressPaths.credentials."; };
+      missing = mkOption { type = types.str; description = "The assertion message when one of secrets is null."; };
+      prepare = mkOption { type = types.listOf types.str; default = [ ]; description = "ExecStartPre commands; egressPaths.private is theirs and Caddy's."; };
       guest.env = mkOption { type = types.attrsOf types.str; default = { }; description = "Environment of a guest that gets the service."; };
       guest.config = mkOption { type = types.deferredModule; default = { }; description = "A NixOS module of a guest that gets the service."; };
     };
@@ -259,6 +257,9 @@ in
       description = "Host paths bound read-only at ${creds}/<name> in every guest.";
     };
     egress = mkOption { type = types.attrsOf (types.submodule egressModule); default = { }; description = "Services the host's proxy signs for the instances."; };
+    egressPaths = mkOption { type = types.attrsOf types.str; readOnly = true; description = "The proxy's credentials, and its private directory (no guest sees it).";
+      default = { credentials = "/run/credentials/dev-env-egress.service"; private = "/tmp"; }; };
+    egressInaccessible = mkOption { type = types.listOf types.str; default = [ ]; description = "Host paths the proxy may not read, besides stateDir."; };
     guestModules = mkOption { type = types.listOf types.deferredModule; default = [ ]; description = "NixOS modules of every guest; `devEnvironment` (name, hostName, address) is their argument."; };
     sessionSurface = mkOption {
       type = types.nullOr (types.submodule {
@@ -593,29 +594,28 @@ in
     })
 
     {
-      assertions = map (x: { assertion = x.path != null; message = x.missing; }) egressSecrets;
+      assertions = map (x: { assertion = x.path != null; message = x.missing; }) egressSecrets ++ [{ message = "services.devEnvironments.egress: two services share a port or a secret name.";
+        assertion = lib.allUnique (map (s: s.port) egressAll) && lib.allUnique (lib.concatMap (s: lib.attrNames s.secrets) egressAll); }];
     }
 
     (lib.mkIf (egressed != [ ] && lib.all (x: x.path != null) egressSecrets) {
       systemd.services = {
         dev-env-egress = {
-          # FIXME: names this fleet's two services; a generic text would restart the unit, which the seam must not
-          description = "Adds the Claude and GitHub logins to the environments' calls";
+          description = "Signs the environments' calls to the services of services.devEnvironments.egress";
           wantedBy = [ "multi-user.target" ];
           onFailure = lib.optional (cfg.alert != null) "dev-env-alert@%n.service";
-          environment.HOME = "/tmp";
+          environment.HOME = cfg.egressPaths.private;
           serviceConfig = {
             ExecStart = "${pkgs.caddy}/bin/caddy run --adapter caddyfile --config ${caddyfile}";
             LoadCredential = map (x: "${x.n}:${x.path}") egressSecrets;
-            ExecStartPre = lib.mkIf (lib.concatMap (s: s.prepare) egressUsed != [ ]) (lib.concatMap (s: s.prepare) egressUsed);
+            ExecStartPre = lib.concatMap (s: s.prepare) egressUsed;
             User = user;
             RuntimeDirectory = [ (baseNameOf egressDir) ] ++ map (w: "${baseNameOf egressDir}/${w.name}") egressed;
             # the guests bind this directory: removed at a restart, they would keep the old, empty one
             RuntimeDirectoryPreserve = true;
-            Restart = "on-failure";
             # it parses the guests' requests as the host user: keep that user's other secrets and the guests' homes from it
-            InaccessiblePaths = [ "/run/secrets.d" cfg.stateDir ];
-            PrivateTmp = true; PrivateDevices = true; ProtectHome = true; ProtectSystem = "strict"; ProtectProc = "invisible";
+            InaccessiblePaths = cfg.egressInaccessible ++ [ cfg.stateDir ];
+            Restart = "on-failure"; PrivateTmp = true; PrivateDevices = true; ProtectHome = true; ProtectSystem = "strict"; ProtectProc = "invisible";
             ProtectKernelTunables = true; ProtectControlGroups = true; NoNewPrivileges = true; CapabilityBoundingSet = "";
             RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ]; RestrictNamespaces = true; SystemCallFilter = [ "@system-service" ];
           };

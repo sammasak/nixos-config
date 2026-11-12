@@ -8,10 +8,9 @@ let
   profile = config.sam.profile;
   user = profile.username;
   inherit (dev.paths) home creds;
-  hasToken = config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token;
   onGithub = i: i.egress.github.repos != [ ];
-  # The tokens are read at request time from the unit's credential and its private /tmp (core.nix, egress).
-  githubToken = "/tmp/github-token";
+  # The tokens are read at request time from the unit's credential and its private directory.
+  githubToken = "${dev.egressPaths.private}/github-token";
   upstream = url: auth: ''
     reverse_proxy ${url} {
       header_up Host {upstream_hostport}
@@ -201,6 +200,7 @@ in
       alert = lib.mkIf (cfg.ntfyUrl != null) (pkgs.writeShellScript "dev-env-alert" ''
         ${pkgs.curl}/bin/curl -fsS -m 10 -H "Title: Environment host" -H "Priority: high" -H "Tags: warning" -d "$1" ${lib.escapeShellArg cfg.ntfyUrl}
       '');
+      egressInaccessible = [ "/run/secrets.d" ]; # sops-nix: every host secret; the proxy gets its own as a credential
       egress = {
         anthropic = {
           for = i: i.agent == "claude";
@@ -209,13 +209,13 @@ in
           respond @other 403
           reverse_proxy https://api.anthropic.com {
             header_up Host {upstream_hostport}
-            header_up Authorization "Bearer {file./run/credentials/dev-env-egress.service/claude_oauth_token}"
+            header_up Authorization "Bearer {file.${dev.egressPaths.credentials}/claude_oauth_token}"
             header_up -X-Api-Key
             flush_interval -1
           }
           '';
           port = 4100;
-          secrets.claude_oauth_token = if hasToken then config.sops.secrets.claude_oauth_token.path else null;
+          secrets.claude_oauth_token = if config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token then config.sops.secrets.claude_oauth_token.path else null;
           missing = "sam.workers: a claude instance's calls are signed with the host's sops secret claude_oauth_token (sam.hostSecrets.enable), which this host does not declare.";
           guest.env = { ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString dev.egress.anthropic.port}"; CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host"; CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"; };
         };
@@ -313,7 +313,7 @@ in
       })
     ];
 
-    # LoadCredential copies the token at start. Not on hasToken: that reads sops.secrets, which this defines.
+    # LoadCredential copies the token at start. Not on the secret's presence: that reads sops.secrets, which this defines.
     sops.secrets = lib.mkIf (lib.any dev.egress.anthropic.for (lib.attrValues dev.instances) && config.sam.hostSecrets.enable) { claude_oauth_token.restartUnits = [ "dev-env-egress.service" ]; };
 
     assertions = lib.optionals (dev.instances != { }) [
