@@ -97,7 +97,12 @@ let
     ] ++ cfg.guestModules;
 
     # not nixpkgs.pkgs = pkgs: core/system.nix sets nixpkgs.config, which an external instance refuses
-    nixpkgs.overlays = config.nixpkgs.overlays;
+    # FIXME: claude-code 2.1.311 (the stable channel) in guests only, the first to read
+    # CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS; drop once the pinned nixpkgs (2.1.300) carries it.
+    nixpkgs.overlays = config.nixpkgs.overlays ++ [ (_: prev: { claude-code = prev.claude-code.override { manifest = {
+      version = "2.1.311";
+      platforms.linux-x64 = { binary = "claude.zst"; checksum = "d0c00b80761f3030f34cf0812266f6c6f8210ff9af7242f7c6c76c5600499caf"; };
+    }; }; }) ];
     sam.profile = profile // { hostname = devEnvironment.hostName; roles = [ "base" ]; pi = false; };
     sam.userConfig = config.sam.userConfig;
 
@@ -107,10 +112,15 @@ let
     sam.herdr.worker.enable = true;
     # Headless, reached over ssh from the host's Herdr: no session server, no firewall behind the veth, no gpg-agent
     # in front of the ssh key; the weekly repo-sweep would reclaim the agent's own clones.
-    home-manager.users.${user}.systemd.user = {
-      services.herdr.Install.WantedBy = lib.mkForce [ ];
-      timers.repo-sweep.Install.WantedBy = lib.mkForce [ ];
-      timers.nixos-config-flake-update.Install.WantedBy = lib.mkForce [ ];
+    home-manager.users.${user} = {
+      systemd.user = {
+        services.herdr.Install.WantedBy = lib.mkForce [ ];
+        timers.repo-sweep.Install.WantedBy = lib.mkForce [ ];
+        timers.nixos-config-flake-update.Install.WantedBy = lib.mkForce [ ];
+      };
+      # mkForce []: any Bash deny rule turns the variable below off. The guest is the boundary; force pushes still
+      # meet validate-bash and the pre-push guard; the rest is in docs/nspawn-workers.md, Permissions.
+      programs.claude-code.settings.permissions.deny = lib.mkForce [ ];
     };
     programs.gnupg.agent.enable = lib.mkForce false;
     programs.dconf.enable = lib.mkForce false;
@@ -217,7 +227,9 @@ in
           port = 4100;
           secrets.claude_oauth_token = if config.sam.hostSecrets.enable && config.sops.secrets ? claude_oauth_token then config.sops.secrets.claude_oauth_token.path else null;
           missing = "sam.workers: a claude instance's calls are signed with the host's sops secret claude_oauth_token (sam.hostSecrets.enable), which this host does not declare.";
-          guest.env = { ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString dev.egress.anthropic.port}"; CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host"; CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"; };
+          guest.env = { ANTHROPIC_BASE_URL = "http://127.0.0.1:${toString dev.egress.anthropic.port}"; CLAUDE_CODE_OAUTH_TOKEN = "held-by-the-host"; CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+            # bypassPermissions alone still stops at "Dangerous rm operation": an unattended worker would wait there
+            CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS = "1"; };
         };
         github = {
           for = onGithub;

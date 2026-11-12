@@ -141,6 +141,8 @@ in {
   stateDir = c.services.devEnvironments.stateDir;
   alert = d (builtins.readFile c.services.devEnvironments.alert);
   onFailure = { container = c.systemd.services."container@t".onFailure; egress = c.systemd.services.dev-env-egress.onFailure or null; };
+  rm = map (x: { deny = x.home-manager.users.lukas.programs.claude-code.settings.permissions.deny; claude = x.home-manager.users.lukas.programs.claude-code.package.version;
+    env = x.environment.variables.CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS or null; }) [ g c ];
 }
 """
 
@@ -642,6 +644,12 @@ def main():
     check_eval_cache(facts)
     check_gcroots(facts)
     check_scripts()
+    guest, host = facts.get("rm", [{}, {}])
+    check(guest.get("env") == "1" and not any(r.startswith("Bash") for r in guest.get("deny", ["Bash"]))
+          and [int(x) for x in guest.get("claude", "0").split(".")] >= [2, 1, 311],
+          f"a guest's claude (2.1.311 or later) starts with CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 and no Bash deny rule that would turn it off ({guest})")
+    check(host.get("env") is None and any(r.startswith("Bash(git push") for r in host.get("deny", [])),
+          f"the host keeps its Bash deny rules and its own claude without the variable ({host})")
     for name, case, want in FLEET_CASES:
         out = run_eval(fleet(case))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
