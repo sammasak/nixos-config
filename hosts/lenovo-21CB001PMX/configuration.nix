@@ -63,7 +63,6 @@ in
   sops.secrets."native_otlp_auth" = lib.mkIf vars.nativeOtel {
     sopsFile = ../../secrets/claude/native-otlp-auth.yaml;
     key = "token";
-    owner = vars.username;
     mode = "0400";
   };
 

@@ -1,6 +1,6 @@
 # Native OTLP canary
 
-lenovo, acer-swift and msi-ms7758 enable native telemetry (`nativeOtel = true`). Traces are
+lenovo, acer-swift and msi-ms7758 enable native telemetry (`nativeOtel = true`). On acer and msi that is the relay, its secret and their environments' telemetry only: `sam.claude.telemetry.enable = false` there keeps host Claude sessions as they were (no export, no change to `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` or `permissions.defaultMode`), so only lenovo's host sessions report. The secret is root-owned (evaluation fails otherwise); only the relay's `LoadCredential` reads it. Traces are
 disabled, Codex logs are disabled, and Claude log forwarding is limited to
 collector-sanitized tool-result events. The client configuration is gated on
 the private OTLP receiver being reviewed and live; this change does not alter
@@ -27,7 +27,9 @@ one host bucket, so a flooding environment cannot starve the host's clients. A
 local process can set the header itself, so a value is trustworthy only when
 it came through an environment's proxy. The per-header limit therefore binds
 only environments: a host process can vary `X-Otel-Worker` per request or
-borrow a guest's name.
+borrow a guest's name. On acer that includes hostNetwork pods: one can post
+forged events under an environment's name (telemetry pollution, bounded by the
+gateway's allowlist; the token stays out of its reach).
 
 Claude's endpoint is the relay, not the receiver, because a headless
 `claude -p` started by a script or by another session's Bash tool never passes
@@ -56,7 +58,7 @@ product analytics stop. Verified on a host session 2026-11-12 against a local
 OTLP receiver; not yet verified inside a guest, which stays unverified until
 one environment is enabled. A guest's telemetry leaves its
 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` and `permissions.defaultMode` as they are
-without it: both follow `sam.profile.nativeOtel`, which is off in every guest.
+without it: both are set only where `sam.profile.nativeOtel` and the host's own `sam.claude.telemetry` are on, and the first is off in every guest.
 
 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is `"0"`. In Claude Code 2.1.300, `"1"`
 forces every session into the default permission mode, so

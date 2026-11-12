@@ -24,10 +24,11 @@ in
   };
 
   sam.profile = vars;
+  # The relay and environments' telemetry only: host sessions here keep their Claude settings (docs/native-otel-canary.md)
+  sam.claude.telemetry.enable = false;
   sops.secrets."native_otlp_auth" = lib.mkIf vars.nativeOtel {
     sopsFile = ../../secrets/claude/native-otlp-auth.yaml;
     key = "token";
-    owner = vars.username;
     mode = "0400";
   };
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "nixos-config" ".cache/wt" ];

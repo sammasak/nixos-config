@@ -18,7 +18,7 @@ let
   telemetry = osConfig.sam.claude.telemetry;
   otel = telemetry.enable;
   # The sandbox posture (scrub, default mode) stays the host profile's: a guest's telemetry must not change it
-  hostOtel = osConfig.sam.profile.nativeOtel;
+  hostOtel = osConfig.sam.profile.nativeOtel && otel;
   relay = "http://127.0.0.1:4319";
   resourceAttributes = lib.concatStringsSep "," (lib.mapAttrsToList (k: v: "${k}=${v}") telemetry.resourceAttributes);
   workRef = otel && builtins.pathExists "${skillsSrc}/hooks/emit-work-ref.sh";
