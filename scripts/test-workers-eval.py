@@ -1,6 +1,6 @@
 """The developer-environment core (modules/workers/core.nix) rejects a wrong configuration at evaluation: each case is
-one small NixOS evaluation of only that module on a stub host, run one at a time. A valid host passes, and the agent's
-command line survives quotes, backslashes and newlines through the guest's login shell (fish and bash)."""
+one small NixOS evaluation of only that module on a stub host. A valid host passes, and the agent's command line
+survives quotes, backslashes and newlines through the guest's login shell (fish and bash)."""
 import json
 import os
 import pathlib
@@ -136,11 +136,13 @@ def prefetch(exprs):
     out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", f"[ {tried} ]"], capture_output=True, text=True)
     if out.returncode == 0:
         FAST.update((e, v) for e, v in zip(exprs, json.loads(out.stdout)) if v is not None)
+    else:
+        print(f"note: the one-process evaluation failed, each case runs on its own ({out.stderr.strip()[-300:]})")
 
 
 def run_eval(expr):
     if expr in FAST:
-        return subprocess.CompletedProcess([], 0, json.dumps(FAST[expr]), "")
+        return subprocess.CompletedProcess([], 0, json.dumps(FAST[expr], ensure_ascii=False), "")
     return subprocess.run(["nix", "eval", "--impure", "--json", "--expr", expr], capture_output=True, text=True)
 
 

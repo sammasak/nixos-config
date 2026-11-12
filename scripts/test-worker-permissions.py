@@ -169,7 +169,7 @@ def main():
     check(trusted == want and "/home/lukas/.cache/wt" in want, f"{COORDINATOR}: activation trusts $HOME and its declared dirs only (got {sorted(trusted)})")
 
     exec_start = P[COORDINATOR]["wakeup"]
-    wakeup = pathlib.Path(" ".join(exec_start)).read_text()
+    wakeup = pathlib.Path(P[COORDINATOR]["wakeupScript"]).read_text()
     calls = re.findall(r"\| claude -p [^\n]*", wakeup)
     check(len(calls) == 1 and "--permission-mode dontAsk" in calls[0], f"{COORDINATOR}: the unattended Coordinator runs claude -p in dontAsk ({exec_start})")
     check(FLAG not in wakeup and "bypassPermissions" not in wakeup, f"{COORDINATOR}: the Coordinator wake-up never asks for bypassPermissions")

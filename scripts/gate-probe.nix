@@ -1,6 +1,7 @@
 # Every value the scripts/test-*.py gates read from the hosts, in one evaluation: nixos:qa builds this once
 # (GATE_PROBE), which also realises each store path a value names, and a test run on its own builds only its
-# section (scripts/gate_probe.py). A section reads exactly what its test asserts on, nothing is decided here.
+# section (scripts/gate_probe.py). A section reads exactly what its test asserts on, nothing is decided here;
+# a value a test checks before it would have read it is `or null`, so its check, not the probe, reports it gone.
 { root ? ./.., only ? null }:
 let
   flake = builtins.getFlake (toString root);
@@ -12,9 +13,9 @@ let
   hm = c: c.home-manager.users.lukas;
   failing = c: map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
   extend = host: modules: (hosts.${host}.extendModules { inherit modules; }).config;
-  localNix = (hm lenovo).home.file."claude-code-skills/devenv.local.nix".text;
+  localNix = (hm lenovo).home.file."claude-code-skills/devenv.local.nix".text or null;
   skills = flake.inputs.skills.outPath;
-  wakeup = builtins.head (builtins.filter (p: (p.name or "") == "coordinator-wakeup") (hm lenovo).home.packages);
+  wakeup = lib.findFirst (p: (p.name or "") == "coordinator-wakeup") null (hm lenovo).home.packages;
 
   claudeOf = c: {
     inherit (hm c) home-files;
@@ -22,7 +23,7 @@ let
     fish = (hm c).programs.fish.functions;
     package = (hm c).programs.claude-code.package;
     finalPackage = (hm c).programs.claude-code.finalPackage;
-    activation = (hm c).home.activation.acceptClaudeStartupDialogs.data;
+    activation = (hm c).home.activation.acceptClaudeStartupDialogs.data or null;
     services = builtins.attrNames (hm c).systemd.user.services;
   };
 
@@ -79,12 +80,12 @@ let
     coordinator-wiring = {
       inherit skills;
       files = lib.mapAttrs (_: c: builtins.attrNames (hm c).home.file) { lenovo = lenovo; acer-swift = acer; };
-      local = import (builtins.toFile "devenv.local.nix" (builtins.unsafeDiscardStringContext localNix));
-      codex = lib.mapAttrs (_: c: (hm c).home.file.".codex/config.toml".text) { lenovo = lenovo; acer-swift = acer; };
+      local = if localNix == null then null else import (builtins.toFile "devenv.local.nix" (builtins.unsafeDiscardStringContext localNix));
+      codex = lib.mapAttrs (_: c: (hm c).home.file.".codex/config.toml".text or null) { lenovo = lenovo; acer-swift = acer; };
       timers = lib.mapAttrs (_: c: (hm c).systemd.user.timers) { lenovo = lenovo; acer-swift = acer; };
       services = (hm lenovo).systemd.user.services;
-      wakeup = wakeup.outPath;
-      script = wakeup.text;
+      wakeup = wakeup.outPath or null;
+      script = wakeup.text or null;
     };
 
     # the worker "host" is the guest of a probe instance declared only here (the committed config declares none)
@@ -92,9 +93,11 @@ let
       "acer-swift/probe" = claudeOf (extend "acer-swift" [ ({ lib, ... }: { sam.workers.instances = lib.mkForce { probe = { }; }; }) ]).containers.probe.config;
       lenovo = claudeOf lenovo // {
         inherit (lenovo.sam.herdr) trustedDirs;
-        wakeup = (hm lenovo).systemd.user.services.coordinator-wakeup.Service.ExecStart;
+        wakeup = (hm lenovo).systemd.user.services.coordinator-wakeup.Service.ExecStart or null;
+        # the file the unit runs; toString, since ExecStart may be a list
+        wakeupScript = toString ((hm lenovo).systemd.user.services.coordinator-wakeup.Service.ExecStart or "");
       };
-      msi-ms7758.fish.claude = (hm msi).programs.fish.functions.claude;
+      msi-ms7758.fish.claude = (hm msi).programs.fish.functions.claude or null;
       coordinatorAsWorker = failing (extend "lenovo" [ { sam.herdr.worker.enable = true; } ]);
     };
 
