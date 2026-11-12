@@ -4,6 +4,7 @@ survives quotes, backslashes and newlines through the guest's login shell (fish 
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -96,25 +97,42 @@ FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
 ]
 
-# what a fresh guest gets for nested sandboxes (modules/workers/nested-sandbox.nix); the host itself gets none of it
-NESTED = r"""
+# What the msi guest of FLEET_INSTANCE gets for nested sandboxes (modules/workers/nested-sandbox.nix), read from the rendered
+# files; the assertions ride along so one evaluation serves both checks
+FLEET_FACTS = r"""
 let
   c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ { sam.workers.instances.t = { }; } ]; }).config;
   g = c.containers.t.config;
-  e = g.virtualisation.containers.containersConf.settings.engine;
+  d = builtins.unsafeDiscardStringContext;
 in {
-  claude = (builtins.fromJSON (builtins.unsafeDiscardStringContext g.environment.etc."claude-code/managed-settings.json".text)).sandbox.bwrapPath
-    == builtins.unsafeDiscardStringContext g.sam.workers.nestedSandbox.bwrap;
-  bwrap = builtins.match ".*/bin/bwrap-subset-proc" g.sam.workers.nestedSandbox.bwrap != null;
-  crun = builtins.match ".*/bin/crun-subset-pid" e.runtime != null && e.runtime == g.sam.workers.nestedSandbox.crun;
-  engine = { inherit (e) cgroup_manager events_logger; };
-  storage = g.virtualisation.containers.storage.settings.storage.driver;
-  podman = g.virtualisation.podman.enable;
+  assertions = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
+  managed = d g.environment.etc."claude-code/managed-settings.json".text;
+  containers = d (builtins.readFile g.environment.etc."containers/containers.conf".source);
+  storage = d (builtins.readFile g.environment.etc."containers/storage.conf".source);
   hostUntouched = !(c.environment.etc ? "claude-code/managed-settings.json") && !c.virtualisation.podman.enable;
 }
 """
-NESTED_WANT = {"claude": True, "bwrap": True, "crun": True, "engine": {"cgroup_manager": "cgroupfs", "events_logger": "file"},
-               "storage": "vfs", "podman": True, "hostUntouched": True}
+
+# The two wrappers with stubs that print their argv in place of bwrap and crun (jq stays real): the store paths of both
+SCRIPTS = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  stub = pkgs: name: pkgs.writeShellScriptBin name ''printf '%%s\n' "$@"'';
+  sys = flake.inputs.nixpkgs.lib.nixosSystem {
+    system = "x86_64-linux";
+    modules = [
+      "${flake}/modules/workers/nested-sandbox.nix"
+      { boot.isContainer = true; system.stateVersion = "25.11";
+        nixpkgs.overlays = [ (_: prev: { bubblewrap = stub prev "bwrap"; crun = stub prev "crun"; }) ]; }
+    ];
+  };
+  c = sys.config;
+  drv = s: builtins.head (builtins.attrNames (builtins.getContext s));
+in {
+  bwrap = drv c.environment.etc."claude-code/managed-settings.json".text;
+  crun = drv (builtins.head c.virtualisation.containers.containersConf.settings.engine.runtimes.crun);
+}
+"""
 
 # the unit whose change restarts an instance: no nixpkgs bump, resize or prompt edit may change it, a model change must
 DECLARATION = r"""
@@ -180,13 +198,75 @@ def nix_string(s):
 GUEST = "let g = sys.config.containers.ok.config; in { inherit (g.nix) nixPath; channel = g.nix.channel.enable; registry = g.nix.settings.flake-registry; }"
 
 
-def fleet(case):
-    return FLEET % {"root": json.dumps(ROOT), "case": case}
+def fleet(case, template=FLEET):
+    return template % {"root": json.dumps(ROOT), "case": case}
+
+
+def check_nested(facts):
+    managed = json.loads(facts["managed"]) if facts.get("managed") else {}
+    conf = facts.get("containers", "")
+    check(re.fullmatch(r"/nix/store/[^/]+-bwrap-subset-proc/bin/bwrap-subset-proc", managed.get("sandbox", {}).get("bwrapPath", "")) is not None
+          and "enabled" not in managed.get("sandbox", {}),
+          f"a guest's managed Claude settings point bwrapPath at the wrapper and leave the sandbox switch alone ({facts.get('managed')})")
+    check('runtime = "crun"' in conf and re.search(r'^crun = \["/nix/store/[^/]+-crun-subset-pid/bin/crun-subset-pid"\]$', conf, re.M)
+          and 'cgroup_manager = "cgroupfs"' in conf and 'events_logger = "file"' in conf,
+          f"a guest's containers.conf keeps the runtime named crun, points it at the wrapper, cgroupfs and file events ({conf})")
+    check('driver = "vfs"' in facts.get("storage", ""), "a guest's podman storage is vfs")
+    check(facts.get("hostUntouched") is True, "the host itself gets neither the managed Claude settings nor podman")
+
+
+def check_scripts():
+    """Runs both wrappers against stubs that print their argv."""
+    out = run_eval(SCRIPTS % {"root": json.dumps(ROOT)})
+    if out.returncode != 0:
+        check(False, f"the wrapper scripts evaluate ({out.stderr.strip()[-300:]})")
+        return
+    drvs = json.loads(out.stdout)
+    exe = {}
+    for name, drv in drvs.items():
+        real = subprocess.run(["nix-store", "--realise", drv], capture_output=True, text=True)
+        exe[name] = pathlib.Path(real.stdout.split()[0]) / "bin" / ("bwrap-subset-proc" if name == "bwrap" else "crun-subset-pid") if real.returncode == 0 else None
+    check(all(exe.values()), "both wrapper scripts build (shellcheck included)")
+    if not all(exe.values()):
+        return
+
+    def argv(script, *args):
+        run = subprocess.run([str(script), *args], capture_output=True, text=True)
+        return run.returncode, run.stdout.splitlines(), run.stderr
+
+    rc, got, _ = argv(exe["bwrap"], "--unshare-user", "--cap-drop", "ALL", "--proc", "/proc", "--dev", "/dev", "--", "make", "-j2")
+    inner = got.index("--") if "--" in got else -1
+    check(rc == 0 and got[:3] == ["--unshare-user", "--cap-drop", "ALL"] and got[3:5] == ["--uid", "0"] and "--proc" not in got
+          and got[-2:] == ["make", "-j2"] and got[inner + 2:inner + 4] == ["-p", "-c"] and "subset=pid" in got[inner + 4]
+          and "--no-new-privs" in got[inner + 4] and got[inner + 5] == "bash",
+          f"bwrap-subset-proc rewrites Claude's shape: mapped root, the host /proc bound, a bash -p mount step before the command ({got})")
+    rc, got, _ = argv(exe["bwrap"], "--unshare-user", "--proc", "/proc", "--dev", "/dev")
+    check(rc == 0 and got == ["--unshare-user", "--proc", "/proc", "--dev", "/dev"], f"no separator after --proc: passed through unchanged ({got})")
+    rc, got, _ = argv(exe["bwrap"], "--proc", "/proc", "--", "tool", "--", "z", "--proc", "/proc")
+    check(rc == 0 and got[-5:] == ["tool", "--", "z", "--proc", "/proc"] and got.count("--") == 2,
+          f"a -- inside the command's own arguments is left alone ({got})")
+    rc, got, _ = argv(exe["bwrap"], "--version")
+    check(rc == 0 and got == ["--version"], f"bwrap-subset-proc passes other invocations through ({got})")
+
+    with tempfile.TemporaryDirectory() as bundle:
+        cfg = pathlib.Path(bundle, "config.json")
+        cfg.write_text(json.dumps({"mounts": [{"destination": "/dev", "type": "tmpfs", "options": ["nosuid"]},
+                                              {"destination": "/proc", "type": "proc", "options": ["nosuid", "noexec"]}]}))
+        rc, got, _ = argv(exe["crun"], "--root", "/run/x", "--bundle", bundle, "create", "id")
+        argv(exe["crun"], "run", "-b", bundle, "id")
+        opts = {m["destination"]: m["options"] for m in json.loads(cfg.read_text())["mounts"]}
+        check(rc == 0 and got == ["--root", "/run/x", "--bundle", bundle, "create", "id"] and opts["/proc"].count("subset=pid") == 1
+              and opts["/dev"] == ["nosuid"], f"crun-subset-pid adds subset=pid to the /proc mount once, however often it runs ({opts}, {got})")
+        before = cfg.read_text()
+        argv(exe["crun"], "delete", "--bundle", bundle, "id")
+        check(cfg.read_text() == before, "crun-subset-pid leaves the bundle alone for other subcommands")
+        rc, _, err = argv(exe["crun"], "create", "--bundle", bundle + "/missing", "id")
+        check(rc == 1 and "cannot add subset=pid" in err, f"crun-subset-pid refuses a bundle it cannot rewrite ({rc}, {err.strip()})")
 
 
 def main():
     prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
-              fleet("{ }"), fleet(FLEET_INSTANCE), NESTED % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES)])
+              fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES)])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
@@ -211,11 +291,11 @@ def main():
 
     out = run_eval(fleet("{ }"))
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
-    out = run_eval(fleet(FLEET_INSTANCE))
-    check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 with a claude instance fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
-    out = run_eval(NESTED % {"root": json.dumps(ROOT)})
-    got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got == NESTED_WANT, f"a guest has Claude pointed at the subset-proc bwrap, podman on vfs and cgroupfs with the subset-pid crun, the host none ({got or out.stderr.strip()[-300:]})")
+    out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
+    facts = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
+    check_nested(facts)
+    check_scripts()
     for name, case, want in FLEET_CASES:
         out = run_eval(fleet(case))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
