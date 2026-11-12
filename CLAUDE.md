@@ -27,7 +27,8 @@ devenv tasks run nixos:runtime-host-test  # msi + acer through the runtime-host 
 devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward supervisor restarts a wedged forward, not an HTTP error
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
-#   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree.
+#   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree
+#               (lints only when everything changed since origin/main is docs/ or *.md).
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 # Or manually verify specific host:

@@ -109,8 +109,9 @@ let
 
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
+  lints = [ lintComments lintShell ];
   qa = gate "nixos-qa" [ ] ''
-    ${run [ lintComments lintShell secretsVerify flakeCheck ]}
+    ${run (lints ++ [ secretsVerify flakeCheck ])}
     GATE_PROBE=$(${lib.getExe probe})
     export GATE_PROBE
     ${run [
@@ -119,16 +120,25 @@ let
     ]}
   '';
 
-  # Runs the full gate on the PUSHED commit in a throwaway worktree, so neither
+  # Runs the gate on the PUSHED commit in a throwaway worktree, so neither
   # unstaged edits nor a different checked-out branch can make it pass.
-  # prek exposes only the first ref of a multi-ref push.
-  qaPush = gate "nixos-qa-push" [ pkgs.git pkgs.coreutils ] ''
+  # prek exposes only the first ref of a multi-ref push. A push that changes only
+  # documentation since origin/main gets the lints; no merge-base means the full gate.
+  qaPush = gate "nixos-qa-push" (with pkgs; [ git coreutils gnugrep ]) ''
     rev=''${PRE_COMMIT_TO_REF:-HEAD}
     case $rev in 0000000000000000000000000000000000000000) exit 0 ;; esac
     tree=$(mktemp -d)
     trap 'git worktree remove --force "$tree"' EXIT
     git worktree add --quiet --detach "$tree" "$rev"
     cd "$tree"
+    # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
+    # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
+    if base=$(git merge-base HEAD origin/main) && changed=$(git diff --no-renames --name-only "$base" HEAD) \
+      && ! grep -qvE '^docs/|\.md$' <<<"$changed"; then
+      echo "nixos-qa: $(git rev-parse --short HEAD) changes only documentation since origin/main, lints only"
+      ${run lints}
+      exit
+    fi
     echo "nixos-qa on pushed commit $(git rev-parse --short HEAD)"
     ${lib.getExe qa}
   '';
