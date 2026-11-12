@@ -280,8 +280,8 @@ in
           ${lib.concatMapStrings (w: ''
             install -d -m 0700 "$d/${w.name}"
             [[ -d $d/${w.name}/home ]] || install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/home"
-            # as the user: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
-            ${pkgs.util-linux}/bin/setpriv --reuid=${user} --regid=${group} --init-groups install -d -m 0755 "$d/${w.name}/home/.cache"
+            # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
+            mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${user}:${group} "$d/${w.name}/home/.cache" || true
             install -d -m 0700 -o ${user} -g ${group} "$d/${w.name}/eval-cache"
           '') instances}
         '';

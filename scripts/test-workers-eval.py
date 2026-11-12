@@ -364,8 +364,8 @@ def main():
     out = nix_eval("{ }", "sys.config.system.activationScripts.devEnvironments.text")
     act = json.loads(out.stdout) if out.returncode == 0 else ""
     cache = [line for line in act.splitlines() if "home/.cache" in line]
-    check(len(cache) == 1 and re.search(r"setpriv --reuid=\S+ --regid=\S+ --init-groups install -d ", cache[0]) and " -o " not in cache[0],
-          f"root creates a guest's ~/.cache as the user, since install -d follows a symlink the guest planted ({cache or out.stderr.strip()[-300:]})")
+    check(len(cache) == 1 and re.search(r"^\s*mkdir -m 0755 \S+ 2>/dev/null && chown -h ", cache[0]) and "install" not in cache[0],
+          f"root creates a guest's ~/.cache without following a symlink the guest planted there ({cache or out.stderr.strip()[-300:]})")
     blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
     for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
         out = nix_eval(blocked % v6, "sys.config.networking.firewall.extraCommands")
