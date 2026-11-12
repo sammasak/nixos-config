@@ -82,6 +82,8 @@ Append; move a line to fixed when its change lands.
 
 - After an unpause (2026-11-12) the agent pane showed the old conversation and no answered restart prompt was seen from outside. From inside, the agent did receive the restart notice ("This environment restarted: whatever you had running here ... was killed") as a message, after the pause and unpause and again at a later restart; nothing in the message says which restart it belongs to, and it is easy to miss in the pane. Not checked that it is sent exactly once per resume.
 
+- A deploy that fixes a guest boot failure does not restart that guest: the container keeps running the failed generation until it is restarted by hand (stop and start `container@<name>`, or pause and unpause).
+
 ## Fixed
 
 - 2026-11-12 Pause failed twice on acer and rolled back: a changed container unit stopped through `PartOf` is unloaded, so switch-to-configuration fails on GetUnit ("Unit container@push.service not loaded") and would otherwise restart it; then the adapter left a stub `container@<name>` unit (the egress `Wants` only) that could not start ("bad unit file setting"). A paused instance now declares no container and no unit. Verified on acer: its units gone, the slice's `memory.low` 0, home, profiles and gcroots kept; the unpause started the container, proxy and session with the transcript intact.

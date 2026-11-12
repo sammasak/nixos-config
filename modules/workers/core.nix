@@ -88,7 +88,12 @@ let
       case ''${1-} in
         wait)
           for _ in $(seq 120); do
-            ${ssh w "-o BatchMode=yes -o ConnectTimeout=2"} true 2>/dev/null && exit 0
+            if st=$(${ssh w "-o BatchMode=yes -o ConnectTimeout=2"} systemctl show --property=LoadState,ActiveState home-manager-${user}.service 2>/dev/null); then
+              case $st in
+                *LoadState=not-found*|*ActiveState=active*) exit 0 ;;
+                *ActiveState=failed*) echo "home-manager-${user}.service failed in ${w.name}" >&2; exit 2 ;;
+              esac
+            fi
             sleep 1
           done
           exit 1 ;;
@@ -157,7 +162,8 @@ let
     # The guest's nix is a client of the host's daemon, which takes a client's substituters (when it trusts each of
     # them), max-jobs and cores over its own: the guest's defaults skipped the fleet's store caches and lifted the
     # host's build bounds. An empty flake-registry fetched the global one on every cold cache.
-    nix.settings = { flake-registry = ""; inherit (config.nix.settings) substituters trusted-public-keys max-jobs cores; }
+    # mkForce: the guest's own defaults would list again what the host's already holds
+    nix.settings = { flake-registry = ""; inherit (config.nix.settings) max-jobs cores; substituters = lib.mkForce config.nix.settings.substituters; trusted-public-keys = lib.mkForce config.nix.settings.trusted-public-keys; }
       // lib.optionalAttrs (config.nix.settings ? connect-timeout) { inherit (config.nix.settings) connect-timeout; };
 
     # lean: the boot is the start latency
@@ -547,6 +553,7 @@ in
           # a restart would kill the running agent (its ssh): a deploy that only changes the surface leaves it be,
           # and a restart of the container brings it back
           restartIfChanged = false;
+          onFailure = lib.optional (cfg.alert != null) "dev-env-alert@%n.service";
           serviceConfig = {
             # simple, not oneshot: a deploy that adds an instance does not wait for its agent to come up
             Type = "simple";
@@ -554,6 +561,7 @@ in
             User = user;
             # at a cold boot the user's session server can come up after the start gave up waiting for it
             Restart = "on-failure";
+            RestartPreventExitStatus = 2; # the guest's home setup failed: a retry would start the agent on a first-run screen
             RestartSec = 10;
             ExecStart = "${lib.getExe surface} start";
             ExecStop = "${lib.getExe surface} stop";
