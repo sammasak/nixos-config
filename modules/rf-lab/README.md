@@ -34,16 +34,18 @@ Captures land in `/var/lib/rf-lab/captures` on the Pi and age out after 14 days.
 The Pi is a narrow capture and command node. Reverse engineering (REA and the
 tools it drives: Ghidra, Binwalk, Unblob, JADX, a Node toolchain) runs on the
 analysis workstation, never on the 1 GiB board. Protocol parsers live in
-`sammasak/rf-proto`. `devenv tasks run nixos:rf-lab-boundary-test` (part of
-`nixos:qa`) checks this by evaluation:
-- naked-pi declares none of those tools in its system or Home Manager packages
-  and is not a k3s node;
-- no other host (black-pi, the k3s nodes) imports this module or carries an
-  `rf-*` unit;
-- a seeded naked-pi with `binwalk` and `nodejs` added is caught.
+`sammasak/rf-proto`. Two halves enforce this by evaluation:
+- the board: assertions in `modules/roles/rf-lab.nix` fail when naked-pi
+  declares one of those tools in its system or Home Manager packages or is a
+  k3s node. They fire on any evaluation of its toplevel: in `nixos:qa` through
+  `nixos:flake-check` (which evaluates the Pis), and in parity or a deploy;
+- the fleet: `devenv tasks run nixos:rf-lab-boundary-test` (part of
+  `nixos:qa`) checks that no other host (black-pi, the k3s nodes) imports this
+  module or carries an `rf-*` unit. It reads the gate probe, which does not
+  evaluate toplevels, so it does not run the board's assertions.
 
-It reads declared packages, not the built closure: a tool pulled in transitively
-by another package is not seen.
+The assertion reads declared packages, not the built closure: a tool pulled in
+transitively by another package is not seen.
 
 ## Crafted pcap fixtures
 

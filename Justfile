@@ -7,7 +7,9 @@ registry := "registry.sammasak.dev"
 # `hostname`: the latter arrives via nettools, which nothing here declares.
 host := if `uname -n` == "lenovo-21CB001PMX" { "lenovo" } else { `uname -n` }
 # The flake-pinned deploy-rs, so the recipes work outside the devenv shell.
-deploy := "nix run --inputs-from . deploy-rs --"
+deploy-rs := "nix run --inputs-from . deploy-rs --"
+# The memory cap for heavy local work on lenovo: 7G, no swap.
+memcap := "-p MemoryMax=7G -p MemorySwapMax=0"
 
 # ── Build & Deploy ────────────────────────────────────────────────────
 
@@ -35,29 +37,24 @@ diff HOST=host:
 audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
     scripts/nix-audit-candidate.sh {{HOST}} {{TARGET}}
 
-# Loopback self-push, proving the deploy-rs/sudo/magic-rollback path before it
-# is ever trusted against acer-swift, which has no BMC to recover a bad push.
-deploy-lenovo:
-    {{deploy}} .#lenovo --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
-
-# Pushes as `deploy` (no password; homelab/deploy-target.nix). acer's
-# trusted-users=[root] accepts the closure via the deploy-rs signing key.
-deploy-acer:
-    {{deploy}} .#acer-swift --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
-
-# Only in msi's power window (Mon-Fri ~09:00-21:00).
-deploy-msi:
-    {{deploy}} .#msi-ms7758 --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
-
-# Builds ON the Pi (lenovo has no aarch64 builder): hours on a first run or an
-# aarch64 cache miss, so run it inside zellij, where a dropped SSH session from
-# the phone does not kill the build.
-deploy-pi:
-    {{deploy}} .#black-pi --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
-
-# Also builds on its Pi, but the rf-lab closure is cache hits plus trivial derivations.
-deploy-naked-pi:
-    {{deploy}} .#naked-pi --auto-rollback true --magic-rollback true --activation-timeout 180 --confirm-timeout 30
+# Run from lenovo; logs in as `deploy` (key-only, passwordless sudo, so no
+# prompt; homelab/deploy-target.nix). Rollback settings come from the node
+# (flake-modules/70-deploy.nix), whose list the pattern repeats. --skip-checks:
+# otherwise deploy-rs runs the full flake check first, building every x86 host
+# on lenovo (the 2026-11-11 OOM). The pre-push gate runs that check on pushed
+# non-docs commits, but `.#HOST` is the working tree: a dirty or unpushed tree
+# deploys unchecked, so the recipe warns (never refuses: break-glass deploys
+# are legitimate). A scope, not `capped`: it keeps the caller's environment,
+# terminal and Ctrl-C. The cap covers the deploy-rs client and its evaluation;
+# builds run in nix-daemon under its own limits. lenovo is a loopback
+# self-push. msi: only Mon-Fri ~09:00-21:00. The Pis build their own closure:
+# black-pi takes hours on a cache miss, so run it in zellij.
+[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
+[doc("Push HOST with deploy-rs (magic rollback), skipping the flake check, under the memory cap")]
+deploy HOST:
+    [ -z "$(git status --porcelain --untracked-files=no)" ] || echo "WARNING: uncommitted changes; deploying a tree no gate checked" >&2
+    git merge-base --is-ancestor HEAD origin/main || echo "WARNING: HEAD is not on origin/main (local ref); its flake check may never have run" >&2
+    systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks
 
 # ── Configuration Verification ────────────────────────────────────────
 
@@ -83,7 +80,7 @@ check:
 # ── Metrics ───────────────────────────────────────────────────────────
 
 # One evaluation run in a transient user unit under a 7G memory cap, no swap.
-capped := "systemd-run --user --wait --collect --pipe -q -p MemoryMax=7G -p MemorySwapMax=0 --working-directory=" + quote(justfile_directory())
+capped := "systemd-run --user --wait --collect --pipe -q " + memcap + " --working-directory=" + quote(justfile_directory())
 
 # Measure eval time + static readability metrics, append to metrics/history.jsonl
 bench:

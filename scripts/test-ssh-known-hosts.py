@@ -143,6 +143,10 @@ def main():
     for node in ("lenovo", "acer-swift", "black-pi"):
         opts = P["sshOpts"][node]
         check(opts == ["-o", "StrictHostKeyChecking=yes"], f"deploy-rs node {node} refuses unknown or changed host keys")
+    pattern = re.search(r'\[arg\("HOST", pattern="([^"]+)"\)\]\ndeploy HOST:',
+                        re.sub(r'\[doc\([^\n]*\)\]\n', "", (ROOT / "Justfile").read_text()))
+    check(pattern is not None and sorted(pattern.group(1).split("|")) == sorted(P["deployNodes"]),
+          f"`just deploy` accepts exactly the deploy-rs nodes {sorted(P['deployNodes'])}")
     verify_script_checks(known)
     services = (ROOT / "modules/core/services.nix").read_text()
     check("knownHosts" not in services, "the old github pin in services.nix is gone: one module owns host keys")

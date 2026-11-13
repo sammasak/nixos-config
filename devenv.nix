@@ -83,7 +83,7 @@ let
     ${pkgs.python3}/bin/python scripts/test-harness-telemetry.py
   '';
 
-  # #42 DoD: no heavyweight RE tooling on naked-pi, no k3s there, no rf-lab module on any other host (eval only)
+  # #42 DoD, fleet half: no rf-lab module or rf-* unit on any other host (eval only); the board half is an rf-lab role assertion that nixos:flake-check enforces
   rfLabBoundaryTest = gate "rf-lab-boundary-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-rf-lab-boundary.py
   '';
@@ -377,7 +377,7 @@ in
     "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" = task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
-    "nixos:rf-lab-boundary-test" = task "#42: naked-pi carries no heavyweight RE tooling and no k3s; no other host imports rf-lab" rfLabBoundaryTest;
+    "nixos:rf-lab-boundary-test" = task "#42: no host but naked-pi imports rf-lab or carries an rf-* unit (naked-pi's own bounds are role assertions)" rfLabBoundaryTest;
     "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
