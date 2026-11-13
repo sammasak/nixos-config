@@ -1,5 +1,5 @@
 # Waybar's style block below is CSS, not Nix — `#battery` there is an id selector.
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 {
   programs.waybar = {
     enable = true;
@@ -205,7 +205,8 @@
       };
     };
 
-    style = ''
+    # mkBefore: keep this CSS ahead of Stylix's regardless of import depth (#315)
+    style = lib.mkBefore ''
       * {
         font-family: "JetBrainsMono Nerd Font";
         font-size: 12px;

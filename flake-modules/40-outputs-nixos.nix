@@ -42,20 +42,20 @@ let
 
   # Every host's modules after its configuration and roles; the runtime-host VM test (52-runtime-host-vm-test.nix) reuses them.
   fleetModules =
-    name: username:
+    name:
     [
       inputs.stylix.nixosModules.stylix
       inputs.sops-nix.nixosModules.sops
       inputs.home-manager.nixosModules.home-manager
       inputs.disko.nixosModules.disko
       ../modules/workers
-      ({
+      (os: {
         nixpkgs.overlays = [
           config.flake.overlays.default
           # pkgs.nur.*: keeps modules on plain pkgs, no specialArgs.
           inputs.nur.overlays.default
         ];
-        sam.userConfig = users.${username} or { };
+        sam.userConfig = users.${os.config.sam.profile.username};
         sam.workers.guestModules = [ inputs.home-manager.nixosModules.home-manager (fleetHome "worker") ];
       })
       (fleetHome name)
@@ -65,8 +65,6 @@ let
     name:
     {
       hostDir,
-      system,
-      username,
       roles,
     }:
     let
@@ -85,13 +83,19 @@ let
       The base role declares core typed options (`sam.profile`, `sam.userConfig`) used across modules.
     '';
     inputs.nixpkgs.lib.nixosSystem {
-      inherit system;
       modules =
         [
           ../hosts/${hostDir}/configuration.nix
+          ({ config, ... }: {
+            sam.profile.roles = roles;
+            assertions = [{
+              assertion = config.sam.profile.roles == roles;
+              message = "sam.profile.roles is set from configurations.nixos.${name}.roles; remove any other definition.";
+            }];
+          })
         ]
         ++ roleModules
-        ++ fleetModules name username;
+        ++ fleetModules name;
     };
 in
 {

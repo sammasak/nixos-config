@@ -57,6 +57,9 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # A oneshot has no start timeout by default. The API wait below gives up after 120 s, inside deploy-rs'
+        # activationTimeout (180 s); this outer bound leaves a first `flux bootstrap` its own 5 min.
+        TimeoutStartSec = "10min";
         Restart = "on-failure";
         RestartSec = "30s";
       };
@@ -67,8 +70,13 @@ in
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
         # Wait for k3s API to be ready
-        echo "Waiting for k3s API..."
-        until kubectl get nodes &>/dev/null; do
+        echo "Waiting for k3s API (up to 120 s)..."
+        deadline=$((SECONDS + 120))
+        until kubectl get nodes --request-timeout=5s &>/dev/null; do
+          if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "k3s API did not answer within 120 s, giving up (retried after RestartSec)" >&2
+            exit 1
+          fi
           sleep 5
         done
         echo "k3s API is ready"
