@@ -65,12 +65,13 @@ in
   perSystem =
     { system, ... }:
     {
-      # Unfiltered, the x86 check would need the aarch64 toplevel built on lenovo.
-      checks = inputs.deploy-rs.lib.${system}.deployChecks (
-        config.flake.deploy
-        // {
-          nodes = lib.filterAttrs (_: node: node.profiles.system.path.system == system) config.flake.deploy.nodes;
-        }
-      );
+      # One pair of checks per node: a check over several nodes holds all their hosts in one evaluator,
+      # which does not fit a 4G cap. Unfiltered, the x86 checks would need the aarch64 toplevels built on lenovo.
+      checks = lib.concatMapAttrs (
+        name: node:
+        lib.mapAttrs' (check: lib.nameValuePair "${check}-${name}") (
+          inputs.deploy-rs.lib.${system}.deployChecks (config.flake.deploy // { nodes.${name} = node; })
+        )
+      ) (lib.filterAttrs (_: node: node.profiles.system.path.system == system) config.flake.deploy.nodes);
     };
 }

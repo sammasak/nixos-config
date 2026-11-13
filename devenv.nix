@@ -34,10 +34,36 @@ let
     fi
   '';
 
-  # Also builds every x86 host (deploy-rs' deploy-activate check holds their toplevels) and, with
-  # --all-systems, evaluates the aarch64 Pis: the one place a host build is checked.
-  flakeCheck = gate "nixos-flake-check" [ pkgs.nix ] ''
-    nix flake check --all-systems --no-write-lock-file
+  # What `nix flake check --all-systems` checks, one output per nix process: in one process it holds every
+  # host and is killed under a 4G cap. Builds every x86 host (its deploy-activate check holds the toplevel)
+  # and evaluates the aarch64 Pis: the one place a host build is checked. An output kind not listed here
+  # fails the step, so a new kind cannot go unchecked.
+  flakeCheck = gate "nixos-flake-check" (with pkgs; [ nix jq ]) ''
+    names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
+    drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
+    here=$(nix eval --raw --impure --expr builtins.currentSystem)
+    kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
+    [ "$kinds" = '["checks","deploy","nixosConfigurations","overlays","packages","templates"]' ] \
+      || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
+    nix eval --no-write-lock-file .#overlays --apply 'builtins.mapAttrs (_: o: assert builtins.isFunction o; true)' >/dev/null
+    nix eval --no-write-lock-file .#templates \
+      --apply 'builtins.mapAttrs (_: t: assert builtins.pathExists t.path && builtins.isString t.description; true)' >/dev/null
+    hosts=$(names nixosConfigurations)
+    for h in $hosts; do drv "nixosConfigurations.$h.config.system.build.toplevel"; done
+    for kind in packages checks; do
+      systems=$(names "$kind")
+      for s in $systems; do
+        outputs=$(names "$kind.$s")
+        for o in $outputs; do
+          if [ "$kind.$s" = "checks.$here" ]; then
+            echo "nixos-flake-check: build checks.$s.$o" >&2
+            nix build --no-link --no-write-lock-file ".#checks.$s.$o"
+          else
+            drv "$kind.$s.$o"
+          fi
+        done
+      done
+    done
   '';
 
   # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
@@ -426,7 +452,7 @@ in
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
     "nixos:secrets-verify" = task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
-    "nixos:flake-check" = task "nix flake check over all systems: builds every x86 host, evaluates the Pis" flakeCheck;
+    "nixos:flake-check" = task "The flake check over all systems, one output per nix process: builds every x86 host, evaluates the Pis" flakeCheck;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:alert-bridge-test" = task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
