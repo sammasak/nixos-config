@@ -188,7 +188,8 @@ let
     # host's build bounds. An empty flake-registry fetched the global one on every cold cache.
     # mkForce: the guest's own defaults would list again what the host's already holds
     nix.settings = { flake-registry = ""; inherit (config.nix.settings) max-jobs cores; substituters = lib.mkForce config.nix.settings.substituters; trusted-public-keys = lib.mkForce config.nix.settings.trusted-public-keys; }
-      // lib.optionalAttrs (config.nix.settings ? connect-timeout) { inherit (config.nix.settings) connect-timeout; };
+      # the host's two answers to a dead store cache, where it sets them (store-cache.nix)
+      // lib.intersectAttrs { connect-timeout = null; fallback = null; } config.nix.settings;
 
     # lean: the boot is the start latency
     documentation.enable = false;
