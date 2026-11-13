@@ -31,7 +31,6 @@ in
     imports = [ ../../modules/specialisations/desktop.nix ];
   };
 
-  homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
   homelab.k3s.cni = "cilium";  # match control-plane: disable kube-proxy for Cilium KPR
   homelab.k3s.extraFlags = [
     "--node-label=node-pool=workers"
