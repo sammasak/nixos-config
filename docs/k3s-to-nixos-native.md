@@ -117,7 +117,7 @@ migration adds it.
 | Desired state per host | `nixosConfigurations.<host>` in one flake; a service is enabled per host in that host's `configuration.nix` | present |
 | Reproducible builds | flake lock; x86 hosts substitute from the signed harmonia caches, the Pis build their own closures | present |
 | Quality gates | pre-push `nixos:qa` on the pushed commit (flake check plus the Python gates), run off lenovo; one `scripts/test-<name>.py` per new module | present; test per module built for P1 |
-| Trigger and approval | merge to main, then an explicit `just deploy HOST` that the owner approves; no host upgrades itself (acer's weekly `system.autoUpgrade` is off since #300) | present |
+| Trigger and approval | merge to main, then an explicit `just deploy HOST` that the owner approves; no host upgrades itself (`system.autoUpgrade` is asserted off on every host since #311) | present |
 | Rollout order | one host at a time, least critical first: msi, black-pi, acer, lenovo | convention |
 | Activation safety | deploy-rs `magicRollback`: a host that cannot be reached after activation reverts | present |
 | Service health | `services.alloy` and most upstream units are `Type=simple`, so each module adds an `ExecStartPost` probe of the service's own local ready endpoint with a start timeout, the upstream restart policy with a slower `RestartSec` and a start limit, and `OnFailure=` to ntfy. A unit that fails its probe fails the activation and so the whole host deploy; the probe therefore never tests anything remote (a collector must not fail a deploy because Loki is away) | built for P1 |
@@ -242,7 +242,7 @@ discovery (replaced by a declared scrape target).
    aarch64 build is evidenced, and the connectivity rollback is unexercised,
    so every deploy still ends with the end-to-end check above (#297).
 2. **acer upgraded itself from main.** Closed by #300: acer's
-   `system.autoUpgrade` is off and a gate test asserts it. Until that change
+   `system.autoUpgrade` is off, and since #311 every host asserts it. Until that change
    is deployed to acer, the running timer still switches to main weekly, so
    the old rule holds: a commit that changes a moved service on acer merges
    only with the owner's approval of the acer deploy, deployed the same day.
