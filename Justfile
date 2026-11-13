@@ -56,6 +56,21 @@ deploy HOST:
     git merge-base --is-ancestor HEAD origin/main || echo "WARNING: HEAD is not on origin/main (local ref); its flake check may never have run" >&2
     systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks
 
+# What `just deploy HOST` would do, without doing it. deploy-rs builds and copies
+# the closure as a deploy does (same cost and place), then runs
+# `switch-to-configuration dry-activate` from the store path: no profile change,
+# no confirmation wait, so none of magic rollback's paths. It needs root, which
+# the deploy user's sudo gives without a prompt, unlike `nixos-rebuild
+# dry-activate`. Then the closure diff against the running system. Not a
+# guarantee: nothing is started, so a unit that would fail is not shown, and
+# units an activation script restarts are only partly predicted.
+[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
+[doc("Show the units a deploy of HOST would stop, restart, reload or start, and its closure diff")]
+dry-activate HOST:
+    systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks --dry-activate
+    top=$(systemd-run --user --scope -q {{memcap}} nix eval --raw .#nixosConfigurations.{{HOST}}.config.system.build.toplevel.outPath) && \
+      ssh -o StrictHostKeyChecking=yes "deploy@$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname)" nix store diff-closures /run/current-system "$top"
+
 # ── Configuration Verification ────────────────────────────────────────
 
 # QA gates live in devenv.nix as tasks; the git hooks run the same ones.

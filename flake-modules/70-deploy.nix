@@ -28,6 +28,8 @@ let
   pushAs = {
     sshUser = "deploy";
     user = "root";
+    # On this pin a failed unit may not roll back while the client says it did (serokell/deploy-rs#411):
+    # after a failed deploy check `readlink /run/current-system` on the target.
     autoRollback = true;
     magicRollback = true;
     activationTimeout = 180;
