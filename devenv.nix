@@ -83,7 +83,7 @@ let
     ${pkgs.python3}/bin/python scripts/test-harness-telemetry.py
   '';
 
-  # #42 DoD: no heavyweight RE tooling on naked-pi, no k3s there, no rf-lab module on any other host (eval only)
+  # #42 DoD, fleet half: no rf-lab module or rf-* unit on any other host (eval only); the board half is an rf-lab role assertion that nixos:flake-check enforces
   rfLabBoundaryTest = gate "rf-lab-boundary-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-rf-lab-boundary.py
   '';
@@ -249,31 +249,11 @@ let
     ls -la "$HOME/rf-lab-captures" 2>/dev/null || echo "(none)"
   '';
 
-  # Offline pre-deploy gate: evaluate naked-pi and assert the management-safety
-  # invariants hold before anyone pushes a config to the headless box.
-  rfPreflight = gate "rf-preflight" (with pkgs; [ nix jq coreutils ]) ''
+  # Offline pre-deploy gate: the management-safety invariants are modules/roles/rf-lab.nix assertions, so evaluating naked-pi checks them.
+  rfPreflight = gate "rf-preflight" (with pkgs; [ nix ]) ''
     exec >&2
-    echo "Evaluating naked-pi + checking management-safety invariants..."
-    facts=$(nix eval --json ".#nixosConfigurations.naked-pi.config" --apply '
-      c: {
-        sshPassword = c.services.openssh.settings.PasswordAuthentication;
-        rootLogin = c.services.openssh.settings.PermitRootLogin;
-        sshOpenFirewall = c.services.openssh.openFirewall;
-        homeWifi = c.networking.networkmanager.ensureProfiles.profiles ? home-wifi;
-        watchdog = c.systemd.timers ? rf-net-watchdog;
-        rootLock = c.system.activationScripts ? lockEmptyRootPassword;
-        wifiUnmanaged = c.networking.networkmanager.unmanaged;
-      }')
-    echo "$facts" | jq .
-    fail=0
-    check() { if [ "$1" = "$2" ]; then echo "  ok  $3"; else echo "  FAIL $3 (got $1, want $2)"; fail=1; fi; }
-    check "$(echo "$facts" | jq -r .sshPassword)" false "SSH password auth disabled"
-    check "$(echo "$facts" | jq -r .rootLogin)" no "SSH root login disabled"
-    check "$(echo "$facts" | jq -r .sshOpenFirewall)" false "SSH not globally open (scoped to LAN)"
-    check "$(echo "$facts" | jq -r .homeWifi)" true "home-wifi management fallback present"
-    check "$(echo "$facts" | jq -r .watchdog)" true "net-watchdog timer present"
-    check "$(echo "$facts" | jq -r .rootLock)" true "empty-root-password lock present"
-    if [ "$fail" = 0 ]; then echo "PREFLIGHT PASS — safe to deploy over Ethernet"; else echo "PREFLIGHT FAIL"; exit 1; fi
+    nix eval --raw ".#nixosConfigurations.naked-pi.config.system.build.toplevel.drvPath" >/dev/null
+    echo "PREFLIGHT PASS: safe to deploy over Ethernet"
   '';
 
   # Offline analysis of a capture (no device involved): management-frame
@@ -397,7 +377,7 @@ in
     "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" = task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
-    "nixos:rf-lab-boundary-test" = task "#42: naked-pi carries no heavyweight RE tooling and no k3s; no other host imports rf-lab" rfLabBoundaryTest;
+    "nixos:rf-lab-boundary-test" = task "#42: no host but naked-pi imports rf-lab or carries an rf-* unit (naked-pi's own bounds are role assertions)" rfLabBoundaryTest;
     "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
