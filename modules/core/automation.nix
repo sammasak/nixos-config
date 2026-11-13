@@ -1,36 +1,12 @@
 { config, pkgs, ... }:
 let
   username = config.sam.profile.username;
-  uid = toString config.users.users.${username}.uid;
-  notifyScript = pkgs.writeShellScript "nixos-upgrade-notify" ''
-    status="$1"
-    runtime_dir="/run/user/${uid}"
-
-    if [ ! -d "$runtime_dir" ]; then
-      exit 0
-    fi
-
-    export XDG_RUNTIME_DIR="$runtime_dir"
-    export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
-    export DISPLAY=":0"
-
-    ${pkgs.libnotify}/bin/notify-send "NixOS Auto Upgrade" "$status"
-  '';
 in
 {
-  # Off by default; a host that upgrades unattended opts in with enable = true.
-  # Why the others stay manual: black-pi and the rf-lab boards would compile
-  # cache misses on the SD card (and rf-lab must not reboot unattended), msi's
-  # Windows/EFI layout is unverified for unattended boot entries, and lenovo is
-  # rebuilt by hand before the push that the others upgrade from.
-  system.autoUpgrade = {
-    flake = "github:sammasak/nixos-config/main";
-    flags = [ "--print-build-logs" ];
-    # Clear of the 03:00-04:05 backup chain and the Sun 05:00 flake-update timer:
-    # a build inside the backup window is the I/O storm that hung acer-swift.
-    dates = "Sun 06:00";
-    randomizedDelaySec = "45min";
-  };
+  assertions = [{
+    assertion = !config.system.autoUpgrade.enable;
+    message = "system.autoUpgrade must stay off: an unattended switch from main bypasses deploy-rs rollback and the health check; deploy with `just deploy HOST` (docs/k3s-to-nixos-native.md).";
+  }];
 
   nix.gc = {
     automatic = true;
@@ -65,16 +41,6 @@ in
     };
   };
 
-  systemd.services.nixos-upgrade = {
-    onSuccess = [ "nixos-upgrade-notify-success.service" ];
-    onFailure = [ "nixos-upgrade-notify-failure.service" ];
-    serviceConfig = {
-      Nice = 10;
-      IOSchedulingClass = "best-effort";
-      IOWeight = 20;
-    };
-  };
-
   systemd.services.nix-gc.serviceConfig = {
     Nice = 19;
     IOSchedulingClass = "idle";
@@ -85,19 +51,5 @@ in
     Nice = 19;
     IOSchedulingClass = "idle";
     IOWeight = 10;
-  };
-
-  systemd.services.nixos-upgrade-notify-success = {
-    description = "Notify user about successful NixOS auto-upgrade";
-    serviceConfig.Type = "oneshot";
-    enableStrictShellChecks = true;
-    script = ''${notifyScript} "Upgrade completed successfully"'';
-  };
-
-  systemd.services.nixos-upgrade-notify-failure = {
-    description = "Notify user about failed NixOS auto-upgrade";
-    serviceConfig.Type = "oneshot";
-    enableStrictShellChecks = true;
-    script = ''${notifyScript} "Upgrade failed - check journalctl -u nixos-upgrade"'';
   };
 }

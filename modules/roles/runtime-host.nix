@@ -37,15 +37,8 @@ in
   # No catch-up run at boot, while k3s and workers start.
   nix.gc.persistent = false;
   nix.optimise.persistent = false;
-  system.autoUpgrade.persistent = false;
 
   systemd.services.nix-optimise.after = [ "nix-gc.service" ];
-  systemd.services.nixos-upgrade = {
-    after = [ "nix-gc.service" "nix-optimise.service" ];
-    # notify-send needs a session bus.
-    onSuccess = lib.mkIf (!desktop) (lib.mkForce [ ]);
-    onFailure = lib.mkIf (!desktop) (lib.mkForce [ ]);
-  };
 
   # NetworkManager.conf is its restart trigger and a restart drops wifi: keep it, sysctl and modules-load the same with zero or more environments (modules/workers/core.nix).
   networking.nat.enable = true;
