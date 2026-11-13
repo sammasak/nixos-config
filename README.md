@@ -49,7 +49,7 @@ the tie-breaker.
 | `scripts/` | Repo tooling | `gate-probe.nix` and the `test-*.py` gates, `bench.sh`, `nix-comment-metrics.awk` |
 | `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
-| `docs/` | Current reference | `architecture.md`, `herdr.md`, `pi.md` |
+| `docs/` | Reference, plus dated records | Reference: `architecture.md`, `herdr.md`, `pi.md`, `nspawn-workers.md`, `ssh-host-keys.md`, `native-otel-canary.md`, `factum-pilot.md`, `nix-audit-pilot.md`. The rest are dated plans, measurements and ledgers, true as of their date |
 | `Justfile` | Task entry points | build, switch, deploy, verify and image recipes |
 | `assets/`, `dotfiles/` | Wallpapers; plain config files symlinked verbatim | |
 | `pkgs/` | Packages not in nixpkgs | Exposed through an overlay in `flake-modules/` |
