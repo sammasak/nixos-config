@@ -258,14 +258,13 @@ FAST = {}
 
 
 def prefetch(exprs):
-    """Evaluates every expression in one process; one that throws (or all, if that process fails) is left to run_eval()
-    to run on its own, so its check reports the error as before."""
-    tried = " ".join(f"(let v = ({e}); r = builtins.tryEval (builtins.deepSeq v v); in if r.success then r.value else null)" for e in exprs)
-    out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", f"[ {tried} ]"], capture_output=True, text=True)
-    if out.returncode == 0:
-        FAST.update((e, v) for e, v in zip(exprs, json.loads(out.stdout)) if v is not None)
-    else:
-        print(f"note: the one-process evaluation failed, each case runs on its own ({out.stderr.strip()[-300:]})")
+    """Evaluates every expression ahead, each in a process of its own (0.2 to 1.1 GB), three at a time; one that fails is
+    left to run_eval() to run again, so its check reports the error as before. In one process they ran one after the
+    other and shared only the parsing, in a heap that grew to about 3 GB."""
+    with ThreadPoolExecutor(3) as pool:
+        for e, out in zip(exprs, pool.map(run_eval, exprs)):
+            if out.returncode == 0 and out.stdout.strip() != "null":
+                FAST[e] = json.loads(out.stdout)
 
 
 def run_eval(expr):
@@ -977,7 +976,7 @@ def main():
         got = json.loads(out.stdout) if out.returncode == 0 else [out.stderr.strip()[-600:]]
         check(any(want in m for m in got), f"{name}: rejected with \"{want}\" (got {got})")
     # a type error ends an evaluation, so each TYPED case is a process of its own (about 230 MB): two at a time,
-    # after the batch (2.5 GB peak) is done, as environments share the host's memory
+    # after the prefetch (three processes of up to 1.1 GB each) is done, as environments share the host's memory
     with ThreadPoolExecutor(2) as pool:
         typed = list(pool.map(lambda c: nix_eval(c[1], "sys.config.system.build.toplevel.drvPath"), TYPED))
     for (name, case, want), out in zip(TYPED, typed):
