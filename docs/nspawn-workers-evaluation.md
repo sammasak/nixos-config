@@ -85,7 +85,8 @@ SSH key once a repo is listed.
   start time unchanged (acer).
 - Telemetry: environments on acer can send Claude telemetry through the host's native OTLP relay (#274, option
   `telemetry = true` on an instance). Checked end to end with one throwaway environment (Loki lines labelled with
-  host and worker), then retired. msi has the same config on main but is not deployed yet.
+  host and worker), then retired. msi was deployed from main 3df3714 on 2026-11-13 with the relay active; POSTs to
+  its local /v1/logs and /v1/metrics returned 200. No environment on msi has been traced to Loki end to end yet.
 
 ## Not yet verified
 
@@ -105,7 +106,8 @@ host. First possible check: after 2026-11-19 on acer, `sudo ls /var/lib/workers/
   factum 6.8 s then 1.0 s. herman's first run was not warm: 179 paths (7.5G) came from the fleet cache (Android
   SDK, Chromium, WebKitGTK, buildah, Rust 1.97.1 toolchain) and 70 small devenv wrappers were built locally, since
   msi's store had never held herman's shell. factum: 8 small local builds and 2 tiny paths from the fleet cache.
-  Second runs: no new paths.
+  Second runs: no new paths. A host is only warm for repos whose shell it has already entered; the first herman
+  shell on msi was filled from the fleet cache on acer.
 - Cold `cargo check --workspace --all-targets` of factum: 35.4 s. Container memory peak 2.70G before, 3.25G
   after; memory.max and memory.high read `max` inside; memory.events and cpu throttling all zero, no OOM kill.
 - m1 is added to msi's `retired` list in the same change as this entry.
