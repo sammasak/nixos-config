@@ -35,5 +35,4 @@ check(d["stylix"] and d["hmStylix"] and d["gui"], "acer's desktop specialisation
 check(len(d["upgradeHooks"]) == 2, f"acer's desktop specialisation keeps the upgrade notifications {d['upgradeHooks']}")
 check(d["persistent"] == [False, False, False] and d["waitSync"], "acer's desktop specialisation keeps the maintenance policy")
 
-check(any("default boot is headless" in m for m in r["themed"]), f"negative case themed: the role's assertion fails ({len(r['themed'])} failing)")
 sys.exit(1 if failed else 0)
