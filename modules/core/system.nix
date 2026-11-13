@@ -224,7 +224,8 @@ in
           the local native-otel-relay at 127.0.0.1:4319, which adds the gateway token,
           and registers the skills input's emit-work-ref.sh hook once the pin carries it.
           A developer environment gets it from `sam.workers.instances.<name>.telemetry`,
-          never from its host (docs/native-otel-canary.md).
+          never from its host (docs/native-otel-canary.md); there it also turns on
+          Codex's metrics exporter and wrapper.
         '';
       };
       resourceAttributes = mkOption {

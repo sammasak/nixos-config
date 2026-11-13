@@ -55,9 +55,12 @@ while the content flags are off, so this hook sends the skill's name and
 nothing else as a `skill_use` event.
 `nixos:harness-telemetry-test` checks all of this. A developer environment
 sends through its host's relay with
-`sam.workers.instances.<name>.telemetry` ([nspawn-workers.md](nspawn-workers.md)), on by default on a
-`nativeOtel` host; it also turns on the guest's Codex metrics exporter and `codex` wrapper, which carry the same
-`host.name` and `worker.name`. Codex has no credential path into a guest yet, so that half is evaluated, not run.
+`sam.workers.instances.<name>.telemetry`
+([nspawn-workers.md](nspawn-workers.md)), on by default on a
+`nativeOtel` host; it also turns on the guest's Codex metrics exporter and
+`codex` wrapper. Codex sends metrics only, which the gateway counts under
+`host.name` (no worker). Codex has no credential path into a guest yet, so
+that half is evaluated, not run.
 A guest's Claude also has `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. With it
 set, OTel events and metrics are still exported; only `DISABLE_TELEMETRY`-style
 product analytics stop. Verified on a host session 2026-11-12 against a local

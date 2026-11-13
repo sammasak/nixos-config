@@ -17,7 +17,8 @@ let
           ../modules/programs/cli/claude-code/default.nix
           (import ../modules/programs/cli/claude-code/mcp.nix inputs.skills)
           (import ../modules/programs/cli/claude-code/skills.nix inputs.skills)
-          # an environment has no nativeOtel (no relay, no secret): its telemetry is sam.claude.telemetry, set by its host
+          # a host's Codex follows nativeOtel even with Claude's telemetry off (acer, msi); an environment has no
+          # nativeOtel (no relay, no secret), so its Codex follows the sam.claude.telemetry its host sets
           (import ../modules/programs/cli/codex/default.nix inputs.skills (os.config.sam.profile.nativeOtel || os.config.sam.claude.telemetry.enable))
           ../modules/programs/cli/coordinator-wakeup.nix
         ]

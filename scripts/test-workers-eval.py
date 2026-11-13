@@ -98,6 +98,11 @@ let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.%(host)s.ex
 in map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions)
 """
 FLEET_INSTANCE = "{ sam.workers.instances.t = { }; }"
+# an instance that sets nothing, on a host without nativeOtel: the default must be off there
+NO_OTEL = r"""
+let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: { sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t = { }; }) ]; }).config;
+in { failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions); guest = c.containers.t.config.sam.claude.telemetry.enable; sockets = builtins.attrNames c.containers.t.config.systemd.sockets; }
+"""
 FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
     ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile"),
@@ -416,7 +421,8 @@ def check_telemetry(got, out):
     check(len(skill_hooks) == (2 if got.get("skill_pinned") else 0), f"a telemetry guest runs emit-skill-use.sh on PreToolUse(Skill) and UserPromptSubmit exactly when the skills pin carries it ({len(skill_hooks)}, pinned {got.get('skill_pinned')})")
     cdx = got.get("cdx", {})
     for name, g in (("tel", tel), ("cdx", cdx)):
-        wrapped = [w for w in g.get("codex_wrappers", []) if f'OTEL_RESOURCE_ATTRIBUTES="host.name=msi-ms7758,worker.name={name}"' in w and "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative" in w]
+        wrapped = [w for w in g.get("codex_wrappers", []) if f'OTEL_RESOURCE_ATTRIBUTES="host.name=msi-ms7758,worker.name={name}"' in w and "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative" in w
+                   and "/run/secrets" not in w and "OTEL_EXPORTER_OTLP_HEADERS" not in w]
         check(g.get("codex_otel") is True and len(wrapped) == 1 and g.get("sockets", {}).get("otlp-egress") == ["127.0.0.1:4319"],
               f"guest {name} (telemetry left at its default on a nativeOtel host): Codex exports metrics to its loopback 4319 as host.name=msi-ms7758,worker.name={name} ({g.get('codex_otel')}, {len(wrapped)} wrapper)")
     check(cdx.get("env", {}).get("CLAUDE_CODE_ENABLE_TELEMETRY") == "1" and not cdx.get("relay") and cdx.get("secrets") == [],
@@ -994,6 +1000,10 @@ def main():
     for name, case, want, host in [(*c, "msi-ms7758") for c in FLEET_CASES] + [(*NO_SECRET, "black-pi"), (*USER_SECRET, "msi-ms7758")]:
         out = run_eval(fleet(case, host=host))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
+    out = run_eval(NO_OTEL % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("failing") == [] and got.get("guest") is False and "otlp-egress" not in got.get("sockets", ["otlp-egress"]),
+          f"without nativeOtel an instance that sets nothing sends no telemetry and the host fails no assertion ({got or out.stderr.strip()[-600:]})")
     out = run_eval(GITHUB % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("failing") == [], f"msi-ms7758 with an egress.github instance and a gh login fails no assertion ({got.get('failing', out.stderr.strip()[-600:])})")
