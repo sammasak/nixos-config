@@ -132,11 +132,19 @@ let
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
   lints = [ lintComments lintShell ];
+  # seconds per step, to see where a slow gate spends its time (#334)
+  timed = lib.concatMapStringsSep "\n" (g: ''
+    t=$SECONDS
+    ${lib.getExe g}
+    echo "nixos-qa: ${g.name} took $((SECONDS - t)) s"
+  '');
   qa = gate "nixos-qa" [ ] ''
-    ${run (lints ++ [ secretsVerify flakeCheck ])}
+    ${timed (lints ++ [ secretsVerify flakeCheck ])}
+    t=$SECONDS
     GATE_PROBE=$(${lib.getExe probe})
     export GATE_PROBE
-    ${run [
+    echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s"
+    ${timed [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
       ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest switchSafetyTest rfBeaconsTest
     ]}
@@ -156,6 +164,8 @@ let
     trap 'git worktree remove --force "$tree"' EXIT
     git worktree add --quiet --detach "$tree" "$rev"
     cd "$tree"
+    # In a linked worktree git hands the hook its GIT_DIR: HEAD would be that checkout's, not this tree's.
+    unset GIT_DIR
     # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
     # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
     if base=$(git merge-base HEAD origin/main) && changed=$(git diff --no-renames --name-only "$base" HEAD) \
