@@ -12,12 +12,6 @@
               description = "Directory under hosts/ used for this distribution.";
             };
 
-            system = lib.mkOption {
-              type = lib.types.str;
-              default = "x86_64-linux";
-              description = "Target platform string for nixpkgs.lib.nixosSystem.";
-            };
-
             username = lib.mkOption {
               type = lib.types.str;
               description = "Primary host user used for Home Manager and user identity lookup.";

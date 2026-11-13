@@ -4,7 +4,6 @@ in
 {
   configurations.nixos.lenovo = {
     hostDir = "lenovo-21CB001PMX";
-    system = "x86_64-linux";
     inherit (vars) username roles;
   };
 }
