@@ -46,11 +46,6 @@ in
   # As the always-on control plane, lenovo sends msi its Mon-Fri 09:00 wake.
   homelab.msiPowerSchedule.waker.enable = true;
 
-  # facter.json is gitignored (DMI/MAC data) and generated on-host via
-  # nixos-facter; mkIf keeps reportPath at its null default so a checkout
-  # without one doesn't hit its readFile on a missing file.
-  hardware.facter.reportPath = lib.mkIf (builtins.pathExists ./facter.json) ./facter.json;
-
   # Declared here, not in the shared sam.hostSecrets tree, so acer never
   # decrypts the private signing key — it only needs the public half already
   # in nix.settings.trusted-public-keys.
