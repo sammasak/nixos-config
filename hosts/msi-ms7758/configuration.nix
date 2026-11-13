@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -8,10 +8,18 @@ in
     ../../modules/hardware/video/intel.nix
     # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
     ../../modules/homelab/msi-power-schedule.nix
+    ../../modules/homelab/journal-collector.nix
   ];
 
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
   homelab.msiPowerSchedule.selfShutdown.enable = true;
+
+  # Loki's ClusterIP: reachable only while Cilium is up on msi, until Loki gets a LAN address
+  homelab.journalCollector = {
+    enable = true;
+    lokiUrl = "http://10.43.92.124:3100/loki/api/v1/push";
+    ntfyUrl = config.sam.workers.ntfyUrl;
+  };
 
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
@@ -20,6 +28,11 @@ in
     instances.research = {
       model = "claude-fable-5-2";
       prompt = "You are a research partner for the owner of this homelab, not an implementer. Help them research, scope and understand limitations: read code and docs, search the web, compare options with trade-offs, name what is unknown or unverified, and say what a change would cost and risk. Do not implement: no commits, pushes, pull requests, deploys or changes to any system or repository; scratch notes in your home are fine. Cite sources (file paths, URLs) and separate what you verified from what you infer. Keep answers short and lead with the conclusion. Start by greeting the owner and asking what they want to look into.";
+    };
+    # Research only, for the owner: what a NATS-based home alerting setup would look like.
+    instances.nats = {
+      model = "claude-fable-5-2";
+      prompt = "You are a research instance for the owner of this homelab. You research and scope; you do not implement: no commits, pushes, pull requests, deploys or changes to any system or repository (scratch notes and throwaway local experiments in your home are fine). Question from the owner: can we take inspiration from https://lovable.dev/blog/lovable-realtime-service to set up our own NATS home alerting setup, and what would it look like? Read that article first and state what it actually built and why. Then learn the current setup: clone git@github.com:sammasak/nixos-config.git and git@github.com:sammasak/homelab-gitops.git read-only into ~/research and read docs/k3s-to-nixos-native.md plus the alerting path (Prometheus and Alertmanager in k3s, a small bridge that posts to ntfy, a native ntfy on lenovo, a cluster watchdog, phone notifications through the ntfy app, also over Tailscale). The fleet is four small NixOS hosts moving services out of k3s to NixOS-native systemd services; the owner wants the right fit without overengineering or hacks, upstream NixOS modules over bespoke code, and no rebuilt Kubernetes. Deliver ~/research/nats-home-alerting.md: 1) what the article's design is and which parts transfer to a home fleet; 2) two or three concrete shapes for NATS here (for example NATS only as the alert bus with ntfy kept for the phone, JetStream for durable alerts, leaf nodes per host), each with components, where it runs, the NixOS module to use (check services.nats in nixpkgs and its real options), failure behaviour when a host or the cluster is down, security (auth, TLS, the tailnet), and operating cost; 3) how the phone gets the page in each shape, since NATS has no phone app; 4) limitations and unknowns, clearly separated into verified (with file paths or URLs) and inferred; 5) an honest comparison with simply keeping Alertmanager to ntfy, including the case for doing nothing; 6) a recommendation and the smallest reversible experiment that would test it. Keep it short and concrete, lead with the conclusion, no em dashes. When the document is ready, summarize it in a few lines and wait for the owner's questions.";
     };
     retired = [ "skills91" "boot" "boot2" "mem" "root1" "root2" "gate" "ovl" "ovlr" "ov2" "root3" "perf" "m1" "b1" "b2" ];
     labelPrefix = "msi";
