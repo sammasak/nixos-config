@@ -77,8 +77,9 @@ inside D.
    gains, and the rename would touch every consumer.
 2. **What belongs in the table:** a field goes in only if something outside
    the host's own evaluation reads it. That covers `roles` (imports cannot
-   depend on config), `deploy.*` (read by deploy-rs), and later #291's
-   addresses (read by other hosts). Username and feature flags are read only
+   depend on config) and `deploy.*` (read by deploy-rs). #291's addresses,
+   read by other hosts' NixOS modules but nothing at flake level, went to
+   `sam.fleet` instead (below). Username and feature flags are read only
    inside the host, so they stay in `hosts/<dir>/variables.nix`, which
    `configuration.nix` and tests import as `sam.profile`. Inlining
    `variables.nix` into `configuration.nix` is a separate follow-up.
@@ -136,7 +137,8 @@ update.
 - A sixth host's flake wiring goes from two files to one table entry. Still
   needed: `hosts/<dir>/`, the `just deploy` HOST pattern (checked by
   `test-ssh-known-hosts.py`), its pinned key in
-  `modules/core/ssh-known-hosts.nix`, its sops recipient, and optionally
+  `modules/core/ssh-known-hosts.nix`, its sops recipient, its address in
+  `modules/core/fleet.nix` if another module reads it, and optionally
   `sam.cliTools.*` in its `configuration.nix` (#291). `just parity` picks the
   host up on its own.
 - Every table entry is a deploy node, as all five were before step 4.
@@ -146,9 +148,14 @@ update.
 ## Composition with #291
 
 #291 owns the facts (addresses, host keys, cache keys, the k3s server address,
-per-host tool choices). It adds typed fields to the same `configurations.nixos`
-entries and exposes them to NixOS through one read-only option. #292 adds no
-fact fields.
+per-host tool choices). #292 adds no fact fields, and #291 adds none to this
+table either: a LAN fact read by two or more modules is a typed, read-only
+`sam.fleet` set in `modules/core/fleet.nix`, imported by `core/system.nix`.
+Nothing at flake level reads an address (`deploy.hostname` uses names), the
+table is keyed by flake attribute while every reader keys by
+`networking.hostName`, and a module under `system.nix` also reaches worker
+guests and the runtime-host VM test without threading a value through. A fact
+with one reader (host keys, cache keys, the Pis' addresses) stays in it.
 
 ## Not changed
 
