@@ -130,15 +130,27 @@ let
     rf-lab-boundary.hosts = builtins.mapAttrs (_: h: rfFacts h.config) hosts;
 
     # every host, so a collector enabled anywhere else is seen; context discarded: nothing here needs a build
-    journal-collector = lib.mapAttrs (_: h: let c = h.config; in builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.toJSON {
-      enable = c.homelab.journalCollector.enable or false;
-      alloy = c.services.alloy.enable;
-      config = c.environment.etc."alloy/config.alloy".text or null;
-      flags = c.services.alloy.extraFlags;
-      environmentFile = c.services.alloy.environmentFile;
-      service = lib.genAttrs [ "ExecStartPost" "Restart" "MemoryMax" "TimeoutStartSec" "LoadCredential" "EnvironmentFile" ]
-        (n: c.systemd.services.alloy.serviceConfig.${n} or null);
-    }))) hosts;
+    journal-collector = let
+      facts = c: builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.toJSON {
+        enable = c.homelab.journalCollector.enable or false;
+        alloy = c.services.alloy.enable;
+        config = c.environment.etc."alloy/config.alloy".text or null;
+        flags = c.services.alloy.extraFlags;
+        environmentFile = c.services.alloy.environmentFile;
+        unit = lib.genAttrs [ "onFailure" "startLimitIntervalSec" "startLimitBurst" "restartTriggers" ]
+          (n: c.systemd.services.alloy.${n} or null);
+        configSource = c.environment.etc."alloy/config.alloy".source or null;
+        service = lib.genAttrs [ "ExecStartPost" "TimeoutStartSec" "MemoryMax" "LoadCredential" "EnvironmentFile" ]
+          (n: c.systemd.services.alloy.serviceConfig.${n} or null);
+        failed = c.systemd.services.journal-collector-failed.script or null;
+      }));
+    in {
+      hosts = lib.mapAttrs (_: h: facts h.config) hosts;
+      # the negative case: the msi-only check must see the module enabled on acer
+      seeded = facts (extend "acer-swift" [ ../modules/homelab/journal-collector.nix {
+        homelab.journalCollector = { enable = true; lokiUrl = "http://loki.example:3100/loki/api/v1/push"; };
+      } ]);
+    };
 
     runtime-host = {
       hosts = lib.genAttrs [ "msi-ms7758" "acer-swift" ] (n: runtimeFacts hosts.${n}.config // { failing = failing hosts.${n}.config; });

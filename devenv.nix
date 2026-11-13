@@ -93,7 +93,6 @@ let
     ${pkgs.python3}/bin/python scripts/test-runtime-host-role.py
   '';
 
-  # msi only: Alloy reads journald, no secret, a loopback readiness probe (eval only)
   journalCollectorTest = gate "journal-collector-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-journal-collector.py
   '';

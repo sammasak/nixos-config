@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -18,6 +18,7 @@ in
   homelab.journalCollector = {
     enable = true;
     lokiUrl = "http://10.43.92.124:3100/loki/api/v1/push";
+    ntfyUrl = config.sam.workers.ntfyUrl;
   };
 
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
