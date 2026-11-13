@@ -1,4 +1,4 @@
-"""lenovo's nix-daemon builds stay bounded (nixos-config#109), and so do the environment hosts' (acer, msi)."""
+"""lenovo's nix-daemon builds stay bounded (nixos-config#109), and so do the environment hosts' (acer, msi); lenovo's user slice has a ceiling (#353)."""
 import sys
 
 import gate_probe
@@ -32,6 +32,23 @@ check(cap is not None and measured < cap,
 ram = 15.3 * 2**30
 check(cap is not None and cap <= ram / 2,
       "MemoryMax leaves at least half of lenovo's 15.3 GiB to k3s, the agents and the desktop")
+# nixos-config#353: a client-side evaluation runs in the user slice, which the daemon cap does not hold
+user = P["userSlice"] or {}
+ucap, uswap = size(user.get("MemoryMax")), size(user.get("MemorySwapMax"))
+# measured on lenovo, peaks since boot in GiB: k3s server 3.1, pods 1.7, system.slice without a build 0.9,
+# kernel 0.6, the zram store 0.44
+control = (3.1 + 1.7 + 0.9 + 0.6 + 0.44) * 2**30
+check(ucap is not None and ucap + control <= ram,
+      f"the user ceiling ({user.get('MemoryMax')}) plus the measured control plane (6.7 GiB at its peaks) fits in lenovo's 15.3 GiB")
+# measured: the idle sessions hold at most 4.6 GiB that cannot be dropped (anon plus shmem; the rest is file
+# cache), and the largest user transient unit in a day of 829 peaked at 3.0 GiB
+idle, unit = 4.6 * 2**30, 3.0 * 2**30
+check(ucap is not None and idle + unit < ucap,
+      "the idle sessions (4.6 GiB not reclaimable) plus the largest measured unit (3.0 GiB) fit under the ceiling")
+check(ucap is not None and uswap is not None and uswap * 4 <= ucap,
+      "the slice's swap is at most a quarter of its ceiling, as in the worker pools: zram is charged to no cgroup")
+check("MemoryHigh" not in user,
+      "the user slice has no MemoryHigh: a runaway reaches the limit and is killed instead of stalling every session")
 for host in ("acer-swift", "msi-ms7758"):
     daemon = P["daemon"][host] or {}
     high, cap = size(daemon.get("MemoryHigh")), size(daemon.get("MemoryMax"))

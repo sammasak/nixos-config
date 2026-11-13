@@ -108,6 +108,16 @@ in
           );
         message = "a devTools host's Herdr user unit must carry X-SwitchMethod = keep-old, or a switch kills every agent session.";
       }
+      {
+        assertion =
+          !config.sam.profile.devTools
+          || (
+            (config.home-manager.users.${config.sam.profile.username}.systemd.user.services.herdr.Service.OOMPolicy
+              or null
+            ) == "continue"
+          );
+        message = "a devTools host's Herdr user unit must carry OOMPolicy = continue, or one kernel OOM kill stops every agent session.";
+      }
       (
         let
           inherit (config.sam.profile) devTools nativeOtel;

@@ -169,6 +169,8 @@ in
       ExecStart = "${herdrBin} server";
       Restart = "on-failure";
       RestartSec = 5;
+      # one cgroup holds every agent: a kernel OOM kill of one process must not stop the rest (default: stop)
+      OOMPolicy = "continue";
       UMask = "0077";
     };
     Install.WantedBy = [ "default.target" ];

@@ -177,6 +177,7 @@ let
         msi-ms7758 = msi;
       };
       settings = lenovo.nix.settings or null;
+      userSlice = lenovo.systemd.slices.user.sliceConfig or null;
     };
 
     delegation = {
