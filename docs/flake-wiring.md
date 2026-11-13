@@ -10,7 +10,7 @@ wave 3).
 |---|---|---|
 | P | `just parity` derives its host list and compares deploy nodes | landed with this file |
 | 0 | this document | landed |
-| 1 | `sam.profile.username` becomes an enum of `lib/users.nix` | not started (after #294) |
+| 1 | `sam.profile.username` becomes an enum of `lib/users.nix` | not started |
 | 2 | architecture stated once (`hostPlatform`) | not started |
 | 3 | one table value file `flake-modules/hosts.nix`, roles in it | not started |
 | 4 | deploy nodes derived from the table | not started |

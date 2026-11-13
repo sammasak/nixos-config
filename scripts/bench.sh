@@ -292,6 +292,7 @@ cmd_parity() {
   tree_nodes=$(attr_names . deploy.nodes)
   mapfile -t hosts < <(sort -u <<<"$base_hosts"$'\n'"$tree_hosts" | grep .)
   mapfile -t names < <(sort -u <<<"$base_hosts"$'\n'"$tree_hosts"$'\n'"$base_nodes"$'\n'"$tree_nodes" | grep .)
+  [ "${#hosts[@]}" -gt 0 ] || { echo "parity: no nixosConfigurations found" >&2; exit 1; }
   for host in "${hosts[@]}"; do
     on_both "$base_hosts" "$tree_hosts" "$host" "" || { rc=1; continue; }
     want=$(toplevel_drv "$baseref" "$host")
