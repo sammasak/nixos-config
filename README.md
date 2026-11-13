@@ -13,8 +13,8 @@ Raspberry Pis, one shared user config, built with flake-parts.
   and reboot verification.
 - [docs/factum-pilot.md](docs/factum-pilot.md): the Lenovo-only, advisory Factum CLI pilot.
 - [docs/nix-audit-pilot.md](docs/nix-audit-pilot.md): the advisory nix-audit pilot on lenovo, acer-swift and msi-ms7758.
-- [docs/flake-wiring.md](docs/flake-wiring.md): proposed decision (#292) for one
-  hosts table with the role registry kept; not yet implemented.
+- [docs/flake-wiring.md](docs/flake-wiring.md): the decision (#292, implemented)
+  for one hosts table with the role registry kept, and its implementation steps.
 
 ## Hosts
 
@@ -103,8 +103,9 @@ Unattended upgrades are off by default; a host would opt in with `system.autoUpg
 
 ## Adding a New Host
 
-`hosts/<name>/` plus an entry in `flake-modules/hosts.nix`, a deploy node, its
-known-hosts key and sops recipient (list in CLAUDE.md); full procedure
+`hosts/<name>/` plus an entry in `flake-modules/hosts.nix` (its deploy node
+follows), the `just deploy` pattern, its known-hosts key and sops recipient
+(list in CLAUDE.md); full procedure
 (including SOPS recipients) in `~/knowledge/homelab/runbooks/add-new-host.md`.
 
 ## Adding a New Service (Modular)

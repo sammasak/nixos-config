@@ -13,8 +13,8 @@
 - `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
 - `60-templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
 - `64-rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
-- `70-deploy.nix` — deploy-rs push targets
-- `hosts.nix`: the hosts table (roles, `hostDir`)
+- `70-deploy.nix`: deploy-rs push targets, one node per hosts table entry
+- `hosts.nix`: the hosts table (roles, `hostDir`, `deploy.hostname`, `deploy.remoteBuild`)
 
 ### Module Registry (`20-module-registry.nix`)
 
@@ -35,7 +35,7 @@ Each host has three files in `hosts/<name>/`:
 | `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
 | `hardware-configuration.nix` | Auto-generated hardware scan |
 
-The wiring: `flake-modules/hosts.nix` declares each host as a typed `configurations.nixos.<name>` entry (option in `30-configurations-options.nix`): its roles, and `hostDir` where the directory differs from the name. Then `40-outputs-nixos.nix` resolves roles to modules, sets `sam.profile.roles` from the entry, injects Stylix/SOPS/Home Manager/disko and `modules/workers`, and produces the final `nixosConfigurations.<name>`.
+The wiring: `flake-modules/hosts.nix` declares each host as a typed `configurations.nixos.<name>` entry (option in `30-configurations-options.nix`): its roles, `hostDir` where the directory differs from the name, `deploy.hostname` where it differs from the name, and the required `deploy.remoteBuild` (no default: a host without it fails evaluation). Then `40-outputs-nixos.nix` resolves roles to modules, sets `sam.profile.roles` from the entry, injects Stylix/SOPS/Home Manager/disko and `modules/workers`, and produces the final `nixosConfigurations.<name>`; `70-deploy.nix` maps every entry to `deploy.nodes.<name>`, with the fleet-wide ssh and rollback settings and `remoteBuild` only when true.
 
 ### Desktop vs Server Mode
 

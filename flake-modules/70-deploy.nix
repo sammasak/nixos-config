@@ -1,7 +1,4 @@
-# deploy-rs push targets. lenovo's hostname is localhost: deploy-rs is only
-# ever invoked from lenovo itself, so lenovo's own deploy is a loopback
-# self-push, used to prove the sudo/magic-rollback path before it is ever
-# trusted against acer-swift, which has no BMC.
+# deploy-rs push targets: one node per hosts-table entry; hostname and remoteBuild come from hosts.nix.
 { config, inputs, lib, ... }:
 let
   # activate-rs runs on the target. patched: serokell/deploy-rs#412, tracking #297; drop the
@@ -47,36 +44,23 @@ let
   };
 
   mkNode =
-    name: profile:
+    name:
+    { deploy, ... }:
     let
       host = config.flake.nixosConfigurations.${name};
     in
     {
-      hostname = name;
+      inherit (deploy) hostname;
       # the pinned key or nothing (modules/core/ssh-known-hosts.nix): no first-use trust from the deployer either
       sshOpts = [ "-o" "StrictHostKeyChecking=yes" ];
-      profiles.system = pushAs // { path = activateFor.${host.pkgs.stdenv.hostPlatform.system}.nixos host; } // profile;
+      profiles.system =
+        pushAs
+        // { path = activateFor.${host.pkgs.stdenv.hostPlatform.system}.nixos host; }
+        // lib.optionalAttrs deploy.remoteBuild { remoteBuild = true; };
     };
 in
 {
-  flake.deploy.nodes = {
-    lenovo = mkNode "lenovo" { } // { hostname = "localhost"; };
-
-    # True: lenovo, memory-constrained, has crashed building these closures; acer's
-    # build I/O mid-deploy is the lesser risk to the cluster.
-    acer-swift = mkNode "acer-swift" { remoteBuild = true; };
-
-    # True for the same reason; only reachable in its Mon-Fri ~09:00-21:00 power window.
-    msi-ms7758 = mkNode "msi-ms7758" { remoteBuild = true; };
-
-    # True, unlike acer: lenovo has no aarch64 builder, so the Pi builds its
-    # own closure (untrusted lukas is enough: .drv and sources are CA paths).
-    black-pi = mkNode "black-pi" { remoteBuild = true; };
-
-    # True for the same no-aarch64-builder reason; rf-lab keeps the closure
-    # to cache hits plus text/symlink derivations, so 1 GiB is enough.
-    naked-pi = mkNode "naked-pi" { remoteBuild = true; };
-  };
+  flake.deploy.nodes = lib.mapAttrs mkNode config.configurations.nixos;
 
   perSystem =
     { system, ... }:
