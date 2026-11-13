@@ -129,6 +129,10 @@ let
     ${pkgs.python3}/bin/python scripts/test-native-otel-rollback.py
   '';
 
+  qaPushTest = gate "qa-push-test" (with pkgs; [ python3 git coreutils gnugrep bash ]) ''
+    ${pkgs.python3}/bin/python scripts/test-qa-push.py
+  '';
+
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
   lints = [ lintComments lintShell ];
@@ -147,7 +151,7 @@ let
     echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
     ${timed [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
-      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest switchSafetyTest rfBeaconsTest
+      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest switchSafetyTest rfBeaconsTest qaPushTest
     ]}
   '';
 
@@ -175,7 +179,7 @@ let
     # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
     docs_only() {
       local changed
-      changed=$(git diff --no-renames --name-only "$1" HEAD) \
+      changed=$(git diff --no-renames --name-only "$1" HEAD --) \
         && ! grep -qvE '^docs/|^[^/]+\.md$' <<<"$changed" && ! grep -rqF -f - --include='test-*' scripts <<<"$changed"
     }
     # Two pushes trimming at once can lose a line: a step time, or a record, which only costs a full gate.
@@ -194,7 +198,7 @@ let
       if [ "$with" = "$gate" ] && [[ $passed =~ ^[0-9a-f]{40,64}$ ]] \
         && { [ "$passed" = "$this" ] || docs_only "$passed" 2>/dev/null; }; then
         echo "nixos-qa: $(git rev-parse --short HEAD) is tree ''${passed:0:12} green under this gate and generation, or that plus documentation: lints only"
-        ${run lints}
+        { ${run lints}; } </dev/null
         exit
       fi
     done < <(tail -n 50 "$green" 2>/dev/null || true)
@@ -435,6 +439,7 @@ in
     "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" = task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
+    "nixos:qa-push-test" = task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit" qaPushTest;
     "nixos:rf-lab-boundary-test" = task "#42: no host but naked-pi imports rf-lab or carries an rf-* unit (naked-pi's own bounds are role assertions)" rfLabBoundaryTest;
     "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
     "nixos:journal-collector-test" = task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;

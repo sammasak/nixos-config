@@ -21,7 +21,7 @@ devenv tasks run nixos:flake-check  # nix flake check --all-systems: builds ever
 #               unless a scripts/test-* file names one of the changed files; also lints only for a tree
 #               already green here under the same gate and system generation, or it plus such docs;
 #               deleting nixos-qa-green in the common git dir forces the full gate.
-#               scripts/test-qa-push.py tests the hook without Nix).
+#               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 # Or manually verify specific host:

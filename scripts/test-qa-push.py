@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory() as t:
     (t / "gen1").mkdir(), (t / "gen2").mkdir()
     gen.symlink_to(t / "gen1")
     lints = t / "lints"
-    lints.write_text(f'#!/usr/bin/env bash\necho LINTS >> "{log}"\n')
+    lints.write_text(f'#!/usr/bin/env bash\necho LINTS >> "{log}"\ncat >> "{t}/lint-stdin"\nexit "${{LINT_RC:-0}}"\n')
     gates = {}
     for name in ("qa", "qa-other"):
         qa = t / name
@@ -56,7 +56,8 @@ with tempfile.TemporaryDirectory() as t:
     for f in (lints, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("GIT_", "PRE_COMMIT_")) and k not in ("NIXOS_QA_TIMES", "GATE_PROBE")}
     env.update(HOME=str(t), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
                GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
     repo, bare = t / "repo", t / "bare.git"
@@ -75,7 +76,7 @@ with tempfile.TemporaryDirectory() as t:
     def gate(rev, which="qa", **extra):
         log.write_text("")
         r = subprocess.run([str(gates[which])], cwd=repo, env={**env, "PRE_COMMIT_TO_REF": rev, **extra},
-                           capture_output=True, text=True)
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True)
         seen = log.read_text().split()
         verdict = "FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"] else f"?{seen}"
         return verdict if r.returncode == 0 else f"{verdict}(rc={r.returncode})", r.stderr
@@ -88,7 +89,7 @@ with tempfile.TemporaryDirectory() as t:
     git("init", "-q", "--bare", "-b", "main", str(bare), cwd=t)
     git("init", "-q", "-b", "main", str(repo), cwd=t)
     git("remote", "add", "origin", str(bare))
-    base = commit({"flake.nix": "1\n", "README.md": "r\n", "docs/a.md": "a\n", "docs/keys.md": "k\n",
+    base = commit({"flake.nix": "1\n", "NOTES.md": "r\n", "docs/a.md": "a\n", "docs/keys.md": "k\n",
                    "scripts/test-keys.py": "open('docs/keys.md')\n", "modules/x/notes.md": "n\n"}, "base")
     git("push", "-q", "origin", "main")
     git("fetch", "-q", "origin")
@@ -118,6 +119,26 @@ with tempfile.TemporaryDirectory() as t:
     case("J same tree, host generation switched", h, "FULL")
     gen.unlink(), gen.symlink_to(t / "gen1")
     case("J2 same tree, generation back", h, "LINTS")
+    case("LF a failing lint on the lints-only path of a recorded tree fails the push", h, "LINTS(rc=1)", LINT_RC="1")
+    tree_h = git("rev-parse", "HEAD^{tree}")
+    green.write_text(f"{tree_h} {t / 'qa'} {t / 'gen1'}")
+    case("NL a record whose last line has no newline is not read", h, "FULL")
+    case("NL2 the record appended to it is fused with that line", h, "FULL")
+    case("NL3 the next record stands on its own line", h, "LINTS")
+    green.write_text(green.read_text() + f"{'1' * 40} {t / 'qa'} {t / 'gen1'}\n")
+    (t / "lint-stdin").write_text("")
+    case("IN a match above other records", h, "LINTS")
+    check((t / "lint-stdin").read_text() == "", "IN the lints do not read the rest of the record file")
+
+    def change(what, act, want):
+        act()
+        git("add", "-A")
+        git("commit", "-qm", what)
+        case(what, git("rev-parse", "HEAD"), want)
+
+    change("MD a mode-only change under docs/ on top of a recorded tree", lambda: (repo / "docs/a.md").chmod(0o755), "LINTS")
+    change("SD a symlink under docs/ to code, on top of a recorded tree", lambda: (repo / "docs/code").symlink_to("../flake.nix"), "LINTS")
+    change("MC a mode-only change to code", lambda: (repo / "flake.nix").chmod(0o755), "FULL")
     p = commit({"flake.nix": "5\n"}, "code 4")
     case("P a green run during which the generation switched", p, "FULL", QA_SWITCH=str(t / "gen2"))
     gen.unlink(), gen.symlink_to(t / "gen1")
@@ -153,6 +174,11 @@ with tempfile.TemporaryDirectory() as t:
     l_rev = git("rev-parse", "origin/main")
     green.unlink()
     case("L a branch equal to origin/main, nothing recorded", l_rev, "FULL")
+    git("switch", "-qc", "docs-main", base)
+    change("MDm a mode-only change under docs/ since origin/main", lambda: (repo / "docs/a.md").chmod(0o755), "LINTS")
+    change("SDm a symlink under docs/ to code since origin/main", lambda: (repo / "docs/code").symlink_to("../flake.nix"), "LINTS")
+    case("LFm a failing lint on the origin/main docs-only path fails the push", git("rev-parse", "HEAD"), "LINTS(rc=1)", LINT_RC="1")
+    git("switch", "-q", "main")
 
     hooks = t / "hooks"
     hooks.mkdir()
