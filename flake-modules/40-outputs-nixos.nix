@@ -2,9 +2,9 @@
 let
   users = import ../lib/users.nix;
 
-  # Home Manager as every host gets it; a worker container (modules/workers) reuses it under host name "worker".
+  # Home Manager as every host gets it; a worker container (modules/workers) reuses it.
   fleetHome =
-    host: os:
+    os:
     {
       home-manager = {
         useGlobalPkgs = true;
@@ -28,10 +28,10 @@ let
         ++ lib.optionals os.config.sam.profile.pi [
           (import ../modules/programs/cli/pi inputs.devenv-platform)
         ]
-        ++ lib.optionals (host == "lenovo") [
-          ../modules/programs/cli/factum-lenovo.nix
+        ++ lib.optionals os.config.sam.cliTools.factum.enable [
+          ../modules/programs/cli/factum.nix
         ]
-        ++ lib.optionals (lib.elem host [ "lenovo" "acer-swift" "msi-ms7758" ]) [
+        ++ lib.optionals os.config.sam.cliTools.nixAudit.enable [
           ../modules/programs/cli/nix-audit.nix
         ];
         users.${os.config.sam.profile.username} =
@@ -41,25 +41,23 @@ let
     };
 
   # Every host's modules after its configuration and roles; the runtime-host VM test (52-runtime-host-vm-test.nix) reuses them.
-  fleetModules =
-    name:
-    [
-      inputs.stylix.nixosModules.stylix
-      inputs.sops-nix.nixosModules.sops
-      inputs.home-manager.nixosModules.home-manager
-      inputs.disko.nixosModules.disko
-      ../modules/workers
-      (os: {
-        nixpkgs.overlays = [
-          config.flake.overlays.default
-          # pkgs.nur.*: keeps modules on plain pkgs, no specialArgs.
-          inputs.nur.overlays.default
-        ];
-        sam.userConfig = users.${os.config.sam.profile.username};
-        sam.workers.guestModules = [ inputs.home-manager.nixosModules.home-manager (fleetHome "worker") ];
-      })
-      (fleetHome name)
-    ];
+  fleetModules = [
+    inputs.stylix.nixosModules.stylix
+    inputs.sops-nix.nixosModules.sops
+    inputs.home-manager.nixosModules.home-manager
+    inputs.disko.nixosModules.disko
+    ../modules/workers
+    (os: {
+      nixpkgs.overlays = [
+        config.flake.overlays.default
+        # pkgs.nur.*: keeps modules on plain pkgs, no specialArgs.
+        inputs.nur.overlays.default
+      ];
+      sam.userConfig = users.${os.config.sam.profile.username};
+      sam.workers.guestModules = [ inputs.home-manager.nixosModules.home-manager fleetHome ];
+    })
+    fleetHome
+  ];
 
   mkNixosDistribution =
     name:
@@ -96,7 +94,7 @@ let
           })
         ]
         ++ roleModules
-        ++ fleetModules name;
+        ++ fleetModules;
     };
 in
 {

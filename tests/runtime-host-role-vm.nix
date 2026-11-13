@@ -18,12 +18,13 @@ let
       { lib, ... }:
       {
         # msi's roles minus homelab-agent: no k3s, whose server is lenovo.
-        imports = roleModules ++ fleetModules vars.hostname;
+        imports = roleModules ++ fleetModules;
         sam.profile = vars // {
           inherit roles;
           # The relay needs msi's native_otlp_auth secret.
           nativeOtel = false;
         };
+        sam.cliTools.nixAudit.enable = true;
         # Stubs for state a VM lacks: the host key the secrets are encrypted to, and an NTP
         # server, without which systemd-time-wait-sync never finishes (nixos:runtime-host-test checks it is wanted).
         sam.hostSecrets.enable = lib.mkForce false;

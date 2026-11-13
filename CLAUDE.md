@@ -249,7 +249,7 @@ either side is only reported.
   its deploy-rs node follows from the entry;
 - the `just deploy` HOST pattern (checked by `scripts/test-ssh-known-hosts.py`);
 - its pinned key in `modules/core/ssh-known-hosts.nix` and its sops recipient;
-- optionally the `fleetHome` host-name lists in `40-outputs-nixos.nix`.
+- optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`.
 
 `just parity` picks the host up on its own. Full procedure:
 `~/knowledge/homelab/runbooks/add-new-host.md`.

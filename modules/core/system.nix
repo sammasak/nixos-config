@@ -230,6 +230,18 @@ in
       };
     };
 
+    # Not under sam.profile: a developer environment's guest copies its host's profile (modules/workers).
+    cliTools.factum.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Install factum for the user (Home Manager).";
+    };
+    cliTools.nixAudit.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Install nix-audit, grype and vulnix for the user (Home Manager; docs/nix-audit-pilot.md).";
+    };
+
     userConfig = mkOption {
       type = types.attrs;
       default = { };

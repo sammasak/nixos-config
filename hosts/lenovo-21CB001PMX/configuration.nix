@@ -19,6 +19,8 @@ in
   sam.profile = vars;
   sam.hostSecrets.enable = true;
   sam.storeCache.enable = true;
+  sam.cliTools.factum.enable = true;
+  sam.cliTools.nixAudit.enable = true;
   # First host on the shunt hooks (CLAUDE.md, Bulk reader); rollback: false, or SHUNT_DISABLE=1.
   sam.claude.bulkReader.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [
