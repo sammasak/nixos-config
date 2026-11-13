@@ -10,7 +10,7 @@ lifecycle, permissions, store options tried). This file is the verdict against t
 | msi and acer reboot and work as nspawn hosts | Met | Both use the same runtime-host role: headless, maintenance off the boot path. msi, measured: container autostarts 6 to 7 s into userspace, agent back in Herdr at 14 to 15 s and resumes its conversation. acer, two reboots on 2026-11-12 with one environment declared, from the host journal: container start at 6.8 s, container and its session surface up at 15.0 and 15.2 s, k3s started alongside at 13.6 s, host startup finished at 51 s; the environment then worked for 29 minutes until it was retired. A guest that never gets ready is retried 3 times in 10 min, then stays failed instead of wedging the next deploy (#263, seen live on msi). |
 | Guests use the host nix store, instant access | Met, with a known floor | Store is the host's, read-only bind, builds through the host daemon. Clone 3 to 6 s. Fresh clone of a seen commit: 6 s (factum), 17.6 s (herman), per-checkout evaluation plus 1 to 4 s of small builds. Warm shell under 1 s. A package no public cache has: 71 s on msi, 2.7 s in an acer environment afterwards over the LAN cache. |
 | Lifecycle | Met, one step unobserved | Declare, deploy (37 s), work, resize live, stop, retire (home to trash for a week). Removing a declaration never deletes a home; only `retired` does. Declaring the first and retiring the last environment no longer restarts NetworkManager (#267, checked both directions on acer). The deletion from trash after a week has not been observed, see "Not yet verified". |
-| Resources, burstable | Met | Per environment `MemoryLow` reserve, pool-level limit and swap. One environment alone reached 10.06G of a 10G pool with 4.6G in swap, no kill. A 17G runaway lost only that process; neighbour kept its 1.5G. cargo build of factum on msi: 65 s, 4.7G peak, zero throttle or OOM events. |
+| Resources, burstable | Met | Per environment `MemoryLow` reserve, pool-level limit and swap. One environment alone reached 10.06G of a 10G pool with 4.6G in swap, no kill. A 17G runaway lost only that process; neighbour kept its 1.5G. cargo build of factum on msi: 65 s, 4.7G peak, zero throttle or OOM events. Burst and runaway on msi: see Verified on msi, 2026-11-13. |
 | Agents never blocked on a permission prompt, own their environment | Met | `rootInGuest`: guest root is an unprivileged host uid range, passwordless sudo inside (#258). Agents start in bypassPermissions. A full dogfood run (clone, devenv shell, cargo build) hit no prompt. |
 | Dogfood | Met | The module changes from #258 on were written, gated and pushed from environments on acer or msi, briefed from lenovo through Herdr. Each environment was retired after its work landed. On 2026-11-12/13 up to two environments at once ran the pin-set rollout (platform, herman, factum gates and pushes) and a build/test timing study. Finding: acer's 8 cores take one heavy job at a time; two concurrent gate runs caused a herman test timeout (240 s nextest limit). Plan for build/test reuse: devenv-platform #129 (not approved yet). |
 | Lean | Met for now | #265 dropped three unused options and duplicate test cases. Two store designs and one cache seed were built, measured and left unmerged rather than carried. Module total: core 736, adapter 367, nested sandbox 91, role 61, store cache 62 lines. |
@@ -86,7 +86,9 @@ SSH key once a repo is listed.
 - Telemetry: environments on acer can send Claude telemetry through the host's native OTLP relay (#274, option
   `telemetry = true` on an instance). Checked end to end with one throwaway environment (Loki lines labelled with
   host and worker), then retired. msi was deployed from main 3df3714 on 2026-11-13 with the relay active; POSTs to
-  its local /v1/logs and /v1/metrics returned 200. No environment on msi has been traced to Loki end to end yet.
+  its local /v1/logs and /v1/metrics returned 200. Environment b1 on msi (`telemetry = true`) was traced end to
+  end on 2026-11-13: its Claude events (api_request, tool_decision, tool_result) arrived in Loki with host_name
+  msi-ms7758 and attribute worker = b1; b2, without the option, sent none.
 
 ## Not yet verified
 
@@ -110,6 +112,14 @@ host. First possible check: after 2026-11-19 on acer, `sudo ls /var/lib/workers/
   shell on msi was filled from the fleet cache on acer.
 - Cold `cargo check --workspace --all-targets` of factum: 35.4 s. Container memory peak 2.70G before, 3.25G
   after; memory.max and memory.high read `max` inside; memory.events and cpu throttling all zero, no OOM kill.
+- Burst near the limit, current module (pool MemoryMax 10G, pool swap 2.5G, MemoryLow 2G per environment, no
+  per-environment max): with a neighbour (b2) holding 1.5G, b1 allocated 9G. The pool sat at its 10.24G limit for
+  55 s, b1 at 8.7G resident plus 1.8G swap; the allocation finished with exit 0, no OOM kill (pool memory.events:
+  max 10996, oom 0, oom_kill 0). The neighbour was not killed but about 0.7G of its 1.5G was swapped out while the
+  pool was full (5 `low` events), although it was under its 2G reserve; its process kept running.
+- Runaway: a 14G allocation in b1 was OOM killed at about 10G (exit 137; pool oom_kill 1, the kernel log names only
+  that process, constraint memcg /environments.slice). Both containers stayed active with zero restarts, both
+  agents stayed up, the neighbour process survived, zero failed units on the host.
 - m1 is added to msi's `retired` list in the same change as this entry.
 
 ## Open items outside this module
