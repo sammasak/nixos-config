@@ -20,6 +20,7 @@ let
           (import ../modules/programs/cli/codex/default.nix inputs.skills)
           ../modules/programs/cli/coordinator-wakeup.nix
         ]
+        # same rule as nativeOtel in codex/default.nix; keep the two in step
         ++ lib.optionals (os.config.sam.profile.nativeOtel || os.config.sam.claude.telemetry.enable) [
           ../modules/programs/cli/native-otel.nix
         ]
