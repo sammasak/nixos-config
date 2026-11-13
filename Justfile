@@ -56,6 +56,34 @@ deploy HOST:
     git merge-base --is-ancestor HEAD origin/main || echo "WARNING: HEAD is not on origin/main (local ref); its flake check may never have run" >&2
     systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks
 
+# What `just deploy HOST` would do, without activating it: deploy-rs's
+# --dry-activate runs `switch-to-configuration dry-activate` from the store
+# path (no profile change, no confirmation wait, so none of magic rollback's
+# paths), then the closure diff against the running system. One flag on the
+# exact deploy path: same node list, ssh options and build placement; `just
+# diff` only sees lenovo. Read the output: deploy-rs ignores the dry activation's
+# exit status, so exit 0 and "Completed dry-activate!" prove nothing. Not side
+# effect free: the full build runs where a deploy builds (acer and the Pis on
+# themselves, lenovo in nix-daemon outside the cap), the closure stays on the
+# target without a GC root, and root runs the pre-switch checks and the dry
+# activation scripts, through the same deploy-user sudo as a deploy. Not a
+# guarantee: nothing is started, so a unit that would fail is not shown, and
+# units an activation script restarts are only partly predicted.
+[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
+[doc("Show the units a deploy of HOST would stop, restart, reload or start, and its closure diff")]
+dry-activate HOST:
+    systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks --dry-activate
+    top=$(systemd-run --user --scope -q {{memcap}} nix eval --raw .#nixosConfigurations.{{HOST}}.config.system.build.toplevel.outPath) && \
+      ssh -o StrictHostKeyChecking=yes "deploy@$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname)" nix store diff-closures /run/current-system "$top"
+
+# Boot the runtime-host role in QEMU (tests/runtime-host-role-vm.nix); BREAK=1
+# runs the copy with Home Manager's activation broken, which must fail. A
+# host-sized build: msi only, not lenovo (memory) nor acer (the only general worker).
+[doc("Build and run the runtime-host role VM test (msi only); BREAK=1 must fail")]
+role-vm-test BREAK="":
+    [ "$(uname -n)" = msi-ms7758 ] || { echo "role-vm-test: run it on msi-ms7758, not $(uname -n)" >&2; exit 1; }
+    nix build -L --no-link .#runtime-host-role-vm{{ if BREAK == "" { "" } else { ".broken" } }}
+
 # ── Configuration Verification ────────────────────────────────────────
 
 # QA gates live in devenv.nix as tasks; the git hooks run the same ones.
@@ -95,8 +123,9 @@ bench-diff:
 # not fail the build gates. Runs under `capped`: needs a user systemd manager and
 # does not inherit the caller's environment (no SSH agent, no NIX_CONFIG). The tree
 # side sees tracked files incl. uncommitted edits, not untracked ones. Non-zero if
-# any host moved.
-[doc("Compare the five host derivations at BASE (default: merge base with origin/main) with the working tree")]
+# any host toplevel or deploy node moved, was added or was removed, or any deploy
+# setting outside nodes moved.
+[doc("Compare every host's toplevel, deploy node and deploy settings at BASE (default: merge base with origin/main) with the working tree")]
 parity BASE="":
     {{capped}} bash scripts/bench.sh parity {{quote(BASE)}}
 

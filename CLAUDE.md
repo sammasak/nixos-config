@@ -36,11 +36,17 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 # --skip-checks under a 7G, no-swap cap on the deploy-rs client. The pre-push gate runs the
 # flake check on pushed non-docs commits; a dirty or unpushed tree deploys unchecked (it warns).
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
+#   then on the target: `systemctl is-system-running` = running, and `readlink /run/current-system`
+#   = `dirname "$(readlink -f /nix/var/nix/profiles/system/init)"`
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only
+just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
+                              # and the closure diff vs the running system; activates nothing, but read
+                              # the output: it exits 0 even when the dry activation fails
+just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); BREAK=1 must fail
 ```
 
 Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
@@ -55,7 +61,7 @@ only needed when targeting the other machine.
 
 `flake.nix` imports every file under `flake-modules/` (import-tree; the number
 prefixes set no order); `modules/roles|home/*.nix` auto-register; hosts are 3 files under
-`hosts/<name>/` wired by `flake-modules/hosts/<name>.nix`; all host metadata
+`hosts/<name>/` wired by an entry (roles included) in `flake-modules/hosts.nix`; all host metadata
 flows through the strict `sam.profile` submodule (unknown fields are build
 errors) and GUI-ness keys off `sam.desktop.enable` alone. Full detail:
 `docs/architecture.md` (profile field table, registry, desktop
@@ -209,10 +215,14 @@ shapes, across `.nix` and `.sh` alike). `''` string bodies are out of scope —
 editing one moves the derivation and breaks `just parity`. Exemplar comments,
 the `''`-string rationale, and measurement mechanics:
 `~/knowledge/nix/comment-policy-notes.md`.
-`just parity [BASE]` evaluates all five hosts' toplevel drvPaths at BASE (default
-the merge base with origin/main) and in the working tree (tracked files incl.
-uncommitted edits, not untracked ones), one host at a time, and exits non-zero
-if any moved or any evaluation failed.
+`just parity [BASE]` evaluates every host's toplevel drvPath and deploy-rs node
+(as JSON, profile paths as drvPaths), plus `deploy` minus `nodes`, at BASE (default the merge base with
+origin/main) and in the working tree (tracked files incl. uncommitted edits, not
+untracked ones), one evaluation at a time. Hosts and nodes are the union of
+`nixosConfigurations` and `deploy.nodes` names on both sides; one on one side only
+is reported ADDED or REMOVED without being evaluated. It exits non-zero if anything
+moved, was added or removed, or any evaluation failed; a host with no node on
+either side is only reported.
 
 ## Conventions
 
@@ -232,9 +242,16 @@ if any moved or any evaluation failed.
 
 ## Adding a New Host
 
-`hosts/<name>/` (variables + configuration + hardware scan) plus
-`flake-modules/hosts/<name>.nix`; the registry auto-discovers the rest.
-Full procedure: `~/knowledge/homelab/runbooks/add-new-host.md`.
+- `hosts/<dir>/` (variables + configuration + hardware scan);
+- an entry with its roles in `flake-modules/hosts.nix` (`hostDir` defaults to
+  the entry name);
+- its deploy node in `flake-modules/70-deploy.nix` and the `just deploy` HOST
+  pattern (checked by `scripts/test-ssh-known-hosts.py`);
+- its pinned key in `modules/core/ssh-known-hosts.nix` and its sops recipient;
+- optionally the `fleetHome` host-name lists in `40-outputs-nixos.nix`.
+
+`just parity` picks the host up on its own. Full procedure:
+`~/knowledge/homelab/runbooks/add-new-host.md`.
 
 ## Further Documentation
 

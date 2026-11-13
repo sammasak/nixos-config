@@ -117,11 +117,11 @@ migration adds it.
 | Desired state per host | `nixosConfigurations.<host>` in one flake; a service is enabled per host in that host's `configuration.nix` | present |
 | Reproducible builds | flake lock; x86 hosts substitute from the signed harmonia caches, the Pis build their own closures | present |
 | Quality gates | pre-push `nixos:qa` on the pushed commit (flake check plus the Python gates), run off lenovo; one `scripts/test-<name>.py` per new module | present; test per module built for P1 |
-| Trigger and approval | merge to main, then an explicit `just deploy HOST` that the owner approves. **Exception: acer.** Its weekly `system.autoUpgrade` (Sunday 06:00) switches to whatever main holds, with no health gate, no rollback, and no failure notice on a headless host | present; see gap 2 |
+| Trigger and approval | merge to main, then an explicit `just deploy HOST` that the owner approves; no host upgrades itself (acer's weekly `system.autoUpgrade` is off since #300) | present |
 | Rollout order | one host at a time, least critical first: msi, black-pi, acer, lenovo | convention |
 | Activation safety | deploy-rs `magicRollback`: a host that cannot be reached after activation reverts | present |
 | Service health | `services.alloy` and most upstream units are `Type=simple`, so each module adds an `ExecStartPost` probe of the service's own local ready endpoint with a start timeout, the upstream restart policy with a slower `RestartSec` and a start limit, and `OnFailure=` to ntfy. A unit that fails its probe fails the activation and so the whole host deploy; the probe therefore never tests anything remote (a collector must not fail a deploy because Loki is away) | built for P1 |
-| Rollback on a failed unit | deploy-rs `autoRollback` | present but **unverified**, see gap 1 |
+| Rollback on a failed unit | deploy-rs `autoRollback` | present on x86 (rehearsed on msi, #324); the Pis are still exposed, see gap 1 |
 | End-to-end check | after every deploy: `systemctl is-system-running`, the generation link, and the service's user-visible check (a log line queryable in Loki, a test page arriving on the phone) | to build, as a checklist in each issue |
 | Secrets | sops-nix with per-host age keys; adding a recipient is an owner step. The first three steps need no new secret | present |
 | Persistent state | a fixed directory under `/var/lib/<service>` on a named host, with a backup job declared in the same module | to build, see gap 3 |
@@ -189,7 +189,7 @@ What this changes, and what must be rehearsed before the first stateful move:
 | comin (pull, closest to Flux) | not now | no automatic rollback or health check; every host evaluates the flake, including the Pis; pre-1.0. Reopen if hosts regularly miss deploys because they were asleep or unreachable |
 | devenv machines | not now | exists since devenv 2.4.0 with a target-side watchdog and a health check, the best safety model of the push tools. Experimental; needs root SSH where this fleet forbids root login (devenv #3242); takes modules, not the existing flake hosts (#3226); the target cannot substitute from harmonia (#3342); requires a disko input; one shell health check per machine. Reopen when it deploys existing flake hosts over a non-root login and leaves experimental status |
 | Colmena | no | no rollback; nothing deploy-rs lacks that is needed here |
-| `system.autoUpgrade` as the pull path | no | no health gate; today's acer use is a gap, not a model |
+| `system.autoUpgrade` as the pull path | no | no health gate; acer's former use was a gap, not a model |
 | lenovo's `nixos-rebuild-trigger` | keep, do not generalise | it rebuilds lenovo at a pinned commit with a health gate on request from the cluster. Extending it to other hosts would be writing a deploy controller |
 | Clan, Nomad, selfhostblocks | no | a framework or a scheduler to adopt whole |
 | nixpkgs modular services | wait | upstream but still in development (nixpkgs #428084) |
@@ -207,7 +207,7 @@ ordered across hosts by hand. Pull would add convergence for sleeping hosts
 | Drift correction | Nix-managed files cannot drift and a switch re-asserts them; data under `/var` can | low |
 | `dependsOn` | systemd ordering on one host; deploy order across hosts | low: dependent services share a host |
 | Health checks with timeout | readiness probe plus deploy-rs confirmation | yes: to build per service |
-| Automatic remediation | rollback on failed activation | yes: unverified, gap 1 |
+| Automatic remediation | rollback on failed activation | yes on x86, rehearsed; Pis pending, gap 1 |
 | SOPS decryption | sops-nix | direct |
 | Notifications | none configured in Flux today; `OnFailure=` to ntfy | same or better |
 
@@ -233,22 +233,19 @@ discovery (replaced by a declared scrape target).
 
 ### Gaps to close, in order
 
-1. **deploy-rs rollback under a failing unit.** Upstream issue
-   serokell/deploy-rs #411: since PR #373 a failed activation can leave the
-   target on the failed generation while the client reports a rollback. The
-   flake pins 45ba3f8, 11 commits after #373, so every deploy today is
-   exposed. The fix (PR #412) is open. #390 (a lock left behind after a failed
-   rollback) is also open. Until fixed, every deploy ends with the end-to-end
-   check above. A rehearsal on msi with a unit that fails on purpose records
-   what this pin does; if it reproduces the bug, pin the fix branch or wait.
-2. **acer upgrades itself from main.** Anything merged that changes acer's
-   configuration goes live within a week, out of order and ungated. Until this
-   is changed, every commit that changes what a moved service does on acer
-   (enabling it, or later repointing it) is merged only together with the
-   owner's approval of the acer deploy, and deployed the same day.
-   The proposed change is to turn acer's automatic upgrade off like the other
-   hosts; it alters deploy behaviour, so it is the owner's decision and is
-   coordinated with the nixos-config modernization work.
+1. **deploy-rs rollback under a failing unit.** Closed for x86 by #324:
+   upstream issue serokell/deploy-rs #411 (a failed activation left the
+   target on the failed generation while the client reported a rollback) was
+   reproduced on msi, and the flake now carries the upstream fix (PR #412) as
+   a patch on the pin; the same rehearsal then restored the previous
+   generation. The Pis still use the unpatched cached binary until a patched
+   aarch64 build is evidenced, and the connectivity rollback is unexercised,
+   so every deploy still ends with the end-to-end check above (#297).
+2. **acer upgraded itself from main.** Closed by #300: acer's
+   `system.autoUpgrade` is off and a gate test asserts it. Until that change
+   is deployed to acer, the running timer still switches to main weekly, so
+   the old rule holds: a commit that changes a moved service on acer merges
+   only with the owner's approval of the acer deploy, deployed the same day.
 3. **Backups.** No tooling exists beyond Postgres dumps and a local k3s
    datastore snapshot. A stateful service does not move until its module
    declares an off-host backup with a rehearsed restore, or the owner accepts

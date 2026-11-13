@@ -14,7 +14,7 @@
 - `60-templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
 - `64-rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
 - `70-deploy.nix` — deploy-rs push targets
-- `hosts/<name>.nix` — per-host distribution declarations
+- `hosts.nix`: the hosts table (roles, `hostDir`)
 
 ### Module Registry (`20-module-registry.nix`)
 
@@ -31,11 +31,11 @@ Each host has three files in `hosts/<name>/`:
 
 | File | Purpose |
 |------|---------|
-| `variables.nix` | Plain attrset of host-specific choices (username, roles, etc.) |
+| `variables.nix` | Plain attrset of host-specific choices (username, feature flags, etc.) |
 | `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
 | `hardware-configuration.nix` | Auto-generated hardware scan |
 
-The wiring: `flake-modules/hosts/<name>.nix` reads `variables.nix` and creates a typed `configurations.nixos.<name>` declaration. Then `40-outputs-nixos.nix` resolves roles to modules, injects Stylix/SOPS/Home Manager/disko and `modules/workers`, and produces the final `nixosConfigurations.<name>`.
+The wiring: `flake-modules/hosts.nix` declares each host as a typed `configurations.nixos.<name>` entry (option in `30-configurations-options.nix`): its roles, and `hostDir` where the directory differs from the name. Then `40-outputs-nixos.nix` resolves roles to modules, sets `sam.profile.roles` from the entry, injects Stylix/SOPS/Home Manager/disko and `modules/workers`, and produces the final `nixosConfigurations.<name>`.
 
 ### Desktop vs Server Mode
 
@@ -76,10 +76,10 @@ Defined in `modules/core/system.nix`. All host metadata lives in `config.sam.pro
 
 **Available fields** (the submodule is strict — anything not listed here is a
 build error if a `variables.nix` sets it):
-- `username` (str) — Primary user account
+- `username` (one of the users in `lib/users.nix`): primary user account
 - `hostname` (str) — System hostname
 - `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str): localisation; default to the fleet values (Europe/Stockholm, en_US.UTF-8, se, "", sv-latin1), set only to differ
-- `roles` (list of str) — Enabled roles from `modules/roles/`
+- `roles` (list of str): enabled roles from `modules/roles/`, set from the host's entry in `flake-modules/hosts.nix`, not in `variables.nix`
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets
 - `nativeOtel` (bool, default false): native harness telemetry through the local relay (docs/native-otel-canary.md)
@@ -97,7 +97,7 @@ Boundary rule in Conventions.
 
 ### Roles (`modules/roles/`)
 
-Composable role modules assigned per-host via `variables.nix`:
+Composable role modules assigned per host in `flake-modules/hosts.nix`:
 - **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`, `sddm`, `fish`)
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node; disables sleep/suspend

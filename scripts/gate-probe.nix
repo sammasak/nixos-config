@@ -57,12 +57,29 @@ let
       && c.systemd.services.systemd-time-wait-sync.wantedBy == [ "sysinit.target" ];
     persistent = map (t: c.systemd.timers.${t}.timerConfig.Persistent) [ "nix-gc" "nix-optimise" ]
       ++ [ c.system.autoUpgrade.persistent ];
+    autoUpgrade = c.system.autoUpgrade.enable;
     upgradeHooks = with c.systemd.services.nixos-upgrade; onSuccess ++ onFailure;
     upgradeAfter = c.systemd.services.nixos-upgrade.after;
     optimiseAfter = c.systemd.services.nix-optimise.after;
   };
 
   sections = {
+    # what a switch may do to the units that hold agent sessions, or that it waits on
+    switch-safety = {
+      # null: the host runs no Herdr server
+      herdr = builtins.mapAttrs (_: h: let units = h.config.home-manager.users.lukas.systemd.user.services or { }; in
+        if units ? herdr then { inherit (units.herdr.Unit) X-SwitchMethod; } else null) hosts;
+      # null: the host does not bootstrap Flux
+      flux = builtins.mapAttrs (name: h: let units = h.config.systemd.services; in
+        if units ? flux-bootstrap then {
+          inherit (units.flux-bootstrap.serviceConfig) Type;
+          TimeoutStartSec = units.flux-bootstrap.serviceConfig.TimeoutStartSec or null;
+          script = builtins.unsafeDiscardStringContext units.flux-bootstrap.script;
+          activationTimeout = flake.deploy.nodes.${name}.profiles.system.activationTimeout or null;
+        } else null) hosts;
+      claudeActivation = (hm lenovo).home.activation.acceptClaudeStartupDialogs.data;
+    };
+
     nvim-check = {
       nvim = (hm lenovo).programs.neovim.finalPackage;
       init = (hm lenovo).xdg.configFile."nvim/init.lua".text;

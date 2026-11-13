@@ -95,7 +95,7 @@ permission, what a host deploys, repo settings, money).
 | Decision | Proposal | Why |
 |----------|----------|-----|
 | GitHub identity in guests (6, nixos-config#166) | A private GitHub App, installed on named repos with contents/PR/issues write; the host mints 1 h tokens per instance; remove the SSH key and `hosts.yml` binds | Removes account takeover and key persistence; about 40 lines |
-| Root path through autoUpgrade (6) | acer upgrades from an owner-only ref, or a ruleset on public `main` once guests hold no owner token | One line; an agent push to `main` no longer runs as root |
+| Root path through autoUpgrade (6) | Resolved by removal (#300): acer no longer upgrades from `main` | No unattended root switch remains |
 | lenovo serving a cache (9) | Keep, knowingly, or stop lenovo serving | Any process as the owner on lenovo can sign a path acer and msi prefer |
 | Claude login at 10+ environments | Workspace API keys with spend limits per host | One shared one-year token; plan terms assume individual use |
 | acer pool size (5) | Pool 6G, or count the pool in kubelet's `system-reserved` | A full pool evicts pods on the single worker |
