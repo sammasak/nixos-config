@@ -66,7 +66,8 @@ just switch [HOST]      # build and activate locally
 just bump [input]       # update one flake input (default: skills), then switch
 
 # Push from lenovo with deploy-rs (magic rollback), under a 7G memory cap;
-# skips deploy-rs's own flake check, which the pre-push gate already ran.
+# skips deploy-rs's own flake check. The pre-push gate runs it on pushed non-docs
+# commits; a dirty or unpushed tree deploys unchecked, and the recipe warns.
 # HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00),
 # black-pi (builds on the Pi, run inside zellij), naked-pi
 just deploy HOST

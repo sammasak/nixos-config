@@ -41,14 +41,19 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # prompt; homelab/deploy-target.nix). Rollback settings come from the node
 # (flake-modules/70-deploy.nix), whose list the pattern repeats. --skip-checks:
 # otherwise deploy-rs runs the full flake check first, building every x86 host
-# on lenovo (the 2026-11-11 OOM); the pre-push gate runs that same check on
-# every pushed commit, so skipping it here loses nothing. A scope, not `capped`:
-# it keeps the caller's environment, terminal and Ctrl-C under the same cap.
-# lenovo is a loopback self-push. msi: only Mon-Fri ~09:00-21:00. The Pis build
-# their own closure: black-pi takes hours on a cache miss, so run it in zellij.
+# on lenovo (the 2026-11-11 OOM). The pre-push gate runs that check on pushed
+# non-docs commits, but `.#HOST` is the working tree: a dirty or unpushed tree
+# deploys unchecked, so the recipe warns (never refuses: break-glass deploys
+# are legitimate). A scope, not `capped`: it keeps the caller's environment,
+# terminal and Ctrl-C. The cap covers the deploy-rs client and its evaluation;
+# builds run in nix-daemon under its own limits. lenovo is a loopback
+# self-push. msi: only Mon-Fri ~09:00-21:00. The Pis build their own closure:
+# black-pi takes hours on a cache miss, so run it in zellij.
 [arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
 [doc("Push HOST with deploy-rs (magic rollback), skipping the flake check, under the memory cap")]
 deploy HOST:
+    [ -z "$(git status --porcelain --untracked-files=no)" ] || echo "WARNING: uncommitted changes; deploying a tree no gate checked" >&2
+    git merge-base --is-ancestor HEAD origin/main || echo "WARNING: HEAD is not on origin/main (local ref); its flake check may never have run" >&2
     systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks
 
 # ── Configuration Verification ────────────────────────────────────────

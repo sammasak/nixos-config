@@ -45,7 +45,8 @@ just build  [HOST]            # Build only
 just diff   [HOST]            # Build and print the package diff vs the running system
 
 # Push from lenovo with deploy-rs (magic rollback; logs in as `deploy`, no password).
-# --skip-checks (the pre-push gate ran the flake check) under a 7G, no-swap memory cap.
+# --skip-checks under a 7G, no-swap cap on the deploy-rs client. The pre-push gate runs the
+# flake check on pushed non-docs commits; a dirty or unpushed tree deploys unchecked (it warns).
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
