@@ -39,13 +39,6 @@ let
     secret = c.sops.secrets ? native_otlp_auth;
   };
 
-  rfFacts = c: {
-    rfLab = (c.sam or { }) ? rfLab;
-    rfLabEnabled = c.sam.rfLab.enable or false;
-    k3s = c.services.k3s.enable;
-    rfUnits = builtins.filter (s: builtins.match "rf-.*" s != null) (builtins.attrNames c.systemd.services);
-  };
-
   runtimeFacts = c: {
     roles = c.sam.profile.roles;
     hostSecrets = c.sam.hostSecrets.enable;
@@ -168,8 +161,6 @@ let
       # acer with the same switch off: what a host without telemetry carries
       acer = (hm (extend "acer-swift" [ ({ lib, ... }: { sam.profile.nativeOtel = lib.mkForce false; }) ])).programs.claude-code.settings.env;
     };
-
-    rf-lab-boundary.hosts = builtins.mapAttrs (_: h: rfFacts h.config) hosts;
 
     # every host, so a collector enabled anywhere else is seen; context discarded: nothing here needs a build
     journal-collector = let
