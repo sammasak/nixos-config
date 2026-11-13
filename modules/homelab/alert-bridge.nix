@@ -43,7 +43,7 @@ in
     };
 
     ntfyUrl = mkOption {
-      type = types.str;
+      type = types.strMatching "http://.+";
       default = "http://127.0.0.1:${toString config.homelab.ntfy.port}/homelab-alerts";
       defaultText = "http://127.0.0.1:<ntfy.port>/homelab-alerts";
       description = "ntfy topic URL pages are published to. Plain http only: the bridge has no TLS stack.";
@@ -57,6 +57,17 @@ in
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.openFirewall -> !lib.hasPrefix "127." cfg.listenAddress;
+        message = "homelab.alertBridge.openFirewall: listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach the bridge.";
+      }
+      {
+        assertion = config.homelab.ntfy.enable;
+        message = "homelab.alertBridge publishes to this host's ntfy, which needs homelab.ntfy.enable.";
+      }
+    ];
+
     systemd.services.alert-bridge = {
       description = "Alertmanager webhook to ntfy bridge";
       wantedBy = [ "multi-user.target" ];
@@ -73,6 +84,11 @@ in
         ExecStartPost = "${getExe pkgs.curl} --fail --silent --show-error --output /dev/null --max-time 5 --retry 10 --retry-delay 1 --retry-connrefused ${healthUrl}";
         Restart = "always";
         RestartSec = 5;
+        # Reachable from the LAN and from pods, on the control plane: a flood
+        # of requests ends in a restart of the bridge, not in pressure on k3s.
+        MemoryMax = "64M";
+        TasksMax = 64;
+        LimitNOFILE = 256;
         DynamicUser = true;
         CapabilityBoundingSet = "";
         NoNewPrivileges = true;

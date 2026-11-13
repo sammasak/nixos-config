@@ -28,6 +28,15 @@ check(env["ALERT_BRIDGE_NTFY_URL"] == f"http://127.0.0.1{P['ntfyListen']}/homela
       f"it publishes to the native ntfy on loopback, to the shadow topic until cutover ({env['ALERT_BRIDGE_NTFY_URL']})")
 check(unit["DynamicUser"] is True and unit["CapabilityBoundingSet"] == "" and unit["ProtectSystem"] == "strict",
       "it runs as a throwaway user with no capabilities and a read-only system")
+bounds = {k: unit.get(k) for k in ("MemoryMax", "TasksMax", "LimitNOFILE")}
+check(bounds == {"MemoryMax": "64M", "TasksMax": 64, "LimitNOFILE": 256}, f"its memory, tasks and open files are bounded {bounds}")
+
+failing = P["failing"]
+check(failing["lenovo"] == [], f"lenovo fails no assertion {failing['lenovo']}")
+check(any("openFirewall" in m and "loopback" in m for m in failing["loopbackFirewall"]),
+      f"openFirewall with a loopback listenAddress is rejected {failing['loopbackFirewall']}")
+check(any("homelab.ntfy.enable" in m for m in failing["noNtfy"]), f"the bridge without the native ntfy is rejected {failing['noNtfy']}")
+check(P["httpsUrl"] is False, "an https ntfyUrl is a type error: the bridge has no TLS stack")
 
 with socket.socket() as s:
     s.bind(("127.0.0.1", 0))
