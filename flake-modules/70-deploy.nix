@@ -1,37 +1,44 @@
 # deploy-rs push targets: one node per hosts-table entry; hostname and remoteBuild come from hosts.nix.
 { config, inputs, lib, ... }:
 let
-  # nixpkgs' deploy-rs binary is cached for aarch64; the flake's own would be
-  # a Rust build on the Pi.
-  deployLib =
-    system:
+  # activate-rs runs on the target. patched: serokell/deploy-rs#412, tracking #297; drop the
+  # override when the pin contains the fix. Unpatched is nixpkgs' binary, cached for aarch64.
+  activate =
+    system: patched:
     (import inputs.nixpkgs {
       inherit system;
       overlays = [
         inputs.deploy-rs.overlays.default
         (final: prev: {
-          deploy-rs = {
-            inherit (inputs.nixpkgs.legacyPackages.${system}) deploy-rs;
-            inherit (prev.deploy-rs) lib;
+          deploy-rs = prev.deploy-rs // {
+            deploy-rs =
+              if patched then
+                prev.deploy-rs.deploy-rs.overrideAttrs (o: {
+                  patches =
+                    (o.patches or [ ])
+                    ++ [ ../pkgs/patches/deploy-rs-412-rollback-before-cancel.patch ];
+                })
+              else
+                inputs.nixpkgs.legacyPackages.${system}.deploy-rs;
           };
         })
       ];
-    }).deploy-rs.lib;
+    }).deploy-rs.lib.activate;
 
   activateFor = {
-    x86_64-linux = inputs.deploy-rs.lib.x86_64-linux.activate;
-    aarch64-linux = (deployLib "aarch64-linux").activate;
+    x86_64-linux = activate "x86_64-linux" true;
+    # Still serokell/deploy-rs#411 (a failed unit is not really rolled back), so the post-deploy
+    # check is mandatory on the Pis until a patched aarch64 build is evidenced (#297).
+    aarch64-linux = activate "aarch64-linux" false;
   };
 
   # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
   pushAs = {
     sshUser = "deploy";
     user = "root";
-    # The x86 nodes' activate (this pin) may leave a failed unit's generation while the client reports a
-    # rollback (serokell/deploy-rs#411; the Pis' nixpkgs build is unread): after a failed deploy, compare
-    # the target's `readlink /run/current-system` with its value before the deploy.
     autoRollback = true;
     magicRollback = true;
+    # covers a failed activation plus the re-activation of the previous generation
     activationTimeout = 180;
     confirmTimeout = 30;
   };
