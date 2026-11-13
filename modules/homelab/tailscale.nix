@@ -73,6 +73,7 @@ in
         TimeoutStartSec = "5min";
       };
 
+      enableStrictShellChecks = true;
       script = ''
         # Wait for tailscaled's LocalAPI (bounded — see TimeoutStartSec).
         # --json: the plain form exits 1 while merely logged out, which reads
@@ -167,6 +168,7 @@ in
         RemainAfterExit = true;
       };
 
+      enableStrictShellChecks = true;
       script = ''
         # route show, not route get: get simulates a packet through the policy
         # rules, so tailscaled's fwmark rules can void the lookup even while

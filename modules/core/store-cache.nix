@@ -42,6 +42,7 @@ in
       unitConfig.ConditionPathExists = "!${dir}/secret-key";
       serviceConfig = { Type = "oneshot"; StateDirectory = "store-cache"; UMask = "0077"; };
       path = [ config.nix.package ];
+      enableStrictShellChecks = true;
       script = ''
         nix key generate-secret --key-name ${host}-store-1 > ${dir}/secret-key.new
         nix key convert-secret-to-public < ${dir}/secret-key.new > ${dir}/public-key
