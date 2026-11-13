@@ -121,6 +121,7 @@ let
         hosts = builtins.mapAttrs (_: h: { inherit (h.config.networking) hostName; files = files h.config; }) hosts;
         seeded = files (extend "black-pi" [ ({ lib, ... }: { sam.profile.nativeOtel = lib.mkForce true; }) ]);
       };
+      deployNodes = builtins.attrNames flake.deploy.nodes;
     };
 
     build-bounds = {

@@ -65,12 +65,12 @@ just diff   [HOST]      # build and show the package diff vs the running system
 just switch [HOST]      # build and activate locally
 just bump [input]       # update one flake input (default: skills); then just switch
 
-# Push from lenovo with deploy-rs (magic rollback)
-just deploy-acer
-just deploy-msi         # only in its Mon-Fri ~09:00-21:00 power window
-just deploy-pi          # black-pi; builds on the Pi, run inside zellij
-just deploy-naked-pi
-just deploy-lenovo      # loopback self-push
+# Push from lenovo with deploy-rs (magic rollback); the deploy-rs client runs under a 7G cap and
+# skips deploy-rs's own flake check. The pre-push gate runs it on pushed non-docs
+# commits; a dirty or unpushed tree deploys unchecked, and the recipe warns.
+# HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00),
+# black-pi (builds on the Pi, run inside zellij), naked-pi
+just deploy HOST
 
 just check              # full QA (lint, flake check with every host build, the tests)
 just verify             # flake check: build every x86 host, evaluate the Pis
@@ -78,10 +78,6 @@ just verify             # flake check: build every x86 host, evaluate the Pis
 
 Rollback with `sudo nixos-rebuild switch --rollback`, or pick an older
 generation in the boot menu.
-
-Every host has a deploy-rs node. The plain SSH fallback is in CLAUDE.md; if
-it fails with `sudo: a terminal is required to read the password`, add
-`--ask-sudo-password`; target by IP when hostnames are flaky.
 
 ## SSH Hardening
 
