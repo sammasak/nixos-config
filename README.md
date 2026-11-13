@@ -1,12 +1,11 @@
 # NixOS Configuration
 
 Personal NixOS + Home Manager flake for the homelab: laptops, a tower and two
-Raspberry Pis, one shared user config, built with flake-parts and dendritic
-auto-discovery.
+Raspberry Pis, one shared user config, built with flake-parts.
 
 - [CLAUDE.md](CLAUDE.md): working rules, secrets scopes, Claude Code / Codex
   delivery, Comment Policy and conventions.
-- [docs/architecture.md](docs/architecture.md): flake load order, module
+- [docs/architecture.md](docs/architecture.md): flake composition, module
   registry, host wiring, `sam.profile` fields, desktop vs headless, roles.
 - [docs/pi.md](docs/pi.md): the Pi coding agent module (enabled on lenovo and
   acer-swift).
@@ -33,17 +32,18 @@ the tie-breaker.
 | Path | Owns | Notes |
 |------|------|-------|
 | `flake.nix` | Flake entry point | Recursively auto-imports `flake-modules/`; nothing host-specific |
-| `flake-modules/` | Top-level flake composition | Numbered for load order (see docs/architecture.md); `hosts/<name>.nix` declares each host |
+| `flake-modules/` | Top-level flake composition | Number prefixes are names only, not an order; `hosts/<name>.nix` declares each host |
 | `hosts/<name>/` | Per-machine facts only | `variables.nix` (choices), `configuration.nix` (host-only modules), `hardware-configuration.nix` (generated) |
-| `modules/core/` | System baseline on every host | boot, users, network, services, packages, automation, sops, wifi, resource-hygiene |
+| `modules/core/` | System modules | `roles/base.nix` imports the baseline every host gets; `laptop`, `wifi`, `always-on`, `sddm` come in through roles, hosts or the desktop specialisation |
 | `modules/roles/` | Composition | `base`, `laptop`, `homelab-agent`, `homelab-server`, `runtime-host`, `rf-lab`, `embedded`; selected in `variables.nix` |
 | `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |
 | `modules/desktop/` | The GUI stack | niri, Waybar, Rofi; gated on `sam.desktop.enable` |
 | `modules/specialisations/` | Boot-menu variants | Currently only `desktop.nix` |
-| `modules/hardware/` | GPU and thermal | `video/<driver>.nix` picked by `sam.profile.videoDriver` |
+| `modules/hardware/` | GPU, thermal, disk layout | the host imports `video/<videoDriver>.nix`, with `videoDriver` from its `variables.nix` |
 | `modules/rf-lab/`, `modules/embedded/` | naked-pi appliance stacks | Wi-Fi/Bluetooth lab and HIL tests; ESP32 tooling |
 | `modules/home/` | Shared Home Manager entry point | One tree for all hosts; there are no per-host `home.nix` files |
-| `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `terminal/` |
+| `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `gui/`, `terminal/` |
+| `modules/workers/` | nspawn developer environments | `sam.workers`, see docs/nspawn-workers.md |
 | `modules/themes/` | Catppuccin via Stylix | |
 | `lib/` | Pure helpers, no module semantics | `users.nix` (git identity, SSH keys), `firewall.nix` (dual-backend rule builder) |
 | `scripts/` | Repo tooling | `gate-probe.nix` and the `test-*.py` gates, `bench.sh`, `nix-comment-metrics.awk` |
@@ -143,6 +143,5 @@ in
 | niri keybinds | [modules/desktop/niri/home.nix](modules/desktop/niri/home.nix) |
 | Desktop stacks | `modules/specialisations/desktop.nix` and `modules/desktop/` |
 
-References: [flake-parts](https://flake.parts/options/flake-parts-modules.html),
-[dendritic](https://github.com/mightyiam/dendritic); inspired by
+References: [flake-parts](https://flake.parts/options/flake-parts-modules.html); inspired by
 [Sly-Harvey/NixOS](https://github.com/Sly-Harvey/NixOS).

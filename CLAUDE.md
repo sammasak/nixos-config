@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A NixOS + Home Manager configuration repository using **flake-parts** with a dendritic auto-discovery pattern. Manages Linux servers and laptops from a single flake.
+A NixOS + Home Manager configuration repository using **flake-parts**. Manages Linux servers and laptops from a single flake.
 
 ## Build & Deploy Commands
 
@@ -52,8 +52,8 @@ only needed when targeting the other machine.
 
 ## Architecture
 
-Flake-parts with dendritic auto-discovery: `flake-modules/` numbered for load
-order; `modules/roles|home/*` auto-register; hosts are 2-3 files under
+`flake.nix` imports every file under `flake-modules/` (import-tree; the number
+prefixes set no order); `modules/roles|home/*.nix` auto-register; hosts are 3 files under
 `hosts/<name>/` wired by `flake-modules/hosts/<name>.nix`; all host metadata
 flows through the strict `sam.profile` submodule (unknown fields are build
 errors) and GUI-ness keys off `sam.desktop.enable` alone. Full detail:
@@ -158,7 +158,9 @@ runbook above — never rotate the authkey while an auth URL is pending.
 
 ### Key Inputs
 
-nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, skills — all following nixpkgs (except skills which is a plain source input).
+The list is `flake.nix`. nixpkgs is nixos-unstable and every input with a nixpkgs input follows it. skills,
+factum, nix-audit, rf-proto and devenv-platform are plain sources (`flake = false`); the last four are private
+`git+ssh` repos, and factum, nix-audit and rf-proto are pinned by `?rev=` in the URL.
 
 ## Comment Policy
 
