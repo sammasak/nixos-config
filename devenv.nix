@@ -93,6 +93,11 @@ let
     ${pkgs.python3}/bin/python scripts/test-runtime-host-role.py
   '';
 
+  # msi only: Alloy reads journald, no secret, a loopback readiness probe (eval only)
+  journalCollectorTest = gate "journal-collector-test" (with pkgs; [ nix python3 ]) ''
+    ${pkgs.python3}/bin/python scripts/test-journal-collector.py
+  '';
+
   ollamaPortforwardTest = gate "ollama-portforward-test" (with pkgs; [ nix python3 procps ]) ''
     ${pkgs.python3}/bin/python scripts/test-ollama-portforward.py
   '';
@@ -125,7 +130,7 @@ let
     export GATE_PROBE
     ${run [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
-      ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest rfBeaconsTest
+      ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest rfBeaconsTest
     ]}
   '';
 
@@ -379,6 +384,7 @@ in
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
     "nixos:rf-lab-boundary-test" = task "#42: no host but naked-pi imports rf-lab or carries an rf-* unit (naked-pi's own bounds are role assertions)" rfLabBoundaryTest;
     "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
+    "nixos:journal-collector-test" = task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;

@@ -129,6 +129,17 @@ let
 
     rf-lab-boundary.hosts = builtins.mapAttrs (_: h: rfFacts h.config) hosts;
 
+    # every host, so a collector enabled anywhere else is seen; context discarded: nothing here needs a build
+    journal-collector = lib.mapAttrs (_: h: let c = h.config; in builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.toJSON {
+      enable = c.homelab.journalCollector.enable or false;
+      alloy = c.services.alloy.enable;
+      config = c.environment.etc."alloy/config.alloy".text or null;
+      flags = c.services.alloy.extraFlags;
+      environmentFile = c.services.alloy.environmentFile;
+      service = lib.genAttrs [ "ExecStartPost" "Restart" "MemoryMax" "TimeoutStartSec" "LoadCredential" "EnvironmentFile" ]
+        (n: c.systemd.services.alloy.serviceConfig.${n} or null);
+    }))) hosts;
+
     runtime-host = {
       hosts = lib.genAttrs [ "msi-ms7758" "acer-swift" ] (n: runtimeFacts hosts.${n}.config // { failing = failing hosts.${n}.config; });
       acerDesktop = runtimeFacts acer.specialisation.desktop.configuration;
