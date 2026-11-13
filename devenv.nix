@@ -390,7 +390,7 @@ in
     "nixos:workers-eval-test" = task "The developer-environment module rejects each wrong configuration at eval; agent argv survives the guest shell" workersEvalTest;
     "nixos:bulk-reader-test" = task "sam.claude.bulkReader: shunt hooks only when on and the skills pin has them, after the existing Bash hooks; guests via a guest module" bulkReaderTest;
     "nixos:harness-telemetry-test" = task "sam.claude.telemetry: Claude exports through the local relay with session and repository attributes; emit-work-ref.sh only when on and pinned" harnessTelemetryTest;
-    "nixos:known-hosts-test" = task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed" knownHostsTest;
+    "nixos:known-hosts-test" = task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host" knownHostsTest;
     "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" = task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;

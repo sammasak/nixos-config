@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -22,11 +22,6 @@ in
   };
   # The relay and environments' telemetry only: host sessions here keep their Claude settings (docs/native-otel-canary.md)
   sam.claude.telemetry.enable = false;
-  sops.secrets."native_otlp_auth" = lib.mkIf vars.nativeOtel {
-    sopsFile = ../../secrets/claude/native-otlp-auth.yaml;
-    key = "token";
-    mode = "0400";
-  };
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 
   # Headless shell mode remains the default for the always-on worker. The GUI

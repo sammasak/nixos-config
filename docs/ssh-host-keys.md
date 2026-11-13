@@ -21,6 +21,13 @@ the host's recipient is therefore the key that host has been decrypting with
 it can only join that network with the PSK it decrypts with this key). The live read of
 `/etc/ssh/ssh_host_ed25519_key.pub` over ssh is a consistency check on top.
 
+The same test then requires every `config.sops.secrets.<name>.sopsFile` a host
+declares to list that host's recipient in the file's own plaintext `sops:`
+metadata (`.sops.yaml` rules apply only to newly encrypted files, so an old file
+can lag them). It reads no ciphertext. A failure names the secret and file:
+add the host with `sops updatekeys <file>` (an owner decision) or stop
+declaring the secret on that host.
+
 | Entry | Names and addresses | SHA256 (Ed25519) | Evidence |
 |---|---|---|---|
 | github | github.com | `+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU` | `api.github.com/meta` (`ssh_keys`, `ssh_key_fingerprints.SHA256_ED25519`) |

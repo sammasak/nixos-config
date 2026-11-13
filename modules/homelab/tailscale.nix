@@ -13,8 +13,6 @@ let
   ];
 in
 {
-  # sops.nix: so `authKeyFile` can point at the declared secret instead of
-  # repeating its path; the config block below turns homelab.secrets on.
   # ntfy.nix: so the `ntfyUrl` default can read homelab.ntfy.port on hosts
   # that never import the ntfy module themselves.
   imports = [ ./sops.nix ./ntfy.nix ];
@@ -44,8 +42,14 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Declares the tailscale/authkey secret that authKeyFile defaults to.
     homelab.secrets.enable = true;
+
+    sops.secrets."tailscale/authkey" = {
+      sopsFile = ../../secrets/homelab/tailscale.yaml;
+      path = "/run/secrets/tailscale-authkey";
+      owner = "root";
+      mode = "0400";
+    };
 
     services.tailscale = {
       enable = true;

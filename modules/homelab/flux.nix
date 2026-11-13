@@ -4,9 +4,6 @@ let
   inherit (lib) mkEnableOption mkIf mkOption types;
   cfg = config.homelab.flux;
 
-  # Referenced through the sops option rather than by literal path; ./sops.nix
-  # is imported below and homelab.secrets is turned on in the config block, so
-  # both secrets are declared in the same evaluation.
   deployKey = config.sops.secrets."flux/deploy_key".path;
   ageKey = config.sops.secrets."flux/age_key".path;
 in
@@ -36,8 +33,20 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Declares the flux/deploy_key and flux/age_key secrets used below.
+    # The sops identity; both keys live in its default file, homelab/k3s.yaml.
     homelab.secrets.enable = true;
+
+    sops.secrets."flux/deploy_key" = {
+      path = "/run/secrets/flux-deploy-key";
+      mode = "0400";
+      restartUnits = [ "flux-bootstrap.service" ];
+    };
+
+    sops.secrets."flux/age_key" = {
+      path = "/run/secrets/flux-age-key";
+      mode = "0400";
+      restartUnits = [ "flux-bootstrap.service" ];
+    };
 
     systemd.services.flux-bootstrap = {
       description = "Bootstrap Flux GitOps";

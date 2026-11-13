@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Wiring test for modules/core/ssh-known-hosts.nix (nixos-config#86): the pinned host keys are the verified ones
 (fingerprints recorded here and in docs/ssh-host-keys.md), every name and address of each host is covered, a host
-pins loopback to its own key only, every client fails closed, deploy-rs too, and the old github pin is gone."""
+pins loopback to its own key only, every client fails closed, deploy-rs too, the old github pin is gone, and every
+sops secret a host declares is in a file encrypted to that host's key."""
 import os
 import pathlib
 import re
@@ -51,6 +52,51 @@ def ssh_to_age(public_key):
 def fingerprint(public_key):
     out = subprocess.run(["ssh-keygen", "-lf", "-"], input=public_key + "\n", capture_output=True, text=True)
     return out.stdout.split()[1] if out.returncode == 0 else None
+
+
+def sops_recipients(path):
+    """The age recipients in an encrypted file's plaintext `sops:` metadata; no other line is kept or decrypted."""
+    lines = path.read_text().splitlines() if path.is_file() else []
+    meta = lines[lines.index("sops:"):] if "sops:" in lines else []
+    return {m.group(1) for line in meta if (m := re.fullmatch(r"\s*(?:- )?recipient: (age1[0-9a-z]+)", line))}
+
+
+def undecryptable(files, host, recipients_of):
+    """The secrets a host declares whose file does not list the host's recipient (an unknown host: all of them)."""
+    want = SOPS_RECIPIENTS.get(host)
+    return sorted(f"{name} ({f})" for name, f in files.items() if want is None or want not in recipients_of(f))
+
+
+def host_key_identity(h):
+    age, gpg = h["age"], h["gnupg"]
+    return (age["sshKeyPaths"] == ["/etc/ssh/ssh_host_ed25519_key"] and gpg["home"] is None
+            and (age["keyFile"] is None or age["generateKey"] is True))
+
+
+def sops_checks(S):
+    """Every secret a host declares is encrypted to that host's key, read from the files' plaintext metadata:
+    sops-nix's own build check confirms the key exists in the file, not that the host can decrypt it. The host's key is
+    its ssh host key, so that is the identity sops-nix must decrypt with: no gnupg home (its default rsa host-key import
+    is inert, the files carry age recipients only); age.keyFile, when set, is the generated extra identity
+    (generateKey), whose public half no file lists."""
+    cache = {}
+    def recipients_of(f):
+        return cache.setdefault(f, sops_recipients(ROOT / f))
+    check(set(S["hosts"]) == {"lenovo", "acer-swift", "msi-ms7758", "black-pi", "naked-pi"}, f"every fleet host is checked ({sorted(S['hosts'])})")
+    for attr, h in S["hosts"].items():
+        bad = undecryptable(h["files"], h["hostName"], recipients_of)
+        check(h["files"] and not bad, f"{attr}: each of its {len(h['files'])} sops secrets is in a file encrypted to {h['hostName']} (not: {bad})")
+        check(host_key_identity(h), f"{attr}: sops-nix decrypts with the ssh host key the recipient is derived from ({h['age']}, gnupg {h['gnupg']})")
+    bad = undecryptable(S["seeded"], "black-pi", recipients_of)
+    check(bad == ["native_otlp_auth (secrets/claude/native-otlp-auth.yaml)"], f"seeded: black-pi with nativeOtel declares the relay's secret, not encrypted to it ({bad})")
+    acer = S["hosts"]["acer-swift"]
+    check(not host_key_identity(dict(acer, age=dict(acer["age"], generateKey=False))),
+          "seeded: a provisioned age.keyFile (generateKey off) is not the host key identity")
+    dropped = lambda f: recipients_of(f) - {SOPS_RECIPIENTS["acer-swift"]} if f == "secrets/homelab/k3s.yaml" else recipients_of(f)
+    bad = undecryptable(acer["files"], "acer-swift", dropped)
+    check(bad == ["k3s/cluster_token (secrets/homelab/k3s.yaml)"], f"seeded: k3s.yaml with acer's recipient dropped fails acer's k3s token ({bad})")
+    check(undecryptable(acer["files"], "acer", recipients_of) == sorted(f"{n} ({f})" for n, f in acer["files"].items()),
+          "seeded: a host with no recorded recipient fails every secret it declares")
 
 
 def verify_script_checks(known_hosts_text):
@@ -148,6 +194,7 @@ def main():
     check(pattern is not None and sorted(pattern.group(1).split("|")) == sorted(P["deployNodes"]),
           f"`just deploy` accepts exactly the deploy-rs nodes {sorted(P['deployNodes'])}")
     verify_script_checks(known)
+    sops_checks(P["sops"])
     services = (ROOT / "modules/core/services.nix").read_text()
     check("knownHosts" not in services, "the old github pin in services.nix is gone: one module owns host keys")
     module = (ROOT / "modules/core/ssh-known-hosts.nix").read_text()

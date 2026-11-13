@@ -141,6 +141,17 @@ let
       sshConfig = lib.mapAttrs (_: c: c.environment.etc."ssh/ssh_config".text) { lenovo = lenovo; acer-swift = acer; };
       defaults = lib.mapAttrs (_: o: o.default) { inherit (hosts.lenovo.options.sam.sshKnownHosts) strict enable; };
       sshOpts = lib.mapAttrs (_: n: n.sshOpts) (lib.getAttrs [ "lenovo" "acer-swift" "black-pi" ] flake.deploy.nodes);
+      # each declared sops secret's file, repo-relative, and the identities sops-nix decrypts with
+      sops = let files = c: lib.mapAttrs (_: s: lib.removePrefix "${flake.outPath}/" (toString s.sopsFile)) c.sops.secrets; in {
+        hosts = builtins.mapAttrs (_: h: {
+          inherit (h.config.networking) hostName;
+          files = files h.config;
+          age = { inherit (h.config.sops.age) sshKeyPaths keyFile generateKey; };
+          gnupg = { inherit (h.config.sops.gnupg) home sshKeyPaths; };
+        }) hosts;
+        # re-seed if black-pi becomes a recipient of claude/native-otlp-auth.yaml or turns nativeOtel on
+        seeded = files (extend "black-pi" [ ({ lib, ... }: { sam.profile.nativeOtel = lib.mkForce true; }) ]);
+      };
       deployNodes = builtins.attrNames flake.deploy.nodes;
     };
 

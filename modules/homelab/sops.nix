@@ -1,5 +1,6 @@
-# Cluster-scoped credentials, enabled only on nodes that join the cluster.
-# Per-machine operator credentials are a different tree: sam.hostSecrets in
+# The sops identity and the k3s token for nodes that join the cluster. Flux,
+# ACME and Tailscale declare their own secrets, so a node that runs none of
+# them never decrypts those. Per-machine operator credentials are a different tree: sam.hostSecrets in
 # modules/core/sops.nix.
 { config, lib, ... }:
 
@@ -26,31 +27,6 @@ in
         path = "/run/secrets/k3s-cluster-token";
         mode = "0400";
         restartUnits = [ "k3s.service" ];
-      };
-
-      secrets."flux/deploy_key" = {
-        path = "/run/secrets/flux-deploy-key";
-        mode = "0400";
-        restartUnits = [ "flux-bootstrap.service" ];
-      };
-
-      secrets."flux/age_key" = {
-        path = "/run/secrets/flux-age-key";
-        mode = "0400";
-        restartUnits = [ "flux-bootstrap.service" ];
-      };
-
-      secrets."cloudflare/api_token" = {
-        sopsFile = ../../secrets/homelab/cloudflare.yaml;
-        path = "/run/secrets/cloudflare-api-token";
-        mode = "0400";
-      };
-
-      secrets."tailscale/authkey" = {
-        sopsFile = ../../secrets/homelab/tailscale.yaml;
-        path = "/run/secrets/tailscale-authkey";
-        owner = "root";
-        mode = "0400";
       };
     };
   };

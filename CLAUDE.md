@@ -72,7 +72,7 @@ specialisations, module layout).
 SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at activation (every switch and boot) to `/run/secrets/`.
 
 Two SOPS modules:
-- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): k3s cluster token, Flux deploy and age keys, Cloudflare API token, Tailscale authkey; on every k3s node (k3s, flux, acme and tailscale turn it on).
+- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity and the k3s cluster token, on every k3s node. The Flux deploy and age keys, Cloudflare API token and Tailscale authkey are declared by `flux.nix`, `acme.nix` and `tailscale.nix`, so only the host that enables those (lenovo) decrypts them. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
 - **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:

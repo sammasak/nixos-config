@@ -112,8 +112,6 @@ FLEET_CASES = [
     ("telemetry from a guest module", "{ sam.workers.instances.t.telemetry = false; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
      "a guest module turned on sam.claude.telemetry"),
 ]
-# black-pi declares no native_otlp_auth (msi and acer do), so the relay's own assertion is seen there
-NO_SECRET = ("nativeOtel without the relay's secret", "{ sam.profile.nativeOtel = lib.mkForce true; }", "native-otel-relay loads the sops secret native_otlp_auth, which this host does not declare")
 USER_SECRET = ("the relay's secret readable by a user", '{ sops.secrets.native_otlp_auth.owner = "lukas"; }', "native_otlp_auth must be owned by root with mode 0400")
 # msi with two instances behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
 GITHUB = r"""
@@ -893,7 +891,7 @@ def check_scripts():
 
 def main():
     prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", BOUNDED), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
-              fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES), fleet(NO_SECRET[1], host="black-pi"), fleet(USER_SECRET[1]),
+              fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES), fleet(USER_SECRET[1]),
               GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
@@ -999,7 +997,7 @@ def main():
     check(host.get("env") is None and any(r.startswith("Bash(git push") for r in host.get("deny", [])),
           f"the host keeps its Bash deny rules and its own claude without the variable ({host})")
     check_no_verify()
-    for name, case, want, host in [(*c, "msi-ms7758") for c in FLEET_CASES] + [(*NO_SECRET, "black-pi"), (*USER_SECRET, "msi-ms7758")]:
+    for name, case, want, host in [(*c, "msi-ms7758") for c in FLEET_CASES] + [(*USER_SECRET, "msi-ms7758")]:
         out = run_eval(fleet(case, host=host))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
     out = run_eval(NO_OTEL % {"root": json.dumps(ROOT)})
