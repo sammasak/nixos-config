@@ -158,6 +158,9 @@ let
   # merge-base means the full gate, and so does a doc a test reads (scripts/test-*
   # names it: docs/ssh-host-keys.md) and a nested *.md, which can be deployed config.
   # A docs-only push on top of a main merged on GitHub skips that combined tree's first full gate.
+  # A green full gate records the tree in the clone's git dir with the gate executable and the system generation
+  # (tests run its tools); that tree, or it plus documentation, gets the lints. Nothing else is keyed: a flaky green,
+  # an age key or the caller's PATH are not re-sampled until the record is deleted (nixos-qa-green).
   qaPush = gate "nixos-qa-push" (with pkgs; [ git coreutils gnugrep ]) ''
     rev=''${PRE_COMMIT_TO_REF:-HEAD}
     case $rev in 0000000000000000000000000000000000000000) exit 0 ;; esac
@@ -170,16 +173,40 @@ let
     unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
     # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
     # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
-    if base=$(git merge-base HEAD origin/main) && changed=$(git diff --no-renames --name-only "$base" HEAD) \
-      && ! grep -qvE '^docs/|^[^/]+\.md$' <<<"$changed" && ! grep -rqF -f - --include='test-*' scripts <<<"$changed"; then
+    docs_only() {
+      local changed
+      changed=$(git diff --no-renames --name-only "$1" HEAD) \
+        && ! grep -qvE '^docs/|^[^/]+\.md$' <<<"$changed" && ! grep -rqF -f - --include='test-*' scripts <<<"$changed"
+    }
+    # Two pushes trimming at once can lose a line: a step time, or a record, which only costs a full gate.
+    trim() { if tail -n "$2" "$1" > "$1.$$" 2>/dev/null; then mv "$1.$$" "$1"; else rm -f "$1.$$"; fi; }
+    if base=$(git merge-base HEAD origin/main) && docs_only "$base"; then
       echo "nixos-qa: $(git rev-parse --short HEAD) changes only documentation since origin/main, lints only"
       ${run lints}
       exit
     fi
-    NIXOS_QA_TIMES=$(git rev-parse --path-format=absolute --git-common-dir)/nixos-qa-times
+    gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
+    green=$gitdir/nixos-qa-green
+    gate="${lib.getExe qa} $(readlink -f /run/current-system)"
+    this=$(git rev-parse 'HEAD^{tree}')
+    # The hex check keeps a damaged line from reaching git diff as an option; an unreadable record runs the full gate.
+    while read -r passed with; do
+      if [ "$with" = "$gate" ] && [[ $passed =~ ^[0-9a-f]{40,64}$ ]] \
+        && { [ "$passed" = "$this" ] || docs_only "$passed" 2>/dev/null; }; then
+        echo "nixos-qa: $(git rev-parse --short HEAD) is tree ''${passed:0:12} green under this gate and generation, or that plus documentation: lints only"
+        ${run lints}
+        exit
+      fi
+    done < <(tail -n 50 "$green" 2>/dev/null || true)
+    NIXOS_QA_TIMES=$gitdir/nixos-qa-times
     export NIXOS_QA_TIMES
+    trim "$NIXOS_QA_TIMES" 2000
     echo "$(date -Is) nixos-qa on pushed commit $(git rev-parse --short HEAD)" | tee -a "$NIXOS_QA_TIMES"
     ${lib.getExe qa}
+    # A switch during the run leaves a green that no key describes.
+    if [ "$gate" = "${lib.getExe qa} $(readlink -f /run/current-system)" ]; then
+      { echo "$this $gate" >> "$green" && trim "$green" 50; } || echo "nixos-qa: green tree not recorded in $green" >&2
+    fi
   '';
 
   # Operator side of the naked-pi RF kit. Each SSHes the Pi (the `naked-pi` ssh

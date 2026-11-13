@@ -18,7 +18,10 @@ devenv tasks run nixos:flake-check  # nix flake check --all-systems: builds ever
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
 #   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree
 #               (lints only when everything changed since origin/main is docs/ or a top-level *.md,
-#               unless a scripts/test-* file names one of the changed files).
+#               unless a scripts/test-* file names one of the changed files; also lints only for a tree
+#               already green here under the same gate and system generation, or it plus such docs;
+#               deleting nixos-qa-green in the common git dir forces the full gate.
+#               scripts/test-qa-push.py tests the hook without Nix).
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 # Or manually verify specific host:
