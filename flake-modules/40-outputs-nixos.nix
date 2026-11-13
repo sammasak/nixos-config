@@ -40,6 +40,27 @@ let
       };
     };
 
+  # Every host's modules after its configuration and roles; the runtime-host VM test (52-runtime-host-vm-test.nix) reuses them.
+  fleetModules =
+    name: username:
+    [
+      inputs.stylix.nixosModules.stylix
+      inputs.sops-nix.nixosModules.sops
+      inputs.home-manager.nixosModules.home-manager
+      inputs.disko.nixosModules.disko
+      ../modules/workers
+      ({
+        nixpkgs.overlays = [
+          config.flake.overlays.default
+          # pkgs.nur.*: keeps modules on plain pkgs, no specialArgs.
+          inputs.nur.overlays.default
+        ];
+        sam.userConfig = users.${username} or { };
+        sam.workers.guestModules = [ inputs.home-manager.nixosModules.home-manager (fleetHome "worker") ];
+      })
+      (fleetHome name)
+    ];
+
   mkNixosDistribution =
     name:
     {
@@ -70,26 +91,11 @@ let
           ../hosts/${hostDir}/configuration.nix
         ]
         ++ roleModules
-        ++ [
-          inputs.stylix.nixosModules.stylix
-          inputs.sops-nix.nixosModules.sops
-          inputs.home-manager.nixosModules.home-manager
-          inputs.disko.nixosModules.disko
-          ../modules/workers
-          ({
-            nixpkgs.overlays = [
-              config.flake.overlays.default
-              # pkgs.nur.* — keeps modules on plain pkgs, no specialArgs.
-              inputs.nur.overlays.default
-            ];
-            sam.userConfig = users.${username} or { };
-            sam.workers.guestModules = [ inputs.home-manager.nixosModules.home-manager (fleetHome "worker") ];
-          })
-          (fleetHome name)
-        ];
+        ++ fleetModules name username;
     };
 in
 {
+  config._module.args.fleetModules = fleetModules;
   config.flake.nixosConfigurations =
     lib.mapAttrs mkNixosDistribution config.configurations.nixos;
 }

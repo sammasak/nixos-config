@@ -41,6 +41,10 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only
+just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
+                              # and the closure diff vs the running system; activates nothing, but read
+                              # the output: it exits 0 even when the dry activation fails
+just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); BREAK=1 must fail
 ```
 
 Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
