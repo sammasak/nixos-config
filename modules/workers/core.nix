@@ -458,7 +458,7 @@ in
               if (( now == was )) || ${cfg.alert} "$((now - was)) process(es) in ${hostName}'s pool killed by the OOM killer"; then echo "$now" > "$STATE_DIRECTORY/oom_kill"; else rc=1; fi
             fi
             for dir in ${lib.escapeShellArg cfg.stateDir} /nix; do
-              # a failed df leaves free empty and the loop goes on, as it did before pipefail
+              # a failed df leaves free empty: skip this directory, still check the next
               free=$(df --output=avail -BG "$dir" | tail -1 | tr -dc 0-9) || free=
               seen="$STATE_DIRECTORY/disk-$(echo "$dir" | tr / _)"
               if [[ -z $free ]] || ! (( free < 10 )); then continue; fi
