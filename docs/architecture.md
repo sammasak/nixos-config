@@ -91,7 +91,7 @@ Sibling options, outside the profile:
 - `sam.hostSecrets.enable` (bool) — per-machine operator credentials, see `modules/core/sops.nix`
 - `sam.wifi.*` — declarative WiFi profile, see `modules/core/wifi.nix`
 - `sam.cliTools.factum.enable`, `sam.cliTools.nixAudit.enable` (bool, default false): per-host CLI tools in the user's Home Manager profile; outside the profile because a developer environment's guest copies its host's profile
-- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4); a host that sets it fails evaluation
+- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), and `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments; a host that sets it fails evaluation
 
 Everything this repo defines lives under `sam.*` or `homelab.*` so it is never
 confused with an upstream NixOS option. Which of the two is the Namespace
@@ -102,7 +102,7 @@ Boundary rule in Conventions.
 Composable role modules assigned per host in `flake-modules/hosts.nix`:
 - **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`, `sddm`, `fish`)
 - **laptop** — laptop-specific overrides
-- **homelab-agent** — k3s worker node; disables sleep/suspend
+- **homelab-agent** — k3s worker node, joining the server at lenovo's `sam.fleet` address; disables sleep/suspend
 - **homelab-server** — k3s control plane
 - **runtime-host** — headless worker host, msi-ms7758 and acer-swift, running the declared nspawn developer environments
   (`sam.workers`, docs/nspawn-workers.md): the run credential, the deploy-rs target, no Stylix outside a

@@ -25,7 +25,7 @@ in
   systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "4G"; MemoryMax = "6G"; CPUQuota = "400%"; };
 
   # lenovo's ntfy server (homelab.ntfy.baseUrl in its configuration)
-  sam.workers.ntfyUrl = lib.mkDefault "http://192.168.10.154:2586/homelab-alerts";
+  sam.workers.ntfyUrl = lib.mkDefault "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
 
   # Headless, Stylix has nothing to theme and its Home Manager half has failed an activation (#185).
   stylix.enable = lib.mkForce desktop;

@@ -66,6 +66,7 @@ in
 
       path = with pkgs; [ kubectl fluxcd coreutils gnugrep ];
 
+      enableStrictShellChecks = true;
       script = ''
         export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 

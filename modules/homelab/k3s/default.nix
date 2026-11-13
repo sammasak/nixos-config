@@ -41,17 +41,18 @@ in
 
     cni = mkOption {
       type = types.enum [ "flannel" "cilium" ];
-      default = "flannel";
+      default = "cilium";
       description = ''
         CNI provider for the cluster.
 
-        "flannel" (default) uses the bundled k3s flannel + embedded kube-proxy +
-        embedded network-policy controller.
+        "cilium" (default) disables flannel, kube-proxy and the network-policy
+        controller on the k3s side (--flannel-backend=none, --disable-kube-proxy,
+        --disable-network-policy) so Cilium can be installed as the sole CNI with
+        eBPF kube-proxy replacement and Hubble observability. Cilium itself is
+        deployed out-of-band (helm) then managed via Flux.
 
-        "cilium" disables all three on the k3s side (--flannel-backend=none,
-        --disable-kube-proxy, --disable-network-policy) so Cilium can be installed
-        as the sole CNI with eBPF kube-proxy replacement and Hubble observability.
-        Cilium itself is deployed out-of-band (helm) then managed via Flux.
+        "flannel" uses the bundled k3s flannel + embedded kube-proxy +
+        embedded network-policy controller.
 
         Must be set consistently on every node (server + all agents), since
         --disable-kube-proxy is a per-node flag.

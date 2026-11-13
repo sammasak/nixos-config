@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -31,8 +31,6 @@ in
     imports = [ ../../modules/specialisations/desktop.nix ];
   };
 
-  homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
-  homelab.k3s.cni = "cilium";  # match control-plane: disable kube-proxy for Cilium KPR
   homelab.k3s.extraFlags = [
     "--node-label=node-pool=workers"
   ];
@@ -63,9 +61,10 @@ in
     after = [ "NetworkManager.service" ];
     serviceConfig.Type = "oneshot";
     path = [ pkgs.iputils pkgs.networkmanager pkgs.util-linux ];
+    enableStrictShellChecks = true;
     script = ''
-      if ! ping -c3 -W2 192.168.10.1 >/dev/null 2>&1; then
-        logger -t wifi-selfheal "LAN gateway 192.168.10.1 unreachable — bouncing wlp0s20f3"
+      if ! ping -c3 -W2 ${config.sam.fleet.gateway} >/dev/null 2>&1; then
+        logger -t wifi-selfheal "LAN gateway ${config.sam.fleet.gateway} unreachable — bouncing wlp0s20f3"
         nmcli device disconnect wlp0s20f3 || true
         sleep 2
         nmcli device connect wlp0s20f3 || systemctl restart NetworkManager.service

@@ -16,6 +16,8 @@ in
           type = types.attrsOf (types.submodule { options.address = mkOption { type = ipv4; }; });
         };
         gateway = mkOption { type = ipv4; };
+        # networking.hostName of the host whose user key deploys every host
+        deployer = mkOption { type = types.str; };
       };
     };
   };
@@ -27,5 +29,6 @@ in
       msi-ms7758.address = "192.168.10.235";
     };
     gateway = "192.168.10.1";
+    deployer = "lenovo-21CB001PMX";
   };
 }

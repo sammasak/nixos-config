@@ -91,10 +91,6 @@ in
 
   homelab.k3s.taintControlPlane = true;
 
-  # Drops bundled flannel, kube-proxy and the network-policy controller so
-  # Cilium's eBPF datapath takes over.
-  homelab.k3s.cni = "cilium";
-
   # ThinkPad-class laptop: thinkfan + thermald with a less heat-prone curve.
   sam.thermal = {
     platform = "thinkpad";
@@ -114,7 +110,7 @@ in
       # because mutableSettings is true — so they never collide with these.
       { domain = "*.sammasak.dev"; answer = "192.168.10.203"; }
       { domain = "sammasak.dev"; answer = "192.168.10.203"; }
-      { domain = "dns.sammasak.dev"; answer = "192.168.10.154"; }  # AdGuard Home on host
+      { domain = "dns.sammasak.dev"; answer = config.sam.fleet.hosts.${config.networking.hostName}.address; }  # AdGuard Home on host
     ];
   };
 
@@ -127,7 +123,7 @@ in
   # the LAN URL below, or to the same port on the Tailscale IP.
   homelab.ntfy = {
     enable = true;
-    baseUrl = "http://192.168.10.154:2586";
+    baseUrl = "http://${config.sam.fleet.hosts.${config.networking.hostName}.address}:2586";
   };
 
   homelab.clusterWatchdog.enable = true;
