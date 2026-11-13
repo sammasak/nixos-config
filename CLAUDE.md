@@ -38,7 +38,7 @@ just deploy-lenovo            # loopback self-push, proves the deploy-rs path
 just deploy-msi               # only in its Mon-Fri ~09:00-21:00 power window
 just deploy-naked-pi          # Pi 3 rf-lab; builds on the Pi, cache hits only
 
-# Remote deploy via SSH (a host without a deploy-rs node yet)
+# Fallback when deploy-rs cannot reach a host (every host has a node in flake-modules/70-deploy.nix)
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
 ```
 

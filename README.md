@@ -63,7 +63,7 @@ attribute and defaults to the machine you are on.
 just build  [HOST]      # build without activating
 just diff   [HOST]      # build and show the package diff vs the running system
 just switch [HOST]      # build and activate locally
-just bump [input]       # update one flake input (default: skills), then switch
+just bump [input]       # update one flake input (default: skills); then just switch
 
 # Push from lenovo with deploy-rs (magic rollback)
 just deploy-acer
@@ -79,7 +79,7 @@ just verify             # flake check: build every x86 host, evaluate the Pis
 Rollback with `sudo nixos-rebuild switch --rollback`, or pick an older
 generation in the boot menu.
 
-For a host without a deploy-rs node, use the plain SSH command in CLAUDE.md. If
+Every host has a deploy-rs node. The plain SSH fallback is in CLAUDE.md; if
 it fails with `sudo: a terminal is required to read the password`, add
 `--ask-sudo-password`; target by IP when hostnames are flaky.
 
