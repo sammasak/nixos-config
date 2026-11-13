@@ -31,7 +31,7 @@ Each host has three files in `hosts/<name>/`:
 
 | File | Purpose |
 |------|---------|
-| `variables.nix` | Plain attrset of host-specific choices (username, roles, videoDriver, etc.) |
+| `variables.nix` | Plain attrset of host-specific choices (username, roles, etc.) |
 | `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
 | `hardware-configuration.nix` | Auto-generated hardware scan |
 
@@ -78,8 +78,7 @@ Defined in `modules/core/system.nix`. All host metadata lives in `config.sam.pro
 build error if a `variables.nix` sets it):
 - `username` (str) — Primary user account
 - `hostname` (str) — System hostname
-- `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str) — Localisation
-- `videoDriver` (str, default "intel"): no module reads it; a host that needs a GPU module imports `modules/hardware/video/<value>.nix` from its `variables.nix` (only "intel" exists)
+- `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str): localisation; default to the fleet values (Europe/Stockholm, en_US.UTF-8, se, "", sv-latin1), set only to differ
 - `roles` (list of str) — Enabled roles from `modules/roles/`
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets

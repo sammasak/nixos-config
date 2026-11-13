@@ -4,7 +4,7 @@
 # Usage:
 #   ./scripts/bench.sh bench    # full run, appends one JSON line to metrics/history.jsonl
 #   ./scripts/bench.sh diff     # delta table for the last two entries
-#   ./scripts/bench.sh parity   # eval drvPaths only, fail if they moved since the last entry
+#   ./scripts/bench.sh parity [BASE]  # fail if any host's drvPath moved since BASE
 #
 # Eval counters come from NIX_SHOW_STATS. Per the nixpkgs metrics.nix caveat
 # they are only meaningful as a before/after diff for one change set, never as
@@ -15,6 +15,7 @@ cd "$(dirname "$0")/.."
 
 HOSTS=("lenovo" "acer-swift")
 HISTORY="metrics/history.jsonl"
+PARITY_HOSTS=("lenovo" "acer-swift" "msi-ms7758" "black-pi" "naked-pi")
 
 # Wall-clock milliseconds and the stats JSON for one host's toplevel drvPath.
 # The eval cache is disabled so repeated runs actually re-evaluate.
@@ -213,19 +214,46 @@ cmd_diff() {
   echo "shellcheck gates scripts/*.sh via 'just lint-shell', not this script."
 }
 
+# toplevel drvPath of host $2 in flake $1; a failed eval aborts the script.
+toplevel_drv() {
+  local drv
+  drv=$(nix eval --raw "$1#nixosConfigurations.$2.config.system.build.toplevel.drvPath" \
+    --option eval-cache false) || {
+    echo "parity: evaluating $2 in $1 failed" >&2
+    exit 1
+  }
+  printf '%s\n' "$drv"
+}
+
+# BASE (default: merge base with origin/main) is read straight from git, the
+# working tree as nix sees it: tracked files with uncommitted edits, no
+# untracked files. One evaluation at a time keeps peak memory to one host.
 cmd_parity() {
-  require_history
-  local rc=0 want got
-  for host in "${HOSTS[@]}"; do
-    want=$(tail -n 1 "$HISTORY" | jq -r --arg h "$host" '.hosts[$h].drvPath')
-    got=$(nix eval --raw ".#nixosConfigurations.$host.config.system.build.toplevel.drvPath" \
-      --option eval-cache false)
+  local base rev want got untracked rc=0
+  base=${1:-$(git merge-base HEAD origin/main)}
+  rev=$(git rev-parse --verify --quiet "$base^{commit}") || {
+    echo "parity: '$base' is not a commit" >&2
+    exit 1
+  }
+  if [ "$rev" = "$(git rev-parse HEAD)" ] && [ -z "$(git status --porcelain --untracked-files=no)" ]; then
+    echo "HEAD is the base (${rev:0:12}) and no tracked file is modified: nothing to compare."
+    return 0
+  fi
+  echo "Comparing base ${rev:0:12} with the working tree (tracked files incl. uncommitted edits; untracked files are not seen)"
+  untracked=$(git ls-files --others --exclude-standard -- '*.nix')
+  if [ -n "$untracked" ]; then
+    echo "parity: untracked .nix files are invisible to the tree side; git add them first:" >&2
+    printf '%s\n' "$untracked" | sed 's/^/    /' >&2
+  fi
+  for host in "${PARITY_HOSTS[@]}"; do
+    want=$(toplevel_drv "git+file://$PWD?rev=$rev" "$host")
+    got=$(toplevel_drv . "$host")
     if [ "$want" = "$got" ]; then
-      echo "✓ $host  $got"
+      echo "same   $host  $got"
     else
-      echo "✗ $host  drvPath moved"
-      echo "    recorded: $want"
-      echo "    current:  $got"
+      echo "MOVED  $host"
+      echo "    base: $want"
+      echo "    tree: $got"
       rc=1
     fi
   done
@@ -240,7 +268,7 @@ cmd_parity() {
 case "${1:-bench}" in
   bench) cmd_bench ;;
   diff) cmd_diff ;;
-  parity) cmd_parity ;;
+  parity) cmd_parity "${2:-}" ;;
   *)
     echo "usage: $0 {bench|diff|parity}" >&2
     exit 2

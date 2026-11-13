@@ -209,6 +209,10 @@ shapes, across `.nix` and `.sh` alike). `''` string bodies are out of scope —
 editing one moves the derivation and breaks `just parity`. Exemplar comments,
 the `''`-string rationale, and measurement mechanics:
 `~/knowledge/nix/comment-policy-notes.md`.
+`just parity [BASE]` evaluates all five hosts' toplevel drvPaths at BASE (default
+the merge base with origin/main) and in the working tree (tracked files incl.
+uncommitted edits, not untracked ones), one host at a time, and exits non-zero
+if any moved or any evaluation failed.
 
 ## Conventions
 

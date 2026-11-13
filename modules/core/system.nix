@@ -22,7 +22,7 @@ in
 
           timezone = mkOption {
             type = types.str;
-            default = "UTC";
+            default = "Europe/Stockholm";
             description = "Time zone.";
           };
 
@@ -34,7 +34,7 @@ in
 
           kbdLayout = mkOption {
             type = types.str;
-            default = "us";
+            default = "se";
             description = "Keyboard layout.";
           };
 
@@ -46,14 +46,8 @@ in
 
           consoleKeymap = mkOption {
             type = types.str;
-            default = "us";
+            default = "sv-latin1";
             description = "Virtual console keymap.";
-          };
-
-          videoDriver = mkOption {
-            type = types.str;
-            default = "intel";
-            description = "Video driver module selector.";
           };
 
           devTools = mkOption {

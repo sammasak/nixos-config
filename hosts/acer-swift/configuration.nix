@@ -7,7 +7,7 @@ in
     ./hardware-configuration.nix
     (import ../../modules/hardware/disko-single-ext4.nix "/dev/disk/by-id/nvme-INTEL_SSDPEKNW010T8_BTNH014425J11P0B")
 
-    ../../modules/hardware/video/${vars.videoDriver}.nix
+    ../../modules/hardware/video/intel.nix
   ];
 
   sam.profile = vars;
@@ -33,10 +33,12 @@ in
     imports = [ ../../modules/specialisations/desktop.nix ];
   };
 
-  # Sole worker — an unattended reboot is a total cluster outage (the reserved
-  # taint strands DNS, kyverno and ntfy, so paging dies with it). Upgrades still
-  # build and activate; the reboot is operator-initiated.
-  system.autoUpgrade.allowReboot = lib.mkForce false;
+  # The only host that upgrades unattended. allowReboot is pinned to false: as
+  # sole worker an unattended reboot is a total cluster outage (the reserved
+  # taint strands DNS, kyverno and ntfy, so paging dies with it). The reboot is
+  # operator-initiated. A shared module that sets true fails the evaluation.
+  system.autoUpgrade.enable = true;
+  system.autoUpgrade.allowReboot = false;
 
   homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
   homelab.k3s.cni = "cilium";  # match control-plane: disable kube-proxy for Cilium KPR

@@ -39,7 +39,7 @@ the tie-breaker.
 | `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |
 | `modules/desktop/` | The GUI stack | niri, Waybar, Rofi; gated on `sam.desktop.enable` |
 | `modules/specialisations/` | Boot-menu variants | Currently only `desktop.nix` |
-| `modules/hardware/` | GPU, thermal, disk layout | the host imports `video/<videoDriver>.nix`, with `videoDriver` from its `variables.nix` |
+| `modules/hardware/` | GPU, thermal, disk layout | `video/intel.nix` imported by the Intel hosts |
 | `modules/rf-lab/`, `modules/embedded/` | naked-pi appliance stacks | Wi-Fi/Bluetooth lab and HIL tests; ESP32 tooling |
 | `modules/home/` | Shared Home Manager entry point | One tree for all hosts; there are no per-host `home.nix` files |
 | `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `gui/`, `terminal/` |
@@ -47,7 +47,7 @@ the tie-breaker.
 | `modules/themes/` | Catppuccin via Stylix | |
 | `lib/` | Pure helpers, no module semantics | `users.nix` (git identity, SSH keys), `firewall.nix` (dual-backend rule builder) |
 | `scripts/` | Repo tooling | `gate-probe.nix` and the `test-*.py` gates, `bench.sh`, `nix-comment-metrics.awk` |
-| `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
+| `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions. `just parity [BASE]` needs no entry: it compares the five host drvPaths at the merge base with the working tree |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
 | `docs/` | Reference, plus dated records | Reference: `architecture.md`, `herdr.md`, `pi.md`, `nspawn-workers.md`, `ssh-host-keys.md`, `native-otel-canary.md`, `factum-pilot.md`, `nix-audit-pilot.md`. The rest are dated plans, measurements and ledgers, true as of their date |
 | `Justfile` | Task entry points | build, switch, deploy, verify and image recipes |
@@ -98,7 +98,7 @@ After changing SSH policy, apply locally on the target first
 
 ## Automation
 
-`modules/core/automation.nix` turns on a weekly auto-upgrade from `github:sammasak/nixos-config/main` (Sunday 06:00, plus up to 45 min of jitter), monthly garbage collection and weekly store optimisation. Only `acer-swift` keeps the auto-upgrade, with `allowReboot = false` (it is the sole worker); lenovo, msi-ms7758, black-pi and naked-pi force it off. The Pis (weekly, 7-day retention) and msi-ms7758 override the GC schedule.
+Unattended upgrades are off by default; a host opts in with `system.autoUpgrade.enable = true`. Only `acer-swift` does (Sunday 06:00, plus up to 45 min of jitter) and it sets `allowReboot = false` because it is the sole worker. By default every host runs garbage collection monthly and optimises the store weekly; the Pis (weekly, 7-day retention) and msi-ms7758 override the GC schedule. Configured in `modules/core/automation.nix`.
 
 ## Adding a New Host
 
