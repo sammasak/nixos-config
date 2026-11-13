@@ -3,7 +3,10 @@
 # blocks the reader, so the journal holds the backlog up to max_age. Residual gaps:
 # - Alloy stopping or restarting while Loki is away drops its in-memory queue after the 15 s drain timeout (about
 #   12 MiB: the 10 MiB send queue plus a batch), since the reader saves its cursor before the send.
-# - A crash loop slower than 3 starts per 600 s never reaches failed, so it pages only once an absence alert exists (P5).
+# - A crash loop with fewer than 5 start attempts per 600 s never reaches failed, so it pages only once an absence
+#   alert exists (P5).
+# - Info-level Caddy access lines of dev-env-egress.service are dropped (72% of msi's volume, one line per proxied
+#   request); its startup, warning and error lines, and access lines at error level (5xx), are kept.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed alloy` and a start.
 { config, lib, pkgs, ... }:
 let
@@ -35,8 +38,26 @@ let
       }
     }
 
+    loki.process "drop" {
+      forward_to = [loki.write.loki.receiver]
+
+      stage.match {
+        selector = "{unit=\"dev-env-egress.service\"}"
+
+        stage.json {
+          expressions = {level = "", logger = ""}
+        }
+
+        stage.drop {
+          source              = "level,logger"
+          expression          = "^info;http\\.log\\.access\\."
+          drop_counter_reason = "egress_access_log"
+        }
+      }
+    }
+
     loki.source.journal "host" {
-      forward_to    = [loki.write.loki.receiver]
+      forward_to    = [loki.process.drop.receiver]
       relabel_rules = loki.relabel.journal.rules
       max_age       = "72h"
       labels        = {job = "host-journal", host = ${builtins.toJSON config.networking.hostName}}
@@ -81,7 +102,7 @@ in
 
     systemd.services.alloy = {
       startLimitIntervalSec = 600;
-      startLimitBurst = 3;
+      startLimitBurst = 4;
       onFailure = lib.optional (cfg.ntfyUrl != null) "journal-collector-failed.service";
       serviceConfig = {
         # Local only: a probe of Loki would fail the host deploy whenever Loki is away. It covers the config load;
@@ -89,7 +110,7 @@ in
         ExecStartPost = "${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 --retry 30 --retry-delay 2 --retry-connrefused --retry-max-time 60 http://${listen}/-/ready";
         TimeoutStartSec = 90;
         MemoryMax = "256M";
-        # mkForce: upstream's 2 s spends the 3-start limit in seconds, so a rollback's own start could be refused.
+        # mkForce: upstream's 2 s spends the start limit in seconds, so a rollback's own start could be refused.
         RestartSec = lib.mkForce 30;
       };
     };
@@ -97,7 +118,7 @@ in
     systemd.services.journal-collector-failed = lib.mkIf (cfg.ntfyUrl != null) {
       serviceConfig = { Type = "oneshot"; DynamicUser = true; };
       script = ''
-        ${pkgs.curl}/bin/curl -fsS -m 10 -H "Priority: high" -d "alloy failed on ${config.networking.hostName}" ${lib.escapeShellArg cfg.ntfyUrl}
+        ${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 --retry-connrefused -H "Priority: high" -d "alloy failed on ${config.networking.hostName}" ${lib.escapeShellArg cfg.ntfyUrl}
       '';
     };
   };
