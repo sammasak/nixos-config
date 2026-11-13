@@ -1,8 +1,11 @@
 """homelab.journalCollector (modules/homelab/journal-collector.nix): Alloy ships the journal on msi-ms7758 only,
 reads journald and nothing else, references no secret, keeps its readiness probe on the host, restarts on a config
-change, drops the egress proxy's info access lines and pages ntfy (with retries) when it fails. The negative case enables the module on acer-swift in the probe only.
+change, drops the egress proxy's info-level 2xx/3xx access lines and pages ntfy (with retries) when it fails. The
+negative case enables the module on acer-swift in the probe only.
 
-Evaluation only: options, the generated config.alloy and the unit, never a build."""
+Evaluation only: options, the generated config.alloy and the unit, never a build. The drop stage's semantics (the
+";" separator, a missing field or a non-JSON line keeps the line) are modelled in Python; that model was checked
+once against real Alloy 1.17.1, not in this gate."""
 import json
 import re
 import sys
@@ -83,6 +86,9 @@ src_f = re.search(r'stage\.drop \{ source = "([^"]+)"', pc)
 drop_rx = re.search(r'stage\.drop \{[^}]*expression = "((?:[^"\\]|\\.)*)"', pc)
 json_f = re.search(r'stage\.json \{ expressions = \{([^}]*)\}', pc)
 check(None not in (sel, src_f, drop_rx, json_f), "drop stage: a unit match, a JSON parse and a drop on its fields")
+stages = re.findall(r"stage\.[a-z_]+", pc)
+check(stages == ["stage.match", "stage.json", "stage.drop"] and "separator" not in pc,
+      f"process block: exactly match, json, drop, default separator {stages}")
 
 
 def shipped(unit, line):
@@ -104,15 +110,20 @@ access = '{"level":"%s","ts":1.0,"logger":"http.log.access.anthropic-nats","msg"
 lines = {
     (egress, access % ("info", 200)): False,
     (egress, access.replace("anthropic", "otlp") % ("info", 204)): False,
+    (egress, access % ("info", 304)): False,
+    (egress, access % ("info", 401)): True,
+    (egress, access % ("info", 403)): True,
+    (egress, access % ("info", 429)): True,
     (egress, access % ("error", 502)): True,
+    (egress, '{"level":"info","ts":1.0,"logger":"http.log.access.x","msg":"handled request"}'): True,
     (egress, '{"level":"info","ts":1.0,"logger":"http.log","msg":"server running"}'): True,
     (egress, '{"level":"warn","ts":1.0,"logger":"http","msg":"HTTP/2 skipped because it requires TLS"}'): True,
     (egress, "Starting the egress proxy"): True,
     ("sshd.service", access % ("info", 200)): True,
 }
-got = {f"{u} {l[:60]}": shipped(u, l) for u, l in lines}
-want = {f"{u} {l[:60]}": keep for (u, l), keep in lines.items()}
-check(got == want, f"drops only info access lines of {egress} {got}")
+got = {f"{u} {l[:60]} {l[-12:]}": shipped(u, l) for u, l in lines}
+want = {f"{u} {l[:60]} {l[-12:]}": keep for (u, l), keep in lines.items()}
+check(got == want, f"drops only info 2xx/3xx access lines of {egress} {got}")
 wr = comps.get(("loki.write", write), "")
 check(re.search(r'url = "http://[^"]+/loki/api/v1/push"', wr) is not None and "max_backoff_retries = 0" in wr,
       "writes to a Loki push endpoint and retries forever (the journal holds the backlog)")
@@ -137,8 +148,10 @@ check(bool(svc.get("MemoryMax")), f"MemoryMax set {svc.get('MemoryMax')}")
 unit = m.get("unit") or {}
 check(unit.get("onFailure") == ["journal-collector-failed.service"],
       f"a failed Alloy starts journal-collector-failed {unit.get('onFailure')}")
-check(re.search(r"curl .*--retry 3 .*-d \"alloy failed on msi-ms7758\" .*http://\S+", m.get("failed") or "") is not None,
-      "journal-collector-failed posts the failure to ntfy, retrying 3 times")
+page = m.get("failed") or ""
+check(re.search(r"curl .*-d \"alloy failed on msi-ms7758\" .*http://\S+", page) is not None
+      and all(f in page.split() for f in ["--retry", "3", "--retry-connrefused", "--retry-all-errors"]),
+      "journal-collector-failed posts the failure to ntfy, retrying 3 times on any error")
 check(unit.get("startLimitBurst") == 4 and unit.get("startLimitIntervalSec") == 600,
       f"start limit: 4 starts in 600 s, then failed {unit.get('startLimitBurst')}/{unit.get('startLimitIntervalSec')}")
 check(isinstance(m.get("configPath"), str) and m["configPath"].startswith("/nix/store/")
