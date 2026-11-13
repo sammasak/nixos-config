@@ -9,28 +9,15 @@ A NixOS + Home Manager configuration repository using **flake-parts** with a den
 ## Build & Deploy Commands
 
 ```bash
-# ── Verification: devenv tasks (devenv.nix), also run by the git hooks ──
-devenv tasks run nixos:qa     # everything below, in order (= just check)
-devenv tasks run nixos:lint-comments   # Comment Policy (density + forbidden shapes)
-devenv tasks run nixos:lint-shell      # shellcheck scripts/*.sh
-devenv tasks run nixos:secrets-verify  # wifi credentials sanity (skips without an age key)
-devenv tasks run nixos:nvim-check      # lenovo's nvim starts headless clean
-devenv tasks run nixos:flake-check     # nix flake check --all-systems: builds every x86 host, evaluates the Pis
-devenv tasks run nixos:claude-settings-test  # generated Claude settings: default mode, bypass on request
-devenv tasks run nixos:coordinator-test  # coordinator adapters on lenovo only; Codex's agent declared via config_file, no model pin
-devenv tasks run nixos:worker-permissions-test  # #145/#157/skills#28: Herdr workers (restored panes too) start in bypassPermissions and switch models on a safeguards flag; the Coordinator unchanged
-devenv tasks run nixos:workers-eval-test  # modules/workers/core.nix: each wrong config fails eval with its message; agent argv survives the guest shell
-devenv tasks run nixos:bulk-reader-test  # sam.claude.bulkReader: shunt hooks only when on and pinned, after the existing Bash hooks; guests via a guest module
-devenv tasks run nixos:harness-telemetry-test  # sam.claude.telemetry: Claude's OTLP through the local relay, session + repository attributes, emit-work-ref.sh only when on and pinned
-devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer with the switch off
-devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
-devenv tasks run nixos:build-bounds-test  # nix-daemon builds bounded on lenovo (#109) and the environment hosts (acer, msi)
-devenv tasks run nixos:runtime-host-test  # msi + acer through the runtime-host role: headless and unthemed, maintenance off the boot path
-devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward supervisor restarts a wedged forward, not an HTTP error
+# ── Verification: devenv tasks, also run by the git hooks. Every nixos:* gate and what
+#    it checks is in devenv.nix `tasks`; each also runs on its own. ──
+devenv tasks run nixos:qa           # every gate in order (= just check): lints, secrets-verify, flake check, then the tests
+devenv tasks run nixos:flake-check  # nix flake check --all-systems: builds every x86 host, evaluates the Pis (= just verify)
 # Hooks (installed by entering the devenv; .envrc does it on cd):
-#   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
+#   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
 #   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree
-#               (lints only when everything changed since origin/main is docs/ or a top-level *.md).
+#               (lints only when everything changed since origin/main is docs/ or a top-level *.md,
+#               unless a scripts/test-* file names one of the changed files).
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 # Or manually verify specific host:
