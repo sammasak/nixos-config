@@ -85,7 +85,7 @@ with tempfile.TemporaryDirectory() as tmp:
     c = commit("c")
     git(work, "checkout", "-q", "main")
     p, seen = push(f"{b}:refs/heads/main", f"{c}:refs/heads/copy")
-    check(p.returncode != 0 and "one ref at a time" in p.stderr, "two refs with new commits are refused: " + p.stderr.strip()[-80:])
+    check(p.returncode != 0 and "one ref at a time" in p.stderr, "two refs with new commits are refused, and the message says to push one ref at a time")
     check("run" not in seen, "prek is not reached by the refused push")
     check(remote_ref("refs/heads/main") == a and remote_ref("refs/heads/copy") == a, "the refused push leaves the remote unchanged")
 
