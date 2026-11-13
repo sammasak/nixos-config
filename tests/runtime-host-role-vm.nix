@@ -18,7 +18,7 @@ let
       { lib, ... }:
       {
         # msi's roles minus homelab-agent: no k3s, whose server is lenovo.
-        imports = roleModules ++ fleetModules vars.hostname vars.username;
+        imports = roleModules ++ fleetModules vars.hostname;
         sam.profile = vars // {
           # The relay needs msi's native_otlp_auth secret.
           nativeOtel = false;
