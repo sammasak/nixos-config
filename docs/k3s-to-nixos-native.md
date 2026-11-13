@@ -117,7 +117,7 @@ migration adds it.
 | Desired state per host | `nixosConfigurations.<host>` in one flake; a service is enabled per host in that host's `configuration.nix` | present |
 | Reproducible builds | flake lock; x86 hosts substitute from the signed harmonia caches, the Pis build their own closures | present |
 | Quality gates | pre-push `nixos:qa` on the pushed commit (flake check plus the Python gates), run off lenovo; one `scripts/test-<name>.py` per new module | present; test per module to build |
-| Trigger and approval | merge to main, then an explicit `just deploy HOST` that the owner approves. **Exception: acer.** Its weekly `system.autoUpgrade` (Sunday 06:00) switches to whatever main holds, with no health gate, no rollback, and no failure notice on a headless host | present; see gap 2 |
+| Trigger and approval | merge to main, then an explicit `just deploy HOST` that the owner approves; no host upgrades itself (acer's weekly `system.autoUpgrade` is off since #300) | present |
 | Rollout order | one host at a time, least critical first: msi, black-pi, acer, lenovo | convention |
 | Activation safety | deploy-rs `magicRollback`: a host that cannot be reached after activation reverts | present |
 | Service health | `services.alloy` and most upstream units are `Type=simple`, so each module adds an `ExecStartPost` probe of the service's own local ready endpoint with a start timeout, `Restart=on-failure`, and `OnFailure=` to ntfy. A unit that fails its probe fails the activation and so the whole host deploy; the probe therefore never tests anything remote (a collector must not fail a deploy because Loki is away) | to build |
@@ -189,7 +189,7 @@ What this changes, and what must be rehearsed before the first stateful move:
 | comin (pull, closest to Flux) | not now | no automatic rollback or health check; every host evaluates the flake, including the Pis; pre-1.0. Reopen if hosts regularly miss deploys because they were asleep or unreachable |
 | devenv machines | not now | exists since devenv 2.4.0 with a target-side watchdog and a health check, the best safety model of the push tools. Experimental; needs root SSH where this fleet forbids root login (devenv #3242); takes modules, not the existing flake hosts (#3226); the target cannot substitute from harmonia (#3342); requires a disko input; one shell health check per machine. Reopen when it deploys existing flake hosts over a non-root login and leaves experimental status |
 | Colmena | no | no rollback; nothing deploy-rs lacks that is needed here |
-| `system.autoUpgrade` as the pull path | no | no health gate; today's acer use is a gap, not a model |
+| `system.autoUpgrade` as the pull path | no | no health gate; acer's former use was a gap, not a model |
 | lenovo's `nixos-rebuild-trigger` | keep, do not generalise | it rebuilds lenovo at a pinned commit with a health gate on request from the cluster. Extending it to other hosts would be writing a deploy controller |
 | Clan, Nomad, selfhostblocks | no | a framework or a scheduler to adopt whole |
 | nixpkgs modular services | wait | upstream but still in development (nixpkgs #428084) |
@@ -241,14 +241,11 @@ discovery (replaced by a declared scrape target).
    rollback) is also open. Until fixed, every deploy ends with the end-to-end
    check above. A rehearsal on msi with a unit that fails on purpose records
    what this pin does; if it reproduces the bug, pin the fix branch or wait.
-2. **acer upgrades itself from main.** Anything merged that changes acer's
-   configuration goes live within a week, out of order and ungated. Until this
-   is changed, every commit that changes what a moved service does on acer
-   (enabling it, or later repointing it) is merged only together with the
-   owner's approval of the acer deploy, and deployed the same day.
-   The proposed change is to turn acer's automatic upgrade off like the other
-   hosts; it alters deploy behaviour, so it is the owner's decision and is
-   coordinated with the nixos-config modernization work.
+2. **acer upgraded itself from main.** Closed by #300: acer's
+   `system.autoUpgrade` is off and a gate test asserts it. Until that change
+   is deployed to acer, the running timer still switches to main weekly, so
+   the old rule holds: a commit that changes a moved service on acer merges
+   only with the owner's approval of the acer deploy, deployed the same day.
 3. **Backups.** No tooling exists beyond Postgres dumps and a local k3s
    datastore snapshot. A stateful service does not move until its module
    declares an off-host backup with a rehearsed restore, or the owner accepts
