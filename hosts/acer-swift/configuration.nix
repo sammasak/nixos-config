@@ -17,6 +17,8 @@ in
     labelPrefix = "acer";
     pool.memory = "7G";
     ghHostsFile = "/home/${vars.username}/.config/gh/hosts.yml";
+    # No prompt: its goal is sent through Herdr once it is up (docs/nspawn-workers.md).
+    instances.herman = { model = "claude-fable-5-2"; };
   };
   # The relay and environments' telemetry only: host sessions here keep their Claude settings (docs/native-otel-canary.md)
   sam.claude.telemetry.enable = false;
