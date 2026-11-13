@@ -134,6 +134,7 @@ in
     gateway = lib.mkOption {
       type = lib.types.str;
       default = config.sam.fleet.gateway;
+      defaultText = lib.literalExpression "config.sam.fleet.gateway";
       description = "Per-interface ICMP probe target; one reachability signal among several, not the sole trigger.";
     };
     managementInterfaces = lib.mkOption {
