@@ -43,6 +43,7 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only
 just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
                               # and the closure diff vs the running system; activates nothing
+just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); BREAK=1 must fail
 ```
 
 Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,

@@ -71,6 +71,14 @@ dry-activate HOST:
     top=$(systemd-run --user --scope -q {{memcap}} nix eval --raw .#nixosConfigurations.{{HOST}}.config.system.build.toplevel.outPath) && \
       ssh -o StrictHostKeyChecking=yes "deploy@$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname)" nix store diff-closures /run/current-system "$top"
 
+# Boot the runtime-host role in QEMU (tests/runtime-host-role-vm.nix); BREAK=1
+# runs the copy with Home Manager's activation broken, which must fail. A
+# host-sized build: msi only, refused on lenovo, which runs out of memory.
+[doc("Build and run the runtime-host role VM test (msi, not lenovo); BREAK=1 must fail")]
+role-vm-test BREAK="":
+    [ "$(uname -n)" != lenovo-21CB001PMX ] || { echo "role-vm-test: run it on msi, not lenovo" >&2; exit 1; }
+    nix build -L --no-link .#runtime-host-role-vm{{ if BREAK == "" { "" } else { ".broken" } }}
+
 # ── Configuration Verification ────────────────────────────────────────
 
 # QA gates live in devenv.nix as tasks; the git hooks run the same ones.
