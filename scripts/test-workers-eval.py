@@ -957,8 +957,7 @@ def main():
         out = nix_eval(case, OWN)
         got = json.loads(out.stdout) if out.returncode == 0 else [out.stderr.strip()[-600:]]
         check(any(want in m for m in got), f"{name}: rejected with \"{want}\" (got {got})")
-    # a type error ends an evaluation, so each TYPED case is a process of its own (about 230 MB): two at a time,
-    # after the batch (2.5 GB peak) is done, as environments share the host's memory
+    # each TYPED case is a process of about 230 MB: two at a time, as environments share the host's memory
     with ThreadPoolExecutor(2) as pool:
         typed = list(pool.map(lambda c: nix_eval(c[1], "sys.config.system.build.toplevel.drvPath"), TYPED))
     for (name, case, want), out in zip(TYPED, typed):
