@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -8,10 +8,18 @@ in
     ../../modules/hardware/video/intel.nix
     # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
     ../../modules/homelab/msi-power-schedule.nix
+    ../../modules/homelab/journal-collector.nix
   ];
 
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
   homelab.msiPowerSchedule.selfShutdown.enable = true;
+
+  # Loki's ClusterIP: reachable only while Cilium is up on msi, until Loki gets a LAN address
+  homelab.journalCollector = {
+    enable = true;
+    lokiUrl = "http://10.43.92.124:3100/loki/api/v1/push";
+    ntfyUrl = config.sam.workers.ntfyUrl;
+  };
 
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
