@@ -133,7 +133,7 @@ in
     };
     gateway = lib.mkOption {
       type = lib.types.str;
-      default = "192.168.10.1";
+      default = config.sam.fleet.gateway;
       description = "Per-interface ICMP probe target; one reachability signal among several, not the sole trigger.";
     };
     managementInterfaces = lib.mkOption {

@@ -3,8 +3,9 @@
 # and whose sudo is passwordless, so pushes need no interactive password.
 { config, lib, ... }:
 let
-  lenovoKey = lib.findFirst (k: lib.hasSuffix "lukas@lenovo-21CB001PMX" k)
-    (throw "deploy-target: lenovo's key is missing from lib/users.nix")
+  inherit (config.sam.fleet) deployer;
+  deployerKey = lib.findFirst (k: lib.hasSuffix "lukas@${deployer}" k)
+    (throw "deploy-target: ${deployer}'s key is missing from lib/users.nix")
     (config.sam.userConfig.sshKeys or [ ]);
 in
 {
@@ -15,8 +16,8 @@ in
     # deploy-rs runs its activation through a login shell.
     useDefaultShell = true;
     openssh.authorizedKeys.keys = [
-      # lenovo's LAN address, plus loopback for its own self-deploy.
-      ''from="192.168.10.154,127.0.0.1,::1" ${lenovoKey}''
+      # the deployer's LAN address, plus loopback for its own self-deploy.
+      ''from="${config.sam.fleet.hosts.${deployer}.address},127.0.0.1,::1" ${deployerKey}''
     ];
   };
 
