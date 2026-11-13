@@ -1,4 +1,4 @@
-# Persistent terminal workspace for AI coding agents, on every host: every host
+# Persistent terminal workspace for AI coding agents, on every devTools host: each
 # runs a herdr server; the coordinator host also saves the workers as herdr
 # machines (sam.herdr.machines) and reaches them with `herdr --machine <label>`.
 { config, lib, pkgs, osConfig, ... }:
