@@ -13,8 +13,8 @@ Herdr workspace as the session surface).
 
 ## Declare one
 
-In `hosts/<host>/configuration.nix`, then deploy that host (`just deploy-msi`,
-`just deploy-acer`):
+In `hosts/<host>/configuration.nix`, then deploy that host (`just deploy msi-ms7758`,
+`just deploy acer-swift`):
 
 ```nix
 sam.workers.instances = {
