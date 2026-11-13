@@ -35,7 +35,7 @@ let
       }
     ]
     ++ lib.optional devTools ../modules/programs/cli/herdr
-    ++ lib.optional nativeOtel (import ../modules/programs/cli/native-otel.nix "LENOVO-21CB001PMX");
+    ++ lib.optional nativeOtel (import ../modules/programs/cli/native-otel.nix { "host.name" = "lenovo-21cb001pmx"; });
   };
   codex = lib.filter (p: (p.name or null) == "codex") evaluated.config.home.packages;
 in

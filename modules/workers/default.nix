@@ -174,8 +174,9 @@ let
     };
     options.telemetry = mkOption {
       type = types.bool;
-      default = false;
-      description = "The guest's Claude Code exports OTLP metrics and events (sam.claude.telemetry) through the proxy to this host's native-otel-relay, which needs sam.profile.nativeOtel here; the guest holds no token. The proxy's X-Otel-Worker stamp names the worker on logs only; metrics carry no worker and count under host.name.";
+      default = profile.nativeOtel;
+      defaultText = lib.literalExpression "config.sam.profile.nativeOtel";
+      description = "The guest's Claude Code (sam.claude.telemetry) and Codex export OTLP metrics, and Claude its events, through the proxy to this host's native-otel-relay, which needs sam.profile.nativeOtel here; the guest holds no token. The proxy's X-Otel-Worker stamp names the worker on logs only; metrics carry no worker and count under host.name.";
     };
     config.credentials = lib.mkIf (onGithub config) (lib.subtractLists [ "id_ed25519" "gh-hosts.yml" ] (lib.attrNames dev.credentials));
   };
@@ -327,7 +328,7 @@ in
             xdg.configFile."gh/config.yml".text = "http_unix_socket: ${dev.egress.github.socket}\n";
           };
         };
-        # A path to the host's relay, which adds the token; the guest's Claude sends to the same 127.0.0.1:4319.
+        # A path to the host's relay, which adds the token; the guest's Claude and Codex send to the same 127.0.0.1:4319.
         otlp = {
           for = i: i.telemetry;
           # The exact path: Caddy's path matcher ignores case and merges slashes. The relay keys its rate limit, and
@@ -389,10 +390,6 @@ in
       {
         assertion = profile.nativeOtel || !lib.any (i: i.telemetry) (lib.attrValues dev.instances);
         message = "sam.workers: an instance with telemetry sends through this host's native-otel-relay, which runs only with sam.profile.nativeOtel (and the sops secret native_otlp_auth).";
-      }
-      {
-        assertion = lib.all (i: !i.telemetry || i.agent == "claude") (lib.attrValues dev.instances);
-        message = "sam.workers: telemetry exports Claude Code's OTLP, and an instance with it has another agent.";
       }
       {
         assertion = lib.all (i: i.paused || i.telemetry || !config.containers.${i.name}.config.sam.claude.telemetry.enable) (lib.attrValues dev.instances);
