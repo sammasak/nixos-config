@@ -97,6 +97,11 @@ let
     ${pkgs.python3}/bin/python scripts/test-journal-collector.py
   '';
 
+  # the probe's seeded msi realises upstream's validate-loki-conf, so loki -verify-config runs here
+  lokiTest = gate "loki-test" (with pkgs; [ nix python3 ]) ''
+    ${pkgs.python3}/bin/python scripts/test-loki.py
+  '';
+
   # a switch keeps Herdr's server and cannot wait forever on a unit (eval only)
   switchSafetyTest = gate "switch-safety-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-switch-safety.py
@@ -138,7 +143,7 @@ let
     export GATE_PROBE
     ${run [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
-      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest switchSafetyTest rfBeaconsTest
+      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest lokiTest switchSafetyTest rfBeaconsTest
     ]}
   '';
 
@@ -397,6 +402,7 @@ in
     "nixos:rf-lab-boundary-test" = task "#42: no host but naked-pi imports rf-lab or carries an rf-* unit (naked-pi's own bounds are role assertions)" rfLabBoundaryTest;
     "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
     "nixos:journal-collector-test" = task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
+    "nixos:loki-test" = task "homelab.loki on no host yet: chart-parity config validated by loki -verify-config, loopback and no port by default" lokiTest;
     "nixos:switch-safety-test" = task "A switch keeps Herdr's server on every host that runs one, waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 

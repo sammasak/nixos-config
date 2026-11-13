@@ -196,6 +196,31 @@ let
       } ]);
     };
 
+    # every host, so a Loki enabled anywhere is seen. The seeded msi keeps execStart's context: building the probe
+    # realises upstream's validate-loki-conf, which runs loki -verify-config on the rendered file.
+    loki = let
+      facts = c: { enable = c.homelab.loki.enable or false; loki = c.services.loki.enable; };
+      seed = settings: hosts.msi-ms7758.extendModules { modules = [ ../modules/homelab/loki.nix { homelab.loki = { enable = true; } // settings; } ]; };
+      lan = seed { listenAddress = "192.0.2.10"; allowedSources = [ "192.0.2.0/24" ]; ntfyUrl = "http://ntfy.example/loki"; };
+      c = lan.config;
+      svc = c.systemd.services.loki;
+    in {
+      hosts = lib.mapAttrs (_: h: facts h.config) hosts;
+      msiRules = msi.networking.firewall.extraInputRules + msi.networking.firewall.extraCommands;
+      seeded = builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.toJSON {
+        inherit (c.services.loki) configuration dataDir extraFlags user;
+        unit = lib.genAttrs [ "onFailure" "startLimitIntervalSec" "startLimitBurst" "wantedBy" ] (n: svc.${n} or null);
+        service = lib.genAttrs [ "ExecStartPost" "TimeoutStartSec" "RestartSec" "Restart" "MemoryMax" "ProtectSystem" "ReadWritePaths"
+          "CapabilityBoundingSet" "NoNewPrivileges" "PrivateDevices" "SystemCallFilter" "User" ] (n: svc.serviceConfig.${n} or null);
+        failed = c.systemd.services.loki-failed.script or null;
+        rules = c.networking.firewall.extraInputRules + c.networking.firewall.extraCommands;
+        tcpPorts = c.networking.firewall.allowedTCPPorts;
+        failing = failing c;
+        defaults = lib.mapAttrs (_: o: o.default) { inherit (lan.options.homelab.loki) listenAddress port retention allowedSources ntfyUrl; };
+      })) // { execStart = svc.serviceConfig.ExecStart; };
+      loopbackOpen = failing (seed { allowedSources = [ "192.0.2.0/24" ]; }).config;
+    };
+
     runtime-host = {
       hosts = lib.genAttrs [ "msi-ms7758" "acer-swift" ] (n: runtimeFacts hosts.${n}.config // { failing = failing hosts.${n}.config; });
       acerDesktop = runtimeFacts acer.specialisation.desktop.configuration;
