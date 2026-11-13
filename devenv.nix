@@ -132,18 +132,19 @@ let
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
   lints = [ lintComments lintShell ];
-  # seconds per step, to see where a slow gate spends its time (#334)
+  # seconds per step, to see where a slow gate spends its time (#334); prek hides a passing hook's
+  # output, so the push gate also appends them to NIXOS_QA_TIMES
   timed = lib.concatMapStringsSep "\n" (g: ''
     t=$SECONDS
     ${lib.getExe g}
-    echo "nixos-qa: ${g.name} took $((SECONDS - t)) s"
+    echo "nixos-qa: ${g.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
   '');
   qa = gate "nixos-qa" [ ] ''
     ${timed (lints ++ [ secretsVerify flakeCheck ])}
     t=$SECONDS
     GATE_PROBE=$(${lib.getExe probe})
     export GATE_PROBE
-    echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s"
+    echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
     ${timed [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
       ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest switchSafetyTest rfBeaconsTest
@@ -175,7 +176,9 @@ let
       ${run lints}
       exit
     fi
-    echo "nixos-qa on pushed commit $(git rev-parse --short HEAD)"
+    NIXOS_QA_TIMES=$(git rev-parse --path-format=absolute --git-common-dir)/nixos-qa-times
+    export NIXOS_QA_TIMES
+    echo "nixos-qa on pushed commit $(git rev-parse --short HEAD)" | tee -a "$NIXOS_QA_TIMES"
     ${lib.getExe qa}
   '';
 
