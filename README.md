@@ -98,7 +98,7 @@ After changing SSH policy, apply locally on the target first
 
 ## Automation
 
-`modules/core/automation.nix` turns on a weekly auto-upgrade from `github:sammasak/nixos-config/main` (Sunday 06:00, plus up to 45 min of jitter), monthly garbage collection and weekly store optimisation. Only `acer-swift` keeps the auto-upgrade, with `allowReboot = false` (it is the sole worker); lenovo, msi-ms7758, black-pi and naked-pi force it off. naked-pi collects garbage weekly.
+`modules/core/automation.nix` turns on a weekly auto-upgrade from `github:sammasak/nixos-config/main` (Sunday 06:00, plus up to 45 min of jitter), monthly garbage collection and weekly store optimisation. Only `acer-swift` keeps the auto-upgrade, with `allowReboot = false` (it is the sole worker); lenovo, msi-ms7758, black-pi and naked-pi force it off. The Pis (weekly, 7-day retention) and msi-ms7758 override the GC schedule.
 
 ## Adding a New Host
 
