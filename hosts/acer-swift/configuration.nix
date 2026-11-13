@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
 let
   vars = import ./variables.nix;
 in
@@ -62,8 +62,8 @@ in
     serviceConfig.Type = "oneshot";
     path = [ pkgs.iputils pkgs.networkmanager pkgs.util-linux ];
     script = ''
-      if ! ping -c3 -W2 192.168.10.1 >/dev/null 2>&1; then
-        logger -t wifi-selfheal "LAN gateway 192.168.10.1 unreachable — bouncing wlp0s20f3"
+      if ! ping -c3 -W2 ${config.sam.fleet.gateway} >/dev/null 2>&1; then
+        logger -t wifi-selfheal "LAN gateway ${config.sam.fleet.gateway} unreachable — bouncing wlp0s20f3"
         nmcli device disconnect wlp0s20f3 || true
         sleep 2
         nmcli device connect wlp0s20f3 || systemctl restart NetworkManager.service
