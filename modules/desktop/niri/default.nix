@@ -1,5 +1,3 @@
-# Niri desktop (system-wide), coexisting with Hyprland: both session files
-# land in the SDDM greeter and the compositor is picked at sign-in.
 { pkgs, ... }:
 {
   programs.niri.enable = true;

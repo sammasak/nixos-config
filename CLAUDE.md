@@ -4,33 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A NixOS + Home Manager configuration repository using **flake-parts** with a dendritic auto-discovery pattern. Manages Linux servers and laptops from a single flake.
+A NixOS + Home Manager configuration repository using **flake-parts**. Manages Linux servers and laptops from a single flake.
 
 ## Build & Deploy Commands
 
 ```bash
-# ── Verification: devenv tasks (devenv.nix), also run by the git hooks ──
-devenv tasks run nixos:qa     # everything below, in order (= just check)
-devenv tasks run nixos:lint-comments   # Comment Policy (density + forbidden shapes)
-devenv tasks run nixos:lint-shell      # shellcheck scripts/*.sh
-devenv tasks run nixos:secrets-verify  # wifi credentials sanity (skips without an age key)
-devenv tasks run nixos:nvim-check      # lenovo's nvim starts headless clean
-devenv tasks run nixos:flake-check     # nix flake check --all-systems: builds every x86 host, evaluates the Pis
-devenv tasks run nixos:claude-settings-test  # generated Claude settings: default mode, bypass on request
-devenv tasks run nixos:coordinator-test  # coordinator adapters on lenovo only; Codex's agent declared via config_file, no model pin
-devenv tasks run nixos:worker-permissions-test  # #145/#157/skills#28: Herdr workers (restored panes too) start in bypassPermissions and switch models on a safeguards flag; the Coordinator unchanged
-devenv tasks run nixos:workers-eval-test  # modules/workers/core.nix: each wrong config fails eval with its message; agent argv survives the guest shell
-devenv tasks run nixos:bulk-reader-test  # sam.claude.bulkReader: shunt hooks only when on and pinned, after the existing Bash hooks; guests via a guest module
-devenv tasks run nixos:harness-telemetry-test  # sam.claude.telemetry: Claude's OTLP through the local relay, session + repository attributes, emit-work-ref.sh only when on and pinned
-devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes every telemetry surface; lenovo then matches acer with the switch off
-devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
-devenv tasks run nixos:build-bounds-test  # nix-daemon builds bounded on lenovo (#109) and the environment hosts (acer, msi)
-devenv tasks run nixos:runtime-host-test  # msi + acer through the runtime-host role: headless and unthemed, maintenance off the boot path
-devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward supervisor restarts a wedged forward, not an HTTP error
-# Hooks (installed by entering the devenv; .envrc does it on cd):
-#   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
+# ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
+#    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
+devenv tasks run nixos:qa           # every gate in order (= just check): lints, secrets-verify, flake check, then the tests
+devenv tasks run nixos:flake-check  # nix flake check --all-systems: builds every x86 host, evaluates the Pis (= just verify)
+# Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
+# which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
+#   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
 #   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree
-#               (lints only when everything changed since origin/main is docs/ or a top-level *.md).
+#               (lints only when everything changed since origin/main is docs/ or a top-level *.md,
+#               unless a scripts/test-* file names one of the changed files).
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 # Or manually verify specific host:
@@ -51,7 +39,7 @@ just deploy-lenovo            # loopback self-push, proves the deploy-rs path
 just deploy-msi               # only in its Mon-Fri ~09:00-21:00 power window
 just deploy-naked-pi          # Pi 3 rf-lab; builds on the Pi, cache hits only
 
-# Remote deploy via SSH (a host without a deploy-rs node yet)
+# Fallback when deploy-rs cannot reach a host (every host has a node in flake-modules/70-deploy.nix)
 nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
 ```
 
@@ -65,8 +53,8 @@ only needed when targeting the other machine.
 
 ## Architecture
 
-Flake-parts with dendritic auto-discovery: `flake-modules/` numbered for load
-order; `modules/roles|home/*` auto-register; hosts are 2-3 files under
+`flake.nix` imports every file under `flake-modules/` (import-tree; the number
+prefixes set no order); `modules/roles|home/*.nix` auto-register; hosts are 3 files under
 `hosts/<name>/` wired by `flake-modules/hosts/<name>.nix`; all host metadata
 flows through the strict `sam.profile` submodule (unknown fields are build
 errors) and GUI-ness keys off `sam.desktop.enable` alone. Full detail:
@@ -75,23 +63,26 @@ specialisations, module layout).
 
 ### Secrets
 
-SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at boot to `/run/secrets/`.
+SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at activation (every switch and boot) to `/run/secrets/`.
 
 Two SOPS modules:
-- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`) — k3s cluster tokens, Flux deploy keys, Cloudflare API token. Encrypted to all host keys + Flux age key.
-- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`) — per-machine operator credentials on every physical host (Claude Code OAuth token, nix access token). Uses `mkDefault` for age config to avoid conflicts with the homelab module.
+- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): k3s cluster token, Flux deploy and age keys, Cloudflare API token, Tailscale authkey; on every k3s node (k3s, flux, acme and tailscale turn it on).
+- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
 
 | Path pattern | Recipients | Purpose |
 |--------------|-----------|---------|
 | `homelab/nix-signing-key.yaml` | Personal + lenovo | deploy-rs closure-signing private key (workers trust the public half) |
-| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, wifi, GitHub access token |
+| `homelab/wifi.yaml` | as `homelab/*.yaml`, plus naked-pi | Home Wi-Fi PSK |
+| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
 | `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, black-pi | Claude OAuth token |
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
 | `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Pi's gateway key |
 | `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
+
+Every acer-swift recipient except `native-otlp-auth.yaml` also includes acer's own `lukas` user key.
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in fish shell init via `modules/programs/cli/claude-code/mcp.nix`.
 
@@ -171,13 +162,14 @@ runbook above — never rotate the authkey while an auth URL is pending.
 
 ### Key Inputs
 
-nixpkgs (unstable), flake-parts, home-manager, stylix, sops-nix, skills — all following nixpkgs (except skills which is a plain source input).
+See `flake.nix`. factum, nix-audit and rf-proto are pinned by `?rev=` in their URL, so `nix flake update`
+does not move them: edit the rev.
 
 ## Comment Policy
 
 Nix is declarative: the option name and value already say *what*. A comment
 earns its line only by saying something the code cannot. Write one only when it
-is one of these four:
+is one of these five:
 
 | Allowed | Example |
 |---------|---------|
@@ -199,8 +191,7 @@ Never:
 - label a single setting with its own name (`# Cursor` above `cursor_shape`)
 
 One exception to the last point: a bare label heading **four or more** related
-entries in a long flat list — `packages.nix`'s groups, hyprland's keybind
-sections — is navigation, not restatement, and stays.
+entries in a long flat list (`packages.nix`'s groups) is navigation, not restatement, and stays.
 
 Long rationale goes to the knowledge vault, and the code keeps a single pointer:
 
@@ -235,8 +226,8 @@ if any moved or any evaluation failed.
 - **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
 - **Firewall**: LAN CIDR defaults to `192.168.10.0/24` (override via `sam.profile.lanCidr`). SSH is key-only, no root login.
-- **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (currently claude-code, obsidian, unrar, vscode) — otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
-- **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` forces `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
+- **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (currently antigravity-cli, claude-code, unrar); otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
+- **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` and `rf-lab.nix` force `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
 
 ## Adding a New Host
