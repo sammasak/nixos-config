@@ -7,8 +7,6 @@
 # `.broken` fails Home Manager's activation on purpose; it means something only next to a passing plain run.
 { pkgs, roleModules, fleetModules, roles }:
 let
-  vars = import ../hosts/msi-ms7758/variables.nix;
-
   test = pkgs.testers.runNixOSTest {
     name = "runtime-host-role";
     # The fleet's modules set nixpkgs.overlays, which read-only pkgs refuses.
@@ -19,7 +17,9 @@ let
       {
         # msi's roles minus homelab-agent: no k3s, whose server is lenovo.
         imports = roleModules ++ fleetModules;
-        sam.profile = vars // {
+        sam.profile = {
+          username = "lukas";
+          hostname = "msi-ms7758";
           inherit roles;
           # The relay needs msi's native_otlp_auth secret.
           nativeOtel = false;
@@ -41,7 +41,7 @@ let
 
     testScript = ''
       machine.wait_for_unit("multi-user.target")
-      machine.wait_for_unit("home-manager-${vars.username}.service")
+      machine.wait_for_unit("home-manager-lukas.service")
       machine.wait_for_open_port(22)
       failed = machine.succeed("systemctl list-units --failed --plain --no-legend").strip()
       assert failed == "", f"failed units after boot:\n{failed}"
@@ -57,7 +57,7 @@ in
 test
 // {
   broken = test.extendNixOS {
-    module.home-manager.users.${vars.username} =
+    module.home-manager.users.lukas =
       { lib, ... }:
       {
         home.activation.brokenOnPurpose = lib.hm.dag.entryAfter [ "writeBoundary" ] "exit 1";

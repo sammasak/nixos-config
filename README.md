@@ -35,7 +35,7 @@ the tie-breaker.
 |------|------|-------|
 | `flake.nix` | Flake entry point | Recursively auto-imports `flake-modules/`; nothing host-specific |
 | `flake-modules/` | Top-level flake composition | Number prefixes are names only, not an order; `hosts.nix` declares each host and its roles |
-| `hosts/<name>/` | Per-machine facts only | `variables.nix` (choices), `configuration.nix` (host-only modules), `hardware-configuration.nix` (generated) |
+| `hosts/<name>/` | Per-machine facts only | `configuration.nix` (`sam.profile` choices and host-only modules), `hardware-configuration.nix` (generated) |
 | `modules/core/` | System modules | `roles/base.nix` imports the baseline every host gets; the rest come in through roles, hosts or the desktop specialisation (docs/architecture.md, Roles) |
 | `modules/roles/` | Composition | `base`, `laptop`, `homelab-agent`, `homelab-server`, `runtime-host`, `rf-lab`, `embedded`; selected in `flake-modules/hosts.nix` |
 | `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |

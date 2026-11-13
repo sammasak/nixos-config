@@ -144,7 +144,7 @@ usage remains separate from harness-observed metrics.
 ## Rollback
 
 Set `nativeOtel = false` in
-`hosts/lenovo-21CB001PMX/variables.nix`, rebuild and switch to that generation,
+`sam.profile` in `hosts/lenovo-21CB001PMX/configuration.nix`, rebuild and switch to that generation,
 then start a fresh shell. `devenv tasks run nixos:otel-rollback-test` (part of
 `nixos:qa`) proves the evaluated result before any switch: it flips that one
 switch in a copy of the tree and checks that no Claude telemetry variable,

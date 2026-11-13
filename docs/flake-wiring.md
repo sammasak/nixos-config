@@ -80,9 +80,8 @@ inside D.
    depend on config) and `deploy.*` (read by deploy-rs). #291's addresses,
    read by other hosts' NixOS modules but nothing at flake level, went to
    `sam.fleet` instead (below). Username and feature flags are read only
-   inside the host, so they stay in `hosts/<dir>/variables.nix`, which
-   `configuration.nix` and tests import as `sam.profile`. Inlining
-   `variables.nix` into `configuration.nix` is a separate follow-up.
+   inside the host, so they stay in `sam.profile` in
+   `hosts/<dir>/configuration.nix`.
 
    ```nix
    configurations.nixos = {
