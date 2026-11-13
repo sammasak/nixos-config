@@ -93,7 +93,6 @@ in
   # Intermittent (WoL-woken) node: the taint keeps its shutdowns off always-on
   # workloads; CPU/batch jobs opt in via toleration + node-pool. The GTX 680 is
   # Kepler, which current drivers dropped, so the GPU is not wired into k3s.
-  homelab.k3s.cni = "cilium"; # must match control-plane: Cilium KPR, kube-proxy disabled
   homelab.k3s.extraFlags = [
     "--node-label=node-pool=workers"
     "--node-taint=sammasak.dev/intermittent=true:NoSchedule"

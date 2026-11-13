@@ -38,7 +38,6 @@ in
     cores = 2;
   };
 
-  homelab.k3s.cni = "cilium"; # must match control-plane: Cilium KPR, kube-proxy disabled
   homelab.k3s.extraFlags = [
     "--node-label=node-pool=arm64"
     # Opt-in: most workloads are unpinned and many homelab images are amd64-only.
