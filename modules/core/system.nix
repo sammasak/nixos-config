@@ -11,8 +11,8 @@ in
       type = types.submodule {
         options = {
           username = mkOption {
-            type = types.str;
-            description = "Primary user for this host.";
+            type = types.enum (builtins.attrNames (import ../../lib/users.nix));
+            description = "Primary user for this host: a user in lib/users.nix.";
           };
 
           hostname = mkOption {
