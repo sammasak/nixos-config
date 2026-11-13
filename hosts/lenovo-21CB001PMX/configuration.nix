@@ -91,10 +91,6 @@ in
 
   homelab.k3s.taintControlPlane = true;
 
-  # Drops bundled flannel, kube-proxy and the network-policy controller so
-  # Cilium's eBPF datapath takes over.
-  homelab.k3s.cni = "cilium";
-
   # ThinkPad-class laptop: thinkfan + thermald with a less heat-prone curve.
   sam.thermal = {
     platform = "thinkpad";

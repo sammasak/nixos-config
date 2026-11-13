@@ -102,7 +102,7 @@ Boundary rule in Conventions.
 Composable role modules assigned per host in `flake-modules/hosts.nix`:
 - **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`, `sddm`, `fish`)
 - **laptop** — laptop-specific overrides
-- **homelab-agent** — k3s worker node; disables sleep/suspend
+- **homelab-agent** — k3s worker node, joining the server at lenovo's `sam.fleet` address; disables sleep/suspend
 - **homelab-server** — k3s control plane
 - **runtime-host** — headless worker host, msi-ms7758 and acer-swift, running the declared nspawn developer environments
   (`sam.workers`, docs/nspawn-workers.md): the run credential, the deploy-rs target, no Stylix outside a

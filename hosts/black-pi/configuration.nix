@@ -38,8 +38,6 @@ in
     cores = 2;
   };
 
-  homelab.k3s.serverAddr = "https://192.168.10.154:6443"; # k3s server on lenovo-21CB001PMX
-  homelab.k3s.cni = "cilium"; # must match control-plane: Cilium KPR, kube-proxy disabled
   homelab.k3s.extraFlags = [
     "--node-label=node-pool=arm64"
     # Opt-in: most workloads are unpinned and many homelab images are amd64-only.
