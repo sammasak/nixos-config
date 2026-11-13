@@ -11,7 +11,7 @@ report.md
 .claude/settings.local.json
 .cycle1-plan.md
 
-# nixos-facter output: DMI/MAC/serial data, regenerated on-host on demand
+# nixos-facter output: DMI/MAC/serial data, never commit
 hosts/lenovo-21CB001PMX/facter.json
 
 # devenv

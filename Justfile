@@ -80,23 +80,10 @@ nvim-check:
 check:
     devenv tasks run nixos:qa
 
-# facter.json is gitignored, so this is the only gate that re-validates facter's
-# actual contribution rather than the (always-safe) null path; there is no CI,
-# so re-run by hand on lenovo after a hardware/BIOS change.
-[doc("lenovo-only: regenerate facter.json in place, confirm the kernel-module union still covers the hand list")]
-facter-check:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cp hosts/lenovo-21CB001PMX/facter.json /tmp/facter-check.bak.json 2>/dev/null || true
-    sudo "$(nix build '.#nixosConfigurations.lenovo.pkgs.nixos-facter' --no-link --print-out-paths)/bin/nixos-facter" \
-      -o hosts/lenovo-21CB001PMX/facter.json
-    nix eval '.#nixosConfigurations.lenovo.config.boot.initrd.availableKernelModules' --json \
-      | nix shell nixpkgs#jq -c -- jq -e 'contains(["xhci_pci","thunderbolt","nvme","usb_storage","sd_mod"])' \
-      > /dev/null && echo "OK: superset holds" \
-      || echo "REGRESSION: hand list is no longer a subset of the facter-augmented union"
-    [ -f /tmp/facter-check.bak.json ] && mv /tmp/facter-check.bak.json hosts/lenovo-21CB001PMX/facter.json || true
-
 # ── Metrics ───────────────────────────────────────────────────────────
+
+# One evaluation run in a transient user unit under a 7G memory cap, no swap.
+capped := "systemd-run --user --wait --collect --pipe -q -p MemoryMax=7G -p MemorySwapMax=0 --working-directory=" + quote(justfile_directory())
 
 # Measure eval time + static readability metrics, append to metrics/history.jsonl
 bench:
@@ -108,10 +95,13 @@ bench-diff:
 
 # Run this after a refactor that is meant to change nothing. Deliberately NOT part
 # of `check` or `verify`: a change that legitimately moves the derivation should
-# not fail the build gates.
-[doc("Compare both toplevel drvPaths against the last bench entry; non-zero if they moved")]
-parity:
-    bash scripts/bench.sh parity
+# not fail the build gates. Runs under `capped`: needs a user systemd manager and
+# does not inherit the caller's environment (no SSH agent, no NIX_CONFIG). The tree
+# side sees tracked files incl. uncommitted edits, not untracked ones. Non-zero if
+# any host moved.
+[doc("Compare the five host derivations at BASE (default: merge base with origin/main) with the working tree")]
+parity BASE="":
+    {{capped}} bash scripts/bench.sh parity {{quote(BASE)}}
 
 # ── Editor ────────────────────────────────────────────────────────────
 

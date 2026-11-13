@@ -18,15 +18,18 @@ let
   '';
 in
 {
+  # Off by default; a host that upgrades unattended opts in with enable = true.
+  # Why the others stay manual: black-pi and the rf-lab boards would compile
+  # cache misses on the SD card (and rf-lab must not reboot unattended), msi's
+  # Windows/EFI layout is unverified for unattended boot entries, and lenovo is
+  # rebuilt by hand before the push that the others upgrade from.
   system.autoUpgrade = {
-    enable = true;
     flake = "github:sammasak/nixos-config/main";
     flags = [ "--print-build-logs" ];
     # Clear of the 03:00-04:05 backup chain and the Sun 05:00 flake-update timer:
     # a build inside the backup window is the I/O storm that hung acer-swift.
     dates = "Sun 06:00";
     randomizedDelaySec = "45min";
-    allowReboot = true;
   };
 
   nix.gc = {

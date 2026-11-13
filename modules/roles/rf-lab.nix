@@ -39,7 +39,4 @@ in
   # Headless: its Home Manager themes compile sass and libxml2 on the Pi (aarch64 cache misses).
   stylix.enable = lib.mkForce false;
   home-manager.users.${username}.fonts.fontconfig.enable = lib.mkForce false;
-
-  # An unattended upgrade would compile cache misses on the SD card and reboot the board.
-  system.autoUpgrade.enable = lib.mkForce false;
 }
