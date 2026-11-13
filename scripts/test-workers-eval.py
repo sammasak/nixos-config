@@ -104,9 +104,8 @@ FLEET_CASES = [
     ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
     ("telemetry without nativeOtel", "{ sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
-    ("telemetry from a guest module", "{ sam.workers.instances.t = { }; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
+    ("telemetry from a guest module", "{ sam.workers.instances.t.telemetry = false; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
      "a guest module turned on sam.claude.telemetry"),
-    ("telemetry on a non-claude instance", '{ sam.workers.instances.t = { agent = "none"; telemetry = true; }; }', "an instance with it has another agent"),
 ]
 # black-pi declares no native_otlp_auth (msi and acer do), so the relay's own assertion is seen there
 NO_SECRET = ("nativeOtel without the relay's secret", "{ sam.profile.nativeOtel = lib.mkForce true; }", "native-otel-relay loads the sops secret native_otlp_auth, which this host does not declare")
@@ -132,16 +131,20 @@ in {
 }
 """
 
-# msi (a nativeOtel host) with one instance sending telemetry and one not: what each guest gets, and the proxy's site
+# msi (a nativeOtel host) with an instance that sets nothing (telemetry by default), a codex one, and one that turns it
+# off: what each guest gets, and the proxy's site
 TELEMETRY = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
   c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: {
-    sam.workers.instances = lib.mkForce { tel.telemetry = true; plain = { }; };
+    sam.workers.instances = lib.mkForce { tel = { }; cdx.agent = "codex"; plain.telemetry = false; };
   }) ]; }).config;
   egress = c.systemd.services.dev-env-egress.serviceConfig;
-  guest = n: let g = c.containers.${n}.config; s = g.home-manager.users.lukas.programs.claude-code.settings; in {
+  guest = n: let g = c.containers.${n}.config; hm = g.home-manager.users.lukas; s = hm.programs.claude-code.settings; in {
     env = s.env;
+    codex_otel = flake.inputs.nixpkgs.lib.hasInfix "metrics_exporter = { \"otlp-http\" = { endpoint = \"http://127.0.0.1:4319/v1/metrics\"" hm.home.file.".codex/config.toml".text;
+    # context discarded: the probe would otherwise build the wrapper
+    codex_wrappers = map (p: builtins.unsafeDiscardStringContext p.text) (builtins.filter (p: (p.pname or p.name or "") == "codex" && p ? text) hm.home.packages);
     mode = s.permissions.defaultMode or null;
     hooks = builtins.concatMap (e: map (h: h.command) e.hooks) (builtins.concatLists (builtins.attrValues s.hooks));
     binds = map (b: b.hostPath) (builtins.attrValues c.containers.${n}.bindMounts);
@@ -159,6 +162,7 @@ in {
   credentials = egress.LoadCredential;
   caddy = builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " egress.ExecStart));
   tel = guest "tel";
+  cdx = guest "cdx";
   plain = guest "plain";
 }
 """
@@ -386,7 +390,7 @@ class Recorder(http.server.BaseHTTPRequestHandler):
 
 
 def check_telemetry(got, out):
-    check(got.get("failing") == [], f"msi as a nativeOtel host with a telemetry instance fails no assertion ({got.get('failing', out.stderr.strip()[-600:])})")
+    check(got.get("failing") == [], f"msi as a nativeOtel host with telemetry instances fails no assertion ({got.get('failing', out.stderr.strip()[-600:])})")
     tel, plain = got.get("tel", {}), got.get("plain", {})
     check(got.get("secret") in ({"owner": None, "mode": "0400"}, {"owner": "root", "mode": "0400"}), f"msi's native_otlp_auth is root-owned 0400, read only by the relay's LoadCredential ({got.get('secret')})")
     h_env = got.get("host", {}).get("env", {})
@@ -410,10 +414,18 @@ def check_telemetry(got, out):
     check(len(hooks) == (2 if got.get("pinned") else 0), f"a telemetry guest runs emit-work-ref.sh on Stop and SessionStart exactly when the skills pin carries it ({len(hooks)}, pinned {got.get('pinned')})")
     skill_hooks = [h for h in tel.get("hooks", []) if h.endswith("/hooks/emit-skill-use.sh")]
     check(len(skill_hooks) == (2 if got.get("skill_pinned") else 0), f"a telemetry guest runs emit-skill-use.sh on PreToolUse(Skill) and UserPromptSubmit exactly when the skills pin carries it ({len(skill_hooks)}, pinned {got.get('skill_pinned')})")
+    cdx = got.get("cdx", {})
+    for name, g in (("tel", tel), ("cdx", cdx)):
+        wrapped = [w for w in g.get("codex_wrappers", []) if f'OTEL_RESOURCE_ATTRIBUTES="host.name=msi-ms7758,worker.name={name}"' in w and "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative" in w]
+        check(g.get("codex_otel") is True and len(wrapped) == 1 and g.get("sockets", {}).get("otlp-egress") == ["127.0.0.1:4319"],
+              f"guest {name} (telemetry left at its default on a nativeOtel host): Codex exports metrics to its loopback 4319 as host.name=msi-ms7758,worker.name={name} ({g.get('codex_otel')}, {len(wrapped)} wrapper)")
+    check(cdx.get("env", {}).get("CLAUDE_CODE_ENABLE_TELEMETRY") == "1" and not cdx.get("relay") and cdx.get("secrets") == [],
+          "a codex instance gets the same telemetry by default, and neither relay nor secret")
     p_env = plain.get("env", {})
     left = sorted(k for k in p_env if k.startswith(("OTEL_", "HARNESS_")) or k == "CLAUDE_CODE_ENABLE_TELEMETRY")
-    check(not left and "otlp-egress" not in plain.get("sockets", {}) and not any(h.endswith(("emit-work-ref.sh", "emit-skill-use.sh")) for h in plain.get("hooks", [])),
-          f"a guest without telemetry, on that nativeOtel host, gets none of it ({left})")
+    check(not left and "otlp-egress" not in plain.get("sockets", {}) and not any(h.endswith(("emit-work-ref.sh", "emit-skill-use.sh")) for h in plain.get("hooks", []))
+          and plain.get("codex_otel") is False and plain.get("codex_wrappers") == [],
+          f"a guest with telemetry = false, on that nativeOtel host, gets none of it, for Claude or Codex ({left}, {plain.get('codex_otel')}, {plain.get('codex_wrappers')})")
     posture = lambda g: (g.get("env", {}).get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"), g.get("mode"))
     check(bool(env) and posture(tel) == posture(plain) == (None, None), f"telemetry leaves a guest's CLAUDE_CODE_SUBPROCESS_ENV_SCRUB and defaultMode as they are without it ({posture(tel)} vs {posture(plain)})")
     sites = {b.split("\n", 2)[1].strip(): b for b in got.get("caddy", "").split("http:// {")[1:]}

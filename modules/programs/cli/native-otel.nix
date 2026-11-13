@@ -1,4 +1,4 @@
-hostName:
+resourceAttributes:
 {
   pkgs,
   lib,
@@ -13,7 +13,7 @@ hostName:
       pkgs.writeShellApplication {
         name = "codex";
         text = ''
-          export OTEL_RESOURCE_ATTRIBUTES="host.name=${lib.toLower hostName}"
+          export OTEL_RESOURCE_ATTRIBUTES="${lib.concatStringsSep "," (lib.mapAttrsToList (k: v: "${k}=${v}") resourceAttributes)}"
           export OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
           exec ${pkgs.codex}/bin/codex "$@"
         '';
