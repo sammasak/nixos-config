@@ -76,6 +76,9 @@ let
       # null: the host runs no Herdr server
       herdr = builtins.mapAttrs (_: h: let units = h.config.home-manager.users.lukas.systemd.user.services or { }; in
         if units ? herdr then { inherit (units.herdr.Unit) X-SwitchMethod; } else null) hosts;
+      # null: the host does not bootstrap Flux
+      flux = builtins.mapAttrs (_: h: let units = h.config.systemd.services; in
+        if units ? flux-bootstrap then { inherit (units.flux-bootstrap.serviceConfig) Type; TimeoutStartSec = units.flux-bootstrap.serviceConfig.TimeoutStartSec or null; } else null) hosts;
     };
 
     nvim-check = {

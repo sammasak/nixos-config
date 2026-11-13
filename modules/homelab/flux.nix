@@ -48,6 +48,9 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        # A oneshot has no start timeout by default: with the API down the wait loop below would hold a switch
+        # forever. Room for the API to come up plus flux bootstrap's own 5 min; a timeout is retried at boot.
+        TimeoutStartSec = "10min";
         Restart = "on-failure";
         RestartSec = "30s";
       };
