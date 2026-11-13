@@ -164,8 +164,9 @@ let
     trap 'git worktree remove --force "$tree"' EXIT
     git worktree add --quiet --detach "$tree" "$rev"
     cd "$tree"
-    # In a linked worktree git hands the hook its GIT_DIR: HEAD would be that checkout's, not this tree's.
-    unset GIT_DIR
+    # In a linked worktree git hands the hook its GIT_DIR: HEAD, the lints' git ls-files and git under qa
+    # would all follow that checkout, not this tree. The siblings are unset for a tool that exports them.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
     # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
     # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
     if base=$(git merge-base HEAD origin/main) && changed=$(git diff --no-renames --name-only "$base" HEAD) \
