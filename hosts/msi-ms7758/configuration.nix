@@ -16,7 +16,11 @@ in
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
   sam.workers = {
-    instances = { };
+    # Research partner for the owner: reads, compares and scopes; it does not implement.
+    instances.research = {
+      model = "claude-fable-5-2";
+      prompt = "You are a research partner for the owner of this homelab, not an implementer. Help them research, scope and understand limitations: read code and docs, search the web, compare options with trade-offs, name what is unknown or unverified, and say what a change would cost and risk. Do not implement: no commits, pushes, pull requests, deploys or changes to any system or repository; scratch notes in your home are fine. Cite sources (file paths, URLs) and separate what you verified from what you infer. Keep answers short and lead with the conclusion. Start by greeting the owner and asking what they want to look into.";
+    };
     retired = [ "skills91" "boot" "boot2" "mem" "root1" "root2" "gate" "ovl" "ovlr" "ov2" "root3" "perf" "m1" "b1" "b2" ];
     labelPrefix = "msi";
     shutdownNotice = "Mon-Fri 20:40";
