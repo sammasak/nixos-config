@@ -169,7 +169,7 @@ factum, nix-audit, rf-proto and devenv-platform are plain sources (`flake = fals
 
 Nix is declarative: the option name and value already say *what*. A comment
 earns its line only by saying something the code cannot. Write one only when it
-is one of these four:
+is one of these five:
 
 | Allowed | Example |
 |---------|---------|
@@ -191,8 +191,7 @@ Never:
 - label a single setting with its own name (`# Cursor` above `cursor_shape`)
 
 One exception to the last point: a bare label heading **four or more** related
-entries in a long flat list — `packages.nix`'s groups, hyprland's keybind
-sections — is navigation, not restatement, and stays.
+entries in a long flat list — `packages.nix`'s groups — is navigation, not restatement, and stays.
 
 Long rationale goes to the knowledge vault, and the code keeps a single pointer:
 
@@ -223,8 +222,8 @@ the `''`-string rationale, and measurement mechanics:
 - **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
 - **Firewall**: LAN CIDR defaults to `192.168.10.0/24` (override via `sam.profile.lanCidr`). SSH is key-only, no root login.
-- **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (currently claude-code, obsidian, unrar, vscode) — otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
-- **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` forces `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
+- **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (currently antigravity-cli, claude-code, unrar) — otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
+- **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` and `rf-lab.nix` force `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
 
 ## Adding a New Host
