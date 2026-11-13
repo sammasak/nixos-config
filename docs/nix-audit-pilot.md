@@ -57,9 +57,9 @@ initrd or bootloader delta means the base moved and needs its own review.
 
 1. lenovo, `just switch`: it has a console for recovery and runs the comparisons for the other
    two, so it must work first.
-2. acer-swift, `just deploy-acer` from lenovo (magic rollback). It is the only k3s worker,
+2. acer-swift, `just deploy acer-swift` from lenovo (magic rollback). It is the only k3s worker,
    so it goes second, once the package is proven.
-3. msi-ms7758, `just deploy-msi` from lenovo, inside its power window.
+3. msi-ms7758, `just deploy msi-ms7758` from lenovo, inside its power window.
 
 On each host, the activation checks above must hold, plus
 `systemctl --user list-units --all | grep -ci nix-audit` printing 0. There is no journal line

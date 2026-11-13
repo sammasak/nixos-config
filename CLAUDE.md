@@ -44,20 +44,19 @@ just switch [HOST]            # Build and activate
 just build  [HOST]            # Build only
 just diff   [HOST]            # Build and print the package diff vs the running system
 
-# Push from lenovo with deploy-rs (magic-rollback; logs in as `deploy`, no password)
-just deploy-acer              # builds on acer (remoteBuild)
-just deploy-pi                # builds on the Pi (remoteBuild); run inside zellij, it takes hours on a cache miss
-just deploy-lenovo            # loopback self-push, proves the deploy-rs path
-just deploy-msi               # only in its Mon-Fri ~09:00-21:00 power window
-just deploy-naked-pi          # Pi 3 rf-lab; builds on the Pi, cache hits only
-
-# Remote deploy via SSH (a host without a deploy-rs node yet)
-nixos-rebuild switch --flake .#<hostname> --target-host lukas@<ip> --sudo --ask-sudo-password
+# Push from lenovo with deploy-rs (magic rollback; logs in as `deploy`, no password).
+# --skip-checks (the pre-push gate ran the flake check) under a 7G, no-swap memory cap.
+just deploy HOST              # HOST: a deploy-rs node, any other name is refused
+#   lenovo      loopback self-push, proves the deploy-rs path
+#   acer-swift  builds on acer (remoteBuild)
+#   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
+#   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
+#   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only
 ```
 
 Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
 `black-pi` (aarch64; evaluated but not built on x86 hosts, build it on the Pi),
-and `naked-pi` (Pi 3 `rf-lab` node, off k3s; `just deploy-naked-pi`;
+and `naked-pi` (Pi 3 `rf-lab` node, off k3s; `just deploy naked-pi`;
 runbook `~/knowledge/homelab/runbooks/naked-pi-rf-lab.md`).
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
 `host` variable at the top of the Justfile does that mapping, so the argument is
