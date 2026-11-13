@@ -4,33 +4,31 @@
 # trusted against acer-swift, which has no BMC.
 { config, inputs, lib, ... }:
 let
-  # nixpkgs' deploy-rs binary is cached for aarch64; the flake's own would be
-  # a Rust build on the Pi.
-  deployLib =
+  # activate-rs runs on the target, so every node's profile needs the patched build; on the Pis
+  # that is a Rust build there, as nothing caches it.
+  activate =
     system:
     (import inputs.nixpkgs {
       inherit system;
       overlays = [
         inputs.deploy-rs.overlays.default
         (final: prev: {
-          deploy-rs = {
-            inherit (inputs.nixpkgs.legacyPackages.${system}) deploy-rs;
-            inherit (prev.deploy-rs) lib;
+          deploy-rs = prev.deploy-rs // {
+            deploy-rs = prev.deploy-rs.deploy-rs.overrideAttrs (o: {
+              patches = (o.patches or [ ]) ++ [ ../pkgs/patches/deploy-rs-412-rollback-before-cancel.patch ];
+            });
           };
         })
       ];
-    }).deploy-rs.lib;
+    }).deploy-rs.lib.activate;
 
-  x86 = inputs.deploy-rs.lib.x86_64-linux.activate;
-  aarch64 = (deployLib "aarch64-linux").activate;
+  x86 = activate "x86_64-linux";
+  aarch64 = activate "aarch64-linux";
 
   # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
   pushAs = {
     sshUser = "deploy";
     user = "root";
-    # The x86 nodes' activate (this pin) may leave a failed unit's generation while the client reports a
-    # rollback (serokell/deploy-rs#411; the Pis' nixpkgs build is unread): after a failed deploy, compare
-    # the target's `readlink /run/current-system` with its value before the deploy.
     autoRollback = true;
     magicRollback = true;
     activationTimeout = 180;
