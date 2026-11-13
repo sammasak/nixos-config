@@ -47,7 +47,7 @@ the tie-breaker.
 | `modules/themes/` | Catppuccin via Stylix | |
 | `lib/` | Pure helpers, no module semantics | `users.nix` (git identity, SSH keys), `firewall.nix` (dual-backend rule builder) |
 | `scripts/` | Repo tooling | `gate-probe.nix` and the `test-*.py` gates, `bench.sh`, `nix-comment-metrics.awk` |
-| `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions |
+| `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions. `just parity [BASE]` needs no entry: it compares the five host drvPaths at the merge base with the working tree |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
 | `docs/` | Current reference | `architecture.md`, `herdr.md`, `pi.md` |
 | `Justfile` | Task entry points | build, switch, deploy, verify and image recipes |
