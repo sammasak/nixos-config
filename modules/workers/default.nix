@@ -361,6 +361,7 @@ in
           environment.XDG_RUNTIME_DIR = "/run/user/${toString dev.uid}";
           serviceConfig = { Type = "oneshot"; User = user; };
           path = [ pkgs.herdr ];
+          enableStrictShellChecks = true;
           script = lib.concatMapStrings (n: "herdr agent prompt ${n} ${lib.escapeShellArg shutdownNotice} >/dev/null || true\n") agentNames;
         };
       })
@@ -368,6 +369,7 @@ in
         # gh rewrites hosts.yml on a login or refresh; the token is read at start
         services.dev-env-egress-gh = {
           serviceConfig.Type = "oneshot";
+          enableStrictShellChecks = true;
           script = "${config.systemd.package}/bin/systemctl try-restart dev-env-egress.service";
         };
         paths.dev-env-egress-gh = { wantedBy = [ "multi-user.target" ]; pathConfig.PathChanged = cfg.ghHostsFile; };

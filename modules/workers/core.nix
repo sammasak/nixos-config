@@ -403,6 +403,7 @@ in
         requiredBy = lib.optionals config.nix.gc.automatic [ "nix-gc.service" ];
         before = lib.optionals config.nix.gc.automatic [ "nix-gc.service" ];
         serviceConfig.Type = "oneshot";
+        enableStrictShellChecks = true;
         script = ''
           rc=0
           for home in ${lib.escapeShellArg cfg.stateDir}/*/home; do
@@ -441,6 +442,7 @@ in
         systemd.services."dev-env-alert@" = {
           serviceConfig = sandboxed // { Type = "oneshot"; };
           scriptArgs = "%i";
+          enableStrictShellChecks = true;
           script = ''${cfg.alert} "$1 failed on ${hostName}"'';
         };
         systemd.services.dev-env-watch = {

@@ -61,6 +61,7 @@ in
     after = [ "NetworkManager.service" ];
     serviceConfig.Type = "oneshot";
     path = [ pkgs.iputils pkgs.networkmanager pkgs.util-linux ];
+    enableStrictShellChecks = true;
     script = ''
       if ! ping -c3 -W2 ${config.sam.fleet.gateway} >/dev/null 2>&1; then
         logger -t wifi-selfheal "LAN gateway ${config.sam.fleet.gateway} unreachable — bouncing wlp0s20f3"
