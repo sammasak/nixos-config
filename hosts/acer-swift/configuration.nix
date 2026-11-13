@@ -34,10 +34,11 @@ in
     imports = [ ../../modules/specialisations/desktop.nix ];
   };
 
-  # Sole worker — an unattended reboot is a total cluster outage (the reserved
-  # taint strands DNS, kyverno and ntfy, so paging dies with it). Upgrades still
-  # build and activate; the reboot is operator-initiated.
-  system.autoUpgrade.allowReboot = lib.mkForce false;
+  # The only host that upgrades unattended. allowReboot stays at its default (false):
+  # as sole worker an unattended reboot is a total cluster outage (the reserved
+  # taint strands DNS, kyverno and ntfy, so paging dies with it). The reboot is
+  # operator-initiated.
+  system.autoUpgrade.enable = true;
 
   homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
   homelab.k3s.cni = "cilium";  # match control-plane: disable kube-proxy for Cilium KPR

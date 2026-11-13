@@ -38,10 +38,6 @@ in
   nix.gc.dates = lib.mkForce "Mon *-*-01..07 12:00";
   nix.optimise.dates = lib.mkForce [ "Wed 12:00" ];
 
-  # Keep this host manual until the existing Windows/EFI layout is verified.
-  system.autoUpgrade.enable = lib.mkForce false;
-  system.autoUpgrade.allowReboot = lib.mkForce false;
-
   # The existing Windows ESP is small. Keep GRUB's mutable directory on root,
   # while leaving only the EFI loader on /boot.
   boot.loader.systemd-boot.enable = lib.mkForce false;

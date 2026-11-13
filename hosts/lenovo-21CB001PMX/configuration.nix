@@ -77,9 +77,6 @@ in
   nix.settings = { max-jobs = 2; cores = 2; };
   systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "6G"; MemoryMax = "7G"; };
 
-  # Rebuilds here are manual and precede the push other hosts auto-upgrade from.
-  system.autoUpgrade.enable = lib.mkForce false;
-
   # pi-harness PICODE_EP and factum FACTS_OLLAMA_EP default to localhost:8080. The
   # llm-gateway serves keyless Ollama only on its pod loopback, so only this reaches it.
   systemd.user.services.ollama-portforward = {
