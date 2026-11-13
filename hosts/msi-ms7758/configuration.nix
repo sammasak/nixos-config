@@ -77,11 +77,6 @@ in
     };
   };
 
-  services.logind.settings.Login = {
-    IdleAction = "ignore";
-    HandlePowerKey = "poweroff";
-  };
-
   # Intermittent (WoL-woken) node: the taint keeps its shutdowns off always-on
   # workloads; CPU/batch jobs opt in via toleration + node-pool. The GTX 680 is
   # Kepler, which current drivers dropped, so the GPU is not wired into k3s.
