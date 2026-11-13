@@ -139,7 +139,7 @@ let
     ${lib.getExe g}
     echo "nixos-qa: ${g.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
   '');
-  qa = gate "nixos-qa" [ ] ''
+  qa = gate "nixos-qa" [ pkgs.coreutils ] ''
     ${timed (lints ++ [ secretsVerify flakeCheck ])}
     t=$SECONDS
     GATE_PROBE=$(${lib.getExe probe})
@@ -178,7 +178,7 @@ let
     fi
     NIXOS_QA_TIMES=$(git rev-parse --path-format=absolute --git-common-dir)/nixos-qa-times
     export NIXOS_QA_TIMES
-    echo "nixos-qa on pushed commit $(git rev-parse --short HEAD)" | tee -a "$NIXOS_QA_TIMES"
+    echo "$(date -Is) nixos-qa on pushed commit $(git rev-parse --short HEAD)" | tee -a "$NIXOS_QA_TIMES"
     ${lib.getExe qa}
   '';
 
