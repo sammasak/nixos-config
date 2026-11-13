@@ -32,11 +32,17 @@ check(d == {"listenAddress": "127.0.0.1", "port": 3100, "retention": "72h", "all
       f"defaults: loopback, 3100, 72h, no firewall source, ntfyUrl required (no default) {d}")
 check("dport 3100" not in r["msiRules"], "msi's firewall has no Loki rule")
 loc = r["local"]
-check(loc["http"] == "127.0.0.1" and "http://127.0.0.1:3100/ready" in loc["probe"] and "dport 3100" not in loc["rules"],
-      f"default instance: HTTP and probe on loopback, no firewall rule {loc['http']}")
+check(loc["http"] == "127.0.0.1" and "http://127.0.0.1:3100/ready" in loc["probe"],
+      f"default instance: HTTP and probe on loopback {loc['http']}")
+check(any("homelab.loki.allowedSources" in m for m in loc["failing"]),
+      "sources with a loopback address fail an assertion")
+check(any("homelab.loki.retention 12h" in m for m in loc["failing"]), "a retention under 24h fails an assertion")
 anyb = r["any"]
 check(anyb["http"] == "0.0.0.0" and "http://127.0.0.1:3100/ready" in anyb["probe"],
       "listenAddress 0.0.0.0: the probe asks 127.0.0.1")
+check("dport 3100" not in anyb["rules"], "no sources: no Loki firewall rule")
+check(any("networking.firewall.enable" in m for m in anyb["failing"]),
+      "a non-loopback address without the firewall fails an assertion")
 
 c = s["configuration"]
 data = s["dataDir"]
@@ -87,19 +93,22 @@ probe = svc.get("ExecStartPost") or ""
 urls = re.findall(r"https?://[^\s'\"]+", probe)
 check(urls == ["http://192.0.2.10:3100/ready"], f"readiness probe is Loki's own /ready only {urls}")
 budget = re.search(r"--retry-max-time (\d+)", probe)
-timeout, rs = svc.get("TimeoutStartSec"), svc.get("RestartSec")
+timeout, rs, stop = svc.get("TimeoutStartSec"), svc.get("RestartSec"), svc.get("TimeoutStopSec")
 check(budget is not None and isinstance(timeout, int) and int(budget[1]) < timeout,
       f"the probe gives up ({budget and budget[1]} s) before the start timeout ({timeout} s)")
-check(unit.get("startLimitBurst") == 3 and isinstance(rs, int)
-      and 3 * (timeout + rs + 90) <= (unit.get("startLimitIntervalSec") or 0),
-      f"three failed starts, each with a full 90 s stop, fit in the start-limit window {unit}")
-check(svc.get("MemoryMax") == "1G" and svc.get("CPUQuota") == "50%",
-      f"MemoryMax 1G and CPUQuota 50%, the chart's limits {svc.get('MemoryMax')} {svc.get('CPUQuota')}")
+check(svc.get("Restart") == "always" and unit.get("wantedBy") == ["multi-user.target"],
+      f"Restart always (upstream), started at boot: a failure loops into the start limit {svc.get('Restart')}")
+check(unit.get("startLimitBurst") == 3 and isinstance(rs, int) and isinstance(stop, int)
+      and 3 * (timeout + rs + stop) <= (unit.get("startLimitIntervalSec") or 0),
+      f"three failed starts, each with a full {stop} s stop, fit in the start-limit window {unit.get('startLimitIntervalSec')}")
+check(svc.get("MemoryMax") == "1G" and svc.get("MemorySwapMax") == 0 and svc.get("CPUQuota") == "50%",
+      f"MemoryMax 1G without swap and CPUQuota 50%, the chart's limits {svc.get('MemoryMax')} {svc.get('CPUQuota')}")
 check((unit.get("environment") or {}).get("GOMEMLIMIT") == "900MiB", "GOMEMLIMIT 900MiB under MemoryMax")
 check(svc.get("ProtectSystem") == "strict" and svc.get("ReadWritePaths") == [data]
       and svc.get("CapabilityBoundingSet") == "" and svc.get("NoNewPrivileges") is True
-      and svc.get("PrivateDevices") is True and "@system-service" in (svc.get("SystemCallFilter") or []),
-      "hardened: read-only system but the state dir, no capabilities, syscall filter")
+      and svc.get("PrivateDevices") is True and "@system-service" in (svc.get("SystemCallFilter") or [])
+      and svc.get("RestrictAddressFamilies") == ["AF_INET", "AF_INET6", "AF_UNIX", "AF_NETLINK"],
+      "hardened: read-only system but the state dir, no capabilities, syscall filter, four address families")
 check(unit.get("onFailure") == ["loki-failed.service"], f"a failed Loki starts loki-failed {unit.get('onFailure')}")
 check(re.search(r'curl -fsS -m 10 --retry 3 --retry-all-errors --retry-max-time 60 .*-d "loki failed on msi-ms7758" .*http://\S+',
                 s["failed"] or "") is not None, "loki-failed posts the failure to ntfy, with bounded retries")
@@ -107,8 +116,4 @@ check(re.search(r'curl -fsS -m 10 --retry 3 --retry-all-errors --retry-max-time 
 check("ip saddr 192.0.2.0/24 tcp dport 3100 accept" in s["rules"] and 3100 not in s["tcpPorts"],
       "listed sources get a scoped rule (mkDualBackendFirewall), never allowedTCPPorts")
 check(s["failing"] == [], f"the seeded config passes its assertions {s['failing']}")
-check(any("homelab.loki.allowedSources" in m for m in r["loopbackOpen"]),
-      f"sources with a loopback address fail an assertion {r['loopbackOpen']}")
-check(any("networking.firewall.enable" in m for m in r["noFirewall"]),
-      "a non-loopback address without the firewall fails an assertion")
 sys.exit(1 if failed else 0)

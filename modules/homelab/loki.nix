@@ -1,7 +1,7 @@
 # Loki as a host service through upstream services.loki, at parity with the k3s chart (single binary, filesystem,
 # tsdb v13, 72h with 30 days for the two agent telemetry streams), so logs stay queryable when the cluster is not.
-# The data directory keeps the chart's layout under /var/loki (chunks, rules, compactor, the rest under
-# path_prefix), so the cut-over in docs/k3s-to-nixos-native.md ("P4 in detail") is a copy of that directory.
+# The data directory keeps the chart's layout (its /var/loki), here under /var/lib/loki (chunks, rules, compactor,
+# the rest under path_prefix), so the cut-over in docs/k3s-to-nixos-native.md ("P4 in detail") is a copy of that directory.
 # Upstream runs `loki -verify-config` on the rendered file at build time (only while extraFlags is empty).
 # - A crash loop slower than 3 starts per 1200 s never reaches failed, so it pages only once an absence alert exists.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed loki` and a start.
@@ -10,6 +10,8 @@ let
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   cfg = config.homelab.loki;
   dataDir = config.services.loki.dataDir;
+  retentionHours = let u = lib.substring (lib.stringLength cfg.retention - 1) 1 cfg.retention;
+    in lib.toInt (lib.removeSuffix u cfg.retention) * { h = 1; d = 24; w = 168; }.${u};
   probeHost = if cfg.listenAddress == "0.0.0.0" then "127.0.0.1" else cfg.listenAddress;
 
   firewallRules = mkDualBackendFirewall {
@@ -39,10 +41,10 @@ in
     retention = lib.mkOption {
       type = lib.types.strMatching "[0-9]+[hdw]";
       default = "72h";
-      description = "Default retention; the two agent telemetry streams keep 720h regardless.";
+      description = "Default retention, at least 24h (the index period); the two agent telemetry streams keep 720h regardless.";
     };
     allowedSources = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
+      type = lib.types.listOf (lib.types.strMatching "[0-9]+(\\.[0-9]+){3}(/[0-9]+)?");
       default = [ ];
       example = [ "192.168.10.0/24" ];
       description = "IPv4 addresses or CIDRs admitted to the port; empty adds no firewall rule (trusted interfaces still pass).";
@@ -58,6 +60,10 @@ in
       {
         assertion = cfg.allowedSources != [ ] -> !lib.hasPrefix "127." cfg.listenAddress;
         message = "homelab.loki.allowedSources: listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach Loki.";
+      }
+      {
+        assertion = retentionHours >= 24;
+        message = "homelab.loki.retention ${cfg.retention} is under 24h, Loki's minimum retention.";
       }
       {
         assertion = !lib.hasPrefix "127." cfg.listenAddress -> config.networking.firewall.enable;
@@ -133,12 +139,14 @@ in
       environment.GOMEMLIMIT = "900MiB";
       serviceConfig = {
         # /ready waits out the WAL replay and the ingester's 15 s join; local only, like the collector's probe
-        ExecStartPost = "${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 --retry 90 --retry-delay 2 --retry-connrefused --retry-all-errors --retry-max-time 180 http://${probeHost}:${toString cfg.port}/ready";
+        ExecStartPost = "${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 --retry 90 --retry-delay 2 --retry-all-errors --retry-max-time 180 http://${probeHost}:${toString cfg.port}/ready";
         TimeoutStartSec = 210;
+        TimeoutStopSec = 90;
         RestartSec = 30;
         # the chart's limits
         MemoryMax = "1G";
         CPUQuota = "50%";
+        MemorySwapMax = 0;
         ProtectSystem = lib.mkForce "strict";
         ReadWritePaths = [ dataDir ];
         CapabilityBoundingSet = "";

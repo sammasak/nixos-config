@@ -205,30 +205,34 @@ let
       lan = seed { listenAddress = "192.0.2.10"; allowedSources = [ "192.0.2.0/24" ]; };
       c = lan.config;
       svc = c.systemd.services.loki;
-      # the rendered address, the probe URL and the firewall of a seeded instance
-      bind = s: let x = s.config; in builtins.unsafeDiscardStringContext (builtins.toJSON {
+      # three evaluations of msi in all: lan, plus one wrong configuration per bind branch, each read for its address,
+      # probe URL, firewall and failed assertions
+      bind = s: let x = s.config; in builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.toJSON {
         http = x.services.loki.configuration.server.http_listen_address;
         probe = x.systemd.services.loki.serviceConfig.ExecStartPost;
         rules = x.networking.firewall.extraInputRules + x.networking.firewall.extraCommands;
-      });
+        failing = failing x;
+      }));
     in {
       hosts = lib.mapAttrs (_: h: facts h.config) hosts;
       msiRules = msi.networking.firewall.extraInputRules + msi.networking.firewall.extraCommands;
       seeded = builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.toJSON {
         inherit (c.services.loki) configuration dataDir extraFlags user;
         unit = lib.genAttrs [ "onFailure" "startLimitIntervalSec" "startLimitBurst" "wantedBy" "environment" ] (n: svc.${n} or null);
-        service = lib.genAttrs [ "ExecStartPost" "TimeoutStartSec" "RestartSec" "Restart" "MemoryMax" "CPUQuota" "ProtectSystem" "ReadWritePaths"
-          "CapabilityBoundingSet" "NoNewPrivileges" "PrivateDevices" "SystemCallFilter" "User" ] (n: svc.serviceConfig.${n} or null);
+        service = lib.genAttrs [ "ExecStartPost" "TimeoutStartSec" "TimeoutStopSec" "RestartSec" "Restart" "MemoryMax" "MemorySwapMax" "CPUQuota"
+          "ProtectSystem" "ReadWritePaths" "CapabilityBoundingSet" "NoNewPrivileges" "PrivateDevices" "SystemCallFilter"
+          "RestrictAddressFamilies" "User" ] (n: svc.serviceConfig.${n} or null);
         failed = c.systemd.services.loki-failed.script or null;
         rules = c.networking.firewall.extraInputRules + c.networking.firewall.extraCommands;
         tcpPorts = c.networking.firewall.allowedTCPPorts;
         failing = failing c;
         defaults = lib.mapAttrs (_: o: o.default or null) { inherit (lan.options.homelab.loki) listenAddress port retention allowedSources ntfyUrl; };
       })) // { execStart = svc.serviceConfig.ExecStart; };
-      local = builtins.fromJSON (bind (seed { }));
-      any = builtins.fromJSON (bind (seed { listenAddress = "0.0.0.0"; }));
-      loopbackOpen = failing (seed { allowedSources = [ "192.0.2.0/24" ]; }).config;
-      noFirewall = failing (lan.extendModules { modules = [ { networking.firewall.enable = lib.mkForce false; } ]; }).config;
+      # loopback (the default) with sources and a too short retention
+      local = bind (seed { allowedSources = [ "192.0.2.0/24" ]; retention = "12h"; });
+      # every address, no sources, the firewall off
+      any = bind (hosts.msi-ms7758.extendModules { modules = [ ../modules/homelab/loki.nix
+        { homelab.loki = { enable = true; inherit ntfyUrl; listenAddress = "0.0.0.0"; }; networking.firewall.enable = lib.mkForce false; } ]; });
     };
 
     runtime-host = {
