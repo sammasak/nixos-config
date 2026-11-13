@@ -49,8 +49,9 @@ in
       Type = "oneshot";
       User = username;
     };
+    enableStrictShellChecks = true;
     script = ''
-      ${pkgs.findutils}/bin/find $HOME -name "*.backup" -type f -mtime +7 -delete
+      ${pkgs.findutils}/bin/find "$HOME" -name "*.backup" -type f -mtime +7 -delete
       echo "Cleaned up home-manager backups older than 7 days"
     '';
   };
@@ -89,12 +90,14 @@ in
   systemd.services.nixos-upgrade-notify-success = {
     description = "Notify user about successful NixOS auto-upgrade";
     serviceConfig.Type = "oneshot";
+    enableStrictShellChecks = true;
     script = ''${notifyScript} "Upgrade completed successfully"'';
   };
 
   systemd.services.nixos-upgrade-notify-failure = {
     description = "Notify user about failed NixOS auto-upgrade";
     serviceConfig.Type = "oneshot";
+    enableStrictShellChecks = true;
     script = ''${notifyScript} "Upgrade failed - check journalctl -u nixos-upgrade"'';
   };
 }

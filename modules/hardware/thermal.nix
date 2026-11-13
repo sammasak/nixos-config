@@ -77,6 +77,7 @@ in
           # re-run when the sleep targets pull it in again on resume.
           serviceConfig.Type = "oneshot";
 
+          enableStrictShellChecks = true;
           script = ''
             ${lib.optionalString cfg.disableTurboBoost ''
               turbo=/sys/devices/system/cpu/intel_pstate/no_turbo

@@ -39,6 +39,7 @@ in
         IOSchedulingClass = "idle";
       };
 
+      enableStrictShellChecks = true;
       script = ''
         db="${databasePath}"
         dir="${snapshotDir}"

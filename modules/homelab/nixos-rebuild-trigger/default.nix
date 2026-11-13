@@ -80,6 +80,7 @@ in
         RemainAfterExit = true;
       };
       path = [ pkgs.coreutils ];
+      enableStrictShellChecks = true;
       script = ''
         install -d -m 0770 -o root -g ${triggerGroup} "${triggerDir}"
       '';
