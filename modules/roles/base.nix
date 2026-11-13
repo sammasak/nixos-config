@@ -14,6 +14,6 @@
     ../core/resource-hygiene.nix
     ../core/store-cache.nix
     ../homelab/native-otel-relay.nix
-    ../themes/Catppuccin  # runtime-host and rf-lab force Stylix off
+    ../themes/Catppuccin  # Stylix: off when headless under runtime-host, always off under rf-lab
   ];
 }
