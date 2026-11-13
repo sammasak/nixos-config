@@ -58,7 +58,7 @@ script = re.search(r"/nix/store/[^ ]+-accept-claude-startup-dialogs", s["claudeA
 VALID = '{"projects": {"/elsewhere": {}}, "theme": "light"}'
 # None: no file yet; the activation creates it
 for case, content in (("missing", None), ("valid", VALID), ("empty", ""), ("half-written", '{"projects": {'), ("an array", "[]"),
-                      ("an object jq cannot update", '{"projects": 5}')):
+                      ("two documents", '{"a": 1}\n{"b": 2}\n'), ("an object jq cannot update", '{"projects": 5}')):
     with tempfile.TemporaryDirectory() as home:
         state = pathlib.Path(home, ".claude.json")
         if content is not None:
@@ -73,8 +73,9 @@ for case, content in (("missing", None), ("valid", VALID), ("empty", ""), ("half
                   and kept and state.stat().st_mode & 0o777 == 0o600)
             outcome = "accepted the dialogs, kept its other keys, mode 0600"
         else:
-            ok = after == content and "leaving it alone" in run.stderr
-            outcome = "left it untouched with a warning"
+            # jq's own message may quote the file's content, which must never reach the journal
+            ok = after == content and run.stderr.startswith("accept-claude-startup-dialogs:") and run.stderr.count("\n") == 1
+            outcome = "left it untouched with one line of warning"
         check(run.returncode == 0 and ok and not stray,
               f"~/.claude.json {case}: the activation exits {run.returncode} and {outcome}{f', stray files {stray}' if stray else ''}")
 

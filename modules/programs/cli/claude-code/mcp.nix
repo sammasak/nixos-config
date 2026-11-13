@@ -329,7 +329,7 @@ in
   # Pre-accepts the bypass-permissions, auto-mode nudge and $HOME project-trust
   # dialogs, which would otherwise reappear every launch (read-only
   # settings.json); a host also trusts its declared sam.herdr.trustedDirs.
-  # Claude rewrites the file constantly: one that is not a JSON object (empty, half-written) is skipped with a
+  # Claude rewrites the file constantly: one that is not one JSON object (empty, half-written) is skipped with a
   # warning, since a failing activation fails the whole system switch.
   home.activation.acceptClaudeStartupDialogs =
     let
@@ -339,8 +339,8 @@ in
           echo '{}' > "$stateFile"
           chmod 600 "$stateFile"
         fi
-        if ! ${pkgs.jq}/bin/jq -e 'type == "object"' "$stateFile" >/dev/null 2>&1; then
-          echo "accept-claude-startup-dialogs: $stateFile is not a JSON object, leaving it alone" >&2
+        if ! ${pkgs.jq}/bin/jq -e -s 'length == 1 and (.[0] | type == "object")' "$stateFile" >/dev/null 2>&1; then
+          echo "accept-claude-startup-dialogs: $stateFile is not one JSON object, leaving it alone" >&2
           exit 0
         fi
         tmp=$(mktemp "$stateFile.XXXXXX")
@@ -349,7 +349,7 @@ in
         if ${pkgs.jq}/bin/jq \
           --arg home "$HOME" --argjson dirs ${lib.escapeShellArg (builtins.toJSON osConfig.sam.herdr.trustedDirs)} \
           '.bypassPermissionsModeAccepted = true | .hasSeenAutoDefaultNudge = true | .hasCompletedOnboarding = true | .lastOnboardingVersion //= "2.1.300" | .theme //= "dark" | .hasSeenAutoModeEntryWarning = true | reduce ([$home] + $dirs)[] as $d (.; .projects[$d].hasTrustDialogAccepted = true)' \
-          "$stateFile" > "$tmp"; then
+          "$stateFile" > "$tmp" 2>/dev/null; then
           mv "$tmp" "$stateFile"
         else
           echo "accept-claude-startup-dialogs: jq failed on $stateFile, leaving it alone" >&2
