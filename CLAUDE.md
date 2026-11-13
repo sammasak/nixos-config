@@ -59,7 +59,7 @@ only needed when targeting the other machine.
 
 `flake.nix` imports every file under `flake-modules/` (import-tree; the number
 prefixes set no order); `modules/roles|home/*.nix` auto-register; hosts are 3 files under
-`hosts/<name>/` wired by `flake-modules/hosts/<name>.nix`; all host metadata
+`hosts/<name>/` wired by an entry (roles included) in `flake-modules/hosts.nix`; all host metadata
 flows through the strict `sam.profile` submodule (unknown fields are build
 errors) and GUI-ness keys off `sam.desktop.enable` alone. Full detail:
 `docs/architecture.md` (profile field table, registry, desktop
@@ -213,10 +213,14 @@ shapes, across `.nix` and `.sh` alike). `''` string bodies are out of scope —
 editing one moves the derivation and breaks `just parity`. Exemplar comments,
 the `''`-string rationale, and measurement mechanics:
 `~/knowledge/nix/comment-policy-notes.md`.
-`just parity [BASE]` evaluates all five hosts' toplevel drvPaths at BASE (default
-the merge base with origin/main) and in the working tree (tracked files incl.
-uncommitted edits, not untracked ones), one host at a time, and exits non-zero
-if any moved or any evaluation failed.
+`just parity [BASE]` evaluates every host's toplevel drvPath and deploy-rs node
+(as JSON, profile paths as drvPaths), plus `deploy` minus `nodes`, at BASE (default the merge base with
+origin/main) and in the working tree (tracked files incl. uncommitted edits, not
+untracked ones), one evaluation at a time. Hosts and nodes are the union of
+`nixosConfigurations` and `deploy.nodes` names on both sides; one on one side only
+is reported ADDED or REMOVED without being evaluated. It exits non-zero if anything
+moved, was added or removed, or any evaluation failed; a host with no node on
+either side is only reported.
 
 ## Conventions
 
@@ -236,9 +240,16 @@ if any moved or any evaluation failed.
 
 ## Adding a New Host
 
-`hosts/<name>/` (variables + configuration + hardware scan) plus
-`flake-modules/hosts/<name>.nix`; the registry auto-discovers the rest.
-Full procedure: `~/knowledge/homelab/runbooks/add-new-host.md`.
+- `hosts/<dir>/` (variables + configuration + hardware scan);
+- an entry with its roles in `flake-modules/hosts.nix` (`hostDir` defaults to
+  the entry name);
+- its deploy node in `flake-modules/70-deploy.nix` and the `just deploy` HOST
+  pattern (checked by `scripts/test-ssh-known-hosts.py`);
+- its pinned key in `modules/core/ssh-known-hosts.nix` and its sops recipient;
+- optionally the `fleetHome` host-name lists in `40-outputs-nixos.nix`.
+
+`just parity` picks the host up on its own. Full procedure:
+`~/knowledge/homelab/runbooks/add-new-host.md`.
 
 ## Further Documentation
 
