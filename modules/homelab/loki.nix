@@ -3,6 +3,8 @@
 # The data directory keeps the chart's layout under /var/loki (chunks, rules, compactor, the rest under
 # path_prefix), so the cut-over in docs/k3s-to-nixos-native.md ("P4 in detail") is a copy of that directory.
 # Upstream runs `loki -verify-config` on the rendered file at build time (only while extraFlags is empty).
+# - A crash loop slower than 3 starts per 1200 s never reaches failed, so it pages only once an absence alert exists.
+# - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed loki` and a start.
 { config, lib, pkgs, ... }:
 let
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
@@ -24,7 +26,10 @@ in
     listenAddress = lib.mkOption {
       type = lib.types.strMatching "[0-9]+(\\.[0-9]+){3}";
       default = "127.0.0.1";
-      description = "IPv4 address of the HTTP API (push and query). gRPC stays on loopback.";
+      description = ''
+        IPv4 address of the HTTP API (push and query). gRPC stays on loopback. Any other address is reachable through
+        the firewall's trusted interfaces (tailscale0, and Cilium's on k3s hosts) whatever allowedSources says.
+      '';
     };
     port = lib.mkOption {
       type = lib.types.port;
@@ -40,20 +45,25 @@ in
       type = lib.types.listOf lib.types.str;
       default = [ ];
       example = [ "192.168.10.0/24" ];
-      description = "IPv4 addresses or CIDRs admitted to the port; empty opens nothing.";
+      description = "IPv4 addresses or CIDRs admitted to the port; empty adds no firewall rule (trusted interfaces still pass).";
     };
     ntfyUrl = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "ntfy topic URL paged when Loki fails; null, no page.";
+      type = lib.types.strMatching "https?://.+";
+      description = "ntfy topic URL paged when Loki fails; no default, so a start-limit hit is never silent.";
     };
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = [{
-      assertion = cfg.allowedSources != [ ] -> !lib.hasPrefix "127." cfg.listenAddress;
-      message = "homelab.loki.allowedSources: listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach Loki.";
-    }];
+    assertions = [
+      {
+        assertion = cfg.allowedSources != [ ] -> !lib.hasPrefix "127." cfg.listenAddress;
+        message = "homelab.loki.allowedSources: listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach Loki.";
+      }
+      {
+        assertion = !lib.hasPrefix "127." cfg.listenAddress -> config.networking.firewall.enable;
+        message = "homelab.loki.listenAddress ${cfg.listenAddress} without networking.firewall.enable exposes an unauthenticated Loki to every network.";
+      }
+    ];
 
     services.loki = {
       enable = true;
@@ -79,6 +89,7 @@ in
             rules_directory = "${dataDir}/rules";
           };
         };
+        # must stay identical to what wrote the copied chunks: append a new period, never edit this one
         schema_config.configs = [{
           from = "2024-01-01";
           store = "tsdb";
@@ -88,6 +99,7 @@ in
         }];
         limits_config = {
           retention_period = cfg.retention;
+          # pi-agent backs the 30-day "Pi agents" panels (devenv-platform#76), harness the 30-day agent usage review
           retention_stream = [
             { selector = ''{job="pi-agent"}''; priority = 1; period = "720h"; }
             { selector = ''{observer="harness"}''; priority = 1; period = "720h"; }
@@ -106,23 +118,27 @@ in
           retention_enabled = true;
           delete_request_store = "filesystem";
         };
+        # the default ceiling is 4GB, so a large WAL would replay into the 1G MemoryMax in a loop
+        ingester.wal.replay_memory_ceiling = "512MB";
         query_range.align_queries_with_step = true;
         tracing.enabled = false;
       };
     };
 
     systemd.services.loki = {
-      # 3 starts of at most 210 + 30 s each fit in the window, so a start loop reaches failed and pages
-      startLimitIntervalSec = 900;
+      # 3 starts of at most 210 s start, 30 s restart and 90 s stop each fit in the window, so a start loop pages
+      startLimitIntervalSec = 1200;
       startLimitBurst = 3;
-      onFailure = lib.optional (cfg.ntfyUrl != null) "loki-failed.service";
+      onFailure = [ "loki-failed.service" ];
+      environment.GOMEMLIMIT = "900MiB";
       serviceConfig = {
         # /ready waits out the WAL replay and the ingester's 15 s join; local only, like the collector's probe
         ExecStartPost = "${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 --retry 90 --retry-delay 2 --retry-connrefused --retry-all-errors --retry-max-time 180 http://${probeHost}:${toString cfg.port}/ready";
         TimeoutStartSec = 210;
         RestartSec = 30;
-        # the chart's limit
+        # the chart's limits
         MemoryMax = "1G";
+        CPUQuota = "50%";
         ProtectSystem = lib.mkForce "strict";
         ReadWritePaths = [ dataDir ];
         CapabilityBoundingSet = "";
@@ -145,10 +161,10 @@ in
       };
     };
 
-    systemd.services.loki-failed = lib.mkIf (cfg.ntfyUrl != null) {
+    systemd.services.loki-failed = {
       serviceConfig = { Type = "oneshot"; DynamicUser = true; };
       script = ''
-        ${pkgs.curl}/bin/curl -fsS -m 10 -H "Priority: high" -d "loki failed on ${config.networking.hostName}" ${lib.escapeShellArg cfg.ntfyUrl}
+        ${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 --retry-all-errors --retry-max-time 60 -H "Priority: high" -d "loki failed on ${config.networking.hostName}" ${lib.escapeShellArg cfg.ntfyUrl}
       '';
     };
 
