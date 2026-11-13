@@ -134,7 +134,7 @@ in
   systemd.user.services.herdr = {
     Unit.Description = "Persistent Herdr session server";
     # A restart kills every pane and agent on the host, so a switch leaves the running server alone; a new
-    # unit takes effect at the next login or reboot, or `systemctl --user restart herdr`.
+    # unit takes effect at the next reboot (lingering: not at a re-login) or `systemctl --user restart herdr`.
     Unit.X-SwitchMethod = "keep-old";
     Service = {
       ExecCondition = herdrAlreadyRunning;
