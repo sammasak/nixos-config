@@ -48,7 +48,11 @@ Claude Code removes every `OTEL_*` variable from the environment of Bash,
 hooks and stdio MCP subprocesses, so the settings also carry
 `HARNESS_OTLP_ENDPOINT` (the relay) and `HARNESS_RESOURCE_ATTRIBUTES` (the
 same attributes) for the skills hook `emit-work-ref.sh`, registered on `Stop`
-(after `check-git-state.sh`) and `SessionStart` once the skills pin carries it.
+(after `check-git-state.sh`) and `SessionStart` once the skills pin carries it,
+and for `emit-skill-use.sh` on `PreToolUse` (`Skill`) and `UserPromptSubmit`:
+Claude's own `skill_activated` event reports a user skill as `custom_skill`
+while the content flags are off, so this hook sends the skill's name and
+nothing else as a `skill_use` event.
 `nixos:harness-telemetry-test` checks all of this. A developer environment
 sends through its host's relay only with
 `sam.workers.instances.<name>.telemetry` ([nspawn-workers.md](nspawn-workers.md)).

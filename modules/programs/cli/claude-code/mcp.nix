@@ -27,6 +27,13 @@ let
     command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.curl pkgs.git ]}:$PATH ${skillsSrc}/hooks/emit-work-ref.sh";
     timeout = 5;
   };
+  # Claude reports user skills as custom_skill with the content flags off; this hook sends the name only
+  skillUse = otel && builtins.pathExists "${skillsSrc}/hooks/emit-skill-use.sh";
+  skillUseHook = {
+    type = "command";
+    command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.curl ]}:$PATH ${skillsSrc}/hooks/emit-skill-use.sh";
+    timeout = 5;
+  };
 in
 {
   programs.claude-code = {
@@ -108,7 +115,7 @@ in
         OTEL_LOG_TOOL_CONTENT = "0";
         OTEL_LOG_TOOL_DETAILS = "0";
         OTEL_LOG_RAW_API_BODIES = "0";
-        # Claude strips OTEL_* from hook environments; emit-work-ref.sh reads these instead.
+        # Claude strips OTEL_* from hook environments; emit-work-ref.sh and emit-skill-use.sh read these instead.
         HARNESS_OTLP_ENDPOINT = relay;
         HARNESS_RESOURCE_ATTRIBUTES = resourceAttributes;
       } // lib.optionalAttrs (shunt && bulkReader.minTokens != null) {
@@ -168,6 +175,9 @@ in
         ] ++ lib.optional shunt {
           matcher = "Read";
           hooks = [ (shuntHook "shunt-check-read.sh") ];
+        } ++ lib.optional skillUse {
+          matcher = "Skill";
+          hooks = [ skillUseHook ];
         };
         PostToolUse = lib.optional spill {
           matcher = "Bash";
@@ -196,6 +206,8 @@ in
         }];
       } // lib.optionalAttrs workRef {
         SessionStart = [{ hooks = [ workRefHook ]; }];
+      } // lib.optionalAttrs skillUse {
+        UserPromptSubmit = [{ hooks = [ skillUseHook ]; }];
       };
     };
   };

@@ -143,7 +143,7 @@ let
   guest = n: let g = c.containers.${n}.config; s = g.home-manager.users.lukas.programs.claude-code.settings; in {
     env = s.env;
     mode = s.permissions.defaultMode or null;
-    hooks = builtins.concatMap (e: map (h: h.command) e.hooks) (s.hooks.Stop ++ s.hooks.SessionStart);
+    hooks = builtins.concatMap (e: map (h: h.command) e.hooks) (builtins.concatLists (builtins.attrValues s.hooks));
     binds = map (b: b.hostPath) (builtins.attrValues c.containers.${n}.bindMounts);
     variables = g.environment.variables;
     sockets = builtins.mapAttrs (_: k: k.listenStreams) g.systemd.sockets;
@@ -155,6 +155,7 @@ in {
   secret = { inherit (c.sops.secrets.native_otlp_auth) owner mode; };
   host = let s = c.home-manager.users.lukas.programs.claude-code.settings; in { env = s.env; mode = s.permissions.defaultMode or null; };
   pinned = builtins.pathExists "${flake.inputs.skills}/hooks/emit-work-ref.sh";
+  skill_pinned = builtins.pathExists "${flake.inputs.skills}/hooks/emit-skill-use.sh";
   credentials = egress.LoadCredential;
   caddy = builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " egress.ExecStart));
   tel = guest "tel";
@@ -407,9 +408,11 @@ def check_telemetry(got, out):
           f"no token path reaches a guest, its env or the proxy: no bind, variable or credential names it, no relay or secret in the guest ({leak})")
     hooks = [h for h in tel.get("hooks", []) if h.endswith("/hooks/emit-work-ref.sh")]
     check(len(hooks) == (2 if got.get("pinned") else 0), f"a telemetry guest runs emit-work-ref.sh on Stop and SessionStart exactly when the skills pin carries it ({len(hooks)}, pinned {got.get('pinned')})")
+    skill_hooks = [h for h in tel.get("hooks", []) if h.endswith("/hooks/emit-skill-use.sh")]
+    check(len(skill_hooks) == (2 if got.get("skill_pinned") else 0), f"a telemetry guest runs emit-skill-use.sh on PreToolUse(Skill) and UserPromptSubmit exactly when the skills pin carries it ({len(skill_hooks)}, pinned {got.get('skill_pinned')})")
     p_env = plain.get("env", {})
     left = sorted(k for k in p_env if k.startswith(("OTEL_", "HARNESS_")) or k == "CLAUDE_CODE_ENABLE_TELEMETRY")
-    check(not left and "otlp-egress" not in plain.get("sockets", {}) and not any(h.endswith("emit-work-ref.sh") for h in plain.get("hooks", [])),
+    check(not left and "otlp-egress" not in plain.get("sockets", {}) and not any(h.endswith(("emit-work-ref.sh", "emit-skill-use.sh")) for h in plain.get("hooks", [])),
           f"a guest without telemetry, on that nativeOtel host, gets none of it ({left})")
     posture = lambda g: (g.get("env", {}).get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"), g.get("mode"))
     check(bool(env) and posture(tel) == posture(plain) == (None, None), f"telemetry leaves a guest's CLAUDE_CODE_SUBPROCESS_ENV_SCRUB and defaultMode as they are without it ({posture(tel)} vs {posture(plain)})")

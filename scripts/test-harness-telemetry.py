@@ -13,6 +13,7 @@ import gate_probe
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HOOK = "emit-work-ref.sh"
+SKILL_HOOK = "emit-skill-use.sh"
 RELAY = "http://127.0.0.1:4319"
 failed = 0
 
@@ -33,12 +34,12 @@ def flipped(skills, tmp, has):
     for p in [fixture, *fixture.rglob("*")]:
         if not p.is_symlink():
             p.chmod(p.stat().st_mode | 0o200)
-    f = fixture / "hooks" / HOOK
-    if has:
-        f.unlink()
-    else:
-        f.write_text("#!/bin/sh\nexit 0\n")
-        f.chmod(0o755)
+    for f in (fixture / "hooks" / h for h in (HOOK, SKILL_HOOK)):
+        if has:
+            f.unlink(missing_ok=True)
+        else:
+            f.write_text("#!/bin/sh\nexit 0\n")
+            f.chmod(0o755)
     out = subprocess.run(
         ["nix", "eval", "--json", "--impure", "--no-write-lock-file", "--override-input", "skills", f"path:{fixture}",
          f"{ROOT}#nixosConfigurations", "--apply", f"import {ROOT}/scripts/harness-telemetry-probe.nix"],
@@ -75,19 +76,24 @@ def with_hook(P, src):
           f"on: one SessionStart entry runs {HOOK} with jq, coreutils, curl and git on PATH, timeout 5 ({starts})")
     rest = lambda s: {k: [e for e in v if not any(h["command"].endswith(HOOK) for h in e["hooks"])] for k, v in s["hooks"].items()}
     check(rest(on)["SessionStart"] == off["hooks"]["SessionStart"], "on: the other SessionStart entries are unchanged")
-    check(not any(c.endswith(HOOK) for c in commands(off)), f"off: no {HOOK} even with the pin carrying it")
+    check(not any(c.endswith((HOOK, SKILL_HOOK)) for c in commands(off)), f"off: no {HOOK} or {SKILL_HOOK} even with the pin carrying them")
+    skill = {k: [e for e in on["hooks"].get(k, []) if any(h["command"].endswith(SKILL_HOOK) for h in e["hooks"])] for k in on["hooks"]}
+    where = {k: [(e.get("matcher"), len(e["hooks"]), e["hooks"][0].get("timeout")) for e in v] for k, v in skill.items() if v}
+    path = next((e["hooks"][0]["command"].split(" ", 1)[0] for v in skill.values() for e in v), "")
+    check(where == {"PreToolUse": [("Skill", 1, 5)], "UserPromptSubmit": [(None, 1, 5)]} and all(f"-{t}-" in path for t in ("jq", "coreutils", "curl")),
+          f"on: {SKILL_HOOK} runs alone on PreToolUse(Skill) and UserPromptSubmit with jq, coreutils and curl on PATH, timeout 5 ({where})")
 
 
 def without_hook(P):
-    check(not any(c.endswith(HOOK) for c in commands(P["on"])) and P["on"]["hooks"] == P["off"]["hooks"],
-          f"on with a pin lacking {HOOK}: the hooks are the off ones")
+    check(not any(c.endswith((HOOK, SKILL_HOOK)) for c in commands(P["on"])) and P["on"]["hooks"] == P["off"]["hooks"],
+          f"on with a pin lacking {HOOK} and {SKILL_HOOK}: the hooks are the off ones")
 
 
 def main():
     P = gate_probe.section("harness-telemetry")
     skills = P["skills"]
-    has = pathlib.Path(skills, "hooks", HOOK).exists()
-    print(f"pinned skills {skills} {'carries' if has else 'lacks'} {HOOK}")
+    has = all(pathlib.Path(skills, "hooks", h).exists() for h in (HOOK, SKILL_HOOK))
+    print(f"pinned skills {skills} {'carries' if has else 'lacks'} {HOOK} and {SKILL_HOOK}")
     env_checks(P)
     with tempfile.TemporaryDirectory() as tmp:
         F = flipped(skills, tmp, has)
