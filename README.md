@@ -78,6 +78,9 @@ just check              # full QA (lint, flake check with every host build, the 
 just verify             # flake check: build every x86 host, evaluate the Pis
 ```
 
+After each deploy, check on the target that `systemctl is-system-running` says `running` and
+`readlink /run/current-system` equals `dirname "$(readlink -f /nix/var/nix/profiles/system/init)"`.
+
 Rollback with `sudo nixos-rebuild switch --rollback`, or pick an older
 generation in the boot menu.
 
