@@ -34,10 +34,10 @@ the tie-breaker.
 | Path | Owns | Notes |
 |------|------|-------|
 | `flake.nix` | Flake entry point | Recursively auto-imports `flake-modules/`; nothing host-specific |
-| `flake-modules/` | Top-level flake composition | Number prefixes are names only, not an order; `hosts/<name>.nix` declares each host |
+| `flake-modules/` | Top-level flake composition | Number prefixes are names only, not an order; `hosts.nix` declares each host and its roles |
 | `hosts/<name>/` | Per-machine facts only | `variables.nix` (choices), `configuration.nix` (host-only modules), `hardware-configuration.nix` (generated) |
 | `modules/core/` | System modules | `roles/base.nix` imports the baseline every host gets; the rest come in through roles, hosts or the desktop specialisation (docs/architecture.md, Roles) |
-| `modules/roles/` | Composition | `base`, `laptop`, `homelab-agent`, `homelab-server`, `runtime-host`, `rf-lab`, `embedded`; selected in `variables.nix` |
+| `modules/roles/` | Composition | `base`, `laptop`, `homelab-agent`, `homelab-server`, `runtime-host`, `rf-lab`, `embedded`; selected in `flake-modules/hosts.nix` |
 | `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |
 | `modules/desktop/` | The GUI stack | niri, Waybar, Rofi; gated on `sam.desktop.enable` |
 | `modules/specialisations/` | Boot-menu variants | Currently only `desktop.nix` |
@@ -100,7 +100,8 @@ Unattended upgrades are off by default; a host would opt in with `system.autoUpg
 
 ## Adding a New Host
 
-`hosts/<name>/` plus `flake-modules/hosts/<name>.nix`; full procedure
+`hosts/<name>/` plus an entry in `flake-modules/hosts.nix`, a deploy node, its
+known-hosts key and sops recipient (list in CLAUDE.md); full procedure
 (including SOPS recipients) in `~/knowledge/homelab/runbooks/add-new-host.md`.
 
 ## Adding a New Service (Modular)

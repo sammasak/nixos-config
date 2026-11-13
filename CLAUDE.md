@@ -59,7 +59,7 @@ only needed when targeting the other machine.
 
 `flake.nix` imports every file under `flake-modules/` (import-tree; the number
 prefixes set no order); `modules/roles|home/*.nix` auto-register; hosts are 3 files under
-`hosts/<name>/` wired by `flake-modules/hosts/<name>.nix`; all host metadata
+`hosts/<name>/` wired by an entry (roles included) in `flake-modules/hosts.nix`; all host metadata
 flows through the strict `sam.profile` submodule (unknown fields are build
 errors) and GUI-ness keys off `sam.desktop.enable` alone. Full detail:
 `docs/architecture.md` (profile field table, registry, desktop
@@ -240,9 +240,16 @@ either side is only reported.
 
 ## Adding a New Host
 
-`hosts/<name>/` (variables + configuration + hardware scan) plus
-`flake-modules/hosts/<name>.nix`; the registry auto-discovers the rest.
-Full procedure: `~/knowledge/homelab/runbooks/add-new-host.md`.
+- `hosts/<dir>/` (variables + configuration + hardware scan);
+- an entry with its roles in `flake-modules/hosts.nix` (`hostDir` defaults to
+  the entry name);
+- its deploy node in `flake-modules/70-deploy.nix` and the `just deploy` HOST
+  pattern (checked by `scripts/test-ssh-known-hosts.py`);
+- its pinned key in `modules/core/ssh-known-hosts.nix` and its sops recipient;
+- optionally the `fleetHome` host-name lists in `40-outputs-nixos.nix`.
+
+`just parity` picks the host up on its own. Full procedure:
+`~/knowledge/homelab/runbooks/add-new-host.md`.
 
 ## Further Documentation
 

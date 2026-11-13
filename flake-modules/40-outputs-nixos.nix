@@ -65,7 +65,6 @@ let
     name:
     {
       hostDir,
-      username,
       roles,
     }:
     let
@@ -87,6 +86,13 @@ let
       modules =
         [
           ../hosts/${hostDir}/configuration.nix
+          ({ config, ... }: {
+            sam.profile.roles = roles;
+            assertions = [{
+              assertion = config.sam.profile.roles == roles;
+              message = "sam.profile.roles is set from configurations.nixos.${name}.roles; remove any other definition.";
+            }];
+          })
         ]
         ++ roleModules
         ++ fleetModules name;

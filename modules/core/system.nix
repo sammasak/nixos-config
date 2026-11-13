@@ -78,9 +78,9 @@ in
           };
 
           roles = mkOption {
-            type = types.listOf types.str;
+            type = types.uniq (types.listOf types.str);
             default = [ "base" ];
-            description = "Role aspects enabled for this host.";
+            description = "Role aspects enabled for this host. Set from flake-modules/hosts.nix; a second definition is an error.";
           };
 
           lanCidr = mkOption {
