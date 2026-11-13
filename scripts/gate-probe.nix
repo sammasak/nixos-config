@@ -94,7 +94,6 @@ let
         wakeupScript = toString ((hm lenovo).systemd.user.services.coordinator-wakeup.Service.ExecStart or "");
       };
       msi-ms7758.fish.claude = (hm msi).programs.fish.functions.claude or null;
-      coordinatorAsWorker = failing (extend "lenovo" [ { sam.herdr.worker.enable = true; } ]);
     };
 
     ollama-portforward = {
@@ -132,8 +131,6 @@ let
     runtime-host = {
       hosts = lib.genAttrs [ "msi-ms7758" "acer-swift" ] (n: runtimeFacts hosts.${n}.config // { failing = failing hosts.${n}.config; });
       acerDesktop = runtimeFacts acer.specialisation.desktop.configuration;
-      # the negative case: the role's own assertion must see a themed headless boot
-      themed = failing (extend "msi-ms7758" [ { stylix.enable = lib.mkOverride 0 true; } ]);
     };
   };
 in

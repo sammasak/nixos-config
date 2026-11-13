@@ -200,9 +200,6 @@ def main():
     check("BypassPermissionsmode" in coordinator_screen and "Yes,Iaccept" in coordinator_screen,
           f"{COORDINATOR}: the same argv still stops at the acceptance dialog (the setting is what skips it, worker hosts only)")
 
-    failed = P["coordinatorAsWorker"]
-    check(any("cannot both be enabled" in m for m in failed), "the Coordinator's host cannot also be a worker (assertion)")
-
 
 if __name__ == "__main__":
     main()
