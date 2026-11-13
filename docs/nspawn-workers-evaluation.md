@@ -85,7 +85,8 @@ SSH key once a repo is listed.
   start time unchanged (acer).
 - Telemetry: environments on acer can send Claude telemetry through the host's native OTLP relay (#274, option
   `telemetry = true` on an instance). Checked end to end with one throwaway environment (Loki lines labelled with
-  host and worker), then retired. msi has the same config on main but is not deployed yet.
+  host and worker), then retired. msi was deployed from main 3df3714 on 2026-11-13 with the relay active; POSTs to
+  its local /v1/logs and /v1/metrics returned 200. No environment on msi has been traced to Loki end to end yet.
 
 ## Not yet verified
 
@@ -94,8 +95,22 @@ trash is covered by the eval test; the deletion is one `find -cmin +10080` line 
 host. First possible check: after 2026-11-19 on acer, `sudo ls /var/lib/workers/.trash` should list no entry dated
 20261112.
 
-msi has not been deployed with #271 to #274 (off outside its weekday power window) and has not run a
-`rootInGuest` environment since #267.
+## Verified on msi, 2026-11-13
+
+- Host: woken by Wake-on-LAN at 08:09:27, boot started 08:09:43. Deployed from main 3df3714 (generation 107):
+  zero failed units, telemetry relay active.
+- Environment m1 (`rootInGuest`): declared and deployed at 08:11:54, container active at 08:12:31 (37 s including
+  evaluation and activation), agent reachable right after. Store is the host's over the daemon (Nix 2.34.9),
+  `sudo -n true` and a root `rm -rf` of a scratch dir ran without a prompt.
+- Fresh clones: herman 5.1 s, factum 3.5 s. `devenv shell -- true`, first then second: herman 151 s then 0.5 s,
+  factum 6.8 s then 1.0 s. herman's first run was not warm: 179 paths (7.5G) came from the fleet cache (Android
+  SDK, Chromium, WebKitGTK, buildah, Rust 1.97.1 toolchain) and 70 small devenv wrappers were built locally, since
+  msi's store had never held herman's shell. factum: 8 small local builds and 2 tiny paths from the fleet cache.
+  Second runs: no new paths. A host is only warm for repos whose shell it has already entered; the first herman
+  shell on msi was filled from the fleet cache on acer.
+- Cold `cargo check --workspace --all-targets` of factum: 35.4 s. Container memory peak 2.70G before, 3.25G
+  after; memory.max and memory.high read `max` inside; memory.events and cpu throttling all zero, no OOM kill.
+- m1 is added to msi's `retired` list in the same change as this entry.
 
 ## Open items outside this module
 
