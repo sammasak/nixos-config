@@ -62,7 +62,7 @@ in
       Description = "Weekly flake.lock update for ~/nixos-config";
     };
     Timer = {
-      # Sunday morning, after the 03:00 system auto-upgrade window.
+      # Sunday morning, after the 03:00-04:05 backup chain.
       OnCalendar = "Sun 05:00";
       # Laptops are asleep more often than not — run on next boot if missed.
       Persistent = true;

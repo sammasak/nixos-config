@@ -99,7 +99,7 @@ After changing SSH policy, apply locally on the target first
 
 ## Automation
 
-Unattended upgrades are off by default; a host would opt in with `system.autoUpgrade.enable = true` (Sunday 06:00, plus up to 45 min of jitter). None does: `acer-swift` pins it off, so it changes only through `just deploy acer-swift`. By default every host runs garbage collection monthly and optimises the store weekly; the Pis (weekly, 7-day retention) and msi-ms7758 override the GC schedule. Configured in `modules/core/automation.nix`.
+No host upgrades itself: every host asserts `system.autoUpgrade` off, so it changes only through `just deploy HOST`. By default every host runs garbage collection monthly and optimises the store weekly; the Pis (weekly, 7-day retention) and msi-ms7758 override the GC schedule. Configured in `modules/core/automation.nix`.
 
 ## Adding a New Host
 
