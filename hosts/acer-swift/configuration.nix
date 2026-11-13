@@ -34,11 +34,12 @@ in
     imports = [ ../../modules/specialisations/desktop.nix ];
   };
 
-  # The only host that upgrades unattended. allowReboot stays at its default (false):
-  # as sole worker an unattended reboot is a total cluster outage (the reserved
+  # The only host that upgrades unattended. allowReboot is pinned to false: as
+  # sole worker an unattended reboot is a total cluster outage (the reserved
   # taint strands DNS, kyverno and ntfy, so paging dies with it). The reboot is
-  # operator-initiated.
+  # operator-initiated. A shared module that sets true fails the evaluation.
   system.autoUpgrade.enable = true;
+  system.autoUpgrade.allowReboot = false;
 
   homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
   homelab.k3s.cni = "cilium";  # match control-plane: disable kube-proxy for Cilium KPR

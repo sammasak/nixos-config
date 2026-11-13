@@ -97,7 +97,7 @@ After changing SSH policy, apply locally on the target first
 
 ## Automation
 
-System auto-updates weekly (Sunday 06:00, plus up to 45 min of jitter), runs garbage collection monthly, and optimises the store weekly. Configured in `modules/core/automation.nix`. `acer-swift` forces `allowReboot = false` — it is the sole worker.
+Unattended upgrades are off by default; a host opts in with `system.autoUpgrade.enable = true`. Only `acer-swift` does (Sunday 06:00, plus up to 45 min of jitter) and it sets `allowReboot = false` because it is the sole worker. Every host runs garbage collection monthly and optimises the store weekly. Configured in `modules/core/automation.nix`.
 
 ## Adding a New Host
 

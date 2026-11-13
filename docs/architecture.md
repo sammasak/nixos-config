@@ -77,7 +77,7 @@ Defined in `modules/core/system.nix`. All host metadata lives in `config.sam.pro
 build error if a `variables.nix` sets it):
 - `username` (str) — Primary user account
 - `hostname` (str) — System hostname
-- `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str) — Localisation
+- `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str) — Localisation; default to the fleet values (Europe/Stockholm, en_US.UTF-8, se, "", sv-latin1), set only to differ
 - `roles` (list of str) — Enabled roles from `modules/roles/`
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets

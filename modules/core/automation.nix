@@ -19,6 +19,10 @@ let
 in
 {
   # Off by default; a host that upgrades unattended opts in with enable = true.
+  # Why the others stay manual: black-pi and the rf-lab boards would compile
+  # cache misses on the SD card (and rf-lab must not reboot unattended), msi's
+  # Windows/EFI layout is unverified for unattended boot entries, and lenovo is
+  # rebuilt by hand before the push that the others upgrade from.
   system.autoUpgrade = {
     flake = "github:sammasak/nixos-config/main";
     flags = [ "--print-build-logs" ];
