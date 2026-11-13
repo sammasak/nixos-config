@@ -92,6 +92,11 @@ let
     ${pkgs.python3}/bin/python scripts/test-journal-collector.py
   '';
 
+  # the probe's seeded msi realises upstream's validate-loki-conf, so loki -verify-config runs here
+  lokiTest = gate "loki-test" (with pkgs; [ nix python3 ]) ''
+    ${pkgs.python3}/bin/python scripts/test-loki.py
+  '';
+
   # a switch keeps Herdr's server and cannot wait forever on a unit (eval only)
   switchSafetyTest = gate "switch-safety-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-switch-safety.py
@@ -146,7 +151,7 @@ let
     echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
     ${timed [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
-      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest runtimeHostTest journalCollectorTest switchSafetyTest rfBeaconsTest qaPushTest
+      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest runtimeHostTest journalCollectorTest lokiTest switchSafetyTest rfBeaconsTest qaPushTest
     ]}
   '';
 
@@ -437,6 +442,7 @@ in
     "nixos:qa-push-test" = task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit" qaPushTest;
     "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
     "nixos:journal-collector-test" = task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
+    "nixos:loki-test" = task "homelab.loki on no host yet: chart-parity config validated by loki -verify-config, loopback and no port by default" lokiTest;
     "nixos:switch-safety-test" = task "A switch keeps Herdr's server on every host that runs one, waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
