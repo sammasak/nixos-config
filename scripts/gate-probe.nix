@@ -118,6 +118,17 @@ let
       unit = lenovo.systemd.user.services.ollama-portforward.serviceConfig;
     };
 
+    alert-bridge = {
+      units = builtins.mapAttrs (_: h: h.config.systemd.services ? alert-bridge) hosts;
+      inherit (lenovo.systemd.services.alert-bridge) environment serviceConfig;
+      ntfyListen = lenovo.services.ntfy-sh.settings.listen-http;
+      firewall = {
+        open = lenovo.networking.firewall.allowedTCPPorts;
+        rules = lenovo.networking.firewall.extraCommands;
+      };
+      inherit (lenovo.sam.profile) lanCidr;
+    };
+
     known-hosts = {
       pinned = { lenovo = lenovo.programs.ssh.knownHosts; acer-swift = acer.programs.ssh.knownHosts; };
       knownHostsFile = lenovo.environment.etc."ssh/ssh_known_hosts".text;

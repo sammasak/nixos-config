@@ -136,6 +136,16 @@ in
 
   homelab.clusterWatchdog.enable = true;
 
+  # Alertmanager runs in a pod and posts to lenovo's LAN address, so loopback
+  # is not enough. The shadow topic keeps pages single while both bridges get
+  # every notification; cutover drops ntfyUrl to take the module's default.
+  homelab.alertBridge = {
+    enable = true;
+    listenAddress = "0.0.0.0";
+    openFirewall = true;
+    ntfyUrl = "http://127.0.0.1:${toString config.homelab.ntfy.port}/homelab-alerts-shadow";
+  };
+
   # Grants non-interactive control-plane deploy — a deliberate trust choice.
   # See vault: homelab/decisions/ADR-024-nixos-rebuild-trigger-security-model.md
   homelab.nixosRebuildTrigger.enable = true;
