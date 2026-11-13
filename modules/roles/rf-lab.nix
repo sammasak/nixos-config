@@ -39,4 +39,29 @@ in
   # Headless: its Home Manager themes compile sass and libxml2 on the Pi (aarch64 cache misses).
   stylix.enable = lib.mkForce false;
   home-manager.users.${username}.fonts.fontconfig.enable = lib.mkForce false;
+
+  # A config that breaks one of these is fixed by walking to the board.
+  assertions =
+    let
+      ssh = config.services.openssh;
+      watchdog = config.sam.rfLab.netWatchdog;
+    in
+    [
+      {
+        assertion = ssh.enable && ssh.settings.PasswordAuthentication == false && ssh.settings.PermitRootLogin == "no";
+        message = "role rf-lab: key-only SSH is the board's management path; keep sshd on with PasswordAuthentication = false and PermitRootLogin = \"no\" (modules/core/services.nix).";
+      }
+      {
+        assertion = !ssh.openFirewall;
+        message = "role rf-lab: SSH is scoped to the LAN by modules/core/network.nix; set services.openssh.openFirewall = false.";
+      }
+      {
+        assertion = watchdog.enable && config.networking.networkmanager.ensureProfiles.profiles ? ${watchdog.recoveryProfile};
+        message = "role rf-lab: the management fallback needs sam.rfLab.netWatchdog.enable and the NetworkManager profile it recovers (\"${watchdog.recoveryProfile}\"; sam.wifi.declarativeHomeProfile = true declares home-wifi).";
+      }
+      {
+        assertion = config.system.activationScripts ? lockEmptyRootPassword;
+        message = "role rf-lab: the SD image ships root with an empty password; import modules/hardware/sd-image-root-lock.nix in the host.";
+      }
+    ];
 }
