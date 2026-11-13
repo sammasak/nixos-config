@@ -1,6 +1,6 @@
 # nspawn developer environments on acer-swift and msi: evaluation
 
-As of 2026-11-12, nixos-config main 93418e3. Reference manual: `docs/nspawn-workers.md` (declaring, sizing,
+As of 2026-11-13, nixos-config main 6a24752. Reference manual: `docs/nspawn-workers.md` (declaring, sizing,
 lifecycle, permissions, store options tried). This file is the verdict against the goal, not a second manual.
 
 ## Verdict per goal item
@@ -12,7 +12,7 @@ lifecycle, permissions, store options tried). This file is the verdict against t
 | Lifecycle | Met, one step unobserved | Declare, deploy (37 s), work, resize live, stop, retire (home to trash for a week). Removing a declaration never deletes a home; only `retired` does. Declaring the first and retiring the last environment no longer restarts NetworkManager (#267, checked both directions on acer). The deletion from trash after a week has not been observed, see "Not yet verified". |
 | Resources, burstable | Met | Per environment `MemoryLow` reserve, pool-level limit and swap. One environment alone reached 10.06G of a 10G pool with 4.6G in swap, no kill. A 17G runaway lost only that process; neighbour kept its 1.5G. cargo build of factum on msi: 65 s, 4.7G peak, zero throttle or OOM events. |
 | Agents never blocked on a permission prompt, own their environment | Met | `rootInGuest`: guest root is an unprivileged host uid range, passwordless sudo inside (#258). Agents start in bypassPermissions. A full dogfood run (clone, devenv shell, cargo build) hit no prompt. |
-| Dogfood | Met | The module changes from #258 on were written, gated and pushed from environments on acer or msi, briefed from lenovo through Herdr. Each environment was retired after its work landed. |
+| Dogfood | Met | The module changes from #258 on were written, gated and pushed from environments on acer or msi, briefed from lenovo through Herdr. Each environment was retired after its work landed. On 2026-11-12/13 up to two environments at once ran the pin-set rollout (platform, herman, factum gates and pushes) and a build/test timing study. Finding: acer's 8 cores take one heavy job at a time; two concurrent gate runs caused a herman test timeout (240 s nextest limit). Plan for build/test reuse: devenv-platform #129 (not approved yet). |
 | Lean | Met for now | #265 dropped three unused options and duplicate test cases. Two store designs and one cache seed were built, measured and left unmerged rather than carried. Module total: core 736, adapter 367, nested sandbox 91, role 61, store cache 62 lines. |
 | Performance improvements found | See "Performance" | |
 
@@ -32,6 +32,7 @@ lifecycle, permissions, store options tried). This file is the verdict against t
 | Same checkout, second shell | both | 0.2 to 0.95 s | devenv's per-checkout eval cache |
 | Fresh clone of a lock this environment has seen | acer, msi | 6.5 s (factum), 17.6 s (herman) | evaluation plus 1 to 4 s of small builds |
 | First shell in a new environment, closure already in the host store | acer | 20 s (herman), 26 s (factum) | 12 to 15 s fetching input tarballs (nixpkgs 8 to 9 s, rust-overlay 3 s, devenv 1.5 s), 5 s evaluation, 2 s small builds; 0 substitutions |
+| Same, after the fleet pin set (2026-11-13, fresh clone of each main) | acer | 36.2 s (herman), 6.3 s (factum); second shell 0.7 and 0.9 s | herman: evaluation only, 17,414 files; 0 builds and 0 substitutions in both |
 | First shell, closure not in the host store | acer | 88 s (factum moved to another nixpkgs) | about 63 downloads (3.9 GB, 17 of them from the LAN caches) and local assembly of the Rust toolchain (rustc 37 s, twice in parallel) |
 | First shell, closure not in the host store | msi | 92 s (herman, first run on the host) | not broken down; most likely the same cause |
 | cargo build factum, cold target | msi | 65 s | all 8 cores, 4.7 GB peak, 2.6 GB target dir, no throttle |
@@ -45,20 +46,23 @@ and cost 88 s, because the toolchain closure is keyed by nixpkgs and rust-overla
 pins into factum fails outright (herman's rust-overlay does not know Rust 1.99).
 
 Plan, in order of value per line of code:
-1. One pin set for the fleet (nixpkgs, rust-overlay, devenv, git-hooks) owned by devenv-platform, at the newest
-   revision any repo needs, bumped in one place. Then a host that has seen any repo has the toolchain closure for
-   all of them: a new repo's first shell drops from the 88 to 92 s case to the 20 s case or better, and each host
-   stores one toolchain closure instead of one per repo (factum's alone is 3.9 GB). Unverified: whether herman
-   builds on the newest pin. This is work in devenv-platform and the consumer repos, not in the nspawn module;
-   it needs an approved issue there.
+1. Done: one pin set for the fleet (nixpkgs, rust-overlay, devenv, git-hooks) owned by devenv-platform, in
+   devenv-platform #124 (#125 to #128), herman #42, factum #50. Same store paths in both repos: nixpkgs,
+   rust-overlay, devenv modules, git-hooks and platform sources, and the C toolchain (gcc-wrapper-15.3.0). Not
+   shared: the Rust toolchain (herman 1.97.1 with musl, wasm32 and android targets; factum 1.99.0 minimal), so a
+   host still stores two toolchain closures until the fleet uses one Rust version (owner decision, open on #124).
+   herman also evaluates a second nixpkgs for its browser and wasm tools (`nix/tools-pkgs.nix`). Not measured: a
+   host that has only ever built one of the repos.
 2. Nothing in the module for the 12 to 15 s of tarball fetches. The seed built for it was dropped; with one pin set
    the tarballs are the same four for every repo and a per-host shared fetcher cache becomes worth one more look.
 3. Judged not worth doing: sharing the eval cache (devenv's is per checkout, so it would not help a fresh clone),
    pre-built cargo targets (2.6 GB of state per repo to save about 60 s).
 
 Also found while measuring: an environment confined with `egress.github.repos` needs `sammasak/devenv-platform` in
-that list or no `devenv shell` works in factum or herman (the input is private). The git and nix fetchers both go
-through the proxy rewrite without an SSH key once it is listed.
+that list or no `devenv shell` works in factum or herman (the input is private). A Rust repo's list also needs
+`rustsec/advisory-db` (cargo-deny advisories) and the repo of every git dependency (herman: `launchbadge/sqlx`),
+or the gates fail inside the environment. The git and nix fetchers both go through the proxy rewrite without an
+SSH key once a repo is listed.
 
 ## Decisions
 
@@ -79,6 +83,9 @@ through the proxy rewrite without an SSH key once it is listed.
   recorded the guest's own key.
 - First and last environment: declaring one on a host with none, and retiring the last, left NetworkManager's
   start time unchanged (acer).
+- Telemetry: environments on acer can send Claude telemetry through the host's native OTLP relay (#274, option
+  `telemetry = true` on an instance). Checked end to end with one throwaway environment (Loki lines labelled with
+  host and worker), then retired. msi has the same config on main but is not deployed yet.
 
 ## Not yet verified
 
@@ -87,7 +94,8 @@ trash is covered by the eval test; the deletion is one `find -cmin +10080` line 
 host. First possible check: after 2026-11-19 on acer, `sudo ls /var/lib/workers/.trash` should list no entry dated
 20261112.
 
-Also not exercised: msi with a fresh `rootInGuest` environment after #267.
+msi has not been deployed with #271 to #274 (off outside its weekday power window) and has not run a
+`rootInGuest` environment since #267.
 
 ## Open items outside this module
 
