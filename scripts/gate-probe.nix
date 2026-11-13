@@ -116,6 +116,11 @@ let
       sshConfig = lib.mapAttrs (_: c: c.environment.etc."ssh/ssh_config".text) { lenovo = lenovo; acer-swift = acer; };
       defaults = lib.mapAttrs (_: o: o.default) { inherit (hosts.lenovo.options.sam.sshKnownHosts) strict enable; };
       sshOpts = lib.mapAttrs (_: n: n.sshOpts) (lib.getAttrs [ "lenovo" "acer-swift" "black-pi" ] flake.deploy.nodes);
+      # each declared sops secret's file, repo-relative; the negative case: black-pi, not a recipient, with the relay on
+      sops = let files = c: lib.mapAttrs (_: s: lib.removePrefix "${flake.outPath}/" (toString s.sopsFile)) c.sops.secrets; in {
+        hosts = builtins.mapAttrs (_: h: { inherit (h.config.networking) hostName; files = files h.config; }) hosts;
+        seeded = files (extend "black-pi" [ ({ lib, ... }: { sam.profile.nativeOtel = lib.mkForce true; }) ]);
+      };
     };
 
     build-bounds = {
