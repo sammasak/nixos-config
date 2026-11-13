@@ -1,0 +1,56 @@
+serokell/deploy-rs#411: activate-rs signals cancellation before rolling back, so the
+client exits and the target keeps the failed generation. Upstream PR #412: hunks verbatim
+from 1195334; applies to pin 45ba3f8. Drop when the pin includes the fix.
+
+diff --git a/src/bin/activate.rs b/src/bin/activate.rs
+index 84ca0812..19d14f01 100644
+--- a/src/bin/activate.rs
++++ b/src/bin/activate.rs
+@@ -681,12 +681,12 @@ pub async fn activate(
+         match nix_env_set_exit_status.code() {
+             Some(0) => (),
+             _exit_code => {
+-                if signal_cancellation {
+-                    create_activation_cancel(&temp_path, &closure).await;
+-                }
+                 if auto_rollback && !dry_activate {
+                     deactivate(&profile_path).await?;
+                 }
++                if signal_cancellation {
++                    create_activation_cancel(&temp_path, &closure).await;
++                }
+                 return Err(ActivateError::SetProfile(
+                     command::CommandError::ExitStatus(
+                         nix_env_set_exit_status,
+@@ -719,12 +719,12 @@ pub async fn activate(
+     {
+         Ok(x) => x,
+         Err(e) => {
+-            if signal_cancellation {
+-                create_activation_cancel(&temp_path, &closure).await;
+-            }
+             if auto_rollback && !dry_activate {
+                 deactivate(&profile_path).await?;
+             }
++            if signal_cancellation {
++                create_activation_cancel(&temp_path, &closure).await;
++            }
+             return Err(e);
+         }
+     };
+@@ -733,12 +733,12 @@ pub async fn activate(
+         match activate_status.code() {
+             Some(0) => (),
+             _exit_code => {
+-                if signal_cancellation {
+-                    create_activation_cancel(&temp_path, &closure).await;
+-                }
+                 if auto_rollback {
+                     deactivate(&profile_path).await?;
+                 }
++                if signal_cancellation {
++                    create_activation_cancel(&temp_path, &closure).await;
++                }
+                 return Err(ActivateError::RunActivate(
+                     command::CommandError::ExitStatus(
+                         activate_status,
