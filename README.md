@@ -65,12 +65,12 @@ just diff   [HOST]      # build and show the package diff vs the running system
 just switch [HOST]      # build and activate locally
 just bump [input]       # update one flake input (default: skills); then just switch
 
-# Push from lenovo with deploy-rs (magic rollback)
-just deploy-acer
-just deploy-msi         # only in its Mon-Fri ~09:00-21:00 power window
-just deploy-pi          # black-pi; builds on the Pi, run inside zellij
-just deploy-naked-pi
-just deploy-lenovo      # loopback self-push
+# Push from lenovo with deploy-rs (magic rollback); the deploy-rs client runs under a 7G cap and
+# skips deploy-rs's own flake check. The pre-push gate runs it on pushed non-docs
+# commits; a dirty or unpushed tree deploys unchecked, and the recipe warns.
+# HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00),
+# black-pi (builds on the Pi, run inside zellij), naked-pi
+just deploy HOST
 
 just check              # full QA (lint, flake check with every host build, the tests)
 just verify             # flake check: build every x86 host, evaluate the Pis
@@ -78,10 +78,6 @@ just verify             # flake check: build every x86 host, evaluate the Pis
 
 Rollback with `sudo nixos-rebuild switch --rollback`, or pick an older
 generation in the boot menu.
-
-Every host has a deploy-rs node. The plain SSH fallback is in CLAUDE.md; if
-it fails with `sudo: a terminal is required to read the password`, add
-`--ask-sudo-password`; target by IP when hostnames are flaky.
 
 ## SSH Hardening
 
@@ -98,7 +94,7 @@ After changing SSH policy, apply locally on the target first
 
 ## Automation
 
-Unattended upgrades are off by default; a host opts in with `system.autoUpgrade.enable = true`. Only `acer-swift` does (Sunday 06:00, plus up to 45 min of jitter) and it sets `allowReboot = false` because it is the sole worker. By default every host runs garbage collection monthly and optimises the store weekly; the Pis (weekly, 7-day retention) and msi-ms7758 override the GC schedule. Configured in `modules/core/automation.nix`.
+Unattended upgrades are off by default; a host would opt in with `system.autoUpgrade.enable = true` (Sunday 06:00, plus up to 45 min of jitter). None does: `acer-swift` pins it off, so it changes only through `just deploy acer-swift`. By default every host runs garbage collection monthly and optimises the store weekly; the Pis (weekly, 7-day retention) and msi-ms7758 override the GC schedule. Configured in `modules/core/automation.nix`.
 
 ## Adding a New Host
 

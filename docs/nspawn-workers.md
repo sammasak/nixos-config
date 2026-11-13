@@ -13,8 +13,8 @@ Herdr workspace as the session surface).
 
 ## Declare one
 
-In `hosts/<host>/configuration.nix`, then deploy that host (`just deploy-msi`,
-`just deploy-acer`):
+In `hosts/<host>/configuration.nix`, then deploy that host (`just deploy msi-ms7758`,
+`just deploy acer-swift`):
 
 ```nix
 sam.workers.instances = {
@@ -96,9 +96,8 @@ neighbour was reclaimed to 59M.
 | Stop | remove the declaration, deploy | units stop, home kept |
 | Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later | 23 s; profile and GC roots deleted, the home moved to `<stateDir>/.trash/<name>-<date>` and deleted at the first activation a week later (recover it with `mv` meanwhile) |
 
-Removing a declaration only stops the environment: a rollback, a deploy from
-an older checkout or acer's weekly auto-upgrade from GitHub `main` lacks
-instances too, and must not delete their homes. Only a name in `retired` is
+Removing a declaration only stops the environment: a rollback or a deploy from
+an older checkout lacks instances too, and must not delete their homes. Only a name in `retired` is
 deleted, and only while its container is stopped; eval refuses a name in both.
 
 The store is the host's, read-only, with builds going through the host's

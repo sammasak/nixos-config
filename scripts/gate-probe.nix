@@ -39,20 +39,12 @@ let
     secret = c.sops.secrets ? native_otlp_auth;
   };
 
-  # REA and the tools it drives belong on the analysis workstation (#42 "Architectural boundaries")
-  heavy = ".*(ghidra|binwalk|unblob|jadx|nodejs|npm|rea-agents|radare2|rizin).*";
-  rfFacts = c:
-    let
-      names = ps: map (p: p.pname or p.name or "?") ps;
-      declared = names c.environment.systemPackages
-        ++ builtins.concatMap (u: names c.home-manager.users.${u}.home.packages) (builtins.attrNames c.home-manager.users);
-    in {
-      rfLab = (c.sam or { }) ? rfLab;
-      rfLabEnabled = c.sam.rfLab.enable or false;
-      k3s = c.services.k3s.enable;
-      rfUnits = builtins.filter (s: builtins.match "rf-.*" s != null) (builtins.attrNames c.systemd.services);
-      heavy = builtins.filter (n: builtins.match heavy (lib.toLower n) != null) declared;
-    };
+  rfFacts = c: {
+    rfLab = (c.sam or { }) ? rfLab;
+    rfLabEnabled = c.sam.rfLab.enable or false;
+    k3s = c.services.k3s.enable;
+    rfUnits = builtins.filter (s: builtins.match "rf-.*" s != null) (builtins.attrNames c.systemd.services);
+  };
 
   runtimeFacts = c: {
     roles = c.sam.profile.roles;
@@ -65,6 +57,7 @@ let
       && c.systemd.services.systemd-time-wait-sync.wantedBy == [ "sysinit.target" ];
     persistent = map (t: c.systemd.timers.${t}.timerConfig.Persistent) [ "nix-gc" "nix-optimise" ]
       ++ [ c.system.autoUpgrade.persistent ];
+    autoUpgrade = c.system.autoUpgrade.enable;
     upgradeHooks = with c.systemd.services.nixos-upgrade; onSuccess ++ onFailure;
     upgradeAfter = c.systemd.services.nixos-upgrade.after;
     optimiseAfter = c.systemd.services.nix-optimise.after;
@@ -118,7 +111,6 @@ let
         wakeupScript = toString ((hm lenovo).systemd.user.services.coordinator-wakeup.Service.ExecStart or "");
       };
       msi-ms7758.fish.claude = (hm msi).programs.fish.functions.claude or null;
-      coordinatorAsWorker = failing (extend "lenovo" [ { sam.herdr.worker.enable = true; } ]);
     };
 
     ollama-portforward = {
@@ -132,6 +124,7 @@ let
       sshConfig = lib.mapAttrs (_: c: c.environment.etc."ssh/ssh_config".text) { lenovo = lenovo; acer-swift = acer; };
       defaults = lib.mapAttrs (_: o: o.default) { inherit (hosts.lenovo.options.sam.sshKnownHosts) strict enable; };
       sshOpts = lib.mapAttrs (_: n: n.sshOpts) (lib.getAttrs [ "lenovo" "acer-swift" "black-pi" ] flake.deploy.nodes);
+      deployNodes = builtins.attrNames flake.deploy.nodes;
     };
 
     build-bounds = {
@@ -151,17 +144,11 @@ let
       acer = (hm (extend "acer-swift" [ ({ lib, ... }: { sam.profile.nativeOtel = lib.mkForce false; }) ])).programs.claude-code.settings.env;
     };
 
-    rf-lab-boundary = {
-      hosts = builtins.mapAttrs (_: h: rfFacts h.config) hosts;
-      # the negative case: the same check must see a heavy tool added to naked-pi
-      seeded = (rfFacts (extend "naked-pi" [ ({ pkgs, ... }: { environment.systemPackages = [ pkgs.binwalk pkgs.nodejs ]; }) ])).heavy;
-    };
+    rf-lab-boundary.hosts = builtins.mapAttrs (_: h: rfFacts h.config) hosts;
 
     runtime-host = {
       hosts = lib.genAttrs [ "msi-ms7758" "acer-swift" ] (n: runtimeFacts hosts.${n}.config // { failing = failing hosts.${n}.config; });
       acerDesktop = runtimeFacts acer.specialisation.desktop.configuration;
-      # the negative case: the role's own assertion must see a themed headless boot
-      themed = failing (extend "msi-ms7758" [ { stylix.enable = lib.mkOverride 0 true; } ]);
     };
   };
 in

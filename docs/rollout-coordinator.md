@@ -51,7 +51,7 @@ runs `nixos-rebuild --sudo`, and lukas has no passwordless sudo.
 just switch                 # nixos-rebuild switch --install-bootloader for .#lenovo
 
 # then, from lenovo
-just deploy-acer            # deploy-rs, magic rollback if acer stops answering
+just deploy acer-swift      # deploy-rs, magic rollback if acer stops answering
 ```
 
 ## Validate
