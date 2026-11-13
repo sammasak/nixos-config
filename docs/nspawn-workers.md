@@ -118,8 +118,10 @@ substitutes from it: with msi powered off, every path lookup on acer waited
 out the 3 s connect timeout one after another (180 lookups, 9 minutes of a
 first `devenv` evaluation, measured 2026-11-12). Each cache signs with a key its host generated on first
 start (`/var/lib/store-cache/`, never in git); the public halves are in the
-module. A peer that is rebooting costs a 3 s connect timeout per lookup, then
-Nix builds. An environment's nix is a client of its host's daemon, so its builds
+module. A dead peer costs a fetch of 20 paths 118 s without `fallback`, about
+20 s with `fallback = true`, which the module sets and an environment takes
+from its host, and 3 s with `download-attempts = 1`, which nothing sets
+(measured 2026-11-13, #332). An environment's nix is a client of its host's daemon, so its builds
 and downloads go through the same caches; its own nix.conf carries the
 host's substituter list, because the daemon takes a client's list when it
 trusts every entry and a shorter one skipped the LAN caches. Checked
