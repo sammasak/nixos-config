@@ -1,6 +1,7 @@
 """naked-pi's RF lab stays on naked-pi (nixos-config#42 DoD): no rf-lab module or rf-* unit on any other host
 (black-pi and the k3s nodes). That naked-pi itself carries no heavyweight reverse-engineering tooling and no
-k3s is an assertion of modules/roles/rf-lab.nix, so every evaluation of naked-pi enforces it.
+k3s is an assertion of modules/roles/rf-lab.nix: only an evaluation of naked-pi's toplevel enforces it (nixos:flake-check
+in nixos:qa, parity, a deploy), not the gate probe this test reads.
 
 Evaluation only, never a build."""
 import sys
@@ -20,7 +21,7 @@ r = gate_probe.section("rf-lab-boundary")
 hosts = r["hosts"]
 
 pi = hosts.get("naked-pi")
-check(pi is not None and pi["rfLabEnabled"], "naked-pi runs the rf-lab role (whose assertions bound it)")
+check(pi is not None and pi["rfLabEnabled"], "naked-pi runs the rf-lab role (its assertions apply when its toplevel is evaluated)")
 others = {h: f for h, f in hosts.items() if h != "naked-pi"}
 check("black-pi" in others, "black-pi is evaluated")
 for h, f in sorted(others.items()):
