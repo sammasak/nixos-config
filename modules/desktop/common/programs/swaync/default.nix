@@ -1,4 +1,4 @@
-{ pkgs, config, ... }:
+{ lib, pkgs, config, ... }:
 let
   colors = config.lib.stylix.colors.withHashtag;
 in
@@ -44,7 +44,8 @@ in
       };
     };
 
-    style = ''
+    # mkBefore: keep this CSS ahead of Stylix's regardless of import depth (#315)
+    style = lib.mkBefore ''
       * {
         font-family: "JetBrainsMono Nerd Font";
         font-weight: bold;
