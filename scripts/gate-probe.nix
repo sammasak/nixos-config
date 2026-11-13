@@ -77,8 +77,13 @@ let
       herdr = builtins.mapAttrs (_: h: let units = h.config.home-manager.users.lukas.systemd.user.services or { }; in
         if units ? herdr then { inherit (units.herdr.Unit) X-SwitchMethod; } else null) hosts;
       # null: the host does not bootstrap Flux
-      flux = builtins.mapAttrs (_: h: let units = h.config.systemd.services; in
-        if units ? flux-bootstrap then { inherit (units.flux-bootstrap.serviceConfig) Type; TimeoutStartSec = units.flux-bootstrap.serviceConfig.TimeoutStartSec or null; } else null) hosts;
+      flux = builtins.mapAttrs (name: h: let units = h.config.systemd.services; in
+        if units ? flux-bootstrap then {
+          inherit (units.flux-bootstrap.serviceConfig) Type;
+          TimeoutStartSec = units.flux-bootstrap.serviceConfig.TimeoutStartSec or null;
+          script = builtins.unsafeDiscardStringContext units.flux-bootstrap.script;
+          activationTimeout = flake.deploy.nodes.${name}.profiles.system.activationTimeout or null;
+        } else null) hosts;
       claudeActivation = (hm lenovo).home.activation.acceptClaudeStartupDialogs.data;
     };
 
