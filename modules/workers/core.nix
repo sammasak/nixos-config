@@ -448,18 +448,21 @@ in
         systemd.services.dev-env-watch = {
           serviceConfig = sandboxed // { Type = "oneshot"; StateDirectory = "dev-env-watch"; };
           path = [ pkgs.coreutils pkgs.gawk ];
+          enableStrictShellChecks = true;
           script = ''
             rc=0
-            now=$(awk '$1 == "oom_kill" { print $2 }' /sys/fs/cgroup/${slice}.slice/memory.events 2>/dev/null)
+            # no cgroup file (the slice has no unit yet) leaves now empty: skip the OOM check, still check the disks
+            now=$(awk '$1 == "oom_kill" { print $2 }' /sys/fs/cgroup/${slice}.slice/memory.events 2>/dev/null) || now=
             if [[ -n $now ]]; then
               was=$(cat "$STATE_DIRECTORY/oom_kill" 2>/dev/null || echo "$now")
               (( now >= was )) || was=0
               if (( now == was )) || ${cfg.alert} "$((now - was)) process(es) in ${hostName}'s pool killed by the OOM killer"; then echo "$now" > "$STATE_DIRECTORY/oom_kill"; else rc=1; fi
             fi
             for dir in ${lib.escapeShellArg cfg.stateDir} /nix; do
-              free=$(df --output=avail -BG "$dir" | tail -1 | tr -dc 0-9)
+              # a failed df leaves free empty: skip this directory, still check the next
+              free=$(df --output=avail -BG "$dir" | tail -1 | tr -dc 0-9) || free=
               seen="$STATE_DIRECTORY/disk-$(echo "$dir" | tr / _)"
-              [[ -n $free ]] && (( free < 10 )) || continue
+              if [[ -z $free ]] || ! (( free < 10 )); then continue; fi
               [[ -e $seen ]] && (( $(date +%s) - $(stat -c %Y "$seen") < 3600 )) && continue
               if ${cfg.alert} "${hostName}: $dir has ''${free}G free"; then touch "$seen"; else rc=1; fi
             done

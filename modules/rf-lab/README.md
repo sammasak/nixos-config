@@ -39,10 +39,9 @@ analysis workstation, never on the 1 GiB board. Protocol parsers live in
   declares one of those tools in its system or Home Manager packages or is a
   k3s node. They fire on any evaluation of its toplevel: in `nixos:qa` through
   `nixos:flake-check` (which evaluates the Pis), and in parity or a deploy;
-- the fleet: `devenv tasks run nixos:rf-lab-boundary-test` (part of
-  `nixos:qa`) checks that no other host (black-pi, the k3s nodes) imports this
-  module or carries an `rf-*` unit. It reads the gate probe, which does not
-  evaluate toplevels, so it does not run the board's assertions.
+- the fleet: an assertion in `modules/roles/base.nix` fails any host without
+  the rf-lab role (black-pi, the k3s nodes) that imports this module or
+  carries an `rf-*` unit, on the same evaluations.
 
 The assertion reads declared packages, not the built closure: a tool pulled in
 transitively by another package is not seen.
