@@ -11,8 +11,8 @@
 - `30-configurations-options.nix` — typed host declaration options
 - `40-outputs-nixos.nix` — transforms declarations into `nixosConfigurations`
 - `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
-- `60-templates.nix` — devShell flake templates (with `.envrc`) stamped by `dev-init`
-- `64-rf-beacons-rs.nix` — the rf-proto beacon table package and its `rf-beacons-parity` check
+- `60-templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
+- `64-rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
 - `70-deploy.nix` — deploy-rs push targets
 - `hosts/<name>.nix` — per-host distribution declarations
 
@@ -79,7 +79,7 @@ build error if a `variables.nix` sets it):
 - `username` (str) — Primary user account
 - `hostname` (str) — System hostname
 - `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str) — Localisation
-- `videoDriver` (str, default "intel") — no module reads it; lenovo, acer-swift and msi-ms7758 import `modules/hardware/video/<value>.nix` from their `variables.nix` (only "intel" exists)
+- `videoDriver` (str, default "intel"): no module reads it; lenovo, acer-swift and msi-ms7758 import `modules/hardware/video/<value>.nix` from their `variables.nix` (only "intel" exists)
 - `roles` (list of str) — Enabled roles from `modules/roles/`
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets
@@ -99,7 +99,7 @@ Boundary rule in Conventions.
 ### Roles (`modules/roles/`)
 
 Composable role modules assigned per-host via `variables.nix`:
-- **base** — required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`, `sddm`, `fish`)
+- **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`, `sddm`, `fish`)
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node; disables sleep/suspend
 - **homelab-server** — k3s control plane

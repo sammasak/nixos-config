@@ -65,8 +65,8 @@ specialisations, module layout).
 SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at activation (every switch and boot) to `/run/secrets/`.
 
 Two SOPS modules:
-- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`) — k3s cluster token, Flux deploy and age keys, Cloudflare API token, Tailscale authkey; on every k3s node (k3s, flux, acme and tailscale turn it on).
-- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`) — per-machine operator credentials (Claude Code OAuth token, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
+- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): k3s cluster token, Flux deploy and age keys, Cloudflare API token, Tailscale authkey; on every k3s node (k3s, flux, acme and tailscale turn it on).
+- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
 
@@ -191,7 +191,7 @@ Never:
 - label a single setting with its own name (`# Cursor` above `cursor_shape`)
 
 One exception to the last point: a bare label heading **four or more** related
-entries in a long flat list — `packages.nix`'s groups — is navigation, not restatement, and stays.
+entries in a long flat list (`packages.nix`'s groups) is navigation, not restatement, and stays.
 
 Long rationale goes to the knowledge vault, and the code keeps a single pointer:
 
@@ -222,7 +222,7 @@ the `''`-string rationale, and measurement mechanics:
 - **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
 - **Firewall**: LAN CIDR defaults to `192.168.10.0/24` (override via `sam.profile.lanCidr`). SSH is key-only, no root login.
-- **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (currently antigravity-cli, claude-code, unrar) — otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
+- **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (currently antigravity-cli, claude-code, unrar); otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
 - **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` and `rf-lab.nix` force `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
 
