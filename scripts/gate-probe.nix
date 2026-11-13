@@ -134,13 +134,15 @@ let
       facts = c: builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.toJSON {
         enable = c.homelab.journalCollector.enable or false;
         alloy = c.services.alloy.enable;
-        config = c.environment.etc."alloy/config.alloy".text or null;
+        config = c.services.alloy.configPath.text or null;
+        execStart = c.systemd.services.alloy.serviceConfig.ExecStart or null;
+        checks = map (d: d.name) c.system.checks;
         flags = c.services.alloy.extraFlags;
         environmentFile = c.services.alloy.environmentFile;
-        unit = lib.genAttrs [ "onFailure" "startLimitIntervalSec" "startLimitBurst" "restartTriggers" ]
+        unit = lib.genAttrs [ "onFailure" "startLimitIntervalSec" "startLimitBurst" ]
           (n: c.systemd.services.alloy.${n} or null);
-        configSource = c.environment.etc."alloy/config.alloy".source or null;
-        service = lib.genAttrs [ "ExecStartPost" "TimeoutStartSec" "MemoryMax" "LoadCredential" "EnvironmentFile" ]
+        configPath = c.services.alloy.configPath;
+        service = lib.genAttrs [ "ExecStartPost" "TimeoutStartSec" "MemoryMax" "RestartSec" "LoadCredential" "EnvironmentFile" ]
           (n: c.systemd.services.alloy.serviceConfig.${n} or null);
         failed = c.systemd.services.journal-collector-failed.script or null;
       }));

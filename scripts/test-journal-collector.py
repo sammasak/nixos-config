@@ -56,8 +56,18 @@ check('job = "host-journal"' in src and 'host = "msi-ms7758"' in src,
 check('max_age = "72h"' in src, "max_age 72h: the backlog survives msi's weekend power-off")
 rel = comps.get(("loki.relabel", relabel), "")
 check('source_labels = ["__journal__systemd_unit"] target_label = "unit"' in rel, "unit label from the systemd unit")
-check('replacement = "transient"' in rel and "session-" in rel and "run-" in rel,
-      "session scopes and run- units collapse to unit=transient")
+rules = {}
+for rule in rel.split("rule {")[1:]:
+    rx = re.search(r'regex = "((?:[^"\\]|\\.)*)"', rule)
+    to = re.search(r'replacement = "([^"]*)"', rule)
+    if rx and to:
+        rules[to[1]] = rx[1].replace("\\\\", "\\")
+check(set(rules) == {"transient", "systemd-coredump"}, f"unit rewrites: transient and systemd-coredump {sorted(rules)}")
+cases = {"session-12.scope": "transient", "run-r1a2b.service": "transient", "run-u7.scope": "transient",
+         "run-p123-i456.scope": "transient", "systemd-coredump@0-1234-0.service": "systemd-coredump",
+         "k3s.service": None, "sshd.service": None, "user@1000.service": None, "systemd-journald.service": None}
+got = {u: next((to for to, rx in rules.items() if re.fullmatch(rx, u)), None) for u in cases}
+check(got == cases, f"unit rewrites match transient and coredump units only {got}")
 wr = comps.get(("loki.write", write), "")
 check(re.search(r'url = "http://[^"]+/loki/api/v1/push"', wr) is not None and "max_backoff_retries = 0" in wr,
       "writes to a Loki push endpoint and retries forever (the journal holds the backlog)")
@@ -86,5 +96,9 @@ check(re.search(r"curl .*-d \"alloy failed on msi-ms7758\" .*http://\S+", m.get(
       "journal-collector-failed posts the failure to ntfy")
 check(unit.get("startLimitBurst") == 3 and unit.get("startLimitIntervalSec") == 600,
       f"start limit: 3 starts in 600 s, then failed {unit.get('startLimitBurst')}/{unit.get('startLimitIntervalSec')}")
-check(m.get("configSource") in (unit.get("restartTriggers") or []), "a config change restarts Alloy (through the probe)")
+check(isinstance(m.get("configPath"), str) and m["configPath"].startswith("/nix/store/")
+      and m["configPath"] in (m.get("execStart") or ""),
+      "the config is a store file named in ExecStart: a config change restarts Alloy (through the probe)")
+check("alloy-config-check" in m.get("checks", []), f"the build validates the config (system.checks) {m.get('checks')}")
+check(svc.get("RestartSec") == 30, f"RestartSec 30: three starts cannot burn out in seconds {svc.get('RestartSec')}")
 sys.exit(1 if failed else 0)
