@@ -71,6 +71,13 @@ let
   };
 
   sections = {
+    # what a switch may do to the units that hold agent sessions, or that it waits on
+    switch-safety = {
+      # null: the host runs no Herdr server
+      herdr = builtins.mapAttrs (_: h: let units = h.config.home-manager.users.lukas.systemd.user.services or { }; in
+        if units ? herdr then { inherit (units.herdr.Unit) X-SwitchMethod; } else null) hosts;
+    };
+
     nvim-check = {
       nvim = (hm lenovo).programs.neovim.finalPackage;
       init = (hm lenovo).xdg.configFile."nvim/init.lua".text;

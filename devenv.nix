@@ -93,6 +93,11 @@ let
     ${pkgs.python3}/bin/python scripts/test-runtime-host-role.py
   '';
 
+  # a switch keeps Herdr's server and cannot wait forever on a unit (eval only)
+  switchSafetyTest = gate "switch-safety-test" (with pkgs; [ nix python3 ]) ''
+    ${pkgs.python3}/bin/python scripts/test-switch-safety.py
+  '';
+
   ollamaPortforwardTest = gate "ollama-portforward-test" (with pkgs; [ nix python3 procps ]) ''
     ${pkgs.python3}/bin/python scripts/test-ollama-portforward.py
   '';
@@ -125,7 +130,7 @@ let
     export GATE_PROBE
     ${run [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
-      ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest rfBeaconsTest
+      ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest switchSafetyTest rfBeaconsTest
     ]}
   '';
 
@@ -399,6 +404,7 @@ in
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
     "nixos:rf-lab-boundary-test" = task "#42: naked-pi carries no heavyweight RE tooling and no k3s; no other host imports rf-lab" rfLabBoundaryTest;
     "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
+    "nixos:switch-safety-test" = task "A switch keeps Herdr's server on every host that runs one and waits on no unit forever" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;
