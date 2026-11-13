@@ -37,7 +37,7 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 # flake check on pushed non-docs commits; a dirty or unpushed tree deploys unchecked (it warns).
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
 #   then on the target: `systemctl is-system-running` = running, and `readlink /run/current-system`
-#   = `readlink -f /nix/var/nix/profiles/system`
+#   = `dirname "$(readlink -f /nix/var/nix/profiles/system/init)"`
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window

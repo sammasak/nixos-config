@@ -1,6 +1,6 @@
 serokell/deploy-rs#411: activate-rs signals cancellation before rolling back, so the
-client exits and the target keeps the failed generation. Upstream PR #412 (commit 1195334),
-verbatim. Drop when the pin includes the fix.
+client exits and the target keeps the failed generation. Upstream PR #412: hunks verbatim
+from 1195334; applies to pin 45ba3f8. Drop when the pin includes the fix.
 
 diff --git a/src/bin/activate.rs b/src/bin/activate.rs
 index 84ca0812..19d14f01 100644

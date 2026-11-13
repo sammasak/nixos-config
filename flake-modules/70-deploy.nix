@@ -4,26 +4,34 @@
 # trusted against acer-swift, which has no BMC.
 { config, inputs, lib, ... }:
 let
-  # activate-rs runs on the target, so every node's profile needs the patched build; on the Pis
-  # that is a Rust build there, as nothing caches it.
+  # activate-rs runs on the target. patched: serokell/deploy-rs#412, tracking #297; drop the
+  # override when the pin contains the fix. Unpatched is nixpkgs' binary, cached for aarch64.
   activate =
-    system:
+    system: patched:
     (import inputs.nixpkgs {
       inherit system;
       overlays = [
         inputs.deploy-rs.overlays.default
         (final: prev: {
           deploy-rs = prev.deploy-rs // {
-            deploy-rs = prev.deploy-rs.deploy-rs.overrideAttrs (o: {
-              patches = (o.patches or [ ]) ++ [ ../pkgs/patches/deploy-rs-412-rollback-before-cancel.patch ];
-            });
+            deploy-rs =
+              if patched then
+                prev.deploy-rs.deploy-rs.overrideAttrs (o: {
+                  patches =
+                    (o.patches or [ ])
+                    ++ [ ../pkgs/patches/deploy-rs-412-rollback-before-cancel.patch ];
+                })
+              else
+                inputs.nixpkgs.legacyPackages.${system}.deploy-rs;
           };
         })
       ];
     }).deploy-rs.lib.activate;
 
-  x86 = activate "x86_64-linux";
-  aarch64 = activate "aarch64-linux";
+  x86 = activate "x86_64-linux" true;
+  # Still serokell/deploy-rs#411 (a failed unit is not really rolled back), so the post-deploy
+  # check is mandatory on the Pis until a patched aarch64 build is evidenced (#297).
+  aarch64 = activate "aarch64-linux" false;
 
   # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
   pushAs = {
@@ -31,6 +39,7 @@ let
     user = "root";
     autoRollback = true;
     magicRollback = true;
+    # covers a failed activation plus the re-activation of the previous generation
     activationTimeout = 180;
     confirmTimeout = 30;
   };
