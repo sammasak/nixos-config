@@ -13,6 +13,8 @@ Raspberry Pis, one shared user config, built with flake-parts.
   and reboot verification.
 - [docs/factum-pilot.md](docs/factum-pilot.md): the Lenovo-only, advisory Factum CLI pilot.
 - [docs/nix-audit-pilot.md](docs/nix-audit-pilot.md): the advisory nix-audit pilot on lenovo, acer-swift and msi-ms7758.
+- [docs/flake-wiring.md](docs/flake-wiring.md): proposed decision (#292) for one
+  hosts table with the role registry kept; not yet implemented.
 
 ## Hosts
 
