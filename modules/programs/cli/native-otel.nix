@@ -1,10 +1,12 @@
-resourceAttributes:
 {
   pkgs,
   lib,
   osConfig,
   ...
 }:
+let
+  inherit (osConfig.sam.claude.telemetry) resourceAttributes;
+in
 {
   # The codex on PATH, so non-interactive callers export too; without both the gateway drops its metrics.
   # hiPrio: wins bin/codex over the codex module's pkgs.codex, whose other outputs stay.

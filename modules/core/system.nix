@@ -5,6 +5,8 @@ let
   profile = config.sam.profile;
 in
 {
+  imports = [ ./fleet.nix ];
+
   options.sam = {
     profile = mkOption {
       description = "Host profile values used by reusable modules.";

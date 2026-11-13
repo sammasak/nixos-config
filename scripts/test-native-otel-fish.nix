@@ -21,6 +21,7 @@ let
     specialArgs = {
       inherit pkgs;
       osConfig.sam.profile.devTools = devTools;
+      osConfig.sam.claude.telemetry.resourceAttributes = { "host.name" = "lenovo-21cb001pmx"; };
     };
     modules = [
       {
@@ -35,7 +36,7 @@ let
       }
     ]
     ++ lib.optional devTools ../modules/programs/cli/herdr
-    ++ lib.optional nativeOtel (import ../modules/programs/cli/native-otel.nix { "host.name" = "lenovo-21cb001pmx"; });
+    ++ lib.optional nativeOtel ../modules/programs/cli/native-otel.nix;
   };
   codex = lib.filter (p: (p.name or null) == "codex") evaluated.config.home.packages;
 in

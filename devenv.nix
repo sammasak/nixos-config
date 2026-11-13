@@ -137,11 +137,20 @@ let
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
   lints = [ lintComments lintShell ];
-  qa = gate "nixos-qa" [ ] ''
-    ${run (lints ++ [ secretsVerify flakeCheck ])}
+  # seconds per step, to see where a slow gate spends its time (#334); prek hides a passing hook's
+  # output, so the push gate also appends them to NIXOS_QA_TIMES
+  timed = lib.concatMapStringsSep "\n" (g: ''
+    t=$SECONDS
+    ${lib.getExe g}
+    echo "nixos-qa: ${g.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+  '');
+  qa = gate "nixos-qa" [ pkgs.coreutils ] ''
+    ${timed (lints ++ [ secretsVerify flakeCheck ])}
+    t=$SECONDS
     GATE_PROBE=$(${lib.getExe probe})
     export GATE_PROBE
-    ${run [
+    echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+    ${timed [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
       ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest lokiTest switchSafetyTest rfBeaconsTest
     ]}
@@ -161,6 +170,9 @@ let
     trap 'git worktree remove --force "$tree"' EXIT
     git worktree add --quiet --detach "$tree" "$rev"
     cd "$tree"
+    # In a linked worktree git hands the hook its GIT_DIR: HEAD, the lints' git ls-files and git under qa
+    # would all follow that checkout, not this tree. The siblings are unset for a tool that exports them.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
     # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
     # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
     if base=$(git merge-base HEAD origin/main) && changed=$(git diff --no-renames --name-only "$base" HEAD) \
@@ -169,7 +181,9 @@ let
       ${run lints}
       exit
     fi
-    echo "nixos-qa on pushed commit $(git rev-parse --short HEAD)"
+    NIXOS_QA_TIMES=$(git rev-parse --path-format=absolute --git-common-dir)/nixos-qa-times
+    export NIXOS_QA_TIMES
+    echo "$(date -Is) nixos-qa on pushed commit $(git rev-parse --short HEAD)" | tee -a "$NIXOS_QA_TIMES"
     ${lib.getExe qa}
   '';
 
