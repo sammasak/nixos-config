@@ -4,7 +4,6 @@ in
 {
   configurations.nixos.naked-pi = {
     hostDir = "naked-pi";
-    system = "aarch64-linux";
     inherit (vars) username roles;
   };
 }

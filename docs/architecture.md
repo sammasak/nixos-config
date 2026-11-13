@@ -76,7 +76,7 @@ Defined in `modules/core/system.nix`. All host metadata lives in `config.sam.pro
 
 **Available fields** (the submodule is strict — anything not listed here is a
 build error if a `variables.nix` sets it):
-- `username` (str) — Primary user account
+- `username` (one of the users in `lib/users.nix`): primary user account
 - `hostname` (str) — System hostname
 - `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str): localisation; default to the fleet values (Europe/Stockholm, en_US.UTF-8, se, "", sv-latin1), set only to differ
 - `roles` (list of str) — Enabled roles from `modules/roles/`

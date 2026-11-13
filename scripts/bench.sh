@@ -4,7 +4,10 @@
 # Usage:
 #   ./scripts/bench.sh bench    # full run, appends one JSON line to metrics/history.jsonl
 #   ./scripts/bench.sh diff     # delta table for the last two entries
-#   ./scripts/bench.sh parity [BASE]  # fail if any host's drvPath moved since BASE
+#   ./scripts/bench.sh parity [BASE]  # fail if any host's toplevel drvPath, deploy
+#                                     # node or deploy setting outside nodes moved
+#                                     # since BASE, or a host or node was added or
+#                                     # removed
 #
 # Eval counters come from NIX_SHOW_STATS. Per the nixpkgs metrics.nix caveat
 # they are only meaningful as a before/after diff for one change set, never as
@@ -15,7 +18,6 @@ cd "$(dirname "$0")/.."
 
 HOSTS=("lenovo" "acer-swift")
 HISTORY="metrics/history.jsonl"
-PARITY_HOSTS=("lenovo" "acer-swift" "msi-ms7758" "black-pi" "naked-pi")
 
 # Wall-clock milliseconds and the stats JSON for one host's toplevel drvPath.
 # The eval cache is disabled so repeated runs actually re-evaluate.
@@ -214,6 +216,14 @@ cmd_diff() {
   echo "shellcheck gates scripts/*.sh via 'just lint-shell', not this script."
 }
 
+# Attribute names of $2 in flake $1, one per line; evaluates no host config.
+attr_names() {
+  nix eval --json "$1#$2" --apply builtins.attrNames --option eval-cache false | jq -r '.[]' || {
+    echo "parity: listing $2 in $1 failed" >&2
+    exit 1
+  }
+}
+
 # toplevel drvPath of host $2 in flake $1; a failed eval aborts the script.
 toplevel_drv() {
   local drv
@@ -225,11 +235,52 @@ toplevel_drv() {
   printf '%s\n' "$drv"
 }
 
+# deploy node $2 in flake $1 as sorted JSON, each profile path as its drvPath.
+node_json() {
+  local json
+  json=$(nix eval --json "$1#deploy.nodes.$2" --option eval-cache false \
+    --apply 'n: n // { profiles = builtins.mapAttrs (_: p: p // { path = p.path.drvPath; }) n.profiles; }' \
+    | jq -cS .) || {
+    echo "parity: evaluating deploy node $2 in $1 failed" >&2
+    exit 1
+  }
+  printf '%s\n' "$json"
+}
+
+# deploy minus nodes (sshUser, magicRollback, ...) in flake $1 as sorted JSON.
+deploy_settings() {
+  local json
+  json=$(nix eval --json "$1#deploy" --option eval-cache false \
+    --apply 'd: removeAttrs d [ "nodes" ]' | jq -cS .) || {
+    echo "parity: evaluating deploy settings in $1 failed" >&2
+    exit 1
+  }
+  printf '%s\n' "$json"
+}
+
+# 0 if line $2 is in the newline-separated list $1.
+has() { grep -qxF -- "$2" <<<"$1"; }
+
+# 0 if $3 is in both the base list $1 and the tree list $2, else print why not.
+# $4 prefixes the name ("node " for deploy nodes).
+on_both() {
+  if ! has "$1" "$3"; then
+    echo "ADDED  $4$3"
+  elif ! has "$2" "$3"; then
+    echo "REMOVED  $4$3"
+  else
+    return 0
+  fi
+  return 1
+}
+
 # BASE (default: merge base with origin/main) is read straight from git, the
 # working tree as nix sees it: tracked files with uncommitted edits, no
-# untracked files. One evaluation at a time keeps peak memory to one host.
+# untracked files. Hosts and nodes are the union of both sides; one present on
+# one side only is ADDED or REMOVED and never evaluated. One evaluation at a
+# time keeps peak memory to one host.
 cmd_parity() {
-  local base rev want got untracked rc=0
+  local base rev baseref want got untracked rc=0
   base=${1:-$(git merge-base HEAD origin/main)}
   rev=$(git rev-parse --verify --quiet "$base^{commit}") || {
     echo "parity: '$base' is not a commit" >&2
@@ -245,8 +296,18 @@ cmd_parity() {
     echo "parity: untracked .nix files are invisible to the tree side; git add them first:" >&2
     printf '%s\n' "$untracked" | sed 's/^/    /' >&2
   fi
-  for host in "${PARITY_HOSTS[@]}"; do
-    want=$(toplevel_drv "git+file://$PWD?rev=$rev" "$host")
+  baseref="git+file://$PWD?rev=$rev"
+  local base_hosts tree_hosts base_nodes tree_nodes hosts names
+  base_hosts=$(attr_names "$baseref" nixosConfigurations)
+  tree_hosts=$(attr_names . nixosConfigurations)
+  base_nodes=$(attr_names "$baseref" deploy.nodes)
+  tree_nodes=$(attr_names . deploy.nodes)
+  mapfile -t hosts < <(sort -u <<<"$base_hosts"$'\n'"$tree_hosts" | grep .)
+  mapfile -t names < <(sort -u <<<"$base_hosts"$'\n'"$tree_hosts"$'\n'"$base_nodes"$'\n'"$tree_nodes" | grep .)
+  [ "${#hosts[@]}" -gt 0 ] || { echo "parity: no nixosConfigurations found" >&2; exit 1; }
+  for host in "${hosts[@]}"; do
+    on_both "$base_hosts" "$tree_hosts" "$host" "" || { rc=1; continue; }
+    want=$(toplevel_drv "$baseref" "$host")
     got=$(toplevel_drv . "$host")
     if [ "$want" = "$got" ]; then
       echo "same   $host  $got"
@@ -257,6 +318,33 @@ cmd_parity() {
       rc=1
     fi
   done
+  for node in "${names[@]}"; do
+    if ! has "$base_nodes" "$node" && ! has "$tree_nodes" "$node"; then
+      echo "none   node $node  (no deploy node on either side)"
+      continue
+    fi
+    on_both "$base_nodes" "$tree_nodes" "$node" "node " || { rc=1; continue; }
+    want=$(node_json "$baseref" "$node")
+    got=$(node_json . "$node")
+    if [ "$want" = "$got" ]; then
+      echo "same   node $node  $(jq -r '.profiles.system.path' <<<"$got")"
+    else
+      echo "MOVED  node $node"
+      echo "    base: $want"
+      echo "    tree: $got"
+      rc=1
+    fi
+  done
+  want=$(deploy_settings "$baseref")
+  got=$(deploy_settings .)
+  if [ "$want" = "$got" ]; then
+    echo "same   deploy-settings  $got"
+  else
+    echo "MOVED  deploy-settings"
+    echo "    base: $want"
+    echo "    tree: $got"
+    rc=1
+  fi
   if [ "$rc" -ne 0 ]; then
     echo ""
     echo "Parity broken. Comments outside nix strings cannot change a derivation,"

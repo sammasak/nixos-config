@@ -13,6 +13,8 @@ Raspberry Pis, one shared user config, built with flake-parts.
   and reboot verification.
 - [docs/factum-pilot.md](docs/factum-pilot.md): the Lenovo-only, advisory Factum CLI pilot.
 - [docs/nix-audit-pilot.md](docs/nix-audit-pilot.md): the advisory nix-audit pilot on lenovo, acer-swift and msi-ms7758.
+- [docs/flake-wiring.md](docs/flake-wiring.md): proposed decision (#292) for one
+  hosts table with the role registry kept; not yet implemented.
 
 ## Hosts
 
@@ -47,7 +49,7 @@ the tie-breaker.
 | `modules/themes/` | Catppuccin via Stylix | |
 | `lib/` | Pure helpers, no module semantics | `users.nix` (git identity, SSH keys), `firewall.nix` (dual-backend rule builder) |
 | `scripts/` | Repo tooling | `gate-probe.nix` and the `test-*.py` gates, `bench.sh`, `nix-comment-metrics.awk` |
-| `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions. `just parity [BASE]` needs no entry: it compares the five host drvPaths at the merge base with the working tree |
+| `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions. `just parity [BASE]` needs no entry: it compares every host's toplevel drvPath and deploy node at the merge base with the working tree |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
 | `docs/` | Reference, plus dated records | Reference: `architecture.md`, `herdr.md`, `pi.md`, `nspawn-workers.md`, `ssh-host-keys.md`, `native-otel-canary.md`, `factum-pilot.md`, `nix-audit-pilot.md`. The rest are dated plans, measurements and ledgers, true as of their date |
 | `Justfile` | Task entry points | build, switch, deploy, verify and image recipes |
