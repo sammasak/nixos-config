@@ -18,7 +18,7 @@ In `hosts/<host>/configuration.nix`, then deploy that host (`just deploy-msi`,
 
 ```nix
 sam.workers.instances = {
-  fix-ci = { model = "sonnet"; prompt = "Fix issue #123 in sammasak/nixos-config, end to end."; };
+  fix-ci = { model = "opus"; prompt = "Fix issue #123 in sammasak/nixos-config, end to end."; };
   shell = { agent = "none"; };
 };
 ```
