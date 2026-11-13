@@ -34,7 +34,7 @@
     nix-audit.url = "git+ssh://git@github.com/sammasak/nix-audit?rev=38789c530998164335637c6b6982b5ddc9e0fda1";
     nix-audit.flake = false;
 
-    alert-bridge.url = "git+ssh://git@github.com/sammasak/alert-bridge?rev=05d1752468ef9fef73a42d960f5f03e21a4bfb6d";
+    alert-bridge.url = "git+ssh://git@github.com/sammasak/alert-bridge?rev=e2d61abf8df857156740119df8ab7f0c59582e20";
     alert-bridge.flake = false;
 
     rf-proto.url = "git+ssh://git@github.com/sammasak/rf-proto?rev=89e08d25d3057f3b68ef5d8a3508238789f8b7de";
