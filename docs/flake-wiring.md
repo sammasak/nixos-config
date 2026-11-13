@@ -136,8 +136,9 @@ update.
 - A sixth host's flake wiring goes from two files to one table entry. Still
   needed: `hosts/<dir>/`, the `just deploy` HOST pattern (checked by
   `test-ssh-known-hosts.py`), its pinned key in
-  `modules/core/ssh-known-hosts.nix`, its sops recipient, and optionally the
-  `fleetHome` name lists (#291). `just parity` picks the host up on its own.
+  `modules/core/ssh-known-hosts.nix`, its sops recipient, and optionally
+  `sam.cliTools.*` in its `configuration.nix` (#291). `just parity` picks the
+  host up on its own.
 - Every table entry is a deploy node, as all five were before step 4.
 - Plain paths (B) stay possible once #315 and its successors make order
   explicit.
@@ -152,6 +153,6 @@ fact fields.
 ## Not changed
 
 flake-parts, one nixpkgs, no specialArgs, curried `import file inputs.x`,
-`fleetHome` and its host-name tests (#291), the `lenovo` attribute vs its
-hostname, untyped `sam.userConfig`, `hardware-configuration.nix`, role file
-contents, flake-module file names, any deploy.
+the `lenovo` attribute vs its hostname, untyped `sam.userConfig`,
+`hardware-configuration.nix`, role file contents, flake-module file names, any
+deploy.

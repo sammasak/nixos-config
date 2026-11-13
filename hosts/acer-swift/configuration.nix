@@ -22,6 +22,7 @@ in
   };
   # The relay and environments' telemetry only: host sessions here keep their Claude settings (docs/native-otel-canary.md)
   sam.claude.telemetry.enable = false;
+  sam.cliTools.nixAudit.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
 
   # Headless shell mode remains the default for the always-on worker. The GUI

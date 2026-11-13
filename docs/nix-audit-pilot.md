@@ -70,8 +70,8 @@ to look for: nothing runs until an operator calls it. The first report appears i
 
 On one host: `sudo nixos-rebuild switch --rollback`, or pick the previous generation in
 the systemd-boot menu; Home Manager is a NixOS module here, so its packages go with it.
-Everywhere: revert this change, or drop a host from the `lib.elem` list in
-`flake-modules/40-outputs-nixos.nix`, then switch or deploy as usual. nix-audit installs no
+Everywhere: revert this change, or drop `sam.cliTools.nixAudit.enable` from a host's
+`configuration.nix`, then switch or deploy as usual. nix-audit installs no
 service, hook or timer, and removing it changes no system it inspected. It writes:
 - its `--json-out` files and `~/nix-audit-pilot`;
 - the grype and vulnix databases in `~/.cache`;
