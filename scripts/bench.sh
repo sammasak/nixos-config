@@ -4,9 +4,10 @@
 # Usage:
 #   ./scripts/bench.sh bench    # full run, appends one JSON line to metrics/history.jsonl
 #   ./scripts/bench.sh diff     # delta table for the last two entries
-#   ./scripts/bench.sh parity [BASE]  # fail if any host's toplevel drvPath or deploy
-#                                     # node moved since BASE, or a host or node was
-#                                     # added or removed
+#   ./scripts/bench.sh parity [BASE]  # fail if any host's toplevel drvPath, deploy
+#                                     # node or deploy setting outside nodes moved
+#                                     # since BASE, or a host or node was added or
+#                                     # removed
 #
 # Eval counters come from NIX_SHOW_STATS. Per the nixpkgs metrics.nix caveat
 # they are only meaningful as a before/after diff for one change set, never as
@@ -246,6 +247,17 @@ node_json() {
   printf '%s\n' "$json"
 }
 
+# deploy minus nodes (sshUser, magicRollback, ...) in flake $1 as sorted JSON.
+deploy_settings() {
+  local json
+  json=$(nix eval --json "$1#deploy" --option eval-cache false \
+    --apply 'd: removeAttrs d [ "nodes" ]' | jq -cS .) || {
+    echo "parity: evaluating deploy settings in $1 failed" >&2
+    exit 1
+  }
+  printf '%s\n' "$json"
+}
+
 # 0 if line $2 is in the newline-separated list $1.
 has() { grep -qxF -- "$2" <<<"$1"; }
 
@@ -323,6 +335,16 @@ cmd_parity() {
       rc=1
     fi
   done
+  want=$(deploy_settings "$baseref")
+  got=$(deploy_settings .)
+  if [ "$want" = "$got" ]; then
+    echo "same   deploy-settings  $got"
+  else
+    echo "MOVED  deploy-settings"
+    echo "    base: $want"
+    echo "    tree: $got"
+    rc=1
+  fi
   if [ "$rc" -ne 0 ]; then
     echo ""
     echo "Parity broken. Comments outside nix strings cannot change a derivation,"

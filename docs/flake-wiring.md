@@ -8,7 +8,7 @@ wave 3).
 
 | Step | Change | State |
 |---|---|---|
-| P | `just parity` derives its host list and compares deploy nodes | landed with this file |
+| P | `just parity` derives its host list and compares deploy nodes and settings | landed with this file |
 | 0 | this document | landed |
 | 1 | `sam.profile.username` becomes an enum of `lib/users.nix` | not started |
 | 2 | architecture stated once (`hostPlatform`) | not started |

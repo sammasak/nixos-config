@@ -214,7 +214,7 @@ editing one moves the derivation and breaks `just parity`. Exemplar comments,
 the `''`-string rationale, and measurement mechanics:
 `~/knowledge/nix/comment-policy-notes.md`.
 `just parity [BASE]` evaluates every host's toplevel drvPath and deploy-rs node
-(as JSON, profile paths as drvPaths) at BASE (default the merge base with
+(as JSON, profile paths as drvPaths), plus `deploy` minus `nodes`, at BASE (default the merge base with
 origin/main) and in the working tree (tracked files incl. uncommitted edits, not
 untracked ones), one evaluation at a time. Hosts and nodes are the union of
 `nixosConfigurations` and `deploy.nodes` names on both sides; one on one side only
