@@ -40,7 +40,7 @@ the tie-breaker.
 | `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |
 | `modules/desktop/` | The GUI stack | niri, Waybar, Rofi; gated on `sam.desktop.enable` |
 | `modules/specialisations/` | Boot-menu variants | Currently only `desktop.nix` |
-| `modules/hardware/` | GPU and thermal | `video/<driver>.nix` picked by `sam.profile.videoDriver` |
+| `modules/hardware/` | GPU and thermal | `video/intel.nix` imported by the Intel hosts |
 | `modules/rf-lab/`, `modules/embedded/` | naked-pi appliance stacks | Wi-Fi/Bluetooth lab and HIL tests; ESP32 tooling |
 | `modules/home/` | Shared Home Manager entry point | One tree for all hosts; there are no per-host `home.nix` files |
 | `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `terminal/` |
@@ -92,7 +92,7 @@ After changing SSH policy, apply locally on the target first
 
 ## Automation
 
-System auto-updates weekly (Sunday 06:00, plus up to 45 min of jitter), runs garbage collection monthly, and optimises the store weekly. Configured in `modules/core/automation.nix`. `acer-swift` forces `allowReboot = false` — it is the sole worker.
+Unattended upgrades are off by default; a host opts in with `system.autoUpgrade.enable = true`. Only `acer-swift` does (Sunday 06:00, plus up to 45 min of jitter) and it sets `allowReboot = false` because it is the sole worker. Every host runs garbage collection monthly and optimises the store weekly. Configured in `modules/core/automation.nix`.
 
 ## Adding a New Host
 
