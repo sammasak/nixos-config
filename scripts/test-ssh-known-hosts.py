@@ -67,9 +67,18 @@ def undecryptable(files, host, recipients_of):
     return sorted(f"{name} ({f})" for name, f in files.items() if want is None or want not in recipients_of(f))
 
 
+def host_key_identity(h):
+    age, gpg = h["age"], h["gnupg"]
+    return (age["sshKeyPaths"] == ["/etc/ssh/ssh_host_ed25519_key"] and gpg["home"] is None
+            and (age["keyFile"] is None or age["generateKey"] is True))
+
+
 def sops_checks(S):
     """Every secret a host declares is encrypted to that host's key, read from the files' plaintext metadata:
-    sops-nix's own build check confirms the key exists in the file, not that the host can decrypt it."""
+    sops-nix's own build check confirms the key exists in the file, not that the host can decrypt it. The host's key is
+    its ssh host key, so that is the identity sops-nix must decrypt with: no gnupg home (its default rsa host-key import
+    is inert, the files carry age recipients only); age.keyFile, when set, is the generated extra identity
+    (generateKey), whose public half no file lists."""
     cache = {}
     def recipients_of(f):
         return cache.setdefault(f, sops_recipients(ROOT / f))
@@ -77,9 +86,12 @@ def sops_checks(S):
     for attr, h in S["hosts"].items():
         bad = undecryptable(h["files"], h["hostName"], recipients_of)
         check(h["files"] and not bad, f"{attr}: each of its {len(h['files'])} sops secrets is in a file encrypted to {h['hostName']} (not: {bad})")
+        check(host_key_identity(h), f"{attr}: sops-nix decrypts with the ssh host key the recipient is derived from ({h['age']}, gnupg {h['gnupg']})")
     bad = undecryptable(S["seeded"], "black-pi", recipients_of)
     check(bad == ["native_otlp_auth (secrets/claude/native-otlp-auth.yaml)"], f"seeded: black-pi with nativeOtel declares the relay's secret, not encrypted to it ({bad})")
     acer = S["hosts"]["acer-swift"]
+    check(not host_key_identity(dict(acer, age=dict(acer["age"], generateKey=False))),
+          "seeded: a provisioned age.keyFile (generateKey off) is not the host key identity")
     dropped = lambda f: recipients_of(f) - {SOPS_RECIPIENTS["acer-swift"]} if f == "secrets/homelab/k3s.yaml" else recipients_of(f)
     bad = undecryptable(acer["files"], "acer-swift", dropped)
     check(bad == ["k3s/cluster_token (secrets/homelab/k3s.yaml)"], f"seeded: k3s.yaml with acer's recipient dropped fails acer's k3s token ({bad})")

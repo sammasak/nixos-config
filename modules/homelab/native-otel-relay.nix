@@ -75,7 +75,7 @@ in
     assertions = [
       {
         # LoadCredential reads it as root: no user process, an agent's tools included, needs the bearer token
-        assertion = let s = config.sops.secrets.native_otlp_auth; in !(config.sops.secrets ? native_otlp_auth) || (builtins.elem s.owner [ null "root" ] && (s.uid or 0) == 0 && s.mode == "0400");
+        assertion = let s = config.sops.secrets.native_otlp_auth; in builtins.elem s.owner [ null "root" ] && (s.uid or 0) == 0 && s.mode == "0400";
         message = "sam.profile.nativeOtel: the sops secret native_otlp_auth must be owned by root with mode 0400; only the relay's LoadCredential reads it.";
       }
     ];
