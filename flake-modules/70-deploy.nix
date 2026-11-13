@@ -28,8 +28,9 @@ let
   pushAs = {
     sshUser = "deploy";
     user = "root";
-    # On this pin a failed unit may not roll back while the client says it did (serokell/deploy-rs#411):
-    # after a failed deploy check `readlink /run/current-system` on the target.
+    # The x86 nodes' activate (this pin) may leave a failed unit's generation while the client reports a
+    # rollback (serokell/deploy-rs#411; the Pis' nixpkgs build is unread): after a failed deploy, compare
+    # the target's `readlink /run/current-system` with its value before the deploy.
     autoRollback = true;
     magicRollback = true;
     activationTimeout = 180;

@@ -42,7 +42,8 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only
 just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
-                              # and the closure diff vs the running system; activates nothing
+                              # and the closure diff vs the running system; activates nothing, but read
+                              # the output: it exits 0 even when the dry activation fails
 just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); BREAK=1 must fail
 ```
 

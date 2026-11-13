@@ -1,8 +1,10 @@
 # The runtime-host role (msi-ms7758, acer-swift) booted in QEMU, for what evaluation
-# cannot show: every unit of the boot comes up, Home Manager's activation included,
-# and a switch into a generation with a failing unit exits non-zero, which deploy-rs's
-# autoRollback depends on. A host-sized closure: `just role-vm-test` on msi, never lenovo.
-# `.broken` fails Home Manager's activation on purpose, so it must fail.
+# cannot show: every system unit of the boot comes up, Home Manager's activation
+# included, and a switch into a generation with a failing unit exits 4 and fails
+# nothing else. System manager only: a failed Home Manager user unit (herdr) is not
+# seen. Not in the VM: hosts/msi-ms7758/configuration.nix (GRUB, WoL, power schedule).
+# A host-sized closure: `just role-vm-test` on msi only.
+# `.broken` fails Home Manager's activation on purpose; it means something only next to a passing plain run.
 { pkgs, roleModules, fleetModules }:
 let
   vars = import ../hosts/msi-ms7758/variables.nix;
@@ -43,8 +45,9 @@ let
 
       rc, out = machine.execute("/run/current-system/specialisation/failing-unit/bin/switch-to-configuration test 2>&1")
       print(out)
-      assert rc != 0, "a switch that leaves a failed unit exited 0"
-      assert "failing-on-purpose.service" in out, "the switch did not name the failed unit"
+      assert rc == 4, f"a switch that leaves a failed unit exited {rc}, not 4"
+      failed = machine.succeed("systemctl list-units --failed --plain --no-legend | cut -d' ' -f1").split()
+      assert failed == ["failing-on-purpose.service"], f"failed units after the switch: {failed}"
     '';
   };
 in
