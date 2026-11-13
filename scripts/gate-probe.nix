@@ -55,11 +55,8 @@ let
     gui = c.services.displayManager.enable || c.services.xserver.enable;
     waitSync = lib.elem "systemd-time-wait-sync.service" c.systemd.additionalUpstreamSystemUnits
       && c.systemd.services.systemd-time-wait-sync.wantedBy == [ "sysinit.target" ];
-    persistent = map (t: c.systemd.timers.${t}.timerConfig.Persistent) [ "nix-gc" "nix-optimise" ]
-      ++ [ c.system.autoUpgrade.persistent ];
+    persistent = map (t: c.systemd.timers.${t}.timerConfig.Persistent) [ "nix-gc" "nix-optimise" ];
     autoUpgrade = c.system.autoUpgrade.enable;
-    upgradeHooks = with c.systemd.services.nixos-upgrade; onSuccess ++ onFailure;
-    upgradeAfter = c.systemd.services.nixos-upgrade.after;
     optimiseAfter = c.systemd.services.nix-optimise.after;
   };
 
