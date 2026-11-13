@@ -14,7 +14,7 @@
 - `60-templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
 - `64-rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
 - `70-deploy.nix` — deploy-rs push targets
-- `hosts/<name>.nix` — per-host distribution declarations
+- `hosts.nix`: the hosts table (roles, `hostDir`)
 
 ### Module Registry (`20-module-registry.nix`)
 

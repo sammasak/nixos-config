@@ -17,7 +17,6 @@
 
               roles = lib.mkOption {
                 type = lib.types.listOf lib.types.str;
-                default = [ "base" ];
                 description = "Role modules resolved via flake.modules.nixos.role-<name>; also sets sam.profile.roles.";
               };
             };
