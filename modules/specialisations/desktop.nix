@@ -3,7 +3,7 @@
   imports = [
     ../desktop/common
     ../desktop/niri
-    ../core/sddm.nix
+    ../desktop/sddm
   ];
 
   # The GUI signal every desktop-gated module reads (compositor-agnostic).

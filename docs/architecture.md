@@ -54,7 +54,7 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 
 `modules/specialisations/desktop.nix` imports `modules/desktop/common`
 (compositor-agnostic bar, launcher, lock/idle, notifications, GTK) and
-`modules/desktop/niri`, the only compositor.
+`modules/desktop/niri`, the only compositor, and `modules/desktop/sddm`.
 
 The Acer headless configuration is the default and its `desktop` specialisation
 adds the Niri GUI boot entry. MSI is an intermittent opt-in k3s worker: powered
@@ -100,7 +100,7 @@ Boundary rule in Conventions.
 ### Roles (`modules/roles/`)
 
 Composable role modules assigned per host in `flake-modules/hosts.nix`:
-- **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`, `sddm`, `fish`)
+- **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`)
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node, joining the server at lenovo's `sam.fleet` address; disables sleep/suspend
 - **homelab-server** — k3s control plane
@@ -116,7 +116,7 @@ Composable role modules assigned per host in `flake-modules/hosts.nix`:
 ```
 modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
-├── desktop/      # Desktop stack: common/ and niri/
+├── desktop/      # Desktop stack: common/, niri/ and sddm/
 ├── embedded/     # ESP32 tooling
 ├── hardware/     # GPU drivers (intel), thermal, disk layouts
 ├── home/         # the shared Home Manager entry point
@@ -128,4 +128,6 @@ modules/
 ├── themes/       # Catppuccin via Stylix
 └── workers/      # nspawn developer environments (docs/nspawn-workers.md)
 ```
+
+Module class follows the directory for these: `modules/core` and `modules/homelab` are NixOS, `modules/home` and `modules/programs` are Home Manager, and in `modules/desktop` each `<x>/default.nix` (NixOS) pairs with `<x>/home.nix` (Home Manager) where there is one. Exceptions: `core/users.nix` also holds the inline `home-manager.users` block; the files `desktop/common/home.nix` imports (`programs/*/`, `scripts/`) are Home Manager despite their `default.nix` names.
 
