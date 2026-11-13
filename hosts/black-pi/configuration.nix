@@ -38,9 +38,6 @@ in
     cores = 2;
   };
 
-  # Weekly upgrades would compile nodejs on the SD card; revisit when aarch64 caches it.
-  system.autoUpgrade.enable = lib.mkForce false;
-
   homelab.k3s.serverAddr = "https://192.168.10.154:6443"; # k3s server on lenovo-21CB001PMX
   homelab.k3s.cni = "cilium"; # must match control-plane: Cilium KPR, kube-proxy disabled
   homelab.k3s.extraFlags = [

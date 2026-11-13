@@ -5,7 +5,7 @@ in
 {
   imports = [
     ./hardware-configuration.nix
-    ../../modules/hardware/video/${vars.videoDriver}.nix
+    ../../modules/hardware/video/intel.nix
     # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
     ../../modules/homelab/msi-power-schedule.nix
   ];
@@ -37,10 +37,6 @@ in
   # their catch-up at boot: both run inside the Mon-Fri power window instead.
   nix.gc.dates = lib.mkForce "Mon *-*-01..07 12:00";
   nix.optimise.dates = lib.mkForce [ "Wed 12:00" ];
-
-  # Keep this host manual until the existing Windows/EFI layout is verified.
-  system.autoUpgrade.enable = lib.mkForce false;
-  system.autoUpgrade.allowReboot = lib.mkForce false;
 
   # The existing Windows ESP is small. Keep GRUB's mutable directory on root,
   # while leaving only the EFI loader on /boot.
@@ -79,11 +75,6 @@ in
       RemainAfterExit = true;
       ExecStart = "${pkgs.ethtool}/sbin/ethtool -s enp3s0 wol g";
     };
-  };
-
-  services.logind.settings.Login = {
-    IdleAction = "ignore";
-    HandlePowerKey = "poweroff";
   };
 
   # Intermittent (WoL-woken) node: the taint keeps its shutdowns off always-on

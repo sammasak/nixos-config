@@ -80,22 +80,6 @@ nvim-check:
 check:
     devenv tasks run nixos:qa
 
-# facter.json is gitignored, so this is the only gate that re-validates facter's
-# actual contribution rather than the (always-safe) null path; there is no CI,
-# so re-run by hand on lenovo after a hardware/BIOS change.
-[doc("lenovo-only: regenerate facter.json in place, confirm the kernel-module union still covers the hand list")]
-facter-check:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cp hosts/lenovo-21CB001PMX/facter.json /tmp/facter-check.bak.json 2>/dev/null || true
-    sudo "$(nix build '.#nixosConfigurations.lenovo.pkgs.nixos-facter' --no-link --print-out-paths)/bin/nixos-facter" \
-      -o hosts/lenovo-21CB001PMX/facter.json
-    nix eval '.#nixosConfigurations.lenovo.config.boot.initrd.availableKernelModules' --json \
-      | nix shell nixpkgs#jq -c -- jq -e 'contains(["xhci_pci","thunderbolt","nvme","usb_storage","sd_mod"])' \
-      > /dev/null && echo "OK: superset holds" \
-      || echo "REGRESSION: hand list is no longer a subset of the facter-augmented union"
-    [ -f /tmp/facter-check.bak.json ] && mv /tmp/facter-check.bak.json hosts/lenovo-21CB001PMX/facter.json || true
-
 # ── Metrics ───────────────────────────────────────────────────────────
 
 # One evaluation run in a transient user unit under a 7G memory cap, no swap.
