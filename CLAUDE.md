@@ -249,6 +249,7 @@ either side is only reported.
   its deploy-rs node follows from the entry;
 - the `just deploy` HOST pattern (checked by `scripts/test-ssh-known-hosts.py`);
 - its pinned key in `modules/core/ssh-known-hosts.nix` and its sops recipient;
+- its LAN address in `modules/core/fleet.nix` if another module reads it;
 - optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`.
 
 `just parity` picks the host up on its own. Full procedure:
