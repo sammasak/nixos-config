@@ -33,11 +33,11 @@ in
     imports = [ ../../modules/specialisations/desktop.nix ];
   };
 
-  # The only host that upgrades unattended. allowReboot is pinned to false: as
-  # sole worker an unattended reboot is a total cluster outage (the reserved
-  # taint strands DNS, kyverno and ntfy, so paging dies with it). The reboot is
-  # operator-initiated. A shared module that sets true fails the evaluation.
-  system.autoUpgrade.enable = true;
+  # Pinned off: an unattended switch from main bypasses deploy-rs rollback and
+  # the health check, and as sole worker an unattended reboot is a total
+  # cluster outage. Deploy with `just deploy-acer`. A shared module that sets
+  # either true fails the evaluation.
+  system.autoUpgrade.enable = false;
   system.autoUpgrade.allowReboot = false;
 
   homelab.k3s.serverAddr = "https://192.168.10.154:6443";  # k3s server on lenovo-21CB001PMX
