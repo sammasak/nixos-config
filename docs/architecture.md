@@ -11,6 +11,7 @@
 - `30-configurations-options.nix` — typed host declaration options
 - `40-outputs-nixos.nix` — transforms declarations into `nixosConfigurations`
 - `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
+- `52-runtime-host-vm-test.nix`: the `runtime-host-role-vm` QEMU test package (x86_64-linux only), booting the base and runtime-host roles with msi-ms7758's role list; a package, not a check, run by `just role-vm-test`
 - `60-templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
 - `64-rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
 - `70-deploy.nix`: deploy-rs push targets, one node per hosts table entry
