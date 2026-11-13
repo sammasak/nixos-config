@@ -9,8 +9,8 @@ A NixOS + Home Manager configuration repository using **flake-parts**. Manages L
 ## Build & Deploy Commands
 
 ```bash
-# ── Verification: devenv tasks, also run by the git hooks. Every nixos:* gate and what
-#    it checks is in devenv.nix `tasks`; each also runs on its own. ──
+# ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
+#    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
 devenv tasks run nixos:qa           # every gate in order (= just check): lints, secrets-verify, flake check, then the tests
 devenv tasks run nixos:flake-check  # nix flake check --all-systems: builds every x86 host, evaluates the Pis (= just verify)
 # Hooks (installed by entering the devenv; .envrc does it on cd):
@@ -161,9 +161,8 @@ runbook above — never rotate the authkey while an auth URL is pending.
 
 ### Key Inputs
 
-The list is `flake.nix`. nixpkgs is nixos-unstable and every input with a nixpkgs input follows it. skills,
-factum, nix-audit, rf-proto and devenv-platform are plain sources (`flake = false`); the last four are private
-`git+ssh` repos, and factum, nix-audit and rf-proto are pinned by `?rev=` in the URL.
+See `flake.nix`. factum, nix-audit and rf-proto are pinned by `?rev=` in their URL, so `nix flake update`
+does not move them: edit the rev.
 
 ## Comment Policy
 
