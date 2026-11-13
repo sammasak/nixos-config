@@ -89,7 +89,8 @@ Policy lives in `modules/core/services.nix`, `network.nix` and `users.nix`:
 
 - Key-only SSH auth (`PasswordAuthentication = false`)
 - No root SSH login (`PermitRootLogin = "no"`)
-- Allowed SSH users are explicit (`AllowUsers = [ username ]`)
+- Allowed SSH users are explicit (`AllowUsers = [ username ]`, plus `deploy` on every host from
+  `modules/homelab/deploy-target.nix`, whose key is accepted only from lenovo)
 - SSH firewall policy allows only LAN CIDR + loopback; keys come from `lib/users.nix`
 
 After changing SSH policy, apply locally on the target first
@@ -97,7 +98,7 @@ After changing SSH policy, apply locally on the target first
 
 ## Automation
 
-System auto-updates weekly (Sunday 06:00, plus up to 45 min of jitter), runs garbage collection monthly, and optimises the store weekly. Configured in `modules/core/automation.nix`. `acer-swift` forces `allowReboot = false` — it is the sole worker.
+`modules/core/automation.nix` turns on a weekly auto-upgrade from `github:sammasak/nixos-config/main` (Sunday 06:00, plus up to 45 min of jitter), monthly garbage collection and weekly store optimisation. Only `acer-swift` keeps the auto-upgrade, with `allowReboot = false` (it is the sole worker); lenovo, msi-ms7758, black-pi and naked-pi force it off. naked-pi collects garbage weekly.
 
 ## Adding a New Host
 
