@@ -65,7 +65,7 @@ just diff   [HOST]      # build and show the package diff vs the running system
 just switch [HOST]      # build and activate locally
 just bump [input]       # update one flake input (default: skills); then just switch
 
-# Push from lenovo with deploy-rs (magic rollback), under a 7G memory cap;
+# Push from lenovo with deploy-rs (magic rollback); the deploy-rs client runs under a 7G cap and
 # skips deploy-rs's own flake check. The pre-push gate runs it on pushed non-docs
 # commits; a dirty or unpushed tree deploys unchecked, and the recipe warns.
 # HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00),
