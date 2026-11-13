@@ -45,6 +45,11 @@ in
     let
       ssh = config.services.openssh;
       watchdog = config.sam.rfLab.netWatchdog;
+      names = map (p: lib.toLower (p.pname or p.name or ""));
+      declared = names config.environment.systemPackages
+        ++ lib.concatMap (u: names u.home.packages) (lib.attrValues config.home-manager.users);
+      # REA and the tools it drives belong on the analysis workstation (#42 "Architectural boundaries").
+      heavy = builtins.filter (n: builtins.match ".*(ghidra|binwalk|unblob|jadx|nodejs|npm|rea-agents|radare2|rizin).*" n != null) declared;
     in
     [
       {
@@ -62,6 +67,14 @@ in
       {
         assertion = config.system.activationScripts ? lockEmptyRootPassword;
         message = "role rf-lab: the SD image ships root with an empty password; import modules/hardware/sd-image-root-lock.nix in the host.";
+      }
+      {
+        assertion = !config.services.k3s.enable;
+        message = "role rf-lab: the 1 GiB board is not a k3s node; drop services.k3s (the homelab-agent role) from this host.";
+      }
+      {
+        assertion = heavy == [ ];
+        message = "role rf-lab: heavyweight reverse-engineering tooling belongs on the analysis workstation, not the 1 GiB board; remove ${lib.concatStringsSep ", " heavy} from environment.systemPackages or home.packages.";
       }
     ];
 }
