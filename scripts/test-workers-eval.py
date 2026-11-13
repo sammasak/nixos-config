@@ -254,23 +254,7 @@ def check(ok, what):
     failed += not ok
 
 
-FAST = {}
-
-
-def prefetch(exprs):
-    """Evaluates every expression in one process; one that throws (or all, if that process fails) is left to run_eval()
-    to run on its own, so its check reports the error as before."""
-    tried = " ".join(f"(let v = ({e}); r = builtins.tryEval (builtins.deepSeq v v); in if r.success then r.value else null)" for e in exprs)
-    out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", f"[ {tried} ]"], capture_output=True, text=True)
-    if out.returncode == 0:
-        FAST.update((e, v) for e, v in zip(exprs, json.loads(out.stdout)) if v is not None)
-    else:
-        print(f"note: the one-process evaluation failed, each case runs on its own ({out.stderr.strip()[-300:]})")
-
-
 def run_eval(expr):
-    if expr in FAST:
-        return subprocess.CompletedProcess([], 0, json.dumps(FAST[expr], ensure_ascii=False), "")
     return subprocess.run(["nix", "eval", "--impure", "--json", "--expr", expr], capture_output=True, text=True)
 
 
@@ -895,9 +879,6 @@ def check_scripts():
 
 
 def main():
-    prefetch([stub_expr("{ }"), stub_expr("{ }", GUEST), stub_expr("{ }", BOUNDED), stub_expr(STUB_SSH, CTL), stub_expr("{ }", LIMITS), stub_expr(ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), stub_expr("{ }", NO_ROOT), stub_expr(NONE_DECLARED, NO_ROOT), stub_expr("{ }", ALERTS), stub_expr('{ services.devEnvironments.alert = "/alert"; }', ALERTS), stub_expr("{ }", ACT), stub_expr(RETIRED, ACT), stub_expr(PAUSED_ONE, ACT), stub_expr(PAUSED, OWN), stub_expr(PAUSED, PAUSED_FACTS), stub_expr("{ }", DECLARATION), *(stub_expr(case, OWN) for _, case, _ in ASSERTED),
-              fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), SCRIPTS % {"root": json.dumps(ROOT)}, *(fleet(case) for _, case, _ in FLEET_CASES), fleet(USER_SECRET[1]),
-              GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
