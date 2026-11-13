@@ -62,23 +62,26 @@ specialisations, module layout).
 
 ### Secrets
 
-SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at boot to `/run/secrets/`.
+SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at activation (every switch and boot) to `/run/secrets/`.
 
 Two SOPS modules:
-- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`) — k3s cluster tokens, Flux deploy keys, Cloudflare API token. Encrypted to all host keys + Flux age key.
-- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`) — per-machine operator credentials on every physical host (Claude Code OAuth token, nix access token). Uses `mkDefault` for age config to avoid conflicts with the homelab module.
+- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`) — k3s cluster token, Flux deploy and age keys, Cloudflare API token, Tailscale authkey; on every k3s node (k3s, flux, acme and tailscale turn it on).
+- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`) — per-machine operator credentials (Claude Code OAuth token, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
 
 | Path pattern | Recipients | Purpose |
 |--------------|-----------|---------|
 | `homelab/nix-signing-key.yaml` | Personal + lenovo | deploy-rs closure-signing private key (workers trust the public half) |
-| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, wifi, GitHub access token |
+| `homelab/wifi.yaml` | as `homelab/*.yaml`, plus naked-pi | Home Wi-Fi PSK |
+| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
 | `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, black-pi | Claude OAuth token |
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
 | `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Pi's gateway key |
 | `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
+
+Every acer-swift recipient except `native-otlp-auth.yaml` also includes acer's own `lukas` user key.
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in fish shell init via `modules/programs/cli/claude-code/mcp.nix`.
 
