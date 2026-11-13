@@ -12,6 +12,7 @@
   homelab.k3s = {
     enable = true;
     role = "agent";
+    serverAddr = "https://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:6443";
   };
 
   # No WWAN hardware on any worker, so ModemManager is only D-Bus attack surface
