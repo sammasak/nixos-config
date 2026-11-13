@@ -155,7 +155,7 @@ Nothing at flake level reads an address (`deploy.hostname` uses names), the
 table is keyed by flake attribute while every reader keys by
 `networking.hostName`, and a module under `system.nix` also reaches worker
 guests and the runtime-host VM test without threading a value through. A fact
-with one reader (host keys, cache keys, the Pis' addresses) stays in it.
+with one reader (host keys, cache keys, the Pis' addresses) stays in its reader.
 
 ## Not changed
 
