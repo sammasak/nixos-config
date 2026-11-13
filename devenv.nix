@@ -351,7 +351,10 @@ let
   };
 in
 {
-  imports = [ "${inputs.platform}/modules/commit-conventions.nix" ];
+  imports = [
+    "${inputs.platform}/modules/commit-conventions.nix"
+    "${inputs.platform}/modules/git-hooks-worktree.nix"
+  ];
 
   packages = with pkgs; [
     just
