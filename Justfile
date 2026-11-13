@@ -123,8 +123,9 @@ bench-diff:
 # not fail the build gates. Runs under `capped`: needs a user systemd manager and
 # does not inherit the caller's environment (no SSH agent, no NIX_CONFIG). The tree
 # side sees tracked files incl. uncommitted edits, not untracked ones. Non-zero if
-# any host moved.
-[doc("Compare the five host derivations at BASE (default: merge base with origin/main) with the working tree")]
+# any host toplevel or deploy node moved, was added or was removed, or any deploy
+# setting outside nodes moved.
+[doc("Compare every host's toplevel, deploy node and deploy settings at BASE (default: merge base with origin/main) with the working tree")]
 parity BASE="":
     {{capped}} bash scripts/bench.sh parity {{quote(BASE)}}
 
