@@ -11,7 +11,7 @@ in
     ../homelab/deploy-target.nix
   ];
 
-  # Delivers the workers' credential (claude_oauth_token), and nix_access_token.
+  # Delivers nix_access_token, and claude_oauth_token when the host has devTools or a claude worker.
   sam.hostSecrets.enable = true;
 
   # What an environment builds here, the other hosts download (modules/core/store-cache.nix).
