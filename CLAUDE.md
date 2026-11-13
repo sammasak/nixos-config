@@ -12,7 +12,7 @@ A NixOS + Home Manager configuration repository using **flake-parts**. Manages L
 # ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
 #    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
 devenv tasks run nixos:qa           # every gate in order (= just check): lints, secrets-verify, flake check, then the tests
-devenv tasks run nixos:flake-check  # nix flake check --all-systems: builds every x86 host, evaluates the Pis (= just verify)
+devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: builds every x86 host, evaluates the Pis (= just verify)
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
