@@ -188,6 +188,7 @@ in {
   hostUntouched = !(c.environment.etc ? "claude-code/managed-settings.json") && !c.virtualisation.podman.enable;
   subs = { host = c.nix.settings.substituters; guest = g.nix.settings.substituters; };
   keys = { host = c.nix.settings.trusted-public-keys; guest = g.nix.settings.trusted-public-keys; };
+  nixConf = { host = d c.environment.etc."nix/nix.conf".source.text; guest = d g.environment.etc."nix/nix.conf".source.text; };
   free = { min = c.nix.settings.min-free; max = c.nix.settings.max-free; };
   hook = builtins.readFile (builtins.appendContext (builtins.head (builtins.match "(.*) start" (d ex))) (builtins.getContext ex));
   evalCache = builtins.filter (n: builtins.match ".*/eval-cache.*" n != null) (builtins.attrNames c.containers.t.bindMounts);
@@ -707,6 +708,10 @@ def check_hygiene(facts):
         check(lists and all(len(v) == len(set(v)) and sum("cache.nixos.org" in x for x in v) == 1 for v in lists.values())
               and lists.get("host") and lists.get("guest") == lists.get("host") and any(lan in x for x in lists["host"]),
               f"the host's and a guest's {what} list each entry once, cache.nixos.org once, are equal and include the LAN store cache ({lan}) ({lists})")
+    dead = {who: sorted(line for line in text.splitlines() if line.startswith(("connect-timeout ", "fallback ")))
+            for who, text in facts.get("nixConf", {}).items()}
+    check("fallback = true" in dead.get("guest", []) and dead.get("guest") == dead.get("host"),
+          f"a guest's nix.conf gives up on a dead store cache as its host's does ({dead})")
     free = facts.get("free", {})
     check(free.get("min", 0) >= 10 * 2**30 and free.get("max", 0) > free.get("min", 0), f"a runtime host collects garbage under a free-space floor ({free})")
     hook = facts.get("hook", "")
