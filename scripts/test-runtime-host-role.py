@@ -1,5 +1,6 @@
 """The runtime-host role (modules/roles/runtime-host.nix) on msi-ms7758 and acer-swift: a headless unthemed
-default boot, no unattended upgrade from main, and store maintenance that waits for a synchronised clock and never catches up at boot. acer's desktop specialisation keeps its theming.
+default boot, no unattended upgrade from main (acer pins it off in its host file, msi is off by default), and store
+maintenance that waits for a synchronised clock and never catches up at boot. acer's desktop specialisation keeps its theming.
 
 Evaluation only: options and unit declarations, never a build."""
 import sys
@@ -35,5 +36,6 @@ d = r["acerDesktop"]
 check(d["stylix"] and d["hmStylix"] and d["gui"], "acer's desktop specialisation keeps Stylix and its display manager")
 check(len(d["upgradeHooks"]) == 2, f"acer's desktop specialisation keeps the upgrade notifications {d['upgradeHooks']}")
 check(d["persistent"] == [False, False, False] and d["waitSync"], "acer's desktop specialisation keeps the maintenance policy")
+check(d["autoUpgrade"] is False, "acer's desktop specialisation does not upgrade unattended either")
 
 sys.exit(1 if failed else 0)

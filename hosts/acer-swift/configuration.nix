@@ -35,7 +35,7 @@ in
 
   # Pinned off: an unattended switch from main bypasses deploy-rs rollback and
   # the health check, and as sole worker an unattended reboot is a total
-  # cluster outage. Deploy with `just deploy-acer`. A shared module that sets
+  # cluster outage. Deploy with `just deploy acer-swift`. A shared module that sets
   # either true fails the evaluation.
   system.autoUpgrade.enable = false;
   system.autoUpgrade.allowReboot = false;
