@@ -79,6 +79,7 @@ let
       # null: the host does not bootstrap Flux
       flux = builtins.mapAttrs (_: h: let units = h.config.systemd.services; in
         if units ? flux-bootstrap then { inherit (units.flux-bootstrap.serviceConfig) Type; TimeoutStartSec = units.flux-bootstrap.serviceConfig.TimeoutStartSec or null; } else null) hosts;
+      claudeActivation = (hm lenovo).home.activation.acceptClaudeStartupDialogs.data;
     };
 
     nvim-check = {

@@ -26,7 +26,7 @@ devenv tasks run nixos:otel-rollback-test  # #92: nativeOtel = false removes eve
 devenv tasks run nixos:delegation-test  # generated devenv.local.nix: gh:label approved accepted under the delegation, refused with it off
 devenv tasks run nixos:build-bounds-test  # nix-daemon builds bounded on lenovo (#109) and the environment hosts (acer, msi)
 devenv tasks run nixos:runtime-host-test  # msi + acer through the runtime-host role: headless and unthemed, maintenance off the boot path
-devenv tasks run nixos:switch-safety-test  # a switch keeps Herdr's server (keep-old) and waits on no unit forever
+devenv tasks run nixos:switch-safety-test  # a switch keeps Herdr's server (keep-old), waits on no unit forever, survives a bad ~/.claude.json
 devenv tasks run nixos:ollama-portforward-test  # lenovo's Ollama port-forward supervisor restarts a wedged forward, not an HTTP error
 # Hooks (installed by entering the devenv; .envrc does it on cd):
 #   pre-commit: lint-comments + lint-shell; commit-msg: Why-gate;
