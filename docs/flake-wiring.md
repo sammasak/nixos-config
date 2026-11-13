@@ -1,9 +1,8 @@
 # Flake wiring: one hosts table, the role registry stays
 
-Status: proposed, 2026-11-13; the owner has not decided yet. This records a
-decision, not the current code: until steps 4 and 5 below land,
-`70-deploy.nix` and the registry work as described in
-`docs/architecture.md`. Tracking issue: #292 (roadmap #295,
+Status: proposed, 2026-11-13; the owner has not decided yet. Every step
+below has landed, so the code now matches this decision;
+`docs/architecture.md` describes it. Tracking issue: #292 (roadmap #295,
 wave 3).
 
 | Step | Change | State |
@@ -13,8 +12,8 @@ wave 3).
 | 1 | `sam.profile.username` becomes an enum of `lib/users.nix` | landed |
 | 2 | architecture stated once (`hostPlatform`) | landed |
 | 3 | one table value file `flake-modules/hosts.nix`, roles in it | landed |
-| 4 | deploy nodes derived from the table | not started |
-| 5 | registry comment: its depth fixes merge order | not started |
+| 4 | deploy nodes derived from the table | landed |
+| 5 | registry comment: its depth fixes merge order | landed |
 
 Evidence: flake.nix, flake-modules/, hosts/*/, lib/users.nix and the roles at
 main 72d7bd5; nixpkgs fe13242 (eval-config.nix, misc/nixpkgs.nix,
@@ -24,8 +23,8 @@ evaluated, not built, from `git archive` copies, one host at a time.
 ## Context
 
 Before step 3, flake wiring for a host lived in two files,
-`flake-modules/hosts/<name>.nix` and its node in `70-deploy.nix`; since step 3
-it is a `flake-modules/hosts.nix` entry and that node. Before step 2, architecture was stated three
+`flake-modules/hosts/<name>.nix` and its node in `70-deploy.nix`; since step 4
+it is one `flake-modules/hosts.nix` entry, and the node is derived from it. Before step 2, architecture was stated three
 times: `system` there, `nixpkgs.hostPlatform` in `hardware-configuration.nix`, and the
 `x86`/`aarch64` activate per node. Nothing checked that they agreed.
 
@@ -138,7 +137,7 @@ update.
   `test-ssh-known-hosts.py`), its pinned key in
   `modules/core/ssh-known-hosts.nix`, its sops recipient, and optionally the
   `fleetHome` name lists (#291). `just parity` picks the host up on its own.
-- Every table entry becomes a deploy node, which is true of all five today.
+- Every table entry is a deploy node, as all five were before step 4.
 - Plain paths (B) stay possible once #315 and its successors make order
   explicit.
 

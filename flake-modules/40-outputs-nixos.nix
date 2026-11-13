@@ -66,6 +66,7 @@ let
     {
       hostDir,
       roles,
+      ...
     }:
     let
       roleNames = roles;
