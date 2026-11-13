@@ -14,6 +14,6 @@
     ../core/resource-hygiene.nix
     ../core/store-cache.nix
     ../homelab/native-otel-relay.nix
-    ../themes/Catppuccin  # Always apply theming (includes GRUB)
+    ../themes/Catppuccin  # runtime-host and rf-lab force Stylix off
   ];
 }
