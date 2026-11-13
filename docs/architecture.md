@@ -84,7 +84,6 @@ build error if a `variables.nix` sets it):
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets
 - `nativeOtel` (bool, default false): native harness telemetry through the local relay (docs/native-otel-canary.md)
-- `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
 
 Sibling options, outside the profile:
 - `sam.desktop.enable` (bool) — whether a GUI desktop session is active (outside the profile so `modules/specialisations/desktop.nix` can set it)
@@ -92,7 +91,7 @@ Sibling options, outside the profile:
 - `sam.hostSecrets.enable` (bool) — per-machine operator credentials, see `modules/core/sops.nix`
 - `sam.wifi.*` — declarative WiFi profile, see `modules/core/wifi.nix`
 - `sam.cliTools.factum.enable`, `sam.cliTools.nixAudit.enable` (bool, default false): per-host CLI tools in the user's Home Manager profile; outside the profile because a developer environment's guest copies its host's profile
-- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), and `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments; a host that sets it fails evaluation
+- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), `lanCidr`, the trusted LAN subnet of the firewall rules, and `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments; a host that sets it fails evaluation
 
 Everything this repo defines lives under `sam.*` or `homelab.*` so it is never
 confused with an upstream NixOS option. Which of the two is the Namespace

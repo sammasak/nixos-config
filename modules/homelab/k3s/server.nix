@@ -15,7 +15,7 @@ let
   ];
 
   apiSources = [
-    config.sam.profile.lanCidr # agents (acer-swift) and admin workstations
+    config.sam.fleet.lanCidr # agents (acer-swift) and admin workstations
     "10.42.0.0/16" # k3s pod CIDR — Cilium native-routing keeps the pod source IP
     "10.43.0.0/16" # k3s service CIDR — ClusterIP hairpin back to the apiserver
   ];
