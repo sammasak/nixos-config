@@ -451,7 +451,8 @@ in
           enableStrictShellChecks = true;
           script = ''
             rc=0
-            now=$(awk '$1 == "oom_kill" { print $2 }' /sys/fs/cgroup/${slice}.slice/memory.events 2>/dev/null)
+            # no cgroup file (the slice has no unit yet) leaves now empty: skip the OOM check, still check the disks
+            now=$(awk '$1 == "oom_kill" { print $2 }' /sys/fs/cgroup/${slice}.slice/memory.events 2>/dev/null) || now=
             if [[ -n $now ]]; then
               was=$(cat "$STATE_DIRECTORY/oom_kill" 2>/dev/null || echo "$now")
               (( now >= was )) || was=0
