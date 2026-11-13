@@ -6,8 +6,6 @@ let
   inherit (lib) mkEnableOption mkOption mkIf types;
 in
 {
-  # Pulled in so the Cloudflare credential can be referenced through the sops
-  # option instead of repeating its path; the config block turns it on.
   imports = [ ./sops.nix ];
 
   options.homelab.acme = {
@@ -27,8 +25,13 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Declares the cloudflare/api_token secret used below.
     homelab.secrets.enable = true;
+
+    sops.secrets."cloudflare/api_token" = {
+      sopsFile = ../../secrets/homelab/cloudflare.yaml;
+      path = "/run/secrets/cloudflare-api-token";
+      mode = "0400";
+    };
 
     security.acme = {
       acceptTerms = true;

@@ -66,11 +66,13 @@ let
 in
 {
   config = lib.mkIf config.sam.profile.nativeOtel {
+    sops.secrets."native_otlp_auth" = {
+      sopsFile = ../../secrets/claude/native-otlp-auth.yaml;
+      key = "token";
+      mode = "0400";
+    };
+
     assertions = [
-      {
-        assertion = config.sops.secrets ? native_otlp_auth;
-        message = "sam.profile.nativeOtel: native-otel-relay loads the sops secret native_otlp_auth, which this host does not declare.";
-      }
       {
         # LoadCredential reads it as root: no user process, an agent's tools included, needs the bearer token
         assertion = let s = config.sops.secrets.native_otlp_auth; in !(config.sops.secrets ? native_otlp_auth) || (builtins.elem s.owner [ null "root" ] && (s.uid or 0) == 0 && s.mode == "0400");
