@@ -38,7 +38,7 @@ def main():
     live = P["live"]
     otel_keys = sorted(k for k in live["env"] if k.startswith("OTEL_") or k == "CLAUDE_CODE_ENABLE_TELEMETRY")
     wrapped = [p for p in live["codex"] if all(v in p["text"] for v in (
-        'OTEL_RESOURCE_ATTRIBUTES="host.name=lenovo-21cb001pmx"', "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative"))]
+        "OTEL_RESOURCE_ATTRIBUTES='host.name=lenovo-21cb001pmx'", "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative"))]
     check(otel_keys and live["codex_otel"] and len(wrapped) == 1 and live["relay"] and live["secret"] and "DISABLE_TELEMETRY" not in live["env"],
           f"control: the live canary carries every surface ({len(otel_keys)} Claude telemetry keys, Codex [otel], codex wrapper, relay, secret)")
     check(not live["fish_otel"], "live: no claude or codex Fish function sets an OTEL_ variable (the codex wrapper on PATH does)")

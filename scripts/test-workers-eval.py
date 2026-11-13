@@ -423,7 +423,7 @@ def check_telemetry(got, out):
     check(len(skill_hooks) == (2 if got.get("skill_pinned") else 0), f"a telemetry guest runs emit-skill-use.sh on PreToolUse(Skill) and UserPromptSubmit exactly when the skills pin carries it ({len(skill_hooks)}, pinned {got.get('skill_pinned')})")
     cdx = got.get("cdx", {})
     for name, g in (("tel", tel), ("cdx", cdx)):
-        wrapped = [w for w in g.get("codex_wrappers", []) if f'OTEL_RESOURCE_ATTRIBUTES="host.name=msi-ms7758,worker.name={name}"' in w and "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative" in w
+        wrapped = [w for w in g.get("codex_wrappers", []) if f'OTEL_RESOURCE_ATTRIBUTES=\'host.name=msi-ms7758,worker.name={name}\'' in w and "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative" in w
                    and "/run/secrets" not in w and "OTEL_EXPORTER_OTLP_HEADERS" not in w]
         check(g.get("codex_otel") is True and len(wrapped) == 1 and g.get("sockets", {}).get("otlp-egress") == ["127.0.0.1:4319"],
               f"guest {name} (telemetry left at its default on a nativeOtel host): Codex exports metrics only (exporter and trace_exporter none, no log_user_prompt) to its loopback 4319 as host.name=msi-ms7758,worker.name={name} ({g.get('codex_otel')}, {len(wrapped)} wrapper)")
