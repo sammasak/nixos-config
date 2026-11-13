@@ -104,6 +104,17 @@ herdr agent list
 herdr
 ```
 
+A switch does not restart the Herdr server: the unit carries
+`X-SwitchMethod=keep-old`, and sd-switch logs `Keeping old units: herdr.service`
+in the activation journal (`journalctl -t hm-activate-lukas`). After a herdr
+package bump the running server therefore keeps the old binary while the
+`herdr` on PATH and the agent hooks are new, until `systemctl --user restart
+herdr` (in a quiet window: it ends every pane) or a reboot; with lingering on, a
+re-login does not restart the user manager, so it does not pick up the new server. To see
+the skew, compare `herdr --version` with `.server.version` in `herdr status
+--json` (its `compatible` and `server_binary_stale` fields are Herdr's own
+view). Whether a new client tolerates an old server is not verified here.
+
 During the first activation, if Herdr was already running outside systemd, the
 service start condition leaves that process alone and systemd reports the unit
 as skipped. A `systemctl --user restart` at that point does not restart the old
