@@ -129,7 +129,11 @@ let
 
     harness-telemetry = import ./harness-telemetry-probe.nix hosts // { inherit skills; };
 
-    otel-rollback = { live = otelSurfaces lenovo; acer = (hm acer).programs.claude-code.settings.env; };
+    otel-rollback = {
+      live = otelSurfaces lenovo;
+      # acer with the same switch off: what a host without telemetry carries
+      acer = (hm (extend "acer-swift" [ ({ lib, ... }: { sam.profile.nativeOtel = lib.mkForce false; }) ])).programs.claude-code.settings.env;
+    };
 
     rf-lab-boundary = {
       hosts = builtins.mapAttrs (_: h: rfFacts h.config) hosts;
