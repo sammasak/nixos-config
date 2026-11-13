@@ -98,6 +98,9 @@ facter-check:
 
 # ── Metrics ───────────────────────────────────────────────────────────
 
+# One evaluation run in a transient user unit under a 7G memory cap, no swap.
+capped := "systemd-run --user --wait --collect --pipe -q -p MemoryMax=7G -p MemorySwapMax=0 --working-directory=" + quote(justfile_directory())
+
 # Measure eval time + static readability metrics, append to metrics/history.jsonl
 bench:
     bash scripts/bench.sh bench
@@ -108,10 +111,13 @@ bench-diff:
 
 # Run this after a refactor that is meant to change nothing. Deliberately NOT part
 # of `check` or `verify`: a change that legitimately moves the derivation should
-# not fail the build gates.
-[doc("Compare both toplevel drvPaths against the last bench entry; non-zero if they moved")]
-parity:
-    bash scripts/bench.sh parity
+# not fail the build gates. Runs under `capped`: needs a user systemd manager and
+# does not inherit the caller's environment (no SSH agent, no NIX_CONFIG). The tree
+# side sees tracked files incl. uncommitted edits, not untracked ones. Non-zero if
+# any host moved.
+[doc("Compare the five host derivations at BASE (default: merge base with origin/main) with the working tree")]
+parity BASE="":
+    {{capped}} bash scripts/bench.sh parity {{quote(BASE)}}
 
 # ── Editor ────────────────────────────────────────────────────────────
 
