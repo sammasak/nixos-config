@@ -13,7 +13,7 @@ in
   sam.profile = vars;
   # k3s pods take ~4.6G here: a 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
   sam.workers = {
-    retired = [ "docs" "ghp" "demo" "dp93" "nc200" "dp120" "f44" "dp121" "boot2" "boot" "push" "pin" "note" "evfix" "pins" "tel1" "fac" "evdoc" "sk" "w1" "tg" "tel2" ];
+    retired = [ "docs" "ghp" "demo" "dp93" "nc200" "dp120" "f44" "dp121" "boot2" "boot" "push" "pin" "note" "evfix" "pins" "tel1" "fac" "evdoc" "sk" "w1" "tg" "tel2" "tg2" ];
     # throwaway: proves an environment reports by default (skill_use, work_ref); retire once checked
     labelPrefix = "acer";
     pool.memory = "7G";
