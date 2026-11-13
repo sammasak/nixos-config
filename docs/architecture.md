@@ -2,7 +2,7 @@
 
 ### Flake Entry Point
 
-`flake.nix` is minimal. It recursively auto-imports all `.nix` files from `flake-modules/` using `collectFlakeModules`. The `flake-modules/` directory is numbered for load order:
+`flake.nix` is minimal. It hands every `.nix` file under `flake-modules/` (recursively, via the `import-tree` input) to flake-parts. The number prefixes are names only: module merging does not depend on them.
 
 - `00-flake-parts-modules.nix` — flake-parts setup
 - `05-overlays.nix` — exposes `pkgs/` through an overlay
@@ -11,7 +11,8 @@
 - `30-configurations-options.nix` — typed host declaration options
 - `40-outputs-nixos.nix` — transforms declarations into `nixosConfigurations`
 - `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
-- `60-templates.nix` — devenv templates stamped by `dev-init`
+- `60-templates.nix` — devShell flake templates (with `.envrc`) stamped by `dev-init`
+- `64-rf-beacons-rs.nix` — the rf-proto beacon table package and its `rf-beacons-parity` check
 - `70-deploy.nix` — deploy-rs push targets
 - `hosts/<name>.nix` — per-host distribution declarations
 
@@ -26,7 +27,7 @@ Home Manager is shared, not per-host: every host gets
 
 ### Host Configuration Flow
 
-Each host follows a 2–3 file pattern in `hosts/<name>/`:
+Each host has three files in `hosts/<name>/`:
 
 | File | Purpose |
 |------|---------|
@@ -34,7 +35,7 @@ Each host follows a 2–3 file pattern in `hosts/<name>/`:
 | `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
 | `hardware-configuration.nix` | Auto-generated hardware scan |
 
-The wiring: `flake-modules/hosts/<name>.nix` reads `variables.nix` and creates a typed `configurations.nixos.<name>` declaration. Then `40-outputs-nixos.nix` resolves roles to modules, injects Stylix/SOPS/Home Manager, and produces the final `nixosConfigurations.<name>`.
+The wiring: `flake-modules/hosts/<name>.nix` reads `variables.nix` and creates a typed `configurations.nixos.<name>` declaration. Then `40-outputs-nixos.nix` resolves roles to modules, injects Stylix/SOPS/Home Manager/disko and `modules/workers`, and produces the final `nixosConfigurations.<name>`.
 
 ### Desktop vs Server Mode
 
@@ -67,7 +68,7 @@ does not import that module is headless. Fonts, GUI packages, desktop services
 and the Home Manager desktop imports all key off it. Do not gate new
 desktop-only config on `programs.niri.enable` — that ties it to one
 compositor. Stylix is the exception: it comes with `base`, so a headless host
-is themed unless its role turns it off, which `runtime-host` does (and asserts).
+is themed unless its role turns it off, which `runtime-host` (with an assertion) and `rf-lab` do.
 
 ### Profile System (`sam.profile`)
 
@@ -78,10 +79,11 @@ build error if a `variables.nix` sets it):
 - `username` (str) — Primary user account
 - `hostname` (str) — System hostname
 - `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str) — Localisation
-- `videoDriver` (str) — GPU driver module selector; picks `modules/hardware/video/<value>.nix` (currently only "intel")
+- `videoDriver` (str, default "intel") — no module reads it; lenovo, acer-swift and msi-ms7758 import `modules/hardware/video/<value>.nix` from their `variables.nix` (only "intel" exists)
 - `roles` (list of str) — Enabled roles from `modules/roles/`
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets
+- `nativeOtel` (bool, default false): native harness telemetry through the local relay (docs/native-otel-canary.md)
 - `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
 
 Sibling options, outside the profile:
@@ -97,7 +99,7 @@ Boundary rule in Conventions.
 ### Roles (`modules/roles/`)
 
 Composable role modules assigned per-host via `variables.nix`:
-- **base** — required on every host (enforced by assertion); imports all `modules/core/`
+- **base** — required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`, `sddm`, `fish`)
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node; disables sleep/suspend
 - **homelab-server** — k3s control plane
@@ -115,12 +117,14 @@ modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
 ├── desktop/      # Desktop stack: common/ and niri/
 ├── embedded/     # ESP32 tooling
-├── hardware/     # GPU drivers (intel), thermal
+├── hardware/     # GPU drivers (intel), thermal, disk layouts
+├── home/         # the shared Home Manager entry point
 ├── homelab/      # k3s (agent/server), sops, flux, tailscale, ntfy, watchdog
-├── programs/     # Home Manager programs: cli/, browser/, editor/, terminal/
+├── programs/     # Home Manager programs: cli/, browser/, editor/, gui/, terminal/
 ├── rf-lab/       # Wi-Fi/Bluetooth lab and HIL tests
 ├── roles/        # Composition roles (see above)
 ├── specialisations/  # Boot-menu variants (desktop.nix)
-└── themes/       # Catppuccin via Stylix
+├── themes/       # Catppuccin via Stylix
+└── workers/      # nspawn developer environments (docs/nspawn-workers.md)
 ```
 
