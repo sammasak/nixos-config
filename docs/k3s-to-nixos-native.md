@@ -117,7 +117,7 @@ migration adds it.
 | Desired state per host | `nixosConfigurations.<host>` in one flake; a service is enabled per host in that host's `configuration.nix` | present |
 | Reproducible builds | flake lock; x86 hosts substitute from the signed harmonia caches, the Pis build their own closures | present |
 | Quality gates | pre-push `nixos:qa` on the pushed commit (flake check plus the Python gates), run off lenovo; one `scripts/test-<name>.py` per new module | present; test per module to build |
-| Trigger and approval | merge to main, then an explicit `just deploy-<host>` that the owner approves. **Exception: acer.** Its weekly `system.autoUpgrade` (Sunday 06:00) switches to whatever main holds, with no health gate, no rollback, and no failure notice on a headless host | present; see gap 2 |
+| Trigger and approval | merge to main, then an explicit `just deploy HOST` that the owner approves. **Exception: acer.** Its weekly `system.autoUpgrade` (Sunday 06:00) switches to whatever main holds, with no health gate, no rollback, and no failure notice on a headless host | present; see gap 2 |
 | Rollout order | one host at a time, least critical first: msi, black-pi, acer, lenovo | convention |
 | Activation safety | deploy-rs `magicRollback`: a host that cannot be reached after activation reverts | present |
 | Service health | `services.alloy` and most upstream units are `Type=simple`, so each module adds an `ExecStartPost` probe of the service's own local ready endpoint with a start timeout, `Restart=on-failure`, and `OnFailure=` to ntfy. A unit that fails its probe fails the activation and so the whole host deploy; the probe therefore never tests anything remote (a collector must not fail a deploy because Loki is away) | to build |

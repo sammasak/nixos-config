@@ -343,8 +343,7 @@ in
     # dependency in unannounced. With it false the predicate is the real gate:
     # an unexpected unfree package fails eval, by name, at review time.
     #
-    # The list below is empirically complete — with it, both hosts evaluate to
-    # the exact same toplevel derivation as they did under allowUnfree = true.
+    # The list below is complete: all five hosts evaluate with it.
     # Redistributable *firmware* is NOT gated here:
     # hardware.enableRedistributableFirmware goes through nixpkgs' separate
     # `allowUnfreeRedistributableFirmware` knob, so no allowlistedLicenses
