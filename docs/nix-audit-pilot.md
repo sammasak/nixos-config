@@ -12,8 +12,8 @@ operator guide, the exit codes and the pilot record format are upstream:
 tags it, see sammasak/nix-audit#45). The Nix client fetches it over ssh with your
 key, and `flake.lock` pins rev and narHash, so no ssh runs inside the build sandbox and
 nothing has to be prefetched. A flake input has no `.git`, so the package passes the locked
-rev as `NIX_AUDIT_DECLARED_REVISION`. Update it with `just bump nix-audit` after choosing a
-reviewed nix-audit commit.
+rev as `NIX_AUDIT_DECLARED_REVISION`. Update it by setting the reviewed commit in the `?rev=` of `flake.nix`'s
+`nix-audit` URL, then `just bump nix-audit` to relock (the URL pin is what holds the rev).
 
 `modules/programs/cli/nix-audit.nix` installs `nix-audit`, `grype` and `vulnix` for the
 user. The example policy ships at `$(dirname $(readlink -f $(command -v nix-audit)))/../share/nix-audit/policy.toml`.
@@ -42,7 +42,7 @@ just audit-candidate lenovo local          # this machine's own running system
 The recipe builds the candidate without activating it and scans the running system and the
 candidate under `flock /tmp/$(hostname)-heavy-work.lock`. It then gates the pair. If that
 gate exits 3, it also runs a grype-only gate. Evidence goes to
-`~/nix-audit-pilot/<date>-<host>-<rev>/`, which stays private on that host, and the recipe
+`~/nix-audit-pilot/<date>-<HHMM>-<host>-<nixos-config rev>/`, which stays private on that host, and the recipe
 always exits 0. acer-swift and msi are deployed from lenovo, which holds their derivations,
 so run their comparisons on lenovo. vulnix needs the closure's `.drv` files in the local
 store: on a target that did not build its own system, vulnix fails (exit 3) and only a
@@ -64,7 +64,7 @@ initrd or bootloader delta means the base moved and needs its own review.
 On each host, the activation checks above must hold, plus
 `systemctl --user list-units --all | grep -ci nix-audit` printing 0. There is no journal line
 to look for: nothing runs until an operator calls it. The first report appears in
-`~/nix-audit-pilot/<date>-<host>-<rev>/` on lenovo after `just audit-candidate HOST`.
+`~/nix-audit-pilot/<date>-<HHMM>-<host>-<nixos-config rev>/` on lenovo after `just audit-candidate HOST`.
 
 ## Rollback
 

@@ -1,7 +1,9 @@
 # Coordinator rollout: lenovo coordinates, acer executes
 
-**Status: prepared, WAITING FOR OWNER DEPLOY APPROVAL.** Nothing here has been
-switched on either host. Tracking: #111, sammasak/skills#28.
+**Status: rolled out.** The wiring is on main and lenovo was switched on
+2026-11-03 (switch record below); #111 is closed. The revisions and store
+paths in this file are those of the rollout, not current. Tracking: #111,
+sammasak/skills#28.
 
 ## What changes
 

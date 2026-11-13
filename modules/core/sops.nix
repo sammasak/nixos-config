@@ -1,5 +1,5 @@
-# Per-machine operator credentials, on every physical host regardless of cluster
-# role. Cluster secrets (k3s, Flux, Cloudflare, Tailscale) are a different tree:
+# Per-machine operator credentials, on the hosts that enable them (not naked-pi),
+# whatever their cluster role. Cluster secrets (k3s, Flux, Cloudflare, Tailscale) are a different tree:
 # homelab.secrets in modules/homelab/sops.nix.
 { config, lib, ... }:
 

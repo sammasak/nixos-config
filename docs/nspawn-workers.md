@@ -196,8 +196,8 @@ at runtime (`nixos:workers-eval-test` holds one case per line):
 - an unknown `agent`; `model` or `prompt` with `agent = "none"`; an empty
   prompt; a model outside `[][A-Za-z0-9._:-]`; a `prompt` with no session
   surface to deliver it;
-- sizes not in systemd syntax (`[1-9][0-9]*[KMGT]?`); `reserved` above `max`,
-  `max` above the pool, reserves summing above the pool; instances on a host
+- sizes not in systemd syntax (`[1-9][0-9]*[KMGT]?`); reserves summing above
+  the pool; instances on a host
   without `pool.memory`;
 - a host interface address in `10.233.0.0/16`; a name both in `instances` and
   `retired`, or a `retired` name that is not a valid name; a `stateDir` outside
