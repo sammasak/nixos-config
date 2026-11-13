@@ -8,9 +8,6 @@
   kbdVariant = "";
   consoleKeymap = "sv-latin1";
 
-  # Hardware
-  videoDriver = "intel";
-
   # Features
   pi = true;
   nativeOtel = true;

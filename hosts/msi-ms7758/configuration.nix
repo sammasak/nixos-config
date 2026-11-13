@@ -5,7 +5,7 @@ in
 {
   imports = [
     ./hardware-configuration.nix
-    ../../modules/hardware/video/${vars.videoDriver}.nix
+    ../../modules/hardware/video/intel.nix
     # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
     ../../modules/homelab/msi-power-schedule.nix
   ];

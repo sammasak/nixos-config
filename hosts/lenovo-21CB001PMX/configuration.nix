@@ -7,7 +7,7 @@ in
     ./hardware-configuration.nix
     (import ../../modules/hardware/disko-single-ext4.nix "/dev/disk/by-id/nvme-SAMSUNG_MZVL2512HCJQ-00BL7_S64KNX1T235655")
 
-    ../../modules/hardware/video/${vars.videoDriver}.nix
+    ../../modules/hardware/video/intel.nix
 
     # Default boot mode.
     ../../modules/specialisations/desktop.nix

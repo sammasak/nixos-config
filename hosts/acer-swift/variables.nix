@@ -8,9 +8,6 @@
   kbdVariant = "";
   consoleKeymap = "sv-latin1";
 
-  # Hardware
-  videoDriver = "intel";
-
   # Features
   # herdr host: Pi run viewer panes run pi-view here (devenv-platform#28).
   pi = true;

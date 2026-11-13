@@ -7,6 +7,5 @@
   kbdVariant = "";
   consoleKeymap = "sv-latin1";
   devTools = false;
-  pi = false;
   roles = [ "base" "rf-lab" "embedded" ];
 }

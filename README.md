@@ -40,7 +40,7 @@ the tie-breaker.
 | `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |
 | `modules/desktop/` | The GUI stack | niri, Waybar, Rofi; gated on `sam.desktop.enable` |
 | `modules/specialisations/` | Boot-menu variants | Currently only `desktop.nix` |
-| `modules/hardware/` | GPU and thermal | `video/<driver>.nix` picked by `sam.profile.videoDriver` |
+| `modules/hardware/` | GPU and thermal | `video/intel.nix` imported by the Intel hosts |
 | `modules/rf-lab/`, `modules/embedded/` | naked-pi appliance stacks | Wi-Fi/Bluetooth lab and HIL tests; ESP32 tooling |
 | `modules/home/` | Shared Home Manager entry point | One tree for all hosts; there are no per-host `home.nix` files |
 | `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `terminal/` |

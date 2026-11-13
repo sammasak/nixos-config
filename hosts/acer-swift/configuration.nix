@@ -7,7 +7,7 @@ in
     ./hardware-configuration.nix
     (import ../../modules/hardware/disko-single-ext4.nix "/dev/disk/by-id/nvme-INTEL_SSDPEKNW010T8_BTNH014425J11P0B")
 
-    ../../modules/hardware/video/${vars.videoDriver}.nix
+    ../../modules/hardware/video/intel.nix
   ];
 
   sam.profile = vars;

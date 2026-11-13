@@ -50,12 +50,6 @@ in
             description = "Virtual console keymap.";
           };
 
-          videoDriver = mkOption {
-            type = types.str;
-            default = "intel";
-            description = "Video driver module selector.";
-          };
-
           devTools = mkOption {
             type = types.bool;
             default = true;
