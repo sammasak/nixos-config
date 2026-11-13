@@ -22,36 +22,6 @@ in
             description = "System hostname.";
           };
 
-          timezone = mkOption {
-            type = types.str;
-            default = "Europe/Stockholm";
-            description = "Time zone.";
-          };
-
-          locale = mkOption {
-            type = types.str;
-            default = "en_US.UTF-8";
-            description = "Default locale.";
-          };
-
-          kbdLayout = mkOption {
-            type = types.str;
-            default = "se";
-            description = "Keyboard layout.";
-          };
-
-          kbdVariant = mkOption {
-            type = types.str;
-            default = "";
-            description = "Keyboard layout variant.";
-          };
-
-          consoleKeymap = mkOption {
-            type = types.str;
-            default = "sv-latin1";
-            description = "Virtual console keymap.";
-          };
-
           devTools = mkOption {
             type = types.bool;
             default = true;
@@ -81,7 +51,6 @@ in
 
           roles = mkOption {
             type = types.uniq (types.listOf types.str);
-            default = [ "base" ];
             description = "Role aspects enabled for this host. Set from flake-modules/hosts.nix; a second definition is an error.";
           };
 
@@ -312,8 +281,8 @@ in
     services.xserver = {
       enable = lib.mkDefault false;
       xkb = {
-        layout = profile.kbdLayout;
-        variant = profile.kbdVariant;
+        layout = "se";
+        variant = "";
       };
     };
 
@@ -336,21 +305,21 @@ in
       };
     };
 
-    time.timeZone = profile.timezone;
-    i18n.defaultLocale = profile.locale;
+    time.timeZone = "Europe/Stockholm";
+    i18n.defaultLocale = "en_US.UTF-8";
     i18n.extraLocaleSettings = {
-      LC_ADDRESS = profile.locale;
-      LC_IDENTIFICATION = profile.locale;
-      LC_MEASUREMENT = profile.locale;
-      LC_MONETARY = profile.locale;
-      LC_NAME = profile.locale;
-      LC_NUMERIC = profile.locale;
-      LC_PAPER = profile.locale;
-      LC_TELEPHONE = profile.locale;
-      LC_TIME = profile.locale;
+      LC_ADDRESS = "en_US.UTF-8";
+      LC_IDENTIFICATION = "en_US.UTF-8";
+      LC_MEASUREMENT = "en_US.UTF-8";
+      LC_MONETARY = "en_US.UTF-8";
+      LC_NAME = "en_US.UTF-8";
+      LC_NUMERIC = "en_US.UTF-8";
+      LC_PAPER = "en_US.UTF-8";
+      LC_TELEPHONE = "en_US.UTF-8";
+      LC_TIME = "en_US.UTF-8";
     };
 
-    console.keyMap = profile.consoleKeymap;
+    console.keyMap = "sv-latin1";
 
     # Unfree is opt-in per package, not a blanket allow. `allowUnfree = true`
     # made the predicate below decorative and let any transitive unfree
