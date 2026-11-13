@@ -3,16 +3,16 @@
     "alert-bridge": {
       "flake": false,
       "locked": {
-        "lastModified": 1794576649,
-        "narHash": "sha256-80UGYZKMGQYezzVT7iWmjkP50RwOQLutCWP5OnhTZOE=",
+        "lastModified": 1794581286,
+        "narHash": "sha256-9gYeUN9qxG6UF1RKt0yBAnzrqOAjEoMOD0ze6sjKZ/c=",
         "ref": "refs/heads/main",
-        "rev": "05d1752468ef9fef73a42d960f5f03e21a4bfb6d",
-        "revCount": 6,
+        "rev": "e2d61abf8df857156740119df8ab7f0c59582e20",
+        "revCount": 14,
         "type": "git",
         "url": "ssh://git@github.com/sammasak/alert-bridge"
       },
       "original": {
-        "rev": "05d1752468ef9fef73a42d960f5f03e21a4bfb6d",
+        "rev": "e2d61abf8df857156740119df8ab7f0c59582e20",
         "type": "git",
         "url": "ssh://git@github.com/sammasak/alert-bridge"
       }
