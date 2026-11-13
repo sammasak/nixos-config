@@ -168,7 +168,7 @@ runbook above — never rotate the authkey while an auth URL is pending.
 
 ### Key Inputs
 
-See `flake.nix`. factum, nix-audit and rf-proto are pinned by `?rev=` in their URL, so `nix flake update`
+See `flake.nix`. factum, nix-audit, alert-bridge and rf-proto are pinned by `?rev=` in their URL, so `nix flake update`
 does not move them: edit the rev.
 
 ## Comment Policy

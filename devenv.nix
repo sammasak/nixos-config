@@ -106,6 +106,10 @@ let
     ${pkgs.python3}/bin/python scripts/test-ollama-portforward.py
   '';
 
+  alertBridgeTest = gate "alert-bridge-test" (with pkgs; [ nix python3 ]) ''
+    ${pkgs.python3}/bin/python scripts/test-alert-bridge.py
+  '';
+
   knownHostsTest = gate "known-hosts-test" (with pkgs; [ nix python3 openssh ssh-to-age ]) ''
     ${pkgs.python3}/bin/python scripts/test-ssh-known-hosts.py
   '';
@@ -134,7 +138,7 @@ let
     export GATE_PROBE
     ${run [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
-      ollamaPortforwardTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest switchSafetyTest rfBeaconsTest
+      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest rfLabBoundaryTest runtimeHostTest journalCollectorTest switchSafetyTest rfBeaconsTest
     ]}
   '';
 
@@ -380,6 +384,7 @@ in
     "nixos:flake-check" = task "nix flake check over all systems: builds every x86 host, evaluates the Pis" flakeCheck;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
+    "nixos:alert-bridge-test" = task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
     "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:worker-permissions-test" = task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
     "nixos:workers-eval-test" = task "The developer-environment module rejects each wrong configuration at eval; agent argv survives the guest shell" workersEvalTest;

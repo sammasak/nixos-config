@@ -20,6 +20,10 @@ let
         rustPlatform = factumRustPlatform;
         src = inputs.factum;
       };
+      alertBridge = final.callPackage ../pkgs/alert-bridge/package.nix {
+        rustPlatform = factumRustPlatform;
+        src = inputs.alert-bridge;
+      };
       nixAudit = final.callPackage ../pkgs/nix-audit/package.nix {
         rustPlatform = factumRustPlatform;
         src = inputs.nix-audit;
