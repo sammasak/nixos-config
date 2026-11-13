@@ -35,10 +35,9 @@ in
     ++ lib.optionals config.sam.profile.devTools [
       claude-code
       devenv
-      # nodejs + chromium look desktop-only but are load-bearing on headless
-      # hosts: the Playwright MCP server (claude-code/mcp.nix) runs
-      # `npx @playwright/mcp --executable-path /run/current-system/sw/bin/chromium`
-      # for agent browser automation. Do not gate behind hasDesktop.
+      # nodejs + chromium look desktop-only but stay on headless devTools hosts
+      # for agents' browser tooling; the Playwright MCP servers
+      # (claude-code/mcp.nix) carry their own store paths. Do not gate behind hasDesktop.
       nodejs
       chromium
     ]

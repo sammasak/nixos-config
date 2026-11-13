@@ -1,12 +1,11 @@
 # NixOS Configuration
 
 Personal NixOS + Home Manager flake for the homelab: laptops, a tower and two
-Raspberry Pis, one shared user config, built with flake-parts and dendritic
-auto-discovery.
+Raspberry Pis, one shared user config, built with flake-parts.
 
 - [CLAUDE.md](CLAUDE.md): working rules, secrets scopes, Claude Code / Codex
   delivery, Comment Policy and conventions.
-- [docs/architecture.md](docs/architecture.md): flake load order, module
+- [docs/architecture.md](docs/architecture.md): flake composition, module
   registry, host wiring, `sam.profile` fields, desktop vs headless, roles.
 - [docs/pi.md](docs/pi.md): the Pi coding agent module (enabled on lenovo and
   acer-swift).
@@ -33,23 +32,24 @@ the tie-breaker.
 | Path | Owns | Notes |
 |------|------|-------|
 | `flake.nix` | Flake entry point | Recursively auto-imports `flake-modules/`; nothing host-specific |
-| `flake-modules/` | Top-level flake composition | Numbered for load order (see docs/architecture.md); `hosts/<name>.nix` declares each host |
+| `flake-modules/` | Top-level flake composition | Number prefixes are names only, not an order; `hosts/<name>.nix` declares each host |
 | `hosts/<name>/` | Per-machine facts only | `variables.nix` (choices), `configuration.nix` (host-only modules), `hardware-configuration.nix` (generated) |
-| `modules/core/` | System baseline on every host | boot, users, network, services, packages, automation, sops, wifi, resource-hygiene |
+| `modules/core/` | System modules | `roles/base.nix` imports the baseline every host gets; the rest come in through roles, hosts or the desktop specialisation (docs/architecture.md, Roles) |
 | `modules/roles/` | Composition | `base`, `laptop`, `homelab-agent`, `homelab-server`, `runtime-host`, `rf-lab`, `embedded`; selected in `variables.nix` |
 | `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |
 | `modules/desktop/` | The GUI stack | niri, Waybar, Rofi; gated on `sam.desktop.enable` |
 | `modules/specialisations/` | Boot-menu variants | Currently only `desktop.nix` |
-| `modules/hardware/` | GPU and thermal | `video/intel.nix` imported by the Intel hosts |
+| `modules/hardware/` | GPU, thermal, disk layout | `video/intel.nix` imported by the Intel hosts |
 | `modules/rf-lab/`, `modules/embedded/` | naked-pi appliance stacks | Wi-Fi/Bluetooth lab and HIL tests; ESP32 tooling |
 | `modules/home/` | Shared Home Manager entry point | One tree for all hosts; there are no per-host `home.nix` files |
-| `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `terminal/` |
+| `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `gui/`, `terminal/` |
+| `modules/workers/` | nspawn developer environments | `sam.workers`, see docs/nspawn-workers.md |
 | `modules/themes/` | Catppuccin via Stylix | |
 | `lib/` | Pure helpers, no module semantics | `users.nix` (git identity, SSH keys), `firewall.nix` (dual-backend rule builder) |
 | `scripts/` | Repo tooling | `gate-probe.nix` and the `test-*.py` gates, `bench.sh`, `nix-comment-metrics.awk` |
 | `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions. `just parity [BASE]` needs no entry: it compares the five host drvPaths at the merge base with the working tree |
 | `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
-| `docs/` | Current reference | `architecture.md`, `herdr.md`, `pi.md` |
+| `docs/` | Reference, plus dated records | Reference: `architecture.md`, `herdr.md`, `pi.md`, `nspawn-workers.md`, `ssh-host-keys.md`, `native-otel-canary.md`, `factum-pilot.md`, `nix-audit-pilot.md`. The rest are dated plans, measurements and ledgers, true as of their date |
 | `Justfile` | Task entry points | build, switch, deploy, verify and image recipes |
 | `assets/`, `dotfiles/` | Wallpapers; plain config files symlinked verbatim | |
 | `pkgs/` | Packages not in nixpkgs | Exposed through an overlay in `flake-modules/` |
@@ -63,7 +63,7 @@ attribute and defaults to the machine you are on.
 just build  [HOST]      # build without activating
 just diff   [HOST]      # build and show the package diff vs the running system
 just switch [HOST]      # build and activate locally
-just bump [input]       # update one flake input (default: skills), then switch
+just bump [input]       # update one flake input (default: skills); then just switch
 
 # Push from lenovo with deploy-rs (magic rollback)
 just deploy-acer
@@ -79,7 +79,7 @@ just verify             # flake check: build every x86 host, evaluate the Pis
 Rollback with `sudo nixos-rebuild switch --rollback`, or pick an older
 generation in the boot menu.
 
-For a host without a deploy-rs node, use the plain SSH command in CLAUDE.md. If
+Every host has a deploy-rs node. The plain SSH fallback is in CLAUDE.md; if
 it fails with `sudo: a terminal is required to read the password`, add
 `--ask-sudo-password`; target by IP when hostnames are flaky.
 
@@ -89,7 +89,8 @@ Policy lives in `modules/core/services.nix`, `network.nix` and `users.nix`:
 
 - Key-only SSH auth (`PasswordAuthentication = false`)
 - No root SSH login (`PermitRootLogin = "no"`)
-- Allowed SSH users are explicit (`AllowUsers = [ username ]`)
+- Allowed SSH users are explicit (`AllowUsers = [ username ]`, plus `deploy` on every host from
+  `modules/homelab/deploy-target.nix`, whose key is accepted only from lenovo)
 - SSH firewall policy allows only LAN CIDR + loopback; keys come from `lib/users.nix`
 
 After changing SSH policy, apply locally on the target first
@@ -97,7 +98,7 @@ After changing SSH policy, apply locally on the target first
 
 ## Automation
 
-Unattended upgrades are off by default; a host opts in with `system.autoUpgrade.enable = true`. Only `acer-swift` does (Sunday 06:00, plus up to 45 min of jitter) and it sets `allowReboot = false` because it is the sole worker. Every host runs garbage collection monthly and optimises the store weekly. Configured in `modules/core/automation.nix`.
+Unattended upgrades are off by default; a host opts in with `system.autoUpgrade.enable = true`. Only `acer-swift` does (Sunday 06:00, plus up to 45 min of jitter) and it sets `allowReboot = false` because it is the sole worker. By default every host runs garbage collection monthly and optimises the store weekly; the Pis (weekly, 7-day retention) and msi-ms7758 override the GC schedule. Configured in `modules/core/automation.nix`.
 
 ## Adding a New Host
 
@@ -143,6 +144,5 @@ in
 | niri keybinds | [modules/desktop/niri/home.nix](modules/desktop/niri/home.nix) |
 | Desktop stacks | `modules/specialisations/desktop.nix` and `modules/desktop/` |
 
-References: [flake-parts](https://flake.parts/options/flake-parts-modules.html),
-[dendritic](https://github.com/mightyiam/dendritic); inspired by
+References: [flake-parts](https://flake.parts/options/flake-parts-modules.html); inspired by
 [Sly-Harvey/NixOS](https://github.com/Sly-Harvey/NixOS).
