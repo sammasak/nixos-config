@@ -39,7 +39,8 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 
 # Run from lenovo; logs in as `deploy` (key-only, passwordless sudo, so no
 # prompt; homelab/deploy-target.nix). Rollback settings come from the node
-# (flake-modules/70-deploy.nix), whose list the pattern repeats. --skip-checks:
+# (flake-modules/70-deploy.nix); the host list is the table in
+# flake-modules/hosts.nix, which the pattern repeats. --skip-checks:
 # otherwise deploy-rs runs the full flake check first, building every x86 host
 # on lenovo (the 2026-11-11 OOM). The pre-push gate runs that check on pushed
 # non-docs commits, but `.#HOST` is the working tree: a dirty or unpushed tree

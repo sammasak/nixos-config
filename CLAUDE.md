@@ -242,7 +242,8 @@ either side is only reported.
 
 - `hosts/<dir>/` (variables + configuration + hardware scan);
 - an entry with its roles in `flake-modules/hosts.nix` (`hostDir` and
-  `deploy.hostname` default to the entry name, `deploy.remoteBuild` to false);
+  `deploy.hostname` default to the entry name; `deploy.remoteBuild` is
+  required, true unless lenovo can build it);
   its deploy-rs node follows from the entry;
 - the `just deploy` HOST pattern (checked by `scripts/test-ssh-known-hosts.py`);
 - its pinned key in `modules/core/ssh-known-hosts.nix` and its sops recipient;

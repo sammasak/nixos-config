@@ -28,9 +28,10 @@
                 };
 
                 remoteBuild = lib.mkOption {
+                  # Required, no default: lenovo has crashed building other hosts' closures, so a new host
+                  # that forgets this field must fail evaluation rather than silently build on lenovo.
                   type = lib.types.bool;
-                  default = false;
-                  description = "Build the closure on the target instead of the deployer.";
+                  description = "Required. Build the closure on the target instead of the deployer (lenovo).";
                 };
               };
             };

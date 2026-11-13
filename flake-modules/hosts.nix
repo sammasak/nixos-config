@@ -3,7 +3,7 @@
   configurations.nixos = {
     # deploy-rs is only ever invoked from lenovo itself, so lenovo's own deploy is a loopback self-push, used to
     # prove the sudo/magic-rollback path before it is ever trusted against acer-swift, which has no BMC.
-    lenovo = { hostDir = "lenovo-21CB001PMX"; roles = [ "base" "laptop" "homelab-server" ]; deploy.hostname = "localhost"; };
+    lenovo = { hostDir = "lenovo-21CB001PMX"; roles = [ "base" "laptop" "homelab-server" ]; deploy = { hostname = "localhost"; remoteBuild = false; }; };
 
     # remoteBuild: lenovo, memory-constrained, has crashed building these closures; acer's
     # build I/O mid-deploy is the lesser risk to the cluster.

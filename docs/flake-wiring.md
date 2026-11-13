@@ -1,9 +1,9 @@
 # Flake wiring: one hosts table, the role registry stays
 
-Status: proposed, 2026-11-13; the owner has not decided yet. Every step
-below has landed, so the code now matches this decision;
-`docs/architecture.md` describes it. Tracking issue: #292 (roadmap #295,
-wave 3).
+Status: implemented in steps P to 5 (step 5 was the last); the owner's open
+questions below remain (option B's moves, the known fragility).
+`docs/architecture.md` describes the current code. Tracking issue: #292
+(roadmap #295, wave 3).
 
 | Step | Change | State |
 |---|---|---|
@@ -86,7 +86,7 @@ inside D.
    ```nix
    configurations.nixos = {
      # deploy-rs runs only on lenovo: its own deploy is a loopback self-push.
-     lenovo = { hostDir = "lenovo-21CB001PMX"; roles = [ "base" "laptop" "homelab-server" ]; deploy.hostname = "localhost"; };
+     lenovo = { hostDir = "lenovo-21CB001PMX"; roles = [ "base" "laptop" "homelab-server" ]; deploy = { hostname = "localhost"; remoteBuild = false; }; };
      # lenovo, memory-constrained, has crashed building these closures.
      acer-swift = { roles = [ "base" "laptop" "homelab-agent" "runtime-host" ]; deploy.remoteBuild = true; };
      # Same reason; reachable only in its Mon-Fri ~09:00-21:00 power window.
@@ -101,7 +101,8 @@ inside D.
    (the flake's `nixosSystem` passes `system = null`, so `hostPlatform`
    decides pkgs; architecture is stated once). `deploy.nodes.<name>` picks
    its activate from `pkgs.stdenv.hostPlatform.system` and emits
-   `remoteBuild` only when true.
+   `remoteBuild` only when true. `deploy.remoteBuild` has no default: a
+   host that omits it fails evaluation instead of building on lenovo.
 4. **Unknown user: `sam.profile.username` becomes
    `types.enum (attrNames (import lib/users.nix))`.** A typo then fails at
    the definition, with its file, for every reader, including direct option

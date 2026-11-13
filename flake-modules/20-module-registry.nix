@@ -25,7 +25,8 @@ let
 in
 {
   # Lookups through flake.modules nest these files deeper, which fixes their merge order (docs/flake-wiring.md):
-  # importing the plain paths instead moves every host's toplevel, waybar/swaync CSS included (#315).
+  # importing the plain paths instead moved every host's toplevel when measured; #315 pinned one such order,
+  # others are unverified.
   flake.modules = {
     nixos = mkAttrs roleFiles (file: "role-${stripNixSuffix file}") (file: ../modules/roles + "/${file}");
 
