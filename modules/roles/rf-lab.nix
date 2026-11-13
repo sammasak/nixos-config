@@ -47,6 +47,7 @@ in
       watchdog = config.sam.rfLab.netWatchdog;
       names = map (p: lib.toLower (p.pname or p.name or ""));
       declared = names config.environment.systemPackages
+        ++ lib.concatMap (u: names u.packages) (lib.attrValues config.users.users)
         ++ lib.concatMap (u: names u.home.packages) (lib.attrValues config.home-manager.users);
       # REA and the tools it drives belong on the analysis workstation (#42 "Architectural boundaries").
       heavy = builtins.filter (n: builtins.match ".*(ghidra|binwalk|unblob|jadx|nodejs|npm|rea-agents|radare2|rizin).*" n != null) declared;
@@ -74,7 +75,7 @@ in
       }
       {
         assertion = heavy == [ ];
-        message = "role rf-lab: heavyweight reverse-engineering tooling belongs on the analysis workstation, not the 1 GiB board; remove ${lib.concatStringsSep ", " heavy} from environment.systemPackages or home.packages.";
+        message = "role rf-lab: heavyweight reverse-engineering tooling belongs on the analysis workstation, not the 1 GiB board; remove ${lib.concatStringsSep ", " heavy} from environment.systemPackages, users.users.<name>.packages or home.packages.";
       }
     ];
 }
