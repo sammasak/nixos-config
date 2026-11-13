@@ -4,6 +4,8 @@ inputs:
   nixpkgs:
     url: github:cachix/devenv-nixpkgs/rolling
   platform:
+    # Do not bump to 2cf12c7 or later until sammasak/devenv-platform#131 is fixed:
+    # from there the pre-push guard ignores core.hooksPath and refuses every push here.
     url: git+ssh://git@github.com/sammasak/devenv-platform?rev=1034f68be541a48125e8455359de5c579cafc857
     flake: false
   git-hooks:
