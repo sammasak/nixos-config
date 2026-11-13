@@ -5,7 +5,7 @@
 # seen. Not in the VM: hosts/msi-ms7758/configuration.nix (GRUB, WoL, power schedule).
 # A host-sized closure: `just role-vm-test` on msi only.
 # `.broken` fails Home Manager's activation on purpose; it means something only next to a passing plain run.
-{ pkgs, roleModules, fleetModules }:
+{ pkgs, roleModules, fleetModules, roles }:
 let
   vars = import ../hosts/msi-ms7758/variables.nix;
 
@@ -20,6 +20,7 @@ let
         # msi's roles minus homelab-agent: no k3s, whose server is lenovo.
         imports = roleModules ++ fleetModules vars.hostname;
         sam.profile = vars // {
+          inherit roles;
           # The relay needs msi's native_otlp_auth secret.
           nativeOtel = false;
         };

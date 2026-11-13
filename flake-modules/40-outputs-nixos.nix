@@ -65,7 +65,6 @@ let
     name:
     {
       hostDir,
-      username,
       roles,
     }:
     let
@@ -87,6 +86,7 @@ let
       modules =
         [
           ../hosts/${hostDir}/configuration.nix
+          { sam.profile.roles = roles; }
         ]
         ++ roleModules
         ++ fleetModules name;
