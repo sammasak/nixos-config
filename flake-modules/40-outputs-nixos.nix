@@ -65,7 +65,6 @@ let
     name:
     {
       hostDir,
-      system,
       username,
       roles,
     }:
@@ -85,7 +84,6 @@ let
       The base role declares core typed options (`sam.profile`, `sam.userConfig`) used across modules.
     '';
     inputs.nixpkgs.lib.nixosSystem {
-      inherit system;
       modules =
         [
           ../hosts/${hostDir}/configuration.nix

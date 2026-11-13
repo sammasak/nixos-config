@@ -10,8 +10,8 @@ wave 3).
 |---|---|---|
 | P | `just parity` derives its host list and compares deploy nodes and settings | landed with this file |
 | 0 | this document | landed |
-| 1 | `sam.profile.username` becomes an enum of `lib/users.nix` | not started |
-| 2 | architecture stated once (`hostPlatform`) | not started |
+| 1 | `sam.profile.username` becomes an enum of `lib/users.nix` | landed |
+| 2 | architecture stated once (`hostPlatform`) | landed |
 | 3 | one table value file `flake-modules/hosts.nix`, roles in it | not started |
 | 4 | deploy nodes derived from the table | not started |
 | 5 | registry comment: its depth fixes merge order | not started |
@@ -24,9 +24,9 @@ evaluated, not built, from `git archive` copies, one host at a time.
 ## Context
 
 Flake wiring for a host lives in two files, `flake-modules/hosts/<name>.nix`
-and its node in `70-deploy.nix`. Architecture is stated three times: `system`
-there, `nixpkgs.hostPlatform` in `hardware-configuration.nix`, and the
-`x86`/`aarch64` activate per node. Nothing checks that they agree.
+and its node in `70-deploy.nix`. Before step 2, architecture was stated three
+times: `system` there, `nixpkgs.hostPlatform` in `hardware-configuration.nix`, and the
+`x86`/`aarch64` activate per node. Nothing checked that they agreed.
 
 The issue's other claims, checked against the code:
 
