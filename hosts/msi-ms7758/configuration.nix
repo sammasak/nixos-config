@@ -4,6 +4,9 @@
   pkgs,
   ...
 }:
+let
+  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
+in
 {
   imports = [
     ./hardware-configuration.nix
@@ -11,6 +14,7 @@
     # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
     ../../modules/homelab/msi-power-schedule.nix
     ../../modules/homelab/journal-collector.nix
+    ../../modules/homelab/ollama-host.nix
   ];
 
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
@@ -90,6 +94,45 @@
         chainloader /EFI/Microsoft/Boot/bootmgfw.efi
       }
     '';
+  };
+
+  # The llm-gateway's bigger tier, off with msi at 21:00 (the gateway falls back to acer).
+  services.ollama = {
+    enable = true;
+    # qwen2.5-coder:7b is the instruct tag's alias (same blob); Pi asks for it by that name
+    loadModels = [
+      "llama3.1:8b"
+      "qwen2.5-coder:7b-instruct-q4_K_M"
+      "qwen2.5-coder:7b"
+    ];
+    environmentVariables.OLLAMA_CONTEXT_LENGTH = "16384";
+  };
+  # factum's worker tag: the /v1 endpoint discards a request's num_ctx, so the repair loop's 8192 lives in the
+  # served model (sammasak/factum dev/ollama/Modelfile.factum-qwen2.5-coder-7b). Same weights, a manifest only.
+  systemd.services.ollama-model-loader.script = lib.mkAfter ''
+    ${lib.getExe config.services.ollama.package} create factum-qwen2.5-coder-7b:q4_K_M-ctx8192 -f ${pkgs.writeText "Modelfile.factum" ''
+      FROM qwen2.5-coder:7b-instruct-q4_K_M
+      PARAMETER num_ctx 8192
+    ''}
+  '';
+  # llama3.1:8b (4.9G) and a 16K q8_0 KV cache (about 0.9G), as in the pod's 8Gi limit
+  systemd.services.ollama.serviceConfig.MemoryMax = "8G";
+  # Pi on lenovo and acer calls it directly; pods arrive on the trusted Cilium interfaces.
+  networking.firewall = {
+    inherit
+      (mkDualBackendFirewall {
+        nftComment = "Ollama answers Pi on lenovo and acer only.";
+        ports = [ config.services.ollama.port ];
+        sources = map (h: config.sam.fleet.hosts.${h}.address) [
+          "lenovo-21CB001PMX"
+          "acer-swift"
+        ];
+        interfaces = [ ];
+        backend = config.networking.firewall.backend;
+      })
+      extraInputRules
+      extraCommands
+      ;
   };
 
   networking.interfaces.enp3s0.wakeOnLan.enable = true;

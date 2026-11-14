@@ -314,7 +314,7 @@ Observed, but not classified as remove; the owner decides in the cleanup issue:
 | Authentik | no upstream NixOS module; it gates sign-in for everything; high risk, low saving |
 | Traefik, cert-manager, MetalLB, Cilium, KEDA, Flux, Kyverno | the platform for what stays |
 | open-webui, ollama, kokoro, whisper, monty-runner, workout | scale to zero through KEDA; they hold no memory while idle |
-| ollama on msi | always on (no scaler), 20Gi of models on msi, reached by a pinned ClusterIP; a candidate for a host service later, but coupled to the llm-gateway's move |
+| ollama on msi | moved: `services.ollama` on msi (#299), like acer's; the gateway and Pi reach it on msi's address |
 | herman, styrka, karta, system-one | 7 to 8 MiB each and public; moving them saves nothing |
 
 ## Placement

@@ -5,6 +5,7 @@
 devenvPlatform:
 {
   lib,
+  osConfig,
   pkgs,
   ...
 }:
@@ -55,8 +56,8 @@ let
   # only `msi-ollama` is replaced on every activation. contextWindow is the
   # server's OLLAMA_CONTEXT_LENGTH: Ollama truncates longer prompts silently.
   msiOllamaProvider = builtins.toJSON {
-    # ollama-msi-backend ClusterIP (llm ns): reachable from k3s nodes; update if the Service is recreated.
-    baseUrl = "http://10.43.160.41:11434/v1";
+    # msi's host Ollama, which admits lenovo and acer only (hosts/msi-ms7758/configuration.nix)
+    baseUrl = "http://${osConfig.sam.fleet.hosts.msi-ms7758.address}:11434/v1";
     api = "openai-completions";
     apiKey = "ollama";
     models =
