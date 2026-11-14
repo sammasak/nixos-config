@@ -35,8 +35,6 @@ in
     max-jobs = 1;
     cores = 1;
   };
-  nix.gc.dates = lib.mkForce "weekly";
-  nix.gc.options = lib.mkForce "--delete-older-than 7d";
   nix.settings.min-free = 2 * 1024 * 1024 * 1024;
   services.journald.settings.Journal.SystemMaxUse = lib.mkForce "100M";
 
@@ -77,7 +75,7 @@ in
       }
       {
         assertion = config.system.activationScripts ? lockEmptyRootPassword;
-        message = "role rf-lab: the SD image ships root with an empty password; import modules/hardware/sd-image-root-lock.nix in the host.";
+        message = "role rf-lab: the SD image ships root with an empty password; import modules/hardware/pi-sd-image.nix in the host.";
       }
       {
         assertion = !config.services.k3s.enable;
