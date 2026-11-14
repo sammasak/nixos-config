@@ -72,7 +72,19 @@
           format-plugged = " {capacity}%";
           format-full = "{icon} Full";
           format-alt = "{time} {icon}";
-          format-icons = [ "󰂎" "󰁺" "󰁻" "󰁼" "󰁽" "󰁾" "󰁿" "󰂀" "󰂁" "󰂂" "󰁹" ];
+          format-icons = [
+            "󰂎"
+            "󰁺"
+            "󰁻"
+            "󰁼"
+            "󰁽"
+            "󰁾"
+            "󰁿"
+            "󰂀"
+            "󰂁"
+            "󰂂"
+            "󰁹"
+          ];
           format-time = "{H}h {M}min";
           tooltip = true;
           tooltip-format = "{timeTo} {power}w";
@@ -113,7 +125,16 @@
           format = "󰍛 {usage}%";
           interval = 10;
           format-alt = "{icon0}{icon1}{icon2}{icon3}";
-          format-icons = [ "▁" "▂" "▃" "▄" "▅" "▆" "▇" "█" ];
+          format-icons = [
+            "▁"
+            "▂"
+            "▃"
+            "▄"
+            "▅"
+            "▆"
+            "▇"
+            "█"
+          ];
         };
 
         "niri/workspaces" = {
@@ -152,7 +173,11 @@
             phone = "󰏲";
             portable = "󰄝";
             car = "󰄋";
-            default = [ "󰕿" "󰖀" "󰕾" ];
+            default = [
+              "󰕿"
+              "󰖀"
+              "󰕾"
+            ];
           };
         };
 
@@ -174,7 +199,7 @@
           format = " {temperatureC}°C";
           # Use coretemp CPU package sensor (stable path across reboots)
           hwmon-path-abs = "/sys/devices/platform/coretemp.0/hwmon";
-          input-filename = "temp1_input";  # Package temp
+          input-filename = "temp1_input"; # Package temp
         };
 
         tray = {

@@ -1,4 +1,9 @@
-{ config, pkgs, lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 let
   hasDesktop = config.sam.desktop.enable;
 in
@@ -54,7 +59,7 @@ in
       nix-prefetch-scripts
 
       appimage-run
-      gawk  # scripts/bench.sh needs asort and a state machine
+      gawk # scripts/bench.sh needs asort and a state machine
     ]
     ++ lib.optionals hasDesktop [
       # Desktop utilities

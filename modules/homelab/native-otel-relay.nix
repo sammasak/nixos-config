@@ -1,10 +1,18 @@
 # Credential-isolated OTLP relay on every nativeOtel host: Claude, Codex and the environments' egress proxy
 # send here, and only this unit reads the gateway token.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   relayConfig = pkgs.writeShellApplication {
     name = "native-otel-relay-config";
-    runtimeInputs = [ pkgs.coreutils pkgs.gnugrep ];
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.gnugrep
+    ];
     text = ''
       token_file="$CREDENTIALS_DIRECTORY/token"
       config_file="$RUNTIME_DIRECTORY/nginx.conf"
@@ -75,7 +83,16 @@ in
     assertions = [
       {
         # LoadCredential reads it as root: no user process, an agent's tools included, needs the bearer token
-        assertion = let s = config.sops.secrets.native_otlp_auth; in builtins.elem s.owner [ null "root" ] && (s.uid or 0) == 0 && s.mode == "0400";
+        assertion =
+          let
+            s = config.sops.secrets.native_otlp_auth;
+          in
+          builtins.elem s.owner [
+            null
+            "root"
+          ]
+          && (s.uid or 0) == 0
+          && s.mode == "0400";
         message = "sam.profile.nativeOtel: the sops secret native_otlp_auth must be owned by root with mode 0400; only the relay's LoadCredential reads it.";
       }
     ];
@@ -84,7 +101,10 @@ in
       description = "Credential-isolated OTLP metrics and logs relay";
       wantedBy = [ "multi-user.target" ];
       wants = [ "network-online.target" ];
-      after = [ "network-online.target" "sops-nix.service" ];
+      after = [
+        "network-online.target"
+        "sops-nix.service"
+      ];
       serviceConfig = {
         Type = "exec";
         DynamicUser = true;
@@ -101,7 +121,11 @@ in
         PrivateTmp = true;
         PrivateDevices = true;
         NoNewPrivileges = true;
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+        ];
         RestrictNamespaces = true;
         RestrictSUIDSGID = true;
         LockPersonality = true;

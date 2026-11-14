@@ -5,7 +5,11 @@
 {
   imports = [ (modulesPath + "/installer/scan/not-detected.nix") ];
 
-  boot.initrd.availableKernelModules = [ "xhci_pci" "usbhid" "usb_storage" ];
+  boot.initrd.availableKernelModules = [
+    "xhci_pci"
+    "usbhid"
+    "usb_storage"
+  ];
 
   fileSystems."/" = {
     device = "/dev/disk/by-label/NIXOS_SD";
@@ -16,7 +20,10 @@
   fileSystems."/boot/firmware" = {
     device = "/dev/disk/by-label/FIRMWARE";
     fsType = "vfat";
-    options = [ "nofail" "noauto" ];
+    options = [
+      "nofail"
+      "noauto"
+    ];
   };
 
   nixpkgs.hostPlatform = lib.mkDefault "aarch64-linux";

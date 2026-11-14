@@ -4,14 +4,23 @@
 # capability to disconnect arbitrary nearby Bluetooth devices. Physical use is
 # gated on a working controller; naked-pi's onboard hci0 is undervoltage-flaky,
 # so the wrappers fail closed when it is down.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.sam.rfLab.bluetooth;
   enrolled = lib.concatStringsSep " " (map lib.toLower cfg.pairedDevices);
 
   rfBtDisconnect = pkgs.writeShellApplication {
     name = "rf-bt-disconnect";
-    runtimeInputs = with pkgs; [ bluez gnugrep coreutils ];
+    runtimeInputs = with pkgs; [
+      bluez
+      gnugrep
+      coreutils
+    ];
     text = ''
       mac=$(printf '%s' "''${1:?usage: rf-bt-disconnect <enrolled-MAC> [--commit]}" | tr '[:upper:]' '[:lower:]')
       commit=''${2:-}
@@ -34,7 +43,10 @@ let
 
   rfBtAdapterOutage = pkgs.writeShellApplication {
     name = "rf-bt-adapter-outage";
-    runtimeInputs = with pkgs; [ bluez coreutils ];
+    runtimeInputs = with pkgs; [
+      bluez
+      coreutils
+    ];
     text = ''
       secs=''${1:-10}
       if ! timeout 8 bluetoothctl show >/dev/null 2>&1; then
@@ -51,7 +63,10 @@ let
 
   rfBtStatus = pkgs.writeShellApplication {
     name = "rf-bt-status";
-    runtimeInputs = with pkgs; [ bluez coreutils ];
+    runtimeInputs = with pkgs; [
+      bluez
+      coreutils
+    ];
     text = ''
       if ! timeout 8 bluetoothctl show >/dev/null 2>&1; then
         echo "bluetooth controller unavailable (hci0 down)" >&2; exit 1
@@ -60,7 +75,11 @@ let
       echo "== paired devices:"; bluetoothctl devices Paired 2>/dev/null || bluetoothctl paired-devices
     '';
   };
-  btTools = [ rfBtDisconnect rfBtAdapterOutage rfBtStatus ];
+  btTools = [
+    rfBtDisconnect
+    rfBtAdapterOutage
+    rfBtStatus
+  ];
 in
 {
   options.sam.rfLab.bluetooth = {

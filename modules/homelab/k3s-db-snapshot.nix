@@ -5,7 +5,12 @@
 # Guards CORRUPTION only — there is deliberately no off-host copy, so a dead
 # disk is still a reinstall-and-let-Flux-rebuild event.
 # See vault: homelab/runbooks/k3s-datastore-snapshot-restore.md
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   inherit (lib) mkEnableOption mkIf;
@@ -26,7 +31,12 @@ in
       description = "Snapshot the k3s sqlite datastore";
       after = [ "k3s.service" ];
 
-      path = [ pkgs.sqlite pkgs.gzip pkgs.coreutils pkgs.findutils ];
+      path = [
+        pkgs.sqlite
+        pkgs.gzip
+        pkgs.coreutils
+        pkgs.findutils
+      ];
 
       serviceConfig = {
         Type = "oneshot";

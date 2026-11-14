@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   imports = [
     ./hardware-configuration.nix
@@ -26,16 +31,33 @@
   # First host on the shunt hooks (CLAUDE.md, Bulk reader); rollback: false, or SHUNT_DISABLE=1.
   sam.claude.bulkReader.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
-    "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
-    "nixos-config" "rf-proto" ".cache/wt"
+    "claude-code-skills"
+    "devenv-platform"
+    "factum"
+    "herman"
+    "homelab-gitops"
+    "knowledge"
+    "llm-gateway"
+    "nixos-config"
+    "rf-proto"
+    ".cache/wt"
   ];
   # The worker hosts; their declared nspawn workers are workspaces in the host's Herdr (docs/nspawn-workers.md).
   sam.herdr.machines = [
-    { label = "acer-swift"; target = "acer-swift"; }
-    { label = "msi-ms7758"; target = "msi-ms7758"; }
+    {
+      label = "acer-swift";
+      target = "acer-swift";
+    }
+    {
+      label = "msi-ms7758";
+      target = "msi-ms7758";
+    }
   ];
   # `ssh <name>.msi` / `ssh <name>.acer` into an environment declared on that host (sam.workers.labelPrefix there).
-  sam.workers.jumpHosts = { acer = "acer-swift"; msi = "msi-ms7758"; };
+  sam.workers.jumpHosts = {
+    acer = "acer-swift";
+    msi = "msi-ms7758";
+  };
   sam.herdr.coordinatorWakeup = {
     enable = true;
     # Delegated approval (the comment every delegated gh:label act cites) and the interactive
@@ -67,8 +89,14 @@
   # outside every user cgroup and oomd's reach; at cores 8 it peaked at 7.5 GiB plus 1.6 GiB swap
   # on acer, at cores 2 at 6.1 GiB with none. The cap keeps a build from pushing the control plane
   # into zram exhaustion; MemoryHigh throttles first, MemoryMax fails the build, not the host.
-  nix.settings = { max-jobs = 2; cores = 2; };
-  systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "6G"; MemoryMax = "7G"; };
+  nix.settings = {
+    max-jobs = 2;
+    cores = 2;
+  };
+  systemd.services.nix-daemon.serviceConfig = {
+    MemoryHigh = "6G";
+    MemoryMax = "7G";
+  };
 
   # pi-harness PICODE_EP and factum FACTS_OLLAMA_EP default to localhost:8080. The
   # llm-gateway serves keyless Ollama only on its pod loopback, so only this reaches it.
@@ -110,9 +138,18 @@
       # Wildcard to the Traefik MetalLB IP. Per-service records from External-DNS
       # are written as AdGuard *filtering rules*, not rewrites, and persist
       # because mutableSettings is true — so they never collide with these.
-      { domain = "*.sammasak.dev"; answer = "192.168.10.203"; }
-      { domain = "sammasak.dev"; answer = "192.168.10.203"; }
-      { domain = "dns.sammasak.dev"; answer = config.sam.fleet.hosts.${config.networking.hostName}.address; }  # AdGuard Home on host
+      {
+        domain = "*.sammasak.dev";
+        answer = "192.168.10.203";
+      }
+      {
+        domain = "sammasak.dev";
+        answer = "192.168.10.203";
+      }
+      {
+        domain = "dns.sammasak.dev";
+        answer = config.sam.fleet.hosts.${config.networking.hostName}.address;
+      } # AdGuard Home on host
     ];
   };
 

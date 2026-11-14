@@ -3,10 +3,17 @@
 # never exits, so Restart= never fires. This runs the forward, probes it, and
 # exits when nothing answers so the unit restarts it against the new pod.
 # Any HTTP status is alive: only a failed connection means the forward is dead.
-{ writeShellApplication, curl, coreutils }:
+{
+  writeShellApplication,
+  curl,
+  coreutils,
+}:
 writeShellApplication {
   name = "ollama-portforward";
-  runtimeInputs = [ curl coreutils ];
+  runtimeInputs = [
+    curl
+    coreutils
+  ];
   text = ''
     url=''${1:?usage: ollama-portforward <probe-url> <command...>}
     shift

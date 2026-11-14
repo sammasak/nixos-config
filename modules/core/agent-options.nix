@@ -7,12 +7,20 @@ in
 {
   options.sam = {
     herdr.machines = mkOption {
-      type = types.listOf (types.submodule {
-        options = {
-          label = mkOption { type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_.-]*"; description = "Herdr machine label, as in `herdr --machine <label>`."; };
-          target = mkOption { type = types.strMatching "([A-Za-z0-9_.-]+@)?[A-Za-z0-9_.-]+"; description = "SSH target `[user@]host` behind the label; the user's own key and known_hosts entry must already work."; };
-        };
-      });
+      type = types.listOf (
+        types.submodule {
+          options = {
+            label = mkOption {
+              type = types.strMatching "[A-Za-z0-9_][A-Za-z0-9_.-]*";
+              description = "Herdr machine label, as in `herdr --machine <label>`.";
+            };
+            target = mkOption {
+              type = types.strMatching "([A-Za-z0-9_.-]+@)?[A-Za-z0-9_.-]+";
+              description = "SSH target `[user@]host` behind the label; the user's own key and known_hosts entry must already work.";
+            };
+          };
+        }
+      );
       default = [ ];
       description = ''
         Herdr saved machines this host should know: each is added with
@@ -45,7 +53,10 @@ in
     herdr.trustedDirs = mkOption {
       type = types.listOf (types.strMatching "/[A-Za-z0-9_./-]*");
       default = [ ];
-      example = [ "/home/lukas/nixos-config" "/home/lukas/.cache/wt" ];
+      example = [
+        "/home/lukas/nixos-config"
+        "/home/lukas/.cache/wt"
+      ];
       description = "Directories whose Claude Code trust dialog is pre-accepted in `~/.claude.json`, besides the `$HOME` every host trusts; the trust covers their subdirectories too.";
     };
 
@@ -73,7 +84,9 @@ in
         description = "Owner delegation (skills `coordinator.mayApprove`): the Coordinator may add the authorizing label to the owner's own issues; needs `approvalDecision`.";
       };
       approvalDecision = mkOption {
-        type = types.nullOr (types.strMatching "https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*#issuecomment-[1-9][0-9]*");
+        type = types.nullOr (
+          types.strMatching "https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*#issuecomment-[1-9][0-9]*"
+        );
         default = null;
         description = "URL of the issue comment quoting the owner's decision that `mayApprove` rests on (skills `coordinator.approvalDecision`).";
       };
@@ -137,7 +150,9 @@ in
       };
       resourceAttributes = mkOption {
         type = types.attrsOf (types.strMatching "[A-Za-z0-9._-]+");
-        default = { "host.name" = lib.toLower profile.hostname; };
+        default = {
+          "host.name" = lib.toLower profile.hostname;
+        };
         defaultText = lib.literalExpression ''{ "host.name" = lib.toLower config.sam.profile.hostname; }'';
         description = "`OTEL_RESOURCE_ATTRIBUTES` of the export, also `HARNESS_RESOURCE_ATTRIBUTES` for the hook.";
       };

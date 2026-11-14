@@ -1,9 +1,19 @@
 # Cluster health watchdog. Runs outside k8s so it survives a worker outage, and
 # publishes on success as well as failure — see the heartbeat comment below.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
-  inherit (lib) mkEnableOption mkIf mkOption types;
+  inherit (lib)
+    mkEnableOption
+    mkIf
+    mkOption
+    types
+    ;
   cfg = config.homelab.clusterWatchdog;
 in
 {
@@ -22,7 +32,10 @@ in
     systemd.services.cluster-watchdog = {
       description = "Homelab k3s cluster health watchdog";
       wants = [ "network-online.target" ];
-      after = [ "network-online.target" "k3s.service" ];
+      after = [
+        "network-online.target"
+        "k3s.service"
+      ];
       serviceConfig = {
         Type = "oneshot";
         User = "root";
@@ -33,7 +46,12 @@ in
       # gnugrep is pinned rather than taken from the system path: a missing grep
       # would make the Watchdog check below fail closed and page for a healthy
       # cluster.
-      path = [ pkgs.kubectl pkgs.curl pkgs.gawk pkgs.gnugrep ];
+      path = [
+        pkgs.kubectl
+        pkgs.curl
+        pkgs.gawk
+        pkgs.gnugrep
+      ];
       enableStrictShellChecks = true;
       script = ''
         failures=""

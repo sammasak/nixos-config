@@ -6,12 +6,26 @@
 # only when NO interface offers a usable path, prefers the gentlest fix, and
 # backs off after a bounded number of tries so a real outage cannot become a
 # NetworkManager-restart storm. See vault: homelab/runbooks/naked-pi-rf-lab.md
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.sam.rfLab.netWatchdog;
   check = pkgs.writeShellApplication {
     name = "rf-net-watchdog";
-    runtimeInputs = with pkgs; [ iputils networkmanager systemd util-linux coreutils iproute2 gawk bash ];
+    runtimeInputs = with pkgs; [
+      iputils
+      networkmanager
+      systemd
+      util-linux
+      coreutils
+      iproute2
+      gawk
+      bash
+    ];
     text = ''
       gw=${cfg.gateway}
       sshport=${toString cfg.sshPort}

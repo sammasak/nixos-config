@@ -331,11 +331,18 @@ def site_wrong(site, upstream, cases, to="http://127.0.0.1:1"):
         conf.write_text("{\n admin off\n auto_https off\n}\nhttp://127.0.0.1:%d {\n%s" % (port, body))
         proc = subprocess.Popen([caddy, "run", "--adapter", "caddyfile", "--config", str(conf)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:
-            for _ in range(50):
+            # admin is off, so the listening socket is the only readiness signal; a slow start under gate load must
+            # fail as itself, not as a refused request further down
+            deadline = time.monotonic() + 30
+            while True:
+                if proc.poll() is not None:
+                    return [f"caddy exited {proc.returncode} before listening: {proc.stderr.read()[-300:]}"]
                 try:
                     socket.create_connection(("127.0.0.1", port), 0.2).close()
                     break
                 except OSError:
+                    if time.monotonic() > deadline:
+                        return [f"caddy did not listen on 127.0.0.1:{port} within 30 s"]
                     time.sleep(0.1)
             wrong = []
             for method, path, allowed, *more in cases:

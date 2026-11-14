@@ -4,10 +4,9 @@ let
     let
       entries = builtins.readDir dir;
     in
-    builtins.filter (
-      name:
-      entries.${name} == "regular" && builtins.match ".*\\.nix" name != null
-    ) (builtins.attrNames entries);
+    builtins.filter (name: entries.${name} == "regular" && builtins.match ".*\\.nix" name != null) (
+      builtins.attrNames entries
+    );
 
   mkAttrs =
     names: mkName: mkValue:
@@ -28,7 +27,9 @@ in
   # importing the plain paths instead moved every host's toplevel when measured; #315 pinned one such order,
   # others are unverified.
   flake.modules = {
-    nixos = mkAttrs roleFiles (file: "role-${stripNixSuffix file}") (file: ../modules/roles + "/${file}");
+    nixos = mkAttrs roleFiles (file: "role-${stripNixSuffix file}") (
+      file: ../modules/roles + "/${file}"
+    );
 
     homeManager = mkAttrs homeFiles stripNixSuffix (file: ../modules/home + "/${file}");
   };
