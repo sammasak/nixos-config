@@ -2,9 +2,9 @@
 # then. No weekend wake fires, so it stays off from Fri 21:00 to Mon 09:00.
 #
 # Graceful note: we deliberately do a local graceful stop rather than an API
-# `kubectl cordon`/`drain`. msi runs a single stateless pod (ollama-msi, model
-# on a PVC) behind a NoSchedule taint, and its NotReady periods are alerting-
-# muted. Stopping k3s.service SIGTERMs that pod cleanly before poweroff, which
+# `kubectl cordon`/`drain`. msi runs only stateless pods that tolerate its
+# NoSchedule taint, and its NotReady periods are alerting-muted. Stopping
+# k3s.service SIGTERMs them cleanly before poweroff, which
 # is all drain would buy here — without a cross-repo RBAC token or having to
 # un-cordon the node on every morning wake.
 {
@@ -63,8 +63,8 @@ in
           ExecStart = pkgs.writeShellScript "msi-scheduled-shutdown" ''
             set -u
             echo "Scheduled shutdown: stopping k3s to drain workloads gracefully..."
-            # Stopping k3s SIGTERMs the kubelet/containerd, so ollama-msi (and any
-            # other tolerating pod) terminates within its grace period before the
+            # Stopping k3s SIGTERMs the kubelet/containerd, so every tolerating
+            # pod terminates within its grace period before the
             # node powers down.
             ${pkgs.systemd}/bin/systemctl stop k3s.service || true
             ${pkgs.coreutils}/bin/sleep 5

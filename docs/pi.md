@@ -108,8 +108,9 @@ every Pi process shares. Each routing decision is logged with its reason in
 | 3 local | none enabled. Provider `msi-ollama` (msi's Ollama, below) is wired in, but no msi model passed verification | no quota; msi is off outside its power window |
 
 The local provider is `msi-ollama` in `~/.pi/agent/models.json`, merged in by
-this module (`http://10.43.160.41:11434/v1`, the `ollama-msi-backend`
-ClusterIP). The router probes it before each dispatch, so a powered-off msi
+this module (`http://192.168.10.235:11434/v1`, msi's host Ollama, whose
+firewall admits the lenovo and acer hosts and, on the Cilium interfaces, the
+gateway pod). The router probes it before each dispatch, so a powered-off msi
 fails over within seconds and is used again once it answers.
 
 ```bash
