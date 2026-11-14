@@ -226,7 +226,7 @@ let
         ${pkgs.python3}/bin/python scripts/test-journal-collector.py
       '';
 
-  # a switch keeps Herdr's server and cannot wait forever on a unit (eval only)
+  # flux wait bound and ~/.claude.json activation
   switchSafetyTest =
     gate "switch-safety-test"
       (with pkgs; [
@@ -256,6 +256,16 @@ let
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-alert-bridge.py
+      '';
+
+  ollamaHostTest =
+    gate "ollama-host-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-ollama-host.py
       '';
 
   knownHostsTest =
@@ -342,6 +352,7 @@ let
       harnessTelemetryTest
       ollamaPortforwardTest
       alertBridgeTest
+      ollamaHostTest
       knownHostsTest
       buildBoundsTest
       delegationTest
@@ -702,6 +713,8 @@ in
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
+    "nixos:ollama-host-test" =
+      task "acer alone runs ollama: bound to its fleet address, no port opened, trusted Cilium interfaces only, 4G cap, no swap, OOM first" ollamaHostTest;
     "nixos:coordinator-test" =
       task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:worker-permissions-test" =
@@ -723,7 +736,7 @@ in
     "nixos:journal-collector-test" =
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:switch-safety-test" =
-      task "A switch keeps Herdr's server on every host that runs one, waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
+      task "A switch waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;

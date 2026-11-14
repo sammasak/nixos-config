@@ -31,16 +31,8 @@ let
   };
 
   sections = {
-    # what a switch may do to the units that hold agent sessions, or that it waits on
+    # flux wait bound and ~/.claude.json activation
     switch-safety = {
-      # null: the host runs no Herdr server
-      herdr = builtins.mapAttrs (
-        _: h:
-        let
-          units = h.config.home-manager.users.lukas.systemd.user.services or { };
-        in
-        if units ? herdr then { inherit (units.herdr.Unit) X-SwitchMethod; } else null
-      ) hosts;
       # null: the host does not bootstrap Flux
       flux = builtins.mapAttrs (
         name: h:
@@ -142,6 +134,33 @@ let
             ({ lib, ... }: { homelab.alertBridge.ntfyUrl = lib.mkForce "https://ntfy.example/x"; })
           ]).systemd.services.alert-bridge.environment.ALERT_BRIDGE_NTFY_URL
         ).success;
+    };
+
+    ollama-host = {
+      units = builtins.mapAttrs (_: h: h.config.services.ollama.enable) hosts;
+      inherit (acer.services.ollama)
+        host
+        port
+        openFirewall
+        loadModels
+        environmentVariables
+        ;
+      inherit (acer.systemd.services.ollama.serviceConfig)
+        MemoryMax
+        MemorySwapMax
+        OOMScoreAdjust
+        Restart
+        ;
+      address = acer.sam.fleet.hosts.acer-swift.address;
+      firewall = {
+        open = acer.networking.firewall.allowedTCPPorts;
+        inherit (acer.networking.firewall) enable allowedTCPPortRanges;
+        interfaces = builtins.mapAttrs (_: i: i.allowedTCPPorts) acer.networking.firewall.interfaces;
+        interfaceRanges = builtins.mapAttrs (
+          _: i: i.allowedTCPPortRanges
+        ) acer.networking.firewall.interfaces;
+        inherit (acer.networking.firewall) trustedInterfaces extraCommands extraInputRules;
+      };
     };
 
     known-hosts = {
