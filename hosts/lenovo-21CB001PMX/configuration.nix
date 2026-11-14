@@ -112,25 +112,12 @@
     };
   };
 
-  homelab.flux = {
-    enable = true;
-    gitUrl = "ssh://git@github.com/sammasak/homelab-gitops";
-    gitBranch = "main";
-    gitPath = "clusters/homelab";
-  };
-
   homelab.k3s.taintControlPlane = true;
 
   # ThinkPad-class laptop: thinkfan with the quiet curve instead of thermald.
   sam.thermal.platform = "thinkpad";
 
   homelab.dns = {
-    enable = true;
-    tls = {
-      enable = true;
-      domain = "dns.sammasak.dev";
-      dohPort = 443;
-    };
     rewrites = [
       # Wildcard to the Traefik MetalLB IP. Per-service records from External-DNS
       # are written as AdGuard *filtering rules*, not rewrites, and persist
@@ -150,19 +137,11 @@
     ];
   };
 
-  homelab.acme = {
-    enable = true;
-    dnsDomain = "dns.sammasak.dev";
-  };
-
   # Runs outside k8s so paging survives a worker outage. Mobile subscribes to
   # the LAN URL below, or to the same port on the Tailscale IP.
   homelab.ntfy = {
-    enable = true;
     baseUrl = "http://${config.sam.fleet.hosts.${config.networking.hostName}.address}:2586";
   };
-
-  homelab.clusterWatchdog.enable = true;
 
   # Alertmanager runs in a pod and posts to lenovo's LAN address, so loopback
   # is not enough. The shadow topic keeps pages single while both bridges get
@@ -173,8 +152,4 @@
     openFirewall = true;
     ntfyUrl = "http://127.0.0.1:${toString config.homelab.ntfy.port}/homelab-alerts-shadow";
   };
-
-  # Grants non-interactive control-plane deploy — a deliberate trust choice.
-  # See vault: homelab/decisions/ADR-024-nixos-rebuild-trigger-security-model.md
-  homelab.nixosRebuildTrigger.enable = true;
 }

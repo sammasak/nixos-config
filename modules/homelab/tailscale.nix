@@ -8,56 +8,24 @@
 }:
 
 let
-  inherit (lib)
-    concatStringsSep
-    escapeShellArgs
-    mkDefault
-    mkEnableOption
-    mkIf
-    mkOption
-    types
-    ;
-  cfg = config.homelab.tailscale;
+  inherit (lib) escapeShellArgs mkDefault;
+  authKeyFile = config.sops.secrets."tailscale/authkey".path;
 
   upFlags = [
-    "--advertise-routes=${concatStringsSep "," cfg.subnetRoutes}"
+    "--advertise-routes=${config.sam.fleet.lanCidr}"
     "--accept-routes"
     "--ssh"
   ];
 in
 {
-  # ntfy.nix: so the `ntfyUrl` default can read homelab.ntfy.port on hosts
-  # that never import the ntfy module themselves.
+  # ntfy.nix: so the ntfy URL below can read homelab.ntfy.port on hosts that
+  # never import the ntfy module themselves.
   imports = [
     ./sops.nix
     ./ntfy.nix
   ];
 
-  options.homelab.tailscale = {
-    enable = mkEnableOption "Tailscale";
-
-    subnetRoutes = mkOption {
-      type = types.listOf types.str;
-      default = [ config.sam.fleet.lanCidr ];
-      description = "List of subnet routes to advertise.";
-    };
-
-    authKeyFile = mkOption {
-      type = types.path;
-      default = config.sops.secrets."tailscale/authkey".path;
-      defaultText = ''config.sops.secrets."tailscale/authkey".path'';
-      description = "Path to the Tailscale authkey file (SOPS-encrypted)";
-    };
-
-    ntfyUrl = mkOption {
-      type = types.str;
-      default = "http://localhost:${toString config.homelab.ntfy.port}/homelab-alerts";
-      defaultText = "http://localhost:<ntfy.port>/homelab-alerts";
-      description = "ntfy push URL paged when tailnet auth needs an operator.";
-    };
-  };
-
-  config = mkIf cfg.enable {
+  config = {
     homelab.secrets.enable = true;
 
     sops.secrets."tailscale/authkey" = {
@@ -131,7 +99,7 @@ in
           ${pkgs.curl}/bin/curl -fsS -m 10 -X POST \
             -H "Title: Tailscale auth needs an operator" \
             -H "Tags: warning" -H "Priority: high" \
-            -d "$1" "${cfg.ntfyUrl}" || true
+            -d "$1" "http://localhost:${toString config.homelab.ntfy.port}/homelab-alerts" || true
         }
 
         # Operator-actionable auth states exit 0: a failed wanted unit is
@@ -148,14 +116,14 @@ in
           exit 0
         else
           echo "Authenticating with Tailscale..."
-          upFlags+=( --authkey=file:${cfg.authKeyFile} )
+          upFlags+=( --authkey=file:${authKeyFile} )
           usedAuthKey=1
         fi
 
         if ! ${pkgs.tailscale}/bin/tailscale up "''${upFlags[@]}"; then
           if [ -n "$usedAuthKey" ]; then
             echo "tailscale up failed (BackendState=$state). The likeliest cause is" >&2
-            echo "that the authkey in ${cfg.authKeyFile} has expired, or was" >&2
+            echo "that the authkey in ${authKeyFile} has expired, or was" >&2
             echo "single-use and is already consumed. Mint a fresh key in the" >&2
             echo "Tailscale admin console, update secrets/homelab/tailscale.yaml," >&2
             echo "rebuild, then run:" >&2

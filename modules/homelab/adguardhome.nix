@@ -16,19 +16,17 @@ let
     ;
   # Android Private DNS only speaks DoT on 853.
   dotPort = 853;
+  inherit (config.homelab.acme) dnsDomain;
 in
 {
+  # the certificate domain is homelab.acme.dnsDomain
+  imports = [ ./acme.nix ];
+
   options.homelab.dns = {
     enable = mkEnableOption "AdGuard Home DNS server";
 
     tls = {
       enable = mkEnableOption "TLS for DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH)";
-
-      domain = mkOption {
-        type = types.str;
-        default = "dns.sammasak.dev";
-        description = "Domain for DoT/DoH (must match ACME certificate)";
-      };
 
       dohPort = mkOption {
         type = types.port;
@@ -68,6 +66,13 @@ in
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.tls.enable -> config.homelab.acme.enable;
+        message = "homelab.dns.tls serves the ACME certificate for homelab.acme.dnsDomain, which needs homelab.acme.enable.";
+      }
+    ];
+
     services.adguardhome = {
       enable = true;
       openFirewall = true;
@@ -97,12 +102,12 @@ in
 
         tls = mkIf cfg.tls.enable {
           enabled = true;
-          server_name = cfg.tls.domain;
+          server_name = dnsDomain;
           port_https = cfg.tls.dohPort;
           port_dns_over_tls = dotPort;
           port_dns_over_quic = 0; # Disabled
-          certificate_path = "/var/lib/acme/${cfg.tls.domain}/fullchain.pem";
-          private_key_path = "/var/lib/acme/${cfg.tls.domain}/key.pem";
+          certificate_path = "/var/lib/acme/${dnsDomain}/fullchain.pem";
+          private_key_path = "/var/lib/acme/${dnsDomain}/key.pem";
           allow_unencrypted_doh = false;
         };
 
@@ -128,8 +133,8 @@ in
 
     # Without the ACME group AdGuard cannot read its own certificate.
     systemd.services.adguardhome = mkIf cfg.tls.enable {
-      after = [ "acme-${cfg.tls.domain}.service" ];
-      wants = [ "acme-${cfg.tls.domain}.service" ];
+      after = [ "acme-${dnsDomain}.service" ];
+      wants = [ "acme-${dnsDomain}.service" ];
       serviceConfig.SupplementaryGroups = [ "acme" ];
     };
   };
