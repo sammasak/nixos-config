@@ -131,7 +131,7 @@ let
     };
 
   fleetGuest =
-    { devEnvironment, ... }:
+    { devEnvironment, ... }@os:
     let
       github = onGithub dev.instances.${devEnvironment.name};
     in
@@ -146,12 +146,15 @@ let
       ]
       ++ cfg.guestModules;
 
-      # not nixpkgs.pkgs = pkgs: core/system.nix sets nixpkgs.config, which an external instance refuses
+      # The guest evaluates on the host's nixpkgs instance (nixpkgs.pkgs would refuse core/system.nix's nixpkgs.config
+      # and re-instantiate under overlays). A guest-side nixpkgs.overlays or nixpkgs.config is ignored: the assertion
+      # catches overlays; config is the host's core/system.nix.
       # FIXME: claude-code 2.1.311 (the stable channel) in guests only, the first to read
       # CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS; drop once the pinned nixpkgs (2.1.300) carries it.
-      nixpkgs.overlays = config.nixpkgs.overlays ++ [
-        (_: prev: {
-          claude-code = prev.claude-code.override {
+      _module.args.pkgs = lib.mkForce (
+        pkgs
+        // {
+          claude-code = pkgs.claude-code.override {
             manifest = {
               version = "2.1.311";
               platforms.linux-x64 = {
@@ -160,7 +163,13 @@ let
               };
             };
           };
-        })
+        }
+      );
+      assertions = [
+        {
+          assertion = os.config.nixpkgs.overlays == [ ];
+          message = "A worker guest shares the host's nixpkgs instance, so its nixpkgs.overlays are ignored: put overlays on the host (modules/workers/default.nix).";
+        }
       ];
       # nativeOtel off: the guest has neither the relay nor its secret; sam.workers.instances.<name>.telemetry is its way in
       sam.profile = profile // {
