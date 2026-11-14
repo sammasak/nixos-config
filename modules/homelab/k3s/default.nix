@@ -79,6 +79,13 @@ in
         assertion = cfg.role == "server" || cfg.serverAddr != null;
         message = "homelab.k3s.serverAddr must be set for agent nodes";
       }
+      {
+        assertion =
+          !lib.any (
+            f: lib.hasInfix "shutdownGracePeriod" f || lib.hasInfix "shutdown-grace-period" f
+          ) cfg.extraFlags;
+        message = "homelab.k3s.extraFlags: shutdownGracePeriod is a kubelet config-file field, not a CLI flag; kubelet exits on the unknown flag and the node crashloops";
+      }
     ];
 
     services.k3s = {
