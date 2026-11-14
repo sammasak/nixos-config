@@ -7,7 +7,7 @@
   ...
 }:
 let
-  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
+  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall anySourceTcp;
   cfg = config.sam.storeCache;
   host = config.networking.hostName;
   port = 5000;
@@ -37,6 +37,12 @@ in
   options.sam.storeCache.enable = lib.mkEnableOption "serving this host's Nix store to the LAN as a signed binary cache, and substituting from the others'";
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = anySourceTcp config.networking.firewall [ port ] == [ ];
+        message = "modules/core/store-cache.nix: the store cache answers the LAN only through the scoped rule there; keep port ${toString port} out of networking.firewall allowedTCPPorts and allowedTCPPortRanges, global and per interface, which accept from any source.";
+      }
+    ];
     services.harmonia.cache = {
       enable = true;
       signKeyPaths = [ "${dir}/secret-key" ];

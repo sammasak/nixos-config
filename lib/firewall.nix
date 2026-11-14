@@ -21,6 +21,19 @@ let
   nftSet = xs: if length xs == 1 then head xs else "{ ${concatStringsSep ", " xs} }";
 in
 {
+  # The ports of `ports` that `fw` (config.networking.firewall) accepts from any
+  # source: listed or in a range, globally or on one interface.
+  anySourceTcp =
+    fw: ports:
+    builtins.filter (
+      port:
+      lib.any (
+        s:
+        lib.elem port s.allowedTCPPorts
+        || lib.any (r: r.from <= port && port <= r.to) s.allowedTCPPortRanges
+      ) ([ fw ] ++ lib.attrValues fw.interfaces)
+    ) ports;
+
   # `nftComment` and `dropOthers` land in the nftables output only, hence the name.
   # The assert is the point of the file. `networking.firewall.backend` is
   # `enum [ "iptables" "nftables" "firewalld" ]`; under firewalld neither output

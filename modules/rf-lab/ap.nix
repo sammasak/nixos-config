@@ -125,6 +125,33 @@ in
         assertion = cfg.pskFile != null;
         message = "sam.rfLab.ap.pskFile must be set (WPA2 passphrase, ideally a sops secret) when the AP lab is enabled.";
       }
+      {
+        assertion = !config.networking.nat.enable;
+        message = "modules/rf-lab/ap.nix: the lab AP has no NAT to the LAN; keep networking.nat.enable = false while sam.rfLab.ap is enabled.";
+      }
+      {
+        # nixpkgs' nat, tailscale and docker modules turn forwarding on through conf.*.forwarding, not ip_forward
+        assertion =
+          !lib.any
+            (
+              k:
+              lib.elem (config.boot.kernel.sysctl.${k} or null) [
+                1
+                true
+                "1"
+              ]
+            )
+            [
+              "net.ipv4.ip_forward"
+              "net.ipv4.conf.all.forwarding"
+              "net.ipv4.conf.default.forwarding"
+            ];
+        message = "modules/rf-lab/ap.nix: lab clients must not be routed to the LAN; keep IPv4 forwarding (net.ipv4.ip_forward, net.ipv4.conf.all/default.forwarding) off while sam.rfLab.ap is enabled.";
+      }
+      {
+        assertion = !lib.elem cfg.interface config.networking.firewall.trustedInterfaces;
+        message = "modules/rf-lab/ap.nix: lab clients reach only DHCP on ${cfg.interface}; keep it out of networking.firewall.trustedInterfaces while sam.rfLab.ap is enabled.";
+      }
     ];
 
     environment.systemPackages =
