@@ -109,6 +109,7 @@ let
   fleetGuest = { devEnvironment, ... }: let github = onGithub dev.instances.${devEnvironment.name}; in {
     imports = [
       ../core/system.nix
+      ../core/agent-options.nix
       ../core/users.nix
       ../core/packages.nix
       ../core/ssh-known-hosts.nix
