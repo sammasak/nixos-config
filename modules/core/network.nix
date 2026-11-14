@@ -7,11 +7,12 @@
 let
   profile = config.sam.profile;
   hasDesktop = config.sam.desktop.enable;
-  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
+  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall anySourceTcp;
+  openSsh = anySourceTcp config.networking.firewall config.services.openssh.ports;
 
   sshRules = mkDualBackendFirewall {
     nftComment = "Allow SSH only from LAN subnet and loopback (nftables backend).";
-    ports = [ 22 ];
+    ports = config.services.openssh.ports;
     sources = [ config.sam.fleet.lanCidr ];
     interfaces = [ "lo" ];
     # nftables path only, and inert on the iptables backend running today,
@@ -37,9 +38,14 @@ in
     };
   };
 
-  # 22 must not enter allowedTCPPorts (any-source accept) — the scoped
-  # accepts above are the only SSH path besides trusted interfaces.
   services.openssh.openFirewall = false;
+
+  assertions = [
+    {
+      assertion = !config.services.openssh.openFirewall && openSsh == [ ];
+      message = "modules/core/network.nix: SSH reaches the LAN only through the scoped rule there; keep services.openssh.openFirewall = false and sshd port(s) ${toString openSsh} out of networking.firewall allowedTCPPorts and allowedTCPPortRanges, global and per interface, which accept from any source.";
+    }
+  ];
 
   environment.systemPackages = lib.optionals hasDesktop [ pkgs.networkmanagerapplet ];
 }

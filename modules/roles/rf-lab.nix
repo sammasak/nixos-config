@@ -64,8 +64,8 @@ in
         message = "role rf-lab: key-only SSH is the board's management path; keep sshd on with PasswordAuthentication = false and PermitRootLogin = \"no\" (modules/core/services.nix).";
       }
       {
-        assertion = !ssh.openFirewall && config.networking.firewall.enable;
-        message = "role rf-lab: SSH is scoped to the LAN by the firewall rule in modules/core/network.nix; keep networking.firewall.enable = true and services.openssh.openFirewall = false.";
+        assertion = config.networking.firewall.enable;
+        message = "role rf-lab: SSH is scoped to the LAN by the firewall rule in modules/core/network.nix, which asserts the port stays scoped; keep networking.firewall.enable = true.";
       }
       {
         assertion =
