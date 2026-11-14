@@ -144,6 +144,33 @@ let
         ).success;
     };
 
+    ollama-host = {
+      units = builtins.mapAttrs (_: h: h.config.services.ollama.enable) hosts;
+      inherit (acer.services.ollama)
+        host
+        port
+        openFirewall
+        loadModels
+        environmentVariables
+        ;
+      inherit (acer.systemd.services.ollama.serviceConfig)
+        MemoryMax
+        MemorySwapMax
+        OOMScoreAdjust
+        Restart
+        ;
+      address = acer.sam.fleet.hosts.acer-swift.address;
+      firewall = {
+        open = acer.networking.firewall.allowedTCPPorts;
+        inherit (acer.networking.firewall) enable allowedTCPPortRanges;
+        interfaces = builtins.mapAttrs (_: i: i.allowedTCPPorts) acer.networking.firewall.interfaces;
+        interfaceRanges = builtins.mapAttrs (
+          _: i: i.allowedTCPPortRanges
+        ) acer.networking.firewall.interfaces;
+        inherit (acer.networking.firewall) trustedInterfaces extraCommands extraInputRules;
+      };
+    };
+
     known-hosts = {
       pinned = {
         lenovo = lenovo.programs.ssh.knownHosts;

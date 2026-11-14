@@ -269,6 +269,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-alert-bridge.py
       '';
 
+  ollamaHostTest =
+    gate "ollama-host-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-ollama-host.py
+      '';
+
   knownHostsTest =
     gate "known-hosts-test"
       (with pkgs; [
@@ -353,6 +363,7 @@ let
       harnessTelemetryTest
       ollamaPortforwardTest
       alertBridgeTest
+      ollamaHostTest
       knownHostsTest
       buildBoundsTest
       delegationTest
@@ -714,6 +725,8 @@ in
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
+    "nixos:ollama-host-test" =
+      task "acer alone runs ollama: bound to its fleet address, no port opened, trusted Cilium interfaces only, 4G cap, no swap, OOM first" ollamaHostTest;
     "nixos:coordinator-test" =
       task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:worker-permissions-test" =

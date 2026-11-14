@@ -105,4 +105,32 @@
     };
   };
 
+  # Ollama for the llm-gateway, bound to the node address. No port is opened, so the
+  # LAN is dropped; a cluster Cilium policy limits pods to the gateway.
+  services.ollama = {
+    enable = true;
+    host = config.sam.fleet.hosts.acer-swift.address;
+    loadModels = [
+      "llama3.2:3b"
+      "qwen2.5-coder:0.5b"
+      "nomic-embed-text:latest"
+    ];
+    environmentVariables = {
+      OLLAMA_MAX_LOADED_MODELS = "1";
+      OLLAMA_NUM_PARALLEL = "1";
+      OLLAMA_CONTEXT_LENGTH = "16384";
+      OLLAMA_FLASH_ATTENTION = "1";
+      OLLAMA_KV_CACHE_TYPE = "q8_0";
+      OLLAMA_KEEP_ALIVE = "5m";
+    };
+  };
+  # k3s does not count this unit: the cap fits one loaded model, and an OOM takes Ollama first.
+  systemd.services.ollama.serviceConfig = {
+    Restart = "on-failure"; # the Wi-Fi address can appear after the unit
+    RestartSec = 5;
+    MemoryMax = "4G";
+    MemorySwapMax = 0;
+    OOMScoreAdjust = 1000;
+    CPUQuota = "400%";
+  };
 }
