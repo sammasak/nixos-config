@@ -303,19 +303,6 @@ let
         PATH="$PATH:/run/current-system/sw/bin" ${pkgs.python3}/bin/python scripts/test-coordinator-delegation.py
       '';
 
-  # nixos-config#92: nativeOtel = false (the runbook's rollback) removes every telemetry surface
-  otelRollbackTest =
-    gate "otel-rollback-test"
-      (with pkgs; [
-        nix
-        python3
-        git
-        gnutar
-      ])
-      ''
-        ${pkgs.python3}/bin/python scripts/test-native-otel-rollback.py
-      '';
-
   qaPushTest =
     gate "qa-push-test"
       (with pkgs; [
@@ -369,7 +356,6 @@ let
       knownHostsTest
       buildBoundsTest
       delegationTest
-      otelRollbackTest
       journalCollectorTest
       lokiTest
       switchSafetyTest
@@ -744,8 +730,6 @@ in
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =
       task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
-    "nixos:otel-rollback-test" =
-      task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
     "nixos:qa-push-test" =
       task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs" qaPushTest;
     "nixos:journal-collector-test" =

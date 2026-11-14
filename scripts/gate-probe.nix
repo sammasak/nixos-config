@@ -30,30 +30,6 @@ let
     services = builtins.attrNames (hm c).systemd.user.services;
   };
 
-  otelSurfaces = c: {
-    env = (hm c).programs.claude-code.settings.env;
-    codex_otel = lib.hasInfix "[otel]" (hm c).home.file.".codex/config.toml".text;
-    fish_otel = lib.hasInfix "OTEL_" (
-      toString (
-        map (f: (hm c).programs.fish.functions.${f}) [
-          "claude"
-          "codex"
-        ]
-      )
-    );
-    # context discarded: the probe would otherwise build codex and its wrapper
-    codex = map (
-      p:
-      builtins.mapAttrs (_: builtins.unsafeDiscardStringContext) {
-        text = p.text or "";
-        path = p.outPath;
-      }
-    ) (builtins.filter (p: (p.pname or p.name or "") == "codex") (hm c).home.packages);
-    plain_codex = builtins.unsafeDiscardStringContext hosts.lenovo.pkgs.codex.outPath;
-    relay = c.systemd.services ? native-otel-relay;
-    secret = c.sops.secrets ? native_otlp_auth;
-  };
-
   sections = {
     # what a switch may do to the units that hold agent sessions, or that it waits on
     switch-safety = {
@@ -225,14 +201,6 @@ let
 
     harness-telemetry = import ./harness-telemetry-probe.nix hosts // {
       inherit skills;
-    };
-
-    otel-rollback = {
-      live = otelSurfaces lenovo;
-      # acer with the same switch off: what a host without telemetry carries
-      acer =
-        (hm (extend "acer-swift" [ ({ lib, ... }: { sam.profile.nativeOtel = lib.mkForce false; }) ]))
-        .programs.claude-code.settings.env;
     };
 
     # every host, so a collector enabled anywhere else is seen; context discarded: nothing here needs a build

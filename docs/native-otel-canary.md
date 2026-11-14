@@ -145,13 +145,14 @@ usage remains separate from harness-observed metrics.
 
 Set `nativeOtel = false` in
 `sam.profile` in `hosts/lenovo-21CB001PMX/configuration.nix`, rebuild and switch to that generation,
-then start a fresh shell. `devenv tasks run nixos:otel-rollback-test` (part of
-`nixos:qa`) proves the evaluated result before any switch: it flips that one
-switch in a copy of the tree and checks that no Claude telemetry variable,
-Codex `[otel]` stanza, codex wrapper (only plain `pkgs.codex`), relay or receiver secret is left, and that
-lenovo's Claude environment then equals acer's with the same switch off. The standard Claude telemetry-disable setting is
-restored, Codex's OTLP exporter stanza and telemetry preludes are removed, and
-the host secret and relay are no longer installed. Verify no new requests
+then start a fresh shell. An assertion in `modules/core/system.nix`, evaluated on every host and
+environment, fails the build of a configuration whose telemetry surfaces do not follow its switches: with
+`nativeOtel = false` and `sam.claude.telemetry` at its default, no Claude telemetry variable (`OTEL_*`,
+`HARNESS_*`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`), OTEL codex wrapper, relay
+or receiver secret is left, and Claude's `DISABLE_TELEMETRY = "1"` is set. Codex's `[otel]` stanza is not
+asserted (reading `config.toml` forces chromium); `codex/default.nix` writes it on the wrapper's rule. The
+standard Claude telemetry-disable setting is restored, Codex's OTLP exporter stanza and telemetry preludes
+are removed, and the host secret and relay are no longer installed. Verify no new requests
 arrive at the receiver. Keep the prior NixOS generation available until
 rollback is confirmed; do not revoke the shared receiver credential if another
 approved client uses it.
