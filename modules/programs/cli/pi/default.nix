@@ -1,4 +1,4 @@
-# Imported applied, for hosts with sam.profile.pi (flake-modules/40-outputs-nixos.nix):
+# Imported applied, for hosts with sam.profile.pi (flake-modules/nixos-configurations.nix):
 #   (import .../pi inputs.devenv-platform)
 # No provider key reaches the host: the in-cluster llm-gateway holds them. Auth, upgrade,
 # rollback: docs/pi.md.

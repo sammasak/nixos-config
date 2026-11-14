@@ -19,7 +19,7 @@ flake-parts and pushed with deploy-rs from the daily-driver laptop.
 
 ```
 flake.nix               inputs; hands every file in flake-modules/ to flake-parts
-flake-modules/          the flake's outputs (file number prefixes set no order)
+flake-modules/          the flake's outputs
   hosts.nix             the fleet: one entry per host, its roles and deploy fields
 hosts/<name>/           per-machine facts: configuration.nix (sam.profile and host-only modules), hardware-configuration.nix
 modules/roles/          base, laptop, homelab-agent, homelab-server, runtime-host, rf-lab, embedded
@@ -43,17 +43,17 @@ assets/, dotfiles/      wallpapers; the nvim config, symlinked from the checkout
 
 1. **One typed host table.** `flake-modules/hosts.nix` declares each host:
    its `roles`, and the deploy fields `hostname` and `remoteBuild`. The entry
-   is a typed option (`flake-modules/30-configurations-options.nix`);
+   is a typed option (`flake-modules/hosts-option.nix`);
    `remoteBuild` has no default, so a new host must say where it is built.
-2. **Roles are plain modules.** `flake-modules/20-module-registry.nix`
+2. **Roles are plain modules.** `flake-modules/module-registry.nix`
    registers every `modules/roles/<name>.nix` as the module `role-<name>`.
    A role imports what it needs; most import `base.nix` themselves.
-3. **Hosts are built from the table.** `flake-modules/40-outputs-nixos.nix`
+3. **Hosts are built from the table.** `flake-modules/nixos-configurations.nix`
    builds `nixosConfigurations.<host>` from `hosts/<name>/configuration.nix`,
    the listed roles, and the modules every host gets (Stylix, sops-nix, Home
    Manager, disko, `modules/workers`). An unknown role, or a host without
    `base`, fails evaluation.
-4. **Deploy nodes are derived.** `flake-modules/70-deploy.nix` maps every
+4. **Deploy nodes are derived.** `flake-modules/deploy.nix` maps every
    table entry to a deploy-rs node, so the host list is written once.
 
 Per-host choices reach modules through `sam.profile`, a strict submodule each
