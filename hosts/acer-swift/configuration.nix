@@ -49,6 +49,8 @@
       model = "claude-fable-5-2";
     };
   };
+  # The relay and environments' telemetry only: host sessions here keep their Claude settings (docs/native-otel-canary.md)
+  sam.claude.telemetry.enable = false;
   sam.cliTools.nixAudit.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
     "claude-code-skills"
@@ -115,12 +117,16 @@
     };
   };
 
-  # Ollama for the llm-gateway, bound to the node address: pods reach it over
-  # the trusted Cilium interfaces, the LAN is not let in.
+  # Ollama for the llm-gateway, bound to the node address. No port is opened, so the
+  # LAN is dropped; a cluster Cilium policy limits pods to the gateway.
   services.ollama = {
     enable = true;
     host = config.sam.fleet.hosts.acer-swift.address;
-    loadModels = [ "llama3.2:3b" "qwen2.5-coder:0.5b" "nomic-embed-text:latest" ];
+    loadModels = [
+      "llama3.2:3b"
+      "qwen2.5-coder:0.5b"
+      "nomic-embed-text:latest"
+    ];
     environmentVariables = {
       OLLAMA_MAX_LOADED_MODELS = "1";
       OLLAMA_NUM_PARALLEL = "1";
