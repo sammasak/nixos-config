@@ -98,6 +98,63 @@ in
         assertion = !(config.sam.herdr.worker.enable && config.sam.herdr.coordinatorWakeup.enable);
         message = "sam.herdr.worker and sam.herdr.coordinatorWakeup cannot both be enabled on one host (the Coordinator must not inherit worker permissions).";
       }
+      (
+        let
+          inherit (config.sam.profile) devTools nativeOtel;
+          claudeOtel = config.sam.claude.telemetry.enable;
+          codexOtel = devTools && (nativeOtel || claudeOtel);
+          hm = config.home-manager.users.${config.sam.profile.username} or { };
+          env = hm.programs.claude-code.settings.env or { };
+          # The rollback (docs/native-otel-canary.md) is nativeOtel = false with sam.claude.telemetry at its default:
+          # every surface off. Checked both ways: a surface whose option path moves fails where it is on, not passes as gone.
+          surfaces = {
+            "the native-otel-relay unit" = {
+              present = config.systemd.services ? native-otel-relay;
+              want = nativeOtel;
+            };
+            "the sops secret native_otlp_auth" = {
+              present = (config.sops.secrets or { }) ? native_otlp_auth;
+              want = nativeOtel;
+            };
+            "Claude's telemetry env (OTEL_*, HARNESS_*, CLAUDE_CODE_ENABLE_TELEMETRY, CLAUDE_CODE_SUBPROCESS_ENV_SCRUB)" =
+              {
+                present = lib.any (
+                  k:
+                  lib.hasPrefix "OTEL_" k
+                  || lib.hasPrefix "HARNESS_" k
+                  || builtins.elem k [
+                    "CLAUDE_CODE_ENABLE_TELEMETRY"
+                    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
+                  ]
+                ) (builtins.attrNames env);
+                want = devTools && claudeOtel;
+              };
+            "Claude's DISABLE_TELEMETRY = \"1\"" = {
+              present = (env.DISABLE_TELEMETRY or null) == "1";
+              want = devTools && !claudeOtel;
+            };
+            "Codex's [otel] stanza" = {
+              present = lib.hasInfix "[otel]" (hm.home.file.".codex/config.toml".text or "");
+              want = codexOtel;
+            };
+            "the OTEL_ codex wrapper" = {
+              present = lib.any (p: (p.pname or p.name or "") == "codex" && lib.hasInfix "OTEL_" (p.text or "")) (
+                hm.home.packages or [ ]
+              );
+              want = codexOtel;
+            };
+          };
+          wrong = lib.attrNames (lib.filterAttrs (_: s: s.present != s.want) surfaces);
+        in
+        {
+          assertion = wrong == [ ];
+          message = "sam.profile.nativeOtel = ${lib.boolToString nativeOtel}, sam.claude.telemetry.enable = ${lib.boolToString claudeOtel}: ${
+            lib.concatMapStringsSep ", " (
+              n: "${n} is ${if surfaces.${n}.present then "present" else "missing"}"
+            ) wrong
+          }.";
+        }
+      )
     ];
 
     programs = {
