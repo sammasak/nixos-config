@@ -39,20 +39,6 @@ let
     secret = c.sops.secrets ? native_otlp_auth;
   };
 
-  runtimeFacts = c: {
-    roles = c.sam.profile.roles;
-    hostSecrets = c.sam.hostSecrets.enable;
-    deployUser = c.users.users ? deploy;
-    stylix = c.stylix.enable;
-    hmStylix = c.home-manager.users.${c.sam.profile.username} ? stylix;
-    gui = c.services.displayManager.enable || c.services.xserver.enable;
-    waitSync = lib.elem "systemd-time-wait-sync.service" c.systemd.additionalUpstreamSystemUnits
-      && c.systemd.services.systemd-time-wait-sync.wantedBy == [ "sysinit.target" ];
-    persistent = map (t: c.systemd.timers.${t}.timerConfig.Persistent) [ "nix-gc" "nix-optimise" ];
-    autoUpgrade = c.system.autoUpgrade.enable;
-    optimiseAfter = c.systemd.services.nix-optimise.after;
-  };
-
   sections = {
     # what a switch may do to the units that hold agent sessions, or that it waits on
     switch-safety = {
@@ -225,11 +211,6 @@ let
       # every address, no sources, the firewall off
       any = bind (hosts.msi-ms7758.extendModules { modules = [ ../modules/homelab/loki.nix
         { homelab.loki = { enable = true; inherit ntfyUrl; listenAddress = "0.0.0.0"; }; networking.firewall.enable = lib.mkForce false; } ]; });
-    };
-
-    runtime-host = {
-      hosts = lib.genAttrs [ "msi-ms7758" "acer-swift" ] (n: runtimeFacts hosts.${n}.config // { failing = failing hosts.${n}.config; });
-      acerDesktop = runtimeFacts acer.specialisation.desktop.configuration;
     };
   };
 in

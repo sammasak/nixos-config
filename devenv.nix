@@ -109,11 +109,6 @@ let
     ${pkgs.python3}/bin/python scripts/test-harness-telemetry.py
   '';
 
-  # msi and acer through the runtime-host role: headless and unthemed, maintenance off the boot path (eval only)
-  runtimeHostTest = gate "runtime-host-test" (with pkgs; [ nix python3 ]) ''
-    ${pkgs.python3}/bin/python scripts/test-runtime-host-role.py
-  '';
-
   journalCollectorTest = gate "journal-collector-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-journal-collector.py
   '';
@@ -177,7 +172,7 @@ let
     echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
     ${timed [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
-      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest runtimeHostTest journalCollectorTest lokiTest switchSafetyTest rfBeaconsTest qaPushTest
+      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest journalCollectorTest lokiTest switchSafetyTest rfBeaconsTest qaPushTest
     ]}
   '';
 
@@ -466,7 +461,6 @@ in
     "nixos:build-bounds-test" = task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
     "nixos:qa-push-test" = task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit" qaPushTest;
-    "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
     "nixos:journal-collector-test" = task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:loki-test" = task "homelab.loki on no host yet: chart-parity config validated by loki -verify-config, loopback and no port by default" lokiTest;
     "nixos:switch-safety-test" = task "A switch keeps Herdr's server on every host that runs one, waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;

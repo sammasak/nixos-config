@@ -27,7 +27,7 @@ let
         # As msi sets it in its host file, which the VM does not import; no unit, kept so the closure matches msi.
         sam.cliTools.nixAudit.enable = true;
         # Stubs for state a VM lacks: the host key the secrets are encrypted to, and an NTP
-        # server, without which systemd-time-wait-sync never finishes (nixos:runtime-host-test checks it is wanted).
+        # server, without which systemd-time-wait-sync never finishes.
         sam.hostSecrets.enable = lib.mkForce false;
         systemd.services.systemd-time-wait-sync.wantedBy = lib.mkForce [ ];
         virtualisation.memorySize = 2048;
