@@ -1,4 +1,4 @@
-# The hosts table: one entry per nixosConfigurations output and deploy-rs node (30-configurations-options.nix).
+# The hosts table: one entry per nixosConfigurations output and deploy-rs node (hosts-option.nix).
 {
   configurations.nixos = {
     # deploy-rs is only ever invoked from lenovo itself, so lenovo's own deploy is a loopback self-push, used to

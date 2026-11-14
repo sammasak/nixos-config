@@ -2,22 +2,22 @@
 
 ### Flake Entry Point
 
-`flake.nix` is minimal. It hands every `.nix` file under `flake-modules/` (recursively, via the `import-tree` input) to flake-parts. The number prefixes are names only: module merging does not depend on them.
+`flake.nix` is minimal. It hands every `.nix` file under `flake-modules/` (recursively, via the `import-tree` input) to flake-parts.
 
-- `00-flake-parts-modules.nix` — flake-parts setup
-- `05-overlays.nix` — exposes `pkgs/` through an overlay
-- `10-systems.nix` — supported systems
-- `20-module-registry.nix` — auto-generates module registries from filesystem
-- `30-configurations-options.nix` — typed host declaration options
-- `40-outputs-nixos.nix` — transforms declarations into `nixosConfigurations`
-- `50-rf-hwsim-test.nix` — the rf-lab hwsim test package
-- `52-runtime-host-vm-test.nix`: the `runtime-host-role-vm` QEMU test package (x86_64-linux only), booting the base and runtime-host roles with msi-ms7758's role list; a package, not a check, run by `just role-vm-test`
-- `60-templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
-- `64-rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
-- `70-deploy.nix`: deploy-rs push targets, one node per hosts table entry
+- `flake-parts-modules.nix` — flake-parts setup
+- `overlays.nix` — exposes `pkgs/` through an overlay
+- `systems.nix` — supported systems
+- `module-registry.nix` — auto-generates module registries from filesystem
+- `hosts-option.nix` — typed host declaration options
+- `nixos-configurations.nix` — transforms declarations into `nixosConfigurations`
+- `rf-hwsim-test.nix` — the rf-lab hwsim test package
+- `runtime-host-vm-test.nix`: the `runtime-host-role-vm` QEMU test package (x86_64-linux only), booting the base and runtime-host roles with msi-ms7758's role list; a package, not a check, run by `just role-vm-test`
+- `templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
+- `rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
+- `deploy.nix`: deploy-rs push targets, one node per hosts table entry
 - `hosts.nix`: the hosts table (roles, `hostDir`, `deploy.hostname`, `deploy.remoteBuild`)
 
-### Module Registry (`20-module-registry.nix`)
+### Module Registry (`module-registry.nix`)
 
 Automatically generates `flake.modules` from filesystem conventions:
 - `modules/roles/*.nix` → `flake.modules.nixos.role-<name>`
@@ -35,7 +35,7 @@ Each host has two files in `hosts/<name>/`:
 | `configuration.nix` | NixOS system modules; sets `sam.profile` (username, hostname, feature flags) |
 | `hardware-configuration.nix` | Auto-generated hardware scan |
 
-The wiring: `flake-modules/hosts.nix` declares each host as a typed `configurations.nixos.<name>` entry (option in `30-configurations-options.nix`): its roles, `hostDir` where the directory differs from the name, `deploy.hostname` where it differs from the name, and the required `deploy.remoteBuild` (no default: a host without it fails evaluation). Then `40-outputs-nixos.nix` resolves roles to modules, sets `sam.profile.roles` from the entry, injects Stylix/SOPS/Home Manager/disko and `modules/workers`, and produces the final `nixosConfigurations.<name>`; `70-deploy.nix` maps every entry to `deploy.nodes.<name>`, with the fleet-wide ssh and rollback settings and `remoteBuild` only when true.
+The wiring: `flake-modules/hosts.nix` declares each host as a typed `configurations.nixos.<name>` entry (option in `hosts-option.nix`): its roles, `hostDir` where the directory differs from the name, `deploy.hostname` where it differs from the name, and the required `deploy.remoteBuild` (no default: a host without it fails evaluation). Then `nixos-configurations.nix` resolves roles to modules, sets `sam.profile.roles` from the entry, injects Stylix/SOPS/Home Manager/disko and `modules/workers`, and produces the final `nixosConfigurations.<name>`; `deploy.nix` maps every entry to `deploy.nodes.<name>`, with the fleet-wide ssh and rollback settings and `remoteBuild` only when true.
 
 ### Desktop vs Server Mode
 

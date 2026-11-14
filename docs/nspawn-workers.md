@@ -296,7 +296,7 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   lifts the host's build bounds and skips the fleet's store caches.
 - The guest imports the fleet's `core/system.nix`, `core/users.nix`,
   `core/packages.nix`, the pinned known hosts and the Home Manager wiring
-  every host gets (`fleetHome` in `flake-modules/40-outputs-nixos.nix`).
+  every host gets (`fleetHome` in `flake-modules/nixos-configurations.nix`).
 - `<nixpkgs>` in a guest is the nixpkgs its system is built from (`nix.nixPath`,
   no channels).
 - Network: a veth pair, `10.233.<i>.1` host side and `10.233.<i>.2` inside,

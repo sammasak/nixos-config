@@ -215,7 +215,7 @@ in
       type = types.listOf types.deferredModule;
       default = [ ];
       internal = true;
-      description = "Home Manager wiring the fleet's hosts get (flake-modules/40-outputs-nixos.nix), reused in every worker.";
+      description = "Home Manager wiring the fleet's hosts get (flake-modules/nixos-configurations.nix), reused in every worker.";
     };
   };
 
