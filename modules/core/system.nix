@@ -84,12 +84,6 @@ in
             default = [ "base" ];
             description = "Role aspects enabled for this host. Set from flake-modules/hosts.nix; a second definition is an error.";
           };
-
-          lanCidr = mkOption {
-            type = types.str;
-            default = "192.168.10.0/24";
-            description = "Trusted LAN CIDR for host-level firewall rules.";
-          };
         };
       };
       default = { };

@@ -13,7 +13,7 @@ let
     nftComment = "alert-bridge: Alertmanager, from its pod or from its node.";
     ports = [ cfg.port ];
     sources = [
-      config.sam.profile.lanCidr
+      config.sam.fleet.lanCidr
       "10.42.0.0/16" # k3s pod CIDR
     ];
     interfaces = [ ];

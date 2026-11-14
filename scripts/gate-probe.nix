@@ -117,7 +117,7 @@ let
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;
       };
-      inherit (lenovo.sam.profile) lanCidr;
+      inherit (lenovo.sam.fleet) lanCidr;
       failing = {
         lenovo = failing lenovo;
         loopbackFirewall = failing (extend "lenovo" [ ({ lib, ... }: { homelab.alertBridge.listenAddress = lib.mkForce "127.0.0.1"; }) ]);

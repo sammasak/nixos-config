@@ -5,6 +5,4 @@
     ./base.nix
     ../embedded
   ];
-
-  sam.embedded.enable = true;
 }

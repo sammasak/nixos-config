@@ -20,7 +20,7 @@ let
   rules = mkDualBackendFirewall {
     nftComment = "The store cache answers the LAN only.";
     ports = [ port ];
-    sources = [ config.sam.profile.lanCidr ];
+    sources = [ config.sam.fleet.lanCidr ];
     interfaces = [ ];
     backend = config.networking.firewall.backend;
   };

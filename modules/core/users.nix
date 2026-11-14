@@ -8,9 +8,6 @@ in
   programs.dconf.enable = true;
 
   home-manager = {
-    useGlobalPkgs = true;
-    useUserPackages = true;
-    backupFileExtension = "backup";
     users.${username} = {
       programs.home-manager.enable = true;
       xdg.enable = true;
@@ -18,7 +15,6 @@ in
       home = {
         username = username;
         homeDirectory = "/home/${username}";
-        stateVersion = "25.11";
         sessionVariables = {
           BROWSER = "firefox";
           TERMINAL = "ghostty";

@@ -1,5 +1,5 @@
 {
-  description = "NixOS + Home Manager";
+  description = "Five-host NixOS fleet: typed host table, role modules, Home Manager, sops-nix, deploy-rs";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
