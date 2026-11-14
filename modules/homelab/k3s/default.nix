@@ -188,7 +188,6 @@ in
         # a desktop-only machine no longer exposes them.
         80 # HTTP  (ingress / ACME http-01)
         443 # HTTPS (ingress)
-        8080 # Alternative HTTP (ingress)
         10250 # Kubelet API
         4240 # Cilium agent health check (cilium-health, node-to-node)
         4244 # Hubble server on the agent (Hubble Relay connects here)

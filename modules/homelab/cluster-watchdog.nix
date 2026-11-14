@@ -24,6 +24,7 @@ in
         Environment = "KUBECONFIG=/etc/rancher/k3s/k3s.yaml";
         # Prevent a hung curl/kubectl from blocking the next run.
         TimeoutStartSec = "90";
+        StateDirectory = "cluster-watchdog";
       };
       # gnugrep is pinned rather than taken from the system path: a missing grep
       # would make the Watchdog check below fail closed and page for a healthy
@@ -43,11 +44,11 @@ in
           failures="$failures\n• k3s API not responding"
         else
           # 2. Node readiness
-          not_ready=$(kubectl get nodes --no-headers 2>/dev/null \
-            | awk '$2 != "Ready" {count++} END {print count+0}') || true
-          if [ "$not_ready" -gt 0 ]; then
-            node_list=$(kubectl get nodes --no-headers 2>/dev/null \
-              | awk '$2 != "Ready" {print $1}' | tr '\n' ' ') || true
+          # One read for the count and the names, so a failed second call cannot change the page's text.
+          node_list=$(kubectl get nodes --no-headers 2>/dev/null \
+            | awk '$2 != "Ready" {printf "%s ", $1}') || true
+          if [ -n "$node_list" ]; then
+            not_ready=$(wc -w <<<"$node_list")
             failures="$failures\n• $not_ready node(s) NotReady: $node_list"
           fi
 
@@ -89,14 +90,39 @@ in
           fi
         fi
 
+        # Pages when the failure set changes and repeats an unchanged one every
+        # 6 h. The state moves only once ntfy took the page, so a failed send is
+        # retried at the next run.
+        last="$STATE_DIRECTORY/failures"
+        paged="$STATE_DIRECTORY/paged-at"
+        before=$(cat "$last" 2>/dev/null) || true
+        now=$(date +%s)
+        paged_at=$(cat "$paged" 2>/dev/null) || paged_at=0
+        node="${config.networking.hostName}"
+        at=$(date -u '+%H:%M UTC')
+
         if [ -n "$failures" ]; then
-          curl -sf \
-            -H "Title: Homelab cluster degraded" \
-            -H "Priority: high" \
-            -H "Tags: warning,rotating_light" \
-            -d "$(printf 'Health check failures:%b\n\nNode: %s\nTime: %s' "$failures" "$(hostname -s)" "$(date -u '+%H:%M UTC')")" \
-            "${ntfyUrl}" || true
+          if [ "$failures" != "$before" ] || [ $((now - paged_at)) -ge 21600 ]; then
+            title="Homelab cluster degraded"
+            [ "$failures" = "$before" ] && title="Homelab cluster still degraded"
+            if curl -sf \
+              -H "Title: $title" \
+              -H "Priority: high" \
+              -H "Tags: warning,rotating_light" \
+              -d "$(printf 'Health check failures:%b\n\nNode: %s\nTime: %s' "$failures" "$node" "$at")" \
+              "${ntfyUrl}"; then
+              printf '%s' "$failures" >"$last"
+              echo "$now" >"$paged"
+            fi
+          fi
         else
+          if [ -n "$before" ]; then
+            curl -sf \
+              -H "Title: Homelab cluster recovered" \
+              -H "Tags: white_check_mark" \
+              -d "$(printf 'All checks pass again.\n\nNode: %s\nTime: %s' "$node" "$at")" \
+              "${ntfyUrl}" && rm -f "$last" "$paged"
+          fi
           # Heartbeat on a clean run. This watchdog is otherwise silent when
           # healthy, which is indistinguishable from the watchdog being dead —
           # a stopped timer, a broken kubectl or an unreachable ntfy all look
@@ -107,7 +133,7 @@ in
             -H "Title: watchdog OK" \
             -H "Priority: min" \
             -H "Tags: heavy_check_mark" \
-            -d "$(printf 'All checks passed.\n\nNode: %s\nTime: %s' "$(hostname -s)" "$(date -u '+%H:%M UTC')")" \
+            -d "$(printf 'All checks passed.\n\nNode: %s\nTime: %s' "$node" "$at")" \
             "${ntfyUrl}" || true
         fi
       '';
