@@ -44,11 +44,11 @@ in
           failures="$failures\n• k3s API not responding"
         else
           # 2. Node readiness
-          not_ready=$(kubectl get nodes --no-headers 2>/dev/null \
-            | awk '$2 != "Ready" {count++} END {print count+0}') || true
-          if [ "$not_ready" -gt 0 ]; then
-            node_list=$(kubectl get nodes --no-headers 2>/dev/null \
-              | awk '$2 != "Ready" {print $1}' | tr '\n' ' ') || true
+          # One read for the count and the names, so a failed second call cannot change the page's text.
+          node_list=$(kubectl get nodes --no-headers 2>/dev/null \
+            | awk '$2 != "Ready" {printf "%s ", $1}') || true
+          if [ -n "$node_list" ]; then
+            not_ready=$(wc -w <<<"$node_list")
             failures="$failures\n• $not_ready node(s) NotReady: $node_list"
           fi
 
@@ -90,18 +90,19 @@ in
           fi
         fi
 
-        # Pages on a change of the failure set, and repeats an unchanged one every 6 h: the timer runs every
-        # 10 min. The state moves only once ntfy took the page, so a failed send is retried at the next run.
+        # Pages when the failure set changes and repeats an unchanged one every
+        # 6 h. The state moves only once ntfy took the page, so a failed send is
+        # retried at the next run.
         last="$STATE_DIRECTORY/failures"
         paged="$STATE_DIRECTORY/paged-at"
         before=$(cat "$last" 2>/dev/null) || true
         now=$(date +%s)
-        then_=$(cat "$paged" 2>/dev/null) || then_=0
+        paged_at=$(cat "$paged" 2>/dev/null) || paged_at=0
         node="${config.networking.hostName}"
         at=$(date -u '+%H:%M UTC')
 
         if [ -n "$failures" ]; then
-          if [ "$failures" != "$before" ] || [ $((now - then_)) -ge 21600 ]; then
+          if [ "$failures" != "$before" ] || [ $((now - paged_at)) -ge 21600 ]; then
             title="Homelab cluster degraded"
             [ "$failures" = "$before" ] && title="Homelab cluster still degraded"
             if curl -sf \
