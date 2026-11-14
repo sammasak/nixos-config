@@ -1,4 +1,7 @@
-{ osConfig ? null, ... }:
+{
+  osConfig ? null,
+  ...
+}:
 let
   resolvedUserConfig =
     if osConfig != null && osConfig ? sam && osConfig.sam ? userConfig then

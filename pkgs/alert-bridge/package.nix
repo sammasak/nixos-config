@@ -15,7 +15,10 @@ rustPlatform.buildRustPackage {
   meta = {
     inherit (manifest) description;
     homepage = "https://github.com/sammasak/alert-bridge";
-    license = with lib.licenses; [ mit asl20 ];
+    license = with lib.licenses; [
+      mit
+      asl20
+    ];
     mainProgram = "alert-bridge";
     platforms = lib.platforms.linux;
   };

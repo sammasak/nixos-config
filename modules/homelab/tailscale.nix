@@ -1,9 +1,22 @@
 # Tailscale subnet router: advertising the LAN CIDR is what makes every box on
 # the LAN reachable from outside through a single node.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
-  inherit (lib) concatStringsSep escapeShellArgs mkDefault mkEnableOption mkIf mkOption types;
+  inherit (lib)
+    concatStringsSep
+    escapeShellArgs
+    mkDefault
+    mkEnableOption
+    mkIf
+    mkOption
+    types
+    ;
   cfg = config.homelab.tailscale;
 
   upFlags = [
@@ -15,7 +28,10 @@ in
 {
   # ntfy.nix: so the `ntfyUrl` default can read homelab.ntfy.port on hosts
   # that never import the ntfy module themselves.
-  imports = [ ./sops.nix ./ntfy.nix ];
+  imports = [
+    ./sops.nix
+    ./ntfy.nix
+  ];
 
   options.homelab.tailscale = {
     enable = mkEnableOption "Tailscale";
@@ -58,7 +74,10 @@ in
 
     systemd.services.tailscale-autoconnect = {
       description = "Join the Tailscale tailnet";
-      after = [ "network-online.target" "tailscaled.service" ];
+      after = [
+        "network-online.target"
+        "tailscaled.service"
+      ];
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 

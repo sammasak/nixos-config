@@ -11,7 +11,10 @@
         version = "0-${builtins.substring 0 7 src.rev}";
         inherit src;
         cargoLock.lockFile = "${src}/Cargo.lock";
-        cargoBuildFlags = [ "--example" "beacons" ];
+        cargoBuildFlags = [
+          "--example"
+          "beacons"
+        ];
         doCheck = false;
         installPhase = ''
           runHook preInstall
@@ -27,19 +30,30 @@
       # #42 DoD ("replicates behavior … with captured baseline and tests"): the Rust table must equal the
       # one rf:beacons prints (tshark + scripts/rf-beacons-table.sh) on this repo's crafted fixtures
       checks = lib.optionalAttrs (system == "x86_64-linux") {
-        rf-beacons-parity = pkgs.runCommand "rf-beacons-parity"
-          { nativeBuildInputs = with pkgs; [ bash wireshark-cli gawk coreutils gnugrep diffutils rfBeaconsRs ]; }
-          ''
-            cd ${../.}
-            for f in beacon beacon-hidden beacon-escape; do
-              p=modules/rf-lab/fixtures/$f.pcap
-              rust=$(rf-beacons-rs "$p" ${rfBeaconsRs}/share/rf-beacons-rs/oui-sample.csv --text)
-              shark=$(bash scripts/rf-beacons-table.sh "$p")
-              diff -u <(printf '%s\n' "$shark") <(printf '%s\n' "$rust") || { echo "rf-beacons parity: $f differs (- tshark, + rust)" >&2; exit 1; }
-              echo "parity ok: $f ($(printf '%s\n' "$rust" | grep -c .) rows)"
-            done
-            touch $out
-          '';
+        rf-beacons-parity =
+          pkgs.runCommand "rf-beacons-parity"
+            {
+              nativeBuildInputs = with pkgs; [
+                bash
+                wireshark-cli
+                gawk
+                coreutils
+                gnugrep
+                diffutils
+                rfBeaconsRs
+              ];
+            }
+            ''
+              cd ${../.}
+              for f in beacon beacon-hidden beacon-escape; do
+                p=modules/rf-lab/fixtures/$f.pcap
+                rust=$(rf-beacons-rs "$p" ${rfBeaconsRs}/share/rf-beacons-rs/oui-sample.csv --text)
+                shark=$(bash scripts/rf-beacons-table.sh "$p")
+                diff -u <(printf '%s\n' "$shark") <(printf '%s\n' "$rust") || { echo "rf-beacons parity: $f differs (- tshark, + rust)" >&2; exit 1; }
+                echo "parity ok: $f ($(printf '%s\n' "$rust" | grep -c .) rows)"
+              done
+              touch $out
+            '';
       };
     };
 }

@@ -3,7 +3,12 @@
 
 let
   cfg = config.homelab.acme;
-  inherit (lib) mkEnableOption mkOption mkIf types;
+  inherit (lib)
+    mkEnableOption
+    mkOption
+    mkIf
+    types
+    ;
 in
 {
   imports = [ ./sops.nix ];
@@ -47,7 +52,10 @@ in
         # AdGuard Home (192.168.10.154). If AdGuard Home is down, lego cannot
         # find the zone and Cloudflare API fails.
         dnsResolver = "1.1.1.1:53";
-        extraLegoFlags = [ "--dns.resolvers" "8.8.8.8:53" ];
+        extraLegoFlags = [
+          "--dns.resolvers"
+          "8.8.8.8:53"
+        ];
 
         credentialFiles = {
           "CLOUDFLARE_DNS_API_TOKEN_FILE" = config.sops.secrets."cloudflare/api_token".path;

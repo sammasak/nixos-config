@@ -15,7 +15,11 @@ in
       pkgs.writeShellApplication {
         name = "codex";
         text = ''
-          export OTEL_RESOURCE_ATTRIBUTES=${lib.escapeShellArg (lib.concatStringsSep "," (lib.mapAttrsToList (k: v: "${k}=${v}") resourceAttributes))}
+          export OTEL_RESOURCE_ATTRIBUTES=${
+            lib.escapeShellArg (
+              lib.concatStringsSep "," (lib.mapAttrsToList (k: v: "${k}=${v}") resourceAttributes)
+            )
+          }
           export OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
           exec ${pkgs.codex}/bin/codex "$@"
         '';

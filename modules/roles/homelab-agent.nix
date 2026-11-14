@@ -21,7 +21,8 @@
 
   # 0 = retry forever: the default 4 ends in a secret-agent request no headless worker answers.
   networking.networkmanager.settings.connection."connection.autoconnect-retries" =
-    lib.mkIf (config.sam.wifi.declarativeHomeProfile or false) 0;
+    lib.mkIf (config.sam.wifi.declarativeHomeProfile or false)
+      0;
 
   # A Nix trusted-user is root-equivalent. deploy-rs connects as `deploy` and
   # becomes root locally via sudo, so the login user never needs it.

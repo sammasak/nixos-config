@@ -5,7 +5,12 @@
 # seen. Not in the VM: hosts/msi-ms7758/configuration.nix (GRUB, WoL, power schedule).
 # A host-sized closure: `just role-vm-test` on msi only.
 # `.broken` fails Home Manager's activation on purpose; it means something only next to a passing plain run.
-{ pkgs, roleModules, fleetModules, roles }:
+{
+  pkgs,
+  roleModules,
+  fleetModules,
+  roles,
+}:
 let
   test = pkgs.testers.runNixOSTest {
     name = "runtime-host-role";

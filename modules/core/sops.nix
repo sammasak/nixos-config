@@ -24,11 +24,14 @@ in
       secrets = {
         # Read by the devTools fish init and coordinator wake-up, and by the workers' egress proxy, whose own
         # restartUnits declaration (modules/workers) would otherwise leave this secret without its sopsFile.
-        "claude_oauth_token" = lib.mkIf (config.sam.profile.devTools || lib.any dev.egress.anthropic.for (lib.attrValues dev.instances)) {
-          sopsFile = ../../secrets/claude/oauth.yaml;
-          owner = username;
-          mode = "0400";
-        };
+        "claude_oauth_token" =
+          lib.mkIf
+            (config.sam.profile.devTools || lib.any dev.egress.anthropic.for (lib.attrValues dev.instances))
+            {
+              sopsFile = ../../secrets/claude/oauth.yaml;
+              owner = username;
+              mode = "0400";
+            };
 
         # Pi's project key for the in-cluster llm-gateway (homelab-gitops
         # apps/llm-gateway). Read by Pi's `homelab` provider at request time

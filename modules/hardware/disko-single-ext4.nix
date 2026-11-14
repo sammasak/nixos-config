@@ -1,8 +1,7 @@
 # Declares the current hand-partitioned layout for a future nixos-anywhere/
 # disko-install reinstall. enableConfig=false keeps hardware-configuration.nix
 # authoritative for the live system; disko generates nothing here.
-device:
-{
+device: {
   disko.enableConfig = false;
 
   disko.devices.disk.main = {
@@ -18,7 +17,10 @@ device:
             type = "filesystem";
             format = "vfat";
             mountpoint = "/boot";
-            mountOptions = [ "fmask=0077" "dmask=0077" ];
+            mountOptions = [
+              "fmask=0077"
+              "dmask=0077"
+            ];
           };
         };
         root = {

@@ -7,7 +7,14 @@
 # ports also stay out of `allowedTCPPorts`, which accepts from any source.
 lib:
 let
-  inherit (lib) concatMapStrings concatStringsSep head length optional optionalString;
+  inherit (lib)
+    concatMapStrings
+    concatStringsSep
+    head
+    length
+    optional
+    optionalString
+    ;
 
   # nftables accepts `{ 22 }` too; the bare form exists only to match the
   # hand-written rules this replaced byte for byte. Drop it when that stops mattering.

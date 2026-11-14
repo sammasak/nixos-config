@@ -1,6 +1,11 @@
 # lenovo and the environment hosts serve their own /nix/store to the fleet over the LAN (harmonia), so what one
 # machine built the others download. Each signs with a key generated on the host that never leaves it; its public half is below.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   cfg = config.sam.storeCache;
@@ -13,7 +18,10 @@ let
     lenovo-21CB001PMX.publicKey = "lenovo-21CB001PMX-store-1:Ifjt/zTBnDw6GFhAw6w6L0JGWHblrWr4V7L/BfphwPU=";
     acer-swift.publicKey = "acer-swift-store-1:iDCzz1UQib6s9pZ818Evy6d8naQ+4jaI6YYZmlGsz5A=";
     # powered off nights and weekends: an absent cache costs every path lookup the connect timeout, so nobody asks it
-    msi-ms7758 = { publicKey = "msi-ms7758-store-1:xIr/Ee7u3rhCm4bhycovNFbfA2UAB6OITroVVWmv7wQ="; sleeps = true; };
+    msi-ms7758 = {
+      publicKey = "msi-ms7758-store-1:xIr/Ee7u3rhCm4bhycovNFbfA2UAB6OITroVVWmv7wQ=";
+      sleeps = true;
+    };
   };
   peers = lib.filter (c: !(c.sleeps or false)) (lib.attrValues (removeAttrs caches [ host ]));
 
@@ -33,14 +41,21 @@ in
       enable = true;
       signKeyPaths = [ "${dir}/secret-key" ];
       # ahead of cache.nixos.org (40): a path a neighbour holds comes over the LAN
-      settings = { bind = "[::]:${toString port}"; priority = 30; };
+      settings = {
+        bind = "[::]:${toString port}";
+        priority = 30;
+      };
     };
     systemd.services.store-cache-key = {
       description = "Signing key of this host's store cache";
       requiredBy = [ "harmonia.service" ];
       before = [ "harmonia.service" ];
       unitConfig.ConditionPathExists = "!${dir}/secret-key";
-      serviceConfig = { Type = "oneshot"; StateDirectory = "store-cache"; UMask = "0077"; };
+      serviceConfig = {
+        Type = "oneshot";
+        StateDirectory = "store-cache";
+        UMask = "0077";
+      };
       path = [ config.nix.package ];
       enableStrictShellChecks = true;
       script = ''

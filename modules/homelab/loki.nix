@@ -5,13 +5,27 @@
 # Upstream runs `loki -verify-config` on the rendered file at build time (only while extraFlags is empty).
 # - A crash loop slower than 3 starts per 1200 s never reaches failed, so it pages only once an absence alert exists.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed loki` and a start.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   cfg = config.homelab.loki;
   dataDir = config.services.loki.dataDir;
-  retentionHours = let u = lib.substring (lib.stringLength cfg.retention - 1) 1 cfg.retention;
-    in lib.toInt (lib.removeSuffix u cfg.retention) * { h = 1; d = 24; w = 168; }.${u};
+  retentionHours =
+    let
+      u = lib.substring (lib.stringLength cfg.retention - 1) 1 cfg.retention;
+    in
+    lib.toInt (lib.removeSuffix u cfg.retention)
+    * {
+      h = 1;
+      d = 24;
+      w = 168;
+    }
+    .${u};
   probeHost = if cfg.listenAddress == "0.0.0.0" then "127.0.0.1" else cfg.listenAddress;
 
   firewallRules = mkDualBackendFirewall {
@@ -96,19 +110,32 @@ in
           };
         };
         # must stay identical to what wrote the copied chunks: append a new period, never edit this one
-        schema_config.configs = [{
-          from = "2024-01-01";
-          store = "tsdb";
-          object_store = "filesystem";
-          schema = "v13";
-          index = { prefix = "loki_index_"; period = "24h"; };
-        }];
+        schema_config.configs = [
+          {
+            from = "2024-01-01";
+            store = "tsdb";
+            object_store = "filesystem";
+            schema = "v13";
+            index = {
+              prefix = "loki_index_";
+              period = "24h";
+            };
+          }
+        ];
         limits_config = {
           retention_period = cfg.retention;
           # pi-agent backs the 30-day "Pi agents" panels (devenv-platform#76), harness the 30-day agent usage review
           retention_stream = [
-            { selector = ''{job="pi-agent"}''; priority = 1; period = "720h"; }
-            { selector = ''{observer="harness"}''; priority = 1; period = "720h"; }
+            {
+              selector = ''{job="pi-agent"}'';
+              priority = 1;
+              period = "720h";
+            }
+            {
+              selector = ''{observer="harness"}'';
+              priority = 1;
+              period = "720h";
+            }
           ];
           ingestion_rate_mb = 8;
           ingestion_burst_size_mb = 16;
@@ -158,19 +185,30 @@ in
         ProtectKernelModules = true;
         ProtectKernelTunables = true;
         ProtectProc = "invisible";
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" "AF_NETLINK" ];
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+          "AF_NETLINK"
+        ];
         RestrictNamespaces = true;
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
         LockPersonality = true;
         SystemCallArchitectures = "native";
-        SystemCallFilter = [ "@system-service" "~@privileged" ];
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+        ];
         UMask = "0027";
       };
     };
 
     systemd.services.loki-failed = {
-      serviceConfig = { Type = "oneshot"; DynamicUser = true; };
+      serviceConfig = {
+        Type = "oneshot";
+        DynamicUser = true;
+      };
       script = ''
         ${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 --retry-all-errors --retry-max-time 60 -H "Priority: high" -d "loki failed on ${config.networking.hostName}" ${lib.escapeShellArg cfg.ntfyUrl}
       '';

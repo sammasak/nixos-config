@@ -3,7 +3,12 @@
 # No provider key reaches the host: the in-cluster llm-gateway holds them. Auth, upgrade,
 # rollback: docs/pi.md.
 devenvPlatform:
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.sam.pi;
 
@@ -56,15 +61,21 @@ let
     baseUrl = cfg.msiOllamaBaseUrl;
     api = "openai-completions";
     apiKey = "ollama";
-    models = map (id: {
-      inherit id;
-      contextWindow = 16384;
-      maxTokens = 4096;
-      compat = {
-        supportsDeveloperRole = false;
-        supportsReasoningEffort = false;
-      };
-    }) [ "qwen2.5-coder:7b" "llama3.1:8b" ];
+    models =
+      map
+        (id: {
+          inherit id;
+          contextWindow = 16384;
+          maxTokens = 4096;
+          compat = {
+            supportsDeveloperRole = false;
+            supportsReasoningEffort = false;
+          };
+        })
+        [
+          "qwen2.5-coder:7b"
+          "llama3.1:8b"
+        ];
   };
 
   # The default (`homelab/auto`, pinned above): the in-cluster llm-gateway picks a free model
@@ -75,9 +86,26 @@ let
     api = "openai-completions";
     apiKey = "!cat /run/secrets/llm_gateway_pi_key";
     models = [
-      { id = "auto"; name = "homelab auto"; reasoning = true; contextWindow = 1048576; maxTokens = 32768; }
-      { id = "best"; name = "homelab best"; reasoning = true; contextWindow = 1048576; maxTokens = 32768; }
-      { id = "local"; name = "homelab local"; contextWindow = 131072; maxTokens = 8192; }
+      {
+        id = "auto";
+        name = "homelab auto";
+        reasoning = true;
+        contextWindow = 1048576;
+        maxTokens = 32768;
+      }
+      {
+        id = "best";
+        name = "homelab best";
+        reasoning = true;
+        contextWindow = 1048576;
+        maxTokens = 32768;
+      }
+      {
+        id = "local";
+        name = "homelab local";
+        contextWindow = 131072;
+        maxTokens = 8192;
+      }
     ];
     # One request shape every tier accepts: msi Ollama 400s on `reasoning_effort`
     # (rejected by both models, so `auto`/`local` lose the local floor) and Gemini
@@ -118,7 +146,14 @@ let
 
   piOffload = pkgs.writeShellApplication {
     name = "pi-offload";
-    runtimeInputs = with pkgs; [ git jq coreutils util-linux curl openssh ];
+    runtimeInputs = with pkgs; [
+      git
+      jq
+      coreutils
+      util-linux
+      curl
+      openssh
+    ];
     text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-offload";
   };
 in
@@ -143,7 +178,11 @@ in
       piOffload
       (pkgs.writeShellApplication {
         name = "pi-view";
-        runtimeInputs = with pkgs; [ curl jq coreutils ];
+        runtimeInputs = with pkgs; [
+          curl
+          jq
+          coreutils
+        ];
         text = lokiDefault + builtins.readFile "${devenvPlatform}/agents/pi/offload/pi-view";
       })
       # ADR-028 issue pipeline. Run in place from the pinned checkout, so it finds its
@@ -152,7 +191,21 @@ in
       # gh is only used for API and PR calls.
       (pkgs.writeShellApplication {
         name = "pi-ticket";
-        runtimeInputs = with pkgs; [ bash gh git jq coreutils util-linux curl openssh gawk gnused gnugrep findutils diffutils ];
+        runtimeInputs = with pkgs; [
+          bash
+          gh
+          git
+          jq
+          coreutils
+          util-linux
+          curl
+          openssh
+          gawk
+          gnused
+          gnugrep
+          findutils
+          diffutils
+        ];
         text = lokiDefault + ''
           export PI_TICKET_OFFLOAD="''${PI_TICKET_OFFLOAD:-${piOffload}/bin/pi-offload}"
           exec bash ${devenvPlatform}/agents/pi/ticket/pi-ticket "$@"

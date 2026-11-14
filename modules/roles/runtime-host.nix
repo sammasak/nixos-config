@@ -18,11 +18,25 @@ in
   sam.storeCache.enable = true;
 
   # An agent that is talked into it reaches the internet, not the LAN, the cluster or this host (DNS excepted).
-  services.devEnvironments.blockedNetworks = [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "169.254.0.0/16" ];
+  services.devEnvironments.blockedNetworks = [
+    "10.0.0.0/8"
+    "172.16.0.0/12"
+    "192.168.0.0/16"
+    "169.254.0.0/16"
+  ];
 
   # A guest may override max-jobs and cores per build, so CPUQuota holds the 2 x 2 bound; MemoryMax fails a build, never k3s.
-  nix.settings = { max-jobs = 2; cores = 2; min-free = lib.mkDefault (15 * 1024 * 1024 * 1024); max-free = lib.mkDefault (40 * 1024 * 1024 * 1024); };
-  systemd.services.nix-daemon.serviceConfig = { MemoryHigh = "4G"; MemoryMax = "6G"; CPUQuota = "400%"; };
+  nix.settings = {
+    max-jobs = 2;
+    cores = 2;
+    min-free = lib.mkDefault (15 * 1024 * 1024 * 1024);
+    max-free = lib.mkDefault (40 * 1024 * 1024 * 1024);
+  };
+  systemd.services.nix-daemon.serviceConfig = {
+    MemoryHigh = "4G";
+    MemoryMax = "6G";
+    CPUQuota = "400%";
+  };
 
   # lenovo's ntfy server (homelab.ntfy.baseUrl in its configuration)
   sam.workers.ntfyUrl = lib.mkDefault "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
@@ -47,8 +61,11 @@ in
 
   assertions =
     let
-      found = lib.optional config.stylix.enable "Stylix"
-        ++ lib.optional (config.home-manager.users.${config.sam.profile.username} ? stylix) "Home Manager Stylix"
+      found =
+        lib.optional config.stylix.enable "Stylix"
+        ++ lib.optional (
+          config.home-manager.users.${config.sam.profile.username} ? stylix
+        ) "Home Manager Stylix"
         ++ lib.optional config.services.displayManager.enable "a display manager"
         ++ lib.optional config.services.xserver.enable "an X server";
     in

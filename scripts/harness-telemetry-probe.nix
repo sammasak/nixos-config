@@ -6,5 +6,9 @@ let
 in
 {
   on = settingsOf hosts.lenovo.config;
-  off = settingsOf (hosts.lenovo.extendModules { modules = [ ({ lib, ... }: { sam.claude.telemetry.enable = lib.mkForce false; }) ]; }).config;
+  off =
+    settingsOf
+      (hosts.lenovo.extendModules {
+        modules = [ ({ lib, ... }: { sam.claude.telemetry.enable = lib.mkForce false; }) ];
+      }).config;
 }

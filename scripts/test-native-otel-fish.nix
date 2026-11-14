@@ -21,7 +21,9 @@ let
     specialArgs = {
       inherit pkgs;
       osConfig.sam.profile.devTools = devTools;
-      osConfig.sam.claude.telemetry.resourceAttributes = { "host.name" = "lenovo-21cb001pmx"; };
+      osConfig.sam.claude.telemetry.resourceAttributes = {
+        "host.name" = "lenovo-21cb001pmx";
+      };
     };
     modules = [
       {
@@ -42,5 +44,8 @@ let
 in
 {
   inherit (evaluated.config.programs.fish) functions;
-  codex = map (p: { inherit (p) text; inherit (p.meta) priority; }) codex;
+  codex = map (p: {
+    inherit (p) text;
+    inherit (p.meta) priority;
+  }) codex;
 }

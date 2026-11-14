@@ -24,6 +24,8 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
+nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table
+
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
 
