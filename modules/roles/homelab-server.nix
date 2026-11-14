@@ -20,6 +20,21 @@
     role = "server";
   };
 
+  homelab.flux.enable = true;
+
+  homelab.dns = {
+    enable = true;
+    tls.enable = true;
+  };
+
+  homelab.acme.enable = true;
+
+  homelab.ntfy.enable = true;
+
+  # Grants non-interactive control-plane deploy — a deliberate trust choice.
+  # See vault: homelab/decisions/ADR-024-nixos-rebuild-trigger-security-model.md
+  homelab.nixosRebuildTrigger.enable = true;
+
   # Self-reboot on a hang: no BMC, no remote power path, so the alternative is
   # walking to the machine. Timeouts are generous on purpose, and not set on the
   # agent role because acer-swift is the sole worker.
