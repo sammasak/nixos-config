@@ -1,4 +1,4 @@
-{ config, lib, ... }:
+{ config, ... }:
 let
   hasDesktop = config.sam.desktop.enable;
 in
@@ -6,13 +6,6 @@ in
   imports = [
     ../hardware/thermal.nix
   ];
-
-  # Safe defaults for laptops. Host-specific configs can override platform/profile.
-  sam.thermal = {
-    enable = true;
-    platform = lib.mkDefault "generic";
-    profile = lib.mkDefault "balanced";
-  };
 
   # Desktop-only: a tray applet needs a tray, and acpilight's backlight udev
   # rules only matter to an interactive session. upower and
