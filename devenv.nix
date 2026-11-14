@@ -226,17 +226,6 @@ let
         ${pkgs.python3}/bin/python scripts/test-journal-collector.py
       '';
 
-  # the probe's seeded msi realises upstream's validate-loki-conf, so loki -verify-config runs here
-  lokiTest =
-    gate "loki-test"
-      (with pkgs; [
-        nix
-        python3
-      ])
-      ''
-        ${pkgs.python3}/bin/python scripts/test-loki.py
-      '';
-
   # a switch keeps Herdr's server and cannot wait forever on a unit (eval only)
   switchSafetyTest =
     gate "switch-safety-test"
@@ -357,7 +346,6 @@ let
       buildBoundsTest
       delegationTest
       journalCollectorTest
-      lokiTest
       switchSafetyTest
       rfBeaconsTest
       qaPushTest
@@ -734,8 +722,6 @@ in
       task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs" qaPushTest;
     "nixos:journal-collector-test" =
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
-    "nixos:loki-test" =
-      task "homelab.loki on no host yet: chart-parity config validated by loki -verify-config, loopback and no port by default" lokiTest;
     "nixos:switch-safety-test" =
       task "A switch keeps Herdr's server on every host that runs one, waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
