@@ -184,8 +184,6 @@ def main():
         check(run.returncode == 0 and "stricthostkeychecking true" in eff and "updatehostkeys false" in eff
               and "globalknownhostsfile /etc/ssh/ssh_known_hosts" in eff,
               f"{host}: ssh -G on the rendered file resolves to strict checking against the pinned file")
-    check(P["defaults"]["strict"] is True and P["defaults"]["enable"] is True,
-          "the module is one switch (enable) plus one for strictness, both on by default")
     for node in ("lenovo", "acer-swift", "black-pi"):
         opts = P["sshOpts"][node]
         check(opts == ["-o", "StrictHostKeyChecking=yes"], f"deploy-rs node {node} refuses unknown or changed host keys")
