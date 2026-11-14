@@ -94,7 +94,7 @@ neighbour was reclaimed to 59M.
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
-| Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later | 23 s; profile and GC roots deleted, the home moved to `<stateDir>/.trash/<name>-<date>` and deleted at the first activation a week later (recover it with `mv` meanwhile) |
+| Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later, except on a host that declares no instance, where the last name stays until `.trash` is empty (the activation that ages it out runs only while `instances` or `retired` is set) | 23 s; profile and GC roots deleted, the home moved to `<stateDir>/.trash/<name>-<date>` and deleted at the first activation a week later (recover it with `mv` meanwhile) |
 
 Removing a declaration only stops the environment: a rollback or a deploy from
 an older checkout lacks instances too, and must not delete their homes. Only a name in `retired` is
