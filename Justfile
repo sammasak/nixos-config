@@ -49,13 +49,28 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # terminal and Ctrl-C. The cap covers the deploy-rs client and its evaluation;
 # builds run in nix-daemon under its own limits. lenovo is a loopback
 # self-push. msi: only Mon-Fri ~09:00-21:00. The Pis build their own closure:
-# black-pi takes hours on a cache miss, so run it in zellij.
+# black-pi takes hours on a cache miss, so run it in zellij. The check after
+# deploy-rs runs whatever deploy-rs returned, and the recipe keeps deploy-rs's
+# exit code if it failed: it catches a host left degraded or not on the system
+# profile's generation, including a Pi left on a failed generation
+# (deploy-rs#411, flake-modules/deploy.nix). It rolls nothing back, and a host
+# degraded for an unrelated reason fails every deploy until fixed.
 [arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
-[doc("Push HOST with deploy-rs (magic rollback), skipping the flake check, under the memory cap")]
+[doc("Push HOST with deploy-rs (magic rollback), skipping the flake check, under the memory cap, then check the host is running it")]
 deploy HOST:
     [ -z "$(git status --porcelain --untracked-files=no)" ] || echo "WARNING: uncommitted changes; deploying a tree no gate checked" >&2
     git merge-base --is-ancestor HEAD origin/main || echo "WARNING: HEAD is not on origin/main (local ref); its flake check may never have run" >&2
-    systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks
+    rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks || rc=$?; \
+      check=255; target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname) || target=""; \
+      if [ -n "$target" ]; then check=0; timeout --foreground 300 ssh -o StrictHostKeyChecking=yes "deploy@$target" \
+        'systemctl is-system-running --wait && [ "$(readlink /run/current-system)" = "$(dirname "$(readlink -f /nix/var/nix/profiles/system/init)")" ]' \
+        || check=$?; fi; \
+      case $check in \
+        0) ;; \
+        124|255) echo "post-deploy check did not run on {{HOST}} (exit $check): timed out, unreachable, or no hostname" >&2 ;; \
+        *) echo "post-deploy check failed on {{HOST}} (exit $check): degraded or not on the profile's generation; nothing was rolled back, see systemctl --failed there" >&2 ;; \
+      esac; \
+      [ "$rc" -eq 0 ] || exit "$rc"; exit "$check"
 
 # What `just deploy HOST` would do, without activating it: deploy-rs's
 # --dry-activate runs `switch-to-configuration dry-activate` from the store
