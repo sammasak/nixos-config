@@ -41,8 +41,11 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 # --skip-checks under a 7G, no-swap cap on the deploy-rs client. The pre-push gate runs the
 # flake check on pushed non-docs commits; a dirty or unpushed tree deploys unchecked (it warns).
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
-#   then on the target: `systemctl is-system-running` = running, and `readlink /run/current-system`
-#   = `dirname "$(readlink -f /nix/var/nix/profiles/system/init)"`
+#   then, whatever deploy-rs returned, it checks the target (`systemctl is-system-running --wait`
+#   = running, /run/current-system = the system profile's generation) and exits non-zero if either
+#   fails: a host left degraded or off that generation, incl. a Pi left on a failed one (#411).
+#   A failed check rolls nothing back, and a host degraded for an unrelated, pre-existing reason
+#   fails every deploy: read `systemctl --failed` on the target.
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
@@ -231,8 +234,9 @@ either side is only reported.
 
 ## Conventions
 
-- **Namespace boundary**: `homelab.*` is a cluster/platform capability a host
-  opts into (k3s, flux, dns, acme, ntfy, tailscale, the rebuild trigger);
+- **Namespace boundary**: `homelab.*` is a cluster/platform capability, mostly
+  turned on by a role (k3s, flux, dns, acme, ntfy, the rebuild trigger;
+  tailscale has no option, importing its module turns it on);
   `sam.*` is host identity and personal-machine concern (profile, desktop,
   thermal, hostSecrets). When both scopes need the same noun, the leaf
   states its scope — `homelab.secrets` (cluster) vs `sam.hostSecrets` (machine)

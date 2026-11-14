@@ -93,8 +93,12 @@ just verify             # flake check: build every x86 host, evaluate the Pis
 just parity [BASE]      # fail if any host's toplevel or deploy node moved since BASE
 ```
 
-After each deploy, check on the target that `systemctl is-system-running` says `running` and
-`readlink /run/current-system` equals `dirname "$(readlink -f /nix/var/nix/profiles/system/init)"`.
+`just deploy` ends, whatever deploy-rs returned, by checking on the target that
+`systemctl is-system-running` says `running` and `/run/current-system` is the system profile's
+generation, and exits non-zero if either fails. That catches a deploy that left the host degraded
+or off that generation, including a Pi left on a failed generation (deploy-rs#411). A failed check
+rolls nothing back: the new generation stays. A host degraded for an unrelated, pre-existing
+reason fails every deploy until fixed; read `systemctl --failed` on the target.
 
 Rollback with `sudo nixos-rebuild switch --rollback`, or pick an older
 generation in the boot menu.
@@ -109,8 +113,10 @@ Policy lives in `modules/core/services.nix`, `network.nix` and `users.nix`:
   `modules/homelab/deploy-target.nix`, whose key is accepted only from lenovo)
 - SSH firewall policy allows only LAN CIDR + loopback; keys come from `lib/users.nix`
 
-After changing SSH policy, apply locally on the target first
-(`just switch` there) to avoid locking yourself out.
+On the x86 hosts, apply an SSH policy change with `just deploy HOST`: magic rollback reverts a
+host the `deploy` login can no longer reach, but it does not test `lukas`'s login, so keep a
+session open until a new one gets in. Not on the Pis: a failed activation can leave them on the
+failed generation (#411, #297), so apply it from a console or local session there first.
 
 ## Automation
 
@@ -132,7 +138,7 @@ Use modules + roles, not ad-hoc host edits.
    - Example: `options.homelab.<service>.enable = mkEnableOption "...";`
 3. Add required ports/rules in the module itself (firewall stays close to service).
 4. Attach module via a role (`modules/roles/*.nix`) if shared by multiple hosts.
-5. Enable that role (or service option) in `hosts/<name>/configuration.nix`.
+5. Add that role to the host's `roles` in `flake-modules/hosts.nix` (or set the service option in `hosts/<name>/configuration.nix`).
 6. Build/apply locally, then remote deploy if needed.
 
 Template:

@@ -12,7 +12,8 @@ Claude and Codex both export through a localhost-only Nginx relay on
 `nixos:known-hosts-test` fails if that host is not a recipient of the file;
 that test runs only in `nixos:qa` at pre-push, and `just deploy` skips checks
 and only warns on an unpushed tree, so a non-recipient host deployed from a
-local tree still fails at activation; an eval-time form is left to #293).
+local tree still fails at activation. No eval-time check covers recipients:
+the #379 assertion only checks that the telemetry surfaces match the flags).
 The relay runs as a dynamic systemd user, reads the
 SOPS credential through `LoadCredential`, and creates its configuration in a
 0700 runtime directory. It accepts only `POST /v1/metrics` and `POST /v1/logs`,

@@ -18,6 +18,7 @@ let
   inherit (lib) mkEnableOption mkIf mkMerge;
   cfg = config.homelab.msiPowerSchedule;
   msiMac = "d4:3d:7e:4a:f9:3d";
+  intermittentTaint = "--node-taint=sammasak.dev/intermittent=true:NoSchedule";
 in
 {
   options.homelab.msiPowerSchedule = {
@@ -48,6 +49,13 @@ in
     })
 
     (mkIf cfg.selfShutdown.enable {
+      assertions = [
+        {
+          assertion = !config.homelab.k3s.enable || lib.elem intermittentTaint config.homelab.k3s.extraFlags;
+          message = "homelab.msiPowerSchedule.selfShutdown needs ${intermittentTaint} in homelab.k3s.extraFlags, or the nightly poweroff takes down untolerating pods";
+        }
+      ];
+
       systemd.services.msi-scheduled-shutdown = {
         description = "Graceful scheduled shutdown of msi (drain workloads, then poweroff)";
         serviceConfig = {

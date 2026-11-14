@@ -40,52 +40,10 @@ in
       description = "Address of the k3s server (required for agents)";
     };
 
-    tokenFile = mkOption {
-      type = types.path;
-      # Read from the sops secret rather than repeating its path: ../sops.nix
-      # is imported above and `homelab.secrets.enable` is forced true below, so
-      # the secret is always declared in the same evaluation as this default.
-      default = config.sops.secrets."k3s/cluster_token".path;
-      defaultText = ''config.sops.secrets."k3s/cluster_token".path'';
-      description = "Path to file containing the cluster token (managed by sops-nix)";
-    };
-
     extraFlags = mkOption {
       type = types.listOf types.str;
       default = [ ];
       description = "Additional flags to pass to k3s";
-    };
-
-    cni = mkOption {
-      type = types.enum [
-        "flannel"
-        "cilium"
-      ];
-      default = "cilium";
-      description = ''
-        CNI provider for the cluster.
-
-        "cilium" (default) disables flannel, kube-proxy and the network-policy
-        controller on the k3s side (--flannel-backend=none, --disable-kube-proxy,
-        --disable-network-policy) so Cilium can be installed as the sole CNI with
-        eBPF kube-proxy replacement and Hubble observability. Cilium itself is
-        deployed out-of-band (helm) then managed via Flux.
-
-        "flannel" uses the bundled k3s flannel + embedded kube-proxy +
-        embedded network-policy controller.
-
-        Must be set consistently on every node (server + all agents), since
-        --disable-kube-proxy is a per-node flag.
-      '';
-    };
-
-    disableComponents = mkOption {
-      type = types.listOf types.str;
-      default = [
-        "traefik"
-        "servicelb"
-      ];
-      description = "Built-in k3s components to disable";
     };
 
     memory = {
@@ -121,12 +79,19 @@ in
         assertion = cfg.role == "server" || cfg.serverAddr != null;
         message = "homelab.k3s.serverAddr must be set for agent nodes";
       }
+      {
+        assertion =
+          !lib.any (
+            f: lib.hasInfix "shutdownGracePeriod" f || lib.hasInfix "shutdown-grace-period" f
+          ) cfg.extraFlags;
+        message = "homelab.k3s.extraFlags: shutdownGracePeriod is a kubelet config-file field, not a CLI flag; kubelet exits on the unknown flag and the node crashloops";
+      }
     ];
 
     services.k3s = {
       enable = true;
       role = cfg.role;
-      tokenFile = cfg.tokenFile;
+      tokenFile = config.sops.secrets."k3s/cluster_token".path;
       serverAddr = mkIf (cfg.role == "agent") cfg.serverAddr;
       extraFlags = toString (
         cfg.extraFlags
@@ -141,33 +106,31 @@ in
           "--kubelet-arg=eviction-soft-grace-period=memory.available=60s"
           "--kubelet-arg=system-reserved=memory=${cfg.memory.systemReserved}"
         ]
-        ++ optionals (cfg.role == "server") (
-          [
-            # 600 (k3s default): the admin kubeconfig is cluster-admin; 644 left
-            # it world-readable on the desktop control-plane for months. The
-            # interactive user gets a 0600 owned COPY via activation (server.nix).
-            "--write-kubeconfig-mode=600"
-            "--secrets-encryption"
-          ]
-          ++ (
-            if cfg.cni == "cilium" then
-              [
-                # Server-only: the agent binary rejects --disable-kube-proxy
-                # ("flag provided but not defined") and fatals.
-                "--flannel-backend=none"
-                "--disable-network-policy"
-                "--disable-kube-proxy"
-              ]
-            else
-              [
-                "--flannel-backend=host-gw"
-              ]
-          )
-        )
+        ++ optionals (cfg.role == "server") [
+          # 600 (k3s default): the admin kubeconfig is cluster-admin; 644 left
+          # it world-readable on the desktop control-plane for months. The
+          # interactive user gets a 0600 owned COPY via activation (server.nix).
+          "--write-kubeconfig-mode=600"
+          "--secrets-encryption"
+          # Cilium (deployed by Flux) is the sole CNI and replaces kube-proxy.
+          # Server-only: the agent binary rejects --disable-kube-proxy
+          # ("flag provided but not defined") and fatals.
+          "--flannel-backend=none"
+          "--disable-network-policy"
+          "--disable-kube-proxy"
+        ]
         ++ optionals (cfg.role == "server" && cfg.taintControlPlane) [
           "--node-taint=node-role.kubernetes.io/control-plane:NoSchedule"
         ]
-        ++ optionals (cfg.role == "server") (map (c: "--disable=${c}") cfg.disableComponents)
+        # local-storage is replaced by a resource-limited copy (server.nix's k3s-manifests).
+        # metrics-server stays off: nothing depends on metrics.k8s.io; autoscaling is
+        # all KEDA (external.metrics.k8s.io) and no HPA uses Resource metrics.
+        ++ optionals (cfg.role == "server") [
+          "--disable=traefik"
+          "--disable=servicelb"
+          "--disable=local-storage"
+          "--disable=metrics-server"
+        ]
       );
     };
 
@@ -212,8 +175,7 @@ in
       # Cilium owns pod connectivity on its own datapath interfaces. The NixOS
       # host firewall must NOT filter traffic on them, or host<->pod packets
       # (e.g. kubelet liveness/readiness probes) are dropped and every pod flaps.
-      # Flannel got this implicitly via k3s' own rules; Cilium needs it explicit.
-      trustedInterfaces = optionals (cfg.cni == "cilium") [
+      trustedInterfaces = [
         "cilium_host"
         "cilium_net"
         "cilium_vxlan"
@@ -228,8 +190,6 @@ in
         443 # HTTPS (ingress)
         8080 # Alternative HTTP (ingress)
         10250 # Kubelet API
-      ]
-      ++ optionals (cfg.cni == "cilium") [
         4240 # Cilium agent health check (cilium-health, node-to-node)
         4244 # Hubble server on the agent (Hubble Relay connects here)
         9962 # Cilium agent Prometheus metrics
@@ -237,8 +197,9 @@ in
         9964 # Cilium Envoy proxy Prometheus metrics
         9965 # Hubble Prometheus metrics
       ];
-      # Cilium's default tunnel mode is VXLAN; flannel's host-gw needs no tunnel.
-      allowedUDPPorts = optionals (cfg.cni == "cilium") [ 8472 ];
+      allowedUDPPorts = [
+        8472 # Cilium VXLAN, its default tunnel mode
+      ];
     };
   };
 }

@@ -64,16 +64,6 @@ in
       skopeo
     ];
 
-    # local-storage is replaced by a resource-limited copy in k3s-manifests below.
-    # metrics-server stays off: nothing depends on metrics.k8s.io — autoscaling is
-    # all KEDA (external.metrics.k8s.io) and no HPA uses Resource metrics.
-    homelab.k3s.disableComponents = [
-      "traefik"
-      "servicelb"
-      "local-storage"
-      "metrics-server"
-    ];
-
     # k3s 1.35 added a staging step that tries to write bundled manifests to
     # the manifests dir. The NixOS k3s module creates L+ symlinks (Nix store,
     # read-only) there, so the write fails. Fix: copy real files before k3s

@@ -111,9 +111,6 @@
   homelab.k3s.extraFlags = [
     "--node-label=node-pool=workers"
     "--node-taint=sammasak.dev/intermittent=true:NoSchedule"
-    # NOTE: no graceful-shutdown args. `shutdownGracePeriod` is a kubelet
-    # config-file field, NOT a CLI flag — passing it via --kubelet-arg makes
-    # kubelet exit with "unknown flag" and crashloops the node. Not worth a
-    # kubelet config file for an opt-in node that runs nothing critical.
+    # No graceful-shutdown kubelet config file: not worth it for an opt-in node that runs nothing critical.
   ];
 }
