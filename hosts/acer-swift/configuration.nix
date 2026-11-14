@@ -65,16 +65,9 @@
     "--node-label=node-pool=workers"
   ];
 
-  # Keep turbo available for interactive coding and builds. Power-profiles-daemon
-  # still provides the battery-aware system profile; EPP keeps sustained work
-  # balanced instead of forcing the server-oriented power bias.
-  sam.thermal = {
-    enable = true;
-    platform = "generic";
-    profile = "balanced";
-    disableTurboBoost = false;
-    energyPerformancePreference = "balance_performance";
-  };
+  # Power-profiles-daemon still provides the battery-aware system profile; EPP
+  # keeps sustained work balanced instead of forcing a power-saving bias.
+  sam.thermal.energyPerformancePreference = "balance_performance";
 
   # WiFi powersave lets the NIC enter deep states, causing ~300-500 ms link
   # drops that break k3s API watches.

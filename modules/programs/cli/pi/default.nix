@@ -4,14 +4,11 @@
 # rollback: docs/pi.md.
 devenvPlatform:
 {
-  config,
   lib,
   pkgs,
   ...
 }:
 let
-  cfg = config.sam.pi;
-
   # Seeded only when missing.
   defaultSettings = builtins.toJSON {
     # Free-tier 429s carry ~10-60s resets; the 2s default base gives up first.
@@ -58,7 +55,8 @@ let
   # only `msi-ollama` is replaced on every activation. contextWindow is the
   # server's OLLAMA_CONTEXT_LENGTH: Ollama truncates longer prompts silently.
   msiOllamaProvider = builtins.toJSON {
-    baseUrl = cfg.msiOllamaBaseUrl;
+    # ollama-msi-backend ClusterIP (llm ns): reachable from k3s nodes; update if the Service is recreated.
+    baseUrl = "http://10.43.160.41:11434/v1";
     api = "openai-completions";
     apiKey = "ollama";
     models =
@@ -82,7 +80,8 @@ let
   # by tier and fails over. `!cat` reads the sops key per request, so it never
   # enters the store or the environment.
   homelabProvider = builtins.toJSON {
-    baseUrl = cfg.llmGatewayBaseUrl;
+    # Pinned spec.clusterIP in homelab-gitops apps/llm-gateway/service.yaml; reachable from k3s nodes.
+    baseUrl = "http://10.43.0.80:8080/v1";
     api = "openai-completions";
     apiKey = "!cat /run/secrets/llm_gateway_pi_key";
     models = [
@@ -158,20 +157,6 @@ let
   };
 in
 {
-  options.sam.pi.msiOllamaBaseUrl = lib.mkOption {
-    type = lib.types.str;
-    # ollama-msi-backend ClusterIP (llm ns): reachable from k3s nodes; update if the Service is recreated.
-    default = "http://10.43.160.41:11434/v1";
-    description = "OpenAI-compatible base URL of msi's Ollama, the router/free local tier.";
-  };
-
-  options.sam.pi.llmGatewayBaseUrl = lib.mkOption {
-    type = lib.types.str;
-    # Pinned spec.clusterIP in homelab-gitops apps/llm-gateway/service.yaml; reachable from k3s nodes.
-    default = "http://10.43.0.80:8080/v1";
-    description = "OpenAI-compatible base URL of the in-cluster llm-gateway (Pi provider `homelab`).";
-  };
-
   config = {
     home.packages = [
       pkgs.pi-coding-agent

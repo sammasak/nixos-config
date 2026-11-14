@@ -46,11 +46,11 @@ Verified on the pinned 1.1.0 build:
   replaces only those keys, so hand-written providers such as `ollama` for
   pi-harness stay): `msi-ollama` and `homelab`. A models.json that is not a
   JSON object is left alone.
-  - `msi-ollama` points at msi's Ollama, the router/free local tier. Override
-    the URL with `sam.pi.msiOllamaBaseUrl` in the host's Home Manager config.
+  - `msi-ollama` points at msi's Ollama, the router/free local tier (set in
+    `msiOllamaProvider`, `modules/programs/cli/pi/default.nix`).
   - `homelab` (the default: `homelab/auto`, also `best`, `local`) is the
     in-cluster llm-gateway (homelab-gitops `apps/llm-gateway`, pinned ClusterIP
-    `10.43.0.80`, override `sam.pi.llmGatewayBaseUrl`). It holds the provider
+    `10.43.0.80`, set in `homelabProvider`). It holds the provider
     keys and fails over across free tiers itself. Pi authenticates with the
     project key `llm_gateway_pi_key` (`secrets/claude/llm-gateway.yaml`, every
     pi host, declared in `modules/core/sops.nix`), read per request via
@@ -108,10 +108,9 @@ every Pi process shares. Each routing decision is logged with its reason in
 | 3 local | none enabled. Provider `msi-ollama` (msi's Ollama, below) is wired in, but no msi model passed verification | no quota; msi is off outside its power window |
 
 The local provider is `msi-ollama` in `~/.pi/agent/models.json`, merged in by
-this module (default `http://10.43.160.41:11434/v1`, the `ollama-msi-backend`
-ClusterIP; set `sam.pi.msiOllamaBaseUrl` to change it). The router probes it
-before each dispatch, so a powered-off msi fails over within seconds and is used
-again once it answers.
+this module (`http://10.43.160.41:11434/v1`, the `ollama-msi-backend`
+ClusterIP). The router probes it before each dispatch, so a powered-off msi
+fails over within seconds and is used again once it answers.
 
 ```bash
 pi --model router/free        # or pick it in /model

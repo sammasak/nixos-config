@@ -4,7 +4,6 @@
 # evidence independent of any ssh connection. Fingerprints beside the keys; docs/ssh-host-keys.md has the rest.
 { config, lib, ... }:
 let
-  cfg = config.sam.sshKnownHosts;
   # a host reaches itself as localhost too (lenovo's deploy-rs node is a loopback self-push), under its own key only
   self = [
     "localhost"
@@ -66,29 +65,12 @@ let
   };
 in
 {
-  options.sam.sshKnownHosts = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Pin the verified host keys of the fleet and github.com in /etc/ssh/ssh_known_hosts.";
-    };
-    strict = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Refuse unknown and changed host keys for every ssh client on the host (StrictHostKeyChecking yes); a user's ~/.ssh/config still wins for the hosts it names.";
-    };
-  };
-
-  config = lib.mkIf cfg.enable {
-    programs.ssh.knownHosts = hosts;
-    # mkAfter: a per-host exception another module adds to extraConfig stays ahead of this catch-all (ssh keeps the
-    # first value); the whole of extraConfig precedes nixpkgs' generated "Host *", and a user's own config precedes both
-    programs.ssh.extraConfig = lib.mkIf cfg.strict (
-      lib.mkAfter ''
-        Host *
-          StrictHostKeyChecking yes
-          UpdateHostKeys no
-      ''
-    );
-  };
+  programs.ssh.knownHosts = hosts;
+  # mkAfter: a per-host exception another module adds to extraConfig stays ahead of this catch-all (ssh keeps the
+  # first value); the whole of extraConfig precedes nixpkgs' generated "Host *", and a user's own config precedes both
+  programs.ssh.extraConfig = lib.mkAfter ''
+    Host *
+      StrictHostKeyChecking yes
+      UpdateHostKeys no
+  '';
 }

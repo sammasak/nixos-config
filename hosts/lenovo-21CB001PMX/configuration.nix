@@ -121,11 +121,8 @@
 
   homelab.k3s.taintControlPlane = true;
 
-  # ThinkPad-class laptop: thinkfan + thermald with a less heat-prone curve.
-  sam.thermal = {
-    platform = "thinkpad";
-    profile = "quiet";
-  };
+  # ThinkPad-class laptop: thinkfan with the quiet curve instead of thermald.
+  sam.thermal.platform = "thinkpad";
 
   homelab.dns = {
     enable = true;

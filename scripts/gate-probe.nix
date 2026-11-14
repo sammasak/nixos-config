@@ -154,9 +154,6 @@ let
         lenovo = lenovo;
         acer-swift = acer;
       };
-      defaults = lib.mapAttrs (_: o: o.default) {
-        inherit (hosts.lenovo.options.sam.sshKnownHosts) strict enable;
-      };
       sshOpts = lib.mapAttrs (_: n: n.sshOpts) (
         lib.getAttrs [ "lenovo" "acer-swift" "black-pi" ] flake.deploy.nodes
       );
