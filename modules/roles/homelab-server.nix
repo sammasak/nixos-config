@@ -4,7 +4,6 @@
     ./base.nix
     ../core/always-on.nix
     ../homelab/k3s/server.nix
-    ../homelab/deploy-target.nix
     ../homelab/k3s-db-snapshot.nix
     ../homelab/adguardhome.nix
     ../homelab/acme.nix
