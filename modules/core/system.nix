@@ -1,5 +1,10 @@
 # System configuration (host profile schema + locale/time/nix settings)
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   inherit (lib) mkOption types;
   locale = "en_US.UTF-8";
@@ -81,14 +86,19 @@ in
   };
 
   config = {
-    assertions = [{
-      assertion = lib.length (lib.unique (map (m: m.label) config.sam.herdr.machines)) == lib.length config.sam.herdr.machines;
-      message = "sam.herdr.machines labels must be unique (herdr --machine addresses a machine by its label).";
-    } {
-      # the unattended Coordinator stays on dontAsk: it must never share a settings.json that skips the bypass dialog
-      assertion = !(config.sam.herdr.worker.enable && config.sam.herdr.coordinatorWakeup.enable);
-      message = "sam.herdr.worker and sam.herdr.coordinatorWakeup cannot both be enabled on one host (the Coordinator must not inherit worker permissions).";
-    }];
+    assertions = [
+      {
+        assertion =
+          lib.length (lib.unique (map (m: m.label) config.sam.herdr.machines))
+          == lib.length config.sam.herdr.machines;
+        message = "sam.herdr.machines labels must be unique (herdr --machine addresses a machine by its label).";
+      }
+      {
+        # the unattended Coordinator stays on dontAsk: it must never share a settings.json that skips the bypass dialog
+        assertion = !(config.sam.herdr.worker.enable && config.sam.herdr.coordinatorWakeup.enable);
+        message = "sam.herdr.worker and sam.herdr.coordinatorWakeup cannot both be enabled on one host (the Coordinator must not inherit worker permissions).";
+      }
+    ];
 
     programs = {
       nix-ld.enable = true;
@@ -177,11 +187,13 @@ in
     # `allowUnfreeRedistributableFirmware` knob, so no allowlistedLicenses
     # escape hatch is needed.
     nixpkgs.config.allowUnfree = false;
-    nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
-      "antigravity-cli" # Google agent CLI (gemini-cli successor), desktop only
-      "claude-code" # Anthropic CLI, all hosts
-      "unrar"       # unfreeRedistributable, from core/packages.nix
-    ];
+    nixpkgs.config.allowUnfreePredicate =
+      pkg:
+      builtins.elem (lib.getName pkg) [
+        "antigravity-cli" # Google agent CLI (gemini-cli successor), desktop only
+        "claude-code" # Anthropic CLI, all hosts
+        "unrar" # unfreeRedistributable, from core/packages.nix
+      ];
 
     environment.variables = {
       XDG_CACHE_HOME = "$HOME/.cache";

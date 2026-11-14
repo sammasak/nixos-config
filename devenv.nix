@@ -1,71 +1,115 @@
-{ pkgs, lib, inputs, ... }:
+{
+  pkgs,
+  lib,
+  inputs,
+  ...
+}:
 
 let
-  gate = name: runtimeInputs: text: pkgs.writeShellApplication { inherit name runtimeInputs text; };
+  gate =
+    name: runtimeInputs: text:
+    pkgs.writeShellApplication { inherit name runtimeInputs text; };
 
-  lintComments = gate "nixos-lint-comments" (with pkgs; [ bash git gawk gnugrep gnused findutils coreutils ]) ''
-    bash scripts/nix-comment-lint.sh
-  '';
+  lintComments =
+    gate "nixos-lint-comments"
+      (with pkgs; [
+        bash
+        git
+        gawk
+        gnugrep
+        gnused
+        findutils
+        coreutils
+      ])
+      ''
+        bash scripts/nix-comment-lint.sh
+      '';
 
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
     shellcheck scripts/*.sh
   '';
 
   # Skips (exit 0) on hosts without the age key; only lenovo enforces it.
-  secretsVerify = gate "nixos-secrets-verify" (with pkgs; [ bash sops age gawk gnugrep gnused coreutils ]) ''
-    bash scripts/secrets-verify.sh
-  '';
+  secretsVerify =
+    gate "nixos-secrets-verify"
+      (with pkgs; [
+        bash
+        sops
+        age
+        gawk
+        gnugrep
+        gnused
+        coreutils
+      ])
+      ''
+        bash scripts/secrets-verify.sh
+      '';
 
   # Isolated config from the generated files, not ~/.config/nvim: +qa against
   # the live dir would exercise the deployed (possibly stale) generation and
   # mask errors, since +qa exits 0 even on an init throw.
-  nvimCheck = gate "nixos-nvim-check" (with pkgs; [ nix python3 jq gnugrep coreutils ]) ''
-    p=$(python3 scripts/gate_probe.py nvim-check)
-    NV=$(jq -r .nvim <<<"$p")
-    cfg=$(mktemp -d); trap 'rm -rf "$cfg"' EXIT
-    mkdir -p "$cfg/nvim"
-    ln -s "$PWD/dotfiles/nvim/lua" "$cfg/nvim/lua"
-    ln -s "$PWD/dotfiles/nvim/lazy-lock.json" "$cfg/nvim/lazy-lock.json"
-    jq -j .init <<<"$p" > "$cfg/nvim/init.lua"
-    jq -j .nix <<<"$p" > "$cfg/nvim/nix.lua"
-    out=$(XDG_CONFIG_HOME="$cfg" "$NV/bin/nvim" --headless +qa 2>&1 || true)
-    if printf '%s' "$out" | grep -qiE 'error|stack traceback|E[0-9]{3,}:'; then
-      printf '%s\n' "$out"; echo "nvim-check: startup errored" >&2; exit 1
-    fi
-  '';
+  nvimCheck =
+    gate "nixos-nvim-check"
+      (with pkgs; [
+        nix
+        python3
+        jq
+        gnugrep
+        coreutils
+      ])
+      ''
+        p=$(python3 scripts/gate_probe.py nvim-check)
+        NV=$(jq -r .nvim <<<"$p")
+        cfg=$(mktemp -d); trap 'rm -rf "$cfg"' EXIT
+        mkdir -p "$cfg/nvim"
+        ln -s "$PWD/dotfiles/nvim/lua" "$cfg/nvim/lua"
+        ln -s "$PWD/dotfiles/nvim/lazy-lock.json" "$cfg/nvim/lazy-lock.json"
+        jq -j .init <<<"$p" > "$cfg/nvim/init.lua"
+        jq -j .nix <<<"$p" > "$cfg/nvim/nix.lua"
+        out=$(XDG_CONFIG_HOME="$cfg" "$NV/bin/nvim" --headless +qa 2>&1 || true)
+        if printf '%s' "$out" | grep -qiE 'error|stack traceback|E[0-9]{3,}:'; then
+          printf '%s\n' "$out"; echo "nvim-check: startup errored" >&2; exit 1
+        fi
+      '';
 
   # What `nix flake check --all-systems` checks, one output per nix process: in one process it holds every
   # host and is killed under a 4G cap. Builds every x86 host (its deploy-activate check holds the toplevel)
   # and evaluates the aarch64 Pis: the one place a host build is checked. An output kind not listed here
   # fails the step, so a new kind cannot go unchecked.
-  flakeCheck = gate "nixos-flake-check" (with pkgs; [ nix jq ]) ''
-    names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
-    drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
-    here=$(nix eval --raw --impure --expr builtins.currentSystem)
-    kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
-    [ "$kinds" = '["checks","deploy","formatter","nixosConfigurations","overlays","packages","templates"]' ] \
-      || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
-    nix eval --no-write-lock-file .#overlays --apply 'builtins.mapAttrs (_: o: assert builtins.isFunction o; true)' >/dev/null
-    nix eval --no-write-lock-file .#templates \
-      --apply 'builtins.mapAttrs (_: t: assert builtins.pathExists t.path && builtins.isString t.description; true)' >/dev/null
-    hosts=$(names nixosConfigurations)
-    for h in $hosts; do drv "nixosConfigurations.$h.config.system.build.toplevel"; done
-    for s in $(names formatter); do drv "formatter.$s"; done
-    for kind in packages checks; do
-      systems=$(names "$kind")
-      for s in $systems; do
-        outputs=$(names "$kind.$s")
-        for o in $outputs; do
-          if [ "$kind.$s" = "checks.$here" ]; then
-            echo "nixos-flake-check: build checks.$s.$o" >&2
-            nix build --no-link --no-write-lock-file ".#checks.$s.$o"
-          else
-            drv "$kind.$s.$o"
-          fi
+  flakeCheck =
+    gate "nixos-flake-check"
+      (with pkgs; [
+        nix
+        jq
+      ])
+      ''
+        names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
+        drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
+        here=$(nix eval --raw --impure --expr builtins.currentSystem)
+        kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
+        [ "$kinds" = '["checks","deploy","formatter","nixosConfigurations","overlays","packages","templates"]' ] \
+          || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
+        nix eval --no-write-lock-file .#overlays --apply 'builtins.mapAttrs (_: o: assert builtins.isFunction o; true)' >/dev/null
+        nix eval --no-write-lock-file .#templates \
+          --apply 'builtins.mapAttrs (_: t: assert builtins.pathExists t.path && builtins.isString t.description; true)' >/dev/null
+        hosts=$(names nixosConfigurations)
+        for h in $hosts; do drv "nixosConfigurations.$h.config.system.build.toplevel"; done
+        for s in $(names formatter); do drv "formatter.$s"; done
+        for kind in packages checks; do
+          systems=$(names "$kind")
+          for s in $systems; do
+            outputs=$(names "$kind.$s")
+            for o in $outputs; do
+              if [ "$kind.$s" = "checks.$here" ]; then
+                echo "nixos-flake-check: build checks.$s.$o" >&2
+                nix build --no-link --no-write-lock-file ".#checks.$s.$o"
+              else
+                drv "$kind.$s.$o"
+              fi
+            done
+          done
         done
-      done
-    done
-  '';
+      '';
 
   # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
   # its own builds only its section.
@@ -73,91 +117,219 @@ let
     nix build --impure --no-link --print-out-paths --expr '(import ./scripts/gate-probe.nix { }).json'
   '';
 
-  claudeSettingsTest = gate "claude-settings-test" (with pkgs; [ nix python3 jq ]) ''
-    p=$(python3 scripts/gate_probe.py claude-settings)
-    CLAUDE_BIN=$(jq -r .package <<<"$p")/bin/claude \
-      python3 scripts/test-native-otel-subprocess-env.py "$(jq -r '."home-files"' <<<"$p")/.claude/settings.json"
-  '';
+  claudeSettingsTest =
+    gate "claude-settings-test"
+      (with pkgs; [
+        nix
+        python3
+        jq
+      ])
+      ''
+        p=$(python3 scripts/gate_probe.py claude-settings)
+        CLAUDE_BIN=$(jq -r .package <<<"$p")/bin/claude \
+          python3 scripts/test-native-otel-subprocess-env.py "$(jq -r '."home-files"' <<<"$p")/.claude/settings.json"
+      '';
 
-  nativeOtelRelayTest = gate "native-otel-relay-test" (with pkgs; [ nginx nix python3 jq ]) ''
-    helper=$(python3 scripts/gate_probe.py native-otel-relay | jq -r .helper)
-    ${pkgs.python3}/bin/python scripts/test-native-otel-relay.py "$helper" "${pkgs.nginx}/bin/nginx"
-  '';
+  nativeOtelRelayTest =
+    gate "native-otel-relay-test"
+      (with pkgs; [
+        nginx
+        nix
+        python3
+        jq
+      ])
+      ''
+        helper=$(python3 scripts/gate_probe.py native-otel-relay | jq -r .helper)
+        ${pkgs.python3}/bin/python scripts/test-native-otel-relay.py "$helper" "${pkgs.nginx}/bin/nginx"
+      '';
 
-  nativeOtelFishTest = gate "native-otel-fish-test" (with pkgs; [ fish nix python3 ]) ''
-    nixpkgs_source=$(nix eval --raw --impure --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')
-    ${pkgs.python3}/bin/python scripts/test-native-otel-fish.py "$nixpkgs_source"
-  '';
+  nativeOtelFishTest =
+    gate "native-otel-fish-test"
+      (with pkgs; [
+        fish
+        nix
+        python3
+      ])
+      ''
+        nixpkgs_source=$(nix eval --raw --impure --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')
+        ${pkgs.python3}/bin/python scripts/test-native-otel-fish.py "$nixpkgs_source"
+      '';
 
-  coordinatorWiringTest = gate "coordinator-wiring-test" (with pkgs; [ nix python3 yq-go ]) ''
-    ${pkgs.python3}/bin/python scripts/test-coordinator-wiring.py
-  '';
+  coordinatorWiringTest =
+    gate "coordinator-wiring-test"
+      (with pkgs; [
+        nix
+        python3
+        yq-go
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-coordinator-wiring.py
+      '';
 
-  workerPermissionsTest = gate "worker-permissions-test" (with pkgs; [ nix python3 coreutils util-linux ]) ''
-    ${pkgs.python3}/bin/python scripts/test-worker-permissions.py
-  '';
+  workerPermissionsTest =
+    gate "worker-permissions-test"
+      (with pkgs; [
+        nix
+        python3
+        coreutils
+        util-linux
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-worker-permissions.py
+      '';
 
-  workersEvalTest = gate "workers-eval-test" (with pkgs; [ nix python3 fish bash caddy ]) ''
-    ${pkgs.python3}/bin/python scripts/test-workers-eval.py
-  '';
+  workersEvalTest =
+    gate "workers-eval-test"
+      (with pkgs; [
+        nix
+        python3
+        fish
+        bash
+        caddy
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-workers-eval.py
+      '';
 
   # sam.claude.bulkReader: shunt hooks only when on and pinned, appended after the fleet's; guests via a guest module
-  bulkReaderTest = gate "bulk-reader-test" (with pkgs; [ nix python3 ]) ''
-    ${pkgs.python3}/bin/python scripts/test-bulk-reader-hooks.py
-  '';
+  bulkReaderTest =
+    gate "bulk-reader-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-bulk-reader-hooks.py
+      '';
 
-  harnessTelemetryTest = gate "harness-telemetry-test" (with pkgs; [ nix python3 ]) ''
-    ${pkgs.python3}/bin/python scripts/test-harness-telemetry.py
-  '';
+  harnessTelemetryTest =
+    gate "harness-telemetry-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-harness-telemetry.py
+      '';
 
-  journalCollectorTest = gate "journal-collector-test" (with pkgs; [ nix python3 ]) ''
-    ${pkgs.python3}/bin/python scripts/test-journal-collector.py
-  '';
+  journalCollectorTest =
+    gate "journal-collector-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-journal-collector.py
+      '';
 
   # the probe's seeded msi realises upstream's validate-loki-conf, so loki -verify-config runs here
-  lokiTest = gate "loki-test" (with pkgs; [ nix python3 ]) ''
-    ${pkgs.python3}/bin/python scripts/test-loki.py
-  '';
+  lokiTest =
+    gate "loki-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-loki.py
+      '';
 
   # a switch keeps Herdr's server and cannot wait forever on a unit (eval only)
-  switchSafetyTest = gate "switch-safety-test" (with pkgs; [ nix python3 ]) ''
-    ${pkgs.python3}/bin/python scripts/test-switch-safety.py
-  '';
+  switchSafetyTest =
+    gate "switch-safety-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-switch-safety.py
+      '';
 
-  ollamaPortforwardTest = gate "ollama-portforward-test" (with pkgs; [ nix python3 procps ]) ''
-    ${pkgs.python3}/bin/python scripts/test-ollama-portforward.py
-  '';
+  ollamaPortforwardTest =
+    gate "ollama-portforward-test"
+      (with pkgs; [
+        nix
+        python3
+        procps
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-ollama-portforward.py
+      '';
 
-  alertBridgeTest = gate "alert-bridge-test" (with pkgs; [ nix python3 ]) ''
-    ${pkgs.python3}/bin/python scripts/test-alert-bridge.py
-  '';
+  alertBridgeTest =
+    gate "alert-bridge-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-alert-bridge.py
+      '';
 
-  knownHostsTest = gate "known-hosts-test" (with pkgs; [ nix python3 openssh ssh-to-age ]) ''
-    ${pkgs.python3}/bin/python scripts/test-ssh-known-hosts.py
-  '';
+  knownHostsTest =
+    gate "known-hosts-test"
+      (with pkgs; [
+        nix
+        python3
+        openssh
+        ssh-to-age
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-ssh-known-hosts.py
+      '';
 
-  buildBoundsTest = gate "build-bounds-test" (with pkgs; [ nix python3 ]) ''
-    ${pkgs.python3}/bin/python scripts/test-lenovo-build-bounds.py
-  '';
+  buildBoundsTest =
+    gate "build-bounds-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-lenovo-build-bounds.py
+      '';
 
   # the generated devenv.local.nix against the pinned skills input and its fake gh: approved accepted under the
   # delegation, refused with it off; devenv itself comes from the system profile, as on the coordinator host
-  delegationTest = gate "delegation-test" (with pkgs; [ nix python3 ]) ''
-    PATH="$PATH:/run/current-system/sw/bin" ${pkgs.python3}/bin/python scripts/test-coordinator-delegation.py
-  '';
+  delegationTest =
+    gate "delegation-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        PATH="$PATH:/run/current-system/sw/bin" ${pkgs.python3}/bin/python scripts/test-coordinator-delegation.py
+      '';
 
   # nixos-config#92: nativeOtel = false (the runbook's rollback) removes every telemetry surface
-  otelRollbackTest = gate "otel-rollback-test" (with pkgs; [ nix python3 git gnutar ]) ''
-    ${pkgs.python3}/bin/python scripts/test-native-otel-rollback.py
-  '';
+  otelRollbackTest =
+    gate "otel-rollback-test"
+      (with pkgs; [
+        nix
+        python3
+        git
+        gnutar
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-native-otel-rollback.py
+      '';
 
-  qaPushTest = gate "qa-push-test" (with pkgs; [ python3 git coreutils gnugrep bash ]) ''
-    ${pkgs.python3}/bin/python scripts/test-qa-push.py
-  '';
-
+  qaPushTest =
+    gate "qa-push-test"
+      (with pkgs; [
+        python3
+        git
+        coreutils
+        gnugrep
+        bash
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-qa-push.py
+      '';
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
-  lints = [ lintComments lintShell ];
+  lints = [
+    lintComments
+    lintShell
+  ];
   # seconds per step, to see where a slow gate spends its time (#334); prek hides a passing hook's
   # output, so the push gate also appends them to NIXOS_QA_TIMES
   timed = lib.concatMapStringsSep "\n" (g: ''
@@ -166,14 +338,38 @@ let
     echo "nixos-qa: ${g.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
   '');
   qa = gate "nixos-qa" [ pkgs.coreutils ] ''
-    ${timed (lints ++ [ secretsVerify flakeCheck ])}
+    ${timed (
+      lints
+      ++ [
+        secretsVerify
+        flakeCheck
+      ]
+    )}
     t=$SECONDS
     GATE_PROBE=$(${lib.getExe probe})
     export GATE_PROBE
     echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
     ${timed [
-      nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
-      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest journalCollectorTest lokiTest switchSafetyTest rfBeaconsTest qaPushTest
+      nvimCheck
+      nativeOtelRelayTest
+      nativeOtelFishTest
+      claudeSettingsTest
+      coordinatorWiringTest
+      workerPermissionsTest
+      workersEvalTest
+      bulkReaderTest
+      harnessTelemetryTest
+      ollamaPortforwardTest
+      alertBridgeTest
+      knownHostsTest
+      buildBoundsTest
+      delegationTest
+      otelRollbackTest
+      journalCollectorTest
+      lokiTest
+      switchSafetyTest
+      rfBeaconsTest
+      qaPushTest
     ]}
   '';
 
@@ -187,94 +383,118 @@ let
   # A green full gate records the tree in the clone's git dir with the gate executable and the system generation
   # (tests run its tools); that tree, or it plus documentation, gets the lints. Nothing else is keyed: a flaky green,
   # an age key or the caller's PATH are not re-sampled until the record is deleted (nixos-qa-green).
-  qaPush = gate "nixos-qa-push" (with pkgs; [ git coreutils gnugrep ]) ''
-    rev=''${PRE_COMMIT_TO_REF:-HEAD}
-    case $rev in 0000000000000000000000000000000000000000) exit 0 ;; esac
-    tree=$(mktemp -d)
-    trap 'git worktree remove --force "$tree"' EXIT
-    git worktree add --quiet --detach "$tree" "$rev"
-    cd "$tree"
-    # In a linked worktree git hands the hook its GIT_DIR: HEAD, the lints' git ls-files and git under qa
-    # would all follow that checkout, not this tree. The siblings are unset for a tool that exports them.
-    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
-    # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
-    # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
-    docs_only() {
-      local changed
-      changed=$(git diff --no-renames --name-only "$1" HEAD --) \
-        && ! grep -qvE '^docs/|^[^/]+\.md$' <<<"$changed" && ! grep -rqF -f - --include='test-*' scripts <<<"$changed"
-    }
-    # Two pushes trimming at once can lose a line: a step time, or a record, which only costs a full gate.
-    trim() { if tail -n "$2" "$1" > "$1.$$" 2>/dev/null; then mv "$1.$$" "$1"; else rm -f "$1.$$"; fi; }
-    if base=$(git merge-base HEAD origin/main) && docs_only "$base"; then
-      echo "nixos-qa: $(git rev-parse --short HEAD) changes only documentation since origin/main, lints only"
-      ${run lints}
-      exit
-    fi
-    gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
-    green=$gitdir/nixos-qa-green
-    gate="${lib.getExe qa} $(readlink -f /run/current-system)"
-    this=$(git rev-parse 'HEAD^{tree}')
-    # The hex check keeps a damaged line from reaching git diff as an option; an unreadable record runs the full gate.
-    while read -r passed with; do
-      if [ "$with" = "$gate" ] && [[ $passed =~ ^[0-9a-f]{40,64}$ ]] \
-        && { [ "$passed" = "$this" ] || docs_only "$passed" 2>/dev/null; }; then
-        echo "nixos-qa: $(git rev-parse --short HEAD) is tree ''${passed:0:12} green under this gate and generation, or that plus documentation: lints only"
-        { ${run lints}; } </dev/null
-        exit
-      fi
-    done < <(tail -n 50 "$green" 2>/dev/null || true)
-    NIXOS_QA_TIMES=$gitdir/nixos-qa-times
-    export NIXOS_QA_TIMES
-    trim "$NIXOS_QA_TIMES" 2000
-    echo "$(date -Is) nixos-qa on pushed commit $(git rev-parse --short HEAD)" | tee -a "$NIXOS_QA_TIMES"
-    ${lib.getExe qa}
-    # A switch during the run leaves a green that no key describes.
-    if [ "$gate" = "${lib.getExe qa} $(readlink -f /run/current-system)" ]; then
-      { echo "$this $gate" >> "$green" && trim "$green" 50; } || echo "nixos-qa: green tree not recorded in $green" >&2
-    fi
-  '';
+  qaPush =
+    gate "nixos-qa-push"
+      (with pkgs; [
+        git
+        coreutils
+        gnugrep
+      ])
+      ''
+        rev=''${PRE_COMMIT_TO_REF:-HEAD}
+        case $rev in 0000000000000000000000000000000000000000) exit 0 ;; esac
+        tree=$(mktemp -d)
+        trap 'git worktree remove --force "$tree"' EXIT
+        git worktree add --quiet --detach "$tree" "$rev"
+        cd "$tree"
+        # In a linked worktree git hands the hook its GIT_DIR: HEAD, the lints' git ls-files and git under qa
+        # would all follow that checkout, not this tree. The siblings are unset for a tool that exports them.
+        unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+        # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
+        # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
+        docs_only() {
+          local changed
+          changed=$(git diff --no-renames --name-only "$1" HEAD --) \
+            && ! grep -qvE '^docs/|^[^/]+\.md$' <<<"$changed" && ! grep -rqF -f - --include='test-*' scripts <<<"$changed"
+        }
+        # Two pushes trimming at once can lose a line: a step time, or a record, which only costs a full gate.
+        trim() { if tail -n "$2" "$1" > "$1.$$" 2>/dev/null; then mv "$1.$$" "$1"; else rm -f "$1.$$"; fi; }
+        if base=$(git merge-base HEAD origin/main) && docs_only "$base"; then
+          echo "nixos-qa: $(git rev-parse --short HEAD) changes only documentation since origin/main, lints only"
+          ${run lints}
+          exit
+        fi
+        gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
+        green=$gitdir/nixos-qa-green
+        gate="${lib.getExe qa} $(readlink -f /run/current-system)"
+        this=$(git rev-parse 'HEAD^{tree}')
+        # The hex check keeps a damaged line from reaching git diff as an option; an unreadable record runs the full gate.
+        while read -r passed with; do
+          if [ "$with" = "$gate" ] && [[ $passed =~ ^[0-9a-f]{40,64}$ ]] \
+            && { [ "$passed" = "$this" ] || docs_only "$passed" 2>/dev/null; }; then
+            echo "nixos-qa: $(git rev-parse --short HEAD) is tree ''${passed:0:12} green under this gate and generation, or that plus documentation: lints only"
+            { ${run lints}; } </dev/null
+            exit
+          fi
+        done < <(tail -n 50 "$green" 2>/dev/null || true)
+        NIXOS_QA_TIMES=$gitdir/nixos-qa-times
+        export NIXOS_QA_TIMES
+        trim "$NIXOS_QA_TIMES" 2000
+        echo "$(date -Is) nixos-qa on pushed commit $(git rev-parse --short HEAD)" | tee -a "$NIXOS_QA_TIMES"
+        ${lib.getExe qa}
+        # A switch during the run leaves a green that no key describes.
+        if [ "$gate" = "${lib.getExe qa} $(readlink -f /run/current-system)" ]; then
+          { echo "$this $gate" >> "$green" && trim "$green" 50; } || echo "nixos-qa: green tree not recorded in $green" >&2
+        fi
+      '';
 
   # Operator side of the naked-pi RF kit. Each SSHes the Pi (the `naked-pi` ssh
   # alias), runs one bounded wrapper there, and keeps analysis on this host.
   # Mostly passive; deauth is limited to our own AP's enrolled stations
   # (rf:ap-kick, rf:ap-kick-hil) — never injection or a third-party network.
-  rfBeacons = gate "rf-beacons" (with pkgs; [ openssh coreutils gawk gnugrep wireshark-cli ]) ''
-    exec >&2  # devenv captures task stdout; stream the table instead
-    dwell=''${RF_DWELL:-1.2}
-    dest="$HOME/rf-lab-captures"; mkdir -p "$dest"
-    echo "Passive 2.4 GHz beacon sweep on naked-pi (~$(awk "BEGIN{printf \"%.0f\", 13*$dwell}")s)..."
-    out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-sweep $dwell")
-    scp -q "naked-pi:$out" "$dest/"
-    f="$dest/$(basename "$out")"
-    hdr=$(printf '%-18s %3s %5s %5s  %s' BSSID CH dBm beac SSID)
-    # the table, SSIDs escaped (untrusted radio bytes): scripts/rf-beacons-table.sh, tested by rf:beacons-test
-    body=$(bash scripts/rf-beacons-table.sh "$f")
-    printf '%s\n%s\n' "$hdr" "$body"
-    echo "($(printf '%s\n' "$body" | grep -c . || true) APs; pcap: $f)"
-  '';
+  rfBeacons =
+    gate "rf-beacons"
+      (with pkgs; [
+        openssh
+        coreutils
+        gawk
+        gnugrep
+        wireshark-cli
+      ])
+      ''
+        exec >&2  # devenv captures task stdout; stream the table instead
+        dwell=''${RF_DWELL:-1.2}
+        dest="$HOME/rf-lab-captures"; mkdir -p "$dest"
+        echo "Passive 2.4 GHz beacon sweep on naked-pi (~$(awk "BEGIN{printf \"%.0f\", 13*$dwell}")s)..."
+        out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-sweep $dwell")
+        scp -q "naked-pi:$out" "$dest/"
+        f="$dest/$(basename "$out")"
+        hdr=$(printf '%-18s %3s %5s %5s  %s' BSSID CH dBm beac SSID)
+        # the table, SSIDs escaped (untrusted radio bytes): scripts/rf-beacons-table.sh, tested by rf:beacons-test
+        body=$(bash scripts/rf-beacons-table.sh "$f")
+        printf '%s\n%s\n' "$hdr" "$body"
+        echo "($(printf '%s\n' "$body" | grep -c . || true) APs; pcap: $f)"
+      '';
 
-  rfCapture = gate "rf-capture" (with pkgs; [ openssh coreutils ]) ''
-    exec >&2  # devenv captures task stdout; stream progress instead
-    ch=''${RF_CHANNEL:?set RF_CHANNEL=1..13 (e.g. RF_CHANNEL=6 devenv tasks run rf:capture)}
-    secs=''${RF_SECONDS:-30}
-    bssid=''${RF_BSSID:-}
-    filt=""; [ -n "$bssid" ] && filt="wlan addr3 $bssid"
-    dest="$HOME/rf-lab-captures"; mkdir -p "$dest"
-    echo "Capturing ch $ch for ''${secs}s''${bssid:+ (AP $bssid)}..."
-    out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-capture $ch $secs '$filt'")
-    scp -q "naked-pi:$out" "$dest/"
-    f="$dest/$(basename "$out")"
-    echo "pcap: $f"
-    echo "open: nix shell nixpkgs#wireshark -c wireshark $f"
-  '';
+  rfCapture =
+    gate "rf-capture"
+      (with pkgs; [
+        openssh
+        coreutils
+      ])
+      ''
+        exec >&2  # devenv captures task stdout; stream progress instead
+        ch=''${RF_CHANNEL:?set RF_CHANNEL=1..13 (e.g. RF_CHANNEL=6 devenv tasks run rf:capture)}
+        secs=''${RF_SECONDS:-30}
+        bssid=''${RF_BSSID:-}
+        filt=""; [ -n "$bssid" ] && filt="wlan addr3 $bssid"
+        dest="$HOME/rf-lab-captures"; mkdir -p "$dest"
+        echo "Capturing ch $ch for ''${secs}s''${bssid:+ (AP $bssid)}..."
+        out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo rf-capture $ch $secs '$filt'")
+        scp -q "naked-pi:$out" "$dest/"
+        f="$dest/$(basename "$out")"
+        echo "pcap: $f"
+        echo "open: nix shell nixpkgs#wireshark -c wireshark $f"
+      '';
 
   # Streams to stderr because devenv captures task stdout.
-  naked = name: preamble: cmd: gate name [ pkgs.openssh ] ''
-    exec >&2
-    ${preamble}
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo ${cmd}"
-  '';
+  naked =
+    name: preamble: cmd:
+    gate name [ pkgs.openssh ] ''
+      exec >&2
+      ${preamble}
+      ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "sudo ${cmd}"
+    '';
 
   rfBtScan = naked "rf-btscan" ''
     secs=''${RF_SECONDS:-15}
@@ -321,13 +541,19 @@ let
     echo "rf-ap-kick $mac ''${flag:-(dry-run)} on naked-pi's own AP..."
   '' "rf-ap-kick $mac $flag";
 
-  rfList = gate "rf-list" (with pkgs; [ openssh coreutils ]) ''
-    exec >&2  # devenv captures task stdout; stream the listing instead
-    echo "== naked-pi /var/lib/rf-lab/captures:"
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi 'ls -la /var/lib/rf-lab/captures 2>/dev/null || echo "(none)"'
-    echo "== local $HOME/rf-lab-captures:"
-    ls -la "$HOME/rf-lab-captures" 2>/dev/null || echo "(none)"
-  '';
+  rfList =
+    gate "rf-list"
+      (with pkgs; [
+        openssh
+        coreutils
+      ])
+      ''
+        exec >&2  # devenv captures task stdout; stream the listing instead
+        echo "== naked-pi /var/lib/rf-lab/captures:"
+        ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi 'ls -la /var/lib/rf-lab/captures 2>/dev/null || echo "(none)"'
+        echo "== local $HOME/rf-lab-captures:"
+        ls -la "$HOME/rf-lab-captures" 2>/dev/null || echo "(none)"
+      '';
 
   # Offline pre-deploy gate: the management-safety invariants are modules/roles/rf-lab.nix assertions, so evaluating naked-pi checks them.
   rfPreflight = gate "rf-preflight" (with pkgs; [ nix ]) ''
@@ -339,49 +565,79 @@ let
   # Offline analysis of a capture (no device involved): management-frame
   # breakdown and, crucially, any deauth/disassoc frames with their reason codes
   # — how you recognise a disconnect in a trace without transmitting anything.
-  rfAnalyze = gate "rf-analyze" (with pkgs; [ coreutils gawk wireshark-cli ]) ''
-    exec >&2
-    # shellcheck disable=SC2012
-    f=''${RF_PCAP:-$(ls -t "$HOME"/rf-lab-captures/*.pcap 2>/dev/null | head -1)}
-    if [ -z "''${f:-}" ] || [ ! -e "$f" ]; then echo "no pcap (set RF_PCAP=path)"; exit 1; fi
-    echo "Analyzing $f"
-    echo "== management-frame subtypes:"
-    tshark -r "$f" -Y 'wlan.fc.type==0' -T fields -e wlan.fc.type_subtype 2>/dev/null \
-      | sort | uniq -c | sort -rn | gawk '
-          BEGIN{n["0x0000"]="assoc-req";n["0x0001"]="assoc-resp";n["0x0004"]="probe-req";
-                n["0x0005"]="probe-resp";n["0x0008"]="beacon";n["0x000a"]="disassoc";
-                n["0x000b"]="auth";n["0x000c"]="deauth"}
-          {name=(n[$2]?n[$2]:"subtype "$2); printf "  %6d  %s\n",$1,name}'
-    echo "== deauth/disassoc frames (reason codes):"
-    tshark -r "$f" -Y 'wlan.fc.type_subtype==0x0c || wlan.fc.type_subtype==0x0a' \
-      -T fields -e wlan.sa -e wlan.da -e wlan.fixed.reason_code 2>/dev/null \
-      | sort | uniq -c | sort -rn | gawk '{printf "  %4d  src=%s dst=%s reason=%s\n",$1,$2,$3,$4} END{if(NR==0)print "  (none in this trace)"}'
-    echo "== top source addresses:"
-    tshark -r "$f" -T fields -e wlan.sa 2>/dev/null | sort | uniq -c | sort -rn | head -8 \
-      | gawk '{printf "  %6d  %s\n",$1,$2}'
-  '';
+  rfAnalyze =
+    gate "rf-analyze"
+      (with pkgs; [
+        coreutils
+        gawk
+        wireshark-cli
+      ])
+      ''
+        exec >&2
+        # shellcheck disable=SC2012
+        f=''${RF_PCAP:-$(ls -t "$HOME"/rf-lab-captures/*.pcap 2>/dev/null | head -1)}
+        if [ -z "''${f:-}" ] || [ ! -e "$f" ]; then echo "no pcap (set RF_PCAP=path)"; exit 1; fi
+        echo "Analyzing $f"
+        echo "== management-frame subtypes:"
+        tshark -r "$f" -Y 'wlan.fc.type==0' -T fields -e wlan.fc.type_subtype 2>/dev/null \
+          | sort | uniq -c | sort -rn | gawk '
+              BEGIN{n["0x0000"]="assoc-req";n["0x0001"]="assoc-resp";n["0x0004"]="probe-req";
+                    n["0x0005"]="probe-resp";n["0x0008"]="beacon";n["0x000a"]="disassoc";
+                    n["0x000b"]="auth";n["0x000c"]="deauth"}
+              {name=(n[$2]?n[$2]:"subtype "$2); printf "  %6d  %s\n",$1,name}'
+        echo "== deauth/disassoc frames (reason codes):"
+        tshark -r "$f" -Y 'wlan.fc.type_subtype==0x0c || wlan.fc.type_subtype==0x0a' \
+          -T fields -e wlan.sa -e wlan.da -e wlan.fixed.reason_code 2>/dev/null \
+          | sort | uniq -c | sort -rn | gawk '{printf "  %4d  src=%s dst=%s reason=%s\n",$1,$2,$3,$4} END{if(NR==0)print "  (none in this trace)"}'
+        echo "== top source addresses:"
+        tshark -r "$f" -T fields -e wlan.sa 2>/dev/null | sort | uniq -c | sort -rn | head -8 \
+          | gawk '{printf "  %6d  %s\n",$1,$2}'
+      '';
 
   # Offline classification test: assert rf:analyze's decode recognises each
   # crafted fixture (beacon count, deauth/disassoc reason codes). No device.
   # the Rust beacon table of rf-proto (#42 slice 6) on a local capture; reads the file only. Its parity with
   # rf:beacons' tshark table is checks.rf-beacons-parity (flake check, so nixos:qa)
-  rfBeaconTable = gate "rf-beacon-table" (with pkgs; [ nix coreutils ]) ''
-    exec >&2
-    # shellcheck disable=SC2012
-    f=''${RF_PCAP:-$(ls -t "$HOME"/rf-lab-captures/*.pcap* 2>/dev/null | head -1)}
-    [ -n "$f" ] && [ -r "$f" ] || { echo "no capture: set RF_PCAP=<file.pcap> (or run rf:beacons first)"; exit 1; }
-    b=$(nix build --no-link --print-out-paths .#rf-beacons-rs)
-    printf '%-18s %3s %5s %5s  %s\n' BSSID CH dBm beac SSID
-    "$b/bin/rf-beacons-rs" "$f" "$b/share/rf-beacons-rs/oui-sample.csv" --text
-  '';
+  rfBeaconTable =
+    gate "rf-beacon-table"
+      (with pkgs; [
+        nix
+        coreutils
+      ])
+      ''
+        exec >&2
+        # shellcheck disable=SC2012
+        f=''${RF_PCAP:-$(ls -t "$HOME"/rf-lab-captures/*.pcap* 2>/dev/null | head -1)}
+        [ -n "$f" ] && [ -r "$f" ] || { echo "no capture: set RF_PCAP=<file.pcap> (or run rf:beacons first)"; exit 1; }
+        b=$(nix build --no-link --print-out-paths .#rf-beacons-rs)
+        printf '%-18s %3s %5s %5s  %s\n' BSSID CH dBm beac SSID
+        "$b/bin/rf-beacons-rs" "$f" "$b/share/rf-beacons-rs/oui-sample.csv" --text
+      '';
 
-  rfBeaconsTest = gate "rf-beacons-test" (with pkgs; [ bash wireshark-cli gawk coreutils gnugrep ]) ''
-    bash scripts/rf-beacons-test.sh
-  '';
+  rfBeaconsTest =
+    gate "rf-beacons-test"
+      (with pkgs; [
+        bash
+        wireshark-cli
+        gawk
+        coreutils
+        gnugrep
+      ])
+      ''
+        bash scripts/rf-beacons-test.sh
+      '';
 
-  rfAnalyzeTest = gate "rf-analyze-test" (with pkgs; [ bash wireshark-cli coreutils gnugrep ]) ''
-    bash scripts/rf-analyze-test.sh
-  '';
+  rfAnalyzeTest =
+    gate "rf-analyze-test"
+      (with pkgs; [
+        bash
+        wireshark-cli
+        coreutils
+        gnugrep
+      ])
+      ''
+        bash scripts/rf-analyze-test.sh
+      '';
 
   embeddedDiscover = gate "embedded-discover" [ pkgs.openssh ] ''
     exec >&2  # devenv captures task stdout; stream results instead
@@ -395,25 +651,34 @@ let
   # state; EMBEDDED_COMMIT=1 performs it. EMBEDDED_PORT overrides espflash's
   # auto-detect when more than one serial port is present (non-interactive SSH
   # cannot answer espflash's port prompt).
-  embeddedFlash = gate "embedded-flash" (with pkgs; [ openssh coreutils ]) ''
-    exec >&2  # devenv captures task stdout; stream results instead
-    fw=''${FW_ELF:?set FW_ELF=/path/to/firmware (the ELF from cargo build, not a raw .bin)}
-    [ -f "$fw" ] || { echo "no such file: $fw" >&2; exit 1; }
-    port=''${EMBEDDED_PORT:+--port ''${EMBEDDED_PORT}}
-    if [ "''${EMBEDDED_COMMIT:-}" != 1 ]; then
-      echo "dry-run: would copy $fw to naked-pi and run: espflash flash $port <remote-elf>" >&2
-      echo "set EMBEDDED_COMMIT=1 to flash for real" >&2
-      exit 0
-    fi
-    remote=$(ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "mktemp /tmp/embedded-fw.XXXXXX")
-    # shellcheck disable=SC2064
-    trap "ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi 'rm -f $remote'" EXIT
-    scp -o BatchMode=yes -o ConnectTimeout=10 "$fw" "naked-pi:$remote"
-    # shellcheck disable=SC2086
-    ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "espflash flash $port $remote"
-  '';
+  embeddedFlash =
+    gate "embedded-flash"
+      (with pkgs; [
+        openssh
+        coreutils
+      ])
+      ''
+        exec >&2  # devenv captures task stdout; stream results instead
+        fw=''${FW_ELF:?set FW_ELF=/path/to/firmware (the ELF from cargo build, not a raw .bin)}
+        [ -f "$fw" ] || { echo "no such file: $fw" >&2; exit 1; }
+        port=''${EMBEDDED_PORT:+--port ''${EMBEDDED_PORT}}
+        if [ "''${EMBEDDED_COMMIT:-}" != 1 ]; then
+          echo "dry-run: would copy $fw to naked-pi and run: espflash flash $port <remote-elf>" >&2
+          echo "set EMBEDDED_COMMIT=1 to flash for real" >&2
+          exit 0
+        fi
+        remote=$(ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "mktemp /tmp/embedded-fw.XXXXXX")
+        # shellcheck disable=SC2064
+        trap "ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi 'rm -f $remote'" EXIT
+        scp -o BatchMode=yes -o ConnectTimeout=10 "$fw" "naked-pi:$remote"
+        # shellcheck disable=SC2086
+        ssh -o BatchMode=yes -o ConnectTimeout=10 naked-pi "espflash flash $port $remote"
+      '';
 
-  task = description: app: { inherit description; exec = lib.getExe app; };
+  task = description: app: {
+    inherit description;
+    exec = lib.getExe app;
+  };
 
   hook = name: stage: app: {
     enable = true;
@@ -446,45 +711,74 @@ in
   tasks = {
     "nixos:lint-comments" = task "Comment Policy lint (density + forbidden shapes)" lintComments;
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
-    "nixos:secrets-verify" = task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
+    "nixos:secrets-verify" =
+      task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
-    "nixos:flake-check" = task "The flake check over all systems, one output per nix process: builds every x86 host, evaluates the Pis" flakeCheck;
-    "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
-    "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
-    "nixos:alert-bridge-test" = task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
-    "nixos:coordinator-test" = task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
-    "nixos:worker-permissions-test" = task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
-    "nixos:workers-eval-test" = task "The developer-environment module rejects each wrong configuration at eval; agent argv survives the guest shell" workersEvalTest;
-    "nixos:bulk-reader-test" = task "sam.claude.bulkReader: shunt hooks only when on and the skills pin has them, after the existing Bash hooks; guests via a guest module" bulkReaderTest;
-    "nixos:harness-telemetry-test" = task "sam.claude.telemetry: Claude exports through the local relay with session and repository attributes; emit-work-ref.sh only when on and pinned" harnessTelemetryTest;
-    "nixos:known-hosts-test" = task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host" knownHostsTest;
-    "nixos:delegation-test" = task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
-    "nixos:build-bounds-test" = task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
-    "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
-    "nixos:qa-push-test" = task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit" qaPushTest;
-    "nixos:journal-collector-test" = task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
-    "nixos:loki-test" = task "homelab.loki on no host yet: chart-parity config validated by loki -verify-config, loopback and no port by default" lokiTest;
-    "nixos:switch-safety-test" = task "A switch keeps Herdr's server on every host that runs one, waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
+    "nixos:flake-check" =
+      task "The flake check over all systems, one output per nix process: builds every x86 host, evaluates the Pis" flakeCheck;
+    "nixos:claude-settings-test" =
+      task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
+    "nixos:ollama-portforward-test" =
+      task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
+    "nixos:alert-bridge-test" =
+      task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
+    "nixos:coordinator-test" =
+      task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
+    "nixos:worker-permissions-test" =
+      task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
+    "nixos:workers-eval-test" =
+      task "The developer-environment module rejects each wrong configuration at eval; agent argv survives the guest shell" workersEvalTest;
+    "nixos:bulk-reader-test" =
+      task "sam.claude.bulkReader: shunt hooks only when on and the skills pin has them, after the existing Bash hooks; guests via a guest module" bulkReaderTest;
+    "nixos:harness-telemetry-test" =
+      task "sam.claude.telemetry: Claude exports through the local relay with session and repository attributes; emit-work-ref.sh only when on and pinned" harnessTelemetryTest;
+    "nixos:known-hosts-test" =
+      task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host" knownHostsTest;
+    "nixos:delegation-test" =
+      task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
+    "nixos:build-bounds-test" =
+      task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
+    "nixos:otel-rollback-test" =
+      task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
+    "nixos:qa-push-test" =
+      task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit" qaPushTest;
+    "nixos:journal-collector-test" =
+      task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
+    "nixos:loki-test" =
+      task "homelab.loki on no host yet: chart-parity config validated by loki -verify-config, loopback and no port by default" lokiTest;
+    "nixos:switch-safety-test" =
+      task "A switch keeps Herdr's server on every host that runs one, waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;
-    "rf:capture" = task "naked-pi: bounded monitor capture (RF_CHANNEL, RF_SECONDS, RF_BSSID)" rfCapture;
+    "rf:capture" =
+      task "naked-pi: bounded monitor capture (RF_CHANNEL, RF_SECONDS, RF_BSSID)" rfCapture;
     "rf:btscan" = task "naked-pi: passive Bluetooth/BLE discovery (RF_SECONDS)" rfBtScan;
     "rf:list" = task "naked-pi: list captures on the Pi and locally" rfList;
-    "rf:analyze" = task "offline pcap analysis: mgmt frames + deauth/disassoc reason codes (RF_PCAP)" rfAnalyze;
-    "rf:beacons-test" = task "offline: rf:beacons' AP table on the crafted fixtures: hidden SSIDs, escaped control bytes (#42)" rfBeaconsTest;
-    "rf:beacon-table" = task "offline: the Rust (rf-proto) beacon table of a local pcap (RF_PCAP, default newest)" rfBeaconTable;
-    "rf:analyze-test" = task "offline: assert rf:analyze classifies the crafted pcap fixtures" rfAnalyzeTest;
-    "rf:sim" = task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
+    "rf:analyze" =
+      task "offline pcap analysis: mgmt frames + deauth/disassoc reason codes (RF_PCAP)" rfAnalyze;
+    "rf:beacons-test" =
+      task "offline: rf:beacons' AP table on the crafted fixtures: hidden SSIDs, escaped control bytes (#42)" rfBeaconsTest;
+    "rf:beacon-table" =
+      task "offline: the Rust (rf-proto) beacon table of a local pcap (RF_PCAP, default newest)" rfBeaconTable;
+    "rf:analyze-test" =
+      task "offline: assert rf:analyze classifies the crafted pcap fixtures" rfAnalyzeTest;
+    "rf:sim" =
+      task "naked-pi: fully-virtual hwsim Wi-Fi lab (assoc + iperf3 + disconnect/recover)" rfSim;
     "rf:ap-outage" = task "naked-pi: bounded outage of the lab's own AP (RF_SECONDS)" rfApOutage;
-    "embedded:discover" = task "naked-pi: espflash board-info (chip, revision, flash, MAC)" embeddedDiscover;
-    "embedded:flash" = task "naked-pi: flash FW_ELF to the board (dry-run; EMBEDDED_COMMIT=1, EMBEDDED_PORT)" embeddedFlash;
+    "embedded:discover" =
+      task "naked-pi: espflash board-info (chip, revision, flash, MAC)" embeddedDiscover;
+    "embedded:flash" =
+      task "naked-pi: flash FW_ELF to the board (dry-run; EMBEDDED_COMMIT=1, EMBEDDED_PORT)" embeddedFlash;
     "rf:preflight" = task "naked-pi: offline pre-deploy safety-invariant gate" rfPreflight;
     "rf:ap-status" = task "naked-pi: list stations associated to the lab AP" rfApStatus;
-    "rf:ap-kick" = task "naked-pi: evict an enrolled station from our own AP (RF_MAC, RF_COMMIT)" rfApKick;
-    "rf:ap-kick-hil" = task "naked-pi: two-radio hardware-in-the-loop rf-ap-kick (Ethernet-gated; RF_HIL_COMMIT)" rfApKickHil;
+    "rf:ap-kick" =
+      task "naked-pi: evict an enrolled station from our own AP (RF_MAC, RF_COMMIT)" rfApKick;
+    "rf:ap-kick-hil" =
+      task "naked-pi: two-radio hardware-in-the-loop rf-ap-kick (Ethernet-gated; RF_HIL_COMMIT)" rfApKickHil;
     "rf:bt-status" = task "naked-pi: Bluetooth controller + paired-device status" rfBtStatus2;
-    "rf:bt-disconnect" = task "naked-pi: disconnect an enrolled paired BT device (RF_MAC, RF_COMMIT)" rfBtDisconnect;
+    "rf:bt-disconnect" =
+      task "naked-pi: disconnect an enrolled paired BT device (RF_MAC, RF_COMMIT)" rfBtDisconnect;
     "rf:bt-outage" = task "naked-pi: bounded local BT adapter power-off/on (RF_SECONDS)" rfBtOutage;
   };
 

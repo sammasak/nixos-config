@@ -32,7 +32,6 @@
   boot.loader.grub.enable = false;
   boot.loader.generic-extlinux-compatible.enable = true;
 
-
   # nodejs/neovim/herdr build on the Pi (aarch64 cache misses); 4x4 threads OOM it.
   nix.settings = {
     max-jobs = 1;

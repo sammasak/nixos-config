@@ -9,7 +9,12 @@
 #   proxied request); 4xx, 5xx and all non-access lines are kept. Those kept access lines carry request headers into
 #   Loki: X-Claude-Code-Session-Id and user agent in clear, Authorization logged as REDACTED.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed alloy` and a start.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.homelab.journalCollector;
   listen = "127.0.0.1:12345";
@@ -91,7 +96,10 @@ in
     services.alloy = {
       enable = true;
       configPath = configFile;
-      extraFlags = [ "--server.http.listen-addr=${listen}" "--disable-reporting" ];
+      extraFlags = [
+        "--server.http.listen-addr=${listen}"
+        "--disable-reporting"
+      ];
     };
 
     system.checks = [
@@ -117,7 +125,10 @@ in
     };
 
     systemd.services.journal-collector-failed = lib.mkIf (cfg.ntfyUrl != null) {
-      serviceConfig = { Type = "oneshot"; DynamicUser = true; };
+      serviceConfig = {
+        Type = "oneshot";
+        DynamicUser = true;
+      };
       script = ''
         ${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 --retry-connrefused --retry-all-errors -H "Priority: high" -d "alloy failed on ${config.networking.hostName}" ${lib.escapeShellArg cfg.ntfyUrl}
       '';

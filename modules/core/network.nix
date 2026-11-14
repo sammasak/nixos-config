@@ -1,4 +1,9 @@
-{ config, pkgs, lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 let
   profile = config.sam.profile;
   hasDesktop = config.sam.desktop.enable;

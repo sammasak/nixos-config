@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   profile = config.sam.profile;
   inherit (profile) username;
@@ -39,7 +44,8 @@ in
       shell = pkgs.fish;
       ignoreShellProgramCheck = true;
       openssh.authorizedKeys.keys = sshAuthorizedKeys;
-    } // lib.optionalAttrs profile.devTools { linger = true; };
+    }
+    // lib.optionalAttrs profile.devTools { linger = true; };
   };
 
   assertions = [
@@ -51,6 +57,9 @@ in
 
   nix.settings = {
     allowed-users = [ username ];
-    trusted-users = [ "root" "${username}" ];
+    trusted-users = [
+      "root"
+      "${username}"
+    ];
   };
 }

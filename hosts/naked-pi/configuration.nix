@@ -24,8 +24,7 @@
 
   # Send the MAC as DHCP client-id so the router's MAC reservation (.138) applies;
   # a sticky client-id lease otherwise shadowed it. See vault: dhcp-reservations.md
-  networking.networkmanager.ensureProfiles.profiles.home-wifi.ipv4.dhcp-client-id =
-    lib.mkForce "mac";
+  networking.networkmanager.ensureProfiles.profiles.home-wifi.ipv4.dhcp-client-id = lib.mkForce "mac";
 
   # age from the host SSH key WITHOUT sam.hostSecrets, so naked-pi decrypts only
   # secrets/homelab/wifi.yaml — not the operator tokens #32 keeps off this host.

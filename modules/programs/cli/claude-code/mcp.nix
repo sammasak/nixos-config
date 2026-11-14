@@ -3,16 +3,35 @@
 # first argument, so it is imported applied:
 #   (import .../claude-code/mcp.nix inputs.skills)
 skillsSrc:
-{ pkgs, lib, config, osConfig, ... }:
+{
+  pkgs,
+  lib,
+  config,
+  osConfig,
+  ...
+}:
 let
   worker = osConfig.sam.herdr.worker;
   bulkReader = osConfig.sam.claude.bulkReader;
   # both or neither: an older skills pin evaluates and registers nothing
-  shunt = bulkReader.enable && lib.all (h: builtins.pathExists "${skillsSrc}/hooks/${h}") [ "shunt-check-read.sh" "shunt-check-bash-read.sh" ];
-  spill = shunt && bulkReader.spillOutput && builtins.pathExists "${skillsSrc}/hooks/shunt-spill-output.sh";
+  shunt =
+    bulkReader.enable
+    && lib.all (h: builtins.pathExists "${skillsSrc}/hooks/${h}") [
+      "shunt-check-read.sh"
+      "shunt-check-bash-read.sh"
+    ];
+  spill =
+    shunt && bulkReader.spillOutput && builtins.pathExists "${skillsSrc}/hooks/shunt-spill-output.sh";
   shuntHook = name: {
     type = "command";
-    command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.gnugrep pkgs.findutils ]}:$PATH ${skillsSrc}/hooks/${name}";
+    command = "PATH=${
+      lib.makeBinPath [
+        pkgs.jq
+        pkgs.coreutils
+        pkgs.gnugrep
+        pkgs.findutils
+      ]
+    }:$PATH ${skillsSrc}/hooks/${name}";
     timeout = 15;
   };
   telemetry = osConfig.sam.claude.telemetry;
@@ -20,18 +39,33 @@ let
   # The sandbox posture (scrub, default mode) stays the host profile's: a guest's telemetry must not change it
   hostOtel = osConfig.sam.profile.nativeOtel && otel;
   relay = "http://127.0.0.1:4319";
-  resourceAttributes = lib.concatStringsSep "," (lib.mapAttrsToList (k: v: "${k}=${v}") telemetry.resourceAttributes);
+  resourceAttributes = lib.concatStringsSep "," (
+    lib.mapAttrsToList (k: v: "${k}=${v}") telemetry.resourceAttributes
+  );
   workRef = otel && builtins.pathExists "${skillsSrc}/hooks/emit-work-ref.sh";
   workRefHook = {
     type = "command";
-    command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.curl pkgs.git ]}:$PATH ${skillsSrc}/hooks/emit-work-ref.sh";
+    command = "PATH=${
+      lib.makeBinPath [
+        pkgs.jq
+        pkgs.coreutils
+        pkgs.curl
+        pkgs.git
+      ]
+    }:$PATH ${skillsSrc}/hooks/emit-work-ref.sh";
     timeout = 5;
   };
   # Claude reports user skills as custom_skill with the content flags off; this hook sends the name only
   skillUse = otel && builtins.pathExists "${skillsSrc}/hooks/emit-skill-use.sh";
   skillUseHook = {
     type = "command";
-    command = "PATH=${lib.makeBinPath [ pkgs.jq pkgs.coreutils pkgs.curl ]}:$PATH ${skillsSrc}/hooks/emit-skill-use.sh";
+    command = "PATH=${
+      lib.makeBinPath [
+        pkgs.jq
+        pkgs.coreutils
+        pkgs.curl
+      ]
+    }:$PATH ${skillsSrc}/hooks/emit-skill-use.sh";
     timeout = 5;
   };
 in
@@ -80,24 +114,29 @@ in
       # Keeps the default mode these hosts had under scrubbing (below); 2.1.300
       # otherwise starts in auto. --dangerously-skip-permissions overrides it.
       permissions = lib.optionalAttrs hostOtel { defaultMode = "default"; };
-    } // lib.optionalAttrs worker.enable {
+    }
+    // lib.optionalAttrs worker.enable {
       # Worker hosts only: a --dangerously-skip-permissions start no longer stops at the acknowledgment dialog
       # (2.1.300 ignores ~/.claude.json's bypassPermissionsModeAccepted); a session without the flag is unaffected.
       skipDangerousModePermissionPrompt = true;
       # #157: "Switch automatically" when safeguards flag a message; unset, every session stops at a dialog asking
       switchModelsOnFlag = true;
-    } // {
+    }
+    // {
       env = {
         DISABLE_ERROR_REPORTING = "1";
-      } // lib.optionalAttrs hostOtel {
+      }
+      // lib.optionalAttrs hostOtel {
         # "1" forces every session to the default permission mode, ignoring
         # --dangerously-skip-permissions (claude-code 2.1.300). With "0", tools
         # inherit credential-shaped env and run outside the bubblewrap sandbox;
         # OTEL_* and CLAUDE_CODE_OAUTH_TOKEN are still withheld.
         CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "0";
-      } // lib.optionalAttrs (!otel) {
+      }
+      // lib.optionalAttrs (!otel) {
         DISABLE_TELEMETRY = "1";
-      } // lib.optionalAttrs otel {
+      }
+      // lib.optionalAttrs otel {
         CLAUDE_CODE_ENABLE_TELEMETRY = "1";
         OTEL_METRICS_EXPORTER = "otlp";
         OTEL_LOGS_EXPORTER = "otlp";
@@ -118,9 +157,11 @@ in
         # Claude strips OTEL_* from hook environments; emit-work-ref.sh and emit-skill-use.sh read these instead.
         HARNESS_OTLP_ENDPOINT = relay;
         HARNESS_RESOURCE_ATTRIBUTES = resourceAttributes;
-      } // lib.optionalAttrs (shunt && bulkReader.minTokens != null) {
+      }
+      // lib.optionalAttrs (shunt && bulkReader.minTokens != null) {
         SHUNT_MIN_TOKENS = toString bulkReader.minTokens;
-      } // lib.optionalAttrs (shunt && bulkReader.model != null) {
+      }
+      // lib.optionalAttrs (shunt && bulkReader.model != null) {
         SHUNT_MODEL = bulkReader.model;
       };
       enabledPlugins = {
@@ -137,15 +178,18 @@ in
       # Hook commands are Nix store paths from the skills input, so
       # they resolve on every host regardless of HOME.
       hooks = {
-        Stop = [{
-          hooks = [
-            {
-              type = "command";
-              command = "${skillsSrc}/hooks/check-git-state.sh";
-              timeout = 10;
-            }
-          ] ++ lib.optional workRef workRefHook;
-        }];
+        Stop = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = "${skillsSrc}/hooks/check-git-state.sh";
+                timeout = 10;
+              }
+            ]
+            ++ lib.optional workRef workRefHook;
+          }
+        ];
         PreToolUse = [
           {
             # 15s: p99 is ~0.8s, but a timed-out PreToolUse hook does NOT block,
@@ -167,47 +211,61 @@ in
             # unreviewed or implementer merge (present once the skills pin carries it)
             ++ lib.optional (worker.enable && builtins.pathExists "${skillsSrc}/hooks/check-merge.sh") {
               type = "command";
-              command = "PATH=${lib.makeBinPath [ pkgs.gh pkgs.python3 pkgs.coreutils ]}:$PATH ${skillsSrc}/hooks/check-merge.sh";
+              command = "PATH=${
+                lib.makeBinPath [
+                  pkgs.gh
+                  pkgs.python3
+                  pkgs.coreutils
+                ]
+              }:$PATH ${skillsSrc}/hooks/check-merge.sh";
               timeout = 30;
             }
             ++ lib.optional shunt (shuntHook "shunt-check-bash-read.sh");
           }
-        ] ++ lib.optional shunt {
+        ]
+        ++ lib.optional shunt {
           matcher = "Read";
           hooks = [ (shuntHook "shunt-check-read.sh") ];
-        } ++ lib.optional skillUse {
+        }
+        ++ lib.optional skillUse {
           matcher = "Skill";
           hooks = [ skillUseHook ];
         };
-        PostToolUse = lib.optional spill {
-          matcher = "Bash";
-          hooks = [ (shuntHook "shunt-spill-output.sh") ];
-        } ++ [{
-          matcher = "Write|Edit";
-          hooks = [
+        PostToolUse =
+          lib.optional spill {
+            matcher = "Bash";
+            hooks = [ (shuntHook "shunt-spill-output.sh") ];
+          }
+          ++ [
             {
-              type = "command";
-              command = "${skillsSrc}/hooks/validate-manifest.sh";
-              timeout = 30;
-            }
-            {
-              type = "command";
-              command = "${skillsSrc}/hooks/validate-nix.sh";
-              timeout = 30;
-            }
-            {
-              # PATH prefix: shellcheck is not in the user environment, and the
-              # hook skips silently when it cannot find the binary.
-              type = "command";
-              command = "PATH=${lib.makeBinPath [ pkgs.shellcheck ]}:$PATH ${skillsSrc}/hooks/validate-shell.sh";
-              timeout = 30;
+              matcher = "Write|Edit";
+              hooks = [
+                {
+                  type = "command";
+                  command = "${skillsSrc}/hooks/validate-manifest.sh";
+                  timeout = 30;
+                }
+                {
+                  type = "command";
+                  command = "${skillsSrc}/hooks/validate-nix.sh";
+                  timeout = 30;
+                }
+                {
+                  # PATH prefix: shellcheck is not in the user environment, and the
+                  # hook skips silently when it cannot find the binary.
+                  type = "command";
+                  command = "PATH=${lib.makeBinPath [ pkgs.shellcheck ]}:$PATH ${skillsSrc}/hooks/validate-shell.sh";
+                  timeout = 30;
+                }
+              ];
             }
           ];
-        }];
-      } // lib.optionalAttrs workRef {
-        SessionStart = [{ hooks = [ workRefHook ]; }];
-      } // lib.optionalAttrs skillUse {
-        UserPromptSubmit = [{ hooks = [ skillUseHook ]; }];
+      }
+      // lib.optionalAttrs workRef {
+        SessionStart = [ { hooks = [ workRefHook ]; } ];
+      }
+      // lib.optionalAttrs skillUse {
+        UserPromptSubmit = [ { hooks = [ skillUseHook ]; } ];
       };
     };
   };

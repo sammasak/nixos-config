@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   wallpaper = ../../../assets/wallpapers/train-sideview.webp;
 in

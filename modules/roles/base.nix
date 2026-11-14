@@ -1,4 +1,9 @@
-{ config, lib, options, ... }:
+{
+  config,
+  lib,
+  options,
+  ...
+}:
 {
   imports = [
     ../core/automation.nix
@@ -15,12 +20,14 @@
     ../core/resource-hygiene.nix
     ../core/store-cache.nix
     ../homelab/native-otel-relay.nix
-    ../themes/Catppuccin  # Stylix: off when headless under runtime-host, always off under rf-lab
+    ../themes/Catppuccin # Stylix: off when headless under runtime-host, always off under rf-lab
   ];
 
   assertions =
     let
-      rfUnits = builtins.filter (s: builtins.match "rf-.*" s != null) (builtins.attrNames config.systemd.services);
+      rfUnits = builtins.filter (s: builtins.match "rf-.*" s != null) (
+        builtins.attrNames config.systemd.services
+      );
     in
     lib.optional (!lib.elem "rf-lab" config.sam.profile.roles) {
       assertion = !(options.sam ? rfLab) && rfUnits == [ ];

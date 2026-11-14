@@ -3,10 +3,12 @@ let
   username = config.sam.profile.username;
 in
 {
-  assertions = [{
-    assertion = !config.system.autoUpgrade.enable;
-    message = "system.autoUpgrade must stay off: an unattended switch from main bypasses deploy-rs rollback and the health check; deploy with `just deploy HOST` (docs/k3s-to-nixos-native.md).";
-  }];
+  assertions = [
+    {
+      assertion = !config.system.autoUpgrade.enable;
+      message = "system.autoUpgrade must stay off: an unattended switch from main bypasses deploy-rs rollback and the health check; deploy with `just deploy HOST` (docs/k3s-to-nixos-native.md).";
+    }
+  ];
 
   nix.gc = {
     automatic = true;

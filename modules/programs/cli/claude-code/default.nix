@@ -3,20 +3,22 @@
   # Mirrors the starship prompt (directory, git branch) plus model and context use.
   programs.claude-code.settings.statusLine = {
     type = "command";
-    command = toString (pkgs.writeShellScript "claude-statusline" ''
-      input=$(cat)
-      jq=${pkgs.jq}/bin/jq
-      dir=$(echo "$input" | $jq -r '.workspace.current_dir // .cwd')
-      model=$(echo "$input" | $jq -r '.model.display_name')
-      used=$(echo "$input" | $jq -r '.context_window.used_percentage // empty')
-      br=$(GIT_OPTIONAL_LOCKS=0 git -C "$dir" symbolic-ref --short HEAD 2>/dev/null \
-        || GIT_OPTIONAL_LOCKS=0 git -C "$dir" rev-parse --short HEAD 2>/dev/null)
-      printf '\033[36m%s\033[0m' "''${dir/#$HOME/\~}"
-      [ -n "$br" ] && printf ' on \033[35m%s\033[0m' "$br"
-      printf ' \033[2m%s\033[0m' "$model"
-      [ -n "$used" ] && printf ' \033[33mctx %.0f%%\033[0m' "$used"
-      echo
-    '');
+    command = toString (
+      pkgs.writeShellScript "claude-statusline" ''
+        input=$(cat)
+        jq=${pkgs.jq}/bin/jq
+        dir=$(echo "$input" | $jq -r '.workspace.current_dir // .cwd')
+        model=$(echo "$input" | $jq -r '.model.display_name')
+        used=$(echo "$input" | $jq -r '.context_window.used_percentage // empty')
+        br=$(GIT_OPTIONAL_LOCKS=0 git -C "$dir" symbolic-ref --short HEAD 2>/dev/null \
+          || GIT_OPTIONAL_LOCKS=0 git -C "$dir" rev-parse --short HEAD 2>/dev/null)
+        printf '\033[36m%s\033[0m' "''${dir/#$HOME/\~}"
+        [ -n "$br" ] && printf ' on \033[35m%s\033[0m' "$br"
+        printf ' \033[2m%s\033[0m' "$model"
+        [ -n "$used" ] && printf ' \033[33mctx %.0f%%\033[0m' "$used"
+        echo
+      ''
+    );
   };
 
   # Auto-approve with destructive classes carved out: deny wins over allow,

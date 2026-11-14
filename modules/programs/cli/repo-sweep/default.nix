@@ -4,7 +4,12 @@
 let
   repoSweep = pkgs.writeShellApplication {
     name = "repo-sweep";
-    runtimeInputs = with pkgs; [ coreutils findutils git gnugrep ];
+    runtimeInputs = with pkgs; [
+      coreutils
+      findutils
+      git
+      gnugrep
+    ];
     text = builtins.readFile ./repo-sweep.sh;
   };
 in

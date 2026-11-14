@@ -22,7 +22,10 @@ stdenv.mkDerivation {
   };
 
   nativeBuildInputs = [ pkg-config ];
-  buildInputs = [ libnl libconfig ];
+  buildInputs = [
+    libnl
+    libconfig
+  ];
 
   makeFlags = [ "PREFIX=$(out)" ];
 

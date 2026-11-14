@@ -1,5 +1,11 @@
 skillsSrc:
-{ config, lib, pkgs, osConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  osConfig,
+  ...
+}:
 let
   # a host's Codex follows nativeOtel even with Claude's telemetry off (acer, msi); an environment has no
   # nativeOtel (no relay, no secret), so its Codex follows the sam.claude.telemetry its host sets
@@ -9,14 +15,19 @@ let
   coordinatorSkills =
     let
       lines = lib.splitString "\n" (builtins.readFile coordinatorRole);
-      afterKey = lib.drop (lib.lists.findFirstIndex (l: l == "skills:") (builtins.length lines) lines + 1) lines;
+      afterKey = lib.drop (
+        lib.lists.findFirstIndex (l: l == "skills:") (builtins.length lines) lines + 1
+      ) lines;
       count = lib.lists.findFirstIndex (l: !lib.hasPrefix "  - " l) (builtins.length afterKey) afterKey;
       items = map (lib.removePrefix "  - ") (lib.take count afterKey);
       missing = lib.filter (n: !builtins.pathExists "${skillsSrc}/skills/${n}/SKILL.md") items;
     in
-    if items == [ ] then throw "coordinator ROLE.md: no `skills:` list in the exact `  - name` form"
-    else if missing != [ ] then throw "coordinator ROLE.md names skills the input lacks: ${toString missing}"
-    else items;
+    if items == [ ] then
+      throw "coordinator ROLE.md: no `skills:` list in the exact `  - name` form"
+    else if missing != [ ] then
+      throw "coordinator ROLE.md names skills the input lacks: ${toString missing}"
+    else
+      items;
 
   portableSkillNames = lib.optionals coordinatorHost coordinatorSkills ++ [
     "credentials"
@@ -32,14 +43,14 @@ let
 
   mkSkillLinks =
     prefix:
-    builtins.listToAttrs (map
-      (name: {
+    builtins.listToAttrs (
+      map (name: {
         name = "${prefix}/${name}";
         value = {
           source = "${skillsSrc}/skills/${name}";
         };
-      })
-      portableSkillNames);
+      }) portableSkillNames
+    );
 
   workspaceRoutingSkill = {
     source = ./workspace-routing;
@@ -59,19 +70,28 @@ let
 
   codexContextHook = pkgs.writeShellApplication {
     name = "codex-workspace-context-hook";
-    runtimeInputs = [ pkgs.jq pkgs.gawk pkgs.coreutils ];
+    runtimeInputs = [
+      pkgs.jq
+      pkgs.gawk
+      pkgs.coreutils
+    ];
     text = builtins.readFile ./context-hook.sh;
   };
 
   codexValidateBashHook = pkgs.writeShellApplication {
     name = "codex-validate-bash-hook";
-    runtimeInputs = [ pkgs.jq pkgs.gnugrep pkgs.gawk pkgs.coreutils ];
+    runtimeInputs = [
+      pkgs.jq
+      pkgs.gnugrep
+      pkgs.gawk
+      pkgs.coreutils
+    ];
     text = builtins.readFile ./validate-bash.sh;
   };
 
   hooksConfig = builtins.toJSON {
     hooks = {
-    SessionStart = [
+      SessionStart = [
         {
           hooks = [
             {
@@ -127,14 +147,14 @@ let
     hooks = true
 
     ${lib.optionalString coordinatorHost ''
-    # Codex opens a role's config_file with O_NOFOLLOW at spawn time, so it must not be a
-    # Home Manager symlink under ~/.codex/agents; a store path is a regular file.
-    [agents.coordinator]
-    config_file = "${skillsSrc}/agents/coordinator/codex.toml"
+      # Codex opens a role's config_file with O_NOFOLLOW at spawn time, so it must not be a
+      # Home Manager symlink under ~/.codex/agents; a store path is a regular file.
+      [agents.coordinator]
+      config_file = "${skillsSrc}/agents/coordinator/codex.toml"
     ''}
     ${lib.optionalString nativeOtel ''
-    [shell_environment_policy.filters]
-    "OTEL_EXPORTER_OTLP_HEADERS" = "exclude"
+      [shell_environment_policy.filters]
+      "OTEL_EXPORTER_OTLP_HEADERS" = "exclude"
     ''}
 
     [projects."/home/lukas"]
@@ -153,11 +173,11 @@ let
     startup_timeout_sec = 20
     ${lib.optionalString nativeOtel ''
 
-    [otel]
-    environment = "prod"
-    exporter = "none"
-    metrics_exporter = { "otlp-http" = { endpoint = "http://127.0.0.1:4319/v1/metrics", protocol = "json" } }
-    trace_exporter = "none"
+      [otel]
+      environment = "prod"
+      exporter = "none"
+      metrics_exporter = { "otlp-http" = { endpoint = "http://127.0.0.1:4319/v1/metrics", protocol = "json" } }
+      trace_exporter = "none"
     ''}
   '';
 

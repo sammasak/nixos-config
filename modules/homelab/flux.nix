@@ -1,7 +1,17 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
-  inherit (lib) mkEnableOption mkIf mkOption types;
+  inherit (lib)
+    mkEnableOption
+    mkIf
+    mkOption
+    types
+    ;
   cfg = config.homelab.flux;
 
   deployKey = config.sops.secrets."flux/deploy_key".path;
@@ -64,7 +74,12 @@ in
         RestartSec = "30s";
       };
 
-      path = with pkgs; [ kubectl fluxcd coreutils gnugrep ];
+      path = with pkgs; [
+        kubectl
+        fluxcd
+        coreutils
+        gnugrep
+      ];
 
       enableStrictShellChecks = true;
       script = ''
