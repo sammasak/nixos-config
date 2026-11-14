@@ -14,6 +14,7 @@
 - `runtime-host-vm-test.nix`: the `runtime-host-role-vm` QEMU test package (x86_64-linux only), booting the base and runtime-host roles with msi-ms7758's role list; a package, not a check, run by `just role-vm-test`
 - `templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
 - `rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
+- `loki-check.nix`: the `loki-config-msi-ms7758` check (x86_64-linux), homelab.loki on a seeded msi: `loki -verify-config` on the rendered file and the module's assertions, held and failing
 - `deploy.nix`: deploy-rs push targets, one node per hosts table entry
 - `hosts.nix`: the hosts table (roles, `hostDir`, `deploy.hostname`, `deploy.remoteBuild`)
 

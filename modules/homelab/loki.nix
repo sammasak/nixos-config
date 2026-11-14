@@ -2,7 +2,8 @@
 # tsdb v13, 72h with 30 days for the two agent telemetry streams), so logs stay queryable when the cluster is not.
 # The data directory keeps the chart's layout (its /var/loki), here under /var/lib/loki (chunks, rules, compactor,
 # the rest under path_prefix), so the cut-over in docs/k3s-to-nixos-native.md ("P4 in detail") is a copy of that directory.
-# Upstream runs `loki -verify-config` on the rendered file at build time (only while extraFlags is empty).
+# Upstream runs `loki -verify-config` on the rendered file at build time (only while extraFlags is empty); the
+# flake check loki-config-msi-ms7758 (flake-modules/loki-check.nix) runs it on a seeded msi.
 # - A crash loop slower than 3 starts per 1200 s never reaches failed, so it pages only once an absence alert exists.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed loki` and a start.
 {
@@ -27,6 +28,8 @@ let
     }
     .${u};
   probeHost = if cfg.listenAddress == "0.0.0.0" then "127.0.0.1" else cfg.listenAddress;
+  probeBudget = 180;
+  unit = config.systemd.services.loki;
 
   firewallRules = mkDualBackendFirewall {
     nftComment = "loki: push and query from the listed sources.";
@@ -82,6 +85,20 @@ in
       {
         assertion = !lib.hasPrefix "127." cfg.listenAddress -> config.networking.firewall.enable;
         message = "homelab.loki.listenAddress ${cfg.listenAddress} without networking.firewall.enable exposes an unauthenticated Loki to every network.";
+      }
+      {
+        assertion = probeBudget < unit.serviceConfig.TimeoutStartSec;
+        message = "homelab.loki: the readiness probe's ${toString probeBudget} s must end before TimeoutStartSec, so a slow start fails its probe instead of being killed.";
+      }
+      {
+        assertion =
+          unit.startLimitBurst
+          * (
+            unit.serviceConfig.TimeoutStartSec
+            + unit.serviceConfig.RestartSec
+            + unit.serviceConfig.TimeoutStopSec
+          ) <= unit.startLimitIntervalSec;
+        message = "homelab.loki: startLimitBurst starts of TimeoutStartSec + RestartSec + TimeoutStopSec each must fit in startLimitIntervalSec, or a start loop never fails the unit and never pages.";
       }
     ];
 
@@ -159,14 +176,13 @@ in
     };
 
     systemd.services.loki = {
-      # 3 starts of at most 210 s start, 30 s restart and 90 s stop each fit in the window, so a start loop pages
       startLimitIntervalSec = 1200;
       startLimitBurst = 3;
       onFailure = [ "loki-failed.service" ];
       environment.GOMEMLIMIT = "900MiB";
       serviceConfig = {
         # /ready waits out the WAL replay and the ingester's 15 s join; local only, like the collector's probe
-        ExecStartPost = "${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 --retry 90 --retry-delay 2 --retry-all-errors --retry-max-time 180 http://${probeHost}:${toString cfg.port}/ready";
+        ExecStartPost = "${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 --retry 90 --retry-delay 2 --retry-all-errors --retry-max-time ${toString probeBudget} http://${probeHost}:${toString cfg.port}/ready";
         TimeoutStartSec = 210;
         TimeoutStopSec = 90;
         RestartSec = 30;
