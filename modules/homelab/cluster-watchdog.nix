@@ -2,33 +2,15 @@
 # publishes on success as well as failure — see the heartbeat comment below.
 {
   config,
-  lib,
   pkgs,
   ...
 }:
 
 let
-  inherit (lib)
-    mkEnableOption
-    mkIf
-    mkOption
-    types
-    ;
-  cfg = config.homelab.clusterWatchdog;
+  ntfyUrl = "http://localhost:${toString config.homelab.ntfy.port}/homelab-watchdog";
 in
 {
-  options.homelab.clusterWatchdog = {
-    enable = mkEnableOption "k3s cluster health watchdog";
-
-    ntfyUrl = mkOption {
-      type = types.str;
-      default = "http://localhost:${toString config.homelab.ntfy.port}/homelab-watchdog";
-      defaultText = "http://localhost:<ntfy.port>/homelab-watchdog";
-      description = "ntfy push URL for watchdog alerts.";
-    };
-  };
-
-  config = mkIf cfg.enable {
+  config = {
     systemd.services.cluster-watchdog = {
       description = "Homelab k3s cluster health watchdog";
       wants = [ "network-online.target" ];
@@ -113,7 +95,7 @@ in
             -H "Priority: high" \
             -H "Tags: warning,rotating_light" \
             -d "$(printf 'Health check failures:%b\n\nNode: %s\nTime: %s' "$failures" "$(hostname -s)" "$(date -u '+%H:%M UTC')")" \
-            "${cfg.ntfyUrl}" || true
+            "${ntfyUrl}" || true
         else
           # Heartbeat on a clean run. This watchdog is otherwise silent when
           # healthy, which is indistinguishable from the watchdog being dead —
@@ -126,7 +108,7 @@ in
             -H "Priority: min" \
             -H "Tags: heavy_check_mark" \
             -d "$(printf 'All checks passed.\n\nNode: %s\nTime: %s' "$(hostname -s)" "$(date -u '+%H:%M UTC')")" \
-            "${cfg.ntfyUrl}" || true
+            "${ntfyUrl}" || true
         fi
       '';
     };

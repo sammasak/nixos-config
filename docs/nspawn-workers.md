@@ -299,6 +299,8 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   every host gets (`fleetHome` in `flake-modules/nixos-configurations.nix`).
 - `<nixpkgs>` in a guest is the nixpkgs its system is built from (`nix.nixPath`,
   no channels).
+- The guest evaluates on the host's nixpkgs instance, so overlays and
+  `nixpkgs.config` belong on the host; a guest overlay fails an assertion.
 - Network: a veth pair, `10.233.<i>.1` host side and `10.233.<i>.2` inside,
   `i` hashed from the name (a collision fails eval); NAT for egress. DNS is
   the host's `resolv.conf` at start; the container waits up to 30 s for it to

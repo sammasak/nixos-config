@@ -128,10 +128,14 @@ key (console, BMC, serial).
 
   Still strict: the connection succeeds only if the server holds the key the
   console showed. Remove the file afterwards.
-- A whole host must not enforce the pins for a while: set
-  `sam.sshKnownHosts.strict = false` (keys stay pinned, unknown hosts prompt
-  again) or `sam.sshKnownHosts.enable = false` (nothing pinned) in that
-  host's configuration and switch; both are single-option reversals.
+- A whole host must not enforce the pins for a while: add
+  `programs.ssh.extraConfig = "Host *\n  StrictHostKeyChecking ask\n";` (default
+  priority, no `mkForce`) to that host's configuration and switch. It lands
+  ahead of the module's strict block, and ssh keeps the first value it reads,
+  so unknown hosts prompt again while the pins stay. Do not empty
+  `programs.ssh.knownHosts` or `mkForce` `programs.ssh.extraConfig`: the
+  first fails lenovo's jump-host assertion, the second drops the worker and
+  gpg-agent entries other modules add.
 - deploy-rs refuses a node: its `sshOpts` carry
   `StrictHostKeyChecking=yes`, so the cause is a missing or changed pin for
   the node's hostname; fix the pin, never the option.

@@ -16,7 +16,7 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
-#   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree
+#   pre-push:   no-force guard, one ref with new commits per push, + nixos:qa on the PUSHED commit in a temp worktree
 #               (lints only when everything changed since origin/main is docs/ or a top-level *.md,
 #               unless a scripts/test-* file names one of the changed files; also lints only for a tree
 #               already green here under the same gate and system generation, or it plus such docs;
@@ -77,7 +77,7 @@ specialisations, module layout).
 SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at activation (every switch and boot) to `/run/secrets/`.
 
 Two SOPS modules:
-- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity and the k3s cluster token, on every k3s node. The Flux deploy and age keys, Cloudflare API token and Tailscale authkey are declared by `flux.nix`, `acme.nix` and `tailscale.nix`, so only the host that enables those (lenovo) decrypts them. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
+- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity and the k3s cluster token, on every k3s node. The Flux deploy and age keys, Cloudflare API token and Tailscale authkey are declared by `flux.nix`, `acme.nix` and `tailscale.nix`, which the homelab-server role turns on, so only lenovo decrypts them. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
 - **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token on `devTools` hosts and hosts with a claude worker instance, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
@@ -161,7 +161,7 @@ The overlay is regenerated automatically by Home Manager activation on every reb
 
 ### Tailscale Remote Access
 
-`modules/homelab/tailscale.nix` (`homelab.tailscale.*`): lenovo is the
+`modules/homelab/tailscale.nix`: lenovo is the
 subnet-router for the LAN; acer runs **no client** (owner decision
 2026-08-26 — remote access rides lenovo, and lenovo-death needs physical
 recovery anyway). Features, DNS flow, and auth-state handling:

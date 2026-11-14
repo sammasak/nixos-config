@@ -313,19 +313,6 @@ let
         PATH="$PATH:/run/current-system/sw/bin" ${pkgs.python3}/bin/python scripts/test-coordinator-delegation.py
       '';
 
-  # nixos-config#92: nativeOtel = false (the runbook's rollback) removes every telemetry surface
-  otelRollbackTest =
-    gate "otel-rollback-test"
-      (with pkgs; [
-        nix
-        python3
-        git
-        gnutar
-      ])
-      ''
-        ${pkgs.python3}/bin/python scripts/test-native-otel-rollback.py
-      '';
-
   qaPushTest =
     gate "qa-push-test"
       (with pkgs; [
@@ -337,6 +324,7 @@ let
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-qa-push.py
+        ${pkgs.python3}/bin/python scripts/test-prepush-one-ref.py
       '';
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
@@ -379,7 +367,6 @@ let
       knownHostsTest
       buildBoundsTest
       delegationTest
-      otelRollbackTest
       journalCollectorTest
       lokiTest
       switchSafetyTest
@@ -390,7 +377,8 @@ let
 
   # Runs the gate on the PUSHED commit in a throwaway worktree, so neither
   # unstaged edits nor a different checked-out branch can make it pass.
-  # prek exposes only the first ref of a multi-ref push. A push that changes only
+  # prek runs it for the first ref that brings new commits only (the shim refuses a push that brings them to
+  # two refs), and not at all for a push that brings none. A push that changes only
   # documentation (docs/ or a top-level *.md) since origin/main gets the lints; no
   # merge-base means the full gate, and so does a doc a test reads (scripts/test-*
   # names it: docs/ssh-host-keys.md) and a nested *.md, which can be deployed config.
@@ -755,10 +743,8 @@ in
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =
       task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
-    "nixos:otel-rollback-test" =
-      task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
     "nixos:qa-push-test" =
-      task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit" qaPushTest;
+      task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs" qaPushTest;
     "nixos:journal-collector-test" =
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:loki-test" =

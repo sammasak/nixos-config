@@ -45,9 +45,7 @@
     pool.memory = "7G";
     ghHostsFile = "/home/${config.sam.profile.username}/.config/gh/hosts.yml";
     # No prompt: its goal is sent through Herdr once it is up (docs/nspawn-workers.md).
-    instances.herman = {
-      model = "claude-fable-5-2";
-    };
+    instances.herman = { };
   };
   # The relay and environments' telemetry only: host sessions here keep their Claude settings (docs/native-otel-canary.md)
   sam.claude.telemetry.enable = false;
@@ -69,16 +67,9 @@
     "--node-label=node-pool=workers"
   ];
 
-  # Keep turbo available for interactive coding and builds. Power-profiles-daemon
-  # still provides the battery-aware system profile; EPP keeps sustained work
-  # balanced instead of forcing the server-oriented power bias.
-  sam.thermal = {
-    enable = true;
-    platform = "generic";
-    profile = "balanced";
-    disableTurboBoost = false;
-    energyPerformancePreference = "balance_performance";
-  };
+  # Power-profiles-daemon still provides the battery-aware system profile; EPP
+  # keeps sustained work balanced instead of forcing a power-saving bias.
+  sam.thermal.energyPerformancePreference = "balance_performance";
 
   # WiFi powersave lets the NIC enter deep states, causing ~300-500 ms link
   # drops that break k3s API watches.

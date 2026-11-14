@@ -2,7 +2,7 @@
 {
   imports = [
     ./hardware-configuration.nix
-    ../../modules/hardware/sd-image-root-lock.nix
+    ../../modules/hardware/pi-sd-image.nix
 
     # Onboard wlan0 as a management fallback over home Wi-Fi when Ethernet is
     # unplugged; the USB capture adapter stays NM-unmanaged (rf-lab role).
@@ -33,10 +33,5 @@
     generateKey = true;
   };
 
-  # No UEFI: the Pi firmware chains U-Boot, which reads /boot/extlinux.
-  # https://wiki.nixos.org/wiki/NixOS_on_ARM/Raspberry_Pi_3
-  boot.loader.systemd-boot.enable = lib.mkForce false;
-  boot.loader.grub.enable = false;
-  boot.loader.generic-extlinux-compatible.enable = true;
   boot.loader.generic-extlinux-compatible.configurationLimit = 4;
 }
