@@ -13,7 +13,47 @@ let
   cfg = config.services.open-webui;
   address = config.sam.fleet.hosts.${config.sam.profile.hostname}.address;
   port = 8080;
-  podCidr = "10.42.0.0/16";
+  # The pod CIDR without each node's Cilium host address (CiliumInternalIP: kubectl get ciliumnodes), which any
+  # process on that node may bind as its source; a node that gets a new one opens a hole until it is listed here.
+  ciliumHosts = [
+    "10.42.0.136" # acer-swift
+    "10.42.1.227" # lenovo
+    "10.42.2.65" # msi-ms7758
+    "10.42.3.52" # black-pi
+  ];
+  pow2 = k: lib.foldl (a: _: a * 2) 1 (lib.range 1 k);
+  toInt = s: lib.foldl (a: o: a * 256 + lib.toInt o) 0 (lib.splitString "." s);
+  toDotted =
+    n: lib.concatMapStringsSep "." (i: toString (lib.mod (n / pow2 (24 - 8 * i)) 256)) (lib.range 0 3);
+  # blocks minus one address: the block holding it splits into halves until the address is a /32 of its own
+  without =
+    hole:
+    lib.concatMap (
+      b:
+      if hole < b.base || hole >= b.base + pow2 (32 - b.len) then
+        [ b ]
+      else if b.len == 32 then
+        [ ]
+      else
+        without hole [
+          {
+            inherit (b) base;
+            len = b.len + 1;
+          }
+          {
+            base = b.base + pow2 (31 - b.len);
+            len = b.len + 1;
+          }
+        ]
+    );
+  podSources = map (b: "${toDotted b.base}/${toString b.len}") (
+    lib.foldr (h: without (toInt h)) [
+      {
+        base = toInt "10.42.0.0";
+        len = 16;
+      }
+    ] ciliumHosts
+  );
   socket = "/run/open-webui/http.sock";
   # uvicorn on the Unix socket, as `open-webui serve` runs it on a TCP port (backend/open_webui/__init__.py)
   python = pkgs.python3.withPackages (ps: [ (ps.toPythonModule cfg.package) ]);
@@ -112,7 +152,7 @@ in
     socketConfig = {
       FreeBind = true; # the Wi-Fi address can appear after the socket
       IPAddressDeny = "any";
-      IPAddressAllow = podCidr;
+      IPAddressAllow = podSources;
     };
   };
   systemd.services.open-webui-proxy = {
