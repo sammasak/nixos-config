@@ -4,7 +4,7 @@ Research and plan, 2026-11-12. Nothing here is built, and nothing here is
 scheduled or a gate on other work: it is the preparation, so that each part
 can be picked up later with the problems already understood. It answers
 three questions about the environments in
-[nspawn-workers.md](nspawn-workers.md):
+[nspawn-workers.md](../nspawn-workers.md):
 
 1. How does every tool and protocol use the host's credentials unless a rule
    blocks it, with no secret in the guest?
