@@ -234,7 +234,7 @@ either side is only reported.
 - **Namespace boundary**: `homelab.*` is a cluster/platform capability a host
   opts into (k3s, flux, dns, acme, ntfy, tailscale, the rebuild trigger);
   `sam.*` is host identity and personal-machine concern (profile, desktop,
-  wifi, thermal, hostSecrets). When both scopes need the same noun, the leaf
+  thermal, hostSecrets). When both scopes need the same noun, the leaf
   states its scope — `homelab.secrets` (cluster) vs `sam.hostSecrets` (machine)
   — because an option path is usually read without its module.
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.

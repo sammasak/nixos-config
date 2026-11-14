@@ -87,7 +87,6 @@ Sibling options, outside the profile:
 - `sam.desktop.enable` (bool) — whether a GUI desktop session is active (outside the profile so `modules/specialisations/desktop.nix` can set it)
 - `sam.thermal.*` — fan/CPU thermal policy, see `modules/hardware/thermal.nix`
 - `sam.hostSecrets.enable` (bool) — per-machine operator credentials, see `modules/core/sops.nix`
-- `sam.wifi.*` — declarative WiFi profile, see `modules/core/wifi.nix`
 - `sam.cliTools.factum.enable`, `sam.cliTools.nixAudit.enable` (bool, default false): per-host CLI tools in the user's Home Manager profile; outside the profile because a developer environment's guest copies its host's profile
 - `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), `lanCidr`, the trusted LAN subnet of the firewall rules, and `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments; a host that sets it fails evaluation
 
