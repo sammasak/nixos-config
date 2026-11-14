@@ -124,7 +124,7 @@ so it answers "no usable free model (no credentials for: ...)" and points at
 `homelab/auto`. It stays installed as an explicit fallback for a session that
 brings its own key (`/login`).
 
-To turn it off for one host, set `pi = false` in its `variables.nix`. That
+To turn it off for one host, set `pi = false` in its `sam.profile` (`hosts/<name>/configuration.nix`). That
 removes the module and the extension link. `~/.pi/agent` state
 stays.
 
@@ -152,7 +152,7 @@ with `</dev/null`.
   below, since provider catalogs change between releases.
 - Rollback: `sudo nixos-rebuild switch --rollback` (or pick the previous
   systemd-boot entry). Pi state in `~/.pi/agent` is version-tolerant and untouched.
-- Remove: set `pi = false` in the host's `variables.nix`.
+- Remove: set `pi = false` in the host's `sam.profile`.
   Seeded keys stay in `~/.pi/agent/settings.json` until you delete them.
 
 ## Verification (2026-10-14, Pi 1.1.0)

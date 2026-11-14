@@ -23,7 +23,7 @@ evaluated, not built, from `git archive` copies, one host at a time.
 ## Context
 
 Before step 3, flake wiring for a host lived in two files,
-`flake-modules/hosts/<name>.nix` and its node in `70-deploy.nix`; since step 4
+`flake-modules/hosts/<name>.nix` and its node in `deploy.nix`; since step 4
 it is one `flake-modules/hosts.nix` entry, and the node is derived from it. Before step 2, architecture was stated three
 times: `system` there, `nixpkgs.hostPlatform` in `hardware-configuration.nix`, and the
 `x86`/`aarch64` activate per node. Nothing checked that they agreed.
@@ -70,7 +70,7 @@ inside D.
 ## Decision
 
 1. **The table is the existing `configurations.nixos` option**
-   (`30-configurations-options.nix`). The five `flake-modules/hosts/*.nix`
+   (`hosts-option.nix`). The five `flake-modules/hosts/*.nix`
    files collapse into one value file, `flake-modules/hosts.nix`. It gains
    `deploy` fields and loses `system` and `username`, and `hostDir`
    defaults to the attribute name. The option is not renamed: no reader
@@ -80,9 +80,8 @@ inside D.
    depend on config) and `deploy.*` (read by deploy-rs). #291's addresses,
    read by other hosts' NixOS modules but nothing at flake level, went to
    `sam.fleet` instead (below). Username and feature flags are read only
-   inside the host, so they stay in `hosts/<dir>/variables.nix`, which
-   `configuration.nix` and tests import as `sam.profile`. Inlining
-   `variables.nix` into `configuration.nix` is a separate follow-up.
+   inside the host, so they stay in `sam.profile` in
+   `hosts/<dir>/configuration.nix`.
 
    ```nix
    configurations.nixos = {
@@ -110,7 +109,7 @@ inside D.
    probes. The user lookup reads the option, without `or { }`. The enum is
    preferred to a throw at the lookup because it makes the bad value
    unrepresentable, not merely detected.
-5. **The registry stays.** A comment in `20-module-registry.nix` records
+5. **The registry stays.** A comment in `module-registry.nix` records
    that its depth fixes merge order. The "must include base" assertion stays:
    `laptop.nix` does not import base, so dropping it would be a behaviour
    change.

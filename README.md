@@ -1,20 +1,9 @@
 # NixOS Configuration
 
-Personal NixOS + Home Manager flake for the homelab: laptops, a tower and two
-Raspberry Pis, one shared user config, built with flake-parts.
-
-- [CLAUDE.md](CLAUDE.md): working rules, secrets scopes, Claude Code / Codex
-  delivery, Comment Policy and conventions.
-- [docs/architecture.md](docs/architecture.md): flake composition, module
-  registry, host wiring, `sam.profile` fields, desktop vs headless, roles.
-- [docs/pi.md](docs/pi.md): the Pi coding agent module (enabled on lenovo and
-  acer-swift).
-- [docs/herdr.md](docs/herdr.md): persistent Herdr sessions, agent restore,
-  and reboot verification.
-- [docs/factum-pilot.md](docs/factum-pilot.md): the Lenovo-only, advisory Factum CLI pilot.
-- [docs/nix-audit-pilot.md](docs/nix-audit-pilot.md): the advisory nix-audit pilot on lenovo, acer-swift and msi-ms7758.
-- [docs/flake-wiring.md](docs/flake-wiring.md): the decision (#292, implemented)
-  for one hosts table with the role registry kept, and its implementation steps.
+One flake that builds and deploys a five-host homelab: two laptops, a tower
+and two Raspberry Pis, sharing one user and one Home Manager tree. Four of the
+hosts form a k3s cluster; the fifth is a Wi-Fi lab appliance. It is built with
+flake-parts and pushed with deploy-rs from the daily-driver laptop.
 
 ## Hosts
 
@@ -26,35 +15,59 @@ Raspberry Pis, one shared user config, built with flake-parts.
 | `black-pi` | Raspberry Pi 4, aarch64 | k3s agent; builds its own closure on the Pi |
 | `naked-pi` | Raspberry Pi 3, aarch64 | `rf-lab` Wi-Fi learning node and ESP32 host; not in k3s |
 
-## Structure
+## Layout
 
-Every directory has one job. Where two places could hold a thing, this table is
-the tie-breaker.
+```
+flake.nix               inputs; hands every file in flake-modules/ to flake-parts
+flake-modules/          the flake's outputs
+  hosts.nix             the fleet: one entry per host, its roles and deploy fields
+hosts/<name>/           per-machine facts: configuration.nix (sam.profile and host-only modules), hardware-configuration.nix
+modules/roles/          base, laptop, homelab-agent, homelab-server, runtime-host, rf-lab, embedded
+modules/core/           the system baseline; roles/base.nix imports most of it
+modules/homelab/        k3s, flux, sops, ACME, AdGuard, tailscale, ntfy, watchdogs
+modules/home/, programs/  the one Home Manager tree every host gets
+modules/desktop/, specialisations/  the niri GUI and the boot entry that enables it
+modules/workers/        nspawn developer environments (docs/nspawn-workers.md)
+modules/rf-lab/, embedded/  naked-pi appliance stacks: Wi-Fi lab, ESP32 USB access
+modules/hardware/       Intel video, thermal policy, disk layout, Pi SD-image root lock
+modules/themes/         Catppuccin via Stylix
+lib/, pkgs/             pure helpers; packages not in nixpkgs, exposed as an overlay
+scripts/, tests/        QA gates, bench.sh, VM tests
+secrets/                SOPS-encrypted material, scopes in .sops.yaml
+docs/                   reference and working documents; dated records in docs/records/
+metrics/                bench.sh history: eval time and counters, drvPaths, line counts
+assets/, dotfiles/      wallpapers; the nvim config, symlinked from the checkout
+```
 
-| Path | Owns | Notes |
-|------|------|-------|
-| `flake.nix` | Flake entry point | Recursively auto-imports `flake-modules/`; nothing host-specific |
-| `flake-modules/` | Top-level flake composition | Number prefixes are names only, not an order; `hosts.nix` declares each host and its roles |
-| `hosts/<name>/` | Per-machine facts only | `variables.nix` (choices), `configuration.nix` (host-only modules), `hardware-configuration.nix` (generated) |
-| `modules/core/` | System modules | `roles/base.nix` imports the baseline every host gets; the rest come in through roles, hosts or the desktop specialisation (docs/architecture.md, Roles) |
-| `modules/roles/` | Composition | `base`, `laptop`, `homelab-agent`, `homelab-server`, `runtime-host`, `rf-lab`, `embedded`; selected in `flake-modules/hosts.nix` |
-| `modules/homelab/` | Cluster concerns | k3s, flux, tailscale, ntfy, AdGuard, ACME, watchdogs, rebuild trigger |
-| `modules/desktop/` | The GUI stack | niri, Waybar, Rofi; gated on `sam.desktop.enable` |
-| `modules/specialisations/` | Boot-menu variants | Currently only `desktop.nix` |
-| `modules/hardware/` | GPU, thermal, disk layout | `video/intel.nix` imported by the Intel hosts |
-| `modules/rf-lab/`, `modules/embedded/` | naked-pi appliance stacks | Wi-Fi/Bluetooth lab and HIL tests; ESP32 tooling |
-| `modules/home/` | Shared Home Manager entry point | One tree for all hosts; there are no per-host `home.nix` files |
-| `modules/programs/` | Home Manager program modules | `cli/`, `browser/`, `editor/`, `gui/`, `terminal/` |
-| `modules/workers/` | nspawn developer environments | `sam.workers`, see docs/nspawn-workers.md |
-| `modules/themes/` | Catppuccin via Stylix | |
-| `lib/` | Pure helpers, no module semantics | `users.nix` (git identity, SSH keys), `firewall.nix` (dual-backend rule builder) |
-| `scripts/` | Repo tooling | `gate-probe.nix` and the `test-*.py` gates, `bench.sh`, `nix-comment-metrics.awk` |
-| `metrics/` | Benchmark history | `history.jsonl`, one line per `just bench`; tracked, diffed across sessions. `just parity [BASE]` needs no entry: it compares every host's toplevel drvPath and deploy node at the merge base with the working tree |
-| `secrets/` | SOPS-encrypted material | `.sops.yaml` holds the recipient scopes |
-| `docs/` | Reference, plus dated records | Reference: `architecture.md`, `herdr.md`, `pi.md`, `nspawn-workers.md`, `ssh-host-keys.md`, `native-otel-canary.md`, `factum-pilot.md`, `nix-audit-pilot.md`. The rest are dated plans, measurements and ledgers, true as of their date |
-| `Justfile` | Task entry points | build, switch, deploy, verify and image recipes |
-| `assets/`, `dotfiles/` | Wallpapers; plain config files symlinked verbatim | |
-| `pkgs/` | Packages not in nixpkgs | Exposed through an overlay in `flake-modules/` |
+## How a host is assembled
+
+1. **One typed host table.** `flake-modules/hosts.nix` declares each host:
+   its `roles`, and the deploy fields `hostname` and `remoteBuild`. The entry
+   is a typed option (`flake-modules/hosts-option.nix`);
+   `remoteBuild` has no default, so a new host must say where it is built.
+2. **Roles are plain modules.** `flake-modules/module-registry.nix`
+   registers every `modules/roles/<name>.nix` as the module `role-<name>`.
+   A role imports what it needs; most import `base.nix` themselves.
+3. **Hosts are built from the table.** `flake-modules/nixos-configurations.nix`
+   builds `nixosConfigurations.<host>` from `hosts/<name>/configuration.nix`,
+   the listed roles, and the modules every host gets (Stylix, sops-nix, Home
+   Manager, disko, `modules/workers`). An unknown role, or a host without
+   `base`, fails evaluation.
+4. **Deploy nodes are derived.** `flake-modules/deploy.nix` maps every
+   table entry to a deploy-rs node, so the host list is written once.
+
+Per-host choices reach modules through `sam.profile`, a strict submodule each
+host sets in its `configuration.nix`; an unknown field is an evaluation error,
+and the host configurations pass nothing through `specialArgs`. Whether a host
+has a GUI is decided by one option, `sam.desktop.enable`, which only
+`modules/specialisations/desktop.nix` sets. Options this repo defines live
+under `sam.*` or `homelab.*`, except `services.devEnvironments`
+(`modules/workers`).
+
+Refactors are checked with `just parity`: it compares every host's toplevel
+drvPath and deploy-rs node at the merge base with the working tree, and fails
+if anything moved. Details and rationale: [docs/architecture.md](docs/architecture.md)
+and [docs/flake-wiring.md](docs/flake-wiring.md).
 
 ## Build, Switch, Deploy
 
@@ -73,9 +86,11 @@ just bump [input]       # update one flake input (default: skills); then just sw
 # HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00),
 # black-pi (builds on the Pi, run inside zellij), naked-pi
 just deploy HOST
+just dry-activate HOST  # the units a deploy would restart, and the closure diff; activates nothing
 
 just check              # full QA (lint, flake check with every host build, the tests)
 just verify             # flake check: build every x86 host, evaluate the Pis
+just parity [BASE]      # fail if any host's toplevel or deploy node moved since BASE
 ```
 
 After each deploy, check on the target that `systemctl is-system-running` says `running` and
@@ -105,8 +120,8 @@ No host upgrades itself: every host asserts `system.autoUpgrade` off, so it chan
 
 `hosts/<name>/` plus an entry in `flake-modules/hosts.nix` (its deploy node
 follows), the `just deploy` pattern, its known-hosts key and sops recipient
-(list in CLAUDE.md); full procedure
-(including SOPS recipients) in `~/knowledge/homelab/runbooks/add-new-host.md`.
+(list in CLAUDE.md). The full procedure is an operator runbook kept outside
+this repository.
 
 ## Adding a New Service (Modular)
 
@@ -146,6 +161,17 @@ in
 | Git credentials | [lib/users.nix](lib/users.nix) |
 | niri keybinds | [modules/desktop/niri/home.nix](modules/desktop/niri/home.nix) |
 | Desktop stacks | `modules/specialisations/desktop.nix` and `modules/desktop/` |
+
+## Further Reading
+
+- [CLAUDE.md](CLAUDE.md): working rules, secrets scopes, Claude Code / Codex
+  delivery, Comment Policy and conventions.
+- [docs/pi.md](docs/pi.md): the Pi coding agent module (enabled on lenovo and
+  acer-swift).
+- [docs/herdr.md](docs/herdr.md): persistent Herdr sessions, agent restore,
+  and reboot verification.
+- [docs/factum-pilot.md](docs/factum-pilot.md): the Lenovo-only, advisory Factum CLI pilot.
+- [docs/nix-audit-pilot.md](docs/nix-audit-pilot.md): the advisory nix-audit pilot on lenovo, acer-swift and msi-ms7758.
 
 References: [flake-parts](https://flake.parts/options/flake-parts-modules.html); inspired by
 [Sly-Harvey/NixOS](https://github.com/Sly-Harvey/NixOS).

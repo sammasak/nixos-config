@@ -4,6 +4,7 @@
     ../core/automation.nix
     ../core/boot.nix
     ../core/system.nix
+    ../core/agent-options.nix
     ../core/users.nix
     ../core/network.nix
     ../core/services.nix

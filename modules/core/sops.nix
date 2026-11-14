@@ -6,6 +6,7 @@
 let
   cfg = config.sam.hostSecrets;
   username = config.sam.profile.username;
+  dev = config.services.devEnvironments;
 in
 {
   options.sam.hostSecrets = {
@@ -21,7 +22,9 @@ in
       };
 
       secrets = {
-        "claude_oauth_token" = {
+        # Read by the devTools fish init and coordinator wake-up, and by the workers' egress proxy, whose own
+        # restartUnits declaration (modules/workers) would otherwise leave this secret without its sopsFile.
+        "claude_oauth_token" = lib.mkIf (config.sam.profile.devTools || lib.any dev.egress.anthropic.for (lib.attrValues dev.instances)) {
           sopsFile = ../../secrets/claude/oauth.yaml;
           owner = username;
           mode = "0400";

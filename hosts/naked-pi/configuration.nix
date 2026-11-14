@@ -1,7 +1,4 @@
 { lib, ... }:
-let
-  vars = import ./variables.nix;
-in
 {
   imports = [
     ./hardware-configuration.nix
@@ -12,7 +9,11 @@ in
     ../../modules/core/wifi.nix
   ];
 
-  sam.profile = vars;
+  sam.profile = {
+    username = "lukas";
+    hostname = "naked-pi";
+    devTools = false;
+  };
   sam.wifi.declarativeHomeProfile = true;
   sam.rfLab.bluetooth.enable = true;
 

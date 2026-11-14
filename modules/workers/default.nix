@@ -109,6 +109,7 @@ let
   fleetGuest = { devEnvironment, ... }: let github = onGithub dev.instances.${devEnvironment.name}; in {
     imports = [
       ../core/system.nix
+      ../core/agent-options.nix
       ../core/users.nix
       ../core/packages.nix
       ../core/ssh-known-hosts.nix
@@ -214,7 +215,7 @@ in
       type = types.listOf types.deferredModule;
       default = [ ];
       internal = true;
-      description = "Home Manager wiring the fleet's hosts get (flake-modules/40-outputs-nixos.nix), reused in every worker.";
+      description = "Home Manager wiring the fleet's hosts get (flake-modules/nixos-configurations.nix), reused in every worker.";
     };
   };
 

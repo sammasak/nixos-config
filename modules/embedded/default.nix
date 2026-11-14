@@ -2,7 +2,6 @@
 # on the HOST only; firmware and flashing live in the separate embedded-lab repo.
 { config, lib, pkgs, ... }:
 let
-  cfg = config.sam.embedded;
   username = config.sam.profile.username;
 
   # ID_MM_DEVICE_IGNORE stops ModemManager AT-probing the adapter (garbles flashing),
@@ -24,14 +23,10 @@ let
     + ''SUBSYSTEM=="usb", ATTR{idVendor}=="303a", ATTR{idProduct}=="1001", GROUP="dialout", MODE="0660"'' + "\n";
 in
 {
-  options.sam.embedded.enable = lib.mkEnableOption "USB-serial and debug-probe access for ESP32 development";
+  users.users.${username}.extraGroups = [ "dialout" ];
 
-  config = lib.mkIf cfg.enable {
-    users.users.${username}.extraGroups = [ "dialout" ];
+  services.udev.packages = [ pkgs.probe-rs-tools ];
+  services.udev.extraRules = serialRules + espressifRules;
 
-    services.udev.packages = [ pkgs.probe-rs-tools ];
-    services.udev.extraRules = serialRules + espressifRules;
-
-    environment.systemPackages = [ pkgs.espflash ];
-  };
+  environment.systemPackages = [ pkgs.espflash ];
 }

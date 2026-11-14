@@ -11,7 +11,7 @@ in
     ../homelab/deploy-target.nix
   ];
 
-  # Delivers the workers' credential (claude_oauth_token), and nix_access_token.
+  # Delivers nix_access_token, and claude_oauth_token when the host has devTools or a claude worker.
   sam.hostSecrets.enable = true;
 
   # What an environment builds here, the other hosts download (modules/core/store-cache.nix).
@@ -45,10 +45,17 @@ in
   boot.enableContainers = true;
   networking.networkmanager.unmanaged = [ "interface-name:ve-*" ];
 
-  assertions = [
-    {
-      assertion = desktop || !(config.stylix.enable || config.services.displayManager.enable || config.services.xserver.enable);
-      message = "role runtime-host: the default boot is headless; Stylix, a display manager or an X server belong in a desktop specialisation (sam.desktop.enable).";
-    }
-  ];
+  assertions =
+    let
+      found = lib.optional config.stylix.enable "Stylix"
+        ++ lib.optional (config.home-manager.users.${config.sam.profile.username} ? stylix) "Home Manager Stylix"
+        ++ lib.optional config.services.displayManager.enable "a display manager"
+        ++ lib.optional config.services.xserver.enable "an X server";
+    in
+    [
+      {
+        assertion = desktop || found == [ ];
+        message = "role runtime-host: the default boot is headless; Stylix, a display manager or an X server belong in a desktop specialisation (sam.desktop.enable); found: ${lib.concatStringsSep ", " found}.";
+      }
+    ];
 }

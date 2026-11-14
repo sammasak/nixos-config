@@ -4,7 +4,7 @@ let
   isDesktopMode = osConfig.sam.desktop.enable or false;
   hasDevTools = osConfig.sam.profile.devTools;
   baseImports = [
-    ../core/fish.nix
+    ../programs/cli/fish.nix
     ../programs/cli/git
     ../programs/cli/cli-tools
     ../programs/cli/direnv

@@ -336,7 +336,7 @@ service removes its pod overhead but not its working set (148 MiB today).
 
 ## Relation to the delivery plan
 
-`docs/nix-native-delivery.md` (2026-11-12) plans a pilot that delivers Nix
+`docs/records/nix-native-delivery.md` (2026-11-12) plans a pilot that delivers Nix
 store paths into pods, and homelab-gitops #146 holds the owner's choice between
 OCI, NixOS services and that pilot. This record leaves that choice with #146
 and proposes two changes to the plan for the owner to accept or reject there:

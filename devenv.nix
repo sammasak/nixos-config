@@ -34,10 +34,36 @@ let
     fi
   '';
 
-  # Also builds every x86 host (deploy-rs' deploy-activate check holds their toplevels) and, with
-  # --all-systems, evaluates the aarch64 Pis: the one place a host build is checked.
-  flakeCheck = gate "nixos-flake-check" [ pkgs.nix ] ''
-    nix flake check --all-systems --no-write-lock-file
+  # What `nix flake check --all-systems` checks, one output per nix process: in one process it holds every
+  # host and is killed under a 4G cap. Builds every x86 host (its deploy-activate check holds the toplevel)
+  # and evaluates the aarch64 Pis: the one place a host build is checked. An output kind not listed here
+  # fails the step, so a new kind cannot go unchecked.
+  flakeCheck = gate "nixos-flake-check" (with pkgs; [ nix jq ]) ''
+    names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
+    drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
+    here=$(nix eval --raw --impure --expr builtins.currentSystem)
+    kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
+    [ "$kinds" = '["checks","deploy","nixosConfigurations","overlays","packages","templates"]' ] \
+      || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
+    nix eval --no-write-lock-file .#overlays --apply 'builtins.mapAttrs (_: o: assert builtins.isFunction o; true)' >/dev/null
+    nix eval --no-write-lock-file .#templates \
+      --apply 'builtins.mapAttrs (_: t: assert builtins.pathExists t.path && builtins.isString t.description; true)' >/dev/null
+    hosts=$(names nixosConfigurations)
+    for h in $hosts; do drv "nixosConfigurations.$h.config.system.build.toplevel"; done
+    for kind in packages checks; do
+      systems=$(names "$kind")
+      for s in $systems; do
+        outputs=$(names "$kind.$s")
+        for o in $outputs; do
+          if [ "$kind.$s" = "checks.$here" ]; then
+            echo "nixos-flake-check: build checks.$s.$o" >&2
+            nix build --no-link --no-write-lock-file ".#checks.$s.$o"
+          else
+            drv "$kind.$s.$o"
+          fi
+        done
+      done
+    done
   '';
 
   # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
@@ -81,11 +107,6 @@ let
 
   harnessTelemetryTest = gate "harness-telemetry-test" (with pkgs; [ nix python3 ]) ''
     ${pkgs.python3}/bin/python scripts/test-harness-telemetry.py
-  '';
-
-  # msi and acer through the runtime-host role: headless and unthemed, maintenance off the boot path (eval only)
-  runtimeHostTest = gate "runtime-host-test" (with pkgs; [ nix python3 ]) ''
-    ${pkgs.python3}/bin/python scripts/test-runtime-host-role.py
   '';
 
   journalCollectorTest = gate "journal-collector-test" (with pkgs; [ nix python3 ]) ''
@@ -152,7 +173,7 @@ let
     echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
     ${timed [
       nvimCheck nativeOtelRelayTest nativeOtelFishTest claudeSettingsTest coordinatorWiringTest workerPermissionsTest workersEvalTest bulkReaderTest harnessTelemetryTest
-      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest runtimeHostTest journalCollectorTest lokiTest switchSafetyTest rfBeaconsTest qaPushTest
+      ollamaPortforwardTest alertBridgeTest knownHostsTest buildBoundsTest delegationTest otelRollbackTest journalCollectorTest lokiTest switchSafetyTest rfBeaconsTest qaPushTest
     ]}
   '';
 
@@ -428,7 +449,7 @@ in
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
     "nixos:secrets-verify" = task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
-    "nixos:flake-check" = task "nix flake check over all systems: builds every x86 host, evaluates the Pis" flakeCheck;
+    "nixos:flake-check" = task "The flake check over all systems, one output per nix process: builds every x86 host, evaluates the Pis" flakeCheck;
     "nixos:claude-settings-test" = task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:ollama-portforward-test" = task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:alert-bridge-test" = task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
@@ -442,7 +463,6 @@ in
     "nixos:build-bounds-test" = task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
     "nixos:otel-rollback-test" = task "nativeOtel = false on lenovo removes every native telemetry surface (Claude env, Codex [otel], Fish preludes, relay, secret)" otelRollbackTest;
     "nixos:qa-push-test" = task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs" qaPushTest;
-    "nixos:runtime-host-test" = task "msi and acer carry the runtime-host role: headless and unthemed, maintenance waits for a synced clock" runtimeHostTest;
     "nixos:journal-collector-test" = task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:loki-test" = task "homelab.loki on no host yet: chart-parity config validated by loki -verify-config, loopback and no port by default" lokiTest;
     "nixos:switch-safety-test" = task "A switch keeps Herdr's server on every host that runs one, waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;

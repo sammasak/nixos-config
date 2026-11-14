@@ -47,6 +47,7 @@ in
       watchdog = config.sam.rfLab.netWatchdog;
       names = map (p: lib.toLower (p.pname or p.name or ""));
       declared = names config.environment.systemPackages
+        ++ lib.concatMap (u: names u.packages) (lib.attrValues config.users.users)
         ++ lib.concatMap (u: names u.home.packages) (lib.attrValues config.home-manager.users);
       # REA and the tools it drives belong on the analysis workstation (#42 "Architectural boundaries").
       heavy = builtins.filter (n: builtins.match ".*(ghidra|binwalk|unblob|jadx|nodejs|npm|rea-agents|radare2|rizin).*" n != null) declared;
@@ -57,8 +58,8 @@ in
         message = "role rf-lab: key-only SSH is the board's management path; keep sshd on with PasswordAuthentication = false and PermitRootLogin = \"no\" (modules/core/services.nix).";
       }
       {
-        assertion = !ssh.openFirewall;
-        message = "role rf-lab: SSH is scoped to the LAN by modules/core/network.nix; set services.openssh.openFirewall = false.";
+        assertion = !ssh.openFirewall && config.networking.firewall.enable;
+        message = "role rf-lab: SSH is scoped to the LAN by the firewall rule in modules/core/network.nix; keep networking.firewall.enable = true and services.openssh.openFirewall = false.";
       }
       {
         assertion = watchdog.enable && config.networking.networkmanager.ensureProfiles.profiles ? ${watchdog.recoveryProfile};
@@ -74,7 +75,7 @@ in
       }
       {
         assertion = heavy == [ ];
-        message = "role rf-lab: heavyweight reverse-engineering tooling belongs on the analysis workstation, not the 1 GiB board; remove ${lib.concatStringsSep ", " heavy} from environment.systemPackages or home.packages.";
+        message = "role rf-lab: heavyweight reverse-engineering tooling belongs on the analysis workstation, not the 1 GiB board; remove ${lib.concatStringsSep ", " heavy} from environment.systemPackages, users.users.<name>.packages or home.packages.";
       }
     ];
 }

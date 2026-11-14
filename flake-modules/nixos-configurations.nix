@@ -39,7 +39,7 @@ let
       };
     };
 
-  # Every host's modules after its configuration and roles; the runtime-host VM test (52-runtime-host-vm-test.nix) reuses them.
+  # Every host's modules after its configuration and roles; the runtime-host VM test (runtime-host-vm-test.nix) reuses them.
   fleetModules = [
     inputs.stylix.nixosModules.stylix
     inputs.sops-nix.nixosModules.sops

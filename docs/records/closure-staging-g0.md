@@ -20,7 +20,7 @@ nothing about the current one.
 |---|---|
 | nixos-config | `1138ab00bf3115af9270ebda33e9a90db253e614` |
 | nixpkgs (`flake.lock`) | `fe13242281a67641c0102cdb1087f0ebe586c7df`, narHash `sha256-zp8ToDMnqZcu4o4IH9pdwXFXGp7yLm/M0dEnNWnyd7I=` |
-| Fixture rf-proto | `sammasak/rf-proto` `89e08d25d3057f3b68ef5d8a3508238789f8b7de`, narHash `sha256-1QY8tdQFQz0jaxNJwKzMTB4CWWFxjmXXuDKr2KV5/Js=`, `devShells.x86_64-linux.default` = `40ladp3…-nix-shell`; 89 paths, 2.90 GB NAR per `docs/shared-nix-builds-baseline.md` (the old doc and the comment say 90) |
+| Fixture rf-proto | `sammasak/rf-proto` `89e08d25d3057f3b68ef5d8a3508238789f8b7de`, narHash `sha256-1QY8tdQFQz0jaxNJwKzMTB4CWWFxjmXXuDKr2KV5/Js=`, `devShells.x86_64-linux.default` = `40ladp3…-nix-shell`; 89 paths, 2.90 GB NAR per `docs/records/shared-nix-builds-baseline.md` (the old doc and the comment say 90) |
 | Fixture llm-gateway | `sammasak/llm-gateway` `4a17b9241d8ad3702777ea85001597910e169e5b`, narHash `sha256-V1U3q8PlItSBdoqXbn7kmThDhhtqLO1lJyrFr0O9xUM=`: the last pin, from `git show 5a40362^:flake.lock`. #210 dropped the flake input, so today it is no longer in `flake.lock` |
 | Fixture harnesses | the projection scripts and QEMU tests for both fixtures were deleted in #210 (`git show 5a40362^:scripts/test-agent-runtime-llm-gateway-devenv-projection.sh`); the old doc survives as `git show 5a40362^:docs/agent-runtime-native-shell.md` |
 | Evaluation boundary | the host's nix daemon evaluates and builds; a guest only reads what the host store holds, or asks the same daemon (below) |
@@ -74,10 +74,10 @@ These bear on #201's own safety invariant ("no host Nix daemon socket, trusted-u
 agent"): today's A does not meet it. Docs say workers are not trusted users (`docs/nspawn-workers.md`
 "Made of"; `CLAUDE.md` already notes lenovo keeps `lukas`), but on lenovo this guest is `Trusted: 1`, because lenovo keeps `lukas` trusted
 (`core/users.nix`) and the guest's uid is the host user's. I did not test what a trusted guest can do with
-it. The ssh key and gh token are the open `environments-feedback.md` owner decision; the OAuth token is bound the same way.
+it. The ssh key and gh token are the open `docs/environments-feedback.md` owner decision; the OAuth token is bound the same way.
 
 Not measurable from here, and not attempted: cold/warm realization, transfer bytes and store growth (the
-shared store cannot be purged; `docs/shared-nix-builds-baseline.md` has n=1 cold and three warm for rf-proto,
+shared store cannot be purged; `docs/records/shared-nix-builds-baseline.md` has n=1 cold and three warm for rf-proto,
 which stays the prior evidence), the old runtime's behaviour, a closure-limited store view.
 
 ## Experiment protocol for G1 (proposal, not run)
@@ -105,7 +105,7 @@ reuse; building one is more than "reproduce", and is the owner's scope call.
   to D and the safety invariant were written for the removed runtime. A (no change) now means today's
   daemon-socket design, which the invariant forbids; whether #201 keeps its invariant, or is restated or
   closed against `modules/workers`, is the owner's call.
-- Fixture 2's cold cost is download-bound (see `docs/shared-nix-builds-baseline.md`), so no slow-closure
+- Fixture 2's cold cost is download-bound (see `docs/records/shared-nix-builds-baseline.md`), so no slow-closure
   problem is observed yet. Choosing the one problem is G1; the inventory's only observation against #201's
   three candidates is (iii): store, db, daemon socket and, on lenovo, a trusted daemon are visible.
 - Default on no decision stays `KEEP A`; nothing here authorizes B or C.

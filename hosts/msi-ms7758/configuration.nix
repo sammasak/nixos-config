@@ -1,7 +1,4 @@
 { config, lib, pkgs, ... }:
-let
-  vars = import ./variables.nix;
-in
 {
   imports = [
     ./hardware-configuration.nix
@@ -40,11 +37,15 @@ in
     pool.memory = "10G";
   };
 
-  sam.profile = vars;
+  sam.profile = {
+    username = "lukas";
+    hostname = "msi-ms7758";
+    nativeOtel = true;
+  };
   # The relay and environments' telemetry only: host sessions here keep their Claude settings (docs/native-otel-canary.md)
   sam.claude.telemetry.enable = false;
   sam.cliTools.nixAudit.enable = true;
-  sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [ "nixos-config" ".cache/wt" ];
+  sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [ "nixos-config" ".cache/wt" ];
 
   # Off at midnight, when the fleet's GC and optimise slots fall, and the runtime-host role drops
   # their catch-up at boot: both run inside the Mon-Fri power window instead.

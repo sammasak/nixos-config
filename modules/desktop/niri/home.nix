@@ -1,11 +1,4 @@
-{ osConfig ? null, ... }:
-let
-  baseProfile =
-    if osConfig != null && osConfig ? sam && osConfig.sam ? profile
-    then osConfig.sam.profile
-    else { };
-  kbdLayout = baseProfile.kbdLayout or "se";
-in
+{ ... }:
 {
   # niri has no config of its own otherwise, so it falls back to the compiled-in
   # default — which spawns its own waybar (a second bar on top of waybar.service)
@@ -14,7 +7,7 @@ in
     input {
         keyboard {
             xkb {
-                layout "${kbdLayout}"
+                layout "se"
             }
             numlock
         }

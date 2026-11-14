@@ -285,7 +285,7 @@ in
         ${pkgs.curl}/bin/curl -fsS -m 5 \
           -H "Title: Claude hooks updated" -H "Priority: min" -H "Tags: wrench" \
           -d "New hook generation ${skillsSrc} deployed; running Claude sessions enforce their start-time generation until restarted." \
-          https://ntfy.sammasak.dev/homelab-improvements >/dev/null 2>&1 || true
+          http://${osConfig.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-improvements >/dev/null 2>&1 || true
       '';
     in
     lib.hm.dag.entryAfter [ "writeBoundary" ] ''

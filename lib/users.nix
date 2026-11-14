@@ -1,4 +1,4 @@
-# Imported by flake-modules/40-outputs-nixos.nix and modules/core/system.nix and exposed as `sam.userConfig`.
+# Imported by flake-modules/nixos-configurations.nix and modules/core/system.nix and exposed as `sam.userConfig`.
 
 {
   lukas = {

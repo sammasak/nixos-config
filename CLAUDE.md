@@ -12,7 +12,7 @@ A NixOS + Home Manager configuration repository using **flake-parts**. Manages L
 # ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
 #    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
 devenv tasks run nixos:qa           # every gate in order (= just check): lints, secrets-verify, flake check, then the tests
-devenv tasks run nixos:flake-check  # nix flake check --all-systems: builds every x86 host, evaluates the Pis (= just verify)
+devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: builds every x86 host, evaluates the Pis (= just verify)
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
@@ -62,8 +62,8 @@ only needed when targeting the other machine.
 
 ## Architecture
 
-`flake.nix` imports every file under `flake-modules/` (import-tree; the number
-prefixes set no order); `modules/roles|home/*.nix` auto-register; hosts are 3 files under
+`flake.nix` imports every file under `flake-modules/` (import-tree);
+`modules/roles|home/*.nix` auto-register; hosts are 2 files under
 `hosts/<name>/` wired by an entry (roles and deploy fields) in `flake-modules/hosts.nix`; all host metadata
 flows through the strict `sam.profile` submodule (unknown fields are build
 errors) and GUI-ness keys off `sam.desktop.enable` alone. Full detail:
@@ -76,7 +76,7 @@ SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decr
 
 Two SOPS modules:
 - **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity and the k3s cluster token, on every k3s node. The Flux deploy and age keys, Cloudflare API token and Tailscale authkey are declared by `flux.nix`, `acme.nix` and `tailscale.nix`, so only the host that enables those (lenovo) decrypts them. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
-- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
+- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token on `devTools` hosts and hosts with a claude worker instance, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
 
@@ -238,14 +238,14 @@ either side is only reported.
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.
 - **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
-- **Firewall**: LAN CIDR defaults to `192.168.10.0/24` (override via `sam.profile.lanCidr`). SSH is key-only, no root login.
+- **Firewall**: the trusted LAN CIDR is `sam.fleet.lanCidr` (`192.168.10.0/24`). SSH is key-only, no root login.
 - **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (currently antigravity-cli, claude-code, unrar); otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
 - **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` and `rf-lab.nix` force `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
 
 ## Adding a New Host
 
-- `hosts/<dir>/` (variables + configuration + hardware scan);
+- `hosts/<dir>/` (`configuration.nix` with its `sam.profile`, plus the hardware scan);
 - an entry with its roles in `flake-modules/hosts.nix` (`hostDir` and
   `deploy.hostname` default to the entry name; `deploy.remoteBuild` is
   required, true unless lenovo can build it);
