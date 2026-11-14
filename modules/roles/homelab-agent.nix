@@ -6,7 +6,6 @@
     # kubelet rejects kubernetes.io/node-role labels, so a worker is marked
     # only by lacking the control-plane role: no agent-only k3s settings exist.
     ../homelab/k3s/default.nix
-    ../homelab/deploy-target.nix
   ];
 
   homelab.k3s = {

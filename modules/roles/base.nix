@@ -21,6 +21,7 @@
     ../core/store-cache.nix
     ../homelab/native-otel-relay.nix
     ../themes/Catppuccin # Stylix: off when headless under runtime-host, always off under rf-lab
+    ../homelab/deploy-target.nix
   ];
 
   assertions =

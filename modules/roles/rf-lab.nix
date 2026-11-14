@@ -12,7 +12,6 @@ in
 {
   imports = [
     ./base.nix
-    ../homelab/deploy-target.nix
     ../rf-lab
   ];
 
