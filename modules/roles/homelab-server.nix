@@ -20,11 +20,6 @@
     role = "server";
   };
 
-  homelab.tailscale.enable = true;
-
-  # Nightly snapshot of the sqlite datastore that holds all cluster state.
-  homelab.k3sDbSnapshot.enable = true;
-
   # Self-reboot on a hang: no BMC, no remote power path, so the alternative is
   # walking to the machine. Timeouts are generous on purpose, and not set on the
   # agent role because acer-swift is the sole worker.

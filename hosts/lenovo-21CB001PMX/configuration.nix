@@ -165,8 +165,6 @@
     baseUrl = "http://${config.sam.fleet.hosts.${config.networking.hostName}.address}:2586";
   };
 
-  homelab.clusterWatchdog.enable = true;
-
   # Alertmanager runs in a pod and posts to lenovo's LAN address, so loopback
   # is not enough. The shadow topic keeps pages single while both bridges get
   # every notification; cutover drops ntfyUrl to take the module's default.

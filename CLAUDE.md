@@ -161,7 +161,7 @@ The overlay is regenerated automatically by Home Manager activation on every reb
 
 ### Tailscale Remote Access
 
-`modules/homelab/tailscale.nix` (`homelab.tailscale.*`): lenovo is the
+`modules/homelab/tailscale.nix`: lenovo is the
 subnet-router for the LAN; acer runs **no client** (owner decision
 2026-08-26 — remote access rides lenovo, and lenovo-death needs physical
 recovery anyway). Features, DNS flow, and auth-state handling:

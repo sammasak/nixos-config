@@ -7,22 +7,17 @@
 # See vault: homelab/runbooks/k3s-datastore-snapshot-restore.md
 {
   config,
-  lib,
   pkgs,
   ...
 }:
 
 let
-  inherit (lib) mkEnableOption mkIf;
-  cfg = config.homelab.k3sDbSnapshot;
   databasePath = "/var/lib/rancher/k3s/server/db/state.db";
   snapshotDir = "/var/lib/k3s-db-snapshots";
   keep = 7;
 in
 {
-  options.homelab.k3sDbSnapshot.enable = mkEnableOption "daily snapshots of the k3s sqlite datastore";
-
-  config = mkIf cfg.enable {
+  config = {
     systemd.tmpfiles.rules = [
       "d ${snapshotDir} 0700 root root -"
     ];
