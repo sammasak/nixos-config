@@ -142,8 +142,9 @@ in
       TimeoutStartSec = "6min";
       # uvicorn makes the socket 0666; the directory keeps it to root and the app's dynamic user, which the proxy shares.
       RuntimeDirectoryMode = lib.mkForce "0700";
-      # The pod's limits; k3s does not count this unit, so an OOM takes it before any pod.
-      MemoryMax = "1G";
+      # Not the pod's 1Gi: 0.12.2 peaked at 1.45G in its first start on acer. k3s does not count this unit, so an
+      # OOM takes it before any pod.
+      MemoryMax = "2G";
       MemorySwapMax = 0;
       CPUQuota = "100%";
       OOMScoreAdjust = 1000;
