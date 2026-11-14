@@ -82,14 +82,15 @@
     };
   };
 
-  # Ollama for the llm-gateway (homelab-gitops#252), bound to the node address:
-  # pods reach it over the trusted Cilium interfaces, the LAN is not let in.
+  # Ollama for the llm-gateway, bound to the node address: pods reach it over
+  # the trusted Cilium interfaces, the LAN is not let in.
   services.ollama = {
     enable = true;
     host = config.sam.fleet.hosts.acer-swift.address;
-    loadModels = [ "llama3.2:3b" "qwen2.5-coder:0.5b" ];
+    loadModels = [ "llama3.2:3b" "qwen2.5-coder:0.5b" "nomic-embed-text:latest" ];
     environmentVariables = {
       OLLAMA_MAX_LOADED_MODELS = "1";
+      OLLAMA_NUM_PARALLEL = "1";
       OLLAMA_CONTEXT_LENGTH = "16384";
       OLLAMA_FLASH_ATTENTION = "1";
       OLLAMA_KV_CACHE_TYPE = "q8_0";
@@ -101,6 +102,7 @@
     Restart = "on-failure"; # the Wi-Fi address can appear after the unit
     RestartSec = 5;
     MemoryMax = "4G";
+    MemorySwapMax = 0;
     OOMScoreAdjust = 1000;
     CPUQuota = "400%";
   };
