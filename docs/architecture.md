@@ -5,7 +5,7 @@
 `flake.nix` is minimal. It hands every `.nix` file under `flake-modules/` (recursively, via the `import-tree` input) to flake-parts.
 
 - `flake-parts-modules.nix` — flake-parts setup
-- `overlays.nix` — exposes `pkgs/` through an overlay
+- `overlays.nix` — exposes `pkgs/` through an overlay and defines the `nix fmt` formatter
 - `systems.nix` — supported systems
 - `module-registry.nix` — auto-generates module registries from filesystem
 - `hosts-option.nix` — typed host declaration options
@@ -97,12 +97,13 @@ Boundary rule in Conventions.
 ### Roles (`modules/roles/`)
 
 Composable role modules assigned per host in `flake-modules/hosts.nix`:
-- **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`)
+- **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`), the deploy-rs target and the native-otel relay
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node, joining the server at lenovo's `sam.fleet` address; disables sleep/suspend
-- **homelab-server** — k3s control plane
+- **homelab-server** — k3s control plane; turns on flux, dns (with TLS), acme, ntfy and the rebuild trigger, and imports
+  the k3s DB snapshot, AdGuard Home, tailscale, the cluster watchdog and the alert bridge
 - **runtime-host** — headless worker host, msi-ms7758 and acer-swift, running the declared nspawn developer environments
-  (`sam.workers`, docs/nspawn-workers.md): the run credential, the deploy-rs target, no Stylix outside a
+  (`sam.workers`, docs/nspawn-workers.md): the run credential, no Stylix outside a
   desktop specialisation, and nix-gc / nix-optimise that wait for a synchronised clock
   (`systemd-time-wait-sync`), never catch up at boot and run one at a time
 - **rf-lab** — headless Wi-Fi learning appliance (naked-pi)

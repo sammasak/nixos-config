@@ -231,8 +231,9 @@ either side is only reported.
 
 ## Conventions
 
-- **Namespace boundary**: `homelab.*` is a cluster/platform capability a host
-  opts into (k3s, flux, dns, acme, ntfy, tailscale, the rebuild trigger);
+- **Namespace boundary**: `homelab.*` is a cluster/platform capability, mostly
+  turned on by a role (k3s, flux, dns, acme, ntfy, the rebuild trigger;
+  tailscale has no option, importing its module turns it on);
   `sam.*` is host identity and personal-machine concern (profile, desktop,
   thermal, hostSecrets). When both scopes need the same noun, the leaf
   states its scope — `homelab.secrets` (cluster) vs `sam.hostSecrets` (machine)

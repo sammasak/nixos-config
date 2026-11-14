@@ -132,7 +132,7 @@ Use modules + roles, not ad-hoc host edits.
    - Example: `options.homelab.<service>.enable = mkEnableOption "...";`
 3. Add required ports/rules in the module itself (firewall stays close to service).
 4. Attach module via a role (`modules/roles/*.nix`) if shared by multiple hosts.
-5. Enable that role (or service option) in `hosts/<name>/configuration.nix`.
+5. Add that role to the host's `roles` in `flake-modules/hosts.nix` (or set the service option in `hosts/<name>/configuration.nix`).
 6. Build/apply locally, then remote deploy if needed.
 
 Template:
