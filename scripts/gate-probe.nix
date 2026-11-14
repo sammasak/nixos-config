@@ -162,7 +162,11 @@ let
       address = acer.sam.fleet.hosts.acer-swift.address;
       firewall = {
         open = acer.networking.firewall.allowedTCPPorts;
+        inherit (acer.networking.firewall) enable allowedTCPPortRanges;
         interfaces = builtins.mapAttrs (_: i: i.allowedTCPPorts) acer.networking.firewall.interfaces;
+        interfaceRanges = builtins.mapAttrs (
+          _: i: i.allowedTCPPortRanges
+        ) acer.networking.firewall.interfaces;
         inherit (acer.networking.firewall) trustedInterfaces extraCommands extraInputRules;
       };
     };
