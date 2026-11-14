@@ -34,6 +34,7 @@ in
       # would make the Watchdog check below fail closed and page for a healthy
       # cluster.
       path = [ pkgs.kubectl pkgs.curl pkgs.gawk pkgs.gnugrep ];
+      enableStrictShellChecks = true;
       script = ''
         failures=""
 
@@ -43,17 +44,17 @@ in
         else
           # 2. Node readiness
           not_ready=$(kubectl get nodes --no-headers 2>/dev/null \
-            | awk '$2 != "Ready" {count++} END {print count+0}')
+            | awk '$2 != "Ready" {count++} END {print count+0}') || true
           if [ "$not_ready" -gt 0 ]; then
             node_list=$(kubectl get nodes --no-headers 2>/dev/null \
-              | awk '$2 != "Ready" {print $1}' | tr '\n' ' ')
+              | awk '$2 != "Ready" {print $1}' | tr '\n' ' ') || true
             failures="$failures\n• $not_ready node(s) NotReady: $node_list"
           fi
 
           # 3. Prometheus pod health
           prom_running=$(kubectl -n monitoring get pods \
             -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null \
-            | awk '$3 == "Running" {count++} END {print count+0}')
+            | awk '$3 == "Running" {count++} END {print count+0}') || true
           if [ "$prom_running" -eq 0 ]; then
             failures="$failures\n• Prometheus: no running pods"
           fi
@@ -61,7 +62,7 @@ in
           # 4. Alertmanager pod health
           am_running=$(kubectl -n monitoring get pods \
             -l app.kubernetes.io/name=alertmanager --no-headers 2>/dev/null \
-            | awk '$3 == "Running" {count++} END {print count+0}')
+            | awk '$3 == "Running" {count++} END {print count+0}') || true
           if [ "$am_running" -eq 0 ]; then
             failures="$failures\n• Alertmanager: no running pods"
           fi
@@ -74,13 +75,17 @@ in
           # cluster silently stops firing too. This is the one check that
           # notices the alerting pipeline itself has died.
           am_ip=$(kubectl -n monitoring get svc monitoring-kube-prometheus-alertmanager \
-            -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+            -o jsonpath='{.spec.clusterIP}' 2>/dev/null) || true
           if [ -z "$am_ip" ]; then
             failures="$failures\n• Alertmanager: service has no clusterIP"
-          elif ! curl -sf --max-time 10 \
+          else
+            # Not piped: under pipefail a SIGPIPEd curl would page a healthy cluster.
+            am_alerts=$(curl -sf --max-time 10 \
               "http://$am_ip:9093/api/v2/alerts?filter=alertname%3DWatchdog&active=true" \
-              2>/dev/null | grep -q '"Watchdog"'; then
-            failures="$failures\n• Alertmanager: Watchdog alert not active — alerting pipeline is down"
+              2>/dev/null) || true
+            if ! grep -q '"Watchdog"' <<<"$am_alerts"; then
+              failures="$failures\n• Alertmanager: Watchdog alert not active — alerting pipeline is down"
+            fi
           fi
         fi
 
@@ -89,7 +94,7 @@ in
             -H "Title: Homelab cluster degraded" \
             -H "Priority: high" \
             -H "Tags: warning,rotating_light" \
-            -d "$(printf "Health check failures:%b\n\nNode: $(hostname -s)\nTime: $(date -u '+%H:%M UTC')" "$failures")" \
+            -d "$(printf 'Health check failures:%b\n\nNode: %s\nTime: %s' "$failures" "$(hostname -s)" "$(date -u '+%H:%M UTC')")" \
             "${cfg.ntfyUrl}" || true
         else
           # Heartbeat on a clean run. This watchdog is otherwise silent when
@@ -102,7 +107,7 @@ in
             -H "Title: watchdog OK" \
             -H "Priority: min" \
             -H "Tags: heavy_check_mark" \
-            -d "$(printf "All checks passed.\n\nNode: $(hostname -s)\nTime: $(date -u '+%H:%M UTC')")" \
+            -d "$(printf 'All checks passed.\n\nNode: %s\nTime: %s' "$(hostname -s)" "$(date -u '+%H:%M UTC')")" \
             "${cfg.ntfyUrl}" || true
         fi
       '';
