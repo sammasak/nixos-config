@@ -12,7 +12,8 @@
 let
   cfg = config.services.open-webui;
   address = config.sam.fleet.hosts.${config.sam.profile.hostname}.address;
-  port = 8080;
+  # not 8080: the k3s module opens that one to any source on every node
+  port = 8090;
   # The pod CIDR without each node's Cilium host address (CiliumInternalIP: kubectl get ciliumnodes), which any
   # process on that node may bind as its source; a node that gets a new one opens a hole until it is listed here.
   ciliumHosts = [
@@ -61,13 +62,12 @@ let
     builtins.readFile ./open-webui-backup.py
   );
   sopsFile = ../../secrets/homelab/open-webui.yaml;
-  gateway = "http://llm-gateway.llm.svc.cluster.local:8080";
+  gateway = "http://10.43.0.80:8080"; # the llm-gateway ClusterIP, as Pi uses it
 in
 {
-  # ClusterIPs: the KEDA interceptor routes kokoro and whisper by Host header, so they need their names. Removed
+  # The KEDA interceptor's ClusterIP: it routes kokoro and whisper by Host header, so they need their names. Removed
   # when these move off k3s (nixos-config #299).
   networking.hosts = {
-    "10.43.0.80" = [ "llm-gateway.llm.svc.cluster.local" ];
     "10.43.22.198" = [
       "kokoro.llm.svc.cluster.local"
       "whisper.llm.svc.cluster.local"
@@ -78,14 +78,12 @@ in
     open_webui_gateway_key.sopsFile = sopsFile;
     open_webui_secret_key.sopsFile = sopsFile;
   };
-  # Single quotes: systemd keeps the JSON's own quotes only inside a quoted value.
   sops.templates."open-webui.env" = {
     content = ''
       OPENAI_API_KEY=${config.sops.placeholder.open_webui_gateway_key}
-      OLLAMA_API_CONFIGS='{"0":{"enable":true,"key":"${config.sops.placeholder.open_webui_gateway_key}"}}'
+      OLLAMA_API_CONFIGS={"0":{"enable":true,"key":"${config.sops.placeholder.open_webui_gateway_key}"}}
       WEBUI_SECRET_KEY=${config.sops.placeholder.open_webui_secret_key}
     '';
-    restartUnits = [ "open-webui.service" ];
   };
 
   services.open-webui = {
@@ -93,6 +91,8 @@ in
     environmentFile = config.sops.templates."open-webui.env".path;
     # The pod's settings (homelab-gitops apps/chat/deployment.yaml); the keys come from the file above.
     environment = {
+      # the image's; at 0.12.2 the default `dev` serves /docs and /openapi.json
+      ENV = "prod";
       SCARF_NO_ANALYTICS = "True";
       DO_NOT_TRACK = "True";
       ANONYMIZED_TELEMETRY = "False";
@@ -124,6 +124,10 @@ in
       # what `open-webui serve` sets before importing the app
       FROM_INIT_PY = "true";
       FRONTEND_BUILD_DIR = "${cfg.package.frontend}/share/open-webui";
+      # the image's cache paths, inside the migrated data dir, so the embedding model is not fetched again
+      HF_HOME = "${cfg.stateDir}/data/cache/embedding/models";
+      SENTENCE_TRANSFORMERS_HOME = "${cfg.stateDir}/data/cache/embedding/models";
+      TIKTOKEN_CACHE_DIR = "${cfg.stateDir}/data/cache/tiktoken";
     };
   };
 
@@ -160,8 +164,10 @@ in
     after = [ "open-webui.service" ];
     serviceConfig = {
       ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min ${socket}";
-      # root only to enter the 0700 directory; it opens no network socket of its own
-      CapabilityBoundingSet = "CAP_DAC_OVERRIDE";
+      # the app's own dynamic user, so it may enter the 0700 directory; it opens no network socket of its own
+      DynamicUser = true;
+      User = "open-webui";
+      CapabilityBoundingSet = "";
       PrivateNetwork = true;
       RestrictAddressFamilies = "AF_UNIX";
       NoNewPrivileges = true;
@@ -191,7 +197,10 @@ in
   };
   systemd.timers.open-webui-backup = {
     wantedBy = [ "timers.target" ];
-    timerConfig.OnCalendar = "*-*-* 03:30:00";
+    timerConfig = {
+      OnCalendar = "*-*-* 03:30:00";
+      Persistent = true;
+    };
   };
   environment.systemPackages = [ backup ];
 
