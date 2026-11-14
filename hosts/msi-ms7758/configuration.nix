@@ -26,22 +26,9 @@
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
   sam.workers = {
+    # With no instance declared, the activation that ages out `.trash` runs only while this list is
+    # non-empty: these two, the newest in .trash, stay until it is empty.
     retired = [
-      "skills91"
-      "boot"
-      "boot2"
-      "mem"
-      "root1"
-      "root2"
-      "gate"
-      "ovl"
-      "ovlr"
-      "ov2"
-      "root3"
-      "perf"
-      "m1"
-      "b1"
-      "b2"
       "research"
       "nats"
     ];
