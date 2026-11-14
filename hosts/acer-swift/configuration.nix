@@ -47,8 +47,6 @@
     # No prompt: its goal is sent through Herdr once it is up (docs/nspawn-workers.md).
     instances.herman = { };
   };
-  # The relay and environments' telemetry only: host sessions here keep their Claude settings (docs/native-otel-canary.md)
-  sam.claude.telemetry.enable = false;
   sam.cliTools.nixAudit.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
     "claude-code-skills"
