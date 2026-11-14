@@ -31,16 +31,8 @@ let
   };
 
   sections = {
-    # what a switch may do to the units that hold agent sessions, or that it waits on
+    # flux wait bound and ~/.claude.json activation
     switch-safety = {
-      # null: the host runs no Herdr server
-      herdr = builtins.mapAttrs (
-        _: h:
-        let
-          units = h.config.home-manager.users.lukas.systemd.user.services or { };
-        in
-        if units ? herdr then { inherit (units.herdr.Unit) X-SwitchMethod; } else null
-      ) hosts;
       # null: the host does not bootstrap Flux
       flux = builtins.mapAttrs (
         name: h:
