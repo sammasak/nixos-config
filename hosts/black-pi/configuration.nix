@@ -16,7 +16,6 @@
     devTools = false;
   };
   sam.hostSecrets.enable = true;
-  sam.wifi.declarativeHomeProfile = true;
 
   # mkForce: the fleet's monthly 30-day GC can fill this 29 GB SD card, which also
   # holds the observability volumes; min-free makes nix GC itself during builds.

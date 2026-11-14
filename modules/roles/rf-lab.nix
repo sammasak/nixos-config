@@ -74,7 +74,7 @@ in
         assertion =
           watchdog.enable
           && config.networking.networkmanager.ensureProfiles.profiles ? ${watchdog.recoveryProfile};
-        message = "role rf-lab: the management fallback needs sam.rfLab.netWatchdog.enable and the NetworkManager profile it recovers (\"${watchdog.recoveryProfile}\"; sam.wifi.declarativeHomeProfile = true declares home-wifi).";
+        message = "role rf-lab: the management fallback needs sam.rfLab.netWatchdog.enable and the NetworkManager profile it recovers (\"${watchdog.recoveryProfile}\"; importing modules/core/wifi.nix declares home-wifi).";
       }
       {
         assertion = config.system.activationScripts ? lockEmptyRootPassword;

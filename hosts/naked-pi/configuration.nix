@@ -14,7 +14,6 @@
     hostname = "naked-pi";
     devTools = false;
   };
-  sam.wifi.declarativeHomeProfile = true;
   sam.rfLab.bluetooth.enable = true;
 
   # Pi 3 onboard radio is 2.4 GHz only; override the shared 5 GHz SSID. SSID is
