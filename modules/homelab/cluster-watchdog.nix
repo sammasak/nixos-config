@@ -94,7 +94,7 @@ in
             -H "Title: Homelab cluster degraded" \
             -H "Priority: high" \
             -H "Tags: warning,rotating_light" \
-            -d "$(printf 'Health check failures:%b\n\nNode: %s\nTime: %s' "$failures" "$(hostname -s)" "$(date -u '+%H:%M UTC')")" \
+            -d "$(printf 'Health check failures:%b\n\nNode: %s\nTime: %s' "$failures" "${config.networking.hostName}" "$(date -u '+%H:%M UTC')")" \
             "${ntfyUrl}" || true
         else
           # Heartbeat on a clean run. This watchdog is otherwise silent when
@@ -107,7 +107,7 @@ in
             -H "Title: watchdog OK" \
             -H "Priority: min" \
             -H "Tags: heavy_check_mark" \
-            -d "$(printf 'All checks passed.\n\nNode: %s\nTime: %s' "$(hostname -s)" "$(date -u '+%H:%M UTC')")" \
+            -d "$(printf 'All checks passed.\n\nNode: %s\nTime: %s' "${config.networking.hostName}" "$(date -u '+%H:%M UTC')")" \
             "${ntfyUrl}" || true
         fi
       '';
