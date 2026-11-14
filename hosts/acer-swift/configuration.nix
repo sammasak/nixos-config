@@ -47,7 +47,6 @@
     # No prompt: its goal is sent through Herdr once it is up (docs/nspawn-workers.md).
     instances.herman = { };
   };
-  sam.cliTools.nixAudit.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
     "claude-code-skills"
     "knowledge"

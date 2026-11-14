@@ -69,9 +69,11 @@ to look for: nothing runs until an operator calls it. The first report appears i
 ## Rollback
 
 On one host: `sudo nixos-rebuild switch --rollback`, or pick the previous generation in
-the systemd-boot menu; Home Manager is a NixOS module here, so its packages go with it.
-Everywhere: revert this change, or drop `sam.cliTools.nixAudit.enable` from a host's
-`configuration.nix`, then switch or deploy as usual. nix-audit installs no
+the boot menu (systemd-boot; GRUB on msi-ms7758); Home Manager is a NixOS module here, so
+its packages go with it. Everywhere: revert this change, or drop
+`sam.cliTools.nixAudit.enable` from lenovo's `configuration.nix` or from
+`modules/roles/runtime-host.nix` (acer-swift, msi-ms7758), then switch or deploy as
+usual. nix-audit installs no
 service, hook or timer, and removing it changes no system it inspected. It writes:
 - its `--json-out` files and `~/nix-audit-pilot`;
 - the grype and vulnix databases in `~/.cache`;
