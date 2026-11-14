@@ -118,13 +118,16 @@
     environmentVariables = {
       OLLAMA_MAX_LOADED_MODELS = "1";
       OLLAMA_NUM_PARALLEL = "1";
-      OLLAMA_CONTEXT_LENGTH = "16384";
+      # CPU fallback behind msi: prompts ran at 4.5-6.5 tokens/s (homelab-gitops#253). The default
+      # num_ctx: longer prompts are cut to fit, and a request's options.num_ctx still overrides it.
+      OLLAMA_CONTEXT_LENGTH = "4096";
       OLLAMA_FLASH_ATTENTION = "1";
       OLLAMA_KV_CACHE_TYPE = "q8_0";
       OLLAMA_KEEP_ALIVE = "5m";
     };
   };
-  # k3s does not count this unit: the cap fits one loaded model, and an OOM takes Ollama first.
+  # k3s does not count this unit: the cap fits one loaded model (llama3.2:3b peaked at 3.1G at a 16K
+  # context; 4K needs less), and an OOM takes Ollama first.
   systemd.services.ollama.serviceConfig = {
     Restart = "on-failure"; # the Wi-Fi address can appear after the unit
     RestartSec = 5;
