@@ -45,9 +45,7 @@
     pool.memory = "7G";
     ghHostsFile = "/home/${config.sam.profile.username}/.config/gh/hosts.yml";
     # No prompt: its goal is sent through Herdr once it is up (docs/nspawn-workers.md).
-    instances.herman = {
-      model = "claude-fable-5-2";
-    };
+    instances.herman = { };
   };
   sam.cliTools.nixAudit.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
