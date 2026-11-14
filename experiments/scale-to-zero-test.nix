@@ -130,7 +130,8 @@ pkgs.testers.runNixOSTest {
     print("BROKEN socket:", show("grafana-proxy.socket", "ActiveState,SubState,Result"))
     print(host.execute("journalctl -u grafana.service -u grafana-proxy.service -u grafana-proxy.socket --no-pager | tail -10")[1])
 
-    host.succeed("/run/booted-system/bin/switch-to-configuration test")
+    rc, _ = host.execute("/run/booted-system/bin/switch-to-configuration test")
+    print("ROLLBACK: switch-to-configuration rc", rc, show("grafana-proxy.socket", "ActiveState,SubState"))
     host.execute("systemctl reset-failed grafana.service grafana-proxy.service grafana-proxy.socket")
     host.succeed("systemctl start grafana-proxy.socket")
     host.succeed("curl -fsS --retry 10 --retry-delay 1 --retry-all-errors -o /dev/null http://127.0.0.1:3001/api/health")
