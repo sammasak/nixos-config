@@ -98,6 +98,16 @@ in
         assertion = !(config.sam.herdr.worker.enable && config.sam.herdr.coordinatorWakeup.enable);
         message = "sam.herdr.worker and sam.herdr.coordinatorWakeup cannot both be enabled on one host (the Coordinator must not inherit worker permissions).";
       }
+      {
+        assertion =
+          !config.sam.profile.devTools
+          || (
+            (config.home-manager.users.${config.sam.profile.username}.systemd.user.services.herdr.Unit.X-SwitchMethod
+              or null
+            ) == "keep-old"
+          );
+        message = "a devTools host's Herdr user unit must carry X-SwitchMethod = keep-old, or a switch kills every agent session.";
+      }
       (
         let
           inherit (config.sam.profile) devTools nativeOtel;

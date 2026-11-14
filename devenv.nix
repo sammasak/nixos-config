@@ -237,7 +237,7 @@ let
         ${pkgs.python3}/bin/python scripts/test-loki.py
       '';
 
-  # a switch keeps Herdr's server and cannot wait forever on a unit (eval only)
+  # flux wait bound and ~/.claude.json activation
   switchSafetyTest =
     gate "switch-safety-test"
       (with pkgs; [
@@ -737,7 +737,7 @@ in
     "nixos:loki-test" =
       task "homelab.loki on no host yet: chart-parity config validated by loki -verify-config, loopback and no port by default" lokiTest;
     "nixos:switch-safety-test" =
-      task "A switch keeps Herdr's server on every host that runs one, waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
+      task "A switch waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;

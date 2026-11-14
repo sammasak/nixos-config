@@ -1,7 +1,6 @@
-"""A switch can neither kill the agent sessions on a host nor wait forever on a unit: Herdr's user server is kept
-across a switch on every host that runs it (a restart ends every pane and agent); flux-bootstrap, a oneshot with
-no default start timeout, gives up after a bounded time; the activation step that pre-accepts Claude's dialogs
-leaves a ~/.claude.json that is not a JSON object alone instead of failing the switch.
+"""A switch neither waits forever on a unit nor fails on a bad ~/.claude.json: flux-bootstrap, a oneshot with no
+default start timeout, gives up after a bounded time; the activation step that pre-accepts Claude's dialogs leaves
+a ~/.claude.json that is not a JSON object alone instead of failing the switch.
 
 Unit declarations from one evaluation, never a switch; the probe realises lenovo's activation script, which is then
 run on throwaway homes."""
@@ -25,11 +24,6 @@ def check(ok, what):
 
 
 s = gate_probe.section("switch-safety")
-
-herdr = {h: u for h, u in s["herdr"].items() if u is not None}
-check({"lenovo", "acer-swift", "msi-ms7758"} <= herdr.keys(), f"the agent hosts run a Herdr server ({sorted(herdr)})")
-for host, unit in sorted(herdr.items()):
-    check(unit["X-SwitchMethod"] == "keep-old", f"{host}: a switch keeps the running Herdr server ({unit})")
 
 
 def seconds(span):
