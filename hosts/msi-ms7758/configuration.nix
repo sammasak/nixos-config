@@ -55,7 +55,6 @@
     hostname = "msi-ms7758";
     nativeOtel = true;
   };
-  sam.cliTools.nixAudit.enable = true;
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
     "nixos-config"
     ".cache/wt"

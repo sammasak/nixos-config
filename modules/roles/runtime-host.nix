@@ -1,5 +1,5 @@
 # Headless worker host (msi-ms7758, acer-swift): runs the ephemeral nspawn workers (modules/workers),
-# pushed by deploy-rs, unthemed, and with maintenance that stays out of a boot.
+# unthemed, and with maintenance that stays out of a boot.
 { config, lib, ... }:
 let
   desktop = config.sam.desktop.enable;
@@ -15,6 +15,8 @@ in
 
   # What an environment builds here, the other hosts download (modules/core/store-cache.nix).
   sam.storeCache.enable = true;
+
+  sam.cliTools.nixAudit.enable = true;
 
   # The relay and environments' telemetry only: host sessions keep their Claude settings (docs/native-otel-canary.md).
   sam.claude.telemetry.enable = false;

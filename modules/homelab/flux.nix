@@ -6,12 +6,7 @@
 }:
 
 let
-  inherit (lib)
-    mkEnableOption
-    mkIf
-    mkOption
-    types
-    ;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.homelab.flux;
 
   deployKey = config.sops.secrets."flux/deploy_key".path;
@@ -20,27 +15,7 @@ in
 {
   imports = [ ./sops.nix ];
 
-  options.homelab.flux = {
-    enable = mkEnableOption "Flux GitOps bootstrap";
-
-    gitUrl = mkOption {
-      type = types.str;
-      default = "ssh://git@github.com/sammasak/homelab-gitops";
-      description = "Git repository URL for Flux";
-    };
-
-    gitBranch = mkOption {
-      type = types.str;
-      default = "main";
-      description = "Git branch to track";
-    };
-
-    gitPath = mkOption {
-      type = types.str;
-      default = "clusters/homelab";
-      description = "Path within the repo for this cluster";
-    };
-  };
+  options.homelab.flux.enable = mkEnableOption "Flux GitOps bootstrap";
 
   config = mkIf cfg.enable {
     # The sops identity; both keys live in its default file, homelab/k3s.yaml.
@@ -132,9 +107,9 @@ in
         # Bootstrap Flux
         echo "Bootstrapping Flux..."
         flux bootstrap git \
-          --url="${cfg.gitUrl}" \
-          --branch="${cfg.gitBranch}" \
-          --path="${cfg.gitPath}" \
+          --url="ssh://git@github.com/sammasak/homelab-gitops" \
+          --branch="main" \
+          --path="clusters/homelab" \
           --private-key-file=${deployKey} \
           --silent
 
