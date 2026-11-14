@@ -16,7 +16,7 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
-#   pre-push:   no-force guard + nixos:qa on the PUSHED commit in a temp worktree
+#   pre-push:   no-force guard, one ref with new commits per push, + nixos:qa on the PUSHED commit in a temp worktree
 #               (lints only when everything changed since origin/main is docs/ or a top-level *.md,
 #               unless a scripts/test-* file names one of the changed files; also lints only for a tree
 #               already green here under the same gate and system generation, or it plus such docs;
