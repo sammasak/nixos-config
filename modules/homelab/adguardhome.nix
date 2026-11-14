@@ -1,8 +1,19 @@
 # AdGuard Home DNS server with encrypted DNS support (DoT/DoH)
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.homelab.dns;
-  inherit (lib) mkEnableOption mkOption mkIf types optionals;
+  inherit (lib)
+    mkEnableOption
+    mkOption
+    mkIf
+    types
+    optionals
+    ;
   # Android Private DNS only speaks DoT on 853.
   dotPort = 853;
 in
@@ -27,23 +38,31 @@ in
     };
 
     rewrites = mkOption {
-      type = types.listOf (types.submodule {
-        options = {
-          domain = mkOption {
-            type = types.str;
-            description = "Domain pattern (supports wildcards like *.example.com)";
+      type = types.listOf (
+        types.submodule {
+          options = {
+            domain = mkOption {
+              type = types.str;
+              description = "Domain pattern (supports wildcards like *.example.com)";
+            };
+            answer = mkOption {
+              type = types.str;
+              description = "IP address or CNAME to return";
+            };
           };
-          answer = mkOption {
-            type = types.str;
-            description = "IP address or CNAME to return";
-          };
-        };
-      });
+        }
+      );
       default = [ ];
       description = "DNS rewrites for internal domain resolution";
       example = [
-        { domain = "*.sammasak.dev"; answer = "192.168.10.200"; }
-        { domain = "dns.sammasak.dev"; answer = "192.168.10.154"; }
+        {
+          domain = "*.sammasak.dev";
+          answer = "192.168.10.200";
+        }
+        {
+          domain = "dns.sammasak.dev";
+          answer = "192.168.10.154";
+        }
       ];
     };
   };
@@ -63,8 +82,14 @@ in
         dns = {
           bind_hosts = [ "0.0.0.0" ];
           port = 53;
-          upstream_dns = [ "1.1.1.1" "8.8.8.8" ];
-          bootstrap_dns = [ "1.1.1.1" "8.8.8.8" ];
+          upstream_dns = [
+            "1.1.1.1"
+            "8.8.8.8"
+          ];
+          bootstrap_dns = [
+            "1.1.1.1"
+            "8.8.8.8"
+          ];
           # LAN-only resolver: the default 20 queries/s per client drops a build host's parallel lookups
           # (40 at once from acer: 20 fail with "Could not resolve host").
           ratelimit = 0;
@@ -95,7 +120,10 @@ in
 
     networking.firewall = {
       allowedUDPPorts = [ 53 ];
-      allowedTCPPorts = optionals cfg.tls.enable [ cfg.tls.dohPort dotPort ];
+      allowedTCPPorts = optionals cfg.tls.enable [
+        cfg.tls.dohPort
+        dotPort
+      ];
     };
 
     # Without the ACME group AdGuard cannot read its own certificate.

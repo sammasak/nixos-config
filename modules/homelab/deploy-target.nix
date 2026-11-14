@@ -4,9 +4,10 @@
 { config, lib, ... }:
 let
   inherit (config.sam.fleet) deployer;
-  deployerKey = lib.findFirst (k: lib.hasSuffix "lukas@${deployer}" k)
-    (throw "deploy-target: ${deployer}'s key is missing from lib/users.nix")
-    (config.sam.userConfig.sshKeys or [ ]);
+  deployerKey =
+    lib.findFirst (k: lib.hasSuffix "lukas@${deployer}" k)
+      (throw "deploy-target: ${deployer}'s key is missing from lib/users.nix")
+      (config.sam.userConfig.sshKeys or [ ]);
 in
 {
   users.groups.deploy = { };

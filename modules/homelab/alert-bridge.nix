@@ -1,13 +1,27 @@
 # Alertmanager webhook to ntfy bridge (sammasak/alert-bridge). Runs beside ntfy,
 # outside k3s, so a page does not depend on the cluster it reports on.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
-  inherit (lib) getExe mkEnableOption mkIf mkOption mkPackageOption types;
+  inherit (lib)
+    getExe
+    mkEnableOption
+    mkIf
+    mkOption
+    mkPackageOption
+    types
+    ;
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   cfg = config.homelab.alertBridge;
 
-  healthUrl = "http://${if cfg.listenAddress == "0.0.0.0" then "127.0.0.1" else cfg.listenAddress}:${toString cfg.port}/health";
+  healthUrl = "http://${
+    if cfg.listenAddress == "0.0.0.0" then "127.0.0.1" else cfg.listenAddress
+  }:${toString cfg.port}/health";
 
   firewallRules = mkDualBackendFirewall {
     nftComment = "alert-bridge: Alertmanager, from its pod or from its node.";
@@ -105,14 +119,21 @@ in
         ProtectKernelTunables = true;
         ProtectProc = "invisible";
         ProcSubset = "pid";
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+        ];
         RestrictNamespaces = true;
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
         LockPersonality = true;
         MemoryDenyWriteExecute = true;
         SystemCallArchitectures = "native";
-        SystemCallFilter = [ "@system-service" "~@privileged" "~@resources" ];
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+          "~@resources"
+        ];
         UMask = "0077";
       };
     };

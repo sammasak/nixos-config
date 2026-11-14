@@ -22,8 +22,8 @@
       efi.efiSysMountPoint = lib.mkDefault "/boot";
       timeout = 3;
       # systemd-boot default: no core/module split to fall out of lockstep on
-      # a bootloader bump (the skew that bricked lenovo's boot). msi alone
-      # mkForces GRUB back on for the Windows dual-boot (hosts/msi-ms7758).
+      # a bootloader bump (the skew that bricked lenovo's boot). msi mkForces
+      # it off for GRUB (Windows dual-boot), both Pis for extlinux.
       systemd-boot = {
         enable = true;
         configurationLimit = 4;

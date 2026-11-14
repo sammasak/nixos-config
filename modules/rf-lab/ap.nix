@@ -3,7 +3,12 @@
 # is your own AP for your own clients — not a tool against anyone else's network.
 # No bridge/NAT/route to the LAN: lab clients cannot reach the management subnet,
 # and the AP runs on wlan0, never the Ethernet management path.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.sam.rfLab.ap;
   runConf = "/run/rf-lab-ap/hostapd.conf";
@@ -16,7 +21,11 @@ let
   # cannot touch a third-party device or a station on anyone else's network.
   rfApKick = pkgs.writeShellApplication {
     name = "rf-ap-kick";
-    runtimeInputs = with pkgs; [ hostapd gnugrep coreutils ];
+    runtimeInputs = with pkgs; [
+      hostapd
+      gnugrep
+      coreutils
+    ];
     text = ''
       mac=$(printf '%s' "''${1:?usage: rf-ap-kick <enrolled-MAC> [--commit]}" | tr '[:upper:]' '[:lower:]')
       commit=''${2:-}
@@ -38,7 +47,10 @@ let
 
   rfApStatus = pkgs.writeShellApplication {
     name = "rf-ap-status";
-    runtimeInputs = with pkgs; [ hostapd coreutils ];
+    runtimeInputs = with pkgs; [
+      hostapd
+      coreutils
+    ];
     text = ''
       if ! hostapd_cli -p ${ctrl} -i ${cfg.interface} ping >/dev/null 2>&1; then
         echo "lab AP not running (sam.rfLab.ap.enable=false?)" >&2; exit 1
@@ -47,7 +59,10 @@ let
       hostapd_cli -p ${ctrl} -i ${cfg.interface} all_sta
     '';
   };
-  apTools = [ rfApKick rfApStatus ];
+  apTools = [
+    rfApKick
+    rfApStatus
+  ];
 in
 {
   options.sam.rfLab.ap = {
@@ -112,7 +127,12 @@ in
       }
     ];
 
-    environment.systemPackages = (with pkgs; [ hostapd dnsmasq ]) ++ apTools;
+    environment.systemPackages =
+      (with pkgs; [
+        hostapd
+        dnsmasq
+      ])
+      ++ apTools;
 
     # hostapd_cli on the control socket needs root; grant lukas only these two
     # observation/eviction wrappers, each gated to our own AP's enrolled stations.

@@ -1,7 +1,13 @@
 # Persistent terminal workspace for AI coding agents, on every devTools host: each
 # runs a herdr server; the coordinator host also saves the workers as herdr
 # machines (sam.herdr.machines) and reaches them with `herdr --machine <label>`.
-{ config, lib, pkgs, osConfig, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  osConfig,
+  ...
+}:
 let
   # delivery = "system" needs an OS notification daemon; the headless worker has
   # none, so it falls back to herdr's own in-app toasts (rendered in the client).
@@ -16,34 +22,50 @@ let
   '';
   herdrAgentLauncher = pkgs.writeShellApplication {
     name = "herdr-agent-launcher";
-    runtimeInputs = [ pkgs.coreutils pkgs.herdr pkgs.jq ];
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.herdr
+      pkgs.jq
+    ];
     # #157: an unattended worker (any claude started with --dangerously-skip-permissions, as coord:spawn starts
     # them) switches models when safeguards flag a message and skips the bypass acknowledgment instead of waiting
     # at a dialog (2.1.300 honours both from --settings); settings.json, and so lenovo's Coordinator, is left alone
     runtimeEnv = {
-      HERDR_CLAUDE_WORKER_SETTINGS = pkgs.writeText "claude-worker-settings.json" (builtins.toJSON { switchModelsOnFlag = true; skipDangerousModePermissionPrompt = true; });
-    } // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
+      HERDR_CLAUDE_WORKER_SETTINGS = pkgs.writeText "claude-worker-settings.json" (
+        builtins.toJSON {
+          switchModelsOnFlag = true;
+          skipDangerousModePermissionPrompt = true;
+        }
+      );
+    }
+    // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
       # skills#28: a worker host's Herdr panes start claude in bypassPermissions, a restored one included
       HERDR_CLAUDE_WORKER_HOST = "1";
     };
     text = builtins.readFile ./agent-launcher.sh;
   };
-  integrationFiles = pkgs.runCommand "herdr-agent-integrations" {
-    nativeBuildInputs = [ pkgs.herdr ];
-  } ''
-    export HOME="$TMPDIR/home"
-    mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.pi/agent"
-    ${herdrBin} integration install claude
-    ${herdrBin} integration install codex
-    ${herdrBin} integration install pi
-    mkdir -p "$out/claude" "$out/codex" "$out/pi"
-    cp "$HOME/.claude/hooks/herdr-agent-state.sh" "$out/claude/"
-    cp "$HOME/.codex/herdr-agent-state.sh" "$out/codex/"
-    cp "$HOME/.pi/agent/extensions/herdr-agent-state.ts" "$out/pi/"
-  '';
+  integrationFiles =
+    pkgs.runCommand "herdr-agent-integrations"
+      {
+        nativeBuildInputs = [ pkgs.herdr ];
+      }
+      ''
+        export HOME="$TMPDIR/home"
+        mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.pi/agent"
+        ${herdrBin} integration install claude
+        ${herdrBin} integration install codex
+        ${herdrBin} integration install pi
+        mkdir -p "$out/claude" "$out/codex" "$out/pi"
+        cp "$HOME/.claude/hooks/herdr-agent-state.sh" "$out/claude/"
+        cp "$HOME/.codex/herdr-agent-state.sh" "$out/codex/"
+        cp "$HOME/.pi/agent/extensions/herdr-agent-state.ts" "$out/pi/"
+      '';
 in
 {
-  home.packages = [ pkgs.herdr pkgs.python3Minimal ];
+  home.packages = [
+    pkgs.herdr
+    pkgs.python3Minimal
+  ];
 
   programs.fish.functions = {
     pi = ''
@@ -55,7 +77,8 @@ in
     codex = ''
       command ${herdrAgentLauncher}/bin/herdr-agent-launcher codex $argv
     '';
-  } // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
+  }
+  // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
     # The worker start by hand, through the same launcher; outside a Herdr pane plain `claude` still asks.
     claude-worker = ''
       command ${herdrAgentLauncher}/bin/herdr-agent-launcher claude --dangerously-skip-permissions $argv
@@ -65,7 +88,8 @@ in
   home.file = {
     ".claude/hooks/herdr-agent-state.sh".source = "${integrationFiles}/claude/herdr-agent-state.sh";
     ".codex/herdr-agent-state.sh".source = "${integrationFiles}/codex/herdr-agent-state.sh";
-  } // lib.optionalAttrs (osConfig.sam.profile.pi or false) {
+  }
+  // lib.optionalAttrs (osConfig.sam.profile.pi or false) {
     ".pi/agent/extensions/herdr-agent-state.ts".source = "${integrationFiles}/pi/herdr-agent-state.ts";
   };
 
@@ -119,17 +143,21 @@ in
 
   # Added through herdr itself so its client state stays herdr-owned and mutable; a label herdr already
   # knows is skipped, and a failed add (host down, key missing) is reported but never stops activation.
-  home.activation.herdrMachines = lib.mkIf (machines != [ ]) (lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    for spec in ${lib.concatMapStringsSep " " (m: lib.escapeShellArg "${m.label}=${m.target}") machines}; do
-      label=''${spec%%=*}; target=''${spec#*=}
-      if ${herdrBin} machine list --json 2>/dev/null | ${lib.getExe pkgs.jq} -e --arg l "$label" 'any(.[]?; .label == $l)' >/dev/null; then
-        continue
-      fi
-      echo "herdr: saving machine $label ($target)"
-      run ${pkgs.coreutils}/bin/timeout 30 ${herdrBin} machine add "$target" --label "$label" --remote-session default </dev/null \
-        || echo "herdr: machine add $label failed; run by hand: herdr machine add $target --label $label --remote-session default" >&2
-    done
-  '');
+  home.activation.herdrMachines = lib.mkIf (machines != [ ]) (
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      for spec in ${
+        lib.concatMapStringsSep " " (m: lib.escapeShellArg "${m.label}=${m.target}") machines
+      }; do
+        label=''${spec%%=*}; target=''${spec#*=}
+        if ${herdrBin} machine list --json 2>/dev/null | ${lib.getExe pkgs.jq} -e --arg l "$label" 'any(.[]?; .label == $l)' >/dev/null; then
+          continue
+        fi
+        echo "herdr: saving machine $label ($target)"
+        run ${pkgs.coreutils}/bin/timeout 30 ${herdrBin} machine add "$target" --label "$label" --remote-session default </dev/null \
+          || echo "herdr: machine add $label failed; run by hand: herdr machine add $target --label $label --remote-session default" >&2
+      done
+    ''
+  );
 
   systemd.user.services.herdr = {
     Unit.Description = "Persistent Herdr session server";

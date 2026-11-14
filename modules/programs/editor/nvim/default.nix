@@ -8,7 +8,11 @@ let
   codelldb = pkgs.writeShellScriptBin "codelldb" ''
     exec ${pkgs.vscode-extensions.vadimcn.vscode-lldb}/share/vscode/extensions/vadimcn.vscode-lldb/adapter/codelldb "$@"
   '';
-  pythonDebug = pkgs.python3.withPackages (ps: [ ps.debugpy ps.pytest ps.pytest-cov ]);
+  pythonDebug = pkgs.python3.withPackages (ps: [
+    ps.debugpy
+    ps.pytest
+    ps.pytest-cov
+  ]);
 in
 {
   programs.neovim = {
@@ -78,6 +82,8 @@ in
   # Out-of-store symlinks: Lua edits and lock bumps apply without a rebuild.
   # The lock is symlinked (not just repo-resident) because lazy.lua now resolves
   # it at stdpath("config") so the same config works as a standalone clone.
-  xdg.configFile."nvim/lua".source = config.lib.file.mkOutOfStoreSymlink "${repoRoot}/dotfiles/nvim/lua";
-  xdg.configFile."nvim/lazy-lock.json".source = config.lib.file.mkOutOfStoreSymlink "${repoRoot}/dotfiles/nvim/lazy-lock.json";
+  xdg.configFile."nvim/lua".source =
+    config.lib.file.mkOutOfStoreSymlink "${repoRoot}/dotfiles/nvim/lua";
+  xdg.configFile."nvim/lazy-lock.json".source =
+    config.lib.file.mkOutOfStoreSymlink "${repoRoot}/dotfiles/nvim/lazy-lock.json";
 }

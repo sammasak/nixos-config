@@ -46,7 +46,10 @@ let
   # The /proc mount of a container comes from the bundle's config.json, which neither podman nor buildah let you edit.
   crunSubsetPid = pkgs.writeShellApplication {
     name = "crun-subset-pid";
-    runtimeInputs = [ pkgs.jq pkgs.crun ];
+    runtimeInputs = [
+      pkgs.jq
+      pkgs.crun
+    ];
     text = ''
       bundle=$PWD sub=
       for ((i = 1; i <= $#; i++)); do

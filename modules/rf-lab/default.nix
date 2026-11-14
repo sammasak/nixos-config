@@ -3,7 +3,12 @@
 # deauth/AP-mode paths — all scoped to our own AP and enrolled stations, never
 # frame injection or anyone else's network. Driven from lenovo by the `rf:*`
 # devenv tasks; full context in README.md and the naked-pi-rf-lab.md runbook.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.sam.rfLab;
   username = config.sam.profile.username;
@@ -51,7 +56,14 @@ let
 
   rfSweep = pkgs.writeShellApplication {
     name = "rf-sweep";
-    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod util-linux ];
+    runtimeInputs = with pkgs; [
+      iw
+      tcpdump
+      coreutils
+      gawk
+      kmod
+      util-linux
+    ];
     text = ''
       per=''${1:-1.2}
       ${pickMon}
@@ -73,7 +85,14 @@ let
 
   rfCapture = pkgs.writeShellApplication {
     name = "rf-capture";
-    runtimeInputs = with pkgs; [ iw tcpdump coreutils gawk kmod util-linux ];
+    runtimeInputs = with pkgs; [
+      iw
+      tcpdump
+      coreutils
+      gawk
+      kmod
+      util-linux
+    ];
     text = ''
       ch=''${1:?usage: rf-capture <channel> [seconds] [bpf-filter]}
       secs=''${2:-30}
@@ -94,7 +113,10 @@ let
   # bound the whole run: bluetoothctl --timeout alone has been seen to hang.
   rfBtScan = pkgs.writeShellApplication {
     name = "rf-btscan";
-    runtimeInputs = with pkgs; [ bluez coreutils ];
+    runtimeInputs = with pkgs; [
+      bluez
+      coreutils
+    ];
     text = ''
       secs=''${1:-15}
       if ! timeout 8 bluetoothctl show >/dev/null 2>&1; then
@@ -112,7 +134,16 @@ let
   # effect on enu1u1/wlan0 or anyone else. Teardown rmmods the module.
   rfSim = pkgs.writeShellApplication {
     name = "rf-sim";
-    runtimeInputs = with pkgs; [ kmod iw iproute2 hostapd wpa_supplicant iperf3 coreutils gnugrep ];
+    runtimeInputs = with pkgs; [
+      kmod
+      iw
+      iproute2
+      hostapd
+      wpa_supplicant
+      iperf3
+      coreutils
+      gnugrep
+    ];
     text = ''
       loss=''${1:-0}      # arg1: tc-netem loss percent on the station link (0 = perfect)
       outage=''${2:-1}    # arg2: seconds the station stays disconnected
@@ -236,7 +267,10 @@ let
   # deauth, no frames at other networks. Inert unless sam.rfLab.ap is running.
   rfApOutage = pkgs.writeShellApplication {
     name = "rf-ap-outage";
-    runtimeInputs = [ pkgs.systemd pkgs.coreutils ];
+    runtimeInputs = [
+      pkgs.systemd
+      pkgs.coreutils
+    ];
     text = ''
       secs=''${1:-10}
       if ! systemctl is-active --quiet rf-lab-ap; then
@@ -253,10 +287,21 @@ let
     '';
   };
 
-  tools = [ rfSweep rfCapture rfBtScan rfSim rfApOutage ];
+  tools = [
+    rfSweep
+    rfCapture
+    rfBtScan
+    rfSim
+    rfApOutage
+  ];
 in
 {
-  imports = [ ./ap.nix ./net-watchdog.nix ./bluetooth.nix ./hil.nix ];
+  imports = [
+    ./ap.nix
+    ./net-watchdog.nix
+    ./bluetooth.nix
+    ./hil.nix
+  ];
 
   options.sam.rfLab = {
     enable = lib.mkEnableOption "2.4 GHz RF lab kit (naked-pi)";
@@ -264,7 +309,14 @@ in
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages =
-      (with pkgs; [ iw usbutils ethtool tcpdump bluez ]) ++ tools;
+      (with pkgs; [
+        iw
+        usbutils
+        ethtool
+        tcpdump
+        bluez
+      ])
+      ++ tools;
 
     systemd.tmpfiles.rules = [
       # Aged out so captures cannot fill the SD card silently.

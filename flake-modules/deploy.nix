@@ -1,5 +1,10 @@
 # deploy-rs push targets: one node per hosts-table entry; hostname and remoteBuild come from hosts.nix.
-{ config, inputs, lib, ... }:
+{
+  config,
+  inputs,
+  lib,
+  ...
+}:
 let
   # activate-rs runs on the target. patched: serokell/deploy-rs#412, tracking #297; drop the
   # override when the pin contains the fix. Unpatched is nixpkgs' binary, cached for aarch64.
@@ -14,9 +19,7 @@ let
             deploy-rs =
               if patched then
                 prev.deploy-rs.deploy-rs.overrideAttrs (o: {
-                  patches =
-                    (o.patches or [ ])
-                    ++ [ ../pkgs/patches/deploy-rs-412-rollback-before-cancel.patch ];
+                  patches = (o.patches or [ ]) ++ [ ../pkgs/patches/deploy-rs-412-rollback-before-cancel.patch ];
                 })
               else
                 inputs.nixpkgs.legacyPackages.${system}.deploy-rs;
@@ -52,10 +55,15 @@ let
     {
       inherit (deploy) hostname;
       # the pinned key or nothing (modules/core/ssh-known-hosts.nix): no first-use trust from the deployer either
-      sshOpts = [ "-o" "StrictHostKeyChecking=yes" ];
+      sshOpts = [
+        "-o"
+        "StrictHostKeyChecking=yes"
+      ];
       profiles.system =
         pushAs
-        // { path = activateFor.${host.pkgs.stdenv.hostPlatform.system}.nixos host; }
+        // {
+          path = activateFor.${host.pkgs.stdenv.hostPlatform.system}.nixos host;
+        }
         // lib.optionalAttrs deploy.remoteBuild { remoteBuild = true; };
     };
 in

@@ -14,7 +14,6 @@
     hostname = "naked-pi";
     devTools = false;
   };
-  sam.wifi.declarativeHomeProfile = true;
   sam.rfLab.bluetooth.enable = true;
 
   # Pi 3 onboard radio is 2.4 GHz only; override the shared 5 GHz SSID. SSID is
@@ -24,8 +23,7 @@
 
   # Send the MAC as DHCP client-id so the router's MAC reservation (.138) applies;
   # a sticky client-id lease otherwise shadowed it. See vault: dhcp-reservations.md
-  networking.networkmanager.ensureProfiles.profiles.home-wifi.ipv4.dhcp-client-id =
-    lib.mkForce "mac";
+  networking.networkmanager.ensureProfiles.profiles.home-wifi.ipv4.dhcp-client-id = lib.mkForce "mac";
 
   # age from the host SSH key WITHOUT sam.hostSecrets, so naked-pi decrypts only
   # secrets/homelab/wifi.yaml — not the operator tokens #32 keeps off this host.

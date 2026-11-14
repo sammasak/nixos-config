@@ -1,19 +1,36 @@
 # Common k3s configuration shared between server and agent
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
-  inherit (lib) mkEnableOption mkIf mkOption optionals types;
+  inherit (lib)
+    mkEnableOption
+    mkIf
+    mkOption
+    optionals
+    types
+    ;
   cfg = config.homelab.k3s;
   quantity = types.strMatching "[0-9]+(Ki|Mi|Gi)";
 in
 {
-  imports = [ ../sops.nix ./containerd-crun.nix ];
+  imports = [
+    ../sops.nix
+    ./containerd-crun.nix
+  ];
 
   options.homelab.k3s = {
     enable = mkEnableOption "k3s Kubernetes";
 
     role = mkOption {
-      type = types.enum [ "server" "agent" ];
+      type = types.enum [
+        "server"
+        "agent"
+      ];
       description = "Node role in the cluster";
     };
 
@@ -40,7 +57,10 @@ in
     };
 
     cni = mkOption {
-      type = types.enum [ "flannel" "cilium" ];
+      type = types.enum [
+        "flannel"
+        "cilium"
+      ];
       default = "cilium";
       description = ''
         CNI provider for the cluster.
@@ -61,7 +81,10 @@ in
 
     disableComponents = mkOption {
       type = types.listOf types.str;
-      default = [ "traefik" "servicelb" ];
+      default = [
+        "traefik"
+        "servicelb"
+      ];
       description = "Built-in k3s components to disable";
     };
 
@@ -127,15 +150,18 @@ in
             "--secrets-encryption"
           ]
           ++ (
-            if cfg.cni == "cilium" then [
-              # Server-only: the agent binary rejects --disable-kube-proxy
-              # ("flag provided but not defined") and fatals.
-              "--flannel-backend=none"
-              "--disable-network-policy"
-              "--disable-kube-proxy"
-            ] else [
-              "--flannel-backend=host-gw"
-            ]
+            if cfg.cni == "cilium" then
+              [
+                # Server-only: the agent binary rejects --disable-kube-proxy
+                # ("flag provided but not defined") and fatals.
+                "--flannel-backend=none"
+                "--disable-network-policy"
+                "--disable-kube-proxy"
+              ]
+            else
+              [
+                "--flannel-backend=host-gw"
+              ]
           )
         )
         ++ optionals (cfg.role == "server" && cfg.taintControlPlane) [
@@ -171,7 +197,10 @@ in
       k9s
     ];
 
-    boot.kernelModules = [ "br_netfilter" "overlay" ];
+    boot.kernelModules = [
+      "br_netfilter"
+      "overlay"
+    ];
 
     boot.kernel.sysctl = {
       "net.bridge.bridge-nf-call-iptables" = 1;
@@ -195,19 +224,19 @@ in
         # Cluster ingress. Moved here from modules/core/network.nix so they are
         # only opened on hosts that actually take part in the k3s data path;
         # a desktop-only machine no longer exposes them.
-        80    # HTTP  (ingress / ACME http-01)
-        443   # HTTPS (ingress)
-        8080  # Alternative HTTP (ingress)
+        80 # HTTP  (ingress / ACME http-01)
+        443 # HTTPS (ingress)
+        8080 # Alternative HTTP (ingress)
         10250 # Kubelet API
       ]
-        ++ optionals (cfg.cni == "cilium") [
-          4240 # Cilium agent health check (cilium-health, node-to-node)
-          4244 # Hubble server on the agent (Hubble Relay connects here)
-          9962 # Cilium agent Prometheus metrics
-          9963 # Cilium operator Prometheus metrics
-          9964 # Cilium Envoy proxy Prometheus metrics
-          9965 # Hubble Prometheus metrics
-        ];
+      ++ optionals (cfg.cni == "cilium") [
+        4240 # Cilium agent health check (cilium-health, node-to-node)
+        4244 # Hubble server on the agent (Hubble Relay connects here)
+        9962 # Cilium agent Prometheus metrics
+        9963 # Cilium operator Prometheus metrics
+        9964 # Cilium Envoy proxy Prometheus metrics
+        9965 # Hubble Prometheus metrics
+      ];
       # Cilium's default tunnel mode is VXLAN; flannel's host-gw needs no tunnel.
       allowedUDPPorts = optionals (cfg.cni == "cilium") [ 8472 ];
     };

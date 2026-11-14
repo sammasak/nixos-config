@@ -5,7 +5,12 @@
 # from the remote, never the local clone. Never deploy a change to THIS module
 # through the trigger itself.
 # See vault: homelab/decisions/ADR-024-nixos-rebuild-trigger-security-model.md
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   inherit (lib) mkEnableOption mkIf;
   cfg = config.homelab.nixosRebuildTrigger;
@@ -56,8 +61,7 @@ let
   activateScript = mkScript "nixos-rebuild-activate" false ./activate.sh;
 in
 {
-  options.homelab.nixosRebuildTrigger.enable =
-    mkEnableOption "path-activated, health-gated nixos-rebuild for board worker";
+  options.homelab.nixosRebuildTrigger.enable = mkEnableOption "path-activated, health-gated nixos-rebuild for board worker";
 
   config = mkIf cfg.enable {
     # WHO CAN TRIGGER: any member of `${triggerGroup}` — 0770 is what makes the
@@ -100,8 +104,16 @@ in
     # history, and the result file for pollers that cannot read the journal.
     systemd.services.nixos-rebuild-trigger = {
       description = "Pinned, health-gated nixos-rebuild (board-worker trigger)";
-      after = [ "nix-daemon.service" "network-online.target" "nixos-rebuild-trigger-dir.service" ];
-      wants = [ "nix-daemon.service" "network-online.target" "nixos-rebuild-trigger-dir.service" ];
+      after = [
+        "nix-daemon.service"
+        "network-online.target"
+        "nixos-rebuild-trigger-dir.service"
+      ];
+      wants = [
+        "nix-daemon.service"
+        "network-online.target"
+        "nixos-rebuild-trigger-dir.service"
+      ];
       # Without the trailing /bin: `path` runs entries through makeBinPath, so
       # "/run/current-system/sw/bin" would render as ".../sw/bin/bin".
       path = [ "/run/current-system/sw" ];

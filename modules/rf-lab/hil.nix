@@ -5,7 +5,12 @@
 # default route rides a non-wireless link AND no established SSH session sits on a
 # radio interface, so it structurally cannot cut the link the way enabling the AP
 # on wlan0 would. Closes #38's hardware gap only when actually run with Ethernet.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.sam.rfLab;
   username = config.sam.profile.username;
@@ -14,8 +19,17 @@ let
   rfApKickHil = pkgs.writeShellApplication {
     name = "rf-ap-kick-hil";
     runtimeInputs = with pkgs; [
-      hostapd wpa_supplicant iw iproute2 networkmanager systemd util-linux
-      gnugrep gnused gawk coreutils
+      hostapd
+      wpa_supplicant
+      iw
+      iproute2
+      networkmanager
+      systemd
+      util-linux
+      gnugrep
+      gnused
+      gawk
+      coreutils
     ];
     text = ''
       apif=wlan0

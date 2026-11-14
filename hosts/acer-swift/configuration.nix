@@ -16,17 +16,46 @@
   };
   # k3s pods take ~4.6G here: a 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
   sam.workers = {
-    retired = [ "docs" "ghp" "demo" "dp93" "nc200" "dp120" "f44" "dp121" "boot2" "boot" "push" "pin" "note" "evfix" "pins" "tel1" "fac" "evdoc" "sk" "w1" "tg" "tel2" "tg2" ];
+    retired = [
+      "docs"
+      "ghp"
+      "demo"
+      "dp93"
+      "nc200"
+      "dp120"
+      "f44"
+      "dp121"
+      "boot2"
+      "boot"
+      "push"
+      "pin"
+      "note"
+      "evfix"
+      "pins"
+      "tel1"
+      "fac"
+      "evdoc"
+      "sk"
+      "w1"
+      "tg"
+      "tel2"
+      "tg2"
+    ];
     labelPrefix = "acer";
     pool.memory = "7G";
     ghHostsFile = "/home/${config.sam.profile.username}/.config/gh/hosts.yml";
     # No prompt: its goal is sent through Herdr once it is up (docs/nspawn-workers.md).
-    instances.herman = { model = "claude-fable-5-2"; };
+    instances.herman = {
+      model = "claude-fable-5-2";
+    };
   };
-  # The relay and environments' telemetry only: host sessions here keep their Claude settings (docs/native-otel-canary.md)
-  sam.claude.telemetry.enable = false;
   sam.cliTools.nixAudit.enable = true;
-  sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [ "claude-code-skills" "knowledge" "nixos-config" ".cache/wt" ];
+  sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
+    "claude-code-skills"
+    "knowledge"
+    "nixos-config"
+    ".cache/wt"
+  ];
 
   # Headless shell mode remains the default for the always-on worker. The GUI
   # variant is an explicit boot-menu specialisation for daily laptop use.
@@ -63,7 +92,11 @@
     description = "Reconnect WiFi when the LAN gateway is unreachable (headless self-heal)";
     after = [ "NetworkManager.service" ];
     serviceConfig.Type = "oneshot";
-    path = [ pkgs.iputils pkgs.networkmanager pkgs.util-linux ];
+    path = [
+      pkgs.iputils
+      pkgs.networkmanager
+      pkgs.util-linux
+    ];
     enableStrictShellChecks = true;
     script = ''
       if ! ping -c3 -W2 ${config.sam.fleet.gateway} >/dev/null 2>&1; then

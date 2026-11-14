@@ -1,7 +1,12 @@
 # Lives under `sam.thermal`, not `hardware.thermal`: `hardware.*` is upstream
 # NixOS territory, and squatting in it makes a local option indistinguishable
 # from a nixpkgs one — and collides outright the day upstream adds that name.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   cfg = config.sam.thermal;
@@ -11,13 +16,20 @@ in
     enable = lib.mkEnableOption "thermal management with quiet fan control";
 
     platform = lib.mkOption {
-      type = lib.types.enum [ "thinkpad" "generic" ];
+      type = lib.types.enum [
+        "thinkpad"
+        "generic"
+      ];
       default = "generic";
       description = "Hardware platform for fan control";
     };
 
     profile = lib.mkOption {
-      type = lib.types.enum [ "quiet" "balanced" "performance" ];
+      type = lib.types.enum [
+        "quiet"
+        "balanced"
+        "performance"
+      ];
       default = "quiet";
       description = "Fan curve profile";
     };
@@ -33,7 +45,13 @@ in
     };
 
     energyPerformancePreference = lib.mkOption {
-      type = lib.types.enum [ "default" "performance" "balance_performance" "balance_power" "power" ];
+      type = lib.types.enum [
+        "default"
+        "performance"
+        "balance_performance"
+        "balance_power"
+        "power"
+      ];
       default = "default";
       description = ''
         Intel HWP Energy Performance Preference (EPP). Controls the bias between
@@ -111,7 +129,7 @@ in
         {
           type = "hwmon";
           query = "/sys/devices/platform/coretemp.0/hwmon";
-          indices = [ 1 ];  # Package temp (most relevant)
+          indices = [ 1 ]; # Package temp (most relevant)
         }
       ];
 
@@ -126,38 +144,141 @@ in
       # Fan levels: (level, low_temp, high_temp)
       # level 0 = fan off, 7 = max, "level auto" = BIOS control
       levels =
-        if cfg.profile == "quiet" then [
-          # Quiet profile: fan stays off below 60C, then ramps gradually.
-          [ 0     0   60 ]
-          [ 1    57   65 ]
-          [ 2    62   70 ]
-          [ 3    67   75 ]
-          [ 4    72   80 ]
-          [ 5    77   85 ]
-          [ 6    82   90 ]
-          [ 7    87   95 ]
-          [ "level full-speed" 93 32767 ]
-        ]
-        else if cfg.profile == "balanced" then [
-          [ 0     0   50 ]
-          [ 1    47   55 ]
-          [ 2    52   60 ]
-          [ 3    57   65 ]
-          [ 4    62   70 ]
-          [ 5    67   75 ]
-          [ 6    72   80 ]
-          [ 7    77   90 ]
-          [ "level full-speed" 88 32767 ]
-        ]
-        else [
-          [ 0     0   45 ]
-          [ 2    42   50 ]
-          [ 4    47   55 ]
-          [ 5    52   60 ]
-          [ 6    57   70 ]
-          [ 7    65   85 ]
-          [ "level full-speed" 82 32767 ]
-        ];
+        if cfg.profile == "quiet" then
+          [
+            # Quiet profile: fan stays off below 60C, then ramps gradually.
+            [
+              0
+              0
+              60
+            ]
+            [
+              1
+              57
+              65
+            ]
+            [
+              2
+              62
+              70
+            ]
+            [
+              3
+              67
+              75
+            ]
+            [
+              4
+              72
+              80
+            ]
+            [
+              5
+              77
+              85
+            ]
+            [
+              6
+              82
+              90
+            ]
+            [
+              7
+              87
+              95
+            ]
+            [
+              "level full-speed"
+              93
+              32767
+            ]
+          ]
+        else if cfg.profile == "balanced" then
+          [
+            [
+              0
+              0
+              50
+            ]
+            [
+              1
+              47
+              55
+            ]
+            [
+              2
+              52
+              60
+            ]
+            [
+              3
+              57
+              65
+            ]
+            [
+              4
+              62
+              70
+            ]
+            [
+              5
+              67
+              75
+            ]
+            [
+              6
+              72
+              80
+            ]
+            [
+              7
+              77
+              90
+            ]
+            [
+              "level full-speed"
+              88
+              32767
+            ]
+          ]
+        else
+          [
+            [
+              0
+              0
+              45
+            ]
+            [
+              2
+              42
+              50
+            ]
+            [
+              4
+              47
+              55
+            ]
+            [
+              5
+              52
+              60
+            ]
+            [
+              6
+              57
+              70
+            ]
+            [
+              7
+              65
+              85
+            ]
+            [
+              "level full-speed"
+              82
+              32767
+            ]
+          ];
     };
 
     boot.kernelModules = lib.mkIf (cfg.platform == "thinkpad") [ "thinkpad_acpi" ];

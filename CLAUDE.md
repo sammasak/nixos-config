@@ -24,6 +24,8 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
+nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table
+
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
 
@@ -232,7 +234,7 @@ either side is only reported.
 - **Namespace boundary**: `homelab.*` is a cluster/platform capability a host
   opts into (k3s, flux, dns, acme, ntfy, tailscale, the rebuild trigger);
   `sam.*` is host identity and personal-machine concern (profile, desktop,
-  wifi, thermal, hostSecrets). When both scopes need the same noun, the leaf
+  thermal, hostSecrets). When both scopes need the same noun, the leaf
   states its scope — `homelab.secrets` (cluster) vs `sam.hostSecrets` (machine)
   — because an option path is usually read without its module.
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.

@@ -1,6 +1,11 @@
 # Headless Wi-Fi learning appliance on a 1 GiB board: Ethernet is the only
 # management path, every Wi-Fi radio is left to manual capture work.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   username = config.sam.profile.username;
 in
@@ -46,15 +51,19 @@ in
       ssh = config.services.openssh;
       watchdog = config.sam.rfLab.netWatchdog;
       names = map (p: lib.toLower (p.pname or p.name or ""));
-      declared = names config.environment.systemPackages
+      declared =
+        names config.environment.systemPackages
         ++ lib.concatMap (u: names u.packages) (lib.attrValues config.users.users)
         ++ lib.concatMap (u: names u.home.packages) (lib.attrValues config.home-manager.users);
       # REA and the tools it drives belong on the analysis workstation (#42 "Architectural boundaries").
-      heavy = builtins.filter (n: builtins.match ".*(ghidra|binwalk|unblob|jadx|nodejs|npm|rea-agents|radare2|rizin).*" n != null) declared;
+      heavy = builtins.filter (
+        n: builtins.match ".*(ghidra|binwalk|unblob|jadx|nodejs|npm|rea-agents|radare2|rizin).*" n != null
+      ) declared;
     in
     [
       {
-        assertion = ssh.enable && ssh.settings.PasswordAuthentication == false && ssh.settings.PermitRootLogin == "no";
+        assertion =
+          ssh.enable && ssh.settings.PasswordAuthentication == false && ssh.settings.PermitRootLogin == "no";
         message = "role rf-lab: key-only SSH is the board's management path; keep sshd on with PasswordAuthentication = false and PermitRootLogin = \"no\" (modules/core/services.nix).";
       }
       {
@@ -62,8 +71,10 @@ in
         message = "role rf-lab: SSH is scoped to the LAN by the firewall rule in modules/core/network.nix; keep networking.firewall.enable = true and services.openssh.openFirewall = false.";
       }
       {
-        assertion = watchdog.enable && config.networking.networkmanager.ensureProfiles.profiles ? ${watchdog.recoveryProfile};
-        message = "role rf-lab: the management fallback needs sam.rfLab.netWatchdog.enable and the NetworkManager profile it recovers (\"${watchdog.recoveryProfile}\"; sam.wifi.declarativeHomeProfile = true declares home-wifi).";
+        assertion =
+          watchdog.enable
+          && config.networking.networkmanager.ensureProfiles.profiles ? ${watchdog.recoveryProfile};
+        message = "role rf-lab: the management fallback needs sam.rfLab.netWatchdog.enable and the NetworkManager profile it recovers (\"${watchdog.recoveryProfile}\"; importing modules/core/wifi.nix declares home-wifi).";
       }
       {
         assertion = config.system.activationScripts ? lockEmptyRootPassword;

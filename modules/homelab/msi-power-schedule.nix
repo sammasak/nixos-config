@@ -7,7 +7,12 @@
 # muted. Stopping k3s.service SIGTERMs that pod cleanly before poweroff, which
 # is all drain would buy here — without a cross-repo RBAC token or having to
 # un-cordon the node on every morning wake.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   inherit (lib) mkEnableOption mkIf mkMerge;

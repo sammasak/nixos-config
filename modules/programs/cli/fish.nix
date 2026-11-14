@@ -4,17 +4,17 @@
     enable = true;
 
     shellAliases = {
-      gco  = "git checkout";
-      k    = "kubectl";
-      kg   = "kubectl get";
-      kd   = "kubectl describe";
-      ka   = "kubectl apply -f";
+      gco = "git checkout";
+      k = "kubectl";
+      kg = "kubectl get";
+      kd = "kubectl describe";
+      ka = "kubectl apply -f";
       kdel = "kubectl delete";
-      kgp  = "kubectl get pods";
-      kgs  = "kubectl get svc";
-      kgd  = "kubectl get deploy";
-      kgn  = "kubectl get nodes";
-      kga  = "kubectl get all";
+      kgp = "kubectl get pods";
+      kgs = "kubectl get svc";
+      kgd = "kubectl get deploy";
+      kgn = "kubectl get nodes";
+      kga = "kubectl get all";
     };
 
     interactiveShellInit = ''

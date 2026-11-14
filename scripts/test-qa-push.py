@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 failed = 0
@@ -21,10 +22,11 @@ def check(ok, what):
 
 
 src = (ROOT / "devenv.nix").read_text()
-m = re.search(r"\n  qaPush = gate \"nixos-qa-push\" [^\n]*''\n(.*?)\n  '';\n", src, re.S)
+# any layout of the gate call; the body is dedented as Nix does for an indented string
+m = re.search(r"\n  qaPush =\s+gate\s+\"nixos-qa-push\".*?''\n(.*?)\n *'';\n", src, re.S)
 if not m:
     sys.exit("FAIL: qaPush not found in devenv.nix")
-BODY = m.group(1).replace("'''", "\0q").replace("''${", "\0d")
+BODY = textwrap.dedent(m.group(1)).replace("'''", "\0q").replace("''${", "\0d")
 
 
 def render(qa, lints, gen):
