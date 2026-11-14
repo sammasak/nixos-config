@@ -133,14 +133,10 @@ in
               present = (env.DISABLE_TELEMETRY or null) == "1";
               want = devTools && !claudeOtel;
             };
-            "Codex's [otel] stanza" = {
-              present = lib.hasInfix "[otel]" (hm.home.file.".codex/config.toml".text or "");
-              want = codexOtel;
-            };
+            # Not Codex's [otel] stanza: config.toml's text forces chromium and playwright-mcp.
+            # `? text`, not the text: only native-otel.nix's script carries one, and reading it forces pkgs.codex.
             "the OTEL_ codex wrapper" = {
-              present = lib.any (p: (p.pname or p.name or "") == "codex" && lib.hasInfix "OTEL_" (p.text or "")) (
-                hm.home.packages or [ ]
-              );
+              present = lib.any (p: (p.pname or p.name or "") == "codex" && p ? text) (hm.home.packages or [ ]);
               want = codexOtel;
             };
           };
