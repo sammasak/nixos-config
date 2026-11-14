@@ -33,11 +33,13 @@ let
   ];
 in
 {
-  perSystem = { system, ... }: {
+  perSystem = { system, pkgs, ... }: {
     _module.args.pkgs = import inputs.nixpkgs {
       inherit system;
       overlays = [ overlay ];
     };
+    # hosts.nix stays one row per host, a table nixfmt would unfold.
+    formatter = pkgs.nixfmt-tree.override { settings.formatter.nixfmt.excludes = [ "flake-modules/hosts.nix" ]; };
   };
 
   flake.overlays.default = overlay;

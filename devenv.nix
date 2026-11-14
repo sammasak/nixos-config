@@ -43,13 +43,14 @@ let
     drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
     here=$(nix eval --raw --impure --expr builtins.currentSystem)
     kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
-    [ "$kinds" = '["checks","deploy","nixosConfigurations","overlays","packages","templates"]' ] \
+    [ "$kinds" = '["checks","deploy","formatter","nixosConfigurations","overlays","packages","templates"]' ] \
       || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
     nix eval --no-write-lock-file .#overlays --apply 'builtins.mapAttrs (_: o: assert builtins.isFunction o; true)' >/dev/null
     nix eval --no-write-lock-file .#templates \
       --apply 'builtins.mapAttrs (_: t: assert builtins.pathExists t.path && builtins.isString t.description; true)' >/dev/null
     hosts=$(names nixosConfigurations)
     for h in $hosts; do drv "nixosConfigurations.$h.config.system.build.toplevel"; done
+    for s in $(names formatter); do drv "formatter.$s"; done
     for kind in packages checks; do
       systems=$(names "$kind")
       for s in $systems; do

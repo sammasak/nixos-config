@@ -94,7 +94,8 @@ def startup_screen(host, extra=(), flag=True):
 
 def main():
     module = (pathlib.Path(__file__).parent.parent / "modules/workers/core.nix").read_text()
-    check(f'[ "claude" "{FLAG}" ]' in module, "the workers module starts every environment's Claude with " + FLAG)
+    check(re.search(r'\[\s*"claude"\s+"' + re.escape(FLAG) + r'"\s*\]', module) is not None,
+          "the workers module starts every environment's Claude with " + FLAG)
 
     for host, worker in ((WORKER, True), (COORDINATOR, False)):
         settings = P[host]["settings"]
