@@ -255,6 +255,7 @@ in
       builtins.elem (lib.getName pkg) [
         "antigravity-cli" # Google agent CLI (gemini-cli successor), desktop only
         "claude-code" # Anthropic CLI, all hosts
+        "open-webui" # custom licence (nixpkgs marks it unfree), acer only: modules/homelab/open-webui.nix
         "unrar" # unfreeRedistributable, from core/packages.nix
       ];
 
