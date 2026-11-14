@@ -112,6 +112,7 @@ let
       units = builtins.mapAttrs (_: h: h.config.systemd.services ? alert-bridge) hosts;
       inherit (lenovo.systemd.services.alert-bridge) environment serviceConfig;
       ntfyListen = lenovo.services.ntfy-sh.settings.listen-http;
+      ntfyUnit = { inherit (lenovo.systemd.services.ntfy-sh) startLimitIntervalSec; inherit (lenovo.systemd.services.ntfy-sh.serviceConfig) Restart; };
       firewall = {
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;

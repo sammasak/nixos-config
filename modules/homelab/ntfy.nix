@@ -43,6 +43,17 @@ in
       };
     };
 
+    systemd.services.ntfy-sh = {
+      # never gives up: nothing can report this unit failed, since the alerts go through it
+      startLimitIntervalSec = 0;
+      serviceConfig = {
+        Restart = "always";
+        RestartSec = 5;
+        RestartSteps = 5;
+        RestartMaxDelaySec = "5min";
+      };
+    };
+
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall [ cfg.port ];
   };
 }
