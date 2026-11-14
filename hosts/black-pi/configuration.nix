@@ -7,7 +7,7 @@
     # wlan0 is the secondary NIC here, end0 carries the cluster.
     ../../modules/core/wifi.nix
 
-    ../../modules/hardware/sd-image-root-lock.nix
+    ../../modules/hardware/pi-sd-image.nix
   ];
 
   sam.profile = {
@@ -17,19 +17,10 @@
   };
   sam.hostSecrets.enable = true;
 
-  # mkForce: the fleet's monthly 30-day GC can fill this 29 GB SD card, which also
-  # holds the observability volumes; min-free makes nix GC itself during builds.
-  nix.gc.dates = lib.mkForce "weekly";
-  nix.gc.options = lib.mkForce "--delete-older-than 7d";
+  # The 29 GB SD card also holds the observability volumes; min-free makes nix GC itself during builds.
   nix.settings.min-free = 3 * 1024 * 1024 * 1024;
   nix.settings.max-free = 8 * 1024 * 1024 * 1024;
   services.journald.settings.Journal.SystemMaxUse = lib.mkForce "200M";
-
-  # No UEFI: the Pi firmware chains U-Boot, which reads /boot/extlinux.
-  # https://wiki.nixos.org/wiki/NixOS_on_ARM/Raspberry_Pi_4
-  boot.loader.systemd-boot.enable = lib.mkForce false;
-  boot.loader.grub.enable = false;
-  boot.loader.generic-extlinux-compatible.enable = true;
 
   # nodejs/neovim/herdr build on the Pi (aarch64 cache misses); 4x4 threads OOM it.
   nix.settings = {

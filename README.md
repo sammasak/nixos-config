@@ -29,7 +29,7 @@ modules/home/, programs/  the one Home Manager tree every host gets
 modules/desktop/, specialisations/  the niri GUI and the boot entry that enables it
 modules/workers/        nspawn developer environments (docs/nspawn-workers.md)
 modules/rf-lab/, embedded/  naked-pi appliance stacks: Wi-Fi lab, ESP32 USB access
-modules/hardware/       Intel video, thermal policy, disk layout, Pi SD-image root lock
+modules/hardware/       Intel video, thermal policy, disk layout, the Pi SD image
 modules/themes/         Catppuccin via Stylix
 lib/, pkgs/             pure helpers; packages not in nixpkgs, exposed as an overlay
 scripts/, tests/        QA gates, bench.sh, VM tests
@@ -114,7 +114,7 @@ After changing SSH policy, apply locally on the target first
 
 ## Automation
 
-No host upgrades itself: every host asserts `system.autoUpgrade` off, so it changes only through `just deploy HOST`. By default every host runs garbage collection monthly and optimises the store weekly; the Pis (weekly, 7-day retention) and msi-ms7758 override the GC schedule. Configured in `modules/core/automation.nix`.
+No host upgrades itself: every host asserts `system.autoUpgrade` off, so it changes only through `just deploy HOST`. By default every host runs garbage collection monthly and optimises the store weekly; the Pis (weekly, 7-day retention, in `modules/hardware/pi-sd-image.nix`) and msi-ms7758 override the GC schedule. The defaults are in `modules/core/automation.nix`.
 
 ## Adding a New Host
 

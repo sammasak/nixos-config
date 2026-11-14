@@ -8,7 +8,6 @@ in
   imports = [
     ./base.nix
     ../core/always-on.nix
-    ../homelab/deploy-target.nix
   ];
 
   # Delivers nix_access_token, and claude_oauth_token when the host has devTools or a claude worker.
