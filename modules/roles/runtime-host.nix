@@ -17,6 +17,9 @@ in
   # What an environment builds here, the other hosts download (modules/core/store-cache.nix).
   sam.storeCache.enable = true;
 
+  # The relay and environments' telemetry only: host sessions keep their Claude settings (docs/native-otel-canary.md).
+  sam.claude.telemetry.enable = false;
+
   # An agent that is talked into it reaches the internet, not the LAN, the cluster or this host (DNS excepted).
   services.devEnvironments.blockedNetworks = [
     "10.0.0.0/8"

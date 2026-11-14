@@ -1,6 +1,6 @@
 # Native OTLP canary
 
-lenovo, acer-swift and msi-ms7758 enable native telemetry (`nativeOtel = true`). On acer and msi that is the relay, its secret, host Codex metrics and their environments' telemetry: `sam.claude.telemetry.enable = false` there keeps host Claude sessions as they were (no export, no change to `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` or `permissions.defaultMode`), so only lenovo's host Claude sessions report. The secret is root-owned (evaluation fails otherwise); only the relay's `LoadCredential` reads it. Traces are
+lenovo, acer-swift and msi-ms7758 enable native telemetry (`nativeOtel = true`). On acer and msi that is the relay, its secret, host Codex metrics and their environments' telemetry: the runtime-host role's `sam.claude.telemetry.enable = false` keeps host Claude sessions as they were (no export, no change to `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` or `permissions.defaultMode`), so only lenovo's host Claude sessions report. The secret is root-owned (evaluation fails otherwise); only the relay's `LoadCredential` reads it. Traces are
 disabled, Codex logs are disabled, and Claude log forwarding is limited to
 collector-sanitized tool-result events. The client configuration is gated on
 the private OTLP receiver being reviewed and live; this change does not alter
