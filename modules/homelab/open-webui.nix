@@ -1,8 +1,8 @@
 # chat.sammasak.dev as a host service: Traefik (forward auth through Authentik, as before) reaches it at the node
 # address through a selectorless Service (homelab-gitops). open-webui signs in whoever sends X-authentik-email, so
-# only pods may reach it: the socket admits the pod CIDR alone, a cluster policy admits only Traefik's pods, and the
-# app serves on a Unix socket in a 0700 directory, out of reach of every local user. The proxy exits when idle and
-# the app stops with it, as the pod scaled to zero.
+# only pods may reach it: the socket admits pod addresses alone (not the nodes' Cilium ones), a cluster policy
+# admits only Traefik's pods, and the app serves on a Unix socket in a 0700 directory, out of reach of every local
+# user. The proxy exits when idle and the app stops with it, as the pod scaled to zero.
 {
   config,
   lib,
@@ -140,7 +140,7 @@ in
       # Ready when it answers: the proxy starts after this, so the first request waits instead of failing.
       ExecStartPost = "${lib.getExe pkgs.curl} --silent --fail --output /dev/null --unix-socket ${socket} --retry 300 --retry-delay 1 --retry-all-errors http://localhost/health";
       TimeoutStartSec = "6min";
-      # uvicorn makes the socket 0666; the directory keeps it to root and this unit.
+      # uvicorn makes the socket 0666; the directory keeps it to root and the app's dynamic user, which the proxy shares.
       RuntimeDirectoryMode = lib.mkForce "0700";
       # The pod's limits; k3s does not count this unit, so an OOM takes it before any pod.
       MemoryMax = "1G";
