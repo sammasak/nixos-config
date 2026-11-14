@@ -76,6 +76,8 @@ let
   # host and is killed under a 4G cap. Builds every x86 host (its deploy-activate check holds the toplevel)
   # and evaluates the aarch64 Pis: the one place a host build is checked. An output kind not listed here
   # fails the step, so a new kind cannot go unchecked.
+  # GC_FREE_SPACE_DIVISOR=16 (Boehm default 3) collects more often: acer-swift deploy check 2809 MiB, not
+  # 3174 MiB, under the 4G cap, for about +40% evaluation time on that process (#359).
   flakeCheck =
     gate "nixos-flake-check"
       (with pkgs; [
@@ -83,6 +85,7 @@ let
         jq
       ])
       ''
+        export GC_FREE_SPACE_DIVISOR=16
         names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
         drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
         here=$(nix eval --raw --impure --expr builtins.currentSystem)
@@ -112,8 +115,9 @@ let
       '';
 
   # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
-  # its own builds only its section.
+  # its own builds only its section. GC_FREE_SPACE_DIVISOR as for flakeCheck: the probe holds acer too.
   probe = gate "nixos-gate-probe" [ pkgs.nix ] ''
+    export GC_FREE_SPACE_DIVISOR=16
     nix build --impure --no-link --print-out-paths --expr '(import ./scripts/gate-probe.nix { }).json'
   '';
 
