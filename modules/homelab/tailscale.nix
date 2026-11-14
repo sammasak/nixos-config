@@ -22,7 +22,7 @@ in
 
     subnetRoutes = mkOption {
       type = types.listOf types.str;
-      default = [ config.sam.profile.lanCidr ];
+      default = [ config.sam.fleet.lanCidr ];
       description = "List of subnet routes to advertise.";
     };
 

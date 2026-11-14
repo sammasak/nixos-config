@@ -53,7 +53,7 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 
 `modules/specialisations/desktop.nix` imports `modules/desktop/common`
 (compositor-agnostic bar, launcher, lock/idle, notifications, GTK) and
-`modules/desktop/niri`, the only compositor.
+`modules/desktop/niri`, the only compositor, and `modules/desktop/sddm`.
 
 The Acer headless configuration is the default and its `desktop` specialisation
 adds the Niri GUI boot entry. MSI is an intermittent opt-in k3s worker: powered
@@ -82,7 +82,6 @@ build error if a host sets it):
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets
 - `nativeOtel` (bool, default false): native harness telemetry through the local relay (docs/native-otel-canary.md)
-- `lanCidr` (str) — LAN subnet for firewall rules (default: "192.168.10.0/24")
 
 Sibling options, outside the profile:
 - `sam.desktop.enable` (bool) — whether a GUI desktop session is active (outside the profile so `modules/specialisations/desktop.nix` can set it)
@@ -90,7 +89,7 @@ Sibling options, outside the profile:
 - `sam.hostSecrets.enable` (bool) — per-machine operator credentials, see `modules/core/sops.nix`
 - `sam.wifi.*` — declarative WiFi profile, see `modules/core/wifi.nix`
 - `sam.cliTools.factum.enable`, `sam.cliTools.nixAudit.enable` (bool, default false): per-host CLI tools in the user's Home Manager profile; outside the profile because a developer environment's guest copies its host's profile
-- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), and `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments; a host that sets it fails evaluation
+- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), `lanCidr`, the trusted LAN subnet of the firewall rules, and `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments; a host that sets it fails evaluation
 
 Everything this repo defines lives under `sam.*` or `homelab.*` so it is never
 confused with an upstream NixOS option. Which of the two is the Namespace
@@ -99,7 +98,7 @@ Boundary rule in Conventions.
 ### Roles (`modules/roles/`)
 
 Composable role modules assigned per host in `flake-modules/hosts.nix`:
-- **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`, `sddm`, `fish`)
+- **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`)
 - **laptop** — laptop-specific overrides
 - **homelab-agent** — k3s worker node, joining the server at lenovo's `sam.fleet` address; disables sleep/suspend
 - **homelab-server** — k3s control plane
@@ -115,7 +114,7 @@ Composable role modules assigned per host in `flake-modules/hosts.nix`:
 ```
 modules/
 ├── core/         # System baseline (boot, users, network, services, packages, automation)
-├── desktop/      # Desktop stack: common/ and niri/
+├── desktop/      # Desktop stack: common/, niri/ and sddm/
 ├── embedded/     # ESP32 tooling
 ├── hardware/     # GPU drivers (intel), thermal, disk layouts
 ├── home/         # the shared Home Manager entry point
@@ -127,4 +126,6 @@ modules/
 ├── themes/       # Catppuccin via Stylix
 └── workers/      # nspawn developer environments (docs/nspawn-workers.md)
 ```
+
+Module class follows the directory for these: `modules/core` and `modules/homelab` are NixOS, `modules/home` and `modules/programs` are Home Manager, and in `modules/desktop` each `<x>/default.nix` (NixOS) pairs with `<x>/home.nix` (Home Manager) where there is one. Exceptions: `core/users.nix` also holds the inline `home-manager.users` block; the files `desktop/common/home.nix` imports (`programs/*/`, `scripts/`) are Home Manager despite their `default.nix` names.
 

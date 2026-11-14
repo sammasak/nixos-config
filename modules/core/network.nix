@@ -7,7 +7,7 @@ let
   sshRules = mkDualBackendFirewall {
     nftComment = "Allow SSH only from LAN subnet and loopback (nftables backend).";
     ports = [ 22 ];
-    sources = [ profile.lanCidr ];
+    sources = [ config.sam.fleet.lanCidr ];
     interfaces = [ "lo" ];
     # nftables path only, and inert on the iptables backend running today,
     # where nixos-fw's default refuse already covers it.
