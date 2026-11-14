@@ -63,7 +63,7 @@ only needed when targeting the other machine.
 ## Architecture
 
 `flake.nix` imports every file under `flake-modules/` (import-tree; the number
-prefixes set no order); `modules/roles|home/*.nix` auto-register; hosts are 3 files under
+prefixes set no order); `modules/roles|home/*.nix` auto-register; hosts are 2 files under
 `hosts/<name>/` wired by an entry (roles and deploy fields) in `flake-modules/hosts.nix`; all host metadata
 flows through the strict `sam.profile` submodule (unknown fields are build
 errors) and GUI-ness keys off `sam.desktop.enable` alone. Full detail:
@@ -245,7 +245,7 @@ either side is only reported.
 
 ## Adding a New Host
 
-- `hosts/<dir>/` (variables + configuration + hardware scan);
+- `hosts/<dir>/` (`configuration.nix` with its `sam.profile`, plus the hardware scan);
 - an entry with its roles in `flake-modules/hosts.nix` (`hostDir` and
   `deploy.hostname` default to the entry name; `deploy.remoteBuild` is
   required, true unless lenovo can build it);

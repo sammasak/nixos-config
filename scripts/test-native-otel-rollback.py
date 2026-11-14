@@ -1,4 +1,4 @@
-"""nixos-config#92: the documented rollback (nativeOtel = false in lenovo's variables.nix) restores the pre-canary state.
+"""nixos-config#92: the documented rollback (nativeOtel = false in lenovo's configuration.nix) restores the pre-canary state.
 
 Copies the tracked tree, flips the one switch the runbook names, and evaluates both trees. The live canary must carry
 every telemetry surface (so the test can tell the states apart); the rolled-back tree must carry none of them and must
@@ -14,7 +14,7 @@ import tempfile
 import gate_probe
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-VARS = "hosts/lenovo-21CB001PMX/variables.nix"
+HOST = "hosts/lenovo-21CB001PMX/configuration.nix"
 failed = 0
 
 
@@ -47,10 +47,10 @@ def main():
         files = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True).stdout
         packed = subprocess.run(["tar", "-C", str(ROOT), "--null", "-T", "-", "-c"], input=files, capture_output=True, check=True).stdout
         subprocess.run(["tar", "-x", "-C", tmp], input=packed, check=True)
-        vars_file = pathlib.Path(tmp, VARS)
-        text, n = re.subn(r"nativeOtel = true;", "nativeOtel = false;", vars_file.read_text())
-        check(n == 1, f"the runbook's switch exists exactly once in {VARS}")
-        vars_file.write_text(text)
+        host_file = pathlib.Path(tmp, HOST)
+        text, n = re.subn(r"nativeOtel = true;", "nativeOtel = false;", host_file.read_text())
+        check(n == 1, f"the runbook's switch exists exactly once in {HOST}")
+        host_file.write_text(text)
         back = surfaces(tmp)
     leftover = sorted(k for k in back["env"] if k.startswith("OTEL_") or k == "CLAUDE_CODE_ENABLE_TELEMETRY")
     check(not leftover, f"rolled back: no Claude telemetry variable is left (left: {leftover})")

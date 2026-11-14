@@ -1,7 +1,4 @@
 { lib, ... }:
-let
-  vars = import ./variables.nix;
-in
 {
   imports = [
     ./hardware-configuration.nix
@@ -13,7 +10,11 @@ in
     ../../modules/hardware/sd-image-root-lock.nix
   ];
 
-  sam.profile = vars;
+  sam.profile = {
+    username = "lukas";
+    hostname = "black-pi";
+    devTools = false;
+  };
   sam.hostSecrets.enable = true;
   sam.wifi.declarativeHomeProfile = true;
 

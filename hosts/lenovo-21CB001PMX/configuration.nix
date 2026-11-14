@@ -1,7 +1,4 @@
 { config, lib, pkgs, ... }:
-let
-  vars = import ./variables.nix;
-in
 {
   imports = [
     ./hardware-configuration.nix
@@ -16,14 +13,19 @@ in
     ../../modules/homelab/msi-power-schedule.nix
   ];
 
-  sam.profile = vars;
+  sam.profile = {
+    username = "lukas";
+    hostname = "lenovo-21CB001PMX";
+    pi = true;
+    nativeOtel = true;
+  };
   sam.hostSecrets.enable = true;
   sam.storeCache.enable = true;
   sam.cliTools.factum.enable = true;
   sam.cliTools.nixAudit.enable = true;
   # First host on the shunt hooks (CLAUDE.md, Bulk reader); rollback: false, or SHUNT_DISABLE=1.
   sam.claude.bulkReader.enable = true;
-  sam.herdr.trustedDirs = map (d: "/home/${vars.username}/${d}") [
+  sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
     "claude-code-skills" "devenv-platform" "factum" "herman" "homelab-gitops" "knowledge" "llm-gateway"
     "nixos-config" "rf-proto" ".cache/wt"
   ];
@@ -73,7 +75,7 @@ in
   systemd.user.services.ollama-portforward = {
     description = "Port-forward the llm-gateway keyless Ollama passthrough to localhost:8080";
     wantedBy = [ "default.target" ];
-    unitConfig.ConditionUser = vars.username;
+    unitConfig.ConditionUser = config.sam.profile.username;
     environment.KUBECONFIG = "%h/.kube/config";
     serviceConfig = {
       ExecStart = "${lib.getExe pkgs.ollama-portforward} http://127.0.0.1:8080/api/tags ${pkgs.kubectl}/bin/kubectl port-forward --address 127.0.0.1 deploy/llm-gateway -n llm 8080:11434";

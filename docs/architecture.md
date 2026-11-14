@@ -28,12 +28,11 @@ Home Manager is shared, not per-host: every host gets
 
 ### Host Configuration Flow
 
-Each host has three files in `hosts/<name>/`:
+Each host has two files in `hosts/<name>/`:
 
 | File | Purpose |
 |------|---------|
-| `variables.nix` | Plain attrset of host-specific choices (username, feature flags, etc.) |
-| `configuration.nix` | NixOS system modules — imports `variables.nix`, sets `sam.profile` |
+| `configuration.nix` | NixOS system modules; sets `sam.profile` (username, hostname, feature flags) |
 | `hardware-configuration.nix` | Auto-generated hardware scan |
 
 The wiring: `flake-modules/hosts.nix` declares each host as a typed `configurations.nixos.<name>` entry (option in `30-configurations-options.nix`): its roles, `hostDir` where the directory differs from the name, `deploy.hostname` where it differs from the name, and the required `deploy.remoteBuild` (no default: a host without it fails evaluation). Then `40-outputs-nixos.nix` resolves roles to modules, sets `sam.profile.roles` from the entry, injects Stylix/SOPS/Home Manager/disko and `modules/workers`, and produces the final `nixosConfigurations.<name>`; `70-deploy.nix` maps every entry to `deploy.nodes.<name>`, with the fleet-wide ssh and rollback settings and `remoteBuild` only when true.
@@ -76,11 +75,10 @@ is themed unless its role turns it off, which `runtime-host` (with an assertion)
 Defined in `modules/core/system.nix`. All host metadata lives in `config.sam.profile` — a typed NixOS option submodule. Modules read this instead of using `specialArgs`.
 
 **Available fields** (the submodule is strict — anything not listed here is a
-build error if a `variables.nix` sets it):
+build error if a host sets it):
 - `username` (one of the users in `lib/users.nix`): primary user account
 - `hostname` (str) — System hostname
-- `timezone` / `locale` / `kbdLayout` / `kbdVariant` / `consoleKeymap` (str): localisation; default to the fleet values (Europe/Stockholm, en_US.UTF-8, se, "", sv-latin1), set only to differ
-- `roles` (list of str): enabled roles from `modules/roles/`, set from the host's entry in `flake-modules/hosts.nix`, not in `variables.nix`
+- `roles` (list of str): enabled roles from `modules/roles/`, set from the host's entry in `flake-modules/hosts.nix`, not in the host's `configuration.nix`
 - `devTools` (bool, default true): ship the interactive dev toolset (claude-code, codex, nvim toolchains, nodejs/chromium, herdr, pi-harness); false on appliance nodes
 - `pi` (bool, default false): Pi coding agent module, provider-key exports and the `router/free` extension (docs/pi.md); the host also declares the sops secrets
 - `nativeOtel` (bool, default false): native harness telemetry through the local relay (docs/native-otel-canary.md)

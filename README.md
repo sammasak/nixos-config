@@ -21,7 +21,7 @@ flake-parts and pushed with deploy-rs from the daily-driver laptop.
 flake.nix               inputs; hands every file in flake-modules/ to flake-parts
 flake-modules/          the flake's outputs (file number prefixes set no order)
   hosts.nix             the fleet: one entry per host, its roles and deploy fields
-hosts/<name>/           per-machine facts: configuration.nix, variables.nix, hardware-configuration.nix
+hosts/<name>/           per-machine facts: configuration.nix (sam.profile and host-only modules), hardware-configuration.nix
 modules/roles/          base, laptop, homelab-agent, homelab-server, runtime-host, rf-lab, embedded
 modules/core/           the system baseline; roles/base.nix imports most of it
 modules/homelab/        k3s, flux, sops, ACME, AdGuard, tailscale, ntfy, watchdogs
@@ -57,7 +57,7 @@ assets/, dotfiles/      wallpapers; the nvim config, symlinked from the checkout
    table entry to a deploy-rs node, so the host list is written once.
 
 Per-host choices reach modules through `sam.profile`, a strict submodule each
-host fills from its `variables.nix`; an unknown field is an evaluation error,
+host sets in its `configuration.nix`; an unknown field is an evaluation error,
 and the host configurations pass nothing through `specialArgs`. Whether a host
 has a GUI is decided by one option, `sam.desktop.enable`, which only
 `modules/specialisations/desktop.nix` sets. Options this repo defines live
