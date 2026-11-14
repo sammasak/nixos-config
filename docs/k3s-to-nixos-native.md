@@ -253,8 +253,8 @@ discovery (replaced by a declared scrape target).
    backup today, its content is 72 hours of logs and 30 days of telemetry, and
    P4 proposes to move it with that posture unchanged.
 4. **Hard-coded cluster addresses** in nixos-config (Loki 10.43.92.124 for
-   pi-offload, the llm-gateway 10.43.0.80, msi Ollama) are replaced by the
-   host address when the service behind them moves. The order of work keeps
+   pi-offload, the llm-gateway 10.43.0.80) are replaced by the host address
+   when the service behind them moves; msi Ollama's already was (#299). The order of work keeps
    new uses of the Loki address to one host (msi, at P1).
 
 ## Inventory and classification
@@ -277,9 +277,8 @@ Observed, but not classified as remove; the owner decides in the cleanup issue:
   carries it, and its log says "All records are already up to date" every
   minute. As configured it manages no record. Removing it also removes the
   option of annotating a Service later.
-- qdrant: three collections named `nb-*`, 492 KiB in total, and no request
-  other than health probes in the 44 hours its current pod has run. Small and
-  idle is not unused; the owner knows what wrote those collections.
+- qdrant: removed (unused since vault-reader, homelab-gitops #259); its claim
+  waits on the owner's by-hand list.
 - `archive/learn/` in homelab-gitops: applied by no Kustomization and no
   namespace of that name is live. Deleting the directory is a repository
   cleanup, not a cluster change.
@@ -314,7 +313,6 @@ Observed, but not classified as remove; the owner decides in the cleanup issue:
 | Authentik | no upstream NixOS module; it gates sign-in for everything; high risk, low saving |
 | Traefik, cert-manager, MetalLB, Cilium, KEDA, Flux, Kyverno | the platform for what stays |
 | open-webui, ollama, kokoro, whisper, monty-runner, workout | scale to zero through KEDA; they hold no memory while idle |
-| ollama on msi | moved: `services.ollama` on msi (#299), like acer's; the gateway and Pi reach it on msi's address |
 | herman, styrka, karta, system-one | 7 to 8 MiB each and public; moving them saves nothing |
 
 ## Placement

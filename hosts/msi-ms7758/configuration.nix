@@ -99,11 +99,14 @@ in
   # The llm-gateway's bigger tier, off with msi at 21:00 (the gateway falls back to acer).
   services.ollama = {
     enable = true;
-    # qwen2.5-coder:7b is the instruct tag's alias (same blob); Pi asks for it by that name
+    # The pod's tags (five pulled, the factum one below): the gateway's /api fails over on a failed connect, not a 404.
+    # qwen2.5-coder:7b is the instruct tag's alias (same blob), Pi's name for it; qwen2.5-coder:3b is pi-harness's.
     loadModels = [
       "llama3.1:8b"
+      "llama3.2:3b"
       "qwen2.5-coder:7b-instruct-q4_K_M"
       "qwen2.5-coder:7b"
+      "qwen2.5-coder:3b"
     ];
     environmentVariables.OLLAMA_CONTEXT_LENGTH = "16384";
   };

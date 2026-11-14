@@ -63,8 +63,8 @@ in
           ExecStart = pkgs.writeShellScript "msi-scheduled-shutdown" ''
             set -u
             echo "Scheduled shutdown: stopping k3s to drain workloads gracefully..."
-            # Stopping k3s SIGTERMs the kubelet/containerd, so ollama-msi (and any
-            # other tolerating pod) terminates within its grace period before the
+            # Stopping k3s SIGTERMs the kubelet/containerd, so every tolerating
+            # pod terminates within its grace period before the
             # node powers down.
             ${pkgs.systemd}/bin/systemctl stop k3s.service || true
             ${pkgs.coreutils}/bin/sleep 5

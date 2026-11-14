@@ -109,7 +109,8 @@ every Pi process shares. Each routing decision is logged with its reason in
 
 The local provider is `msi-ollama` in `~/.pi/agent/models.json`, merged in by
 this module (`http://192.168.10.235:11434/v1`, msi's host Ollama, whose
-firewall admits lenovo and acer only). The router probes it before each dispatch, so a powered-off msi
+firewall admits the lenovo and acer hosts and, on the Cilium interfaces, the
+gateway pod). The router probes it before each dispatch, so a powered-off msi
 fails over within seconds and is used again once it answers.
 
 ```bash
