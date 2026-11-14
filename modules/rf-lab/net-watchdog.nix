@@ -14,6 +14,12 @@
 }:
 let
   cfg = config.sam.rfLab.netWatchdog;
+  gateway = config.sam.fleet.gateway;
+  managementInterfaces = [ ];
+  sshPort = builtins.head config.services.openssh.ports;
+  threshold = 3;
+  maxRecoveryAttempts = 3;
+  recoveryWait = 20;
   check = pkgs.writeShellApplication {
     name = "rf-net-watchdog";
     runtimeInputs = with pkgs; [
@@ -27,13 +33,13 @@ let
       bash
     ];
     text = ''
-      gw=${cfg.gateway}
-      sshport=${toString cfg.sshPort}
+      gw=${gateway}
+      sshport=${toString sshPort}
       profile=${cfg.recoveryProfile}
-      threshold=${toString cfg.threshold}
-      maxattempts=${toString cfg.maxRecoveryAttempts}
-      waitfor=${toString cfg.recoveryWait}
-      configured=(${lib.concatMapStringsSep " " (i: "\"${i}\"") cfg.managementInterfaces})
+      threshold=${toString threshold}
+      maxattempts=${toString maxRecoveryAttempts}
+      waitfor=${toString recoveryWait}
+      configured=(${lib.concatMapStringsSep " " (i: "\"${i}\"") managementInterfaces})
 
       state_fails=/run/rf-net-watchdog.fails
       state_attempts=/run/rf-net-watchdog.attempts
@@ -145,41 +151,10 @@ in
       default = config.sam.rfLab.enable;
       description = "Self-heal a wedged management network, acting only when no link offers a usable path.";
     };
-    gateway = lib.mkOption {
-      type = lib.types.str;
-      default = config.sam.fleet.gateway;
-      defaultText = lib.literalExpression "config.sam.fleet.gateway";
-      description = "Per-interface ICMP probe target; one reachability signal among several, not the sole trigger.";
-    };
-    managementInterfaces = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "Links to treat as management paths; empty auto-discovers all but loopback and the wlu* capture adapter.";
-    };
-    sshPort = lib.mkOption {
-      type = lib.types.port;
-      default = 22;
-      description = "Local sshd port dialed on a link's own address to confirm a live management daemon.";
-    };
     recoveryProfile = lib.mkOption {
       type = lib.types.str;
       default = "home-wifi";
       description = "NetworkManager profile re-upped as the gentle first recovery step.";
-    };
-    threshold = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 3;
-      description = "Consecutive no-path checks before recovery (× the 2-min timer).";
-    };
-    maxRecoveryAttempts = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 3;
-      description = "Recovery cycles that may run before backing off to log-only, so an outage cannot loop-restart NM.";
-    };
-    recoveryWait = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 20;
-      description = "Seconds to wait for a path to return after each recovery step before escalating or giving up.";
     };
   };
 
