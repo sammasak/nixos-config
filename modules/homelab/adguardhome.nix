@@ -16,6 +16,8 @@ let
     ;
   # Android Private DNS only speaks DoT on 853.
   dotPort = 853;
+  # Free on the host: the k3s servicelb is off, so ingress holds 443 on its MetalLB address only.
+  dohPort = 443;
   inherit (config.homelab.acme) dnsDomain;
 in
 {
@@ -25,15 +27,7 @@ in
   options.homelab.dns = {
     enable = mkEnableOption "AdGuard Home DNS server";
 
-    tls = {
-      enable = mkEnableOption "TLS for DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH)";
-
-      dohPort = mkOption {
-        type = types.port;
-        default = 443;
-        description = "Port for DNS-over-HTTPS (use 8443 if 443 is taken by ingress)";
-      };
-    };
+    tls.enable = mkEnableOption "TLS for DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH)";
 
     rewrites = mkOption {
       type = types.listOf (
@@ -103,7 +97,7 @@ in
         tls = mkIf cfg.tls.enable {
           enabled = true;
           server_name = dnsDomain;
-          port_https = cfg.tls.dohPort;
+          port_https = dohPort;
           port_dns_over_tls = dotPort;
           port_dns_over_quic = 0; # Disabled
           certificate_path = "/var/lib/acme/${dnsDomain}/fullchain.pem";
@@ -126,7 +120,7 @@ in
     networking.firewall = {
       allowedUDPPorts = [ 53 ];
       allowedTCPPorts = optionals cfg.tls.enable [
-        cfg.tls.dohPort
+        dohPort
         dotPort
       ];
     };

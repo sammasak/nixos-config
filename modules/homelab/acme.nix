@@ -16,12 +16,6 @@ in
   options.homelab.acme = {
     enable = mkEnableOption "ACME certificate management";
 
-    email = mkOption {
-      type = types.str;
-      default = "admin@sammasak.dev";
-      description = "Email for Let's Encrypt registration";
-    };
-
     dnsDomain = mkOption {
       type = types.str;
       default = "dns.sammasak.dev";
@@ -40,7 +34,7 @@ in
 
     security.acme = {
       acceptTerms = true;
-      defaults.email = cfg.email;
+      defaults.email = "admin@sammasak.dev";
 
       certs."${cfg.dnsDomain}" = {
         dnsProvider = "cloudflare";
