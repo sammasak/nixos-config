@@ -4,8 +4,6 @@
 # config: a model or provider change lands there. Without state.sqlite3 the unit is skipped, not failed, and a
 # database restored after the switch needs `systemd-tmpfiles --create` (the Z rule below), then
 # `systemctl start llm-gateway`.
-# FIXME: no sops.secrets yet: sops-nix fails evaluation on a missing file, and the six keys' file is the owner's
-# (homelab-gitops #265); until it lands the gateway would stop at its first key read.
 {
   config,
   lib,
@@ -18,7 +16,17 @@ let
   api = 8081;
   admin = 9091;
   state = "/var/lib/llm-gateway";
-  configFile = pkgs.writeText "llm-gateway.toml" (builtins.readFile ./llm-gateway.toml);
+  configText = builtins.readFile ./llm-gateway.toml;
+  configFile = pkgs.writeText "llm-gateway.toml" configText;
+  # every key file the config names, so a provider added there needs its key in the sops file to build: the gateway
+  # reads each one at startup, enabled or not
+  keyFiles = lib.unique (
+    lib.concatLists (
+      builtins.filter builtins.isList (
+        builtins.split "/run/secrets/(llm-gateway/[^\"[:space:]]+)" configText
+      )
+    )
+  );
   backup = pkgs.writers.writePython3Bin "llm-gateway-backup" { doCheck = false; } (
     builtins.readFile ./llm-gateway-backup.py
   );
@@ -30,6 +38,14 @@ in
     group = "llm-gateway";
   };
   users.groups.llm-gateway = { };
+  sops.secrets = lib.genAttrs keyFiles (_: {
+    sopsFile = ../../secrets/homelab/llm-gateway.yaml;
+    owner = "llm-gateway";
+    group = "llm-gateway";
+    mode = "0400";
+    restartUnits = [ "llm-gateway.service" ];
+  });
+
   # Z: a migrated database keeps the pod's uid (65532) or root's, and the gateway then cannot write it
   systemd.tmpfiles.rules = [
     "d ${state} 0700 llm-gateway llm-gateway -"
