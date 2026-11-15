@@ -245,6 +245,17 @@ let
         ${pkgs.python3}/bin/python scripts/test-alloy-otlp-log-loki.py
       '';
 
+  # acer's Caddyfile through acer's Caddy, from the gate probe
+  caddyEdgeTest =
+    gate "caddy-edge-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-caddy-edge.py
+      '';
+
   # flux wait bound and ~/.claude.json activation
   switchSafetyTest =
     gate "switch-safety-test"
@@ -366,6 +377,7 @@ let
       delegationTest
       journalCollectorTest
       alloyOtlpTest
+      caddyEdgeTest
       switchSafetyTest
       rfBeaconsTest
       qaPushTest
@@ -744,6 +756,8 @@ in
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
+    "nixos:caddy-edge-test" =
+      task "acer's Caddy edge, as caddy adapt reads it: admin off, every name routed, forward auth before chat and grafana, otlp allowlisted, llm-gateway /v1 only" caddyEdgeTest;
     "nixos:switch-safety-test" =
       task "A switch waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;

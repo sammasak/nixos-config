@@ -18,16 +18,21 @@ let
   dotPort = 853;
   # Free on the host: the k3s servicelb is off, so ingress holds 443 on its MetalLB address only.
   dohPort = 443;
-  inherit (config.homelab.acme) dnsDomain;
+  dnsDomain = cfg.tls.domain;
 in
 {
-  # the certificate domain is homelab.acme.dnsDomain
   imports = [ ./acme.nix ];
 
   options.homelab.dns = {
     enable = mkEnableOption "AdGuard Home DNS server";
 
     tls.enable = mkEnableOption "TLS for DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH)";
+
+    tls.domain = mkOption {
+      type = types.str;
+      default = "dns.sammasak.dev";
+      description = "DNS service domain for DoT/DoH certificates";
+    };
 
     rewrites = mkOption {
       type = types.listOf (
@@ -63,9 +68,14 @@ in
     assertions = [
       {
         assertion = cfg.tls.enable -> config.homelab.acme.enable;
-        message = "homelab.dns.tls serves the ACME certificate for homelab.acme.dnsDomain, which needs homelab.acme.enable.";
+        message = "homelab.dns.tls serves the ACME certificate for homelab.dns.tls.domain, which needs homelab.acme.enable.";
       }
     ];
+
+    security.acme.certs.${dnsDomain} = mkIf cfg.tls.enable {
+      group = "acme";
+      reloadServices = [ "adguardhome.service" ];
+    };
 
     services.adguardhome = {
       enable = true;
