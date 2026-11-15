@@ -53,8 +53,9 @@ in
       message = "No SSH authorized keys configured for `${username}`. Set `lib/users.nix` (${username}.sshKeys).";
     }
     {
-      # raw block access reads the SSH host key off the disk, and that key decrypts every secret of the host
-      assertion = !lib.elem "disk" config.users.users.${username}.extraGroups;
+      assertion =
+        !lib.elem "disk" config.users.users.${username}.extraGroups
+        && !lib.elem username config.users.groups.disk.members;
       message = "`${username}` must not be in the `disk` group: it reads the raw disk, so the host key that decrypts every sops secret. Write disks through sudo.";
     }
   ];
