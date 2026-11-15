@@ -29,9 +29,17 @@ in
         OLLAMA_KEEP_ALIVE = "5m";
       };
     };
+    # The bind needs the node address: wait for it at boot, then keep retrying if it comes later
+    # (acer's is on Wi-Fi). No start limit: the model loader's restarts start this unit at once,
+    # past RestartSec, so three failed binds would otherwise leave it failed for good.
+    systemd.services.ollama = {
+      wants = [ "network-online.target" ];
+      after = [ "network-online.target" ];
+      unitConfig.StartLimitIntervalSec = 0;
+    };
     # k3s does not count this unit, so an OOM takes Ollama before any pod or worker.
     systemd.services.ollama.serviceConfig = {
-      Restart = "on-failure"; # the address can appear after the unit (acer's is on Wi-Fi)
+      Restart = "on-failure";
       RestartSec = 5;
       MemorySwapMax = 0;
       OOMScoreAdjust = 1000;
