@@ -1,16 +1,17 @@
-# Moving suitable services from k3s to NixOS: decision record and inventory
+# Moving the homelab from k3s to NixOS: decision record and inventory
 
-Status: proposed 2026-11-13; amended 2026-11-15, when the owner decided the
-end state is no k3s at all (see Decision). It records what the audit
-observed, which delivery model fits this fleet, and the order of work.
-Deploying to a host, deleting state and removing a running k3s service each
-need the owner's approval; every step below names its gate.
+Status: decided (owner) 2026-11-15: no k3s at all, in four steps. Deploying
+to a host, adding a secret, changing DNS and deleting state each need the
+owner's approval; every step below names its gate.
 
 Evidence: read-only audits of homelab-gitops at main 32b7c88 (what Flux runs),
 nixos-config at main 9342c37, the live cluster (kubectl, Loki, and Prometheus
 queried from black-pi), and a research pass on deployment tooling checked
-against upstream repositories on 2026-11-13. Tracking issue: nixos-config
+against upstream repositories on 2026-11-13; updated against homelab-gitops
+5c44dea and nixos-config 77cfa81 on 2026-11-15. Tracking issue: nixos-config
 #299.
+
+The 2026-11-13 hybrid record: `git show 77cfa81:docs/k3s-to-nixos-native.md`.
 
 ## Answer to the request
 
@@ -27,31 +28,31 @@ per host, atomic activation, generations to roll back to, supervised units with
 readiness and restart, and secrets. So the fit is a composition, not a
 platform:
 
-- services that should outlive the cluster become plain NixOS modules on a
-  named host;
-- workloads that use what Kubernetes is good at here stay on k3s;
+- every service becomes a plain NixOS module on a named host;
 - the deployment tool stays the one already in use.
 
 What is lost for a moved service is listed under "Given up". devenv machines
 and comin are the two tools worth reopening, each under a stated condition
 below.
 
-Superseded 2026-11-15: the second bullet. Nothing stays on k3s; the cluster
-is removed in four steps (see Decision).
-
 ## Decision
 
 1. **No k3s at all** (owner, 2026-11-15). This replaces the 2026-11-13
-   "hybrid, by failure domain" decision, under which the edge and the
-   scale-to-zero workloads stayed on k3s. The end state is reached in four
-   steps (see "Order of work"):
+   hybrid decision, under which the edge and the scale-to-zero workloads
+   stayed on k3s. The end state is reached in four steps (see "Order of
+   work"):
    1. monitoring native on black-pi (#414, PR #419, homelab-gitops #271);
    2. Caddy on acer fronts everything and replaces Traefik; herman and karta
-      become Nix-built static sites; zot retires;
-   3. Authentik and Postgres go native, behind Caddy `forward_auth`;
-   4. k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager and
-      external-dns are removed; a wildcard DNS record plus AdGuard rewrites
-      replace external-dns.
+      become Nix-built static sites; zot retires (#420);
+   3. Authentik and Postgres go native, behind Caddy `forward_auth` (#421);
+   4. k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns
+      and metrics-server are removed (#422).
+
+   DNS needs no new mechanism: AdGuard on lenovo already rewrites
+   `*.sammasak.dev` and `sammasak.dev` to Traefik's address
+   (`hosts/lenovo-21CB001PMX/configuration.nix:131-143`). Step 2 repoints
+   that rewrite to acer; step 4 only removes external-dns. The one possible
+   new record is an optional public wildcard at Cloudflare.
 
    Removed instead of migrated: styrka-web, system-one, monty-runner, kokoro
    and whisper (homelab-gitops #269). Already moved to acer: the llm-gateway
@@ -66,13 +67,17 @@ is removed in four steps (see Decision).
    `mkDualBackendFirewall`, and has one `scripts/test-<name>.py` gate reading
    the shared probe evaluation. A shared helper is written only when a third
    service repeats the same wiring.
-4. **Pod concerns stay in the cluster.** Pod logs and Kubernetes object metrics
-   are collected by the DaemonSet and the operator stack for as long as k3s
-   runs pods (until homelab-gitops #271 removes them in step 1). Hosts get their own journald collector, as a host service so
-   that it keeps working when the cluster does not and covers msi. The cost is
-   a second Alloy process on each host, which is measured (see Placement).
-5. **Nix store delivery into k3s is dropped**, since no cluster remains to
-   deliver into. See "Relation to the delivery plan".
+4. **Pod telemetry ends with the pods (step 1).** Pod logs and Kubernetes
+   object metrics were collected by the Alloy DaemonSet and the operator
+   stack; homelab-gitops #271 removes both. Hosts get their own journald
+   collector, as a host service that covers msi too (#301 on msi; #330 for
+   the other hosts, any time before step 4). The cost is one Alloy process
+   per host, which is measured (see Placement).
+5. **Nix store delivery into k3s is dropped.** With no cluster, homelab-gitops
+   #146's choice between OCI, NixOS services and the store-delivery pilot
+   (`docs/records/nix-native-delivery.md`) resolves to NixOS services; the
+   pilot and its E0 measurement are dropped. #146 keeps the owner's by-hand
+   list of claims and state to delete.
 
 Vault ADR-001 (Flux) and ADR-005 (single k3s cluster) hold until step 4 and
 are superseded by it.
@@ -100,7 +105,7 @@ inside the cluster do not pass through Traefik.
 
 ## What survives which outage
 
-Today, from the placement above:
+On 2026-11-13, from the placement above:
 
 | Outage | Metrics | Logs | Dashboards | Paging |
 |---|---|---|---|---|
@@ -109,18 +114,14 @@ Today, from the placement above:
 | black-pi down | none | none | none | only the cluster watchdog on lenovo |
 | k3s or Cilium broken, hosts up | none | none | none | only the cluster watchdog |
 
-The last row is the one this work addresses: when the cluster is the thing
-that is broken, nothing is left to look at. Steps P1, P4 and P2 fix the logs
-column of that row (msi after P4, every host after P2); metrics, dashboards and alert-driven paging follow only if P5
-moves Prometheus, Alertmanager and Grafana. After the steps below, with the
-stores as NixOS services on black-pi:
+End state, after step 4: the stores on black-pi, the edge and Authentik on
+acer, AdGuard and ntfy on lenovo. The cluster row no longer exists.
 
 | Outage | Metrics | Logs | Dashboards | Paging |
 |---|---|---|---|---|
-| acer down | as today | as today | after P5: Grafana on a LAN port (needs a local login, Authentik is on acer) | bridge posts to the native ntfy on the LAN |
-| lenovo down | as today | host logs keep flowing | as today | none; unchanged, and not fixable without a second ntfy host or an external dead-man check, neither proposed here |
-| black-pi down | none | none | none | cluster watchdog; unchanged |
-| k3s or Cilium broken, hosts up | after P5: host metrics | msi's journal after P4, every host's (k3s, containerd, kernel) after P2, queried through Loki's LAN port until P5 | after P5 | cluster watchdog as today, plus `OnFailure=` pages from the moved units; alert rules page only after P5 |
+| acer down | collected (black-pi), minus acer | collected, minus acer | Grafana on black-pi's LAN port with its local login (Caddy and Authentik are on acer) | Alertmanager on black-pi posts to lenovo's ntfy |
+| lenovo down | collected | collected | through Caddy, with client-side hosts entries (AdGuard is on lenovo) | none: ntfy is on lenovo; #414 owns this gap (it absorbed #399) |
+| black-pi down | none | none | none | the host-side replacement for the cluster watchdog, a step 4 prerequisite (#422) |
 
 ## Deployment workflow
 
@@ -133,71 +134,33 @@ migration adds it.
 |---|---|---|
 | Desired state per host | `nixosConfigurations.<host>` in one flake; a service is enabled per host in that host's `configuration.nix` | present |
 | Reproducible builds | flake lock; x86 hosts substitute from the signed harmonia caches, the Pis build their own closures | present |
-| Quality gates | pre-push `nixos:qa` on the pushed commit (flake check plus the Python gates), run off lenovo; one `scripts/test-<name>.py` per new module | present; test per module built for P1 |
+| Quality gates | pre-push `nixos:qa` on the pushed commit (flake check plus the Python gates), run off lenovo; one `scripts/test-<name>.py` per new module | present |
 | Trigger and approval | merge to main, then an explicit `just deploy HOST` that the owner approves; no host upgrades itself (`system.autoUpgrade` is asserted off on every host since #311) | present |
 | Rollout order | one host at a time, least critical first: msi, black-pi, acer, lenovo | convention |
 | Activation safety | deploy-rs `magicRollback`: a host that cannot be reached after activation reverts | present |
-| Service health | `services.alloy` and most upstream units are `Type=simple`, so each module adds an `ExecStartPost` probe of the service's own local ready endpoint with a start timeout, the upstream restart policy with a slower `RestartSec` and a start limit, and `OnFailure=` to ntfy. A unit that fails its probe fails the activation and so the whole host deploy; the probe therefore never tests anything remote (a collector must not fail a deploy because Loki is away) | built for P1 |
+| Service health | `services.alloy` and most upstream units are `Type=simple`, so each module adds an `ExecStartPost` probe of the service's own local ready endpoint with a start timeout, the upstream restart policy with a slower `RestartSec` and a start limit, and `OnFailure=` to ntfy. A unit that fails its probe fails the activation and so the whole host deploy; the probe therefore never tests anything remote (a collector must not fail a deploy because Loki is away) | present (#301) |
 | Rollback on a failed unit | deploy-rs `autoRollback` | present on x86 (rehearsed on msi, #324); the Pis are still exposed, see gap 1 |
-| End-to-end check | after every deploy: `systemctl is-system-running`, the generation link, and the service's user-visible check (a log line queryable in Loki, a test page arriving on the phone) | to build, as a checklist in each issue |
-| Secrets | sops-nix with per-host age keys; adding a recipient is an owner step. The first three steps need no new secret | present |
+| End-to-end check | after every deploy: `systemctl is-system-running`, the generation link, and the service's user-visible check (a log line queryable in Loki, a test page arriving on the phone) | a checklist in each issue |
+| Secrets | sops-nix with per-host age keys; a new secret file and its creation rule are owner steps, needed in steps 2 and 3 | present |
 | Persistent state | a fixed directory under `/var/lib/<service>` on a named host, with a backup job declared in the same module | to build, see gap 3 |
-| Service discovery | static: one host address and port, set once in each repository | to build |
-| Ingress and TLS | Traefik in k3s keeps the names and certificates until step 2, when Caddy on acer takes them over; a moved service is also reachable on a LAN port so that it works when k3s does not | design below; Caddy in step 2 |
-| Observability of the moved service | its journal through the host collector; its scrape target and alert rule in homelab-gitops while Prometheus runs there | to build |
+| Service discovery | static: one host address and port, set once in each repository | present |
+| Ingress and TLS | Traefik in k3s keeps the names and certificates until step 2, when Caddy on acer takes them over | Caddy in step 2 |
+| Observability of the moved service | its journal through the host collector; its scrape target and alert rule in nixos-config after step 1 | step 1 |
 
 ### Two repositories
 
-While Prometheus, Traefik and the clients of a moved service live in k3s, a
-migration touches both repositories. Order: (1) nixos-config adds the module
-and a deploy brings the service up next to the old one; (2) homelab-gitops
-repoints clients, routes and scrape targets through Flux; (3) after an
-observation period, homelab-gitops removes the old workload. Rollback runs the
-other way: revert the gitops change first, then disable the module. Step 3 is
-the only one that cannot be undone by a revert when it deletes a volume, so it
-is always a separate owner gate.
+While Traefik and the clients of a moved service live in k3s, a migration
+touches both repositories. Order: (1) nixos-config adds the module and a
+deploy brings the service up next to the old one; (2) homelab-gitops
+repoints clients and routes through Flux; (3) after an observation period,
+homelab-gitops removes the old workload. Rollback runs the other way: revert
+the gitops change first, then disable the module. Step 3 is the only one that
+cannot be undone by a revert when it deletes a volume, so it is always a
+separate owner gate.
 
-### Reaching a host service from the cluster
-
-Default: clients are repointed by configuration to the host's LAN address and
-port. Loki's clients are few and all declared in Git (the Alloy DaemonSet,
-alloy-otlp, the Grafana datasource, the usage report script, one hard-coded
-ClusterIP in nixos-config for pi-offload and, after P1, msi's collector), so no Service object needs to be swapped. A
-selectorless Service with an EndpointSlice is used only where a cluster DNS
-name must stay; it has to be a new object with its own name, because the
-chart-owned `loki` Service has a selector and an unpinned ClusterIP and cannot
-be converted in place without a gap.
-
-What this changes, and what must be rehearsed before the first stateful move:
-
-- **Who can reach the port.** The k3s module trusts the Cilium interfaces
-  (`cilium_host`, `cilium_vxlan`, `lxc+`) in the NixOS firewall, so pods can
-  already reach every listening port on their node, and only a Cilium policy
-  can limit that. The NixOS firewall rule that the module adds scopes LAN
-  sources only. Whether a pod on another node arrives with its pod address
-  through the tunnel or masqueraded to the node's LAN address is not assumed
-  here; the reachability check R1 records it, and the rule admits the pod
-  network only if R1 shows it is needed.
-- **Trust, for Loki.** Nothing changes for pods: no network policy selects
-  Loki today, the `monitoring` namespace is an accepted exception to
-  default-deny, and Loki runs without authentication, so every pod can already
-  push and query. What is new is the host side: an unauthenticated Loki on a
-  port of black-pi, reachable from whatever LAN sources the firewall rule
-  admits (the other cluster hosts) and from any process on those hosts. The
-  owner accepts that in the Loki issue, or the step waits for an
-  authenticating proxy, which is not proposed now.
-- **Cilium host firewall** is on and passes host traffic today only because
-  the single host policy does not default-deny. Any later host policy has to
-  admit these ports; the module's test records the port so the dependency is
-  visible.
-- **Reachability check R1.** Once the native Loki is up on its port and
-  before any client uses it (P4 step 1, in msi's power window), it is queried
-  from a pod on each node and from each other host, and the source address of
-  each request is recorded. Loki does not log source addresses by default, so
-  the module turns on source-address and request logging for the check, or
-  the addresses are read with tcpdump on black-pi. This tests the real
-  firewall rule without a throwaway service. If it shows the rule must also
-  admit the pod network, that costs one more black-pi deploy.
+Reaching a host service from the cluster (selectorless Services, the R1
+source check, the Cilium interface trust) is settled in #414 and its
+homelab-gitops half #271.
 
 ### Why not another tool
 
@@ -207,7 +170,7 @@ What this changes, and what must be rehearsed before the first stateful move:
 | devenv machines | not now | exists since devenv 2.4.0 with a target-side watchdog and a health check, the best safety model of the push tools. Experimental; needs root SSH where this fleet forbids root login (devenv #3242); takes modules, not the existing flake hosts (#3226); the target cannot substitute from harmonia (#3342); requires a disko input; one shell health check per machine. Reopen when it deploys existing flake hosts over a non-root login and leaves experimental status |
 | Colmena | no | no rollback; nothing deploy-rs lacks that is needed here |
 | `system.autoUpgrade` as the pull path | no | no health gate; acer's former use was a gap, not a model |
-| lenovo's `nixos-rebuild-trigger` | keep, do not generalise | it rebuilds lenovo at a pinned commit with a health gate on request from the cluster. Extending it to other hosts would be writing a deploy controller |
+| lenovo's `nixos-rebuild-trigger` | keep until step 4 (#422), do not generalise | it rebuilds lenovo at a pinned commit with a health gate on request from the cluster. Extending it to other hosts would be writing a deploy controller |
 | Clan, Nomad, selfhostblocks | no | a framework or a scheduler to adopt whole |
 | nixpkgs modular services | wait | upstream but still in development (nixpkgs #428084) |
 | GitHub Actions building closures | no | no runner reaches the LAN cache, and Actions use is kept minimal on purpose |
@@ -233,7 +196,8 @@ ordered across hosts by hand. Pull would add convergence for sleeping hosts
 Rescheduling on node loss (placement is static), horizontal scaling, admission
 policy (replaced by module assertions and systemd sandboxing), per-pod network
 policy (replaced by the host firewall, which is coarser), ServiceMonitor
-discovery (replaced by a declared scrape target).
+discovery (replaced by a declared scrape target), scale to zero through KEDA
+(replaced by socket activation where it matters, as open-webui does).
 
 ### Operations
 
@@ -256,98 +220,66 @@ discovery (replaced by a declared scrape target).
    reproduced on msi, and the flake now carries the upstream fix (PR #412) as
    a patch on the pin; the same rehearsal then restored the previous
    generation. The Pis still use the unpatched cached binary until a patched
-   aarch64 build is evidenced, and the connectivity rollback is unexercised,
-   so every deploy still ends with the end-to-end check above (#297).
+   aarch64 build is evidenced (#406), and the connectivity rollback is
+   unexercised, so every deploy still ends with the end-to-end check above
+   (#297).
 2. **acer upgraded itself from main.** Closed by #300: acer's
-   `system.autoUpgrade` is off, and since #311 every host asserts it. Until that change
-   is deployed to acer, the running timer still switches to main weekly, so
-   the old rule holds: a commit that changes a moved service on acer merges
-   only with the owner's approval of the acer deploy, deployed the same day.
+   `system.autoUpgrade` is off, and since #311 every host asserts it.
 3. **Backups.** No tooling exists beyond Postgres dumps and a local k3s
    datastore snapshot. A stateful service does not move until its module
    declares an off-host backup with a rehearsed restore, or the owner accepts
    in its issue that the data has none. Loki is the second case: it has no
-   backup today, its content is 72 hours of logs and 30 days of telemetry, and
-   P4 proposes to move it with that posture unchanged.
-4. **Hard-coded cluster addresses** in nixos-config (Loki 10.43.92.124 for
-   pi-offload, the llm-gateway 10.43.0.80) are replaced by the host address
-   when the service behind them moves; msi Ollama's and the llm-gateway's already were (#299, homelab-gitops #265). The order of work keeps
-   new uses of the Loki address to one host (msi, at P1).
+   backup, and step 1 moves it with that posture unchanged. Authentik's
+   Postgres (step 3) is the first case.
+4. **Hard-coded cluster addresses.** Closed: nixos-config no longer
+   hard-codes the Loki (10.43.92.124) or llm-gateway (10.43.0.80) ClusterIPs;
+   what remains is the service CIDR in `modules/homelab/k3s/server.nix`, which
+   goes in step 4.
 
 ## Inventory and classification
 
 Risk is the cost of getting the move wrong. Every deletion and deploy is an
 owner gate.
 
-### Remove (observed unused; deletion is the owner's)
+### Removed or decided
 
-| Item | Evidence | Gate |
-|---|---|---|
-| `monitoring-tempo` StatefulSet and `monitoring-prometheus-pushgateway` Deployment in `monitoring` | 0 replicas for months; no manifest in Git; repo docs say they were removed | delete the two objects |
-| PVCs `prometheus-...-db-...-0` (8Gi) and `alertmanager-...-db-...-0` (1Gi) on acer; PV `pvc-68839200` (old Loki, Retain) | mounted by nothing; the running stack uses the `pi-` claims on black-pi | default: archive each directory to a tarball on lenovo, then delete; the owner may waive the archive |
-| Six failed `postgres-backup-offnode` Jobs, 32 to 69 days old | later runs completed; they keep KubeJobFailed firing | delete the Jobs; set `failedJobsHistoryLimit` |
-
-Observed, but not classified as remove; the owner decides in the cleanup issue:
-
-- external-dns: it only acts on Services and Ingresses carrying the
-  `external-dns.alpha.kubernetes.io/hostname` annotation, no live object
-  carries it, and its log says "All records are already up to date" every
-  minute. As configured it manages no record. Decided 2026-11-15: removed in
-  step 4; the wildcard record and AdGuard rewrites replace it.
+- The orphan `monitoring-tempo` and `monitoring-prometheus-pushgateway`
+  releases, the six failed `postgres-backup-offnode` Jobs and
+  `archive/learn/` in homelab-gitops: removed under the 2026-11-13
+  delegation (homelab-gitops #157, closed).
+- The old claims `prometheus-...-db-...-0` (8Gi) and
+  `alertmanager-...-db-...-0` (1Gi) on acer and PV `pvc-68839200` (old Loki,
+  Retain): mounted by nothing; deleting them is on the #146 by-hand list.
+- external-dns: it only acts on objects carrying the
+  `external-dns.alpha.kubernetes.io/hostname` annotation, none does, and it
+  manages no record. Removed in step 4; AdGuard's existing rewrite covers it.
 - qdrant: the 2026-11-13 decline was reversed; removed by homelab-gitops #259
-  (unused since vault-reader). Its claim is kept, on the owner's by-hand list.
-- `archive/learn/` in homelab-gitops: applied by no Kustomization and no
-  namespace of that name is live. Deleting the directory is a repository
-  cleanup, not a cluster change.
-- The public hosts with zero requests in three days.
+  (unused since vault-reader). Its claim is kept, on the by-hand list.
+- styrka-web, system-one, monty-runner, kokoro, whisper (homelab-gitops #269)
+  and workout (homelab-gitops #175): removed, not migrated.
 
-### Migrate (low risk, suited to NixOS)
+### Placed
 
-Status 2026-11-15: the collector is on msi (#301), the other hosts are #330;
-the bridge posts to lenovo's native ntfy; Loki moves in step 1 (#414).
-
-| Service | Now | Destination | Storage | Consumers | Verification |
-|---|---|---|---|---|---|
-| Host log collector (new) | no host ships its journal; msi ships nothing | `services.alloy` reading journald only, on each cluster host; labels `host` and `unit`, a distinct `job` so it never overlaps pod logs; `MemoryMax` set | positions file | Loki | each host's journal queryable in Loki; a k3s restart line found by query; resident memory recorded |
-| Alert delivery | bridge posts to the k3s ntfy | bridge posts to the native ntfy on lenovo | none | phone | see P3 |
-| Loki | StatefulSet on black-pi, `local-path` volume, which is a directory on black-pi | `services.loki` on black-pi | 72 h of logs and 30 days of agent telemetry | Alloy DaemonSet, alloy-otlp, Grafana, pi-offload, the usage report | see P4 |
-
-### Research (stateful or coupled; an experiment first)
-
-Placed 2026-11-15: the monitoring rows and alloy-otlp in step 1 (#414; this
-answers P5, #399); the llm-gateway is done (homelab-gitops #265); zot retires
-and `ntfy.sammasak.dev` moves off Traefik in step 2; Postgres in step 3
-(Authentik's only; workout was removed, homelab-gitops #175).
-
-| Service | Coupling | Question to answer |
-|---|---|---|
-| Prometheus, operator, kube-state-metrics, Alertmanager | 28 ServiceMonitors and PodMonitors, 164 rules mostly about Kubernetes objects, targets on the pod network | a native Prometheus needs an API credential on the host to discover pods (a new secret) and declared rules. Does that cost less than the operator it replaces, and does black-pi have the memory? Decided at P5 from measurements |
-| node-exporter DaemonSet | chart relabels `instance` and `node` that dashboards join on | moves with Prometheus, not before: while Prometheus is in the cluster a native exporter gains nothing |
-| Grafana | Authentik OIDC secret, nine dashboards as ConfigMaps plus chart dashboards, KEDA route | `services.grafana` provisioning from the same JSON; needs the OIDC secret on a host and a local login for when Authentik is down (owner steps) |
-| k3s ntfy and `ntfy.sammasak.dev` | auth database, TLS name; publishers other than the bridge not yet attributed (19 requests in three days) | who publishes and subscribes there, from ntfy's own log. Retiring it deletes the auth database and is a separate owner gate from repointing the bridge |
-| alloy-otlp (agent telemetry intake) | Traefik allowlist, bearer token, tested privacy pipeline | portable (one Alloy config whose tests run locally); move after Loki, with its secret (owner step) |
-| zot registry | every in-house image is pulled from it; 50Gi, no backup | a registry outside the cluster removes the cluster's dependence on itself; needs a backup and a pull test from all nodes |
-| llm-gateway | SQLite state, pinned ClusterIP used by hosts, bearer keys in SOPS | already a static Nix-built binary; a natural systemd service, but its secrets must move (owner step) |
-| Postgres (Authentik, workout) | data; a past data loss | only with tested dump and restore |
+Done: msi's Ollama (#394, #395), open-webui (#262) and the llm-gateway
+(homelab-gitops #265) on hosts; the alert bridge posts to lenovo's native
+ntfy; the journald collector on msi (#301). Step 1 (#414) takes Prometheus,
+the operator, kube-state-metrics, Alertmanager, node-exporter, Grafana, Loki
+and alloy-otlp, which also answers #302 (Loki) and #399 (P5). The journald
+collector on the other hosts (#330) lands any time before step 4.
 
 ### Keep until step N
 
-Formerly "Keep on k3s"; the reasons were true under the hybrid decision, and
-the owner's 2026-11-15 decision gives each item an end.
-
-| Service | Until | Why it waits |
+| Item | Until | Why it waits |
 |---|---|---|
 | Alloy DaemonSet (pod logs) | step 1 | pod labels come from the Kubernetes API; it goes with the in-cluster stack (homelab-gitops #271) |
 | Traefik | step 2 | Caddy on acer takes every name, including the routes to host services |
-| herman, karta | step 2 | become Nix-built static sites served by Caddy; styrka and system-one were removed instead (homelab-gitops #269) |
-| zot | step 2 | retires once nothing pulls from it (herman and karta are its last in-house images) |
-| k3s ntfy (`ntfy.sammasak.dev`) | step 2 | the name moves off Traefik; whether it routes to lenovo's native ntfy or retires is decided in step 2 |
+| herman, karta | step 2 | become Nix-built static sites served by Caddy |
+| zot, and nixos-config's `registry` Justfile variable, `registry-login` recipe and the skopeo/dive comment in `k3s/server.nix` | step 2 | zot retires once nothing pulls from it (herman and karta are its last in-house images) |
+| k3s ntfy (`ntfy.sammasak.dev`) | step 2 | the name moves off Traefik; whether it routes to lenovo's native ntfy or retires is decided in #420 |
+| chat leftovers: the `open-webui-backup` CronJob and its 10Gi claim, the `open-webui-state-v2` claim | step 2 | removed with the gitops cleanup in #420; both claims go on the #146 by-hand list |
 | Authentik and its Postgres | step 3 | no upstream NixOS module; it gates sign-in for everything; high risk |
-| k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns | step 4 | the platform; removed once nothing runs on it |
-
-workout was removed (homelab-gitops #175); open-webui and Ollama moved to
-hosts (#299); kokoro, whisper and monty-runner were removed instead
-(homelab-gitops #269).
+| k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns, metrics-server | step 4 | the platform; removed once nothing runs on it |
+| Host cluster modules: `cluster-watchdog.nix`, `k3s-db-snapshot.nix`, `nixos-rebuild-trigger`, `flux.nix` | step 4 | they serve the cluster; the watchdog's paging floor gets a host-side replacement first |
 
 ## Placement
 
@@ -359,153 +291,31 @@ instead of a 30-day parallel run. Its limits are memory (75% used) and a 29 GB
 SD card with 5.9 GB free, so each step on black-pi has floors: over the 24
 hours after it, available memory stays at or above 600 MiB (about 970 today)
 with no new OOM kill; over 72 hours (one full retention period), the root
-filesystem keeps at least 3 GB free. A
-step that breaks a floor is rolled back and placement is reopened with those
-numbers. P1 also records journal volume per host in bytes per day; a host
-whose journal would add more than Loki's current daily intake gets a drop rule
-for its noisiest units before its collector is enabled. Running Loki as a host
-service removes its pod overhead but not its working set (148 MiB today).
+filesystem keeps at least 3 GB free. A step that breaks a floor is rolled
+back and placement is reopened with those numbers. #301 records journal
+volume per host in bytes per day; a host whose journal would add more than
+Loki's current daily intake gets a drop rule for its noisiest units before
+its collector is enabled. Running Loki as a host service removes its pod
+overhead but not its working set (148 MiB today).
 
-## Relation to the delivery plan
-
-Superseded 2026-11-15. With no cluster in the end state, #146's choice
-between OCI, NixOS services and the store-delivery pilot resolves to NixOS
-services, and the pilot and E0 are dropped. #146 still holds the owner's
-by-hand list of claims and state to delete. The 2026-11-13 text follows as
-record.
-
-`docs/records/nix-native-delivery.md` (2026-11-12) plans a pilot that delivers Nix
-store paths into pods, and homelab-gitops #146 holds the owner's choice between
-OCI, NixOS services and that pilot. This record leaves that choice with #146
-and proposes two changes to the plan for the owner to accept or reject there:
-telemetry on hosts goes before the pilot, and the pilot's "Phase 1 Baseline"
-becomes E0 with a decision rule.
-
-- The Anthropic pattern earns its speed on images of tens of gigabytes across
-  many nodes. The in-house images here are 13 to 30 MiB, so the speed case has
-  to be shown, not assumed.
-- **E0** measures a real pod start on acer (pull, sandbox, start, ready; cold
-  and warm, plus one KEDA wake from zero). If image pull is under about 20% of
-  schedule-to-ready, the pilot is not a speed project.
-- Its other reasons remain valid: no registry for the cluster to depend on,
-  and no base-image CVE drift. That plan picks the CSI driver with preloaded
-  images as fallback; given that the driver is weeks old and has one author,
-  this record suggests weighing the stock options (preloaded images, layered
-  images built by Nix) first. That is a proposed reordering, not a decision.
-- Telemetry on hosts goes first because it is useful under every outcome of
-  #146.
+The edge and Authentik go on acer, which already holds Traefik, Authentik and
+the moved apps, so its loss costs what it costs today.
 
 ## Order of work
 
-The owner's four steps, 2026-11-15. Each step's issue holds its gates,
-tests and rollback; each needs the one before it.
+The owner's four steps, 2026-11-15. Each step's issue holds its gates, tests
+and rollback; each needs the one before it.
 
 | Step | Change | Status | Gate |
 |---|---|---|---|
 | 1 | Prometheus, Alertmanager, Grafana, Loki and alloy-otlp as NixOS services (black-pi; alloy-otlp on acer); the in-cluster stack removed | nixos half merged (#419); host deploys, then homelab-gitops #271, pending (#414) | owner: each deploy, the #271 merge |
-| 2 | Caddy on acer fronts every name and replaces Traefik; herman and karta as Nix-built static sites; zot retires | planned, #420 | owner: acer deploy, secrets on acer, DNS cut-over, zot data |
-| 3 | Authentik and its Postgres as NixOS services, Caddy `forward_auth` | planned, #421 | owner: secrets, the database cut-over |
-| 4 | Remove k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns; wildcard record and AdGuard rewrites | planned, #422 | owner: every host deploy, DNS, state deletion |
-
-Done outside the steps: the llm-gateway (homelab-gitops #265) and open-webui
-(#262) on acer, msi's Ollama (#394, #395), and the removals in homelab-gitops
-#269 and #259.
-
-### The 2026-11-13 order, superseded
-
-Kept as record. G1 is done (#324), P1 (#301) and P3 are done, P4 (#302) and
-P5 (#399) are folded into step 1, E0 is dropped, and P2 (#330) still applies:
-host journals are needed with or without a cluster.
-
-| Step | Change | Proves | Reversible by | Gate |
-|---|---|---|---|---|
-| 0 | Remove the observed-unused items (homelab-gitops #157) | n/a | archives for the volumes | owner, per item |
-| G1 | deploy-rs rehearsal on msi: a unit that fails on purpose (#297) | whether a failed unit rolls back with the current pin | switched back by hand if it does not | owner: deploy msi, in its power window |
-| E0 | Pod start timing on acer in a scratch namespace | the speed case for store delivery | delete the namespace | owner: one throwaway Deployment |
-| P1 | Journald collector on msi, writing to Loki's ClusterIP | module shape, readiness probe, test gate, deploy and end-to-end check on the least critical host; journal volume | disable the module, deploy | owner: deploy msi |
-| P3 | Bridge posts to the native ntfy (gitops only) | a cluster client using a host service; a gitops-only change | revert the URL | owner: merge to gitops |
-| P4 | Loki to a NixOS service on black-pi, with the reachability check R1 as its first sub-step | cluster to host networking, state, client cut-over, the two-repository order | below | owner: each sub-step |
-| P2 | Journald collector on black-pi, acer, lenovo, one at a time, writing to Loki's LAN address | memory on the tight hosts, a native build on the Pi, the acer rule from gap 2, lenovo's self-push | as P1 | owner: each deploy |
-| P5 | Decide Prometheus, Alertmanager, Grafana and node-exporter from the numbers above | n/a | n/a | owner |
-
-P2 comes after P4 so that only msi's collector ever uses the cluster address
-and has to be repointed. Until P4, msi's collector works only while Cilium is
-up on msi. naked-pi is not a cluster node and can join after P4.
-
-P1 proves the deploy path and the module shape only. A cluster client is first
-exercised at P3, cluster to host networking and state at P4, secrets not
-before P5.
-
-### P3 in detail
-
-The native ntfy is plain HTTP on the LAN with open read-write access, so alert
-text crosses the LAN in clear and any LAN device can read or publish the
-topic. That posture is already accepted for the cluster watchdog and recorded
-in the network-policy README of homelab-gitops; P3 extends it to alerts and
-says so in its issue. The path is open today: the bridge's namespace has no
-egress policy and port 2586 admits any LAN source.
-
-1. Before the change: the phone is subscribed to the alert topic on the native
-   instance, and a test publish arrives on the LAN and over the tailnet. A
-   subscription on `ntfy.sammasak.dev` would stop receiving alerts after the
-   repoint, and the k3s instance may deliver differently off the LAN, so this
-   is checked, not assumed.
-2. Repoint the bridge; a test alert and then a real firing alert arrive.
-3. The k3s ntfy keeps running. Retiring it is a Research item with its own
-   gate, after its publishers and subscribers are attributed from its log.
-
-### P4 in detail
-
-Loki holds about 1.8 GB according to a comment in its chart values; the issue
-measures the directory first. The chart runs Loki 3.0 and nixpkgs carries a
-newer release, so this is also an upgrade: both versions are named in the
-issue and the schema configuration is carried over unchanged.
-
-1. Module with `services.loki` on black-pi, same schema and retention, port
-   opened to the cluster hosts only. R1 runs against it. A scrape target for
-   it is declared in homelab-gitops and `up` is confirmed for the new job;
-   `LokiIngesterDown` is confirmed after the cut-over, since the old pod masks
-   it while both run, and it is silenced for the cut-over itself. `LokiPVCNearCapacity` reads the volume's kubelet
-   metrics and cannot see a host directory, so the cut-over commit replaces it
-   with a rule on black-pi's root filesystem at the 3 GB floor.
-   `LokiNamespaceSilent` reads the DaemonSet's metrics and is unaffected.
-2. One gitops commit is prepared that repoints every in-cluster client (the
-   Alloy DaemonSet, alloy-otlp, the Grafana datasource), replaces the usage
-   report script's port-forward to the old Service with the LAN address, swaps
-   the disk alert, and scales the StatefulSet to zero. The commit is rendered
-   before the merge to confirm the chart accepts zero replicas. alloy-otlp's change is an endpoint only; its privacy tests, which
-   today assert against Loki 3.0, are run against the nixpkgs version before
-   the merge.
-3. Cut-over, in one sitting, inside msi's power window: record line counts
-   for fixed queries over a fixed time range that has already ended; stop the native Loki and empty its data directory; apply
-   the commit; once the pod has stopped, copy its whole data directory (chunks,
-   index, write-ahead log, compactor state) with ownership fixed for the
-   service user; start the native Loki; the same queries over the same range
-   return the same counts. Writers retry for a bounded time, so logs
-   produced during the copy can be lost; the issue states the measured
-   duration. msi's journald collector is repointed by a deploy in the same
-   sitting; what it could not deliver in between is accepted as lost. The
-   pi-offload address ships on lenovo and acer and changes with a gated deploy
-   of each; until then pi-offload on that host cannot reach Loki, which the
-   issue states.
-4. Disk, two branches decided by the measurement:
-   - **The copy fits within the 3 GB floor:** the old volume stays untouched.
-     Rollback: revert the gitops commit, which scales the StatefulSet back up
-     on it.
-   - **It does not fit:** the old directory is archived to lenovo and verified
-     there, then moved instead of copied. Rollback: restore the archive into
-     the volume, then revert the commit.
-   In both branches the rollback ends on the nixos-config side: stop the
-   native Loki and redeploy msi (and lenovo and acer if already repointed)
-   back to the cluster address. Logs written to the native store after the cut-over are
-   not in the old one; that loss grows with how long a rollback is delayed.
-5. Releasing the old volume, or the archive, is a later, separate owner gate.
+| 2 | Caddy on acer fronts every name and replaces Traefik; herman and karta as Nix-built static sites; zot and the chat leftovers retire | planned, #420 | owner: acer deploy, the Cloudflare secret for acer, the AdGuard repoint, zot and chat claims |
+| 3 | Authentik and its Postgres as NixOS services, Caddy `forward_auth` | planned, #421 | owner: host choice, secrets, the database cut-over |
+| 4 | Remove k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns, metrics-server and the host cluster modules | planned, #422; needs the watchdog's host-side replacement | owner: every host deploy, external-dns's leftover AdGuard rules, archive homelab-gitops, state deletion |
 
 ## Not done here
 
 No scheduler, controller, operator or service framework. One ingress per
-name: Caddy replaces Traefik in step 2. No change to secret values. DNS changes only in steps 2 and 4,
-each an owner gate. No PVC or state is deleted by any step; that is the
-owner's by-hand list (homelab-gitops #146). (Superseded 2026-11-15: "no
-second ingress on the hosts", "no change to DNS or the MetalLB address" and
-"no new secret before P5".)
+name: Caddy replaces Traefik in step 2. No change to secret values. DNS
+changes only in steps 2 and 4, each an owner gate. No PVC or state is deleted
+by any step; that is the owner's by-hand list (homelab-gitops #146).
