@@ -200,6 +200,19 @@ let
       loki = "${hosts.lenovo.pkgs.grafana-loki}/bin/loki";
     };
 
+    # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
+    caddy-edge = {
+      caddy = lib.getExe acer.services.caddy.package;
+      inherit (acer.services.caddy) configFile enableReload;
+      fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
+      failing = {
+        acer = failing acer;
+        noCaddy = failing (
+          extend "acer-swift" [ ({ lib, ... }: { services.caddy.enable = lib.mkForce false; }) ]
+        );
+      };
+    };
+
     # every host, so a collector enabled anywhere else is seen; context discarded: nothing here needs a build
     journal-collector =
       let

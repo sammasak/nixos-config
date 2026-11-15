@@ -1,29 +1,16 @@
-# Let's Encrypt certificates via Cloudflare DNS-01 validation.
+# Let's Encrypt through Cloudflare DNS-01: the defaults every certificate inherits. Each use site declares its own
+# certificate, group and reloads (adguardhome.nix, edge.nix).
 { config, lib, ... }:
 
 let
   cfg = config.homelab.acme;
-  inherit (lib)
-    mkEnableOption
-    mkOption
-    mkIf
-    types
-    ;
 in
 {
   imports = [ ./sops.nix ];
 
-  options.homelab.acme = {
-    enable = mkEnableOption "ACME certificate management";
+  options.homelab.acme.enable = lib.mkEnableOption "ACME certificate management";
 
-    dnsDomain = mkOption {
-      type = types.str;
-      default = "dns.sammasak.dev";
-      description = "DNS service domain for DoT/DoH certificates";
-    };
-  };
-
-  config = mkIf cfg.enable {
+  config = lib.mkIf cfg.enable {
     homelab.secrets.enable = true;
 
     sops.secrets."cloudflare/api_token" = {
@@ -34,9 +21,8 @@ in
 
     security.acme = {
       acceptTerms = true;
-      defaults.email = "admin@sammasak.dev";
-
-      certs."${cfg.dnsDomain}" = {
+      defaults = {
+        email = "admin@sammasak.dev";
         dnsProvider = "cloudflare";
 
         # Use public DNS resolvers for SOA lookups so that cert renewal is not
@@ -54,16 +40,15 @@ in
         credentialFiles = {
           "CLOUDFLARE_DNS_API_TOKEN_FILE" = config.sops.secrets."cloudflare/api_token".path;
         };
-
-        reloadServices = [ "adguardhome.service" ];
-
-        group = "acme";
       };
     };
 
-    systemd.services."acme-order-renew-${cfg.dnsDomain}" = {
-      after = [ "sops-nix.service" ];
-      wants = [ "sops-nix.service" ];
-    };
+    systemd.services = lib.mapAttrs' (
+      name: _:
+      lib.nameValuePair "acme-order-renew-${name}" {
+        after = [ "sops-nix.service" ];
+        wants = [ "sops-nix.service" ];
+      }
+    ) config.security.acme.certs;
   };
 }

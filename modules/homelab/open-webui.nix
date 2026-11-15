@@ -2,7 +2,8 @@
 # address through a selectorless Service (homelab-gitops). open-webui signs in whoever sends X-authentik-email, so
 # only pods may reach it: the socket admits pod addresses alone (not the nodes' Cilium ones), a cluster policy
 # admits only Traefik's pods, and the app serves on a Unix socket in a 0700 directory, out of reach of every local
-# user. The proxy exits when idle and the app stops with it, as the pod scaled to zero.
+# user. The proxy exits when idle and the app stops with it, as the pod scaled to zero. Caddy (edge.nix) connects through
+# a second socket only its user may open.
 {
   config,
   lib,
@@ -55,6 +56,7 @@ let
     ] ciliumHosts
   );
   socket = "/run/open-webui/http.sock";
+  edgeSocket = "/run/open-webui-edge.sock";
   # uvicorn on the Unix socket, as `open-webui serve` runs it on a TCP port (backend/open_webui/__init__.py)
   python = pkgs.python3.withPackages (ps: [ (ps.toPythonModule cfg.package) ]);
   backup = pkgs.writers.writePython3Bin "open-webui-backup" { doCheck = false; } (
@@ -137,8 +139,14 @@ in
 
   systemd.sockets.open-webui-proxy = {
     wantedBy = [ "sockets.target" ];
-    listenStreams = [ "${address}:${toString port}" ];
+    listenStreams = [
+      "${address}:${toString port}"
+      edgeSocket
+    ];
     socketConfig = {
+      # the Unix stream only
+      SocketUser = config.services.caddy.user;
+      SocketMode = "0600";
       FreeBind = true; # the Wi-Fi address can appear after the socket
       IPAddressDeny = "any";
       IPAddressAllow = podSources;
@@ -193,6 +201,10 @@ in
     {
       assertion = config.sam.hostSecrets.enable;
       message = "modules/homelab/open-webui.nix: its keys are sops secrets; set sam.hostSecrets.enable.";
+    }
+    {
+      assertion = config.services.caddy.enable;
+      message = "modules/homelab/open-webui.nix: ${edgeSocket} belongs to Caddy's user; enable services.caddy (edge.nix).";
     }
     {
       assertion =

@@ -32,6 +32,10 @@ let
     ];
     # the ingress serves /v1 alone, behind a project key
     https_2xx_401 = [ "https://llm-gateway.sammasak.dev/v1/models" ];
+    # forward auth sends a browser without a session to Authentik
+    https_302_auth = [ "https://chat.sammasak.dev" ];
+    # black-pi is on the allowlist; without a bearer token Alloy refuses
+    https_401_405 = [ "https://otlp.sammasak.dev/v1/logs" ];
   };
   https = codes: {
     prober = "http";
@@ -55,6 +59,21 @@ in
           https_2xx_401 = https [
             200
             401
+          ];
+          https_302_auth = lib.recursiveUpdate (https [ 302 ]) {
+            http = {
+              follow_redirects = false;
+              fail_if_header_not_matches = [
+                {
+                  header = "Location";
+                  regexp = "^https://auth\\.sammasak\\.dev/";
+                }
+              ];
+            };
+          };
+          https_401_405 = https [
+            401
+            405
           ];
         };
       }

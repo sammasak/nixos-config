@@ -149,10 +149,8 @@
   };
 
   # Runs outside k8s so paging survives a worker outage. Mobile subscribes to
-  # the LAN URL below, or to the same port on the Tailscale IP.
-  homelab.ntfy = {
-    baseUrl = "http://${config.sam.fleet.hosts.${config.networking.hostName}.address}:2586";
-  };
+  # port 2586 on the LAN or Tailscale IP; the web UI is the name below, through Caddy on acer.
+  homelab.ntfy.baseUrl = "https://ntfy.sammasak.dev";
 
   # Alertmanager on black-pi posts to lenovo's LAN address, so loopback is not
   # enough. Pages go to the module's default topic, homelab-alerts.

@@ -24,7 +24,7 @@ in
 
     baseUrl = mkOption {
       type = types.str;
-      description = "Public base URL clients use to reach this server (e.g. http://192.168.10.154:2586).";
+      description = "Public base URL clients use to reach this server (e.g. https://ntfy.sammasak.dev).";
     };
   };
 
@@ -38,7 +38,8 @@ in
         attachment-cache-dir = "/var/lib/ntfy-sh/attachments";
         # Open read-write access: fine for a LAN/Tailscale-only homelab instance.
         auth-default-access = "read-write";
-        behind-proxy = false;
+        # Caddy on acer proxies ntfy.sammasak.dev (edge.nix); a LAN client can spoof only its rate-limit key.
+        behind-proxy = true;
       };
     };
 
