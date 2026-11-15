@@ -120,7 +120,7 @@ acer, AdGuard and ntfy on lenovo. The cluster row no longer exists.
 | Outage | Metrics | Logs | Dashboards | Paging |
 |---|---|---|---|---|
 | acer down | collected (black-pi), minus acer | collected, minus acer | Grafana on black-pi's LAN port with its local login (Caddy and Authentik are on acer) | Alertmanager on black-pi posts to lenovo's ntfy |
-| lenovo down | collected | collected | through Caddy, with client-side hosts entries (AdGuard is on lenovo) | none: ntfy is on lenovo; #414 owns this gap (it absorbed #399) |
+| lenovo down | collected | collected | through Caddy, with client-side hosts entries (AdGuard is on lenovo) | none: ntfy is on lenovo; accepted by the owner, "Not now" (#399) |
 | black-pi down | none | none | none | the host-side replacement for the cluster watchdog, a step 4 prerequisite (#422) |
 
 ## Deployment workflow
@@ -154,7 +154,7 @@ touches both repositories. Order: (1) nixos-config adds the module and a
 deploy brings the service up next to the old one; (2) homelab-gitops
 repoints clients and routes through Flux; (3) after an observation period,
 homelab-gitops removes the old workload. Rollback runs the other way: revert
-the gitops change first, then disable the module. Step 3 is the only one that
+the gitops change first, then disable the module. The removal (3) is the only one that
 cannot be undone by a revert when it deletes a volume, so it is always a
 separate owner gate.
 
@@ -308,7 +308,7 @@ and rollback; each needs the one before it.
 
 | Step | Change | Status | Gate |
 |---|---|---|---|
-| 1 | Prometheus, Alertmanager, Grafana, Loki and alloy-otlp as NixOS services (black-pi; alloy-otlp on acer); the in-cluster stack removed | nixos half merged (#419); host deploys, then homelab-gitops #271, pending (#414) | owner: each deploy, the #271 merge |
+| 1 | Prometheus, Alertmanager, Grafana, Loki and alloy-otlp as NixOS services (black-pi; alloy-otlp on acer); the in-cluster stack removed | done 2026-11-15: #419 deployed, homelab-gitops #271 merged (#414 closed; OTLP metrics fix #424) | owner: each deploy, the #271 merge |
 | 2 | Caddy on acer fronts every name and replaces Traefik; herman and karta as Nix-built static sites; zot and the chat leftovers retire | planned, #420 | owner: acer deploy, the Cloudflare secret for acer, the AdGuard repoint, zot and chat claims |
 | 3 | Authentik and its Postgres as NixOS services, Caddy `forward_auth` | planned, #421 | owner: host choice, secrets, the database cut-over |
 | 4 | Remove k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns, metrics-server and the host cluster modules | planned, #422; needs the watchdog's host-side replacement | owner: every host deploy, external-dns's leftover AdGuard rules, archive homelab-gitops, state deletion |
