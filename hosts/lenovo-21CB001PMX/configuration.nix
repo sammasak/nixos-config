@@ -132,7 +132,8 @@
     rewrites = [
       # Wildcard and apex to Caddy on acer (modules/homelab/edge.nix). External-DNS
       # writes AdGuard *filtering rules*, not rewrites, which persist under
-      # mutableSettings; a stale one can still pin a name to the old address.
+      # mutableSettings; a stale one could pin a name to the old address. On
+      # 2026-11-15 external-dns managed no record and user_rules was empty.
       {
         domain = "*.sammasak.dev";
         answer = config.sam.fleet.hosts.acer-swift.address;
