@@ -1,7 +1,8 @@
 # The *.sammasak.dev edge on acer (#420): Caddy terminates TLS with one DNS-01 wildcard from security.acme and
 # proxies each name to its backend, with forward auth through the k3s Authentik for chat and grafana. The admin API is
 # off, so no local process can load a config without forward_auth; a config change or renewal restarts Caddy.
-# herman, karta and registry proxy to their pods' ClusterIPs until they move (step 2, PR 2).
+# herman is a static site from its Nix build; karta and registry (zot, which karta's pod pulls from) proxy to their
+# pods' ClusterIPs until karta moves.
 {
   config,
   lib,
@@ -55,9 +56,27 @@ let
       }
     '';
     ntfy = "reverse_proxy ${hosts.lenovo-21CB001PMX.address}:2586";
-    herman = "reverse_proxy 10.43.114.35:8080";
+    # herman's deploy/nginx.conf: hashed wasm/js/css immutable and never the SPA fallback, the rest no-cache
+    herman = ''
+      root * ${pkgs.hermanWeb}
+      @hashed {
+        path *.wasm *.js *.css
+        not path /sw.js
+      }
+      header @hashed Cache-Control "public, max-age=31536000, immutable"
+      header ?Cache-Control no-cache
+      @spa {
+        not path *.wasm *.js *.css /manifest.json /favicon.ico
+        not file
+      }
+      rewrite @spa /index.html
+      encode gzip
+      file_server {
+        precompressed gzip
+      }
+    '';
     karta = "reverse_proxy 10.43.147.178:8080";
-    # zot, for pulls until the pods go
+    # zot, for pulls until karta's pod goes
     registry = "reverse_proxy 10.43.23.61:5000";
   };
 in
