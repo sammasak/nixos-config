@@ -88,15 +88,20 @@ Secret scopes in `secrets/.sops.yaml`:
 | Path pattern | Recipients | Purpose |
 |--------------|-----------|---------|
 | `homelab/nix-signing-key.yaml` | Personal + lenovo | deploy-rs closure-signing private key (workers trust the public half) |
-| `homelab/wifi.yaml` | as `homelab/*.yaml`, plus naked-pi | Home Wi-Fi PSK |
-| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s, Cloudflare, Tailscale authkey, GitHub access token |
+| `homelab/wifi.yaml` | Personal + lenovo, acer-swift, acer `lukas`, black-pi, naked-pi + Flux (msi is wired) | Home Wi-Fi PSK |
+| `homelab/open-webui.yaml` | Personal + acer-swift | open-webui's gateway and session keys |
+| `homelab/llm-gateway.yaml` | Personal + acer-swift | llm-gateway's provider and project keys |
+| `homelab/(cloudflare\|tailscale).yaml` | Personal + lenovo, acer `lukas` + Flux | ACME DNS token, Tailscale authkey |
+| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s cluster token, GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
-| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, black-pi | Claude OAuth token |
+| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | Claude OAuth token |
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
-| `claude/*.yaml` | Personal + lenovo, acer-swift, black-pi | Pi's gateway key |
-| `cosign.key` | Personal + lenovo, acer-swift | Image-signing key used by `just sign` |
+| `claude/*.yaml` | Personal + lenovo, acer-swift | Pi's gateway key |
+| `cosign.key` | Personal (+ acer's `lukas` key) | Image-signing key used by `just sign` |
 
-Every acer-swift recipient except `native-otlp-auth.yaml` also includes acer's own `lukas` user key.
+Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml` and `llm-gateway.yaml` also includes acer's own `lukas` user
+key. A fleet host is a recipient only of files it declares a secret from (`nixos:known-hosts-test`); trimming a
+recipient revokes nothing already in git history, only rotating the secret does.
 
 The `CLAUDE_CODE_OAUTH_TOKEN` is decrypted to `/run/secrets/claude_oauth_token` and exported in fish shell init via `modules/programs/cli/claude-code/mcp.nix`.
 

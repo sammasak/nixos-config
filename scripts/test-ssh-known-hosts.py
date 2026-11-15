@@ -57,8 +57,19 @@ def fingerprint(public_key):
 def sops_recipients(path):
     """The age recipients in an encrypted file's plaintext `sops:` metadata; no other line is kept or decrypted."""
     lines = path.read_text().splitlines() if path.is_file() else []
-    meta = lines[lines.index("sops:"):] if "sops:" in lines else []
-    return {m.group(1) for line in meta if (m := re.fullmatch(r"\s*(?:- )?recipient: (age1[0-9a-z]+)", line))}
+    if lines[:1] == ["{"]:  # a binary file (cosign.key) is stored as JSON, its metadata under "sops"
+        meta = lines[next((i for i, l in enumerate(lines) if l.strip().startswith('"sops":')), len(lines)):]
+        pattern = r'\s*"recipient": "(age1[0-9a-z]+)",?'
+    else:
+        meta = lines[lines.index("sops:"):] if "sops:" in lines else []
+        pattern = r"\s*(?:- )?recipient: (age1[0-9a-z]+)"
+    return {m.group(1) for line in meta if (m := re.fullmatch(pattern, line))}
+
+
+def encrypted_files():
+    """Every sops file in the repo, repo-relative: the ones no host declares are checked too."""
+    return sorted(str(p.relative_to(ROOT)) for p in (ROOT / "secrets").rglob("*")
+                  if p.is_file() and p.name != ".sops.yaml" and sops_recipients(p))
 
 
 def undecryptable(files, host, recipients_of):
@@ -71,6 +82,11 @@ def host_key_identity(h):
     age, gpg = h["age"], h["gnupg"]
     return (age["sshKeyPaths"] == ["/etc/ssh/ssh_host_ed25519_key"] and gpg["home"] is None
             and (age["keyFile"] is None or age["generateKey"] is True))
+
+
+def needless(f, hosts, recipients_of):
+    """The fleet hosts whose key is a recipient of `f` but which declare none of its secrets."""
+    return sorted(n for n, r in SOPS_RECIPIENTS.items() if r in recipients_of(f) and n not in hosts)
 
 
 def sops_checks(S):
@@ -87,6 +103,22 @@ def sops_checks(S):
         bad = undecryptable(h["files"], h["hostName"], recipients_of)
         check(h["files"] and not bad, f"{attr}: each of its {len(h['files'])} sops secrets is in a file encrypted to {h['hostName']} (not: {bad})")
         check(host_key_identity(h), f"{attr}: sops-nix decrypts with the ssh host key the recipient is derived from ({h['age']}, gnupg {h['gnupg']})")
+    # the converse: a host key on a file whose secrets that host never declares can decrypt them for nothing
+    declared = {}
+    for h in S["hosts"].values():
+        for f in set(h["files"].values()):
+            declared.setdefault(f, set()).add(h["hostName"])
+    files = encrypted_files()
+    check(len(files) >= 12 and "secrets/cosign.key" in files, f"every encrypted file is read, the JSON cosign.key too ({len(files)})")
+    for f in files:
+        extra = needless(f, declared.get(f, set()), recipients_of)
+        check(not extra, f"{f}: encrypted only to fleet hosts that declare one of its secrets (also: {extra})")
+    added = lambda f: recipients_of(f) | {SOPS_RECIPIENTS["msi-ms7758"]}
+    check(needless("secrets/homelab/tailscale.yaml", declared.get("secrets/homelab/tailscale.yaml", set()), added) == ["msi-ms7758"],
+          "seeded: tailscale.yaml with msi's recipient added names msi, which declares none of its secrets")
+    lenovo_too = lambda f: recipients_of(f) | {SOPS_RECIPIENTS["lenovo-21CB001PMX"]}
+    check(needless("secrets/claude/llm-cloud.yaml", declared.get("secrets/claude/llm-cloud.yaml", set()), lenovo_too) == ["lenovo-21CB001PMX"],
+          "seeded: a file no host declares (llm-cloud.yaml) fails any host recipient")
     bad = undecryptable(S["seeded"], "black-pi", recipients_of)
     check(bad == ["native_otlp_auth (secrets/claude/native-otlp-auth.yaml)"], f"seeded: black-pi with nativeOtel declares the relay's secret, not encrypted to it ({bad})")
     acer = S["hosts"]["acer-swift"]
