@@ -1,7 +1,8 @@
 # Moving suitable services from k3s to NixOS: decision record and inventory
 
-Status: proposed, 2026-11-13. Nothing here is deployed. It records what the
-audit observed, which delivery model fits this fleet, and the order of work.
+Status: proposed 2026-11-13; amended 2026-11-15, when the owner decided the
+end state is no k3s at all (see Decision). It records what the audit
+observed, which delivery model fits this fleet, and the order of work.
 Deploying to a host, deleting state and removing a running k3s service each
 need the owner's approval; every step below names its gate.
 
@@ -35,15 +36,31 @@ What is lost for a moved service is listed under "Given up". devenv machines
 and comin are the two tools worth reopening, each under a stated condition
 below.
 
+Superseded 2026-11-15: the second bullet. Nothing stays on k3s; the cluster
+is removed in four steps (see Decision).
+
 ## Decision
 
-1. **Hybrid, by failure domain.** Telemetry and paging move to NixOS modules,
-   because the tools used to diagnose a broken cluster should not run inside
-   it. Workloads that rely on KEDA scale to zero, Traefik with cert-manager and
-   Authentik forward auth stay on k3s. k3s is not removed.
+1. **No k3s at all** (owner, 2026-11-15). This replaces the 2026-11-13
+   "hybrid, by failure domain" decision, under which the edge and the
+   scale-to-zero workloads stayed on k3s. The end state is reached in four
+   steps (see "Order of work"):
+   1. monitoring native on black-pi (#414, PR #419, homelab-gitops #271);
+   2. Caddy on acer fronts everything and replaces Traefik; herman and karta
+      become Nix-built static sites; zot retires;
+   3. Authentik and Postgres go native, behind Caddy `forward_auth`;
+   4. k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager and
+      external-dns are removed; a wildcard DNS record plus AdGuard rewrites
+      replace external-dns.
+
+   Removed instead of migrated: styrka-web, system-one, monty-runner, kokoro
+   and whisper (homelab-gitops #269). Already moved to acer: the llm-gateway
+   (homelab-gitops #265) and open-webui (#262). Deleting a PVC or other
+   state stays on the owner's by-hand list (homelab-gitops #146).
 2. **Deployment stays deploy-rs from the existing flake.** No new tool now.
    While a moved service still has clients or routes in the cluster, its
-   migration is a two-repository change (see "Two repositories").
+   migration is a two-repository change (see "Two repositories"); after
+   step 4 there is one repository.
 3. **No service framework.** A moved service is one `homelab.<name>` module in
    `modules/homelab/` that wraps the upstream NixOS module, opens its port with
    `mkDualBackendFirewall`, and has one `scripts/test-<name>.py` gate reading
@@ -51,14 +68,14 @@ below.
    service repeats the same wiring.
 4. **Pod concerns stay in the cluster.** Pod logs and Kubernetes object metrics
    are collected by the DaemonSet and the operator stack for as long as k3s
-   runs pods. Hosts get their own journald collector, as a host service so
+   runs pods (until homelab-gitops #271 removes them in step 1). Hosts get their own journald collector, as a host service so
    that it keeps working when the cluster does not and covers msi. The cost is
    a second Alloy process on each host, which is measured (see Placement).
-5. **Nix store delivery into k3s is ranked after telemetry and decided by one
-   measurement** (E0). See "Relation to the delivery plan".
+5. **Nix store delivery into k3s is dropped**, since no cluster remains to
+   deliver into. See "Relation to the delivery plan".
 
-Vault ADR-001 (Flux) and ADR-005 (single k3s cluster) stay in force for what
-remains on k3s.
+Vault ADR-001 (Flux) and ADR-005 (single k3s cluster) hold until step 4 and
+are superseded by it.
 
 ## Baseline observed 2026-11-13
 
@@ -126,7 +143,7 @@ migration adds it.
 | Secrets | sops-nix with per-host age keys; adding a recipient is an owner step. The first three steps need no new secret | present |
 | Persistent state | a fixed directory under `/var/lib/<service>` on a named host, with a backup job declared in the same module | to build, see gap 3 |
 | Service discovery | static: one host address and port, set once in each repository | to build |
-| Ingress and TLS | Traefik in k3s keeps the public names and certificates; a moved service is also reachable on a LAN port so that it works when k3s does not | design below |
+| Ingress and TLS | Traefik in k3s keeps the names and certificates until step 2, when Caddy on acer takes them over; a moved service is also reachable on a LAN port so that it works when k3s does not | design below; Caddy in step 2 |
 | Observability of the moved service | its journal through the host collector; its scrape target and alert rule in homelab-gitops while Prometheus runs there | to build |
 
 ### Two repositories
@@ -275,16 +292,19 @@ Observed, but not classified as remove; the owner decides in the cleanup issue:
 - external-dns: it only acts on Services and Ingresses carrying the
   `external-dns.alpha.kubernetes.io/hostname` annotation, no live object
   carries it, and its log says "All records are already up to date" every
-  minute. As configured it manages no record. Removing it also removes the
-  option of annotating a Service later.
-- qdrant: removed (unused since vault-reader, homelab-gitops #259); its claim
-  waits on the owner's by-hand list.
+  minute. As configured it manages no record. Decided 2026-11-15: removed in
+  step 4; the wildcard record and AdGuard rewrites replace it.
+- qdrant: the 2026-11-13 decline was reversed; removed by homelab-gitops #259
+  (unused since vault-reader). Its claim is kept, on the owner's by-hand list.
 - `archive/learn/` in homelab-gitops: applied by no Kustomization and no
   namespace of that name is live. Deleting the directory is a repository
   cleanup, not a cluster change.
 - The public hosts with zero requests in three days.
 
 ### Migrate (low risk, suited to NixOS)
+
+Status 2026-11-15: the collector is on msi (#301), the other hosts are #330;
+the bridge posts to lenovo's native ntfy; Loki moves in step 1 (#414).
 
 | Service | Now | Destination | Storage | Consumers | Verification |
 |---|---|---|---|---|---|
@@ -293,6 +313,11 @@ Observed, but not classified as remove; the owner decides in the cleanup issue:
 | Loki | StatefulSet on black-pi, `local-path` volume, which is a directory on black-pi | `services.loki` on black-pi | 72 h of logs and 30 days of agent telemetry | Alloy DaemonSet, alloy-otlp, Grafana, pi-offload, the usage report | see P4 |
 
 ### Research (stateful or coupled; an experiment first)
+
+Placed 2026-11-15: the monitoring rows and alloy-otlp in step 1 (#414; this
+answers P5, #399); the llm-gateway is done (homelab-gitops #265); zot retires
+and `ntfy.sammasak.dev` moves off Traefik in step 2; Postgres in step 3
+(Authentik's only; workout was removed, homelab-gitops #175).
 
 | Service | Coupling | Question to answer |
 |---|---|---|
@@ -305,15 +330,24 @@ Observed, but not classified as remove; the owner decides in the cleanup issue:
 | llm-gateway | SQLite state, pinned ClusterIP used by hosts, bearer keys in SOPS | already a static Nix-built binary; a natural systemd service, but its secrets must move (owner step) |
 | Postgres (Authentik, workout) | data; a past data loss | only with tested dump and restore |
 
-### Keep on k3s
+### Keep until step N
 
-| Service | Why |
-|---|---|
-| Alloy DaemonSet (pod logs) | pod labels come from the Kubernetes API; a host collector would need a credential or lose the labels dashboards and alerts use. Running it on msi too is a one-line toleration, raised as a question |
-| Authentik | no upstream NixOS module; it gates sign-in for everything; high risk, low saving |
-| Traefik, cert-manager, MetalLB, Cilium, KEDA, Flux, Kyverno | the platform for what stays |
-| workout | scales to zero through KEDA; it holds no memory while idle. open-webui and Ollama moved to hosts (#299); kokoro, whisper and monty-runner were removed instead (owner, 2026-11-15) |
-| herman, karta | 7 to 8 MiB each and public; moving them saves nothing. styrka and system-one were removed instead (owner, 2026-11-15) |
+Formerly "Keep on k3s"; the reasons were true under the hybrid decision, and
+the owner's 2026-11-15 decision gives each item an end.
+
+| Service | Until | Why it waits |
+|---|---|---|
+| Alloy DaemonSet (pod logs) | step 1 | pod labels come from the Kubernetes API; it goes with the in-cluster stack (homelab-gitops #271) |
+| Traefik | step 2 | Caddy on acer takes every name, including the routes to host services |
+| herman, karta | step 2 | become Nix-built static sites served by Caddy; styrka and system-one were removed instead (homelab-gitops #269) |
+| zot | step 2 | retires once nothing pulls from it (herman and karta are its last in-house images) |
+| k3s ntfy (`ntfy.sammasak.dev`) | step 2 | the name moves off Traefik; whether it routes to lenovo's native ntfy or retires is decided in step 2 |
+| Authentik and its Postgres | step 3 | no upstream NixOS module; it gates sign-in for everything; high risk |
+| k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns | step 4 | the platform; removed once nothing runs on it |
+
+workout was removed (homelab-gitops #175); open-webui and Ollama moved to
+hosts (#299); kokoro, whisper and monty-runner were removed instead
+(homelab-gitops #269).
 
 ## Placement
 
@@ -333,6 +367,12 @@ for its noisiest units before its collector is enabled. Running Loki as a host
 service removes its pod overhead but not its working set (148 MiB today).
 
 ## Relation to the delivery plan
+
+Superseded 2026-11-15. With no cluster in the end state, #146's choice
+between OCI, NixOS services and the store-delivery pilot resolves to NixOS
+services, and the pilot and E0 are dropped. #146 still holds the owner's
+by-hand list of claims and state to delete. The 2026-11-13 text follows as
+record.
 
 `docs/records/nix-native-delivery.md` (2026-11-12) plans a pilot that delivers Nix
 store paths into pods, and homelab-gitops #146 holds the owner's choice between
@@ -356,6 +396,26 @@ becomes E0 with a decision rule.
   #146.
 
 ## Order of work
+
+The owner's four steps, 2026-11-15. Each step's issue holds its gates,
+tests and rollback; each needs the one before it.
+
+| Step | Change | Status | Gate |
+|---|---|---|---|
+| 1 | Prometheus, Alertmanager, Grafana, Loki and alloy-otlp as NixOS services (black-pi; alloy-otlp on acer); the in-cluster stack removed | nixos half merged (#419); host deploys, then homelab-gitops #271, pending (#414) | owner: each deploy, the #271 merge |
+| 2 | Caddy on acer fronts every name and replaces Traefik; herman and karta as Nix-built static sites; zot retires | planned, issue drafted | owner: acer deploy, secrets on acer, DNS cut-over, zot data |
+| 3 | Authentik and its Postgres as NixOS services, Caddy `forward_auth` | planned, issue drafted | owner: secrets, the database cut-over |
+| 4 | Remove k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns; wildcard record and AdGuard rewrites | planned, issue drafted | owner: every host deploy, DNS, state deletion |
+
+Done outside the steps: the llm-gateway (homelab-gitops #265) and open-webui
+(#262) on acer, msi's Ollama (#394, #395), and the removals in homelab-gitops
+#269 and #259.
+
+### The 2026-11-13 order, superseded
+
+Kept as record. G1 is done (#324), P1 (#301) and P3 are done, P4 (#302) and
+P5 (#399) are folded into step 1, E0 is dropped, and P2 (#330) still applies:
+host journals are needed with or without a cluster.
 
 | Step | Change | Proves | Reversible by | Gate |
 |---|---|---|---|---|
@@ -443,6 +503,9 @@ issue and the schema configuration is carried over unchanged.
 
 ## Not done here
 
-No scheduler, controller, operator or service framework. No second ingress on
-the hosts while Traefik in k3s serves the public names. No change to secret
-values, DNS or the MetalLB address. No new secret before P5.
+No scheduler, controller, operator or service framework. One ingress per
+name: Caddy replaces Traefik in step 2. No change to secret values. DNS changes only in steps 2 and 4,
+each an owner gate. No PVC or state is deleted by any step; that is the
+owner's by-hand list (homelab-gitops #146). (Superseded 2026-11-15: "no
+second ingress on the hosts", "no change to DNS or the MetalLB address" and
+"no new secret before P5".)
