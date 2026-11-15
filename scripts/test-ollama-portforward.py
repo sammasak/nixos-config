@@ -52,10 +52,10 @@ def free_port():
 P = gate_probe.section("ollama-portforward")
 exe, unit = P["exe"], P["unit"]
 argv = unit["ExecStart"].split()
-check(argv[0] == exe and argv[1] == "http://127.0.0.1:8080/api/tags" and argv[2].endswith("/bin/kubectl")
-      and argv[3:6] == ["port-forward", "--address", "127.0.0.1"] and "deploy/llm-gateway" in argv
-      and "8080:11434" in argv and unit.get("Restart") == "always",
-      f"the unit runs kubectl under the supervisor, probing the forwarded port ({unit['ExecStart']})")
+check(argv[0] == exe and argv[1] == "http://127.0.0.1:8080/api/tags" and argv[2].endswith("/bin/ssh")
+      and argv[3] == "-N" and "BatchMode=yes" in argv and "ExitOnForwardFailure=yes" in argv
+      and argv[-3:] == ["-L", "127.0.0.1:8080:127.0.0.1:11435", "192.168.10.110"] and unit.get("Restart") == "always",
+      f"the unit runs an ssh forward to acer's keyless loopback listener under the supervisor ({unit['ExecStart']})")
 
 tmp = tempfile.mkdtemp()
 fake = os.path.join(tmp, "fake_forward.py")

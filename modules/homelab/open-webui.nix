@@ -12,7 +12,6 @@
 let
   cfg = config.services.open-webui;
   address = config.sam.fleet.hosts.${config.sam.profile.hostname}.address;
-  # not 8080: the k3s module opens that one to any source on every node
   port = 8090;
   # The pod CIDR without each node's Cilium host address (CiliumInternalIP: kubectl get ciliumnodes), which any
   # process on that node may bind as its source; a node that gets a new one opens a hole until it is listed here.
@@ -62,7 +61,7 @@ let
     builtins.readFile ./open-webui-backup.py
   );
   sopsFile = ../../secrets/homelab/open-webui.yaml;
-  gateway = "http://10.43.0.80:8080"; # the llm-gateway ClusterIP, as Pi uses it
+  gateway = "http://127.0.0.1:8081"; # the llm-gateway's API listener on this host (llm-gateway.nix)
 in
 {
   sops.secrets = {

@@ -1,6 +1,6 @@
 # Imported applied, for hosts with sam.profile.pi (flake-modules/nixos-configurations.nix):
 #   (import .../pi inputs.devenv-platform)
-# No provider key reaches the host: the in-cluster llm-gateway holds them. Auth, upgrade,
+# No provider key reaches the host: the llm-gateway on acer holds them. Auth, upgrade,
 # rollback: docs/pi.md.
 devenvPlatform:
 {
@@ -19,7 +19,7 @@ let
     };
   };
 
-  # Re-applied on every activation: the in-cluster llm-gateway is the default
+  # Re-applied on every activation: the llm-gateway on acer is the default
   # path (sammasak/llm-gateway#8); router/free stays selectable as the fallback.
   pinnedSettings = builtins.toJSON {
     defaultProvider = "homelab";
@@ -77,12 +77,12 @@ let
         ];
   };
 
-  # The default (`homelab/auto`, pinned above): the in-cluster llm-gateway picks a free model
+  # The default (`homelab/auto`, pinned above): the llm-gateway on acer picks a free model
   # by tier and fails over. `!cat` reads the sops key per request, so it never
   # enters the store or the environment.
   homelabProvider = builtins.toJSON {
-    # Pinned spec.clusterIP in homelab-gitops apps/llm-gateway/service.yaml; reachable from k3s nodes.
-    baseUrl = "http://10.43.0.80:8080/v1";
+    # acer's firewall admits lenovo on 8081 (modules/homelab/llm-gateway.nix); acer reaches its own address locally
+    baseUrl = "http://${osConfig.sam.fleet.hosts.acer-swift.address}:8081/v1";
     api = "openai-completions";
     apiKey = "!cat /run/secrets/llm_gateway_pi_key";
     models = [

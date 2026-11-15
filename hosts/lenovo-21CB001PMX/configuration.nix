@@ -108,14 +108,14 @@
   };
 
   # pi-harness PICODE_EP and factum FACTS_OLLAMA_EP default to localhost:8080. The
-  # llm-gateway serves keyless Ollama only on its pod loopback, so only this reaches it.
+  # llm-gateway serves keyless Ollama only on acer's loopback, so only this reaches it.
+  # BatchMode: the unit has no agent, so lukas's key must be usable without one.
   systemd.user.services.ollama-portforward = {
-    description = "Port-forward the llm-gateway keyless Ollama passthrough to localhost:8080";
+    description = "Forward the llm-gateway keyless Ollama passthrough on acer to localhost:8080";
     wantedBy = [ "default.target" ];
     unitConfig.ConditionUser = config.sam.profile.username;
-    environment.KUBECONFIG = "%h/.kube/config";
     serviceConfig = {
-      ExecStart = "${lib.getExe pkgs.ollama-portforward} http://127.0.0.1:8080/api/tags ${pkgs.kubectl}/bin/kubectl port-forward --address 127.0.0.1 deploy/llm-gateway -n llm 8080:11434";
+      ExecStart = "${lib.getExe pkgs.ollama-portforward} http://127.0.0.1:8080/api/tags ${pkgs.openssh}/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -L 127.0.0.1:8080:127.0.0.1:11435 ${config.sam.fleet.hosts.acer-swift.address}";
       Restart = "always";
       RestartSec = 5;
     };
