@@ -313,7 +313,7 @@ Observed, but not classified as remove; the owner decides in the cleanup issue:
 | Authentik | no upstream NixOS module; it gates sign-in for everything; high risk, low saving |
 | Traefik, cert-manager, MetalLB, Cilium, KEDA, Flux, Kyverno | the platform for what stays |
 | workout | scales to zero through KEDA; it holds no memory while idle. open-webui and Ollama moved to hosts (#299); kokoro, whisper and monty-runner were removed instead (owner, 2026-11-15) |
-| herman, styrka, karta | 7 to 8 MiB each and public; moving them saves nothing. styrka-web and system-one were removed instead (owner, 2026-11-15) |
+| herman, karta | 7 to 8 MiB each and public; moving them saves nothing. styrka and system-one were removed instead (owner, 2026-11-15) |
 
 ## Placement
 
