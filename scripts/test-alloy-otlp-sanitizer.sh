@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# alloy-otlp's sanitizer and log privacy (modules/homelab/monitoring/alloy-otlp.alloy), ported from homelab-gitops
-# scripts/test-native-otlp-sanitizer.sh: sentinels sent through the real config must not reach its exporters.
+# alloy-otlp's sanitizer (modules/homelab/monitoring/alloy-otlp.alloy), ported from homelab-gitops
+# scripts/test-native-otlp-sanitizer.sh: sentinels sent through acer's deployed config, run with acer's Alloy and the
+# unit's own arguments (scripts/alloy_otlp_argv.py), must not reach its exporters.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-alloy_bin=${ALLOY_BIN:-alloy}
+argv_of() { python3 "$repo_root/scripts/alloy_otlp_argv.py" "$@"; }
+deployed_config=$(argv_of config)
 
-for executable in "$alloy_bin" jq curl grep mktemp unlink rmdir cat sed awk seq sleep head tr; do
+for executable in python3 jq curl grep mktemp unlink rmdir cat sed awk seq sleep head tr cmp cp; do
   command -v "$executable" >/dev/null || {
     printf 'required executable not found: %s\n' "$executable" >&2
     exit 2
@@ -15,6 +17,7 @@ done
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/native-otlp-sanitizer.XXXXXX")
 config_file="$work_dir/test.alloy"
+rewritten_file="$work_dir/rewritten.alloy"
 alloy_log="$work_dir/alloy.log"
 storage_dir="$work_dir/storage"
 oversized_payload_file="$work_dir/oversized.json"
@@ -27,7 +30,7 @@ cleanup() {
     kill -INT "$alloy_pid" 2>/dev/null || true
     wait "$alloy_pid" 2>/dev/null || true
   fi
-  unlink "$config_file" "$alloy_log" "$oversized_payload_file" "$near_limit_payload_file" \
+  unlink "$config_file" "$rewritten_file" "$alloy_log" "$oversized_payload_file" "$near_limit_payload_file" \
     "$oversized_response_file" 2>/dev/null || true
   rmdir "$storage_dir" "$work_dir" 2>/dev/null || true
 }
@@ -35,30 +38,42 @@ trap cleanup EXIT
 
 otlp_port=$((20000 + $$ % 20000))
 server_port=$((otlp_port + 1))
-memory_port=$((otlp_port + 2))
 test_token="native-otlp-smoke-${$}"
 export OTLP_BEARER_TOKEN=$test_token
 
-# Metrics skip the session-sum chain, so the sanitizer's own output reaches the debug exporter.
-sed -e "s/0.0.0.0:4318/127.0.0.1:$otlp_port/" \
-      -e 's/metrics = \[otelcol.processor.cumulativetodelta.native.input\]/metrics = [otelcol.processor.transform.native_sanitize.input]/' \
-      -e 's/metrics = \[otelcol.processor.batch.native_serialize.input\]/metrics = [otelcol.exporter.debug.test.input]/' \
-      -e 's/otelcol.exporter.otlphttp.native.input/otelcol.exporter.debug.test.input/g' \
-      -e 's/otelcol.exporter.loki.native.input/otelcol.exporter.debug.test.input/g' \
-      "$repo_root/modules/homelab/monitoring/alloy-otlp.alloy" \
-  | awk '/^otelcol.exporter.loki "native" \{/ { skip = 1 } !skip { print }' > "$config_file"
+# Metrics skip the session-sum chain, so the sanitizer's own output reaches the debug exporter. Each rewrite must
+# change the file, so a config that moved on fails here instead of testing something else.
+cp "$deployed_config" "$rewritten_file"
+chmod u+w "$rewritten_file"
+for rewrite in \
+  "s/0.0.0.0:4318/127.0.0.1:$otlp_port/" \
+  's/metrics = \[otelcol.processor.cumulativetodelta.native.input\]/metrics = [otelcol.processor.transform.native_sanitize.input]/' \
+  's/metrics = \[otelcol.processor.batch.native_serialize.input\]/metrics = [otelcol.exporter.debug.test.input]/' \
+  's/otelcol.exporter.otlphttp.native.input/otelcol.exporter.debug.test.input/g' \
+  's/otelcol.exporter.loki.native.input/otelcol.exporter.debug.test.input/g'; do
+  cp "$rewritten_file" "$config_file"
+  sed -i -e "$rewrite" "$rewritten_file"
+  if cmp -s "$rewritten_file" "$config_file"; then
+    printf 'rewrite matched nothing in %s: %s\n' "$deployed_config" "$rewrite" >&2
+    exit 1
+  fi
+done
+grep -q '^otelcol.exporter.loki "native" {' "$rewritten_file" || {
+  printf 'no otelcol.exporter.loki "native" block to cut at in %s\n' "$deployed_config" >&2
+  exit 1
+}
+awk '/^otelcol.exporter.loki "native" \{/ { skip = 1 } !skip { print }' "$rewritten_file" > "$config_file"
 cat >> "$config_file" <<'EOF'
 otelcol.exporter.debug "test" {
   verbosity = "detailed"
 }
 EOF
 
-"$alloy_bin" validate --stability.level=experimental "$config_file" >/dev/null
-"$alloy_bin" run --disable-reporting \
-  --server.http.listen-addr="127.0.0.1:$server_port" \
-  --server.http.memory-addr="127.0.0.1:$memory_port" \
-  --storage.path="$storage_dir" \
-  --stability.level=experimental "$config_file" > "$alloy_log" 2>&1 &
+# the unit's own argv, its listener, storage and config pointed here
+mapfile -d '' alloy_argv < <(argv_of "127.0.0.1:$server_port" "$storage_dir" "$config_file")
+[[ ${#alloy_argv[@]} -gt 3 ]] || { printf 'no alloy-otlp argv\n' >&2; exit 1; }
+"${alloy_argv[0]}" validate --stability.level=experimental "$config_file" >/dev/null
+"${alloy_argv[@]}" > "$alloy_log" 2>&1 &
 alloy_pid=$!
 
 endpoint="http://127.0.0.1:$otlp_port"
@@ -271,11 +286,7 @@ logs_before_restart=$logs_emitted
 kill -INT "$alloy_pid" 2>/dev/null || true
 wait "$alloy_pid" 2>/dev/null || true
 alloy_pid=
-"$alloy_bin" run --disable-reporting \
-  --server.http.listen-addr="127.0.0.1:$server_port" \
-  --server.http.memory-addr="127.0.0.1:$memory_port" \
-  --storage.path="$storage_dir" \
-  --stability.level=experimental "$config_file" >> "$alloy_log" 2>&1 &
+"${alloy_argv[@]}" >> "$alloy_log" 2>&1 &
 alloy_pid=$!
 
 restarted_unauthenticated_status=

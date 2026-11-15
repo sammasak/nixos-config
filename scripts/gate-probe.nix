@@ -193,6 +193,13 @@ let
       inherit skills;
     };
 
+    # acer's unit as deployed: its ExecStart realises acer's Alloy, the wrapper and the rendered config; Loki is
+    # black-pi's version from an x86 package set (lenovo's, the same nixpkgs)
+    alloy-otlp = {
+      execStart = acer.systemd.services.alloy-otlp.serviceConfig.ExecStart or null;
+      loki = "${hosts.lenovo.pkgs.grafana-loki}/bin/loki";
+    };
+
     # every host, so a collector enabled anywhere else is seen; context discarded: nothing here needs a build
     journal-collector =
       let

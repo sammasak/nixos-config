@@ -56,11 +56,13 @@ in
             failures="$failures\n• $not_ready node(s) NotReady: $node_list"
           fi
 
-          # 3. Flux objects Ready=False for over a tick (replaces FluxReconciliationFailed; goes with Flux)
+          # 3. Flux objects Ready=False for over a tick (replaces FluxReconciliationFailed; goes with Flux).
+          # Suspended ones are skipped; a missing or unparsable timestamp counts as old, so it reports.
           flux_failed=$(kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io \
             -A -o json --request-timeout=20s 2>/dev/null \
-            | jq -r '[.items[] | select(any(.status.conditions[]?; .type == "Ready" and .status == "False"
-                and (.lastTransitionTime | fromdateiso8601) < now - 600))
+            | jq -r '[.items[] | select(.spec.suspend != true)
+                | select(any(.status.conditions[]?; .type == "Ready" and .status == "False"
+                  and (try ((.lastTransitionTime // "") | fromdateiso8601) catch 0) < now - 600))
                 | "\(.kind)/\(.metadata.namespace)/\(.metadata.name)"] | join(" ")') || true
           if [ -n "$flux_failed" ]; then
             failures="$failures\n• Flux not Ready: $flux_failed"

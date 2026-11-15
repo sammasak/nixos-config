@@ -1,7 +1,8 @@
 # grafana.sammasak.dev on black-pi through upstream services.grafana: Traefik on acer reaches it through a
 # selectorless Service (homelab-gitops), and nothing else on the LAN does. Sign-in through Authentik (generic_oauth,
-# no proxy auth) as the chart had it, and only through it. The database starts fresh: users and roles come back with the first OIDC sign-in, and
-# the dashboards are the host ones in ./dashboards (the Kubernetes ones went with kube-state-metrics).
+# no proxy auth) as the chart had it, and only through it. The database starts fresh: users and roles come back
+# with the first OIDC sign-in, and the dashboards are the host ones in ./dashboards (the Kubernetes ones went with
+# kube-state-metrics).
 { config, lib, ... }:
 let
   inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
@@ -104,6 +105,8 @@ in
     serviceConfig = {
       # the pod peaked at 354 MB without its sidecars
       MemoryMax = "384M";
+      # DHCP: .137 can appear after the unit, and upstream's Restart=on-failure would spend its start limit at once
+      RestartSec = 10;
       MemorySwapMax = 0;
     };
   };
@@ -126,9 +129,14 @@ in
   assertions = [
     {
       assertion =
-        config.services.grafana.settings.auth.disable_login_form
-        && !config.services.grafana.settings."auth.basic".enabled;
-      message = "modules/homelab/monitoring/grafana.nix: keep the login form and basic auth off; the admin password copied from the cluster is weak, and sign-in goes through Authentik.";
+        let
+          s = config.services.grafana.settings;
+        in
+        s.auth.disable_login_form
+        && !s."auth.basic".enabled
+        && !(s."auth.proxy".enabled or false)
+        && !(s."auth.anonymous".enabled or false);
+      message = "modules/homelab/monitoring/grafana.nix: keep the login form, basic, proxy and anonymous auth off; the admin password copied from the cluster is weak, and sign-in goes through Authentik.";
     }
     {
       assertion = config.sam.hostSecrets.enable;

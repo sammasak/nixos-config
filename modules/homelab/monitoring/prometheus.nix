@@ -79,7 +79,7 @@ in
       };
       # keeps the remote-write names, e.g. claude_code_cost_usage_USD_total
       otlp.translation_strategy = "UnderscoreEscapingWithSuffixes";
-      # PROPOSED (homelab-gitops#202): a replayed in-flight request lands behind newer ones; younger than this, kept
+      # homelab-gitops#202: a replayed in-flight request lands behind newer ones; younger than this, kept
       storage.tsdb.out_of_order_time_window = "1m";
       # interpolated, not toString: the store copies are promtool's inputs
       rule_files = map (f: "${f}") [
@@ -178,6 +178,11 @@ in
     {
       assertion = fw.enable && anySourceTcp fw [ cfg.port ] == [ ];
       message = "modules/homelab/monitoring/prometheus.nix: Prometheus has no authentication and takes OTLP writes; keep the firewall on and port ${toString cfg.port} out of allowedTCPPorts.";
+    }
+    {
+      assertion =
+        cfg.scrapeConfigs == [ ] && cfg.ruleFiles == [ ] && cfg.rules == [ ] && cfg.alertmanagers == [ ];
+      message = "modules/homelab/monitoring/prometheus.nix: configText is set, so services.prometheus.scrapeConfigs, ruleFiles, rules and alertmanagers are never read; add to the configText attrset instead.";
     }
   ];
 }

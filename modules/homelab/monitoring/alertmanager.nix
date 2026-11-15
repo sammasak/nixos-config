@@ -27,10 +27,11 @@ in
         group_interval = "5m";
         repeat_interval = "12h";
         receiver = "alert-bridge";
+        # Watchdog pages no one: lenovo's cluster-watchdog reads it from /api/v2/alerts
         routes = [
           {
             receiver = "null";
-            matchers = [ ''alertname =~ "InfoInhibitor|MsiExpectedOff"'' ];
+            matchers = [ ''alertname =~ "Watchdog|InfoInhibitor|MsiExpectedOff"'' ];
           }
         ];
       };

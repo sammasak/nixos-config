@@ -1,16 +1,18 @@
-"""alloy-otlp's log privacy (modules/homelab/monitoring/alloy-otlp.alloy) on a real Alloy and Loki, ported from
-homelab-gitops scripts/test-native-otlp-log-loki.py: prompts, tool output, identities and trace ids never reach Loki,
-and the stored schema is exact. Usage: test-alloy-otlp-log-loki.py ALLOY LOKI."""
+"""alloy-otlp's log privacy (modules/homelab/monitoring/alloy-otlp.alloy), ported from homelab-gitops
+scripts/test-native-otlp-log-loki.py: acer's deployed config, run with acer's Alloy and the unit's own arguments
+(scripts/alloy_otlp_argv.py), against black-pi's Loki version. Prompts, tool output, identities and trace ids never
+reach Loki, and the stored schema is exact."""
 import json
 import os
 from pathlib import Path
 import socket
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.parse
 import urllib.request
+
+import alloy_otlp_argv
 
 
 root = Path(tempfile.mkdtemp(prefix='otlp-log-privacy-', dir=os.environ.get('TMPDIR', '/tmp')))
@@ -21,12 +23,22 @@ for unused in range(4):
         listener.bind(('127.0.0.1', 0))
         ports.append(listener.getsockname()[1])
 receiver_port, alloy_port, loki_port, grpc_port = ports
-repo = Path(__file__).resolve().parent.parent
-base = (repo / 'modules/homelab/monitoring/alloy-otlp.alloy').read_text()
+_, loki_bin = alloy_otlp_argv.unit()
+alloy_argv = alloy_otlp_argv.overridden(f'127.0.0.1:{alloy_port}', str(root / 'alloy'), str(root / 'alloy.alloy'))
+
+
+def replace_once(text, old, new):
+    # a rewrite that matched nothing would test some other config
+    assert text.count(old) == 1, f'{old!r} occurs {text.count(old)} times in the deployed config, not once'
+    return text.replace(old, new)
+
+
+base = Path(alloy_otlp_argv.config_path()).read_text()
+assert base.count('otelcol.storage.file "native"') == 1, 'no durable queue block to cut at'
 config = base.split('otelcol.storage.file "native"')[0]
-config = config.replace('0.0.0.0:4318', f'127.0.0.1:{receiver_port}')
-config = config.replace('@loki@', f'http://127.0.0.1:{loki_port}')
-config = config.replace('metrics = [otelcol.exporter.otlphttp.native.input]', 'metrics = []')
+config = replace_once(config, '0.0.0.0:4318', f'127.0.0.1:{receiver_port}')
+config = replace_once(config, 'http://192.168.10.137:3100', f'http://127.0.0.1:{loki_port}')
+config = replace_once(config, 'metrics = [otelcol.exporter.otlphttp.native.input]', 'metrics = []')
 (root / 'alloy.alloy').write_text(config)
 (root / 'loki.yml').write_text(f'''auth_enabled: false
 server:
@@ -70,10 +82,7 @@ def get(url):
 
 
 try:
-    commands = [[sys.argv[2], '-config.file=' + str(root / 'loki.yml')],
-                [sys.argv[1], 'run', '--disable-reporting', str(root / 'alloy.alloy'),
-                 '--server.http.listen-addr=127.0.0.1:' + str(alloy_port),
-                 '--storage.path=' + str(root / 'alloy'), '--stability.level=experimental']]
+    commands = [[loki_bin, '-config.file=' + str(root / 'loki.yml')], alloy_argv]
     for index, command in enumerate(commands):
         with (root / f'process-{index}.log').open('w') as output:
             processes.append(subprocess.Popen(command, env=environment, stdout=output, stderr=output))
