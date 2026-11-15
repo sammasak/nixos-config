@@ -717,7 +717,7 @@ in
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =
-      task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts" buildBoundsTest;
+      task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts; lenovo's user slice has a ceiling" buildBoundsTest;
     "nixos:qa-push-test" =
       task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs" qaPushTest;
     "nixos:journal-collector-test" =

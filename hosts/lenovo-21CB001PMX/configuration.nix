@@ -98,6 +98,15 @@
     MemoryMax = "7G";
   };
 
+  # nixos-config#353: the daemon cap does not hold a client-side evaluation. All login users combined;
+  # daemon builds sit outside. Closes one runaway only: this plus the daemon cap still exceeds RAM.
+  # NOT MemoryHigh: a runaway then never reaches the limit and stalls every session instead (workers/core.nix).
+  # RAM less the measured control plane (scripts/test-lenovo-build-bounds.py); swap a quarter, as the worker pools.
+  systemd.slices.user.sliceConfig = {
+    MemoryMax = "8704M";
+    MemorySwapMax = "2176M";
+  };
+
   # pi-harness PICODE_EP and factum FACTS_OLLAMA_EP default to localhost:8080. The
   # llm-gateway serves keyless Ollama only on its pod loopback, so only this reaches it.
   systemd.user.services.ollama-portforward = {
