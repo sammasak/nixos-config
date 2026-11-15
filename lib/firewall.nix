@@ -21,6 +21,17 @@ let
   nftSet = xs: if length xs == 1 then head xs else "{ ${concatStringsSep ", " xs} }";
 in
 {
+  # loopback and the interfaces Cilium's pod traffic arrives on: nothing else may be trusted where a service
+  # relies on the firewall to keep it from the LAN
+  ciliumInterfaces = [
+    "lo"
+    "cilium_host"
+    "cilium_net"
+    "cilium_vxlan"
+    "cilium_health"
+    "lxc+"
+  ];
+
   # The ports of `ports` that `fw` (config.networking.firewall) accepts from any
   # source: listed or in a range, globally or on one interface.
   anySourceTcp =

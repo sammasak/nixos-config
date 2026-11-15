@@ -1,0 +1,298 @@
+# llm-gateway config: server settings, router tuning, providers and the model
+# catalog. Only models that cannot bill by usage can be enabled (enforced at
+# parse): `cost_class = "free"`, or `"prepaid-capped"` on a provider whose
+# `billing` declares a verified prepaid plan without auto-recharge (owner
+# policy 2026-10-17). Routing to prepaid-capped models stops at 00:00 UTC on
+# the provider's `billing.expires`.
+# Within a tier, catalog order is quality order. Keys are read from files and
+# never logged.
+
+[server]
+listen = "0.0.0.0:8081"
+# /status and /metrics bind separately; Cilium restricts this listener to
+# Prometheus only. Requires gateway PR #77.
+admin_listen = "0.0.0.0:9091"
+state_db = "/var/lib/llm-gateway/state.sqlite3"
+project_keys_file = "/run/secrets/llm-gateway/project-keys.toml"
+
+[router]
+max_attempts = 4     # upstream attempts per client request, failover included
+max_wait_secs = 60   # longest cooldown worth waiting out instead of a 429
+block_secs = 21600   # 401/402/403/404 block a model for 6h
+# Share of each quota group's daily allowance (`rpd`/`tpd`/`npd`) that
+# batch projects may not use; they get a 429 until 00:00 UTC once only the
+# reserve is left (owner decision 2026-10-15: 30%).
+interactive_reserve_percent = 30
+
+# --- projects ----------------------------------------------------------------
+# One section per key in the llm-gateway secret's project-keys.toml; a key
+# without a section, or a section without a key, stops the gateway. Optional:
+# `rpm` (requests started per minute), `daily_tokens` (per UTC day, across
+# quota groups), `models` (names it may ask for), `tiers` (1, 2, 3).
+
+[projects.pi]
+priority = "interactive"
+rpm = 60
+
+[projects.open-webui]
+priority = "interactive"
+rpm = 30
+# Its Ollama connection (/api below) lists the local models by their Ollama
+# names. Over /v1 it may use, and /v1/models lists, only the virtual models,
+# so chat offers no model twice and no pinned physical cloud model (intended).
+models = ["auto", "best", "local"]
+
+[projects.factum]
+priority = "batch"
+rpm = 10
+# About a third of Workers Free's 10k neurons/day (input-heavy estimate; output
+# bills higher). The workers-neurons group's npd and the 30% reserve keep factum
+# off Pi's share of the CF day; this caps it across groups (llm-gateway#8).
+daily_tokens = 60000
+# factum pins the physical model its reviewed catalog admits: provenance stays
+# exact and the qwen2.5 tokenizer matches its prompt charge (factum cloud.rs).
+models = ["cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct"]
+
+[[providers]]
+name = "gemini"
+kind = "gemini"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_file = "/run/secrets/llm-gateway/gemini-api-key"
+
+[[providers]]
+name = "cloudflare"
+kind = "cloudflare"
+base_url = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1"
+api_key_file = "/run/secrets/llm-gateway/cloudflare-api-token"
+account_id_file = "/run/secrets/llm-gateway/cloudflare-account-id"
+
+# Free plan, no card: `x-ratelimit-limit-tokens: 8000` and
+# `x-ratelimit-limit-requests: 1000` (probe 2026-10-17). Limits are per model,
+# per organization.
+[[providers]]
+name = "groq"
+kind = "openai"
+base_url = "https://api.groq.com/openai/v1"
+api_key_file = "/run/secrets/llm-gateway/groq-api-key"
+
+# Trial credit with a card on file. No `billing` evidence: auto-recharge was
+# never observed off, and the live limits (450 RPM, 150K TPM) are not the
+# documented trial's (5 RPM). Stand-in ruling 2026-10-17: keep disabled until
+# the console shows no auto-recharge (llm-gateway#13).
+[[providers]]
+name = "cerebras"
+kind = "openai"
+base_url = "https://api.cerebras.ai/v1"
+api_key_file = "/run/secrets/llm-gateway/cerebras-api-key"
+
+[[providers]]
+name = "msi"
+kind = "ollama"
+# msi: services.ollama on the node itself (#260), bound to its address.
+base_url = "http://192.168.10.235:11434/v1"
+max_concurrency = 1  # one CPU-bound client saturates msi (Phase 0)
+# Both msi models answer `400 "<model>" does not support thinking` to these
+# (live 2026-10-15); store, stream_options, parallel_tool_calls and
+# max_completion_tokens are accepted (llm-gateway#3).
+drop_fields = ["reasoning_effort", "reasoning"]
+# Probed every 30s (2s timeout) so /status shows msi unreachable while it is
+# off (llm-gateway#4).
+health_url = "http://192.168.10.235:11434/api/tags"
+
+# --- Ollama-native passthrough (/api/*) -------------------------------------
+# Replaces nginx ollama-router: first reachable backend wins; one whose
+# connection fails or that answers 502/503/504 is skipped (a failed connect
+# puts it last for 10s, like nginx max_fails). Keyed /api routes on `listen`;
+# `local_listen` (loopback only) forwards any path without a key, for
+# lenovo's ollama-portforward (PICODE_EP, factum), an SSH forward to it.
+[ollama]
+local_listen = "127.0.0.1:11435"
+backends = [
+  # msi: services.ollama on the node itself (#260), bound to its address.
+  { name = "msi", url = "http://192.168.10.235:11434" },
+  # acer: services.ollama on the node itself (#252), bound to its address.
+  { name = "acer", url = "http://192.168.10.110:11434" },
+]
+
+[[models]]
+provider = "gemini"
+id = "gemini-3.6-flash"
+tier = 1
+cost_class = "free"
+enabled = true
+context_window = 1048576
+limits = { rpd = 20 }
+quota_group = "flash"
+tool_capable = true
+verified = "2026-10-15"
+notes = "free RPD 20; signature kept 200, stripped 400 (Phase 0 raw curl)"
+
+[[models]]
+provider = "gemini"
+id = "gemini-3.5-flash"
+tier = 1
+cost_class = "free"
+enabled = true
+context_window = 1048576
+limits = { rpd = 20 }
+quota_group = "flash"  # billed to the gemini-3.6-flash RPD bucket (Phase 0)
+tool_capable = true
+verified = "2026-10-15"
+notes = "dummy signature 200; shares the 3.6-flash daily quota"
+
+# 3.8 and 3.7 each have their own 20 RPD. They come after 3.6/3.5 because
+# their 2026-10-15 runs hit 503 "high demand" and minute-long turns.
+[[models]]
+provider = "gemini"
+id = "gemini-3.8-flash"
+tier = 1
+cost_class = "free"
+enabled = true
+context_window = 1048576
+limits = { rpd = 20 }
+tool_capable = true
+verified = "2026-10-17"
+notes = "Pi bash+edit+bash via the gateway 2026-10-17: 5 requests, 9s; 2026-10-15 run 1 timed out on 503s"
+
+[[models]]
+provider = "gemini"
+id = "gemini-3.7-flash"
+tier = 1
+cost_class = "free"
+enabled = true
+context_window = 1048576
+limits = { rpd = 20 }
+tool_capable = true
+verified = "2026-10-17"
+notes = "Pi bash+edit+bash via the gateway 2026-10-17: 6 requests, 11s; 2026-10-15 runs took 775s / timed out on 503s"
+
+[[models]]
+provider = "cloudflare"
+id = "@cf/openai/gpt-oss-120b"
+tier = 2
+cost_class = "free"
+enabled = true
+context_window = 128000
+limits = { rpm = 300, npd = 10000 }
+# Cheaper neurons than qwen3.8-27b (pricing page 2026-10-15), so it goes first.
+neurons = { input_per_mtok = 31818, output_per_mtok = 68182 }
+quota_group = "workers-neurons"
+tool_capable = true
+# Workers AI 400s (code 5006) on an assistant tool-call message with
+# `content: null`; `""` is accepted (fact-check 2026-10-17).
+request_shims = ["assistant-null-content"]
+verified = "2026-10-17"
+notes = "Pi bash+edit+bash via the gateway with the null-content shim 2026-10-17: 7 requests, 8s"
+
+[[models]]
+provider = "cloudflare"
+id = "@cf/qwen/qwen3.8-27b"
+tier = 2
+cost_class = "free"
+enabled = true
+context_window = 262144
+# npd: Workers Free's daily neurons, metered locally from Cloudflare's published
+# per-model rates (neurons per million tokens, pricing page 2026-10-16); the
+# provider's 4006 still blocks the group if its own count runs ahead.
+limits = { rpm = 300, npd = 10000 }
+neurons = { input_per_mtok = 40909, output_per_mtok = 290909 }
+quota_group = "workers-neurons"  # one account-wide neuron allowance and rpm
+tool_capable = true
+verified = "2026-10-14"
+notes = "Workers Free 10k neurons/day, hard stop (code 4006); multi-turn edit+bash verified by router-free"
+
+[[models]]
+provider = "gemini"
+id = "gemini-3.5-flash-lite"
+tier = 2
+cost_class = "free"
+enabled = true
+context_window = 1048576
+# RPM 15 is the 429 quotaValue (pi-bench). No daily number has been observed
+# (a 500/day figure was unsupported): a provider RPD 429 blocks it until 08:00 UTC
+# (midnight Pacific), or longer if its retryDelay says so.
+limits = { rpm = 15 }
+tool_capable = true
+verified = "2026-10-15"
+notes = "Phase 0 proxy run green with signature cache; fails turn 2 without it"
+
+[[models]]
+provider = "cloudflare"
+id = "@cf/qwen/qwen2.5-coder-32b-instruct"
+tier = 2
+cost_class = "free"
+enabled = true
+context_window = 32768
+limits = { rpm = 300, npd = 10000 }
+neurons = { input_per_mtok = 60000, output_per_mtok = 90909 }
+quota_group = "workers-neurons"
+tool_capable = false
+verified = "2026-10-13"
+notes = "factum's reviewed cloud arm (no tools); shares the Workers Free 10k neurons/day with qwen3.8-27b"
+
+# Groq after the other free tier-2 models: its 8K TPM paces a Pi loop to about
+# a minute per turn. Each model has its own per-org bucket.
+[[models]]
+provider = "groq"
+id = "openai/gpt-oss-120b"
+tier = 2
+cost_class = "free"
+enabled = true
+context_window = 131072
+limits = { rpm = 30, rpd = 1000, tpm = 8000, tpd = 200000 }
+tool_capable = true
+verified = "2026-10-17"
+notes = "Pi bash+edit+bash via the gateway 2026-10-17: 6 requests, 122s (119s TPM pacing); the 2026-10-14 schema failure did not recur"
+
+[[models]]
+provider = "groq"
+id = "qwen/qwen3.8-27b"
+tier = 2
+cost_class = "free"
+enabled = true
+context_window = 131072
+limits = { rpm = 30, rpd = 1000, tpm = 8000, tpd = 200000 }
+tool_capable = true
+verified = "2026-10-17"
+notes = "Pi bash+edit+bash via the gateway 2026-10-17: 5 requests, 91s, one 429 retried; the 2026-10-14 tool-role 400 did not recur"
+
+[[models]]
+provider = "groq"
+id = "openai/gpt-oss-20b"
+tier = 2
+cost_class = "free"
+enabled = true
+context_window = 131072
+limits = { rpm = 30, rpd = 1000, tpm = 8000, tpd = 200000 }
+tool_capable = true
+verified = "2026-10-17"
+notes = "Pi bash+edit+bash via the gateway 2026-10-17: 6 requests, 122s (119s TPM pacing, no fatal 429)"
+
+[[models]]
+provider = "cerebras"
+id = "qwen-3.8-27b"
+tier = 2
+cost_class = "trial-credit"
+enabled = false
+context_window = 131072
+notes = "card on file, auto-recharge never observed off, live limits not the trial's (2026-10-17): kept out; flip to prepaid-capped with provider billing evidence and expires = 2026-11-12 (llm-gateway#13)"
+
+[[models]]
+provider = "msi"
+id = "llama3.1:8b"
+tier = 3
+cost_class = "free"
+enabled = true
+context_window = 131072
+tool_capable = true
+notes = "tool use unverified: Phase 0 run timed out with msi saturated"
+
+[[models]]
+provider = "msi"
+id = "qwen2.5-coder:7b-instruct-q4_K_M"
+tier = 3
+cost_class = "free"
+enabled = true
+context_window = 32768
+tool_capable = false
+notes = "emits tool calls as plain-text JSON (Ollama template); text-only requests"

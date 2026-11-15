@@ -4,17 +4,9 @@
 # context and the MemoryMax that fits one loaded model.
 { config, lib, ... }:
 let
-  inherit (import ../../lib/firewall.nix lib) anySourceTcp;
+  inherit (import ../../lib/firewall.nix lib) anySourceTcp ciliumInterfaces;
   cfg = config.services.ollama;
   fw = config.networking.firewall;
-  cilium = [
-    "lo"
-    "cilium_host"
-    "cilium_net"
-    "cilium_vxlan"
-    "cilium_health"
-    "lxc+"
-  ];
 in
 {
   config = lib.mkIf cfg.enable {
@@ -51,8 +43,8 @@ in
         message = "modules/homelab/ollama-host.nix: Ollama has no authentication; keep the firewall on, openFirewall off and port ${toString cfg.port} out of allowedTCPPorts and allowedTCPPortRanges, global and per interface. Admit a caller with a source-scoped rule.";
       }
       {
-        assertion = lib.all (i: lib.elem i cilium) fw.trustedInterfaces;
-        message = "modules/homelab/ollama-host.nix: a trusted interface bypasses the firewall and reaches Ollama; trust only loopback and Cilium's, not ${toString (lib.subtractLists cilium fw.trustedInterfaces)}.";
+        assertion = lib.all (i: lib.elem i ciliumInterfaces) fw.trustedInterfaces;
+        message = "modules/homelab/ollama-host.nix: a trusted interface bypasses the firewall and reaches Ollama; trust only loopback and Cilium's, not ${toString (lib.subtractLists ciliumInterfaces fw.trustedInterfaces)}.";
       }
       {
         assertion = config.systemd.services.ollama.serviceConfig ? MemoryMax;

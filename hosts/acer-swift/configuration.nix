@@ -7,6 +7,7 @@
     ../../modules/hardware/video/intel.nix
     ../../modules/homelab/ollama-host.nix
     ../../modules/homelab/open-webui.nix
+    ../../modules/homelab/llm-gateway.nix
   ];
 
   sam.profile = {
