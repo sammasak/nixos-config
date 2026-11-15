@@ -2,6 +2,7 @@
 # connection fails ("lost connection to pod") but kubectl keeps listening and
 # never exits, so Restart= never fires. This runs the forward, probes it, and
 # exits when nothing answers so the unit restarts it against the new pod.
+# An ssh forward wedges the same way when its far end is gone and before keepalives give up.
 # Any HTTP status is alive: only a failed connection means the forward is dead.
 {
   writeShellApplication,

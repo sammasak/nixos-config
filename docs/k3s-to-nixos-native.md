@@ -254,7 +254,7 @@ discovery (replaced by a declared scrape target).
    P4 proposes to move it with that posture unchanged.
 4. **Hard-coded cluster addresses** in nixos-config (Loki 10.43.92.124 for
    pi-offload, the llm-gateway 10.43.0.80) are replaced by the host address
-   when the service behind them moves; msi Ollama's already was (#299). The order of work keeps
+   when the service behind them moves; msi Ollama's and the llm-gateway's already were (#299, homelab-gitops #265). The order of work keeps
    new uses of the Loki address to one host (msi, at P1).
 
 ## Inventory and classification
