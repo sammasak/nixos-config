@@ -1,4 +1,4 @@
-{ lib, ... }:
+{ config, lib, ... }:
 {
   imports = [
     ./hardware-configuration.nix
@@ -8,7 +8,27 @@
     ../../modules/core/wifi.nix
 
     ../../modules/hardware/pi-sd-image.nix
+
+    # The fleet's monitoring (nixos-config#414); alloy-otlp, its OTLP intake, runs on acer.
+    ../../modules/homelab/monitoring/prometheus.nix
+    ../../modules/homelab/monitoring/alertmanager.nix
+    ../../modules/homelab/monitoring/grafana.nix
+    ../../modules/homelab/monitoring/node-exporter.nix
+    ../../modules/homelab/loki.nix
   ];
+
+  # Unauthenticated, per #302: the journal collectors and pi-offload push, Grafana here reads on loopback.
+  # A fresh store; the chart's volume stays on disk.
+  homelab.loki = {
+    enable = true;
+    listenAddress = config.sam.fleet.hosts.black-pi.address;
+    allowedSources = map (h: config.sam.fleet.hosts.${h}.address) [
+      "lenovo-21CB001PMX"
+      "acer-swift"
+      "msi-ms7758"
+    ];
+    ntfyUrl = "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
+  };
 
   sam.profile = {
     username = "lukas";

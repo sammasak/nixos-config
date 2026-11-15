@@ -16,6 +16,8 @@
 
     # Wake msi (the intermittent LLM worker) on the work-hours schedule.
     ../../modules/homelab/msi-power-schedule.nix
+
+    ../../modules/homelab/monitoring/node-exporter.nix
   ];
 
   sam.profile = {
@@ -152,13 +154,11 @@
     baseUrl = "http://${config.sam.fleet.hosts.${config.networking.hostName}.address}:2586";
   };
 
-  # Alertmanager runs in a pod and posts to lenovo's LAN address, so loopback
-  # is not enough. The shadow topic keeps pages single while both bridges get
-  # every notification; cutover drops ntfyUrl to take the module's default.
+  # Alertmanager on black-pi posts to lenovo's LAN address, so loopback is not
+  # enough. Pages go to the module's default topic, homelab-alerts.
   homelab.alertBridge = {
     enable = true;
     listenAddress = "0.0.0.0";
     openFirewall = true;
-    ntfyUrl = "http://127.0.0.1:${toString config.homelab.ntfy.port}/homelab-alerts-shadow";
   };
 }

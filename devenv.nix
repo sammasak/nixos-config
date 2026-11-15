@@ -226,6 +226,23 @@ let
         ${pkgs.python3}/bin/python scripts/test-journal-collector.py
       '';
 
+  # devenv's Alloy, not necessarily acer's: run it again after a flake update moves acer's
+  alloyOtlpTest =
+    gate "alloy-otlp-test"
+      (with pkgs; [
+        grafana-alloy
+        jq
+        curl
+        gnugrep
+        gnused
+        gawk
+        coreutils
+      ])
+      ''
+        bash scripts/test-alloy-otlp-sanitizer.sh
+        ${pkgs.python3}/bin/python scripts/test-alloy-otlp-log-loki.py ${lib.getExe' pkgs.grafana-alloy "alloy"} ${lib.getExe' pkgs.grafana-loki "loki"}
+      '';
+
   # flux wait bound and ~/.claude.json activation
   switchSafetyTest =
     gate "switch-safety-test"
@@ -346,6 +363,7 @@ let
       buildBoundsTest
       delegationTest
       journalCollectorTest
+      alloyOtlpTest
       switchSafetyTest
       rfBeaconsTest
       qaPushTest
@@ -722,6 +740,8 @@ in
       task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs" qaPushTest;
     "nixos:journal-collector-test" =
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
+    "nixos:alloy-otlp-test" =
+      task "acer's alloy-otlp config on a real Alloy and Loki: sentinels, prompts, identities and trace ids never reach its exporters or Loki" alloyOtlpTest;
     "nixos:switch-safety-test" =
       task "A switch waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;

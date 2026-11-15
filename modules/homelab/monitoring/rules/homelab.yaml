@@ -1,0 +1,161 @@
+# The homelab's own rules, from homelab-gitops apps/monitoring-dashboards (app-health-alerts, loki-health-alerts,
+# homelab-infra-guardrails, homelab-health-kpis), rewritten on the native node-exporter `up` and the blackbox probes:
+# no kube-state-metrics, Traefik or cert-manager metrics.
+groups:
+  - name: host-health.alerts
+    rules:
+      - alert: MsiExpectedOff
+        # The one signal for "msi is off and that is planned": msi powers off
+        # Mon-Fri 21:00 and is woken Mon-Fri 09:00 Europe/Stockholm
+        # (modules/homelab/msi-power-schedule.nix). Never notifies (null
+        # route); the Alertmanager inhibit rules keyed on it silence what a
+        # powered-off msi causes (../alertmanager.nix).
+        # PromQL time is UTC and has no time zone, so the window is the union
+        # of both seasons: 19:00 to 08:30 UTC plus Saturday and Sunday. That
+        # is one hour early in winter evenings, and up to 10:30 local in
+        # summer mornings; 08:30 gives the exporter time to come up.
+        # Fails open: it does not fire while any other host's exporter is
+        # down, so those cases still notify.
+        expr: |
+          max by (node) (up{job="node-exporter",node="msi-ms7758"} == 0)
+          and on () (
+            hour() >= 19 or hour() < 8 or (hour() == 8 and minute() < 30)
+            or day_of_week() == 0 or day_of_week() == 6
+          )
+          unless on () (
+            count(up{job="node-exporter",node!="msi-ms7758"} == 0) > 0
+          )
+        for: 2m
+        labels:
+          severity: none
+          team: homelab
+        annotations:
+          summary: "msi-ms7758 is off inside its planned power-off window"
+          description: "Source for the Alertmanager inhibit rules that silence alerts caused by the planned msi power-off. Not a notification."
+
+      - alert: NodeChronicNotReady
+        # msi-ms7758 powers off on a schedule, so it is left out.
+        expr: up{job="node-exporter",node!="msi-ms7758"} == 0
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Host {{ $labels.node }} has been unreachable for 15+ minutes"
+          description: "Prometheus on black-pi has not scraped node-exporter on {{ $labels.node }} for 15 minutes: the host is down, off the LAN, or its exporter stopped."
+
+      - alert: NodeOOMKill
+        expr: increase(node_vmstat_oom_kill{job="node-exporter"}[15m]) > 0
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "The kernel OOM-killed a process on {{ $labels.node }}"
+          description: "{{ $value | humanize }} OOM kill(s) on {{ $labels.node }} in the last 15 minutes. A unit at its MemoryMax or the host out of memory: read that host's kernel journal before raising any limit."
+
+      - alert: RootFilesystemLow
+        # The 3 GB root floor (nixos-config#302): black-pi's SD card holds Prometheus and Loki.
+        expr: node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} < 3 * 1024 * 1024 * 1024
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "{{ $labels.node }} has under 3 GiB free on /"
+          description: "{{ $value | humanize1024 }}B free on / of {{ $labels.node }}. On black-pi, Prometheus is capped at 1500MB; check Loki's /var/lib/loki and the Nix store."
+
+      - alert: LokiIngesterDown
+        expr: |
+          absent(loki_ingester_streams_created_total) == 1
+          or
+          max(up{job="loki"}) == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: homelab
+        annotations:
+          summary: "Loki ingester is not reporting metrics"
+          description: "Loki on black-pi has stopped exporting ingester metrics or its scrape target is down. New logs cannot be persisted. Run: systemctl status loki on black-pi."
+
+      # The two below replace the cluster's AppDown (Traefik) and CertificateExpiringSoon (cert-manager): black-pi
+      # probes the public names (../prometheus.nix), so they hold under Caddy too.
+      - alert: AppDown
+        expr: probe_success{job="blackbox"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: homelab
+        annotations:
+          summary: "{{ $labels.instance }} is down"
+          runbook_url: "https://github.com/sammasak/homelab-gitops/blob/main/docs/runbooks/service-unreachable.md"
+          description: "The HTTPS probe from black-pi to {{ $labels.instance }} has failed for 5 minutes: a refused connection, a bad certificate, or a status outside the module's list. Check http://192.168.10.137:9090/targets?search=blackbox."
+
+      - alert: CertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry{job="blackbox"} - time() < 14 * 86400
+        for: 1h
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "TLS certificate of {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"
+          description: "The certificate {{ $labels.instance }} serves expires in under 14 days: its renewal is failing."
+
+      - alert: PrometheusTargetsMostlyDown
+        # Self-blind guard: if a large fraction of scrape targets go down, the whole
+        # monitoring signal is suspect.
+        expr: (sum(up == 1) / count(up)) < 0.7
+        for: 10m
+        labels:
+          severity: critical
+          team: homelab
+        annotations:
+          summary: "Over 30% of Prometheus scrape targets are down"
+          description: "up ratio is {{ $value | humanizePercentage }}: Prometheus may be starved or scraping is broken. Check http://192.168.10.137:9090/targets."
+
+      - alert: HomelabHealthScoreLow
+        expr: homelab:health:score < 70
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Homelab health score is {{ $value }}/100"
+          description: "The composite homelab:health:score dropped below 70. Inspect the homelab:health:* KPI series to see which dimension regressed."
+
+  # A fixed, queryable definition of "healthy" (avg_over_time(...[30d]) gives a scorecard). The host-scope subset of
+  # the in-cluster KPIs; rules evaluate in order, so the score sees this cycle's values.
+  - name: homelab.health.kpi
+    interval: 1m
+    rules:
+      # node_ready_ratio and target_up_ratio leave out the host MsiExpectedOff fires for.
+      - record: homelab:health:node_ready_ratio
+        expr: |
+          sum(up{job="node-exporter"} unless on(node) ALERTS{alertname="MsiExpectedOff",alertstate="firing"})
+          /
+          count(up{job="node-exporter"} unless on(node) ALERTS{alertname="MsiExpectedOff",alertstate="firing"})
+      - record: homelab:health:firing_critical
+        expr: count(ALERTS{alertstate="firing",severity="critical"}) or vector(0)
+      - record: homelab:health:min_disk_free_ratio
+        expr: |
+          min(
+            node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}
+            /
+            node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}
+          )
+      - record: homelab:health:target_up_ratio
+        expr: |
+          sum(up unless on(node) ALERTS{alertname="MsiExpectedOff",alertstate="firing"})
+          /
+          count(up unless on(node) ALERTS{alertname="MsiExpectedOff",alertstate="firing"})
+      - record: homelab:health:deadman_alive
+        expr: count(ALERTS{alertname="Watchdog",alertstate="firing"}) or vector(0)
+      # Composite score (0-100): each KPI thresholded to 0/1, averaged over 5.
+      - record: homelab:health:score
+        expr: |
+          100 / 5 * (
+              (homelab:health:node_ready_ratio    >= bool 1)
+            + (homelab:health:target_up_ratio     >= bool 0.95)
+            + (homelab:health:firing_critical     <= bool 0)
+            + (homelab:health:min_disk_free_ratio >= bool 0.15)
+            + (homelab:health:deadman_alive       >= bool 1)
+          )

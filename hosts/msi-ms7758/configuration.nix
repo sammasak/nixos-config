@@ -15,15 +15,16 @@ in
     ../../modules/homelab/msi-power-schedule.nix
     ../../modules/homelab/journal-collector.nix
     ../../modules/homelab/ollama-host.nix
+    ../../modules/homelab/monitoring/node-exporter.nix
   ];
 
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
   homelab.msiPowerSchedule.selfShutdown.enable = true;
 
-  # Loki's ClusterIP: reachable only while Cilium is up on msi, until Loki gets a LAN address
+  # Loki on black-pi
   homelab.journalCollector = {
     enable = true;
-    lokiUrl = "http://10.43.92.124:3100/loki/api/v1/push";
+    lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";
     ntfyUrl = config.sam.workers.ntfyUrl;
   };
 

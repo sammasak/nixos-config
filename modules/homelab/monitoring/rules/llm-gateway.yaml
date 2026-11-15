@@ -1,0 +1,46 @@
+# llm-gateway free-quota alerts, from homelab-gitops apps/monitoring-dashboards/llm-gateway-alerts.yaml.
+# Metrics: sammasak/llm-gateway crates/gateway/src/metrics.rs; dashboard: ../dashboards/llm-gateway.json.
+groups:
+  - name: llm-gateway.alerts
+    rules:
+      # Every tier-2 quota group is under 10% of its daily allowance (a group
+      # without a configured daily limit reports 1 until the provider says
+      # it is exhausted, then 0). Tier 3 (msi) is the only floor left.
+      - alert: LLMGatewayFreeFloorLow
+        expr: |
+          max(llm_gateway_quota_remaining_ratio{tier="free-floor"}) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "LLM gateway free floor is below 10% for the day"
+          runbook_url: "https://github.com/sammasak/homelab-gitops/blob/main/docs/runbooks/llm-gateway.md#provider-exhausted-clients-get-429-with-retry-after"
+          description: "Every tier-2 (free floor) quota group has less than 10% of its daily free allowance left (best: {{ $value | humanizePercentage }}); it resets at 00:00 UTC. Requests fall to msi or get 429s. Check /status quota_groups and the LLM gateway dashboard: https://grafana.sammasak.dev/d/llm-gateway"
+
+      # A batch project was refused because only the interactive reserve of
+      # the free quota is left for it (code interactive_reserve).
+      - alert: LLMGatewayBatchHittingReserve
+        expr: |
+          sum by (project) (increase(llm_gateway_refusals_total{reason="interactive_reserve"}[15m])) > 0
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Batch project {{ $labels.project }} is held off the interactive reserve"
+          runbook_url: "https://github.com/sammasak/homelab-gitops/blob/main/docs/runbooks/llm-gateway.md#provider-exhausted-clients-get-429-with-retry-after"
+          description: "llm-gateway refused {{ $value | humanize }} requests of batch project {{ $labels.project }} in 15m: the free quota left today is reserved for interactive projects until 00:00 UTC. Check /status projects and quota_groups: https://grafana.sammasak.dev/d/llm-gateway"
+
+      # The gateway is the only path to every cloud model and to Ollama for
+      # keyed clients (Pi, Open WebUI, factum).
+      - alert: LLMGatewayDown
+        expr: |
+          up{job="llm-gateway"} == 0 or absent(up{job="llm-gateway"})
+        for: 5m
+        labels:
+          severity: critical
+          team: homelab
+        annotations:
+          summary: "LLM gateway is down"
+          runbook_url: "https://github.com/sammasak/homelab-gitops/blob/main/docs/runbooks/llm-gateway.md#gateway-down-unit-not-running-clients-get-connection-refused--502"
+          description: "Prometheus on black-pi cannot scrape llm-gateway's admin port on acer for 5m: Pi, Open WebUI and factum have no LLM path. See the runbook."

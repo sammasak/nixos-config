@@ -138,10 +138,9 @@ let
     cmp -s "$tmp" "$f" || mv "$tmp" "$f"
   '';
 
-  # monitoring/loki ClusterIP: reachable from k3s nodes only; update if the Service is
-  # recreated. Baked into the wrappers so non-login shells and timers get it too.
+  # Loki on black-pi. Baked into the wrappers so non-login shells and timers get it too.
   lokiDefault = ''
-    export PI_OFFLOAD_LOKI_URL="''${PI_OFFLOAD_LOKI_URL:-http://10.43.92.124:3100}"
+    export PI_OFFLOAD_LOKI_URL="''${PI_OFFLOAD_LOKI_URL:-http://${osConfig.sam.fleet.hosts.black-pi.address}:3100}"
   '';
 
   piOffload = pkgs.writeShellApplication {
