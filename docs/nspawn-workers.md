@@ -5,7 +5,7 @@ configuration: a stock NixOS container (`containers.<name>`, systemd-nspawn) on
 acer-swift or msi-ms7758 with the fleet's tooling (Claude Code, Codex, git, gh,
 devenv), its own persistent home, and a workspace in the host's Herdr with the
 agent running in it. It runs while declared; its home is deleted only once its
-name is in `retired`. There is no operator command. Modules:
+name is in `retired`, or replaced by a fresh one with `dev-env-reset@<name>` (Reset, below). Modules:
 `modules/workers/core.nix` (`services.devEnvironments`, nothing of this
 fleet: the part meant for publishing) and `modules/workers/default.nix`, the
 fleet adapter (`sam.workers.*`, the fleet's guest modules, credentials and the
@@ -95,6 +95,7 @@ neighbour was reclaimed to 59M.
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
 | Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later, except on a host that declares no instance, where the last name stays until `.trash` is empty (the activation that ages it out runs only while `instances` or `retired` is set) | 23 s; profile and GC roots deleted, the home moved to `<stateDir>/.trash/<name>-<date>` and deleted at the first activation a week later (recover it with `mv` meanwhile) |
+| Reset | `sudo systemctl start dev-env-reset@<name>` (the coordinator, through the deploy user, or the owner); no deploy. It refuses, and changes nothing, while a `claude` or `codex` process runs in the guest or a clone under its home has uncommitted changes, commits on no remote, or a stash: to discard those on purpose, retire the name instead. The check runs inside the guest as its user, never as host git on guest-owned clones | the container stopped, its home, profile and GC roots trashed as Retire does, the home recreated as for a new instance (fresh `~/.cache`, eval and fetcher caches, and for `rootInGuest` a new host key, so a client that trusted the old one drops its line from `~/.ssh/known_hosts_environments`), the container started again; the host store is not touched (`tests/dev-env-reset-vm.nix`, `nix build .#dev-env-reset-vm` on msi) |
 
 Removing a declaration only stops the environment: a rollback or a deploy from
 an older checkout lacks instances too, and must not delete their homes. Only a name in `retired` is

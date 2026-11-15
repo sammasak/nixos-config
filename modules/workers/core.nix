@@ -66,6 +66,54 @@ let
     echo "''${1##*/}: rootInGuest was toggled on an existing environment; retire it (or declare it under a new name) so it starts from a fresh home" >&2
     exit 1
   '';
+  # Retire and reset share these (with $d the state dir, $n the name), so a reset leaves exactly what a retire plus a
+  # new declaration would.
+  trashOne = ''
+    # a rename on the state dir's filesystem, never a copy, and never through a link
+    [[ ! -L $d/$n && -d $d/$n ]] && mv -T --no-copy "$d/$n" "$d/.trash/$n-$(date +%Y%m%d-%H%M%S)"
+    rm -rf --one-file-system "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
+  '';
+  prepareDirs = ''
+    install -d -m 0711 "$d"
+    install -d -m 0700 -o ${user} -g ${group} "$d/.nix-cache"
+    [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
+    echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
+    chmod 0644 "$d/known_hosts"
+    ${lib.concatMapStrings (
+      w:
+      let
+        o = owner w;
+      in
+      ''
+        install -d -m 0700 "$d/${w.name}"
+        if [[ ! -d $d/${w.name}/home ]]; then
+          echo ${
+            toString (if w.rootInGuest then baseOf w else 0)
+          } > "$d/${w.name}/.id-base.new" && mv -f "$d/${w.name}/.id-base.new" "$d/${w.name}/.id-base"
+          install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/home"
+        fi
+        # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
+        mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
+        [[ -d $d/${w.name}/eval-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
+      ''
+      + lib.optionalString w.rootInGuest ''
+        [[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
+        [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
+        chown ${toString (baseOf w)}:${toString (baseOf w)} "$d/${w.name}/ssh_host_ed25519_key"
+        echo "${aliasOf w} $(cut -d' ' -f1,2 "$d/${w.name}/ssh_host_ed25519_key.pub")" >> "$d/known_hosts"
+      ''
+    ) instances}
+  '';
+  # its own process, so the ERR trap marks any failed step: inside an if condition bash would ignore it
+  resetSteps = pkgs.writeShellScript "dev-env-reset-steps" ''
+    rc=0
+    trap rc=1 ERR
+    d=${lib.escapeShellArg cfg.stateDir} n=$1
+    ${trashOne}
+    [[ ! -e $d/$n ]] || rc=1
+    ${prepareDirs}
+    exit "$rc"
+  '';
   aliasOf = w: if w.rootInGuest then "${w.name}.${keyAlias}" else keyAlias;
   hostKeyOf =
     w:
@@ -695,42 +743,12 @@ in
           [[ -d $d ]] && install -d -m 0700 "$d/.trash"
           for n in ${lib.escapeShellArgs cfg.retired}; do
             ${config.systemd.package}/bin/systemctl is-active --quiet "container@$n.service" && continue
-            # a rename on the state dir's filesystem, never a copy, and never through a link
-            [[ ! -L $d/$n && -d $d/$n ]] && mv -T --no-copy "$d/$n" "$d/.trash/$n-$(date +%Y%m%d-%H%M%S)"
-            rm -rf --one-file-system "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
+            ${trashOne}
           done
           # Aged by when it was trashed (the rename sets the entry's ctime), not by tmpfiles: that ages each file by its
           # own times, so a retired home's old files would go at its next clean.
           [[ -d $d/.trash ]] && ${pkgs.findutils}/bin/find "$d/.trash" -mindepth 1 -maxdepth 1 -cmin +10080 -exec rm -rf --one-file-system {} +
-          install -d -m 0711 "$d"
-          install -d -m 0700 -o ${user} -g ${group} "$d/.nix-cache"
-          [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
-          echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
-          chmod 0644 "$d/known_hosts"
-          ${lib.concatMapStrings (
-            w:
-            let
-              o = owner w;
-            in
-            ''
-              install -d -m 0700 "$d/${w.name}"
-              if [[ ! -d $d/${w.name}/home ]]; then
-                echo ${
-                  toString (if w.rootInGuest then baseOf w else 0)
-                } > "$d/${w.name}/.id-base.new" && mv -f "$d/${w.name}/.id-base.new" "$d/${w.name}/.id-base"
-                install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/home"
-              fi
-              # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target
-              mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
-              [[ -d $d/${w.name}/eval-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
-            ''
-            + lib.optionalString w.rootInGuest ''
-              [[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
-              [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
-              chown ${toString (baseOf w)}:${toString (baseOf w)} "$d/${w.name}/ssh_host_ed25519_key"
-              echo "${aliasOf w} $(cut -d' ' -f1,2 "$d/${w.name}/ssh_host_ed25519_key.pub")" >> "$d/known_hosts"
-            ''
-          ) instances}
+          ${prepareDirs}
         '';
       };
     }
@@ -739,6 +757,64 @@ in
     # host: without this the host's collection deletes every environment's built shells. The daemon also collects
     # on its own when min-free is set, so the timer refreshes the roots between the scheduled runs too.
     (lib.mkIf (cfg.instances != { }) {
+      # `systemctl start dev-env-reset@<name>`: a fresh home for a declared instance without a deploy, refused while
+      # its agent runs or a clone in it holds work that is not pushed (retire it to discard that on purpose).
+      systemd.services."dev-env-reset@" = {
+        description = "Reset developer environment %i to a fresh home";
+        serviceConfig.Type = "oneshot";
+        scriptArgs = "%i";
+        path = [
+          pkgs.coreutils
+          pkgs.findutils
+          pkgs.gnugrep
+          pkgs.util-linux
+          config.systemd.package
+        ];
+        enableStrictShellChecks = true;
+        script = ''
+          n=$1
+          names=${lib.escapeShellArg (lib.concatMapStringsSep " " (w: w.name) running)}
+          [[ " $names " == *" $n "* ]] || { echo "$n: not a declared, unpaused instance" >&2; exit 1; }
+          systemctl is-active --quiet "container@$n.service" || { echo "$n: container@$n is not running" >&2; exit 1; }
+          # A real agent arrives over the guest's sshd, so it runs in the container unit's cgroup.
+          cg=/sys/fs/cgroup$(systemctl show -p ControlGroup --value "container@$n.service")
+          busy=$(find "$cg" -name cgroup.procs -exec cat {} + | while read -r pid; do
+            mapfile -d ''' -t argv < "/proc/$pid/cmdline" 2>/dev/null || continue
+            for a in "''${argv[@]:0:3}"; do
+              case $a in claude | codex | */claude | */codex | */.claude-wrapped | */.codex-wrapped | *claude-code*/cli.js) echo "$pid"; break ;; esac
+            done
+          done) || true
+          [[ -z $busy ]] || { echo "$n: an agent is running (pids ''${busy//$'\n'/ }); not reset" >&2; exit 1; }
+          # Run by the guest's own systemd as its user, inside the container's limits: git acts on the clones' config
+          # (hooks, fsmonitor, filters), which must not run on the host.
+          # shellcheck disable=SC2016 # the script expands inside the guest
+          held=$(systemd-run -M "$n" --uid=${user} --wait --pipe --quiet -- ${pkgs.bash}/bin/bash -c '
+            cd "$HOME" || { echo "the home cannot be entered"; exit 0; }
+            errs=$(${pkgs.findutils}/bin/find . -maxdepth 5 -name .git -prune -print 2>&1 >/dev/null)
+            [[ -z $errs ]] || echo "paths under the home cannot be read"
+            ${pkgs.findutils}/bin/find . -maxdepth 5 -name .git -prune -print 2>/dev/null | while read -r g; do
+              r=''${g%/.git}
+              st=$(${pkgs.git}/bin/git -C "$r" status --porcelain 2>&1) || st="unreadable: $st"
+              [[ -z $st ]] || echo "$r: uncommitted changes or an unreadable repository"
+              head=; ${pkgs.git}/bin/git -C "$r" rev-parse -q --verify HEAD >/dev/null && head=HEAD
+              [[ -z $(${pkgs.git}/bin/git -C "$r" log --branches $head --not --remotes --oneline 2>&1) ]] || echo "$r: commits on no remote"
+              [[ -z $(${pkgs.git}/bin/git -C "$r" stash list 2>&1) ]] || echo "$r: a stash"
+            done
+            exit 0
+          ') || { echo "$n: could not check the guest for unpushed work; not reset" >&2; exit 1; }
+          [[ -z $held ]] || { printf '%s: not reset, the guest holds work that is not pushed:\n%s\n' "$n" "$held" >&2; exit 1; }
+          systemctl stop "container@$n.service"
+          install -d -m 0700 ${lib.escapeShellArg cfg.stateDir}/.trash
+          if ! ${resetSteps} "$n"; then
+            systemctl start "container@$n.service" || true
+            echo "$n: the reset failed after the stop; the container was started again on what is left" >&2
+            exit 1
+          fi
+          systemctl start "container@$n.service"
+          echo "$n: reset; the old home is in ${cfg.stateDir}/.trash for a week"
+        '';
+      };
+
       systemd.timers.dev-environments-gcroots = {
         wantedBy = [ "timers.target" ];
         timerConfig = {
