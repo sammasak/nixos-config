@@ -403,9 +403,9 @@ tests and rollback; each needs the one before it.
 | Step | Change | Status | Gate |
 |---|---|---|---|
 | 1 | Prometheus, Alertmanager, Grafana, Loki and alloy-otlp as NixOS services (black-pi; alloy-otlp on acer); the in-cluster stack removed | nixos half merged (#419); host deploys, then homelab-gitops #271, pending (#414) | owner: each deploy, the #271 merge |
-| 2 | Caddy on acer fronts every name and replaces Traefik; herman and karta as Nix-built static sites; zot retires | planned, issue drafted | owner: acer deploy, secrets on acer, DNS cut-over, zot data |
-| 3 | Authentik and its Postgres as NixOS services, Caddy `forward_auth` | planned, issue drafted | owner: secrets, the database cut-over |
-| 4 | Remove k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns; wildcard record and AdGuard rewrites | planned, issue drafted | owner: every host deploy, DNS, state deletion |
+| 2 | Caddy on acer fronts every name and replaces Traefik; herman and karta as Nix-built static sites; zot retires | planned, #420 | owner: acer deploy, secrets on acer, DNS cut-over, zot data |
+| 3 | Authentik and its Postgres as NixOS services, Caddy `forward_auth` | planned, #421 | owner: secrets, the database cut-over |
+| 4 | Remove k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns; wildcard record and AdGuard rewrites | planned, #422 | owner: every host deploy, DNS, state deletion |
 
 Done outside the steps: the llm-gateway (homelab-gitops #265) and open-webui
 (#262) on acer, msi's Ollama (#394, #395), and the removals in homelab-gitops
