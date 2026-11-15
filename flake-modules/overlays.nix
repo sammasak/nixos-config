@@ -28,6 +28,10 @@ let
           rustPlatform = factumRustPlatform;
           src = inputs.alert-bridge;
         };
+        llmGateway = final.callPackage ../pkgs/llm-gateway/package.nix {
+          rustPlatform = factumRustPlatform;
+          src = inputs.llm-gateway;
+        };
         nixAudit = final.callPackage ../pkgs/nix-audit/package.nix {
           rustPlatform = factumRustPlatform;
           src = inputs.nix-audit;
