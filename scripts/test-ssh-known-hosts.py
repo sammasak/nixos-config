@@ -32,6 +32,10 @@ SOPS_RECIPIENTS = {
     "black-pi": "age16l5rqqh0xv9r6rcuyyz2s9ca5ex25azg9dp4z460zh2r3eqwd3ps9yx7tn",
     "naked-pi": "age1kdjqlt6s6fklcdjm2y9dggyvc9nmpcglsu3gduzudcl85ur8jdwqz26wer",
 }
+# files encrypted ahead of the module that will declare them: the host that will, and what lands it
+AWAITING = {
+    "secrets/homelab/grafana.yaml": ("black-pi", "nixos-config #414 (a) declares Grafana's secrets"),
+}
 LOOPBACK = ["localhost", "127.0.0.1", "::1"]
 
 
@@ -112,6 +116,10 @@ def sops_checks(S):
     check(len(files) >= 12 and "secrets/cosign.key" in files, f"every encrypted file is read, the JSON cosign.key too ({len(files)})")
     for f in files:
         extra = needless(f, declared.get(f, set()), recipients_of)
+        if f in AWAITING:
+            host, why = AWAITING[f]
+            check(extra == [host], f"{f}: {host} is its only undeclared recipient until {why}; once it declares, drop the entry ({extra})")
+            continue
         check(not extra, f"{f}: encrypted only to fleet hosts that declare one of its secrets (also: {extra})")
     added = lambda f: recipients_of(f) | {SOPS_RECIPIENTS["msi-ms7758"]}
     check(needless("secrets/homelab/tailscale.yaml", declared.get("secrets/homelab/tailscale.yaml", set()), added) == ["msi-ms7758"],
