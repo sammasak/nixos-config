@@ -157,8 +157,9 @@ Each phase ends with a measurement; "no change" is a valid result.
 3. **Decide.** Adopt if the warm start is no worse and the cold start or the
    build-to-running path is clearly better. Otherwise fall back to preloaded
    images or stop.
-4. **Migrate.** In order of how ready the derivation is: system-one, karta-web,
-   styrka-web, herman-web, then the rest. Each app repo renders its manifest
+4. **Migrate.** In order of how ready the derivation is: karta-web,
+   herman-web, then the rest (system-one and styrka-web were removed instead,
+   owner, 2026-11-15). Each app repo renders its manifest
    with the store path.
 5. **Remove.** When nothing pulls from zot, remove zot and the manual build
    steps. Prune the stale images on msi.

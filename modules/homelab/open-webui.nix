@@ -65,15 +65,6 @@ let
   gateway = "http://10.43.0.80:8080"; # the llm-gateway ClusterIP, as Pi uses it
 in
 {
-  # The KEDA interceptor's ClusterIP: it routes kokoro and whisper by Host header, so they need their names. Removed
-  # when these move off k3s (nixos-config #299).
-  networking.hosts = {
-    "10.43.22.198" = [
-      "kokoro.llm.svc.cluster.local"
-      "whisper.llm.svc.cluster.local"
-    ];
-  };
-
   sops.secrets = {
     open_webui_gateway_key.sopsFile = sopsFile;
     open_webui_secret_key.sopsFile = sopsFile;
@@ -112,15 +103,9 @@ in
       ENABLE_PASSWORD_AUTH = "True";
       DEFAULT_USER_ROLE = "user";
       ENABLE_SIGNUP = "False";
-      AUDIO_TTS_ENGINE = "openai";
-      AUDIO_TTS_OPENAI_API_BASE_URL = "http://kokoro.llm.svc.cluster.local:8080/v1";
-      AUDIO_TTS_OPENAI_API_KEY = "kokoro-local";
-      AUDIO_TTS_MODEL = "kokoro";
-      AUDIO_TTS_VOICE = "af_heart";
-      AUDIO_STT_ENGINE = "openai";
-      AUDIO_STT_OPENAI_API_BASE_URL = "http://whisper.llm.svc.cluster.local:8080/v1";
-      AUDIO_STT_OPENAI_API_KEY = "whisper-local";
-      AUDIO_STT_MODEL = "Systran/faster-distil-whisper-small.en";
+      # Speech stays in the browser: text-to-speech defaults to its Web API already, but the default speech-to-text
+      # engine runs Whisper inside the app and fetches its model at first use.
+      AUDIO_STT_ENGINE = "web";
       # what `open-webui serve` sets before importing the app
       FROM_INIT_PY = "true";
       FRONTEND_BUILD_DIR = "${cfg.package.frontend}/share/open-webui";
