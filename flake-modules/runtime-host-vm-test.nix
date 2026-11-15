@@ -11,6 +11,14 @@
     { pkgs, system, ... }:
     {
       packages = lib.optionalAttrs (system == "x86_64-linux") {
+        dev-env-reset-vm = import ../tests/dev-env-reset-vm.nix {
+          inherit pkgs fleetModules;
+          inherit (config.configurations.nixos.msi-ms7758) roles;
+          roleModules = with config.flake.modules.nixos; [
+            role-base
+            role-runtime-host
+          ];
+        };
         runtime-host-role-vm = import ../tests/runtime-host-role-vm.nix {
           inherit pkgs fleetModules;
           inherit (config.configurations.nixos.msi-ms7758) roles;
