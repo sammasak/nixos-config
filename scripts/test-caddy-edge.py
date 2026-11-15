@@ -69,6 +69,21 @@ for server in servers.values():
 expected = {f"{name}.sammasak.dev" for name in backends}
 check(set(routes) == expected, f"exactly the edge's names have a route {sorted(set(routes) ^ expected)}")
 
+tls = config["apps"].get("tls", {})
+check("automation" not in tls, f"Caddy issues no certificate of its own {tls.get('automation')}")
+cert = P["cert"]
+check(cert["extraDomainNames"] == ["*.sammasak.dev"], f"the ACME certificate is the wildcard {cert['extraDomainNames']}")
+files = tls.get("certificates", {}).get("load_files", [])
+loaded = [(f["certificate"], f["key"]) for f in files]
+check(loaded == [(f"{cert['directory']}/cert.pem", f"{cert['directory']}/key.pem")],
+      f"Caddy loads that certificate alone {loaded}")
+tags = set(files[0].get("tags", [])) if len(files) == 1 else set()
+policies = [p for server in servers.values() for p in server.get("tls_connection_policies", [])]
+selecting = [p for p in policies if p != {}]
+check(len(selecting) == 1 and set(selecting[0].get("match", {}).get("sni", [])) == expected
+      and set(selecting[0].get("certificate_selection", {}).get("any_tag", [])) == tags != set(),
+      f"one TLS policy serves it for exactly the edge's names {selecting}")
+
 for name, backend in backends.items():
     route = routes.get(f"{name}.sammasak.dev")
     if route is None:
@@ -80,10 +95,15 @@ for name, backend in backends.items():
         auth = [i for i, (h, m) in enumerate(steps) if is_forward_auth(h) and m == ()]
         check(len(auth) == 1 and proxied and auth[0] < proxied[0],
               f"{name} runs forward_auth, unconditionally, before its backend")
-        copied = {k for h, _ in steps if is_forward_auth(h) for r in h.get("handle_response", [])
-                  for x, _ in flatten([y for rr in r["routes"] for y in rr["handle"]])
-                  for k in x.get("request", {}).get("set", {})}
+        copies = [x.get("request", {}) for h, _ in steps if is_forward_auth(h) for r in h.get("handle_response", [])
+                  for x, _ in flatten([y for rr in r["routes"] for y in rr["handle"]])]
+        copied = {k for c in copies for k in c.get("set", {})}
         check(copied == headers, f"{name} copies the five X-Authentik-* fields {sorted(copied)}")
+        for header in sorted(headers):
+            deleted = [i for i, c in enumerate(copies) if header in c.get("delete", [])]
+            setting = [i for i, c in enumerate(copies) if header in c.get("set", {})]
+            check(len(deleted) == 1 and len(setting) == 1 and deleted[0] < setting[0],
+                  f"{name} deletes a client-sent {header} before it sets the outpost's")
         outpost = [m for h, m in steps if authentik in dials(h) and not is_forward_auth(h)]
         check(outpost == [({"path": ["/outpost.goauthentik.io/*"]},)],
               f"{name} sends only /outpost.goauthentik.io/* to Authentik besides forward_auth {outpost}")

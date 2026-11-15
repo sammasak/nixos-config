@@ -42,7 +42,7 @@ in
     CPUQuota = "400%";
   };
 
-  # lenovo's ntfy server (homelab.ntfy.baseUrl in its configuration)
+  # lenovo's native ntfy on its LAN port, not the public name: pages must not need acer's Caddy
   sam.workers.ntfyUrl = lib.mkDefault "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
 
   # Headless, Stylix has nothing to theme and its Home Manager half has failed an activation (#185).

@@ -13,7 +13,6 @@ let
   domain = "sammasak.dev";
   # authentik-server's ClusterIP: Helm-owned, so stable until step 3 (the auth probe catches a change)
   authentik = "10.43.238.182:80";
-  ntfyUrl = "http://${hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
   # the only OTLP pushers: each host's native-otel-relay, and black-pi's blackbox probe
   otlpSources = map (h: hosts.${h}.address) [
     "lenovo-21CB001PMX"
@@ -100,7 +99,7 @@ in
       DynamicUser = true;
     };
     script = ''
-      ${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 --retry-all-errors --retry-max-time 60 -H "Priority: high" -d "caddy failed on ${config.networking.hostName}: every *.${domain} name is down" ${lib.escapeShellArg ntfyUrl}
+      ${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 --retry-all-errors --retry-max-time 60 -H "Priority: high" -d "caddy failed on ${config.networking.hostName}: every *.${domain} name is down" ${lib.escapeShellArg config.sam.workers.ntfyUrl}
     '';
   };
 

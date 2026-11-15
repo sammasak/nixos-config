@@ -34,8 +34,6 @@ let
     https_2xx_401 = [ "https://llm-gateway.sammasak.dev/v1/models" ];
     # forward auth sends a browser without a session to Authentik
     https_302_auth = [ "https://chat.sammasak.dev" ];
-    # black-pi is on the allowlist; without a bearer token Alloy refuses
-    https_401_405 = [ "https://otlp.sammasak.dev/v1/logs" ];
   };
   https = codes: {
     prober = "http";
@@ -71,6 +69,7 @@ in
               ];
             };
           };
+          # otlp, whose target comes with the AdGuard repoint: Traefik refuses black-pi
           https_401_405 = https [
             401
             405

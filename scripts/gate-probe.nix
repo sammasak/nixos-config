@@ -205,6 +205,7 @@ let
       caddy = lib.getExe acer.services.caddy.package;
       inherit (acer.services.caddy) configFile enableReload;
       fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
+      cert = { inherit (acer.security.acme.certs."sammasak.dev") directory extraDomainNames; };
       failing = {
         acer = failing acer;
         noCaddy = failing (
