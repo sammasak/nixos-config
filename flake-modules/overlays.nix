@@ -51,6 +51,11 @@ let
           inherit (inputs.herman) rev;
           wasmBindgenCli = wasmBindgenCli inputs.herman;
         };
+        kartaWeb = final.callPackage ../pkgs/karta-web/package.nix {
+          src = inputs.karta;
+          inherit (inputs.karta) rev;
+          wasmBindgenCli = wasmBindgenCli inputs.karta;
+        };
       }
     )
   ];

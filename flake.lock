@@ -318,6 +318,23 @@
         "type": "github"
       }
     },
+    "karta": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790696348,
+        "narHash": "sha256-YI0ixTvzrX3kOdXlDwaoHwGnMIMdx8bCdKisYf/g+Ds=",
+        "ref": "refs/heads/main",
+        "rev": "793aa6f38ac652ee22589d2aeaa53a539519f5d4",
+        "revCount": 121,
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/karta"
+      },
+      "original": {
+        "rev": "793aa6f38ac652ee22589d2aeaa53a539519f5d4",
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/karta"
+      }
+    },
     "llm-gateway": {
       "flake": false,
       "locked": {
@@ -479,6 +496,7 @@
         "herman": "herman",
         "home-manager": "home-manager",
         "import-tree": "import-tree",
+        "karta": "karta",
         "llm-gateway": "llm-gateway",
         "nix-audit": "nix-audit",
         "nix-index-database": "nix-index-database",
