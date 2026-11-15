@@ -1,0 +1,290 @@
+{
+  "title": "Pi agents",
+  "uid": "pi-agents",
+  "schemaVersion": 36,
+  "version": 6,
+  "timezone": "utc",
+  "refresh": "5m",
+  "time": {"from": "now-24h", "to": "now"},
+  "tags": ["pi", "agents", "loki"],
+  "templating": {
+    "list": [
+      {"name": "run_id", "type": "textbox", "label": "run id (blank = all)", "query": "", "current": {"text": "", "value": ""}}
+    ]
+  },
+  "panels": [
+    {
+      "id": 14, "title": "Needs attention (24h)", "type": "stat",
+      "description": "Runs that did not pass (failed, invalid, error, terminated, or stopped as stuck, budget, refusal, oracle-unavailable, verdict-boundary), plus viewers that saw no run_end. Their herdr pane stays open.",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"noValue": "0", "color": {"mode": "thresholds"},
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}}},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\"} | json | event=\"attention\" [24h]))", "queryType": "instant"}]
+    },
+    {
+      "id": 15, "title": "Running now", "type": "stat",
+      "description": "Runs with a run_start and no run_end in the last 3h (a run killed without cleanup counts until it leaves the window).",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"noValue": "0", "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"expr": "count(sum by (run_id) (count_over_time({job=\"pi-agent\"} | json | event=\"run_start\" [3h])) unless on (run_id) sum by (run_id) (count_over_time({job=\"pi-agent\"} | json | event=\"run_end\" [3h])))", "queryType": "instant"}]
+    },
+    {
+      "id": 16, "title": "Viewer panes open (24h)", "type": "stat",
+      "description": "herdr viewer panes opened (view_opened) that pi-view has not closed (view_closed, on a pass). Panes of runs needing attention stay open until closed by hand, which Loki does not see.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"noValue": "0"}},
+      "targets": [{"expr": "count(sum by (run_id) (count_over_time({job=\"pi-agent\"} | json | event=\"view_opened\" [24h])) unless on (run_id) sum by (run_id) (count_over_time({job=\"pi-agent\"} | json | event=\"view_closed\" [24h])))", "queryType": "instant"}]
+    },
+    {
+      "id": 17, "title": "Runs needing attention (time range)", "type": "table",
+      "description": "attention events: why the run stopped, who asked and through what. Look one up with pi-view <run id>.",
+      "gridPos": {"h": 8, "w": 15, "x": 0, "y": 4},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {"sortBy": [{"displayName": "run_id", "desc": true}]},
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true},
+        "indexByName": {"run_id": 0, "reason": 1, "status": 2, "repo": 3, "requested_by": 4, "via": 5, "issue": 6, "note": 7}}}],
+      "targets": [{"expr": "sum by (run_id, reason, status, repo, requested_by, via, issue, note) (count_over_time({job=\"pi-agent\"} | json | event=\"attention\" [$__range]))", "queryType": "instant", "format": "table"}]
+    },
+    {
+      "id": 18, "title": "Runs in progress (3h)", "type": "table",
+      "gridPos": {"h": 8, "w": 9, "x": 15, "y": 4},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {"sortBy": [{"displayName": "run_id", "desc": true}]},
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true},
+        "renameByName": {"provenance_requested_by": "requested_by", "provenance_via": "via", "provenance_issue": "issue"},
+        "indexByName": {"run_id": 0, "repo": 1, "provenance_requested_by": 2, "provenance_via": 3, "provenance_issue": 4, "host": 5}}}],
+      "targets": [{"expr": "sum by (run_id, repo, host, provenance_requested_by, provenance_via, provenance_issue) (count_over_time({job=\"pi-agent\"} | json | event=\"run_start\" [3h])) unless on (run_id) sum by (run_id) (count_over_time({job=\"pi-agent\"} | json | event=\"run_end\" [3h]))", "queryType": "instant", "format": "table"}]
+    },
+    {
+      "id": 1, "title": "Runs (24h)", "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 12},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\"} | json | event=\"run_end\" [24h]))", "queryType": "instant"}]
+    },
+    {
+      "id": 2, "title": "Passed (24h)", "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 12},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\"} | json | event=\"run_end\" | status=\"passed\" [24h]))", "queryType": "instant"}]
+    },
+    {
+      "id": 3, "title": "Pi tokens (24h)", "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 12},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [{"expr": "sum(sum_over_time({job=\"pi-agent\"} | json | event=\"run_end\" | unwrap pi_tokens [24h]))", "queryType": "instant"}]
+    },
+    {
+      "id": 4, "title": "Router refusals (24h)", "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 12},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "orange"}}},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\"} | json | event=\"assistant\" | provider=\"router\" [24h]))", "queryType": "instant"}]
+    },
+    {
+      "id": 5, "title": "Tool errors (24h)", "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 12},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "red"}}},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\"} | json | event=\"tool\" | is_error=\"true\" [24h]))", "queryType": "instant"}]
+    },
+    {
+      "id": 6, "title": "Run duration p95 (24h)", "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 12},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "targets": [{"expr": "quantile_over_time(0.95, {job=\"pi-agent\"} | json | event=\"run_end\" | unwrap elapsed_s [24h]) by (job)", "queryType": "instant"}]
+    },
+    {
+      "id": 7, "title": "Runs by status", "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}},
+      "targets": [{"expr": "sum by (status) (count_over_time({job=\"pi-agent\"} | json | event=\"run_end\" [$__interval]))", "legendFormat": "{{status}}"}]
+    },
+    {
+      "id": 8, "title": "Model responses by physical model", "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}},
+      "targets": [{"expr": "sum by (provider, model) (count_over_time({job=\"pi-agent\"} | json | event=\"assistant\" [$__interval]))", "legendFormat": "{{provider}}/{{model}}"}]
+    },
+    {
+      "id": 9, "title": "Tokens per model", "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {"expr": "sum by (model) (sum_over_time({job=\"pi-agent\"} | json | event=\"assistant\" | unwrap tokens_in [$__interval]))", "legendFormat": "in {{model}}"},
+        {"expr": "sum by (model) (sum_over_time({job=\"pi-agent\"} | json | event=\"assistant\" | unwrap tokens_out [$__interval]))", "legendFormat": "out {{model}}"}
+      ]
+    },
+    {
+      "id": 10, "title": "Check results", "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}},
+      "targets": [{"expr": "sum by (passed) (count_over_time({job=\"pi-agent\"} | json | event=\"check\" [$__interval]))", "legendFormat": "passed={{passed}}"}]
+    },
+    {
+      "id": 12, "title": "SDLC loop: red evaluations by stage", "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}},
+      "targets": [{"expr": "sum by (stage) (count_over_time({job=\"pi-agent\"} | json | event=\"stage_eval\" | red=\"true\" [$__interval]))", "legendFormat": "{{stage}}"}]
+    },
+    {
+      "id": 13, "title": "SDLC loop: autofix vs Pi packets, stuck, regressions, budget stops", "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}},
+      "targets": [
+        {"expr": "sum by (guard) (count_over_time({job=\"pi-agent\"} | json | event=\"autofix\" [$__interval]))", "legendFormat": "autofix {{guard}}"},
+        {"expr": "sum by (guard) (count_over_time({job=\"pi-agent\"} | json | event=\"packet\" [$__interval]))", "legendFormat": "pi {{guard}}"},
+        {"expr": "sum by (event) (count_over_time({job=\"pi-agent\"} | json | event=~\"stuck|regression|budget\" [$__interval]))", "legendFormat": "{{event}}"}
+      ]
+    },
+    {
+      "id": 11, "title": "Run traces (events)", "type": "logs",
+      "gridPos": {"h": 14, "w": 24, "x": 0, "y": 40},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Ascending"},
+      "targets": [{"expr": "{job=\"pi-agent\"} |= \"$run_id\" | json | line_format \"{{.run_id}} r{{.round}} {{.event}} {{.stage}} {{.guard}} {{.status}}{{.provider}}/{{.model}} {{.tool}} {{.outcome}} {{.gate}} {{.stop_reason}}{{.reason}} in={{.tokens_in}} out={{.tokens_out}} {{.error}}\""}]
+    },
+    {
+      "id": 19, "title": "Issue pipeline (pi-ticket, ADR-028)", "type": "row", "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 54}, "panels": []
+    },
+    {
+      "id": 20, "title": "pi-ticket runs today (UTC) vs cap 5", "type": "stat",
+      "description": "pi-offload run_start events requested via pi-ticket since 00:00 UTC: the same count pi-ticket's daily cap (5, all hosts) checks before dispatch.",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 55}, "timeFrom": "now/d",
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"noValue": "0", "max": 5, "color": {"mode": "thresholds"},
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 4}, {"color": "red", "value": 5}]}}},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\"} |= \"pi-ticket\" | json | event=\"run_start\" | provenance_via=\"pi-ticket\" [$__range]))", "queryType": "instant"}]
+    },
+    {
+      "id": 21, "title": "Accepted to review", "type": "stat",
+      "description": "pi-ticket issue outcomes in the time range that passed G0-G3 cleanly and opened a draft PR (agent:pi-review). A red-then-green retry (outcome review-flaky) also opens a PR but is not counted here (ADR-028 §6).",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 55},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"noValue": "0", "color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | outcome=\"review\" [$__range]))", "queryType": "instant"}]
+    },
+    {
+      "id": 22, "title": "Blocked", "type": "stat",
+      "description": "pi-ticket issue outcomes in the time range that went to agent:pi-blocked (any gate, including quota).",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 55},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"noValue": "0", "color": {"mode": "thresholds"},
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}}},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | outcome=\"blocked\" [$__range]))", "queryType": "instant"}]
+    },
+    {
+      "id": 23, "title": "Pass rate", "type": "stat",
+      "description": "Accepted to review / all pi-ticket issue outcomes in the time range; review-flaky counts as not passed.",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 55},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 0, "min": 0, "max": 1}},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | outcome=\"review\" [$__range])) / sum(count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" [$__range]))", "queryType": "instant"}]
+    },
+    {
+      "id": 24, "title": "Flagged retries, 30d (red, then green)", "type": "stat",
+      "description": "Last 30 days: runs whose repo sdlc gate was red, then green on the one retry (ADR-028 §6). Each is a flaky test in the repo or a change the reviewer must check; look at every one. The event push is best effort: a lost push shows as outcome_push false in the run host's runs.jsonl, and the PR still carries the flag.",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 55}, "timeFrom": "30d",
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"noValue": "0", "color": {"mode": "thresholds"},
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}}},
+      "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | flaky=\"true\" [$__range]))", "queryType": "instant"}]
+    },
+    {
+      "id": 25, "title": "Pi tokens per accepted diff", "type": "stat",
+      "description": "Pi tokens of the runs accepted to review / their count, in the time range. Tokens of earlier blocked attempts at the same issue are not included.",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 55},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"noValue": "n/a", "unit": "short", "decimals": 0}},
+      "targets": [{"expr": "sum(sum_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | outcome=\"review\" | unwrap pi_tokens [$__range])) / sum(count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | outcome=\"review\" [$__range]))", "queryType": "instant"}]
+    },
+    {
+      "id": 26, "title": "pi-ticket runs per day (last 7 days, UTC, cap 5)", "type": "barchart",
+      "description": "pi-offload run_start events requested via pi-ticket, one bar per UTC day, today so far included (up to an hour behind; the stat above is live). Counted per hour and summed per day (a [1d] range query would put each day's count on the next day, homelab-gitops#110). The red line is the daily cap.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 59}, "timeFrom": "now-6d/d+1h", "hideTimeOverride": true,
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {"stacking": "normal", "showValue": "auto", "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "fieldConfig": {"defaults": {"min": 0, "custom": {"fillOpacity": 60, "thresholdsStyle": {"mode": "line"}},
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 5}]}}, "overrides": []},
+      "transformations": [{"id": "seriesToRows", "options": {}},
+        {"id": "calculateField", "options": {"mode": "binary", "alias": "Day", "replaceFields": false,
+          "binary": {"left": {"matcher": {"id": "byName", "options": "Time"}}, "operator": "-", "right": {"fixed": "3600000"}}}},
+        {"id": "convertFieldType", "options": {"conversions": [{"targetField": "Day", "destinationType": "time"}]}},
+        {"id": "formatTime", "options": {"timeField": "Day", "outputFormat": "YYYY-MM-DD", "useTimezone": true}},
+        {"id": "groupBy", "options": {"fields": {"Day": {"operation": "groupby"}, "Metric": {"operation": "groupby"}, "Value": {"operation": "aggregate", "aggregations": ["sum"]}}}},
+        {"id": "sortBy", "options": {"sort": [{"field": "Day"}]}},
+        {"id": "groupingToMatrix", "options": {"columnField": "Metric", "rowField": "Day", "valueField": "Value (sum)", "emptyValue": "zero"}}],
+      "targets": [{"refId": "A", "expr": "sum(count_over_time({job=\"pi-agent\"} |= \"pi-ticket\" | json | event=\"run_start\" | provenance_via=\"pi-ticket\" [1h]))", "step": "1h", "legendFormat": "runs"}, {"refId": "Z", "expr": "vector(0)", "step": "1h", "legendFormat": "runs"}]
+    },
+    {
+      "id": 27, "title": "Issue outcomes per day by gate (last 7 days, UTC)", "type": "barchart",
+      "description": "One bar per UTC day, today so far included (up to an hour behind). review = passed G0-G3 cleanly; review-flaky = passed after one flagged retry; blocked shows the gate it stopped at (lint, prepare, quota, g2 Pi, g3 verify, push, pr, internal). Pass rate by gate over time.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 59}, "timeFrom": "now-6d/d+1h", "hideTimeOverride": true,
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {"stacking": "normal", "showValue": "never", "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "fieldConfig": {"defaults": {"min": 0, "custom": {"fillOpacity": 60}}, "overrides": [{"matcher": {"id": "byName", "options": "zero"}, "properties": [{"id": "custom.hideFrom", "value": {"legend": true, "tooltip": true, "viz": false}}]}]},
+      "transformations": [{"id": "seriesToRows", "options": {}},
+        {"id": "calculateField", "options": {"mode": "binary", "alias": "Day", "replaceFields": false,
+          "binary": {"left": {"matcher": {"id": "byName", "options": "Time"}}, "operator": "-", "right": {"fixed": "3600000"}}}},
+        {"id": "convertFieldType", "options": {"conversions": [{"targetField": "Day", "destinationType": "time"}]}},
+        {"id": "formatTime", "options": {"timeField": "Day", "outputFormat": "YYYY-MM-DD", "useTimezone": true}},
+        {"id": "groupBy", "options": {"fields": {"Day": {"operation": "groupby"}, "Metric": {"operation": "groupby"}, "Value": {"operation": "aggregate", "aggregations": ["sum"]}}}},
+        {"id": "sortBy", "options": {"sort": [{"field": "Day"}]}},
+        {"id": "groupingToMatrix", "options": {"columnField": "Metric", "rowField": "Day", "valueField": "Value (sum)", "emptyValue": "zero"}}],
+      "targets": [{"refId": "A", "expr": "sum by (outcome, gate) (count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" [1h]))", "step": "1h", "legendFormat": "{{outcome}} {{gate}}"}, {"refId": "Z", "expr": "vector(0)", "step": "1h", "legendFormat": "zero"}]
+    },
+    {
+      "id": 28, "title": "Flagged retries (last 30 days)", "type": "table",
+      "description": "Every red-then-green repo gate: the PR carries the first failure and the reviewer must acknowledge it. Repeated stages or repos point at a flaky test to fix.",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 67}, "timeFrom": "30d",
+      "datasource": {"type": "loki", "uid": "loki"},
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true}}}],
+      "targets": [{"expr": "sum by (issue, run_id, sdlc_stage, pr) (count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | flaky=\"true\" [$__range]))", "queryType": "instant", "format": "table"}]
+    },
+    {
+      "id": 29, "title": "Blocked issues by gate and reason (time range)", "type": "table",
+      "description": "The issue comment holds the full evidence; the reason here is masked and cut to 200 characters (e.g. test-set-shrank, red-not-passing, sdlc red twice, quota).",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 67},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true}}}],
+      "targets": [{"expr": "sum by (gate, reason, issue, run_id) (count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | outcome=\"blocked\" [$__range]))", "queryType": "instant", "format": "table"}]
+    },
+    {
+      "id": 30, "title": "Issue runs: rounds, wall time, tokens, served model (time range)", "type": "table",
+      "description": "One row per pi-ticket outcome. Look a run up with pi-view <run id>.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 73},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true}}}],
+      "targets": [{"expr": "sum by (issue, outcome, gate, run_id, rounds, elapsed_s, pi_tokens, served_model, sdlc_result) (count_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" [$__range]))", "queryType": "instant", "format": "table"}]
+    },
+    {
+      "id": 31, "title": "Pi tokens per day by served model (pi-ticket runs, last 7 days, UTC)", "type": "barchart",
+      "description": "pi_tokens of each issue outcome, one bar per UTC day, today so far included (up to an hour behind).",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 73}, "timeFrom": "now-6d/d+1h", "hideTimeOverride": true,
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {"stacking": "normal", "showValue": "never", "legend": {"showLegend": true, "displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "fieldConfig": {"defaults": {"min": 0, "custom": {"fillOpacity": 60}}, "overrides": [{"matcher": {"id": "byName", "options": "zero"}, "properties": [{"id": "custom.hideFrom", "value": {"legend": true, "tooltip": true, "viz": false}}]}]},
+      "transformations": [{"id": "seriesToRows", "options": {}},
+        {"id": "calculateField", "options": {"mode": "binary", "alias": "Day", "replaceFields": false,
+          "binary": {"left": {"matcher": {"id": "byName", "options": "Time"}}, "operator": "-", "right": {"fixed": "3600000"}}}},
+        {"id": "convertFieldType", "options": {"conversions": [{"targetField": "Day", "destinationType": "time"}]}},
+        {"id": "formatTime", "options": {"timeField": "Day", "outputFormat": "YYYY-MM-DD", "useTimezone": true}},
+        {"id": "groupBy", "options": {"fields": {"Day": {"operation": "groupby"}, "Metric": {"operation": "groupby"}, "Value": {"operation": "aggregate", "aggregations": ["sum"]}}}},
+        {"id": "sortBy", "options": {"sort": [{"field": "Day"}]}},
+        {"id": "groupingToMatrix", "options": {"columnField": "Metric", "rowField": "Day", "valueField": "Value (sum)", "emptyValue": "zero"}}],
+      "targets": [{"refId": "A", "expr": "sum by (served_model) (sum_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | unwrap pi_tokens [1h]))", "step": "1h", "legendFormat": "{{served_model}}"}, {"refId": "Z", "expr": "vector(0)", "step": "1h", "legendFormat": "zero"}]
+    }
+  ]
+}
+

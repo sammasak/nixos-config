@@ -8,6 +8,9 @@
 
 let
   ntfyUrl = "http://localhost:${toString config.homelab.ntfy.port}/homelab-watchdog";
+  blackPi = config.sam.fleet.hosts.black-pi.address;
+  prometheus = "http://${blackPi}:9090";
+  alertmanager = "http://${blackPi}:9093";
 in
 {
   config = {
@@ -34,6 +37,7 @@ in
         pkgs.curl
         pkgs.gawk
         pkgs.gnugrep
+        pkgs.jq
       ];
       enableStrictShellChecks = true;
       script = ''
@@ -52,42 +56,38 @@ in
             failures="$failures\n• $not_ready node(s) NotReady: $node_list"
           fi
 
-          # 3. Prometheus pod health
-          prom_running=$(kubectl -n monitoring get pods \
-            -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null \
-            | awk '$3 == "Running" {count++} END {print count+0}') || true
-          if [ "$prom_running" -eq 0 ]; then
-            failures="$failures\n• Prometheus: no running pods"
+          # 3. Flux objects Ready=False for over a tick (replaces FluxReconciliationFailed; goes with Flux).
+          # Suspended ones are skipped; a missing or unparsable timestamp counts as old, so it reports.
+          flux_failed=$(kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io \
+            -A -o json --request-timeout=20s 2>/dev/null \
+            | jq -r '[.items[] | select(.spec.suspend != true)
+                | select(any(.status.conditions[]?; .type == "Ready" and .status == "False"
+                  and (try ((.lastTransitionTime // "") | fromdateiso8601) catch 0) < now - 600))
+                | "\(.kind)/\(.metadata.namespace)/\(.metadata.name)"] | join(" ")') || true
+          if [ -n "$flux_failed" ]; then
+            failures="$failures\n• Flux not Ready: $flux_failed"
           fi
+        fi
 
-          # 4. Alertmanager pod health
-          am_running=$(kubectl -n monitoring get pods \
-            -l app.kubernetes.io/name=alertmanager --no-headers 2>/dev/null \
-            | awk '$3 == "Running" {count++} END {print count+0}') || true
-          if [ "$am_running" -eq 0 ]; then
-            failures="$failures\n• Alertmanager: no running pods"
-          fi
+        # 4. Prometheus and Alertmanager on black-pi, outside the k3s branch: an API outage cannot hide them
+        if ! curl -sf -o /dev/null --max-time 10 "${prometheus}/-/ready"; then
+          failures="$failures\n• Prometheus on black-pi not ready"
+        fi
+        if ! curl -sf -o /dev/null --max-time 10 "${alertmanager}/-/ready"; then
+          failures="$failures\n• Alertmanager on black-pi not ready"
+        fi
 
-          # 5. Alertmanager's built-in Watchdog alert is ACTIVE.
-          # Watchdog is an always-firing alert shipped by kube-prometheus. A
-          # running Alertmanager pod (check 4) only proves the process is up;
-          # if Prometheus has stopped evaluating rules or delivering to
-          # Alertmanager, Watchdog goes quiet and every other alert in the
-          # cluster silently stops firing too. This is the one check that
-          # notices the alerting pipeline itself has died.
-          am_ip=$(kubectl -n monitoring get svc monitoring-kube-prometheus-alertmanager \
-            -o jsonpath='{.spec.clusterIP}' 2>/dev/null) || true
-          if [ -z "$am_ip" ]; then
-            failures="$failures\n• Alertmanager: service has no clusterIP"
-          else
-            # Not piped: under pipefail a SIGPIPEd curl would page a healthy cluster.
-            am_alerts=$(curl -sf --max-time 10 \
-              "http://$am_ip:9093/api/v2/alerts?filter=alertname%3DWatchdog&active=true" \
-              2>/dev/null) || true
-            if ! grep -q '"Watchdog"' <<<"$am_alerts"; then
-              failures="$failures\n• Alertmanager: Watchdog alert not active — alerting pipeline is down"
-            fi
-          fi
+        # 5. Alertmanager's always-firing Watchdog alert is ACTIVE. A ready
+        # Alertmanager only proves the process is up; if Prometheus has
+        # stopped evaluating rules or delivering to Alertmanager, Watchdog
+        # goes quiet and every other alert silently stops firing too. This is
+        # the one check that notices the alerting pipeline itself has died.
+        # Not piped: under pipefail a SIGPIPEd curl would page a healthy pipeline.
+        am_alerts=$(curl -sf --max-time 10 \
+          "${alertmanager}/api/v2/alerts?filter=alertname%3DWatchdog&active=true" \
+          2>/dev/null) || true
+        if ! grep -q '"Watchdog"' <<<"$am_alerts"; then
+          failures="$failures\n• Alertmanager: Watchdog alert not active — alerting pipeline is down"
         fi
 
         # Pages when the failure set changes and repeats an unchanged one every

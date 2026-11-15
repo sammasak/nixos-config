@@ -1,0 +1,854 @@
+{
+  "title": "LLM gateway",
+  "uid": "llm-gateway",
+  "schemaVersion": 36,
+  "version": 2,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "tags": [
+    "llm",
+    "gateway",
+    "prometheus"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "project",
+        "type": "query",
+        "label": "project",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(llm_gateway_requests_total, project)",
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2
+      },
+      {
+        "name": "model",
+        "type": "query",
+        "label": "physical model",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(llm_gateway_attributed_requests_total, model)",
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2
+      },
+      {
+        "name": "protocol",
+        "type": "query",
+        "label": "protocol",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(llm_gateway_attributed_requests_total, protocol)",
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 29,
+      "type": "logs",
+      "title": "Claude native tool completions",
+      "description": "Claude Code tool_result events after execution; collector replaces bodies and bounds tool names.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 117
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Ascending"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"claude-code\",event_name=\"tool_result\",observer=\"harness\"} | json | line_format \"{{.body}} host={{.host_name}} tool={{.tool_name}} success={{.attributes_success}}\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Requests (range)",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(llm_gateway_requests_total{project=~\"$project\"}[$__range]))",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Refused (nothing ready, 429)",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(llm_gateway_requests_total{project=~\"$project\",outcome=\"refused\"}[$__range]))",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Failed-over attempts (range)",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(llm_gateway_upstream_attempts_total{result!=\"ok\"}[$__range]))",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Gateway up",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(up{job=\"llm-gateway\"})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Requests by project / answering model / outcome",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, model, outcome) (rate(llm_gateway_requests_total{project=~\"$project\"}[5m]))",
+          "legendFormat": "{{project}} {{model}} {{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Requests by provider",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (provider) (label_replace(rate(llm_gateway_requests_total{project=~\"$project\",model!=\"none\"}[5m]), \"provider\", \"$1\", \"model\", \"([^/]+)/.*\"))",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Upstream attempts by model and result (non-ok = failover)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (model, result) (rate(llm_gateway_upstream_attempts_total[5m]))",
+          "legendFormat": "{{model}} {{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Tokens per model (prompt + completion)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (model) (increase(llm_gateway_tokens_total[1h]))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Time to first byte p50 / p95 by model",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (model, le) (rate(llm_gateway_first_byte_seconds_bucket[15m])))",
+          "legendFormat": "p50 {{model}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (model, le) (rate(llm_gateway_first_byte_seconds_bucket[15m])))",
+          "legendFormat": "p95 {{model}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Gemini thought signatures (dummy = fallback)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (source) (increase(llm_gateway_gemini_signatures_total[1h]))",
+          "legendFormat": "{{source}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Model state now (ready / paced / cooling / spent / blocked)",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (tier, model, state) (llm_gateway_model_state == 1)",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            },
+            "indexByName": {
+              "tier": 0,
+              "model": 1,
+              "state": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "state-timeline",
+      "title": "Model state history",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "ready",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "paced",
+                  "color": "yellow"
+                },
+                "2": {
+                  "text": "cooling",
+                  "color": "orange"
+                },
+                "3": {
+                  "text": "spent",
+                  "color": "red"
+                },
+                "4": {
+                  "text": "blocked",
+                  "color": "purple"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (model) (llm_gateway_model_state{state=\"ready\"} * 0 or llm_gateway_model_state{state=\"paced\"} * 1 or llm_gateway_model_state{state=\"cooling\"} * 2 or llm_gateway_model_state{state=\"spent\"} * 3 or llm_gateway_model_state{state=\"blocked\"} * 4)",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Projects, budgets and the interactive reserve",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Tokens per project and quota group (1h)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, quota_group) (increase(llm_gateway_project_tokens_total{project=~\"$project\"}[1h]))",
+          "legendFormat": "{{project}} {{quota_group}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Answered requests per project and tier",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, tier) (rate(llm_gateway_project_requests_total{project=~\"$project\"}[5m]))",
+          "legendFormat": "{{project}} {{tier}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Refusals by project and reason (rpm, daily_tokens, interactive_reserve, model_not_allowed, unavailable)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 55
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, reason) (increase(llm_gateway_refusals_total{project=~\"$project\"}[15m]))",
+          "legendFormat": "{{project}} {{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "bargauge",
+      "title": "Project tokens today / daily budget",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (project) (llm_gateway_project_tokens_today{project=~\"$project\"}) / max by (project) (llm_gateway_project_daily_token_budget)",
+          "legendFormat": "{{project}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "bargauge",
+      "title": "Free quota left today per quota group (0 = provider-blocked; 1 = no daily limit configured)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 63
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.1
+              },
+              {
+                "color": "green",
+                "value": 0.3
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (tier, quota_group) (llm_gateway_quota_remaining_ratio)",
+          "legendFormat": "{{tier}} {{quota_group}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "bargauge",
+      "title": "Interactive reserve left (groups with a daily limit)",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 63
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.34
+              },
+              {
+                "color": "green",
+                "value": 0.67
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (quota_group) (llm_gateway_reserve_remaining_ratio)",
+          "legendFormat": "{{quota_group}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "Open to batch projects",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 63
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "textMode": "value_and_name",
+        "colorMode": "background"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "reserve only",
+                  "color": "orange"
+                },
+                "1": {
+                  "text": "open",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (quota_group) (llm_gateway_quota_batch_open)",
+          "legendFormat": "{{quota_group}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Attributed HTTP requests by project / requested / physical model / outcome",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, requested_model, model, outcome, protocol) (rate(llm_gateway_attributed_requests_total{project=~\"$project\",model=~\"$model\",protocol=~\"$protocol\"}[5m]))",
+          "legendFormat": "{{project}} {{requested_model}} → {{model}} {{protocol}} {{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Response body dispositions (complete / partial / failed)",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, requested_model, model, disposition, protocol) (rate(llm_gateway_attributed_response_dispositions_total{project=~\"$project\",model=~\"$model\",protocol=~\"$protocol\"}[5m]))",
+          "legendFormat": "{{project}} {{requested_model}} → {{model}} {{protocol}} {{disposition}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Observed input/output tokens by usage source",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 87
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, requested_model, model, direction, source, protocol) (increase(llm_gateway_observed_tokens_total{project=~\"$project\",model=~\"$model\",protocol=~\"$protocol\"}[$__rate_interval]))",
+          "legendFormat": "{{project}} {{requested_model}} → {{model}} {{direction}} {{source}} {{protocol}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Provider-reported cached input tokens (absent when not reported)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 87
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, requested_model, model, protocol) (increase(llm_gateway_cache_tokens_total{project=~\"$project\",model=~\"$model\",protocol=~\"$protocol\",cache_type=\"input_cached\"}[$__rate_interval]))",
+          "legendFormat": "{{project}} {{requested_model}} → {{model}} {{protocol}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Attributed upstream attempts and p95 latency",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 95
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, requested_model, model, result, protocol) (rate(llm_gateway_attributed_upstream_attempts_total{project=~\"$project\",model=~\"$model\",protocol=~\"$protocol\"}[5m]))",
+          "legendFormat": "attempts {{project}} {{requested_model}} → {{model}} {{protocol}} {{result}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (project, requested_model, model, result, protocol, le) (rate(llm_gateway_upstream_attempt_seconds_bucket{project=~\"$project\",model=~\"$model\",protocol=~\"$protocol\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{project}} {{requested_model}} → {{model}} {{protocol}} {{result}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Model-emitted tool calls (not confirmed tool executions)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 95
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (project, requested_model, model, state, protocol) (increase(llm_gateway_model_tool_calls_total{project=~\"$project\",model=~\"$model\",protocol=~\"$protocol\"}[$__rate_interval]))",
+          "legendFormat": "{{project}} {{requested_model}} → {{model}} {{protocol}} {{state}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

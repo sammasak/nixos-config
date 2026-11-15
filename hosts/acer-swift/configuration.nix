@@ -8,6 +8,8 @@
     ../../modules/homelab/ollama-host.nix
     ../../modules/homelab/open-webui.nix
     ../../modules/homelab/llm-gateway.nix
+    ../../modules/homelab/monitoring/node-exporter.nix
+    ../../modules/homelab/monitoring/alloy-otlp.nix
   ];
 
   sam.profile = {

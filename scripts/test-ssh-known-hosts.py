@@ -33,9 +33,7 @@ SOPS_RECIPIENTS = {
     "naked-pi": "age1kdjqlt6s6fklcdjm2y9dggyvc9nmpcglsu3gduzudcl85ur8jdwqz26wer",
 }
 # files encrypted ahead of the module that will declare them: the host that will, and what lands it
-AWAITING = {
-    "secrets/homelab/grafana.yaml": ("black-pi", "nixos-config #414 (a) declares Grafana's secrets"),
-}
+AWAITING: dict[str, tuple[str, str]] = {}
 LOOPBACK = ["localhost", "127.0.0.1", "::1"]
 
 

@@ -1,4 +1,4 @@
-# homelab.loki on a seeded msi, as no host enables it yet. Building the check realises only ExecStart's context,
+# homelab.loki on a seeded msi, an x86 host (black-pi runs it, but is evaluated only). Building the check realises only ExecStart's context,
 # the loki package and upstream's validate-loki-conf (loki -verify-config on the rendered file), never a toplevel;
 # evaluating it requires the seed to pass the module's assertions and each wrong configuration to fail its own.
 { config, lib, ... }:

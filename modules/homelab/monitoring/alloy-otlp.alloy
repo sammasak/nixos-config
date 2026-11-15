@@ -1,0 +1,346 @@
+// alloy-otlp, from homelab-gitops observability.yaml with #203's durable queue and #226's session sum
+// (fix/192-collision-proof 341c7e3). ./alloy-otlp.nix fills in the Prometheus and Loki endpoints.
+otelcol.auth.bearer "native" {
+  token = sys.env("OTLP_BEARER_TOKEN")
+}
+
+// Traefik's pods reach it on acer through Cilium; the LAN has no rule for the port.
+otelcol.receiver.otlp "native" {
+  http {
+    endpoint               = "0.0.0.0:4318"
+    auth                   = otelcol.auth.bearer.native.handler
+    include_metadata       = true
+    max_request_body_size = "1MiB"
+  }
+
+  output {
+    metrics = [otelcol.processor.memory_limiter.native.input]
+    logs    = [otelcol.processor.attributes.native_worker_stamp.input]
+  }
+}
+
+// A host relay stamps X-Otel-Worker on a guest's requests; the stamp,
+// never the guest's own worker.name, names the worker on its lines.
+otelcol.processor.attributes "native_worker_stamp" {
+  action {
+    key    = "stamped.worker"
+    action = "delete"
+  }
+  action {
+    key          = "stamped.worker"
+    from_context = "metadata.x-otel-worker"
+    action       = "insert"
+  }
+
+  output {
+    logs = [otelcol.processor.memory_limiter.native.input]
+  }
+}
+
+otelcol.processor.memory_limiter "native" {
+  check_interval = "1s"
+  limit          = "128MiB"
+  spike_limit    = "32MiB"
+
+  output {
+    metrics = [otelcol.processor.filter.native_allowlist.input]
+    logs    = [otelcol.processor.filter.native_allowlist.input]
+  }
+}
+
+otelcol.processor.filter "native_allowlist" {
+  error_mode = "propagate"
+
+  metric_conditions {
+    context = "metric"
+    conditions = [
+      `not IsMatch(name, "^(codex\\.(api_request|api_request\\.duration_ms|sse_event|sse_event\\.duration_ms|tool\\.call|tool\\.call\\.duration_ms|turn\\.token_usage)|claude_code\\.(token\\.usage|cost\\.usage|session\\.count|active_time\\.total|code_edit_tool\\.decision))$")`,
+    ]
+  }
+
+  log_conditions {
+    context = "log"
+    conditions = [
+      `resource.attributes["service.name"] != "claude-code" and resource.attributes["service.name"] != "claude-code-desktop"`,
+      `attributes["event.name"] == nil or not IsMatch(attributes["event.name"], "^(tool_result|tool_decision|api_request|api_error|api_retries_exhausted|skill_activated|subagent_completed|hook_execution_complete|compaction|work_ref|skill_use)$")`,
+    ]
+  }
+
+  output {
+    metrics = [otelcol.processor.cumulativetodelta.native.input]
+    logs    = [otelcol.processor.transform.native_sanitize.input]
+  }
+}
+
+// Concurrent sessions report cumulative counters that the sanitizer
+// gives one identity (#192). Turn them into deltas while session.id
+// still separates them; deltatocumulative sums them again after.
+// "auto" drops the first point of a stream that started before
+// this component (a collector restart), so live totals are not
+// added twice. PROPOSED max_staleness: longer than a session's
+// longest silent gap (a suspended laptop overnight). A stream
+// expired earlier and seen again is added again in full (an
+// overcount); a longer value only holds ended sessions' streams
+// in memory longer.
+otelcol.processor.cumulativetodelta "native" {
+  initial_value = "auto"
+  max_staleness = "24h"
+
+  output {
+    metrics = [otelcol.processor.transform.native_sanitize.input]
+  }
+}
+
+otelcol.processor.transform "native_sanitize" {
+  error_mode = "propagate"
+
+  metric_statements {
+    context = "resource"
+    statements = [
+      `keep_keys(resource.attributes, ["service.name", "host.name"])`,
+      `set(resource.attributes["service.name"], "unknown") where resource.attributes["service.name"] == nil`,
+      `set(resource.attributes["service.name"], "codex") where IsMatch(resource.attributes["service.name"], "^codex.*$")`,
+      `set(resource.attributes["service.name"], "claude-code") where IsMatch(resource.attributes["service.name"], "^claude-code.*$")`,
+      `set(resource.attributes["service.name"], "other") where not IsMatch(resource.attributes["service.name"], "^(codex.*|claude-code.*)$")`,
+      `set(resource.attributes["host.name"], "other") where resource.attributes["host.name"] == nil`,
+      `set(resource.attributes["host.name"], "other") where not IsMatch(resource.attributes["host.name"], "^(acer-swift|lenovo-21cb001pmx|msi-ms7758|black-pi)$")`,
+      `set(resource.attributes["observer"], "harness")`,
+    ]
+  }
+
+  metric_statements {
+    context = "datapoint"
+    statements = [
+      `keep_keys(attributes, ["model", "tool", "tool_name", "success", "type", "token_type", "query_source", "effort", "vcs.owner.name", "vcs.repository.name"])`,
+      `set(attributes["success"], "unknown") where attributes["success"] != "true" and attributes["success"] != "false"`,
+      `set(attributes["harness"], resource.attributes["service.name"])`,
+      `set(attributes["host"], resource.attributes["host.name"])`,
+      `set(attributes["observer"], "harness")`,
+      `set(attributes["model"], "gpt-codex") where attributes["model"] != nil and IsMatch(attributes["model"], "(?i)^gpt.*codex.*$")`,
+      `set(attributes["model"], "gpt") where attributes["model"] != nil and IsMatch(attributes["model"], "(?i)^gpt.*$") and not IsMatch(attributes["model"], "(?i)^gpt.*codex.*$")`,
+      `set(attributes["model"], "claude-sonnet") where attributes["model"] != nil and IsMatch(attributes["model"], "(?i)^claude-sonnet.*$")`,
+      `set(attributes["model"], "claude-opus") where attributes["model"] != nil and IsMatch(attributes["model"], "(?i)^claude-opus.*$")`,
+      `set(attributes["model"], "claude-haiku") where attributes["model"] != nil and IsMatch(attributes["model"], "(?i)^claude-haiku.*$")`,
+      `set(attributes["model"], "claude-fable") where attributes["model"] != nil and IsMatch(attributes["model"], "(?i)^claude-(fable|mythos).*$")`,
+      `set(attributes["model"], "other") where attributes["model"] != nil and not IsMatch(attributes["model"], "(?i)^(gpt|claude-(sonnet|opus|haiku|fable)).*$")`,
+      `set(attributes["tool"], "exec") where attributes["tool"] == "exec_command"`,
+      `set(attributes["tool"], "other") where attributes["tool"] != nil and not IsMatch(attributes["tool"], "^(shell|apply_patch|read|write|grep|glob|mcp|exec|web_search|web_fetch)$")`,
+      `set(attributes["tool_name"], "other") where attributes["tool_name"] != nil and not IsMatch(attributes["tool_name"], "^(Bash|Read|Edit|Write|Grep|Glob|Agent|Skill|WebFetch|WebSearch|NotebookEdit|TodoWrite)$")`,
+      `set(attributes["type"], "other") where attributes["type"] != nil and not IsMatch(attributes["type"], "^(input|output|cacheRead|cacheCreation)$")`,
+      `set(attributes["token_type"], "other") where attributes["token_type"] != nil and not IsMatch(attributes["token_type"], "^(total|input|cached_input|output|reasoning_output)$")`,
+      `set(attributes["query_source"], "other") where attributes["query_source"] != nil and not IsMatch(attributes["query_source"], "^(main|subagent|auxiliary|sdk)$")`,
+      `set(attributes["vcs.owner.name"], "other") where attributes["vcs.owner.name"] != nil and not IsMatch(attributes["vcs.owner.name"], "^[A-Za-z0-9_.-]{1,100}$")`,
+      `set(attributes["vcs.repository.name"], "other") where attributes["vcs.repository.name"] != nil and not IsMatch(attributes["vcs.repository.name"], "^[A-Za-z0-9_.-]{1,100}$")`,
+      `set(attributes["effort"], "other") where attributes["effort"] != nil and not IsMatch(attributes["effort"], "^(low|medium|high|xhigh|max)$")`,
+    ]
+  }
+
+  // The durable queue persists whole OTLP messages: clear every
+  // free-form field before it. Units are fixed per family because
+  // the unit becomes part of the Prometheus series name.
+  metric_statements {
+    context = "scope"
+    statements = [
+      `set(scope.name, "")`,
+      `set(scope.version, "")`,
+      `set(scope.schema_url, "")`,
+      `keep_keys(scope.attributes, [])`,
+    ]
+  }
+
+  metric_statements {
+    context = "metric"
+    statements = [
+      `set(metric.description, "")`,
+      `keep_keys(metric.metadata, [])`,
+      `set(metric.unit, "")`,
+      `set(metric.unit, "ms") where IsMatch(metric.name, "\\.duration_ms$")`,
+      `set(metric.unit, "tokens") where metric.name == "claude_code.token.usage"`,
+      `set(metric.unit, "s") where metric.name == "claude_code.active_time.total"`,
+      `set(metric.unit, "USD") where metric.name == "claude_code.cost.usage"`,
+    ]
+  }
+
+  // A no-op on Alloy 1.17.1, measured: the exemplar reaches the queue and the export. #203 pinned 1.20.1 for it.
+  metric_statements {
+    context = "datapoint"
+    statements = [
+      `set(datapoint.exemplars, nil)`,
+    ]
+  }
+
+  // Runs after the datapoint context copied host/harness/observer
+  // onto each point; any other resource attribute would become a
+  // Prometheus target_info series.
+  metric_statements {
+    context = "resource"
+    statements = [
+      `set(resource.schema_url, "")`,
+      `keep_keys(resource.attributes, ["service.name"])`,
+    ]
+  }
+
+  log_statements {
+    context = "scope"
+    statements = [
+      `set(scope.name, "")`,
+      `set(scope.version, "")`,
+      `set(scope.schema_url, "")`,
+      `keep_keys(scope.attributes, [])`,
+    ]
+  }
+
+  log_statements {
+    context = "resource"
+    statements = [
+      `set(resource.schema_url, "")`,
+      `keep_keys(resource.attributes, ["service.name", "host.name", "worker.name"])`,
+      `set(resource.attributes["service.name"], "claude-code")`,
+      `set(resource.attributes["host.name"], "other") where resource.attributes["host.name"] == nil`,
+      `set(resource.attributes["host.name"], "other") where not IsMatch(resource.attributes["host.name"], "^(acer-swift|lenovo-21cb001pmx|msi-ms7758|black-pi)$")`,
+      `delete_key(resource.attributes, "worker.name") where resource.attributes["worker.name"] != nil and not IsMatch(resource.attributes["worker.name"], "^[a-z][a-z0-9-]{0,31}$")`,
+      `set(resource.attributes["loki.resource.labels"], "service.name,host.name")`,
+    ]
+  }
+
+  log_statements {
+    context = "log"
+    statements = [
+      `keep_keys(log.attributes, ["event.name", "session.id", "prompt.id", "model", "query_source", "effort", "speed", "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "cost_usd", "duration_ms", "ttft_ms", "status_code", "attempt", "skill.name", "invocation_trigger", "skill.source", "agent_type", "is_async", "total_tokens", "total_tool_uses", "hook_event", "hook_name", "num_hooks", "num_success", "num_blocking", "num_non_blocking_error", "num_cancelled", "total_duration_ms", "tool_name", "success", "decision", "source", "tool_result_size_bytes", "trigger", "pre_tokens", "post_tokens", "vcs.owner.name", "vcs.repository.name", "vcs.ref.head.name", "vcs.ref.head.revision", "work.ref.hint", "stamped.worker"])`,
+      `set(log.attributes["worker"], resource.attributes["worker.name"]) where resource.attributes["worker.name"] != nil`,
+      `set(log.attributes["worker"], "other") where log.attributes["stamped.worker"] != nil`,
+      `set(log.attributes["worker"], log.attributes["stamped.worker"]) where log.attributes["stamped.worker"] != nil and IsMatch(log.attributes["stamped.worker"], "^[a-z][a-z0-9-]{0,31}$")`,
+      `delete_key(log.attributes, "stamped.worker")`,
+      `set(log.body, log.attributes["event.name"])`,
+      `set(log.severity_text, "")`,
+      `set(log.trace_id, TraceID("00000000000000000000000000000000"))`,
+      `set(log.span_id, SpanID("0000000000000000"))`,
+      `set(log.attributes["tool_name"], "mcp") where log.attributes["tool_name"] != nil and IsMatch(log.attributes["tool_name"], "^mcp__")`,
+      `set(log.attributes["tool_name"], "other") where log.attributes["tool_name"] != nil and not IsMatch(log.attributes["tool_name"], "^(Bash|Read|Edit|Write|Grep|Glob|Agent|Skill|WebFetch|WebSearch|NotebookEdit|TodoWrite|mcp)$")`,
+      `set(log.attributes["tool_name"], "other") where log.attributes["tool_name"] == nil and (log.attributes["event.name"] == "tool_result" or log.attributes["event.name"] == "tool_decision")`,
+      `set(log.attributes["success"], "unknown") where log.attributes["event.name"] == "tool_result" and log.attributes["success"] != "true" and log.attributes["success"] != "false"`,
+      `set(log.attributes["skill.name"], "other") where log.attributes["skill.name"] != nil and not IsMatch(log.attributes["skill.name"], "^[A-Za-z0-9_.:/@ -]{1,80}$")`,
+      `set(log.attributes["agent_type"], "other") where log.attributes["agent_type"] != nil and not IsMatch(log.attributes["agent_type"], "^[A-Za-z0-9_.:/@ -]{1,80}$")`,
+      `set(log.attributes["hook_name"], "other") where log.attributes["hook_name"] != nil and not IsMatch(log.attributes["hook_name"], "^[A-Za-z0-9_.:/@ -]{1,80}$")`,
+      `set(log.attributes["vcs.owner.name"], "other") where log.attributes["vcs.owner.name"] != nil and not IsMatch(log.attributes["vcs.owner.name"], "^[A-Za-z0-9_.-]{1,100}$")`,
+      `set(log.attributes["vcs.repository.name"], "other") where log.attributes["vcs.repository.name"] != nil and not IsMatch(log.attributes["vcs.repository.name"], "^[A-Za-z0-9_.-]{1,100}$")`,
+      `set(log.attributes["vcs.ref.head.name"], "other") where log.attributes["vcs.ref.head.name"] != nil and not IsMatch(log.attributes["vcs.ref.head.name"], "^[A-Za-z0-9_./@#+-]{1,200}$")`,
+      `set(log.attributes["vcs.ref.head.revision"], "other") where log.attributes["vcs.ref.head.revision"] != nil and not IsMatch(log.attributes["vcs.ref.head.revision"], "^[0-9a-f]{7,40}$")`,
+      `set(log.attributes["work.ref.hint"], "other") where log.attributes["work.ref.hint"] != nil and not IsMatch(log.attributes["work.ref.hint"], "^[0-9]{1,9}$")`,
+      `set(log.attributes["model"], "other") where log.attributes["model"] != nil and not IsMatch(log.attributes["model"], "^[A-Za-z0-9_.:/@\\[\\] -]{1,80}$")`,
+      `set(log.attributes["observer"], "harness")`,
+      `set(log.attributes["loki.attribute.labels"], "event.name,tool_name,observer")`,
+    ]
+  }
+
+  // Runs after the log context so worker.name reaches the line once,
+  // as the "worker" attribute, not again as a resource field.
+  log_statements {
+    context = "resource"
+    statements = [
+      `delete_key(resource.attributes, "worker.name")`,
+    ]
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.native_serialize.input]
+    logs    = [otelcol.exporter.loki.native.input]
+  }
+}
+
+// deltatocumulative drops a point that is not newer than its
+// series' last one, so sessions reporting at the same timestamp
+// lose all but one. Re-stamp every point with its arrival time,
+// after one batch goroutine has serialized the requests (stamped
+// concurrently, they can reach deltatocumulative out of order).
+otelcol.processor.batch "native_serialize" {
+  output {
+    metrics = [otelcol.processor.transform.native_restamp.input]
+  }
+}
+
+otelcol.processor.transform "native_restamp" {
+  error_mode = "propagate"
+
+  metric_statements {
+    context = "datapoint"
+    statements = [
+      `set(datapoint.start_time, Now())`,
+      `set(datapoint.time, Now())`,
+    ]
+  }
+
+  output {
+    metrics = [otelcol.processor.deltatocumulative.native.input]
+  }
+}
+
+// Sums the sessions' deltas per sanitized series. Drops are counted
+// in otelcol_deltatocumulative_datapoints_total{error!=""}.
+// PROPOSED max_stale: an idle night keeps its total instead of
+// resetting. PROPOSED max_streams: headroom over the sanitized
+// series count; a new series over it is dropped (error="limit").
+otelcol.processor.deltatocumulative "native" {
+  max_stale   = "24h"
+  max_streams = 2000
+
+  output {
+    metrics = [otelcol.processor.interval.native_last.input]
+  }
+}
+
+// One batch can hold several sums of one series within a
+// millisecond; Prometheus keeps the first and silently drops the
+// rest. Forward only each series' last value. PROPOSED interval:
+// the shortest tick; points wait this long before the durable queue.
+otelcol.processor.interval "native_last" {
+  interval = "1s"
+
+  output {
+    metrics = [otelcol.exporter.otlphttp.native.input]
+  }
+}
+
+otelcol.exporter.loki "native" {
+  forward_to = [loki.write.native.receiver]
+}
+
+loki.write "native" {
+  endpoint {
+    url = "@loki@/loki/api/v1/push"
+  }
+}
+
+// Durable metrics queue (#119): replaces prometheus.remote_write, whose
+// WAL watcher skips samples written before a restart. Files live under
+// the storage path (/var/lib/alloy-otlp), fsynced per write.
+otelcol.storage.file "native" {
+  fsync = true
+}
+
+otelcol.exporter.otlphttp "native" {
+  client {
+    endpoint = "@prometheus@/api/v1/otlp"
+  }
+
+  // Bounded by serialized bytes; a full queue answers the client
+  // 503 "sending queue is full" instead of growing. One consumer
+  // keeps delivery close to arrival order.
+  sending_queue {
+    enabled       = true
+    sizer         = "bytes"
+    queue_size    = 33554432
+    num_consumers = 1
+    storage       = otelcol.storage.file.native.handler
+  }
+
+  // Retry until delivered: an elapsed-time limit would drop the
+  // backlog of a long Prometheus outage. Only connection errors and
+  // HTTP 429/502/503/504 are retried; any other status (400 out of
+  // order, 404 receiver off, 500) drops the request.
+  retry_on_failure {
+    initial_interval = "5s"
+    max_interval     = "30s"
+    max_elapsed_time = "0s"
+  }
+}

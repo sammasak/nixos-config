@@ -1,5 +1,5 @@
 # LAN facts that more than one module reads (#291), stated once. Read-only: a host that sets any of it fails as a
-# second definition. A fact with a single reader stays in that reader (host keys, cache keys, the Pis' addresses).
+# second definition. A fact with a single reader stays in that reader (host keys, cache keys, naked-pi's addresses).
 { lib, ... }:
 let
   inherit (lib) mkOption types;
@@ -28,6 +28,8 @@ in
       lenovo-21CB001PMX.address = "192.168.10.154";
       acer-swift.address = "192.168.10.110";
       msi-ms7758.address = "192.168.10.235";
+      # end0; wlan0's .136 is a second LAN address
+      black-pi.address = "192.168.10.137";
     };
     gateway = "192.168.10.1";
     lanCidr = "192.168.10.0/24";

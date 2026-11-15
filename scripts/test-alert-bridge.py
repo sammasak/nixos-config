@@ -24,8 +24,8 @@ env, unit = P["environment"], P["serviceConfig"]
 
 running = sorted(name for name, has in P["units"].items() if has)
 check(running == ["lenovo"], f"lenovo alone runs alert-bridge {running}")
-check(env["ALERT_BRIDGE_NTFY_URL"] == f"http://127.0.0.1{P['ntfyListen']}/homelab-alerts-shadow",
-      f"it publishes to the native ntfy on loopback, to the shadow topic until cutover ({env['ALERT_BRIDGE_NTFY_URL']})")
+check(env["ALERT_BRIDGE_NTFY_URL"] == f"http://127.0.0.1{P['ntfyListen']}/homelab-alerts",
+      f"it publishes to the native ntfy on loopback, to the paging topic ({env['ALERT_BRIDGE_NTFY_URL']})")
 check(P["ntfyUnit"] == {"Restart": "always", "startLimitIntervalSec": 0},
       f"the native ntfy restarts always and without a start limit {P['ntfyUnit']}")
 check(unit["DynamicUser"] is True and unit["CapabilityBoundingSet"] == "" and unit["ProtectSystem"] == "strict",
