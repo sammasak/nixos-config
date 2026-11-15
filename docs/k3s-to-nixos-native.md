@@ -312,8 +312,8 @@ Observed, but not classified as remove; the owner decides in the cleanup issue:
 | Alloy DaemonSet (pod logs) | pod labels come from the Kubernetes API; a host collector would need a credential or lose the labels dashboards and alerts use. Running it on msi too is a one-line toleration, raised as a question |
 | Authentik | no upstream NixOS module; it gates sign-in for everything; high risk, low saving |
 | Traefik, cert-manager, MetalLB, Cilium, KEDA, Flux, Kyverno | the platform for what stays |
-| open-webui, ollama, kokoro, whisper, monty-runner, workout | scale to zero through KEDA; they hold no memory while idle |
-| herman, styrka, karta, system-one | 7 to 8 MiB each and public; moving them saves nothing |
+| workout | scales to zero through KEDA; it holds no memory while idle. open-webui and Ollama moved to hosts (#299); kokoro, whisper and monty-runner were removed instead (owner, 2026-11-15) |
+| herman, styrka, karta | 7 to 8 MiB each and public; moving them saves nothing. styrka-web and system-one were removed instead (owner, 2026-11-15) |
 
 ## Placement
 
