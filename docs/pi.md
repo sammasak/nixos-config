@@ -49,8 +49,8 @@ Verified on the pinned 1.1.0 build:
   - `msi-ollama` points at msi's Ollama, the router/free local tier (set in
     `msiOllamaProvider`, `modules/programs/cli/pi/default.nix`).
   - `homelab` (the default: `homelab/auto`, also `best`, `local`) is the
-    in-cluster llm-gateway (homelab-gitops `apps/llm-gateway`, pinned ClusterIP
-    `10.43.0.80`, set in `homelabProvider`). It holds the provider
+    llm-gateway, a host service on acer at `<acer>:8081` (`modules/homelab/llm-gateway.nix`, set in
+    `homelabProvider`). It holds the provider
     keys and fails over across free tiers itself. Pi authenticates with the
     project key `llm_gateway_pi_key` (`secrets/claude/llm-gateway.yaml`, every
     pi host, declared in `modules/core/sops.nix`), read per request via
