@@ -20,6 +20,7 @@ config_file="$work_dir/test.alloy"
 rewritten_file="$work_dir/rewritten.alloy"
 alloy_log="$work_dir/alloy.log"
 storage_dir="$work_dir/storage"
+sum_storage_dir="$work_dir/sum-storage"
 oversized_payload_file="$work_dir/oversized.json"
 near_limit_payload_file="$work_dir/near-limit.json"
 oversized_response_file="$work_dir/oversized-response"
@@ -32,7 +33,7 @@ cleanup() {
   fi
   unlink "$config_file" "$rewritten_file" "$alloy_log" "$oversized_payload_file" "$near_limit_payload_file" \
     "$oversized_response_file" 2>/dev/null || true
-  rmdir "$storage_dir" "$work_dir" 2>/dev/null || true
+  rmdir "$storage_dir" "$sum_storage_dir" "$work_dir" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -357,3 +358,85 @@ if grep -q 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' "$alloy_log"; then
 fi
 
 printf 'PASS: authenticated OTLP ingestion recovered after restart; 1 MiB request limit enforced; auth and redaction remained enforced\n'
+
+# The session sum (homelab-gitops#226) in Claude Code's live shape: one request per session, cumulative, a start time
+# from before the collector started and fixed per stream, the time moving on per export. After a start nothing leaves
+# until each session's second export (cumulativetodelta's "auto" takes the first as the baseline), then the output
+# is the sessions' summed increase since. This is what acer showed after its first start (#414).
+kill -INT "$alloy_pid" 2>/dev/null || true
+wait "$alloy_pid" 2>/dev/null || true
+alloy_pid=
+sum_port=$((otlp_port + 3))
+cp "$deployed_config" "$rewritten_file"
+chmod u+w "$rewritten_file"
+for rewrite in \
+  "s/0.0.0.0:4318/127.0.0.1:$sum_port/" \
+  's/otelcol.exporter.otlphttp.native.input/otelcol.exporter.debug.test.input/g' \
+  's/otelcol.exporter.loki.native.input/otelcol.exporter.debug.test.input/g'; do
+  cp "$rewritten_file" "$config_file"
+  sed -i -e "$rewrite" "$rewritten_file"
+  if cmp -s "$rewritten_file" "$config_file"; then
+    printf 'session-sum rewrite matched nothing in %s: %s\n' "$deployed_config" "$rewrite" >&2
+    exit 1
+  fi
+done
+awk '/^otelcol.exporter.loki "native" \{/ { skip = 1 } !skip { print }' "$rewritten_file" > "$config_file"
+cat >> "$config_file" <<'EOF'
+otelcol.exporter.debug "test" {
+  verbosity = "detailed"
+}
+EOF
+: > "$alloy_log"
+mapfile -d '' alloy_argv < <(argv_of "127.0.0.1:$((otlp_port + 4))" "$sum_storage_dir" "$config_file")
+"${alloy_argv[@]}" > "$alloy_log" 2>&1 &
+alloy_pid=$!
+for _ in $(seq 1 50); do
+  status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
+    -H 'Content-Type: application/json' -d '{"resourceMetrics":[]}' "http://127.0.0.1:$sum_port/v1/metrics" || true)
+  [[ "$status" == 401 ]] && break
+  sleep 0.1
+done
+
+session_start=$(( $(date +%s%N) - 2 * 3600 * 1000000000 ))
+send_cost() {
+  local session=$1 value=$2
+  curl --silent --fail --output /dev/null --max-time 5 -H "Authorization: Bearer $test_token" \
+    -H 'Content-Type: application/json' --data "$(jq -cn --arg s "$session" --argjson v "$value" \
+      --arg start "$session_start" --arg now "$(date +%s%N)" '{resourceMetrics: [{
+        resource: {attributes: [{key: "service.name", value: {stringValue: "claude-code"}},
+          {key: "host.name", value: {stringValue: "acer-swift"}}]},
+        scopeMetrics: [{scope: {name: "com.anthropic.claude_code"}, metrics: [{name: "claude_code.cost.usage",
+          unit: "USD", sum: {aggregationTemporality: 2, isMonotonic: true, dataPoints: [{
+            attributes: [{key: "session.id", value: {stringValue: $s}}, {key: "model", value: {stringValue: "claude-opus-4-1"}}],
+            startTimeUnixNano: $start, timeUnixNano: $now, asDouble: $v}]}}]}]}]}')" \
+    "http://127.0.0.1:$sum_port/v1/metrics"
+}
+cost_values() {
+  grep -o 'Name: claude_code.cost.usage[^"]*Value: [0-9.]*' "$alloy_log" | sed 's/.*Value: //' || true
+}
+expect_last_cost() {
+  local want=$1 got=
+  for _ in $(seq 1 50); do
+    got=$(cost_values | tail -n 1)
+    [[ "$got" == "$want" ]] && return 0
+    sleep 0.1
+  done
+  printf 'session sum: expected %s, last emitted %s (all: %s)\n' "$want" "${got:-nothing}" "$(cost_values | tr '\n' ' ')" >&2
+  exit 1
+}
+
+send_cost s1 10
+send_cost s2 20
+sleep 3
+[[ -z "$(cost_values)" ]] || {
+  printf 'session sum: the first export after a start must only set the baseline, emitted %s\n' "$(cost_values | tr '\n' ' ')" >&2
+  exit 1
+}
+send_cost s1 10.5
+send_cost s2 21
+expect_last_cost 1.500000
+sleep 1.2
+send_cost s1 11
+expect_last_cost 2.000000
+
+printf 'PASS: session sum in the live shape: first export after a start is the baseline, then the summed increase (1.5, 2.0)\n'
