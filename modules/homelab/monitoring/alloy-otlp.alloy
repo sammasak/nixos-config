@@ -77,9 +77,10 @@ otelcol.processor.filter "native_allowlist" {
 // still separates them; deltatocumulative sums them again after.
 // "auto" drops the first point of a stream that started before
 // this component (a collector restart), so live totals are not
-// added twice: after a start, no metric leaves until each session's
-// second export (Claude Code exports every 60 s), and the totals
-// count from that start. PROPOSED max_staleness: longer than a session's
+// added twice: after a start, no metric leaves until each session
+// stream's second export (Claude Code exports every 60 s); increases
+// before that first export are not counted. Sessions started after
+// the collector pass their first point. PROPOSED max_staleness: longer than a session's
 // longest silent gap (a suspended laptop overnight). A stream
 // expired earlier and seen again is added again in full (an
 // overcount); a longer value only holds ended sessions' streams

@@ -8,7 +8,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 argv_of() { python3 "$repo_root/scripts/alloy_otlp_argv.py" "$@"; }
 deployed_config=$(argv_of config)
 
-for executable in python3 jq curl grep mktemp unlink rmdir cat sed awk seq sleep head tr cmp cp; do
+for executable in python3 jq curl grep mktemp rm rmdir cat sed awk seq sleep head tr cmp cp; do
   command -v "$executable" >/dev/null || {
     printf 'required executable not found: %s\n' "$executable" >&2
     exit 2
@@ -31,8 +31,14 @@ cleanup() {
     kill -INT "$alloy_pid" 2>/dev/null || true
     wait "$alloy_pid" 2>/dev/null || true
   fi
-  unlink "$config_file" "$rewritten_file" "$alloy_log" "$oversized_payload_file" "$near_limit_payload_file" \
-    "$oversized_response_file" 2>/dev/null || true
+  # rm, not unlink: unlink takes one operand and removed none of these
+  rm -f "$config_file" "$rewritten_file" "$alloy_log" "$oversized_payload_file" "$near_limit_payload_file" \
+    "$oversized_response_file"
+  # what alloy run leaves in its storage path, so the directories can go
+  for dir in "$storage_dir" "$sum_storage_dir"; do
+    rm -f "$dir/alloy_seed.json"
+    rm -rf "$dir/remotecfg"
+  done
   rmdir "$storage_dir" "$sum_storage_dir" "$work_dir" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -388,21 +394,33 @@ otelcol.exporter.debug "test" {
 EOF
 : > "$alloy_log"
 mapfile -d '' alloy_argv < <(argv_of "127.0.0.1:$((otlp_port + 4))" "$sum_storage_dir" "$config_file")
+"${alloy_argv[0]}" validate --stability.level=experimental "$config_file" >/dev/null
 "${alloy_argv[@]}" > "$alloy_log" 2>&1 &
 alloy_pid=$!
+sum_status=
 for _ in $(seq 1 50); do
-  status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
+  sum_status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
     -H 'Content-Type: application/json' -d '{"resourceMetrics":[]}' "http://127.0.0.1:$sum_port/v1/metrics" || true)
-  [[ "$status" == 401 ]] && break
+  [[ "$sum_status" == 401 ]] && break
+  kill -0 "$alloy_pid" 2>/dev/null || {
+    printf 'Alloy exited during the session-sum startup; see %s\n' "$alloy_log" >&2
+    exit 1
+  }
   sleep 0.1
 done
+[[ "$sum_status" == 401 ]] || {
+  printf 'session sum: expected unauthenticated OTLP response 401, got %s\n' "$sum_status" >&2
+  exit 1
+}
 
-session_start=$(( $(date +%s%N) - 2 * 3600 * 1000000000 ))
+# s1 and s2 started two hours before this collector; s3 starts after it
+old_start=$(( $(date +%s%N) - 2 * 3600 * 1000000000 ))
+new_start=$(date +%s%N)
 send_cost() {
-  local session=$1 value=$2
+  local session=$1 value=$2 start=$3
   curl --silent --fail --output /dev/null --max-time 5 -H "Authorization: Bearer $test_token" \
     -H 'Content-Type: application/json' --data "$(jq -cn --arg s "$session" --argjson v "$value" \
-      --arg start "$session_start" --arg now "$(date +%s%N)" '{resourceMetrics: [{
+      --arg start "$start" --arg now "$(date +%s%N)" '{resourceMetrics: [{
         resource: {attributes: [{key: "service.name", value: {stringValue: "claude-code"}},
           {key: "host.name", value: {stringValue: "acer-swift"}}]},
         scopeMetrics: [{scope: {name: "com.anthropic.claude_code"}, metrics: [{name: "claude_code.cost.usage",
@@ -425,18 +443,23 @@ expect_last_cost() {
   exit 1
 }
 
-send_cost s1 10
-send_cost s2 20
-sleep 3
-[[ -z "$(cost_values)" ]] || {
-  printf 'session sum: the first export after a start must only set the baseline, emitted %s\n' "$(cost_values | tr '\n' ' ')" >&2
+# First export: the older sessions only set their baselines, the new one counts in full ("drop" would lose it,
+# "keep" would add the older totals). Two seconds cover the 1 s interval tick, so a late older-session value shows.
+send_cost s1 10 "$old_start"
+send_cost s2 20 "$old_start"
+send_cost s3 3 "$new_start"
+expect_last_cost 3.000000
+sleep 2
+first=$(cost_values | sort -u | tr '\n' ' ')
+[[ "$first" == "3.000000 " ]] || {
+  printf 'session sum: the first export must emit only the new session (3), emitted %s\n' "$first" >&2
   exit 1
 }
-send_cost s1 10.5
-send_cost s2 21
-expect_last_cost 1.500000
-sleep 1.2
-send_cost s1 11
-expect_last_cost 2.000000
+send_cost s1 10.5 "$old_start"
+send_cost s2 21 "$old_start"
+send_cost s3 3 "$new_start"
+expect_last_cost 4.500000
+send_cost s1 11 "$old_start"
+expect_last_cost 5.000000
 
-printf 'PASS: session sum in the live shape: first export after a start is the baseline, then the summed increase (1.5, 2.0)\n'
+printf 'PASS: session sum in the live shape: older sessions baseline on the first export, a new one counts at once (3, 4.5, 5)\n'
