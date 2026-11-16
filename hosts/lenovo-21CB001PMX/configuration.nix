@@ -130,16 +130,16 @@
 
   homelab.dns = {
     rewrites = [
-      # Wildcard to the Traefik MetalLB IP. Per-service records from External-DNS
-      # are written as AdGuard *filtering rules*, not rewrites, and persist
-      # because mutableSettings is true — so they never collide with these.
+      # Wildcard and apex to Caddy on acer (modules/homelab/edge.nix). External-DNS
+      # writes AdGuard *filtering rules*, not rewrites, which persist under
+      # mutableSettings; a stale one can still pin a name to the old address.
       {
         domain = "*.sammasak.dev";
-        answer = "192.168.10.203";
+        answer = config.sam.fleet.hosts.acer-swift.address;
       }
       {
         domain = "sammasak.dev";
-        answer = "192.168.10.203";
+        answer = config.sam.fleet.hosts.acer-swift.address;
       }
       {
         domain = "dns.sammasak.dev";

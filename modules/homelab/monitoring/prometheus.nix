@@ -29,11 +29,15 @@ let
       "https://auth.sammasak.dev"
       "https://grafana.sammasak.dev"
       "https://ntfy.sammasak.dev/v1/health"
+      "https://herman.sammasak.dev"
+      "https://karta.sammasak.dev"
     ];
     # the ingress serves /v1 alone, behind a project key
     https_2xx_401 = [ "https://llm-gateway.sammasak.dev/v1/models" ];
     # forward auth sends a browser without a session to Authentik
     https_302_auth = [ "https://chat.sammasak.dev" ];
+    # Caddy admits black-pi; without a bearer token Alloy refuses
+    https_401_405 = [ "https://otlp.sammasak.dev/v1/logs" ];
   };
   https = codes: {
     prober = "http";
