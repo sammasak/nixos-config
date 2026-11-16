@@ -275,8 +275,8 @@ either side is only reported.
 - its LAN address in `modules/core/fleet.nix` if another module reads it;
 - optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`.
 
-`just parity` picks the host up on its own. Full procedure:
-`~/knowledge/homelab/runbooks/add-new-host.md`.
+`just parity` picks the host up on its own. Full procedure, including a Windows
+dual boot: `docs/new-host.md`.
 
 ## Further Documentation
 
