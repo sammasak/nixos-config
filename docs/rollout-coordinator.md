@@ -100,7 +100,11 @@ herdr status --json | jq .server.running             # true
 ## Wake-up timer (lenovo only)
 
 `sam.herdr.coordinatorWakeup.enable` installs the user units
-`coordinator-wakeup.timer` and `.service`. Every `interval` (2min) of service
+`coordinator-wakeup.timer` and `.service`, plus the report timers
+`coordinator-report-daily` (03:00, `coord:report:daily` for yesterday) and
+`coordinator-report-fortnight` (Mondays 07:00; on even ISO weeks it renders
+`coord:report:weekly` for the two weeks before, on odd weeks it does nothing).
+A host without `sam.herdr.machines`, or a worker, fails evaluation with it on. Every `interval` (2min) of service
 inactivity the service runs `devenv tasks run coord:changed --input-json '{"consume":true}'` in
 `~/claude-code-skills`; the task is a jq diff of Herdr agent state, GitHub
 counts and the audit log's open handoffs against
