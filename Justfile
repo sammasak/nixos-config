@@ -63,6 +63,7 @@ deploy HOST:
       if [ -n "$ungated" ] && [ "${DEPLOY_UNGATED:-}" != 1 ]; then \
         echo "deploy: refused, $ungated: no gate checked this tree; commit and merge (then git fetch), or DEPLOY_UNGATED=1 to break glass" >&2; exit 1; fi; \
       [ -z "$ungated" ] || echo "WARNING: DEPLOY_UNGATED: deploying a tree no gate checked ($ungated)" >&2
+    scripts/system-checks.sh {{HOST}} {{memcap}}
     rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks || rc=$?; \
       check=255; target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname) || target=""; \
       if [ -n "$target" ]; then check=0; timeout --foreground 300 ssh -o StrictHostKeyChecking=yes "deploy@$target" \
@@ -91,9 +92,17 @@ deploy HOST:
 [arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
 [doc("Show the units a deploy of HOST would stop, restart, reload or start, and its closure diff")]
 dry-activate HOST:
+    scripts/system-checks.sh {{HOST}} {{memcap}}
     systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks --dry-activate
     top=$(systemd-run --user --scope -q {{memcap}} nix eval --raw .#nixosConfigurations.{{HOST}}.config.system.build.toplevel.outPath) && \
       ssh -o StrictHostKeyChecking=yes "deploy@$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname)" nix store diff-closures /run/current-system "$top"
+
+# deploy and dry-activate run this first: a toplevel fetched from a store cache skips its build inputs, so without it
+# no line shows that HOST's system.checks ran for this closure. Only the checks are realised, on the build host.
+[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
+[doc("Realise HOST's system.checks where its deploy builds, and print per check: built, or substituted and the signatures it carries")]
+checks HOST:
+    scripts/system-checks.sh {{HOST}} {{memcap}}
 
 # Boot the runtime-host role in QEMU (tests/runtime-host-role-vm.nix); BREAK=1
 # runs the copy with Home Manager's activation broken, which must fail. The plain

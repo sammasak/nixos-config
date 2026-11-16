@@ -51,6 +51,8 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only
+just checks HOST              # Realise HOST's system.checks where its deploy builds and print, per check, built or
+                              # substituted (and the cache keys that signed it); deploy and dry-activate run it first, and stop on a failure
 just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
                               # and the closure diff vs the running system; activates nothing, but read
                               # the output: it exits 0 even when the dry activation fails
