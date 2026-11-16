@@ -5,13 +5,14 @@ groups:
       # One series per node that may be off right now: a host the fleet
       # marks sleeps (modules/core/fleet.nix, the sleeps label on its
       # node-exporter target), at any time, except msi: it powers off Mon-Fri
-      # 21:00 and is woken Mon-Fri 09:00 Europe/Stockholm (its power entry in
+      # 21:00 and is woken Mon-Fri 08:30 Europe/Stockholm (its power entry in
       # modules/core/fleet.nix, modules/core/power-schedule.nix), so off outside
       # that window is an outage. asus-b460m has the same window but stays
-      # planned-off at any time here: the owner also powers it off by hand. PromQL time is UTC and has no time zone, so msi's
-      # window is the union of both seasons: 19:00 to 08:30 UTC plus Saturday
-      # and Sunday. That is one hour early in winter evenings, and up to 10:30
-      # local in summer mornings; 08:30 gives the exporter time to come up.
+      # planned-off at any time here: the owner also powers it off by hand.
+      # PromQL time is UTC and has no time zone, so msi's window is the union
+      # of both seasons: 19:00 to 08:30 UTC plus Saturday and Sunday. That is
+      # one hour early in winter evenings, and 08:30 UTC leaves the wake an
+      # hour (winter) or two (summer) to bring the exporter up.
       # Recorded before the alerts below, which this group evaluates after it.
       - record: homelab:node:planned_off
         expr: |

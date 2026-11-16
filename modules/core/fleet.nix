@@ -67,7 +67,7 @@ in
         power = {
           mac = "d4:3d:7e:4a:f9:3d";
           interface = "enp3s0";
-          wake = "Mon-Fri 09:00";
+          wake = "Mon-Fri 08:30";
           off = "Mon-Fri 21:00";
         };
       };
@@ -77,7 +77,7 @@ in
         power = {
           mac = "f0:2f:74:32:6b:7f";
           interface = "eno1";
-          wake = "Mon-Fri 09:00";
+          wake = "Mon-Fri 08:30";
           off = "Mon-Fri 21:00";
         };
       };

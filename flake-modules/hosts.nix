@@ -9,7 +9,7 @@
     # build I/O mid-deploy is the lesser risk to its services.
     acer-swift = { roles = [ "base" "laptop" "homelab-agent" "runtime-host" ]; deploy.remoteBuild = true; };
 
-    # remoteBuild for the same reason; only reachable in its Mon-Fri ~09:00-21:00 power window.
+    # remoteBuild for the same reason; only reachable in its Mon-Fri ~08:30-21:00 power window.
     msi-ms7758 = { roles = [ "base" "homelab-agent" "runtime-host" ]; deploy.remoteBuild = true; };
 
     # remoteBuild as msi; a Windows dual-boot worker.

@@ -48,7 +48,7 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   fails every deploy: read `systemctl --failed` on the target.
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
-#   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
+#   msi-ms7758  builds on msi; only in its Mon-Fri ~08:30-21:00 power window
 #   asus-b460m  builds on the asus (Windows dual-boot worker)
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only, except the patched deploy-rs (not cached, a
