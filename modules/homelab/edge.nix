@@ -1,7 +1,8 @@
 # The *.sammasak.dev edge on acer (#420): Caddy terminates TLS with one DNS-01 wildcard from security.acme and
 # proxies each name to its backend, with forward auth through the k3s Authentik for chat and grafana. The admin API is
 # off, so no local process can load a config without forward_auth; a config change or renewal restarts Caddy.
-# herman and karta are static sites from their Nix builds.
+# herman is a static site from its Nix build; karta and registry (zot, which karta's pod pulls from) proxy to their
+# pods' ClusterIPs until karta switches.
 {
   config,
   lib,
@@ -74,36 +75,9 @@ let
         precompressed gzip
       }
     '';
-    # karta's deploy/nginx.conf and security-headers.conf: the monty worker, sw.js, svg and manifest no-cache
-    karta = ''
-      root * ${pkgs.kartaWeb}
-      header {
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
-        X-Content-Type-Options nosniff
-        X-Frame-Options DENY
-        Referrer-Policy no-referrer
-        Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=(), usb=()"
-        Cross-Origin-Opener-Policy same-origin
-        Cross-Origin-Resource-Policy same-origin
-        Strict-Transport-Security "max-age=63072000; includeSubDomains"
-      }
-      @hashed {
-        path *.wasm *.js *.css
-        not path /sw.js /monty_worker.js /monty_worker_bg.wasm /monty_worker_loader.js
-      }
-      header @hashed Cache-Control "public, max-age=31536000, immutable"
-      header ?Cache-Control no-cache
-      header /manifest.webmanifest Content-Type application/manifest+json
-      @spa {
-        not path *.wasm *.js *.css *.svg /manifest.webmanifest /favicon.ico
-        not file
-      }
-      rewrite @spa /index.html
-      encode gzip
-      file_server {
-        precompressed gzip
-      }
-    '';
+    karta = "reverse_proxy 10.43.147.178:8080";
+    # zot: the registry stays until karta switches, so its pod can pull its image if rescheduled
+    registry = "reverse_proxy 10.43.23.61:5000";
   };
 in
 {

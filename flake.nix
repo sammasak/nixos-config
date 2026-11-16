@@ -46,7 +46,7 @@
     herman.url = "git+ssh://git@github.com/sammasak/herman?rev=7f41955749fc473d11173ffbc18e76973a7bb224";
     herman.flake = false;
 
-    # 441b800, the deployed image's source, was never pushed; main is the newest karta source there is
+    # pinned 793aa6f; live runs 441b800, whose source is not on GitHub; switch when recovered
     karta.url = "git+ssh://git@github.com/sammasak/karta?rev=793aa6f38ac652ee22589d2aeaa53a539519f5d4";
     karta.flake = false;
 
