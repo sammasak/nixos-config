@@ -205,6 +205,12 @@ let
       };
     };
 
+    # acer's ak wrapper and the server unit environment it copies
+    authentik = {
+      ak = lib.findFirst (p: (p.name or "") == "ak") null acer.environment.systemPackages;
+      envKeys = builtins.attrNames acer.systemd.services.authentik.environment;
+    };
+
     # every host, so a collector enabled anywhere else is seen; context discarded: nothing here needs a build
     journal-collector =
       let

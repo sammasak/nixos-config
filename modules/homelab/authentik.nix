@@ -99,6 +99,36 @@ let
       ExecStartPre = "${pkgs.coreutils}/bin/mkdir -p /run/${name}/prometheus";
     };
   };
+  # `sudo ak shell [-c CODE]`: upstream's lifecycle/ak (bin/ak re-splits its arguments) as the server unit runs,
+  # with its user, environment and sandbox; systemd reads the env file, so no secret passes argv or the store
+  ak =
+    let
+      server = config.systemd.services.authentik;
+      props = lib.getAttrs [
+        "EnvironmentFile"
+        "WorkingDirectory"
+        "StateDirectory"
+        "StateDirectoryMode"
+        "UMask"
+        "ProtectSystem"
+        "ProtectHome"
+        "PrivateTmp"
+        "NoNewPrivileges"
+        "CapabilityBoundingSet"
+      ] server.serviceConfig;
+      # the live server's multiproc dir would collect a dead shell's metrics; lifecycle/ak picks one in the private /tmp
+      env = removeAttrs server.environment [ "PROMETHEUS_MULTIPROC_DIR" ];
+      arg =
+        flag: n: v:
+        "${flag} ${lib.escapeShellArg "${n}=${toString v}"}";
+    in
+    pkgs.writeShellScriptBin "ak" ''
+      exec ${lib.getExe' config.systemd.package "systemd-run"} --quiet --collect --wait --pty --pipe \
+        --uid=${server.serviceConfig.User} --gid=${server.serviceConfig.Group} -p MemoryMax=1G \
+        ${lib.concatMapAttrsStringSep " " (arg "-p") props} \
+        ${lib.concatMapAttrsStringSep " " (arg "-E") env} \
+        ${pkgs.bash}/bin/bash ${django}/lifecycle/ak "$@"
+    '';
 in
 {
   users.users.authentik = {
@@ -108,6 +138,7 @@ in
   users.groups.authentik = { };
 
   environment.etc."authentik/config.yml".text = builtins.toJSON settings;
+  environment.systemPackages = [ ak ];
 
   sops.secrets = lib.mapAttrs' (_: key: lib.nameValuePair key { inherit sopsFile; }) envNames;
   sops.templates."authentik.env" = {
