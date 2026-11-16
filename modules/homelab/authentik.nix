@@ -20,6 +20,7 @@ let
   fw = config.networking.firewall;
   state = "/var/lib/authentik";
   backups = "/var/lib/authentik-backup";
+  pullKey = "restrict,from=\"${config.sam.fleet.hosts.lenovo-21CB001PMX.address}\",command=\"cat ${backups}/latest.dump\" ${config.programs.ssh.knownHosts.lenovo-21CB001PMX.publicKey}";
   blueprints = pkgs.symlinkJoin {
     name = "authentik-blueprints";
     paths = [
@@ -236,9 +237,7 @@ in
     isSystemUser = true;
     group = "authentik-backup";
     shell = pkgs.bash;
-    openssh.authorizedKeys.keys = [
-      "restrict,from=\"${config.sam.fleet.hosts.lenovo-21CB001PMX.address}\",command=\"cat ${backups}/latest.dump\" ${config.programs.ssh.knownHosts.lenovo-21CB001PMX.publicKey}"
-    ];
+    openssh.authorizedKeys.keys = [ pullKey ];
   };
   # AllowUsers is a list the other modules extend; without this sshd refuses the pull
   services.openssh.settings.AllowUsers = [ "backup-pull" ];
@@ -277,7 +276,24 @@ in
     };
   };
 
+  # info-level SC2012 (ls -1t for the rotation) is the only finding below warning
+  system.checks = [
+    (pkgs.runCommand "authentik-backup-script-check" { nativeBuildInputs = [ pkgs.shellcheck ]; } ''
+      shellcheck --severity=warning ${config.systemd.services.authentik-backup.serviceConfig.ExecStart}
+      touch $out
+    '')
+  ];
+
   assertions = [
+    {
+      # the restore path: a backup that no timer starts, or a pull key another module widens, fails only when it is needed
+      assertion =
+        lib.elem "timers.target" config.systemd.timers.authentik-backup.wantedBy
+        && config.users.users.backup-pull.openssh.authorizedKeys.keys == [ pullKey ]
+        && config.users.users.backup-pull.openssh.authorizedKeys.keyFiles == [ ]
+        && lib.elem "backup-pull" config.services.openssh.settings.AllowUsers;
+      message = "modules/homelab/authentik.nix: authentik-backup must be started by its timer, and backup-pull must hold only lenovo's restricted key (from=, command=cat latest.dump) and be in AllowUsers.";
+    }
     {
       assertion = pkg.version == version;
       message = "modules/homelab/authentik.nix: nixpkgs moved authentik to ${pkg.version}; the module and the cut-over notes are for ${version}. Bump `version` on purpose, after reading the release notes.";
