@@ -274,7 +274,8 @@ either side is only reported.
 - the `just deploy` HOST pattern (checked by `scripts/test-ssh-known-hosts.py`);
 - its pinned key in `modules/core/ssh-known-hosts.nix` and its sops recipient;
 - its LAN address in `modules/core/fleet.nix` if another module reads it;
-- optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`.
+- optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`;
+- the hand-kept host lists in `docs/new-host.md` step 5 (until #480 derives them).
 
 `just parity` picks the host up on its own. Full procedure, including a Windows
 dual boot: `docs/new-host.md`.

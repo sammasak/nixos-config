@@ -1,12 +1,14 @@
 # Adding a new host
 
-The steps that brought `asus-b460m` (a Windows desktop) into the fleet on
-2026-11-16, written so the next machine can follow them. A Linux-only machine
-skips the Windows parts. Pis have their own image path (`modules/hardware/pi-sd-image.nix`).
+How a machine joins the fleet, written from onboarding `asus-b460m` (a
+Windows desktop). A Linux-only machine skips the Windows parts. Pis have their
+own image path (`modules/hardware/pi-sd-image.nix`).
 
-Hard rules for a dual-boot machine: never format or repartition the existing
-EFI system partition (ESP), never touch a Windows or recovery partition, and
-never use `modules/hardware/disko-single-ext4.nix` (it takes the whole disk).
+Hard rules for a dual-boot machine: back up Windows and store the BitLocker
+recovery key off the machine before any disk change; never format or
+repartition the existing EFI system partition (ESP); never touch a Windows or
+recovery partition; never use `modules/hardware/disko-single-ext4.nix` (it
+takes the whole disk).
 
 ## 1. Reach it and inspect it, read-only
 
@@ -41,19 +43,36 @@ os-prober off). GRUB's loader takes under 1 MB of the ESP.
 
 ## 3. Windows-side preparation
 
-```
-powercfg /h off
-reg add HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation /v RealTimeIsUniversal /t REG_DWORD /d 1 /f
-```
+In this order, nothing skipped:
 
-Suspend BitLocker first if it is on (and save the recovery key). Shrink C:
-with diskpart (`select volume C` / `shrink desired=<MB>`). The limit
-`querymax` reports is set by unmovable files, not by free space; to go past
-it, turn the pagefile off (`AutomaticManagedPagefile=False`, delete the
-`Win32_PageFileSetting`), turn System Restore off and delete shadow copies
-(`vssadmin delete shadows /for=C: /all /quiet`), reboot, query again, shrink,
-then turn the pagefile back on. Decide the final size before installing:
-space freed later lands in front of the Linux partition.
+1. Back up the Windows data (or take a full disk image) to another machine or
+   drive, and confirm a file restores from it.
+2. If BitLocker is on, store the recovery key off the machine
+   (`manage-bde -protectors -get C:`, or the Microsoft account). Booting
+   Windows through GRUB changes the measured boot path, so expect the recovery
+   prompt at least once and have the key at hand.
+3. Suspend BitLocker until it is resumed by hand:
+   `Suspend-BitLocker -MountPoint C: -RebootCount 0`. The default resumes it
+   after one reboot, and the steps below reboot before the shrink.
+4. Turn off hibernation and Fast Startup, and keep the clock in UTC:
+
+   ```
+   powercfg /h off
+   reg add HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation /v RealTimeIsUniversal /t REG_DWORD /d 1 /f
+   ```
+
+5. Shrink C: with diskpart (`select volume C` / `shrink desired=<MB>`). The
+   limit `querymax` reports is set by unmovable files, not by free space. To go
+   past it, turn the pagefile off (`AutomaticManagedPagefile=False`, delete the
+   `Win32_PageFileSetting`), turn System Restore off
+   (`Disable-ComputerRestore -Drive C:\`) and delete the shadow copies
+   (`vssadmin delete shadows /for=C: /all /quiet`; this destroys every restore
+   point), reboot, query again, shrink.
+6. Turn the pagefile back on (`AutomaticManagedPagefile=True`) and System
+   Restore back on (`Enable-ComputerRestore -Drive C:\`).
+
+Decide the final size before installing: space freed later lands in front of
+the Linux partition.
 
 ## 4. Installer
 
@@ -65,27 +84,45 @@ mkdir -p ~/.ssh && curl -fsSL https://github.com/sammasak.keys > ~/.ssh/authoriz
 sudo systemctl start sshd
 ```
 
-From lenovo, with exact sectors read from `sgdisk -p` (the gap between the
-Windows and recovery partitions):
+Every command in this step runs on the installer, never on lenovo (which has
+an `nvme0n1` too): from lenovo, `ssh nixos@<installer-ip>` first. `<disk>`,
+`<n>` and `<esp>` are placeholders: read them from this machine, do not copy
+another host's.
+
+Look before writing anything:
 
 ```
-sudo sgdisk -n 5:<first>:<last> -t 5:8304 -c 5:nixos-root /dev/nvme0n1
-sudo mkfs.ext4 -L nixos /dev/nvme0n1p5
-sudo mount /dev/nvme0n1p5 /mnt          # by-label may lag udev
-sudo mkdir -p /mnt/boot && sudo mount -o fmask=0077,dmask=0077 /dev/nvme0n1p1 /mnt/boot   # the ESP, NOT formatted
+lsblk -f
+sudo sgdisk -p /dev/<disk>
+```
+
+The ESP must be type `EF00` and already hold `EFI/Microsoft`
+(`sudo mount -o ro /dev/<esp> /mnt && ls /mnt/EFI && sudo umount /mnt`).
+The new partition goes in the free gap the shrink left (between the Windows
+and recovery partitions), with `<first>`/`<last>` the exact sectors of that
+gap and `<n>` the next unused number. Create it, then check that `/dev/<disk>p<n>`
+is the new, empty partition of the expected size before `mkfs`:
+
+```
+sudo sgdisk -n <n>:<first>:<last> -t <n>:8304 -c <n>:nixos-root /dev/<disk>
+lsblk -f /dev/<disk>
+sudo mkfs.ext4 -L nixos /dev/<disk>p<n>
+sudo mount /dev/<disk>p<n> /mnt          # by-label may lag udev
+sudo mkdir -p /mnt/boot && sudo mount -o fmask=0077,dmask=0077 /dev/<esp> /mnt/boot   # the ESP, NOT formatted
 ```
 
 Before GRUB writes to the ESP, save it: `tar -C /mnt/boot -cf /mnt/root/esp-before-nixos.tar .`
-and `efibootmgr -v > /mnt/root/efibootmgr-before.txt`.
+and `efibootmgr -v > /mnt/root/efibootmgr-before.txt`, and copy both off the
+machine (`scp` to lenovo).
 `nixos-generate-config --root /mnt`, replace `configuration.nix` with a
 bootstrap (the GRUB block, `networking.hostName`, user `lukas` with lenovo's
-key, sshd key-only, flakes), `nixos-install --no-root-passwd`. Check both
-GRUB entries boot at the machine. A missing `kvm-intel` in the hardware scan
-means VT-x is off in the firmware.
+key, sshd key-only, flakes), `nixos-install --no-root-passwd`. At the machine,
+boot both GRUB entries: NixOS, and Windows to the desktop. A missing
+`kvm-intel` in the hardware scan means VT-x is off in the firmware.
 
 ## 5. Register it (one PR)
 
-Per `CLAUDE.md` "Adding a New Host", plus:
+Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
 
 - the fingerprint read on the console (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`),
   never `ssh-keyscan` (`docs/ssh-host-keys.md`);
@@ -93,7 +130,16 @@ Per `CLAUDE.md` "Adding a New Host", plus:
   declares secrets from (`nixos:known-hosts-test` fails a needless one), then
   `sops updatekeys -y` on each;
 - `scripts/test-ssh-known-hosts.py`: `EXPECTED`, `SOPS_RECIPIENTS`, the hard-coded host set;
-- the `just deploy` and `just dry-activate` HOST patterns.
+- the `just deploy` and `just dry-activate` HOST patterns;
+- the hand-kept host lists no test derives yet (#480):
+  - `modules/homelab/edge.nix` `otlpSources` and its mirror in
+    `scripts/test-caddy-edge.py`, if the host runs native OTel;
+  - the `host.name` relabel regex in `modules/homelab/monitoring/alloy-otlp.alloy`
+    (two places) and the hosts `scripts/test-alloy-otlp-sanitizer.sh` feeds it;
+  - the default host list in `scripts/ssh-known-hosts-verify.sh`;
+  - the host rows in `README.md` and `docs/architecture.md`;
+  - for a host that is not always up (scheduled power-off, dual boot), the
+    `NodeChronicNotReady` exemption in `modules/homelab/monitoring/rules/homelab.yaml`.
 
 Commit and gate on a worker (msi or acer), not lenovo.
 
@@ -105,8 +151,11 @@ first (`sudo passwd lukas` over an `ssh -t` session; the fleet config drops the
 bootstrap's passwordless sudo). Then, building on the new host:
 
 1. The host has no GitHub key and some inputs are private: from lenovo, copy
-   every input into its store (sources only, no evaluation):
-   `NIX_SSHOPTS=... nix flake archive --no-check-sigs --to ssh-ng://lukas@<address> .`
+   every input into its store (sources only, no evaluation). Until lenovo runs
+   the registration commit, its `known_hosts` lacks the new host, so point ssh
+   at a file holding the host key read on the console
+   (`<address> ssh-ed25519 <key>`):
+   `NIX_SSHOPTS="-o UserKnownHostsFile=<file> -o StrictHostKeyChecking=yes" nix flake archive --no-check-sigs --to ssh-ng://lukas@<address> .`
 2. Put the commit on the host (`git bundle` from the gate host, `git fetch` it into a clone).
 3. Build as `lukas` and activate as root, in a `systemd-run` unit so a dropped
    ssh session does not kill it (root refuses a git tree owned by `lukas`):
@@ -115,8 +164,12 @@ bootstrap's passwordless sudo). Then, building on the new host:
    `<out>/bin/switch-to-configuration switch`.
 4. Reboot once: the switch from the bootstrap's `dbus` to the fleet's
    `dbus-broker` fails to reload on a live system and leaves it degraded until then.
+5. The switch rewrote GRUB with the fleet config: at the machine, boot both
+   entries again. Windows must reach the desktop; then resume BitLocker
+   (`Resume-BitLocker -MountPoint C:`) and reboot Windows once more to confirm
+   it starts without the recovery prompt.
 
-After that, `just deploy <name>` from lenovo.
+Only after that, `just deploy <name>` from lenovo, and step 7.
 
 ## 7. Make it a worker (second PR)
 

@@ -177,6 +177,7 @@ in
   acer-swift).
 - [docs/herdr.md](docs/herdr.md): persistent Herdr sessions, agent restore,
   and reboot verification.
+- [docs/new-host.md](docs/new-host.md): onboarding a new host, Windows dual boot included.
 - [docs/factum-pilot.md](docs/factum-pilot.md): the Lenovo-only, advisory Factum CLI pilot.
 - [docs/nix-audit-pilot.md](docs/nix-audit-pilot.md): the advisory nix-audit pilot on lenovo, acer-swift and msi-ms7758.
 
