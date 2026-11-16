@@ -146,7 +146,7 @@ for name, (fresh, no_fallback) in static.items():
     check(spa == [({"not": [{"path": no_fallback}, {"file": {}}]},)],
           f"{name} falls back to /index.html only for a missing file outside {no_fallback} {spa}")
 
-# DNS (#432): every *.sammasak.dev name reaches this Caddy, dns.sammasak.dev reaches lenovo's AdGuard
+# DNS: every *.sammasak.dev name reaches this Caddy, dns.sammasak.dev reaches lenovo's AdGuard
 answers = {r["domain"]: r["answer"] for r in P["rewrites"]}
 check(answers.get("*.sammasak.dev") == fleet["acer-swift"], f"*.sammasak.dev answers acer's address {answers}")
 check(answers.get("sammasak.dev") == fleet["acer-swift"], f"the apex answers acer's address {answers}")
