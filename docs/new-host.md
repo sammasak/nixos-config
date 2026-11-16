@@ -111,9 +111,18 @@ sudo mount /dev/<disk>p<n> /mnt          # by-label may lag udev
 sudo mkdir -p /mnt/boot && sudo mount -o fmask=0077,dmask=0077 /dev/<esp> /mnt/boot   # the ESP, NOT formatted
 ```
 
-Before GRUB writes to the ESP, save it: `tar -C /mnt/boot -cf /mnt/root/esp-before-nixos.tar .`
-and `efibootmgr -v > /mnt/root/efibootmgr-before.txt`, and copy both off the
-machine (`scp` to lenovo).
+Before GRUB writes to the ESP, save it and copy it off the machine. The ESP is
+mounted root-only and `/mnt/root` does not exist yet, so every step is `sudo`, and
+the copies land world-readable in `/tmp` for the `nixos` user to hand out:
+
+```
+sudo mkdir -p /mnt/root
+sudo tar -C /mnt/boot -cf /mnt/root/esp-before-nixos.tar .
+sudo efibootmgr -v | sudo tee /mnt/root/efibootmgr-before.txt >/dev/null
+sudo install -m 0644 /mnt/root/esp-before-nixos.tar /mnt/root/efibootmgr-before.txt /tmp/
+```
+
+Then, from lenovo: `scp nixos@<installer-ip>:/tmp/{esp-before-nixos.tar,efibootmgr-before.txt} .`
 `nixos-generate-config --root /mnt`, replace `configuration.nix` with a
 bootstrap (the GRUB block, `networking.hostName`, user `lukas` with lenovo's
 key, sshd key-only, flakes), `nixos-install --no-root-passwd`. At the machine,
@@ -130,7 +139,7 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
   declares secrets from (`nixos:known-hosts-test` fails a needless one), then
   `sops updatekeys -y` on each;
 - `scripts/test-ssh-known-hosts.py`: `EXPECTED`, `SOPS_RECIPIENTS`, the hard-coded host set;
-- the `just deploy` and `just dry-activate` HOST patterns;
+- every `HOST` recipe pattern in the `Justfile` (`test-ssh-known-hosts.py` fails on a missed one);
 - the hand-kept host lists no test derives yet (#480):
   - `modules/homelab/edge.nix` `otlpSources` and its mirror in
     `scripts/test-caddy-edge.py`, if the host runs native OTel;
@@ -138,8 +147,11 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
     (two places) and the hosts `scripts/test-alloy-otlp-sanitizer.sh` feeds it;
   - the default host list in `scripts/ssh-known-hosts-verify.sh`;
   - the host rows in `README.md` and `docs/architecture.md`;
-  - for a host that is not always up (scheduled power-off, dual boot), the
-    `NodeChronicNotReady` exemption in `modules/homelab/monitoring/rules/homelab.yaml`.
+- for a host that is not always up (scheduled power-off, dual boot), `sleeps = true`
+  on its `modules/core/fleet.nix` entry. That one fact keeps it out of every store
+  cache's substituters and moves it from `NodeChronicNotReady` to `HostExpectedOff`;
+  no rule edit. A power window, like msi's, is the one exception that
+  `homelab:node:planned_off` in `rules/homelab.yaml` names by host.
 
 Commit and gate on a worker (msi or acer), not lenovo.
 
