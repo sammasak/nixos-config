@@ -88,13 +88,14 @@ Secret scopes in `secrets/.sops.yaml`:
 | Path pattern | Recipients | Purpose |
 |--------------|-----------|---------|
 | `homelab/nix-signing-key.yaml` | Personal + lenovo | deploy-rs closure-signing private key (workers trust the public half) |
-| `homelab/wifi.yaml` | Personal + lenovo, acer-swift, acer `lukas`, black-pi, naked-pi + Flux (msi is wired) | Home Wi-Fi PSK |
+| `homelab/wifi.yaml` | Personal + lenovo, acer-swift, acer `lukas`, black-pi, naked-pi (msi is wired) | Home Wi-Fi PSK |
 | `homelab/open-webui.yaml` | Personal + acer-swift | open-webui's gateway and session keys |
 | `homelab/llm-gateway.yaml` | Personal + acer-swift | llm-gateway's provider and project keys |
 | `homelab/authentik.yaml` | Personal + acer-swift | Authentik's secret key and the Grafana OIDC pair its blueprint reads |
 | `homelab/grafana.yaml` | Personal + black-pi | Grafana's admin, OIDC client and secret key |
-| `homelab/(cloudflare\|tailscale).yaml` | Personal + lenovo, acer `lukas` + Flux | ACME DNS token, Tailscale authkey |
-| `homelab/*.yaml` | Personal + every cluster host + Flux | GitHub access token; `k3s.yaml`, which nothing declares since k3s left, until the owner retires it |
+| `homelab/cloudflare.yaml` | Personal + lenovo, acer-swift, acer `lukas` | ACME DNS token (lenovo, and acer's Caddy) |
+| `homelab/tailscale.yaml` | Personal + lenovo, acer `lukas` | Tailscale authkey |
+| `homelab/*.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, black-pi | GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
 | `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | Claude OAuth token |
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
