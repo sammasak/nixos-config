@@ -116,7 +116,10 @@ let
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;
       };
-      alertmanager = [ lenovo.sam.fleet.hosts.black-pi.address ] ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
+      alertmanager = [
+        lenovo.sam.fleet.hosts.black-pi.address
+      ]
+      ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
       failing = {
         lenovo = failing lenovo;
         loopbackFirewall = failing (
@@ -178,7 +181,9 @@ let
             )
           ]
         );
-        uncached = failing (extend "black-pi" [ ({ lib, ... }: { sam.storeCache.enable = lib.mkForce true; }) ]);
+        uncached = failing (
+          extend "black-pi" [ ({ lib, ... }: { sam.storeCache.enable = lib.mkForce true; }) ]
+        );
       };
       roles = lib.mapAttrs (_: h: h.config.sam.profile.roles) hosts;
     };
@@ -191,6 +196,20 @@ let
       };
       settings = lenovo.nix.settings or null;
       userSlice = lenovo.systemd.slices.user.sliceConfig or null;
+      memory = {
+        inherit (lenovo.sam.memory) ram floors;
+        systemSliceMin = lenovo.systemd.slices.system.sliceConfig.MemoryMin or null;
+        floorUnits = lib.mapAttrs (_: u: u.serviceConfig.MemoryMin or null) {
+          inherit (lenovo.systemd.services) adguardhome sshd;
+        };
+      };
+      failing = {
+        lenovo = failing lenovo;
+        # a floor raised past what the caps leave of the RAM must fail evaluation
+        overRam = failing (
+          extend "lenovo" [ ({ lib, ... }: { sam.memory.floors."adguardhome.service" = lib.mkForce "1G"; }) ]
+        );
+      };
     };
 
     delegation = {

@@ -52,6 +52,20 @@ check(ucap is not None and uswap is not None and uswap * 4 <= ucap,
       "the slice's swap is at most a quarter of its ceiling, as in the worker pools: zram is charged to no cgroup")
 check("MemoryHigh" not in user,
       "the user slice has no MemoryHigh: a runaway reaches the limit and is killed instead of stalling every session")
+# nixos-config#354: one budget (sam.memory): every MemoryMax plus the floors fits in the declared RAM, at evaluation
+mem = P["memory"] or {}
+floors = mem.get("floors") or {}
+check(mem.get("ram") == "15667M" and {"adguardhome.service", "sshd.service"} <= set(floors),
+      f"lenovo declares its RAM and floors for its DNS and sshd ({mem.get('ram')}, {sorted(floors)})")
+units = mem.get("floorUnits") or {}
+check(units.get("adguardhome") == floors.get("adguardhome.service") and units.get("sshd") == floors.get("sshd.service"),
+      f"the floors reach the units as MemoryMin ({units})")
+check(size(mem.get("systemSliceMin") or "") == sum(size(v) for v in floors.values()),
+      f"system.slice's MemoryMin is the floors' sum ({mem.get('systemSliceMin')}): a child's floor holds only under its parent's")
+fails = P["failing"] or {}
+check(fails.get("lenovo") == [], f"lenovo fails no assertion {fails.get('lenovo')}")
+check(any("exceed the RAM" in m for m in fails.get("overRam") or []),
+      f"a floor raised past what the caps leave of the RAM fails evaluation {fails.get('overRam')}")
 for host in ("acer-swift", "msi-ms7758"):
     daemon = P["daemon"][host] or {}
     high, cap = size(daemon.get("MemoryHigh")), size(daemon.get("MemoryMax"))
