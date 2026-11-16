@@ -1,4 +1,4 @@
-# Headless worker host (msi-ms7758, asus-b460m, acer-swift): runs the ephemeral nspawn workers (modules/workers),
+# Headless worker host: runs the ephemeral nspawn workers (modules/workers),
 # unthemed, and with maintenance that stays out of a boot.
 { config, lib, ... }:
 let
