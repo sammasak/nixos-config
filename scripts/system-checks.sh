@@ -46,6 +46,11 @@ fi
 before=$(on nix-store --check-validity --print-invalid "${outs[@]}")
 echo "system-checks: realising ${#drvs[@]} check(s) of ${host} on ${where}"
 on nix build --no-link "${drvs[@]/%/^*}"
+missing=$(on nix-store --check-validity --print-invalid "${outs[@]}")
+if [ -n "$missing" ]; then
+  echo "system-checks: still not valid on ${where} after the build:" "$missing" >&2
+  exit 1
+fi
 info=$(on nix path-info --json --json-format 1 "${outs[@]}")
 for i in "${!outs[@]}"; do
   how=$(jq -r --arg p "${outs[$i]}" '.[$p] | if .ultimate then "built"

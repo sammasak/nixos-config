@@ -21,7 +21,6 @@ in
   # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
   homelab.msiPowerSchedule.selfShutdown.enable = true;
 
-  # Loki on black-pi
   homelab.journalCollector = {
     enable = true;
     lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";

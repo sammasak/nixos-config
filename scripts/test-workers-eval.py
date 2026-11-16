@@ -78,6 +78,8 @@ ASSERTED = [
     ("credential name", '{ services.devEnvironments.credentials."a b" = "/etc/x"; }', 'credentials.a b: a file name'),
     ("lock lanes bound writable", '{ containers.ok.bindMounts."/run/work-locks".isReadOnly = lib.mkForce false; }', "/run/work-locks must be bound read-only"),
     ("lock lanes from another directory", '{ containers.ok.bindMounts."/run/work-locks".hostPath = lib.mkForce "/tmp"; }', "/run/work-locks must be bound read-only"),
+    ("lock lanes at another mount point", '{ containers.ok.bindMounts."/run/work-locks".mountPoint = lib.mkForce "/mnt"; }', "/run/work-locks must be bound read-only"),
+    ("lock lane file not made", '{ systemd.tmpfiles.settings.work-locks."/run/work-locks/light-work.lock" = lib.mkForce { }; }', "/run/work-locks must be bound read-only"),
 ]
 
 # (name, module, expected stderr substring); each must fail the evaluation on its type

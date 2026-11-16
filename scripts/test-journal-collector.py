@@ -1,7 +1,7 @@
-"""homelab.journalCollector (modules/homelab/journal-collector.nix): Alloy ships the journal on msi-ms7758 only,
+"""homelab.journalCollector (modules/homelab/journal-collector.nix): Alloy ships the journal on every host but naked-pi,
 reads journald and nothing else, references no secret, keeps its readiness probe on the host, restarts on a config
-change, drops the egress proxy's info-level 2xx/3xx access lines and pages ntfy (with retries) when it fails. The
-negative case enables the module on acer-swift in the probe only.
+change, never ships Authentik's or user units' lines, drops the egress proxy's info-level 2xx/3xx access lines and pages ntfy (with retries) when it fails. The
+negative case enables the module on naked-pi in the probe only. The detailed checks read msi-ms7758's unit.
 
 Evaluation only: options, the generated config.alloy and the unit, never a build. The drop stage's semantics (the
 ";" separator, a missing field or a non-JSON line keeps the line) are modelled in Python; that model was checked
@@ -38,10 +38,18 @@ def components(conf):
 
 r = gate_probe.section("journal-collector")
 hosts = r["hosts"]
-check({"msi-ms7758", "lenovo", "acer-swift", "black-pi"} <= set(hosts), f"every host is evaluated {sorted(hosts)}")
-check(enabled(hosts) == ["msi-ms7758"], f"the collector and Alloy run on msi-ms7758 only {enabled(hosts)}")
-seeded = enabled({**hosts, "acer-swift": r["seeded"]})
-check(seeded == ["acer-swift", "msi-ms7758"], f"negative case: enabling it on acer-swift shows in the msi-only check {seeded}")
+check({"msi-ms7758", "lenovo", "acer-swift", "black-pi", "naked-pi"} <= set(hosts), f"every host is evaluated {sorted(hosts)}")
+shipping = ["acer-swift", "asus-b460m", "black-pi", "lenovo", "msi-ms7758"]
+check(enabled(hosts) == shipping, f"the collector and Alloy run on every host but naked-pi {enabled(hosts)}")
+seeded = enabled({**hosts, "naked-pi": r["seeded"]})
+check(seeded == sorted(shipping + ["naked-pi"]), f"negative case: enabling it on naked-pi shows in the hosts check {seeded}")
+for h in shipping:
+    f = hosts.get(h, {})
+    check(f'host = "{f.get("hostName")}"' in norm(f.get("config")) and "alloy-config-check" in f.get("checks", []),
+          f"{h} labels its lines with its own hostname and validates its config at build ({f.get('hostName')}, {f.get('checks')})")
+    check((f.get("unit") or {}).get("onFailure") == ["journal-collector-failed.service"] and f"alloy failed on {f.get('hostName')}" in (f.get("failed") or ""),
+          f"{h} pages ntfy when Alloy fails ({(f.get('unit') or {}).get('onFailure')})")
+check(len({hosts.get(h, {}).get("hostName") for h in shipping}) == len(shipping), "each shipping host has its own host label")
 
 m = hosts.get("msi-ms7758", {})
 conf = norm(m.get("config"))
@@ -66,33 +74,45 @@ check('source_labels = ["__journal__systemd_unit"] target_label = "unit"' in rel
 order = [(re.search(r'source_labels = \["([^"]*)"\]', r) or [None, "?"])[1]
          + "->" + (re.search(r'replacement = "([^"]*)"', r) or [None, "unit"])[1]
          for r in rel.split("rule {")[1:]]
-check(order == ["__journal__systemd_unit->unit", "unit->transient", "unit->systemd-coredump"],
-      f"relabel rules: exactly three, unit first, then the transient and coredump rewrites {order}")
+check(order == ["__journal__systemd_unit->unit", "unit->session", "unit->transient", "unit->systemd-coredump"],
+      f"relabel rules: exactly four, unit first, then the session, transient and coredump rewrites {order}")
 rules = {}
 for rule in rel.split("rule {")[1:]:
     rx = re.search(r'regex = "((?:[^"\\]|\\.)*)"', rule)
     to = re.search(r'replacement = "([^"]*)"', rule)
     if rx and to:
         rules[to[1]] = rx[1].replace("\\\\", "\\")
-check(set(rules) == {"transient", "systemd-coredump"}, f"unit rewrites: transient and systemd-coredump {sorted(rules)}")
-cases = {"session-12.scope": "transient", "run-r1a2b.service": "transient", "run-u7.scope": "transient",
+check(set(rules) == {"session", "transient", "systemd-coredump"}, f"unit rewrites: session, transient and systemd-coredump {sorted(rules)}")
+cases = {"session-12.scope": "session", "session-c1.scope": "session", "run-r1a2b.service": "transient", "run-u7.scope": "transient",
          "run-p123-i456.scope": "transient", "systemd-coredump@0-1234-0.service": "systemd-coredump",
          "sshd.service": None, "user@1000.service": None, "systemd-journald.service": None}
 got = {u: next((to for to, rx in rules.items() if re.fullmatch(rx, u)), None) for u in cases}
-check(got == cases, f"unit rewrites match transient and coredump units only {got}")
+check(got == cases, f"unit rewrites match session, transient and coredump units only {got}")
 pc = comps.get(("loki.process", proc), "")
+private = re.search(r'stage\.match \{ selector = "\{unit = ~\\"([^"\\]+)\\"\}" action = "drop"', pc)
+check(private is not None, f"a drop stage on private units {pc[:200]}")
+private_rx = private[1] if private else "(?!)"
+units = {"authentik.service": False, "authentik-worker.service": False, "user@1000.service": False, "user@0.service": False,
+         "session": False, "authentik-migrate.service": True, "authentik-backup.service": True, "transient": True,
+         "sshd.service": True, "dev-env-egress.service": True, "user-runtime-dir@1000.service": True}
+got = {u: re.fullmatch(private_rx, u) is None for u in units}
+check(got == units, f"Authentik's, user units' and login sessions' lines never ship, every other unit's do {got}")
+ak = re.search(r'stage\.match \{ selector = "\{job = \\"([^"\\]+)\\"\} \|~ \\"([^"\\]+)\\"" action = "drop"', pc)
+check(ak is not None and ak[1] == "host-journal", f"a drop stage on any line naming ak's command {ak and ak.groups()}")
 sel = re.search(r'stage\.match \{ selector = "\{unit = \\"([^"\\]+)\\"\}"', pc)
 src_f = re.search(r'stage\.drop \{ source = "([^"]+)"', pc)
 drop_rx = re.search(r'stage\.drop \{[^}]*expression = "((?:[^"\\]|\\.)*)"', pc)
 json_f = re.search(r'stage\.json \{ expressions = \{([^}]*)\}', pc)
 check(None not in (sel, src_f, drop_rx, json_f), "drop stage: a unit match, a JSON parse and a drop on its fields")
 stages = re.findall(r"stage\.[a-z_]+", pc)
-check(stages == ["stage.match", "stage.json", "stage.drop"] and "separator" not in pc,
-      f"process block: exactly match, json, drop, default separator {stages}")
+check(stages == ["stage.match", "stage.match", "stage.match", "stage.json", "stage.drop"] and "separator" not in pc,
+      f"process block: the private-unit and ak drops, then match, json, drop, default separator {stages}")
 
 
 def shipped(unit, line):
     """The rendered match and drop stage applied to one line (Go regexp: unanchored search)."""
+    if re.fullmatch(private_rx, unit) or (ak and re.search(ak[2], line)):
+        return False
     if None in (sel, src_f, drop_rx, json_f) or unit != sel[1]:
         return True
     try:
@@ -120,10 +140,18 @@ lines = {
     (egress, '{"level":"warn","ts":1.0,"logger":"http","msg":"HTTP/2 skipped because it requires TLS"}'): True,
     (egress, "Starting the egress proxy"): True,
     ("sshd.service", access % ("info", 200)): True,
+    ("authentik.service", '{"event":"/application/o/authorize/?code=x&state=y","level":"info"}'): False,
+    ("user@1000.service", "agent output"): False,
+    ("session", "lukas : TTY=pts/3 ; PWD=/home/lukas ; USER=root ; COMMAND=/run/current-system/sw/bin/ak shell"): False,
+    ("init.scope", 'Started run-u412.service - /nix/store/x-bash/bin/bash /nix/store/y-authentik/lifecycle/ak shell -c "print(1)".'): False,
+    ("init.scope", "Started sshd.service - SSH Daemon."): True,
+    ("polkit.service", "Operator of unix-session:4 successfully authenticated as unix-user:root to gain ONE-SHOT authorization "
+     "for action org.freedesktop.systemd1.manage-units [/nix/store/y-authentik/lifecycle/ak shell -c print(1)]"): False,
+    ("transient", "a systemd-run job's own line"): True,
 }
 got = {f"{u} {l[:60]} {l[-12:]}": shipped(u, l) for u, l in lines}
 want = {f"{u} {l[:60]} {l[-12:]}": keep for (u, l), keep in lines.items()}
-check(got == want, f"drops only info 2xx/3xx access lines of {egress} {got}")
+check(got == want, f"drops private units and only info 2xx/3xx access lines of {egress} {got}")
 wr = comps.get(("loki.write", write), "")
 check(re.search(r'url = "http://[^"]+/loki/api/v1/push"', wr) is not None and "max_backoff_retries = 0" in wr,
       "writes to a Loki push endpoint and retries forever (the journal holds the backlog)")

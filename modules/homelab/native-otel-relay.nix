@@ -7,6 +7,9 @@
   ...
 }:
 let
+  # the edge host (edge.nix), by address: otlp.sammasak.dev answers only it (lenovo's *.sammasak.dev rewrite), and a
+  # name in proxy_pass would make nginx's start, or with `resolver` every request, depend on DNS. SNI and Host keep the name
+  edge = config.sam.fleet.hosts.acer-swift.address;
   relayConfig = pkgs.writeShellApplication {
     name = "native-otel-relay-config";
     runtimeInputs = [
@@ -58,11 +61,11 @@ let
           proxy_ssl_trusted_certificate ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt;
           location = /v1/metrics {
             if (\$request_method != POST) { return 405; }
-            proxy_pass https://otlp.sammasak.dev/v1/metrics;
+            proxy_pass https://${edge}/v1/metrics;
           }
           location = /v1/logs {
             if (\$request_method != POST) { return 405; }
-            proxy_pass https://otlp.sammasak.dev/v1/logs;
+            proxy_pass https://${edge}/v1/logs;
           }
           location / { return 404; }
         }
@@ -98,16 +101,14 @@ in
     ];
 
     # nginx first parses the rendered config at service start; render it with the unit's own ExecStartPre and a
-    # dummy token. proxy_pass resolves its host at parse time, so /etc/hosts is redirected as nftables.checkRuleset does
+    # dummy token. The sandbox has no DNS, as a host booting offline has none: a proxy_pass host name fails here.
     system.checks = [
       (pkgs.runCommand "native-otel-relay-nginx-check" { nativeBuildInputs = [ pkgs.nginx ]; } ''
         mkdir credentials runtime
         printf '%s' dummy-token > credentials/token
-        printf '%s\n' '127.0.0.1 otlp.sammasak.dev' > hosts
         CREDENTIALS_DIRECTORY=$PWD/credentials RUNTIME_DIRECTORY=$PWD/runtime \
           ${relayConfig}/bin/native-otel-relay-config
-        LD_PRELOAD=${pkgs.libredirect}/lib/libredirect.so NIX_REDIRECTS=/etc/hosts=$PWD/hosts \
-          nginx -t -e stderr -p "$PWD/runtime/" -c "$PWD/runtime/nginx.conf"
+        nginx -t -e stderr -p "$PWD/runtime/" -c "$PWD/runtime/nginx.conf"
         touch $out
       '')
     ];

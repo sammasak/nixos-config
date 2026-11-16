@@ -23,6 +23,16 @@ let
       ])
       ''
         bash scripts/nix-comment-lint.sh
+        fx=scripts/fixtures/comment-lint
+        # refused by that rule, not by a missing fixture or a dead awk (exit 2)
+        rc=0
+        out=$(bash scripts/nix-comment-lint.sh "$fx/rollback-instruction.nix.fixture" 2>&1) || rc=$?
+        if [ "$rc" -ne 1 ] || ! grep -q '^rollback-instructions: ' <<<"$out"; then
+          printf '%s\n' "$out" >&2
+          echo "comment lint: $fx/rollback-instruction.nix.fixture was not refused by rollback-instructions (exit $rc)" >&2
+          exit 1
+        fi
+        bash scripts/nix-comment-lint.sh "$fx/rollback-pointer.nix.fixture" >/dev/null
       '';
 
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
@@ -89,6 +99,14 @@ let
         names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
         drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
         here=$(nix eval --raw --impure --expr builtins.currentSystem)
+        # VM checks (NixOS tests, the ones with a driver) boot QEMU, up to 4 GiB: the gate refuses to run on lenovo
+        # shellcheck disable=SC2016 # the single-quoted ''${n} is Nix's, not the shell's
+        vms=$(nix eval --json --no-write-lock-file ".#checks.$here" \
+          --apply 'cs: builtins.filter (n: cs.''${n} ? driver) (builtins.attrNames cs)' | jq -r '.[]')
+        if [ -n "$vms" ] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
+          echo "nixos-flake-check: refused on lenovo: $(tr '\n' ' ' <<<"$vms")boot a QEMU VM (memory); run the gate on msi or acer" >&2
+          exit 1
+        fi
         kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
         [ "$kinds" = '["checks","deploy","formatter","nixosConfigurations","overlays","packages","templates"]' ] \
           || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
@@ -103,11 +121,7 @@ let
           for s in $systems; do
             outputs=$(names "$kind.$s")
             for o in $outputs; do
-              # the *-vm checks boot QEMU (up to 4 GiB): lenovo evaluates them and says so, msi and acer boot them
-              if [ "$kind.$s" = "checks.$here" ] && [[ $o == *-vm ]] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
-                echo "nixos-flake-check: NOT booting checks.$s.$o on lenovo (a QEMU VM, memory): only its drvPath is evaluated; run the gate on msi or acer" >&2
-                drv "$kind.$s.$o"
-              elif [ "$kind.$s" = "checks.$here" ]; then
+              if [ "$kind.$s" = "checks.$here" ]; then
                 echo "nixos-flake-check: build checks.$s.$o" >&2
                 nix build --no-link --no-write-lock-file ".#checks.$s.$o"
               else
@@ -249,7 +263,18 @@ let
         ${pkgs.python3}/bin/python scripts/test-alloy-otlp-log-loki.py
       '';
 
-  # acer's Caddyfile through acer's Caddy, from the gate probe
+  systemChecksTest =
+    gate "system-checks-test"
+      (with pkgs; [
+        python3
+        bash
+        jq
+        coreutils
+        gnugrep
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-system-checks.py
+      '';
   platformRecordsTest =
     gate "platform-records-test"
       (with pkgs; [
@@ -262,6 +287,7 @@ let
       ''
         ${pkgs.python3}/bin/python scripts/test-platform-records.py
       '';
+  # acer's Caddyfile through acer's Caddy, from the gate probe
   caddyEdgeTest =
     gate "caddy-edge-test"
       (with pkgs; [
@@ -443,6 +469,7 @@ let
           journalCollectorTest
           alloyOtlpTest
           caddyEdgeTest
+          systemChecksTest
           platformRecordsTest
           authentikAkTest
           switchSafetyTest
@@ -825,6 +852,8 @@ in
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
+    "nixos:system-checks-test" =
+      task "just checks against stub nix/ssh: lists built or substituted, and refuses an empty list, a non-input, an unreachable host, a failed build and a still-invalid check" systemChecksTest;
     "nixos:caddy-edge-test" =
       task "acer's Caddy edge, as caddy adapt reads it: admin off, every name routed, forward auth before chat and grafana, otlp allowlisted, llm-gateway /v1 only" caddyEdgeTest;
     "nixos:authentik-ak-test" =

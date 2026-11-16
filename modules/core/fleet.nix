@@ -28,6 +28,7 @@ in
       lenovo-21CB001PMX.address = "192.168.10.154";
       acer-swift.address = "192.168.10.110";
       msi-ms7758.address = "192.168.10.235";
+      asus-b460m.address = "192.168.10.113";
       # end0; wlan0's .136 is a second LAN address
       black-pi.address = "192.168.10.137";
     };
