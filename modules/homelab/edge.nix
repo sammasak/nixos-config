@@ -1,8 +1,7 @@
 # The *.sammasak.dev edge on acer (#420): Caddy terminates TLS with one DNS-01 wildcard from security.acme and
 # proxies each name to its backend, with forward auth through the k3s Authentik for chat and grafana. The admin API is
 # off, so no local process can load a config without forward_auth; a config change or renewal restarts Caddy.
-# herman is a static site from its Nix build; karta and registry (zot, which karta's pod pulls from) proxy to their
-# pods' ClusterIPs until karta switches.
+# herman is a static site from its Nix build, karta from its archived live build (pkgs/karta-web-archive).
 {
   config,
   lib,
@@ -87,11 +86,54 @@ let
         precompressed gzip
       }
     '';
-    # its derivation comes back with the switch, once sammasak/karta#1 resolves
-    karta = "reverse_proxy 10.43.147.178:8080";
-    # zot: the registry stays until karta switches, so its pod can pull its image if rescheduled
-    registry = "reverse_proxy 10.43.23.61:5000";
+    # the archived 441b800 nginx conf: its security headers on every response; sw.js, the unhashed monty worker,
+    # svg and the manifest no-cache, and those, wasm/js/css and favicon.ico never the SPA fallback
+    karta = ''
+      root * ${pkgs.kartaWeb}
+      header {
+        Content-Security-Policy "${kartaCsp}"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=(), usb=()"
+        Cross-Origin-Opener-Policy same-origin
+        Cross-Origin-Resource-Policy same-origin
+        Strict-Transport-Security "max-age=63072000; includeSubDomains"
+      }
+      @hashed {
+        path *.wasm *.js *.css
+        not path /sw.js /monty_worker.js /monty_worker_bg.wasm /monty_worker_loader.js
+        file
+      }
+      header @hashed Cache-Control "public, max-age=31536000, immutable"
+      header ?Cache-Control no-cache
+      header /manifest.webmanifest Content-Type application/manifest+json
+      @spa {
+        not path *.wasm *.js *.css *.svg /manifest.webmanifest /favicon.ico
+        not file
+      }
+      rewrite @spa /index.html
+      encode gzip
+      file_server {
+        precompressed gzip
+      }
+    '';
   };
+  # open-meteo and OSRM for live data, iroh's relays and DNS (each also as its FQDN) for sync
+  kartaCsp = lib.concatStringsSep "; " [
+    "default-src 'self'"
+    "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'"
+    "style-src 'self' 'unsafe-inline'"
+    "img-src 'self' data:"
+    "font-src 'self'"
+    "connect-src 'self' https://geocoding-api.open-meteo.com https://api.open-meteo.com https://router.project-osrm.org https://*.relay.n0.iroh.link wss://*.relay.n0.iroh.link https://dns.iroh.link https://*.relay.n0.iroh.link. wss://*.relay.n0.iroh.link. https://dns.iroh.link."
+    "worker-src 'self'"
+    "manifest-src 'self'"
+    "object-src 'none'"
+    "base-uri 'self'"
+    "form-action 'self'"
+    "frame-ancestors 'none'"
+  ];
 in
 {
   imports = [ ./acme.nix ];

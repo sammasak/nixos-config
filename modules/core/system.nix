@@ -265,6 +265,7 @@ in
       builtins.elem (lib.getName pkg) [
         "antigravity-cli" # Google agent CLI (gemini-cli successor), desktop only
         "claude-code" # Anthropic CLI, all hosts
+        "karta-web" # the owner's private app's archived site (requireFile is unfree), acer only: pkgs/karta-web-archive
         "open-webui" # custom licence (nixpkgs marks it unfree), acer only: modules/homelab/open-webui.nix
         "unrar" # unfreeRedistributable, from core/packages.nix
       ];

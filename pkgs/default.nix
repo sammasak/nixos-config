@@ -2,6 +2,7 @@
 final: prev: {
   wmediumd = final.callPackage ./wmediumd/package.nix { };
   ollama-portforward = final.callPackage ./ollama-portforward/package.nix { };
+  kartaWeb = final.callPackage ./karta-web-archive/package.nix { };
 
   # Patch CRIU 4.1.1 for kernel 6.16+ compatibility.
   # SO_PASSCRED/SO_PASSSEC on non-Unix sockets returns EOPNOTSUPP on

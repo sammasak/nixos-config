@@ -206,6 +206,7 @@ let
       inherit (acer.services.caddy) configFile enableReload;
       sites = {
         herman = "${hosts.acer-swift.pkgs.hermanWeb}";
+        karta = "${hosts.acer-swift.pkgs.kartaWeb}";
       };
       chatStreams = acer.systemd.sockets.open-webui-proxy.listenStreams;
       fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
