@@ -116,7 +116,10 @@ let
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;
       };
-      alertmanager = [ lenovo.sam.fleet.hosts.black-pi.address ] ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
+      alertmanager = [
+        lenovo.sam.fleet.hosts.black-pi.address
+      ]
+      ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
       failing = {
         lenovo = failing lenovo;
         loopbackFirewall = failing (
@@ -178,7 +181,9 @@ let
             )
           ]
         );
-        uncached = failing (extend "black-pi" [ ({ lib, ... }: { sam.storeCache.enable = lib.mkForce true; }) ]);
+        uncached = failing (
+          extend "black-pi" [ ({ lib, ... }: { sam.storeCache.enable = lib.mkForce true; }) ]
+        );
       };
       roles = lib.mapAttrs (_: h: h.config.sam.profile.roles) hosts;
     };
@@ -214,6 +219,51 @@ let
     };
 
     # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
+    # the work-hours power windows (modules/core/power-schedule.nix): the rendered units per host and the seeded failures
+    power-schedule =
+      let
+        fleetModule = "${flake}/modules/core/fleet.nix";
+        unitsOf =
+          c:
+          lib.mapAttrs (_: u: u.text) (
+            lib.filterAttrs (
+              n: _: lib.hasInfix "-wake." n || lib.hasInfix "-scheduled-shutdown." n
+            ) c.systemd.units
+          );
+      in
+      {
+        units = lib.mapAttrs (_: h: unitsOf h.config) hosts;
+        fleet = lib.mapAttrs (_: h: { inherit (h) sleeps power; }) lenovo.sam.fleet.hosts;
+        failing = {
+          lenovo = failing lenovo;
+          msi = failing msi;
+          asus = failing hosts.asus-b460m.config;
+          sleepingWaker = failing (extend "msi-ms7758" [ { sam.powerSchedule.waker.enable = true; } ]);
+          noWol = failing (
+            extend "asus-b460m" [
+              ({ lib, ... }: { networking.interfaces.eno1.wakeOnLan.enable = lib.mkForce false; })
+            ]
+          );
+          # fleet.nix is read-only, so the seed swaps the module for a copy whose asus entry is awake
+          awake = failing (
+            extend "lenovo" [
+              {
+                disabledModules = [ fleetModule ];
+                imports = [
+                  (
+                    args:
+                    let
+                      m = import fleetModule args;
+                    in
+                    m // { config = lib.recursiveUpdate m.config { sam.fleet.hosts.asus-b460m.sleeps = false; }; }
+                  )
+                ];
+              }
+            ]
+          );
+        };
+      };
+
     caddy-edge = {
       caddy = lib.getExe acer.services.caddy.package;
       inherit (acer.services.caddy) configFile enableReload;

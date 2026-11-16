@@ -281,6 +281,8 @@ either side is only reported.
 - a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` (asserted);
 - its LAN address in `modules/core/fleet.nix` if another module reads it, and `sleeps = true` there if it
   may be powered off (the store caches skip it; `HostExpectedOff` covers it instead of `NodeChronicNotReady`);
+  for a work-hours window also `power` there (MAC, NIC, wake and off times): lenovo wakes it and it powers
+  itself off (`modules/core/power-schedule.nix`, asserted with its `wol-<nic>` unit);
 - optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`.
 
 `just parity` picks the host up on its own. Full procedure:

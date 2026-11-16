@@ -365,6 +365,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-ssh-known-hosts.py
       '';
 
+  powerScheduleTest =
+    gate "power-schedule-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-power-schedule.py
+      '';
+
   buildBoundsTest =
     gate "build-bounds-test"
       (with pkgs; [
@@ -477,6 +487,7 @@ let
           ollamaPortforwardTest
           alertBridgeTest
           knownHostsTest
+          powerScheduleTest
           buildBoundsTest
           delegationTest
           journalCollectorTest
@@ -855,6 +866,8 @@ in
       task "sam.claude.telemetry: Claude exports through the local relay with session and repository attributes; emit-work-ref.sh only when on and pinned" harnessTelemetryTest;
     "nixos:known-hosts-test" =
       task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
+    "nixos:power-schedule-test" =
+      task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =
