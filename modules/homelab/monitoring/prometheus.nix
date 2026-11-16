@@ -23,7 +23,9 @@ let
   probeBudget = 120;
   # the committed llm-bench scorecard as constant recording rules (pkgs/llm-bench/rules.nix)
   scorecard = ../../../pkgs/llm-bench/scorecard;
-  llmBench = pkgs.writeText "llm-bench.yaml" (
+  # toFile, not writeText: a plain store file like ./rules/*.yaml, so evaluating black-pi's config on x86 (the gate
+  # probe) never has to build an aarch64 derivation
+  llmBench = builtins.toFile "llm-bench.yaml" (
     builtins.toJSON (
       import ../../../pkgs/llm-bench/rules.nix {
         inherit lib;
