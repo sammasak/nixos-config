@@ -58,6 +58,8 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #                 $(ssh deploy@black-pi nix-store -qR /nix/var/nix/profiles/system | grep -- '-deploy-rs-')
 #               (black-pi deployed first; the path is unsigned and naked-pi trusts only root, hence sudo).
 #               Owed (#474): naked-pi was offline when this landed, so its next deploy needs this step first.
+just checks HOST              # Realise HOST's system.checks where its deploy builds and print, per check, built or
+                              # substituted (and the cache keys that signed it); deploy and dry-activate run it first, and stop on a failure
 just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
                               # and the closure diff vs the running system; activates nothing, but read
                               # the output: it exits 0 even when the dry activation fails
