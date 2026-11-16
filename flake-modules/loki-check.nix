@@ -19,6 +19,19 @@ let
       ];
     });
   failing = s: map (a: a.message) (builtins.filter (a: !a.assertion) s.config.assertions);
+  # what black-pi's stored chunks were written with: modules/homelab/loki.nix may append periods, never edit this one
+  firstPeriod = {
+    from = "2024-01-01";
+    store = "tsdb";
+    object_store = "filesystem";
+    schema = "v13";
+    index = {
+      prefix = "loki_index_";
+      period = "24h";
+    };
+  };
+  periods =
+    config.flake.nixosConfigurations.black-pi.config.services.loki.configuration.schema_config.configs;
   expectFailure =
     name: c: prefix:
     lib.assertMsg (lib.any (lib.hasPrefix prefix) (failing c)) "loki-check: ${name} passes the assertion ${prefix}";
@@ -52,6 +65,8 @@ in
           assert expectFailure "loopback with sources" local "homelab.loki.allowedSources";
           assert expectFailure "retention 12h" local "homelab.loki.retention 12h";
           assert expectFailure "0.0.0.0 without the firewall" anyAddress "homelab.loki.listenAddress 0.0.0.0";
+          assert lib.assertMsg (lib.head periods == firstPeriod)
+            "loki-check: black-pi's first schema_config period is ${builtins.toJSON (lib.head periods)}; the stored chunks need ${builtins.toJSON firstPeriod}: append a new period instead";
           # upstream validates only without configFile and extraFlags; otherwise this check would pass unvalidated
           assert lib.assertMsg
             (lib.hasInfix "-validate-loki-conf" lan.config.systemd.services.loki.serviceConfig.ExecStart)
