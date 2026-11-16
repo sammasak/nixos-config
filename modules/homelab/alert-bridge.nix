@@ -16,17 +16,22 @@ let
     mkPackageOption
     types
     ;
-  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
+  inherit (import ../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
+  fw = config.networking.firewall;
   cfg = config.homelab.alertBridge;
 
   healthUrl = "http://${
     if cfg.listenAddress == "0.0.0.0" then "127.0.0.1" else cfg.listenAddress
   }:${toString cfg.port}/health";
 
+  # the only sender; the unit's IP filter holds it on trusted interfaces too (lenovo trusts tailscale0)
+  admitted = [ config.sam.fleet.hosts.black-pi.address ];
+
   firewallRules = mkDualBackendFirewall {
-    nftComment = "alert-bridge: Alertmanager, from the LAN.";
+    nftComment = "alert-bridge: black-pi's Alertmanager only.";
     ports = [ cfg.port ];
-    sources = [ config.sam.fleet.lanCidr ];
+    # any other source could page homelab-alerts; flake-modules/alert-bridge-check.nix ties this to the Alertmanager host
+    sources = admitted;
     interfaces = [ ];
     backend = config.networking.firewall.backend;
   };
@@ -63,7 +68,7 @@ in
     openFirewall = mkOption {
       type = types.bool;
       default = false;
-      description = "Accept the port from the LAN.";
+      description = "Accept the port from black-pi's Alertmanager.";
     };
   };
 
@@ -72,6 +77,21 @@ in
       {
         assertion = cfg.openFirewall -> !lib.hasPrefix "127." cfg.listenAddress;
         message = "homelab.alertBridge.openFirewall: listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach the bridge.";
+      }
+      {
+        assertion =
+          (cfg.openFirewall -> (fw.enable && anySourceTcp fw [ cfg.port ] == [ ]))
+          && (config.systemd.services.alert-bridge.serviceConfig.IPAddressDeny or null) == "any"
+          &&
+            (config.systemd.services.alert-bridge.serviceConfig.IPAddressAllow or null)
+            == admitted ++ [ "localhost" ];
+        message = "homelab.alertBridge: keep the firewall on, port ${toString cfg.port} out of allowedTCPPorts and allowedTCPPortRanges, and the unit's IPAddressDeny = any with IPAddressAllow = ${toString admitted} localhost: only the Alertmanager host may page, from the LAN or a trusted interface.";
+      }
+      {
+        # IPAddressDeny = any holds outgoing traffic too: a publish anywhere but loopback is dropped without a page
+        assertion =
+          lib.hasPrefix "http://127." cfg.ntfyUrl || lib.hasPrefix "http://localhost:" cfg.ntfyUrl;
+        message = "homelab.alertBridge.ntfyUrl ${cfg.ntfyUrl} is not loopback; the unit's IP filter only lets it reach localhost and black-pi.";
       }
       {
         assertion = config.homelab.ntfy.enable;
@@ -90,6 +110,9 @@ in
       serviceConfig = {
         Type = "exec";
         ExecStart = getExe cfg.package;
+        # localhost: the start probe and ntfy
+        IPAddressAllow = admitted ++ [ "localhost" ];
+        IPAddressDeny = "any";
         # Type=exec is "started" before the bind; without this probe a bridge
         # that cannot listen passes a switch and then restarts forever.
         ExecStartPost = "${getExe pkgs.curl} --fail --silent --show-error --output /dev/null --max-time 5 --retry 10 --retry-delay 1 --retry-connrefused ${healthUrl}";
