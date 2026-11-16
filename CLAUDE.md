@@ -39,7 +39,7 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 
 # Push from lenovo with deploy-rs (magic rollback; logs in as `deploy`, no password).
 # --skip-checks under a 7G, no-swap cap on the deploy-rs client. The pre-push gate runs the
-# flake check on pushed non-docs commits; a dirty or unpushed tree deploys unchecked (it warns).
+# flake check on pushed non-docs commits; a dirty tree or a HEAD not on origin/main is refused (DEPLOY_UNGATED=1 breaks glass).
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
 #   then, whatever deploy-rs returned, it checks the target (`systemctl is-system-running --wait`
 #   = running, /run/current-system = the system profile's generation) and exits non-zero if either

@@ -10,9 +10,9 @@ Claude and Codex both export through a localhost-only Nginx relay on
 `127.0.0.1:4319` (`modules/homelab/native-otel-relay.nix`, on every host with
 `nativeOtel = true`, which also declares its `native_otlp_auth` secret;
 `nixos:known-hosts-test` fails if that host is not a recipient of the file;
-that test runs only in `nixos:qa` at pre-push, and `just deploy` skips checks
-and only warns on an unpushed tree, so a non-recipient host deployed from a
-local tree still fails at activation. No eval-time check covers recipients:
+that test runs only in `nixos:qa` at pre-push, and `just deploy` skips checks;
+it refuses a dirty tree or a HEAD not on origin/main, but a host deployed with
+`DEPLOY_UNGATED=1` that is not a recipient still fails at activation. No eval-time check covers recipients:
 the #379 assertion only checks that the telemetry surfaces match the flags).
 The relay runs as a dynamic systemd user, reads the
 SOPS credential through `LoadCredential`, and creates its configuration in a

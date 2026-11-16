@@ -41,9 +41,10 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # flake-modules/hosts.nix, which the pattern repeats. --skip-checks:
 # otherwise deploy-rs runs the full flake check first, building every x86 host
 # on lenovo (the 2026-11-11 OOM). The pre-push gate runs that check on pushed
-# non-docs commits, but `.#HOST` is the working tree: a dirty or unpushed tree
-# deploys unchecked, so the recipe warns (never refuses: break-glass deploys
-# are legitimate). A scope, not `capped`: it keeps the caller's environment,
+# non-docs commits, but `.#HOST` is the working tree, so the recipe refuses a
+# dirty tree or a HEAD not on origin/main (a detached checkout of it passes).
+# Break-glass: DEPLOY_UNGATED=1 just deploy HOST deploys it anyway, with a
+# warning. A scope, not `capped`: it keeps the caller's environment,
 # terminal and Ctrl-C. The cap covers the deploy-rs client and its evaluation;
 # builds run in nix-daemon under its own limits. lenovo is a loopback
 # self-push. msi: only Mon-Fri ~09:00-21:00. The Pis build their own closure:
@@ -56,8 +57,12 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 [arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
 [doc("Push HOST with deploy-rs (magic rollback), skipping the flake check, under the memory cap, then check the host is running it")]
 deploy HOST:
-    [ -z "$(git status --porcelain --untracked-files=no)" ] || echo "WARNING: uncommitted changes; deploying a tree no gate checked" >&2
-    git merge-base --is-ancestor HEAD origin/main || echo "WARNING: HEAD is not on origin/main (local ref); its flake check may never have run" >&2
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then ungated="uncommitted changes"; \
+      elif ! git merge-base --is-ancestor HEAD origin/main; then ungated="HEAD is not on origin/main (local ref)"; \
+      else ungated=""; fi; \
+      if [ -n "$ungated" ] && [ "${DEPLOY_UNGATED:-}" != 1 ]; then \
+        echo "deploy: refused, $ungated: no gate checked this tree; commit and merge (then git fetch), or DEPLOY_UNGATED=1 to break glass" >&2; exit 1; fi; \
+      [ -z "$ungated" ] || echo "WARNING: DEPLOY_UNGATED: deploying a tree no gate checked ($ungated)" >&2
     rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks || rc=$?; \
       check=255; target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname) || target=""; \
       if [ -n "$target" ]; then check=0; timeout --foreground 300 ssh -o StrictHostKeyChecking=yes "deploy@$target" \
