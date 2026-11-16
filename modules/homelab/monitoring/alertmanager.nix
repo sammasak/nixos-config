@@ -6,7 +6,7 @@ let
   inherit (config.sam.fleet) hosts;
   cfg = config.services.prometheus.alertmanager;
   fw = config.networking.firewall;
-  msiOff = [ "alertname = MsiExpectedOff" ];
+  hostOff = [ "alertname = HostExpectedOff" ];
 in
 {
   services.prometheus.alertmanager = {
@@ -30,7 +30,7 @@ in
         routes = [
           {
             receiver = "null";
-            matchers = [ ''alertname =~ "Watchdog|InfoInhibitor|MsiExpectedOff"'' ];
+            matchers = [ ''alertname =~ "Watchdog|InfoInhibitor|HostExpectedOff"'' ];
           }
         ];
       };
@@ -63,17 +63,18 @@ in
             "alertname"
           ];
         }
-        # Planned msi power-off (homelab-gitops#188): while MsiExpectedOff fires (./rules/homelab.yaml), silence
-        # what a powered-off msi causes. Outside the window, or with a second host down, it does not fire.
-        # 1) anything labelled with the host;
+        # Planned power-off of a sleeping host (homelab-gitops#188): while HostExpectedOff fires for it
+        # (./rules/homelab.yaml), silence what it causes. With a host that does not sleep down, it does not fire.
+        # 1) anything labelled with that host;
         {
-          source_matchers = msiOff;
-          target_matchers = [ ''node = "msi-ms7758"'' ];
+          source_matchers = hostOff;
+          target_matchers = [ ''node =~ ".+"'' ];
+          equal = [ "node" ];
         }
         # 2) TargetDown of a job with a target on every host, which carries no node label. A new per-host job
-        #    needs adding here; another host's exporter down is silent in the window too.
+        #    needs adding here.
         {
-          source_matchers = msiOff;
+          source_matchers = hostOff;
           target_matchers = [
             "alertname = TargetDown"
             ''job =~ "node-exporter"''
