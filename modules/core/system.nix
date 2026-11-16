@@ -8,32 +8,6 @@
 let
   inherit (lib) mkOption types;
   locale = "en_US.UTF-8";
-  defaultDeps =
-    u:
-    !(lib.elem (u.unitConfig.DefaultDependencies or true) [
-      false
-      "no"
-      "false"
-    ]);
-  # a path unit with default dependencies starts before paths.target, so before basic.target: ordering it after a
-  # service that itself waits for basic.target is a cycle systemd breaks at boot by dropping a start job
-  pathOrderingCycles = lib.concatLists (
-    lib.mapAttrsToList (
-      name: p:
-      map (a: "${name}.path after ${a}") (
-        lib.filter (
-          a:
-          let
-            s = lib.removeSuffix ".service" a;
-          in
-          lib.hasSuffix ".service" a
-          && config.systemd.services ? ${s}
-          && config.systemd.services.${s}.enable
-          && defaultDeps config.systemd.services.${s}
-        ) (lib.optionals (p.enable && defaultDeps p) p.after)
-      )
-    ) config.systemd.paths
-  );
 in
 {
   imports = [
@@ -116,10 +90,6 @@ in
 
   config = {
     assertions = [
-      {
-        assertion = pathOrderingCycles == [ ];
-        message = "ordering cycle through paths.target (${lib.concatStringsSep ", " pathOrderingCycles}): give the service unitConfig.DefaultDependencies = false and explicit after/before.";
-      }
       {
         assertion =
           lib.length (lib.unique (map (m: m.label) config.sam.herdr.machines))

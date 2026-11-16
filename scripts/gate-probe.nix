@@ -143,6 +143,7 @@ let
           hosts = builtins.mapAttrs (_: h: {
             inherit (h.config.networking) hostName;
             files = files h.config;
+            keys = lib.mapAttrs (_: s: { inherit (s) key format; }) h.config.sops.secrets;
             age = { inherit (h.config.sops.age) sshKeyPaths keyFile generateKey; };
             gnupg = { inherit (h.config.sops.gnupg) home sshKeyPaths; };
           }) hosts;
