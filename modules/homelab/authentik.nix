@@ -1,7 +1,8 @@
 # Authentik and its Postgres on this host, from nixpkgs' package (unit layout after nix-community/authentik-nix's
 # module.nix): Caddy (edge.nix) reaches the server and its embedded outpost on loopback; Postgres has no TCP listener
 # and admits only its own superuser and authentik, by peer. The units start only on a restored database: an empty one
-# would come up as a fresh install with an open akadmin setup flow. Cut-over and rollback: scripts/authentik-cutover.sh.
+# would come up as a fresh install with an open akadmin setup flow. Restore: pg_restore of a latest.dump (here or
+# lenovo's authentik-offhost copy) into an empty authentik database, as the authentik role.
 {
   config,
   lib,
