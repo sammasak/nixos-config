@@ -343,6 +343,18 @@ let
         ${pkgs.python3}/bin/python scripts/test-ollama-portforward.py
       '';
 
+  ollamaPullPinnedTest =
+    gate "ollama-pull-pinned-test"
+      (with pkgs; [
+        python3
+        ollama
+        curl
+        jq
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-ollama-pull-pinned.py
+      '';
+
   alertBridgeTest =
     gate "alert-bridge-test"
       (with pkgs; [
@@ -475,6 +487,7 @@ let
           bulkReaderTest
           harnessTelemetryTest
           ollamaPortforwardTest
+          ollamaPullPinnedTest
           alertBridgeTest
           knownHostsTest
           buildBoundsTest
@@ -839,6 +852,8 @@ in
       task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:ollama-portforward-test" =
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
+    "nixos:ollama-pull-pinned-test" =
+      task "ollama-pull-pinned: a tag at its pin is left alone, a moved tag is removed again and fails the loader" ollamaPullPinnedTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
     "nixos:coordinator-test" =

@@ -19,28 +19,14 @@ let
       pkgs.curl
       pkgs.jq
     ];
-    text = ''
-      digest() { curl -fsS "http://$OLLAMA_HOST/api/tags" | jq -r --arg n "$1" '.models[] | select(.name == $n) | .digest'; }
-      status=0
-      for pin in "$@"; do
-        name=''${pin% *} want=''${pin#* }
-        [ "$(digest "$name")" = "$want" ] && continue
-        ollama pull "$name"
-        got=$(digest "$name")
-        if [ "$got" != "$want" ]; then
-          echo "$name: the registry served $got, pinned is $want" >&2
-          status=3
-        fi
-      done
-      exit "$status"
-    '';
+    text = builtins.readFile ./ollama-pull-pinned.sh;
   };
 in
 {
   options.homelab.ollama.modelDigests = lib.mkOption {
     type = lib.types.attrsOf (lib.types.strMatching "[0-9a-f]{64}");
     default = { };
-    description = "Pins each services.ollama.loadModels tag to its registry manifest sha256 (the digest /api/tags reports). With any pin set, the loader leaves a tag already at its pin unpulled and fails when the registry serves another digest.";
+    description = "Pins each services.ollama.loadModels tag to its registry manifest sha256 (the digest /api/tags reports). With any pin set, the loader leaves a tag already at its pin unpulled, and when the registry serves another digest it removes the tag and fails.";
   };
 
   config = lib.mkIf cfg.enable {
@@ -72,7 +58,7 @@ in
     };
 
     # A tag already at its pin is never pulled again, so a moved upstream tag cannot replace it. Exit 3 is a moved
-    # tag: no restart, the unit stays failed and the host degraded until the pin is reviewed.
+    # tag, removed again: no restart, the unit stays failed and the host degraded until the pin is reviewed.
     systemd.services.ollama-model-loader = lib.mkIf (pins != { }) {
       script = lib.mkForce "exec ${lib.getExe pullPinned} ${
         lib.escapeShellArgs (lib.mapAttrsToList (name: digest: "${name} ${digest}") pins)

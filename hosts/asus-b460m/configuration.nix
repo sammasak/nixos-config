@@ -7,14 +7,22 @@
 let
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   ollama = config.services.ollama;
-  acer = config.sam.fleet.hosts.acer-swift.address;
+  acers = [
+    config.sam.fleet.hosts.acer-swift.address
+  ]
+  ++ config.sam.fleet.hosts.acer-swift.extraAddresses;
   driver = config.hardware.nvidia.package.version;
-  cuda = pkgs.cudaPackages.cuda_cudart.version;
+  # the CUDA runtime the ollama build links, not the default cudaPackages set
+  cuda =
+    (lib.findFirst (
+      p: lib.getName p == "cuda_cudart"
+    ) (throw "ollama has no cuda_cudart input") ollama.package.buildInputs).version;
   # NVIDIA's minimum Linux driver per CUDA major (CUDA Toolkit release notes, table 3)
   minDriver = {
     "12" = "525.60.13";
     "13" = "580.65.06";
   };
+  # the iptables backend's script; the workers module requires iptables on asus
   firewallStart = lib.head (
     lib.splitString " " (lib.removePrefix "@" config.systemd.services.firewall.serviceConfig.ExecStart)
   );
@@ -112,7 +120,7 @@ in
       (mkDualBackendFirewall {
         nftComment = "Ollama answers the llm-gateway on acer only.";
         ports = [ config.services.ollama.port ];
-        sources = [ acer ];
+        sources = acers;
         interfaces = [ ];
         backend = config.networking.firewall.backend;
       })
@@ -143,8 +151,10 @@ in
     (pkgs.runCommand "asus-ollama-gpu-check" { } ''
       rules=$(grep -- '--dport ${toString ollama.port} ' ${firewallStart})
       echo "$rules"
-      [ "$(echo "$rules" | wc -l)" = 1 ]
-      echo "$rules" | grep -q -- '-s ${acer} -p tcp --dport ${toString ollama.port} -j nixos-fw-accept'
+      [ "$(echo "$rules" | wc -l)" = ${toString (lib.length acers)} ]
+      ${lib.concatMapStrings (a: ''
+        echo "$rules" | grep -q -- '-s ${a} -p tcp --dport ${toString ollama.port} -j nixos-fw-accept'
+      '') acers}
       ls ${ollama.package}/lib/ollama/*/libggml-cuda.so
       touch $out
     '')
