@@ -99,6 +99,14 @@ let
         names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
         drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
         here=$(nix eval --raw --impure --expr builtins.currentSystem)
+        # VM checks (NixOS tests, the ones with a driver) boot QEMU, up to 4 GiB: the gate refuses to run on lenovo
+        # shellcheck disable=SC2016 # the single-quoted ''${n} is Nix's, not the shell's
+        vms=$(nix eval --json --no-write-lock-file ".#checks.$here" \
+          --apply 'cs: builtins.filter (n: cs.''${n} ? driver) (builtins.attrNames cs)' | jq -r '.[]')
+        if [ -n "$vms" ] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
+          echo "nixos-flake-check: refused on lenovo: $(tr '\n' ' ' <<<"$vms")boot a QEMU VM (memory); run the gate on msi or acer" >&2
+          exit 1
+        fi
         kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
         [ "$kinds" = '["checks","deploy","formatter","nixosConfigurations","overlays","packages","templates"]' ] \
           || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
@@ -108,13 +116,6 @@ let
         hosts=$(names nixosConfigurations)
         for h in $hosts; do drv "nixosConfigurations.$h.config.system.build.toplevel"; done
         for s in $(names formatter); do drv "formatter.$s"; done
-        # VM checks (NixOS tests, the ones with a driver) boot QEMU, up to 4 GiB: the gate refuses to run on lenovo
-        vms=$(nix eval --json --no-write-lock-file ".#checks.$here" \
-          --apply 'cs: builtins.filter (n: cs.''${n} ? driver) (builtins.attrNames cs)' | jq -r '.[]')
-        if [ -n "$vms" ] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
-          echo "nixos-flake-check: refused on lenovo: $(echo $vms) boot a QEMU VM (memory); run the gate on msi or acer" >&2
-          exit 1
-        fi
         for kind in packages checks; do
           systems=$(names "$kind")
           for s in $systems; do
