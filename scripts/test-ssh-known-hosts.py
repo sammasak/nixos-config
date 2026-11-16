@@ -2,7 +2,7 @@
 """Wiring test for modules/core/ssh-known-hosts.nix (nixos-config#86): the pinned host keys are the verified ones
 (fingerprints recorded here and in docs/ssh-host-keys.md), every name and address of each host is covered, a host
 pins loopback to its own key only, every client fails closed, deploy-rs too, the old github pin is gone, and every
-sops secret a host declares is in a file encrypted to that host's key."""
+sops secret a host declares is in a file encrypted to that host's key and names a key that file has."""
 import os
 import pathlib
 import re
@@ -63,6 +63,26 @@ def sops_recipients(path):
     return {m.group(1) for line in meta if (m := re.fullmatch(r"\s*(?:- )?recipient: (age1[0-9a-z]+)", line))}
 
 
+def key_paths(path):
+    """Every leaf key path (`a`, `a/b`) of a sops yaml file outside its `sops:` metadata, from the plaintext key names;
+    no value is kept or decrypted. A mapping is no secret, so its own path is not a leaf."""
+    paths, stack = set(), []
+    for line in path.read_text().splitlines() if path.is_file() else []:
+        if not (m := re.match(r"( *)([^\s#:'\"-][^:]*):(?: |$)", line)):
+            continue
+        indent = len(m.group(1))
+        stack = [(i, n) for i, n in stack if i < indent] + [(indent, m.group(2))]
+        if stack[0][1] != "sops":
+            paths.add("/".join(n for _, n in stack))
+    return {p for p in paths if not any(q.startswith(p + "/") for q in paths)}
+
+
+def missing_keys(keys, files, paths_of):
+    """The secrets a host declares whose key is not in their file. Only yaml is read; any other format is reported."""
+    return sorted(f"{n} ({files[n]}: {k['format']} {k['key']})" for n, k in keys.items()
+                  if k["format"] != "yaml" or k["key"] not in paths_of(files[n]))
+
+
 def encrypted_files():
     """Every sops file in the repo, repo-relative: the ones no host declares are checked too."""
     return sorted(str(p.relative_to(ROOT)) for p in (ROOT / "secrets").rglob("*")
@@ -92,13 +112,18 @@ def sops_checks(S):
     its ssh host key, so that is the identity sops-nix must decrypt with: no gnupg home (its default rsa host-key import
     is inert, the files carry age recipients only); age.keyFile, when set, is the generated extra identity
     (generateKey), whose public half no file lists."""
-    cache = {}
+    cache, key_cache = {}, {}
     def recipients_of(f):
         return cache.setdefault(f, sops_recipients(ROOT / f))
+    def paths_of(f):
+        return key_cache.setdefault(f, key_paths(ROOT / f))
     check(set(S["hosts"]) == {"lenovo", "acer-swift", "msi-ms7758", "black-pi", "naked-pi"}, f"every fleet host is checked ({sorted(S['hosts'])})")
     for attr, h in S["hosts"].items():
         bad = undecryptable(h["files"], h["hostName"], recipients_of)
         check(h["files"] and not bad, f"{attr}: each of its {len(h['files'])} sops secrets is in a file encrypted to {h['hostName']} (not: {bad})")
+        # sops-nix's validateSopsFiles checks this too, but only in the toplevel's build: on the Pis, at deploy
+        bad = missing_keys(h["keys"], h["files"], paths_of)
+        check(not bad, f"{attr}: each of its sops secrets names a key its file has (not: {bad})")
         check(host_key_identity(h), f"{attr}: sops-nix decrypts with the ssh host key the recipient is derived from ({h['age']}, gnupg {h['gnupg']})")
     # the converse: a host key on a file whose secrets that host never declares can decrypt them for nothing
     declared = {}
@@ -130,6 +155,21 @@ def sops_checks(S):
     bad = undecryptable(acer["files"], "acer-swift", dropped)
     want = sorted(f"{n} ({f})" for n, f in acer["files"].items() if f == seed)
     check(want and bad == want, f"seeded: open-webui.yaml with acer's recipient dropped fails acer's open-webui keys ({bad})")
+    typo = dict(acer["keys"], open_webui_secret_key={"key": "open_webui_secret_kye", "format": "yaml"})
+    check(missing_keys(typo, acer["files"], paths_of) == ["open_webui_secret_key (secrets/homelab/open-webui.yaml: yaml open_webui_secret_kye)"],
+          "seeded: a misspelt top-level key is reported")
+    black = S["hosts"]["black-pi"]
+    nested = dict(black["keys"], **{n: dict(k, key=k["key"].replace("/", "/x_")) for n, k in black["keys"].items() if "/" in k["key"]})
+    check(any("/" in k["key"] for k in black["keys"].values()) and missing_keys(nested, black["files"], paths_of)
+          == sorted(f"{n} ({black['files'][n]}: yaml {k['key']})" for n, k in nested.items() if "/x_" in k["key"]),
+          "seeded: black-pi's nested keys under a wrong leaf are reported")
+    parent = dict(black["keys"], **{n: dict(k, key=k["key"].split("/")[0]) for n, k in black["keys"].items() if "/" in k["key"]})
+    check(missing_keys(parent, black["files"], paths_of) == sorted(f"{n} ({black['files'][n]}: yaml {k['key']})"
+          for n, k in parent.items() if n in nested and "/x_" in nested[n]["key"]),
+          "seeded: a key naming a mapping (black-pi's nested keys cut to their parent) is reported, not taken as a leaf")
+    check(missing_keys(dict(acer["keys"], open_webui_secret_key={"key": "open_webui_secret_key", "format": "binary"}), acer["files"], paths_of)
+          == ["open_webui_secret_key (secrets/homelab/open-webui.yaml: binary open_webui_secret_key)"],
+          "seeded: a non-yaml format is reported, not read as yaml")
     check(undecryptable(acer["files"], "acer", recipients_of) == sorted(f"{n} ({f})" for n, f in acer["files"].items()),
           "seeded: a host with no recorded recipient fails every secret it declares")
 
