@@ -141,14 +141,12 @@ try:
           f"a tool-call turn is classified, with no content TTFT and its decode over the whole turn ({tool})")
     check(lb.chat_stream("http://127.0.0.1:9/v1", "mock:7b", [], [])["error"], "a refused connection is an error row, not an exception")
     try:
-        lb.fit("http://127.0.0.1:9", "mock-host", "mock:7b", 4096, cold=1, warm=1, limits=mock_limits, settle=0)
-        gone = "returned"
+        lb.fit(srv.base, "mock-host", "mock:gone", 4096, cold=2, warm=2, prom=srv.base, limits=mock_limits, settle=0)
+        gone = "returned a result"
     except SystemExit as e:
         gone = str(e)
-    except OSError as e:
-        gone = f"OSError before any run: {e}"
-    check("nothing measured" in gone or "OSError before any run" in gone,
-          f"a host that does not answer writes no result, never a no-fit ({gone[:80]})")
+    check("nothing measured" in gone,
+          f"a host that answers /api/tags, then drops every run, stops the fit with no result, never a no-fit ({gone[:90]})")
 finally:
     srv.shutdown()
 

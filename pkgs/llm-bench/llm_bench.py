@@ -172,7 +172,8 @@ def unload(base, model, timeout=60):
         if loaded(base, model) is None:
             return
         time.sleep(0.5)
-    raise RuntimeError(f"{model} still loaded {timeout}s after keep_alive 0")
+    # TimeoutError: a stuck unload is the server's state, not a measurement of the model
+    raise TimeoutError(f"{model} still loaded {timeout}s after keep_alive 0")
 
 
 def loaded(base, model):
@@ -536,7 +537,7 @@ class FakeHandler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/tags":
             self.reply({"models": [{"name": m, "digest": "sha256:" + "0" * 64,
                                     "details": {"quantization_level": "Q4_K_M", "parameter_size": "7B"}}
-                                   for m in (self.MODEL, "mock:oom", "mock:tools")]})
+                                   for m in (self.MODEL, "mock:oom", "mock:tools", "mock:gone")]})
         elif self.path == "/api/ps":
             self.reply({"models": [] if s.loaded is None else [{"name": s.loaded, "size": 6 * GIB, "size_vram": 6 * GIB,
                                                                  "context_length": 8192}]})
@@ -566,6 +567,10 @@ class FakeHandler(http.server.BaseHTTPRequestHandler):
         if body.get("keep_alive") == 0 and "prompt" not in body:
             s.loaded = None
             return self.reply({"done": True})
+        if body.get("model") == "mock:gone":
+            # a host that drops off after answering /api/tags: the connection closes with no reply
+            self.close_connection = True
+            return self.connection.shutdown(2)
         if body.get("model") == "mock:oom":
             # a model that does not fit: Ollama's load error arrives as a line of the stream
             return self.stream([json.dumps({"error": "model requires more system memory than is available"}).encode() + b"\n"])
