@@ -104,7 +104,7 @@ let
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;
       };
-      alertmanager = lenovo.sam.fleet.hosts.black-pi.address;
+      alertmanager = [ lenovo.sam.fleet.hosts.black-pi.address ] ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
       failing = {
         lenovo = failing lenovo;
         loopbackFirewall = failing (

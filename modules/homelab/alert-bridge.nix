@@ -25,7 +25,11 @@ let
   }:${toString cfg.port}/health";
 
   # the only sender; the unit's IP filter holds it on trusted interfaces too (lenovo trusts tailscale0)
-  admitted = [ config.sam.fleet.hosts.black-pi.address ];
+  # both of black-pi's LAN addresses: Alertmanager has no outgoing-source setting, so with end0 down it sends from wlan0
+  admitted = [
+    config.sam.fleet.hosts.black-pi.address
+  ]
+  ++ config.sam.fleet.hosts.black-pi.extraAddresses;
 
   firewallRules = mkDualBackendFirewall {
     nftComment = "alert-bridge: black-pi's Alertmanager only.";
@@ -89,8 +93,7 @@ in
       }
       {
         # IPAddressDeny = any holds outgoing traffic too: a publish anywhere but loopback is dropped without a page
-        assertion =
-          lib.hasPrefix "http://127." cfg.ntfyUrl || lib.hasPrefix "http://localhost:" cfg.ntfyUrl;
+        assertion = builtins.match "http://(127[.][0-9.]+|localhost)(:[0-9]+)?/.*" cfg.ntfyUrl != null;
         message = "homelab.alertBridge.ntfyUrl ${cfg.ntfyUrl} is not loopback; the unit's IP filter only lets it reach localhost and black-pi.";
       }
       {
