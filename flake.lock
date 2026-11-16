@@ -266,6 +266,23 @@
         "type": "gitlab"
       }
     },
+    "herman": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791192856,
+        "narHash": "sha256-f1Z7a7ZyLSUc9plk5Po4JYwGYGYkBwBv3ZIdwTMf0Ig=",
+        "ref": "refs/heads/main",
+        "rev": "7f41955749fc473d11173ffbc18e76973a7bb224",
+        "revCount": 1097,
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/herman"
+      },
+      "original": {
+        "rev": "7f41955749fc473d11173ffbc18e76973a7bb224",
+        "type": "git",
+        "url": "ssh://git@github.com/sammasak/herman"
+      }
+    },
     "home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -459,6 +476,7 @@
         "disko": "disko",
         "factum": "factum",
         "flake-parts": "flake-parts",
+        "herman": "herman",
         "home-manager": "home-manager",
         "import-tree": "import-tree",
         "llm-gateway": "llm-gateway",

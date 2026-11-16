@@ -4,10 +4,10 @@ otelcol.auth.bearer "native" {
   token = sys.env("OTLP_BEARER_TOKEN")
 }
 
-// Traefik's pods reach it on acer through Cilium; the LAN has no rule for the port.
+// loopback only: Caddy (edge.nix) on this host proxies otlp.sammasak.dev to it
 otelcol.receiver.otlp "native" {
   http {
-    endpoint               = "0.0.0.0:4318"
+    endpoint               = "127.0.0.1:4318"
     auth                   = otelcol.auth.bearer.native.handler
     include_metadata       = true
     max_request_body_size = "1MiB"

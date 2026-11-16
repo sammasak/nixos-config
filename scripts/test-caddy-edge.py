@@ -1,6 +1,8 @@
 """acer's Caddy edge (modules/homelab/edge.nix), as `caddy adapt` reads the deployed Caddyfile: the admin API is off,
 every name has its route and backend, chat and grafana pass forward auth before their backend with the five
-X-Authentik-* fields copied, otlp admits the fleet alone, and llm-gateway serves /v1 only."""
+X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only, open-webui listens on the
+edge socket alone, and herman is its Nix build with the Cache-Control matrix and SPA fallback of its
+deploy/nginx.conf."""
 import json
 import subprocess
 import sys
@@ -31,7 +33,6 @@ backends = {
     "llm-gateway": "127.0.0.1:8081",
     "otlp": "127.0.0.1:4318",
     "ntfy": f"{fleet['lenovo-21CB001PMX']}:2586",
-    "herman": "10.43.114.35:8080",
     "karta": "10.43.147.178:8080",
     "registry": "10.43.23.61:5000",
 }
@@ -68,7 +69,7 @@ for server in servers.values():
         for match in route.get("match", []):
             for host in match.get("host", []):
                 routes[host] = route
-expected = {f"{name}.sammasak.dev" for name in backends}
+expected = {f"{name}.sammasak.dev" for name in [*backends, "herman"]}
 check(set(routes) == expected, f"exactly the edge's names have a route {sorted(set(routes) ^ expected)}")
 
 tls = config["apps"].get("tls", {})
@@ -128,5 +129,28 @@ gateway = [m for h, m in steps if "127.0.0.1:8081" in dials(h)]
 check(gateway == [({"path": ["/v1", "/v1/*"]},)], f"llm-gateway proxies /v1 and /v1/* only {gateway}")
 rest = [(h.get("status_code"), m) for h, m in steps if h.get("handler") == "static_response"]
 check(rest == [(404, ())], f"everything else on llm-gateway is 404 {rest}")
+
+check(P["chatStreams"] == ["/run/open-webui-edge.sock"], f"open-webui listens on Caddy's socket alone {P['chatStreams']}")
+
+static = {
+    "herman": (["/sw.js"], ["*.wasm", "*.js", "*.css", "/manifest.json", "/favicon.ico"]),
+}
+for name, (fresh, no_fallback) in static.items():
+    steps = list(flatten(routes.get(f"{name}.sammasak.dev", {}).get("handle", [])))
+    roots = [h.get("root") for h, _ in steps if h.get("handler") == "vars"]
+    check(roots == [P["sites"][name]], f"{name}'s root is its Nix build {roots}")
+    served = [h for h, _ in steps if h.get("handler") == "file_server"]
+    check(len(served) == 1 and served[0].get("precompressed") == {"gzip": {}},
+          f"{name} is served from files, with the .gz siblings {served}")
+    check(not any(h.get("handler") == "reverse_proxy" for h, _ in steps), f"{name} proxies nowhere")
+    hashed = {"path": ["*.wasm", "*.js", "*.css"], "not": [{"path": fresh}], "file": {}}
+    cache = [(m, h["response"].get("require"), h["response"]["set"]["Cache-Control"]) for h, m in steps
+             if h.get("handler") == "headers" and "Cache-Control" in h.get("response", {}).get("set", {})]
+    check(cache == [((hashed,), None, ["public, max-age=31536000, immutable"]),
+                    ((), {"headers": {"Cache-Control": None}}, ["no-cache"])],
+          f"{name}: hashed wasm/js/css immutable, {fresh} and everything else no-cache {cache}")
+    spa = [m for h, m in steps if h.get("handler") == "rewrite" and h.get("uri") == "/index.html"]
+    check(spa == [({"not": [{"path": no_fallback}, {"file": {}}]},)],
+          f"{name} falls back to /index.html only for a missing file outside {no_fallback} {spa}")
 
 sys.exit(1 if failed else 0)

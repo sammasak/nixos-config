@@ -274,7 +274,8 @@ collector on the other hosts (#330) lands any time before step 4.
 | Alloy DaemonSet (pod logs) | step 1 | pod labels come from the Kubernetes API; it goes with the in-cluster stack (homelab-gitops #271) |
 | Traefik | step 2 | Caddy on acer takes every name, including the routes to host services |
 | herman, karta | step 2 | become Nix-built static sites served by Caddy |
-| zot, and nixos-config's `registry` Justfile variable, `registry-login` recipe and the skopeo/dive comment in `k3s/server.nix` | step 2 | zot retires once nothing pulls from it (herman and karta are its last in-house images) |
+| zot | step 2 | zot retires once nothing pulls from it (karta's pod is its last puller) |
+| nixos-config's `registry` Justfile variable, `registry-login` recipe and the skopeo/dive comment in `k3s/server.nix` | done (#420) | removed with the cosign recipes and key |
 | k3s ntfy (`ntfy.sammasak.dev`) | step 2 | the name moves off Traefik; whether it routes to lenovo's native ntfy or retires is decided in #420 |
 | chat leftovers: the `open-webui-backup` CronJob and its 10Gi claim, the `open-webui-state-v2` claim | step 2 | removed with the gitops cleanup in #420; both claims go on the #146 by-hand list |
 | Authentik and its Postgres | step 3 | no upstream NixOS module; it gates sign-in for everything; high risk |

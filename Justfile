@@ -1,7 +1,5 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-registry := "registry.sammasak.dev"
-
 # nh selects by nixosConfigurations attribute, and lenovo's attribute is not its
 # hostname, so the default cannot just be the hostname. `uname -n` rather than
 # `hostname`: the latter arrives via nettools, which nothing here declares.
@@ -150,35 +148,3 @@ parity BASE="":
 # Mirror dotfiles/nvim to the standalone public repo the work machine clones
 export-nvim REMOTE="git@github.com:sammasak/nvim-config.git":
     bash scripts/export-nvim.sh {{REMOTE}}
-
-# ── Registry ──────────────────────────────────────────────────────────
-
-# Log in to the image registry (zot)
-registry-login:
-    nix shell nixpkgs#skopeo -c skopeo login {{registry}}
-
-# ── Image Supply Chain Security ───────────────────────────────────────
-
-[doc("Scan image for CRITICAL CVEs before publishing; non-zero if any are found")]
-scan IMAGE:
-    nix shell nixpkgs#trivy -c trivy image --exit-code 1 --severity CRITICAL {{IMAGE}}
-
-[doc("Sign image with Cosign after publishing; needs SOPS-encrypted secrets/cosign.key")]
-sign IMAGE:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    TMPKEY=$(mktemp)
-    trap "rm -f $TMPKEY" EXIT
-    cd secrets && sops --decrypt cosign.key > "$TMPKEY"
-    nix shell nixpkgs#cosign -c cosign sign --key "$TMPKEY" --yes {{IMAGE}}
-
-# Generate SBOM and attach as OCI attestation
-sbom IMAGE:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    TMPKEY=$(mktemp)
-    TMPSBOM=$(mktemp --suffix=.spdx.json)
-    trap "rm -f $TMPKEY $TMPSBOM" EXIT
-    cd secrets && sops --decrypt cosign.key > "$TMPKEY"
-    nix shell nixpkgs#syft -c syft {{IMAGE}} -o spdx-json > "$TMPSBOM"
-    nix shell nixpkgs#cosign -c cosign attest --key "$TMPKEY" --predicate "$TMPSBOM" --type spdx --yes {{IMAGE}}
