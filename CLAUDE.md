@@ -49,6 +49,7 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
+#   asus-b460m  builds on the asus (Windows dual-boot worker)
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only, except the patched deploy-rs (not cached, a
 #               2.3 GiB Rust build): first, from lenovo,
@@ -64,7 +65,7 @@ just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); B
                               # also flake checks, so the gate boots them when their inputs change
 ```
 
-Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
+Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`, `asus-b460m`,
 `black-pi` (aarch64; evaluated but not built on x86 hosts, build it on the Pi),
 and `naked-pi` (Pi 3 `rf-lab` node; `just deploy naked-pi`;
 runbook `~/knowledge/homelab/runbooks/naked-pi-rf-lab.md`).
@@ -88,7 +89,7 @@ SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decr
 
 Two SOPS modules:
 - **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity for the homelab secrets. The Cloudflare API token and Tailscale authkey are declared by `acme.nix` and `tailscale.nix`: lenovo decrypts both, acer (edge.nix's ACME) the token. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
-- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token on `devTools` hosts and hosts with a claude worker instance, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
+- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token on `devTools` hosts and hosts with a claude worker instance, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758, asus-b460m); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
 
@@ -102,10 +103,10 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/grafana.yaml` | Personal + black-pi | Grafana's admin, OIDC client and secret key |
 | `homelab/cloudflare.yaml` | Personal + lenovo, acer-swift, acer `lukas` | ACME DNS token (lenovo, and acer's Caddy) |
 | `homelab/tailscale.yaml` | Personal + lenovo, acer `lukas` | Tailscale authkey |
-| `homelab/*.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, black-pi | GitHub access token |
+| `homelab/*.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, asus-b460m, black-pi | GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
-| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | Claude OAuth token |
-| `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
+| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | Claude OAuth token |
+| `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | OTLP auth |
 | `claude/*.yaml` | Personal + lenovo, acer-swift | Pi's gateway key |
 
 Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml`, `llm-gateway.yaml` and `authentik.yaml` also includes acer's own `lukas` user
