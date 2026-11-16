@@ -319,6 +319,11 @@ let
         ${pkgs.python3}/bin/python scripts/test-ollama-portforward.py
       '';
 
+  # the llm-bench harness against its fake Ollama; no nix: the rules and the exporter are flake checks
+  llmBenchTest = gate "llm-bench-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python -I scripts/test-llm-bench.py
+  '';
+
   alertBridgeTest =
     gate "alert-bridge-test"
       (with pkgs; [
@@ -412,6 +417,7 @@ let
       bulkReaderTest
       harnessTelemetryTest
       ollamaPortforwardTest
+      llmBenchTest
       alertBridgeTest
       knownHostsTest
       buildBoundsTest
@@ -775,6 +781,8 @@ in
       task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:ollama-portforward-test" =
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
+    "nixos:llm-bench-test" =
+      task "llm-bench (#493): fit and capacity runs against the fake Ollama, quantile floors, verdicts, the MSI import, no prompt in an aggregate" llmBenchTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
     "nixos:coordinator-test" =

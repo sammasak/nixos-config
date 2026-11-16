@@ -21,6 +21,20 @@ let
     static_configs = [ { inherit targets; } ];
   };
   probeBudget = 120;
+  # the committed llm-bench scorecard as constant recording rules (pkgs/llm-bench/rules.nix)
+  scorecard = ../../../pkgs/llm-bench/scorecard;
+  llmBench = pkgs.writeText "llm-bench.yaml" (
+    builtins.toJSON (
+      import ../../../pkgs/llm-bench/rules.nix {
+        inherit lib;
+        hosts = lib.attrNames hosts;
+        results = lib.mapAttrs (f: _: lib.importJSON (scorecard + "/${f}")) (
+          lib.filterAttrs (f: t: t == "regular" && lib.hasSuffix ".json" f) (builtins.readDir scorecard)
+        );
+      }
+    )
+  );
+  gpuHosts = lib.filterAttrs (_: h: h.gpu == "nvidia") hosts;
   blackbox = cfg.exporters.blackbox;
   # the public names as a browser reaches them, through Caddy on acer. Authentik's Postgres has no exporter, so a
   # dead Postgres shows as AppDown on auth.
@@ -110,6 +124,7 @@ in
         ./rules/prometheus.yaml
         ./rules/llm-gateway.yaml
         ./rules/homelab.yaml
+        llmBench
       ];
       alerting.alertmanagers = [
         { static_configs = [ { targets = [ (at config.services.prometheus.alertmanager.port) ]; } ]; }
@@ -128,6 +143,20 @@ in
             }
             // lib.optionalAttrs h.sleeps { sleeps = "true"; };
           }) hosts;
+        }
+        {
+          # 10 s: a GPU's load changes within seconds; one board is about 15 series
+          job_name = "nvidia-gpu";
+          scrape_interval = "10s";
+          scrape_timeout = "8s";
+          static_configs = lib.mapAttrsToList (name: h: {
+            targets = [ "${h.address}:${toString cfg.exporters.nvidia-gpu.port}" ];
+            labels = {
+              instance = name;
+              node = name;
+            }
+            // lib.optionalAttrs h.sleeps { sleeps = "true"; };
+          }) gpuHosts;
         }
         (static "prometheus" [ (at cfg.port) ])
         (static "alertmanager" [ (at cfg.alertmanager.port) ])

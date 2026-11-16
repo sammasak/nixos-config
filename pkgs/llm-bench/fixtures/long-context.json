@@ -1,0 +1,13 @@
+{
+ "corpus": [
+  "A service unit declares what it needs before it starts: the network being online, a mount, another unit. The init system orders units by those declarations and starts independent ones in parallel. A unit that fails is restarted according to its policy, and a burst of failures inside the start-limit window leaves it failed until an operator resets it.",
+  "A binary cache stores build outputs addressed by the hash of their inputs. A client that needs a path asks each configured cache in priority order; the first that answers with a signed narinfo wins, and the path is downloaded instead of built. An unreachable cache costs the connect timeout on every lookup.",
+  "Prometheus scrapes each target on an interval and stores every sample with the target's labels. A label with many distinct values multiplies the series count, so identifiers such as request IDs belong in logs, not in metric labels. A missing series is not the same as a zero: an absent value must stay absent.",
+  "A firewall rule admits a source address to a port. Rules scoped to one source keep an unauthenticated service reachable by its intended caller alone; an interface marked trusted bypasses those rules entirely, which is why only loopback is trusted on hosts that run such services.",
+  "A language model served on a single consumer GPU holds its weights and its key-value cache in video memory. The cache grows with the context length, so a model that fits at four thousand tokens may spill layers to the CPU at eight thousand, and decoding slows sharply once layers run on the CPU.",
+  "Time to first token covers queueing, model loading when the model is cold, and processing the whole prompt. Decode throughput is the rate of output tokens after the first. A streamed response's first byte can be a role marker rather than content, so a client measures the first content token, not the first byte.",
+  "A deployment is rolled back by activating the previous system generation. The bootloader keeps several generations, and an activation that fails its health check reverts automatically. Rolling back restores configuration, not data: state directories keep whatever the newer generation wrote.",
+  "Concurrency at a backend that serves one request at a time turns into queueing: the second request waits for the first to finish. The useful number is how many concurrent clients can be served while every client still sees an acceptable first-token time and a usable output rate."
+ ],
+ "question": "Summarise, in three short bullet points, what the sections above say about failure handling. Answer in plain text."
+}

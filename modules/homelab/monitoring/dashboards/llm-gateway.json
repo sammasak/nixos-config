@@ -849,6 +849,590 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Local inference: model fit, agent capacity, GPU (nixos-config#493)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 125
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "table",
+      "title": "Model fit per host, model and context (llm-bench scorecard; thresholds proposed, empty = not measured)",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 126
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum without (phase) (llm_bench:vram_bytes{phase=\"load\"})",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (phase) (llm_bench:vram_bytes{phase=\"steady\"})",
+          "refId": "B",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "llm_bench:vram_headroom_bytes",
+          "refId": "C",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "llm_bench:gpu_offload_ratio",
+          "refId": "D",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (stat) (llm_bench:decode_tokens_per_second)",
+          "refId": "E",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (start, quantile) (llm_bench:ttft_seconds{start=\"warm\",quantile=\"0.5\"})",
+          "refId": "F",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (start, quantile) (llm_bench:ttft_seconds{start=\"warm\",quantile=\"0.95\"})",
+          "refId": "G",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (start, quantile) (llm_bench:ttft_seconds{start=\"cold\",quantile=\"0.5\"})",
+          "refId": "H",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "llm_bench:cold_load_seconds",
+          "refId": "I",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "max without (route) (llm_bench:agent_capacity)",
+          "refId": "J",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "llm_bench:fit",
+          "refId": "K",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "VRAM at load",
+              "Value #B": "VRAM steady",
+              "Value #C": "Headroom",
+              "Value #D": "GPU offload",
+              "Value #E": "Decode tok/s p50",
+              "Value #F": "TTFT warm p50",
+              "Value #G": "TTFT warm p95",
+              "Value #H": "TTFT cold p50",
+              "Value #I": "Cold load",
+              "Value #J": "Agent capacity",
+              "Value #K": "Fit"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "–"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "VRAM at load"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "VRAM steady"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Headroom"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU offload"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Decode tok/s p50"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "TTFT warm p50"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "TTFT warm p95"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "TTFT cold p50"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Cold load"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Agent capacity"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fit"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "no"
+                      },
+                      "1": {
+                        "text": "yes"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "description": "One row per host, model, quant and context from the committed llm-bench results (pkgs/llm-bench/scorecard). Fit is yes only when every check passes; a missing value is never shown as 0. Thresholds: pkgs/llm-bench/thresholds.json."
+    },
+    {
+      "id": 32,
+      "type": "stat",
+      "title": "Agent capacity per model (largest concurrent Pi agents inside the thresholds)",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 136
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "llm_bench:agent_capacity",
+          "refId": "A",
+          "legendFormat": "{{host}} {{model}} {{ctx}} ({{route}})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "not measured"
+        }
+      },
+      "description": "From llm-bench capacity runs. route=direct is Ollama itself; route=gateway goes through llm-gateway with the Pi key."
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Live queue depth and in flight per provider",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 136
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (provider) (llm_gateway_provider_queue_depth)",
+          "refId": "A",
+          "legendFormat": "queued {{provider}}"
+        },
+        {
+          "expr": "sum by (provider) (llm_gateway_provider_in_flight)",
+          "refId": "B",
+          "legendFormat": "in flight {{provider}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "not exported yet (llm-gateway#101)"
+        }
+      },
+      "description": "Gauges proposed for llm-gateway#101; until the gateway exports them this panel has no data, never 0."
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Local backends: requests and first byte p95",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 142
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (backend, outcome) (rate(llm_gateway_ollama_requests_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{backend}} {{outcome}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (backend, le) (rate(llm_gateway_ollama_first_byte_seconds_bucket[5m])))",
+          "refId": "B",
+          "legendFormat": "first byte p95 {{backend}}"
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "type": "stat",
+      "title": "Local backend hosts (planned off is not down)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 142
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (up{job=\"node-exporter\",node=~\"asus-b460m|msi-ms7758\"}) + 2 * max by (node) (homelab:node:planned_off and on (node) (up{job=\"node-exporter\"} == 0))",
+          "refId": "A",
+          "legendFormat": "{{node}}",
+          "instant": true
+        },
+        {
+          "expr": "max by (node) (up{job=\"nvidia-gpu\"}) + 2 * max by (node) (homelab:node:planned_off and on (node) (up{job=\"nvidia-gpu\"} == 0))",
+          "refId": "B",
+          "legendFormat": "{{node}} GPU exporter",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green"
+                },
+                "2": {
+                  "text": "off (planned)",
+                  "color": "blue"
+                }
+              }
+            }
+          ],
+          "noValue": "no GPU host declared"
+        }
+      }
+    },
+    {
+      "id": 36,
+      "type": "timeseries",
+      "title": "GPU memory: used, total and headroom",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 150
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "nvidia_smi_memory_used_bytes{job=\"nvidia-gpu\"}",
+          "refId": "A",
+          "legendFormat": "used {{node}}"
+        },
+        {
+          "expr": "nvidia_smi_memory_total_bytes{job=\"nvidia-gpu\"}",
+          "refId": "B",
+          "legendFormat": "total {{node}}"
+        },
+        {
+          "expr": "nvidia_smi_memory_total_bytes{job=\"nvidia-gpu\"} - nvidia_smi_memory_used_bytes{job=\"nvidia-gpu\"}",
+          "refId": "C",
+          "legendFormat": "headroom {{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 37,
+      "type": "timeseries",
+      "title": "GPU utilisation, temperature, power, throttling",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 150
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "nvidia_smi_utilization_gpu_ratio{job=\"nvidia-gpu\"}",
+          "refId": "A",
+          "legendFormat": "utilisation {{node}}"
+        },
+        {
+          "expr": "nvidia_smi_temperature_gpu{job=\"nvidia-gpu\"}",
+          "refId": "B",
+          "legendFormat": "°C {{node}}"
+        },
+        {
+          "expr": "nvidia_smi_power_draw_watts{job=\"nvidia-gpu\"}",
+          "refId": "C",
+          "legendFormat": "W {{node}} (GPU only)"
+        },
+        {
+          "expr": "nvidia_smi_clocks_throttle_reasons_active{job=\"nvidia-gpu\"} > 0",
+          "refId": "D",
+          "legendFormat": "throttle active {{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "watt"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 38,
+      "type": "stat",
+      "title": "GPU energy per output token (GPU board estimate, not whole host)",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 158
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "llm_bench:gpu_joules_per_output_token",
+          "refId": "A",
+          "legendFormat": "{{host}} {{model}} {{ctx}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "noValue": "not measured"
+        }
+      }
+    },
+    {
+      "id": 39,
+      "type": "logs",
+      "title": "NVIDIA driver errors (Xid) on GPU hosts",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 158
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"host-journal\", host=\"asus-b460m\"} |~ \"NVRM: (Xid|GPU has fallen off)\"",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

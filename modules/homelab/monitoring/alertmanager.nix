@@ -71,13 +71,13 @@ in
           target_matchers = [ ''node =~ ".+"'' ];
           equal = [ "node" ];
         }
-        # 2) TargetDown of a job with a target on every host, which carries no node label. A new per-host job
-        #    needs adding here.
+        # 2) TargetDown of a job with a target on every host, or only on sleeping ones (nvidia-gpu: asus), which
+        #    carries no node label. A new per-host job needs adding here.
         {
           source_matchers = hostOff;
           target_matchers = [
             "alertname = TargetDown"
-            ''job =~ "node-exporter"''
+            ''job =~ "node-exporter|nvidia-gpu"''
           ];
         }
       ];

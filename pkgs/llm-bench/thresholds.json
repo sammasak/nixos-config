@@ -1,0 +1,20 @@
+{
+ "status": "proposed: confirmed by the owner with the first measurements (nixos-config#491)",
+ "fit": {
+  "vram_headroom_gib_min": 0.75,
+  "gpu_offload_ratio_min": 1.0,
+  "decode_tps_min_model": "qwen2.5-coder:7b",
+  "decode_tps_min": 24,
+  "decode_tps_min_other": 15,
+  "ttft_warm_p95_s_max": {
+   "4096": 2.0,
+   "8192": 4.0
+  },
+  "cold_load_s_max": 30
+ },
+ "capacity": {
+  "ttft_p95_s_max": 5.0,
+  "decode_tps_per_agent_min": 10,
+  "queue_wait_p95_s_max": 3.0
+ }
+}

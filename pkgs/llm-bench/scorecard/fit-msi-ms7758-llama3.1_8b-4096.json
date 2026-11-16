@@ -1,0 +1,51 @@
+{
+ "checks": {},
+ "ctx": 4096,
+ "digest": null,
+ "evidence": "historical",
+ "finished_at": 1794848463.39517,
+ "fit": "not_evaluated",
+ "fixture": {
+  "name": "homelab-gitops@0e79a5063b4cea7ca577d728a2d4e5be24842f38 docs/decisions/assets/colibri-msi/results/ollama-llama31.jsonl",
+  "sha256": "d19d435d9d1d2c666ace06179acf03e417dfefa0997ff1b9d0128b36f60a90b9"
+ },
+ "host": "msi-ms7758",
+ "kind": "fit",
+ "metrics": {
+  "decode_tps_p50": {
+   "n": 6,
+   "source": "provider_reported",
+   "unit": "tokens/s",
+   "value": 4.4629364555553455
+  },
+  "gpu_offload_ratio": {
+   "n": null,
+   "source": "unavailable",
+   "unit": "ratio",
+   "value": null
+  },
+  "ttft_warm_p50": {
+   "n": 6,
+   "source": "client_measured",
+   "unit": "s",
+   "value": 7.646814823150635
+  }
+ },
+ "model": "llama3.1:8b",
+ "ollama_version": null,
+ "quant": "Q4_K_M",
+ "rejected": null,
+ "route": "direct",
+ "samples": {
+  "cold": 0,
+  "warm": 6
+ },
+ "schema": "llm-bench/1",
+ "settings": {
+  "num_ctx": 4096,
+  "num_predict": 128,
+  "seed": 42,
+  "temperature": 0
+ },
+ "started_at": 1791821397.816552
+}

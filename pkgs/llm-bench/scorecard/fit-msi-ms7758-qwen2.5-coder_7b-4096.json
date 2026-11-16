@@ -1,0 +1,51 @@
+{
+ "checks": {},
+ "ctx": 4096,
+ "digest": null,
+ "evidence": "historical",
+ "finished_at": 1794848463.3947463,
+ "fit": "not_evaluated",
+ "fixture": {
+  "name": "homelab-gitops@0e79a5063b4cea7ca577d728a2d4e5be24842f38 docs/decisions/assets/colibri-msi/results/ollama-qwen25c7.jsonl",
+  "sha256": "e2cceb68823d8d5b57a5c275650b7df645c793033978461c80e3c8ed8abb59d6"
+ },
+ "host": "msi-ms7758",
+ "kind": "fit",
+ "metrics": {
+  "decode_tps_p50": {
+   "n": 6,
+   "source": "provider_reported",
+   "unit": "tokens/s",
+   "value": 4.751881070299119
+  },
+  "gpu_offload_ratio": {
+   "n": null,
+   "source": "unavailable",
+   "unit": "ratio",
+   "value": null
+  },
+  "ttft_warm_p50": {
+   "n": 6,
+   "source": "client_measured",
+   "unit": "s",
+   "value": 7.054563999176025
+  }
+ },
+ "model": "qwen2.5-coder:7b",
+ "ollama_version": null,
+ "quant": "Q4_K_M",
+ "rejected": null,
+ "route": "direct",
+ "samples": {
+  "cold": 0,
+  "warm": 6
+ },
+ "schema": "llm-bench/1",
+ "settings": {
+  "num_ctx": 4096,
+  "num_predict": 128,
+  "seed": 42,
+  "temperature": 0
+ },
+ "started_at": 1791821918.7904818
+}
