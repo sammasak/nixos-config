@@ -12,6 +12,9 @@ let
   ];
   own = name: names: if config.networking.hostName == name then names ++ self else names;
   address = name: config.sam.fleet.hosts.${name}.address;
+  # every deploy node's hostName; a host's directory is named after it
+  nodes = lib.mapAttrsToList (name: h: h.hostDir or name) deployNodes;
+  deployNodes = (import ../../flake-modules/hosts.nix).configurations.nixos;
   hosts = {
     # api.github.com/meta; SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU
     github = {
@@ -71,8 +74,15 @@ let
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMyeESlmIoNX5aWSaXmM/7fvWXN+2tMCI/5no21XXct7";
     };
   };
+  pinned = lib.attrNames (removeAttrs config.programs.ssh.knownHosts [ "github" ]);
 in
 {
+  assertions = [
+    {
+      assertion = pinned == lib.sort lib.lessThan nodes;
+      message = "modules/core/ssh-known-hosts.nix pins ${toString pinned}, not the deploy nodes of flake-modules/hosts.nix (${toString nodes}): pin each host's key there.";
+    }
+  ];
   programs.ssh.knownHosts = hosts;
   # mkAfter: a per-host exception another module adds to extraConfig stays ahead of this catch-all (ssh keeps the
   # first value); the whole of extraConfig precedes nixpkgs' generated "Host *", and a user's own config precedes both
