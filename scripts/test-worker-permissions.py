@@ -7,7 +7,9 @@ plain `claude` and the unattended Coordinator (dontAsk) keep their permissions.
 #157: a worker switches models when safeguards flag a message instead of stopping at the choice dialog: worker
 hosts' settings carry switchModelsOnFlag, and the launcher hands it to any bypass-mode claude, on every host,
 without touching settings.json (lenovo's Coordinator keeps the owner's choice). The pinned Claude Code must
-still recognise the setting name, or a version bump would silently bring the stall back."""
+still recognise the setting name, or a version bump would silently bring the stall back.
+#487: every host's settings carry crossSessionInbound = "accept", and the pinned Claude Code must still recognise
+that name, or a version bump would silently hold peer messages again."""
 import json
 import os
 import pathlib
@@ -160,6 +162,9 @@ def main():
     found = subprocess.run(["grep", "-rqa", "switchModelsOnFlag", str(wrapped)]).returncode == 0
     check(found, f"the pinned Claude Code ({wrapped.name}) recognises switchModelsOnFlag; if this fails a Claude Code "
                  "upgrade dropped or renamed the setting and #157 workers will stop at the model-switch dialog again")
+    found = subprocess.run(["grep", "-rqa", "crossSessionInbound", str(wrapped)]).returncode == 0
+    check(found, f"the pinned Claude Code ({wrapped.name}) recognises crossSessionInbound; if this fails a Claude Code "
+                 "upgrade dropped or renamed the setting and peer messages across permission modes are held again")
 
     home, got = trusted_after_activation(WORKER)
     want = {home, *(f"/home/lukas/{d}" for d in ("claude-code-skills", "knowledge", "nixos-config", ".cache/wt"))}
