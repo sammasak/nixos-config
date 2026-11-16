@@ -7,6 +7,7 @@
 let
   profile = config.sam.profile;
   hasDesktop = config.sam.desktop.enable;
+  fw = config.networking.firewall;
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall anySourceTcp;
   openSsh = anySourceTcp config.networking.firewall config.services.openssh.ports;
 
@@ -59,7 +60,7 @@ in
 
   # A shell error in extraCommands otherwise surfaces at activation (at boot on the Pis), and nftables.checkRuleset
   # is inert on the iptables backend
-  system.checks = lib.optional (config.networking.firewall.backend == "iptables") (
+  system.checks = lib.optional (fw.enable && fw.backend == "iptables") (
     pkgs.runCommand "firewall-scripts-syntax-check" { } ''
       ${lib.concatMapStrings (script: "${pkgs.bash}/bin/bash -n ${script}\n") firewallScripts}
       touch $out
