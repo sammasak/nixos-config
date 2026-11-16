@@ -1,13 +1,16 @@
-"""pkgs/llm-bench (nixos-config#493): the harness end to end against its fake Ollama, its statistics and verdicts on
-fixed inputs, the MSI import, and what may leave a run: no prompt, completion or run ID in an aggregate, and every
-committed scorecard file is an aggregate."""
+"""pkgs/llm-bench (nixos-config#493): #492's G1 bench (scripts/ollama-g1-bench.sh) run against the fake Ollama and
+imported with `import-g1` under #492's G1 rule, the capacity run end to end, the statistics and verdicts on fixed inputs,
+the MSI import, and what may leave a run: no prompt, completion or run ID in an aggregate, and every committed
+scorecard file is an aggregate."""
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "pkgs", "llm-bench"))
@@ -33,22 +36,29 @@ limits = lb.thresholds()
 check(limits["status"].startswith("proposed"), "the thresholds are marked proposed until the owner confirms them")
 
 
-def fit_result(**values):
+def g1_result(ctx=4096, msi=None, warnings=(), **values):
     m = {k: lb.metric(None, "", "unavailable") for k in
          ("vram_headroom_bytes", "gpu_offload_ratio", "decode_tps_p50", "ttft_warm_p95", "cold_load_p50")}
     for k, v in values.items():
         m[k] = lb.metric(v, "", "provider_reported")
-    return lb.judge_fit({"model": "qwen2.5-coder:7b", "ctx": 4096, "metrics": m}, limits)
+    return lb.judge_g1({"model": "qwen2.5-coder:7b-instruct-q4_K_M", "ctx": ctx, "metrics": m, "warnings": list(warnings)}, msi, limits)
 
 
 good = dict(vram_headroom_bytes=1.0 * lb.GIB, gpu_offload_ratio=1.0, decode_tps_p50=30.0, ttft_warm_p95=1.0, cold_load_p50=10.0)
-check(fit_result(**good)["fit"] == "yes", "every fit check inside its threshold is a fit")
-bad = fit_result(**{**good, "decode_tps_p50": 20.0})
-check(bad["fit"] == "no" and bad["checks"]["decode"]["pass"] is False, "Qwen 7B under 24 tok/s is no fit, naming the decode check")
-partial = fit_result(**{k: v for k, v in good.items() if k != "vram_headroom_bytes"})
-check(partial["fit"] == "not_evaluated" and partial["checks"]["headroom"]["pass"] is None,
-      "without a VRAM reading the fit is not evaluated, never passed")
-check(fit_result(**{**good, "gpu_offload_ratio": 0.8})["fit"] == "no", "a model partly on the CPU is no fit")
+check(g1_result(**good)["g1"] == "pass" and g1_result(**good)["fit"] == "yes", "every check inside its threshold: G1 pass and a fit")
+bad = g1_result(**{**good, "decode_tps_p50": 20.0})
+check(bad["g1"] == "no-go" and bad["checks"]["decode"]["threshold"] == 24, "without an msi row the G1 decode bar is 24 tok/s, for every model")
+vs = g1_result(msi=4.8, **good)
+check(vs["checks"]["decode"]["threshold"] == 24.0 and g1_result(msi=7.0, **good)["g1"] == "no-go",
+      "with msi's row for the same model and context the bar is 5x msi's decode (#492's rule)")
+check("headroom" not in g1_result(ctx=8192, **{**good, "vram_headroom_bytes": 0.1 * lb.GIB})["checks"],
+      "the 768 MiB headroom bar applies at 4096 only, as #492's table says")
+partial = g1_result(**{k: v for k, v in good.items() if k != "vram_headroom_bytes"})
+check(partial["g1"] == "not_evaluated" and partial["fit"] == "not_evaluated", "without a VRAM reading neither G1 nor the fit passes")
+check(g1_result(**{**good, "gpu_offload_ratio": 0.8})["g1"] == "no-go", "a model partly on the CPU is a G1 no-go")
+check(g1_result(**{**good, "ttft_warm_p95": 9.0})["g1"] == "pass" and g1_result(**{**good, "ttft_warm_p95": 9.0})["fit"] == "no",
+      "the proposed TTFT check fails the fit, not G1")
+check(g1_result(warnings=["cache"], **good)["fit"] == "not_evaluated", "a measurement the harness distrusts is never a fit")
 
 
 def level(n, ttft, tps, wait, errors=0):
@@ -62,9 +72,6 @@ check(lb.agent_capacity([level(1, None, 30, 0)], limits) is None, "an unevaluabl
 check(lb.agent_capacity([level(1, 9, 30, 0)], limits) == 0, "a first level outside the thresholds gives 0 agents")
 check(lb.within({**level(1, 1, 30, 0), "non_content": 2}, limits) is None, "a level with tool-call turns is not evaluable")
 
-a, b = lb.long_prompt(4096), lb.long_prompt(4096)
-check(a == b and lb.long_prompt(8192)[1] != a[1] and len(lb.long_prompt(8192)[0]) > len(a[0]),
-      "the fit fixture is byte-identical per context size, and 8K is longer than 4K")
 check(lb.agent_turn(4096)[2] == lb.agent_turn(4096)[2], "the agent fixture is byte-identical")
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -72,16 +79,8 @@ with tempfile.TemporaryDirectory() as tmp:
                          capture_output=True, text=True, timeout=300)
     check(run.returncode == 0, f"llm-bench mock runs ({run.stderr[-400:]})")
     results = {os.path.basename(p): json.load(open(p)) for p in glob.glob(os.path.join(tmp, "*.json"))}
-    fits = [r for r in results.values() if r["kind"] == "fit"]
     caps = [r for r in results.values() if r["kind"] == "capacity"]
-    check(sorted(r["ctx"] for r in fits) == [4096, 8192] and len(caps) == 1 and all("-direct-" in n for n in results),
-          f"mock: a fit per context size and one capacity run, the route in each name {sorted(results)}")
-    for r in fits:
-        check(r["samples"] == {"warm": 20, "cold": 5, "failed": 0} and r["fit"] == "yes" and r["digest"] and r["fixture"]["sha256"]
-              and r["warnings"] == [] and r["metrics"]["prompt_tokens"]["value"] == 2048,
-              f"mock fit {r['ctx']}: 20 warm and 5 cold, identified, judged ({r['fit']}, {r['samples']})")
-        check(r["metrics"]["vram_headroom_bytes"]["source"] == "prometheus" and r["metrics"]["decode_tps_p50"]["source"] == "provider_reported",
-              f"mock fit {r['ctx']}: VRAM from Prometheus, decode from Ollama's own timings")
+    check(len(caps) == 1 and all("-direct-" in n for n in results), f"mock: one capacity run, the route in its name {sorted(results)}")
     if caps:
         c = caps[0]["capacity"]
         mock_limits = lb.thresholds(os.path.join(ROOT, "pkgs", "llm-bench", "fixtures", "mock-thresholds.json"))
@@ -93,11 +92,11 @@ with tempfile.TemporaryDirectory() as tmp:
               "queue wait is labelled estimated, and zero for one agent")
         check(sum(lv["requests"] for lv in c["levels"]) == len([l for p in glob.glob(os.path.join(tmp, "capacity-*.runs.jsonl")) for l in open(p)]),
               "the unmeasured warm-up is in no level")
-    corpus = lb.load_json(os.path.join(lb.FIXTURES, "long-context.json"))["corpus"]
-    task = lb.load_json(os.path.join(lb.FIXTURES, "agent-turn.json"))["task"]
+    spec = lb.load_json(os.path.join(lb.FIXTURES, "agent-turn.json"))
     for name, r in results.items():
         text = json.dumps(r)
-        check("_runs" not in r and not any(s[:40] in text for s in corpus + [task]), f"{name}: an aggregate, no prompt text")
+        check("_runs" not in r and not any(x[:40] in text for x in spec["history"] + [spec["task"], spec["system"]]),
+              f"{name}: an aggregate, no prompt text")
     runs = [json.loads(l) for p in glob.glob(os.path.join(tmp, "*.runs.jsonl")) for l in open(p) if l.strip()]
     check(runs and not any({"text", "prompt", "response", "content", "id"} & set(r) for r in runs),
           "the private runs file holds timings, no prompt, completion or ID")
@@ -123,30 +122,68 @@ with tempfile.TemporaryDirectory() as tmp:
 srv = lb.FakeOllama()
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 mock_limits = lb.thresholds(os.path.join(ROOT, "pkgs", "llm-bench", "fixtures", "mock-thresholds.json"))
+
+
+def g1_bench(script, out, host, cold, warm):
+    env = {**os.environ, "OLLAMA_URL": srv.base}
+    return subprocess.run(["bash", script, host, "mock:7b", "4096", str(cold), str(warm), out], env=env,
+                          capture_output=True, text=True, timeout=300)
+
+
+def vram_log(path, t0, t1):
+    with open(path, "w") as f:
+        f.write("timestamp, memory.used [MiB], memory.total [MiB]\n")
+        t = t0
+        while t <= t1 + 1:
+            f.write(f"{time.strftime('%Y/%m/%d %H:%M:%S', time.localtime(t))}.{int(t % 1 * 1000):03d}, 6656 MiB, 8192 MiB\n")
+            t += 0.02
+
+
 try:
-    real_prompt = lb.long_prompt
-    # without the per-run nonce the fake's prompt cache serves every warm run, as Ollama's would
-    lb.long_prompt = lambda ctx, nonce=None: real_prompt(ctx)
-    try:
-        cached = lb.fit(srv.base, "mock-host", "mock:7b", 4096, cold=1, warm=5, prom=srv.base, limits=mock_limits, settle=0)
-    finally:
-        lb.long_prompt = real_prompt
-    check(any("prompt cache" in w for w in cached["warnings"]) and cached["fit"] != "yes",
-          f"identical prompts are caught as cache-served, and never a fit ({cached['fit']}, {cached['warnings']})")
-    oom = lb.fit(srv.base, "mock-host", "mock:oom", 4096, cold=2, warm=2, prom=srv.base, limits=mock_limits, settle=0)
-    check(oom["fit"] == "no" and "more system memory" in (oom["rejected"] or ""),
-          f"a model that fails to load is rejected with Ollama's error, not a crash ({oom['rejected']})")
+    bench = os.path.join(ROOT, "scripts", "ollama-g1-bench.sh")
+    with tempfile.TemporaryDirectory() as tmp:
+        d = os.path.join(tmp, "g1")
+        os.mkdir(d)
+        t0 = time.time()
+        run = g1_bench(bench, os.path.join(d, "g1-asus.jsonl"), "192.168.10.113", 2, 5)
+        check(run.returncode == 0, f"#492's G1 bench runs against the fake ({run.stderr[-300:]})")
+        vram_log(os.path.join(d, "vram-asus.csv"), t0, time.time())
+        with open(os.path.join(d, "g1-msi.jsonl"), "w") as f:
+            for i in range(5):
+                f.write(json.dumps({"host": "192.168.10.235", "model": "mock:7b", "ctx": 4096, "kind": "warm", "clients": 1,
+                                    "decode_tok_s": 20.0, "ttft_s": 9.0, "load_s": 0, "prompt_tokens": 2048, "t_start": 0, "t_end": 1}) + "\n")
+        out = lb.import_g1(d, os.path.join(tmp, "out"), mock_limits)
+        rows = {json.load(open(p))["host"]: json.load(open(p)) for p in out}
+        a = rows.get("asus-b460m", {})
+        check(set(rows) == {"asus-b460m", "msi-ms7758"} and a.get("samples") == {"warm": 5, "cold": 2},
+              f"import-g1: one fit row per host, model and context, named by fleet host, with its sample counts ({sorted(rows)})")
+        check(a["warnings"] == [] and a["metrics"]["prompt_tokens"]["value"] == 2048,
+              f"the bench's per-run nonce keeps the prompt cache out ({a['warnings']})")
+        check(a["checks"]["decode"]["threshold"] == 100.0 and a["g1"] == "pass",
+              f"the G1 decode bar is 5x msi's decode for the same model and context ({a['checks'].get('decode')})")
+        check(a["metrics"]["vram_headroom_bytes"]["value"] == 1536 * lb.MIB and a["metrics"]["vram_headroom_bytes"]["source"] == "nvidia_smi"
+              and a["metrics"]["ttft_warm_p95"]["source"] == "insufficient_samples",
+              "VRAM comes from the nvidia-smi log; p95 of 5 warm runs is not reported")
+        check(a["fixture"]["name"] == "scripts/ollama-g1-bench.sh" and a["fixture"]["sha256"] and "top_k1" in a["fixture"]["sampling"],
+              "the result names #492's fixture and sampling: one contract")
+        check(srv.cache_hits == 0, f"no request of the bench repeats the previous prompt: the nonce keeps Ollama's cache out ({srv.cache_hits} hits)")
+        # what a cache-served warm phase looks like in the bench's output: few prompt tokens evaluated
+        d2 = os.path.join(tmp, "g1-cached")
+        os.mkdir(d2)
+        with open(os.path.join(d, "g1-asus.jsonl")) as src, open(os.path.join(d2, "g1-asus.jsonl"), "w") as dst:
+            for l in src:
+                r = json.loads(l)
+                if r["kind"] == "warm":
+                    r["prompt_tokens"] = 8
+                dst.write(json.dumps(r) + "\n")
+        shutil.copy(os.path.join(d, "vram-asus.csv"), d2)
+        cached = [json.load(open(p)) for p in lb.import_g1(d2, os.path.join(tmp, "out2"), mock_limits)][0]
+        check(any("prompt cache" in w for w in cached["warnings"]) and cached["fit"] != "yes",
+              f"warm runs that evaluated a handful of prompt tokens are caught as cache-served, and never a fit ({cached['warnings']})")
     tool = lb.chat_stream(srv.base + "/v1", "mock:tools", lb.agent_turn(4096, "t")[0], [])
     check(tool["kind"] == "tool_call" and tool["ttft_s"] is None and tool["decode_source"] == "whole_turn",
           f"a tool-call turn is classified, with no content TTFT and its decode over the whole turn ({tool})")
     check(lb.chat_stream("http://127.0.0.1:9/v1", "mock:7b", [], [])["error"], "a refused connection is an error row, not an exception")
-    try:
-        lb.fit(srv.base, "mock-host", "mock:gone", 4096, cold=2, warm=2, prom=srv.base, limits=mock_limits, settle=0)
-        gone = "returned a result"
-    except SystemExit as e:
-        gone = str(e)
-    check("nothing measured" in gone,
-          f"a host that answers /api/tags, then drops every run, stops the fit with no result, never a no-fit ({gone[:90]})")
 finally:
     srv.shutdown()
 

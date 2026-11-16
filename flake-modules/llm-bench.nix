@@ -40,6 +40,18 @@ let
     "nvidia_smi_clocks_throttle_reasons_sw_power_cap"
     "nvidia_smi_gpu_info"
   ];
+  # every tag a host's Ollama loads must be a model the scorecard's rules accept, or committing its result would fail
+  # black-pi's evaluation
+  unlisted = lib.concatLists (
+    lib.mapAttrsToList (
+      name: h:
+      map (m: "${name}: ${m}") (
+        lib.subtractLists (import ../pkgs/llm-bench/models.nix) (
+          lib.optionals h.config.services.ollama.enable h.config.services.ollama.loadModels
+        )
+      )
+    ) config.flake.nixosConfigurations
+  );
   fixture = lib.importJSON ../pkgs/llm-bench/fixtures/scorecard-fixture.json;
   render =
     results:
@@ -232,6 +244,9 @@ in
               grep '^nvidia_smi_' metrics > $out
             '';
         llm-bench-scorecard =
+          assert lib.assertMsg (
+            unlisted == [ ]
+          ) "llm-bench: hosts load tags pkgs/llm-bench/models.nix does not list: ${toString unlisted}";
           assert lib.assertMsg (
             renders { } && badLabels == [ ]
           ) "llm-bench: results with labels outside rules.nix's sets rendered: ${builtins.toJSON badLabels}";

@@ -1,16 +1,17 @@
 {
  "status": "mock: scaled to the fake Ollama's fixed costs, for the gate only",
- "fit": {
-  "vram_headroom_gib_min": 0.75,
-  "gpu_offload_ratio_min": 1.0,
-  "decode_tps_min_model": "mock:7b",
-  "decode_tps_min": 100,
-  "decode_tps_min_other": 100,
+ "g1": {
+  "headroom_mib_min_at_4096": 768,
+  "gpu_share_min": 1.0,
+  "decode_vs_msi": 5,
+  "decode_tps_min": 24
+ },
+ "proposed": {
   "ttft_warm_p95_s_max": {
-   "4096": 1.0,
-   "8192": 1.0
+   "4096": 2.0,
+   "8192": 4.0
   },
-  "cold_load_s_max": 1.0
+  "cold_load_s_max": 30
  },
  "capacity": {
   "ttft_p95_s_max": 0.25,

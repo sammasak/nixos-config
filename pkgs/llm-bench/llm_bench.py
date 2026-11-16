@@ -1,24 +1,28 @@
-"""llm-bench: the local-inference benchmark of nixos-config#493.
+"""llm-bench: the local-inference scorecard of nixos-config#493.
 
-fit       one model on one Ollama host, direct (backend timings): cold starts and warm runs at one context size, GPU
-          offload from /api/ps, VRAM and GPU power from black-pi's Prometheus when given
-capacity  N = 1, 2, ... concurrent Pi-shaped streamed turns against an OpenAI-compatible base (Ollama's /v1 direct, or
-          the gateway with the Pi project key); the agent capacity is the largest N inside every capacity threshold
+import-g1   the G1 bench of #492 (scripts/ollama-g1-bench.sh, its nvidia-smi vram-*.csv) as llm-bench/1 fit results:
+            the one fixture, sampling and G1 rule (scripts/ollama-g1-table.py), here carried into the scorecard with
+            each value's source and the proposed TTFT and cold-load checks on top
+capacity    N = 1, 2, ... concurrent Pi-shaped streamed turns against an OpenAI-compatible base (Ollama's /v1 direct, or
+            the gateway with the Pi project key); the agent capacity is the largest N inside every capacity threshold
 import-msi  the archived MSI evidence (homelab-gitops colibri-msi results), read and normalised, never edited
-mock      the same fit and capacity runs against a built-in deterministic fake Ollama, so the gate runs without hardware
-table     the model-fit table (CSV) of result files
+mock        the capacity run against a built-in deterministic fake Ollama, so the gate runs without hardware
+table       the model-fit table (CSV) of result files
 
-Every value carries its source: provider_reported (Ollama's own timings), client_measured, prometheus, estimated or
+Every value carries its source: provider_reported (Ollama's own timings), client_measured, nvidia_smi, estimated or
 unavailable. A quantile needs its sample floor or it is insufficient_samples; a missing value stays null, never 0.
 Prompts, completions and per-run IDs never leave the private runs file.
 """
 import argparse
 import csv
+import datetime
+import glob
 import hashlib
 import http.server
 import json
 import math
 import os
+import statistics
 import sys
 import threading
 import time
@@ -45,22 +49,6 @@ def thresholds(path=None):
 
 
 # ---- fixtures ---------------------------------------------------------------------------------------------------
-
-def long_prompt(ctx, nonce=None):
-    """The fit prompt for a context size: the fixed corpus, numbered and repeated to ~70% of ctx at ~3.5 chars per
-    token, then the fixed question. Deterministic: the same ctx gives the same bytes and sha256. A run's nonce goes
-    first, so Ollama's prompt cache cannot serve a warm run's prefill from the previous one; the sha256 is of the
-    prompt without it."""
-    spec = load_json(os.path.join(FIXTURES, "long-context.json"))
-    budget = int(ctx * 0.7 * 3.5)
-    parts, n = [], 0
-    while sum(len(p) for p in parts) < budget:
-        parts.append(f"## Section {n}\n{spec['corpus'][n % len(spec['corpus'])]}\n")
-        n += 1
-    text = "".join(parts)[:budget] + "\n" + spec["question"]
-    sha = hashlib.sha256(text.encode()).hexdigest()
-    return (text if nonce is None else f"Run {nonce}.\n{text}"), sha
-
 
 def agent_turn(ctx, nonce=None):
     """A Pi-shaped turn: system prompt, tool schemas and history filled to ~60% of ctx, then the task. The nonce
@@ -107,74 +95,7 @@ def get_json(url, timeout=30):
         return json.load(r)
 
 
-def prom_query(base, expr, at):
-    """One instant query; None when Prometheus is not given, unreachable, or has no series (never 0)."""
-    if not base:
-        return None
-    q = urllib.parse.urlencode({"query": expr, "time": f"{at:.3f}"})
-    try:
-        res = get_json(f"{base}/api/v1/query?{q}")["data"]["result"]
-    except (OSError, ValueError, KeyError):
-        return None
-    return float(res[0]["value"][1]) if res else None
-
-
-# ---- fit --------------------------------------------------------------------------------------------------------
-
-def generate(base, model, prompt, ctx, keep_alive="5m"):
-    """One streamed /api/generate: client TTFT to the first content token, and Ollama's own timings. think is off:
-    a thinking model would spend num_predict before its first answer token."""
-    body = {"model": model, "prompt": prompt, "stream": True, "keep_alive": keep_alive, "think": False,
-            "options": {**SETTINGS, "num_ctx": ctx}}
-    t0 = time.monotonic()
-    ttft, final = None, {}
-    with request(f"{base}/api/generate", body) as r:
-        for line in r:
-            if not line.strip():
-                continue
-            chunk = json.loads(line)
-            if chunk.get("error"):
-                raise RuntimeError(f"ollama: {chunk['error']}")
-            if ttft is None and chunk.get("response"):
-                ttft = time.monotonic() - t0
-            if chunk.get("done"):
-                final = chunk
-    if not final:
-        raise RuntimeError("ollama: the stream ended without its done line")
-    total = time.monotonic() - t0
-    ns = 1e-9
-    eval_s = final.get("eval_duration", 0) * ns
-    return {
-        "ttft_s": ttft, "total_s": total,
-        "load_s": final.get("load_duration", 0) * ns if "load_duration" in final else None,
-        "prompt_tokens": final.get("prompt_eval_count"),
-        "prompt_eval_s": final.get("prompt_eval_duration", 0) * ns if "prompt_eval_duration" in final else None,
-        "decode_tokens": final.get("eval_count"),
-        "decode_tps": final["eval_count"] / eval_s if final.get("eval_count") and eval_s > 0 else None,
-    }
-
-
-def attempt(run, **fields):
-    """One run, its failure kept as data. error_kind ollama: Ollama itself answered with an error (a load it refused,
-    an HTTP 5xx), which is a measurement; transport: nothing answered, which says nothing about the model."""
-    try:
-        return {**fields, **run(), "error": None, "error_kind": None}
-    except (OSError, ValueError, RuntimeError) as e:
-        kind = "ollama" if isinstance(e, (RuntimeError, urllib.error.HTTPError)) else "transport"
-        return {**fields, "error": f"{type(e).__name__}: {e}"[:200], "error_kind": kind}
-
-
-def unload(base, model, timeout=60):
-    with request(f"{base}/api/generate", {"model": model, "keep_alive": 0}):
-        pass
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        if loaded(base, model) is None:
-            return
-        time.sleep(0.5)
-    # TimeoutError: a stuck unload is the server's state, not a measurement of the model
-    raise TimeoutError(f"{model} still loaded {timeout}s after keep_alive 0")
-
+# ---- G1 import ---------------------------------------------------------------------------------------------------
 
 def loaded(base, model):
     return next((m for m in get_json(f"{base}/api/ps").get("models", []) if model in (m.get("name"), m.get("model"))), None)
@@ -195,97 +116,89 @@ def median(xs):
     return xs[len(xs) // 2] if xs else None
 
 
-def fit(base, host, model, ctx, cold=5, warm=20, prom=None, limits=None, settle=15):
-    """settle: seconds idle after the cold phase and after the warm phase, so the 10 s GPU scrape and its ingest have
-    a sample of the resident-but-idle model (VRAM at load) and of the end of the warm runs (steady)."""
-    limits = limits or thresholds()
-    ident = model_identity(base, model)
-    started = time.time()
-    if ident is None:
-        return result("fit", host, model, ctx, None, started, rejected=f"{model} is not pulled on {host}")
-    prompt, sha = long_prompt(ctx)
-    runs = []
-    def cold_run(i):
-        unload(base, model)
-        return generate(base, model, long_prompt(ctx, f"cold-{i}")[0], ctx)
-
-    for i in range(cold):
-        runs.append(attempt(lambda i=i: cold_run(i), start="cold"))
-    if all(r["error"] for r in runs):
-        if not any(r["error_kind"] == "ollama" for r in runs):
-            raise SystemExit(f"llm-bench: {host} stopped answering ({runs[0]['error']}); nothing measured, nothing written")
-        warm = 0
-    cold_end = time.time()
-    resident = loaded(base, model) or {}
-    time.sleep(settle)
-    idle_end = time.time()
-    for i in range(warm):
-        runs.append(attempt(lambda i=i: generate(base, model, long_prompt(ctx, f"warm-{i}")[0], ctx), start="warm"))
-    warm_end = time.time()
-    time.sleep(settle)
-    queried = time.time()
-    ok = [r for r in runs if r["error"] is None]
-    w = [r for r in ok if r["start"] == "warm"]
-    c = [r for r in ok if r["start"] == "cold"]
-    node = f'node="{host}"'
-    idle_window = max(1, int(idle_end - cold_end))
-    warm_window = max(1, int(queried - idle_end))
-    total = prom_query(prom, f"max(nvidia_smi_memory_total_bytes{{{node}}})", queried)
-    vram_load = prom_query(prom, f"max(max_over_time(nvidia_smi_memory_used_bytes{{{node}}}[{idle_window}s]))", idle_end)
-    vram_steady = prom_query(prom, f"max(max_over_time(nvidia_smi_memory_used_bytes{{{node}}}[{warm_window}s]))", queried)
-    power = prom_query(prom, f"avg(avg_over_time(nvidia_smi_power_draw_watts{{{node}}}[{int(warm_end - idle_end) or 1}s]))", warm_end)
-    out_tokens = sum(r["decode_tokens"] or 0 for r in w)
-    prompt_cold, prompt_warm = median(r["prompt_tokens"] for r in c), median(r["prompt_tokens"] for r in w)
-    warnings = []
-    if prompt_cold and prompt_warm is not None and prompt_warm < 0.5 * prompt_cold:
-        warnings.append(f"warm runs evaluated {prompt_warm} prompt tokens against {prompt_cold} cold: a prompt cache served them")
-    if resident.get("context_length") and prompt_cold and prompt_cold >= resident["context_length"]:
-        warnings.append(f"the prompt ({prompt_cold} tokens) filled the context ({resident['context_length']}): truncated")
-    offload = resident["size_vram"] / resident["size"] if resident.get("size") else None
-    metrics = {
-        "decode_tps_p50": metric(quantile([r["decode_tps"] for r in w], 0.5), "tokens/s", "provider_reported", len(w)),
-        "ttft_warm_p50": metric(quantile([r["ttft_s"] for r in w], 0.5), "s", "client_measured", len(w)),
-        "ttft_warm_p95": metric(quantile([r["ttft_s"] for r in w], 0.95), "s", "client_measured", len(w)),
-        "ttft_cold_p50": metric(quantile([r["ttft_s"] for r in c], 0.5), "s", "client_measured", len(c)),
-        "cold_load_p50": metric(quantile([r["load_s"] for r in c], 0.5), "s", "provider_reported", len(c)),
-        "prompt_tokens": metric(prompt_warm, "tokens", "provider_reported", len(w)),
-        "gpu_offload_ratio": metric(offload, "ratio", "provider_reported"),
-        "model_vram_bytes": metric(resident.get("size_vram"), "bytes", "provider_reported"),
-        "vram_load_bytes": metric(vram_load, "bytes", "prometheus"),
-        "vram_steady_bytes": metric(vram_steady, "bytes", "prometheus"),
-        "vram_headroom_bytes": metric(total - vram_steady if None not in (total, vram_steady) else None, "bytes", "prometheus"),
-        # GPU-estimated: the board's own power reading over the warm runs (prefill included), not the host's
-        "gpu_joules_per_output_token": metric(power * (warm_end - idle_end) / out_tokens if power and out_tokens else None,
-                                              "J/token", "estimated"),
-    }
-    failed = [r["error"] for r in runs if r["error"]]
-    r = result("fit", host, model, ctx, ident, started, metrics=metrics,
-               fixture={"name": "long-context", "sha256": sha, "chars": len(prompt), "nonce": "Run <start>-<i>. prefix"},
-               samples={"warm": len(w), "cold": len(c), "failed": len(failed)}, runs=runs,
-               rejected=f"{len(failed)} of {len(runs)} runs failed, Ollama: {failed[0]}" if failed and not c else None)
-    r["settings"]["context_length_loaded"] = resident.get("context_length")
-    r["warnings"] = warnings + ([f"{len(failed)} runs failed, first: {failed[0]}"] if failed else [])
-    return r if r["rejected"] else judge_fit(r, limits)
+# the fleet's addresses (modules/core/fleet.nix): the G1 bench records the host it was pointed at
+FLEET = {"192.168.10.113": "asus-b460m", "192.168.10.235": "msi-ms7758", "192.168.10.110": "acer-swift"}
+MIB = 1024 ** 2
 
 
-def judge_fit(r, limits):
-    m, t = r["metrics"], limits["fit"]
-    big = r["model"] == t["decode_tps_min_model"]
+def vram_samples(d):
+    """nvidia-smi --query-gpu=timestamp,memory.used,memory.total --format=csv -lms 1000, as the G1 procedure logs it."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(d, "vram-*.csv"))):
+        with open(path, encoding="utf-8") as f:
+            for row in csv.DictReader(f, skipinitialspace=True):
+                ts = datetime.datetime.strptime(row["timestamp"], "%Y/%m/%d %H:%M:%S.%f").timestamp()
+                out.append((ts, int(row["memory.used [MiB]"].split()[0]) * MIB, int(row["memory.total [MiB]"].split()[0]) * MIB))
+    return out
+
+
+def judge_g1(r, msi_decode, limits):
+    """scripts/ollama-g1-table.py's G1 rule, unchanged, plus the proposed TTFT and cold-load checks. G1: headroom at
+    4096 at least 768 MiB, every layer on the GPU, decode p50 at least 5x msi's for the same model and context (24
+    tok/s when msi has no such row). fit is yes only with every check passing and no warning."""
+    m, g, t = r["metrics"], limits["g1"], limits["proposed"]
+    need = g["decode_vs_msi"] * msi_decode if msi_decode else g["decode_tps_min"]
     checks = {
-        "headroom": (m["vram_headroom_bytes"]["value"], t["vram_headroom_gib_min"] * GIB, ">="),
-        "offload": (m["gpu_offload_ratio"]["value"], t["gpu_offload_ratio_min"], ">="),
-        "decode": (m["decode_tps_p50"]["value"], t["decode_tps_min"] if big else t["decode_tps_min_other"], ">="),
+        "headroom": (m["vram_headroom_bytes"]["value"], g["headroom_mib_min_at_4096"] * MIB, ">=") if r["ctx"] == 4096 else None,
+        "offload": (m["gpu_offload_ratio"]["value"], g["gpu_share_min"], ">="),
+        "decode": (m["decode_tps_p50"]["value"], need, ">="),
         "ttft": (m["ttft_warm_p95"]["value"], t["ttft_warm_p95_s_max"][str(r["ctx"])], "<="),
         "cold_load": (m["cold_load_p50"]["value"], t["cold_load_s_max"], "<="),
     }
     r["checks"] = {k: {"pass": None if v is None else (v >= lim if op == ">=" else v <= lim), "value": v, "threshold": lim, "op": op}
-                   for k, (v, lim, op) in checks.items()}
+                   for k, c in checks.items() if c is not None for v, lim, op in [c]}
+    g1 = [r["checks"][k]["pass"] for k in ("headroom", "offload", "decode") if k in r["checks"]]
+    r["g1"] = "no-go" if False in g1 else ("pass" if None not in g1 else "not_evaluated")
     passes = [c["pass"] for c in r["checks"].values()]
-    r["fit"] = "no" if False in passes else ("yes" if None not in passes else "not_evaluated")
-    # a measurement the harness itself distrusts is never a yes
-    if r["fit"] == "yes" and r.get("warnings"):
-        r["fit"] = "not_evaluated"
+    r["fit"] = "no" if False in passes else ("yes" if None not in passes and not r["warnings"] else "not_evaluated")
     return r
+
+
+def import_g1(d, out, limits=None):
+    """One fit result per GPU host, model and context from a G1 results directory: g1-*.jsonl (one-client runs; the
+    multi-client rows are queueing context, the agent capacity is `capacity`'s) and the vram-*.csv logged meanwhile."""
+    limits = limits or thresholds()
+    runs = [json.loads(l) for p in sorted(glob.glob(os.path.join(d, "g1-*.jsonl"))) for l in open(p, encoding="utf-8") if l.strip()]
+    smi = vram_samples(d)
+    groups = {}
+    for r in runs:
+        if r.get("clients", 1) == 1 and r["kind"] in ("cold", "warm"):
+            groups.setdefault((FLEET.get(r["host"], r["host"]), r["model"], r["ctx"]), []).append(r)
+    msi = {(m, c): quantile([r["decode_tok_s"] for r in rs if r["kind"] == "warm"], 0.5)
+           for (h, m, c), rs in groups.items() if h == "msi-ms7758"}
+    written = []
+    for (host, model, ctx), rs in sorted(groups.items()):
+        cold = [r for r in rs if r["kind"] == "cold"]
+        warm = [r for r in rs if r["kind"] == "warm"]
+        during = lambda xs: [s for s in smi if any(x["t_start"] <= s[0] <= x["t_end"] for x in xs)]
+        vc, vw = during(cold), during(warm)
+        shares = [r["gpu_share"] for r in rs if r.get("gpu_share") is not None]
+        warnings = []
+        pc, pw = median(r["prompt_tokens"] for r in cold), median(r["prompt_tokens"] for r in warm)
+        if pc and pw is not None and pw < 0.5 * pc:
+            warnings.append(f"warm runs evaluated {pw} prompt tokens against {pc} cold: a prompt cache served them")
+        gpu = host != "msi-ms7758"
+        metrics = {
+            "decode_tps_p50": metric(quantile([r["decode_tok_s"] for r in warm], 0.5), "tokens/s", "provider_reported", len(warm)),
+            # Ollama's load + prompt eval, as the G1 bench defines TTFT; queue wait is not in it
+            "ttft_warm_p50": metric(quantile([r["ttft_s"] for r in warm], 0.5), "s", "provider_reported", len(warm)),
+            "ttft_warm_p95": metric(quantile([r["ttft_s"] for r in warm], 0.95), "s", "provider_reported", len(warm)),
+            "ttft_cold_p50": metric(quantile([r["ttft_s"] for r in cold], 0.5), "s", "provider_reported", len(cold)),
+            "cold_load_p50": metric(quantile([r["load_s"] for r in cold], 0.5), "s", "provider_reported", len(cold)),
+            "prompt_tokens": metric(pc, "tokens", "provider_reported", len(cold)),
+            "gpu_offload_ratio": metric(min(shares) if shares else None, "ratio", "provider_reported"),
+            "vram_load_bytes": metric(max((s[1] for s in vc), default=None) if gpu else None, "bytes", "nvidia_smi"),
+            "vram_steady_bytes": metric(statistics.median(s[1] for s in vw) if gpu and vw else None, "bytes", "nvidia_smi"),
+            "vram_headroom_bytes": metric(vw[0][2] - max(s[1] for s in vw) if gpu and vw else None, "bytes", "nvidia_smi"),
+        }
+        first = rs[0]
+        r = result("fit", host, model, ctx, {"digest": first.get("digest"), "quant": first.get("quant")}, first["t_start"],
+                   metrics=metrics, samples={"warm": len(warm), "cold": len(cold)},
+                   fixture={"name": "scripts/ollama-g1-bench.sh", "sha256": first.get("prompt_sha256"),
+                            "sampling": first.get("sampling")})
+        r["warnings"] = warnings
+        written.append(write(judge_g1(r, msi.get((model, ctx)), limits) if gpu else r, out))
+    return written
 
 
 # ---- capacity ---------------------------------------------------------------------------------------------------
@@ -451,16 +364,17 @@ def write(r, out):
     with open(os.path.join(out, name + ".json"), "w", encoding="utf-8") as f:
         json.dump(r, f, indent=1, sort_keys=True)
         f.write("\n")
-    # private: per-run timings, never committed with the aggregate or read by the rules
-    with open(os.path.join(out, name + ".runs.jsonl"), "w", encoding="utf-8") as f:
-        for run in runs:
-            f.write(json.dumps(run, sort_keys=True) + "\n")
+    # private: per-run timings, never committed with the aggregate or read by the rules; an import has none
+    if runs:
+        with open(os.path.join(out, name + ".runs.jsonl"), "w", encoding="utf-8") as f:
+            for run in runs:
+                f.write(json.dumps(run, sort_keys=True) + "\n")
     return os.path.join(out, name + ".json")
 
 
 TABLE = ["host", "model", "quant", "ctx", "evidence", "route", "vram_load_gib", "vram_steady_gib", "headroom_gib", "gpu_offload",
          "decode_tps_p50", "ttft_warm_p50_s", "ttft_warm_p95_s", "ttft_cold_p50_s", "cold_load_s", "agent_capacity",
-         "fit", "failed_checks", "warnings"]
+         "g1", "fit", "failed_checks", "warnings"]
 
 
 def table_row(r):
@@ -474,7 +388,7 @@ def table_row(r):
         "decode_tps_p50": rnd(m.get("decode_tps_p50"), 1), "ttft_warm_p50_s": rnd(m.get("ttft_warm_p50")),
         "ttft_warm_p95_s": rnd(m.get("ttft_warm_p95")), "ttft_cold_p50_s": rnd(m.get("ttft_cold_p50")),
         "cold_load_s": rnd(m.get("cold_load_p50")), "agent_capacity": (r.get("capacity") or {}).get("agents"),
-        "fit": r["fit"], "failed_checks": " ".join(k for k, c in r.get("checks", {}).items() if c["pass"] is False),
+        "g1": r.get("g1"), "fit": r["fit"], "failed_checks": " ".join(k for k, c in r.get("checks", {}).items() if c["pass"] is False),
         "warnings": " | ".join(r.get("warnings", [])),
     }
 
@@ -514,6 +428,7 @@ class FakeOllama(http.server.ThreadingHTTPServer):
         self.loaded = None
         # Ollama's prompt cache: a prompt identical to the last one prefills almost nothing
         self.last_prompt = None
+        self.cache_hits = 0
         self.gate = threading.Lock()
         self.base = f"http://127.0.0.1:{self.server_address[1]}"
 
@@ -537,19 +452,13 @@ class FakeHandler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/tags":
             self.reply({"models": [{"name": m, "digest": "sha256:" + "0" * 64,
                                     "details": {"quantization_level": "Q4_K_M", "parameter_size": "7B"}}
-                                   for m in (self.MODEL, "mock:oom", "mock:tools", "mock:gone")]})
+                                   for m in (self.MODEL, "mock:tools")]})
         elif self.path == "/api/ps":
             self.reply({"models": [] if s.loaded is None else [{"name": s.loaded, "size": 6 * GIB, "size_vram": 6 * GIB,
-                                                                 "context_length": 8192}]})
+                                                                 "context_length": 8192, "digest": "sha256:" + "0" * 64,
+                                                                 "details": {"quantization_level": "Q4_K_M"}}]})
         elif self.path == "/api/version":
             self.reply({"version": "0.0.0-mock"})
-        elif self.path.startswith("/api/v1/query?"):
-            # black-pi's Prometheus for the GPU series: a fixed 8 GiB board, 6.5 GiB used, 150 W
-            expr = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)["query"][0]
-            value = next((v for k, v in (("memory_total", 8 * GIB), ("memory_used", 6.5 * GIB), ("power_draw", 150.0))
-                          if k in expr), None)
-            self.reply({"status": "success", "data": {"resultType": "vector",
-                        "result": [] if value is None else [{"metric": {}, "value": [0, str(value)]}]}})
         else:
             self.send_error(404)
 
@@ -567,13 +476,6 @@ class FakeHandler(http.server.BaseHTTPRequestHandler):
         if body.get("keep_alive") == 0 and "prompt" not in body:
             s.loaded = None
             return self.reply({"done": True})
-        if body.get("model") == "mock:gone":
-            # a host that drops off after answering /api/tags: the connection closes with no reply
-            self.close_connection = True
-            return self.connection.shutdown(2)
-        if body.get("model") == "mock:oom":
-            # a model that does not fit: Ollama's load error arrives as a line of the stream
-            return self.stream([json.dumps({"error": "model requires more system memory than is available"}).encode() + b"\n"])
         with s.gate:
             load = 0.0
             if s.loaded != body["model"]:
@@ -583,17 +485,16 @@ class FakeHandler(http.server.BaseHTTPRequestHandler):
             prompt = json.dumps(body.get("prompt") or body.get("messages"))
             cached = prompt == s.last_prompt
             s.last_prompt = prompt
+            s.cache_hits += cached
             prompt_tokens = 8 if cached else 2048
             time.sleep(0 if cached else self.PREFILL_S)
             if self.path == "/api/generate":
-                def gen():
-                    for i in range(self.TOKENS):
-                        time.sleep(self.TOKEN_S)
-                        yield json.dumps({"response": "x", "done": False}).encode() + b"\n"
-                    yield json.dumps({"done": True, "load_duration": int(load * 1e9), "prompt_eval_count": prompt_tokens,
-                                      "prompt_eval_duration": int(self.PREFILL_S * 1e9), "eval_count": self.TOKENS,
-                                      "eval_duration": int(self.TOKENS * self.TOKEN_S * 1e9)}).encode() + b"\n"
-                self.stream(gen())
+                # the G1 bench's request: stream false, Ollama's own timings in the one reply
+                time.sleep(self.TOKENS * self.TOKEN_S)
+                self.reply({"done": True, "load_duration": int(load * 1e9), "prompt_eval_count": prompt_tokens,
+                            "prompt_eval_duration": int((0.001 if cached else self.PREFILL_S) * 1e9),
+                            "eval_count": self.TOKENS, "eval_duration": int(self.TOKENS * self.TOKEN_S * 1e9),
+                            "total_duration": int((load + self.PREFILL_S + self.TOKENS * self.TOKEN_S) * 1e9)})
             elif self.path == "/v1/chat/completions":
                 def sse():
                     if body.get("model") == "mock:tools":
@@ -622,11 +523,8 @@ def mock(out, limits_path=None):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     limits = thresholds(limits_path or os.path.join(FIXTURES, "mock-thresholds.json"))
     try:
-        paths = [write(fit(srv.base, "mock-host", FakeHandler.MODEL, ctx, cold=5, warm=20, prom=srv.base, limits=limits,
-                           settle=0), out)
-                 for ctx in (4096, 8192)]
-        paths.append(write(capacity(srv.base + "/v1", "mock-host", FakeHandler.MODEL, 4096, "direct", max_n=6,
-                                    per_level=20, limits=limits), out))
+        paths = [write(capacity(srv.base + "/v1", "mock-host", FakeHandler.MODEL, 4096, "direct", max_n=6,
+                                per_level=20, limits=limits), out)]
     finally:
         srv.shutdown()
     return paths
@@ -637,19 +535,15 @@ def mock(out, limits_path=None):
 def main(argv=None):
     p = argparse.ArgumentParser(prog="llm-bench", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    f = sub.add_parser("fit")
-    f.add_argument("--base", required=True, help="Ollama, e.g. http://192.168.10.113:11434")
-    f.add_argument("--host", required=True)
-    f.add_argument("--model", required=True)
-    f.add_argument("--ctx", type=int, choices=(4096, 8192), required=True)
-    f.add_argument("--cold", type=int, default=5)
-    f.add_argument("--warm", type=int, default=20)
-    f.add_argument("--prometheus", help="black-pi Prometheus, e.g. http://192.168.10.137:9090")
-    f.add_argument("--out", required=True)
+    g = sub.add_parser("import-g1")
+    g.add_argument("--src", required=True, help="a G1 results directory: g1-*.jsonl and vram-*.csv")
+    g.add_argument("--out", required=True)
     c = sub.add_parser("capacity")
     c.add_argument("--base", required=True, help="OpenAI-compatible base: Ollama's /v1 or the gateway's /v1")
     c.add_argument("--host", required=True)
     c.add_argument("--model", required=True)
+    # /v1 takes no num_ctx: the server's loaded context applies (asus: OLLAMA_CONTEXT_LENGTH 4096), so 8192 only
+    # measures where that context is loaded, and otherwise warns and gives no number
     c.add_argument("--ctx", type=int, choices=(4096, 8192), default=4096)
     c.add_argument("--route", choices=("direct", "gateway"), required=True)
     c.add_argument("--key-file", help="the Pi project key, for --route gateway")
@@ -665,8 +559,8 @@ def main(argv=None):
     t = sub.add_parser("table")
     t.add_argument("results", nargs="+")
     a = p.parse_args(argv)
-    if a.cmd == "fit":
-        print(write(fit(a.base, a.host, a.model, a.ctx, a.cold, a.warm, a.prometheus), a.out))
+    if a.cmd == "import-g1":
+        print("\n".join(import_g1(a.src, a.out)))
     elif a.cmd == "capacity":
         key = open(a.key_file, encoding="utf-8").read().strip() if a.key_file else None
         print(write(capacity(a.base, a.host, a.model, a.ctx, a.route, key, a.max_agents, a.per_level), a.out))

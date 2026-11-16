@@ -10,15 +10,7 @@
   extraModels ? [ ],
 }:
 let
-  models = [
-    "qwen2.5-coder:7b"
-    "llama3.1:8b"
-    "gemma4:e4b-it-qat"
-    "gemma4:e2b-it-qat"
-    "gemma3:4b-it-qat"
-    "qwen3.5:4b"
-  ]
-  ++ extraModels;
+  models = import ./models.nix ++ extraModels;
   quants = [
     "Q4_0"
     "Q4_K_S"

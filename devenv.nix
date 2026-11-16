@@ -355,10 +355,20 @@ let
         ${pkgs.python3}/bin/python scripts/test-ollama-pull-pinned.py
       '';
 
-  # the llm-bench harness against its fake Ollama; no nix: the rules and the exporter are flake checks
-  llmBenchTest = gate "llm-bench-test" [ pkgs.python3 ] ''
-    ${pkgs.python3}/bin/python -I scripts/test-llm-bench.py
-  '';
+  # the llm-bench harness and #492's G1 bench against the fake Ollama; no nix: the rules and the exporter are flake checks
+  llmBenchTest =
+    gate "llm-bench-test"
+      (with pkgs; [
+        python3
+        bash
+        curl
+        jq
+        git
+        coreutils
+      ])
+      ''
+        ${pkgs.python3}/bin/python -I scripts/test-llm-bench.py
+      '';
 
   alertBridgeTest =
     gate "alert-bridge-test"
