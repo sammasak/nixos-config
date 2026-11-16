@@ -88,7 +88,7 @@ let
       }
 
       stage.match {
-        selector            = "{job=\"host-journal\"} |~ \"(lifecycle|bin)/ak |[ =/]ak shell|[(]command continued[)]\""
+        selector            = "{job=\"host-journal\"} |~ \"(lifecycle|bin)/ak |(^|[^A-Za-z0-9_.-])ak[^A-Za-z0-9_.-]+shell|[(]command continued[)]\""
         action              = "drop"
         drop_counter_reason = "ak_command"
       }

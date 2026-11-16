@@ -152,6 +152,10 @@ lines = {
     ("polkit.service", "Operator of unix-session:4 successfully authenticated as unix-user:root to gain ONE-SHOT authorization "
      "for action org.freedesktop.systemd1.manage-units [/nix/store/y-authentik/lifecycle/ak shell -c print(1)]"): False,
     ("transient", "a systemd-run job's own line"): True,
+    ("transient", "lukas : USER=root ; COMMAND=/run/current-system/sw/bin/bash -c cd /var/lib/authentik;ak shell -c print(1)"): False,
+    ("session", "lukas : USER=root ; COMMAND=/run/current-system/sw/bin/bash -c true&&ak\tshell -c print(1)"): False,
+    ("init.scope", "Started run-u9.service - /nix/store/y-authentik/bin/ak worker."): False,
+    ("init.scope", "Started lint.service - tweak shellcheck over the scripts."): True,
 }
 got = {f"{u} {l[:60]} {l[-12:]}": shipped(u, l) for u, l in lines}
 want = {f"{u} {l[:60]} {l[-12:]}": keep for (u, l), keep in lines.items()}

@@ -32,18 +32,36 @@ let
         )
       );
   portsOf =
-    l:
+    backend: l:
     let
       m = builtins.match (
-        if fw.backend == "iptables" then ".*--dports? ([0-9:,]+).*" else ".*dport ([{][^}]*[}]|[0-9-]+).*"
+        if backend == "iptables" then ".*--dports? ([0-9:,]+).*" else ".*dport ([{][^}]*[}]|[0-9-]+).*"
       ) l;
     in
     if m == null then null else lib.head m;
-  # every rule line whose ports cover the bridge port (single, list or range), against the one shape
-  # mkDualBackendFirewall renders per admitted source
-  rendered = lib.filter (l: portsOf l != null && covers (portsOf l)) (
+  # fails closed: a port rule this cannot read (a set, a negation) counts as admitting the bridge port
+  admits =
+    backend: l:
+    lib.hasInfix "dport" l
+    && (portsOf backend l == null || lib.hasInfix "!" l || covers (portsOf backend l));
+  # every rule line that admits the bridge port, against the one shape mkDualBackendFirewall renders per admitted source
+  rendered = lib.filter (admits fw.backend) (
     lines (if fw.backend == "iptables" then fw.extraCommands else fw.extraInputRules)
   );
+  # rules the matcher must catch, whichever backend lenovo runs
+  seeds = {
+    iptables = [
+      "iptables -w -A nixos-fw -p tcp -m multiport --dports 80,9099 -j nixos-fw-accept"
+      "iptables -w -A nixos-fw -p tcp --dport 9000:9100 -j nixos-fw-accept"
+      "iptables -w -A nixos-fw -p tcp ! --dport 22 -j nixos-fw-accept"
+    ];
+    nftables = [
+      "tcp dport { 22, 9000-9100 } accept"
+      "tcp dport @ports accept"
+      "tcp dport != 22 accept"
+    ];
+  };
+  missed = lib.concatLists (lib.mapAttrsToList (backend: lib.filter (l: !admits backend l)) seeds);
   expected =
     if fw.backend == "iptables" then
       map (src: "iptables -w -A nixos-fw -s ${src} -p tcp --dport ${port} -j nixos-fw-accept") want
@@ -63,6 +81,9 @@ in
           assert lib.assertMsg
             (bridge.homelab.alertBridge.openFirewall && alerting.services.prometheus.alertmanager.enable)
             "alert-bridge-check: lenovo no longer admits the bridge, or black-pi no longer runs Alertmanager; update this check";
+          assert lib.assertMsg (
+            missed == [ ]
+          ) "alert-bridge-check: the matcher misses rules that admit port ${port}: ${builtins.toJSON missed}";
           assert lib.assertMsg (rendered == expected)
             "alert-bridge-check: lenovo's ${fw.backend} rules for port ${port} are ${builtins.toJSON rendered}; only ${builtins.toJSON expected} may admit it";
           pkgs.writeText "alert-bridge-sources" (builtins.toJSON want);
