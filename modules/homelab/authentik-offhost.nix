@@ -33,4 +33,10 @@ in
       Persistent = true;
     };
   };
+  system.checks = [
+    (pkgs.runCommand "authentik-offhost-script-check" { nativeBuildInputs = [ pkgs.shellcheck ]; } ''
+      shellcheck --severity=warning ${config.systemd.services.authentik-offhost.serviceConfig.ExecStart}
+      touch $out
+    '')
+  ];
 }
