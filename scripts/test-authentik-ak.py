@@ -26,7 +26,7 @@ check('lifecycle/ak "$@"' in text, "ak hands its arguments to upstream's lifecyc
 check("--pty" in argv and "--pipe" in argv, "systemd-run picks a tty or pipes per stdio")
 check("--uid=authentik" in argv and "--gid=authentik" in argv, "ak runs as authentik")
 for p in ["EnvironmentFile=/run/secrets/rendered/authentik.env", "ProtectSystem=strict", "PrivateTmp=1",
-          "StateDirectory=authentik", "CapabilityBoundingSet=", "MemoryMax=1G"]:
+          "StateDirectory=authentik", "StateDirectoryMode=0750", "CapabilityBoundingSet=", "MemoryMax=1G"]:
     check(p in props, f"ak sets {p} {props}")
 check("PROMETHEUS_MULTIPROC_DIR" in P["envKeys"] and "PROMETHEUS_MULTIPROC_DIR" not in text,
       "ak leaves out the server's prometheus multiproc dir")

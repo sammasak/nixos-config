@@ -108,6 +108,7 @@ let
         "EnvironmentFile"
         "WorkingDirectory"
         "StateDirectory"
+        "StateDirectoryMode"
         "UMask"
         "ProtectSystem"
         "ProtectHome"
