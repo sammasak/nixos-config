@@ -343,6 +343,18 @@ let
         ${pkgs.python3}/bin/python scripts/test-ollama-portforward.py
       '';
 
+  ollamaPullPinnedTest =
+    gate "ollama-pull-pinned-test"
+      (with pkgs; [
+        python3
+        ollama
+        curl
+        jq
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-ollama-pull-pinned.py
+      '';
+
   # the llm-bench harness against its fake Ollama; no nix: the rules and the exporter are flake checks
   llmBenchTest = gate "llm-bench-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python -I scripts/test-llm-bench.py
@@ -480,6 +492,7 @@ let
           bulkReaderTest
           harnessTelemetryTest
           ollamaPortforwardTest
+          ollamaPullPinnedTest
           llmBenchTest
           alertBridgeTest
           knownHostsTest
@@ -845,6 +858,8 @@ in
       task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
     "nixos:ollama-portforward-test" =
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
+    "nixos:ollama-pull-pinned-test" =
+      task "ollama-pull-pinned: a tag at its pin is left alone, a moved tag is removed again and fails the loader" ollamaPullPinnedTest;
     "nixos:llm-bench-test" =
       task "llm-bench (#493): fit and capacity runs against the fake Ollama, quantile floors, verdicts, the MSI import, no prompt in an aggregate" llmBenchTest;
     "nixos:alert-bridge-test" =
