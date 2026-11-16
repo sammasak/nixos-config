@@ -8,9 +8,10 @@
 #   proxied request); 4xx, 5xx and all non-access lines are kept. Those kept access lines carry request headers into
 #   Loki: X-Claude-Code-Session-Id and user agent in clear, Authorization logged as REDACTED.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed alloy` and a start.
-# - Loki is unauthenticated to its allowed sources, so two kinds of lines never ship: authentik.service and
-#   authentik-worker.service (request lines carry OAuth code and state query strings) and user@<uid>.service, which
-#   labels every user unit's lines (agent output). Every other unit of every journal file ships.
+# - Loki is unauthenticated to its allowed sources, so these lines never ship: authentik.service and
+#   authentik-worker.service (request lines carry OAuth code and state query strings), user@<uid>.service (every user
+#   unit's lines: agent output), login session scopes (sudo's COMMAND= lines) and PID 1's lines naming `ak`'s
+#   systemd-run command (its shell -c code). Only this host's journal is read: sdjournal opens it SD_JOURNAL_LOCAL_ONLY.
 {
   config,
   lib,
@@ -20,6 +21,24 @@
 let
   cfg = config.homelab.journalCollector;
   listen = "127.0.0.1:12345";
+  # Authentik's units by what their lines carry: the server and worker log request paths with OAuth codes; a new
+  # authentik* unit must join one list (the assertion below) before it ships or not
+  privateAuthentik = [
+    "authentik"
+    "authentik-worker"
+  ];
+  shippedAuthentik = [
+    "authentik-backup"
+    "authentik-migrate"
+    "authentik-offhost"
+  ];
+  private = lib.concatStringsSep "|" (
+    map (u: "${u}[.]service") privateAuthentik
+    ++ [
+      "user@[0-9]+[.]service"
+      "session"
+    ]
+  );
   # https://grafana.com/docs/alloy/latest/reference/components/loki/loki.source.journal/
   # max_age 72h: spans msi's weekend power-off, equals Loki's retention and stays under its 168h reject_old_samples_max_age.
   configFile = pkgs.writeText "config.alloy" ''
@@ -33,7 +52,14 @@ let
 
       rule {
         source_labels = ["unit"]
-        regex         = "(session-[0-9]+|run-.+)\\.(scope|service)"
+        regex         = "session-[0-9]+\\.scope"
+        target_label  = "unit"
+        replacement   = "session"
+      }
+
+      rule {
+        source_labels = ["unit"]
+        regex         = "run-.+\\.(scope|service)"
         target_label  = "unit"
         replacement   = "transient"
       }
@@ -50,9 +76,15 @@ let
       forward_to = [loki.write.loki.receiver]
 
       stage.match {
-        selector            = "{unit=~\"(authentik|authentik-worker|user@[0-9]+)[.]service\"}"
+        selector            = "{unit=~\"(${private})\"}"
         action              = "drop"
         drop_counter_reason = "private_unit"
+      }
+
+      stage.match {
+        selector            = "{unit=\"init.scope\"} |~ \"lifecycle/ak \""
+        action              = "drop"
+        drop_counter_reason = "ak_command"
       }
 
       stage.match {
@@ -115,6 +147,21 @@ in
         alloy validate ${configFile}
         touch $out
       '')
+    ];
+
+    assertions = [
+      {
+        assertion = lib.all (u: lib.elem u (privateAuthentik ++ shippedAuthentik)) (
+          lib.filter (lib.hasPrefix "authentik") (lib.attrNames config.systemd.services)
+        );
+        message = "modules/homelab/journal-collector.nix: put ${
+          toString (
+            lib.filter (u: lib.hasPrefix "authentik" u && !lib.elem u (privateAuthentik ++ shippedAuthentik)) (
+              lib.attrNames config.systemd.services
+            )
+          )
+        } in privateAuthentik (never shipped) or shippedAuthentik; a new Authentik unit's lines may carry OAuth codes.";
+      }
     ];
 
     systemd.services.alloy = {

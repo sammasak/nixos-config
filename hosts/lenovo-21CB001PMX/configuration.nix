@@ -22,6 +22,9 @@
     ../../modules/homelab/journal-collector.nix
   ];
 
+  # a quarter of the collector's 256M MemoryMax, as the daemon and the user slice: zram is charged to no cgroup
+  systemd.services.alloy.serviceConfig.MemorySwapMax = "64M";
+
   homelab.journalCollector = {
     enable = true;
     lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";
