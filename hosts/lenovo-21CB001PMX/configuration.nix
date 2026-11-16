@@ -154,6 +154,12 @@
         message = "lenovo: nix-daemon MemorySwapMax ${daemon.MemorySwapMax} is above a quarter of its MemoryMax ${daemon.MemoryMax}; zram is charged to no cgroup.";
       }
       {
+        assertion =
+          parse config.systemd.services.alloy.serviceConfig.MemorySwapMax * 4
+          <= parse config.systemd.services.alloy.serviceConfig.MemoryMax;
+        message = "lenovo: the journal collector's MemorySwapMax is above a quarter of its MemoryMax; zram is charged to no cgroup.";
+      }
+      {
         assertion = parse user.MemorySwapMax * 4 <= parse user.MemoryMax;
         message = "lenovo: user.slice MemorySwapMax ${user.MemorySwapMax} is above a quarter of its MemoryMax ${user.MemoryMax}; zram is charged to no cgroup.";
       }

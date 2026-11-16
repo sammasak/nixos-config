@@ -10,8 +10,9 @@
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed alloy` and a start.
 # - Loki is unauthenticated to its allowed sources, so these lines never ship: authentik.service and
 #   authentik-worker.service (request lines carry OAuth code and state query strings), user@<uid>.service (every user
-#   unit's lines: agent output), login session scopes (sudo's COMMAND= lines) and PID 1's lines naming `ak`'s
-#   systemd-run command (its shell -c code). Only this host's journal is read: sdjournal opens it SD_JOURNAL_LOCAL_ONLY.
+#   unit's lines: agent output), login session scopes (sudo's COMMAND= lines) and any line naming `ak`'s
+#   systemd-run command (its shell -c code: PID 1's Started lines, polkit's authentication lines).
+# - Only this host's own journal is read: with no path, sdjournal opens it SD_JOURNAL_LOCAL_ONLY.
 {
   config,
   lib,
@@ -21,8 +22,7 @@
 let
   cfg = config.homelab.journalCollector;
   listen = "127.0.0.1:12345";
-  # Authentik's units by what their lines carry: the server and worker log request paths with OAuth codes; a new
-  # authentik* unit must join one list (the assertion below) before it ships or not
+  # server and worker request lines carry OAuth codes; the assertion refuses an authentik* unit in neither list
   privateAuthentik = [
     "authentik"
     "authentik-worker"
@@ -32,6 +32,9 @@ let
     "authentik-migrate"
     "authentik-offhost"
   ];
+  unlisted = lib.filter (
+    u: lib.hasPrefix "authentik" u && !lib.elem u (privateAuthentik ++ shippedAuthentik)
+  ) (lib.attrNames config.systemd.services);
   private = lib.concatStringsSep "|" (
     map (u: "${u}[.]service") privateAuthentik
     ++ [
@@ -52,7 +55,7 @@ let
 
       rule {
         source_labels = ["unit"]
-        regex         = "session-[0-9]+\\.scope"
+        regex         = "session-.+\\.scope"
         target_label  = "unit"
         replacement   = "session"
       }
@@ -82,7 +85,7 @@ let
       }
 
       stage.match {
-        selector            = "{unit=\"init.scope\"} |~ \"lifecycle/ak \""
+        selector            = "{job=\"host-journal\"} |~ \"lifecycle/ak \""
         action              = "drop"
         drop_counter_reason = "ak_command"
       }
@@ -151,16 +154,8 @@ in
 
     assertions = [
       {
-        assertion = lib.all (u: lib.elem u (privateAuthentik ++ shippedAuthentik)) (
-          lib.filter (lib.hasPrefix "authentik") (lib.attrNames config.systemd.services)
-        );
-        message = "modules/homelab/journal-collector.nix: put ${
-          toString (
-            lib.filter (u: lib.hasPrefix "authentik" u && !lib.elem u (privateAuthentik ++ shippedAuthentik)) (
-              lib.attrNames config.systemd.services
-            )
-          )
-        } in privateAuthentik (never shipped) or shippedAuthentik; a new Authentik unit's lines may carry OAuth codes.";
+        assertion = unlisted == [ ];
+        message = "modules/homelab/journal-collector.nix: put ${toString unlisted} in privateAuthentik (never shipped) or shippedAuthentik; a new Authentik unit's lines may carry OAuth codes.";
       }
     ];
 

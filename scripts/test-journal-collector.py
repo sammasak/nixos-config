@@ -83,7 +83,7 @@ for rule in rel.split("rule {")[1:]:
     if rx and to:
         rules[to[1]] = rx[1].replace("\\\\", "\\")
 check(set(rules) == {"session", "transient", "systemd-coredump"}, f"unit rewrites: session, transient and systemd-coredump {sorted(rules)}")
-cases = {"session-12.scope": "session", "run-r1a2b.service": "transient", "run-u7.scope": "transient",
+cases = {"session-12.scope": "session", "session-c1.scope": "session", "run-r1a2b.service": "transient", "run-u7.scope": "transient",
          "run-p123-i456.scope": "transient", "systemd-coredump@0-1234-0.service": "systemd-coredump",
          "sshd.service": None, "user@1000.service": None, "systemd-journald.service": None}
 got = {u: next((to for to, rx in rules.items() if re.fullmatch(rx, u)), None) for u in cases}
@@ -97,8 +97,8 @@ units = {"authentik.service": False, "authentik-worker.service": False, "user@10
          "sshd.service": True, "dev-env-egress.service": True, "user-runtime-dir@1000.service": True}
 got = {u: re.fullmatch(private_rx, u) is None for u in units}
 check(got == units, f"Authentik's, user units' and login sessions' lines never ship, every other unit's do {got}")
-ak = re.search(r'stage\.match \{ selector = "\{unit = \\"([^"\\]+)\\"\} \|~ \\"([^"\\]+)\\"" action = "drop"', pc)
-check(ak is not None and ak[1] == "init.scope", f"a drop stage on PID 1's lines naming ak's command {ak and ak.groups()}")
+ak = re.search(r'stage\.match \{ selector = "\{job = \\"([^"\\]+)\\"\} \|~ \\"([^"\\]+)\\"" action = "drop"', pc)
+check(ak is not None and ak[1] == "host-journal", f"a drop stage on any line naming ak's command {ak and ak.groups()}")
 sel = re.search(r'stage\.match \{ selector = "\{unit = \\"([^"\\]+)\\"\}"', pc)
 src_f = re.search(r'stage\.drop \{ source = "([^"]+)"', pc)
 drop_rx = re.search(r'stage\.drop \{[^}]*expression = "((?:[^"\\]|\\.)*)"', pc)
@@ -111,7 +111,7 @@ check(stages == ["stage.match", "stage.match", "stage.match", "stage.json", "sta
 
 def shipped(unit, line):
     """The rendered match and drop stage applied to one line (Go regexp: unanchored search)."""
-    if re.fullmatch(private_rx, unit) or (ak and unit == ak[1] and re.search(ak[2], line)):
+    if re.fullmatch(private_rx, unit) or (ak and re.search(ak[2], line)):
         return False
     if None in (sel, src_f, drop_rx, json_f) or unit != sel[1]:
         return True
@@ -145,6 +145,8 @@ lines = {
     ("session", "lukas : TTY=pts/3 ; PWD=/home/lukas ; USER=root ; COMMAND=/run/current-system/sw/bin/ak shell"): False,
     ("init.scope", 'Started run-u412.service - /nix/store/x-bash/bin/bash /nix/store/y-authentik/lifecycle/ak shell -c "print(1)".'): False,
     ("init.scope", "Started sshd.service - SSH Daemon."): True,
+    ("polkit.service", "Operator of unix-session:4 successfully authenticated as unix-user:root to gain ONE-SHOT authorization "
+     "for action org.freedesktop.systemd1.manage-units [/nix/store/y-authentik/lifecycle/ak shell -c print(1)]"): False,
     ("transient", "a systemd-run job's own line"): True,
 }
 got = {f"{u} {l[:60]} {l[-12:]}": shipped(u, l) for u, l in lines}
