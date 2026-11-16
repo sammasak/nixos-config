@@ -20,6 +20,11 @@ let
     && c.services.prometheus.exporters.blackbox.enableConfigCheck
     && !c.services.prometheus.enableReload;
   s = seeded.systemd.services;
+  units = [
+    s.prometheus.serviceConfig.ExecStart
+    s.alertmanager.serviceConfig.ExecStartPre
+    s.prometheus-blackbox-exporter.serviceConfig.ExecStart
+  ];
 in
 {
   perSystem =
@@ -27,17 +32,27 @@ in
     {
       checks = lib.optionalAttrs (system == "x86_64-linux") {
         monitoring-config-msi-ms7758 = pkgs.writeText "monitoring-config-msi-ms7758" (
-          assert lib.assertMsg (
-            failing == [ ]
-          ) "monitoring-check: the seeded msi fails ${toString (map (a: a.message) failing)}";
+          assert lib.assertMsg (failing == [ ])
+            "monitoring-check: the seeded msi fails ${toString (map (a: a.message) failing)}";
           assert lib.assertMsg (
             checksOn seeded && checksOn black-pi.config
           ) "monitoring-check: promtool, amtool or blackbox --config.check is off on black-pi or the seed";
-          lib.concatStringsSep "\n" [
-            s.prometheus.serviceConfig.ExecStart
-            s.alertmanager.serviceConfig.ExecStartPre
-            s.prometheus-blackbox-exporter.serviceConfig.ExecStart
-          ]
+          # the strings, not the options, are what this builds: upstream moving a checked file elsewhere would leave it green
+          assert lib.assertMsg (lib.all ({ fst, snd }: lib.hasInfix snd fst) (
+            lib.zipLists units [
+              "-checkconfig-checked"
+              "-checked-config"
+              "-checked-blackbox-exporter.conf"
+            ]
+          )) "monitoring-check: a unit no longer references its checked config";
+          assert lib.assertMsg
+            (
+              seeded.services.prometheus.alertmanager.configuration
+              == black-pi.config.services.prometheus.alertmanager.configuration
+              && seeded.services.prometheus.extraFlags == black-pi.config.services.prometheus.extraFlags
+            )
+            "monitoring-check: black-pi's Alertmanager configuration or Prometheus flags differ from the seed's";
+          lib.concatStringsSep "\n" units
         );
       };
     };

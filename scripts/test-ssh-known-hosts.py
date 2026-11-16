@@ -65,14 +65,19 @@ def sops_recipients(path):
 
 def key_paths(path):
     """Every leaf key path (`a`, `a/b`) of a sops yaml file outside its `sops:` metadata, from the plaintext key names;
-    no value is kept or decrypted. A mapping is no secret, so its own path is not a leaf."""
+    no value is kept or decrypted. A mapping is no secret, so its own path is not a leaf. A file with a line outside
+    `sops:` this does not read (a quoted key, a list, a `/` in a name: sops-nix splits keys on `/`) has no paths."""
     paths, stack = set(), []
     for line in path.read_text().splitlines() if path.is_file() else []:
-        if not (m := re.match(r"( *)([^\s#:'\"-][^:]*):(?: |$)", line)):
+        if not line.strip() or line.lstrip().startswith("#"):
             continue
-        indent = len(m.group(1))
-        stack = [(i, n) for i, n in stack if i < indent] + [(indent, m.group(2))]
-        if stack[0][1] != "sops":
+        m = re.match(r"( *)([A-Za-z0-9_.-]+):(?: |$)", line)
+        if m:
+            indent = len(m.group(1))
+            stack = [(i, n) for i, n in stack if i < indent] + [(indent, m.group(2))]
+        elif not (stack and stack[0][1] == "sops" and line.startswith(" ")):
+            return set()
+        if stack[0][1] != "sops" and m:
             paths.add("/".join(n for _, n in stack))
     return {p for p in paths if not any(q.startswith(p + "/") for q in paths)}
 
@@ -165,8 +170,15 @@ def sops_checks(S):
           "seeded: black-pi's nested keys under a wrong leaf are reported")
     parent = dict(black["keys"], **{n: dict(k, key=k["key"].split("/")[0]) for n, k in black["keys"].items() if "/" in k["key"]})
     check(missing_keys(parent, black["files"], paths_of) == sorted(f"{n} ({black['files'][n]}: yaml {k['key']})"
-          for n, k in parent.items() if n in nested and "/x_" in nested[n]["key"]),
+          for n, k in parent.items() if "/" in black["keys"][n]["key"]),
           "seeded: a key naming a mapping (black-pi's nested keys cut to their parent) is reported, not taken as a leaf")
+    check(missing_keys(dict(acer["keys"], open_webui_secret_key={"key": "sops/mac", "format": "yaml"}), acer["files"], paths_of)
+          == ["open_webui_secret_key (secrets/homelab/open-webui.yaml: yaml sops/mac)"],
+          "seeded: a key inside the sops: metadata is reported, not taken as a secret")
+    check(missing_keys(acer["keys"], dict(acer["files"], open_webui_secret_key="secrets/homelab/absent.yaml"), paths_of)
+          == ["open_webui_secret_key (secrets/homelab/absent.yaml: yaml open_webui_secret_key)"],
+          "seeded: a file that does not exist has no keys")
+    check(key_paths(ROOT / "secrets/.sops.yaml") == set(), "seeded: a file with lines it cannot read (a list) has no keys")
     check(missing_keys(dict(acer["keys"], open_webui_secret_key={"key": "open_webui_secret_key", "format": "binary"}), acer["files"], paths_of)
           == ["open_webui_secret_key (secrets/homelab/open-webui.yaml: binary open_webui_secret_key)"],
           "seeded: a non-yaml format is reported, not read as yaml")
