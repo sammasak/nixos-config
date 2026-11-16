@@ -1,7 +1,7 @@
 # The *.sammasak.dev edge on acer (#420): Caddy terminates TLS with one DNS-01 wildcard from security.acme and
 # proxies each name to its backend, with forward auth through the native Authentik (authentik.nix) for chat and
-# grafana. The admin API is off, so no local process can load a config without forward_auth; a config change or
-# renewal restarts Caddy.
+# grafana. The admin API answers only on a socket only caddy may write to, so no other local process can load a
+# config without forward_auth; a config change or renewal reloads Caddy.
 # herman is a static site from its Nix build.
 {
   config,
@@ -12,6 +12,8 @@
 let
   inherit (config.sam.fleet) hosts;
   domain = "sammasak.dev";
+  caddy = config.services.caddy;
+  adminSocket = "unix//run/caddy/admin.sock|0200";
   # the native server and its embedded outpost (authentik.nix)
   authentik = "127.0.0.1:9000";
   # the only OTLP pushers: each host's native-otel-relay, and black-pi's blackbox probe
@@ -83,8 +85,11 @@ in
     enable = true;
     # 80/tcp, 443/tcp and 443/udp on every interface
     openFirewall = true;
-    enableReload = false;
-    globalConfig = "admin off";
+    # a TCP admin API would let any local process load a config; with none, a change restarts (every site drops)
+    globalConfig = ''
+      admin ${adminSocket}
+      grace_period 10s
+    '';
     # Caddy deletes a client-sent copy of each copied header before it sets the outpost's value.
     extraConfig = ''
       (authentik) {
@@ -115,7 +120,10 @@ in
       };
   };
 
-  systemd.services.caddy.onFailure = [ "caddy-failed.service" ];
+  systemd.services.caddy = {
+    onFailure = [ "caddy-failed.service" ];
+    serviceConfig.RuntimeDirectory = "caddy";
+  };
   systemd.services.caddy-failed = {
     serviceConfig = {
       Type = "oneshot";
@@ -134,8 +142,17 @@ in
     }
     {
       assertion =
-        !config.services.caddy.enableReload && lib.hasInfix "admin off" config.services.caddy.globalConfig;
-      message = "modules/homelab/edge.nix: keep Caddy's admin API off and enableReload false; any local process could otherwise load a config without forward_auth.";
+        lib.filter (l: lib.hasPrefix "admin" l) (map lib.trim (lib.splitString "\n" caddy.globalConfig))
+        == [
+          "admin ${adminSocket}"
+        ];
+      message = "modules/homelab/edge.nix: keep Caddy's admin API on ${adminSocket} alone; any local process could otherwise load a config without forward_auth.";
+    }
+    {
+      assertion =
+        lib.hasInfix "\nX-Reload-Triggers=" config.systemd.units."caddy.service".text
+        && !lib.elem caddy.configFile config.systemd.services.caddy.restartTriggers;
+      message = "modules/homelab/edge.nix: a Caddyfile change must reload Caddy, not restart it (every site drops): the rendered caddy.service needs X-Reload-Triggers and the Caddyfile out of its restartTriggers.";
     }
   ];
 }

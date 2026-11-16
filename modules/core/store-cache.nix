@@ -14,18 +14,15 @@ let
   dir = "/var/lib/store-cache";
 
   # publicKey: `cat ${dir}/public-key` on the host after its first deploy with this enabled
-  caches = lib.mapAttrs (name: c: c // { inherit (config.sam.fleet.hosts.${name}) address; }) {
+  caches = lib.mapAttrs (name: c: c // { inherit (config.sam.fleet.hosts.${name}) address sleeps; }) {
     lenovo-21CB001PMX.publicKey = "lenovo-21CB001PMX-store-1:Ifjt/zTBnDw6GFhAw6w6L0JGWHblrWr4V7L/BfphwPU=";
     acer-swift.publicKey = "acer-swift-store-1:iDCzz1UQib6s9pZ818Evy6d8naQ+4jaI6YYZmlGsz5A=";
     asus-b460m.publicKey = "asus-b460m-store-1:UkdmV23WWg1N85R4uTEl0JHp5MB6Inx36T+08F/cpdg=";
-    # powered off nights and weekends: an absent cache costs every path lookup the connect timeout, so nobody asks it
-    msi-ms7758 = {
-      publicKey = "msi-ms7758-store-1:xIr/Ee7u3rhCm4bhycovNFbfA2UAB6OITroVVWmv7wQ=";
-      sleeps = true;
-    };
+    msi-ms7758.publicKey = "msi-ms7758-store-1:xIr/Ee7u3rhCm4bhycovNFbfA2UAB6OITroVVWmv7wQ=";
   };
   strays = lib.filter (n: !(config.sam.fleet.hosts ? ${n})) (lib.attrNames caches);
-  peers = lib.filter (c: !(c.sleeps or false)) (lib.attrValues (removeAttrs caches [ host ]));
+  # a sleeping host (sam.fleet): an absent cache costs every path lookup the connect timeout, so nobody asks it
+  peers = lib.filter (c: !c.sleeps) (lib.attrValues (removeAttrs caches [ host ]));
 
   rules = mkDualBackendFirewall {
     nftComment = "The store cache answers the LAN only.";
@@ -51,6 +48,12 @@ in
       {
         assertion = anySourceTcp config.networking.firewall [ port ] == [ ];
         message = "modules/core/store-cache.nix: the store cache answers the LAN only through the scoped rule there; keep port ${toString port} out of networking.firewall allowedTCPPorts and allowedTCPPortRanges, global and per interface, which accept from any source.";
+      }
+      {
+        assertion = lib.all (
+          c: c.sleeps -> !lib.elem "http://${c.address}:${toString port}" config.nix.settings.substituters
+        ) (lib.attrValues caches);
+        message = "modules/core/store-cache.nix: a host sam.fleet marks sleeps is a substituter here; every lookup would wait the connect timeout while it is off.";
       }
     ];
     services.harmonia.cache = {

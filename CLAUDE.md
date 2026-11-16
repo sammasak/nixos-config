@@ -279,7 +279,8 @@ either side is only reported.
 - its rows in this file's deploy block and hostnames, `docs/architecture.md`, and for a runtime host
   `docs/nspawn-workers.md` (checked by the same test);
 - a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` (asserted);
-- its LAN address in `modules/core/fleet.nix` if another module reads it;
+- its LAN address in `modules/core/fleet.nix` if another module reads it, and `sleeps = true` there if it
+  may be powered off (the store caches skip it; `HostExpectedOff` covers it instead of `NodeChronicNotReady`);
 - optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`.
 
 `just parity` picks the host up on its own. Full procedure:
