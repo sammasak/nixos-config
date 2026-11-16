@@ -54,7 +54,7 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # profile's generation, which deploy-rs's own rollback does not judge (a unit
 # that fails after activation reported success). It rolls nothing back, and a host
 # degraded for an unrelated reason fails every deploy until fixed.
-[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
+[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|asus-b460m|black-pi|naked-pi")]
 [doc("Push HOST with deploy-rs (magic rollback), skipping the flake check, under the memory cap, then check the host is running it")]
 deploy HOST:
     if [ -n "$(git status --porcelain --untracked-files=no)" ]; then ungated="uncommitted changes"; \
@@ -88,7 +88,7 @@ deploy HOST:
 # activation scripts, through the same deploy-user sudo as a deploy. Not a
 # guarantee: nothing is started, so a unit that would fail is not shown, and
 # units an activation script restarts are only partly predicted.
-[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|black-pi|naked-pi")]
+[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|asus-b460m|black-pi|naked-pi")]
 [doc("Show the units a deploy of HOST would stop, restart, reload or start, and its closure diff")]
 dry-activate HOST:
     systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks --dry-activate

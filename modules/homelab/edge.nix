@@ -19,6 +19,7 @@ let
     "lenovo-21CB001PMX"
     "acer-swift"
     "msi-ms7758"
+    "asus-b460m"
     "black-pi"
   ];
   sites = {
