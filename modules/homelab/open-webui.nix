@@ -161,10 +161,11 @@ in
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      # systemd refuses to start a socket whose service still runs (the proxy, for 5 min after a request)
+      # systemd refuses to start a socket whose service still runs (the proxy, for 5 min after a request); both stop in
+      # one job, so a request between the two cannot activate the proxy again
       ExecStart = [
-        "${config.systemd.package}/bin/systemctl stop open-webui-proxy.service"
-        "${config.systemd.package}/bin/systemctl restart open-webui-proxy.socket"
+        "${config.systemd.package}/bin/systemctl stop open-webui-proxy.socket open-webui-proxy.service"
+        "${config.systemd.package}/bin/systemctl start open-webui-proxy.socket"
       ];
     };
   };

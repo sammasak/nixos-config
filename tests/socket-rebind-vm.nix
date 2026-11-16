@@ -30,8 +30,8 @@ pkgs.testers.runNixOSTest {
             Type = "oneshot";
             RemainAfterExit = true;
             ExecStart = [
-              "${config.systemd.package}/bin/systemctl stop rebound.service"
-              "${config.systemd.package}/bin/systemctl restart rebound.socket"
+              "${config.systemd.package}/bin/systemctl stop rebound.socket rebound.service"
+              "${config.systemd.package}/bin/systemctl start rebound.socket"
             ];
           };
         };
