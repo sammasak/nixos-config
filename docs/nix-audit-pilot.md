@@ -40,7 +40,7 @@ just audit-candidate lenovo local          # this machine's own running system
 ```
 
 The recipe builds the candidate without activating it and scans the running system and the
-candidate under `flock /tmp/$(hostname)-heavy-work.lock`. It then gates the pair. If that
+candidate under `flock /run/work-locks/heavy-work.lock`. It then gates the pair. If that
 gate exits 3, it also runs a grype-only gate. Evidence goes to
 `~/nix-audit-pilot/<date>-<HHMM>-<host>-<nixos-config rev>/`, which stays private on that host, and the recipe
 always exits 0. acer-swift and msi are deployed from lenovo, which holds their derivations,

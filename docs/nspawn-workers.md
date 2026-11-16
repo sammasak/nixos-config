@@ -291,6 +291,13 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   checked against its hash, so that fails the fetch, it does not swap the
   source). The evaluation cache inside it is per environment: its rows are
   unsigned and name the derivation to build.
+- `/run/work-locks` (`modules/core/work-locks.nix`) is the host's directory,
+  bound read-only into every environment: `flock -o /run/work-locks/<lane>.lock`
+  in a guest and on the host take the same lock, so one heavy job runs per
+  physical host. The price: a guest that holds a lane, or leaves a stopped
+  holder behind, stalls the host's heavy work and every other guest's until it
+  ends. `host:locks` inside a guest sees only that guest's holders (`/proc/locks`
+  is per PID namespace); run it on the host.
 - The guest's nix sends the host's `max-jobs`, `cores`, substituters and keys:
   the daemon takes a client's values over its own, so a guest left on defaults
   lifts the host's build bounds and skips the fleet's store caches.
