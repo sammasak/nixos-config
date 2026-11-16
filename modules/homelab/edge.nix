@@ -100,13 +100,24 @@ in
         }
       }
     '';
-    virtualHosts = lib.mapAttrs' (
-      name: extraConfig:
-      lib.nameValuePair "${name}.${domain}" {
-        useACMEHost = domain;
-        inherit extraConfig;
-      }
-    ) sites;
+    virtualHosts =
+      lib.mapAttrs' (
+        name: extraConfig:
+        lib.nameValuePair "${name}.${domain}" {
+          useACMEHost = domain;
+          inherit extraConfig;
+        }
+      ) sites
+      // {
+        # a name the wildcard DNS and certificate cover but no site serves, the apex too; Caddy's own answer would be an
+        # empty 200. The default log name would carry the literal `*`
+        "*.${domain}" = {
+          serverAliases = [ domain ];
+          useACMEHost = domain;
+          logFormat = "output file ${config.services.caddy.logDir}/access-unserved.log";
+          extraConfig = "respond 404";
+        };
+      };
   };
 
   systemd.services.caddy.onFailure = [ "caddy-failed.service" ];
