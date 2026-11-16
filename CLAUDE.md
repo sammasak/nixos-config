@@ -274,7 +274,11 @@ either side is only reported.
   required, true unless lenovo can build it);
   its deploy-rs node follows from the entry;
 - the `just deploy` HOST pattern (checked by `scripts/test-ssh-known-hosts.py`);
-- its pinned key in `modules/core/ssh-known-hosts.nix` and its sops recipient;
+- its pinned key in `modules/core/ssh-known-hosts.nix` (asserted against the deploy nodes) and its sops
+  recipient, both also in `scripts/test-ssh-known-hosts.py`;
+- its rows in this file's deploy block and hostnames, `docs/architecture.md`, and for a runtime host
+  `docs/nspawn-workers.md` (checked by the same test);
+- a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` (asserted);
 - its LAN address in `modules/core/fleet.nix` if another module reads it, and `sleeps = true` there if it
   may be powered off (the store caches skip it; `HostExpectedOff` covers it instead of `NodeChronicNotReady`);
 - optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`.

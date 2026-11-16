@@ -2,7 +2,8 @@
 """Wiring test for modules/core/ssh-known-hosts.nix (nixos-config#86): the pinned host keys are the verified ones
 (fingerprints recorded here and in docs/ssh-host-keys.md), every name and address of each host is covered, a host
 pins loopback to its own key only, every client fails closed, deploy-rs too, the old github pin is gone, and every
-sops secret a host declares is in a file encrypted to that host's key and names a key that file has."""
+sops secret a host declares is in a file encrypted to that host's key and names a key that file has. The hand-kept
+host lists (EXPECTED, SOPS_RECIPIENTS, the verify script's default, the docs' host rows) name every deploy node."""
 import os
 import pathlib
 import re
@@ -113,7 +114,7 @@ def needless(f, hosts, recipients_of):
     return sorted(n for n, r in SOPS_RECIPIENTS.items() if r in recipients_of(f) and n not in hosts)
 
 
-def sops_checks(S):
+def sops_checks(S, nodes):
     """Every secret a host declares is encrypted to that host's key, read from the files' plaintext metadata:
     sops-nix's own build check confirms the key exists in the file, not that the host can decrypt it. The host's key is
     its ssh host key, so that is the identity sops-nix must decrypt with: no gnupg home (its default rsa host-key import
@@ -124,7 +125,7 @@ def sops_checks(S):
         return cache.setdefault(f, sops_recipients(ROOT / f))
     def paths_of(f):
         return key_cache.setdefault(f, key_paths(ROOT / f))
-    check(set(S["hosts"]) == {"lenovo", "acer-swift", "msi-ms7758", "asus-b460m", "black-pi", "naked-pi"}, f"every fleet host is checked ({sorted(S['hosts'])})")
+    check(set(S["hosts"]) == set(nodes), f"every deploy node is checked ({sorted(S['hosts'])})")
     for attr, h in S["hosts"].items():
         bad = undecryptable(h["files"], h["hostName"], recipients_of)
         check(h["files"] and not bad, f"{attr}: each of its {len(h['files'])} sops secrets is in a file encrypted to {h['hostName']} (not: {bad})")
@@ -186,6 +187,50 @@ def sops_checks(S):
           "seeded: a non-yaml format is reported, not read as yaml")
     check(undecryptable(acer["files"], "acer", recipients_of) == sorted(f"{n} ({f})" for n, f in acer["files"].items()),
           "seeded: a host with no recorded recipient fails every secret it declares")
+
+
+def gap(got, want):
+    """What one host list lacks or adds against the other, as `-name` and `+name`."""
+    return sorted([f"-{n}" for n in set(want) - set(got)] + [f"+{n}" for n in set(got) - set(want)])
+
+
+def fleet_addresses(fleet):
+    """{hostName: [address, *extraAddresses]} for each host of sam.fleet.hosts."""
+    return {n: [h["address"]] + h["extraAddresses"] for n, h in fleet.items()}
+
+
+def pinned_ips(expected, addresses):
+    """The hosts whose pinned addresses differ from sam.fleet's, for every host in both."""
+    return sorted(n for n, (names, _) in expected.items() if n in addresses
+                  and [x for x in names if re.fullmatch(r"[0-9.]+", x)] != addresses[n])
+
+
+def verify_defaults(script_text):
+    """The hosts scripts/ssh-known-hosts-verify.sh checks when given none."""
+    m = re.search(r'\|\| hosts=\(([^)]*)\)', script_text)
+    return m.group(1).split() if m else []
+
+
+DOCS = {
+    # the `just deploy` host notes: one `#   <node>  <how>` line per deploy-rs node
+    "CLAUDE.md deploy block": ("CLAUDE.md", r"\njust deploy HOST.*?\njust checks HOST", r"^#   ({}) {{2,}}\S", "node"),
+    "CLAUDE.md Current hostnames": ("CLAUDE.md", r"\nCurrent hostnames:.*?\n\n", r"`({})`", "host"),
+    "docs/architecture.md host table": ("docs/architecture.md", r"\n\| Host \| Mode \|.*?\n\n", r"^\| `({})` \|", "host"),
+    "docs/nspawn-workers.md runtime-host rows": ("docs/nspawn-workers.md", r"\n\| Host \| Pool \|.*?\n\n", r"^\| ({}) \|", "runtime-host"),
+}
+
+
+def undocumented(texts, nodes, host_name, roles):
+    """Per document in DOCS, the deploy nodes its host list leaves out: by node name, by hostName, or (runtime-host)
+    the hostNames of the nodes with that role."""
+    out = {}
+    for doc, (path, section, row, kind) in DOCS.items():
+        m = re.search(section, texts[path], re.DOTALL)
+        block = m.group(0) if m else ""
+        want = {n: host_name[n] for n in nodes if kind != "runtime-host" or "runtime-host" in roles[n]}
+        out[doc] = sorted(n for n, h in want.items()
+                          if not re.search(row.format(re.escape(n if kind == "node" else h)), block, re.MULTILINE))
+    return out
 
 
 def verify_script_checks(known_hosts_text):
@@ -286,7 +331,46 @@ def main():
     odd = [name for p, name in recipes if sorted(p.split("|")) != sorted(P["deployNodes"])]
     check(len(recipes) >= 3 and not odd, f"every HOST recipe accepts exactly the deploy-rs nodes ({[n for _, n in recipes]}; not: {odd})")
     verify_script_checks(known)
-    sops_checks(P["sops"])
+    nodes = P["deployNodes"]
+    host_name = {n: P["sops"]["hosts"][n]["hostName"] for n in nodes}
+    names = host_name.values()
+    check(gap(set(EXPECTED) - {"github"}, names) == [], f"EXPECTED pins exactly the deploy nodes' hosts ({gap(set(EXPECTED) - {'github'}, names)})")
+    check(gap(SOPS_RECIPIENTS, names) == [], f"SOPS_RECIPIENTS names exactly the deploy nodes' hosts ({gap(SOPS_RECIPIENTS, names)})")
+    seeded = {n: v for n, v in EXPECTED.items() if n != "asus-b460m"}
+    check(gap(set(seeded) - {"github"}, names) == ["-asus-b460m"], "seeded: EXPECTED without asus-b460m fails the deploy-node check")
+    addresses = fleet_addresses(P["fleet"])
+    check(pinned_ips(EXPECTED, addresses) == [], f"every pinned address is sam.fleet's for a fleet host ({pinned_ips(EXPECTED, addresses)})")
+    check(pinned_ips(EXPECTED, dict(addresses, **{"asus-b460m": ["192.168.10.99"]})) == ["asus-b460m"],
+          "seeded: a fleet address that moved fails the pinned address")
+    order = [host_name[n] for n in sorted(nodes)]
+    unpin = (f"modules/core/ssh-known-hosts.nix pins {' '.join(sorted(set(names) - {'asus-b460m'}))}, not the deploy nodes"
+             f" of flake-modules/hosts.nix ({' '.join(order)}): pin each host's key there.")
+    uncache = "modules/core/store-cache.nix: black-pi serves a store cache, so its public key belongs in caches there."
+    F = P["failing"]
+    check(unpin not in F["lenovo"] and uncache not in F["lenovo"], "lenovo fails neither fleet-list assertion")
+    check(unpin in F["unpinned"], f"seeded: lenovo without asus-b460m's pin fails the deploy-node assertion ({F['unpinned']})")
+    check(uncache in F["uncached"], f"seeded: black-pi serving a store cache with no key listed fails ({F['uncached']})")
+    script = (ROOT / "scripts/ssh-known-hosts-verify.sh").read_text()
+    check(gap(verify_defaults(script), names) == [], f"ssh-known-hosts-verify.sh checks every deploy node's host by default ({verify_defaults(script)})")
+    check(gap(verify_defaults(script.replace(" asus-b460m", "")), names) == ["-asus-b460m"],
+          "seeded: the verify script's default list without asus-b460m fails")
+    texts = {path: (ROOT / path).read_text() for path, *_ in DOCS.values()}
+    gaps = undocumented(texts, nodes, host_name, P["roles"])
+    for doc, missing in gaps.items():
+        check(not missing, f"{doc} lists every deploy node (not: {missing})")
+    cut = dict(texts, **{"docs/architecture.md": texts["docs/architecture.md"].replace("| `asus-b460m` |", "| asus |")})
+    check(undocumented(cut, nodes, host_name, P["roles"])["docs/architecture.md host table"] == ["asus-b460m"],
+          "seeded: the architecture host table without asus-b460m fails")
+    # alloy-otlp keeps host.name only for a fleet host (lower-cased, as Claude Code reports it), else "other"
+    def alloy_hosts(text):
+        return [set(m.split("|")) for m in re.findall(r'IsMatch\(resource\.attributes\["host\.name"\], "\^\(([^)]*)\)\$"\)', text)]
+    alloy = (ROOT / "modules/homelab/monitoring/alloy-otlp.alloy").read_text()
+    fleet_lower = {n.lower() for n in P["fleet"]}
+    check(alloy_hosts(alloy) and all(h == fleet_lower for h in alloy_hosts(alloy)),
+          f"alloy-otlp's host.name allowlists are exactly sam.fleet's hosts ({alloy_hosts(alloy)} vs {sorted(fleet_lower)})")
+    check(not all(h == fleet_lower for h in alloy_hosts(alloy.replace("|asus-b460m", ""))),
+          "seeded: alloy-otlp's allowlist without asus-b460m fails")
+    sops_checks(P["sops"], P["deployNodes"])
     services = (ROOT / "modules/core/services.nix").read_text()
     check("knownHosts" not in services, "the old github pin in services.nix is gone: one module owns host keys")
     module = (ROOT / "modules/core/ssh-known-hosts.nix").read_text()

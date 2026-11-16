@@ -20,6 +20,7 @@ let
     asus-b460m.publicKey = "asus-b460m-store-1:UkdmV23WWg1N85R4uTEl0JHp5MB6Inx36T+08F/cpdg=";
     msi-ms7758.publicKey = "msi-ms7758-store-1:xIr/Ee7u3rhCm4bhycovNFbfA2UAB6OITroVVWmv7wQ=";
   };
+  strays = lib.filter (n: !(config.sam.fleet.hosts ? ${n})) (lib.attrNames caches);
   # a sleeping host (sam.fleet): an absent cache costs every path lookup the connect timeout, so nobody asks it
   peers = lib.filter (c: !c.sleeps) (lib.attrValues (removeAttrs caches [ host ]));
 
@@ -36,6 +37,14 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        assertion = strays == [ ];
+        message = "modules/core/store-cache.nix: every cache is a host of sam.fleet.hosts (modules/core/fleet.nix); not: ${toString strays}.";
+      }
+      {
+        assertion = caches ? ${host};
+        message = "modules/core/store-cache.nix: ${host} serves a store cache, so its public key belongs in caches there.";
+      }
       {
         assertion = anySourceTcp config.networking.firewall [ port ] == [ ];
         message = "modules/core/store-cache.nix: the store cache answers the LAN only through the scoped rule there; keep port ${toString port} out of networking.firewall allowedTCPPorts and allowedTCPPortRanges, global and per interface, which accept from any source.";
