@@ -1,7 +1,8 @@
 """acer's Caddy edge (modules/homelab/edge.nix), as `caddy adapt` reads the deployed Caddyfile: the admin API is off,
 every name has its route and backend, chat and grafana pass forward auth before their backend with the five
-X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only, and herman is its Nix build
-with the Cache-Control matrix and SPA fallback of herman's deploy/nginx.conf."""
+X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only, open-webui listens on the
+edge socket alone, and herman and karta are their Nix builds with the Cache-Control matrix and SPA fallback of each
+repo's deploy/nginx.conf (karta's security headers too)."""
 import json
 import subprocess
 import sys
@@ -30,8 +31,6 @@ backends = {
     "llm-gateway": "127.0.0.1:8081",
     "otlp": "127.0.0.1:4318",
     "ntfy": f"{fleet['lenovo-21CB001PMX']}:2586",
-    "karta": "10.43.147.178:8080",
-    "registry": "10.43.23.61:5000",
 }
 headers = {"X-Authentik-Username", "X-Authentik-Groups", "X-Authentik-Email", "X-Authentik-Name", "X-Authentik-Uid"}
 
@@ -66,7 +65,7 @@ for server in servers.values():
         for match in route.get("match", []):
             for host in match.get("host", []):
                 routes[host] = route
-expected = {f"{name}.sammasak.dev" for name in [*backends, "herman"]}
+expected = {f"{name}.sammasak.dev" for name in [*backends, "herman", "karta"]}
 check(set(routes) == expected, f"exactly the edge's names have a route {sorted(set(routes) ^ expected)}")
 
 tls = config["apps"].get("tls", {})
@@ -122,22 +121,35 @@ check(gateway == [({"path": ["/v1", "/v1/*"]},)], f"llm-gateway proxies /v1 and 
 rest = [(h.get("status_code"), m) for h, m in steps if h.get("handler") == "static_response"]
 check(rest == [(404, ())], f"everything else on llm-gateway is 404 {rest}")
 
-steps = [h for h, _ in flatten(routes.get("herman.sammasak.dev", {}).get("handle", []))]
-roots = [h.get("root") for h in steps if h.get("handler") == "vars"]
-check(roots == [P["herman"]], f"herman's root is its Nix build {roots}")
-served = [h for h in steps if h.get("handler") == "file_server"]
-check(len(served) == 1 and served[0].get("precompressed") == {"gzip": {}},
-      f"herman is served from files, with the .gz siblings {served}")
-check(not any(h.get("handler") == "reverse_proxy" for h in steps), "herman proxies nowhere")
-hashed = {"path": ["*.wasm", "*.js", "*.css"], "not": [{"path": ["/sw.js"]}]}
-cache = [(m, h["response"].get("require"), h["response"]["set"].get("Cache-Control"))
-         for h, m in flatten(routes.get("herman.sammasak.dev", {}).get("handle", [])) if h.get("handler") == "headers"]
-check(cache == [((hashed,), None, ["public, max-age=31536000, immutable"]),
-                ((), {"headers": {"Cache-Control": None}}, ["no-cache"])],
-      f"herman: hashed wasm/js/css (not sw.js) immutable, everything else no-cache {cache}")
-spa = [m for h, m in flatten(routes.get("herman.sammasak.dev", {}).get("handle", []))
-       if h.get("handler") == "rewrite" and h.get("uri") == "/index.html"]
-check(spa == [({"not": [{"path": ["*.wasm", "*.js", "*.css", "/manifest.json", "/favicon.ico"]}, {"file": {}}]},)],
-      f"herman falls back to /index.html only for a missing file outside wasm/js/css, the manifest and favicon {spa}")
+check(P["chatStreams"] == ["/run/open-webui-edge.sock"], f"open-webui listens on Caddy's socket alone {P['chatStreams']}")
+
+karta_headers = {"Content-Security-Policy", "X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy",
+                 "Permissions-Policy", "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy",
+                 "Strict-Transport-Security"}
+static = {
+    "herman": (["/sw.js"], ["*.wasm", "*.js", "*.css", "/manifest.json", "/favicon.ico"]),
+    "karta": (["/sw.js", "/monty_worker.js", "/monty_worker_bg.wasm", "/monty_worker_loader.js"],
+              ["*.wasm", "*.js", "*.css", "*.svg", "/manifest.webmanifest", "/favicon.ico"]),
+}
+for name, (fresh, no_fallback) in static.items():
+    steps = list(flatten(routes.get(f"{name}.sammasak.dev", {}).get("handle", [])))
+    roots = [h.get("root") for h, _ in steps if h.get("handler") == "vars"]
+    check(roots == [P["sites"][name]], f"{name}'s root is its Nix build {roots}")
+    served = [h for h, _ in steps if h.get("handler") == "file_server"]
+    check(len(served) == 1 and served[0].get("precompressed") == {"gzip": {}},
+          f"{name} is served from files, with the .gz siblings {served}")
+    check(not any(h.get("handler") == "reverse_proxy" for h, _ in steps), f"{name} proxies nowhere")
+    hashed = {"path": ["*.wasm", "*.js", "*.css"], "not": [{"path": fresh}]}
+    cache = [(m, h["response"].get("require"), h["response"]["set"]["Cache-Control"]) for h, m in steps
+             if h.get("handler") == "headers" and "Cache-Control" in h.get("response", {}).get("set", {})]
+    check(cache == [((hashed,), None, ["public, max-age=31536000, immutable"]),
+                    ((), {"headers": {"Cache-Control": None}}, ["no-cache"])],
+          f"{name}: hashed wasm/js/css immutable, {fresh} and everything else no-cache {cache}")
+    spa = [m for h, m in steps if h.get("handler") == "rewrite" and h.get("uri") == "/index.html"]
+    check(spa == [({"not": [{"path": no_fallback}, {"file": {}}]},)],
+          f"{name} falls back to /index.html only for a missing file outside {no_fallback} {spa}")
+    always = {k for h, m in steps if h.get("handler") == "headers" and m == ()
+              for k in h.get("response", {}).get("set", {}) if k != "Cache-Control"}
+    check(always == (karta_headers if name == "karta" else set()), f"{name}'s security headers {sorted(always)}")
 
 sys.exit(1 if failed else 0)
