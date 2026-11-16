@@ -1,8 +1,8 @@
-"""acer's Caddy edge (modules/homelab/edge.nix), as `caddy adapt` reads the deployed Caddyfile: the admin API is off,
-every name has its route and backend, chat and grafana pass forward auth before their backend with the five
-X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only, open-webui listens on the
-edge socket alone, the apex and any other name under the wildcard are 404, and herman is its Nix build with the
-Cache-Control matrix and SPA fallback of its deploy/nginx.conf."""
+"""acer's Caddy edge (modules/homelab/edge.nix), as `caddy adapt` reads the deployed Caddyfile: the admin API is a
+socket only caddy may write to, every name has its route and backend, chat and grafana pass forward auth before
+their backend with the five X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only,
+open-webui listens on the edge socket alone, the apex and any other name under the wildcard are 404, and herman is
+its Nix build with the Cache-Control matrix and SPA fallback of its deploy/nginx.conf."""
 import json
 import subprocess
 import sys
@@ -52,8 +52,9 @@ def is_forward_auth(h):
     return h.get("handler") == "reverse_proxy" and h.get("rewrite", {}).get("uri") == "/outpost.goauthentik.io/auth/caddy"
 
 
-check(config.get("admin") == {"disabled": True}, f"the admin API is off {config.get('admin')}")
-check(P["enableReload"] is False, "a config change restarts Caddy: reload needs the admin API")
+check(config.get("admin") == {"listen": "unix//run/caddy/admin.sock|0200"},
+      f"the admin API listens on caddy's own socket, not TCP {config.get('admin')}")
+check(P["enableReload"] is True, "a Caddyfile change reloads Caddy instead of restarting it (every site drops)")
 check(P["failing"]["acer"] == [], f"acer fails no assertion {P['failing']['acer']}")
 check(any("services.caddy" in m and "open-webui" in m for m in P["failing"]["noCaddy"]),
       f"the open-webui edge socket without Caddy is rejected {P['failing']['noCaddy']}")

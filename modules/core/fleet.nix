@@ -15,11 +15,18 @@ in
         hosts = mkOption {
           type = types.attrsOf (
             types.submodule {
-              options.address = mkOption { type = ipv4; };
-              # a second LAN address the host can send from (another NIC), for a source-scoped rule
-              options.extraAddresses = mkOption {
-                type = types.listOf ipv4;
-                default = [ ];
+              options = {
+                address = mkOption { type = ipv4; };
+                # a second LAN address the host can send from (another NIC), for a source-scoped rule
+                extraAddresses = mkOption {
+                  type = types.listOf ipv4;
+                  default = [ ];
+                };
+                # may be powered off at any time: the store caches skip it, the alerts expect it (rules/homelab.yaml)
+                sleeps = mkOption {
+                  type = types.bool;
+                  default = false;
+                };
               };
             }
           );
@@ -38,8 +45,15 @@ in
     hosts = {
       lenovo-21CB001PMX.address = "192.168.10.154";
       acer-swift.address = "192.168.10.110";
-      msi-ms7758.address = "192.168.10.235";
-      asus-b460m.address = "192.168.10.113";
+      # dual-boot towers, often off or in Windows; msi powers off nights and weekends (msi-power-schedule.nix)
+      msi-ms7758 = {
+        address = "192.168.10.235";
+        sleeps = true;
+      };
+      asus-b460m = {
+        address = "192.168.10.113";
+        sleeps = true;
+      };
       # address is end0, extraAddresses wlan0
       black-pi = {
         address = "192.168.10.137";
