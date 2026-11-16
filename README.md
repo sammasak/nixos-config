@@ -12,7 +12,7 @@ flake-parts and pushed with deploy-rs from the daily-driver laptop.
 | `lenovo-21CB001PMX` (`lenovo`) | Laptop | Daily driver with desktop; DNS, ntfy and Tailscale; deploys every other host |
 | `acer-swift` | Laptop run headless | Always-on service host (Caddy edge, Authentik, chat, llm-gateway); `desktop` boot entry adds the Niri GUI |
 | `msi-ms7758` | Tower, dual-boots Windows (GRUB) | Intermittent worker host, woken via Wake-on-LAN in its work-hours window |
-| `asus-b460m` | Tower, dual-boots Windows (GRUB) | Always-on worker host |
+| `asus-b460m` | Tower, dual-boots Windows (GRUB) | Worker host, offline while booted into Windows |
 | `black-pi` | Raspberry Pi 4, aarch64 | Observability host (Prometheus, Grafana, Loki); builds its own closure on the Pi |
 | `naked-pi` | Raspberry Pi 3, aarch64 | `rf-lab` Wi-Fi learning node and ESP32 host |
 
