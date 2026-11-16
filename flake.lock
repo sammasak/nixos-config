@@ -496,11 +496,11 @@
     "skills": {
       "flake": false,
       "locked": {
-        "lastModified": 1794657397,
-        "narHash": "sha256-CZO1bgTEQs23ELFA/XgJtujdkX1e8HOGNzM5+my4jaU=",
+        "lastModified": 1794807070,
+        "narHash": "sha256-aF5eLUtLT/C4SZBE1Yf1qZXoKMoo8rv6wXNFAz1uSHY=",
         "owner": "sammasak",
         "repo": "skills",
-        "rev": "d3b920f4646c6c8ec78378fbb7d4e049ad1b327d",
+        "rev": "29f538e53a392c74b34835062fa40331faf46eb4",
         "type": "github"
       },
       "original": {
