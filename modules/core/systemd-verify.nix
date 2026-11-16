@@ -59,6 +59,7 @@ in
     # Every OnCalendar= of this host's timers parses (systemd-analyze calendar): a typo in a schedule otherwise only
     # shows as a timer systemd refuses at switch time, or one that never fires. A bad and a good fixture spec run
     # first, so a calendar parser that accepts anything, or cannot run in the sandbox, fails instead of passing.
+    # Covers the NixOS system and user units in /etc; Home Manager's user timers live in ~/.config and are not read.
     (pkgs.runCommand "systemd-calendar" { nativeBuildInputs = [ config.systemd.package ]; } ''
       export XDG_RUNTIME_DIR=$PWD/xdg HOME=$PWD/home
       mkdir -p xdg home
