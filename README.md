@@ -12,6 +12,7 @@ flake-parts and pushed with deploy-rs from the daily-driver laptop.
 | `lenovo-21CB001PMX` (`lenovo`) | Laptop | Daily driver with desktop; DNS, ntfy and Tailscale; deploys every other host |
 | `acer-swift` | Laptop run headless | Always-on service host (Caddy edge, Authentik, chat, llm-gateway); `desktop` boot entry adds the Niri GUI |
 | `msi-ms7758` | Tower, dual-boots Windows (GRUB) | Intermittent worker host, woken via Wake-on-LAN in its work-hours window |
+| `asus-b460m` | Tower, dual-boots Windows (GRUB) | Always-on worker host |
 | `black-pi` | Raspberry Pi 4, aarch64 | Observability host (Prometheus, Grafana, Loki); builds its own closure on the Pi |
 | `naked-pi` | Raspberry Pi 3, aarch64 | `rf-lab` Wi-Fi learning node and ESP32 host |
 
@@ -83,7 +84,7 @@ just bump [input]       # update one flake input (default: skills); then just sw
 # Push from lenovo with deploy-rs (magic rollback); the deploy-rs client runs under a 7G cap and
 # skips deploy-rs's own flake check. The pre-push gate runs it on pushed non-docs
 # commits; the recipe refuses a dirty tree or a HEAD not on origin/main (DEPLOY_UNGATED=1 breaks glass).
-# HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00),
+# HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00), asus-b460m,
 # black-pi (builds on the Pi, run inside zellij), naked-pi
 just deploy HOST
 just dry-activate HOST  # the units a deploy would restart, and the closure diff; activates nothing
