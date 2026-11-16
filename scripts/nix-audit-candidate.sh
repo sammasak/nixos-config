@@ -11,7 +11,7 @@ target=${2:-$host}
 flake=$(cd "$(dirname "$0")/.." && pwd)
 bin=$(command -v nix-audit) || { echo "nix-audit is not installed on this host" >&2; exit 0; }
 policy=${NIX_AUDIT_POLICY:-$(dirname "$(readlink -f "$bin")")/../share/nix-audit/policy.toml}
-lock=/tmp/$(hostname)-heavy-work.lock
+lock=/run/work-locks/heavy-work.lock
 rev=$(git -C "$flake" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)
 run=$HOME/nix-audit-pilot/$(date +%F-%H%M)-$host-$rev
 mkdir -p "$run"
@@ -39,15 +39,17 @@ step() {
   echo "$name: exit $code"
 }
 
+# the heavy lane from modules/core/work-locks.nix: a host still on an older generation has none
+[ -e "$lock" ] || { echo "$lock is missing: deploy a generation with modules/core/work-locks.nix first" | tee note.txt; exit 0; }
 nix-audit --version > version.txt 2>&1 || true
 grype db status > grype-db.txt 2>&1 || true
-step build flock "$lock" nix build --out-link candidate \
+step build flock -o "$lock" nix build --out-link candidate \
   "$flake#nixosConfigurations.$host.config.system.build.toplevel"
 [ -e candidate ] || { echo "candidate did not build; see build.err"; exit 0; }
 candidate=$(readlink -f candidate)
 rm -f current.json candidate.json
-step current flock "$lock" nix-audit scan "$baseline" --policy "$policy" --json-out current.json
-step candidate flock "$lock" nix-audit scan "$candidate" --policy "$policy" --json-out candidate.json
+step current flock -o "$lock" nix-audit scan "$baseline" --policy "$policy" --json-out current.json
+step candidate flock -o "$lock" nix-audit scan "$candidate" --policy "$policy" --json-out candidate.json
 if [ -s current.json ] && [ -s candidate.json ]; then
   step gate nix-audit diff current.json candidate.json --policy "$policy" --gate
   if [ "$(cat gate.exit)" = 3 ]; then

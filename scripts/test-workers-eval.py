@@ -76,6 +76,8 @@ ASSERTED = [
     ("rootInGuest without a gid", '{ services.devEnvironments.instances.ok.rootInGuest = true; nix.settings.allowed-users = [ "alice" ]; users.groups.users.gid = lib.mkForce null; }',
      "rootInGuest maps alice's group users, which declares no gid"),
     ("credential name", '{ services.devEnvironments.credentials."a b" = "/etc/x"; }', 'credentials.a b: a file name'),
+    ("lock lanes bound writable", '{ containers.ok.bindMounts."/run/work-locks".isReadOnly = lib.mkForce false; }', "/run/work-locks must be bound read-only"),
+    ("lock lanes from another directory", '{ containers.ok.bindMounts."/run/work-locks".hostPath = lib.mkForce "/tmp"; }', "/run/work-locks must be bound read-only"),
 ]
 
 # (name, module, expected stderr substring); each must fail the evaluation on its type
@@ -128,6 +130,7 @@ in {
   failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
   binds = builtins.mapAttrs (_: w: builtins.attrNames w.bindMounts) c.containers;
   egress = builtins.mapAttrs (_: w: w.bindMounts."/run/egress".hostPath or null) c.containers;
+  locks = builtins.mapAttrs (_: w: [ (w.bindMounts."/run/work-locks".hostPath or null) (w.bindMounts."/run/work-locks".isReadOnly or null) ]) c.containers;
   links = builtins.mapAttrs (_: w: builtins.filter (r: builtins.match ".*id_ed25519.*" r != null) w.config.systemd.tmpfiles.rules) c.containers;
   inherit config;
   caddy = builtins.readFile config;
@@ -1006,6 +1009,9 @@ def main():
     egress = got.get("egress", {})
     check(egress != {} and all(path == f"/run/dev-env-egress/{n}" for n, path in egress.items()),
           f"each instance's /run/egress is its own /run/dev-env-egress/<name> ({egress})")
+    locks = got.get("locks", {})
+    check(set(locks) == {"gh", "gh2", "plain"} and all(v == ["/run/work-locks", True] for v in locks.values()),
+          f"every guest binds the host's /run/work-locks read-only, so its flock and the host's take one inode ({locks})")
     links = got.get("links", {})
     check(links.get("gh") == [] and links.get("gh2") == [] and links.get("plain"), f"only the guest without egress.github links id_ed25519 ({links})")
     caddy = got.get("caddy", "")

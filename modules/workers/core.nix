@@ -19,6 +19,7 @@ let
   creds = "/var/lib/host-credentials";
   clientKey = "${home}/.ssh/id_ed25519";
   slice = "environments";
+  workLocks = "/run/work-locks";
 
   multipliers = {
     "" = 1;
@@ -296,6 +297,11 @@ let
         hostPath = "${cfg.stateDir}/${w.name}/eval-cache";
         isReadOnly = false;
       };
+      # read-only, so a guest cannot create a lock file there: work-locks.nix makes them on the host
+      ${workLocks} = {
+        hostPath = workLocks;
+        isReadOnly = true;
+      };
       "${creds}/ssh_host_ed25519_key" = {
         hostPath = hostKeyOf w;
         isReadOnly = true;
@@ -561,6 +567,8 @@ let
   };
 in
 {
+  imports = [ ../core/work-locks.nix ];
+
   options.services.devEnvironments = {
     instances = mkOption {
       type = types.attrsOf (types.submodule instanceModule);
@@ -1027,6 +1035,17 @@ in
             assertion = config.containers.${w.name}.config.services.openssh.enable;
             message = "${i}: a guest module disabled sshd, the only way into it.";
           }
+          ++ lib.optional (!w.paused) (
+            let
+              b = config.containers.${w.name}.bindMounts.${workLocks} or { };
+            in
+            {
+              assertion =
+                (b.isReadOnly or false)
+                && (config.systemd.tmpfiles.settings.work-locks.${toString (b.hostPath or "")} or { }) ? d;
+              message = "${i}: ${workLocks} must be bound read-only from the directory modules/core/work-locks.nix creates, or the guest's heavy jobs and the host's take different locks.";
+            }
+          )
         ) instances;
 
       # The daemon sees the guest user as the mapped uid, which machined names vu-<machine>-<uid>; neither guest root nor
