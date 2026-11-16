@@ -23,6 +23,13 @@ let
       ])
       ''
         bash scripts/nix-comment-lint.sh
+        # the lint's own test: one fixture it must refuse, one it must pass
+        fx=scripts/fixtures/comment-lint
+        if bash scripts/nix-comment-lint.sh "$fx/rollback-instruction.nix.fixture" 2>/dev/null; then
+          echo "comment lint: $fx/rollback-instruction.nix.fixture passed; the rollback-instructions rule is gone" >&2
+          exit 1
+        fi
+        bash scripts/nix-comment-lint.sh "$fx/rollback-pointer.nix.fixture" >/dev/null
       '';
 
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''

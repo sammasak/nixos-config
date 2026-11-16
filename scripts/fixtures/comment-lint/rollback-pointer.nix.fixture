@@ -1,0 +1,6 @@
+{ ... }:
+{
+  # No provider key reaches the host. Auth, upgrade,
+  # rollback: docs/pi.md.
+  sam.claude.bulkReader.enable = true;
+}
