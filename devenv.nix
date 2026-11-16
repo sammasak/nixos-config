@@ -103,7 +103,11 @@ let
           for s in $systems; do
             outputs=$(names "$kind.$s")
             for o in $outputs; do
-              if [ "$kind.$s" = "checks.$here" ]; then
+              # the *-vm checks boot QEMU (up to 4 GiB): lenovo evaluates them and says so, msi and acer boot them
+              if [ "$kind.$s" = "checks.$here" ] && [[ $o == *-vm ]] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
+                echo "nixos-flake-check: NOT booting checks.$s.$o on lenovo (a QEMU VM, memory): only its drvPath is evaluated; run the gate on msi or acer" >&2
+                drv "$kind.$s.$o"
+              elif [ "$kind.$s" = "checks.$here" ]; then
                 echo "nixos-flake-check: build checks.$s.$o" >&2
                 nix build --no-link --no-write-lock-file ".#checks.$s.$o"
               else
