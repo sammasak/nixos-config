@@ -3,8 +3,9 @@
 # them from the transaction, so they are verified with that line removed. verify exits 0 on a cycle: the check reads
 # its output, and a fixture cycle wanted by multi-user.target must be reported through it and default.target first,
 # so a verify that did not walk this host's tree, or a renamed message, fails instead of passing. Not covered:
-# generator-made units (mounts), the initrd, units only started on demand, and the edges only the system manager adds:
-# sockets, paths and timers get no implicit After=sysinit.target here, so a cycle through those edges passes.
+# generator-made units (mounts), the initrd, units only started on demand, and edges only the system manager adds,
+# e.g. the implicit After=sysinit.target of sockets, paths and timers and the default dependencies of declared mounts
+# and swaps, so a cycle through those edges passes.
 { config, pkgs, ... }:
 let
   trueBin = "${pkgs.coreutils}/bin/true";
@@ -41,7 +42,7 @@ in
       for target in multi-user.target default.target; do
         found=$(verify "$target" | cycles)
         grep -q fixture <<<"$found" || {
-          echo "the fixture cycle under $target was not reported: verify did not walk this tree, or its message changed"
+          echo "the fixture cycle under $target was not reported: $target does not load or does not reach multi-user.target, verify did not walk this tree, or its message changed"
           [ -z "$found" ] || { echo "cycles it did report:"; echo "$found"; }
           exit 1
         }

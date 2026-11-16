@@ -1,0 +1,704 @@
+{
+  "title": "Platform health",
+  "uid": "platform-health",
+  "tags": [
+    "platform",
+    "loki"
+  ],
+  "schemaVersion": 36,
+  "version": 1,
+  "timezone": "browser",
+  "time": {
+    "from": "now-14d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Gates (nixos:qa on lenovo, acer-swift and msi hosts; dev-environment guests cannot reach Loki)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Seconds per step",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "max by (host, step) (max_over_time({job=\"platform\",kind=\"gate-step\"} | logfmt | unwrap seconds [1h]))",
+          "legendFormat": "{{host}} {{step}}",
+          "queryType": "range",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Gate pass rate",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"platform\",kind=\"gate\"} | logfmt | result=\"pass\" [$__range])) / sum(count_over_time({job=\"platform\",kind=\"gate\"} [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Gate runs by host and result",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "expr": "sum by (host, result, mode) (count_over_time({job=\"platform\",kind=\"gate\"} | logfmt [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Failed steps",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "targets": [
+        {
+          "expr": "sum by (host, step) (count_over_time({job=\"platform\",kind=\"gate-step\"} | logfmt | result=\"fail\" [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Deploys (just deploy from lenovo)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Deploys by node and result",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "expr": "sum by (node, result) (count_over_time({job=\"platform\",kind=\"deploy\"} | logfmt [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Deploy seconds",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 18
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (max_over_time({job=\"platform\",kind=\"deploy\"} | logfmt | unwrap seconds [1h]))",
+          "legendFormat": "{{node}}",
+          "queryType": "range",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Rollbacks",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 16,
+        "y": 18
+      },
+      "targets": [
+        {
+          "expr": "sum(sum_over_time({job=\"platform\",kind=\"deploy\"} | logfmt | unwrap rolled_back [$__range])) or vector(0)",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Units restarted",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 18
+      },
+      "targets": [
+        {
+          "expr": "sum(sum_over_time({job=\"platform\",kind=\"deploy\"} | logfmt | unwrap units_restarted [$__range])) or vector(0)",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Build-time coverage",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Assertions and system.checks per host (gate's latest)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (max_over_time({job=\"platform\",kind=\"coverage\"} | logfmt | unwrap assertions [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "max by (node) (max_over_time({job=\"platform\",kind=\"coverage\"} | logfmt | unwrap system_checks [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Checks shown to run for a deploy (scripts/system-checks.sh)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "targets": [
+        {
+          "expr": "sum by (node, status) (count_over_time({job=\"platform\",kind=\"checks-run\"} | logfmt [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Runtime health",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Alerts firing now",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Distinct alerts fired",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 36
+      },
+      "targets": [
+        {
+          "expr": "count(count by (alertname) (count_over_time(ALERTS{alertstate=\"firing\"}[$__range]))) or vector(0)",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "table",
+      "title": "Failed units after the last deploy",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (max_over_time({job=\"platform\",kind=\"deploy\"} | logfmt | failed_units!=\"unknown\" | unwrap failed_units [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "row",
+      "title": "Delivery and review (coord:report:daily on lenovo)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "panels": []
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Per day",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 45
+      },
+      "targets": [
+        {
+          "expr": "max(max_over_time({job=\"platform\",kind=\"delivery\"} | logfmt | result=\"ok\" | verified_deliveries!=\"unknown\" | unwrap verified_deliveries | __error__=\"\" [1d]))",
+          "legendFormat": "verified_deliveries",
+          "queryType": "range",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "max(max_over_time({job=\"platform\",kind=\"delivery\"} | logfmt | result=\"ok\" | prs_reviewed!=\"unknown\" | unwrap prs_reviewed | __error__=\"\" [1d]))",
+          "legendFormat": "prs_reviewed",
+          "queryType": "range",
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "max(max_over_time({job=\"platform\",kind=\"delivery\"} | logfmt | result=\"ok\" | review_passes!=\"unknown\" | unwrap review_passes | __error__=\"\" [1d]))",
+          "legendFormat": "review_passes",
+          "queryType": "range",
+          "refId": "C",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "max(max_over_time({job=\"platform\",kind=\"delivery\"} | logfmt | result=\"ok\" | rework_rounds!=\"unknown\" | unwrap rework_rounds | __error__=\"\" [1d]))",
+          "legendFormat": "rework_rounds",
+          "queryType": "range",
+          "refId": "D",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "max(max_over_time({job=\"platform\",kind=\"delivery\"} | logfmt | result=\"ok\" | repeated_reviews!=\"unknown\" | unwrap repeated_reviews | __error__=\"\" [1d]))",
+          "legendFormat": "repeated_reviews",
+          "queryType": "range",
+          "refId": "E",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "max(max_over_time({job=\"platform\",kind=\"delivery\"} | logfmt | result=\"ok\" | parked!=\"unknown\" | unwrap parked | __error__=\"\" [1d]))",
+          "legendFormat": "parked",
+          "queryType": "range",
+          "refId": "F",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "max(max_over_time({job=\"platform\",kind=\"delivery\"} | logfmt | result=\"ok\" | lead_time_hours!=\"unknown\" | unwrap lead_time_hours | __error__=\"\" [1d]))",
+          "legendFormat": "lead_time_hours",
+          "queryType": "range",
+          "refId": "G",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "Instructions",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Always-loaded instruction bytes",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 54
+      },
+      "targets": [
+        {
+          "expr": "max by (file) (max_over_time({job=\"platform\",kind=\"instructions\"} | logfmt | unwrap bytes [1h]))",
+          "legendFormat": "{{file}}",
+          "queryType": "range",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "Comment lint (nixos-lint-comments step)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 54
+      },
+      "targets": [
+        {
+          "expr": "sum by (result) (count_over_time({job=\"platform\",kind=\"gate-step\"} | logfmt | step=\"nixos-lint-comments\" [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    }
+  ]
+}

@@ -107,11 +107,11 @@ metric_payload=$(cat <<'EOF'
 EOF
 )
 histogram_payload=$(cat <<'EOF'
-{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"codex"}},{"key":"host.name","value":{"stringValue":"lenovo-21cb001pmx"}}]},"scopeMetrics":[{"scope":{"name":"smoke"},"metrics":[{"name":"codex.turn.token_usage","histogram":{"aggregationTemporality":2,"dataPoints":[{"attributes":[{"key":"model","value":{"stringValue":"gpt-mini"}},{"key":"token_type","value":{"stringValue":"input"}}],"startTimeUnixNano":"1761270000000000000","timeUnixNano":"1761270001000000000","count":"2","sum":37,"bucketCounts":["1","1"],"explicitBounds":[10]}]}}]}]}]}
+{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"codex"}},{"key":"host.name","value":{"stringValue":"asus-b460m"}}]},"scopeMetrics":[{"scope":{"name":"smoke"},"metrics":[{"name":"codex.turn.token_usage","histogram":{"aggregationTemporality":2,"dataPoints":[{"attributes":[{"key":"model","value":{"stringValue":"gpt-mini"}},{"key":"token_type","value":{"stringValue":"input"}}],"startTimeUnixNano":"1761270000000000000","timeUnixNano":"1761270001000000000","count":"2","sum":37,"bucketCounts":["1","1"],"explicitBounds":[10]}]}}]}]}]}
 EOF
 )
 log_payload=$(cat <<'EOF'
-{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}},{"key":"host.name","value":{"stringValue":"lenovo-21cb001pmx"}},{"key":"worker.name","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_WORKER"}},{"key":"user.id","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_RESOURCE_LOG"}}]},"scopeLogs":[{"scope":{"name":"smoke"},"logRecords":[{"timeUnixNano":"1761270001000000000","severityText":"INFO","body":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_BODY"},"attributes":[{"key":"event.name","value":{"stringValue":"tool_result"}},{"key":"tool_name","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_TOOL_NAME"}},{"key":"success","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_SUCCESS_LOG"}},{"key":"duration_ms","value":{"stringValue":"17"}},{"key":"tool_result_size_bytes","value":{"stringValue":"4242"}},{"key":"output","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_OUTPUT"}},{"key":"user.email","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_EMAIL"}},{"key":"tool_parameters","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_PARAMETERS"}},{"key":"tool_input","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_INPUT"}}]}]}]}]}
+{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}},{"key":"host.name","value":{"stringValue":"asus-b460m"}},{"key":"worker.name","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_WORKER"}},{"key":"user.id","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_RESOURCE_LOG"}}]},"scopeLogs":[{"scope":{"name":"smoke"},"logRecords":[{"timeUnixNano":"1761270001000000000","severityText":"INFO","body":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_BODY"},"attributes":[{"key":"event.name","value":{"stringValue":"tool_result"}},{"key":"tool_name","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_TOOL_NAME"}},{"key":"success","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_SUCCESS_LOG"}},{"key":"duration_ms","value":{"stringValue":"17"}},{"key":"tool_result_size_bytes","value":{"stringValue":"4242"}},{"key":"output","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_OUTPUT"}},{"key":"user.email","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_EMAIL"}},{"key":"tool_parameters","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_PARAMETERS"}},{"key":"tool_input","value":{"stringValue":"NATIVE_OTLP_SMOKE_SENTINEL_INPUT"}}]}]}]}]}
 EOF
 )
 log_payload=$(jq -c '.resourceLogs[0].schemaUrl = "https://NATIVE_OTLP_SMOKE_SENTINEL_RESOURCE_SCHEMA.invalid"
@@ -249,6 +249,8 @@ for expected in \
   'effort: Str(other)' \
   'host: Str(msi-ms7758)' \
   'host.name: Str(black-pi)' \
+  'host: Str(asus-b460m)' \
+  'host.name: Str(asus-b460m)' \
   'Body: Str(api_request)' \
   'session.id: Str(smoke-session)' \
   'model: Str(claude-opus-5-5)' \

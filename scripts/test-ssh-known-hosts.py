@@ -280,6 +280,11 @@ def main():
                         re.sub(r'\[doc\([^\n]*\)\]\n', "", (ROOT / "Justfile").read_text()))
     check(pattern is not None and sorted(pattern.group(1).split("|")) == sorted(P["deployNodes"]),
           f"`just deploy` accepts exactly the deploy-rs nodes {sorted(P['deployNodes'])}")
+    # every recipe taking a HOST (deploy, dry-activate, checks) names the same nodes: a new host missing from one
+    recipes = re.findall(r'\[arg\("HOST", pattern="([^"]+)"\)\]\n(?:\[doc\([^\n]*\)\]\n)?([a-z-]+) HOST:',
+                         (ROOT / "Justfile").read_text())
+    odd = [name for p, name in recipes if sorted(p.split("|")) != sorted(P["deployNodes"])]
+    check(len(recipes) >= 3 and not odd, f"every HOST recipe accepts exactly the deploy-rs nodes ({[n for _, n in recipes]}; not: {odd})")
     verify_script_checks(known)
     sops_checks(P["sops"])
     services = (ROOT / "modules/core/services.nix").read_text()
