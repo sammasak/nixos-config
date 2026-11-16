@@ -78,6 +78,12 @@ in
     systemd.services.nixos-rebuild-trigger-dir = {
       description = "Provision the nixos-rebuild trigger request directory";
       wantedBy = [ "multi-user.target" ];
+      # the path unit below orders after this one and before paths.target, which basic.target waits for: with default
+      # dependencies (after basic.target) that is a cycle, and systemd drops paths.target's start job at boot
+      unitConfig.DefaultDependencies = false;
+      after = [ "sysinit.target" ];
+      before = [ "shutdown.target" ];
+      conflicts = [ "shutdown.target" ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
