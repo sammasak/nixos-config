@@ -211,7 +211,10 @@ let
       exec 9>"$state/session.lock"
       flock -w 20 9 || { log "$state/session.lock is still held after 20 s (a previous run or a child of it is alive); giving up"; toast "Coordinator wake-up stuck" "session.lock held; see journalctl --user -u coordinator-wakeup"; exit 75; }
       pending="$state/pending.txt"; attempts="$state/pending.attempts"; parked="$state/pending.failed"
-      : > "$state/.started"
+      # coord:changed replaces latest.json by rename (a new inode) on every consuming run, so a record that kept its inode
+      # was not written by this run; an mtime compared against a start stamp depends on the clock and its granularity
+      rec="$state/latest.json"
+      before=$(stat -c %i "$rec" 2>/dev/null || true)
       cd "$skills"
       if ! devenv tasks run coord:changed --input-json '{"consume":true}' ${skillsOptions} > "$state/run.log" 2>&1 9>&-; then
         if grep -q 'Task does not exist: coord:changed' "$state/run.log"; then
@@ -231,8 +234,8 @@ let
         log "coord:changed failed: $(grep -vE '^\s*$' "$state/run.log" | tail -n 3 | tr '\n' ' ')"; exit 1
       fi
       rm -f "$state/behind-pin.toasted"
-      rec="$state/latest.json"
-      [ "$rec" -nt "$state/.started" ] || { log "$rec was not rewritten by this run; not trusted"; exit 1; }
+      after=$(stat -c %i "$rec" 2>/dev/null || true)
+      [ -n "$after" ] && [ "$after" != "$before" ] || { log "$rec was not rewritten by this run; not trusted"; exit 1; }
       n=$(jq -r '.changes | length' "$rec" 2>/dev/null) || { log "no readable $rec after the run"; exit 1; }
       [ "$n" -gt 0 ] && jq -r '.changes[].line' "$rec" >> "$pending"
       # a quiet tick says why once, deduplicated (quiet.last) so the journal explains a long idle stretch in one line (skills#28, the overnight no-wake)
