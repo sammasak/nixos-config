@@ -1,6 +1,7 @@
 # The *.sammasak.dev edge on acer (#420): Caddy terminates TLS with one DNS-01 wildcard from security.acme and
-# proxies each name to its backend, with forward auth through the k3s Authentik for chat and grafana. The admin API is
-# off, so no local process can load a config without forward_auth; a config change or renewal restarts Caddy.
+# proxies each name to its backend, with forward auth through the native Authentik (authentik.nix) for chat and
+# grafana. The admin API is off, so no local process can load a config without forward_auth; a config change or
+# renewal restarts Caddy.
 # herman, karta and registry proxy to their pods' ClusterIPs until they move (step 2, PR 2).
 {
   config,
@@ -11,15 +12,8 @@
 let
   inherit (config.sam.fleet) hosts;
   domain = "sammasak.dev";
-  # The native Authentik (authentik.nix) first, the k3s one while it still runs: a refused connection marks the first
-  # down, so starting or stopping the native units moves sign-in without a deploy, and stopping them is the rollback.
-  # Drop the ClusterIP with the HelmRelease.
-  authentik = "127.0.0.1:9000 10.43.238.182:80";
-  upstreams = ''
-    lb_policy first
-    lb_try_duration 3s
-    fail_duration 10s
-  '';
+  # the native server and its embedded outpost (authentik.nix)
+  authentik = "127.0.0.1:9000";
   # the only OTLP pushers: each host's native-otel-relay, and black-pi's blackbox probe
   otlpSources = map (h: hosts.${h}.address) [
     "lenovo-21CB001PMX"
@@ -28,11 +22,7 @@ let
     "black-pi"
   ];
   sites = {
-    auth = ''
-      reverse_proxy ${authentik} {
-        ${upstreams}
-      }
-    '';
+    auth = "reverse_proxy ${authentik}";
     chat = ''
       route {
         import authentik
@@ -87,11 +77,8 @@ in
     # Caddy deletes a client-sent copy of each copied header before it sets the outpost's value.
     extraConfig = ''
       (authentik) {
-        reverse_proxy /outpost.goauthentik.io/* ${authentik} {
-          ${upstreams}
-        }
+        reverse_proxy /outpost.goauthentik.io/* ${authentik}
         forward_auth ${authentik} {
-          ${upstreams}
           uri /outpost.goauthentik.io/auth/caddy
           copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
         }
