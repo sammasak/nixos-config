@@ -23,9 +23,7 @@ fleet = P["fleet"]
 config = json.loads(subprocess.run([P["caddy"], "adapt", "--config", P["configFile"], "--adapter", "caddyfile"],
                                    check=True, stdout=subprocess.PIPE, text=True).stdout)
 
-# the native Authentik first, the k3s one as the fallback until the HelmRelease goes
 authentik = "127.0.0.1:9000"
-authentik_fallback = "10.43.238.182:80"
 backends = {
     "auth": authentik,
     "chat": "unix//run/open-webui-edge.sock",
@@ -107,11 +105,8 @@ for name, backend in backends.items():
             setting = [i for i, c in enumerate(copies) if header in c.get("set", {})]
             check(len(deleted) == 1 and len(setting) == 1 and deleted[0] < setting[0],
                   f"{name} deletes a client-sent {header} before it sets the outpost's")
-        auth_proxies = [h for h, _ in steps if authentik in dials(h)]
-        check(auth_proxies and all(dials(h) == [authentik, authentik_fallback]
-                                   and h.get("load_balancing", {}).get("selection_policy", {}).get("policy") == "first"
-                                   for h in auth_proxies),
-              f"{name}'s Authentik calls try the native server first and fall back to the k3s one {[dials(h) for h in auth_proxies]}")
+        check(all(dials(h) == [authentik] for h, _ in steps if authentik in dials(h)),
+              f"{name}'s Authentik calls go to the native server alone")
         outpost = [m for h, m in steps if authentik in dials(h) and not is_forward_auth(h)]
         check(outpost == [({"path": ["/outpost.goauthentik.io/*"]},)],
               f"{name} sends only /outpost.goauthentik.io/* to Authentik besides forward_auth {outpost}")
