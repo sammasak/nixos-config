@@ -1,0 +1,42 @@
+version: 1
+metadata:
+  name: Domain Gate Proxy Provider
+entries:
+  # Forward-domain proxy provider covering all *.sammasak.dev apps that Caddy
+  # sends through forward_auth (modules/homelab/edge.nix).
+  # A single provider with cookie_domain=sammasak.dev covers all subdomains.
+  - model: authentik_providers_proxy.proxyprovider
+    id: domain-gate-provider
+    state: present
+    identifiers:
+      name: sammasak-domain-gate
+    attrs:
+      name: sammasak-domain-gate
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      mode: forward_domain
+      external_host: https://auth.sammasak.dev
+      cookie_domain: sammasak.dev
+      access_token_validity: "minutes=30"
+      refresh_token_validity: "days=30"
+
+  - model: authentik_core.application
+    state: present
+    identifiers:
+      slug: sammasak-domain-gate
+    attrs:
+      name: sammasak-domain-gate
+      slug: sammasak-domain-gate
+      provider: !KeyOf domain-gate-provider
+      policy_engine_mode: any
+      open_in_new_tab: false
+
+  # Bind the domain-gate provider to the embedded outpost so it handles
+  # forward-auth requests for all *.sammasak.dev hosts.
+  - model: authentik_outposts.outpost
+    state: present
+    identifiers:
+      name: authentik Embedded Outpost
+    attrs:
+      providers:
+        - !KeyOf domain-gate-provider
