@@ -99,6 +99,8 @@ def main():
 
     for host, worker in ((WORKER, True), (COORDINATOR, False)):
         settings = P[host]["settings"]
+        check(settings.get("crossSessionInbound") == "accept",
+              f"{host}: settings deliver peer messages from sessions in another permission mode")
         if worker:
             check(settings.get("skipDangerousModePermissionPrompt") is True, f"{host}: settings skip the bypass acknowledgment dialog")
             check(settings.get("switchModelsOnFlag") is True, f"{host}: settings switch models when safeguards flag a message (#157)")
