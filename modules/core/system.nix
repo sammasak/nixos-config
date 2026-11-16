@@ -36,7 +36,10 @@ let
   );
 in
 {
-  imports = [ ./fleet.nix ];
+  imports = [
+    ./fleet.nix
+    ./systemd-verify.nix
+  ];
 
   options.sam = {
     profile = mkOption {
