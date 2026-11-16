@@ -30,7 +30,6 @@ in
 
     sops.secrets."tailscale/authkey" = {
       sopsFile = ../../secrets/homelab/tailscale.yaml;
-      path = "/run/secrets/tailscale-authkey";
       owner = "root";
       mode = "0400";
     };

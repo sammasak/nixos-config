@@ -2,7 +2,7 @@
 
 An environment is a long-running developer machine declared in a worker host's
 configuration: a stock NixOS container (`containers.<name>`, systemd-nspawn) on
-acer-swift or msi-ms7758 with the fleet's tooling (Claude Code, Codex, git, gh,
+acer-swift, msi-ms7758 or asus-b460m with the fleet's tooling (Claude Code, Codex, git, gh,
 devenv), its own persistent home, and a workspace in the host's Herdr with the
 agent running in it. It runs while declared; its home is deleted only once its
 name is in `retired`, or replaced by a fresh one with `dev-env-reset@<name>` (Reset, below). Modules:
@@ -71,6 +71,7 @@ CPU-throttled 947 s of 1275 s used while cores sat idle; msi `skills91`
 |------|------|--------|----------------|----------------------|-------------|
 | acer-swift | 7G, 8 cores | `acer` | host services and system about 7.5G (measured with k3s, an upper bound) | 3 | 2 |
 | msi-ms7758 | 10G, 8 cores | `msi` | about 2.8G | 5 | 3 |
+| asus-b460m | 20G, 10 cores | `asus` | not measured yet (32 GB RAM) | 10 | 4 |
 
 The reserve sum is what eval enforces; the recommendation is lower because a
 build in an environment spikes to 4 to 5G.

@@ -43,6 +43,14 @@ let
       ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN3KB1qWY1sl8s3yJ18FMAFH5XU2UL9DJhnnHsgDryP1";
     };
+    # read on the console, sops recipient age1ye0ma...; SHA256:SsemYL0zG8kEdMlejNVgNsVsI+DF/PVHs3olZqR8S84
+    asus-b460m = {
+      hostNames = own "asus-b460m" [
+        "asus-b460m"
+        (address "asus-b460m")
+      ];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMFmct2Z+IG6s9io3bKmtYOSGAJJCQA6y23YlB4/NZSa";
+    };
     # sops recipient age16l5rq...; SHA256:i78xzl+ImmEgGFp0QehlBaa3zuFgkpk2nU5ALIHZMjY
     black-pi = {
       hostNames = own "black-pi" [

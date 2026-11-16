@@ -27,6 +27,7 @@
       "lenovo-21CB001PMX"
       "acer-swift"
       "msi-ms7758"
+      "asus-b460m"
     ];
     ntfyUrl = "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
   };
