@@ -145,6 +145,10 @@ lines = {
     ("session", "lukas : TTY=pts/3 ; PWD=/home/lukas ; USER=root ; COMMAND=/run/current-system/sw/bin/ak shell"): False,
     ("init.scope", 'Started run-u412.service - /nix/store/x-bash/bin/bash /nix/store/y-authentik/lifecycle/ak shell -c "print(1)".'): False,
     ("init.scope", "Started sshd.service - SSH Daemon."): True,
+    ("transient", "lukas : PWD=/home/lukas ; USER=root ; COMMAND=/run/current-system/sw/bin/ak shell -c print(1)"): False,
+    ("transient", "lukas : USER=root ; COMMAND=/run/current-system/sw/bin/bash -c ak shell -c print(1)"): False,
+    ("session", "(command continued) the tail of a long ak -c snippet"): False,
+    ("transient", "(command continued) the tail of a long ak -c snippet"): False,
     ("polkit.service", "Operator of unix-session:4 successfully authenticated as unix-user:root to gain ONE-SHOT authorization "
      "for action org.freedesktop.systemd1.manage-units [/nix/store/y-authentik/lifecycle/ak shell -c print(1)]"): False,
     ("transient", "a systemd-run job's own line"): True,

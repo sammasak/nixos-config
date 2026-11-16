@@ -11,7 +11,7 @@
 # - Loki is unauthenticated to its allowed sources, so these lines never ship: authentik.service and
 #   authentik-worker.service (request lines carry OAuth code and state query strings), user@<uid>.service (every user
 #   unit's lines: agent output), login session scopes (sudo's COMMAND= lines) and any line naming `ak`'s
-#   systemd-run command (its shell -c code: PID 1's Started lines, polkit's authentication lines).
+#   command (its shell -c code: PID 1's Started lines, polkit's and sudo's lines, sudo's continuations, any unit).
 # - Only this host's own journal is read: with no path, sdjournal opens it SD_JOURNAL_LOCAL_ONLY.
 {
   config,
@@ -28,8 +28,11 @@ let
     "authentik-worker"
   ];
   shippedAuthentik = [
+    # pg_dump to a file and a restore check: counts and errors, no request
     "authentik-backup"
+    # Django migrations at start: schema steps, no request
     "authentik-migrate"
+    # lenovo pulls the dump over ssh into a file; only errors reach the journal
     "authentik-offhost"
   ];
   unlisted = lib.filter (
@@ -85,7 +88,7 @@ let
       }
 
       stage.match {
-        selector            = "{job=\"host-journal\"} |~ \"lifecycle/ak \""
+        selector            = "{job=\"host-journal\"} |~ \"(lifecycle|bin)/ak |[ =/]ak shell|[(]command continued[)]\""
         action              = "drop"
         drop_counter_reason = "ak_command"
       }

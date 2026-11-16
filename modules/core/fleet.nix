@@ -13,12 +13,23 @@ in
       options = {
         # keyed by networking.hostName
         hosts = mkOption {
-          type = types.attrsOf (types.submodule { options.address = mkOption { type = ipv4; }; });
+          type = types.attrsOf (
+            types.submodule {
+              options.address = mkOption { type = ipv4; };
+              # a second LAN address the host can send from (another NIC), for a source-scoped rule
+              options.extraAddresses = mkOption {
+                type = types.listOf ipv4;
+                default = [ ];
+              };
+            }
+          );
         };
         gateway = mkOption { type = ipv4; };
         lanCidr = mkOption { type = types.str; };
         # networking.hostName of the host whose user key deploys every host
         deployer = mkOption { type = types.str; };
+        # networking.hostName of the host that serves *.sammasak.dev (edge.nix): the DNS rewrite and the OTLP relay
+        edge = mkOption { type = types.str; };
       };
     };
   };
@@ -28,11 +39,15 @@ in
       lenovo-21CB001PMX.address = "192.168.10.154";
       acer-swift.address = "192.168.10.110";
       msi-ms7758.address = "192.168.10.235";
-      # end0; wlan0's .136 is a second LAN address
-      black-pi.address = "192.168.10.137";
+      # address is end0, extraAddresses wlan0
+      black-pi = {
+        address = "192.168.10.137";
+        extraAddresses = [ "192.168.10.136" ];
+      };
     };
     gateway = "192.168.10.1";
     lanCidr = "192.168.10.0/24";
     deployer = "lenovo-21CB001PMX";
+    edge = "acer-swift";
   };
 }
