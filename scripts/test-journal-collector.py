@@ -1,7 +1,7 @@
-"""homelab.journalCollector (modules/homelab/journal-collector.nix): Alloy ships the journal on msi-ms7758 only,
+"""homelab.journalCollector (modules/homelab/journal-collector.nix): Alloy ships the journal on every host but naked-pi,
 reads journald and nothing else, references no secret, keeps its readiness probe on the host, restarts on a config
 change, drops the egress proxy's info-level 2xx/3xx access lines and pages ntfy (with retries) when it fails. The
-negative case enables the module on acer-swift in the probe only.
+negative case enables the module on naked-pi in the probe only. The detailed checks read msi-ms7758's unit.
 
 Evaluation only: options, the generated config.alloy and the unit, never a build. The drop stage's semantics (the
 ";" separator, a missing field or a non-JSON line keeps the line) are modelled in Python; that model was checked
@@ -38,10 +38,18 @@ def components(conf):
 
 r = gate_probe.section("journal-collector")
 hosts = r["hosts"]
-check({"msi-ms7758", "lenovo", "acer-swift", "black-pi"} <= set(hosts), f"every host is evaluated {sorted(hosts)}")
-check(enabled(hosts) == ["msi-ms7758"], f"the collector and Alloy run on msi-ms7758 only {enabled(hosts)}")
-seeded = enabled({**hosts, "acer-swift": r["seeded"]})
-check(seeded == ["acer-swift", "msi-ms7758"], f"negative case: enabling it on acer-swift shows in the msi-only check {seeded}")
+check({"msi-ms7758", "lenovo", "acer-swift", "black-pi", "naked-pi"} <= set(hosts), f"every host is evaluated {sorted(hosts)}")
+shipping = ["acer-swift", "black-pi", "lenovo", "msi-ms7758"]
+check(enabled(hosts) == shipping, f"the collector and Alloy run on every host but naked-pi {enabled(hosts)}")
+seeded = enabled({**hosts, "naked-pi": r["seeded"]})
+check(seeded == sorted(shipping + ["naked-pi"]), f"negative case: enabling it on naked-pi shows in the hosts check {seeded}")
+for h in shipping:
+    f = hosts.get(h, {})
+    check(f'host = "{f.get("hostName")}"' in norm(f.get("config")) and "alloy-config-check" in f.get("checks", []),
+          f"{h} labels its lines with its own hostname and validates its config at build ({f.get('hostName')}, {f.get('checks')})")
+    check((f.get("unit") or {}).get("onFailure") == ["journal-collector-failed.service"] and f"alloy failed on {f.get('hostName')}" in (f.get("failed") or ""),
+          f"{h} pages ntfy when Alloy fails ({(f.get('unit') or {}).get('onFailure')})")
+check(len({hosts.get(h, {}).get("hostName") for h in shipping}) == len(shipping), "each shipping host has its own host label")
 
 m = hosts.get("msi-ms7758", {})
 conf = norm(m.get("config"))

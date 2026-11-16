@@ -8,6 +8,9 @@
 #   proxied request); 4xx, 5xx and all non-access lines are kept. Those kept access lines carry request headers into
 #   Loki: X-Claude-Code-Session-Id and user agent in clear, Authorization logged as REDACTED.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed alloy` and a start.
+# - Every local journal file is read, user journals included: on lenovo the login user's units (herdr, the
+#   coordinator's timers) ship too, and on acer Authentik's info-level request lines, which may carry request paths
+#   with query strings and user names. Loki is unauthenticated to its allowed sources.
 {
   config,
   lib,
@@ -109,6 +112,8 @@ in
     ];
 
     systemd.services.alloy = {
+      # the Go heap target under MemoryMax: a catch-up of the 72h backlog otherwise meets the cap as an OOM kill
+      environment.GOMEMLIMIT = "200MiB";
       startLimitIntervalSec = 600;
       startLimitBurst = 4;
       onFailure = lib.optional (cfg.ntfyUrl != null) "journal-collector-failed.service";
