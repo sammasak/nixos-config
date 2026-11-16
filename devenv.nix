@@ -871,7 +871,7 @@ in
     "nixos:ollama-pull-pinned-test" =
       task "ollama-pull-pinned: a tag at its pin is left alone, a moved tag is removed again and fails the loader" ollamaPullPinnedTest;
     "nixos:llm-bench-test" =
-      task "llm-bench (#493): fit and capacity runs against the fake Ollama, quantile floors, verdicts, the MSI import, no prompt in an aggregate" llmBenchTest;
+      task "llm-bench (#493): #492's G1 bench and the capacity run against the fake Ollama, the G1 import and rule, quantile floors, the MSI import, no prompt in an aggregate" llmBenchTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
     "nixos:coordinator-test" =
