@@ -77,6 +77,17 @@ groups:
           summary: "Loki ingester is not reporting metrics"
           description: "Loki on black-pi has stopped exporting ingester metrics or its scrape target is down. New logs cannot be persisted. Run: systemctl status loki on black-pi."
 
+      # Caddy's unix upstreams on acer (open-webui.nix's edge check): the probe above sees only forward auth's 302
+      - alert: EdgeSocketDown
+        expr: homelab_edge_socket_listening == 0 or time() - node_textfile_mtime_seconds{file=~".*open-webui-edge.prom"} > 300
+        for: 2m
+        labels:
+          severity: critical
+          team: homelab
+        annotations:
+          summary: "Caddy's upstream socket on {{ $labels.instance }} is not listening"
+          description: "Nothing listens on the edge socket, or the check stopped writing (stale for 5 min), so signed-in users get a 502. Run on acer: systemctl restart open-webui-proxy.socket; then check systemctl status open-webui-edge-check.timer."
+
       # The two below replace the cluster's AppDown (Traefik) and CertificateExpiringSoon (cert-manager): black-pi
       # probes the public names (../prometheus.nix), so they hold under Caddy too.
       - alert: AppDown

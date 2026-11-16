@@ -164,6 +164,30 @@ in
       ExecStart = "${config.systemd.package}/bin/systemctl restart open-webui-proxy.socket";
     };
   };
+  # Caddy's upstream, without connecting: a connection would start the app (a ~50 s cold start). #427's socket had
+  # no file behind a passing 302 probe; this one reads the listener table and the EdgeSocketDown alert reads it.
+  systemd.services.open-webui-edge-check = {
+    path = [ pkgs.iproute2 ];
+    serviceConfig = {
+      Type = "oneshot";
+      ProtectSystem = "strict";
+      ReadWritePaths = [ "/run/node-exporter-textfile" ];
+      ProtectHome = true;
+      PrivateTmp = true;
+      NoNewPrivileges = true;
+    };
+    script = ''
+      up=0
+      [ -n "$(ss -xlH src ${edgeSocket})" ] && up=1
+      out=/run/node-exporter-textfile/open-webui-edge.prom
+      printf 'homelab_edge_socket_listening{socket="%s"} %d\n' ${edgeSocket} "$up" > "$out.tmp"
+      mv "$out.tmp" "$out"
+    '';
+  };
+  systemd.timers.open-webui-edge-check = {
+    wantedBy = [ "timers.target" ];
+    timerConfig.OnCalendar = "minutely";
+  };
   systemd.services.open-webui-proxy = {
     requires = [ "open-webui.service" ];
     after = [ "open-webui.service" ];

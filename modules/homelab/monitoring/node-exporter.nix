@@ -7,12 +7,16 @@ let
   inherit (config.sam.fleet) hosts;
   cfg = config.services.prometheus.exporters.node;
   fw = config.networking.firewall;
+  textfiles = "/run/node-exporter-textfile";
 in
 {
   services.prometheus.exporters.node = {
     enable = true;
     listenAddress = hosts.${config.networking.hostName}.address;
+    # a host's own checks drop *.prom files here (open-webui.nix's edge-socket check)
+    extraFlags = [ "--collector.textfile.directory=${textfiles}" ];
   };
+  systemd.tmpfiles.rules = [ "d ${textfiles} 0755 root root -" ];
 
   # DHCP: the address can appear after the unit, so it waits for the network and retries below the start limit
   systemd.services.prometheus-node-exporter = {
