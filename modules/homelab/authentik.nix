@@ -276,10 +276,16 @@ in
     };
   };
 
-  # info-level SC2012 (ls -1t for the rotation) is the only finding below warning
   system.checks = [
+    # info-level SC2012 (ls -1t for the rotation) is the only finding below warning
     (pkgs.runCommand "authentik-backup-script-check" { nativeBuildInputs = [ pkgs.shellcheck ]; } ''
       shellcheck --severity=warning ${config.systemd.services.authentik-backup.serviceConfig.ExecStart}
+      touch $out
+    '')
+    # the worker applies blueprints only after the deploy; Authentik's own parser on the directory it is given, no database
+    (pkgs.runCommand "authentik-blueprints-check" { nativeBuildInputs = [ pkgs.ruff ]; } ''
+      ruff check --isolated --no-cache --select F ${./authentik/check-blueprints.py}
+      HOME=$TMPDIR AUTHENTIK_LOG_LEVEL=warning ${pyEnv}/bin/python -I ${./authentik/check-blueprints.py} ${blueprints}
       touch $out
     '')
   ];
