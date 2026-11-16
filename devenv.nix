@@ -23,10 +23,13 @@ let
       ])
       ''
         bash scripts/nix-comment-lint.sh
-        # the lint's own test: one fixture it must refuse, one it must pass
         fx=scripts/fixtures/comment-lint
-        if bash scripts/nix-comment-lint.sh "$fx/rollback-instruction.nix.fixture" 2>/dev/null; then
-          echo "comment lint: $fx/rollback-instruction.nix.fixture passed; the rollback-instructions rule is gone" >&2
+        # refused by that rule, not by a missing fixture or a dead awk (exit 2)
+        rc=0
+        out=$(bash scripts/nix-comment-lint.sh "$fx/rollback-instruction.nix.fixture" 2>&1) || rc=$?
+        if [ "$rc" -ne 1 ] || ! grep -q '^rollback-instructions: ' <<<"$out"; then
+          printf '%s\n' "$out" >&2
+          echo "comment lint: $fx/rollback-instruction.nix.fixture was not refused by rollback-instructions (exit $rc)" >&2
           exit 1
         fi
         bash scripts/nix-comment-lint.sh "$fx/rollback-pointer.nix.fixture" >/dev/null

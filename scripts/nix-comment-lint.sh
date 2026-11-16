@@ -27,7 +27,7 @@ report() {
   printf '%s\n' "$1" >&2
 }
 
-# With arguments, only those files, read as Nix: the lint's own fixtures (scripts/fixtures/comment-lint).
+# With arguments, only those files (relative to the repo root), read as Nix: the lint's own fixtures.
 if [ "$#" -gt 0 ]; then
   NIXFILES=("$@")
   SHFILES=()
