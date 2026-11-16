@@ -111,6 +111,9 @@ in
       # Publishing to claude.ai is never wanted from these hosts.
       # https://code.claude.com/docs/en/artifacts#disable-artifacts
       enableArtifact = false;
+      # accept: a peer session's text reaches this one without a human, even into bypass mode; only
+      # instructions keep it advisory. Unset, messages from a session in another permission mode are held.
+      crossSessionInbound = "accept";
       # Keeps the default mode these hosts had under scrubbing (below); 2.1.300
       # otherwise starts in auto. --dangerously-skip-permissions overrides it.
       permissions = lib.optionalAttrs hostOtel { defaultMode = "default"; };
