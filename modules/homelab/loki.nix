@@ -56,7 +56,7 @@ in
     retention = lib.mkOption {
       type = lib.types.strMatching "[0-9]+[hdw]";
       default = "72h";
-      description = "Default retention, at least 24h (the index period); the two agent telemetry streams keep 720h regardless.";
+      description = "Default retention, at least 24h (the index period); the two agent telemetry streams and the platform records keep 720h regardless.";
     };
     allowedSources = lib.mkOption {
       type = lib.types.listOf (lib.types.strMatching "[0-9]+(\\.[0-9]+){3}(/[0-9]+)?");
@@ -139,8 +139,14 @@ in
         ];
         limits_config = {
           retention_period = cfg.retention;
-          # pi-agent backs the 30-day "Pi agents" panels (devenv-platform#76), harness the 30-day agent usage review
+          # pi-agent backs the 30-day "Pi agents" panels (devenv-platform#76), harness the 30-day agent usage review,
+          # platform the bi-weekly "Platform health" review (scripts/platform-record.sh)
           retention_stream = [
+            {
+              selector = ''{job="platform"}'';
+              priority = 1;
+              period = "720h";
+            }
             {
               selector = ''{job="pi-agent"}'';
               priority = 1;
