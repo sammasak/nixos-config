@@ -104,7 +104,7 @@ let
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;
       };
-      inherit (lenovo.sam.fleet) lanCidr;
+      alertmanager = lenovo.sam.fleet.hosts.black-pi.address;
       failing = {
         lenovo = failing lenovo;
         loopbackFirewall = failing (

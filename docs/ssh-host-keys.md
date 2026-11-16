@@ -34,6 +34,7 @@ declaring the secret on that host.
 | lenovo-21CB001PMX | lenovo-21CB001PMX, 192.168.10.154 (+ localhost on itself) | `7DLYFLKZ4wrcrO0Bk7MnZ8yYHrVeu5pFsSwYWjvpNGs` | read on the machine; sops recipient `age13lj7p…gqc4y` |
 | acer-swift | acer-swift, 192.168.10.110 | `5Ong1jvhk4Hgx82l2fYrKBjqlkVyG5rYvYfVPo7WdRY` | sops recipient `age1uu9y3…xlyuk`; live read equal |
 | msi-ms7758 | msi-ms7758, msi, 192.168.10.235 | `JebDBAzSWRc/WHY8wQG7jVcidYFp4eFKyjuTzXl5Jwc` | sops recipient `age1g0k9v…mvcx4r`; live read equal |
+| asus-b460m | asus-b460m, 192.168.10.113 | `SsemYL0zG8kEdMlejNVgNsVsI+DF/PVHs3olZqR8S84` | read on the console on 2026-11-16; sops recipient `age1ye0ma…h2ksl` |
 | black-pi | black-pi, 192.168.10.137, 192.168.10.136 | `i78xzl+ImmEgGFp0QehlBaa3zuFgkpk2nU5ALIHZMjY` | sops recipient `age16l5rq…yx7tn`; live read equal on .137 |
 | naked-pi | naked-pi, 192.168.10.127, 192.168.10.138, 192.168.10.180 | `auOEtU3d4yfB4U6iB7WIt0gSCLwK7hCDPorJAwVs0sY` | sops recipient `age1kdjql…26wer`; unreachable for a live read on 2026-11-04 |
 

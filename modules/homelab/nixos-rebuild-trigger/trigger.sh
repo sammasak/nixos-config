@@ -4,9 +4,8 @@
 # path, discovered at the worst possible time. Nothing above this line may fail.
 # -rf, not -f: a trigger-group member can `mkdir` the request path, and plain
 # `rm -f` on a directory returns 1 into `set -e`. The enclosing DIRECTORY must
-# survive — it is the trigger surface itself, and /run tmpfiles rules are
-# re-applied only at boot, so removing it would disable the trigger until the
-# next reboot.
+# survive — it is the trigger surface itself; tmpfiles re-creates it at the next
+# switch or boot, so removing it would disable the trigger until then.
 REQUEST_RAW="$(cat "${TRIGGER_FILE:?}" 2>/dev/null || true)"
 rm -rf "$TRIGGER_FILE"
 

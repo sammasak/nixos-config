@@ -12,7 +12,7 @@ A NixOS + Home Manager configuration repository using **flake-parts**. Manages L
 # ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
 #    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
 devenv tasks run nixos:qa           # every gate in order (= just check): lints, secrets-verify, flake check, then the tests
-devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: builds every x86 host and the x86 checks (incl. the QEMU tests; on lenovo they are only evaluated, and it says so), evaluates the Pis (= just verify)
+devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: builds every x86 host and the x86 checks (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them), evaluates the Pis (= just verify)
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
@@ -43,19 +43,21 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
 #   then, whatever deploy-rs returned, it checks the target (`systemctl is-system-running --wait`
 #   = running, /run/current-system = the system profile's generation) and exits non-zero if either
-#   fails: a host left degraded or off that generation, incl. a Pi left on a failed one (#411).
+#   fails: a host left degraded or off that generation (deploy-rs rolls back a failed activation itself; naked-pi not until #474).
 #   A failed check rolls nothing back, and a host degraded for an unrelated, pre-existing reason
 #   fails every deploy: read `systemctl --failed` on the target.
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
+#   asus-b460m  builds on the asus (Windows dual-boot worker)
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only, except the patched deploy-rs (not cached, a
 #               2.3 GiB Rust build): first, from lenovo,
 #               nix copy --no-check-sigs --from ssh-ng://deploy@black-pi \
 #                 --to 'ssh://deploy@naked-pi?remote-program=sudo%20nix-store' \
 #                 $(ssh deploy@black-pi nix-store -qR /nix/var/nix/profiles/system | grep -- '-deploy-rs-')
-#               (black-pi deployed first; the path is unsigned and naked-pi trusts only root, hence sudo)
+#               (black-pi deployed first; the path is unsigned and naked-pi trusts only root, hence sudo).
+#               Owed (#474): naked-pi was offline when this landed, so its next deploy needs this step first.
 just checks HOST              # Realise HOST's system.checks where its deploy builds and print, per check, built or
                               # substituted (and the cache keys that signed it); deploy and dry-activate run it first, and stop on a failure
 just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
@@ -65,7 +67,7 @@ just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); B
                               # also flake checks, so the gate boots them when their inputs change
 ```
 
-Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
+Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`, `asus-b460m`,
 `black-pi` (aarch64; evaluated but not built on x86 hosts, build it on the Pi),
 and `naked-pi` (Pi 3 `rf-lab` node; `just deploy naked-pi`;
 runbook `~/knowledge/homelab/runbooks/naked-pi-rf-lab.md`).
@@ -89,7 +91,7 @@ SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decr
 
 Two SOPS modules:
 - **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity for the homelab secrets. The Cloudflare API token and Tailscale authkey are declared by `acme.nix` and `tailscale.nix`: lenovo decrypts both, acer (edge.nix's ACME) the token. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
-- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token on `devTools` hosts and hosts with a claude worker instance, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
+- **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token on `devTools` hosts and hosts with a claude worker instance, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758, asus-b460m); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
 
@@ -103,10 +105,10 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/grafana.yaml` | Personal + black-pi | Grafana's admin, OIDC client and secret key |
 | `homelab/cloudflare.yaml` | Personal + lenovo, acer-swift, acer `lukas` | ACME DNS token (lenovo, and acer's Caddy) |
 | `homelab/tailscale.yaml` | Personal + lenovo, acer `lukas` | Tailscale authkey |
-| `homelab/*.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, black-pi | GitHub access token |
+| `homelab/*.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, asus-b460m, black-pi | GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
-| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | Claude OAuth token |
-| `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
+| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | Claude OAuth token |
+| `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | OTLP auth |
 | `claude/*.yaml` | Personal + lenovo, acer-swift | Pi's gateway key |
 
 Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml`, `llm-gateway.yaml` and `authentik.yaml` also includes acer's own `lukas` user

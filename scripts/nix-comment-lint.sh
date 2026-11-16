@@ -80,7 +80,7 @@ rule decision-log "$PROSE" 'DECISION[ :(]'
 rule incident-history "$PROSE" 'postmortem|post-mortem'
 rule undo-instructions "$PROSE" 'to restore|to revert|re-enable (it|this|by)|revert with'
 # `rollback: <bool>` says how to undo a switch, which git log owns; `rollback: docs/x.md` is a pointer and stays
-rule rollback-instructions "$PROSE" 'rollback: (false|true)'
+rule rollback-instructions "$PROSE" '\brollback: (false|true)'
 # The policy allows a dated *revisit trigger* ("revisit after 2026-10-01 if X
 # still breaks") — that is a consequence, not history. Everything else dated is.
 rule bare-date "$PROSE" '[0-9]{4}-[0-9]{2}-[0-9]{2}' 'revisit'

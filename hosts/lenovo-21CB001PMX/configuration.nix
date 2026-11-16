@@ -22,6 +22,9 @@
     ../../modules/homelab/journal-collector.nix
   ];
 
+  # a quarter of the collector's 256M MemoryMax, as the daemon and the user slice: zram is charged to no cgroup
+  systemd.services.alloy.serviceConfig.MemorySwapMax = "64M";
+
   homelab.journalCollector = {
     enable = true;
     lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";
@@ -60,11 +63,16 @@
       label = "msi-ms7758";
       target = "msi-ms7758";
     }
+    {
+      label = "asus-b460m";
+      target = "asus-b460m";
+    }
   ];
   # `ssh <name>.msi` / `ssh <name>.acer` into an environment declared on that host (sam.workers.labelPrefix there).
   sam.workers.jumpHosts = {
     acer = "acer-swift";
     msi = "msi-ms7758";
+    asus = "asus-b460m";
   };
   sam.herdr.coordinatorWakeup = {
     enable = true;
@@ -149,6 +157,12 @@
       {
         assertion = parse daemon.MemorySwapMax * 4 <= parse daemon.MemoryMax;
         message = "lenovo: nix-daemon MemorySwapMax ${daemon.MemorySwapMax} is above a quarter of its MemoryMax ${daemon.MemoryMax}; zram is charged to no cgroup.";
+      }
+      {
+        assertion =
+          parse config.systemd.services.alloy.serviceConfig.MemorySwapMax * 4
+          <= parse config.systemd.services.alloy.serviceConfig.MemoryMax;
+        message = "lenovo: the journal collector's MemorySwapMax is above a quarter of its MemoryMax; zram is charged to no cgroup.";
       }
       {
         assertion = parse user.MemorySwapMax * 4 <= parse user.MemoryMax;
