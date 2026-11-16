@@ -77,7 +77,7 @@ for rule in rel.split("rule {")[1:]:
 check(set(rules) == {"transient", "systemd-coredump"}, f"unit rewrites: transient and systemd-coredump {sorted(rules)}")
 cases = {"session-12.scope": "transient", "run-r1a2b.service": "transient", "run-u7.scope": "transient",
          "run-p123-i456.scope": "transient", "systemd-coredump@0-1234-0.service": "systemd-coredump",
-         "k3s.service": None, "sshd.service": None, "user@1000.service": None, "systemd-journald.service": None}
+         "sshd.service": None, "user@1000.service": None, "systemd-journald.service": None}
 got = {u: next((to for to, rx in rules.items() if re.fullmatch(rx, u)), None) for u in cases}
 check(got == cases, f"unit rewrites match transient and coredump units only {got}")
 pc = comps.get(("loki.process", proc), "")

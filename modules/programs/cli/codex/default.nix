@@ -32,7 +32,6 @@ let
   portableSkillNames = lib.optionals coordinatorHost coordinatorSkills ++ [
     "credentials"
     "knowledge-vault"
-    "kubernetes-gitops"
     "nix-audit-operator"
     "nix-flake-development"
     "pi-offload"

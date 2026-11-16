@@ -1,8 +1,6 @@
-# kubectl port-forward pins one pod at start; once that pod is gone each new
-# connection fails ("lost connection to pod") but kubectl keeps listening and
-# never exits, so Restart= never fires. This runs the forward, probes it, and
-# exits when nothing answers so the unit restarts it against the new pod.
-# An ssh forward wedges the same way when its far end is gone and before keepalives give up.
+# lenovo's ssh -L forward to acer can keep listening after its far end is gone,
+# before keepalives give up, so Restart= never fires. This runs the forward,
+# probes it, and exits when nothing answers so the unit restarts it.
 # Any HTTP status is alive: only a failed connection means the forward is dead.
 {
   writeShellApplication,

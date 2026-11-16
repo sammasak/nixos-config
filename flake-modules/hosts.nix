@@ -6,7 +6,7 @@
     lenovo = { hostDir = "lenovo-21CB001PMX"; roles = [ "base" "laptop" "homelab-server" ]; deploy = { hostname = "localhost"; remoteBuild = false; }; };
 
     # remoteBuild: lenovo, memory-constrained, has crashed building these closures; acer's
-    # build I/O mid-deploy is the lesser risk to the cluster.
+    # build I/O mid-deploy is the lesser risk to its services.
     acer-swift = { roles = [ "base" "laptop" "homelab-agent" "runtime-host" ]; deploy.remoteBuild = true; };
 
     # remoteBuild for the same reason; only reachable in its Mon-Fri ~09:00-21:00 power window.

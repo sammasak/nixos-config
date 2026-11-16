@@ -168,8 +168,7 @@ a "push your work" message first if it holds unpushed commits. A deploy that fai
 A guest's Claude runs in bypassPermissions with `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1` (claude-code
 2.1.311 or later, guests only), so a "Dangerous rm operation" never stops an unattended agent. Any Bash deny or ask
 rule turns that variable off, so a guest drops the fleet's Bash deny rules; real hosts keep them. What still covers
-each: force pushes (`--force`, `-f`, a `+ref`) meet the validate-bash hook and the pre-push guard; `kubectl delete`
-of a PV or namespace meets validate-bash and Kyverno, and a guest has no kubeconfig; a push that skips the pre-push
+each: force pushes (`--force`, `-f`, a `+ref`) meet the validate-bash hook and the pre-push guard; a push that skips the pre-push
 gate (`--no-verify`, `-c core.hooksPath=`) meets the guests' own `no-verify-guard` PreToolUse hook, beside
 validate-bash in the same Bash hook list, which denies with exit 2 and never asks (an asking hook would turn the
 variable off for removals). The remote has no ruleset yet.

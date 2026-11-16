@@ -1,6 +1,4 @@
-# The homelab's own rules, from homelab-gitops apps/monitoring-dashboards (app-health-alerts, loki-health-alerts,
-# homelab-infra-guardrails, homelab-health-kpis), rewritten on the native node-exporter `up` and the blackbox probes:
-# no kube-state-metrics, Traefik or cert-manager metrics.
+# The homelab's own rules, on the native node-exporter `up` and the blackbox probes.
 groups:
   - name: host-health.alerts
     rules:
@@ -77,8 +75,7 @@ groups:
           summary: "Loki ingester is not reporting metrics"
           description: "Loki on black-pi has stopped exporting ingester metrics or its scrape target is down. New logs cannot be persisted. Run: systemctl status loki on black-pi."
 
-      # The two below replace the cluster's AppDown (Traefik) and CertificateExpiringSoon (cert-manager): black-pi
-      # probes the public names (../prometheus.nix), so they hold under Caddy too.
+      # The two below come from black-pi's probes of the public names through Caddy (../prometheus.nix).
       - alert: AppDown
         expr: probe_success{job="blackbox"} == 0
         for: 5m

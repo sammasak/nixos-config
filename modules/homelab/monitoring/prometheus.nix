@@ -22,8 +22,8 @@ let
   };
   probeBudget = 120;
   blackbox = cfg.exporters.blackbox;
-  # the public names as a browser reaches them, through Caddy on acer. Authentik's Postgres stays in the
-  # cluster until step 3, which brings a native postgres exporter; until then a dead Postgres shows as AppDown on auth.
+  # the public names as a browser reaches them, through Caddy on acer. Authentik's Postgres has no exporter, so a
+  # dead Postgres shows as AppDown on auth.
   probes = {
     https_2xx = [
       "https://auth.sammasak.dev"
@@ -35,8 +35,7 @@ let
     https_2xx_401 = [ "https://llm-gateway.sammasak.dev/v1/models" ];
     # forward auth sends a browser without a session to Authentik
     https_302_auth = [ "https://chat.sammasak.dev" ];
-    # Caddy admits black-pi; without a bearer token Alloy refuses. Needs lenovo's repoint first:
-    # through Traefik black-pi gets 403
+    # Caddy admits black-pi; without a bearer token Alloy refuses
     https_401_405 = [ "https://otlp.sammasak.dev/v1/logs" ];
   };
   https = codes: {
@@ -73,7 +72,7 @@ in
               ];
             };
           };
-          # otlp, whose target comes with the AdGuard repoint: Traefik refuses black-pi
+          # otlp: Alloy refuses a request without a bearer token
           https_401_405 = https [
             401
             405
@@ -165,7 +164,7 @@ in
   systemd.services.prometheus = {
     wants = [ "network-online.target" ];
     after = [ "network-online.target" ];
-    # about 20k series; 1.32 GB served 230k in the cluster
+    # about 20k series
     environment.GOMEMLIMIT = "400MiB";
     serviceConfig = {
       # a bad flag or a slow head load fails the switch instead of restarting unseen

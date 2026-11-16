@@ -1,7 +1,5 @@
-# Loki as a host service through upstream services.loki, at parity with the k3s chart (single binary, filesystem,
-# tsdb v13, 72h with 30 days for the two agent telemetry streams), so logs stay queryable when the cluster is not.
-# The data directory keeps the chart's layout (its /var/loki), here under /var/lib/loki (chunks, rules, compactor,
-# the rest under path_prefix), so the cut-over in docs/k3s-to-nixos-native.md ("P4 in detail") is a copy of that directory.
+# Loki as a host service through upstream services.loki: single binary, filesystem, tsdb v13, 72h with 30 days
+# for the two agent telemetry streams. Data under /var/lib/loki (chunks, rules, compactor, the rest under path_prefix).
 # Upstream runs `loki -verify-config` on the rendered file at build time (only while extraFlags is empty); the
 # flake check loki-config-msi-ms7758 (flake-modules/loki-check.nix) runs it on a seeded msi.
 # - A crash loop slower than 3 starts per 1200 s never reaches failed, so it pages only once an absence alert exists.

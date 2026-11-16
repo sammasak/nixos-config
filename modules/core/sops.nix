@@ -1,5 +1,5 @@
 # Per-machine operator credentials, on the hosts that enable them (not naked-pi),
-# whatever their cluster role. Cluster secrets (Cloudflare, Tailscale) are a different tree:
+# whatever their homelab role. Homelab secrets (Cloudflare, Tailscale) are a different tree:
 # homelab.secrets in modules/homelab/sops.nix.
 { config, lib, ... }:
 
@@ -45,7 +45,7 @@ in
         # Decrypted to /run/secrets/nix_access_token, which nix.conf includes at
         # runtime so nix can fetch private flake inputs. It lives under
         # secrets/homelab/ for the `homelab/*.yaml` recipient rule in
-        # secrets/.sops.yaml, not because it is a cluster secret — moving it
+        # secrets/.sops.yaml, not because it is a homelab service secret — moving it
         # breaks decryption until the rule moves with it.
         "nix_access_token" = {
           sopsFile = ../../secrets/homelab/github-access-token.yaml;

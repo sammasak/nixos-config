@@ -1,6 +1,6 @@
 """lenovo's ollama-portforward supervisor restarts a wedged forward (nixos-config#84).
 
-The fake forward serves HTTP, then wedges like kubectl after its pod is gone:
+The fake forward serves HTTP, then wedges like an ssh forward whose far end is gone:
 still running and listening, but every connection closes without a reply.
 """
 import os
