@@ -95,9 +95,11 @@
     max-jobs = 2;
     cores = 2;
   };
+  # swap a quarter of the cap, as the user slice and the worker pools: zram is charged to no cgroup
   systemd.services.nix-daemon.serviceConfig = {
     MemoryHigh = "6G";
     MemoryMax = "7G";
+    MemorySwapMax = "1792M";
   };
 
   # nixos-config#353: the daemon cap does not hold a client-side evaluation. All login users combined;
@@ -108,6 +110,45 @@
     MemoryMax = "8704M";
     MemorySwapMax = "2176M";
   };
+
+  # The caps still oversubscribe RAM: the user ceiling plus the daemon's MemoryHigh is 14.5 GiB before the kernel,
+  # zram and system.slice (about 1.9 GiB measured); MemoryHigh only throttles. Closing that needs the measured floor
+  # (#354). These hold what is known: the daemon throttles before its cap, and no swap cap exceeds a quarter of its cap.
+  assertions =
+    let
+      parse =
+        v:
+        let
+          m = builtins.match "([0-9]+)([KMG]?)" (toString v);
+        in
+        if m == null then
+          throw "lenovo: cannot size ${toString v} (want an integer, optionally with K, M or G)"
+        else
+          lib.toInt (builtins.elemAt m 0)
+          * {
+            "" = 1;
+            K = 1024;
+            M = 1048576;
+            G = 1073741824;
+          }
+          .${builtins.elemAt m 1};
+      daemon = config.systemd.services.nix-daemon.serviceConfig;
+      user = config.systemd.slices.user.sliceConfig;
+    in
+    [
+      {
+        assertion = parse daemon.MemoryHigh < parse daemon.MemoryMax;
+        message = "lenovo: nix-daemon MemoryHigh ${daemon.MemoryHigh} must be below its MemoryMax ${daemon.MemoryMax}, so a build is throttled before it is killed.";
+      }
+      {
+        assertion = parse daemon.MemorySwapMax * 4 <= parse daemon.MemoryMax;
+        message = "lenovo: nix-daemon MemorySwapMax ${daemon.MemorySwapMax} is above a quarter of its MemoryMax ${daemon.MemoryMax}; zram is charged to no cgroup.";
+      }
+      {
+        assertion = parse user.MemorySwapMax * 4 <= parse user.MemoryMax;
+        message = "lenovo: user.slice MemorySwapMax ${user.MemorySwapMax} is above a quarter of its MemoryMax ${user.MemoryMax}; zram is charged to no cgroup.";
+      }
+    ];
 
   # pi-harness PICODE_EP and factum FACTS_OLLAMA_EP default to localhost:8080. The
   # llm-gateway serves keyless Ollama only on acer's loopback, so only this reaches it.
