@@ -256,6 +256,17 @@ let
         ${pkgs.python3}/bin/python scripts/test-caddy-edge.py
       '';
 
+  # acer's ak wrapper, from the gate probe
+  authentikAkTest =
+    gate "authentik-ak-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-authentik-ak.py
+      '';
+
   # ~/.claude.json activation
   switchSafetyTest =
     gate "switch-safety-test"
@@ -378,6 +389,7 @@ let
       journalCollectorTest
       alloyOtlpTest
       caddyEdgeTest
+      authentikAkTest
       switchSafetyTest
       rfBeaconsTest
       qaPushTest
@@ -758,6 +770,8 @@ in
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:caddy-edge-test" =
       task "acer's Caddy edge, as caddy adapt reads it: admin off, every name routed, forward auth before chat and grafana, otlp allowlisted, llm-gateway /v1 only" caddyEdgeTest;
+    "nixos:authentik-ak-test" =
+      task "acer's ak: lifecycle/ak as authentik in the server unit's sandbox and environment, the env file by path" authentikAkTest;
     "nixos:switch-safety-test" = task "A switch survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 

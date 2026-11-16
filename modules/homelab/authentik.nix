@@ -104,22 +104,28 @@ let
   ak =
     let
       server = config.systemd.services.authentik;
-      props = lib.genAttrs [
+      props = lib.getAttrs [
         "EnvironmentFile"
         "WorkingDirectory"
+        "StateDirectory"
         "UMask"
         "ProtectSystem"
         "ProtectHome"
         "PrivateTmp"
         "NoNewPrivileges"
-      ] (n: server.serviceConfig.${n});
+        "CapabilityBoundingSet"
+      ] server.serviceConfig;
+      # the live server's multiproc dir would collect a dead shell's metrics; lifecycle/ak picks one in the private /tmp
+      env = removeAttrs server.environment [ "PROMETHEUS_MULTIPROC_DIR" ];
+      arg =
+        flag: n: v:
+        "${flag} ${lib.escapeShellArg "${n}=${toString v}"}";
     in
     pkgs.writeShellScriptBin "ak" ''
-      [[ -t 0 && -t 1 ]] && io=--pty || io=--pipe
-      exec ${config.systemd.package}/bin/systemd-run --quiet --collect --wait "$io" \
-        --uid=${server.serviceConfig.User} --gid=${server.serviceConfig.Group} \
-        ${lib.concatMapAttrsStringSep " " (n: v: "-p ${lib.escapeShellArg "${n}=${toString v}"}") props} \
-        -E ${lib.escapeShellArg "PATH=${server.environment.PATH}"} -E TZ=${server.environment.TZ} \
+      exec ${lib.getExe' config.systemd.package "systemd-run"} --quiet --collect --wait --pty --pipe \
+        --uid=${server.serviceConfig.User} --gid=${server.serviceConfig.Group} -p MemoryMax=1G \
+        ${lib.concatMapAttrsStringSep " " (arg "-p") props} \
+        ${lib.concatMapAttrsStringSep " " (arg "-E") env} \
         ${pkgs.bash}/bin/bash ${django}/lifecycle/ak "$@"
     '';
 in

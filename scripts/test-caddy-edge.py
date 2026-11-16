@@ -1,8 +1,8 @@
 """acer's Caddy edge (modules/homelab/edge.nix), as `caddy adapt` reads the deployed Caddyfile: the admin API is off,
 every name has its route and backend, chat and grafana pass forward auth before their backend with the five
 X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only, open-webui listens on the
-edge socket alone, herman is its Nix build with the Cache-Control matrix and SPA fallback of its
-deploy/nginx.conf, and acer's `ak` runs as authentik with systemd reading Authentik's env file."""
+edge socket alone, and herman is its Nix build with the Cache-Control matrix and SPA fallback of its
+deploy/nginx.conf."""
 import json
 import subprocess
 import sys
@@ -122,10 +122,6 @@ gateway = [m for h, m in steps if "127.0.0.1:8081" in dials(h)]
 check(gateway == [({"path": ["/v1", "/v1/*"]},)], f"llm-gateway proxies /v1 and /v1/* only {gateway}")
 rest = [(h.get("status_code"), m) for h, m in steps if h.get("handler") == "static_response"]
 check(rest == [(404, ())], f"everything else on llm-gateway is 404 {rest}")
-
-ak = open(f"{P['ak']}/bin/ak").read() if P["ak"] else ""
-check("--uid=authentik" in ak and "-p 'EnvironmentFile=/run/secrets/rendered/authentik.env'" in ak
-      and "AUTHENTIK_SECRET_KEY" not in ak, f"ak runs as authentik and passes the env file by path {P['ak']}")
 
 check(P["chatStreams"] == ["/run/open-webui-edge.sock"], f"open-webui listens on Caddy's socket alone {P['chatStreams']}")
 

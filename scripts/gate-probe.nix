@@ -192,7 +192,6 @@ let
         herman = "${hosts.acer-swift.pkgs.hermanWeb}";
       };
       chatStreams = acer.systemd.sockets.open-webui-proxy.listenStreams;
-      ak = lib.findFirst (p: (p.name or "") == "ak") null acer.environment.systemPackages;
       fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
       cert = { inherit (acer.security.acme.certs."sammasak.dev") directory extraDomainNames; };
       failing = {
@@ -201,6 +200,12 @@ let
           extend "acer-swift" [ ({ lib, ... }: { services.caddy.enable = lib.mkForce false; }) ]
         );
       };
+    };
+
+    # acer's ak wrapper and the server unit environment it copies
+    authentik = {
+      ak = lib.findFirst (p: (p.name or "") == "ak") null acer.environment.systemPackages;
+      envKeys = builtins.attrNames acer.systemd.services.authentik.environment;
     };
 
     # every host, so a collector enabled anywhere else is seen; context discarded: nothing here needs a build
