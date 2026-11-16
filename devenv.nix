@@ -103,7 +103,11 @@ let
           for s in $systems; do
             outputs=$(names "$kind.$s")
             for o in $outputs; do
-              if [ "$kind.$s" = "checks.$here" ]; then
+              # the *-vm checks boot QEMU (up to 4 GiB): lenovo evaluates them and says so, msi and acer boot them
+              if [ "$kind.$s" = "checks.$here" ] && [[ $o == *-vm ]] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
+                echo "nixos-flake-check: NOT booting checks.$s.$o on lenovo (a QEMU VM, memory): only its drvPath is evaluated; run the gate on msi or acer" >&2
+                drv "$kind.$s.$o"
+              elif [ "$kind.$s" = "checks.$here" ]; then
                 echo "nixos-flake-check: build checks.$s.$o" >&2
                 nix build --no-link --no-write-lock-file ".#checks.$s.$o"
               else
@@ -807,7 +811,7 @@ in
     "nixos:harness-telemetry-test" =
       task "sam.claude.telemetry: Claude exports through the local relay with session and repository attributes; emit-work-ref.sh only when on and pinned" harnessTelemetryTest;
     "nixos:known-hosts-test" =
-      task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host" knownHostsTest;
+      task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =

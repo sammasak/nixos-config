@@ -229,5 +229,43 @@ with tempfile.TemporaryDirectory() as t:
     listed = git("worktree", "list", "--porcelain").count("worktree ")
     check(listed == 2, f"no gate worktree left behind ({listed} registered, the repository and wt expected)")
 
+
+# The flake check (flakeCheck in devenv.nix) boots the *-vm checks only off lenovo, and says when it does not: run with
+# nix and uname stubbed, on a fake flake with one VM check and one plain check.
+fc = re.search(r"\n  flakeCheck =\s+gate\s+\"nixos-flake-check\".*?''\n(.*?)\n *'';\n", src, re.S)
+check(fc is not None, "flakeCheck found in devenv.nix")
+if fc:
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        calls = t / "calls"
+        names = {"nixosConfigurations": [], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
+                 "checks.x86_64-linux": ["socket-rebind-vm", "plain"]}
+        (t / "nix").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
+                               f"open({str(calls)!r}, 'a').write(' '.join(a) + '\\n')\n"
+                               f"names = {names!r}\n"
+                               "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
+                               "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','nixosConfigurations','overlays','packages','templates']}))\n"
+                               "elif '--expr' in a: print('x86_64-linux', end='')\n"
+                               "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n")
+        for host in ("lenovo-21CB001PMX", "msi-ms7758"):
+            (t / "uname").write_text(f"#!/usr/bin/env bash\necho {host}\n")
+            for f in ("nix", "uname"):
+                (t / f).chmod(0o755)
+            calls.write_text("")
+            body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
+            body = body.replace("''$", "$")
+            run = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True,
+                                 env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}"})
+            built = [c for c in calls.read_text().splitlines() if c.startswith("build ")]
+            vm_built = any("socket-rebind-vm" in c for c in built)
+            vm_evaluated = any("socket-rebind-vm.drvPath" in c for c in calls.read_text().splitlines())
+            if host.startswith("lenovo"):
+                check(run.returncode == 0 and not vm_built and vm_evaluated
+                      and "NOT booting checks.x86_64-linux.socket-rebind-vm on lenovo" in run.stderr
+                      and any("plain" in c for c in built), f"on lenovo the VM check is evaluated, not booted, and said so ({run.stderr[-300:]!r})")
+            else:
+                check(run.returncode == 0 and vm_built and "NOT booting" not in run.stderr,
+                      f"on msi the VM check is booted ({run.stderr[-300:]!r})")
+
 print(f"{failed} failed" if failed else "all passed")
 sys.exit(1 if failed else 0)
