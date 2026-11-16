@@ -17,6 +17,44 @@ let
   ];
   file = key: "$__file{${config.sops.secrets."grafana/${key}".path}}";
   auth = "https://auth.sammasak.dev/application/o";
+  # every dashboard parses at evaluation (importJSON throws), and each datasource reference anywhere in it (panels,
+  # targets, templating, annotations) is a provisioned uid or a template variable; Grafana would only log the rest
+  dashboards =
+    lib.mapAttrs
+      (
+        f: _:
+        builtins.addErrorContext "while parsing dashboards/${f}" (lib.importJSON (./dashboards + "/${f}"))
+      )
+      (lib.filterAttrs (f: t: t == "regular" && lib.hasSuffix ".json" f) (builtins.readDir ./dashboards));
+  provisioned = config.services.grafana.provision.datasources.settings.datasources;
+  uids = map (d: d.uid or null) provisioned;
+  # a legacy string datasource resolves by name too; the rest are Grafana's built-in sources
+  known =
+    uids
+    ++ map (d: d.name) provisioned
+    ++ [
+      "-- Grafana --"
+      "-- Mixed --"
+      "-- Dashboard --"
+      "grafana"
+    ];
+  refs =
+    v:
+    if builtins.isAttrs v then
+      lib.optional (v ? datasource) v.datasource ++ lib.concatMap refs (builtins.attrValues v)
+    else if builtins.isList v then
+      lib.concatMap refs v
+    else
+      [ ];
+  uidOf = d: if builtins.isAttrs d then d.uid or null else d;
+  unknownUids = lib.concatLists (
+    lib.mapAttrsToList (
+      f: j:
+      map (u: "${f}: ${u}") (
+        lib.filter (u: u != null && !lib.hasPrefix "$" u && !lib.elem u known) (map uidOf (refs j))
+      )
+    ) dashboards
+  );
 in
 {
   sops.secrets = lib.genAttrs (map (k: "grafana/${k}") keys) (_: {
@@ -143,6 +181,10 @@ in
     {
       assertion = !config.services.grafana.openFirewall && fw.enable && anySourceTcp fw [ port ] == [ ];
       message = "modules/homelab/monitoring/grafana.nix: keep the firewall on and port ${toString port} out of openFirewall and allowedTCPPorts; admit a caller with a source-scoped rule.";
+    }
+    {
+      assertion = unknownUids == [ ];
+      message = "modules/homelab/monitoring/grafana.nix: dashboard datasources not provisioned (${toString uids}): ${lib.concatStringsSep ", " unknownUids}.";
     }
   ];
 }

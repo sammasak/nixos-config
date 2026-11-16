@@ -183,6 +183,13 @@ in
     };
   };
   environment.systemPackages = [ backup ];
+  # ruff's pyflakes rules and syntax errors at build: the nightly timer would be the first to run it
+  system.checks = [
+    (pkgs.runCommand "open-webui-backup-ruff" { nativeBuildInputs = [ pkgs.ruff ]; } ''
+      ruff check --isolated --no-cache --select F ${./open-webui-backup.py}
+      touch $out
+    '')
+  ];
 
   assertions = [
     {
