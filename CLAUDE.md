@@ -43,7 +43,7 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
 #   then, whatever deploy-rs returned, it checks the target (`systemctl is-system-running --wait`
 #   = running, /run/current-system = the system profile's generation) and exits non-zero if either
-#   fails: a host left degraded or off that generation, incl. a Pi left on a failed one (#411).
+#   fails: a host left degraded or off that generation (deploy-rs rolls back a failed activation itself; naked-pi not until #474).
 #   A failed check rolls nothing back, and a host degraded for an unrelated, pre-existing reason
 #   fails every deploy: read `systemctl --failed` on the target.
 #   lenovo      loopback self-push, proves the deploy-rs path
@@ -55,7 +55,8 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #               nix copy --no-check-sigs --from ssh-ng://deploy@black-pi \
 #                 --to 'ssh://deploy@naked-pi?remote-program=sudo%20nix-store' \
 #                 $(ssh deploy@black-pi nix-store -qR /nix/var/nix/profiles/system | grep -- '-deploy-rs-')
-#               (black-pi deployed first; the path is unsigned and naked-pi trusts only root, hence sudo)
+#               (black-pi deployed first; the path is unsigned and naked-pi trusts only root, hence sudo).
+#               Owed (#474): naked-pi was offline when this landed, so its next deploy needs this step first.
 just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
                               # and the closure diff vs the running system; activates nothing, but read
                               # the output: it exits 0 even when the dry activation fails

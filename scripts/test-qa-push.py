@@ -239,7 +239,7 @@ if fc:
     with tempfile.TemporaryDirectory() as t:
         t = pathlib.Path(t)
         calls = t / "calls"
-        names = {"nixosConfigurations": [], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
+        names = {"nixosConfigurations": ["h1"], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
                  "checks.x86_64-linux": ["rebind", "plain"]}
         (t / "nix").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
                                f"open({str(calls)!r}, 'a').write(' '.join(a) + '\\n')\n"
@@ -261,7 +261,9 @@ if fc:
             built = [c for c in calls.read_text().splitlines() if c.startswith("build ")]
             vm_built = any("rebind" in c for c in built)
             if host.startswith("lenovo"):
-                check(run.returncode != 0 and not built and "refused on lenovo: rebind boot a QEMU VM" in run.stderr,
+                hosts_evaluated = any("toplevel" in c for c in calls.read_text().splitlines())
+                check(run.returncode != 0 and not built and not hosts_evaluated
+                      and "refused on lenovo: rebind boot a QEMU VM" in run.stderr,
                       f"on lenovo the gate fails, builds nothing and names the VM check ({run.returncode}, {run.stderr[-300:]!r})")
             else:
                 check(run.returncode == 0 and vm_built and "refused" not in run.stderr,
