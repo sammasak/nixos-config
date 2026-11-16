@@ -97,6 +97,25 @@ def main():
           "the timer's coord:changed carries the host's fixed skills options: delegated approval citing the owner's decision comment, the Coordinator's pane")
     check(script.count("--option coordinator.interactiveQuietSeconds:int 600") == script.count("--option coordinator.mayApprove:bool true"),
           "lenovo's interactiveQuietSeconds (600) rides on every devenv call beside the delegation flags (skills#66: no wake while the interactive Coordinator works)")
+    # the report timers ride on the wake-up's enable and gate; their job's week rule is scripts/test-coordinator-report.py
+    for name, mode, cal in (("coordinator-report-daily", "daily", "*-*-* 03:00"), ("coordinator-report-fortnight", "fortnight", "Mon 07:00")):
+        t = lenovo_timers.get(name, {}).get("Timer", {})
+        check(t.get("OnCalendar") == cal and t.get("Persistent") is True and name not in acer_timers,
+              f"lenovo alone has the {name} timer, {cal}, Persistent (got {t})")
+        svc = lenovo_services.get(name, {}).get("Service", {})
+        check(svc.get("Type") == "oneshot" and svc.get("ExecStart") in (want := f"{P['report']}/bin/coordinator-report {mode}", [want])
+              and svc.get("MemoryMax") == "2G" and any(e.startswith("PATH=/run/current-system/sw/bin:") for e in svc.get("Environment", [])),
+              f"{name} is a memory-bounded oneshot running coordinator-report {mode}, devenv from the profiles (got {svc})")
+    check("coordinator-report-daily.service" in lenovo_services["coordinator-report-fortnight"]["Unit"].get("After", []),
+          "the fortnight run orders after the daily, so a boot catch-up renders the weekly after Sunday's daily")
+    report = P["reportScript"] or ""
+    # writeShellApplication puts its shebang and set -o lines before the text
+    check(('\nset -- "$@" ' + OPTS + "\n") in report and report.count("--option coordinator.") == OPTS.count("--option coordinator.")
+          and 'no skills checkout at $skills' in report,
+          f"the report job passes exactly the host's fixed skills options to devenv and skips without a checkout ({report[:160]!r})")
+    seeded = "sam.herdr.coordinatorWakeup (the wake-up and the coordinator-report timers) runs only on the coordinator host"
+    check(any(m.startswith(seeded) for m in P["failing"]["acerWakeup"]) and not any(m.startswith(seeded) for m in P["failing"]["lenovo"]),
+          "coordinatorWakeup on acer, a host without sam.herdr.machines, fails evaluation; lenovo passes")
     check("does not exist" in script and "older than the pinned skills input" in script and "pull --ff-only origin main" in script,
           "a checkout that lacks the options (older than the pin) is named in the journal and toasted, not retried silently")
     quiet = script.index('if [ ! -s "$pending" ]; then')
