@@ -118,10 +118,10 @@ for name, backend in backends.items():
               f"{name} sends only /outpost.goauthentik.io/* to Authentik besides forward_auth {outpost}")
 
 steps = list(flatten(routes.get("otlp.sammasak.dev", {}).get("handle", [])))
-allow = {fleet[h] for h in ("lenovo-21CB001PMX", "acer-swift", "msi-ms7758", "asus-b460m", "black-pi")}
+allow = set(fleet.values())
 denied = [m for h, m in steps if h.get("handler") == "static_response" and h.get("status_code") == 403]
 ranges = [set(n["remote_ip"]["ranges"]) for m in denied for x in m for n in x.get("not", []) if "remote_ip" in n]
-check(ranges == [allow], f"otlp answers 403 to any source but the five fleet hosts {ranges}")
+check(ranges == [allow], f"otlp answers 403 to any source but the fleet hosts {ranges}")
 order = [h.get("handler") for h, _ in steps if h.get("handler") in ("static_response", "reverse_proxy")]
 check(order == ["static_response", "reverse_proxy"], f"otlp checks the allowlist before it proxies {order}")
 

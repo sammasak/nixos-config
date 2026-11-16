@@ -24,6 +24,7 @@ let
       sleeps = true;
     };
   };
+  strays = lib.filter (n: !(config.sam.fleet.hosts ? ${n})) (lib.attrNames caches);
   peers = lib.filter (c: !(c.sleeps or false)) (lib.attrValues (removeAttrs caches [ host ]));
 
   rules = mkDualBackendFirewall {
@@ -39,6 +40,14 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        assertion = strays == [ ];
+        message = "modules/core/store-cache.nix: every cache is a host of sam.fleet.hosts (modules/core/fleet.nix); not: ${toString strays}.";
+      }
+      {
+        assertion = caches ? ${host};
+        message = "modules/core/store-cache.nix: ${host} serves a store cache, so its public key belongs in caches there.";
+      }
       {
         assertion = anySourceTcp config.networking.firewall [ port ] == [ ];
         message = "modules/core/store-cache.nix: the store cache answers the LAN only through the scoped rule there; keep port ${toString port} out of networking.firewall allowedTCPPorts and allowedTCPPortRanges, global and per interface, which accept from any source.";

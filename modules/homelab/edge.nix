@@ -15,13 +15,7 @@ let
   # the native server and its embedded outpost (authentik.nix)
   authentik = "127.0.0.1:9000";
   # the only OTLP pushers: each host's native-otel-relay, and black-pi's blackbox probe
-  otlpSources = map (h: hosts.${h}.address) [
-    "lenovo-21CB001PMX"
-    "acer-swift"
-    "msi-ms7758"
-    "asus-b460m"
-    "black-pi"
-  ];
+  otlpSources = map (h: h.address) (lib.attrValues hosts);
   sites = {
     auth = "reverse_proxy ${authentik}";
     chat = ''

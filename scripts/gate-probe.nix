@@ -158,6 +158,22 @@ let
           );
         };
       deployNodes = builtins.attrNames flake.deploy.nodes;
+      fleet = lenovo.sam.fleet.hosts;
+      failing = {
+        lenovo = failing lenovo;
+        unpinned = failing (
+          extend "lenovo" [
+            (
+              { lib, ... }:
+              {
+                programs.ssh.knownHosts = lib.mkForce (removeAttrs lenovo.programs.ssh.knownHosts [ "asus-b460m" ]);
+              }
+            )
+          ]
+        );
+        uncached = failing (extend "black-pi" [ ({ lib, ... }: { sam.storeCache.enable = lib.mkForce true; }) ]);
+      };
+      roles = lib.mapAttrs (_: h: h.config.sam.profile.roles) hosts;
     };
 
     build-bounds = {
@@ -252,6 +268,7 @@ let
       in
       {
         hosts = lib.mapAttrs (_: h: facts h.config) hosts;
+        deployNodes = builtins.attrNames flake.deploy.nodes;
         # the negative case: the hosts check must see the module enabled on naked-pi, the one host without it
         seeded = facts (
           extend "naked-pi" [
