@@ -192,6 +192,7 @@ let
         herman = "${hosts.acer-swift.pkgs.hermanWeb}";
       };
       chatStreams = acer.systemd.sockets.open-webui-proxy.listenStreams;
+      ak = lib.findFirst (p: (p.name or "") == "ak") null acer.environment.systemPackages;
       fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
       cert = { inherit (acer.security.acme.certs."sammasak.dev") directory extraDomainNames; };
       failing = {

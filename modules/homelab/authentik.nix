@@ -99,6 +99,29 @@ let
       ExecStartPre = "${pkgs.coreutils}/bin/mkdir -p /run/${name}/prometheus";
     };
   };
+  # `sudo ak shell [-c CODE]`: upstream's lifecycle/ak (bin/ak re-splits its arguments) as the server unit runs,
+  # with its user, environment and sandbox; systemd reads the env file, so no secret passes argv or the store
+  ak =
+    let
+      server = config.systemd.services.authentik;
+      props = lib.genAttrs [
+        "EnvironmentFile"
+        "WorkingDirectory"
+        "UMask"
+        "ProtectSystem"
+        "ProtectHome"
+        "PrivateTmp"
+        "NoNewPrivileges"
+      ] (n: server.serviceConfig.${n});
+    in
+    pkgs.writeShellScriptBin "ak" ''
+      [[ -t 0 && -t 1 ]] && io=--pty || io=--pipe
+      exec ${config.systemd.package}/bin/systemd-run --quiet --collect --wait "$io" \
+        --uid=${server.serviceConfig.User} --gid=${server.serviceConfig.Group} \
+        ${lib.concatMapAttrsStringSep " " (n: v: "-p ${lib.escapeShellArg "${n}=${toString v}"}") props} \
+        -E ${lib.escapeShellArg "PATH=${server.environment.PATH}"} -E TZ=${server.environment.TZ} \
+        ${pkgs.bash}/bin/bash ${django}/lifecycle/ak "$@"
+    '';
 in
 {
   users.users.authentik = {
@@ -108,6 +131,7 @@ in
   users.groups.authentik = { };
 
   environment.etc."authentik/config.yml".text = builtins.toJSON settings;
+  environment.systemPackages = [ ak ];
 
   sops.secrets = lib.mapAttrs' (_: key: lib.nameValuePair key { inherit sopsFile; }) envNames;
   sops.templates."authentik.env" = {
