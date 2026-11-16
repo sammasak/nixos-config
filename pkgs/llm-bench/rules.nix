@@ -33,9 +33,11 @@ let
     host = hosts ++ extraHosts;
     model = models;
     quant = quants;
+    # 16384: msi's archived runs (llm_bench.py import-msi), not a fit context
     ctx = [
       "4096"
       "8192"
+      "16384"
     ];
     evidence = [
       "measured"
@@ -44,6 +46,13 @@ let
     route = [
       "direct"
       "gateway"
+    ];
+    check = [
+      "headroom"
+      "offload"
+      "decode"
+      "ttft"
+      "cold_load"
     ];
   };
   check =
@@ -109,7 +118,7 @@ let
                 1
               else
                 0
-            ) { check = name; }
+            ) (check file { check = name; })
           ) (r.checks or { })
         ))
       ];

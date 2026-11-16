@@ -15,7 +15,8 @@ let
           {
             homelab.gpuTelemetry.enable = true;
             services.xserver.videoDrivers = [ "nvidia" ];
-            hardware.nvidia.open = true;
+            # mkDefault: #492's own choice for asus wins
+            hardware.nvidia.open = lib.mkDefault true;
             nixpkgs.config.allowUnfreePredicate = lib.mkForce (_: true);
           }
         )
@@ -114,13 +115,73 @@ let
       }
     ];
   };
-  badLabel = builtins.tryEval (
-    builtins.deepSeq (render {
-      "bad.json" = fixture.fit // {
-        model = "unlisted:70b";
-      };
-    }) true
-  );
+  renders =
+    r: (builtins.tryEval (builtins.deepSeq (render { "bad.json" = fixture.fit // r; }) true)).success;
+  # GpuTelemetryDown (rules/homelab.yaml): asus's GPU exporter down is a page only while asus itself answers
+  gpuTests = {
+    rule_files = [ "${../modules/homelab/monitoring/rules/homelab.yaml}" ];
+    tests =
+      map
+        (
+          {
+            name,
+            node,
+            gpu,
+            firing,
+          }:
+          {
+            inherit name;
+            interval = "1m";
+            input_series = [
+              {
+                series = ''up{job="node-exporter",node="asus-b460m",instance="asus-b460m",sleeps="true"}'';
+                values = "${node}x30";
+              }
+              {
+                series = ''up{job="nvidia-gpu",node="asus-b460m",instance="asus-b460m",sleeps="true"}'';
+                values = "${gpu}x30";
+              }
+            ];
+            promql_expr_test = [
+              {
+                expr = ''count by (node) (ALERTS{alertname="GpuTelemetryDown",alertstate="firing"})'';
+                eval_time = "20m";
+                exp_samples = lib.optional firing {
+                  labels = ''{node="asus-b460m"}'';
+                  value = 1;
+                };
+              }
+            ];
+          }
+        )
+        [
+          {
+            name = "asus up, its GPU exporter down";
+            node = "1";
+            gpu = "0";
+            firing = true;
+          }
+          {
+            name = "asus off";
+            node = "0";
+            gpu = "0";
+            firing = false;
+          }
+          {
+            name = "asus up, its GPU exporter up";
+            node = "1";
+            gpu = "1";
+            firing = false;
+          }
+        ];
+  };
+  badLabels = lib.filter renders [
+    { model = "unlisted:70b"; }
+    { host = "not-a-fleet-host"; }
+    { ctx = 2048; }
+    { quant = "Q2_K"; }
+    { evidence = "invented"; }
+  ];
 in
 {
   perSystem =
@@ -135,12 +196,18 @@ in
         gpu-telemetry-exporter =
           assert lib.assertMsg (lib.hasInfix "--nvidia-smi-command ${discard smi} " (
             discard exec
-          )) "llm-bench: the GPU exporter does not run its host driver's nvidia-smi (${exec})";
+          )) "llm-bench: the GPU exporter does not run its host driver's nvidia-smi (${discard exec})";
+          assert lib.assertMsg (lib.hasPrefix "${discard "${pkgs.prometheus-nvidia-gpu-exporter}"}/bin/" (
+            lib.trim (discard exec)
+          )) "llm-bench: the GPU exporter on the host is not this check's prometheus-nvidia-gpu-exporter";
           pkgs.runCommand "gpu-telemetry-exporter"
             {
+              # the command line without its context, so the unfree, uncached driver is never built here; the exporter
+              # it names is this package (asserted above)
               nativeBuildInputs = [
                 pkgs.python3
                 pkgs.curl
+                pkgs.prometheus-nvidia-gpu-exporter
               ];
             }
             ''
@@ -149,9 +216,9 @@ in
               # the deployed command line, with only the listener and nvidia-smi swapped for the sandbox's
               ${
                 lib.replaceStrings
-                  [ smi "${gpuHost.services.prometheus.exporters.nvidia-gpu.listenAddress}:" ]
+                  [ (discard smi) "${gpuHost.services.prometheus.exporters.nvidia-gpu.listenAddress}:" ]
                   [ "$PWD/nvidia-smi" "127.0.0.1:" ]
-                  (lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] exec)
+                  (lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] (discard exec))
               } > exporter.log 2>&1 &
               exporter=$!
               for _ in $(seq 50); do curl -fsS -o metrics http://127.0.0.1:${toString gpuHost.services.prometheus.exporters.nvidia-gpu.port}/metrics && break; sleep 0.2; done
@@ -163,8 +230,9 @@ in
               grep '^nvidia_smi_' metrics > $out
             '';
         llm-bench-scorecard =
-          assert lib.assertMsg (!badLabel.success)
-            "llm-bench: a result naming an undeclared model rendered; the label sets in rules.nix no longer bound it";
+          assert lib.assertMsg (
+            renders { } && badLabels == [ ]
+          ) "llm-bench: results with labels outside rules.nix's sets rendered: ${builtins.toJSON badLabels}";
           pkgs.runCommand "llm-bench-scorecard"
             {
               nativeBuildInputs = [ pkgs.prometheus.cli ];
@@ -173,9 +241,11 @@ in
                 "capacity.json" = fixture.capacity;
               });
               tests = builtins.toJSON ruleTests;
+              gpuTests = builtins.toJSON gpuTests;
               passAsFile = [
                 "rules"
                 "tests"
+                "gpuTests"
               ];
             }
             ''
@@ -183,6 +253,8 @@ in
               cp "$testsPath" tests.yaml
               promtool check rules rules.yaml
               promtool test rules tests.yaml
+              cp "$gpuTestsPath" gpu-tests.yaml
+              promtool test rules gpu-tests.yaml
               touch $out
             '';
       };

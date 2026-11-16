@@ -1,4 +1,5 @@
-"""nvidia-smi --query-gpu=... --format=csv as the 595 driver answers it for one RTX 3070, for the exporter check."""
+"""nvidia-smi --query-gpu=... --format=csv in nvidia-smi's CSV form (units in the header, the throttle bitmask in hex)
+for one RTX 3070, for the exporter check. Written from the driver's documented output, not captured from it."""
 import sys
 
 VALUES = {
@@ -14,6 +15,9 @@ fields = args["--query-gpu"].split(",")
 head, row = [], []
 for f in fields:
     v = VALUES.get(f, "Not Active" if f.startswith("clocks_throttle_reasons.") else None)
+    if f == "clocks_throttle_reasons.active":
+        # bit 0x1 is "GPU idle", not a throttle
+        v = "0x0000000000000001"
     if v is None:
         sys.exit(f"fake nvidia-smi: Field \"{f}\" is not a valid field to query.")
     unit, val = v if isinstance(v, tuple) else (None, v)

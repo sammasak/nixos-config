@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "pkgs", "llm-bench"))
@@ -72,9 +73,11 @@ with tempfile.TemporaryDirectory() as tmp:
     results = {os.path.basename(p): json.load(open(p)) for p in glob.glob(os.path.join(tmp, "*.json"))}
     fits = [r for r in results.values() if r["kind"] == "fit"]
     caps = [r for r in results.values() if r["kind"] == "capacity"]
-    check(sorted(r["ctx"] for r in fits) == [4096, 8192] and len(caps) == 1, f"mock: a fit per context size and one capacity run {sorted(results)}")
+    check(sorted(r["ctx"] for r in fits) == [4096, 8192] and len(caps) == 1 and all("-direct-" in n for n in results),
+          f"mock: a fit per context size and one capacity run, the route in each name {sorted(results)}")
     for r in fits:
-        check(r["samples"] == {"warm": 20, "cold": 5} and r["fit"] == "yes" and r["digest"] and r["fixture"]["sha256"],
+        check(r["samples"] == {"warm": 20, "cold": 5, "failed": 0} and r["fit"] == "yes" and r["digest"] and r["fixture"]["sha256"]
+              and r["warnings"] == [] and r["metrics"]["prompt_tokens"]["value"] == 2048,
               f"mock fit {r['ctx']}: 20 warm and 5 cold, identified, judged ({r['fit']}, {r['samples']})")
         check(r["metrics"]["vram_headroom_bytes"]["source"] == "prometheus" and r["metrics"]["decode_tps_p50"]["source"] == "provider_reported",
               f"mock fit {r['ctx']}: VRAM from Prometheus, decode from Ollama's own timings")
@@ -85,7 +88,10 @@ with tempfile.TemporaryDirectory() as tmp:
         n = c["agents"]
         check(isinstance(n, int) and n >= 1 and all(inside[:n]) and (len(inside) == n or inside[n] is False),
               f"mock capacity {n}: every level up to it inside the thresholds, the next one outside ({inside})")
-        check(c["queue_wait_source"] == "estimated", "queue wait is labelled estimated")
+        check(c["queue_wait_source"] == "estimated" and c["levels"][0]["queue_wait_p95"] == 0.0,
+              "queue wait is labelled estimated, and zero for one agent")
+        check(sum(lv["requests"] for lv in c["levels"]) == len([l for p in glob.glob(os.path.join(tmp, "capacity-*.runs.jsonl")) for l in open(p)]),
+              "the unmeasured warm-up is in no level")
     corpus = lb.load_json(os.path.join(lb.FIXTURES, "long-context.json"))["corpus"]
     task = lb.load_json(os.path.join(lb.FIXTURES, "agent-turn.json"))["task"]
     for name, r in results.items():
@@ -104,12 +110,37 @@ with tempfile.TemporaryDirectory() as tmp:
                 fh.write(json.dumps({"text": "secret completion", "ttft_s": 7.0 + i, "decode_tok_s": tps, "t": 1.0}) + "\n")
     out = lb.import_msi(src, os.path.join(tmp, "out"), "0" * 40)
     rows = [json.load(open(p)) for p in out]
-    check(len(rows) == 2 and all(r["evidence"] == "historical" and r["host"] == "msi-ms7758" for r in rows),
-          "import-msi: one historical msi row per model")
+    check(len(rows) == 2 and all(r["evidence"] == "historical" and r["host"] == "msi-ms7758" and r["ctx"] == 16384 for r in rows),
+          "import-msi: one historical msi row per model, at the 16K context it ran")
+    check(all(r["metrics"]["decode_tps_p50"]["source"] == "client_measured" and "ttft_warm_p50" not in r["metrics"] for r in rows),
+          "import-msi: decode is the archived client's measurement; the mixed-prompt TTFT is not carried over")
     check(sorted(r["metrics"]["decode_tps_p50"]["value"] for r in rows) == [4.5, 4.8]
           and all(r["metrics"]["gpu_offload_ratio"]["value"] is None for r in rows),
           "import-msi: the measured decode rate, and no GPU value for a CPU host")
     check(not any("secret completion" in json.dumps(r) for r in rows), "import-msi: no completion text is carried over")
+
+srv = lb.FakeOllama()
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+mock_limits = lb.thresholds(os.path.join(ROOT, "pkgs", "llm-bench", "fixtures", "mock-thresholds.json"))
+try:
+    real_prompt = lb.long_prompt
+    # without the per-run nonce the fake's prompt cache serves every warm run, as Ollama's would
+    lb.long_prompt = lambda ctx, nonce=None: real_prompt(ctx)
+    try:
+        cached = lb.fit(srv.base, "mock-host", "mock:7b", 4096, cold=1, warm=5, prom=srv.base, limits=mock_limits, settle=0)
+    finally:
+        lb.long_prompt = real_prompt
+    check(any("prompt cache" in w for w in cached["warnings"]) and cached["fit"] != "yes",
+          f"identical prompts are caught as cache-served, and never a fit ({cached['fit']}, {cached['warnings']})")
+    oom = lb.fit(srv.base, "mock-host", "mock:oom", 4096, cold=2, warm=2, prom=srv.base, limits=mock_limits, settle=0)
+    check(oom["fit"] == "no" and "more system memory" in (oom["rejected"] or ""),
+          f"a model that fails to load is rejected with Ollama's error, not a crash ({oom['rejected']})")
+    tool = lb.chat_stream(srv.base + "/v1", "mock:tools", lb.agent_turn(4096, "t")[0], [])
+    check(tool["kind"] == "tool_call" and tool["ttft_s"] is None and tool["decode_source"] == "whole_turn",
+          f"a tool-call turn is classified, with no content TTFT and its decode over the whole turn ({tool})")
+    check(lb.chat_stream("http://127.0.0.1:9/v1", "mock:7b", [], [])["error"], "a refused connection is an error row, not an exception")
+finally:
+    srv.shutdown()
 
 committed = glob.glob(os.path.join(ROOT, "pkgs", "llm-bench", "scorecard", "*"))
 check(committed and all(p.endswith(".json") for p in committed), f"the scorecard holds aggregates only, no runs files {committed}")

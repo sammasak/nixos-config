@@ -48,7 +48,8 @@ in
       after = [ "network-online.target" ];
       serviceConfig = {
         RestartSec = 5;
-        MemoryMax = "64M";
+        # the nvidia-smi it forks per scrape runs in this cgroup too
+        MemoryMax = "128M";
       };
     };
 

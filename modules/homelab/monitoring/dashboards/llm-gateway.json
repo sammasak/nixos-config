@@ -933,14 +933,50 @@
           "format": "table"
         },
         {
-          "expr": "max without (route) (llm_bench:agent_capacity)",
+          "expr": "llm_bench:fit",
+          "refId": "K",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (route) (llm_bench:agent_capacity{route=\"direct\"})",
           "refId": "J",
           "instant": true,
           "format": "table"
         },
         {
-          "expr": "llm_bench:fit",
-          "refId": "K",
+          "expr": "sum without (route) (llm_bench:agent_capacity{route=\"gateway\"})",
+          "refId": "L",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (check) (llm_bench:fit_check{check=\"headroom\"})",
+          "refId": "M0",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (check) (llm_bench:fit_check{check=\"offload\"})",
+          "refId": "M1",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (check) (llm_bench:fit_check{check=\"decode\"})",
+          "refId": "M2",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (check) (llm_bench:fit_check{check=\"ttft\"})",
+          "refId": "M3",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "expr": "sum without (check) (llm_bench:fit_check{check=\"cold_load\"})",
+          "refId": "M4",
           "instant": true,
           "format": "table"
         }
@@ -966,8 +1002,14 @@
               "Value #G": "TTFT warm p95",
               "Value #H": "TTFT cold p50",
               "Value #I": "Cold load",
-              "Value #J": "Agent capacity",
-              "Value #K": "Fit"
+              "Value #J": "Agents (direct)",
+              "Value #K": "Fit",
+              "Value #L": "Agents (gateway)",
+              "Value #M0": "headroom check",
+              "Value #M1": "offload check",
+              "Value #M2": "decode check",
+              "Value #M3": "ttft check",
+              "Value #M4": "cold_load check"
             }
           }
         }
@@ -1088,18 +1130,6 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Agent capacity"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "none"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
               "options": "Fit"
             },
             "properties": [
@@ -1120,10 +1150,140 @@
                 ]
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "headroom check"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "fail",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "pass",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "offload check"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "fail",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "pass",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "decode check"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "fail",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "pass",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ttft check"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "fail",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "pass",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cold_load check"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "fail",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "pass",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
-      "description": "One row per host, model, quant and context from the committed llm-bench results (pkgs/llm-bench/scorecard). Fit is yes only when every check passes; a missing value is never shown as 0. Thresholds: pkgs/llm-bench/thresholds.json."
+      "description": "One row per host, model, quant and context from the committed llm-bench results (pkgs/llm-bench/scorecard). Fit is yes only when every check passes; a missing value is never shown as 0. Thresholds: pkgs/llm-bench/thresholds.json. Agents (direct) is Ollama itself; Agents (gateway) goes through llm-gateway with the Pi key, so the two are never merged."
     },
     {
       "id": 32,
@@ -1212,7 +1372,40 @@
           "refId": "B",
           "legendFormat": "first byte p95 {{backend}}"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "reqps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": 35,
@@ -1230,13 +1423,13 @@
       },
       "targets": [
         {
-          "expr": "max by (node) (up{job=\"node-exporter\",node=~\"asus-b460m|msi-ms7758\"}) + 2 * max by (node) (homelab:node:planned_off and on (node) (up{job=\"node-exporter\"} == 0))",
+          "expr": "((max by (node) (up{job=\"node-exporter\",node=~\"asus-b460m|msi-ms7758\"} == 0) and on (node) homelab:node:planned_off) * 0 + 2) or max by (node) (up{job=\"node-exporter\",node=~\"asus-b460m|msi-ms7758\"})",
           "refId": "A",
           "legendFormat": "{{node}}",
           "instant": true
         },
         {
-          "expr": "max by (node) (up{job=\"nvidia-gpu\"}) + 2 * max by (node) (homelab:node:planned_off and on (node) (up{job=\"nvidia-gpu\"} == 0))",
+          "expr": "((max by (node) (up{job=\"nvidia-gpu\"} == 0) and on (node) homelab:node:planned_off) * 0 + 2) or max by (node) (up{job=\"nvidia-gpu\"})",
           "refId": "B",
           "legendFormat": "{{node}} GPU exporter",
           "instant": true
@@ -1265,7 +1458,8 @@
           ],
           "noValue": "no GPU host declared"
         }
-      }
+      },
+      "description": "homelab:node:planned_off holds the value of up, so its presence, not its value, says the host may be off: 2 = off as planned, 1 = up, 0 = down outside its plan."
     },
     {
       "id": 36,
@@ -1308,7 +1502,7 @@
     {
       "id": 37,
       "type": "timeseries",
-      "title": "GPU utilisation, temperature, power, throttling",
+      "title": "GPU utilisation, temperature, power, thermal and power-cap throttling",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1336,9 +1530,9 @@
           "legendFormat": "W {{node}} (GPU only)"
         },
         {
-          "expr": "nvidia_smi_clocks_throttle_reasons_active{job=\"nvidia-gpu\"} > 0",
+          "expr": "nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job=\"nvidia-gpu\"} + nvidia_smi_clocks_throttle_reasons_sw_power_cap{job=\"nvidia-gpu\"} > 0",
           "refId": "D",
-          "legendFormat": "throttle active {{node}}"
+          "legendFormat": "thermal or power-cap throttle {{node}}"
         }
       ],
       "fieldConfig": {
