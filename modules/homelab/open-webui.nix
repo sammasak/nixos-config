@@ -152,6 +152,18 @@ in
       IPAddressAllow = podSources;
     };
   };
+  # switch-to-configuration never restarts a changed .socket (nixpkgs#74899), and the proxy behind it is idle (so
+  # skipped) most of the time: this unit restarts with the socket's text, so a new ListenStream binds at the switch
+  systemd.services.open-webui-proxy-rebind = {
+    wantedBy = [ "multi-user.target" ];
+    after = [ "open-webui-proxy.socket" ];
+    restartTriggers = [ config.systemd.units."open-webui-proxy.socket".unit ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${config.systemd.package}/bin/systemctl restart open-webui-proxy.socket";
+    };
+  };
   systemd.services.open-webui-proxy = {
     requires = [ "open-webui.service" ];
     after = [ "open-webui.service" ];
