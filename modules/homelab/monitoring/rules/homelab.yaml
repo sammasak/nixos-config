@@ -86,7 +86,7 @@ groups:
           team: homelab
         annotations:
           summary: "Caddy's upstream socket on {{ $labels.instance }} is not listening"
-          description: "Nothing listens on the edge socket, or the check stopped writing (stale for 5 min), so signed-in users get a 502. Run on acer: systemctl restart open-webui-proxy.socket; then check systemctl status open-webui-edge-check.timer."
+          description: "Nothing listens on the edge socket, or the check stopped writing (stale for 5 min), so signed-in users get a 502. Run on acer: systemctl restart open-webui-proxy-rebind (it stops the proxy first, or the socket refuses to start); then check systemctl status open-webui-edge-check.timer."
 
       # The two below replace the cluster's AppDown (Traefik) and CertificateExpiringSoon (cert-manager): black-pi
       # probes the public names (../prometheus.nix), so they hold under Caddy too.

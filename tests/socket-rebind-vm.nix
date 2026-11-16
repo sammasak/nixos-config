@@ -13,8 +13,8 @@ pkgs.testers.runNixOSTest {
           wantedBy = [ "sockets.target" ];
           listenStreams = [ "/run/${name}-a.sock" ];
         };
-        # an idle socket-activated service, as the proxy is between requests
-        systemd.services.${name}.serviceConfig.ExecStart = "${pkgs.coreutils}/bin/true";
+        # still running at the switch, as the proxy is for 5 min after a request
+        systemd.services.${name}.serviceConfig.ExecStart = "${pkgs.coreutils}/bin/sleep infinity";
       };
     in
     lib.mkMerge [
@@ -29,7 +29,10 @@ pkgs.testers.runNixOSTest {
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
-            ExecStart = "${config.systemd.package}/bin/systemctl restart rebound.socket";
+            ExecStart = [
+              "${config.systemd.package}/bin/systemctl stop rebound.service"
+              "${config.systemd.package}/bin/systemctl restart rebound.socket"
+            ];
           };
         };
         specialisation.moved.configuration = {
@@ -42,11 +45,13 @@ pkgs.testers.runNixOSTest {
   testScript = ''
     machine.wait_for_unit("rebound-rebind.service")
     machine.succeed("test -S /run/plain-a.sock -a -S /run/rebound-a.sock")
+    machine.succeed("systemctl start plain.service rebound.service")
 
     machine.succeed("/run/booted-system/specialisation/moved/bin/switch-to-configuration test >&2")
 
     with subtest("the rebind unit binds the new ListenStream at the switch"):
         machine.succeed("test -S /run/rebound-b.sock")
+        machine.succeed("systemctl is-active rebound.socket")
     with subtest("a plain socket does not: the gap the rebind unit covers"):
         machine.fail("test -S /run/plain-b.sock")
   '';

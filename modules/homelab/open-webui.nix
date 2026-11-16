@@ -161,11 +161,15 @@ in
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = "${config.systemd.package}/bin/systemctl restart open-webui-proxy.socket";
+      # systemd refuses to start a socket whose service still runs (the proxy, for 5 min after a request)
+      ExecStart = [
+        "${config.systemd.package}/bin/systemctl stop open-webui-proxy.service"
+        "${config.systemd.package}/bin/systemctl restart open-webui-proxy.socket"
+      ];
     };
   };
-  # Caddy's upstream, without connecting: a connection would start the app (a ~50 s cold start). #427's socket had
-  # no file behind a passing 302 probe; this one reads the listener table and the EdgeSocketDown alert reads it.
+  # Caddy's upstream, from the listener table: a connection would start the app (a ~50 s cold start), and black-pi's
+  # probe sees only forward auth's 302. EdgeSocketDown (rules/homelab.yaml) reads the metric.
   systemd.services.open-webui-edge-check = {
     path = [ pkgs.iproute2 ];
     serviceConfig = {
@@ -234,6 +238,10 @@ in
   environment.systemPackages = [ backup ];
 
   assertions = [
+    {
+      assertion = config.services.prometheus.exporters.node.enable;
+      message = "modules/homelab/open-webui.nix: the edge check writes a textfile metric; import monitoring/node-exporter.nix.";
+    }
     {
       assertion = config.sam.hostSecrets.enable;
       message = "modules/homelab/open-webui.nix: its keys are sops secrets; set sam.hostSecrets.enable.";
