@@ -19,6 +19,7 @@ let
   localNix = (hm lenovo).home.file."claude-code-skills/devenv.local.nix".text or null;
   skills = flake.inputs.skills.outPath;
   wakeup = lib.findFirst (p: (p.name or "") == "coordinator-wakeup") null (hm lenovo).home.packages;
+  report = lib.findFirst (p: (p.name or "") == "coordinator-report") null (hm lenovo).home.packages;
 
   claudeOf = c: {
     inherit (hm c) home-files;
@@ -73,6 +74,12 @@ let
       services = (hm lenovo).systemd.user.services;
       wakeup = wakeup.outPath or null;
       script = wakeup.text or null;
+      report = report.outPath or null;
+      reportScript = report.text or null;
+      failing = {
+        lenovo = failing lenovo;
+        acerWakeup = failing (extend "acer-swift" [ { sam.herdr.coordinatorWakeup.enable = true; } ]);
+      };
     };
 
     # the worker "host" is the guest of a probe instance declared only here (the committed config declares none)

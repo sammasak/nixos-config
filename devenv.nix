@@ -188,6 +188,18 @@ let
         ${pkgs.python3}/bin/python scripts/test-coordinator-wiring.py
       '';
 
+  # the report timers' job without Nix: the fortnight rule on a pinned date, devenv stubbed
+  coordinatorReportTest =
+    gate "coordinator-report-test"
+      (with pkgs; [
+        python3
+        bash
+        coreutils
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-coordinator-report.py
+      '';
+
   workerPermissionsTest =
     gate "worker-permissions-test"
       (with pkgs; [
@@ -457,6 +469,7 @@ let
           nativeOtelFishTest
           claudeSettingsTest
           coordinatorWiringTest
+          coordinatorReportTest
           workerPermissionsTest
           workersEvalTest
           bulkReaderTest
@@ -830,6 +843,8 @@ in
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
     "nixos:coordinator-test" =
       task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
+    "nixos:coordinator-report-test" =
+      task "The coordinator-report job: an even ISO week renders the two weeklies before it, an odd week exits 0 without devenv" coordinatorReportTest;
     "nixos:worker-permissions-test" =
       task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
     "nixos:workers-eval-test" =

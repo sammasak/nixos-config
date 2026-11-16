@@ -114,10 +114,10 @@ Policy lives in `modules/core/services.nix`, `network.nix` and `users.nix`:
   `modules/homelab/deploy-target.nix`, whose key is accepted only from lenovo)
 - SSH firewall policy allows only LAN CIDR + loopback; keys come from `lib/users.nix`
 
-Apply an SSH policy change with `just deploy HOST`: magic rollback reverts a host the `deploy`
-login can no longer reach (the patched deploy-rs activate rolls a failed activation back, rehearsed
-on msi and black-pi), but it does not test `lukas`'s login, so keep a session open until a new one
-gets in. Not on naked-pi until it takes the patched activate (#474): apply it from a console there
+Apply an SSH policy change with `just deploy HOST`: magic rollback should revert a host the
+`deploy` login can no longer reach, but that connectivity rollback is unexercised on every host (the
+msi and black-pi rehearsals covered a failed activation, which the patched deploy-rs activate rolls
+back), and it does not test `lukas`'s login, so keep a session open until a new one gets in. Not on naked-pi until it takes the patched activate (#474): apply it from a console there
 first.
 
 ## Automation

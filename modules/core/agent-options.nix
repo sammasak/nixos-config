@@ -64,7 +64,7 @@ in
       enable = mkOption {
         type = types.bool;
         default = false;
-        description = "Run `coord:changed` on a user timer and start one spend-capped headless Coordinator session only when it prints an actionable change.";
+        description = "Run `coord:changed` on a user timer and start one spend-capped headless Coordinator session only when it prints an actionable change; also schedules `coord:report:daily` (daily) and the bi-weekly report run (Mondays of even ISO weeks). Only on the coordinator host (declares `machines`, not a `worker`), asserted.";
       };
       interval = mkOption {
         type = types.str;
