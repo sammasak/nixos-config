@@ -218,7 +218,6 @@ let
       loki = "${hosts.lenovo.pkgs.grafana-loki}/bin/loki";
     };
 
-    # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
     # the work-hours power windows (modules/core/power-schedule.nix): the rendered units per host and the seeded failures
     power-schedule =
       let
@@ -264,6 +263,7 @@ let
         };
       };
 
+    # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
     caddy-edge = {
       caddy = lib.getExe acer.services.caddy.package;
       inherit (acer.services.caddy) configFile enableReload;
