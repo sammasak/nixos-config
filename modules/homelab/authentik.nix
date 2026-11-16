@@ -252,6 +252,10 @@ in
       message = "modules/homelab/authentik.nix: nixpkgs moved authentik to ${pkg.version}; the module and the cut-over notes are for ${version}. Bump `version` on purpose, after reading the release notes.";
     }
     {
+      assertion = lib.versions.major config.services.postgresql.package.version == "16";
+      message = "modules/homelab/authentik.nix: Postgres is ${config.services.postgresql.package.version}, but Authentik's data directory is major 16. Upgrade the data (dump and restore, or pg_upgrade) as its own change, then move this pin.";
+    }
+    {
       assertion =
         !config.services.postgresql.enableTCPIP
         && config.services.postgresql.settings.listen_addresses == ""
