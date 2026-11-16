@@ -19,6 +19,7 @@ let
   localNix = (hm lenovo).home.file."claude-code-skills/devenv.local.nix".text or null;
   skills = flake.inputs.skills.outPath;
   wakeup = lib.findFirst (p: (p.name or "") == "coordinator-wakeup") null (hm lenovo).home.packages;
+  report = lib.findFirst (p: (p.name or "") == "coordinator-report") null (hm lenovo).home.packages;
 
   claudeOf = c: {
     inherit (hm c) home-files;
@@ -31,6 +32,11 @@ let
   };
 
   sections = {
+    # counts for the Platform health dashboard, recorded by nixos:qa (scripts/platform-record.sh), not asserted on
+    coverage = lib.mapAttrs (_: h: {
+      assertions = builtins.length h.config.assertions;
+      checks = builtins.length h.config.system.checks;
+    }) hosts;
     # ~/.claude.json activation
     switch-safety = {
       claudeActivation = (hm lenovo).home.activation.acceptClaudeStartupDialogs.data;
@@ -68,6 +74,12 @@ let
       services = (hm lenovo).systemd.user.services;
       wakeup = wakeup.outPath or null;
       script = wakeup.text or null;
+      report = report.outPath or null;
+      reportScript = report.text or null;
+      failing = {
+        lenovo = failing lenovo;
+        acerWakeup = failing (extend "acer-swift" [ { sam.herdr.coordinatorWakeup.enable = true; } ]);
+      };
     };
 
     # the worker "host" is the guest of a probe instance declared only here (the committed config declares none)
@@ -104,7 +116,7 @@ let
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;
       };
-      alertmanager = lenovo.sam.fleet.hosts.black-pi.address;
+      alertmanager = [ lenovo.sam.fleet.hosts.black-pi.address ] ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
       failing = {
         lenovo = failing lenovo;
         loopbackFirewall = failing (

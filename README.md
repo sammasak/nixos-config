@@ -12,6 +12,7 @@ flake-parts and pushed with deploy-rs from the daily-driver laptop.
 | `lenovo-21CB001PMX` (`lenovo`) | Laptop | Daily driver with desktop; DNS, ntfy and Tailscale; deploys every other host |
 | `acer-swift` | Laptop run headless | Always-on service host (Caddy edge, Authentik, chat, llm-gateway); `desktop` boot entry adds the Niri GUI |
 | `msi-ms7758` | Tower, dual-boots Windows (GRUB) | Intermittent worker host, woken via Wake-on-LAN in its work-hours window |
+| `asus-b460m` | Tower, dual-boots Windows (GRUB) | Worker host, offline while booted into Windows |
 | `black-pi` | Raspberry Pi 4, aarch64 | Observability host (Prometheus, Grafana, Loki); builds its own closure on the Pi |
 | `naked-pi` | Raspberry Pi 3, aarch64 | `rf-lab` Wi-Fi learning node and ESP32 host |
 
@@ -83,7 +84,7 @@ just bump [input]       # update one flake input (default: skills); then just sw
 # Push from lenovo with deploy-rs (magic rollback); the deploy-rs client runs under a 7G cap and
 # skips deploy-rs's own flake check. The pre-push gate runs it on pushed non-docs
 # commits; the recipe refuses a dirty tree or a HEAD not on origin/main (DEPLOY_UNGATED=1 breaks glass).
-# HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00),
+# HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00), asus-b460m,
 # black-pi (builds on the Pi, run inside zellij), naked-pi
 just deploy HOST
 just dry-activate HOST  # the units a deploy would restart, and the closure diff; activates nothing
@@ -113,10 +114,10 @@ Policy lives in `modules/core/services.nix`, `network.nix` and `users.nix`:
   `modules/homelab/deploy-target.nix`, whose key is accepted only from lenovo)
 - SSH firewall policy allows only LAN CIDR + loopback; keys come from `lib/users.nix`
 
-Apply an SSH policy change with `just deploy HOST`: magic rollback reverts a host the `deploy`
-login can no longer reach (the patched deploy-rs activate rolls a failed activation back, rehearsed
-on msi and black-pi), but it does not test `lukas`'s login, so keep a session open until a new one
-gets in. Not on naked-pi until it takes the patched activate (#474): apply it from a console there
+Apply an SSH policy change with `just deploy HOST`: magic rollback should revert a host the
+`deploy` login can no longer reach, but that connectivity rollback is unexercised on every host (the
+msi and black-pi rehearsals covered a failed activation, which the patched deploy-rs activate rolls
+back), and it does not test `lukas`'s login, so keep a session open until a new one gets in. Not on naked-pi until it takes the patched activate (#474): apply it from a console there
 first.
 
 ## Automation

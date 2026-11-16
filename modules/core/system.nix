@@ -97,9 +97,12 @@ in
         message = "sam.herdr.machines labels must be unique (herdr --machine addresses a machine by its label).";
       }
       {
-        # the unattended Coordinator stays on dontAsk: it must never share a settings.json that skips the bypass dialog
-        assertion = !(config.sam.herdr.worker.enable && config.sam.herdr.coordinatorWakeup.enable);
-        message = "sam.herdr.worker and sam.herdr.coordinatorWakeup cannot both be enabled on one host (the Coordinator must not inherit worker permissions).";
+        # the unattended Coordinator stays on dontAsk: it must never share a settings.json that skips the bypass dialog;
+        # elsewhere the module's coordinatorHost gate would drop the wake-up and report timers without a word
+        assertion =
+          config.sam.herdr.coordinatorWakeup.enable
+          -> (config.sam.herdr.machines != [ ] && !config.sam.herdr.worker.enable);
+        message = "sam.herdr.coordinatorWakeup (the wake-up and the coordinator-report timers) runs only on the coordinator host: one that declares sam.herdr.machines and is not a sam.herdr.worker (the Coordinator must not inherit worker permissions).";
       }
       {
         assertion =

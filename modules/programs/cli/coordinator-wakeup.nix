@@ -8,6 +8,7 @@
 # stays the authority for every send. The owner's skills options (delegated
 # approval, the Coordinator's panes) ride as fixed --option flags in the timer
 # and the wrappers, and as the checkout's devenv.local.nix for interactive use.
+# The same enable schedules coord:report:daily and the bi-weekly run (coordinator-report.sh).
 {
   config,
   lib,
@@ -19,6 +20,36 @@ let
   wk = osConfig.sam.herdr.coordinatorWakeup;
   coordinatorHost = (osConfig.sam.herdr.machines or [ ]) != [ ];
   skillsDir = "${config.home.homeDirectory}/claude-code-skills";
+  platformRecord = pkgs.writeShellApplication {
+    name = "platform-record";
+    runtimeInputs = with pkgs; [
+      curl
+      jq
+      coreutils
+      findutils
+    ];
+    text = builtins.readFile ../../../scripts/platform-record.sh;
+  };
+  # a metric the report leaves null (its unknown_reason says why) is recorded as unknown, never as 0
+  deliveryRecord = pkgs.writeShellApplication {
+    name = "platform-delivery-record";
+    runtimeInputs = with pkgs; [
+      jq
+      coreutils
+    ];
+    text = ''
+      day=$(date -u -d yesterday +%F)
+      report="$XDG_STATE_HOME/coordinator/report/daily/$day.json"
+      cd ${skillsDir}
+      if ! devenv tasks run coord:report:daily --input-json "{\"date\":\"$day\"}" ${skillsOptions} >/dev/null 2>&1 || [ ! -f "$report" ]; then
+        ${lib.getExe platformRecord} delivery day="$day" result=report-failed
+        exit 1
+      fi
+      # word splitting is the point: one key=value argument per metric
+      # shellcheck disable=SC2046
+      ${lib.getExe platformRecord} delivery day="$day" result=ok $(jq -r -f ${../../../scripts/platform-delivery.jq} "$report")
+    '';
+  };
   # The long-lived OAuth token the Fish session also exports; the service has no interactive login.
   oauthTokenFile = osConfig.sops.secrets.claude_oauth_token.path or "/run/secrets/claude_oauth_token";
   # the only GitHub account the unattended session may write to (gh:comment, gh:label); the skills tasks accept any OWNER/REPO
@@ -267,6 +298,36 @@ let
       exit "$rc"
     '';
   };
+  report = pkgs.writeShellApplication {
+    name = "coordinator-report";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      set -- "$@" ${skillsOptions}
+      ${builtins.readFile ./coordinator-report.sh}
+    '';
+  };
+  reportUnit = mode: description: {
+    Unit.Description = description;
+    Service = {
+      Type = "oneshot";
+      ExecStart = "${report}/bin/coordinator-report ${mode}";
+      Environment = [
+        "PATH=/run/current-system/sw/bin:${config.home.profileDirectory}/bin"
+        "XDG_STATE_HOME=${config.home.homeDirectory}/.local/state"
+      ];
+      TimeoutStartSec = "30min";
+      Nice = 10;
+      MemoryMax = "2G";
+    };
+  };
+  reportTimer = description: calendar: {
+    Unit.Description = description;
+    Timer = {
+      OnCalendar = calendar;
+      Persistent = true;
+    };
+    Install.WantedBy = [ "timers.target" ];
+  };
 in
 {
   config = lib.mkIf (coordinatorHost && wk.enable) {
@@ -281,7 +342,10 @@ in
         message = "sam.herdr.coordinatorWakeup.approvalDecision must be a comment on one of ${ghOwner}'s own issues (the skills gate accepts no other)";
       }
     ];
-    home.packages = [ wakeup ];
+    home.packages = [
+      wakeup
+      report
+    ];
     home.file."claude-code-skills/devenv.local.nix".text = localConfig;
 
     systemd.user.services.coordinator-wakeup = {
@@ -304,6 +368,30 @@ in
       };
     };
 
+    # the delivery row of the Platform health dashboard: yesterday's coord:report:daily, its numbers recorded as one line
+    systemd.user.services.platform-delivery-record = {
+      Unit.Description = "coord:report:daily for yesterday, then its delivery and review numbers to Loki";
+      Service = {
+        Type = "oneshot";
+        ExecStart = lib.getExe deliveryRecord;
+        Environment = [
+          "PATH=/run/current-system/sw/bin:${config.home.profileDirectory}/bin"
+          "XDG_STATE_HOME=${config.home.homeDirectory}/.local/state"
+        ];
+        TimeoutStartSec = "30min";
+        Nice = 10;
+        MemoryMax = "3G";
+      };
+    };
+    systemd.user.timers.platform-delivery-record = {
+      Unit.Description = "coord:report:daily once a day";
+      Timer = {
+        OnCalendar = "*-*-* 06:30:00";
+        Persistent = true;
+      };
+      Install.WantedBy = [ "timers.target" ];
+    };
+
     systemd.user.timers.coordinator-wakeup = {
       Unit.Description = "coord:changed every ${wk.interval} of idleness";
       Timer = {
@@ -314,5 +402,15 @@ in
       };
       Install.WantedBy = [ "timers.target" ];
     };
+
+    systemd.user.services.coordinator-report-daily = reportUnit "daily" "coord:report:daily for yesterday";
+    # After: when both catch up at boot (Persistent), Sunday's daily is in before the weekly reads it
+    systemd.user.services.coordinator-report-fortnight =
+      lib.recursiveUpdate
+        (reportUnit "fortnight" "On even ISO weeks: the weeklies since the previous run")
+        { Unit.After = [ "coordinator-report-daily.service" ]; };
+    # 03:00 local is past midnight UTC, so the task's yesterday (UTC) is complete
+    systemd.user.timers.coordinator-report-daily = reportTimer "Daily coord:report:daily" "*-*-* 03:00";
+    systemd.user.timers.coordinator-report-fortnight = reportTimer "Bi-weekly coordinator report, Mondays" "Mon 07:00";
   };
 }

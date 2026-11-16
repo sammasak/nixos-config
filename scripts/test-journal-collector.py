@@ -38,7 +38,7 @@ def components(conf):
 
 r = gate_probe.section("journal-collector")
 hosts = r["hosts"]
-check({"msi-ms7758", "lenovo", "acer-swift", "black-pi", "naked-pi"} <= set(hosts), f"every host is evaluated {sorted(hosts)}")
+check({"msi-ms7758", "asus-b460m", "lenovo", "acer-swift", "black-pi", "naked-pi"} <= set(hosts), f"every host is evaluated {sorted(hosts)}")
 shipping = ["acer-swift", "asus-b460m", "black-pi", "lenovo", "msi-ms7758"]
 check(enabled(hosts) == shipping, f"the collector and Alloy run on every host but naked-pi {enabled(hosts)}")
 seeded = enabled({**hosts, "naked-pi": r["seeded"]})
@@ -145,12 +145,21 @@ lines = {
     ("session", "lukas : TTY=pts/3 ; PWD=/home/lukas ; USER=root ; COMMAND=/run/current-system/sw/bin/ak shell"): False,
     ("init.scope", 'Started run-u412.service - /nix/store/x-bash/bin/bash /nix/store/y-authentik/lifecycle/ak shell -c "print(1)".'): False,
     ("init.scope", "Started sshd.service - SSH Daemon."): True,
+    ("transient", "lukas : PWD=/home/lukas ; USER=root ; COMMAND=/run/current-system/sw/bin/ak shell -c print(1)"): False,
+    ("transient", "lukas : USER=root ; COMMAND=/run/current-system/sw/bin/bash -c ak shell -c print(1)"): False,
+    ("session", "(command continued) the tail of a long ak -c snippet"): False,
+    ("transient", "(command continued) the tail of a long ak -c snippet"): False,
     ("polkit.service", "Operator of unix-session:4 successfully authenticated as unix-user:root to gain ONE-SHOT authorization "
      "for action org.freedesktop.systemd1.manage-units [/nix/store/y-authentik/lifecycle/ak shell -c print(1)]"): False,
     ("transient", "a systemd-run job's own line"): True,
+    ("transient", "lukas : USER=root ; COMMAND=/run/current-system/sw/bin/bash -c cd /var/lib/authentik;ak shell -c print(1)"): False,
+    ("session", "lukas : USER=root ; COMMAND=/run/current-system/sw/bin/bash -c true&&ak\tshell -c print(1)"): False,
+    ("init.scope", "Started run-u9.service - /nix/store/y-authentik/bin/ak worker."): False,
+    ("init.scope", "Started lint.service - tweak shellcheck over the scripts."): True,
 }
-got = {f"{u} {l[:60]} {l[-12:]}": shipped(u, l) for u, l in lines}
-want = {f"{u} {l[:60]} {l[-12:]}": keep for (u, l), keep in lines.items()}
+got = {f"{u} {l}": shipped(u, l) for u, l in lines}
+want = {f"{u} {l}": keep for (u, l), keep in lines.items()}
+check(len(want) == len(lines), "every case line is its own comparison key")
 check(got == want, f"drops private units and only info 2xx/3xx access lines of {egress} {got}")
 wr = comps.get(("loki.write", write), "")
 check(re.search(r'url = "http://[^"]+/loki/api/v1/push"', wr) is not None and "max_backoff_retries = 0" in wr,

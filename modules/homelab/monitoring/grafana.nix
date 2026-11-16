@@ -150,10 +150,10 @@ in
   networking.firewall = {
     inherit
       (mkDualBackendFirewall {
-        nftComment = "Grafana answers Caddy on acer.";
+        nftComment = "Grafana answers Caddy on the edge host.";
         ports = [ port ];
-        # Caddy on acer (edge.nix)
-        sources = [ hosts.acer-swift.address ];
+        # Caddy on the edge host (edge.nix)
+        sources = [ hosts.${config.sam.fleet.edge}.address ];
         interfaces = [ ];
         inherit (fw) backend;
       })

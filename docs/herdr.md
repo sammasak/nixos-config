@@ -68,7 +68,7 @@ Herdr itself is the fleet view: a host sees its own agents, and any Herdr
 **saved machine** it has (`herdr machine list --json`) through command
 forwarding (`herdr --machine <label> agent list` and friends). Workers save
 nothing and so see themselves only. The coordinator host (lenovo) saves the
-worker hosts (`acer-swift`, `msi-ms7758`) as `sam.herdr.machines`; each nspawn worker a
+worker hosts (`acer-swift`, `msi-ms7758`, `asus-b460m`) as `sam.herdr.machines`; each nspawn worker a
 host declares (`sam.workers.instances.<name>`) is a workspace and agent
 `<name>` on that host (docs/nspawn-workers.md).
 At activation Home Manager runs `herdr machine add
