@@ -96,8 +96,9 @@ dry-activate HOST:
       ssh -o StrictHostKeyChecking=yes "deploy@$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname)" nix store diff-closures /run/current-system "$top"
 
 # Boot the runtime-host role in QEMU (tests/runtime-host-role-vm.nix); BREAK=1
-# runs the copy with Home Manager's activation broken, which must fail. A
-# host-sized build: msi only, not lenovo (memory) nor acer (the only general worker).
+# runs the copy with Home Manager's activation broken, which must fail. The plain
+# test is also a flake check the gate boots; this recipe is for BREAK=1 and reruns.
+# A host-sized build: msi only, not lenovo (memory).
 [doc("Build and run the runtime-host role VM test (msi only); BREAK=1 must fail")]
 role-vm-test BREAK="":
     [ "$(uname -n)" = msi-ms7758 ] || { echo "role-vm-test: run it on msi-ms7758, not $(uname -n)" >&2; exit 1; }
