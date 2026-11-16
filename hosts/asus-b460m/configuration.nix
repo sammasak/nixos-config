@@ -1,10 +1,28 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 {
-  imports = [ ./hardware-configuration.nix ];
+  imports = [
+    ./hardware-configuration.nix
+    ../../modules/homelab/journal-collector.nix
+    ../../modules/homelab/monitoring/node-exporter.nix
+  ];
+
+  homelab.journalCollector = {
+    enable = true;
+    lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";
+    ntfyUrl = config.sam.workers.ntfyUrl;
+  };
+
+  # 32 GB RAM, the host's own use not yet measured (msi's 2.8G assumed): a 20G pool reserves 2G each for at most 10,
+  # 4 recommended (docs/nspawn-workers.md, Sizing). No ghHostsFile until lukas has a gh login here.
+  sam.workers = {
+    labelPrefix = "asus";
+    pool.memory = "20G";
+  };
 
   sam.profile = {
     username = "lukas";
@@ -41,5 +59,17 @@
         chainloader /EFI/Microsoft/Boot/bootmgfw.efi
       }
     '';
+  };
+
+  networking.interfaces.eno1.wakeOnLan.enable = true;
+  systemd.services.wol-eno1 = {
+    description = "Enable Wake on LAN for eno1";
+    after = [ "network-addresses-eno1.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.ethtool}/sbin/ethtool -s eno1 wol g";
+    };
   };
 }

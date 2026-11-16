@@ -17,6 +17,7 @@ let
   caches = lib.mapAttrs (name: c: c // { inherit (config.sam.fleet.hosts.${name}) address; }) {
     lenovo-21CB001PMX.publicKey = "lenovo-21CB001PMX-store-1:Ifjt/zTBnDw6GFhAw6w6L0JGWHblrWr4V7L/BfphwPU=";
     acer-swift.publicKey = "acer-swift-store-1:iDCzz1UQib6s9pZ818Evy6d8naQ+4jaI6YYZmlGsz5A=";
+    asus-b460m.publicKey = "asus-b460m-store-1:UkdmV23WWg1N85R4uTEl0JHp5MB6Inx36T+08F/cpdg=";
     # powered off nights and weekends: an absent cache costs every path lookup the connect timeout, so nobody asks it
     msi-ms7758 = {
       publicKey = "msi-ms7758-store-1:xIr/Ee7u3rhCm4bhycovNFbfA2UAB6OITroVVWmv7wQ=";

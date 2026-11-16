@@ -12,7 +12,7 @@ set -euo pipefail
 for tool in ssh-keygen ssh-to-age curl jq; do command -v "$tool" >/dev/null || { echo "UNCHECKED: $tool is not on PATH"; exit 2; }; done
 here=$(cd "$(dirname "$0")/.." && pwd)
 known="${KNOWN_HOSTS:-/etc/ssh/ssh_known_hosts}"; user_known="${USER_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}"; sops="$here/secrets/.sops.yaml"
-hosts=("$@"); [ "${#hosts[@]}" -gt 0 ] || hosts=(lenovo-21CB001PMX acer-swift msi-ms7758 black-pi naked-pi)
+hosts=("$@"); [ "${#hosts[@]}" -gt 0 ] || hosts=(lenovo-21CB001PMX acer-swift msi-ms7758 asus-b460m black-pi naked-pi)
 rc=0
 pinned() { { ssh-keygen -F "$1" -f "$known" 2>/dev/null || true; } | { grep -v '^#' || true; } | awk '$2 == "ssh-ed25519" {print $3; exit}'; }
 user_key() { [ -r "$user_known" ] || return 0; { ssh-keygen -F "$1" -f "$user_known" 2>/dev/null || true; } | { grep -v '^#' || true; } | awk '$2 == "ssh-ed25519" {print $3; exit}'; }
