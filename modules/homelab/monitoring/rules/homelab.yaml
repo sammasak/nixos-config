@@ -2,38 +2,45 @@
 groups:
   - name: host-health.alerts
     rules:
-      - alert: MsiExpectedOff
-        # The one signal for "msi is off and that is planned": msi powers off
-        # Mon-Fri 21:00 and is woken Mon-Fri 09:00 Europe/Stockholm
-        # (modules/homelab/msi-power-schedule.nix). Never notifies (null
-        # route); the Alertmanager inhibit rules keyed on it silence what a
-        # powered-off msi causes (../alertmanager.nix).
-        # PromQL time is UTC and has no time zone, so the window is the union
+      - alert: HostExpectedOff
+        # The one signal for "this host is off and that is planned", per node:
+        # a host the fleet marks sleeps (modules/core/fleet.nix, the sleeps
+        # label on its node-exporter target) is down. msi is planned off only
+        # in its window: it powers off Mon-Fri 21:00 and is woken Mon-Fri
+        # 09:00 Europe/Stockholm (modules/homelab/msi-power-schedule.nix).
+        # Never notifies (null route); the Alertmanager inhibit rules keyed
+        # on it silence what the powered-off host causes (../alertmanager.nix).
+        # PromQL time is UTC and has no time zone, so msi's window is the union
         # of both seasons: 19:00 to 08:30 UTC plus Saturday and Sunday. That
         # is one hour early in winter evenings, and up to 10:30 local in
         # summer mornings; 08:30 gives the exporter time to come up.
-        # Fails open: it does not fire while any other host's exporter is
+        # Fails open: it does not fire while a host that does not sleep is
         # down, so those cases still notify.
         expr: |
-          max by (node) (up{job="node-exporter",node="msi-ms7758"} == 0)
-          and on () (
-            hour() >= 19 or hour() < 8 or (hour() == 8 and minute() < 30)
-            or day_of_week() == 0 or day_of_week() == 6
+          (
+            max by (node) (up{job="node-exporter",sleeps="true",node!="msi-ms7758"} == 0)
+            or (
+              max by (node) (up{job="node-exporter",sleeps="true",node="msi-ms7758"} == 0)
+              and on () (
+                hour() >= 19 or hour() < 8 or (hour() == 8 and minute() < 30)
+                or day_of_week() == 0 or day_of_week() == 6
+              )
+            )
           )
           unless on () (
-            count(up{job="node-exporter",node!="msi-ms7758"} == 0) > 0
+            count(up{job="node-exporter",sleeps!="true"} == 0) > 0
           )
         for: 2m
         labels:
           severity: none
           team: homelab
         annotations:
-          summary: "msi-ms7758 is off inside its planned power-off window"
-          description: "Source for the Alertmanager inhibit rules that silence alerts caused by the planned msi power-off. Not a notification."
+          summary: "{{ $labels.node }} is off, as planned"
+          description: "Source for the Alertmanager inhibit rules that silence alerts caused by a sleeping host's planned power-off. Not a notification."
 
       - alert: NodeChronicNotReady
-        # msi-ms7758 powers off on a schedule, so it is left out.
-        expr: up{job="node-exporter",node!="msi-ms7758"} == 0
+        # a host the fleet marks sleeps is off at times, so it is left out
+        expr: up{job="node-exporter",sleeps!="true"} == 0
         for: 15m
         labels:
           severity: warning
@@ -137,12 +144,12 @@ groups:
   - name: homelab.health.kpi
     interval: 1m
     rules:
-      # node_ready_ratio and target_up_ratio leave out the host MsiExpectedOff fires for.
+      # node_ready_ratio and target_up_ratio leave out the hosts HostExpectedOff fires for.
       - record: homelab:health:node_ready_ratio
         expr: |
-          sum(up{job="node-exporter"} unless on(node) ALERTS{alertname="MsiExpectedOff",alertstate="firing"})
+          sum(up{job="node-exporter"} unless on(node) ALERTS{alertname="HostExpectedOff",alertstate="firing"})
           /
-          count(up{job="node-exporter"} unless on(node) ALERTS{alertname="MsiExpectedOff",alertstate="firing"})
+          count(up{job="node-exporter"} unless on(node) ALERTS{alertname="HostExpectedOff",alertstate="firing"})
       - record: homelab:health:firing_critical
         expr: count(ALERTS{alertstate="firing",severity="critical"}) or vector(0)
       - record: homelab:health:min_disk_free_ratio
@@ -154,9 +161,9 @@ groups:
           )
       - record: homelab:health:target_up_ratio
         expr: |
-          sum(up unless on(node) ALERTS{alertname="MsiExpectedOff",alertstate="firing"})
+          sum(up unless on(node) ALERTS{alertname="HostExpectedOff",alertstate="firing"})
           /
-          count(up unless on(node) ALERTS{alertname="MsiExpectedOff",alertstate="firing"})
+          count(up unless on(node) ALERTS{alertname="HostExpectedOff",alertstate="firing"})
       - record: homelab:health:deadman_alive
         expr: count(ALERTS{alertname="Watchdog",alertstate="firing"}) or vector(0)
       # Composite score (0-100): each KPI thresholded to 0/1, averaged over 5.

@@ -13,7 +13,18 @@ in
       options = {
         # keyed by networking.hostName
         hosts = mkOption {
-          type = types.attrsOf (types.submodule { options.address = mkOption { type = ipv4; }; });
+          type = types.attrsOf (
+            types.submodule {
+              options = {
+                address = mkOption { type = ipv4; };
+                # may be powered off at any time: the store caches skip it, the alerts expect it (rules/homelab.yaml)
+                sleeps = mkOption {
+                  type = types.bool;
+                  default = false;
+                };
+              };
+            }
+          );
         };
         gateway = mkOption { type = ipv4; };
         lanCidr = mkOption { type = types.str; };
@@ -27,8 +38,15 @@ in
     hosts = {
       lenovo-21CB001PMX.address = "192.168.10.154";
       acer-swift.address = "192.168.10.110";
-      msi-ms7758.address = "192.168.10.235";
-      asus-b460m.address = "192.168.10.113";
+      # dual-boot towers, often off or in Windows; msi powers off nights and weekends (msi-power-schedule.nix)
+      msi-ms7758 = {
+        address = "192.168.10.235";
+        sleeps = true;
+      };
+      asus-b460m = {
+        address = "192.168.10.113";
+        sleeps = true;
+      };
       # end0; wlan0's .136 is a second LAN address
       black-pi.address = "192.168.10.137";
     };

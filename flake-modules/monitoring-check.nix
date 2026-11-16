@@ -1,6 +1,7 @@
 # black-pi's promtool (config and rule files), amtool and blackbox --config.check run only in its toplevel's build, so on
 # the Pi at deploy. Seeded onto msi, an x86 host, the same modules' checked files build in the flake check; building it
-# realises only those files and their tools, never a toplevel.
+# realises only those files and their tools, never a toplevel. The rule test below feeds ./rules/homelab.yaml the
+# node-exporter targets as the seed renders them, one case per host, so a host the fleet marks sleeps is checked.
 { config, lib, ... }:
 let
   inherit (config.flake.nixosConfigurations) black-pi msi-ms7758;
@@ -25,6 +26,69 @@ let
     s.alertmanager.serviceConfig.ExecStartPre
     s.prometheus-blackbox-exporter.serviceConfig.ExecStart
   ];
+
+  nodeTargets = lib.concatMap (c: c.static_configs) (
+    lib.filter (c: c.job_name == "node-exporter")
+      (builtins.fromJSON (builtins.unsafeDiscardStringContext seeded.services.prometheus.configText))
+      .scrape_configs
+  );
+  node = t: t.labels.node;
+  sleeping = lib.attrNames (lib.filterAttrs (_: h: h.sleeps) seeded.sam.fleet.hosts);
+  # the scrape label is what the rules read; the fleet fact is what a new host sets
+  labelled = map node (lib.filter (t: t.labels.sleeps or "" == "true") nodeTargets);
+  awake = lib.subtractLists sleeping (map node nodeTargets);
+  # promtool's clock starts at the Unix epoch, a Thursday 00:00 UTC, inside msi's off window; 10:00 is outside it
+  ruleTest = name: at: down: firing: {
+    inherit name;
+    interval = "30s";
+    input_series = map (t: {
+      series = "up{${
+        lib.concatStringsSep "," (
+          lib.mapAttrsToList (k: v: "${k}=${builtins.toJSON v}") (t.labels // { job = "node-exporter"; })
+        )
+      }}";
+      values = if lib.elem (node t) down then "0x1400" else "1x1400";
+    }) nodeTargets;
+    promql_expr_test = lib.mapAttrsToList (alertname: nodes: {
+      expr = ''count by (node) (ALERTS{alertname="${alertname}",alertstate="firing"})'';
+      eval_time = at;
+      exp_samples = map (n: {
+        labels = ''{node="${n}"}'';
+        value = 1;
+      }) nodes;
+    }) firing;
+  };
+  ruleTests = {
+    rule_files = [ "${../modules/homelab/monitoring/rules/homelab.yaml}" ];
+    tests =
+      map (
+        h:
+        ruleTest "${h} sleeps, off alone" "20m" [ h ] {
+          HostExpectedOff = [ h ];
+          NodeChronicNotReady = [ ];
+        }
+      ) sleeping
+      ++ [
+        (ruleTest "every sleeping host off at night" "20m" sleeping {
+          HostExpectedOff = sleeping;
+          NodeChronicNotReady = [ ];
+        })
+        (ruleTest "every sleeping host off by day: msi's is not planned" "10h" sleeping {
+          HostExpectedOff = lib.remove "msi-ms7758" sleeping;
+          NodeChronicNotReady = [ ];
+        })
+      ]
+      ++ lib.concatMap (h: [
+        (ruleTest "${h} does not sleep, off" "20m" [ h ] {
+          HostExpectedOff = [ ];
+          NodeChronicNotReady = [ h ];
+        })
+        (ruleTest "${h} off with the sleeping hosts: fails open" "20m" ([ h ] ++ sleeping) {
+          HostExpectedOff = [ ];
+          NodeChronicNotReady = [ h ];
+        })
+      ]) awake;
+  };
 in
 {
   perSystem =
@@ -54,6 +118,20 @@ in
             "monitoring-check: black-pi's Alertmanager configuration or Prometheus flags differ from the seed's";
           lib.concatStringsSep "\n" units
         );
+        monitoring-rules-sleeping-hosts =
+          assert lib.assertMsg (sleeping != [ ] && lib.sort lib.lessThan labelled == sleeping)
+            "monitoring-check: the node-exporter targets labelled sleeps (${toString labelled}) are not the fleet's sleeping hosts (${toString sleeping})";
+          pkgs.runCommand "monitoring-rules-sleeping-hosts"
+            {
+              nativeBuildInputs = [ pkgs.prometheus.cli ];
+              tests = builtins.toJSON ruleTests;
+              passAsFile = [ "tests" ];
+            }
+            ''
+              cp "$testsPath" tests.yaml
+              promtool test rules tests.yaml
+              touch $out
+            '';
       };
     };
 }
