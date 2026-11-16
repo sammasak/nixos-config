@@ -1,6 +1,6 @@
 # Tests issue #40's claim that naked-pi's kernel 7.2.9 blocks the hwsim data
 # plane, by running hwsim on a different nixpkgs kernel inside QEMU. Never loads
-# hwsim on the host (lenovo is the k3s control plane). Rationale + verdict logic
+# hwsim on the host (lenovo is the DNS host). Rationale + verdict logic
 # live in the commit/PR. Build: nix build .#packages.x86_64-linux.rf-hwsim-dataplane
 { pkgs }:
 let

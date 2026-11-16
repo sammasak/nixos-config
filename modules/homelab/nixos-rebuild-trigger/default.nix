@@ -37,7 +37,6 @@ let
     openssh
     util-linux
     iproute2
-    curl
     coreutils
     gnugrep
     gnused

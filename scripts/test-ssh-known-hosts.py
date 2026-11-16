@@ -34,6 +34,8 @@ SOPS_RECIPIENTS = {
 }
 # files encrypted ahead of the module that will declare them: the host that will, and what lands it
 AWAITING: dict[str, tuple[str, str]] = {}
+# files no module declares a secret from any more, kept until the owner retires them: why each stays
+RETIRING = {"secrets/homelab/k3s.yaml": "k3s left the fleet (#422); retiring the file and the Flux recipient is the owner's"}
 LOOPBACK = ["localhost", "127.0.0.1", "::1"]
 
 
@@ -114,6 +116,9 @@ def sops_checks(S):
     check(len(files) >= 12 and "secrets/cosign.key" in files, f"every encrypted file is read, the JSON cosign.key too ({len(files)})")
     for f in files:
         extra = needless(f, declared.get(f, set()), recipients_of)
+        if f in RETIRING:
+            check(not declared.get(f), f"{f}: no host declares from it ({RETIRING[f]}; {sorted(declared.get(f, set()))})")
+            continue
         if f in AWAITING:
             host, why = AWAITING[f]
             check(extra == [host], f"{f}: {host} is its only undeclared recipient until {why}; once it declares, drop the entry ({extra})")
@@ -130,9 +135,11 @@ def sops_checks(S):
     acer = S["hosts"]["acer-swift"]
     check(not host_key_identity(dict(acer, age=dict(acer["age"], generateKey=False))),
           "seeded: a provisioned age.keyFile (generateKey off) is not the host key identity")
-    dropped = lambda f: recipients_of(f) - {SOPS_RECIPIENTS["acer-swift"]} if f == "secrets/homelab/k3s.yaml" else recipients_of(f)
+    seed = "secrets/homelab/open-webui.yaml"
+    dropped = lambda f: recipients_of(f) - {SOPS_RECIPIENTS["acer-swift"]} if f == seed else recipients_of(f)
     bad = undecryptable(acer["files"], "acer-swift", dropped)
-    check(bad == ["k3s/cluster_token (secrets/homelab/k3s.yaml)"], f"seeded: k3s.yaml with acer's recipient dropped fails acer's k3s token ({bad})")
+    want = sorted(f"{n} ({f})" for n, f in acer["files"].items() if f == seed)
+    check(want and bad == want, f"seeded: open-webui.yaml with acer's recipient dropped fails acer's open-webui keys ({bad})")
     check(undecryptable(acer["files"], "acer", recipients_of) == sorted(f"{n} ({f})" for n, f in acer["files"].items()),
           "seeded: a host with no recorded recipient fails every secret it declares")
 

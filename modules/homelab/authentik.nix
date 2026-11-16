@@ -17,7 +17,6 @@ let
   pyEnv = py.withPackages (ps: [ ps.authentik-django ]);
   postgres = config.services.postgresql.package;
   fw = config.networking.firewall;
-  inherit (import ../../lib/firewall.nix lib) ciliumInterfaces;
   state = "/var/lib/authentik";
   backups = "/var/lib/authentik-backup";
   blueprints = pkgs.symlinkJoin {
@@ -33,7 +32,7 @@ let
       name = "authentik";
       user = "authentik";
     };
-    # 2026.5 defaults to [::], every interface: acer trusts Cilium's and tailscale's
+    # 2026.5 defaults to [::], every interface
     listen = {
       http = [ "127.0.0.1:9000" ];
       https = [ "127.0.0.1:9443" ];
@@ -122,7 +121,7 @@ in
 
   services.postgresql = {
     enable = true;
-    # the k3s database's major: an upgrade is its own change, not part of the move
+    # the major the data was dumped from: an upgrade is its own change
     package = pkgs.postgresql_16;
     enableTCPIP = false;
     settings.listen_addresses = lib.mkForce "";
@@ -269,8 +268,8 @@ in
       message = "modules/homelab/authentik.nix: every Authentik listener stays on loopback; Caddy is the way in.";
     }
     {
-      assertion = lib.all (i: lib.elem i ciliumInterfaces) fw.trustedInterfaces;
-      message = "modules/homelab/authentik.nix: a trusted interface other than loopback and Cilium's reaches every port on this host.";
+      assertion = lib.all (i: i == "lo") fw.trustedInterfaces;
+      message = "modules/homelab/authentik.nix: a trusted interface other than loopback reaches every port on this host.";
     }
     {
       assertion = lib.all (u: config.systemd.services.${u}.serviceConfig ? MemoryMax) [

@@ -1,9 +1,7 @@
-# chat.sammasak.dev as a host service: Traefik (forward auth through Authentik, as before) reaches it at the node
-# address through a selectorless Service (homelab-gitops). open-webui signs in whoever sends X-authentik-email, so
-# only pods may reach it: the socket admits pod addresses alone (not the nodes' Cilium ones), a cluster policy
-# admits only Traefik's pods, and the app serves on a Unix socket in a 0700 directory, out of reach of every local
-# user. The proxy exits when idle and the app stops with it, as the pod scaled to zero. Caddy (edge.nix) connects through
-# a second socket only its user may open.
+# chat.sammasak.dev as a host service behind Caddy (edge.nix), with forward auth through Authentik. open-webui signs
+# in whoever sends X-authentik-email, so the app serves on a Unix socket in a 0700 directory, out of reach of every
+# local user, and Caddy connects through a second socket only its user may open. The proxy exits when idle and the
+# app stops with it.
 {
   config,
   lib,
@@ -12,49 +10,6 @@
 }:
 let
   cfg = config.services.open-webui;
-  address = config.sam.fleet.hosts.${config.sam.profile.hostname}.address;
-  port = 8090;
-  # The pod CIDR without each node's Cilium host address (CiliumInternalIP: kubectl get ciliumnodes), which any
-  # process on that node may bind as its source; a node that gets a new one opens a hole until it is listed here.
-  ciliumHosts = [
-    "10.42.0.136" # acer-swift
-    "10.42.1.227" # lenovo
-    "10.42.2.65" # msi-ms7758
-    "10.42.3.52" # black-pi
-  ];
-  pow2 = k: lib.foldl (a: _: a * 2) 1 (lib.range 1 k);
-  toInt = s: lib.foldl (a: o: a * 256 + lib.toInt o) 0 (lib.splitString "." s);
-  toDotted =
-    n: lib.concatMapStringsSep "." (i: toString (lib.mod (n / pow2 (24 - 8 * i)) 256)) (lib.range 0 3);
-  # blocks minus one address: the block holding it splits into halves until the address is a /32 of its own
-  without =
-    hole:
-    lib.concatMap (
-      b:
-      if hole < b.base || hole >= b.base + pow2 (32 - b.len) then
-        [ b ]
-      else if b.len == 32 then
-        [ ]
-      else
-        without hole [
-          {
-            inherit (b) base;
-            len = b.len + 1;
-          }
-          {
-            base = b.base + pow2 (31 - b.len);
-            len = b.len + 1;
-          }
-        ]
-    );
-  podSources = map (b: "${toDotted b.base}/${toString b.len}") (
-    lib.foldr (h: without (toInt h)) [
-      {
-        base = toInt "10.42.0.0";
-        len = 16;
-      }
-    ] ciliumHosts
-  );
   socket = "/run/open-webui/http.sock";
   edgeSocket = "/run/open-webui-edge.sock";
   # uvicorn on the Unix socket, as `open-webui serve` runs it on a TCP port (backend/open_webui/__init__.py)
@@ -128,8 +83,7 @@ in
       TimeoutStartSec = "6min";
       # uvicorn makes the socket 0666; the directory keeps it to root and the app's dynamic user, which the proxy shares.
       RuntimeDirectoryMode = lib.mkForce "0700";
-      # Not the pod's 1Gi: 0.12.2 peaked at 1.45G in its first start on acer. k3s does not count this unit, so an
-      # OOM takes it before any pod.
+      # Not the pod's 1Gi: 0.12.2 peaked at 1.45G in its first start on acer.
       MemoryMax = "2G";
       MemorySwapMax = 0;
       CPUQuota = "100%";
@@ -139,17 +93,10 @@ in
 
   systemd.sockets.open-webui-proxy = {
     wantedBy = [ "sockets.target" ];
-    listenStreams = [
-      "${address}:${toString port}"
-      edgeSocket
-    ];
+    listenStreams = [ edgeSocket ];
     socketConfig = {
-      # the Unix stream only
       SocketUser = config.services.caddy.user;
       SocketMode = "0600";
-      FreeBind = true; # the Wi-Fi address can appear after the socket
-      IPAddressDeny = "any";
-      IPAddressAllow = podSources;
     };
   };
   systemd.services.open-webui-proxy = {
@@ -205,12 +152,6 @@ in
     {
       assertion = config.services.caddy.enable;
       message = "modules/homelab/open-webui.nix: ${edgeSocket} belongs to Caddy's user; enable services.caddy (edge.nix).";
-    }
-    {
-      assertion =
-        !cfg.openFirewall
-        && (import ../../lib/firewall.nix lib).anySourceTcp config.networking.firewall [ port ] == [ ];
-      message = "modules/homelab/open-webui.nix: open-webui trusts X-authentik-email; keep port ${toString port} unopened, only the socket's pod CIDR may reach it.";
     }
   ];
 }

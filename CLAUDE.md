@@ -59,7 +59,7 @@ just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); B
 
 Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
 `black-pi` (aarch64; evaluated but not built on x86 hosts, build it on the Pi),
-and `naked-pi` (Pi 3 `rf-lab` node, off k3s; `just deploy naked-pi`;
+and `naked-pi` (Pi 3 `rf-lab` node; `just deploy naked-pi`;
 runbook `~/knowledge/homelab/runbooks/naked-pi-rf-lab.md`).
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
 `host` variable at the top of the Justfile does that mapping, so the argument is
@@ -80,7 +80,7 @@ specialisations, module layout).
 SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at activation (every switch and boot) to `/run/secrets/`.
 
 Two SOPS modules:
-- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity and the k3s cluster token, on every k3s node. The Flux deploy and age keys, Cloudflare API token and Tailscale authkey are declared by `flux.nix`, `acme.nix` and `tailscale.nix`, which the homelab-server role turns on, so only lenovo decrypts them. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
+- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity for the cluster secrets. The Cloudflare API token and Tailscale authkey are declared by `acme.nix` and `tailscale.nix`: lenovo decrypts both, acer (edge.nix's ACME) the token. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
 - **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token on `devTools` hosts and hosts with a claude worker instance, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
@@ -94,7 +94,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/authentik.yaml` | Personal + acer-swift | Authentik's secret key and the Grafana OIDC pair its blueprint reads |
 | `homelab/grafana.yaml` | Personal + black-pi | Grafana's admin, OIDC client and secret key |
 | `homelab/(cloudflare\|tailscale).yaml` | Personal + lenovo, acer `lukas` + Flux | ACME DNS token, Tailscale authkey |
-| `homelab/*.yaml` | Personal + every cluster host + Flux | k3s cluster token, GitHub access token |
+| `homelab/*.yaml` | Personal + every cluster host + Flux | GitHub access token; `k3s.yaml`, which nothing declares since k3s left, until the owner retires it |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
 | `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | Claude OAuth token |
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
@@ -194,11 +194,11 @@ is one of these five:
 
 | Allowed | Example |
 |---------|---------|
-| **(a) A consequence or gotcha** — what breaks, and when | `# NOT security.lockKernelModules: it breaks on-demand module loading for k3s/containerd.` |
+| **(a) A consequence or gotcha** — what breaks, and when | `# NOT security.lockKernelModules: it breaks on-demand module loading after boot.` |
 | **(b) An upstream doc link** | `# https://wiki.hyprland.org/Configuring/Variables/#input` |
 | **(c) A FIXME with the specific blocker** | `# FIXME: waiting on nixpkgs#123456; the module asserts on empty extraCommands.` |
 | **(d) A one-line justification for a pin or override** | `# mkForce: the desktop module sets this too and we must win.` |
-| **(e) A file header, only when it carries a fact the path does not** | `# Common k3s configuration shared between server and agent` |
+| **(e) A file header, only when it carries a fact the path does not** | `# Port-scoping rules for the NixOS firewall, emitted for BOTH backends.` |
 
 Never:
 
@@ -242,7 +242,7 @@ either side is only reported.
 ## Conventions
 
 - **Namespace boundary**: `homelab.*` is a cluster/platform capability, mostly
-  turned on by a role (k3s, flux, dns, acme, ntfy, the rebuild trigger;
+  turned on by a role (dns, acme, ntfy, the rebuild trigger;
   tailscale has no option, importing its module turns it on);
   `sam.*` is host identity and personal-machine concern (profile, desktop,
   thermal, hostSecrets). When both scopes need the same noun, the leaf

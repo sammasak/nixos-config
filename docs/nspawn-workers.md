@@ -47,14 +47,14 @@ not otherwise verified.
 Host-wide: `sam.workers.pool.memory` (below) and `sam.workers.ntfyUrl` (null, or the ntfy topic that hears of failures, see Alerts).
 
 Every environment of a host runs in `environments.slice`, whose `MemoryMax` is
-the host's `sam.workers.pool.memory` (protecting k3s and the host) and whose
+the host's `sam.workers.pool.memory` (protecting the host and its services) and whose
 `MemoryLow` is the sum of the reserves. An environment has no ceiling of its
 own and the pool no `MemoryHigh`: the only limit is the pool's `MemoryMax`,
 with the pool's swap (zram) capped at a quarter of it, so one gate alone uses what
 its neighbours leave idle, down to their reserves (`MemoryMin`). nix builds
 run in the host's daemon, outside the pool; acer and msi bound that daemon
 (2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
-fails before k3s or the host does. msi powers off at 21:00
+fails before the host's services do. msi powers off at 21:00
 (Mon-Fri window); its environments come back at its next boot.
 Inside, the cgroup files read `max`: `/etc/dev-environment` holds these limits as shell `key=value` (bytes: `memory_reserved`, `pool_memory`, `pool_swap`; `cpu_weight`, `nix_max_jobs`, `nix_cores`).
 

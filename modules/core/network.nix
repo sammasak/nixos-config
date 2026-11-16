@@ -26,12 +26,10 @@ in
     hostName = profile.hostname;
     networkmanager.enable = true;
 
-    # Baseline firewall for EVERY host: SSH only. Cluster ingress ports live in
-    # modules/homelab/k3s/default.nix behind `homelab.k3s.enable`, so a laptop
-    # that never joins the cluster ends up SSH-only.
+    # Baseline firewall for EVERY host: SSH only. Each service opens its own
+    # ports (edge.nix, adguardhome.nix), so a laptop running none is SSH-only.
     #
-    # Break-glass if a rule here is ever wrong: the k8s API (root pod) path, or
-    # the console.
+    # Break-glass if a rule here is ever wrong: the console.
     firewall = {
       enable = true;
       inherit (sshRules) extraInputRules extraCommands;

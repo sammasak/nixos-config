@@ -2,18 +2,18 @@
 
 One flake that builds and deploys a five-host homelab: two laptops, a tower
 and two Raspberry Pis, sharing one user and one Home Manager tree. Four of the
-hosts form a k3s cluster; the fifth is a Wi-Fi lab appliance. It is built with
+hosts run the homelab's services as NixOS units; the fifth is a Wi-Fi lab appliance. It is built with
 flake-parts and pushed with deploy-rs from the daily-driver laptop.
 
 ## Hosts
 
 | Host (flake attribute) | Hardware | Role |
 |------------------------|----------|------|
-| `lenovo-21CB001PMX` (`lenovo`) | Laptop | Daily driver with desktop; k3s control plane; deploys every other host |
-| `acer-swift` | Laptop run headless | k3s worker (the only general one); `desktop` boot entry adds the Niri GUI |
-| `msi-ms7758` | Tower, dual-boots Windows (GRUB) | Intermittent k3s agent, woken via Wake-on-LAN, tainted so only tolerating pods land |
-| `black-pi` | Raspberry Pi 4, aarch64 | k3s agent; builds its own closure on the Pi |
-| `naked-pi` | Raspberry Pi 3, aarch64 | `rf-lab` Wi-Fi learning node and ESP32 host; not in k3s |
+| `lenovo-21CB001PMX` (`lenovo`) | Laptop | Daily driver with desktop; DNS, ntfy and Tailscale; deploys every other host |
+| `acer-swift` | Laptop run headless | Always-on service host (Caddy edge, Authentik, chat, llm-gateway); `desktop` boot entry adds the Niri GUI |
+| `msi-ms7758` | Tower, dual-boots Windows (GRUB) | Intermittent worker host, woken via Wake-on-LAN in its work-hours window |
+| `black-pi` | Raspberry Pi 4, aarch64 | Observability host (Prometheus, Grafana, Loki); builds its own closure on the Pi |
+| `naked-pi` | Raspberry Pi 3, aarch64 | `rf-lab` Wi-Fi learning node and ESP32 host |
 
 ## Layout
 
@@ -24,7 +24,7 @@ flake-modules/          the flake's outputs
 hosts/<name>/           per-machine facts: configuration.nix (sam.profile and host-only modules), hardware-configuration.nix
 modules/roles/          base, laptop, homelab-agent, homelab-server, runtime-host, rf-lab, embedded
 modules/core/           the system baseline; roles/base.nix imports most of it
-modules/homelab/        k3s, flux, sops, ACME, AdGuard, tailscale, ntfy, watchdogs
+modules/homelab/        host services: edge, AdGuard, ACME, sops, tailscale, ntfy, monitoring, watchdog
 modules/home/, programs/  the one Home Manager tree every host gets
 modules/desktop/, specialisations/  the niri GUI and the boot entry that enables it
 modules/workers/        nspawn developer environments (docs/nspawn-workers.md)

@@ -1,10 +1,8 @@
-# alloy-otlp on acer: the OTLP intake behind otlp.sammasak.dev (Traefik reaches 4318 through a selectorless Service,
-# homelab-gitops), sanitizing the harness telemetry and sending metrics to black-pi's Prometheus through a durable
-# queue and logs to its Loki. On acer, not black-pi, so the queue sits on the far side of a black-pi outage. One
+# alloy-otlp on acer: the OTLP intake behind otlp.sammasak.dev (Caddy reaches 4318 over loopback, edge.nix),
+# sanitizing the harness telemetry and sending metrics to black-pi's Prometheus through a durable queue and logs to
+# its Loki. On acer, not black-pi, so the queue sits on the far side of a black-pi outage. One
 # process by construction: the session sum (homelab-gitops#226) is per process. On nixpkgs' Alloy 1.17.1, which leaves
 # exemplars in place (./alloy-otlp.alloy); they stop at the queue, as Prometheus stores none.
-# Until homelab-gitops#271 reconciles, the cluster's alloy-otlp pod holds the same /var/lib/alloy-otlp. Once it is
-# gone: `systemctl restart alloy-otlp` on acer, then confirm the queue drains (otelcol_exporter_queue_size to 0).
 # scripts/test-alloy-otlp-*.{sh,py} run this unit's ExecStart, as evaluated, against the deployed config.
 {
   config,
@@ -14,7 +12,7 @@
   ...
 }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp ciliumInterfaces mkDualBackendFirewall;
+  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
   fw = config.networking.firewall;
   alloy = pkgs.grafana-alloy;
@@ -102,8 +100,7 @@ in
     };
   };
 
-  # black-pi's Prometheus scrapes the collector's own metrics; 4318 has no rule, so only Cilium's interfaces (any pod,
-  # Traefik's included) reach it
+  # black-pi's Prometheus scrapes the collector's own metrics; 4318 has no rule, so only loopback (Caddy) reaches it
   networking.firewall = {
     inherit
       (mkDualBackendFirewall {
@@ -132,8 +129,8 @@ in
             otlpPort
             httpPort
           ] == [ ]
-        && lib.all (i: lib.elem i ciliumInterfaces) fw.trustedInterfaces;
-      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback and Cilium's interfaces: no LAN host may reach the intake. Any pod still can; the bearer token is the control there.";
+        && lib.all (i: i == "lo") fw.trustedInterfaces;
+      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback: no LAN host may reach the intake.";
     }
   ];
 }

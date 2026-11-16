@@ -21,7 +21,7 @@
     pi = true;
     nativeOtel = true;
   };
-  # k3s pods take ~4.6G here: a 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
+  # A 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
   sam.workers = {
     labelPrefix = "acer";
     pool.memory = "7G";
@@ -42,16 +42,12 @@
     imports = [ ../../modules/specialisations/desktop.nix ];
   };
 
-  homelab.k3s.extraFlags = [
-    "--node-label=node-pool=workers"
-  ];
-
   # Power-profiles-daemon still provides the battery-aware system profile; EPP
   # keeps sustained work balanced instead of forcing a power-saving bias.
   sam.thermal.energyPerformancePreference = "balance_performance";
 
   # WiFi powersave lets the NIC enter deep states, causing ~300-500 ms link
-  # drops that break k3s API watches.
+  # drops that break long-lived LAN connections.
   # See vault: homelab/acer-swift-wifi-resilience.md
   networking.networkmanager.wifi.powersave = false;
   boot.extraModprobeConfig = ''

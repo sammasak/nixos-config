@@ -38,16 +38,12 @@ fi
 # before the handoff.
 NEW_SYSTEM="$(readlink -f /nix/var/nix/profiles/system)"
 
-# All three must pass within HEALTH_TIMEOUT_SEC seconds: the k3s API answering
-# on 127.0.0.1:6443, sshd listening on :22 (or we lock ourselves out), and DNS
-# resolving (this host serves DNS for the cluster).
+# Both must pass within HEALTH_TIMEOUT_SEC seconds: sshd listening on :22 (or
+# we lock ourselves out), and DNS resolving (this host serves DNS for the LAN).
 health_check() {
   local deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SEC ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     local ok=1
-    # 401/403/200 over TLS all mean "answering".
-    curl -sk --max-time 5 -o /dev/null https://127.0.0.1:6443/healthz \
-      || curl -sk --max-time 5 -o /dev/null https://127.0.0.1:6443/ || ok=0
     ss -ltn 2>/dev/null | grep -Eq ':22\b' || ok=0
     getent hosts github.com >/dev/null 2>&1 || ok=0
     if [ "$ok" -eq 1 ]; then return 0; fi

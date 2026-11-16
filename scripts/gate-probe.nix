@@ -31,24 +31,8 @@ let
   };
 
   sections = {
-    # flux wait bound and ~/.claude.json activation
+    # ~/.claude.json activation
     switch-safety = {
-      # null: the host does not bootstrap Flux
-      flux = builtins.mapAttrs (
-        name: h:
-        let
-          units = h.config.systemd.services;
-        in
-        if units ? flux-bootstrap then
-          {
-            inherit (units.flux-bootstrap.serviceConfig) Type;
-            TimeoutStartSec = units.flux-bootstrap.serviceConfig.TimeoutStartSec or null;
-            script = builtins.unsafeDiscardStringContext units.flux-bootstrap.script;
-            activationTimeout = flake.deploy.nodes.${name}.profiles.system.activationTimeout or null;
-          }
-        else
-          null
-      ) hosts;
       claudeActivation = (hm lenovo).home.activation.acceptClaudeStartupDialogs.data;
     };
 

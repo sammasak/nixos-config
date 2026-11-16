@@ -1182,7 +1182,7 @@ in
       };
       networking.localCommands = "${pkgs.iproute2}/bin/ip route replace unreachable 10.233.0.0/16";
       networking.firewall = lib.mkIf (cfg.blockedNetworks != [ ]) {
-        # INPUT too: a guest's connection to one of the host's own addresses (its k3s API, sshd) is never forwarded.
+        # INPUT too: a guest's connection to one of the host's own addresses (sshd, say) is never forwarded.
         # IPv6 is link-local only (no router advertises a prefix): the host's fe80 address answers ping and some ports
         # from the guest, so the same chain drops new connections there, with ICMPv6 left for neighbour discovery.
         extraCommands = ''

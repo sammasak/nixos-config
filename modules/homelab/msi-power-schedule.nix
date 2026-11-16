@@ -1,12 +1,5 @@
 # Work-hours power window for msi-ms7758, a dual-boot tower only wanted awake
 # then. No weekend wake fires, so it stays off from Fri 21:00 to Mon 09:00.
-#
-# Graceful note: we deliberately do a local graceful stop rather than an API
-# `kubectl cordon`/`drain`. msi runs only stateless pods that tolerate its
-# NoSchedule taint, and its NotReady periods are alerting-muted. Stopping
-# k3s.service SIGTERMs them cleanly before poweroff, which
-# is all drain would buy here — without a cross-repo RBAC token or having to
-# un-cordon the node on every morning wake.
 {
   config,
   lib,
@@ -18,12 +11,11 @@ let
   inherit (lib) mkEnableOption mkIf mkMerge;
   cfg = config.homelab.msiPowerSchedule;
   msiMac = "d4:3d:7e:4a:f9:3d";
-  intermittentTaint = "--node-taint=sammasak.dev/intermittent=true:NoSchedule";
 in
 {
   options.homelab.msiPowerSchedule = {
     waker.enable = mkEnableOption "sending msi its Mon-Fri 09:00 Wake-on-LAN packet (enable on an always-on host)";
-    selfShutdown.enable = mkEnableOption "msi's scheduled Mon-Fri 21:00 graceful poweroff (enable on msi)";
+    selfShutdown.enable = mkEnableOption "msi's scheduled Mon-Fri 21:00 poweroff (enable on msi)";
   };
 
   config = mkMerge [
@@ -49,28 +41,11 @@ in
     })
 
     (mkIf cfg.selfShutdown.enable {
-      assertions = [
-        {
-          assertion = !config.homelab.k3s.enable || lib.elem intermittentTaint config.homelab.k3s.extraFlags;
-          message = "homelab.msiPowerSchedule.selfShutdown needs ${intermittentTaint} in homelab.k3s.extraFlags, or the nightly poweroff takes down untolerating pods";
-        }
-      ];
-
       systemd.services.msi-scheduled-shutdown = {
-        description = "Graceful scheduled shutdown of msi (drain workloads, then poweroff)";
+        description = "Scheduled poweroff of msi";
         serviceConfig = {
           Type = "oneshot";
-          ExecStart = pkgs.writeShellScript "msi-scheduled-shutdown" ''
-            set -u
-            echo "Scheduled shutdown: stopping k3s to drain workloads gracefully..."
-            # Stopping k3s SIGTERMs the kubelet/containerd, so every tolerating
-            # pod terminates within its grace period before the
-            # node powers down.
-            ${pkgs.systemd}/bin/systemctl stop k3s.service || true
-            ${pkgs.coreutils}/bin/sleep 5
-            echo "Powering off."
-            ${pkgs.systemd}/bin/systemctl poweroff
-          '';
+          ExecStart = "${pkgs.systemd}/bin/systemctl poweroff";
         };
       };
       systemd.timers.msi-scheduled-shutdown = {

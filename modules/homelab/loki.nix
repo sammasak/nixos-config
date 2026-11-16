@@ -47,7 +47,7 @@ in
       default = "127.0.0.1";
       description = ''
         IPv4 address of the HTTP API (push and query). gRPC stays on loopback. Any other address is reachable through
-        the firewall's trusted interfaces (tailscale0, and Cilium's on k3s hosts) whatever allowedSources says.
+        the firewall's trusted interfaces (tailscale0 where it runs) whatever allowedSources says.
       '';
     };
     port = lib.mkOption {

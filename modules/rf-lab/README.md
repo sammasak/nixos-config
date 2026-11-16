@@ -36,11 +36,10 @@ tools it drives: Ghidra, Binwalk, Unblob, JADX, a Node toolchain) runs on the
 analysis workstation, never on the 1 GiB board. Protocol parsers live in
 `sammasak/rf-proto`. Two halves enforce this by evaluation:
 - the board: assertions in `modules/roles/rf-lab.nix` fail when naked-pi
-  declares one of those tools in its system, per-user or Home Manager packages or is a
-  k3s node. They fire on any evaluation of its toplevel: in `nixos:qa` through
+  declares one of those tools in its system, per-user or Home Manager packages. They fire on any evaluation of its toplevel: in `nixos:qa` through
   `nixos:flake-check` (which evaluates the Pis), and in parity or a deploy;
 - the fleet: an assertion in `modules/roles/base.nix` fails any host without
-  the rf-lab role (black-pi, the k3s nodes) that imports this module or
+  the rf-lab role (black-pi and the other fleet hosts) that imports this module or
   carries an `rf-*` unit, on the same evaluations.
 
 The assertion reads declared packages, not the built closure: a tool pulled in

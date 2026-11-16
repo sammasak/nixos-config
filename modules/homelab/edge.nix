@@ -1,7 +1,7 @@
 # The *.sammasak.dev edge on acer (#420): Caddy terminates TLS with one DNS-01 wildcard from security.acme and
 # proxies each name to its backend, with forward auth through the k3s Authentik for chat and grafana. The admin API is
 # off, so no local process can load a config without forward_auth; a config change or renewal restarts Caddy.
-# herman, karta and registry proxy to their pods' ClusterIPs until they move (step 2, PR 2).
+# herman and karta proxy to their pods' ClusterIPs until they move (step 2, PR 2).
 {
   config,
   lib,
@@ -68,8 +68,6 @@ let
     ntfy = "reverse_proxy ${hosts.lenovo-21CB001PMX.address}:2586";
     herman = "reverse_proxy 10.43.114.35:8080";
     karta = "reverse_proxy 10.43.147.178:8080";
-    # zot, for pulls until the pods go
-    registry = "reverse_proxy 10.43.23.61:5000";
   };
 in
 {

@@ -114,9 +114,9 @@ in
   networking.firewall = {
     inherit
       (mkDualBackendFirewall {
-        nftComment = "Grafana answers Traefik on acer.";
+        nftComment = "Grafana answers Caddy on acer.";
         ports = [ port ];
-        # Traefik's pods arrive SNATed to acer's address, or on a trusted Cilium interface
+        # Caddy on acer (edge.nix)
         sources = [ hosts.acer-swift.address ];
         interfaces = [ ];
         inherit (fw) backend;

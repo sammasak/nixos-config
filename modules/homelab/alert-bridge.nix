@@ -1,5 +1,5 @@
-# Alertmanager webhook to ntfy bridge (sammasak/alert-bridge). Runs beside ntfy,
-# outside k3s, so a page does not depend on the cluster it reports on.
+# Alertmanager webhook to ntfy bridge (sammasak/alert-bridge). Runs beside ntfy on lenovo, so a page does not
+# depend on the host that runs Alertmanager.
 {
   config,
   lib,
@@ -24,12 +24,9 @@ let
   }:${toString cfg.port}/health";
 
   firewallRules = mkDualBackendFirewall {
-    nftComment = "alert-bridge: Alertmanager, from its pod or from its node.";
+    nftComment = "alert-bridge: Alertmanager, from the LAN.";
     ports = [ cfg.port ];
-    sources = [
-      config.sam.fleet.lanCidr
-      "10.42.0.0/16" # k3s pod CIDR
-    ];
+    sources = [ config.sam.fleet.lanCidr ];
     interfaces = [ ];
     backend = config.networking.firewall.backend;
   };
@@ -66,7 +63,7 @@ in
     openFirewall = mkOption {
       type = types.bool;
       default = false;
-      description = "Accept the port from the LAN and the k3s pod network.";
+      description = "Accept the port from the LAN.";
     };
   };
 
@@ -98,8 +95,8 @@ in
         ExecStartPost = "${getExe pkgs.curl} --fail --silent --show-error --output /dev/null --max-time 5 --retry 10 --retry-delay 1 --retry-connrefused ${healthUrl}";
         Restart = "always";
         RestartSec = 5;
-        # Reachable from the LAN and from pods, on the control plane: a flood
-        # of requests ends in a restart of the bridge, not in pressure on k3s.
+        # Reachable from the LAN, on the DNS host: a flood of requests ends in
+        # a restart of the bridge, not in pressure on AdGuard and ntfy.
         MemoryMax = "64M";
         TasksMax = 64;
         LimitNOFILE = 256;

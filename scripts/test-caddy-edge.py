@@ -33,7 +33,6 @@ backends = {
     "ntfy": f"{fleet['lenovo-21CB001PMX']}:2586",
     "herman": "10.43.114.35:8080",
     "karta": "10.43.147.178:8080",
-    "registry": "10.43.23.61:5000",
 }
 headers = {"X-Authentik-Username", "X-Authentik-Groups", "X-Authentik-Email", "X-Authentik-Name", "X-Authentik-Uid"}
 

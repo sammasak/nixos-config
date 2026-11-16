@@ -3,8 +3,6 @@
   imports = [
     ./base.nix
     ../core/always-on.nix
-    ../homelab/k3s/server.nix
-    ../homelab/k3s-db-snapshot.nix
     ../homelab/adguardhome.nix
     ../homelab/acme.nix
     ../homelab/tailscale.nix
@@ -13,13 +11,6 @@
     ../homelab/alert-bridge.nix
     ../homelab/nixos-rebuild-trigger
   ];
-
-  homelab.k3s = {
-    enable = true;
-    role = "server";
-  };
-
-  homelab.flux.enable = true;
 
   homelab.dns = {
     enable = true;

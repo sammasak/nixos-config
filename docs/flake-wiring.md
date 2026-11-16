@@ -146,7 +146,7 @@ update.
 
 ## Composition with #291
 
-#291 owns the facts (addresses, host keys, cache keys, the k3s server address,
+#291 owns the facts (addresses, host keys, cache keys,
 per-host tool choices). #292 adds no fact fields, and #291 adds none to this
 table either: a LAN fact read by two or more modules is a typed, read-only
 `sam.fleet` set in `modules/core/fleet.nix`, imported by `core/system.nix`.

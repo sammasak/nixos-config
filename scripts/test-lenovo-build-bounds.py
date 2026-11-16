@@ -31,7 +31,7 @@ check(cap is not None and measured < cap,
       f"the measured cores-2 build peak (6118 MiB) fits under MemoryMax ({lenovo.get('MemoryMax')})")
 ram = 15.3 * 2**30
 check(cap is not None and cap <= ram / 2,
-      "MemoryMax leaves at least half of lenovo's 15.3 GiB to k3s, the agents and the desktop")
+      "MemoryMax leaves at least half of lenovo's 15.3 GiB to its services, the agents and the desktop")
 # nixos-config#353: a client-side evaluation runs in the user slice, which the daemon cap does not hold
 user = P["userSlice"] or {}
 ucap, uswap = size(user.get("MemoryMax")), size(user.get("MemorySwapMax"))

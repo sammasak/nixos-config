@@ -1,7 +1,6 @@
-# llm-gateway as a host service. Pods reach 8081 and 9091 on the trusted Cilium interfaces, and cluster policies
-# admit only Traefik and Prometheus there; from the LAN lenovo reaches 8081 and black-pi's Prometheus 9091. Any process on acer, and a
-# hostNetwork pod, still reaches 9091 and the keyless 11435 over loopback. llm-gateway.toml is the one deployed
-# config: a model or provider change lands there. Without state.sqlite3 the unit is skipped, not failed, and a
+# llm-gateway as a host service. From the LAN lenovo reaches 8081 and black-pi's Prometheus 9091; Caddy reaches 8081
+# over loopback. Any process on acer still reaches 9091 and the keyless 11435 over loopback. llm-gateway.toml is the
+# one deployed config: a model or provider change lands there. Without state.sqlite3 the unit is skipped, not failed, and a
 # database restored after the switch needs `systemd-tmpfiles --create` (the Z rule below), then
 # `systemctl start llm-gateway`.
 {
@@ -11,7 +10,7 @@
   ...
 }:
 let
-  inherit (import ../../lib/firewall.nix lib) anySourceTcp ciliumInterfaces mkDualBackendFirewall;
+  inherit (import ../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   fw = config.networking.firewall;
   api = 8081;
   admin = 9091;
@@ -151,8 +150,8 @@ in
       message = "modules/homelab/llm-gateway.nix: keep the firewall on and ports ${toString api} and ${toString admin} out of allowedTCPPorts and allowedTCPPortRanges, global and per interface; admit a caller with a source-scoped rule.";
     }
     {
-      assertion = lib.all (i: lib.elem i ciliumInterfaces) fw.trustedInterfaces;
-      message = "modules/homelab/llm-gateway.nix: a trusted interface bypasses the firewall and reaches the gateway's listeners; trust only loopback and Cilium's, not ${toString (lib.subtractLists ciliumInterfaces fw.trustedInterfaces)}.";
+      assertion = lib.all (i: i == "lo") fw.trustedInterfaces;
+      message = "modules/homelab/llm-gateway.nix: a trusted interface bypasses the firewall and reaches the gateway's listeners; trust only loopback, not ${toString (lib.remove "lo" fw.trustedInterfaces)}.";
     }
   ];
 }

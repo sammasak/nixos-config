@@ -78,10 +78,6 @@ in
         message = "role rf-lab: the SD image ships root with an empty password; import modules/hardware/pi-sd-image.nix in the host.";
       }
       {
-        assertion = !config.services.k3s.enable;
-        message = "role rf-lab: the 1 GiB board is not a k3s node; drop services.k3s (the homelab-agent role) from this host.";
-      }
-      {
         assertion = heavy == [ ];
         message = "role rf-lab: heavyweight reverse-engineering tooling belongs on the analysis workstation, not the 1 GiB board; remove ${lib.concatStringsSep ", " heavy} from environment.systemPackages, users.users.<name>.packages or home.packages.";
       }
