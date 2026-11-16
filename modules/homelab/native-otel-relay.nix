@@ -97,6 +97,21 @@ in
       }
     ];
 
+    # nginx first parses the rendered config at service start; render it with the unit's own ExecStartPre and a
+    # dummy token. proxy_pass resolves its host at parse time, so /etc/hosts is redirected as nftables.checkRuleset does
+    system.checks = [
+      (pkgs.runCommand "native-otel-relay-nginx-check" { nativeBuildInputs = [ pkgs.nginx ]; } ''
+        mkdir credentials runtime
+        printf '%s' dummy-token > credentials/token
+        printf '%s\n' '127.0.0.1 otlp.sammasak.dev' > hosts
+        CREDENTIALS_DIRECTORY=$PWD/credentials RUNTIME_DIRECTORY=$PWD/runtime \
+          ${relayConfig}/bin/native-otel-relay-config
+        LD_PRELOAD=${pkgs.libredirect}/lib/libredirect.so NIX_REDIRECTS=/etc/hosts=$PWD/hosts \
+          nginx -t -e stderr -p "$PWD/runtime/" -c "$PWD/runtime/nginx.conf"
+        touch $out
+      '')
+    ];
+
     systemd.services.native-otel-relay = {
       description = "Credential-isolated OTLP metrics and logs relay";
       wantedBy = [ "multi-user.target" ];
