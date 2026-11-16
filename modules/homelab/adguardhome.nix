@@ -1,4 +1,4 @@
-# AdGuard Home DNS server with encrypted DNS support (DoT/DoH)
+# AdGuard Home DNS server with DNS-over-TLS (DoT)
 {
   config,
   lib,
@@ -16,9 +16,13 @@ let
     ;
   # Android Private DNS only speaks DoT on 853.
   dotPort = 853;
-  # Free on the host: the k3s servicelb is off, so ingress holds 443 on its MetalLB address only.
-  dohPort = 443;
   dnsDomain = cfg.tls.domain;
+  inherit (import ../../lib/firewall.nix lib) anySourceTcp;
+  fw = config.networking.firewall;
+  # AdGuard's UI and control API have no users, so loopback keeps them off the LAN. port_https would serve them, and
+  # DoH, on this address's IP too (internal/home/web.go), so it is 0: no DoH; DNS and DoT bind dns.bind_hosts
+  webPort = 3003;
+  webAddress = "127.0.0.1:${toString webPort}";
 in
 {
   imports = [ ./acme.nix ];
@@ -26,12 +30,12 @@ in
   options.homelab.dns = {
     enable = mkEnableOption "AdGuard Home DNS server";
 
-    tls.enable = mkEnableOption "TLS for DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH)";
+    tls.enable = mkEnableOption "DNS-over-TLS (DoT)";
 
     tls.domain = mkOption {
       type = types.str;
       default = "dns.sammasak.dev";
-      description = "DNS service domain for DoT/DoH certificates";
+      description = "DNS service domain for the DoT certificate";
     };
 
     rewrites = mkOption {
@@ -70,6 +74,14 @@ in
         assertion = cfg.tls.enable -> config.homelab.acme.enable;
         message = "homelab.dns.tls serves the ACME certificate for homelab.dns.tls.domain, which needs homelab.acme.enable.";
       }
+      {
+        assertion =
+          lib.hasPrefix "127.0.0.1:" config.services.adguardhome.settings.http.address
+          && (config.services.adguardhome.settings.tls.port_https or 0) == 0
+          && !config.services.adguardhome.openFirewall
+          && anySourceTcp fw [ webPort ] == [ ];
+        message = "modules/homelab/adguardhome.nix: AdGuard's control API has no users, so http.address stays on 127.0.0.1 (it is ${config.services.adguardhome.settings.http.address}), tls.port_https stays 0 and port ${toString webPort} stays closed.";
+      }
     ];
 
     # upstream's own validator on the rendered file: nixpkgs puts it in a checkPhase that pkgs.formats.yaml's
@@ -94,15 +106,13 @@ in
 
     services.adguardhome = {
       enable = true;
-      openFirewall = true;
-      # mutableSettings = true allows External-DNS (running in k3s) to write
-      # filtering rules via the AdGuard API and have them persist across restarts.
-      # NixOS-declared rewrites and settings are merged in on startup (taking precedence)
-      # but runtime changes (External-DNS filtering rules) are preserved.
+      openFirewall = false;
+      # keeps runtime state and changes made in the UI (an SSH tunnel to 127.0.0.1:3003); the declared settings are
+      # merged in on every start and win
       mutableSettings = true;
 
       settings = {
-        http.address = "0.0.0.0:3003";
+        http.address = webAddress;
         dns = {
           bind_hosts = [ "0.0.0.0" ];
           port = 53;
@@ -122,7 +132,7 @@ in
         tls = mkIf cfg.tls.enable {
           enabled = true;
           server_name = dnsDomain;
-          port_https = dohPort;
+          port_https = 0;
           port_dns_over_tls = dotPort;
           port_dns_over_quic = 0; # Disabled
           certificate_path = "/var/lib/acme/${dnsDomain}/fullchain.pem";
@@ -144,10 +154,7 @@ in
 
     networking.firewall = {
       allowedUDPPorts = [ 53 ];
-      allowedTCPPorts = optionals cfg.tls.enable [
-        dohPort
-        dotPort
-      ];
+      allowedTCPPorts = optionals cfg.tls.enable [ dotPort ];
     };
 
     # Without the ACME group AdGuard cannot read its own certificate.
