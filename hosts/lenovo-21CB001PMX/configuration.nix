@@ -158,4 +158,10 @@
     listenAddress = "0.0.0.0";
     openFirewall = true;
   };
+
+  # secrets/ is edited here, where the personal age key lives (nixos-config's devenv has them too)
+  environment.systemPackages = with pkgs; [
+    sops
+    age
+  ];
 }

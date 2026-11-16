@@ -34,8 +34,6 @@ SOPS_RECIPIENTS = {
 }
 # files encrypted ahead of the module that will declare them: the host that will, and what lands it
 AWAITING: dict[str, tuple[str, str]] = {}
-# files no module declares a secret from any more, kept until the owner retires them: why each stays
-RETIRING = {"secrets/homelab/k3s.yaml": "k3s left the fleet (#422); retiring the file and the Flux recipient is the owner's"}
 LOOPBACK = ["localhost", "127.0.0.1", "::1"]
 
 
@@ -111,9 +109,6 @@ def sops_checks(S):
     check(len(files) >= 12, f"every encrypted file is read ({len(files)})")
     for f in files:
         extra = needless(f, declared.get(f, set()), recipients_of)
-        if f in RETIRING:
-            check(not declared.get(f), f"{f}: no host declares from it ({RETIRING[f]}; {sorted(declared.get(f, set()))})")
-            continue
         if f in AWAITING:
             host, why = AWAITING[f]
             check(extra == [host], f"{f}: {host} is its only undeclared recipient until {why}; once it declares, drop the entry ({extra})")
