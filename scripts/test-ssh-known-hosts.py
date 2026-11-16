@@ -21,6 +21,7 @@ EXPECTED = {
     "lenovo-21CB001PMX": (["lenovo-21CB001PMX", "192.168.10.154"], "SHA256:7DLYFLKZ4wrcrO0Bk7MnZ8yYHrVeu5pFsSwYWjvpNGs"),
     "acer-swift": (["acer-swift", "192.168.10.110"], "SHA256:5Ong1jvhk4Hgx82l2fYrKBjqlkVyG5rYvYfVPo7WdRY"),
     "msi-ms7758": (["msi-ms7758", "msi", "192.168.10.235"], "SHA256:JebDBAzSWRc/WHY8wQG7jVcidYFp4eFKyjuTzXl5Jwc"),
+    "asus-b460m": (["asus-b460m", "192.168.10.113"], "SHA256:SsemYL0zG8kEdMlejNVgNsVsI+DF/PVHs3olZqR8S84"),
     "black-pi": (["black-pi", "192.168.10.137", "192.168.10.136"], "SHA256:i78xzl+ImmEgGFp0QehlBaa3zuFgkpk2nU5ALIHZMjY"),
     "naked-pi": (["naked-pi", "192.168.10.127", "192.168.10.138", "192.168.10.180"], "SHA256:auOEtU3d4yfB4U6iB7WIt0gSCLwK7hCDPorJAwVs0sY"),
 }
@@ -29,6 +30,7 @@ SOPS_RECIPIENTS = {
     "lenovo-21CB001PMX": "age13lj7pyzzspnk8ck3rg5kgh63ekm7k9j5cyzl8awzr37hnr34r94qugqc4y",
     "acer-swift": "age1uu9y3sfr4htk4rrsw66df5gn2xt3t3mykm52ljxlctj37yuza5mqpxlyuk",
     "msi-ms7758": "age1g0k9vwsduy0sclensm38ksxgj5pkjds4r4su5dqufee6lxtl0gzsmvcx4r",
+    "asus-b460m": "age1ye0ma9wl5nt33u73744jv7qsqtelw70tsxlm8wkgaelm7crpsf7sxh2ksl",
     "black-pi": "age16l5rqqh0xv9r6rcuyyz2s9ca5ex25azg9dp4z460zh2r3eqwd3ps9yx7tn",
     "naked-pi": "age1kdjqlt6s6fklcdjm2y9dggyvc9nmpcglsu3gduzudcl85ur8jdwqz26wer",
 }
@@ -122,7 +124,7 @@ def sops_checks(S):
         return cache.setdefault(f, sops_recipients(ROOT / f))
     def paths_of(f):
         return key_cache.setdefault(f, key_paths(ROOT / f))
-    check(set(S["hosts"]) == {"lenovo", "acer-swift", "msi-ms7758", "black-pi", "naked-pi"}, f"every fleet host is checked ({sorted(S['hosts'])})")
+    check(set(S["hosts"]) == {"lenovo", "acer-swift", "msi-ms7758", "asus-b460m", "black-pi", "naked-pi"}, f"every fleet host is checked ({sorted(S['hosts'])})")
     for attr, h in S["hosts"].items():
         bad = undecryptable(h["files"], h["hostName"], recipients_of)
         check(h["files"] and not bad, f"{attr}: each of its {len(h['files'])} sops secrets is in a file encrypted to {h['hostName']} (not: {bad})")
