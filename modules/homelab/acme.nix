@@ -15,7 +15,6 @@ in
 
     sops.secrets."cloudflare/api_token" = {
       sopsFile = ../../secrets/homelab/cloudflare.yaml;
-      path = "/run/secrets/cloudflare-api-token";
       mode = "0400";
     };
 
