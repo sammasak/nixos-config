@@ -46,8 +46,8 @@
       },
       "targets": [
         {
-          "expr": "max by (step) (max_over_time({job=\"platform\",kind=\"gate-step\"} | logfmt | unwrap seconds [1h]))",
-          "legendFormat": "{{step}}",
+          "expr": "max by (host, step) (max_over_time({job=\"platform\",kind=\"gate-step\"} | logfmt | unwrap seconds [1h]))",
+          "legendFormat": "{{host}} {{step}}",
           "queryType": "range",
           "refId": "A",
           "datasource": {
@@ -423,20 +423,47 @@
     {
       "id": 15,
       "type": "stat",
-      "title": "Firing alerts",
+      "title": "Alerts firing now",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
         "y": 36
       },
       "targets": [
         {
           "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Distinct alerts fired",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 36
+      },
+      "targets": [
+        {
+          "expr": "count(count by (alertname) (count_over_time(ALERTS{alertstate=\"firing\"}[$__range]))) or vector(0)",
           "queryType": "instant",
           "instant": true,
           "refId": "A",
@@ -457,8 +484,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 16,
-        "x": 8,
+        "w": 12,
+        "x": 12,
         "y": 36
       },
       "targets": [
@@ -570,6 +597,16 @@
           "legendFormat": "parked",
           "queryType": "range",
           "refId": "F",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "max(max_over_time({job=\"platform\",kind=\"delivery\"} | logfmt | result=\"ok\" | lead_time_hours!=\"unknown\" | unwrap lead_time_hours | __error__=\"\" [1d]))",
+          "legendFormat": "lead_time_hours",
+          "queryType": "range",
+          "refId": "G",
           "datasource": {
             "type": "loki",
             "uid": "loki"

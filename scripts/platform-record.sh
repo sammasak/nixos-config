@@ -19,13 +19,24 @@ esac
 
 line="$*"
 spool=${PLATFORM_RECORD_SPOOL:-${XDG_STATE_HOME:-$HOME/.local/state}/platform-records}
-if mkdir -p "$(dirname "$spool")" && printf '%s %s %s\n' "$(date -Is)" "$kind" "$line" >>"$spool"; then
-  tail -n 2000 "$spool" >"$spool.$$" && mv -f "$spool.$$" "$spool"
+{ mkdir -p "$(dirname "$spool")" && printf '%s %s %s\n' "$(date -Is)" "$kind" "$line" >>"$spool" \
+  && tail -n 2000 "$spool" >"$spool.$$" && mv -f "$spool.$$" "$spool"; } || true
+
+# a Loki that did not answer in the last 5 min is not tried again: a gate writes dozens of records, and a dropped
+# connection (a dev-environment guest, black-pi down) would otherwise cost each one its timeout
+down="$spool.loki-down"
+if [ -n "$(find "$down" -mmin -5 2>/dev/null)" ]; then
+  echo "platform-record: Loki was unreachable within 5 min; the $kind record is only in $spool" >&2
+  exit 0
 fi
 
 body=$(jq -cn --arg k "$kind" --arg h "$(uname -n)" --arg ts "$(date +%s%N)" --arg l "$line" \
   '{streams: [{stream: {job: "platform", kind: $k, host: $h}, values: [[$ts, $l]]}]}') || exit 0
-curl -fsS -m 5 -H 'Content-Type: application/json' --data "$body" \
-  "${PLATFORM_LOKI_URL:-http://192.168.10.137:3100}/loki/api/v1/push" >/dev/null 2>&1 \
-  || echo "platform-record: Loki did not take the $kind record; it is in $spool" >&2
+if curl -fsS --connect-timeout 1 -m 3 -H 'Content-Type: application/json' --data "$body" \
+  "${PLATFORM_LOKI_URL:-http://192.168.10.137:3100}/loki/api/v1/push" >/dev/null 2>&1; then
+  rm -f "$down"
+else
+  touch "$down" 2>/dev/null || true
+  echo "platform-record: Loki did not take the $kind record; it is in $spool" >&2
+fi
 exit 0

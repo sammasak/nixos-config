@@ -67,7 +67,7 @@ deploy HOST:
       rec() { recorded=1; scripts/platform-record.sh deploy node={{HOST}} result="$1" seconds=$((SECONDS - start)) \
         rolled_back="${2:-0}" units_restarted="${3:-0}" failed_units="${4:-unknown}" sha="$sha"; }; \
       trap '[ "$recorded" = 1 ] || rec interrupted; rm -f "$log"' EXIT; \
-      if ! scripts/system-checks.sh {{HOST}} {{memcap}}; then rec checks-failed; exit 1; fi; \
+      scripts/system-checks.sh {{HOST}} {{memcap}} || { c=$?; rec checks-failed; exit "$c"; }; \
       rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}; \
       rolled=0; if grep -q 'rolled back to previous generation' "$log"; then rolled=1; fi; \
       units=$(sed -n 's/.*restarting the following units: //p' "$log" | tr ',' '\n' | grep -c . || true); \
@@ -75,7 +75,7 @@ deploy HOST:
       if [ -n "$target" ]; then check=0; timeout --foreground 300 ssh -o StrictHostKeyChecking=yes "deploy@$target" \
         'systemctl is-system-running --wait && [ "$(readlink /run/current-system)" = "$(dirname "$(readlink -f /nix/var/nix/profiles/system/init)")" ]' \
         || check=$?; fi; \
-      failed=unknown; if [ -n "$target" ]; then failed=$(timeout 60 ssh -o StrictHostKeyChecking=yes "deploy@$target" \
+      failed=unknown; if [ "$check" != 124 ] && [ "$check" != 255 ]; then failed=$(timeout 60 ssh -o StrictHostKeyChecking=yes "deploy@$target" \
         'systemctl --failed --no-legend --plain | wc -l' 2>/dev/null) || failed=unknown; fi; \
       case $check in \
         0) result=ok ;; \

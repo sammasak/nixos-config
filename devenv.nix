@@ -372,6 +372,7 @@ let
     curl
     jq
     coreutils
+    findutils
   ]) (builtins.readFile ./scripts/platform-record.sh);
   # seconds per step, to see where a slow gate spends its time (#334); prek hides a passing hook's
   # output, so the push gate also appends them to NIXOS_QA_TIMES. Each step, failed ones included, also goes to the

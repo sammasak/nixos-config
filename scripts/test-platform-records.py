@@ -59,11 +59,12 @@ class Loki(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run(kind, *fields, url):
+def run(kind, *fields, url, twice=False):
     with tempfile.TemporaryDirectory() as tmp:
         spool = pathlib.Path(tmp) / "spool"
         env = dict(os.environ, PLATFORM_LOKI_URL=url, PLATFORM_RECORD_SPOOL=str(spool))
-        out = subprocess.run(["bash", str(HELPER), kind, *fields], env=env, capture_output=True, text=True)
+        for _ in range(2 if twice else 1):
+            out = subprocess.run(["bash", str(HELPER), kind, *fields], env=env, capture_output=True, text=True)
         return out.returncode, out.stderr, spool.read_text() if spool.exists() else ""
 
 
@@ -81,11 +82,29 @@ check(stream.get("values", [[None, None]])[0][1] == "node=acer-swift result=ok s
 check(re.fullmatch(r"\S+ deploy node=acer-swift result=ok seconds=12\n", spool) is not None, f"the spool keeps the line ({spool!r})")
 
 server.shutdown()
+server.server_close()
 rc, err, spool = run("gate", "result=fail", url=url)
 check(rc == 0 and "did not take" in err and "gate result=fail" in spool,
       f"with Loki away the caller still exits 0 and the spool holds the record (rc {rc}, {err.strip()})")
 
+rc, err, spool = run("gate", "result=fail", url=url, twice=True)
+check(rc == 0 and "unreachable within 5 min" in err and spool.count("gate result=fail") == 2,
+      f"after a failed push the next record is spooled without trying Loki again (rc {rc}, {err.strip()})")
+
 rc, err, spool = run("deploys", "result=ok", url=url)
 check(rc == 0 and "unknown kind" in err and spool == "", f"an unknown kind records nothing and exits 0 (rc {rc}, {err.strip()})")
+
+report = {"metrics": {
+    "verified_deliveries": {"value": {"total": 18}}, "review": {"value": None},
+    "blocked_time": {"value": {"parked_events": 0}},
+    "authorization_to_merge": {"value": {"n": 3, "median_seconds": 9000}}}}
+with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
+    json.dump(report, f)
+    f.flush()
+    fields = subprocess.run(["jq", "-r", "-f", str(ROOT / "scripts/platform-delivery.jq"), f.name],
+                            capture_output=True, text=True).stdout.split()
+check(fields == ["verified_deliveries=18", "prs_reviewed=unknown", "review_passes=unknown", "rework_rounds=unknown",
+                 "repeated_reviews=unknown", "parked=0", "lead_time_hours=2.5"],
+      f"the delivery record: numbers kept (0 too), a null metric unknown, lead time the median in hours ({fields})")
 
 sys.exit(1 if failed else 0)

@@ -25,6 +25,7 @@ let
       curl
       jq
       coreutils
+      findutils
     ];
     text = builtins.readFile ../../../scripts/platform-record.sh;
   };
@@ -45,15 +46,7 @@ let
       fi
       # word splitting is the point: one key=value argument per metric
       # shellcheck disable=SC2046
-      ${lib.getExe platformRecord} delivery day="$day" result=ok $(jq -r '.metrics as $m | [
-        "verified_deliveries=\($m.verified_deliveries.value.total // "unknown")",
-        "prs_reviewed=\($m.review.value.prs_reviewed // "unknown")",
-        "review_passes=\($m.review.value.passes // "unknown")",
-        "rework_rounds=\($m.review.value.rework_rounds // "unknown")",
-        "repeated_reviews=\($m.review.value.repeated_reviews // "unknown")",
-        "parked=\($m.blocked_time.value.parked_events // "unknown")",
-        "lead_time_hours=\($m.authorization_to_merge.value | numbers // "unknown")"
-      ] | join(" ")' "$report")
+      ${lib.getExe platformRecord} delivery day="$day" result=ok $(jq -r -f ${../../../scripts/platform-delivery.jq} "$report")
     '';
   };
   # The long-lived OAuth token the Fish session also exports; the service has no interactive login.
