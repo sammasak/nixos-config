@@ -26,6 +26,53 @@ let
       )
     )
   );
+  # the gateway's own parse rules (llm-gateway crates/core/src/catalog.rs), checked at evaluation: a syntax error
+  # throws in fromTOML, and the gateway would otherwise refuse these only at service start
+  catalog = builtins.fromTOML configText;
+  providers = lib.listToAttrs (
+    map (p: lib.nameValuePair (p.name or "") p) (catalog.providers or [ ])
+  );
+  badProviders = builtins.filter (
+    p:
+    !(
+      p ? name
+      && p ? base_url
+      && lib.elem (p.kind or null) [
+        "gemini"
+        "cloudflare"
+        "ollama"
+        "openai"
+      ]
+      && (p.kind == "ollama" || p ? api_key_file)
+    )
+  ) (catalog.providers or [ ]);
+  # an enabled model must not bill by usage: free, or prepaid-capped on a provider with billing evidence
+  badModels = builtins.filter (
+    m:
+    !(
+      lib.all (f: m ? ${f}) [
+        "provider"
+        "id"
+        "tier"
+        "cost_class"
+        "enabled"
+        "context_window"
+      ]
+      && lib.elem m.cost_class [
+        "free"
+        "prepaid-capped"
+        "trial-credit"
+        "paid"
+        "unknown"
+      ]
+      && providers ? ${m.provider}
+      && (
+        !m.enabled
+        || m.cost_class == "free"
+        || (m.cost_class == "prepaid-capped" && providers.${m.provider} ? billing)
+      )
+    )
+  ) (catalog.models or [ ]);
   backup = pkgs.writers.writePython3Bin "llm-gateway-backup" { doCheck = false; } (
     builtins.readFile ./llm-gateway-backup.py
   );
@@ -152,6 +199,18 @@ in
     {
       assertion = lib.all (i: i == "lo") fw.trustedInterfaces;
       message = "modules/homelab/llm-gateway.nix: a trusted interface bypasses the firewall and reaches the gateway's listeners; trust only loopback, not ${toString (lib.remove "lo" fw.trustedInterfaces)}.";
+    }
+    {
+      assertion = badProviders == [ ];
+      message = "modules/homelab/llm-gateway.toml: providers ${
+        toString (map (p: p.name or "<unnamed>") badProviders)
+      } need name, base_url, a kind of gemini, cloudflare, ollama or openai, and api_key_file unless the kind is ollama.";
+    }
+    {
+      assertion = badModels == [ ];
+      message = "modules/homelab/llm-gateway.toml: models ${
+        toString (map (m: "${m.provider or "?"}/${m.id or "?"}") badModels)
+      } need provider (a declared one), id, tier, cost_class (free, prepaid-capped, trial-credit, paid or unknown), enabled and context_window; an enabled one must be free, or prepaid-capped on a provider with billing.";
     }
   ];
 }
