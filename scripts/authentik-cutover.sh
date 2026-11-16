@@ -13,17 +13,18 @@ stamp=$(date +%Y%m%d-%H%M%S)
 dump=/var/tmp/authentik-cutover-$stamp.sql.gz
 tables=(authentik_core_user authentik_core_group authentik_core_application authentik_core_token
   authentik_providers_oauth2_oauth2provider authentik_providers_proxy_proxyprovider authentik_flows_flow
-  authentik_flows_stage authentik_outposts_outpost authentik_brands_brand)
+  authentik_flows_stage authentik_outposts_outpost authentik_brands_brand authentik_core_session
+  authentik_core_authenticatedsession authentik_providers_proxy_proxysession)
 
 say() { printf '\n== %s\n' "$*"; }
 on_acer() { ssh -o BatchMode=yes "$acer" sudo -n "$@"; }
-k3s_sql() { kubectl -n "$ns" exec deploy/authentik-postgres -- psql -U authentik -d authentik -tAc "$1"; }
+k3s_sql() { trap - ERR; kubectl -n "$ns" exec deploy/authentik-postgres -- psql -U authentik -d authentik -tAc "$1"; }
 # SQL on stdin: ssh joins its arguments into one shell line, which would re-split and mangle the query
-native_sql() { on_acer -u authentik psql -h /run/postgresql -d authentik -tA <<<"$1"; }
-counts() { local q; for t in "${tables[@]}"; do q+="SELECT '$t', count(*) FROM $t UNION ALL "; done; "$1" "${q% UNION ALL } ORDER BY 1"; }
+native_sql() { trap - ERR; on_acer -u authentik psql -h /run/postgresql -d authentik -tA <<<"$1"; }
+counts() { trap - ERR; local q; for t in "${tables[@]}"; do q+="SELECT '$t', count(*) FROM $t UNION ALL "; done; "$1" "${q% UNION ALL } ORDER BY 1"; }
 
 rollback() {
-  trap - ERR
+  trap - ERR INT TERM HUP
   say "rollback: native units stop, k3s comes back on its untouched claim"
   on_acer systemctl stop authentik authentik-worker authentik-migrate || true
   # set the restored copy aside (kept): the units' gate then finds an empty database again after a reboot or switch,
@@ -36,7 +37,7 @@ rollback() {
   kubectl -n "$ns" scale deploy/authentik-server deploy/authentik-worker --replicas=1
   kubectl -n "$ns" patch cronjob authentik-postgres-backup authentik-postgres-backup-offnode -p '{"spec":{"suspend":false}}'
   kubectl -n "$ns" rollout status deploy/authentik-server --timeout=300s
-  echo "k3s Authentik is back; Caddy falls back to it once the native port refuses (fail_duration 30s)."
+  echo "k3s Authentik is back; Caddy falls back to it once the native port refuses (fail_duration 10s)."
 }
 abort() { echo "ABORT: $*" >&2; rollback; exit 1; }
 
@@ -50,7 +51,10 @@ n=$(native_sql "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
 kubectl -n "$ns" rollout status deploy/authentik-server --timeout=30s
 
 # from here on any failure rolls back, not just a failed check
+# and so does a dropped session or ^C, which would otherwise leave k3s at 0
 trap 'echo "ABORT: a step failed (line $LINENO)" >&2; rollback; exit 1' ERR
+# a dropped session has no tty left: the rollback writes to a log beside the dump instead, so it does not die mid-way
+trap 'exec >>"$dump.log" 2>&1 </dev/null; echo "ABORT: interrupted"; rollback; exit 1' INT TERM HUP
 
 say "1. stop the k3s Authentik (sign-in is down from here)"
 flux suspend helmrelease authentik -n "$ns"
@@ -63,15 +67,15 @@ kubectl -n "$ns" exec deploy/authentik-postgres -- pg_dump -U authentik --no-own
 gzip -t "$dump" && [[ $(stat -c %s "$dump") -gt 1000000 ]] || abort "the dump is broken or too small: $dump"
 ext=$(zcat "$dump" | grep -c '^CREATE EXTENSION' || true)
 [[ $ext == 0 ]] || abort "the dump creates $ext extension(s), which the authentik role cannot"
-ssh -o BatchMode=yes "$acer" "cat > $dump" <"$dump"
-source=$(counts k3s_sql)
+ssh -o BatchMode=yes "$acer" "umask 077; cat > $dump" <"$dump"
+source=$(counts k3s_sql) || abort "could not count the k3s tables"
 echo "$source"
 
 say "3. restore as the authentik role, in one transaction"
 zcat "$dump" | on_acer -u authentik psql -h /run/postgresql -d authentik -1 -v ON_ERROR_STOP=1 -q >/dev/null || abort "the restore failed"
-restored=$(counts native_sql)
+restored=$(counts native_sql) || abort "could not count the restored tables"
 [[ $restored == "$source" ]] || abort "row counts differ: $(diff <(echo "$source") <(echo "$restored") || true)"
-host=$(native_sql "SELECT _config->>'authentik_host' FROM authentik_outposts_outpost WHERE name = 'authentik Embedded Outpost'")
+host=$(native_sql "SELECT _config->>'authentik_host' FROM authentik_outposts_outpost WHERE name = 'authentik Embedded Outpost'") || abort "could not read the outpost"
 [[ $host == https://auth.sammasak.dev/ ]] || abort "the embedded outpost's authentik_host is '$host'"
 
 say "4. start the native units (migrate: 2026.2.3 to 2026.5.6)"
@@ -85,5 +89,5 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --resolve auth.sammasak.dev:443:19
 loc=$(curl -s -o /dev/null -w '%{redirect_url}' --resolve chat.sammasak.dev:443:192.168.10.110 https://chat.sammasak.dev/)
 [[ $loc == https://auth.sammasak.dev/* ]] || abort "an unauthenticated chat request is not sent to Authentik ($loc)"
 
-trap - ERR
+trap - ERR INT TERM HUP
 say "6. done: sign in at auth, chat and grafana by hand; the dump is $dump on lenovo and acer"
