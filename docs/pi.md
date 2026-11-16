@@ -59,12 +59,12 @@ Verified on the pinned 1.1.0 build:
 ## Credentials
 
 Pi on the hosts holds **no provider key**. Since 2026-10-16
-(sammasak/llm-gateway#8) the in-cluster llm-gateway is the only path to cloud
-models. It holds the Gemini and Workers AI keys (homelab-gitops
-`apps/llm-gateway/secrets`) and the free-quota ledger that Pi shares with Open
+(sammasak/llm-gateway#8) llm-gateway on acer (`modules/homelab/llm-gateway.nix`)
+is the only path to cloud models. It holds the Gemini and Workers AI keys
+(`secrets/homelab/llm-gateway.yaml`) and the free-quota ledger that Pi shares with Open
 WebUI and factum. Pi authenticates with its project key `llm_gateway_pi_key`
-(above). Adding or rotating a provider key is a gateway change: edit the
-gateway's SOPS secret and catalog in homelab-gitops.
+(above). Adding or rotating a provider key is a gateway change: edit that
+SOPS file and the catalog in `modules/homelab/llm-gateway.toml`.
 
 `secrets/claude/llm-cloud.yaml` now holds only factum's keys: its direct
 benchmark arms and `llm_gateway_factum_key`. It is encrypted to the personal key

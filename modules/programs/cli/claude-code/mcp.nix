@@ -358,7 +358,7 @@ in
   home.activation.wireManualGitHooks =
     let
       wireScript = pkgs.writeShellScript "wire-manual-githooks" ''
-        for r in nixos-config skills homelab-gitops knowledge; do
+        for r in nixos-config skills knowledge; do
           d="$HOME/$r"
           [ -d "$d/.git" ] && [ -d "$d/.githooks" ] || continue
           cur=$(${pkgs.git}/bin/git -C "$d" config --local core.hooksPath 2>/dev/null || true)

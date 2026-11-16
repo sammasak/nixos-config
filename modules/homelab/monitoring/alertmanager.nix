@@ -1,6 +1,5 @@
-# Alertmanager on black-pi through upstream services.prometheus.alertmanager: the in-cluster route and inhibitions
-# (homelab-gitops observability.yaml) less their Kubernetes parts, one webhook to lenovo's alert-bridge, which pages
-# homelab-alerts. Upstream passes the file through envsubst, so a literal `$` must be written `$$`.
+# Alertmanager on black-pi through upstream services.prometheus.alertmanager: one route and its inhibitions,
+# one webhook to lenovo's alert-bridge, which pages homelab-alerts. Upstream passes the file through envsubst, so a literal `$` must be written `$$`.
 { config, lib, ... }:
 let
   inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;

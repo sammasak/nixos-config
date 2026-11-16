@@ -1,5 +1,4 @@
-# The host's own journal to Loki through upstream services.alloy, so it keeps shipping when the cluster does not;
-# pod logs stay with the cluster's Alloy DaemonSet. While Loki is away the writer retries forever and its queue
+# The host's own journal to Loki through upstream services.alloy. While Loki is away the writer retries forever and its queue
 # blocks the reader, so the journal holds the backlog up to max_age. Residual gaps:
 # - Alloy stopping or restarting while Loki is away drops its in-memory queue after the 15 s drain timeout (about
 #   12 MiB: the 10 MiB send queue plus a batch), since the reader saves its cursor before the send.

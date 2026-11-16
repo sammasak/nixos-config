@@ -80,7 +80,7 @@ specialisations, module layout).
 SOPS-nix with age-based encryption. Config in `secrets/.sops.yaml`. Secrets decrypt at activation (every switch and boot) to `/run/secrets/`.
 
 Two SOPS modules:
-- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity for the cluster secrets. The Cloudflare API token and Tailscale authkey are declared by `acme.nix` and `tailscale.nix`: lenovo decrypts both, acer (edge.nix's ACME) the token. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
+- **`modules/homelab/sops.nix`** (`homelab.secrets.enable`): the host-key age identity for the homelab secrets. The Cloudflare API token and Tailscale authkey are declared by `acme.nix` and `tailscale.nix`: lenovo decrypts both, acer (edge.nix's ACME) the token. The OTLP token is declared by `native-otel-relay.nix` on `nativeOtel` hosts.
 - **`modules/core/sops.nix`** (`sam.hostSecrets.enable`): per-machine operator credentials (Claude Code OAuth token on `devTools` hosts and hosts with a claude worker instance, Pi gateway key on `pi` hosts, nix access token) on lenovo, black-pi and the runtime-host role (acer-swift, msi-ms7758); not naked-pi. Uses `mkDefault` for age config to avoid conflicts with the homelab module.
 
 Secret scopes in `secrets/.sops.yaml`:
@@ -241,12 +241,12 @@ either side is only reported.
 
 ## Conventions
 
-- **Namespace boundary**: `homelab.*` is a cluster/platform capability, mostly
+- **Namespace boundary**: `homelab.*` is a homelab service capability, mostly
   turned on by a role (dns, acme, ntfy, the rebuild trigger;
   tailscale has no option, importing its module turns it on);
   `sam.*` is host identity and personal-machine concern (profile, desktop,
   thermal, hostSecrets). When both scopes need the same noun, the leaf
-  states its scope — `homelab.secrets` (cluster) vs `sam.hostSecrets` (machine)
+  states its scope — `homelab.secrets` (homelab services) vs `sam.hostSecrets` (machine)
   — because an option path is usually read without its module.
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.
 - **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.

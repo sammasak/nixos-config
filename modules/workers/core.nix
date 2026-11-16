@@ -1070,7 +1070,7 @@ in
         # build at 6G in a 10G pool with one instance running. Past the pool and its swap it kills the largest process
         # in the slice. NOT MemoryHigh: a runaway then never reaches the limit and stalls the whole pool instead.
         # zram is charged to no cgroup and holds incompressible pages in RAM at full size: at half the pool a runaway
-        # took msi (16G, 10G pool) into a host-wide OOM that killed k3s pods
+        # took msi (16G, 10G pool) into a host-wide OOM
         MemorySwapMax = cfg.pool.memory / 4;
       };
 

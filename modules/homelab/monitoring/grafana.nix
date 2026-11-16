@@ -1,8 +1,6 @@
-# grafana.sammasak.dev on black-pi through upstream services.grafana: Traefik on acer reaches it through a
-# selectorless Service (homelab-gitops), and nothing else on the LAN does. Sign-in through Authentik (generic_oauth,
-# no proxy auth) as the chart had it, and only through it. The database starts fresh: users and roles come back
-# with the first OIDC sign-in, and the dashboards are the host ones in ./dashboards (the Kubernetes ones went with
-# kube-state-metrics).
+# grafana.sammasak.dev on black-pi through upstream services.grafana, reached through Caddy on acer. Sign-in
+# through Authentik (generic_oauth, no proxy auth), and only through it: users and roles come with the first OIDC
+# sign-in. The dashboards are the host ones in ./dashboards.
 { config, lib, ... }:
 let
   inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;

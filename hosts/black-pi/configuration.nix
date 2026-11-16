@@ -4,7 +4,7 @@
     ./hardware-configuration.nix
 
     # Directly, not via the laptop role (Intel-only settings). No wifi-selfheal:
-    # wlan0 is the secondary NIC here, end0 carries the cluster.
+    # wlan0 is the secondary NIC here, end0 carries the LAN.
     ../../modules/core/wifi.nix
 
     ../../modules/hardware/pi-sd-image.nix

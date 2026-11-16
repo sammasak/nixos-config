@@ -36,7 +36,6 @@ in
   services.open-webui = {
     enable = true;
     environmentFile = config.sops.templates."open-webui.env".path;
-    # The pod's settings (homelab-gitops apps/chat/deployment.yaml); the keys come from the file above.
     environment = {
       # the image's; at 0.12.2 the default `dev` serves /docs and /openapi.json
       ENV = "prod";

@@ -38,7 +38,6 @@
     "devenv-platform"
     "factum"
     "herman"
-    "homelab-gitops"
     "knowledge"
     "llm-gateway"
     "nixos-config"
