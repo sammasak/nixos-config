@@ -50,9 +50,11 @@ def main():
     helper = pathlib.Path(sys.argv[1])
     nginx = sys.argv[2]
     # the upstream comes up only after the relay has started, as on a host booting before the edge or the LAN
-    with socket.socket() as reserve:
-        reserve.bind(("127.0.0.1", 0))
-        upstream_port = reserve.getsockname()[1]
+    # held bound (not listening, so a connection is refused) until the receiver binds it too: no other process takes it
+    reserve = socket.socket()
+    reserve.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    reserve.bind(("127.0.0.1", 0))
+    upstream_port = reserve.getsockname()[1]
     receiver = receiver_thread = None
     nginx_process = None
 
@@ -75,15 +77,19 @@ def main():
             if config.stat().st_mode & 0o777 != 0o600:
                 raise AssertionError("relay config permissions are not 0600")
 
-            with socket.socket() as listener:
-                listener.bind(("127.0.0.1", 0))
-                relay_port = listener.getsockname()[1]
+            # held bound until nginx listens on it too (nginx sets SO_REUSEADDR): no other process takes it first
+            relay_reserve = socket.socket()
+            relay_reserve.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            relay_reserve.bind(("127.0.0.1", 0))
+            relay_port = relay_reserve.getsockname()[1]
 
             config_text = config.read_text(encoding="utf-8")
             if "proxy_ssl_verify on;" not in config_text:
                 raise AssertionError("relay does not verify the upstream certificate")
             if "proxy_ssl_verify_depth 3;" not in config_text:
                 raise AssertionError("relay TLS verification depth is not explicit")
+            if "proxy_connect_timeout 3s;" not in config_text:
+                raise AssertionError("relay waits nginx's default 60 s for an unreachable edge")
             # nixos-config#454: a host name in proxy_pass is resolved when nginx parses the config, so a start without
             # DNS fails (and with `resolver` every request needs DNS); the upstream is the edge host's address
             upstreams = set(re.findall(r"proxy_pass https://(\d+\.\d+\.\d+\.\d+)/v1/(?:metrics|logs);", config_text))
@@ -128,10 +134,12 @@ def main():
                 time.sleep(0.05)
             else:
                 raise AssertionError("local relay did not become ready with its upstream down")
+            relay_reserve.close()
 
             if request_status(f"{endpoint}/v1/metrics", data=body) != 502:
                 raise AssertionError("relay did not answer 502 while its upstream is down")
             receiver = http.server.ThreadingHTTPServer(("127.0.0.1", upstream_port), Receiver)
+            reserve.close()
             receiver_thread = threading.Thread(target=receiver.serve_forever, daemon=True)
             receiver_thread.start()
 
@@ -189,6 +197,7 @@ def main():
         if nginx_process and nginx_process.poll() is None:
             nginx_process.terminate()
             nginx_process.wait(timeout=5)
+        reserve.close()
         if receiver:
             receiver.shutdown()
             receiver.server_close()

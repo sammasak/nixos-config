@@ -23,7 +23,9 @@
   ];
 
   # a quarter of the collector's 256M MemoryMax, as the daemon and the user slice: zram is charged to no cgroup
-  systemd.services.alloy.serviceConfig.MemorySwapMax = "64M";
+  systemd.services.alloy = lib.mkIf config.homelab.journalCollector.enable {
+    serviceConfig.MemorySwapMax = "64M";
+  };
 
   homelab.journalCollector = {
     enable = true;
@@ -148,6 +150,7 @@
           .${builtins.elemAt m 1};
       daemon = config.systemd.services.nix-daemon.serviceConfig;
       user = config.systemd.slices.user.sliceConfig;
+      alloy = config.systemd.services.alloy.serviceConfig;
     in
     [
       {
@@ -159,16 +162,14 @@
         message = "lenovo: nix-daemon MemorySwapMax ${daemon.MemorySwapMax} is above a quarter of its MemoryMax ${daemon.MemoryMax}; zram is charged to no cgroup.";
       }
       {
-        assertion =
-          parse config.systemd.services.alloy.serviceConfig.MemorySwapMax * 4
-          <= parse config.systemd.services.alloy.serviceConfig.MemoryMax;
-        message = "lenovo: the journal collector's MemorySwapMax is above a quarter of its MemoryMax; zram is charged to no cgroup.";
-      }
-      {
         assertion = parse user.MemorySwapMax * 4 <= parse user.MemoryMax;
         message = "lenovo: user.slice MemorySwapMax ${user.MemorySwapMax} is above a quarter of its MemoryMax ${user.MemoryMax}; zram is charged to no cgroup.";
       }
-    ];
+    ]
+    ++ lib.optional config.homelab.journalCollector.enable {
+      assertion = parse alloy.MemorySwapMax * 4 <= parse alloy.MemoryMax;
+      message = "lenovo: the journal collector's MemorySwapMax ${toString alloy.MemorySwapMax} is above a quarter of its MemoryMax ${toString alloy.MemoryMax}; zram is charged to no cgroup.";
+    };
 
   # pi-harness PICODE_EP and factum FACTS_OLLAMA_EP default to localhost:8080. The
   # llm-gateway serves keyless Ollama only on acer's loopback, so only this reaches it.
@@ -189,17 +190,17 @@
 
   homelab.dns = {
     rewrites = [
-      # Wildcard and apex to Caddy on acer (modules/homelab/edge.nix). External-DNS
+      # Wildcard and apex to Caddy on the edge host (modules/homelab/edge.nix). External-DNS
       # writes AdGuard *filtering rules*, not rewrites, which persist under
       # mutableSettings; a stale one could pin a name to the old address. When
       # the repoint landed, external-dns managed no record and user_rules was empty.
       {
         domain = "*.sammasak.dev";
-        answer = config.sam.fleet.hosts.acer-swift.address;
+        answer = config.sam.fleet.hosts.${config.sam.fleet.edge}.address;
       }
       {
         domain = "sammasak.dev";
-        answer = config.sam.fleet.hosts.acer-swift.address;
+        answer = config.sam.fleet.hosts.${config.sam.fleet.edge}.address;
       }
       {
         domain = "dns.sammasak.dev";

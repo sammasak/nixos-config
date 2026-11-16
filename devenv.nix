@@ -263,6 +263,30 @@ let
         ${pkgs.python3}/bin/python scripts/test-alloy-otlp-log-loki.py
       '';
 
+  systemChecksTest =
+    gate "system-checks-test"
+      (with pkgs; [
+        python3
+        bash
+        jq
+        coreutils
+        gnugrep
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-system-checks.py
+      '';
+  platformRecordsTest =
+    gate "platform-records-test"
+      (with pkgs; [
+        python3
+        bash
+        curl
+        jq
+        coreutils
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-platform-records.py
+      '';
   # acer's Caddyfile through acer's Caddy, from the gate probe
   caddyEdgeTest =
     gate "caddy-edge-test"
@@ -370,49 +394,89 @@ let
     lintComments
     lintShell
   ];
+  record = gate "platform-record" (with pkgs; [
+    curl
+    jq
+    coreutils
+    findutils
+  ]) (builtins.readFile ./scripts/platform-record.sh);
   # seconds per step, to see where a slow gate spends its time (#334); prek hides a passing hook's
-  # output, so the push gate also appends them to NIXOS_QA_TIMES
+  # output, so the push gate also appends them to NIXOS_QA_TIMES. Each step, failed ones included, also goes to the
+  # Platform health dashboard (scripts/platform-record.sh)
   timed = lib.concatMapStringsSep "\n" (g: ''
     t=$SECONDS
-    ${lib.getExe g}
+    if ${lib.getExe g}; then r=pass; else r=fail; fi
     echo "nixos-qa: ${g.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+    ${lib.getExe record} gate-step gate=nixos-qa step=${g.name} seconds=$((SECONDS - t)) result=$r sha="$sha"
+    [ "$r" = pass ]
   '');
-  qa = gate "nixos-qa" [ pkgs.coreutils ] ''
-    ${timed (
-      lints
-      ++ [
-        secretsVerify
-        flakeCheck
-      ]
-    )}
-    t=$SECONDS
-    GATE_PROBE=$(${lib.getExe probe})
-    export GATE_PROBE
-    echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
-    ${timed [
-      nvimCheck
-      nativeOtelRelayTest
-      nativeOtelFishTest
-      claudeSettingsTest
-      coordinatorWiringTest
-      workerPermissionsTest
-      workersEvalTest
-      bulkReaderTest
-      harnessTelemetryTest
-      ollamaPortforwardTest
-      alertBridgeTest
-      knownHostsTest
-      buildBoundsTest
-      delegationTest
-      journalCollectorTest
-      alloyOtlpTest
-      caddyEdgeTest
-      authentikAkTest
-      switchSafetyTest
-      rfBeaconsTest
-      qaPushTest
-    ]}
-  '';
+  # the run's own record is written on every exit, so a failed or interrupted gate still shows
+  qa =
+    gate "nixos-qa"
+      (with pkgs; [
+        coreutils
+        git
+        jq
+        python3
+      ])
+      ''
+        sha=$(git rev-parse --short HEAD 2>/dev/null || echo none)
+        mode=manual
+        [ -z "''${NIXOS_QA_TIMES:-}" ] || mode=push
+        start=$SECONDS
+        on_exit() {
+          local rc=$? result=fail
+          [ "$rc" != 0 ] || result=pass
+          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode
+        }
+        trap on_exit EXIT
+        # always-loaded instructions: this repo's CLAUDE.md and the global one Home Manager links (names only, no path)
+        ${lib.getExe record} instructions file=repo-CLAUDE.md bytes="$(wc -c <CLAUDE.md)"
+        if [ -f "$HOME/.claude/CLAUDE.md" ]; then
+          ${lib.getExe record} instructions file=global-CLAUDE.md bytes="$(wc -c <"$HOME/.claude/CLAUDE.md")"
+        fi
+        ${timed (
+          lints
+          ++ [
+            secretsVerify
+            flakeCheck
+          ]
+        )}
+        t=$SECONDS
+        GATE_PROBE=$(${lib.getExe probe})
+        export GATE_PROBE
+        echo "nixos-qa: ${probe.name} took $((SECONDS - t)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+        ${lib.getExe record} gate-step gate=nixos-qa step=${probe.name} seconds=$((SECONDS - t)) result=pass sha="$sha"
+        python3 scripts/gate_probe.py coverage | jq -r 'to_entries[] | "\(.key) \(.value.assertions) \(.value.checks)"' \
+          | while read -r node assertions checks; do
+            ${lib.getExe record} coverage node="$node" assertions="$assertions" system_checks="$checks"
+          done
+        ${timed [
+          nvimCheck
+          nativeOtelRelayTest
+          nativeOtelFishTest
+          claudeSettingsTest
+          coordinatorWiringTest
+          workerPermissionsTest
+          workersEvalTest
+          bulkReaderTest
+          harnessTelemetryTest
+          ollamaPortforwardTest
+          alertBridgeTest
+          knownHostsTest
+          buildBoundsTest
+          delegationTest
+          journalCollectorTest
+          alloyOtlpTest
+          caddyEdgeTest
+          systemChecksTest
+          platformRecordsTest
+          authentikAkTest
+          switchSafetyTest
+          rfBeaconsTest
+          qaPushTest
+        ]}
+      '';
 
   # Runs the gate on the PUSHED commit in a throwaway worktree, so neither
   # unstaged edits nor a different checked-out branch can make it pass.
@@ -786,6 +850,10 @@ in
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
+    "nixos:platform-records-test" =
+      task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
+    "nixos:system-checks-test" =
+      task "just checks against stub nix/ssh: lists built or substituted, and refuses an empty list, a non-input, an unreachable host, a failed build and a still-invalid check" systemChecksTest;
     "nixos:caddy-edge-test" =
       task "acer's Caddy edge, as caddy adapt reads it: admin off, every name routed, forward auth before chat and grafana, otlp allowlisted, llm-gateway /v1 only" caddyEdgeTest;
     "nixos:authentik-ak-test" =

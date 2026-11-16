@@ -9,7 +9,7 @@
 let
   # the edge host (edge.nix), by address: otlp.sammasak.dev answers only it (lenovo's *.sammasak.dev rewrite), and a
   # name in proxy_pass would make nginx's start, or with `resolver` every request, depend on DNS. SNI and Host keep the name
-  edge = config.sam.fleet.hosts.acer-swift.address;
+  edge = config.sam.fleet.hosts.${config.sam.fleet.edge}.address;
   relayConfig = pkgs.writeShellApplication {
     name = "native-otel-relay-config";
     runtimeInputs = [
@@ -58,6 +58,8 @@ let
           proxy_ssl_name otlp.sammasak.dev;
           proxy_ssl_verify on;
           proxy_ssl_verify_depth 3;
+          # off the LAN the edge is unreachable: fail in 3 s, not the default 60 s per request against 32 connections
+          proxy_connect_timeout 3s;
           proxy_ssl_trusted_certificate ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt;
           location = /v1/metrics {
             if (\$request_method != POST) { return 405; }
