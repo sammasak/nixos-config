@@ -1,10 +1,9 @@
-# services.ollama for the llm-gateway on a k3s node, bound to the node address. Pods arrive on the trusted
-# Cilium interfaces; the port is opened to no source, so the LAN is dropped unless the host adds a scoped rule.
-# A cluster Cilium policy limits pods to the gateway (homelab-gitops #254). The host sets the models, the
-# context and the MemoryMax that fits one loaded model.
+# services.ollama for the llm-gateway, bound to the node address. The port is opened to no source, so the LAN is
+# dropped unless the host adds a scoped rule. The host sets the models, the context and the MemoryMax that fits one
+# loaded model.
 { config, lib, ... }:
 let
-  inherit (import ../../lib/firewall.nix lib) anySourceTcp ciliumInterfaces;
+  inherit (import ../../lib/firewall.nix lib) anySourceTcp;
   cfg = config.services.ollama;
   fw = config.networking.firewall;
 in
@@ -29,7 +28,7 @@ in
       after = [ "network-online.target" ];
       unitConfig.StartLimitIntervalSec = 0;
     };
-    # k3s does not count this unit, so an OOM takes Ollama before any pod or worker.
+    # an OOM takes Ollama before any worker
     systemd.services.ollama.serviceConfig = {
       Restart = "on-failure";
       RestartSec = 5;
@@ -43,12 +42,12 @@ in
         message = "modules/homelab/ollama-host.nix: Ollama has no authentication; keep the firewall on, openFirewall off and port ${toString cfg.port} out of allowedTCPPorts and allowedTCPPortRanges, global and per interface. Admit a caller with a source-scoped rule.";
       }
       {
-        assertion = lib.all (i: lib.elem i ciliumInterfaces) fw.trustedInterfaces;
-        message = "modules/homelab/ollama-host.nix: a trusted interface bypasses the firewall and reaches Ollama; trust only loopback and Cilium's, not ${toString (lib.subtractLists ciliumInterfaces fw.trustedInterfaces)}.";
+        assertion = lib.all (i: i == "lo") fw.trustedInterfaces;
+        message = "modules/homelab/ollama-host.nix: a trusted interface bypasses the firewall and reaches Ollama; trust only loopback, not ${toString (lib.remove "lo" fw.trustedInterfaces)}.";
       }
       {
         assertion = config.systemd.services.ollama.serviceConfig ? MemoryMax;
-        message = "modules/homelab/ollama-host.nix: set systemd.services.ollama.serviceConfig.MemoryMax to what one loaded model needs; k3s does not count this unit.";
+        message = "modules/homelab/ollama-host.nix: set systemd.services.ollama.serviceConfig.MemoryMax to what one loaded model needs.";
       }
     ];
   };

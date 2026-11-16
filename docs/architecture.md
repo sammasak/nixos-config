@@ -46,21 +46,19 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 
 | Host | Mode | Specialisations |
 |------|------|-----------------|
-| `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the k3s control plane) | none |
-| `acer-swift` | **headless** (k3s worker) | `desktop` (Niri GUI) |
-| `msi-ms7758` | **headless** (intermittent opt-in k3s worker, dual-boot Windows) | none |
-| `black-pi` | **headless** (aarch64 k3s worker, Raspberry Pi 4 on SD card, builds its own closure) | none |
-| `naked-pi` | **headless** (aarch64 Wi-Fi learning node, Raspberry Pi 3, role `rf-lab`; not in k3s) | none |
+| `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the DNS, ntfy and deploy host) | none |
+| `acer-swift` | **headless** (the always-on service host: Caddy edge, Authentik, chat, llm-gateway) | `desktop` (Niri GUI) |
+| `msi-ms7758` | **headless** (intermittent worker host, dual-boot Windows) | none |
+| `black-pi` | **headless** (aarch64 observability host, Raspberry Pi 4 on SD card, builds its own closure) | none |
+| `naked-pi` | **headless** (aarch64 Wi-Fi learning node, Raspberry Pi 3, role `rf-lab`) | none |
 
 `modules/specialisations/desktop.nix` imports `modules/desktop/common`
 (compositor-agnostic bar, launcher, lock/idle, notifications, GTK) and
 `modules/desktop/niri`, the only compositor, and `modules/desktop/sddm`.
 
 The Acer headless configuration is the default and its `desktop` specialisation
-adds the Niri GUI boot entry. MSI is an intermittent opt-in k3s worker: powered
-on only occasionally (woken via Wake-on-LAN), tainted
-`sammasak.dev/intermittent=true:NoSchedule` so nothing schedules on it unless it
-tolerates that. Its root/shared-Windows-ESP UUIDs are verified; boot stays GRUB
+adds the Niri GUI boot entry. MSI is an intermittent worker host: powered
+on only in its work-hours window (woken via Wake-on-LAN). Its root/shared-Windows-ESP UUIDs are verified; boot stays GRUB
 with a manual Windows Boot Manager entry (dual-boot preserved).
 
 **One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
@@ -100,9 +98,9 @@ Boundary rule in Conventions.
 Composable role modules assigned per host in `flake-modules/hosts.nix`:
 - **base**: required on every host (enforced by assertion); imports the `modules/core/` baseline (not `laptop`, `wifi`, `always-on`), the deploy-rs target and the native-otel relay
 - **laptop** — laptop-specific overrides
-- **homelab-agent** — k3s worker node, joining the server at lenovo's `sam.fleet` address; disables sleep/suspend
-- **homelab-server** — k3s control plane; turns on flux, dns (with TLS), acme, ntfy and the rebuild trigger, and imports
-  the k3s DB snapshot, AdGuard Home, tailscale, the cluster watchdog and the alert bridge
+- **homelab-agent** — always-on fleet host that is not the control host; disables sleep/suspend, ModemManager and Nix trust for the login user
+- **homelab-server** — the control host (lenovo); turns on dns (with TLS), acme, ntfy and the rebuild trigger, and
+  imports AdGuard Home, tailscale, the alerting watchdog and the alert bridge
 - **runtime-host** — headless worker host, msi-ms7758 and acer-swift, running the declared nspawn developer environments
   (`sam.workers`, docs/nspawn-workers.md): the run credential, no Stylix outside a
   desktop specialisation, and nix-gc / nix-optimise that wait for a synchronised clock
@@ -119,7 +117,7 @@ modules/
 ├── embedded/     # ESP32 tooling
 ├── hardware/     # GPU drivers (intel), thermal, disk layouts
 ├── home/         # the shared Home Manager entry point
-├── homelab/      # k3s (agent/server), sops, flux, tailscale, ntfy, watchdog
+├── homelab/      # host services: edge, AdGuard, sops, tailscale, ntfy, monitoring, watchdog
 ├── programs/     # Home Manager programs: cli/, browser/, editor/, gui/, terminal/
 ├── rf-lab/       # Wi-Fi/Bluetooth lab and HIL tests
 ├── roles/        # Composition roles (see above)

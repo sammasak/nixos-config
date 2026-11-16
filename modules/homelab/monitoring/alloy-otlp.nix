@@ -3,8 +3,6 @@
 # its Loki. On acer, not black-pi, so the queue sits on the far side of a black-pi outage. One
 # process by construction: the session sum (homelab-gitops#226) is per process. On nixpkgs' Alloy 1.17.1, which leaves
 # exemplars in place (./alloy-otlp.alloy); they stop at the queue, as Prometheus stores none.
-# Until homelab-gitops#271 reconciles, the cluster's alloy-otlp pod holds the same /var/lib/alloy-otlp. Once it is
-# gone: `systemctl restart alloy-otlp` on acer, then confirm the queue drains (otelcol_exporter_queue_size to 0).
 # scripts/test-alloy-otlp-*.{sh,py} run this unit's ExecStart, as evaluated, against the deployed config.
 {
   config,
@@ -14,7 +12,7 @@
   ...
 }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp ciliumInterfaces mkDualBackendFirewall;
+  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
   fw = config.networking.firewall;
   alloy = pkgs.grafana-alloy;
@@ -131,8 +129,8 @@ in
             otlpPort
             httpPort
           ] == [ ]
-        && lib.all (i: lib.elem i ciliumInterfaces) fw.trustedInterfaces;
-      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback and Cilium's interfaces: no LAN host may reach the metrics port.";
+        && lib.all (i: i == "lo") fw.trustedInterfaces;
+      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback: no LAN host may reach the metrics port.";
     }
   ];
 }

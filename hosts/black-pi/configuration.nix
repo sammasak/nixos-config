@@ -47,17 +47,4 @@
     max-jobs = 1;
     cores = 2;
   };
-
-  homelab.k3s.extraFlags = [
-    "--node-label=node-pool=arm64"
-    # Opt-in: most workloads are unpinned and many homelab images are amd64-only.
-    "--node-taint=sammasak.dev/arch=arm64:NoSchedule"
-  ];
-
-  # The 15Gi-node defaults would reserve ~1.5Gi of 3.7Gi before a pod schedules.
-  homelab.k3s.memory = {
-    systemReserved = "512Mi";
-    evictionHard = "200Mi";
-    evictionSoft = "400Mi";
-  };
 }

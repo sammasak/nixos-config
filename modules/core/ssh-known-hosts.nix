@@ -13,7 +13,7 @@ let
   own = name: names: if config.networking.hostName == name then names ++ self else names;
   address = name: config.sam.fleet.hosts.${name}.address;
   hosts = {
-    # api.github.com/meta; SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU (also inline in modules/homelab/flux.nix)
+    # api.github.com/meta; SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU
     github = {
       hostNames = [ "github.com" ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";

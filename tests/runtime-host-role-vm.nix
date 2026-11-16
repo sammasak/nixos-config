@@ -20,7 +20,7 @@ let
     nodes.machine =
       { lib, ... }:
       {
-        # msi's roles minus homelab-agent: no k3s, whose server is lenovo.
+        # msi's roles minus homelab-agent.
         imports = roleModules ++ fleetModules;
         sam.profile = {
           username = "lukas";

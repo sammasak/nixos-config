@@ -11,9 +11,9 @@
     MaxRetentionSec = "1month";
   };
 
-  # User slices only. system.slice is DELIBERATELY left unmanaged: k3s and
-  # containerd live there, and oomd would judge them on cgroup pressure alone,
-  # killing a kubelet that kubernetes is already responsible for evicting from.
+  # User slices only. system.slice is DELIBERATELY left unmanaged: oomd would
+  # judge the host services there on cgroup pressure alone, and the ones that
+  # matter carry their own MemoryMax and OOMScoreAdjust.
   systemd.oomd = {
     enable = true;
     enableUserSlices = true;
@@ -25,8 +25,8 @@
   documentation.doc.enable = false;
 
   # ptrace_scope=1 still allows gdb/strace on a process you launched yourself.
-  # Deliberately NOT security.lockKernelModules: that breaks the on-demand
-  # module loading k3s and containerd rely on.
+  # Deliberately NOT security.lockKernelModules: that breaks on-demand module
+  # loading after boot.
   boot.kernel.sysctl = {
     "kernel.dmesg_restrict" = 1;
     "kernel.kptr_restrict" = 1;

@@ -108,7 +108,7 @@ in
   '';
   # llama3.1:8b (4.9G) and a 16K q8_0 KV cache (about 0.9G), as in the pod's 8Gi limit
   systemd.services.ollama.serviceConfig.MemoryMax = "8G";
-  # Pi on lenovo and acer calls it directly; pods arrive on the trusted Cilium interfaces.
+  # Pi on lenovo, and Pi and the gateway on acer, call it directly.
   networking.firewall = {
     inherit
       (mkDualBackendFirewall {
@@ -138,12 +138,4 @@ in
     };
   };
 
-  # Intermittent (WoL-woken) node: the taint keeps its shutdowns off always-on
-  # workloads; CPU/batch jobs opt in via toleration + node-pool. The GTX 680 is
-  # Kepler, which current drivers dropped, so the GPU is not wired into k3s.
-  homelab.k3s.extraFlags = [
-    "--node-label=node-pool=workers"
-    "--node-taint=sammasak.dev/intermittent=true:NoSchedule"
-    # No graceful-shutdown kubelet config file: not worth it for an opt-in node that runs nothing critical.
-  ];
 }

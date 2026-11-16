@@ -31,8 +31,6 @@ backends = {
     "llm-gateway": "127.0.0.1:8081",
     "otlp": "127.0.0.1:4318",
     "ntfy": f"{fleet['lenovo-21CB001PMX']}:2586",
-    "karta": "10.43.147.178:8080",
-    "registry": "10.43.23.61:5000",
 }
 headers = {"X-Authentik-Username", "X-Authentik-Groups", "X-Authentik-Email", "X-Authentik-Name", "X-Authentik-Uid"}
 

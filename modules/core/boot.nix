@@ -7,8 +7,7 @@
       "btrfs"
     ];
     tmp.cleanOnBoot = true;
-    # Latest over LTS — revisit if the Cilium eBPF path breaks.
-    # See vault: homelab/decisions/ADR-025-linux-kernel-latest-over-lts.md
+    # Latest over LTS. See vault: homelab/decisions/ADR-025-linux-kernel-latest-over-lts.md
     kernelPackages = lib.mkDefault pkgs.linuxPackages_latest;
     kernelParams = [
       "preempt=full"

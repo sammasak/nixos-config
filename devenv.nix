@@ -256,7 +256,7 @@ let
         ${pkgs.python3}/bin/python scripts/test-caddy-edge.py
       '';
 
-  # flux wait bound and ~/.claude.json activation
+  # ~/.claude.json activation
   switchSafetyTest =
     gate "switch-safety-test"
       (with pkgs; [
@@ -758,8 +758,7 @@ in
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:caddy-edge-test" =
       task "acer's Caddy edge, as caddy adapt reads it: admin off, every name routed, forward auth before chat and grafana, otlp allowlisted, llm-gateway /v1 only" caddyEdgeTest;
-    "nixos:switch-safety-test" =
-      task "A switch waits on no unit forever and survives a bad ~/.claude.json" switchSafetyTest;
+    "nixos:switch-safety-test" = task "A switch survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;

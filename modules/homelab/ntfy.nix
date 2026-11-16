@@ -1,5 +1,5 @@
 # Self-hosted ntfy.sh notification server for the control plane.
-# Runs outside k3s so it remains reachable even when the cluster is degraded.
+# Runs on lenovo, beside AdGuard, so it stays reachable when the other hosts are down.
 # Accessible on the LAN and via Tailscale for push notifications to the mobile app.
 { config, lib, ... }:
 

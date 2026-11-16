@@ -31,12 +31,12 @@ check(cap is not None and measured < cap,
       f"the measured cores-2 build peak (6118 MiB) fits under MemoryMax ({lenovo.get('MemoryMax')})")
 ram = 15.3 * 2**30
 check(cap is not None and cap <= ram / 2,
-      "MemoryMax leaves at least half of lenovo's 15.3 GiB to k3s, the agents and the desktop")
+      "MemoryMax leaves at least half of lenovo's 15.3 GiB to its services, the agents and the desktop")
 # nixos-config#353: a client-side evaluation runs in the user slice, which the daemon cap does not hold
 user = P["userSlice"] or {}
 ucap, uswap = size(user.get("MemoryMax")), size(user.get("MemorySwapMax"))
-# measured on lenovo, peaks since boot in GiB: k3s server 3.1, pods 1.7, system.slice without a build 0.9,
-# kernel 0.6, the zram store 0.44
+# measured on lenovo while it still ran k3s, peaks since boot in GiB: k3s server 3.1, pods 1.7, system.slice
+# without a build 0.9, kernel 0.6, the zram store 0.44; k3s is gone, so this is now an upper bound
 control = (3.1 + 1.7 + 0.9 + 0.6 + 0.44) * 2**30
 check(ucap is not None and ucap + control <= ram,
       f"the user ceiling ({user.get('MemoryMax')}) plus the measured control plane (6.7 GiB at its peaks) fits in lenovo's 15.3 GiB")

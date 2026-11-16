@@ -29,7 +29,7 @@ in
     "169.254.0.0/16"
   ];
 
-  # A guest may override max-jobs and cores per build, so CPUQuota holds the 2 x 2 bound; MemoryMax fails a build, never k3s.
+  # A guest may override max-jobs and cores per build, so CPUQuota holds the 2 x 2 bound; MemoryMax fails a build, never the host's services.
   nix.settings = {
     max-jobs = 2;
     cores = 2;
@@ -52,7 +52,7 @@ in
   systemd.additionalUpstreamSystemUnits = [ "systemd-time-wait-sync.service" ];
   systemd.services.systemd-time-wait-sync.wantedBy = [ "sysinit.target" ];
 
-  # No catch-up run at boot, while k3s and workers start.
+  # No catch-up run at boot, while the services and workers start.
   nix.gc.persistent = false;
   nix.optimise.persistent = false;
 

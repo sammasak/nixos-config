@@ -1,5 +1,5 @@
 # Per-machine operator credentials, on the hosts that enable them (not naked-pi),
-# whatever their cluster role. Cluster secrets (k3s, Flux, Cloudflare, Tailscale) are a different tree:
+# whatever their cluster role. Cluster secrets (Cloudflare, Tailscale) are a different tree:
 # homelab.secrets in modules/homelab/sops.nix.
 { config, lib, ... }:
 
@@ -33,9 +33,9 @@ in
               mode = "0400";
             };
 
-        # Pi's project key for the in-cluster llm-gateway (homelab-gitops
-        # apps/llm-gateway). Read by Pi's `homelab` provider at request time
-        # (modules/programs/cli/pi); no provider keys, so every pi host may hold it.
+        # Pi's project key for acer's llm-gateway (modules/homelab/llm-gateway.nix). Read by Pi's
+        # `homelab` provider at request time (modules/programs/cli/pi); no provider keys, so every
+        # pi host may hold it.
         "llm_gateway_pi_key" = lib.mkIf config.sam.profile.pi {
           sopsFile = ../../secrets/claude/llm-gateway.yaml;
           owner = username;

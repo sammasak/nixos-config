@@ -30,7 +30,6 @@ let
       "https://grafana.sammasak.dev"
       "https://ntfy.sammasak.dev/v1/health"
       "https://herman.sammasak.dev"
-      "https://karta.sammasak.dev"
     ];
     # the ingress serves /v1 alone, behind a project key
     https_2xx_401 = [ "https://llm-gateway.sammasak.dev/v1/models" ];

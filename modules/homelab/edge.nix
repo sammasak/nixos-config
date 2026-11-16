@@ -2,8 +2,7 @@
 # proxies each name to its backend, with forward auth through the native Authentik (authentik.nix) for chat and
 # grafana. The admin API is off, so no local process can load a config without forward_auth; a config change or
 # renewal restarts Caddy.
-# herman is a static site from its Nix build; karta and registry (zot, which karta's pod pulls from) proxy to their
-# pods' ClusterIPs until karta switches.
+# herman is a static site from its Nix build.
 {
   config,
   lib,
@@ -77,10 +76,6 @@ let
         precompressed gzip
       }
     '';
-    # its derivation comes back with the switch, once sammasak/karta#1 resolves
-    karta = "reverse_proxy 10.43.147.178:8080";
-    # zot: the registry stays until karta switches, so its pod can pull its image if rescheduled
-    registry = "reverse_proxy 10.43.23.61:5000";
   };
 in
 {
