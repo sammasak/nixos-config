@@ -5,12 +5,12 @@
   ...
 }:
 {
-  # A package, not a check, as rf-hwsim-dataplane: `nix flake check` evaluates it
-  # but builds no package, so the QEMU boot runs only from `just role-vm-test`.
+  # Checks as well as packages: `nix flake check` and the pre-push gate (msi or acer) boot them, and a built one is a
+  # cache hit. The packages stay for `just role-vm-test` and its .broken variant.
   perSystem =
     { pkgs, system, ... }:
-    {
-      packages = lib.optionalAttrs (system == "x86_64-linux") {
+    let
+      vmTests = {
         dev-env-reset-vm = import ../tests/dev-env-reset-vm.nix {
           inherit pkgs fleetModules;
           inherit (config.configurations.nixos.msi-ms7758) roles;
@@ -29,5 +29,9 @@
           ];
         };
       };
+    in
+    lib.optionalAttrs (system == "x86_64-linux") {
+      packages = vmTests;
+      checks = vmTests;
     };
 }

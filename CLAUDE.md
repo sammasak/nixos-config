@@ -54,7 +54,8 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
                               # and the closure diff vs the running system; activates nothing, but read
                               # the output: it exits 0 even when the dry activation fails
-just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); BREAK=1 must fail
+just role-vm-test [BREAK=1]   # QEMU boot of the runtime-host role (msi only); BREAK=1 must fail. The three VM tests are
+                              # also flake checks, so the gate boots them when their inputs change
 ```
 
 Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`), `msi-ms7758`,
