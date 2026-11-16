@@ -53,7 +53,7 @@ export OTLP_BEARER_TOKEN=$test_token
 cp "$deployed_config" "$rewritten_file"
 chmod u+w "$rewritten_file"
 for rewrite in \
-  "s/0.0.0.0:4318/127.0.0.1:$otlp_port/" \
+  "s/127.0.0.1:4318/127.0.0.1:$otlp_port/" \
   's/metrics = \[otelcol.processor.cumulativetodelta.native.input\]/metrics = [otelcol.processor.transform.native_sanitize.input]/' \
   's/metrics = \[otelcol.processor.batch.native_serialize.input\]/metrics = [otelcol.exporter.debug.test.input]/' \
   's/otelcol.exporter.otlphttp.native.input/otelcol.exporter.debug.test.input/g' \
@@ -376,7 +376,7 @@ sum_port=$((otlp_port + 3))
 cp "$deployed_config" "$rewritten_file"
 chmod u+w "$rewritten_file"
 for rewrite in \
-  "s/0.0.0.0:4318/127.0.0.1:$sum_port/" \
+  "s/127.0.0.1:4318/127.0.0.1:$sum_port/" \
   's/otelcol.exporter.otlphttp.native.input/otelcol.exporter.debug.test.input/g' \
   's/otelcol.exporter.loki.native.input/otelcol.exporter.debug.test.input/g'; do
   cp "$rewritten_file" "$config_file"

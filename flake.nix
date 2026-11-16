@@ -43,6 +43,9 @@
     rf-proto.url = "git+ssh://git@github.com/sammasak/rf-proto?rev=89e08d25d3057f3b68ef5d8a3508238789f8b7de";
     rf-proto.flake = false;
 
+    herman.url = "git+ssh://git@github.com/sammasak/herman?rev=7f41955749fc473d11173ffbc18e76973a7bb224";
+    herman.flake = false;
+
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
 

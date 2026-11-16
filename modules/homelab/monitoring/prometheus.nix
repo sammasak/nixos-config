@@ -22,7 +22,7 @@ let
   };
   probeBudget = 120;
   blackbox = cfg.exporters.blackbox;
-  # the public names as a browser reaches them, through Traefik now and Caddy later. Authentik's Postgres stays in the
+  # the public names as a browser reaches them, through Caddy on acer. Authentik's Postgres stays in the
   # cluster until step 3, which brings a native postgres exporter; until then a dead Postgres shows as AppDown on auth.
   probes = {
     https_2xx = [
@@ -36,7 +36,8 @@ let
     https_2xx_401 = [ "https://llm-gateway.sammasak.dev/v1/models" ];
     # forward auth sends a browser without a session to Authentik
     https_302_auth = [ "https://chat.sammasak.dev" ];
-    # Caddy admits black-pi; without a bearer token Alloy refuses
+    # Caddy admits black-pi; without a bearer token Alloy refuses. Needs lenovo's repoint first:
+    # through Traefik black-pi gets 403
     https_401_405 = [ "https://otlp.sammasak.dev/v1/logs" ];
   };
   https = codes: {

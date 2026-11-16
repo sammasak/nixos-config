@@ -15,6 +15,15 @@ let
           cargo = factumToolchain;
           rustc = factumToolchain;
         };
+        # the wasm-bindgen-cli matching the wasm-bindgen crate in a repo's Cargo.lock
+        wasmBindgenCli =
+          src:
+          let
+            crate = lib.findSingle (p: p.name == "wasm-bindgen") (throw "${src}: no wasm-bindgen in Cargo.lock") (
+              throw "${src}: two wasm-bindgen versions in Cargo.lock"
+            ) (lib.importTOML "${src}/Cargo.lock").package;
+          in
+          final."wasm-bindgen-cli_${lib.replaceStrings [ "." ] [ "_" ] crate.version}";
       in
       (import ../pkgs final prev)
       // {
@@ -36,6 +45,11 @@ let
           rustPlatform = factumRustPlatform;
           src = inputs.nix-audit;
           inherit (inputs.nix-audit) rev;
+        };
+        hermanWeb = final.callPackage ../pkgs/herman-web/package.nix {
+          src = inputs.herman;
+          inherit (inputs.herman) rev;
+          wasmBindgenCli = wasmBindgenCli inputs.herman;
         };
       }
     )

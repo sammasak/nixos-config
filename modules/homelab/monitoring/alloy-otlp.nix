@@ -1,6 +1,6 @@
-# alloy-otlp on acer: the OTLP intake behind otlp.sammasak.dev (Traefik reaches 4318 through a selectorless Service,
-# homelab-gitops), sanitizing the harness telemetry and sending metrics to black-pi's Prometheus through a durable
-# queue and logs to its Loki. On acer, not black-pi, so the queue sits on the far side of a black-pi outage. One
+# alloy-otlp on acer: the OTLP intake behind otlp.sammasak.dev (Caddy, edge.nix, reaches 4318 on loopback),
+# sanitizing the harness telemetry and sending metrics to black-pi's Prometheus through a durable queue and logs to
+# its Loki. On acer, not black-pi, so the queue sits on the far side of a black-pi outage. One
 # process by construction: the session sum (homelab-gitops#226) is per process. On nixpkgs' Alloy 1.17.1, which leaves
 # exemplars in place (./alloy-otlp.alloy); they stop at the queue, as Prometheus stores none.
 # Until homelab-gitops#271 reconciles, the cluster's alloy-otlp pod holds the same /var/lib/alloy-otlp. Once it is
@@ -102,8 +102,7 @@ in
     };
   };
 
-  # black-pi's Prometheus scrapes the collector's own metrics; 4318 has no rule, so only Cilium's interfaces (any pod,
-  # Traefik's included) reach it
+  # black-pi's Prometheus scrapes the collector's own metrics; 4318 listens on loopback alone
   networking.firewall = {
     inherit
       (mkDualBackendFirewall {
@@ -133,7 +132,7 @@ in
             httpPort
           ] == [ ]
         && lib.all (i: lib.elem i ciliumInterfaces) fw.trustedInterfaces;
-      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback and Cilium's interfaces: no LAN host may reach the intake. Any pod still can; the bearer token is the control there.";
+      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback and Cilium's interfaces: no LAN host may reach the metrics port.";
     }
   ];
 }
