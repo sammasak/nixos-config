@@ -1,7 +1,7 @@
 # The *.sammasak.dev edge on acer (#420): Caddy terminates TLS with one DNS-01 wildcard from security.acme and
 # proxies each name to its backend, with forward auth through the native Authentik (authentik.nix) for chat and
-# grafana. The admin API is off, so no local process can load a config without forward_auth; a config change or
-# renewal restarts Caddy.
+# grafana. The admin API answers only on a socket only caddy may write to, so no other local process can load a
+# config without forward_auth; a config change or renewal reloads Caddy.
 # herman is a static site from its Nix build.
 {
   config,
@@ -91,8 +91,7 @@ in
     enable = true;
     # 80/tcp, 443/tcp and 443/udp on every interface
     openFirewall = true;
-    # the admin API answers only on a socket only caddy may write to: a TCP one would let any local process load a
-    # config without forward_auth. It is what lets a Caddyfile change reload, not restart (every site drops).
+    # a TCP admin API would let any local process load a config; with none, a change restarts (every site drops)
     globalConfig = ''
       admin ${adminSocket}
       grace_period 10s
@@ -143,7 +142,11 @@ in
 
   assertions = [
     {
-      assertion = lib.hasPrefix "admin ${adminSocket}\n" caddy.globalConfig;
+      assertion =
+        lib.filter (l: lib.hasPrefix "admin" l) (map lib.trim (lib.splitString "\n" caddy.globalConfig))
+        == [
+          "admin ${adminSocket}"
+        ];
       message = "modules/homelab/edge.nix: keep Caddy's admin API on ${adminSocket} alone; any local process could otherwise load a config without forward_auth.";
     }
     {

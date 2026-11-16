@@ -1,8 +1,8 @@
 """acer's Caddy edge (modules/homelab/edge.nix), as `caddy adapt` reads the deployed Caddyfile: the admin API is a
-socket only caddy may write to, every name has its route and backend, chat and grafana pass forward auth before their backend with the five
-X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only, open-webui listens on the
-edge socket alone, the apex and any other name under the wildcard are 404, and herman is its Nix build with the
-Cache-Control matrix and SPA fallback of its deploy/nginx.conf."""
+socket only caddy may write to, every name has its route and backend, chat and grafana pass forward auth before
+their backend with the five X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only,
+open-webui listens on the edge socket alone, the apex and any other name under the wildcard are 404, and herman is
+its Nix build with the Cache-Control matrix and SPA fallback of its deploy/nginx.conf."""
 import json
 import subprocess
 import sys

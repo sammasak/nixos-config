@@ -2,33 +2,37 @@
 groups:
   - name: host-health.alerts
     rules:
-      - alert: HostExpectedOff
-        # The one signal for "this host is off and that is planned", per node:
-        # a host the fleet marks sleeps (modules/core/fleet.nix, the sleeps
-        # label on its node-exporter target) is down. msi is planned off only
-        # in its window: it powers off Mon-Fri 21:00 and is woken Mon-Fri
-        # 09:00 Europe/Stockholm (modules/homelab/msi-power-schedule.nix).
-        # Never notifies (null route); the Alertmanager inhibit rules keyed
-        # on it silence what the powered-off host causes (../alertmanager.nix).
-        # PromQL time is UTC and has no time zone, so msi's window is the union
-        # of both seasons: 19:00 to 08:30 UTC plus Saturday and Sunday. That
-        # is one hour early in winter evenings, and up to 10:30 local in
-        # summer mornings; 08:30 gives the exporter time to come up.
-        # Fails open: it does not fire while a host that does not sleep is
-        # down, so those cases still notify.
+      # One series per node that may be off right now: a host the fleet
+      # marks sleeps (modules/core/fleet.nix, the sleeps label on its
+      # node-exporter target), at any time, except msi: it powers off Mon-Fri
+      # 21:00 and is woken Mon-Fri 09:00 Europe/Stockholm
+      # (modules/homelab/msi-power-schedule.nix), so off outside that window
+      # is an outage. PromQL time is UTC and has no time zone, so msi's
+      # window is the union of both seasons: 19:00 to 08:30 UTC plus Saturday
+      # and Sunday. That is one hour early in winter evenings, and up to 10:30
+      # local in summer mornings; 08:30 gives the exporter time to come up.
+      # Recorded before the alerts below, which this group evaluates after it.
+      - record: homelab:node:planned_off
         expr: |
-          (
-            max by (node) (up{job="node-exporter",sleeps="true",node!="msi-ms7758"} == 0)
-            or (
-              max by (node) (up{job="node-exporter",sleeps="true",node="msi-ms7758"} == 0)
-              and on () (
-                hour() >= 19 or hour() < 8 or (hour() == 8 and minute() < 30)
-                or day_of_week() == 0 or day_of_week() == 6
-              )
+          max by (node) (up{job="node-exporter",sleeps="true",node!="msi-ms7758"})
+          or (
+            max by (node) (up{job="node-exporter",sleeps="true",node="msi-ms7758"})
+            and on () (
+              hour() >= 19 or hour() < 8 or (hour() == 8 and minute() < 30)
+              or day_of_week() == 0 or day_of_week() == 6
             )
           )
+
+      - alert: HostExpectedOff
+        # The one signal for "this host is off and that is planned", per node.
+        # Never notifies (null route); the Alertmanager inhibit rules keyed
+        # on it silence what the powered-off host causes (../alertmanager.nix).
+        # Fails open: it does not fire while any host is down outside its
+        # plan, so those cases still notify (TargetDown included).
+        expr: |
+          max by (node) (up{job="node-exporter"} == 0) and on (node) homelab:node:planned_off
           unless on () (
-            count(up{job="node-exporter",sleeps!="true"} == 0) > 0
+            count(max by (node) (up{job="node-exporter"} == 0) unless on (node) homelab:node:planned_off) > 0
           )
         for: 2m
         labels:
@@ -39,8 +43,8 @@ groups:
           description: "Source for the Alertmanager inhibit rules that silence alerts caused by a sleeping host's planned power-off. Not a notification."
 
       - alert: NodeChronicNotReady
-        # a host the fleet marks sleeps is off at times, so it is left out
-        expr: up{job="node-exporter",sleeps!="true"} == 0
+        # a host off inside its plan (homelab:node:planned_off) is left out
+        expr: up{job="node-exporter"} == 0 unless on (node) homelab:node:planned_off
         for: 15m
         labels:
           severity: warning

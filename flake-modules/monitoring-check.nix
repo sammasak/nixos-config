@@ -37,17 +37,22 @@ let
   # the scrape label is what the rules read; the fleet fact is what a new host sets
   labelled = map node (lib.filter (t: t.labels.sleeps or "" == "true") nodeTargets);
   awake = lib.subtractLists sleeping (map node nodeTargets);
-  # promtool's clock starts at the Unix epoch, a Thursday 00:00 UTC, inside msi's off window; 10:00 is outside it
+  # promtool's clock starts at the Unix epoch, a Thursday 00:00 UTC, inside msi's off window; 10:00 is outside it,
+  # Saturday 12:00 inside again. msi alone has a window (rules/homelab.yaml), the other sleeping hosts none.
+  night = "20m";
+  day = "10h";
+  saturday = "60h";
+  plannedByDay = h: h != "msi-ms7758";
   ruleTest = name: at: down: firing: {
     inherit name;
-    interval = "30s";
+    interval = "1m";
     input_series = map (t: {
       series = "up{${
         lib.concatStringsSep "," (
           lib.mapAttrsToList (k: v: "${k}=${builtins.toJSON v}") (t.labels // { job = "node-exporter"; })
         )
       }}";
-      values = if lib.elem (node t) down then "0x1400" else "1x1400";
+      values = if lib.elem (node t) down then "0x3700" else "1x3700";
     }) nodeTargets;
     promql_expr_test = lib.mapAttrsToList (alertname: nodes: {
       expr = ''count by (node) (ALERTS{alertname="${alertname}",alertstate="firing"})'';
@@ -61,29 +66,37 @@ let
   ruleTests = {
     rule_files = [ "${../modules/homelab/monitoring/rules/homelab.yaml}" ];
     tests =
-      map (
-        h:
-        ruleTest "${h} sleeps, off alone" "20m" [ h ] {
+      lib.concatMap (h: [
+        (ruleTest "${h} sleeps, off alone at night" night [ h ] {
           HostExpectedOff = [ h ];
           NodeChronicNotReady = [ ];
-        }
-      ) sleeping
+        })
+        (ruleTest "${h} sleeps, off alone by day" day [ h ] {
+          HostExpectedOff = lib.optional (plannedByDay h) h;
+          NodeChronicNotReady = lib.optional (!plannedByDay h) h;
+        })
+      ]) sleeping
       ++ [
-        (ruleTest "every sleeping host off at night" "20m" sleeping {
+        (ruleTest "every sleeping host off at night" night sleeping {
           HostExpectedOff = sleeping;
           NodeChronicNotReady = [ ];
         })
-        (ruleTest "every sleeping host off by day: msi's is not planned" "10h" sleeping {
-          HostExpectedOff = lib.remove "msi-ms7758" sleeping;
+        (ruleTest "every sleeping host off on a Saturday" saturday sleeping {
+          HostExpectedOff = sleeping;
           NodeChronicNotReady = [ ];
+        })
+        # an unplanned outage among them fails open: no inhibit hides it behind the planned ones
+        (ruleTest "every sleeping host off by day" day sleeping {
+          HostExpectedOff = if lib.all plannedByDay sleeping then sleeping else [ ];
+          NodeChronicNotReady = lib.filter (h: !plannedByDay h) sleeping;
         })
       ]
       ++ lib.concatMap (h: [
-        (ruleTest "${h} does not sleep, off" "20m" [ h ] {
+        (ruleTest "${h} does not sleep, off" night [ h ] {
           HostExpectedOff = [ ];
           NodeChronicNotReady = [ h ];
         })
-        (ruleTest "${h} off with the sleeping hosts: fails open" "20m" ([ h ] ++ sleeping) {
+        (ruleTest "${h} off with the sleeping hosts: fails open" night ([ h ] ++ sleeping) {
           HostExpectedOff = [ ];
           NodeChronicNotReady = [ h ];
         })
