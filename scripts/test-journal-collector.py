@@ -38,8 +38,8 @@ def components(conf):
 
 r = gate_probe.section("journal-collector")
 hosts = r["hosts"]
-check({"msi-ms7758", "asus-b460m", "lenovo", "acer-swift", "black-pi", "naked-pi"} <= set(hosts), f"every host is evaluated {sorted(hosts)}")
-shipping = ["acer-swift", "asus-b460m", "black-pi", "lenovo", "msi-ms7758"]
+check(set(r["deployNodes"]) <= set(hosts), f"every deploy node is evaluated {sorted(hosts)}")
+shipping = sorted(set(r["deployNodes"]) - {"naked-pi"})
 check(enabled(hosts) == shipping, f"the collector and Alloy run on every host but naked-pi {enabled(hosts)}")
 seeded = enabled({**hosts, "naked-pi": r["seeded"]})
 check(seeded == sorted(shipping + ["naked-pi"]), f"negative case: enabling it on naked-pi shows in the hosts check {seeded}")
