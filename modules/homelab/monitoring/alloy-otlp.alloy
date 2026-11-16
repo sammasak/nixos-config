@@ -4,7 +4,7 @@ otelcol.auth.bearer "native" {
   token = sys.env("OTLP_BEARER_TOKEN")
 }
 
-// Traefik's pods reach it on acer through Cilium; the LAN has no rule for the port.
+// Caddy on acer reaches it over loopback; the LAN has no rule for the port.
 otelcol.receiver.otlp "native" {
   http {
     endpoint               = "0.0.0.0:4318"

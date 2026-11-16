@@ -1,7 +1,5 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-registry := "registry.sammasak.dev"
-
 # nh selects by nixosConfigurations attribute, and lenovo's attribute is not its
 # hostname, so the default cannot just be the hostname. `uname -n` rather than
 # `hostname`: the latter arrives via nettools, which nothing here declares.
@@ -150,12 +148,6 @@ parity BASE="":
 # Mirror dotfiles/nvim to the standalone public repo the work machine clones
 export-nvim REMOTE="git@github.com:sammasak/nvim-config.git":
     bash scripts/export-nvim.sh {{REMOTE}}
-
-# ── Registry ──────────────────────────────────────────────────────────
-
-# Log in to the image registry (zot)
-registry-login:
-    nix shell nixpkgs#skopeo -c skopeo login {{registry}}
 
 # ── Image Supply Chain Security ───────────────────────────────────────
 

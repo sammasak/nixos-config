@@ -33,9 +33,9 @@ in
               mode = "0400";
             };
 
-        # Pi's project key for the in-cluster llm-gateway (homelab-gitops
-        # apps/llm-gateway). Read by Pi's `homelab` provider at request time
-        # (modules/programs/cli/pi); no provider keys, so every pi host may hold it.
+        # Pi's project key for acer's llm-gateway (modules/homelab/llm-gateway.nix). Read by Pi's
+        # `homelab` provider at request time (modules/programs/cli/pi); no provider keys, so every
+        # pi host may hold it.
         "llm_gateway_pi_key" = lib.mkIf config.sam.profile.pi {
           sopsFile = ../../secrets/claude/llm-gateway.yaml;
           owner = username;

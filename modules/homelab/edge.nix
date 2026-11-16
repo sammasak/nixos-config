@@ -1,5 +1,5 @@
 # The *.sammasak.dev edge on acer (#420): Caddy terminates TLS with one DNS-01 wildcard from security.acme and
-# proxies each name to its backend, with forward auth through the k3s Authentik for chat and grafana. The admin API is
+# proxies each name to its backend, with forward auth through Authentik for chat and grafana. The admin API is
 # off, so no local process can load a config without forward_auth; a config change or renewal restarts Caddy.
 # herman and karta proxy to their pods' ClusterIPs until they move (step 2, PR 2).
 {

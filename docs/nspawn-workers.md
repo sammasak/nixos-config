@@ -69,7 +69,7 @@ CPU-throttled 947 s of 1275 s used while cores sat idle; msi `skills91`
 
 | Host | Pool | Prefix | Host's own use | At most (by reserve) | Recommended |
 |------|------|--------|----------------|----------------------|-------------|
-| acer-swift | 7G, 8 cores | `acer` | k3s pods 4.6G, system 2.9G | 3 | 2 |
+| acer-swift | 7G, 8 cores | `acer` | host services and system about 7.5G (measured with k3s, an upper bound) | 3 | 2 |
 | msi-ms7758 | 10G, 8 cores | `msi` | about 2.8G | 5 | 3 |
 
 The reserve sum is what eval enforces; the recommendation is lower because a

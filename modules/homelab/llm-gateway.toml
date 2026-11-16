@@ -9,8 +9,8 @@
 
 [server]
 listen = "0.0.0.0:8081"
-# /status and /metrics bind separately; Cilium restricts this listener to
-# Prometheus only. Requires gateway PR #77.
+# /status and /metrics bind separately; the host firewall admits only
+# black-pi's Prometheus here. Requires gateway PR #77.
 admin_listen = "0.0.0.0:9091"
 state_db = "/var/lib/llm-gateway/state.sqlite3"
 project_keys_file = "/run/secrets/llm-gateway/project-keys.toml"
