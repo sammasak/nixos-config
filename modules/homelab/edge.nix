@@ -142,6 +142,11 @@ in
 
   assertions = [
     {
+      # lenovo's *.sammasak.dev rewrite and every OTLP relay send here by sam.fleet.edge
+      assertion = config.networking.hostName == config.sam.fleet.edge;
+      message = "modules/homelab/edge.nix runs on ${config.networking.hostName}, but sam.fleet.edge is ${config.sam.fleet.edge}: the DNS rewrite and the OTLP relays would point at the wrong host.";
+    }
+    {
       assertion =
         lib.filter (l: lib.hasPrefix "admin" l) (map lib.trim (lib.splitString "\n" caddy.globalConfig))
         == [
