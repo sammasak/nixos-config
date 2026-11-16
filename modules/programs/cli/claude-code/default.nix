@@ -40,9 +40,6 @@
       "Bash(git push --force:*)"
       "Bash(git push -f:*)"
       "Bash(git push --no-verify:*)"
-      "Bash(kubectl delete pv:*)"
-      "Bash(kubectl delete namespace:*)"
-      "Bash(kubectl delete ns:*)"
     ];
   };
 
