@@ -1,4 +1,4 @@
-"""lenovo's nix-daemon builds stay bounded (nixos-config#109), and so do the environment hosts' (acer, msi); lenovo's user slice has a ceiling (#353)."""
+"""lenovo's nix-daemon builds stay bounded, swap included (nixos-config#109, #354), and so do the environment hosts' (acer, msi); lenovo's user slice has a ceiling (#353)."""
 import sys
 
 import gate_probe
@@ -29,6 +29,9 @@ check(high is not None and cap is not None and high < cap,
 measured = 6118 * 2**20
 check(cap is not None and measured < cap,
       f"the measured cores-2 build peak (6118 MiB) fits under MemoryMax ({lenovo.get('MemoryMax')})")
+swap = size(lenovo.get("MemorySwapMax"))
+check(cap is not None and swap is not None and swap * 4 <= cap,
+      f"lenovo's nix-daemon swap is at most a quarter of its MemoryMax ({lenovo.get('MemorySwapMax')}), as the user slice: zram is charged to no cgroup")
 ram = 15.3 * 2**30
 check(cap is not None and cap <= ram / 2,
       "MemoryMax leaves at least half of lenovo's 15.3 GiB to its services, the agents and the desktop")
