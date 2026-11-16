@@ -12,7 +12,14 @@
     ../../modules/homelab/authentik.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/monitoring/alloy-otlp.nix
+    ../../modules/homelab/journal-collector.nix
   ];
+
+  homelab.journalCollector = {
+    enable = true;
+    lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";
+    ntfyUrl = config.sam.workers.ntfyUrl;
+  };
 
   sam.profile = {
     username = "lukas";

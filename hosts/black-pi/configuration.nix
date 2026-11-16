@@ -15,6 +15,7 @@
     ../../modules/homelab/monitoring/grafana.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/loki.nix
+    ../../modules/homelab/journal-collector.nix
   ];
 
   # Unauthenticated, per #302: the journal collectors and pi-offload push, Grafana here reads on loopback.
@@ -27,6 +28,13 @@
       "acer-swift"
       "msi-ms7758"
     ];
+    ntfyUrl = "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
+  };
+
+  # to its own LAN address, which the kernel delivers on lo (always accepted), so it needs no allowedSources entry
+  homelab.journalCollector = {
+    enable = true;
+    lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";
     ntfyUrl = "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
   };
 
