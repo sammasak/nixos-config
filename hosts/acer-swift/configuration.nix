@@ -9,6 +9,7 @@
     ../../modules/homelab/open-webui.nix
     ../../modules/homelab/edge.nix
     ../../modules/homelab/llm-gateway.nix
+    ../../modules/homelab/authentik.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/monitoring/alloy-otlp.nix
   ];

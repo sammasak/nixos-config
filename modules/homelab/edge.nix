@@ -11,8 +11,15 @@
 let
   inherit (config.sam.fleet) hosts;
   domain = "sammasak.dev";
-  # authentik-server's ClusterIP: Helm-owned, so stable until step 3 (the auth probe catches a change)
-  authentik = "10.43.238.182:80";
+  # The native Authentik (authentik.nix) first, the k3s one while it still runs: a refused connection marks the first
+  # down, so starting or stopping the native units moves sign-in without a deploy, and stopping them is the rollback.
+  # Drop the ClusterIP with the HelmRelease.
+  authentik = "127.0.0.1:9000 10.43.238.182:80";
+  upstreams = ''
+    lb_policy first
+    lb_try_duration 3s
+    fail_duration 10s
+  '';
   # the only OTLP pushers: each host's native-otel-relay, and black-pi's blackbox probe
   otlpSources = map (h: hosts.${h}.address) [
     "lenovo-21CB001PMX"
@@ -21,7 +28,11 @@ let
     "black-pi"
   ];
   sites = {
-    auth = "reverse_proxy ${authentik}";
+    auth = ''
+      reverse_proxy ${authentik} {
+        ${upstreams}
+      }
+    '';
     chat = ''
       route {
         import authentik
@@ -76,8 +87,11 @@ in
     # Caddy deletes a client-sent copy of each copied header before it sets the outpost's value.
     extraConfig = ''
       (authentik) {
-        reverse_proxy /outpost.goauthentik.io/* ${authentik}
+        reverse_proxy /outpost.goauthentik.io/* ${authentik} {
+          ${upstreams}
+        }
         forward_auth ${authentik} {
+          ${upstreams}
           uri /outpost.goauthentik.io/auth/caddy
           copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
         }
