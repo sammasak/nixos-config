@@ -761,7 +761,7 @@ in
     "nixos:harness-telemetry-test" =
       task "sam.claude.telemetry: Claude exports through the local relay with session and repository attributes; emit-work-ref.sh only when on and pinned" harnessTelemetryTest;
     "nixos:known-hosts-test" =
-      task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host" knownHostsTest;
+      task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =
