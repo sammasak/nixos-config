@@ -31,7 +31,7 @@
     ntfyUrl = "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
   };
 
-  # self-push over lo, so black-pi is not in its own Loki's allowedSources
+  # to its own LAN address, which the kernel delivers on lo (always accepted), so it needs no allowedSources entry
   homelab.journalCollector = {
     enable = true;
     lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";

@@ -1,6 +1,6 @@
 """homelab.journalCollector (modules/homelab/journal-collector.nix): Alloy ships the journal on every host but naked-pi,
 reads journald and nothing else, references no secret, keeps its readiness probe on the host, restarts on a config
-change, drops the egress proxy's info-level 2xx/3xx access lines and pages ntfy (with retries) when it fails. The
+change, never ships Authentik's or user units' lines, drops the egress proxy's info-level 2xx/3xx access lines and pages ntfy (with retries) when it fails. The
 negative case enables the module on naked-pi in the probe only. The detailed checks read msi-ms7758's unit.
 
 Evaluation only: options, the generated config.alloy and the unit, never a build. The drop stage's semantics (the
@@ -89,18 +89,27 @@ cases = {"session-12.scope": "transient", "run-r1a2b.service": "transient", "run
 got = {u: next((to for to, rx in rules.items() if re.fullmatch(rx, u)), None) for u in cases}
 check(got == cases, f"unit rewrites match transient and coredump units only {got}")
 pc = comps.get(("loki.process", proc), "")
+private = re.search(r'stage\.match \{ selector = "\{unit = ~\\"([^"\\]+)\\"\}" action = "drop"', pc)
+check(private is not None, f"a drop stage on private units {pc[:200]}")
+private_rx = private[1] if private else "(?!)"
+units = {"authentik.service": False, "authentik-worker.service": False, "user@1000.service": False, "user@0.service": False,
+         "authentik-migrate.service": True, "sshd.service": True, "dev-env-egress.service": True, "user-runtime-dir@1000.service": True}
+got = {u: re.fullmatch(private_rx, u) is None for u in units}
+check(got == units, f"Authentik's and user units' lines never ship, every other unit's do {got}")
 sel = re.search(r'stage\.match \{ selector = "\{unit = \\"([^"\\]+)\\"\}"', pc)
 src_f = re.search(r'stage\.drop \{ source = "([^"]+)"', pc)
 drop_rx = re.search(r'stage\.drop \{[^}]*expression = "((?:[^"\\]|\\.)*)"', pc)
 json_f = re.search(r'stage\.json \{ expressions = \{([^}]*)\}', pc)
 check(None not in (sel, src_f, drop_rx, json_f), "drop stage: a unit match, a JSON parse and a drop on its fields")
 stages = re.findall(r"stage\.[a-z_]+", pc)
-check(stages == ["stage.match", "stage.json", "stage.drop"] and "separator" not in pc,
-      f"process block: exactly match, json, drop, default separator {stages}")
+check(stages == ["stage.match", "stage.match", "stage.json", "stage.drop"] and "separator" not in pc,
+      f"process block: the private-unit drop, then match, json, drop, default separator {stages}")
 
 
 def shipped(unit, line):
     """The rendered match and drop stage applied to one line (Go regexp: unanchored search)."""
+    if re.fullmatch(private_rx, unit):
+        return False
     if None in (sel, src_f, drop_rx, json_f) or unit != sel[1]:
         return True
     try:
@@ -128,10 +137,12 @@ lines = {
     (egress, '{"level":"warn","ts":1.0,"logger":"http","msg":"HTTP/2 skipped because it requires TLS"}'): True,
     (egress, "Starting the egress proxy"): True,
     ("sshd.service", access % ("info", 200)): True,
+    ("authentik.service", '{"event":"/application/o/authorize/?code=x&state=y","level":"info"}'): False,
+    ("user@1000.service", "agent output"): False,
 }
 got = {f"{u} {l[:60]} {l[-12:]}": shipped(u, l) for u, l in lines}
 want = {f"{u} {l[:60]} {l[-12:]}": keep for (u, l), keep in lines.items()}
-check(got == want, f"drops only info 2xx/3xx access lines of {egress} {got}")
+check(got == want, f"drops private units and only info 2xx/3xx access lines of {egress} {got}")
 wr = comps.get(("loki.write", write), "")
 check(re.search(r'url = "http://[^"]+/loki/api/v1/push"', wr) is not None and "max_backoff_retries = 0" in wr,
       "writes to a Loki push endpoint and retries forever (the journal holds the backlog)")
