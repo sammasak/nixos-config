@@ -60,6 +60,7 @@ check(lb.agent_capacity([level(1, 1, 30, 0), level(2, 2, 25, 1), level(3, 6, 20,
 check(lb.agent_capacity([level(1, 1, 30, 0), level(2, 2, 25, 1, errors=1)], limits) == 1, "a level with errors ends the ramp")
 check(lb.agent_capacity([level(1, None, 30, 0)], limits) is None, "an unevaluable first level gives no capacity, not 0")
 check(lb.agent_capacity([level(1, 9, 30, 0)], limits) == 0, "a first level outside the thresholds gives 0 agents")
+check(lb.within({**level(1, 1, 30, 0), "non_content": 2}, limits) is None, "a level with tool-call turns is not evaluable")
 
 a, b = lb.long_prompt(4096), lb.long_prompt(4096)
 check(a == b and lb.long_prompt(8192)[1] != a[1] and len(lb.long_prompt(8192)[0]) > len(a[0]),
@@ -139,6 +140,15 @@ try:
     check(tool["kind"] == "tool_call" and tool["ttft_s"] is None and tool["decode_source"] == "whole_turn",
           f"a tool-call turn is classified, with no content TTFT and its decode over the whole turn ({tool})")
     check(lb.chat_stream("http://127.0.0.1:9/v1", "mock:7b", [], [])["error"], "a refused connection is an error row, not an exception")
+    try:
+        lb.fit("http://127.0.0.1:9", "mock-host", "mock:7b", 4096, cold=1, warm=1, limits=mock_limits, settle=0)
+        gone = "returned"
+    except SystemExit as e:
+        gone = str(e)
+    except OSError as e:
+        gone = f"OSError before any run: {e}"
+    check("nothing measured" in gone or "OSError before any run" in gone,
+          f"a host that does not answer writes no result, never a no-fit ({gone[:80]})")
 finally:
     srv.shutdown()
 

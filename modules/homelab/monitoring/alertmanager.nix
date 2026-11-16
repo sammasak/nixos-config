@@ -80,6 +80,14 @@ in
             ''job =~ "node-exporter|nvidia-gpu"''
           ];
         }
+        # 3) GpuTelemetryDown is the per-host page for a dead GPU exporter: its TargetDown would say it twice
+        {
+          source_matchers = [ "alertname = GpuTelemetryDown" ];
+          target_matchers = [
+            "alertname = TargetDown"
+            ''job = "nvidia-gpu"''
+          ];
+        }
       ];
     };
   };

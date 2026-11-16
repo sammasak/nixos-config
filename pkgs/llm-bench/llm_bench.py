@@ -155,11 +155,13 @@ def generate(base, model, prompt, ctx, keep_alive="5m"):
 
 
 def attempt(run, **fields):
-    """One run, its failure kept as data: an OOM or a refused load is a result, not a crash."""
+    """One run, its failure kept as data. error_kind ollama: Ollama itself answered with an error (a load it refused,
+    an HTTP 5xx), which is a measurement; transport: nothing answered, which says nothing about the model."""
     try:
-        return {**fields, **run(), "error": None}
+        return {**fields, **run(), "error": None, "error_kind": None}
     except (OSError, ValueError, RuntimeError) as e:
-        return {**fields, "error": f"{type(e).__name__}: {e}"[:200]}
+        kind = "ollama" if isinstance(e, (RuntimeError, urllib.error.HTTPError)) else "transport"
+        return {**fields, "error": f"{type(e).__name__}: {e}"[:200], "error_kind": kind}
 
 
 def unload(base, model, timeout=60):
@@ -208,6 +210,10 @@ def fit(base, host, model, ctx, cold=5, warm=20, prom=None, limits=None, settle=
 
     for i in range(cold):
         runs.append(attempt(lambda i=i: cold_run(i), start="cold"))
+    if all(r["error"] for r in runs):
+        if not any(r["error_kind"] == "ollama" for r in runs):
+            raise SystemExit(f"llm-bench: {host} stopped answering ({runs[0]['error']}); nothing measured, nothing written")
+        warm = 0
     cold_end = time.time()
     resident = loaded(base, model) or {}
     time.sleep(settle)
@@ -255,7 +261,7 @@ def fit(base, host, model, ctx, cold=5, warm=20, prom=None, limits=None, settle=
     r = result("fit", host, model, ctx, ident, started, metrics=metrics,
                fixture={"name": "long-context", "sha256": sha, "chars": len(prompt), "nonce": "Run <start>-<i>. prefix"},
                samples={"warm": len(w), "cold": len(c), "failed": len(failed)}, runs=runs,
-               rejected=f"{len(failed)} of {len(runs)} runs failed, first: {failed[0]}" if failed and not c else None)
+               rejected=f"{len(failed)} of {len(runs)} runs failed, Ollama: {failed[0]}" if failed and not c else None)
     r["settings"]["context_length_loaded"] = resident.get("context_length")
     r["warnings"] = warnings + ([f"{len(failed)} runs failed, first: {failed[0]}"] if failed else [])
     return r if r["rejected"] else judge_fit(r, limits)
@@ -291,7 +297,7 @@ def chat_stream(base, model, messages, tools, key=None):
             "stream_options": {"include_usage": True}, "temperature": 0, "seed": 42, "max_tokens": SETTINGS["num_predict"]}
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     t0 = time.monotonic()
-    ttft, first_any, chunks, usage, err, kind = None, None, 0, None, None, None
+    ttft, first_any, chunks, usage, err, kind, reasoned = None, None, 0, None, None, None, False
     try:
         with request(f"{base}/chat/completions", body, headers) as r:
             for line in r:
@@ -313,6 +319,7 @@ def chat_stream(base, model, messages, tools, key=None):
                         kind = kind or "tool_call"
                     elif delta.get("reasoning") or delta.get("reasoning_content"):
                         kind = kind or "reasoning_only"
+                        reasoned = True
                     if first_any is None and kind:
                         first_any = now
     except (OSError, ValueError, RuntimeError) as e:
@@ -320,7 +327,8 @@ def chat_stream(base, model, messages, tools, key=None):
     total = time.monotonic() - t0
     tokens = (usage or {}).get("completion_tokens")
     n = tokens if tokens is not None else chunks
-    if kind == "content" and ttft is not None and total > ttft and n > 1:
+    # completion_tokens counts reasoning too: after reasoning, only the whole turn's rate is honest
+    if kind == "content" and not reasoned and ttft is not None and total > ttft and n > 1:
         tps, tps_source = (n - 1) / (total - ttft), "after_first_token"
     else:
         tps, tps_source = (n / total if n and total > 0 else None), "whole_turn"
@@ -348,6 +356,9 @@ def within(level, limits):
     t = limits["capacity"]
     if level["errors"]:
         return False
+    # a tool-call or reasoning-only turn has no content TTFT: the level's TTFT would be over the rest only
+    if level.get("non_content"):
+        return None
     vals = (level["ttft_p95"], level["decode_tps_per_agent_p50"], level["queue_wait_p95"])
     if None in vals:
         return None
@@ -407,9 +418,11 @@ def capacity(base, host, model, ctx, route, key=None, max_n=8, per_level=20, lim
     r["settings"]["num_ctx"] = None
     r["settings"]["context_length_loaded"] = resident.get("context_length")
     prompt_tokens = median(x.get("prompt_tokens") for x in runs)
+    # Ollama's chat path drops the oldest messages to fit, so a short loaded context hides in the token counts
+    loaded_ctx = resident.get("context_length")
     r["warnings"] = ([f"warm-up failed: {warmup['error']}"] if warmup["error"] else []) + (
-        [f"the prompt ({prompt_tokens} tokens) filled the loaded context ({resident['context_length']}): truncated"]
-        if prompt_tokens and resident.get("context_length") and prompt_tokens >= resident["context_length"] else [])
+        [f"the server loaded {loaded_ctx} tokens of context, under the {ctx} asked: history was dropped"]
+        if loaded_ctx and loaded_ctx < ctx else [])
     r["capacity"] = {"agents": agents if not r["warnings"] else None, "levels": levels, "queue_wait_source": "estimated",
                      "prompt_tokens": prompt_tokens}
     return r

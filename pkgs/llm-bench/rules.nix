@@ -58,7 +58,11 @@ let
   check =
     file: labels:
     let
-      bad = lib.filterAttrs (k: v: allowed ? ${k} && !lib.elem v allowed.${k}) labels;
+      bad =
+        lib.filterAttrs (k: v: allowed ? ${k} && !lib.elem v allowed.${k}) labels
+        // lib.optionalAttrs ((labels.ctx or "") == "16384" && labels.evidence != "historical") {
+          inherit (labels) ctx evidence;
+        };
     in
     lib.throwIf (
       bad != { }
