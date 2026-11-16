@@ -56,12 +56,13 @@ let
       }
     '';
     ntfy = "reverse_proxy ${hosts.lenovo-21CB001PMX.address}:2586";
-    # herman's deploy/nginx.conf: hashed wasm/js/css immutable and never the SPA fallback, the rest no-cache
+    # herman's deploy/nginx.conf: hashed wasm/js/css that exist immutable and never the SPA fallback, the rest no-cache
     herman = ''
       root * ${pkgs.hermanWeb}
       @hashed {
         path *.wasm *.js *.css
         not path /sw.js
+        file
       }
       header @hashed Cache-Control "public, max-age=31536000, immutable"
       header ?Cache-Control no-cache
@@ -75,6 +76,7 @@ let
         precompressed gzip
       }
     '';
+    # its derivation comes back with the switch, once sammasak/karta#1 resolves
     karta = "reverse_proxy 10.43.147.178:8080";
     # zot: the registry stays until karta switches, so its pod can pull its image if rescheduled
     registry = "reverse_proxy 10.43.23.61:5000";

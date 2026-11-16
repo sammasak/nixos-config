@@ -136,7 +136,7 @@ for name, (fresh, no_fallback) in static.items():
     check(len(served) == 1 and served[0].get("precompressed") == {"gzip": {}},
           f"{name} is served from files, with the .gz siblings {served}")
     check(not any(h.get("handler") == "reverse_proxy" for h, _ in steps), f"{name} proxies nowhere")
-    hashed = {"path": ["*.wasm", "*.js", "*.css"], "not": [{"path": fresh}]}
+    hashed = {"path": ["*.wasm", "*.js", "*.css"], "not": [{"path": fresh}], "file": {}}
     cache = [(m, h["response"].get("require"), h["response"]["set"]["Cache-Control"]) for h, m in steps
              if h.get("handler") == "headers" and "Cache-Control" in h.get("response", {}).get("set", {})]
     check(cache == [((hashed,), None, ["public, max-age=31536000, immutable"]),
