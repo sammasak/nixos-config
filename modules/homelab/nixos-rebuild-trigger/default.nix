@@ -71,37 +71,12 @@ in
       "d /var/lib/nixos-rebuild-trigger 0700 root root -"
     ];
 
-    # The tmpfiles rule alone is not enough: /run rules are applied only at boot
-    # by systemd-tmpfiles-setup, so a switch that introduces one leaves the
-    # directory missing — and the trigger dead — until the next reboot. That is
-    # how this module first shipped broken. This oneshot runs during activation.
-    systemd.services.nixos-rebuild-trigger-dir = {
-      description = "Provision the nixos-rebuild trigger request directory";
-      wantedBy = [ "multi-user.target" ];
-      # the path unit below orders after this one and before paths.target, which basic.target waits for: with default
-      # dependencies (after basic.target) that is a cycle, and systemd drops paths.target's start job at boot
-      unitConfig.DefaultDependencies = false;
-      after = [ "sysinit.target" ];
-      before = [ "shutdown.target" ];
-      conflicts = [ "shutdown.target" ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      path = [ pkgs.coreutils ];
-      enableStrictShellChecks = true;
-      script = ''
-        install -d -m 0770 -o root -g ${triggerGroup} "${triggerDir}"
-      '';
-    };
-
+    # The tmpfiles rule covers a switch too: switch-to-configuration restarts sysinit-reactivation.target, which
+    # re-runs systemd-tmpfiles-resetup, so a switch that adds the rule creates the directory
+    # (tests/rebuild-trigger-vm.nix).
     systemd.paths.nixos-rebuild-trigger = {
       description = "Board-worker nixos-rebuild trigger (path watch)";
       wantedBy = [ "multi-user.target" ];
-      # Wants, not Requires: a Requires on a oneshot would propagate the
-      # oneshot's eventual stop back to the path unit.
-      wants = [ "nixos-rebuild-trigger-dir.service" ];
-      after = [ "nixos-rebuild-trigger-dir.service" ];
       pathConfig.PathExists = triggerFile;
     };
 
@@ -112,12 +87,10 @@ in
       after = [
         "nix-daemon.service"
         "network-online.target"
-        "nixos-rebuild-trigger-dir.service"
       ];
       wants = [
         "nix-daemon.service"
         "network-online.target"
-        "nixos-rebuild-trigger-dir.service"
       ];
       # Without the trailing /bin: `path` runs entries through makeBinPath, so
       # "/run/current-system/sw/bin" would render as ".../sw/bin/bin".
