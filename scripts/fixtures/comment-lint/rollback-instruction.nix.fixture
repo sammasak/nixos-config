@@ -1,0 +1,5 @@
+{ ... }:
+{
+  # First host on the hooks; rollback: false, or SHUNT_DISABLE=1.
+  sam.claude.bulkReader.enable = true;
+}

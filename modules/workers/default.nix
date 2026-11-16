@@ -9,6 +9,7 @@
 let
   inherit (lib) mkOption types;
   cfg = config.sam.workers;
+  guestClaude = "2.1.311";
   dev = config.services.devEnvironments;
   profile = config.sam.profile;
   user = profile.username;
@@ -149,14 +150,14 @@ let
       # The guest evaluates on the host's nixpkgs instance (nixpkgs.pkgs would refuse core/system.nix's nixpkgs.config
       # and re-instantiate under overlays). A guest-side nixpkgs.overlays or nixpkgs.config is ignored: the assertion
       # catches overlays; config is the host's core/system.nix.
-      # FIXME: claude-code 2.1.311 (the stable channel) in guests only, the first to read
-      # CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS; drop once the pinned nixpkgs (2.1.300) carries it.
+      # claude-code guestClaude (the stable channel) in guests only, the first to read
+      # CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS; an assertion below fails once the pinned nixpkgs carries it.
       _module.args.pkgs = lib.mkForce (
         pkgs
         // {
           claude-code = pkgs.claude-code.override {
             manifest = {
-              version = "2.1.311";
+              version = guestClaude;
               platforms.linux-x64 = {
                 binary = "claude.zst";
                 checksum = "d0c00b80761f3030f34cf0812266f6c6f8210ff9af7242f7c6c76c5600499caf";
@@ -169,6 +170,10 @@ let
         {
           assertion = os.config.nixpkgs.overlays == [ ];
           message = "A worker guest shares the host's nixpkgs instance, so its nixpkgs.overlays are ignored: put overlays on the host (modules/workers/default.nix).";
+        }
+        {
+          assertion = lib.versionOlder pkgs.claude-code.version guestClaude;
+          message = "The pinned nixpkgs carries claude-code ${pkgs.claude-code.version}, at or past the guests' ${guestClaude}: drop the guest claude-code override in modules/workers/default.nix.";
         }
       ];
       # nativeOtel off: the guest has neither the relay nor its secret; sam.workers.instances.<name>.telemetry is its way in

@@ -46,7 +46,6 @@ let
       && (p.kind == "ollama" || p ? api_key_file)
     )
   ) (catalog.providers or [ ]);
-  # an enabled model must not bill by usage: free, or prepaid-capped on a provider with billing evidence
   badModels = builtins.filter (
     m:
     !(

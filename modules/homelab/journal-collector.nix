@@ -8,6 +8,9 @@
 #   proxied request); 4xx, 5xx and all non-access lines are kept. Those kept access lines carry request headers into
 #   Loki: X-Claude-Code-Session-Id and user agent in clear, Authorization logged as REDACTED.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed alloy` and a start.
+# - Loki is unauthenticated to its allowed sources, so two kinds of lines never ship: authentik.service and
+#   authentik-worker.service (request lines carry OAuth code and state query strings) and user@<uid>.service, which
+#   labels every user unit's lines (agent output). Every other unit of every journal file ships.
 {
   config,
   lib,
@@ -45,6 +48,12 @@ let
 
     loki.process "drop" {
       forward_to = [loki.write.loki.receiver]
+
+      stage.match {
+        selector            = "{unit=~\"(authentik|authentik-worker|user@[0-9]+)[.]service\"}"
+        action              = "drop"
+        drop_counter_reason = "private_unit"
+      }
 
       stage.match {
         selector = "{unit=\"dev-env-egress.service\"}"
@@ -109,6 +118,8 @@ in
     ];
 
     systemd.services.alloy = {
+      # the Go heap target under MemoryMax: a catch-up of the 72h backlog otherwise meets the cap as an OOM kill
+      environment.GOMEMLIMIT = "200MiB";
       startLimitIntervalSec = 600;
       startLimitBurst = 4;
       onFailure = lib.optional (cfg.ntfyUrl != null) "journal-collector-failed.service";
