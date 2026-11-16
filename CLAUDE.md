@@ -91,6 +91,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/wifi.yaml` | Personal + lenovo, acer-swift, acer `lukas`, black-pi, naked-pi + Flux (msi is wired) | Home Wi-Fi PSK |
 | `homelab/open-webui.yaml` | Personal + acer-swift | open-webui's gateway and session keys |
 | `homelab/llm-gateway.yaml` | Personal + acer-swift | llm-gateway's provider and project keys |
+| `homelab/authentik.yaml` | Personal + acer-swift | Authentik's secret key and the Grafana OIDC pair its blueprint reads |
 | `homelab/grafana.yaml` | Personal + black-pi | Grafana's admin, OIDC client and secret key |
 | `homelab/(cloudflare\|tailscale).yaml` | Personal + lenovo, acer `lukas` + Flux | ACME DNS token, Tailscale authkey |
 | `homelab/*.yaml` | Personal + every cluster host + Flux | k3s cluster token, GitHub access token |
@@ -99,7 +100,7 @@ Secret scopes in `secrets/.sops.yaml`:
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
 | `claude/*.yaml` | Personal + lenovo, acer-swift | Pi's gateway key |
 
-Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml` and `llm-gateway.yaml` also includes acer's own `lukas` user
+Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml`, `llm-gateway.yaml` and `authentik.yaml` also includes acer's own `lukas` user
 key. A fleet host is a recipient only of files it declares a secret from (`nixos:known-hosts-test`); trimming a
 recipient revokes nothing already in git history, only rotating the secret does.
 

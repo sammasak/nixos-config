@@ -1,0 +1,19 @@
+version: 1
+metadata:
+  name: Embedded Outpost Config
+entries:
+  # Pin authentik_host on the embedded outpost. Without this it is empty
+  # and the proxy outpost generates redirects pointing at its internal
+  # listen address (http://0.0.0.0:9000), which browsers cannot reach.
+  - model: authentik_outposts.outpost
+    state: present
+    identifiers:
+      name: authentik Embedded Outpost
+    attrs:
+      type: proxy
+      config:
+        authentik_host: https://auth.sammasak.dev/
+        authentik_host_insecure: false
+        authentik_host_browser: ""
+        log_level: info
+        refresh_interval: minutes=5

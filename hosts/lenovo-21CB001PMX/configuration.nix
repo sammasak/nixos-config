@@ -16,6 +16,7 @@
 
     # Wake msi (the intermittent LLM worker) on the work-hours schedule.
     ../../modules/homelab/msi-power-schedule.nix
+    ../../modules/homelab/authentik-offhost.nix
 
     ../../modules/homelab/monitoring/node-exporter.nix
   ];
