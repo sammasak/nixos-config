@@ -108,16 +108,19 @@ let
         hosts=$(names nixosConfigurations)
         for h in $hosts; do drv "nixosConfigurations.$h.config.system.build.toplevel"; done
         for s in $(names formatter); do drv "formatter.$s"; done
+        # VM checks (NixOS tests, the ones with a driver) boot QEMU, up to 4 GiB: the gate refuses to run on lenovo
+        vms=$(nix eval --json --no-write-lock-file ".#checks.$here" \
+          --apply 'cs: builtins.filter (n: cs.''${n} ? driver) (builtins.attrNames cs)' | jq -r '.[]')
+        if [ -n "$vms" ] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
+          echo "nixos-flake-check: refused on lenovo: $(echo $vms) boot a QEMU VM (memory); run the gate on msi or acer" >&2
+          exit 1
+        fi
         for kind in packages checks; do
           systems=$(names "$kind")
           for s in $systems; do
             outputs=$(names "$kind.$s")
             for o in $outputs; do
-              # the *-vm checks boot QEMU (up to 4 GiB): lenovo evaluates them and says so, msi and acer boot them
-              if [ "$kind.$s" = "checks.$here" ] && [[ $o == *-vm ]] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
-                echo "nixos-flake-check: NOT booting checks.$s.$o on lenovo (a QEMU VM, memory): only its drvPath is evaluated; run the gate on msi or acer" >&2
-                drv "$kind.$s.$o"
-              elif [ "$kind.$s" = "checks.$here" ]; then
+              if [ "$kind.$s" = "checks.$here" ]; then
                 echo "nixos-flake-check: build checks.$s.$o" >&2
                 nix build --no-link --no-write-lock-file ".#checks.$s.$o"
               else
