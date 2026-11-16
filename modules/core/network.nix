@@ -7,6 +7,7 @@
 let
   profile = config.sam.profile;
   hasDesktop = config.sam.desktop.enable;
+  fw = config.networking.firewall;
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall anySourceTcp;
   openSsh = anySourceTcp config.networking.firewall config.services.openssh.ports;
 
@@ -20,6 +21,25 @@ let
     dropOthers = true;
     backend = config.networking.firewall.backend;
   };
+
+  # Fails evaluation when nixpkgs stops wiring a script this way, so the check below cannot go empty
+  firewallScripts =
+    lib.mapAttrsToList
+      (
+        unit: name:
+        let
+          exec = config.systemd.services.firewall.serviceConfig.${unit} or "";
+        in
+        if builtins.match "@/nix/store/[^ ]+/bin/${name} ${name}" exec == null then
+          throw "modules/core/network.nix: systemd.services.firewall.serviceConfig.${unit} is not \"@<store path>/bin/${name} ${name}\" but \"${exec}\"; update the firewall script syntax check."
+        else
+          lib.head (lib.splitString " " (lib.removePrefix "@" exec))
+      )
+      {
+        ExecStart = "firewall-start";
+        ExecReload = "firewall-reload";
+        ExecStop = "firewall-stop";
+      };
 in
 {
   networking = {
@@ -37,6 +57,15 @@ in
   };
 
   services.openssh.openFirewall = false;
+
+  # A shell error in extraCommands otherwise surfaces at activation (at boot on the Pis), and nftables.checkRuleset
+  # is inert on the iptables backend
+  system.checks = lib.optional (fw.enable && fw.backend == "iptables") (
+    pkgs.runCommand "firewall-scripts-syntax-check" { } ''
+      ${lib.concatMapStrings (script: "${pkgs.bash}/bin/bash -n ${script}\n") firewallScripts}
+      touch $out
+    ''
+  );
 
   assertions = [
     {
