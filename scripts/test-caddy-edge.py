@@ -167,7 +167,7 @@ needed = ["'wasm-unsafe-eval'", "https://api.open-meteo.com", "https://geocoding
 check(len(csp) == 1 and all(n in csp[0][0] for n in needed) and "'unsafe-eval'" not in csp[0][0],
       f"karta's CSP admits wasm, open-meteo, OSRM and the iroh relays, and no eval {csp}")
 cluster = sorted({d for route in routes.values() for h, _ in flatten(route["handle"]) for d in dials(h)
-                  if d.startswith("10.43.") and d != authentik})
+                  if d.startswith("10.43.") and d != authentik_fallback})
 check(cluster == [], f"no name proxies to a ClusterIP but Authentik {cluster}")
 
 sys.exit(1 if failed else 0)

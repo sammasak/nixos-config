@@ -43,7 +43,8 @@ below.
    work"):
    1. monitoring native on black-pi (#414, PR #419, homelab-gitops #271);
    2. Caddy on acer fronts everything and replaces Traefik; herman and karta
-      become Nix-built static sites; zot retires (#420);
+      become static sites served by Caddy (herman Nix-built, karta from its archived
+      441b800 build, sammasak/karta#1); zot retires (#420);
    3. Authentik and Postgres go native, behind Caddy `forward_auth` (#421);
    4. k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns
       and metrics-server are removed (#422).
@@ -273,8 +274,8 @@ collector on the other hosts (#330) lands any time before step 4.
 |---|---|---|
 | Alloy DaemonSet (pod logs) | step 1 | pod labels come from the Kubernetes API; it goes with the in-cluster stack (homelab-gitops #271) |
 | Traefik | step 2 | Caddy on acer takes every name, including the routes to host services |
-| herman, karta | step 2 | become Nix-built static sites served by Caddy |
-| zot | step 2 | zot retires once nothing pulls from it (karta's pod is its last puller) |
+| herman, karta | step 2 | done: static sites served by Caddy (herman Nix-built #437; karta from its archive) |
+| zot | step 4 | nothing pulls from it once karta is native; its pod goes with homelab-gitops #275 |
 | nixos-config's `registry` Justfile variable, `registry-login` recipe and the skopeo/dive comment in `k3s/server.nix` | done (#420) | removed with the cosign recipes and key |
 | k3s ntfy (`ntfy.sammasak.dev`) | step 2 | the name moves off Traefik; whether it routes to lenovo's native ntfy or retires is decided in #420 |
 | chat leftovers: the `open-webui-backup` CronJob and its 10Gi claim, the `open-webui-state-v2` claim | step 2 | removed with the gitops cleanup in #420; both claims go on the #146 by-hand list |
@@ -310,7 +311,7 @@ and rollback; each needs the one before it.
 | Step | Change | Status | Gate |
 |---|---|---|---|
 | 1 | Prometheus, Alertmanager, Grafana, Loki and alloy-otlp as NixOS services (black-pi; alloy-otlp on acer); the in-cluster stack removed | done 2026-11-15: #419 deployed, homelab-gitops #271 merged (#414 closed; OTLP metrics fix #424) | owner: each deploy, the #271 merge |
-| 2 | Caddy on acer fronts every name and replaces Traefik; herman and karta as Nix-built static sites; zot and the chat leftovers retire | planned, #420 | owner: acer deploy, the Cloudflare secret for acer, the AdGuard repoint, zot and chat claims |
+| 2 | Caddy on acer fronts every name and replaces Traefik; herman and karta as static sites; zot and the chat leftovers retire | planned, #420 | owner: acer deploy, the Cloudflare secret for acer, the AdGuard repoint, zot and chat claims |
 | 3 | Authentik and its Postgres as NixOS services, Caddy `forward_auth` | planned, #421 | owner: host choice, secrets, the database cut-over |
 | 4 | Remove k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns, metrics-server and the host cluster modules | planned, #422; needs the watchdog's host-side replacement | owner: every host deploy, external-dns's leftover AdGuard rules, archive homelab-gitops, state deletion |
 

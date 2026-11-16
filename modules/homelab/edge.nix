@@ -87,7 +87,8 @@ let
       }
     '';
     # the archived 441b800 nginx conf: its security headers on every response; sw.js, the unhashed monty worker,
-    # svg and the manifest no-cache, and those, wasm/js/css and favicon.ico never the SPA fallback
+    # svg and the manifest no-cache, and those, wasm/js/css and favicon.ico never the SPA fallback. The unhashed
+    # iroh worker files stay immutable as nginx had them: the build is frozen
     karta = ''
       root * ${pkgs.kartaWeb}
       header {
