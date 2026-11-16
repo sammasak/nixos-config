@@ -50,7 +50,12 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
-#   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only
+#   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only, except the patched deploy-rs (not cached, a
+#               2.3 GiB Rust build): first, from lenovo,
+#               nix copy --no-check-sigs --from ssh-ng://deploy@black-pi \
+#                 --to 'ssh://deploy@naked-pi?remote-program=sudo%20nix-store' \
+#                 $(ssh deploy@black-pi nix-store -qR /nix/var/nix/profiles/system | grep -- '-deploy-rs-')
+#               (black-pi deployed first; the path is unsigned and naked-pi trusts only root, hence sudo)
 just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
                               # and the closure diff vs the running system; activates nothing, but read
                               # the output: it exits 0 even when the dry activation fails

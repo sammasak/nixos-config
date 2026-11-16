@@ -16,8 +16,8 @@
     # own closure (untrusted lukas is enough: .drv and sources are CA paths).
     black-pi = { roles = [ "base" "homelab-agent" ]; deploy.remoteBuild = true; };
 
-    # remoteBuild for the same no-aarch64-builder reason; rf-lab keeps the closure
-    # to cache hits plus text/symlink derivations, so 1 GiB is enough.
+    # remoteBuild for the same no-aarch64-builder reason; rf-lab keeps the closure to cache hits plus text/symlink
+    # derivations, so 1 GiB is enough, except the patched deploy-rs: copy it from black-pi first (CLAUDE.md).
     naked-pi = { roles = [ "base" "rf-lab" "embedded" ]; deploy.remoteBuild = true; };
   };
 }
