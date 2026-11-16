@@ -99,7 +99,6 @@ Secret scopes in `secrets/.sops.yaml`:
 | `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | Claude OAuth token |
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758 | OTLP auth |
 | `claude/*.yaml` | Personal + lenovo, acer-swift | Pi's gateway key |
-| `cosign.key` | Personal (+ acer's `lukas` key) | Image-signing key used by `just sign` |
 
 Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml`, `llm-gateway.yaml` and `authentik.yaml` also includes acer's own `lukas` user
 key. A fleet host is a recipient only of files it declares a secret from (`nixos:known-hosts-test`); trimming a

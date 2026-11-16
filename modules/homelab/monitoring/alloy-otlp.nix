@@ -1,4 +1,4 @@
-# alloy-otlp on acer: the OTLP intake behind otlp.sammasak.dev (Caddy reaches 4318 over loopback, edge.nix),
+# alloy-otlp on acer: the OTLP intake behind otlp.sammasak.dev (Caddy, edge.nix, reaches 4318 on loopback),
 # sanitizing the harness telemetry and sending metrics to black-pi's Prometheus through a durable queue and logs to
 # its Loki. On acer, not black-pi, so the queue sits on the far side of a black-pi outage. One
 # process by construction: the session sum (homelab-gitops#226) is per process. On nixpkgs' Alloy 1.17.1, which leaves
@@ -100,7 +100,7 @@ in
     };
   };
 
-  # black-pi's Prometheus scrapes the collector's own metrics; 4318 has no rule, so only loopback (Caddy) reaches it
+  # black-pi's Prometheus scrapes the collector's own metrics; 4318 listens on loopback alone
   networking.firewall = {
     inherit
       (mkDualBackendFirewall {
@@ -130,7 +130,7 @@ in
             httpPort
           ] == [ ]
         && lib.all (i: i == "lo") fw.trustedInterfaces;
-      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback: no LAN host may reach the intake.";
+      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback: no LAN host may reach the metrics port.";
     }
   ];
 }

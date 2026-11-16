@@ -1,7 +1,7 @@
-# chat.sammasak.dev as a host service behind Caddy (edge.nix), with forward auth through Authentik. open-webui signs
-# in whoever sends X-authentik-email, so the app serves on a Unix socket in a 0700 directory, out of reach of every
-# local user, and Caddy connects through a second socket only its user may open. The proxy exits when idle and the
-# app stops with it.
+# chat.sammasak.dev as a host service: Caddy (edge.nix) runs forward auth through Authentik and connects through a
+# socket only its user may open. open-webui signs in whoever sends X-authentik-email, so it serves on a Unix socket in
+# a 0700 directory, out of reach of every local user, and opens no TCP port. The proxy exits when idle and the app
+# stops with it.
 {
   config,
   lib,

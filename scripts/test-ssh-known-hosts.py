@@ -61,13 +61,8 @@ def fingerprint(public_key):
 def sops_recipients(path):
     """The age recipients in an encrypted file's plaintext `sops:` metadata; no other line is kept or decrypted."""
     lines = path.read_text().splitlines() if path.is_file() else []
-    if lines[:1] == ["{"]:  # a binary file (cosign.key) is stored as JSON, its metadata under "sops"
-        meta = lines[next((i for i, l in enumerate(lines) if l.strip().startswith('"sops":')), len(lines)):]
-        pattern = r'\s*"recipient": "(age1[0-9a-z]+)",?'
-    else:
-        meta = lines[lines.index("sops:"):] if "sops:" in lines else []
-        pattern = r"\s*(?:- )?recipient: (age1[0-9a-z]+)"
-    return {m.group(1) for line in meta if (m := re.fullmatch(pattern, line))}
+    meta = lines[lines.index("sops:"):] if "sops:" in lines else []
+    return {m.group(1) for line in meta if (m := re.fullmatch(r"\s*(?:- )?recipient: (age1[0-9a-z]+)", line))}
 
 
 def encrypted_files():
@@ -113,7 +108,7 @@ def sops_checks(S):
         for f in set(h["files"].values()):
             declared.setdefault(f, set()).add(h["hostName"])
     files = encrypted_files()
-    check(len(files) >= 12 and "secrets/cosign.key" in files, f"every encrypted file is read, the JSON cosign.key too ({len(files)})")
+    check(len(files) >= 12, f"every encrypted file is read ({len(files)})")
     for f in files:
         extra = needless(f, declared.get(f, set()), recipients_of)
         if f in RETIRING:
