@@ -63,11 +63,16 @@
       label = "msi-ms7758";
       target = "msi-ms7758";
     }
+    {
+      label = "asus-b460m";
+      target = "asus-b460m";
+    }
   ];
   # `ssh <name>.msi` / `ssh <name>.acer` into an environment declared on that host (sam.workers.labelPrefix there).
   sam.workers.jumpHosts = {
     acer = "acer-swift";
     msi = "msi-ms7758";
+    asus = "asus-b460m";
   };
   sam.herdr.coordinatorWakeup = {
     enable = true;
