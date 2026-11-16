@@ -72,6 +72,21 @@ in
       }
     ];
 
+    # upstream's own validator on the rendered file: nixpkgs puts it in a checkPhase that pkgs.formats.yaml's
+    # runCommand never runs, so without this a value its parser rejects is only found by preStart on lenovo
+    system.checks = [
+      (pkgs.runCommand "adguardhome-config-check"
+        { nativeBuildInputs = [ config.services.adguardhome.package ]; }
+        ''
+          install -m 0600 ${
+            (pkgs.formats.yaml { }).generate "AdGuardHome.yaml" config.services.adguardhome.settings
+          } AdGuardHome.yaml
+          AdGuardHome -c AdGuardHome.yaml -w "$TMPDIR" --check-config
+          touch $out
+        ''
+      )
+    ];
+
     security.acme.certs.${dnsDomain} = mkIf cfg.tls.enable {
       group = "acme";
       reloadServices = [ "adguardhome.service" ];

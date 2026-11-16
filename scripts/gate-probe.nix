@@ -193,6 +193,9 @@ let
       };
       chatStreams = acer.systemd.sockets.open-webui-proxy.listenStreams;
       fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
+      # what lenovo's AdGuard answers for the names, and what black-pi's blackbox probes
+      rewrites = lenovo.homelab.dns.rewrites;
+      prometheusConfig = hosts.black-pi.config.services.prometheus.configText;
       cert = { inherit (acer.security.acme.certs."sammasak.dev") directory extraDomainNames; };
       failing = {
         acer = failing acer;
