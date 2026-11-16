@@ -32,6 +32,11 @@ let
 
   sections = {
     # ~/.claude.json activation
+    # counts for the Platform health dashboard, recorded by nixos:qa (scripts/platform-record.sh), not asserted on
+    coverage = lib.mapAttrs (_: h: {
+      assertions = builtins.length h.config.assertions;
+      checks = builtins.length h.config.system.checks;
+    }) hosts;
     switch-safety = {
       claudeActivation = (hm lenovo).home.activation.acceptClaudeStartupDialogs.data;
     };

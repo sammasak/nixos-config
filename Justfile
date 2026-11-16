@@ -63,17 +63,27 @@ deploy HOST:
       if [ -n "$ungated" ] && [ "${DEPLOY_UNGATED:-}" != 1 ]; then \
         echo "deploy: refused, $ungated: no gate checked this tree; commit and merge (then git fetch), or DEPLOY_UNGATED=1 to break glass" >&2; exit 1; fi; \
       [ -z "$ungated" ] || echo "WARNING: DEPLOY_UNGATED: deploying a tree no gate checked ($ungated)" >&2
-    scripts/system-checks.sh {{HOST}} {{memcap}}
-    rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks || rc=$?; \
+    start=$SECONDS; sha=$(git rev-parse --short HEAD); log=$(mktemp); recorded=0; \
+      rec() { recorded=1; scripts/platform-record.sh deploy node={{HOST}} result="$1" seconds=$((SECONDS - start)) \
+        rolled_back="${2:-0}" units_restarted="${3:-0}" failed_units="${4:-unknown}" sha="$sha"; }; \
+      trap '[ "$recorded" = 1 ] || rec interrupted; rm -f "$log"' EXIT; \
+      if ! scripts/system-checks.sh {{HOST}} {{memcap}}; then rec checks-failed; exit 1; fi; \
+      rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}; \
+      rolled=0; if grep -q 'rolled back to previous generation' "$log"; then rolled=1; fi; \
+      units=$(sed -n 's/.*restarting the following units: //p' "$log" | tr ',' '\n' | grep -c . || true); \
       check=255; target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname) || target=""; \
       if [ -n "$target" ]; then check=0; timeout --foreground 300 ssh -o StrictHostKeyChecking=yes "deploy@$target" \
         'systemctl is-system-running --wait && [ "$(readlink /run/current-system)" = "$(dirname "$(readlink -f /nix/var/nix/profiles/system/init)")" ]' \
         || check=$?; fi; \
+      failed=unknown; if [ -n "$target" ]; then failed=$(timeout 60 ssh -o StrictHostKeyChecking=yes "deploy@$target" \
+        'systemctl --failed --no-legend --plain | wc -l' 2>/dev/null) || failed=unknown; fi; \
       case $check in \
-        0) ;; \
-        124|255) echo "post-deploy check did not run on {{HOST}} (exit $check): timed out, unreachable, or no hostname" >&2 ;; \
-        *) echo "post-deploy check failed on {{HOST}} (exit $check): degraded or not on the profile's generation; nothing was rolled back, see systemctl --failed there" >&2 ;; \
+        0) result=ok ;; \
+        124|255) result=check-unreachable; echo "post-deploy check did not run on {{HOST}} (exit $check): timed out, unreachable, or no hostname" >&2 ;; \
+        *) result=check-failed; echo "post-deploy check failed on {{HOST}} (exit $check): degraded or not on the profile's generation; nothing was rolled back, see systemctl --failed there" >&2 ;; \
       esac; \
+      [ "$rc" -eq 0 ] || result=deploy-failed; \
+      rec "$result" "$rolled" "$units" "$failed"; \
       [ "$rc" -eq 0 ] || exit "$rc"; exit "$check"
 
 # What `just deploy HOST` would do, without activating it: deploy-rs's
