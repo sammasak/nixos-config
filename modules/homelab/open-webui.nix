@@ -99,6 +99,47 @@ in
       SocketMode = "0600";
     };
   };
+  # switch-to-configuration never restarts a changed .socket (nixpkgs#74899), and the proxy behind it is idle (so
+  # skipped) most of the time: this unit restarts with the socket's text, so a new ListenStream binds at the switch
+  systemd.services.open-webui-proxy-rebind = {
+    wantedBy = [ "multi-user.target" ];
+    after = [ "open-webui-proxy.socket" ];
+    restartTriggers = [ config.systemd.units."open-webui-proxy.socket".unit ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      # systemd refuses to start a socket whose service still runs (the proxy, for 5 min after a request); both stop in
+      # one job, so a request between the two cannot activate the proxy again
+      ExecStart = [
+        "${config.systemd.package}/bin/systemctl stop open-webui-proxy.socket open-webui-proxy.service"
+        "${config.systemd.package}/bin/systemctl start open-webui-proxy.socket"
+      ];
+    };
+  };
+  # Caddy's upstream, from the listener table: a connection would start the app (a ~50 s cold start), and black-pi's
+  # probe sees only forward auth's 302. EdgeSocketDown (rules/homelab.yaml) reads the metric.
+  systemd.services.open-webui-edge-check = {
+    path = [ pkgs.iproute2 ];
+    serviceConfig = {
+      Type = "oneshot";
+      ProtectSystem = "strict";
+      ReadWritePaths = [ "/run/node-exporter-textfile" ];
+      ProtectHome = true;
+      PrivateTmp = true;
+      NoNewPrivileges = true;
+    };
+    script = ''
+      up=0
+      [ -n "$(ss -xlH src ${edgeSocket})" ] && up=1
+      out=/run/node-exporter-textfile/open-webui-edge.prom
+      printf 'homelab_edge_socket_listening{socket="%s"} %d\n' ${edgeSocket} "$up" > "$out.tmp"
+      mv "$out.tmp" "$out"
+    '';
+  };
+  systemd.timers.open-webui-edge-check = {
+    wantedBy = [ "timers.target" ];
+    timerConfig.OnCalendar = "minutely";
+  };
   systemd.services.open-webui-proxy = {
     requires = [ "open-webui.service" ];
     after = [ "open-webui.service" ];
@@ -145,6 +186,10 @@ in
   environment.systemPackages = [ backup ];
 
   assertions = [
+    {
+      assertion = config.services.prometheus.exporters.node.enable;
+      message = "modules/homelab/open-webui.nix: the edge check writes a textfile metric; import monitoring/node-exporter.nix.";
+    }
     {
       assertion = config.sam.hostSecrets.enable;
       message = "modules/homelab/open-webui.nix: its keys are sops secrets; set sam.hostSecrets.enable.";
