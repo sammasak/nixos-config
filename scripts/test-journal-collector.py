@@ -157,8 +157,9 @@ lines = {
     ("init.scope", "Started run-u9.service - /nix/store/y-authentik/bin/ak worker."): False,
     ("init.scope", "Started lint.service - tweak shellcheck over the scripts."): True,
 }
-got = {f"{u} {l[:60]} {l[-12:]}": shipped(u, l) for u, l in lines}
-want = {f"{u} {l[:60]} {l[-12:]}": keep for (u, l), keep in lines.items()}
+got = {f"{u} {l}": shipped(u, l) for u, l in lines}
+want = {f"{u} {l}": keep for (u, l), keep in lines.items()}
+check(len(want) == len(lines), "every case line is its own comparison key")
 check(got == want, f"drops private units and only info 2xx/3xx access lines of {egress} {got}")
 wr = comps.get(("loki.write", write), "")
 check(re.search(r'url = "http://[^"]+/loki/api/v1/push"', wr) is not None and "max_backoff_retries = 0" in wr,

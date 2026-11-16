@@ -42,7 +42,11 @@ let
   # fails closed: a port rule this cannot read (a set, a negation) counts as admitting the bridge port
   admits =
     backend: l:
-    lib.hasInfix "dport" l
+    lib.any (w: lib.hasInfix w l) [
+      "dport"
+      "destination-port"
+      "multiport"
+    ]
     && (portsOf backend l == null || lib.hasInfix "!" l || covers (portsOf backend l));
   # every rule line that admits the bridge port, against the one shape mkDualBackendFirewall renders per admitted source
   rendered = lib.filter (admits fw.backend) (
@@ -54,6 +58,8 @@ let
       "iptables -w -A nixos-fw -p tcp -m multiport --dports 80,9099 -j nixos-fw-accept"
       "iptables -w -A nixos-fw -p tcp --dport 9000:9100 -j nixos-fw-accept"
       "iptables -w -A nixos-fw -p tcp ! --dport 22 -j nixos-fw-accept"
+      "iptables -w -A nixos-fw -p tcp --destination-port 9099 -j nixos-fw-accept"
+      "iptables -w -A nixos-fw -p tcp -m multiport --ports 9099 -j nixos-fw-accept"
     ];
     nftables = [
       "tcp dport { 22, 9000-9100 } accept"
