@@ -273,6 +273,15 @@ in
         "claude-code" # Anthropic CLI, all hosts
         "open-webui" # custom licence (nixpkgs marks it unfree), acer only: modules/homelab/open-webui.nix
         "unrar" # unfreeRedistributable, from core/packages.nix
+        "nvidia-x11" # asus only: the RTX 3070 driver, hosts/asus-b460m
+        # CUDA EULA, asus only: what pkgs.ollama-cuda builds and runs with
+        "cccl"
+        "cuda_crt"
+        "cuda_cudart"
+        "cuda_nvcc"
+        "cuda_nvrtc"
+        "libcublas"
+        "libnvvm"
       ];
 
     environment.variables = {
