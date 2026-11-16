@@ -31,6 +31,11 @@ let
   };
 
   sections = {
+    # counts for the Platform health dashboard, recorded by nixos:qa (scripts/platform-record.sh), not asserted on
+    coverage = lib.mapAttrs (_: h: {
+      assertions = builtins.length h.config.assertions;
+      checks = builtins.length h.config.system.checks;
+    }) hosts;
     # ~/.claude.json activation
     switch-safety = {
       claudeActivation = (hm lenovo).home.activation.acceptClaudeStartupDialogs.data;
@@ -104,7 +109,7 @@ let
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;
       };
-      alertmanager = lenovo.sam.fleet.hosts.black-pi.address;
+      alertmanager = [ lenovo.sam.fleet.hosts.black-pi.address ] ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
       failing = {
         lenovo = failing lenovo;
         loopbackFirewall = failing (

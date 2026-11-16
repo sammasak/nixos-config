@@ -106,7 +106,7 @@ otelcol.processor.transform "native_sanitize" {
       `set(resource.attributes["service.name"], "claude-code") where IsMatch(resource.attributes["service.name"], "^claude-code.*$")`,
       `set(resource.attributes["service.name"], "other") where not IsMatch(resource.attributes["service.name"], "^(codex.*|claude-code.*)$")`,
       `set(resource.attributes["host.name"], "other") where resource.attributes["host.name"] == nil`,
-      `set(resource.attributes["host.name"], "other") where not IsMatch(resource.attributes["host.name"], "^(acer-swift|lenovo-21cb001pmx|msi-ms7758|black-pi)$")`,
+      `set(resource.attributes["host.name"], "other") where not IsMatch(resource.attributes["host.name"], "^(acer-swift|lenovo-21cb001pmx|msi-ms7758|asus-b460m|black-pi)$")`,
       `set(resource.attributes["observer"], "harness")`,
     ]
   }
@@ -200,7 +200,7 @@ otelcol.processor.transform "native_sanitize" {
       `keep_keys(resource.attributes, ["service.name", "host.name", "worker.name"])`,
       `set(resource.attributes["service.name"], "claude-code")`,
       `set(resource.attributes["host.name"], "other") where resource.attributes["host.name"] == nil`,
-      `set(resource.attributes["host.name"], "other") where not IsMatch(resource.attributes["host.name"], "^(acer-swift|lenovo-21cb001pmx|msi-ms7758|black-pi)$")`,
+      `set(resource.attributes["host.name"], "other") where not IsMatch(resource.attributes["host.name"], "^(acer-swift|lenovo-21cb001pmx|msi-ms7758|asus-b460m|black-pi)$")`,
       `delete_key(resource.attributes, "worker.name") where resource.attributes["worker.name"] != nil and not IsMatch(resource.attributes["worker.name"], "^[a-z][a-z0-9-]{0,31}$")`,
       `set(resource.attributes["loki.resource.labels"], "service.name,host.name")`,
     ]

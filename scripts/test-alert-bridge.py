@@ -49,8 +49,8 @@ check(health == f"http://127.0.0.1:{listen_port}/health", f"the start probe asks
 
 accepted = sorted(rule.split()[rule.split().index("-s") + 1] for rule in P["firewall"]["rules"].splitlines()
                   if f"--dport {listen_port} " in rule)
-check(int(listen_port) not in P["firewall"]["open"] and accepted == [P["alertmanager"]],
-      f"the port is accepted from black-pi's Alertmanager only {accepted}")
+check(int(listen_port) not in P["firewall"]["open"] and accepted == sorted(P["alertmanager"]),
+      f"the port is accepted from black-pi's Alertmanager addresses only {accepted}")
 
 bridge = subprocess.Popen([unit["ExecStart"]], env={**env, "ALERT_BRIDGE_LISTEN": f"127.0.0.1:{port}"})
 try:

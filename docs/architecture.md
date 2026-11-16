@@ -49,6 +49,7 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 | `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the DNS, ntfy and deploy host) | none |
 | `acer-swift` | **headless** (the always-on service host: Caddy edge, Authentik, chat, llm-gateway) | `desktop` (Niri GUI) |
 | `msi-ms7758` | **headless** (intermittent worker host, dual-boot Windows) | none |
+| `asus-b460m` | **headless** (worker host, dual-boot Windows) | none |
 | `black-pi` | **headless** (aarch64 observability host, Raspberry Pi 4 on SD card, builds its own closure) | none |
 | `naked-pi` | **headless** (aarch64 Wi-Fi learning node, Raspberry Pi 3, role `rf-lab`) | none |
 
@@ -101,7 +102,7 @@ Composable role modules assigned per host in `flake-modules/hosts.nix`:
 - **homelab-agent** — always-on fleet host that is not the control host; disables sleep/suspend, ModemManager and Nix trust for the login user
 - **homelab-server** — the control host (lenovo); turns on dns (with TLS), acme, ntfy and the rebuild trigger, and
   imports AdGuard Home, tailscale, the alerting watchdog and the alert bridge
-- **runtime-host** — headless worker host, msi-ms7758 and acer-swift, running the declared nspawn developer environments
+- **runtime-host** — headless worker host, msi-ms7758, asus-b460m and acer-swift, running the declared nspawn developer environments
   (`sam.workers`, docs/nspawn-workers.md): the run credential, no Stylix outside a
   desktop specialisation, and nix-gc / nix-optimise that wait for a synchronised clock
   (`systemd-time-wait-sync`), never catch up at boot and run one at a time
