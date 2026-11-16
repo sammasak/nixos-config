@@ -1,6 +1,7 @@
 import http.server
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
@@ -48,9 +49,11 @@ def request_status(url, data=None, headers=None):
 def main():
     helper = pathlib.Path(sys.argv[1])
     nginx = sys.argv[2]
-    receiver = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Receiver)
-    receiver_thread = threading.Thread(target=receiver.serve_forever, daemon=True)
-    receiver_thread.start()
+    # the upstream comes up only after the relay has started, as on a host booting before the edge or the LAN
+    with socket.socket() as reserve:
+        reserve.bind(("127.0.0.1", 0))
+        upstream_port = reserve.getsockname()[1]
+    receiver = receiver_thread = None
     nginx_process = None
 
     try:
@@ -81,11 +84,16 @@ def main():
                 raise AssertionError("relay does not verify the upstream certificate")
             if "proxy_ssl_verify_depth 3;" not in config_text:
                 raise AssertionError("relay TLS verification depth is not explicit")
+            # nixos-config#454: a host name in proxy_pass is resolved when nginx parses the config, so a start without
+            # DNS fails (and with `resolver` every request needs DNS); the upstream is the edge host's address
+            upstreams = set(re.findall(r"proxy_pass https://(\d+\.\d+\.\d+\.\d+)/v1/(?:metrics|logs);", config_text))
+            if len(upstreams) != 1 or len(re.findall(r"proxy_pass ", config_text)) != 2 or re.search(r"^\s*resolver ", config_text, re.M):
+                raise AssertionError(f"relay proxy_pass is not one IPv4 address for both paths, or it uses a resolver ({upstreams})")
             config_text = config_text.replace(
                 "127.0.0.1:4319", f"127.0.0.1:{relay_port}"
             ).replace(
-                "https://otlp.sammasak.dev/",
-                f"http://127.0.0.1:{receiver.server_port}/",
+                f"https://{upstreams.pop()}/",
+                f"http://127.0.0.1:{upstream_port}/",
             )
             config_text = "\n".join(
                 line
@@ -93,6 +101,13 @@ def main():
                 if "proxy_ssl_" not in line and "proxy_set_header Host" not in line
             ) + "\n"
             config.write_text(config_text, encoding="utf-8")
+
+            # the old shape, a literal host nothing resolves (.invalid, RFC 6761), must not even start
+            literal = runtime / "literal.conf"
+            literal.write_text(config_text.replace("http://127.0.0.1:", "http://otlp.invalid:"), encoding="utf-8")
+            old = subprocess.run([nginx, "-t", "-c", str(literal), "-p", f"{runtime}/"], capture_output=True, text=True)
+            if old.returncode == 0 or "host not found" not in old.stderr:
+                raise AssertionError(f"a literal unresolvable upstream did not fail nginx -t ({old.returncode}: {old.stderr[-200:]})")
 
             subprocess.run(
                 [nginx, "-t", "-c", str(config), "-p", f"{runtime}/"],
@@ -112,7 +127,13 @@ def main():
                     break
                 time.sleep(0.05)
             else:
-                raise AssertionError("local relay did not become ready")
+                raise AssertionError("local relay did not become ready with its upstream down")
+
+            if request_status(f"{endpoint}/v1/metrics", data=body) != 502:
+                raise AssertionError("relay did not answer 502 while its upstream is down")
+            receiver = http.server.ThreadingHTTPServer(("127.0.0.1", upstream_port), Receiver)
+            receiver_thread = threading.Thread(target=receiver.serve_forever, daemon=True)
+            receiver_thread.start()
 
             if request_status(f"{endpoint}/v1/metrics") != 405:
                 raise AssertionError("relay accepted a non-POST metrics request")
@@ -161,15 +182,17 @@ def main():
                 raise AssertionError("an environment's flood starved the host's own clients")
             if request_status(f"{endpoint}/v1/metrics", data=body, headers={"X-Otel-Worker": "calm"}) != 200:
                 raise AssertionError("an environment's flood starved another environment")
-            print("native OTLP relay: metrics and logs POST only, header filtering, X-Otel-Worker passed through, "
+            print("native OTLP relay: needs no DNS (the upstream is an address; a host name fails nginx -t), starts with its "
+                  "upstream down (502, then forwards once it is up), metrics and logs POST only, header filtering, X-Otel-Worker passed through, "
                   "per-environment rate limit, and fake auth passed")
     finally:
         if nginx_process and nginx_process.poll() is None:
             nginx_process.terminate()
             nginx_process.wait(timeout=5)
-        receiver.shutdown()
-        receiver.server_close()
-        receiver_thread.join(timeout=2)
+        if receiver:
+            receiver.shutdown()
+            receiver.server_close()
+            receiver_thread.join(timeout=2)
 
 
 if __name__ == "__main__":
