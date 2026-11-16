@@ -116,7 +116,8 @@ in
       ];
       scrape_configs = [
         {
-          # instance and node carry the host name, as the chart's relabelling did, for the mixin and the dashboards
+          # instance and node carry the host name, as the chart's relabelling did, for the mixin and the dashboards;
+          # sleeps marks a host the fleet expects off at times, which ./rules/homelab.yaml keys on
           job_name = "node-exporter";
           scrape_timeout = "30s";
           static_configs = lib.mapAttrsToList (name: h: {
@@ -124,7 +125,8 @@ in
             labels = {
               instance = name;
               node = name;
-            };
+            }
+            // lib.optionalAttrs h.sleeps { sleeps = "true"; };
           }) hosts;
         }
         (static "prometheus" [ (at cfg.port) ])
