@@ -146,4 +146,16 @@ for name, (fresh, no_fallback) in static.items():
     check(spa == [({"not": [{"path": no_fallback}, {"file": {}}]},)],
           f"{name} falls back to /index.html only for a missing file outside {no_fallback} {spa}")
 
+# DNS (#432): every *.sammasak.dev name reaches this Caddy, dns.sammasak.dev reaches lenovo's AdGuard
+answers = {r["domain"]: r["answer"] for r in P["rewrites"]}
+check(answers.get("*.sammasak.dev") == fleet["acer-swift"], f"*.sammasak.dev answers acer's address {answers}")
+check(answers.get("sammasak.dev") == fleet["acer-swift"], f"the apex answers acer's address {answers}")
+check(answers.get("dns.sammasak.dev") == fleet["lenovo-21CB001PMX"], f"dns.sammasak.dev answers lenovo's address {answers}")
+
+# every name Caddy serves has a blackbox probe from black-pi, so a new site cannot go unwatched
+blackbox = [j for j in json.loads(P["prometheusConfig"])["scrape_configs"] if j["job_name"] == "blackbox"]
+probed = {t.split("://", 1)[1].split("/", 1)[0] for j in blackbox for sc in j["static_configs"] for t in sc["targets"]}
+unprobed = sorted(h for h in routes if h not in probed)
+check(blackbox and not unprobed, f"black-pi probes every Caddy name (unprobed: {unprobed})")
+
 sys.exit(1 if failed else 0)
