@@ -39,7 +39,7 @@ def components(conf):
 r = gate_probe.section("journal-collector")
 hosts = r["hosts"]
 check({"msi-ms7758", "lenovo", "acer-swift", "black-pi", "naked-pi"} <= set(hosts), f"every host is evaluated {sorted(hosts)}")
-shipping = ["acer-swift", "black-pi", "lenovo", "msi-ms7758"]
+shipping = ["acer-swift", "asus-b460m", "black-pi", "lenovo", "msi-ms7758"]
 check(enabled(hosts) == shipping, f"the collector and Alloy run on every host but naked-pi {enabled(hosts)}")
 seeded = enabled({**hosts, "naked-pi": r["seeded"]})
 check(seeded == sorted(shipping + ["naked-pi"]), f"negative case: enabling it on naked-pi shows in the hosts check {seeded}")
@@ -74,41 +74,44 @@ check('source_labels = ["__journal__systemd_unit"] target_label = "unit"' in rel
 order = [(re.search(r'source_labels = \["([^"]*)"\]', r) or [None, "?"])[1]
          + "->" + (re.search(r'replacement = "([^"]*)"', r) or [None, "unit"])[1]
          for r in rel.split("rule {")[1:]]
-check(order == ["__journal__systemd_unit->unit", "unit->transient", "unit->systemd-coredump"],
-      f"relabel rules: exactly three, unit first, then the transient and coredump rewrites {order}")
+check(order == ["__journal__systemd_unit->unit", "unit->session", "unit->transient", "unit->systemd-coredump"],
+      f"relabel rules: exactly four, unit first, then the session, transient and coredump rewrites {order}")
 rules = {}
 for rule in rel.split("rule {")[1:]:
     rx = re.search(r'regex = "((?:[^"\\]|\\.)*)"', rule)
     to = re.search(r'replacement = "([^"]*)"', rule)
     if rx and to:
         rules[to[1]] = rx[1].replace("\\\\", "\\")
-check(set(rules) == {"transient", "systemd-coredump"}, f"unit rewrites: transient and systemd-coredump {sorted(rules)}")
-cases = {"session-12.scope": "transient", "run-r1a2b.service": "transient", "run-u7.scope": "transient",
+check(set(rules) == {"session", "transient", "systemd-coredump"}, f"unit rewrites: session, transient and systemd-coredump {sorted(rules)}")
+cases = {"session-12.scope": "session", "session-c1.scope": "session", "run-r1a2b.service": "transient", "run-u7.scope": "transient",
          "run-p123-i456.scope": "transient", "systemd-coredump@0-1234-0.service": "systemd-coredump",
          "sshd.service": None, "user@1000.service": None, "systemd-journald.service": None}
 got = {u: next((to for to, rx in rules.items() if re.fullmatch(rx, u)), None) for u in cases}
-check(got == cases, f"unit rewrites match transient and coredump units only {got}")
+check(got == cases, f"unit rewrites match session, transient and coredump units only {got}")
 pc = comps.get(("loki.process", proc), "")
 private = re.search(r'stage\.match \{ selector = "\{unit = ~\\"([^"\\]+)\\"\}" action = "drop"', pc)
 check(private is not None, f"a drop stage on private units {pc[:200]}")
 private_rx = private[1] if private else "(?!)"
 units = {"authentik.service": False, "authentik-worker.service": False, "user@1000.service": False, "user@0.service": False,
-         "authentik-migrate.service": True, "sshd.service": True, "dev-env-egress.service": True, "user-runtime-dir@1000.service": True}
+         "session": False, "authentik-migrate.service": True, "authentik-backup.service": True, "transient": True,
+         "sshd.service": True, "dev-env-egress.service": True, "user-runtime-dir@1000.service": True}
 got = {u: re.fullmatch(private_rx, u) is None for u in units}
-check(got == units, f"Authentik's and user units' lines never ship, every other unit's do {got}")
+check(got == units, f"Authentik's, user units' and login sessions' lines never ship, every other unit's do {got}")
+ak = re.search(r'stage\.match \{ selector = "\{job = \\"([^"\\]+)\\"\} \|~ \\"([^"\\]+)\\"" action = "drop"', pc)
+check(ak is not None and ak[1] == "host-journal", f"a drop stage on any line naming ak's command {ak and ak.groups()}")
 sel = re.search(r'stage\.match \{ selector = "\{unit = \\"([^"\\]+)\\"\}"', pc)
 src_f = re.search(r'stage\.drop \{ source = "([^"]+)"', pc)
 drop_rx = re.search(r'stage\.drop \{[^}]*expression = "((?:[^"\\]|\\.)*)"', pc)
 json_f = re.search(r'stage\.json \{ expressions = \{([^}]*)\}', pc)
 check(None not in (sel, src_f, drop_rx, json_f), "drop stage: a unit match, a JSON parse and a drop on its fields")
 stages = re.findall(r"stage\.[a-z_]+", pc)
-check(stages == ["stage.match", "stage.match", "stage.json", "stage.drop"] and "separator" not in pc,
-      f"process block: the private-unit drop, then match, json, drop, default separator {stages}")
+check(stages == ["stage.match", "stage.match", "stage.match", "stage.json", "stage.drop"] and "separator" not in pc,
+      f"process block: the private-unit and ak drops, then match, json, drop, default separator {stages}")
 
 
 def shipped(unit, line):
     """The rendered match and drop stage applied to one line (Go regexp: unanchored search)."""
-    if re.fullmatch(private_rx, unit):
+    if re.fullmatch(private_rx, unit) or (ak and re.search(ak[2], line)):
         return False
     if None in (sel, src_f, drop_rx, json_f) or unit != sel[1]:
         return True
@@ -139,6 +142,12 @@ lines = {
     ("sshd.service", access % ("info", 200)): True,
     ("authentik.service", '{"event":"/application/o/authorize/?code=x&state=y","level":"info"}'): False,
     ("user@1000.service", "agent output"): False,
+    ("session", "lukas : TTY=pts/3 ; PWD=/home/lukas ; USER=root ; COMMAND=/run/current-system/sw/bin/ak shell"): False,
+    ("init.scope", 'Started run-u412.service - /nix/store/x-bash/bin/bash /nix/store/y-authentik/lifecycle/ak shell -c "print(1)".'): False,
+    ("init.scope", "Started sshd.service - SSH Daemon."): True,
+    ("polkit.service", "Operator of unix-session:4 successfully authenticated as unix-user:root to gain ONE-SHOT authorization "
+     "for action org.freedesktop.systemd1.manage-units [/nix/store/y-authentik/lifecycle/ak shell -c print(1)]"): False,
+    ("transient", "a systemd-run job's own line"): True,
 }
 got = {f"{u} {l[:60]} {l[-12:]}": shipped(u, l) for u, l in lines}
 want = {f"{u} {l[:60]} {l[-12:]}": keep for (u, l), keep in lines.items()}

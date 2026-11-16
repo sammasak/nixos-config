@@ -97,7 +97,7 @@ just parity [BASE]      # fail if any host's toplevel or deploy node moved since
 `just deploy` ends, whatever deploy-rs returned, by checking on the target that
 `systemctl is-system-running` says `running` and `/run/current-system` is the system profile's
 generation, and exits non-zero if either fails. That catches a deploy that left the host degraded
-or off that generation, including a Pi left on a failed generation (deploy-rs#411). A failed check
+or off that generation, for example a unit that fails after activation reported success. A failed check
 rolls nothing back: the new generation stays. A host degraded for an unrelated, pre-existing
 reason fails every deploy until fixed; read `systemctl --failed` on the target.
 
@@ -114,10 +114,11 @@ Policy lives in `modules/core/services.nix`, `network.nix` and `users.nix`:
   `modules/homelab/deploy-target.nix`, whose key is accepted only from lenovo)
 - SSH firewall policy allows only LAN CIDR + loopback; keys come from `lib/users.nix`
 
-On the x86 hosts, apply an SSH policy change with `just deploy HOST`: magic rollback reverts a
-host the `deploy` login can no longer reach, but it does not test `lukas`'s login, so keep a
-session open until a new one gets in. Not on the Pis: a failed activation can leave them on the
-failed generation (#411, #297), so apply it from a console or local session there first.
+Apply an SSH policy change with `just deploy HOST`: magic rollback reverts a host the `deploy`
+login can no longer reach (the patched deploy-rs activate rolls a failed activation back, rehearsed
+on msi and black-pi), but it does not test `lukas`'s login, so keep a session open until a new one
+gets in. Not on naked-pi until it takes the patched activate (#474): apply it from a console there
+first.
 
 ## Automation
 

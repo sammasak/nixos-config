@@ -51,8 +51,8 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # black-pi takes hours on a cache miss, so run it in zellij. The check after
 # deploy-rs runs whatever deploy-rs returned, and the recipe keeps deploy-rs's
 # exit code if it failed: it catches a host left degraded or not on the system
-# profile's generation, including a Pi left on a failed generation
-# (deploy-rs#411, flake-modules/deploy.nix). It rolls nothing back, and a host
+# profile's generation, which deploy-rs's own rollback does not judge (a unit
+# that fails after activation reported success). It rolls nothing back, and a host
 # degraded for an unrelated reason fails every deploy until fixed.
 [arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|asus-b460m|black-pi|naked-pi")]
 [doc("Push HOST with deploy-rs (magic rollback), skipping the flake check, under the memory cap, then check the host is running it")]
