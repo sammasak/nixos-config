@@ -29,7 +29,8 @@ case = re.search(r"case \$kind in\n\s*([a-z| -]+)\)", HELPER.read_text())
 kinds = set(case.group(1).replace(" ", "").split("|")) if case else set()
 check(len(kinds) == 7, f"the helper's kind vocabulary is read ({sorted(kinds)})")
 
-pi = re.search(r'black-pi\.address = "([0-9.]+)"', (ROOT / "modules/core/fleet.nix").read_text())
+# either black-pi.address = "…" or a black-pi = { address = "…"; … } block
+pi = re.search(r'black-pi(?:\.address| = \{\s*address) = "([0-9.]+)"', (ROOT / "modules/core/fleet.nix").read_text())
 check(pi is not None and f"http://{pi.group(1)}:3100" in HELPER.read_text(),
       f"the helper's default Loki is black-pi's fleet address ({pi and pi.group(1)})")
 
