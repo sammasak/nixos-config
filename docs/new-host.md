@@ -122,10 +122,15 @@ sudo efibootmgr -v | sudo tee /mnt/root/efibootmgr-before.txt >/dev/null
 sudo install -m 0644 /mnt/root/esp-before-nixos.tar /mnt/root/efibootmgr-before.txt /tmp/
 ```
 
-Then, from lenovo: `scp nixos@<installer-ip>:/tmp/{esp-before-nixos.tar,efibootmgr-before.txt} .`
-`nixos-generate-config --root /mnt`, replace `configuration.nix` with a
+Then, from lenovo:
+
+```
+scp nixos@<installer-ip>:/tmp/{esp-before-nixos.tar,efibootmgr-before.txt} .
+```
+
+Run `nixos-generate-config --root /mnt`, replace `configuration.nix` with a
 bootstrap (the GRUB block, `networking.hostName`, user `lukas` with lenovo's
-key, sshd key-only, flakes), `nixos-install --no-root-passwd`. At the machine,
+key, sshd key-only, flakes), then `nixos-install --no-root-passwd`. At the machine,
 boot both GRUB entries: NixOS, and Windows to the desktop. A missing
 `kvm-intel` in the hardware scan means VT-x is off in the firmware.
 
