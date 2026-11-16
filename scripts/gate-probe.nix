@@ -104,7 +104,7 @@ let
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;
       };
-      inherit (lenovo.sam.fleet) lanCidr;
+      alertmanager = lenovo.sam.fleet.hosts.black-pi.address;
       failing = {
         lenovo = failing lenovo;
         loopbackFirewall = failing (
@@ -143,6 +143,7 @@ let
           hosts = builtins.mapAttrs (_: h: {
             inherit (h.config.networking) hostName;
             files = files h.config;
+            keys = lib.mapAttrs (_: s: { inherit (s) key format; }) h.config.sops.secrets;
             age = { inherit (h.config.sops.age) sshKeyPaths keyFile generateKey; };
             gnupg = { inherit (h.config.sops.gnupg) home sshKeyPaths; };
           }) hosts;
@@ -220,6 +221,7 @@ let
             builtins.unsafeDiscardStringContext (
               builtins.toJSON {
                 enable = c.homelab.journalCollector.enable or false;
+                hostName = c.networking.hostName;
                 alloy = c.services.alloy.enable;
                 config = c.services.alloy.configPath.text or null;
                 execStart = c.systemd.services.alloy.serviceConfig.ExecStart or null;
@@ -245,9 +247,9 @@ let
       in
       {
         hosts = lib.mapAttrs (_: h: facts h.config) hosts;
-        # the negative case: the msi-only check must see the module enabled on acer
+        # the negative case: the hosts check must see the module enabled on naked-pi, the one host without it
         seeded = facts (
-          extend "acer-swift" [
+          extend "naked-pi" [
             ../modules/homelab/journal-collector.nix
             {
               homelab.journalCollector = {

@@ -1,0 +1,7 @@
+{ ... }:
+{
+  # No provider key reaches the host. Auth, upgrade,
+  # rollback: docs/pi.md.
+  # deploy-rs magicRollback: true reverts a switch that loses ssh.
+  sam.claude.bulkReader.enable = true;
+}

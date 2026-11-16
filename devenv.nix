@@ -23,6 +23,16 @@ let
       ])
       ''
         bash scripts/nix-comment-lint.sh
+        fx=scripts/fixtures/comment-lint
+        # refused by that rule, not by a missing fixture or a dead awk (exit 2)
+        rc=0
+        out=$(bash scripts/nix-comment-lint.sh "$fx/rollback-instruction.nix.fixture" 2>&1) || rc=$?
+        if [ "$rc" -ne 1 ] || ! grep -q '^rollback-instructions: ' <<<"$out"; then
+          printf '%s\n' "$out" >&2
+          echo "comment lint: $fx/rollback-instruction.nix.fixture was not refused by rollback-instructions (exit $rc)" >&2
+          exit 1
+        fi
+        bash scripts/nix-comment-lint.sh "$fx/rollback-pointer.nix.fixture" >/dev/null
       '';
 
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
@@ -89,6 +99,14 @@ let
         names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
         drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
         here=$(nix eval --raw --impure --expr builtins.currentSystem)
+        # VM checks (NixOS tests, the ones with a driver) boot QEMU, up to 4 GiB: the gate refuses to run on lenovo
+        # shellcheck disable=SC2016 # the single-quoted ''${n} is Nix's, not the shell's
+        vms=$(nix eval --json --no-write-lock-file ".#checks.$here" \
+          --apply 'cs: builtins.filter (n: cs.''${n} ? driver) (builtins.attrNames cs)' | jq -r '.[]')
+        if [ -n "$vms" ] && [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
+          echo "nixos-flake-check: refused on lenovo: $(tr '\n' ' ' <<<"$vms")boot a QEMU VM (memory); run the gate on msi or acer" >&2
+          exit 1
+        fi
         kinds=$(nix flake show --json --all-systems --no-write-lock-file | jq -c 'keys')
         [ "$kinds" = '["checks","deploy","formatter","nixosConfigurations","overlays","packages","templates"]' ] \
           || { echo "nixos-flake-check: flake outputs are $kinds: add the new kind to this step" >&2; exit 1; }
@@ -757,7 +775,7 @@ in
     "nixos:harness-telemetry-test" =
       task "sam.claude.telemetry: Claude exports through the local relay with session and repository attributes; emit-work-ref.sh only when on and pinned" harnessTelemetryTest;
     "nixos:known-hosts-test" =
-      task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host" knownHostsTest;
+      task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =

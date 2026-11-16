@@ -139,7 +139,7 @@ migration adds it.
 | Rollout order | one host at a time, least critical first: msi, black-pi, acer, lenovo | convention |
 | Activation safety | deploy-rs `magicRollback`: a host that cannot be reached after activation reverts | present |
 | Service health | `services.alloy` and most upstream units are `Type=simple`, so each module adds an `ExecStartPost` probe of the service's own local ready endpoint with a start timeout, the upstream restart policy with a slower `RestartSec` and a start limit, and `OnFailure=` to ntfy. A unit that fails its probe fails the activation and so the whole host deploy; the probe therefore never tests anything remote (a collector must not fail a deploy because Loki is away) | present (#301) |
-| Rollback on a failed unit | deploy-rs `autoRollback` | present on x86 (rehearsed on msi, #324); the Pis are still exposed, see gap 1 |
+| Rollback on a failed unit | deploy-rs `autoRollback` | present on x86 (rehearsed on msi, #324) and black-pi (rehearsed, #406); naked-pi pending (#474) |
 | End-to-end check | after every deploy: `systemctl is-system-running`, the generation link, and the service's user-visible check (a log line queryable in Loki, a test page arriving on the phone) | a checklist in each issue |
 | Secrets | sops-nix with per-host age keys; a new secret file and its creation rule are owner steps, needed in steps 2 and 3 | present |
 | Persistent state | a fixed directory under `/var/lib/<service>` on a named host, with a backup job declared in the same module | to build, see gap 3 |
@@ -187,7 +187,7 @@ ordered across hosts by hand. Pull would add convergence for sleeping hosts
 | Drift correction | Nix-managed files cannot drift and a switch re-asserts them; data under `/var` can | low |
 | `dependsOn` | systemd ordering on one host; deploy order across hosts | low: dependent services share a host |
 | Health checks with timeout | readiness probe plus deploy-rs confirmation | yes: to build per service |
-| Automatic remediation | rollback on failed activation | yes on x86, rehearsed; Pis pending, gap 1 |
+| Automatic remediation | rollback on failed activation | yes on x86 and black-pi, rehearsed; naked-pi pending (#474) |
 | SOPS decryption | sops-nix | direct |
 | Notifications | none configured in Flux today; `OnFailure=` to ntfy | same or better |
 
@@ -219,8 +219,9 @@ discovery (replaced by a declared scrape target), scale to zero through KEDA
    target on the failed generation while the client reported a rollback) was
    reproduced on msi, and the flake now carries the upstream fix (PR #412) as
    a patch on the pin; the same rehearsal then restored the previous
-   generation. The Pis still use the unpatched cached binary until a patched
-   aarch64 build is evidenced (#406), and the connectivity rollback is
+   generation. The Pis carry the same patch since #472: built on black-pi and
+   rehearsed there with a failing unit, which rolled back (#406). naked-pi
+   takes it at its next deploy (#474). The connectivity rollback is
    unexercised, so every deploy still ends with the end-to-end check above
    (#297).
 2. **acer upgraded itself from main.** Closed by #300: acer's

@@ -20,6 +20,7 @@
           ];
         };
         socket-rebind-vm = import ../tests/socket-rebind-vm.nix { inherit pkgs; };
+        rebuild-trigger-vm = import ../tests/rebuild-trigger-vm.nix { inherit pkgs; };
         runtime-host-role-vm = import ../tests/runtime-host-role-vm.nix {
           inherit pkgs fleetModules;
           inherit (config.configurations.nixos.msi-ms7758) roles;

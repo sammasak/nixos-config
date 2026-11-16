@@ -1,8 +1,8 @@
 """acer's Caddy edge (modules/homelab/edge.nix), as `caddy adapt` reads the deployed Caddyfile: the admin API is off,
 every name has its route and backend, chat and grafana pass forward auth before their backend with the five
 X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only, open-webui listens on the
-edge socket alone, and herman is its Nix build with the Cache-Control matrix and SPA fallback of its
-deploy/nginx.conf."""
+edge socket alone, the apex and any other name under the wildcard are 404, and herman is its Nix build with the
+Cache-Control matrix and SPA fallback of its deploy/nginx.conf."""
 import json
 import subprocess
 import sys
@@ -65,8 +65,16 @@ for server in servers.values():
         for match in route.get("match", []):
             for host in match.get("host", []):
                 routes[host] = route
+wildcard = "*.sammasak.dev"
+fallback = routes.pop(wildcard, None)
+check(fallback is not None and routes.pop("sammasak.dev", None) is fallback, "the apex shares the wildcard's route")
 expected = {f"{name}.sammasak.dev" for name in [*backends, "herman"]}
 check(set(routes) == expected, f"exactly the edge's names have a route {sorted(set(routes) ^ expected)}")
+answer = [(h.get("handler"), h.get("status_code"), m) for h, m in flatten((fallback or {}).get("handle", []))
+          if h.get("handler") != "subroute"]
+check(answer == [("static_response", 404, ())], f"the apex and any other name under the wildcard are 404 {answer}")
+order = [r for server in servers.values() for r in server["routes"]]
+check(fallback is not None and order[-1] is fallback, "the wildcard route comes after every named one, so they win")
 
 tls = config["apps"].get("tls", {})
 check("automation" not in tls, f"Caddy issues no certificate of its own {tls.get('automation')}")
@@ -79,9 +87,9 @@ check(loaded == [(f"{cert['directory']}/cert.pem", f"{cert['directory']}/key.pem
 tags = set(files[0].get("tags", [])) if len(files) == 1 else set()
 policies = [p for server in servers.values() for p in server.get("tls_connection_policies", [])]
 selecting = [p for p in policies if p != {}]
-check(len(selecting) == 1 and set(selecting[0].get("match", {}).get("sni", [])) == expected
+check(len(selecting) == 1 and set(selecting[0].get("match", {}).get("sni", [])) == expected | {wildcard, "sammasak.dev"}
       and set(selecting[0].get("certificate_selection", {}).get("any_tag", [])) == tags != set(),
-      f"one TLS policy serves it for exactly the edge's names {selecting}")
+      f"one TLS policy serves it for exactly the edge's names, the wildcard and the apex {selecting}")
 
 for name, backend in backends.items():
     route = routes.get(f"{name}.sammasak.dev")

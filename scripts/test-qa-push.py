@@ -229,5 +229,45 @@ with tempfile.TemporaryDirectory() as t:
     listed = git("worktree", "list", "--porcelain").count("worktree ")
     check(listed == 2, f"no gate worktree left behind ({listed} registered, the repository and wt expected)")
 
+
+# The flake check (flakeCheck in devenv.nix) refuses to run on lenovo when a check is a VM test (it has a driver,
+# whatever its name), and builds them elsewhere: nix and uname stubbed, a fake flake with one VM check ("rebind") and
+# one plain check.
+fc = re.search(r"\n  flakeCheck =\s+gate\s+\"nixos-flake-check\".*?''\n(.*?)\n *'';\n", src, re.S)
+check(fc is not None, "flakeCheck found in devenv.nix")
+if fc:
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        calls = t / "calls"
+        names = {"nixosConfigurations": ["h1"], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
+                 "checks.x86_64-linux": ["rebind", "plain"]}
+        (t / "nix").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
+                               f"open({str(calls)!r}, 'a').write(' '.join(a) + '\\n')\n"
+                               f"names = {names!r}\n"
+                               "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
+                               "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','nixosConfigurations','overlays','packages','templates']}))\n"
+                               "elif '--expr' in a: print('x86_64-linux', end='')\n"
+                               "elif any('? driver' in x for x in a): print(json.dumps(['rebind']))\n"
+                               "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n")
+        for host in ("lenovo-21CB001PMX", "msi-ms7758"):
+            (t / "uname").write_text(f"#!/usr/bin/env bash\necho {host}\n")
+            for f in ("nix", "uname"):
+                (t / f).chmod(0o755)
+            calls.write_text("")
+            body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
+            body = body.replace("''$", "$")
+            run = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True,
+                                 env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}"})
+            built = [c for c in calls.read_text().splitlines() if c.startswith("build ")]
+            vm_built = any("rebind" in c for c in built)
+            if host.startswith("lenovo"):
+                hosts_evaluated = any("toplevel" in c for c in calls.read_text().splitlines())
+                check(run.returncode != 0 and not built and not hosts_evaluated
+                      and "refused on lenovo: rebind boot a QEMU VM" in run.stderr,
+                      f"on lenovo the gate fails, builds nothing and names the VM check ({run.returncode}, {run.stderr[-300:]!r})")
+            else:
+                check(run.returncode == 0 and vm_built and "refused" not in run.stderr,
+                      f"on msi the VM check is booted ({run.stderr[-300:]!r})")
+
 print(f"{failed} failed" if failed else "all passed")
 sys.exit(1 if failed else 0)

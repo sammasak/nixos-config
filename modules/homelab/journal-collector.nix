@@ -8,6 +8,11 @@
 #   proxied request); 4xx, 5xx and all non-access lines are kept. Those kept access lines carry request headers into
 #   Loki: X-Claude-Code-Session-Id and user agent in clear, Authorization logged as REDACTED.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed alloy` and a start.
+# - Loki is unauthenticated to its allowed sources, so these lines never ship: authentik.service and
+#   authentik-worker.service (request lines carry OAuth code and state query strings), user@<uid>.service (every user
+#   unit's lines: agent output), login session scopes (sudo's COMMAND= lines) and any line naming `ak`'s
+#   systemd-run command (its shell -c code: PID 1's Started lines, polkit's authentication lines).
+# - Only this host's own journal is read: with no path, sdjournal opens it SD_JOURNAL_LOCAL_ONLY.
 {
   config,
   lib,
@@ -17,6 +22,26 @@
 let
   cfg = config.homelab.journalCollector;
   listen = "127.0.0.1:12345";
+  # server and worker request lines carry OAuth codes; the assertion refuses an authentik* unit in neither list
+  privateAuthentik = [
+    "authentik"
+    "authentik-worker"
+  ];
+  shippedAuthentik = [
+    "authentik-backup"
+    "authentik-migrate"
+    "authentik-offhost"
+  ];
+  unlisted = lib.filter (
+    u: lib.hasPrefix "authentik" u && !lib.elem u (privateAuthentik ++ shippedAuthentik)
+  ) (lib.attrNames config.systemd.services);
+  private = lib.concatStringsSep "|" (
+    map (u: "${u}[.]service") privateAuthentik
+    ++ [
+      "user@[0-9]+[.]service"
+      "session"
+    ]
+  );
   # https://grafana.com/docs/alloy/latest/reference/components/loki/loki.source.journal/
   # max_age 72h: spans msi's weekend power-off, equals Loki's retention and stays under its 168h reject_old_samples_max_age.
   configFile = pkgs.writeText "config.alloy" ''
@@ -30,7 +55,14 @@ let
 
       rule {
         source_labels = ["unit"]
-        regex         = "(session-[0-9]+|run-.+)\\.(scope|service)"
+        regex         = "session-.+\\.scope"
+        target_label  = "unit"
+        replacement   = "session"
+      }
+
+      rule {
+        source_labels = ["unit"]
+        regex         = "run-.+\\.(scope|service)"
         target_label  = "unit"
         replacement   = "transient"
       }
@@ -45,6 +77,18 @@ let
 
     loki.process "drop" {
       forward_to = [loki.write.loki.receiver]
+
+      stage.match {
+        selector            = "{unit=~\"(${private})\"}"
+        action              = "drop"
+        drop_counter_reason = "private_unit"
+      }
+
+      stage.match {
+        selector            = "{job=\"host-journal\"} |~ \"lifecycle/ak \""
+        action              = "drop"
+        drop_counter_reason = "ak_command"
+      }
 
       stage.match {
         selector = "{unit=\"dev-env-egress.service\"}"
@@ -108,7 +152,16 @@ in
       '')
     ];
 
+    assertions = [
+      {
+        assertion = unlisted == [ ];
+        message = "modules/homelab/journal-collector.nix: put ${toString unlisted} in privateAuthentik (never shipped) or shippedAuthentik; a new Authentik unit's lines may carry OAuth codes.";
+      }
+    ];
+
     systemd.services.alloy = {
+      # the Go heap target under MemoryMax: a catch-up of the 72h backlog otherwise meets the cap as an OOM kill
+      environment.GOMEMLIMIT = "200MiB";
       startLimitIntervalSec = 600;
       startLimitBurst = 4;
       onFailure = lib.optional (cfg.ntfyUrl != null) "journal-collector-failed.service";

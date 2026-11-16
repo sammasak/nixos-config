@@ -12,7 +12,7 @@ A NixOS + Home Manager configuration repository using **flake-parts**. Manages L
 # ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
 #    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
 devenv tasks run nixos:qa           # every gate in order (= just check): lints, secrets-verify, flake check, then the tests
-devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: builds every x86 host and the x86 checks (incl. the three QEMU tests), evaluates the Pis (= just verify)
+devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: builds every x86 host and the x86 checks (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them), evaluates the Pis (= just verify)
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
@@ -43,14 +43,20 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
 #   then, whatever deploy-rs returned, it checks the target (`systemctl is-system-running --wait`
 #   = running, /run/current-system = the system profile's generation) and exits non-zero if either
-#   fails: a host left degraded or off that generation, incl. a Pi left on a failed one (#411).
+#   fails: a host left degraded or off that generation (deploy-rs rolls back a failed activation itself; naked-pi not until #474).
 #   A failed check rolls nothing back, and a host degraded for an unrelated, pre-existing reason
 #   fails every deploy: read `systemctl --failed` on the target.
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
-#   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only
+#   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only, except the patched deploy-rs (not cached, a
+#               2.3 GiB Rust build): first, from lenovo,
+#               nix copy --no-check-sigs --from ssh-ng://deploy@black-pi \
+#                 --to 'ssh://deploy@naked-pi?remote-program=sudo%20nix-store' \
+#                 $(ssh deploy@black-pi nix-store -qR /nix/var/nix/profiles/system | grep -- '-deploy-rs-')
+#               (black-pi deployed first; the path is unsigned and naked-pi trusts only root, hence sudo).
+#               Owed (#474): naked-pi was offline when this landed, so its next deploy needs this step first.
 just dry-activate HOST        # Same build and copy, then the units a switch would stop/restart/reload/start
                               # and the closure diff vs the running system; activates nothing, but read
                               # the output: it exits 0 even when the dry activation fails

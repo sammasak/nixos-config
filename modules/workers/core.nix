@@ -1038,12 +1038,22 @@ in
           ++ lib.optional (!w.paused) (
             let
               b = config.containers.${w.name}.bindMounts.${workLocks} or { };
+              made = config.systemd.tmpfiles.settings.work-locks or { };
+              dir = toString (b.hostPath or "");
             in
             {
               assertion =
                 (b.isReadOnly or false)
-                && (config.systemd.tmpfiles.settings.work-locks.${toString (b.hostPath or "")} or { }) ? d;
-              message = "${i}: ${workLocks} must be bound read-only from the directory modules/core/work-locks.nix creates, or the guest's heavy jobs and the host's take different locks.";
+                && lib.elem (b.mountPoint or null) [
+                  workLocks
+                  "${workLocks}:idmap"
+                ]
+                && (made.${dir} or { }) ? d
+                && lib.all (lane: (made."${dir}/${lane}.lock" or { }) ? f) [
+                  "heavy-work"
+                  "light-work"
+                ];
+              message = "${i}: ${workLocks} must be bound read-only at ${workLocks} from the directory modules/core/work-locks.nix creates with its heavy-work and light-work lock files, or the guest's heavy jobs and the host's take different locks.";
             }
           )
         ) instances;

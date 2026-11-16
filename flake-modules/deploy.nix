@@ -6,34 +6,29 @@
   ...
 }:
 let
-  # activate-rs runs on the target. patched: serokell/deploy-rs#412, tracking #297; drop the
-  # override when the pin contains the fix. Unpatched is nixpkgs' binary, cached for aarch64.
+  # activate-rs runs on the target, patched with serokell/deploy-rs#412 (a failed unit really rolls back); drop the
+  # override when the pin contains the fix. The patched build is not cached: on aarch64 it builds on black-pi, and
+  # naked-pi (1 GiB) needs it copied in before its deploy (CLAUDE.md).
   activate =
-    system: patched:
+    system:
     (import inputs.nixpkgs {
       inherit system;
       overlays = [
         inputs.deploy-rs.overlays.default
         (final: prev: {
           deploy-rs = prev.deploy-rs // {
-            deploy-rs =
-              if patched then
-                prev.deploy-rs.deploy-rs.overrideAttrs (o: {
-                  patches = (o.patches or [ ]) ++ [ ../pkgs/patches/deploy-rs-412-rollback-before-cancel.patch ];
-                })
-              else
-                inputs.nixpkgs.legacyPackages.${system}.deploy-rs;
+            deploy-rs = prev.deploy-rs.deploy-rs.overrideAttrs (o: {
+              patches = (o.patches or [ ]) ++ [ ../pkgs/patches/deploy-rs-412-rollback-before-cancel.patch ];
+            });
           };
         })
       ];
     }).deploy-rs.lib.activate;
 
-  activateFor = {
-    x86_64-linux = activate "x86_64-linux" true;
-    # Still serokell/deploy-rs#411 (a failed unit is not really rolled back), so the post-deploy
-    # check is mandatory on the Pis until a patched aarch64 build is evidenced (#297).
-    aarch64-linux = activate "aarch64-linux" false;
-  };
+  activateFor = lib.genAttrs [
+    "x86_64-linux"
+    "aarch64-linux"
+  ] activate;
 
   # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
   pushAs = {
