@@ -4,7 +4,9 @@
 # The coordinator-report timers' job, run in the skills checkout. daily runs
 # coord:report:daily (the task defaults to yesterday, UTC). fortnight acts on
 # even ISO weeks only: until the bi-weekly review task exists in skills, it
-# renders coord:report:weekly for the two ISO weeks before this one and stops.
+# renders coord:report:weekly for every week since the previous acting run and
+# stops: walking back a week at a time, up to and including the first even week
+# (that run's own week). A 53-week year makes it three weeks, not two.
 # The remaining arguments go to every devenv call (the host's --option flags).
 set -euo pipefail
 
@@ -35,8 +37,10 @@ cd "$skills"
 if [ "$mode" = daily ]; then
   exec devenv tasks run coord:report:daily --show-output "$@"
 fi
-for back in 14 7; do
-  anchor=$(date -d "-$back days" +%F)
-  log "ISO week $week: rendering the weekly of $anchor's week"
+for k in 1 2 3; do
+  anchor=$(date -d "-$((7 * k)) days" +%F)
+  past=$((10#$(date -d "-$((7 * k)) days" +%V)))
+  log "ISO week $week: rendering the weekly of week $past ($anchor)"
   devenv tasks run coord:report:weekly --input-json "{\"anchor\":\"$anchor\"}" --show-output "$@"
+  ((past % 2)) || break
 done

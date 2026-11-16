@@ -353,7 +353,7 @@ in
     # After: when both catch up at boot (Persistent), Sunday's daily is in before the weekly reads it
     systemd.user.services.coordinator-report-fortnight =
       lib.recursiveUpdate
-        (reportUnit "fortnight" "On even ISO weeks: the weeklies of the two weeks before")
+        (reportUnit "fortnight" "On even ISO weeks: the weeklies since the previous run")
         { Unit.After = [ "coordinator-report-daily.service" ]; };
     # 03:00 local is past midnight UTC, so the task's yesterday (UTC) is complete
     systemd.user.timers.coordinator-report-daily = reportTimer "Daily coord:report:daily" "*-*-* 03:00";

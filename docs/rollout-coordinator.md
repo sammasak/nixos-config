@@ -103,7 +103,8 @@ herdr status --json | jq .server.running             # true
 `coordinator-wakeup.timer` and `.service`, plus the report timers
 `coordinator-report-daily` (03:00, `coord:report:daily` for yesterday) and
 `coordinator-report-fortnight` (Mondays 07:00; on even ISO weeks it renders
-`coord:report:weekly` for the two weeks before, on odd weeks it does nothing).
+`coord:report:weekly` for each week since the previous even week, that one included,
+so three after a 53-week year; on odd weeks it does nothing).
 A host without `sam.herdr.machines`, or a worker, fails evaluation with it on. Every `interval` (2min) of service
 inactivity the service runs `devenv tasks run coord:changed --input-json '{"consume":true}'` in
 `~/claude-code-skills`; the task is a jq diff of Herdr agent state, GitHub

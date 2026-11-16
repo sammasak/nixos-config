@@ -1,6 +1,8 @@
 """The coordinator-report job (modules/programs/cli/coordinator-report.sh) without Nix: `date` is pinned to a fixed
-day and `devenv` records its argv. fortnight acts on even ISO weeks and renders the weeklies of the two weeks before;
-on an odd week, week 09 included (not octal), it exits 0 and never calls devenv. daily runs coord:report:daily."""
+day and `devenv` records its argv. fortnight acts on even ISO weeks and renders the weekly of every week since the
+previous acting run, that run's week included (three weeks after a 53-week year, so week 52 is not lost); on an odd week, week 09 included (not octal), it exits 0 and never calls devenv. daily runs coord:report:daily."""
+import datetime
+import json
 import os
 import pathlib
 import shutil
@@ -46,12 +48,14 @@ def main():
         (tmp / "skills/devenv.nix").write_text("{ }\n")
         opts = " ".join(OPTS)
 
-        p, calls, n = run(tmp, "2026-11-23", "fortnight")
-        check(p.returncode == 0 and n == 2 and calls == [
-            f'tasks run coord:report:weekly --input-json {{"anchor":"2026-11-09"}} --show-output {opts}',
-            f'tasks run coord:report:weekly --input-json {{"anchor":"2026-11-16"}} --show-output {opts}'],
-            f"even week 48 (Mon 2026-11-23): the weeklies of weeks 46 and 47, in the checkout, with the host's options "
-            f"(exit {p.returncode}, calls {calls}, {p.stderr.strip()})")
+        for today, weeks in (("2026-11-23", [47, 46]), ("2026-12-21", [51, 50]), ("2027-01-11", [1, 53, 52])):
+            p, calls, n = run(tmp, today, "fortnight")
+            anchors = [json.loads(c.split("--input-json ", 1)[1].split(" --show-output", 1)[0])["anchor"] for c in calls]
+            rendered = [datetime.date.fromisoformat(a).isocalendar().week for a in anchors]
+            check(p.returncode == 0 and n == len(weeks) and rendered == weeks
+                  and all(c.startswith("tasks run coord:report:weekly --input-json ") and c.endswith(f"--show-output {opts}") for c in calls),
+                  f"even week {datetime.date.fromisoformat(today).isocalendar().week} ({today}): the weeklies of weeks {weeks}, "
+                  f"in the checkout, with the host's options (exit {p.returncode}, rendered {rendered}, {p.stderr.strip()})")
 
         for today, week in (("2026-11-16", 47), ("2026-02-23", 9)):
             p, calls, n = run(tmp, today, "fortnight")
