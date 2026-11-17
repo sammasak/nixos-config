@@ -88,6 +88,9 @@ let
   # fails the step, so a new kind cannot go unchecked.
   # GC_FREE_SPACE_DIVISOR=16 (Boehm default 3) collects more often: acer-swift deploy check 2809 MiB, not
   # 3174 MiB, under the 4G cap, for about +40% evaluation time on that process (#359).
+  # what a gate step built off its own node would compile against: CUDA or the NVIDIA driver (#502); one pattern for the
+  # flake check and scripts/gate_defer.py (GATE_HEAVY)
+  gateHeavy = "-cuda[0-9._]*-|cuda_|nvidia-x11";
   flakeCheck =
     gate "nixos-flake-check"
       (with pkgs; [
@@ -118,7 +121,7 @@ let
         # name: asus's CUDA Ollama is plain ollama-0.x (#502).
         # args: this host, the check's name, the derivations a build would compile, their inputs, 1 if this host's system
         # has CUDA
-        heavy='-cuda[0-9._]*-|cuda_|nvidia-x11'
+        heavy='${gateHeavy}'
         decide() {
           local node=
           case $2 in deploy-activate-* | deploy-schema-*) node=''${2#deploy-*-} ;; esac
@@ -462,7 +465,7 @@ let
         python3
       ])
       ''
-        PLATFORM_RECORD=${lib.getExe record} ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
+        GATE_HEAVY='${gateHeavy}' PLATFORM_RECORD=${lib.getExe record} ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
       '';
 
   # the llm-bench harness and #492's G1 bench against the fake Ollama; no nix: the rules and the exporter are flake checks

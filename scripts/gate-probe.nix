@@ -443,7 +443,9 @@ let
             after
             requiredBy
             ;
-          inherit (hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig) Type ExecStart;
+          inherit (hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig) Type;
+          # the path only: with its context the probe would realise asus's nvidia-x11 on every gate host (#502)
+          ExecStart = builtins.unsafeDiscardStringContext hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig.ExecStart;
           timeout =
             hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig.TimeoutStartSec or null;
           persistenced = hosts.asus-b460m.config.hardware.nvidia.nvidiaPersistenced;

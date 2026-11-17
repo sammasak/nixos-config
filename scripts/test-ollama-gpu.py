@@ -12,10 +12,10 @@ The two gpu-check builds compile asus's CUDA closure. They follow nixos-flake-ch
   compiling CUDA on msi, acer or lenovo."""
 import json
 import os
-import re
 import subprocess
 import sys
 
+import gate_defer
 import gate_probe
 
 failed = 0
@@ -53,38 +53,15 @@ check(any("OLLAMA_CONTEXT_LENGTH is 2048" in m for m in failing["ctx2k"]),
       f"seeded: a server context under 4096, too small for pi's own prompt, fails evaluation {failing['ctx2k']}")
 
 
-# nixos-flake-check's rule, the same pattern and owner: a build whose to-build inputs compile against CUDA runs on its
-# node only, and anything a substituter has is no compile at all
-HEAVY = re.compile(r"-cuda[0-9._]*-|cuda_|nvidia-x11")
+# nixos-flake-check's rule (scripts/gate_defer.py, the pattern from devenv.nix's gateHeavy): a build whose to-build
+# inputs compile against CUDA runs on its node only, and anything a substituter has is no compile at all
 OWNER = "asus-b460m"
-
-
-def deferred(drv, name):
-    """The rule for one build: None to run it here, else the CUDA inputs it would compile against."""
-    dry = subprocess.run(["nix", "build", "--dry-run", "--no-link", drv + "^*"], capture_output=True, text=True, check=False)
-    text = dry.stdout + dry.stderr
-    if dry.returncode != 0 or "know how to build" in text:
-        print(text, file=sys.stderr)
-        sys.exit(f"ollama-gpu-test: the dry-run of {name} failed")
-    todo, inside = [], False
-    for line in text.splitlines():
-        if "will be built:" in line:
-            inside = True
-        elif "will be fetched" in line or not line.startswith(" "):
-            inside = False
-        elif inside:
-            todo.append(line.split()[0])
-    if not todo or os.uname().nodename.startswith(OWNER):
-        return None
-    refs = subprocess.run(["nix-store", "-q", "--references", *todo], capture_output=True, text=True, check=False).stdout.split()
-    heavy = sorted({re.sub(r"^/nix/store/[a-z0-9]*-", "", r) for r in refs if HEAVY.search(r)})
-    return (len(todo), heavy) if heavy else None
 
 
 def realise(drv, name):
     if not drv:
         return None, "no asus-ollama-gpu-check in system.checks"
-    defer = deferred(drv, name)
+    defer = gate_defer.deferred(drv, name, OWNER, "ollama-gpu-test")
     if defer:
         n, heavy = defer
         print(f"ollama-gpu-test: deferred {name} to {OWNER} (compiles {n}) {drv}: it would compile against {' '.join(heavy)}")
