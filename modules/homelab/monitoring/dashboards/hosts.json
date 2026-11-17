@@ -422,7 +422,7 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Network (all but lo)",
+      "title": "Network (physical interfaces)",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -435,12 +435,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (node) (rate(node_network_receive_bytes_total{device!=\"lo\",node=\"$node\"}[$__rate_interval]))",
+          "expr": "sum by (node) (rate(node_network_receive_bytes_total{device!~\"lo|ve-.*|vb-.*|veth.*|br.*|virbr.*|docker.*|cni.*|flannel.*|vxlan.*|tailscale.*|wg.*|tun.*|tap.*\",node=\"$node\"}[$__rate_interval]))",
           "legendFormat": "receive",
           "refId": "A"
         },
         {
-          "expr": "-sum by (node) (rate(node_network_transmit_bytes_total{device!=\"lo\",node=\"$node\"}[$__rate_interval]))",
+          "expr": "-sum by (node) (rate(node_network_transmit_bytes_total{device!~\"lo|ve-.*|vb-.*|veth.*|br.*|virbr.*|docker.*|cni.*|flannel.*|vxlan.*|tailscale.*|wg.*|tun.*|tap.*\",node=\"$node\"}[$__rate_interval]))",
           "legendFormat": "transmit (down)",
           "refId": "B"
         }
@@ -468,12 +468,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (node) (rate(node_disk_read_bytes_total{node=\"$node\"}[$__rate_interval]))",
+          "expr": "sum by (node) (rate(node_disk_read_bytes_total{device!~\"dm-.*|md.*\",node=\"$node\"}[$__rate_interval]))",
           "legendFormat": "read",
           "refId": "A"
         },
         {
-          "expr": "-sum by (node) (rate(node_disk_written_bytes_total{node=\"$node\"}[$__rate_interval]))",
+          "expr": "-sum by (node) (rate(node_disk_written_bytes_total{device!~\"dm-.*|md.*\",node=\"$node\"}[$__rate_interval]))",
           "legendFormat": "written (down)",
           "refId": "B"
         }
