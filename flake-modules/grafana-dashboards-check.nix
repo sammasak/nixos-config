@@ -1,8 +1,8 @@
 # black-pi's dashboards, as grafana.nix provisions them, against what the fleet exports: the deployed node-exporter
 # command runs on node_exporter's own sysfs/procfs fixtures, so its metric names are this version's with these flags;
-# the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus loads; Loki,
-# Alloy and llm-gateway names are string literals in the source of the version each host runs; the OTLP ones are
-# alloy-otlp's allow-list. Each seeded dashboard below must fail scripts/check-grafana-dashboards.py with its own reason.
+# the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus loads;
+# llm-gateway's from its registrations and Loki's and Alloy's from their name literals, in the source each host runs;
+# the OTLP ones are alloy-otlp's allow-list. Each seeded dashboard below must fail scripts/check-grafana-dashboards.py with its own reason.
 { config, lib, ... }:
 let
   inherit (config.flake.nixosConfigurations) acer-swift black-pi msi-ms7758;
@@ -35,25 +35,16 @@ let
   # the longest prefix first: Alloy's loki.write names sit inside Loki's
   sources = [
     {
-      prefix = "llm_gateway_";
-      strip = "llm_gateway_";
-      job = "llm-gateway";
-      src = acer-swift.pkgs.llmGateway.src;
-      ext = "rs";
-    }
-    {
       prefix = "loki_write_";
       strip = "";
       job = "alloy-otlp";
       src = acer-swift.pkgs.grafana-alloy.src;
-      ext = "go";
     }
     {
       prefix = "loki_";
       strip = "loki_";
       job = "loki";
       src = msi-ms7758.pkgs.grafana-loki.src;
-      ext = "go";
     }
   ];
   otlp = lib.elem "--web.enable-otlp-receiver" pi.services.prometheus.extraFlags;
@@ -114,6 +105,15 @@ let
     gateway-typo = {
       dashboard = seed "rate(llm_gateway_no_such_total[5m])" "prometheus";
       reason = "unknown metric llm_gateway_no_such_total";
+    };
+    # the counter is exported as llm_gateway_requests_total
+    gateway-suffix = {
+      dashboard = seed "rate(llm_gateway_requests[5m])" "prometheus";
+      reason = "unknown metric llm_gateway_requests:";
+    };
+    loki-word = {
+      dashboard = seed "loki_name" "prometheus";
+      reason = "unknown metric loki_name:";
     };
     # the logind collector is off on every host, so a panel on it would stay empty
     collector-off = {
@@ -215,14 +215,21 @@ in
         assert lib.assertMsg (lib.hasPrefix "${discard "${pkgs.prometheus-node-exporter}"}/bin/" (
           lib.trim exec
         )) "grafana-dashboards: msi's node-exporter is not this check's prometheus-node-exporter";
-        assert lib.assertMsg (otlp && lib.all (s: lib.elem s.job jobs) sources)
+        assert lib.assertMsg
+          (otlp && lib.all (j: lib.elem j jobs) ([ "llm-gateway" ] ++ map (s: s.job) sources))
           "grafana-dashboards: a metric source names a job black-pi does not scrape, or its OTLP receiver is off";
-        assert lib.assertMsg (
-          discard pi.services.loki.package.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
-          && lib.hasInfix (discard "${acer-swift.pkgs.grafana-alloy}/bin/alloy") (
-            discard (toString acer.systemd.services.alloy-otlp.serviceConfig.ExecStart)
+        assert lib.assertMsg
+          (
+            discard pi.services.loki.package.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
+            && discard pkgs.grafana-loki.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
+            && lib.hasInfix (discard "${acer-swift.pkgs.grafana-alloy}/bin/alloy") (
+              discard (toString acer.systemd.services.alloy-otlp.serviceConfig.ExecStart)
+            )
+            && lib.hasInfix (discard "${acer-swift.pkgs.llmGateway}/bin/") (
+              discard acer.systemd.services.llm-gateway.serviceConfig.ExecStart
+            )
           )
-        ) "grafana-dashboards: black-pi's Loki or acer's alloy-otlp is not the source this check reads";
+          "grafana-dashboards: black-pi's Loki (or this check's logcli), acer's alloy-otlp or acer's llm-gateway is not the source this check reads";
         assert lib.assertMsg (
           !handList.success
         ) "grafana-dashboards: a dashboard listing the node variable's hosts by hand evaluated";
@@ -289,12 +296,13 @@ in
               exit 1
             }
             ${lib.concatImapStrings (i: s: ''
-              rg --no-filename -o -g '*.${s.ext}' -g '!*_test.go' -g '!vendor/' -g '!tests/' '"[a-z][a-z0-9_]*"' ${s.src} \
+              rg --no-filename -o -g '*.go' -g '!*_test.go' -g '!vendor/' '"[a-z][a-z0-9_]*"' ${s.src} \
                 | tr -d '"' | sort -u > literals-${toString (i - 1)}
             '') sources}
+            python3 -I ${../scripts/llm-gateway-metric-names.py} ${acer-swift.pkgs.llmGateway.src} > llm-gateway.prom
             check() {
               python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"
