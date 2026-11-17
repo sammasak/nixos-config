@@ -39,8 +39,11 @@ let
   until = window.wake;
 
   matcher =
-    neg: if lib.length names == 1 then "node${lib.optionalString neg "!"}=\"${lib.head names}\""
-    else "node${if neg then "!~" else "=~"}\"${lib.concatStringsSep "|" names}\"";
+    neg:
+    if lib.length names == 1 then
+      "node${lib.optionalString neg "!"}=\"${lib.head names}\""
+    else
+      "node${if neg then "!~" else "=~"}\"${lib.concatStringsSep "|" names}\"";
   series = extra: "max by (node) (up{job=\"node-exporter\",sleeps=\"true\"${extra}})";
 
   untilClause =
@@ -66,13 +69,13 @@ let
   expr = lib.concatMapStringsSep "\n" (l: "          " + l) lines;
   placeholder = "          @PLANNED_OFF_EXPR@";
 in
-assert lib.assertMsg (
-  lib.length windows <= 1
-) "rules/homelab.nix: the windowed hosts ${toString names} do not share one window; planned_off renders one";
-assert lib.assertMsg (
-  names == [ ] || (window.off.m == 0 && window.off.h >= 2 && from > until.h)
-) "rules/homelab.nix: a power window must power off on the hour, after its wake: ${builtins.toJSON windows}";
-assert lib.assertMsg (lib.all (n: lib.elem n sleeping) names) "rules/homelab.nix: a windowed host must sleep";
+assert lib.assertMsg (lib.length windows <= 1)
+  "rules/homelab.nix: the windowed hosts ${toString names} do not share one window; planned_off renders one";
+assert lib.assertMsg (names == [ ] || (window.off.m == 0 && window.off.h >= 2 && from > until.h))
+  "rules/homelab.nix: a power window must power off on the hour, after its wake: ${builtins.toJSON windows}";
+assert lib.assertMsg (lib.all (
+  n: lib.elem n sleeping
+) names) "rules/homelab.nix: a windowed host must sleep";
 {
   inherit windowed;
   file = builtins.toFile "homelab.yaml" (
