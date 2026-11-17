@@ -87,12 +87,26 @@
       "description": "A fleet host missing here shipped nothing for 15 minutes: asleep (see Fleet), or its collector or Loki is down.",
       "options": {
         "showHeader": true
-      }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "host": "Host",
+              "Value #A": "Lines"
+            }
+          }
+        }
+      ]
     },
     {
       "id": 3,
       "type": "timeseries",
-      "title": "Error-like lines per host",
+      "title": "Error-like lines per second per host",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -106,12 +120,14 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (host) (count_over_time({job=\"host-journal\",host=~\"$node\"} |~ \"(?i)(error|fail|fatal|panic|segfault|oom)\" [$__interval]))",
+          "expr": "sum by (host) (rate({job=\"host-journal\",host=~\"$node\"} |~ `(?i)(error|fail|fatal|panic|segfault|\\boom\\b)` != \"caller=metrics.go\" [$__interval]))",
           "legendFormat": "{{host}}"
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "unit": "short"
+        },
         "overrides": []
       },
       "description": "Lines matching error, fail, fatal, panic, segfault or oom: the journal ships no priority label, so this is a text match."
@@ -134,7 +150,9 @@
         {
           "refId": "A",
           "expr": "topk(10, sum by (host, unit) (count_over_time({job=\"host-journal\",host=~\"$node\"}[$__range])))",
-          "legendFormat": "{{host}} {{unit}}"
+          "legendFormat": "{{host}} {{unit}}",
+          "queryType": "instant",
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -197,7 +215,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{job=\"host-journal\",host=~\"$node\"} |~ \"(?i)(error|fail|fatal|panic|segfault|oom)\"",
+          "expr": "{job=\"host-journal\",host=~\"$node\"} |~ `(?i)(error|fail|fatal|panic|segfault|\\boom\\b)` != \"caller=metrics.go\"",
           "legendFormat": "{{host}}"
         }
       ],

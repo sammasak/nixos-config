@@ -2,7 +2,8 @@
 """The provisioned Grafana dashboards against what the fleet exports (flake-modules/grafana-dashboards-check.nix):
 each dashboard's structure; every PromQL expression, panel or variable, through promtool and every LogQL one through
 logcli's parser; every metric name in an exporter's own output, a rule file's records, a Go service's metric name
-literals or the OTLP allow-list; every variable defined; and no host named by hand in a query.
+literals or the OTLP allow-list; every `job` a query selects scraped by Prometheus or written to Loki by the repo; every variable
+defined; and no host named by hand in a query.
 Usage: check-grafana-dashboards.py SPEC.json PROMTOOL LOGCLI EXPOSITION...; exits non-zero on any FAIL. EXPOSITION is
 an exporter's /metrics output; SPEC names the dashboards, the fleet's hosts, the rule files and the metric sources."""
 import json
@@ -28,6 +29,12 @@ sources = [dict(s, literals=set(open(s["literals"]).read().split())) for s in sp
 otlp = set()
 for group, alts in re.findall(r"(codex|claude_code)\\+\.\(([^)]*)\)", open(spec["otlp_allowlist"]).read()):
     otlp |= {group + "_" + re.sub(r"\\+\.", "_", a) for a in alts.split("|")}
+# the Loki streams the repo writes: `job = "…"`, `job: "…"`, {job="…"} and alloy-otlp's service.name values
+loki_jobs = set()
+for f in spec["loki_job_sources"]:
+    text = open(f).read()
+    loki_jobs |= set(re.findall(r'\bjob\s*[=:]\s*\\?"([a-z][a-z-]*)', text))
+    loki_jobs |= set(re.findall(r'"service\.name"\], "([a-z][a-z-]*)"', text))
 failed = []
 
 KEYWORDS = {"and", "or", "unless", "by", "without", "on", "ignoring", "group_left", "group_right", "bool", "offset",
@@ -96,6 +103,11 @@ def check_expr(where, expr, variables, loki):
         value = next(g for g in m.groups()[2:] if g is not None)
         if not re.fullmatch(r"\$\{?\w+\}?|[.*+]*", value):
             fail(where, f"host literal {m.group(1)}{m.group(2)}{value!r}: use the fleet variable")
+    jobs = loki_jobs if loki else set(spec["scrape_jobs"])
+    for m in re.finditer(r"\bjob\s*=\s*(?:" + QUOTED + ")", expr):
+        value = next(g for g in m.groups() if g is not None)
+        if not value.startswith("$") and value not in jobs:
+            fail(where, f"job {value!r}: no {'Loki stream' if loki else 'scrape job'} by that name")
     for h in hosts:
         if re.search(r"(?<![\w-])" + re.escape(h) + r"(?![\w-])", expr):
             fail(where, f"fleet host {h} named in {expr!r}: use the fleet variable")

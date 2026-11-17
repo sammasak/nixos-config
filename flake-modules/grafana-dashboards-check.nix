@@ -102,6 +102,14 @@ let
       dashboard = seed "rate(node_no_such_metric_total[5m])" "prometheus";
       reason = "unknown metric node_no_such_metric_total";
     };
+    scrape-job-typo = {
+      dashboard = seed ''up{job="node_exporter"}'' "prometheus";
+      reason = "job 'node_exporter': no scrape job";
+    };
+    loki-job-typo = {
+      dashboard = seed ''{job="journal"}'' "loki";
+      reason = "job 'journal': no Loki stream";
+    };
     gateway-typo = {
       dashboard = seed "rate(llm_gateway_no_such_total[5m])" "prometheus";
       reason = "unknown metric llm_gateway_no_such_total";
@@ -251,6 +259,13 @@ in
                 literals = "literals-${toString i}";
               }) sources;
               otlp_allowlist = "${../modules/homelab/monitoring/alloy-otlp.alloy}";
+              scrape_jobs = jobs;
+              loki_job_sources = [
+                "${../modules/homelab/journal-collector.nix}"
+                "${../modules/homelab/loki.nix}"
+                "${../scripts/platform-record.sh}"
+                "${../modules/homelab/monitoring/alloy-otlp.alloy}"
+              ];
               inherit (prom) rule_files;
               record_sources = [ "${../pkgs/llm-bench/rules.nix}" ];
             };
