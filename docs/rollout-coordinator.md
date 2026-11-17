@@ -15,16 +15,17 @@ agent, so the Codex coordinator is bounded by its instructions and Codex's own s
 ## Wake-up timer (lenovo only)
 
 `sam.herdr.coordinatorWakeup.enable` (options in `modules/core/agent-options.nix`, unit in
-`modules/programs/cli/coordinator-wakeup.nix`) installs the user units `coordinator-wakeup.timer` and `.service`, the `platform-delivery-record` timer (06:30),
-plus the report timers `coordinator-report-daily` (03:00, `coord:report:daily` for yesterday) and
-`coordinator-report-fortnight` (Mondays 07:00; on even ISO weeks it renders `coord:report:weekly` for each week since
-the previous even week, that one included; on odd weeks it does nothing). A host without `sam.herdr.machines`, or a worker, fails
-evaluation with it on. Every `interval` (default 2min) of service inactivity the service runs
-`devenv tasks run coord:changed --input-json '{"consume":true}'` in `~/claude-code-skills`; the task diffs Herdr
-agent state, GitHub counts and the audit log's open handoffs against a snapshot under
-`~/.local/state/coordinator/changed/` and prints nothing when nothing is actionable. Only then does the service start
-one headless `claude -p --agent coordinator --max-budget-usd <maxBudgetUsd>` session (default 1.00), write its report
-to `changed/wake-<ts>.md` and raise a Herdr toast. `herdr:message`'s label gate stays the authority for every send.
+`modules/programs/cli/coordinator-wakeup.nix`) installs the user units `coordinator-wakeup.timer` and `.service`, the
+`platform-delivery-record` timer (06:30), plus the report timers `coordinator-report-daily` (03:00,
+`coord:report:daily` for yesterday) and `coordinator-report-fortnight` (Mondays 07:00; on even ISO weeks it renders
+`coord:report:weekly` for each week since the previous even week, that one included; on odd weeks it does nothing). A
+host without `sam.herdr.machines`, or a worker, fails evaluation with it on. Every `interval` (default 2min) of
+service inactivity the service runs `devenv tasks run coord:changed --input-json '{"consume":true}'` in
+`~/claude-code-skills`; the task diffs Herdr agent state, GitHub counts and the audit log's open handoffs against a
+snapshot under `~/.local/state/coordinator/changed/` and prints nothing when nothing is actionable. Only then does
+the service start one headless `claude -p --agent coordinator --max-budget-usd <maxBudgetUsd>` session (default
+1.00), write its report to `changed/wake-<ts>.md` and raise a Herdr toast. `herdr:message`'s label gate stays the
+authority for every send.
 
 The session runs `--permission-mode dontAsk`: anything outside its allow list is refused, not asked. The allow list is
 pinned word for word by `scripts/test-coordinator-wiring.py`:

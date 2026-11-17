@@ -3,8 +3,9 @@
 `flake-modules/hosts.nix` is one typed table (option in `hosts-option.nix`): each entry holds `roles`, and `deploy`
 fields (`hostname`, and a required `remoteBuild`). From it `nixos-configurations.nix` derives `nixosConfigurations`
 and `deploy.nix` derives the deploy-rs nodes. There are six entries today. Architecture is stated once, by
-`nixpkgs.hostPlatform` in each host's hardware scan (the Pis: `modules/hardware/pi-sd-image.nix`), and `sam.profile.username` is an enum of `lib/users.nix`, so a
-typo fails at its definition. A new host's checklist is "Adding a New Host" in `CLAUDE.md`.
+`nixpkgs.hostPlatform` in each host's hardware scan (the Pis: `modules/hardware/pi-sd-image.nix`), and
+`sam.profile.username` is an enum of `lib/users.nix`, so a typo fails at its definition. A new host's checklist is
+"Adding a New Host" in `CLAUDE.md`.
 
 A field goes in the table only if something outside the host's own evaluation reads it (`roles`, since imports cannot
 depend on config, and `deploy.*`). A fact read by two or more modules goes in `sam.fleet` (`modules/core/fleet.nix`),
@@ -28,7 +29,8 @@ Merge order rests on import depth, which nobody chose. The waybar and swaync CSS
 definitions is unknown. A flake-parts bump (wrapper depth) or a Stylix bump (its own depth) can flip one, and parity
 cannot catch it: the drvPath moves with the bump anyway, so an ordering change looks like the update.
 
-`sam.userConfig` is a typed submodule (`git.userName`, `git.email`, `sshKeys`): it was `types.attrs`, which merged by `//`,
-silently dropping keys, and did not discharge `mkDefault`/`mkIf`; `scripts/test-typed-interfaces.py` keeps it typed.
+`sam.userConfig` is a typed submodule (`git.userName`, `git.email`, `sshKeys`): it was `types.attrs`, which merged by
+`//`, silently dropping keys, and did not discharge `mkDefault`/`mkIf`; `scripts/test-typed-interfaces.py` keeps it
+typed.
 
 The migration plan and its evidence: `git log -- docs/flake-wiring.md`.
