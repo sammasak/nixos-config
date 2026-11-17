@@ -36,7 +36,7 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
     scripts/nix-audit-candidate.sh {{HOST}} {{TARGET}}
 
 # Run from lenovo; logs in as `deploy` (key-only, passwordless sudo, so no
-# prompt; homelab/deploy-target.nix). Rollback settings come from the node
+# prompt; modules/homelab/deploy-target.nix). Rollback settings come from the node
 # (flake-modules/deploy.nix); the host list is the table in
 # flake-modules/hosts.nix, which the pattern repeats. --skip-checks:
 # otherwise deploy-rs runs the full flake check first, building every x86 host
