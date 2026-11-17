@@ -259,8 +259,26 @@ def check(ok, what):
     failed += not ok
 
 
+EVALUATED = {}
+
+
 def run_eval(expr):
+    """The expression's JSON value: from the one evaluation prefetch() made of it, else (not prefetched, or its entry threw
+    there) its own nix process, which is what reports the error."""
+    if EVALUATED.get(expr) is not None:
+        return subprocess.CompletedProcess(["nix", "eval"], 0, EVALUATED[expr], "")
     return subprocess.run(["nix", "eval", "--impure", "--json", "--expr", expr], capture_output=True, text=True)
+
+
+def prefetch(exprs):
+    """Evaluates the expressions (each complete and independent, as run_eval takes them) in one nix process, so the flake
+    is loaded once; each value comes back as its JSON text. If the batch fails as a whole nothing is cached."""
+    batch = "{\n" + "".join(
+        f"  \"{i}\" = let r = builtins.tryEval (builtins.toJSON (\n{e}\n)); in if r.success then builtins.unsafeDiscardStringContext r.value else null;\n"
+        for i, e in enumerate(exprs)) + "}"
+    out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", batch], capture_output=True, text=True)
+    if out.returncode == 0:
+        EVALUATED.update({e: json.loads(out.stdout)[str(i)] for i, e in enumerate(exprs)})
 
 
 def stub_expr(case, what=FAILING):
@@ -498,6 +516,7 @@ def check_gcroots(facts):
         check("find \"$home\" -ignore_readdir_race" in facts["gcroots"], "the scan ignores a directory a running guest deletes under it")
 
 
+ALERT_ON = '{ services.devEnvironments.alert = "/alert"; }'
 ACT = "{ inherit (sys.config.services.devEnvironments) stateDir; text = sys.config.system.activationScripts.devEnvironments.text; }"
 RETIRED = '{ services.devEnvironments.retired = [ "gone" "live" "link" ]; }'
 PAUSED_ONE = '{ services.devEnvironments.instances.idle.paused = true; }'
@@ -621,7 +640,7 @@ def check_alerts(facts):
     off = nix_eval("{ }", ALERTS)
     got = json.loads(off.stdout) if off.returncode == 0 else {}
     check(got.get("onFailure") == [] and got.get("watch") is False, f"with no alert program an instance has no OnFailure and no watch unit ({got})")
-    on = nix_eval('{ services.devEnvironments.alert = "/alert"; }', ALERTS)
+    on = nix_eval(ALERT_ON, ALERTS)
     got = json.loads(on.stdout) if on.returncode == 0 else {}
     check(got.get("onFailure") == ["dev-env-alert@%n.service"] and got.get("watch") is True, f"with one, the container unit alerts and the watch unit exists ({got})")
     # %I would unescape the unit name and read dev/env/egress.service
@@ -800,12 +819,15 @@ in flake.nixosConfigurations.msi-ms7758.pkgs.writeText "pre" (builtins.concatStr
 """
 
 
+def host_network_expr():
+    return ('let b = (builtins.getFlake %s).nixosConfigurations.acer-swift; f = i: (b.extendModules { modules = [ ({ lib, ... }: { sam.workers.instances = lib.mkForce i; }) ]; }).config; '
+            'g = c: map (n: c.environment.etc.${n}.source.outPath) [ "NetworkManager/NetworkManager.conf" "sysctl.d/60-nixos.conf" "modules-load.d/nixos.conf" ] ++ [ c.systemd.units."NetworkManager.service".unit.outPath ]; in [ (g (f { })) (g (f { x = { }; })) ]' % nix_string(ROOT))
+
+
 def check_host_network():
     """The runtime-host's NetworkManager.conf (the restart trigger of NetworkManager.service, whose restart drops wifi), sysctl
     and modules-load, and that unit, are the same with no environment and with one."""
-    expr = ('let b = (builtins.getFlake %s).nixosConfigurations.acer-swift; f = i: (b.extendModules { modules = [ ({ lib, ... }: { sam.workers.instances = lib.mkForce i; }) ]; }).config; '
-            'g = c: map (n: c.environment.etc.${n}.source.outPath) [ "NetworkManager/NetworkManager.conf" "sysctl.d/60-nixos.conf" "modules-load.d/nixos.conf" ] ++ [ c.systemd.units."NetworkManager.service".unit.outPath ]; in [ (g (f { })) (g (f { x = { }; })) ]' % nix_string(ROOT))
-    out = run_eval(expr)
+    out = run_eval(host_network_expr())
     zero, one = json.loads(out.stdout) if out.returncode == 0 else ([0], [1])
     check(zero == one, f"a runtime-host's NetworkManager.conf, sysctl, modules-load and NetworkManager.service do not depend on any environment existing ({out.stderr.strip()[-300:] or zero})")
 
@@ -890,7 +912,22 @@ def check_scripts():
         check(rc == 1 and "cannot add subset=pid" in err, f"crun-subset-pid refuses a bundle it cannot rewrite ({rc}, {err.strip()})")
 
 
+BLOCKED_CASE = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
+BLOCKED_WHAT = "sys.config.networking.firewall.extraCommands"
+BLOCKED = (("", True), ("networking.enableIPv6 = false;", False))
+
+
 def main():
+    # every evaluation below that is not expected to fail, in two processes (the stub host's, the fleet's) instead of one
+    # each: the order of the checks, and so of their lines, is unchanged. The TYPED cases must throw, so each stays its own.
+    prefetch([stub_expr(c, w) for c, w in [
+        ("{ }", FAILING), ("{ }", GUEST), (ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), ("{ }", NO_ROOT), (NONE_DECLARED, NO_ROOT), ("{ }", LIMITS),
+        ("{ }", ACT), (RETIRED, ACT), (PAUSED_ONE, ACT), ("{ }", ALERTS), (ALERT_ON, ALERTS), (PAUSED, OWN), (PAUSED, PAUSED_FACTS),
+        ("{ }", BOUNDED), (STUB_SSH, CTL), ("{ }", DECLARATION),
+        *[(BLOCKED_CASE % v6, BLOCKED_WHAT) for v6, _ in BLOCKED], *[(case, OWN) for _, case, _ in ASSERTED]]])
+    prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(case) for _, case, _ in FLEET_CASES], fleet(USER_SECRET[1]),
+              NO_OTEL % {"root": json.dumps(ROOT)}, GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)},
+              SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr()])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
@@ -954,9 +991,8 @@ def main():
     check_activation()
     check_bounded()
     check_paused()
-    blocked = '{ services.devEnvironments.blockedNetworks = [ "192.168.1.0/24" ]; networking.nftables.enable = lib.mkForce false; %s }'
-    for v6, want in (("", True), ("networking.enableIPv6 = false;", False)):
-        out = nix_eval(blocked % v6, "sys.config.networking.firewall.extraCommands")
+    for v6, want in BLOCKED:
+        out = nix_eval(BLOCKED_CASE % v6, BLOCKED_WHAT)
         cmds = json.loads(out.stdout) if out.returncode == 0 else ""
         check(out.returncode == 0 and ("ip6tables -w -I INPUT -i ve-+ -j dev-env-input" in cmds and "ip6tables -w -I FORWARD -i ve-+ -j DROP" in cmds
               and "ip6tables -w -A dev-env-input -p ipv6-icmp -j RETURN" in cmds) == want and "iptables -w -I INPUT -i ve-+ -j dev-env-input" in cmds,
