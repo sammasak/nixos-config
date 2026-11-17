@@ -1,6 +1,7 @@
 # Work-hours power windows for the hosts whose fleet entry declares one (sam.fleet.hosts.<name>.power,
 # modules/core/fleet.nix): an always-on waker sends each its Wake-on-LAN packet at `wake`, and the host
-# powers itself off at `off`. No weekend wake fires, so a Mon-Fri window stays off from Fri `off` to Mon `wake`.
+# arms Wake-on-LAN on its `interface` and powers itself off at `off`. No weekend wake fires, so a Mon-Fri window
+# stays off from Fri `off` to Mon `wake`.
 {
   config,
   lib,
@@ -27,7 +28,7 @@ in
     poweroff.enable = lib.mkOption {
       type = lib.types.bool;
       default = own != null;
-      description = "This host's scheduled poweroff and Wake-on-LAN requirement from its fleet power window.";
+      description = "This host's scheduled poweroff and Wake-on-LAN unit from its fleet power window.";
     };
   };
 
@@ -87,6 +88,17 @@ in
     })
 
     (mkIf (own != null && cfg.poweroff.enable) {
+      networking.interfaces.${own.interface}.wakeOnLan.enable = true;
+      systemd.services."wol-${own.interface}" = {
+        description = "Enable Wake on LAN for ${own.interface}";
+        after = [ "network-addresses-${own.interface}.service" ];
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = "${pkgs.ethtool}/sbin/ethtool -s ${own.interface} wol g";
+        };
+      };
       systemd.services."${prefix host}-scheduled-shutdown" = {
         description = "Scheduled poweroff of ${prefix host}";
         serviceConfig = {

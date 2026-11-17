@@ -17,6 +17,14 @@ let
   onGithub = i: i.egress.github.repos != [ ];
   # The tokens are read at request time from the unit's credential and its private directory.
   githubToken = "${dev.paths.egress.private}/github-token";
+  # the hosts.nix entries with the runtime-host role, by hostName (as ssh-known-hosts.nix reads the table)
+  runtimeHosts = lib.sort lib.lessThan (
+    lib.mapAttrsToList (name: h: h.hostDir or name) (
+      lib.filterAttrs (_: h: lib.elem "runtime-host" h.roles)
+        (import ../../flake-modules/hosts.nix).configurations.nixos
+    )
+  );
+  sameHosts = names: lib.sort lib.lessThan names == runtimeHosts;
   upstream = url: auth: ''
     reverse_proxy ${url} {
       header_up Host {upstream_hostport}
@@ -516,7 +524,20 @@ in
       lib.any dev.egress.anthropic.for (lib.attrValues dev.instances) && config.sam.hostSecrets.enable
     ) { claude_oauth_token.restartUnits = [ "dev-env-egress.service" ]; };
 
-    assertions = lib.optionals (dev.instances != { }) [
+    assertions = [
+      {
+        assertion =
+          config.sam.herdr.machines != [ ] -> sameHosts (map (m: m.target) config.sam.herdr.machines);
+        message = "sam.herdr.machines targets ${
+          toString (map (m: m.target) config.sam.herdr.machines)
+        }, not the runtime hosts of flake-modules/hosts.nix (${toString runtimeHosts}): add or drop the machine.";
+      }
+      {
+        assertion = dev.jumpHosts != { } -> sameHosts (lib.attrValues dev.jumpHosts);
+        message = "sam.workers.jumpHosts names ${toString (lib.attrValues dev.jumpHosts)}, not the runtime hosts of flake-modules/hosts.nix (${toString runtimeHosts}): add or drop the jump host.";
+      }
+    ]
+    ++ lib.optionals (dev.instances != { }) [
       {
         # homelab/deploy-target.nix: that key, from that host's address (a guest's traffic leaves by it), is root fleet-wide
         assertion = profile.hostname != config.sam.fleet.deployer;

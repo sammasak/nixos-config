@@ -37,9 +37,10 @@ space, ESP size and free space, CPU, RAM, GPU, NIC, MAC, Wake-on-LAN.
 
 systemd-boot (the fleet default, `modules/core/boot.nix`) copies every
 generation's kernel and initrd onto the ESP. A Windows ESP of 100-260 MB holds
-too few: use the GRUB pattern from `hosts/msi-ms7758` and `hosts/asus-b460m`
-(loader on the shared ESP, GRUB directory on root, hand-written Windows entry,
-os-prober off). GRUB's loader takes under 1 MB of the ESP.
+too few: import `modules/hardware/windows-dual-boot.nix` in the host's
+`configuration.nix`, as msi and asus do (loader on the shared ESP mounted at `/boot`,
+GRUB directory on root, hand-written Windows entry, os-prober off; it asserts that
+`/boot` is a vfat mount). GRUB's loader takes under 1 MB of the ESP.
 
 ## 3. Windows-side preparation
 
@@ -129,7 +130,8 @@ scp nixos@<installer-ip>:/tmp/{esp-before-nixos.tar,efibootmgr-before.txt} .
 ```
 
 Run `nixos-generate-config --root /mnt`, replace `configuration.nix` with a
-bootstrap (the GRUB block, `networking.hostName`, user `lukas` with lenovo's
+bootstrap (an import of `windows-dual-boot.nix`, scp'd next to it from a checkout, as the
+module needs nothing else from the repo; `networking.hostName`, user `lukas` with lenovo's
 key, sshd key-only, flakes), then `nixos-install --no-root-passwd`. At the machine,
 boot both GRUB entries: NixOS, and Windows to the desktop. A missing
 `kvm-intel` in the hardware scan means VT-x is off in the firmware.
@@ -153,14 +155,17 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
     runtime host `docs/nspawn-workers.md`;
 - the host rows in `README.md` and the fleet size the docs state (`nixos:readability-test`);
 - not checked yet: the hosts `scripts/test-alloy-otlp-sanitizer.sh` feeds the relabel;
+- for a host with the `runtime-host` role, its `sam.herdr.machines` entry and `sam.workers.jumpHosts` name on
+  lenovo, in this same PR: lenovo's evaluation fails while they differ from the runtime hosts of
+  `flake-modules/hosts.nix` (and on a host's removal there until they drop it);
 - for a host that is not always up (scheduled power-off, dual boot), `sleeps = true`
   on its `modules/core/fleet.nix` entry. That one fact keeps it out of every store
   cache's substituters and moves it from `NodeChronicNotReady` to `HostExpectedOff`;
   no rule edit. A power window, like msi's, is the one exception that
   `homelab:node:planned_off` in `rules/homelab.yaml` names by host.
 - for a work-hours window, `power = { mac; interface; wake; off; }` on the same entry: lenovo
-  wakes it and it powers itself off (`modules/core/power-schedule.nix`). Evaluation fails
-  unless it also has `sleeps = true` and its NIC's `wol-<nic>` unit.
+  wakes it, and it arms Wake-on-LAN on `interface` (`wol-<interface>`) and powers itself off
+  (`modules/core/power-schedule.nix`). Evaluation fails unless it also has `sleeps = true`.
 
 Commit and gate on a worker (msi or acer), not lenovo.
 
@@ -196,5 +201,5 @@ Only after that, `just deploy <name>` from lenovo, and step 7.
 
 Its store-cache key (`modules/core/store-cache.nix`; harmonia is socket-activated, so
 the key exists only after a first request: `curl http://127.0.0.1:5000/nix-cache-info`,
-then `cat /var/lib/store-cache/public-key`), `sam.workers` (`docs/nspawn-workers.md`), `sam.herdr.machines` and
-`sam.workers.jumpHosts` on lenovo, Wake-on-LAN and its fleet `power` window if it sleeps.
+then `cat /var/lib/store-cache/public-key`), `sam.workers` (`docs/nspawn-workers.md`), and its fleet `power` window if it
+sleeps, which arms Wake-on-LAN (lenovo's `sam.herdr.machines` and `sam.workers.jumpHosts` came with step 5).

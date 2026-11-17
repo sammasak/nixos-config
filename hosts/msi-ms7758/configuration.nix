@@ -11,6 +11,7 @@ in
   imports = [
     ./hardware-configuration.nix
     ../../modules/hardware/video/intel.nix
+    ../../modules/hardware/windows-dual-boot.nix
     ../../modules/homelab/journal-collector.nix
     ../../modules/homelab/ollama-host.nix
     ../../modules/homelab/monitoring/node-exporter.nix
@@ -46,33 +47,6 @@ in
   # their catch-up at boot: both run inside the Mon-Fri power window instead.
   nix.gc.dates = lib.mkForce "Mon *-*-01..07 12:00";
   nix.optimise.dates = lib.mkForce [ "Wed 12:00" ];
-
-  # The existing Windows ESP is small. Keep GRUB's mutable directory on root,
-  # while leaving only the EFI loader on /boot.
-  boot.loader.systemd-boot.enable = lib.mkForce false;
-  boot.loader.grub = {
-    enable = true;
-    device = "nodev";
-    efiSupport = true;
-    useOSProber = false;
-    configurationLimit = 5;
-    mirroredBoots = lib.mkForce [
-      {
-        path = "/boot-nix";
-        efiSysMountPoint = "/boot";
-        devices = [ "nodev" ];
-      }
-    ];
-    extraEntries = ''
-      menuentry "Windows Boot Manager" {
-        insmod part_gpt
-        insmod fat
-        insmod chain
-        search --no-floppy --file --set=root /EFI/Microsoft/Boot/bootmgfw.efi
-        chainloader /EFI/Microsoft/Boot/bootmgfw.efi
-      }
-    '';
-  };
 
   # The llm-gateway's bigger tier, off with msi at 21:00 (the gateway falls back to acer).
   services.ollama = {
@@ -115,17 +89,4 @@ in
       extraCommands
       ;
   };
-
-  networking.interfaces.enp3s0.wakeOnLan.enable = true;
-  systemd.services.wol-enp3s0 = {
-    description = "Enable Wake on LAN for enp3s0";
-    after = [ "network-addresses-enp3s0.service" ];
-    wantedBy = [ "multi-user.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = "${pkgs.ethtool}/sbin/ethtool -s enp3s0 wol g";
-    };
-  };
-
 }

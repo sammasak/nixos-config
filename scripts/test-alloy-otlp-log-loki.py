@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 
 import alloy_otlp_argv
+import gate_probe
 
 
 root = Path(tempfile.mkdtemp(prefix='otlp-log-privacy-', dir=os.environ.get('TMPDIR', '/tmp')))
@@ -37,7 +38,7 @@ base = Path(alloy_otlp_argv.config_path()).read_text()
 assert base.count('otelcol.storage.file "native"') == 1, 'no durable queue block to cut at'
 config = base.split('otelcol.storage.file "native"')[0]
 config = replace_once(config, '127.0.0.1:4318', f'127.0.0.1:{receiver_port}')
-config = replace_once(config, 'http://192.168.10.137:3100', f'http://127.0.0.1:{loki_port}')
+config = replace_once(config, gate_probe.section('alloy-otlp')['lokiUrl'], f'http://127.0.0.1:{loki_port}')
 config = replace_once(config, 'metrics = [otelcol.exporter.otlphttp.native.input]', 'metrics = []')
 (root / 'alloy.alloy').write_text(config)
 (root / 'loki.yml').write_text(f'''auth_enabled: false

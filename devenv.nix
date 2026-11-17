@@ -340,6 +340,17 @@ let
         ${pkgs.python3}/bin/python scripts/test-fleet-endpoints.py
       '';
 
+  fleetContractTest =
+    gate "fleet-contract-test"
+      (with pkgs; [
+        git
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-fleet-contract.py
+      '';
+
   # acer's Alloy, config and ExecStart from the gate probe, not devenv's packages
   alloyOtlpTest =
     gate "alloy-otlp-test"
@@ -490,6 +501,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-alert-bridge.py
       '';
 
+  dualBootTest =
+    gate "dual-boot-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-dual-boot.py
+      '';
+
   knownHostsTest =
     gate "known-hosts-test"
       (with pkgs; [
@@ -624,6 +645,7 @@ let
     ollamaGpuTest
     llmBenchTest
     alertBridgeTest
+    dualBootTest
     knownHostsTest
     adguardDnsTest
     powerScheduleTest
@@ -632,6 +654,7 @@ let
     delegationTest
     journalCollectorTest
     fleetEndpointsTest
+    fleetContractTest
     caddyEdgeTest
     typedInterfacesTest
     systemChecksTest
@@ -1143,6 +1166,8 @@ in
       task "llm-bench (#493): #492's G1 bench and the capacity run against the fake Ollama, the G1 import and rule, quantile floors, the MSI import, no prompt in an aggregate" llmBenchTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
+    "nixos:dual-boot-test" =
+      task "msi and asus GRUB from windows-dual-boot.nix: the Windows entry chainloads bootmgfw.efi, the ESP is a vfat mount, the seeded ESP breaks fail" dualBootTest;
     "nixos:coordinator-test" =
       task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:coordinator-report-test" =
@@ -1177,6 +1202,8 @@ in
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:fleet-endpoints-test" =
       task "Every paging unit pages sam.fleet.pageUrl, also without runtime-host's sam.workers.ntfyUrl; an empty URL, ntfy off its fleet host and a redefined fleet fact fail" fleetEndpointsTest;
+    "nixos:fleet-contract-test" =
+      task "No file but fleet.nix names the ntfy or Loki port, each port is asserted to its fleet fact, Loki admits the fleet, lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: port 2587, a host removed)" fleetContractTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:platform-records-test" =

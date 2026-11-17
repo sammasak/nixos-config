@@ -31,8 +31,9 @@ check(len(kinds) == 7, f"the helper's kind vocabulary is read ({sorted(kinds)})"
 
 # either black-pi.address = "…" or a black-pi = { address = "…"; … } block
 pi = re.search(r'black-pi(?:\.address| = \{\s*address) = "([0-9.]+)"', (ROOT / "modules/core/fleet.nix").read_text())
-check(pi is not None and f"http://{pi.group(1)}:3100" in HELPER.read_text(),
-      f"the helper's default Loki is black-pi's fleet address ({pi and pi.group(1)})")
+port = re.search(r'loki = \{\s*host = "black-pi";\s*port = ([0-9]+);', (ROOT / "modules/core/fleet.nix").read_text())
+check(pi is not None and port is not None and f"http://{pi.group(1)}:{port.group(1)}" in HELPER.read_text(),
+      f"the helper's default Loki is black-pi's fleet address and sam.fleet.loki.port ({pi and pi.group(1)}, {port and port.group(1)})")
 
 exprs = [t["expr"] for p in json.loads(DASHBOARD.read_text())["panels"] for t in p.get("targets", [])]
 used = {k for e in exprs for k in re.findall(r'kind="([^"]+)"', e)}
