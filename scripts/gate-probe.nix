@@ -240,7 +240,7 @@ let
           c:
           lib.mapAttrs (_: u: u.text) (
             lib.filterAttrs (
-              n: _: lib.hasInfix "-wake." n || lib.hasInfix "-scheduled-shutdown." n
+              n: _: lib.hasInfix "-wake." n || lib.hasInfix "-scheduled-shutdown." n || lib.hasPrefix "wol-" n
             ) c.systemd.units
           );
       in
@@ -276,6 +276,37 @@ let
           );
         };
       };
+
+    # the dual-boot towers' GRUB (modules/hardware/windows-dual-boot.nix): the Windows entry and the ESP assertion's seeds
+    dual-boot = {
+      grub = lib.mapAttrs (_: h: {
+        inherit (h.config.boot.loader.grub) enable extraEntries mirroredBoots;
+        systemdBoot = h.config.boot.loader.systemd-boot.enable;
+      }) hosts;
+      failing = {
+        msi = failing msi;
+        asus = failing hosts.asus-b460m.config;
+        notVfat = failing (
+          extend "msi-ms7758" [ ({ lib, ... }: { fileSystems."/boot".fsType = lib.mkForce "ext4"; }) ]
+        );
+        noMount = failing (
+          extend "asus-b460m" [
+            (
+              { lib, ... }:
+              {
+                boot.loader.grub.mirroredBoots = lib.mkOverride 10 [
+                  {
+                    path = "/boot-nix";
+                    efiSysMountPoint = "/efi";
+                    devices = [ "nodev" ];
+                  }
+                ];
+              }
+            )
+          ]
+        );
+      };
+    };
 
     # lenovo's AdGuard (modules/homelab/adguardhome.nix, nixos-config#503): what it answers the LAN from, and the seeds
     adguard-dns = {

@@ -1,7 +1,8 @@
 """The work-hours power windows (modules/core/power-schedule.nix) as each host renders them: lenovo, the always-on
 waker, sends every host whose fleet entry has a power window its Wake-on-LAN packet at the window's wake, each such host
-powers itself off at its off, and no other host gets either unit. The assertions refuse a window on a host that is not
-marked sleeps, a waker on a sleeping host, and a window host without its NIC's Wake-on-LAN unit."""
+powers itself off at its off and arms Wake-on-LAN on its fleet interface, and no other host gets any of these units.
+The assertions refuse a window on a host that is not marked sleeps, a waker on a sleeping host, and a window host whose
+NIC's Wake-on-LAN is turned off."""
 import sys
 
 import gate_probe
@@ -47,6 +48,18 @@ for host, us in units.items():
               f"{host} powers itself off at {windowed[host]['off']} ({mine})")
     else:
         check(mine == [], f"{host} has no scheduled poweroff ({mine})")
+
+# Wake-on-LAN armed by each window host on its fleet interface, by the module; no other host has a wol unit
+for host, us in units.items():
+    mine = sorted(u for u in us if u.startswith("wol-"))
+    if host in windowed:
+        nic = windowed[host]["interface"]
+        service = us.get(f"wol-{nic}.service", "")
+        check(mine == [f"wol-{nic}.service"] and f"ethtool -s {nic} wol g" in service and "Type=oneshot" in service
+              and "RemainAfterExit=true" in service and "WantedBy=multi-user.target" in service,
+              f"{host} arms Wake-on-LAN on {nic} at boot ({mine})")
+    else:
+        check(mine == [], f"{host} has no Wake-on-LAN unit ({mine})")
 
 # assertions: clean on the real hosts, each seeded break fails with its message
 awake = "modules/core/fleet.nix: asus-b460m has a power window, so it is off by plan: set sleeps = true on its entry."

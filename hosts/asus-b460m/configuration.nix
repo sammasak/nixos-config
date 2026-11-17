@@ -37,6 +37,7 @@ in
 {
   imports = [
     ./hardware-configuration.nix
+    ../../modules/hardware/windows-dual-boot.nix
     ../../modules/homelab/journal-collector.nix
     ../../modules/homelab/ollama-host.nix
     ../../modules/homelab/monitoring/node-exporter.nix
@@ -60,33 +61,6 @@ in
     "nixos-config"
     ".cache/wt"
   ];
-
-  # Dual boot on Windows' 256 MB ESP, too small for systemd-boot's kernels: as msi, only the GRUB loader goes
-  # there, its directory stays on root, and Windows is a hand-written entry (os-prober off).
-  boot.loader.systemd-boot.enable = lib.mkForce false;
-  boot.loader.grub = {
-    enable = true;
-    device = "nodev";
-    efiSupport = true;
-    useOSProber = false;
-    configurationLimit = 5;
-    mirroredBoots = lib.mkForce [
-      {
-        path = "/boot-nix";
-        efiSysMountPoint = "/boot";
-        devices = [ "nodev" ];
-      }
-    ];
-    extraEntries = ''
-      menuentry "Windows Boot Manager" {
-        insmod part_gpt
-        insmod fat
-        insmod chain
-        search --no-floppy --file --set=root /EFI/Microsoft/Boot/bootmgfw.efi
-        chainloader /EFI/Microsoft/Boot/bootmgfw.efi
-      }
-    '';
-  };
 
   # Headless RTX 3070 (GA104, Ampere): videoDrivers only selects the driver, X stays off. The open modules are
   # NVIDIA's recommendation from Turing on; the console moves from nouveau to nvidia-drm's framebuffer.
@@ -173,16 +147,4 @@ in
       touch $out
     '')
   ];
-
-  networking.interfaces.eno1.wakeOnLan.enable = true;
-  systemd.services.wol-eno1 = {
-    description = "Enable Wake on LAN for eno1";
-    after = [ "network-addresses-eno1.service" ];
-    wantedBy = [ "multi-user.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = "${pkgs.ethtool}/sbin/ethtool -s eno1 wol g";
-    };
-  };
 }

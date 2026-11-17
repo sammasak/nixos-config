@@ -282,7 +282,7 @@ either side is only reported.
 - its LAN address in `modules/core/fleet.nix` if another module reads it, and `sleeps = true` there if it
   may be powered off (the store caches skip it; `HostExpectedOff` covers it instead of `NodeChronicNotReady`);
   for a work-hours window also `power` there (MAC, NIC, wake and off times): lenovo wakes it and it powers
-  itself off (`modules/core/power-schedule.nix`, asserted with its `wol-<nic>` unit);
+  itself off, arming Wake-on-LAN on that NIC (`modules/core/power-schedule.nix`, its `wol-<nic>` unit);
 - optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`;
 - the hand-kept host lists in `docs/new-host.md` step 5 (until #480 derives them).
 

@@ -416,6 +416,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-alert-bridge.py
       '';
 
+  dualBootTest =
+    gate "dual-boot-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-dual-boot.py
+      '';
+
   knownHostsTest =
     gate "known-hosts-test"
       (with pkgs; [
@@ -582,6 +592,7 @@ let
           ollamaGpuTest
           llmBenchTest
           alertBridgeTest
+          dualBootTest
           knownHostsTest
           adguardDnsTest
           powerScheduleTest
@@ -960,6 +971,8 @@ in
       task "llm-bench (#493): #492's G1 bench and the capacity run against the fake Ollama, the G1 import and rule, quantile floors, the MSI import, no prompt in an aggregate" llmBenchTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
+    "nixos:dual-boot-test" =
+      task "msi and asus GRUB from windows-dual-boot.nix: the Windows entry chainloads bootmgfw.efi, the ESP is a vfat mount, the seeded ESP breaks fail" dualBootTest;
     "nixos:coordinator-test" =
       task "Coordinator adapters on lenovo only; Codex agent via config_file, no model pin" coordinatorWiringTest;
     "nixos:coordinator-report-test" =
