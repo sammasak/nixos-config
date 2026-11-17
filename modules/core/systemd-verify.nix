@@ -1,18 +1,30 @@
-# Ordering cycles and unit lines systemd ignores (any `<unit>:<line>: ... ignoring` message: an unknown key or section,
-# a value or limit that does not parse, a bad dependency name) fail the build: systemd-analyze verify over this host's
-# units, in the manager's user mode (system mode needs a writable /run/systemd, which the sandbox lacks). User mode
-# refuses DynamicUser= units, which would drop them from the transaction, so they are verified with that line removed.
-# verify exits 0 on both: the check reads its output, and a fixture cycle and a fixture Restartsec= wanted by
-# multi-user.target must be reported through it and default.target first, so a verify that did not walk this host's
-# tree, or a renamed message, fails instead of passing. Measured: the allowlisted user-mode message is the only such
-# line in msi's full tree, in every host's NixOS-generated units, and in asus's packaged and systemd units; the Pis'
-# packaged and systemd units were not measured. Not covered:
-# generator-made units (mounts), the initrd, units only started on demand, and edges only the system manager adds,
-# e.g. the implicit After=sysinit.target of sockets, paths and timers and the default dependencies of declared mounts
-# and swaps, so a cycle through those edges passes.
-{ config, pkgs, ... }:
+# Ordering cycles and unit lines systemd ignores (`<unit>:<line>: ... ignoring`) fail the build: systemd-analyze verify
+# in user mode (system mode needs a writable /run/systemd), DynamicUser= removed (user mode refuses it). verify exits 0
+# on both, so fixtures (a cycle and a Restartsec= under multi-user.target, a Restartsec= beside each Home Manager user's
+# units, which are verified file by file) must be reported first, or the check fails. Not covered: cycles among Home
+# Manager units, keys of the NixOS units in /etc/systemd/user, generator-made units, the initrd, units only started on
+# demand, and edges only the system manager adds (e.g. After=sysinit.target of sockets, paths and timers).
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   trueBin = "${pkgs.coreutils}/bin/true";
+  hmTrees = lib.concatStringsSep " " (
+    lib.mapAttrsToList (
+      user: hm:
+      "${user}=${
+        pkgs.linkFarm "hm-user-units-${user}" (
+          lib.mapAttrsToList (name: f: {
+            name = lib.removePrefix "systemd/user/" name;
+            path = f.source;
+          }) (lib.filterAttrs (name: f: f.enable && lib.hasPrefix "systemd/user/" name) hm.xdg.configFile)
+        )
+      }"
+    ) config.home-manager.users
+  );
 in
 {
   system.checks = [
@@ -72,13 +84,32 @@ in
         found=$(ignored <<<"$output")
         [ -z "$found" ] || { echo "unit lines systemd ignores, reaching $target:"; echo "$found"; exit 1; }
       done
+
+      hmverify() { SYSTEMD_UNIT_PATH="$PWD/hm:" systemd-analyze --user verify --man=no "$PWD/$1" 2>&1 || true; }
+      n=0
+      for tree in ${hmTrees}; do
+        user=''${tree%%=*}
+        rm -rf hm
+        cp -rL "''${tree#*=}" hm
+        chmod -R u+w hm
+        printf '[Service]\nRestartsec=5\nExecStart=${trueBin}\n' > hm/fixture-c.service
+        found=$(hmverify hm/fixture-c.service | ignored)
+        grep -q "fixture-c.service:.*Restartsec" <<<"$found" || {
+          echo "the fixture Restartsec= in $user's Home Manager units was not reported: verify did not load it, or its message changed"
+          exit 1
+        }
+        rm hm/fixture-c.service
+        n=$((n + $(find hm -maxdepth 1 -type f | wc -l)))
+        found=$(for f in hm/*; do if [ -f "$f" ]; then hmverify "$f"; fi; done | ignored)
+        [ -z "$found" ] || { echo "$user's Home Manager unit lines systemd ignores:"; echo "$found"; exit 1; }
+      done
+      [ "$n" -gt 0 ] || { echo "no Home Manager user unit on this host: the user trees are not this host's"; exit 1; }
       touch $out
     '')
 
-    # Every OnCalendar= of this host's timers parses (systemd-analyze calendar): a typo in a schedule otherwise only
-    # shows as a timer systemd refuses at switch time, or one that never fires. A bad and a good fixture spec run
-    # first, so a calendar parser that accepts anything, or cannot run in the sandbox, fails instead of passing.
-    # Covers the NixOS system and user units in /etc; Home Manager's user timers live in ~/.config and are not read.
+    # Every OnCalendar= of this host's NixOS and Home Manager timers parses: a typo otherwise shows only as a timer
+    # systemd refuses at switch time, or one that never fires. A bad and a good fixture spec run first, so a parser
+    # that accepts anything, or does not run in the sandbox, fails instead of passing.
     (pkgs.runCommand "systemd-calendar" { nativeBuildInputs = [ config.systemd.package ]; } ''
       export XDG_RUNTIME_DIR=$PWD/xdg HOME=$PWD/home
       mkdir -p xdg home
@@ -87,14 +118,24 @@ in
       parses 'Mon-Fri 08:30' || { echo "the fixture 'Mon-Fri 08:30' did not parse: systemd-analyze calendar does not run here"; exit 1; }
       etc=${config.system.build.etc}/etc/systemd
       n=0 bad=0
-      for f in "$etc"/system/*.timer "$etc"/system/*.timer.d/*.conf "$etc"/user/*.timer "$etc"/user/*.timer.d/*.conf; do
-        [ -e "$f" ] || continue
+      specs() {
         while IFS= read -r spec; do
           # an empty OnCalendar= resets the list in a drop-in
           [ -n "$spec" ] || continue
           n=$((n + 1))
-          parses "$spec" || { echo "''${f#"$etc"/}: OnCalendar=$spec does not parse"; bad=1; }
-        done < <(sed -n 's/^OnCalendar=//p' "$f")
+          parses "$spec" || { echo "$1: OnCalendar=$spec does not parse"; bad=1; }
+        done < <(sed -n 's/^OnCalendar=//p' "$2")
+      }
+      for f in "$etc"/system/*.timer "$etc"/system/*.timer.d/*.conf "$etc"/user/*.timer "$etc"/user/*.timer.d/*.conf; do
+        [ -e "$f" ] || continue
+        specs "''${f#"$etc"/}" "$f"
+      done
+      for tree in ${hmTrees}; do
+        dir=''${tree#*=}
+        for f in "$dir"/*.timer "$dir"/*.timer.d/*.conf; do
+          [ -e "$f" ] || continue
+          specs "home-manager ''${tree%%=*}: ''${f#"$dir"/}" "$f"
+        done
       done
       [ "$n" -gt 0 ] || { echo "no OnCalendar= in this host's timers: the unit tree is not this host's"; exit 1; }
       [ "$bad" = 0 ] || exit 1
