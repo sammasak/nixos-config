@@ -140,7 +140,7 @@ for mode, dryrun in dryruns.items():
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred)})
         built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c]
