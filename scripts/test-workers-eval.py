@@ -10,6 +10,7 @@ import re
 import socket
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -280,6 +281,10 @@ def prefetch(exprs):
         out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", batch], capture_output=True, text=True)
         if out.returncode == 0:
             EVALUATED.update({e: json.loads(out.stdout)[str(i)] for i, e in enumerate(chunk)})
+        else:
+            # not a check: the cases still run, one process each, so only the speed-up is lost
+            last = (out.stderr.strip().splitlines() or [""])[-1]
+            print(f"prefetch: chunk {start // PREFETCH_CHUNK} fell back (rc {out.returncode}): {last[-300:]}", file=sys.stderr)
 
 
 def stub_expr(case, what=FAILING):
@@ -919,7 +924,7 @@ BLOCKED = (("", True), ("networking.enableIPv6 = false;", False))
 
 
 def main():
-    # every evaluation below that is not expected to fail, in chunks of PREFETCH_CHUNK per process instead of one process
+    # every evaluation below that is not expected to throw, in chunks of PREFETCH_CHUNK per process instead of one process
     # each: the order of the checks, and so of their lines, is unchanged. The TYPED cases must throw, so each stays its own.
     prefetch([stub_expr(c, w) for c, w in [
         ("{ }", FAILING), ("{ }", GUEST), (ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), ("{ }", NO_ROOT), (NONE_DECLARED, NO_ROOT), ("{ }", LIMITS),
