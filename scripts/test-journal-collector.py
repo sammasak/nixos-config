@@ -172,6 +172,9 @@ lines = {
      'status=200 query="{unit=\\"x\\"}" query_hash=1 total_entries=1'): False,
     ("loki.service", 'ts=2026-11-17T21:03:20.3Z caller=spanlogger.go:152 middleware=QueryShard.astMapperware org_id=fake '
      'level=warn msg="failed mapping AST" err="context canceled" query="{job=\\"host-journal\\"}"'): True,
+    # a failed query's own stats line is still info: it goes with the rest
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.4Z caller=metrics.go:285 component=querier org_id=fake '
+     'query="{host=\\"black-pi\\"}" status=500 duration=30s'): False,
     ("loki.service", 'level=error ts=2026-11-17T21:15:09.4Z caller=metrics.go:285 component=querier org_id=fake '
      'query="{host=\\"black-pi\\"}" status=500 err="context deadline exceeded"'): True,
     ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=table_manager.go:195 index-store=tsdb-2024-01-01 '
