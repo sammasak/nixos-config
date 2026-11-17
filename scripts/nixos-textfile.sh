@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # The running NixOS generation as node-exporter textfile metrics (modules/homelab/monitoring/node-exporter.nix runs it
 # at activation). Usage: nixos-textfile.sh DIR SYSTEM PROFILES: SYSTEM is the activated toplevel, PROFILES the
-# directory holding system and system-<n>-link. The generation is the profile's when it is SYSTEM, else the newest
-# link that resolves to SYSTEM (a boot or rollback into an older one); none for a specialisation or a test switch.
+# directory holding system and system-<n>-link. A link is SYSTEM's when its activate script is SYSTEM's: deploy-rs
+# points the profile at an activatable-* buildEnv around the toplevel, never at the toplevel itself. The generation is
+# the profile's when it is SYSTEM, else the newest matching link (a boot or rollback into an older one); none for a
+# specialisation or a test switch.
 set -eu
 dir=$1 system=$(readlink -f "$2") profiles=$3
 mkdir -p "$dir"
+key=$(readlink -f "$system/activate")
 gen=
-if [ "$(readlink -f "$profiles/system")" = "$system" ]; then
-  gen=$(readlink "$profiles/system")
+if [ "$(readlink -f "$profiles/system/activate")" = "$key" ]; then
+  gen=$(basename "$(readlink "$profiles/system")")
 else
   for link in "$profiles"/system-*-link; do
-    [ "$(readlink -f "$link")" = "$system" ] || continue
+    [ "$(readlink -f "$link/activate")" = "$key" ] || continue
     n=${link##*/system-}
     n=${n%-link}
     if [ -z "$gen" ] || [ "$n" -gt "${gen#system-}" ]; then gen=system-$n; fi
