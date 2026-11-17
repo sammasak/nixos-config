@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The shipping collector (scripts/shipping-metrics.py) against a fake GitHub and Loki: open issues split into
 actionable, parked (the policy's repos) and archived (the API's flag); the first verdict against the policy grade; a
-deploy record's flake attribute joined to its host; every section stamped. Then GitHub down: exit 0, no GitHub series
+deploy record's flake attribute joined to its host; PR lead time from
+the oldest own commit's author date; every section stamped. Then GitHub down: exit 0, no GitHub series
 (no 0 in their place), the Loki sections still written and GitHub's last success timestamps carried over. Seeded: a
 name outside METRICS is refused."""
 import http.server
@@ -50,6 +51,9 @@ parked = json.loads(POLICY.read_text())["issues"]["parkedRepos"]["value"][0]
 OPEN = [issue("nixos-config", 1, 10, ["needs-live"]), issue("nixos-config", 2, 50, ["approved"]),
         issue(parked, 3, 100), issue("old", 4, 1000)]
 PRS = [pr(10, 5, 1), pr(11, 30, 2), pr(12, 3, 2.5)]
+# PR 10 is a batch: opened 5 h ago, its lanes' commits authored 40 and 20 h ago; PR 11's oldest commit is on its
+# second page; PR 12 lists no commits, so it falls back to its open time
+COMMITS = {10: [40, 20], 11: [30] * 100 + [60, 31], 12: []}
 COMMENTS = {10: ["Grade: 9/10 (head a)"], 11: ["Grade: 6/10 (head b)", "Grade: 9/10 (head c)"], 12: ["looks fine"]}
 GATES = [f"gate=nixos-qa seconds={100 + i} result={'fail' if i < 5 else 'pass'} sha=x mode=push deferred=0" for i in range(20)]
 DEPLOYS = ["node=lenovo result=ok seconds=9 rolled_back=0 sha=abc1234",
@@ -78,6 +82,9 @@ class Fake(http.server.BaseHTTPRequestHandler):
             body = {"total_count": len(items) if items else (7 if "created:" in s else 4), "items": items}
         elif u.path == "/search/commits":
             body = {"total_count": 1, "items": [{"commit": {"message": 'Revert "x"', "committer": {"date": iso(30)}}}]}
+        elif m := re.match(r"/repos/sammasak/nixos-config/pulls/(\d+)/commits", u.path):
+            page = int(q["page"][0])
+            body = [{"commit": {"author": {"date": iso(h)}}} for h in COMMITS[int(m.group(1))][(page - 1) * 100:page * 100]]
         elif m := re.match(r"/repos/sammasak/nixos-config/issues/(\d+)/comments", u.path):
             body = [{"body": b} for b in COMMENTS[int(m.group(1))]]
         elif u.path == "/repos/sammasak/nixos-config/compare/abc1234...HEAD":
@@ -120,6 +127,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check(m.get("shipping_review_prs_counted") == 2 and m.get("shipping_review_first_pass_ratio") == 0.5
           and m.get("shipping_review_unreviewed_prs") == 1,
           "first verdict against the policy grade; a PR without a verdict is unreviewed, not a pass")
+    check(38.9 < m.get('shipping_pr_lead_time_hours{quantile="0.5"}', 0) < 39.1
+          and 54.1 < m.get('shipping_pr_lead_time_hours{quantile="0.9"}', 0) < 54.3,
+          "lead time runs from the oldest own commit's author date (second page included), not the PR's open time")
     check(m.get("shipping_gate_fail_ratio") == 0.25 and m.get("shipping_gate_runs_counted") == 20,
           "gate fail ratio over the policy's last runs")
     check(m.get('shipping_deploy_lag_commits{host="lenovo",node="lenovo-21CB001PMX"}') == 2

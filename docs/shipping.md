@@ -19,7 +19,7 @@ node-exporter. Its calls are read-only:
 | `shipping_issues_open_labelled{label}` | Actionable issues carrying needs-live, needs-decision, blocked, approved or ready-for-agent |
 | `shipping_issues_opened` / `_closed{window}` | Issues opened and closed in the last 24 h and 7 d, in every repo, parked and archived ones included |
 | `shipping_issue_age_days{quantile}` | Age of the open actionable issues, median and p90 |
-| `shipping_prs_merged`, `shipping_pr_lead_time_hours{quantile}` | PRs merged in 7 d, and their time from open to merge |
+| `shipping_prs_merged`, `shipping_pr_lead_time_hours{quantile}` | PRs merged in 7 d, and their lead time: from the author date of the PR's oldest commit not on its base to the merge (a batch PR is opened after its gate, so its open time would measure the PR, not the work) |
 | `shipping_review_rounds`, `_first_pass_ratio`, `_prs_counted`, `_unreviewed_prs` | `Grade: N/10` comments per PR, over the last reviewed merged PRs; first pass means the first grade reached `review.passGrade` |
 | `shipping_escapes{kind,window}` | Commits starting `Revert "` on default branches, and issues labelled `escape` |
 | `shipping_gate_fail_ratio`, `_runs_counted`, `shipping_gate_seconds` | The last push-mode `nixos-qa` gates |
