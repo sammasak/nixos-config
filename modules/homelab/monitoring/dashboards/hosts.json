@@ -283,7 +283,7 @@
       },
       "targets": [
         {
-          "expr": "max by (node) (node_thermal_zone_temp{node=\"$node\"}) or max by (node) (node_hwmon_temp_celsius{node=\"$node\"})",
+          "expr": "max by (node) (node_thermal_zone_temp{node=\"$node\"} or node_hwmon_temp_celsius{node=\"$node\"})",
           "legendFormat": "{{node}}",
           "instant": true,
           "refId": "A"
@@ -312,7 +312,7 @@
         },
         "overrides": []
       },
-      "description": "Thermal zones where the kernel has them (Pis, laptops), else hwmon sensors (desktop boards)."
+      "description": "The hottest of the thermal zones and hwmon sensors the kernel exposes."
     },
     {
       "id": 8,

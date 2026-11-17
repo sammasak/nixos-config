@@ -1,10 +1,11 @@
 # black-pi's dashboards, as grafana.nix provisions them, against what the fleet exports: the deployed node-exporter
 # command runs on node_exporter's own sysfs/procfs fixtures, so its metric names are this version's with these flags;
-# the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus loads.
-# Each seeded dashboard below must fail scripts/check-grafana-dashboards.py with its own reason.
+# the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus loads; Loki,
+# Alloy and llm-gateway names are string literals in the source of the version each host runs; the OTLP ones are
+# alloy-otlp's allow-list. Each seeded dashboard below must fail scripts/check-grafana-dashboards.py with its own reason.
 { config, lib, ... }:
 let
-  inherit (config.flake.nixosConfigurations) black-pi msi-ms7758;
+  inherit (config.flake.nixosConfigurations) acer-swift black-pi msi-ms7758;
   pi = black-pi.config;
   inherit (pi.homelab.grafana) dashboards;
   hosts = lib.attrNames pi.sam.fleet.hosts;
@@ -18,7 +19,6 @@ let
         lib.filter (c: c.job_name == job) prom.scrape_configs
       )
     );
-  gpuHosts = lib.attrNames (lib.filterAttrs (_: h: h.gpu == "nvidia") pi.sam.fleet.hosts);
   # every fleet host runs the same exporter flags, so msi's command stands for each
   exporterHosts = lib.filterAttrs (
     _: h: h.config.services.prometheus.exporters.node.enable
@@ -31,17 +31,31 @@ let
     ];
   node = msi-ms7758.config.services.prometheus.exporters.node;
   exec = discard msi-ms7758.config.systemd.services.prometheus-node-exporter.serviceConfig.ExecStart;
-  # a scraped job's own metrics, by prefix; the OTLP ones arrive through the receiver
-  prefixes = {
-    llm_gateway_ = "llm-gateway";
-    loki_ = "loki";
-    prometheus_ = "prometheus";
-    alertmanager_ = "alertmanager";
-    grafana_ = "grafana";
-    probe_ = "blackbox";
-    claude_code_ = "otlp";
-    codex_ = "otlp";
-  };
+  acer = acer-swift.config;
+  # the longest prefix first: Alloy's loki.write names sit inside Loki's
+  sources = [
+    {
+      prefix = "llm_gateway_";
+      strip = "llm_gateway_";
+      job = "llm-gateway";
+      src = acer-swift.pkgs.llmGateway.src;
+      ext = "rs";
+    }
+    {
+      prefix = "loki_write_";
+      strip = "";
+      job = "alloy-otlp";
+      src = acer-swift.pkgs.grafana-alloy.src;
+      ext = "go";
+    }
+    {
+      prefix = "loki_";
+      strip = "loki_";
+      job = "loki";
+      src = msi-ms7758.pkgs.grafana-loki.src;
+      ext = "go";
+    }
+  ];
   otlp = lib.elem "--web.enable-otlp-receiver" pi.services.prometheus.extraFlags;
   builtin = [
     "up"
@@ -97,6 +111,10 @@ let
       dashboard = seed "rate(node_no_such_metric_total[5m])" "prometheus";
       reason = "unknown metric node_no_such_metric_total";
     };
+    gateway-typo = {
+      dashboard = seed "rate(llm_gateway_no_such_total[5m])" "prometheus";
+      reason = "unknown metric llm_gateway_no_such_total";
+    };
     # the logind collector is off on every host, so a panel on it would stay empty
     collector-off = {
       dashboard = seed ''node_logind_sessions{node=~"$node"}'' "prometheus";
@@ -104,15 +122,41 @@ let
     };
     unknown-host = {
       dashboard = seed ''up{node="no-such-host"}'' "prometheus";
-      reason = ''host literal node="no-such-host"'';
+      reason = "host literal node='no-such-host'";
     };
+    single-quoted-host = {
+      dashboard = seed "up{node='no-such-host'}" "prometheus";
+      reason = "host literal node='no-such-host'";
+    };
+    # a label the literal check does not know: only the scan for fleet names catches it
     fleet-host-by-hand = {
-      dashboard = seed ''up{node="${lib.head hosts}"}'' "prometheus";
-      reason = "host literal node=\"${lib.head hosts}\"";
+      dashboard = seed ''up{job="${lib.head hosts}"}'' "prometheus";
+      reason = "fleet host ${lib.head hosts} named";
     };
     loki-host-by-hand = {
       dashboard = seed ''{job="host-journal", host="no-such-host"}'' "loki";
-      reason = ''host literal host="no-such-host"'';
+      reason = "host literal host='no-such-host'";
+    };
+    bad-logql = {
+      dashboard = seed ''{job="host-journal"} | json | unwrap'' "loki";
+      reason = "LogQL: ";
+    };
+    variable-query = {
+      dashboard = lib.recursiveUpdate (seed "up" "prometheus") {
+        templating.list = [
+          {
+            name = "node";
+            type = "custom";
+            query = "";
+          }
+          {
+            name = "bad";
+            type = "query";
+            query = "label_values(node_bogus_metric, node)";
+          }
+        ];
+      };
+      reason = "unknown metric node_bogus_metric";
     };
     bad-promql = {
       dashboard = seed "sum(rate(up[5m])" "prometheus";
@@ -159,8 +203,6 @@ in
       checks.grafana-dashboards =
         assert lib.assertMsg (nodesOf "node-exporter" == hosts)
           "grafana-dashboards: the node-exporter targets (${toString (nodesOf "node-exporter")}) are not the fleet's hosts (${toString hosts}), which the node variable lists";
-        assert lib.assertMsg (nodesOf "nvidia-gpu" == gpuHosts)
-          "grafana-dashboards: the nvidia-gpu targets are not the fleet's GPU hosts, which the gpu_node variable lists";
         assert lib.assertMsg
           (
             lib.all (n: exporterHosts ? ${n}) [
@@ -173,9 +215,14 @@ in
         assert lib.assertMsg (lib.hasPrefix "${discard "${pkgs.prometheus-node-exporter}"}/bin/" (
           lib.trim exec
         )) "grafana-dashboards: msi's node-exporter is not this check's prometheus-node-exporter";
-        assert lib.assertMsg (lib.all (j: j == "otlp" && otlp || lib.elem j jobs) (
-          lib.attrValues prefixes
-        )) "grafana-dashboards: a metric prefix names a job black-pi does not scrape";
+        assert lib.assertMsg (otlp && lib.all (s: lib.elem s.job jobs) sources)
+          "grafana-dashboards: a metric source names a job black-pi does not scrape, or its OTLP receiver is off";
+        assert lib.assertMsg (
+          discard pi.services.loki.package.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
+          && lib.hasInfix (discard "${acer-swift.pkgs.grafana-alloy}/bin/alloy") (
+            discard (toString acer.systemd.services.alloy-otlp.serviceConfig.ExecStart)
+          )
+        ) "grafana-dashboards: black-pi's Loki or acer's alloy-otlp is not the source this check reads";
         assert lib.assertMsg (
           !handList.success
         ) "grafana-dashboards: a dashboard listing the node variable's hosts by hand evaluated";
@@ -189,11 +236,16 @@ in
               pkgs.python3
               pkgs.curl
               pkgs.prometheus-node-exporter
+              pkgs.ripgrep
             ];
             inherit promConfig;
             spec = builtins.toJSON {
               inherit dashboards hosts builtin;
-              prefixes = lib.attrNames prefixes;
+              sources = lib.imap0 (i: s: {
+                inherit (s) prefix strip;
+                literals = "literals-${toString i}";
+              }) sources;
+              otlp_allowlist = "${../modules/homelab/monitoring/alloy-otlp.alloy}";
               inherit (prom) rule_files;
               record_sources = [ "${../pkgs/llm-bench/rules.nix}" ];
             };
@@ -236,7 +288,14 @@ in
               echo "grafana-dashboards: node-exporter gave no CPU metrics on the fixtures" >&2
               exit 1
             }
-            check() { python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool node.prom systemd.prom ${self'.checks.gpu-telemetry-exporter}; }
+            ${lib.concatImapStrings (i: s: ''
+              rg --no-filename -o -g '*.${s.ext}' -g '!*_test.go' -g '!vendor/' -g '!tests/' '"[a-z][a-z0-9_]*"' ${s.src} \
+                | tr -d '"' | sort -u > literals-${toString (i - 1)}
+            '') sources}
+            check() {
+              python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom ${self'.checks.gpu-telemetry-exporter}
+            }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"
             for s in seed-*.json; do

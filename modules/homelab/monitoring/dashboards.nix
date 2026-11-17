@@ -1,19 +1,17 @@
 # The provisioned dashboards, parsed, with their host variables filled from sam.fleet.hosts: a dashboard declares
-# `{"name": "node", "type": "custom"}` (or gpu_node) and gets the fleet's hosts as its options, so no dashboard
+# `{"name": "node", "type": "custom"}` and gets the fleet's hosts as its options, so no dashboard
 # lists a host by hand. `dashboards` is what grafana.nix provisions; flake-modules/grafana-dashboards-check.nix checks
 # them and seeds `render`.
 { lib, hosts }:
 let
   derived = {
     node = lib.attrNames hosts;
-    gpu_node = lib.attrNames (lib.filterAttrs (_: h: h.gpu == "nvidia") hosts);
   };
   fill =
     f: v:
     let
       values = derived.${v.name};
       multi = v.multi or false;
-      # a single-select variable starts on the first host, a multi one on All
       current =
         if multi || values == [ ] then
           {
