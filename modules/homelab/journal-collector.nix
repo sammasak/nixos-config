@@ -8,8 +8,8 @@
 #   proxied request); 4xx, 5xx and all non-access lines are kept. Those kept access lines carry request headers into
 #   Loki: X-Claude-Code-Session-Id and user agent in clear, Authorization logged as REDACTED.
 # - loki.service: its info-level per-query lines (caller metrics.go, engine.go or roundtrip.go with a query= field) are
-#   dropped, most of black-pi's volume since every dashboard refresh logs itself; warnings, errors and every other
-#   Loki line are kept.
+#   dropped, most of black-pi's volume since every dashboard refresh logs itself. Lines at warn and error level and
+#   every other Loki line are kept; a failed query's own stats line is info, so it goes too.
 # - After a start-limit hit the unit stays failed; recover with `systemctl reset-failed alloy` and a start.
 # - Loki is unauthenticated to its allowed sources, so these lines never ship: authentik.service and
 #   authentik-worker.service (request lines carry OAuth code and state query strings), user@<uid>.service (every user

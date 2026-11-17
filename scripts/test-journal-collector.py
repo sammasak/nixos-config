@@ -177,6 +177,9 @@ lines = {
     ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=table_manager.go:195 index-store=tsdb-2024-01-01 '
      'msg="get or create table" found=true table=loki_index_20774'): True,
     ("loki.service", 'level=info ts=2026-11-17T21:00:00Z caller=roundtrip.go:96 msg="splitting by interval" interval=30m'): True,
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=roundtrip.go:412 org_id=fake msg="executing query" type=range '
+     'query="{host=\\"black-pi\\"}" length=10m0s step=2000'): False,
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=retry.go:95 org_id=fake msg="retrying" query="{host=\\"x\\"}"'): True,
     ("loki.service", "level=info ts=2026-11-17T21:00:00Z caller=main.go:126 msg=\"Starting Loki\" version=3.5.0"): True,
     ("sshd.service", 'level=info ts=2026-11-17T21:15:09.4Z caller=metrics.go:285 component=frontend query="{x}" status=200'): True,
 }
