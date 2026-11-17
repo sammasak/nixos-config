@@ -287,16 +287,18 @@ let
       ''
         ${pkgs.python3}/bin/python scripts/test-system-checks.py
       '';
-  dryActivateTest =
-    gate "dry-activate-test"
+  deployRecipesTest =
+    gate "deploy-recipes-test"
       (with pkgs; [
         python3
         bash
         just
         coreutils
+        gnugrep
+        gnused
       ])
       ''
-        ${pkgs.python3}/bin/python scripts/test-dry-activate.py
+        ${pkgs.python3}/bin/python scripts/test-deploy-recipes.py
       '';
   platformRecordsTest =
     gate "platform-records-test"
@@ -555,7 +557,7 @@ let
           alloyOtlpTest
           caddyEdgeTest
           systemChecksTest
-          dryActivateTest
+          deployRecipesTest
           systemdCalendarTest
           platformRecordsTest
           authentikAkTest
@@ -953,8 +955,8 @@ in
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
     "nixos:system-checks-test" =
       task "just checks against stub nix/ssh: lists built or substituted, and refuses an empty list, a non-input, an unreachable host, a failed build and a still-invalid check" systemChecksTest;
-    "nixos:dry-activate-test" =
-      task "just dry-activate against stub nix/ssh: a seeded failing dry activation exits non-zero though deploy-rs reports success, a passing one exits 0" dryActivateTest;
+    "nixos:deploy-recipes-test" =
+      task "just deploy and dry-activate against stub nix/ssh/systemctl: a looping unit fails the post-deploy check, a failed dry activation or closure diff fails dry-activate though deploy-rs reports success" deployRecipesTest;
     "nixos:caddy-edge-test" =
       task "acer's Caddy edge, as caddy adapt reads it: admin off, every name routed, forward auth before chat and grafana, otlp allowlisted, llm-gateway /v1 only" caddyEdgeTest;
     "nixos:authentik-ak-test" =

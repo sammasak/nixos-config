@@ -53,7 +53,7 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # exit code if it failed: it catches a host left degraded, a unit in a restart
 # loop or the host not on the system profile's generation, which deploy-rs's own
 # rollback does not judge (a unit that fails after activation reported success;
-# scripts/post-deploy-check.sh, tests/post-deploy-check-vm.nix). It also lists
+# scripts/post-deploy-check.sh, tests/post-deploy-check-vm.nix, scripts/test-deploy-recipes.py). It also lists
 # condition-skipped units without failing. It rolls nothing back, and a host
 # degraded for an unrelated reason fails every deploy until fixed.
 [arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|asus-b460m|black-pi|naked-pi")]
@@ -96,7 +96,7 @@ deploy HOST:
 # diff` only sees lenovo. deploy-rs ignores the dry activation's exit status
 # ("Completed dry-activate!" proves nothing), so the recipe runs the same
 # switch-to-configuration dry-activate once more over ssh, quiet unless it fails,
-# and exits non-zero if it does (scripts/test-dry-activate.py). Not side effect
+# and exits non-zero if it does (scripts/test-deploy-recipes.py). Not side effect
 # free: the full build runs where a deploy builds (acer and the Pis on
 # themselves, lenovo in nix-daemon outside the cap), the closure stays on the
 # target without a GC root, and root runs the pre-switch checks and the dry
@@ -111,8 +111,9 @@ dry-activate HOST:
     top=$(systemd-run --user --scope -q {{memcap}} nix eval --raw .#nixosConfigurations.{{HOST}}.config.system.build.toplevel.outPath); \
       target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname); \
       rc=0; out=$(ssh -o StrictHostKeyChecking=yes "deploy@$target" sudo "$top/bin/switch-to-configuration" dry-activate 2>&1) || rc=$?; \
-      ssh -o StrictHostKeyChecking=yes "deploy@$target" nix store diff-closures /run/current-system "$top"; \
-      [ "$rc" -eq 0 ] || { printf '%s\n' "$out" >&2; echo "dry-activate: the dry activation of {{HOST}} failed (exit $rc), output above" >&2; exit 1; }
+      diff=0; ssh -o StrictHostKeyChecking=yes "deploy@$target" nix store diff-closures /run/current-system "$top" || diff=$?; \
+      [ "$rc" -eq 0 ] || { printf '%s\n' "$out" >&2; echo "dry-activate: the dry activation of {{HOST}} failed (exit $rc), output above" >&2; exit 1; }; \
+      [ "$diff" -eq 0 ] || { echo "dry-activate: the closure diff on {{HOST}} failed (exit $diff)" >&2; exit 1; }
 
 # deploy and dry-activate run this first: a toplevel fetched from a store cache skips its build inputs, so without it
 # no line shows that HOST's system.checks ran for this closure. Only the checks are realised, on the build host.
