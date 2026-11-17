@@ -74,7 +74,11 @@ let
             series = ''shipping_prs_merged{window="7d"}'';
             values = "${n merged}x${n (2 * fallbackFor + 30)}";
           }
-          # every PR also counted under another reason: the rule must read http_error alone
+          # every PR also counted under another reason and another window: the rule must read 7 d http_error alone
+          {
+            series = ''shipping_pr_lead_time_fallbacks{reason="http_error",window="30d"}'';
+            values = "${n merged}x${n (2 * fallbackFor + 30)}";
+          }
           {
             series = ''shipping_pr_lead_time_fallbacks{reason="no_commits",window="7d"}'';
             values = "${n merged}x${n (2 * fallbackFor + 30)}";
