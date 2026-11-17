@@ -116,7 +116,7 @@ in
     };
   };
   # Caddy's upstream, from the listener table: a connection would start the app (a ~50 s cold start), and black-pi's
-  # probe sees only forward auth's 302. EdgeSocketDown (rules/homelab.yaml) reads the metric.
+  # probe sees only forward auth's 302. EdgeSocketDown (modules/homelab/monitoring/rules/homelab.yaml) reads the metric.
   systemd.services.open-webui-edge-check = {
     path = [ pkgs.iproute2 ];
     serviceConfig = {
