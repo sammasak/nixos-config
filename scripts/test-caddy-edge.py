@@ -3,7 +3,7 @@ socket only caddy may write to, every name has its route and backend, chat and g
 their backend with the five X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only,
 open-webui listens on the edge socket alone, the apex and any other name under the wildcard are 404, herman is
 its Nix build with the Cache-Control matrix and SPA fallback of its deploy/nginx.conf, and the metrics server is
-plain HTTP on the fleet address alone, serving /metrics only, which black-pi scrapes."""
+plain HTTP on its own port, serving /metrics only, which black-pi scrapes at the fleet address."""
 import json
 import subprocess
 import sys
@@ -61,7 +61,8 @@ check(any("services.caddy" in m and "open-webui" in m for m in P["failing"]["noC
       f"the open-webui edge socket without Caddy is rejected {P['failing']['noCaddy']}")
 
 servers = config["apps"]["http"]["servers"]
-metrics_listen = f"{P['edgeMetrics']['address']}:{P['edgeMetrics']['port']}"
+metrics_listen = f":{P['edgeMetrics']['port']}"
+metrics_target = f"{P['edgeMetrics']['address']}:{P['edgeMetrics']['port']}"
 metrics = {k: v for k, v in servers.items() if metrics_listen in v.get("listen", [])}
 servers = {k: v for k, v in servers.items() if k not in metrics}
 check(len(metrics) == 1 and all(v["listen"] == [metrics_listen] for v in metrics.values()),
@@ -72,7 +73,7 @@ check([h for h, _ in served] == ["metrics"] and all(not v.get("tls_connection_po
       f"the metrics server serves Caddy's metrics alone, over plain HTTP {served}")
 scraped = [t for j in json.loads(P["prometheusConfig"])["scrape_configs"] if j["job_name"] == "caddy"
            for sc in j["static_configs"] for t in sc["targets"]]
-check(scraped == [metrics_listen], f"black-pi scrapes it {scraped}")
+check(scraped == [metrics_target], f"black-pi scrapes it {scraped}")
 routes = {}
 for server in servers.values():
     for route in server["routes"]:

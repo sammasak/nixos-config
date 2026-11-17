@@ -88,7 +88,7 @@ in
     # 80/tcp, 443/tcp and 443/udp on every interface
     openFirewall = true;
     # a TCP admin API would let any local process load a config; with none, a change restarts (every site drops)
-    # per_host: each request's Host as a label, one series set per public name
+    # per_host: the Host header as a label; plain-HTTP requests (the :80 redirects, the scrapes) fall under _other
     globalConfig = ''
       admin ${adminSocket}
       grace_period 10s
@@ -123,9 +123,10 @@ in
           logFormat = "output file ${config.services.caddy.logDir}/access-unserved.log";
           extraConfig = "respond 404";
         };
-        # plain HTTP on the fleet address, for black-pi's scrape alone (the rule below)
-        "http://${hosts.${edgeMetrics.host}.address}:${toString edgeMetrics.port}" = {
-          listenAddresses = [ hosts.${edgeMetrics.host}.address ];
+        # plain HTTP for black-pi's scrape alone (the rule below), on every address: bound to the DHCP Wi-Fi address,
+        # a start before the address exists exits 1, which the unit never restarts (RestartPreventExitStatus), and
+        # every name would stay down
+        "http://:${toString edgeMetrics.port}" = {
           logFormat = "output discard";
           extraConfig = "metrics /metrics";
         };
@@ -167,7 +168,7 @@ in
       message = "modules/homelab/edge.nix runs on ${config.networking.hostName}, but sam.fleet.edge is ${config.sam.fleet.edge}: the DNS rewrite and the OTLP relays would point at the wrong host.";
     }
     {
-      assertion = edgeMetrics.host == config.sam.fleet.edge && anySourceTcp fw [ edgeMetrics.port ] == [ ];
+      assertion = edgeMetrics.host == config.sam.fleet.edge && fw.enable && anySourceTcp fw [ edgeMetrics.port ] == [ ];
       message = "modules/homelab/edge.nix: sam.fleet.edgeMetrics must be on the edge host (${config.sam.fleet.edge}), and port ${toString edgeMetrics.port} out of allowedTCPPorts: only black-pi is admitted.";
     }
     {
