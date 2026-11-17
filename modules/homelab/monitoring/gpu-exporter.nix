@@ -1,6 +1,7 @@
 # GPU telemetry for a host whose sam.fleet entry says gpu = "nvidia": upstream's nvidia_gpu_exporter on the fleet
 # address, for black-pi's nvidia-gpu job alone. It runs the host driver's own nvidia-smi per scrape, so it needs the
-# NVIDIA driver; the fields it asks for are checked against that driver at build (flake-modules/llm-bench.nix).
+# NVIDIA driver. The build checks the fields against the exporter and a fake nvidia-smi (flake-modules/llm-bench.nix);
+# a field the real driver refuses shows only live, as GpuTelemetryDown.
 { config, lib, ... }:
 let
   inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;

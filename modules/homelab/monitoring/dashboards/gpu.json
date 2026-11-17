@@ -168,7 +168,32 @@
       ],
       "fieldConfig": {
         "defaults": {},
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -326,7 +351,7 @@
       },
       "targets": [
         {
-          "expr": "sum without (stat) (llm_bench:decode_tokens_per_second)",
+          "expr": "llm_bench:decode_tokens_per_second{stat=\"p50\"}",
           "legendFormat": "{{node}}",
           "format": "table",
           "instant": true,
@@ -340,7 +365,22 @@
         },
         "overrides": []
       },
-      "description": "Tokens per second from the committed llm-bench results (pkgs/llm-bench/scorecard); Ollama exports no live rate."
+      "description": "Median tokens per second from the committed llm-bench results (pkgs/llm-bench/scorecard); Ollama exports no live rate.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "stat": true
+            },
+            "renameByName": {
+              "Value": "tokens/s"
+            }
+          }
+        }
+      ]
     },
     {
       "id": 10,
