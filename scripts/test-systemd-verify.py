@@ -82,6 +82,8 @@ for what, text, line in [
     ("a value that does not parse", "[Service]\nType=simpel\nExecStart=/bin/true\n", "Failed to parse Type=simpel"),
     ("a memory limit that does not parse", "[Service]\nMemoryMax=8Gb\nExecStart=/bin/true\n", "Invalid memory limit '8Gb'"),
     ("a CPU quota that does not parse", "[Service]\nCPUQuota=800\nExecStart=/bin/true\n", "Invalid CPU quota '800'"),
+    ("a path that is not absolute (message without 'ignoring')", "[Service]\nWorkingDirectory=relative\nExecStart=/bin/true\n",
+     "WorkingDirectory= path is not absolute"),
     ("a bad dependency name", "[Unit]\nOnFailure=not a unit\n[Service]\nExecStart=/bin/true\n", "Failed to add dependency on not"),
 ]:
     rc, out, made = run({"msi-wake.service": text})
@@ -119,7 +121,7 @@ rc, out, made = run({}, skips)
 check(rc != 0 and not made and "the fixture Restartsec= in lukas's Home Manager units was not reported" in out,
       f"seeded: a check that does not verify the user fixture fails, not passing the users ({rc}, {out.strip()!r})")
 
-blind = body.replace("':[0-9]+: .*ignoring'", "':[0-9]+: .*ignored'")
+blind = body.replace("':[0-9]+: |has a bad", "':[0-9]+: .*ignored|has a bad")
 check(blind != body, "the check's pattern is found to blind it")
 rc, out, made = run({"msi-wake.service": "[Service]\nRestartsec=5\nExecStart=/bin/true\n"}, blind)
 check(rc != 0 and not made and "the fixture Restartsec= under multi-user.target was not reported" in out,

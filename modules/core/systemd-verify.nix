@@ -1,4 +1,4 @@
-# Ordering cycles and unit lines systemd ignores (`<unit>:<line>: ... ignoring`) fail the build: systemd-analyze verify
+# Ordering cycles and unit lines systemd rejects or ignores (any `<unit>:<line>: ...` parse message) fail the build: systemd-analyze verify
 # in user mode (system mode needs a writable /run/systemd), DynamicUser= removed (user mode refuses it). verify exits 0
 # on both, so fixtures (a cycle and a Restartsec= under multi-user.target, a Restartsec= beside each Home Manager user's
 # units, which are verified file by file) must be reported first, or the check fails. Not covered: cycles among Home
@@ -51,15 +51,19 @@ in
       cycles() { grep -E 'Found ordering cycle|deleted to break ordering cycle' || true; }
       # allowlist: user mode refuses a system action (reboot, poweroff, soft-reboot-force, ...) in JobTimeoutAction=,
       # SuccessAction= and FailureAction= (27 lines in systemd's own units); the system manager, which runs them, accepts it
-      ignored() { grep -Ei ':[0-9]+: .*ignoring' | grep -Ev ': [A-Za-z]+Action= specified as user mode action, ignoring' || true; }
+      # every <file>:<line>: message systemd logs while parsing (unknown key or section, Failed to parse, a path that is not
+      # absolute: not all say "ignoring") and the "bad unit file setting" verdict that follows a refused unit
+      ignored() { grep -Ei ':[0-9]+: |has a bad unit file setting' | grep -Ev ': [A-Za-z]+Action= specified as user mode action, ignoring' || true; }
 
       printf '[Unit]\nWants=fixture-b.service\nAfter=fixture-b.service\n[Service]\nExecStart=${trueBin}\n' > units/fixture-a.service
       printf '[Unit]\nAfter=fixture-a.service\n[Service]\nExecStart=${trueBin}\n' > units/fixture-b.service
       printf '[Service]\nRestartsec=5\nExecStart=${trueBin}\n' > units/fixture-c.service
+      printf '[Service]\nWorkingDirectory=relative\nExecStart=${trueBin}\n' > units/fixture-d.service
       wants=units/multi-user.target.wants
       chmod u+w "$wants"
       ln -s ../fixture-a.service "$wants/fixture-a.service"
       ln -s ../fixture-c.service "$wants/fixture-c.service"
+      ln -s ../fixture-d.service "$wants/fixture-d.service"
       for target in multi-user.target default.target; do
         output=$(verify "$target")
         found=$(cycles <<<"$output")
@@ -74,8 +78,13 @@ in
           [ -z "$found" ] || { echo "ignored lines it did report:"; echo "$found"; }
           exit 1
         }
+        # a parse error whose message does not say "ignoring" must be reported too
+        grep -q "fixture-d.service:.*WorkingDirectory" <<<"$found" || {
+          echo "the fixture WorkingDirectory=relative under $target was not reported: the pattern misses systemd's parse errors that do not say ignoring"
+          exit 1
+        }
       done
-      rm "$wants/fixture-a.service" "$wants/fixture-c.service" units/fixture-a.service units/fixture-b.service units/fixture-c.service
+      rm "$wants/fixture-a.service" "$wants/fixture-c.service" "$wants/fixture-d.service" units/fixture-[abcd].service
 
       for target in multi-user.target default.target; do
         output=$(verify "$target")
