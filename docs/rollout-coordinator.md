@@ -15,7 +15,7 @@ agent, so the Codex coordinator is bounded by its instructions and Codex's own s
 ## Wake-up timer (lenovo only)
 
 `sam.herdr.coordinatorWakeup.enable` (options in `modules/core/agent-options.nix`, unit in
-`modules/programs/cli/coordinator-wakeup.nix`) installs the user units `coordinator-wakeup.timer` and `.service`,
+`modules/programs/cli/coordinator-wakeup.nix`) installs the user units `coordinator-wakeup.timer` and `.service`, the `platform-delivery-record` timer (06:30),
 plus the report timers `coordinator-report-daily` (03:00, `coord:report:daily` for yesterday) and
 `coordinator-report-fortnight` (Mondays 07:00; on even ISO weeks it renders `coord:report:weekly` for each week since
 the previous even week, that one included; on odd weeks it does nothing). A host without `sam.herdr.machines`, or a worker, fails
@@ -37,6 +37,9 @@ pinned word for word by `scripts/test-coordinator-wiring.py`:
 | Herdr reads | `herdr machine list\|status`, `herdr agent list\|get\|read\|wait` | as typed; the `herdr --machine` deny is textual, so the trailing `--machine <label>` form of these read commands still reaches a saved machine (read-only) |
 | `cd` | into `~/claude-code-skills` | |
 | `Read` | the checkout and `~/.local/state/coordinator/` | |
+
+The unattended session acts under ROLE.md's Autonomy rule: no confirmation per handoff, and merges are not asked
+of the owner (owner decision, sammasak/skills#28; the wake prompt in `coordinator-wakeup.nix` says so).
 
 ## Owner skills config
 
