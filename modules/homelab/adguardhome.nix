@@ -23,8 +23,8 @@ let
   # DoH, on this address's IP too (internal/home/web.go), so it is 0: no DoH; DNS and DoT bind dns.bind_hosts
   webPort = 3003;
   webAddress = "127.0.0.1:${toString webPort}";
-  # nixos-config#503: every fleet name answers its LAN address, and none is served as loopback (NixOS maps this
-  # host's own name to 127.0.0.2 in /etc/hosts, which AdGuard would otherwise answer the whole LAN from)
+  # every fleet name answers its LAN address, and none is served as loopback (NixOS maps this host's own name to
+  # 127.0.0.2 in /etc/hosts, which AdGuard would otherwise answer the whole LAN from)
   fleet = config.sam.fleet.hosts;
   loopback = a: lib.hasPrefix "127." a || a == "::1";
   served = config.services.adguardhome.settings;
@@ -119,6 +119,48 @@ in
           touch $out
         ''
       )
+      # the declared settings, served: AdGuard runs in the sandbox on loopback (TLS off, no upstream reachable) and must
+      # answer each fleet name, single-label and in mixed case as a client may send it, with its fleet address
+      (pkgs.runCommand "adguardhome-fleet-names"
+        {
+          nativeBuildInputs = [
+            config.services.adguardhome.package
+            pkgs.dnsutils
+          ];
+        }
+        ''
+          install -m 0600 ${
+            (pkgs.formats.yaml { }).generate "AdGuardHome.yaml" (
+              lib.recursiveUpdate served {
+                http.address = "127.0.0.1:13003";
+                dns = {
+                  bind_hosts = [ "127.0.0.1" ];
+                  port = 15353;
+                };
+                tls.enabled = false;
+              }
+            )
+          } AdGuardHome.yaml
+          AdGuardHome -c AdGuardHome.yaml -w "$TMPDIR" --no-check-update > adguard.log 2>&1 &
+          pid=$!
+          ask() { dig +time=1 +tries=1 +short -p 15353 @127.0.0.1 "$1" A; }
+          for _ in $(seq 60); do [ -n "$(ask '${lib.head (lib.attrNames fleet)}')" ] && break; sleep 0.5; done
+          bad=0
+          ${lib.concatStrings (
+            lib.mapAttrsToList (name: h: ''
+              for q in ${name} ${lib.toUpper name} ${lib.toLower name}; do
+                got=$(ask "$q" | tr '\n' ' '); [ "$got" = "${h.address} " ] || { echo "$q answered '$got', not ${h.address}"; bad=1; }
+              done
+            '') fleet
+          )}
+          # a name with no rewrite must not borrow a fleet address: the answers above are the rewrites', not a catch-all
+          got=$(ask not-a-fleet-host | tr '\n' ' ')
+          case " $got" in *" 192.168."*) echo "not-a-fleet-host answered '$got'"; bad=1 ;; esac
+          kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+          [ "$bad" = 0 ] || { echo "--- AdGuard log"; tail -n 20 adguard.log; exit 1; }
+          touch $out
+        ''
+      )
     ];
 
     security.acme.certs.${dnsDomain} = mkIf cfg.tls.enable {
@@ -150,7 +192,7 @@ in
           # (40 at once from acer: 20 fail with "Could not resolve host").
           ratelimit = 0;
           # this host's /etc/hosts maps its own name to 127.0.0.2; answering the LAN from it sent every host's ssh to
-          # itself (nixos-config#503). The fleet's names come from the rewrites below instead.
+          # itself. The fleet's names come from the rewrites below instead.
           hostsfile_enabled = false;
         };
 
