@@ -72,14 +72,19 @@ in
       type = types.attrsOf (
         types.submodule {
           options = {
-            max = mkOption { type = size; };
+            max = mkOption {
+              type = size;
+              description = "The unit's MemoryMax, the hard cap counted in the budget's sum.";
+            };
             high = mkOption {
               type = types.nullOr size;
               default = null;
+              description = "The unit's MemoryHigh, where the kernel starts reclaiming and throttling it; null sets none.";
             };
             swapMax = mkOption {
               type = types.nullOr size;
               default = null;
+              description = "The unit's MemorySwapMax; null sets none (the systemd default, no swap limit).";
             };
           };
         }

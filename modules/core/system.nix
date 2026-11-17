@@ -28,7 +28,7 @@ in
 
           hostname = mkOption {
             type = types.str;
-            description = "System hostname.";
+            description = "Becomes networking.hostName; also the key into sam.fleet.hosts and, lowercased, host.name in telemetry.";
           };
 
           devTools = mkOption {
@@ -278,7 +278,7 @@ in
     # dependency in unannounced. With it false the predicate is the real gate:
     # an unexpected unfree package fails eval, by name, at review time.
     #
-    # The list below is complete: all five hosts evaluate with it.
+    # The list below is complete: every host evaluates with it.
     # Redistributable *firmware* is NOT gated here:
     # hardware.enableRedistributableFirmware goes through nixpkgs' separate
     # `allowUnfreeRedistributableFirmware` knob, so no allowlistedLicenses

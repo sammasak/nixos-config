@@ -1,8 +1,8 @@
 # NixOS Configuration
 
-One flake that builds and deploys a five-host homelab: two laptops, a tower
-and two Raspberry Pis, sharing one user and one Home Manager tree. Four of the
-hosts run the homelab's services as NixOS units; the fifth is a Wi-Fi lab appliance. It is built with
+One flake that builds and deploys a six-host homelab: two laptops, two towers
+and two Raspberry Pis, sharing one user and one Home Manager tree. Five of the
+hosts run the homelab's services as NixOS units; the sixth is a Wi-Fi lab appliance. It is built with
 flake-parts and pushed with deploy-rs from the daily-driver laptop.
 
 ## Hosts

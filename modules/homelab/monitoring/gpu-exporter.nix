@@ -18,7 +18,7 @@ in
   options.homelab.gpuTelemetry.fields = lib.mkOption {
     type = lib.types.listOf lib.types.str;
     readOnly = true;
-    # nvidia-smi --query-gpu names: one series each, for the scorecard (pkgs/llm-bench) and the dashboard
+    description = "The nvidia-smi --query-gpu field names the exporter asks for: one series each, for the scorecard (pkgs/llm-bench) and the dashboard.";
     default = [
       "name"
       "uuid"
