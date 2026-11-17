@@ -23,9 +23,11 @@ let
   exporterHosts = lib.filterAttrs (
     _: h: h.config.services.prometheus.exporters.node.enable
   ) config.flake.nixosConfigurations;
+  # a textfile directory adds only the metrics of its own files (lenovo's shipping_* are checked by shipping-check.nix),
+  # so those flags are left out of the comparison
   flagsOf =
     c: with c.services.prometheus.exporters.node; [
-      extraFlags
+      (lib.filter (f: !lib.hasPrefix "--collector.textfile.directory=" f) extraFlags)
       enabledCollectors
       disabledCollectors
     ];
