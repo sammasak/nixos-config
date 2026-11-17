@@ -5,12 +5,14 @@ groups:
       # One series per node that may be off right now: a host the fleet
       # marks sleeps (modules/core/fleet.nix, the sleeps label on its
       # node-exporter target), at any time, except msi: it powers off Mon-Fri
-      # 21:00 and is woken Mon-Fri 09:00 Europe/Stockholm
-      # (modules/homelab/msi-power-schedule.nix), so off outside that window
-      # is an outage. PromQL time is UTC and has no time zone, so msi's
-      # window is the union of both seasons: 19:00 to 08:30 UTC plus Saturday
-      # and Sunday. That is one hour early in winter evenings, and up to 10:30
-      # local in summer mornings; 08:30 gives the exporter time to come up.
+      # 21:00 and is woken Mon-Fri 08:30 Europe/Stockholm (its power entry in
+      # modules/core/fleet.nix, modules/core/power-schedule.nix), so off outside
+      # that window is an outage. asus-b460m has the same window but stays
+      # planned-off at any time here: the owner also powers it off by hand.
+      # PromQL time is UTC and has no time zone, so msi's window is the union
+      # of both seasons: 19:00 to 08:30 UTC plus Saturday and Sunday. That is
+      # one hour early in winter evenings, and 08:30 UTC leaves the wake an
+      # hour (winter) or two (summer) to bring the exporter up.
       # Recorded before the alerts below, which this group evaluates after it.
       - record: homelab:node:planned_off
         expr: |
@@ -52,6 +54,21 @@ groups:
         annotations:
           summary: "Host {{ $labels.node }} has been unreachable for 15+ minutes"
           description: "Prometheus on black-pi has not scraped node-exporter on {{ $labels.node }} for 15 minutes: the host is down, off the LAN, or its exporter stopped."
+
+      - alert: GpuTelemetryDown
+        # A GPU host that is up (its node-exporter answers) while its GPU
+        # exporter does not: the driver or the exporter failed. Off, it says
+        # nothing. It carries node, so another host's planned power-off does
+        # not inhibit it, as it does TargetDown{job="nvidia-gpu"}.
+        # for: under TargetDown's 10m, so inhibit rule 3 (../alertmanager.nix) mutes it before it notifies
+        expr: max by (node) (up{job="nvidia-gpu"} == 0) and on (node) max by (node) (up{job="node-exporter"} == 1)
+        for: 5m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "GPU telemetry on {{ $labels.node }} is down while the host is up"
+          description: "black-pi has not scraped nvidia-gpu-exporter on {{ $labels.node }} for 5 minutes although its node-exporter answers. Check systemctl status prometheus-nvidia-gpu-exporter and nvidia-smi on the host, and its kernel journal for NVRM Xid lines."
 
       - alert: NodeOOMKill
         expr: increase(node_vmstat_oom_kill{job="node-exporter"}[15m]) > 0

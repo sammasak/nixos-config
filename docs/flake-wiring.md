@@ -89,7 +89,7 @@ inside D.
      lenovo = { hostDir = "lenovo-21CB001PMX"; roles = [ "base" "laptop" "homelab-server" ]; deploy = { hostname = "localhost"; remoteBuild = false; }; };
      # lenovo, memory-constrained, has crashed building these closures.
      acer-swift = { roles = [ "base" "laptop" "homelab-agent" "runtime-host" ]; deploy.remoteBuild = true; };
-     # Same reason; reachable only in its Mon-Fri ~09:00-21:00 power window.
+     # Same reason; reachable only in its Mon-Fri ~08:30-21:00 power window.
      msi-ms7758 = { roles = [ "base" "homelab-agent" "runtime-host" ]; deploy.remoteBuild = true; };
      # lenovo has no aarch64 builder; untrusted lukas is enough (.drv and sources are CA paths).
      black-pi = { roles = [ "base" "homelab-agent" ]; deploy.remoteBuild = true; };

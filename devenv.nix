@@ -365,6 +365,21 @@ let
         ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
       '';
 
+  # the llm-bench harness and #492's G1 bench against the fake Ollama; no nix: the rules and the exporter are flake checks
+  llmBenchTest =
+    gate "llm-bench-test"
+      (with pkgs; [
+        python3
+        bash
+        curl
+        jq
+        git
+        coreutils
+      ])
+      ''
+        ${pkgs.python3}/bin/python -I scripts/test-llm-bench.py
+      '';
+
   alertBridgeTest =
     gate "alert-bridge-test"
       (with pkgs; [
@@ -385,6 +400,26 @@ let
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-ssh-known-hosts.py
+      '';
+
+  systemdCalendarTest =
+    gate "systemd-calendar-test"
+      (with pkgs; [
+        python3
+        systemd
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-systemd-calendar.py
+      '';
+
+  powerScheduleTest =
+    gate "power-schedule-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-power-schedule.py
       '';
 
   buildBoundsTest =
@@ -499,14 +534,17 @@ let
           ollamaPortforwardTest
           ollamaPullPinnedTest
           ollamaGpuTest
+          llmBenchTest
           alertBridgeTest
           knownHostsTest
+          powerScheduleTest
           buildBoundsTest
           delegationTest
           journalCollectorTest
           alloyOtlpTest
           caddyEdgeTest
           systemChecksTest
+          systemdCalendarTest
           platformRecordsTest
           authentikAkTest
           switchSafetyTest
@@ -867,6 +905,8 @@ in
       task "ollama-pull-pinned: a tag at its pin is left alone, a moved tag is removed again and fails the loader" ollamaPullPinnedTest;
     "nixos:ollama-gpu-test" =
       task "A CUDA Ollama build without hardware.graphics is rejected (it would run on the CPU)" ollamaGpuTest;
+    "nixos:llm-bench-test" =
+      task "llm-bench (#493): #492's G1 bench and the capacity run against the fake Ollama, the G1 import and rule, quantile floors, the MSI import, no prompt in an aggregate" llmBenchTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
     "nixos:coordinator-test" =
@@ -883,6 +923,10 @@ in
       task "sam.claude.telemetry: Claude exports through the local relay with session and repository attributes; emit-work-ref.sh only when on and pinned" harnessTelemetryTest;
     "nixos:known-hosts-test" =
       task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
+    "nixos:systemd-calendar-test" =
+      task "The systemd-calendar check passes parsing timer specs and fails, naming the timer, on a bad one (fixture trees)" systemdCalendarTest;
+    "nixos:power-schedule-test" =
+      task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =

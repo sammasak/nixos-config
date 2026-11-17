@@ -18,6 +18,7 @@
     ../core/fonts.nix
     ../core/sops.nix
     ../core/resource-hygiene.nix
+    ../core/memory-budget.nix
     ../core/store-cache.nix
     ../homelab/native-otel-relay.nix
     ../themes/Catppuccin # Stylix: off when headless under runtime-host, always off under rf-lab

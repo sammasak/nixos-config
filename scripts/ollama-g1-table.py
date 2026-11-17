@@ -4,7 +4,8 @@ Reads the bench's g1-*.jsonl and the nvidia-smi logs (vram-*.csv, written on the
 VRAM at load is the peak over the cold runs, steady state the median over the warm runs, headroom the card's total
 minus the warm peak. G1 for a one-client GPU row: headroom >= 768 MiB at 4096, every layer on the GPU (gpu_share 1),
 and decode tok/s p50 >= 5x the msi row for the same model and context (>= 24 without one). Rows with more clients
-are the queueing inputs for the agent-capacity number, which #493 sets against the owner's thresholds.
+show raw queueing only: the agent-capacity number is llm-bench capacity's (Pi-shaped /v1 turns, pkgs/llm-bench), and
+`llm-bench import-g1 DIR` carries this table's one-client rows into the scorecard.
 usage: python3 ollama-g1-table.py DIR
 """
 import csv
