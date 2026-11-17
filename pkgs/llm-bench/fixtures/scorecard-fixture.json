@@ -1,0 +1,117 @@
+{
+ "fit": {
+  "schema": "llm-bench/1",
+  "kind": "fit",
+  "evidence": "measured",
+  "host": "mock-host",
+  "model": "mock:7b",
+  "quant": "Q4_K_M",
+  "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "ollama_version": "0.0.0-mock",
+  "ctx": 4096,
+  "route": "direct",
+  "settings": {},
+  "fixture": null,
+  "samples": {
+   "warm": 20,
+   "cold": 5
+  },
+  "metrics": {
+   "vram_load_bytes": {
+    "value": null,
+    "unit": "bytes",
+    "source": "unavailable",
+    "n": null
+   },
+   "vram_steady_bytes": {
+    "value": 7516192768,
+    "unit": "bytes",
+    "source": "prometheus",
+    "n": null
+   },
+   "vram_headroom_bytes": {
+    "value": 1073741824,
+    "unit": "bytes",
+    "source": "prometheus",
+    "n": null
+   },
+   "gpu_offload_ratio": {
+    "value": 1.0,
+    "unit": "ratio",
+    "source": "provider_reported",
+    "n": null
+   },
+   "decode_tps_p50": {
+    "value": 20.5,
+    "unit": "tokens/s",
+    "source": "provider_reported",
+    "n": 20
+   },
+   "ttft_warm_p50": {
+    "value": 0.5,
+    "unit": "s",
+    "source": "client_measured",
+    "n": 20
+   },
+   "ttft_warm_p95": {
+    "value": null,
+    "unit": "s",
+    "source": "insufficient_samples",
+    "n": 4
+   }
+  },
+  "checks": {
+   "headroom": {
+    "pass": true,
+    "value": 1073741824,
+    "threshold": 805306368,
+    "op": ">="
+   },
+   "decode": {
+    "pass": false,
+    "value": 20.5,
+    "threshold": 24,
+    "op": ">="
+   },
+   "ttft": {
+    "pass": null,
+    "value": null,
+    "threshold": 2.0,
+    "op": "<="
+   }
+  },
+  "fit": "no",
+  "rejected": null,
+  "started_at": 0,
+  "finished_at": 0
+ },
+ "capacity": {
+  "schema": "llm-bench/1",
+  "kind": "capacity",
+  "evidence": "measured",
+  "host": "mock-host",
+  "model": "mock:7b",
+  "quant": "Q4_K_M",
+  "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "ollama_version": "0.0.0-mock",
+  "ctx": 4096,
+  "route": "direct",
+  "settings": {},
+  "fixture": null,
+  "samples": {
+   "warm": 20,
+   "cold": 5
+  },
+  "metrics": {},
+  "checks": {},
+  "fit": null,
+  "rejected": null,
+  "started_at": 0,
+  "finished_at": 0,
+  "capacity": {
+   "agents": 3,
+   "levels": [],
+   "queue_wait_source": "estimated"
+  }
+ }
+}

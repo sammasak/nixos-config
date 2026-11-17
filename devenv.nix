@@ -355,6 +355,21 @@ let
         ${pkgs.python3}/bin/python scripts/test-ollama-pull-pinned.py
       '';
 
+  # the llm-bench harness and #492's G1 bench against the fake Ollama; no nix: the rules and the exporter are flake checks
+  llmBenchTest =
+    gate "llm-bench-test"
+      (with pkgs; [
+        python3
+        bash
+        curl
+        jq
+        git
+        coreutils
+      ])
+      ''
+        ${pkgs.python3}/bin/python -I scripts/test-llm-bench.py
+      '';
+
   alertBridgeTest =
     gate "alert-bridge-test"
       (with pkgs; [
@@ -508,6 +523,7 @@ let
           harnessTelemetryTest
           ollamaPortforwardTest
           ollamaPullPinnedTest
+          llmBenchTest
           alertBridgeTest
           knownHostsTest
           powerScheduleTest
@@ -876,6 +892,8 @@ in
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:ollama-pull-pinned-test" =
       task "ollama-pull-pinned: a tag at its pin is left alone, a moved tag is removed again and fails the loader" ollamaPullPinnedTest;
+    "nixos:llm-bench-test" =
+      task "llm-bench (#493): #492's G1 bench and the capacity run against the fake Ollama, the G1 import and rule, quantile floors, the MSI import, no prompt in an aggregate" llmBenchTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
     "nixos:coordinator-test" =

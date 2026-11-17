@@ -55,6 +55,21 @@ groups:
           summary: "Host {{ $labels.node }} has been unreachable for 15+ minutes"
           description: "Prometheus on black-pi has not scraped node-exporter on {{ $labels.node }} for 15 minutes: the host is down, off the LAN, or its exporter stopped."
 
+      - alert: GpuTelemetryDown
+        # A GPU host that is up (its node-exporter answers) while its GPU
+        # exporter does not: the driver or the exporter failed. Off, it says
+        # nothing. It carries node, so another host's planned power-off does
+        # not inhibit it, as it does TargetDown{job="nvidia-gpu"}.
+        # for: under TargetDown's 10m, so inhibit rule 3 (../alertmanager.nix) mutes it before it notifies
+        expr: max by (node) (up{job="nvidia-gpu"} == 0) and on (node) max by (node) (up{job="node-exporter"} == 1)
+        for: 5m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "GPU telemetry on {{ $labels.node }} is down while the host is up"
+          description: "black-pi has not scraped nvidia-gpu-exporter on {{ $labels.node }} for 5 minutes although its node-exporter answers. Check systemctl status prometheus-nvidia-gpu-exporter and nvidia-smi on the host, and its kernel journal for NVRM Xid lines."
+
       - alert: NodeOOMKill
         expr: increase(node_vmstat_oom_kill{job="node-exporter"}[15m]) > 0
         labels:

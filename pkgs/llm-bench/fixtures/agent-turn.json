@@ -1,0 +1,74 @@
+{
+ "system": "You are a coding agent working in a NixOS configuration repository. Use the tools to read and edit files; keep edits minimal and explain each one briefly.",
+ "history": [
+  "The test in scripts/test-store-cache.py fails with: expected 3 substituters, got 4. Can you look at modules/core/store-cache.nix?",
+  "I read modules/core/store-cache.nix. The peers list filters out the host itself and hosts marked as sleeping. The fourth substituter comes from a host that is not marked. I will check the fleet facts next.",
+  "Here is modules/core/fleet.nix: each host has an address, and two hosts set sleeps = true. The new host has no sleeps flag yet.",
+  "That explains the extra substituter: the new host is listed as a peer although it is often powered off. Setting sleeps = true on it removes it from every peer list and from the alert exclusions."
+ ],
+ "task": "Make the change: mark the new host as sleeping in modules/core/fleet.nix, then run the store-cache test.",
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "read_file",
+    "description": "Read a file from the repository.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "path"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "edit_file",
+    "description": "Replace an exact string in a file.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "old": {
+       "type": "string"
+      },
+      "new": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "path",
+      "old",
+      "new"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "run",
+    "description": "Run a shell command in the repository and return its output.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "command": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "command"
+     ]
+    }
+   }
+  }
+ ]
+}

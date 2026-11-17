@@ -7,7 +7,8 @@
 # Needs curl, jq, awk and git; the fixture is read from this checkout at a pinned commit.
 set -euo pipefail
 host=$1 model=$2 ctx=$3 cold=$4 warm=$5 out=$6 clients=${7:-1}
-url=http://$host:11434
+# OLLAMA_URL: another endpoint than HOST's Ollama, for scripts/test-llm-bench.py's fake
+url=${OLLAMA_URL:-http://$host:11434}
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 fixture=4171289cc43725ffa4f4009df9b2a4e1d9606d5f
 
@@ -29,8 +30,11 @@ jq -n --arg m "$model" --rawfile p "$work/prompt" --argjson ctx "$ctx" \
 unload() { curl -fsS "$url/api/generate" -d "{\"model\":\"$model\",\"keep_alive\":0}" > /dev/null; sleep 3; }
 run() {
   local kind=$1 i=$2 client=$3 dest=$4 t0 t1 resp ps
+  # a nonce line first: Ollama's prompt cache would otherwise serve every warm run's prefill from the last one, and
+  # ttft_s (load + prompt eval) would measure nothing; prompt_sha256 stays the fixed prompt's
+  jq --arg n "Run $kind-$i-$client." '.prompt = $n + "\n" + .prompt' "$work/req" > "$work/req-$client"
   t0=$(date +%s.%N)
-  resp=$(curl -fsS "$url/api/generate" -d @"$work/req")
+  resp=$(curl -fsS "$url/api/generate" -d @"$work/req-$client")
   t1=$(date +%s.%N)
   ps=$(curl -fsS "$url/api/ps")
   jq -nc --arg host "$host" --arg model "$model" --arg kind "$kind" --argjson i "$i" --argjson ctx "$ctx" \

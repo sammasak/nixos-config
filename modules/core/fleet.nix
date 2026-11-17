@@ -42,6 +42,11 @@ in
                     }
                   );
                 };
+                # its GPU, for the telemetry (monitoring/gpu-exporter.nix) and black-pi's nvidia-gpu scrape job
+                gpu = mkOption {
+                  type = types.nullOr (types.enum [ "nvidia" ]);
+                  default = null;
+                };
               };
             }
           );
