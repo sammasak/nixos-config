@@ -56,7 +56,7 @@ The issue's other claims, checked against the code:
 
 ## Options considered
 
-| Option | Five-host parity | Fit here |
+| Option | Parity (as measured then) | Fit here |
 |---|---|---|
 | A. Status quo | yes | the wiring stays split in two places |
 | B. Direct role and HM paths, explicit flake-module list | **no**: all five move, CSS precedence flips | only after #315 pins the order-dependent definitions and the owner accepts the moves |
