@@ -131,7 +131,7 @@
       },
       "targets": [
         {
-          "expr": "max(node_thermal_zone_temp{node=\"$node\"}) or max(node_hwmon_temp_celsius{node=\"$node\"})"
+          "expr": "max(node_thermal_zone_temp{node=\"$node\"} or node_hwmon_temp_celsius{node=\"$node\"})"
         }
       ],
       "fieldConfig": {
@@ -231,7 +231,7 @@
       },
       "targets": [
         {
-          "expr": "max(node_thermal_zone_temp{node=\"$node\"}) or max(node_hwmon_temp_celsius{node=\"$node\"})",
+          "expr": "max(node_thermal_zone_temp{node=\"$node\"} or node_hwmon_temp_celsius{node=\"$node\"})",
           "legendFormat": "soc °C"
         },
         {
