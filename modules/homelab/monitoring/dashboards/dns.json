@@ -291,11 +291,11 @@
     },
     {
       "id": 9,
-      "type": "bargauge",
-      "title": "Upstream average answer time",
+      "type": "stat",
+      "title": "Statistics last written",
       "gridPos": {
-        "h": 8,
-        "w": 12,
+        "h": 4,
+        "w": 6,
         "x": 0,
         "y": 12
       },
@@ -305,76 +305,42 @@
       },
       "targets": [
         {
-          "expr": "max by (upstream) (homelab_dns_upstream_avg_seconds)",
-          "legendFormat": "{{upstream}}",
+          "expr": "time() - max(node_textfile_mtime_seconds{file=~\".*/adguard[.]prom\"})",
+          "legendFormat": "",
           "instant": true,
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 180
+              }
+            ]
+          }
         },
         "overrides": []
       },
-      "description": "Per upstream resolver over AdGuard's statistics interval (24 h unless changed in its UI); the fleet's names never reach one (rewrites).",
-      "options": {
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "values": false,
-          "calcs": [
-            "lastNotNull"
-          ]
-        }
-      }
+      "description": "The minutely unit rewrites its file each run; older than 3 minutes, the numbers above are stale (the unit is failing)."
     },
     {
       "id": 10,
-      "type": "bargauge",
-      "title": "Upstream responses",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 12
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "max by (upstream) (homelab_dns_upstream_responses)",
-          "legendFormat": "{{upstream}}",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "options": {
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "values": false,
-          "calcs": [
-            "lastNotNull"
-          ]
-        }
-      }
-    },
-    {
-      "id": 11,
       "type": "logs",
       "title": "AdGuard warnings and errors",
       "gridPos": {
         "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 20
+        "w": 18,
+        "x": 6,
+        "y": 12
       },
       "datasource": {
         "type": "loki",

@@ -9,7 +9,7 @@ let
   inherit (config.flake.nixosConfigurations) acer-swift black-pi lenovo msi-ms7758;
   # its output holds what adguard-textfile wrote against a running AdGuard (modules/homelab/adguardhome.nix)
   adguardCheck = lib.findFirst (
-    c: lib.hasSuffix "-adguardhome-fleet-names" c.name
+    c: c.name == "adguardhome-fleet-names"
   ) (throw "grafana-dashboards: lenovo has no adguardhome-fleet-names check") lenovo.config.system.checks;
   pi = black-pi.config;
   inherit (pi.homelab.grafana) dashboards;
