@@ -1,4 +1,4 @@
-# The sops identity for the cluster secrets. ACME and Tailscale declare their
+# The sops identity for the homelab host secrets. ACME and Tailscale declare their
 # own secrets, so a host that runs neither never decrypts those. Per-machine
 # operator credentials are a different tree: sam.hostSecrets in modules/core/sops.nix.
 { config, lib, ... }:

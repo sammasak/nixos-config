@@ -150,7 +150,7 @@ in
     systemd.services.grafana = {
       environment.GOMEMLIMIT = "320MiB";
       serviceConfig = {
-        # the pod peaked at 354 MB without its sidecars
+        # it peaked at 354 MB without its sidecars
         MemoryMax = "384M";
         # DHCP: .137 can appear after the unit, and upstream's Restart=on-failure would spend its start limit at once
         RestartSec = 10;
