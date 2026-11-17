@@ -20,6 +20,16 @@
         "tunedBy": "count_over_time(ALERTS{alertname=\"PrLeadTimeHigh\"}[1d])"
       }
     },
+    "LeadTimeFallbacksHigh": {
+      "maxRatio": {
+        "value": 0.5,
+        "tunedBy": "sum(shipping_pr_lead_time_fallbacks{reason=\"http_error\"}) / sum(shipping_prs_merged)"
+      },
+      "forMinutes": {
+        "value": 60,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"LeadTimeFallbacksHigh\"}[1d])"
+      }
+    },
     "ReviewFirstPassLow": {
       "minRatio": {
         "value": 0.5,
