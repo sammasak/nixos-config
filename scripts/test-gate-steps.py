@@ -9,6 +9,8 @@ import sys
 import tempfile
 import textwrap
 
+import gate_defer
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 failed = 0
 
@@ -29,10 +31,14 @@ def function(name):
     return textwrap.dedent(m.group(0)).replace("''${", "${")
 
 
-heavy = re.search(r"\n *(heavy='[^']*')\n", src)
-if not heavy:
-    sys.exit("FAIL: heavy= not found in devenv.nix")
-DECIDE = heavy.group(1) + "\n" + function("decide")
+# the heavy pattern is defined once, as gateHeavy, and interpolated into the flake check and the gpu test's GATE_HEAVY
+gate_heavy = re.search(r'\n *gateHeavy = "([^"]*)";\n', src)
+heavy = re.search(r"\n *heavy='\$\{gateHeavy\}'\n", src)
+if not gate_heavy or not heavy:
+    sys.exit("FAIL: gateHeavy, or the flake check's heavy='${gateHeavy}', not found in devenv.nix")
+check("GATE_HEAVY='${gateHeavy}'" in src and "-cuda" not in src.replace(gate_heavy.group(0), ""),
+      "the heavy pattern has one definition (gateHeavy): the flake check and ollama-gpu-test's GATE_HEAVY both read it")
+DECIDE = f"heavy='{gate_heavy.group(1)}'\n" + function("decide")
 
 
 def decide(here, check_name, todo, inputs="", cudahost="0"):
@@ -134,7 +140,7 @@ for mode, dryrun in dryruns.items():
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-        body = body.replace("${lib.getExe record}", str(t / "record")).replace("''$", "$")
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred)})
         built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c]
@@ -156,6 +162,13 @@ for mode, dryrun in dryruns.items():
 # one line of "would compile", and a missing one must hit the step's failure test
 awk = re.search(r"todo=\$\(awk '([^']*)' <<<\"\$dry\"\)", src)
 check(awk is not None, "the step's dry-run awk is found")
+# one parse: scripts/gate_defer.py (the gpu test's rule) reads the same dry-run texts as the flake check's awk
+for mode, dryrun in dryruns.items():
+    if dryrun is None or awk is None:
+        continue
+    text = dryrun.replace("\\n", "\n")
+    by_awk = subprocess.run(["awk", awk.group(1)], input=text, capture_output=True, text=True, check=False).stdout.split()
+    check(gate_defer.to_build(text) == by_awk, f"{mode}: gate_defer.to_build and the flake check's awk list the same derivations ({by_awk})")
 if awk:
     import shutil, time
     nix = shutil.which("nix")
