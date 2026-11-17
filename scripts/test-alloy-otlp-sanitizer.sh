@@ -94,7 +94,8 @@ while ((SECONDS < deadline)); do
     "$endpoint/v1/metrics" || true)
   [[ "$unauthenticated_status" == 401 ]] && break
   kill -0 "$alloy_pid" 2>/dev/null || {
-    printf 'Alloy exited during startup; see %s\n' "$alloy_log" >&2
+    printf 'Alloy exited during startup; the end of its log:\n' >&2
+    tail -n 20 "$alloy_log" >&2
     exit 1
   }
   sleep 0.1
@@ -309,7 +310,8 @@ while ((SECONDS < deadline)); do
     "$endpoint/v1/metrics" || true)
   [[ "$restarted_unauthenticated_status" == 401 ]] && break
   kill -0 "$alloy_pid" 2>/dev/null || {
-    printf 'Alloy exited during restart; see %s\n' "$alloy_log" >&2
+    printf 'Alloy exited during restart; the end of its log:\n' >&2
+    tail -n 20 "$alloy_log" >&2
     exit 1
   }
   sleep 0.1
