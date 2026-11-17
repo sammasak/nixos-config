@@ -355,9 +355,13 @@ let
           inherit (hosts.asus-b460m.config.systemd.services.nvidia-power-limit)
             wantedBy
             before
+            after
             requiredBy
             ;
           inherit (hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig) Type ExecStart;
+          timeout =
+            hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig.TimeoutStartSec or null;
+          persistenced = hosts.asus-b460m.config.hardware.nvidia.nvidiaPersistenced;
           remain =
             hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig.RemainAfterExit or false;
           ollamaRequires = hosts.asus-b460m.config.systemd.services.ollama.requires;

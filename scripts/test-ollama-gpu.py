@@ -2,7 +2,8 @@
 """A CUDA Ollama build needs hardware.graphics (modules/homelab/ollama-host.nix): asus as deployed fails no
 assertion, and asus without it is rejected, since libcuda.so.1 is only found under /run/opengl-driver/lib. asus's
 gpu check builds, and fails on asus with graphics but no NVIDIA library in the drivers env. The GPU power cap is a
-oneshot wanted by Ollama and ordered before it, never required, and a cap outside the card's range fails evaluation."""
+oneshot wanted by Ollama and ordered before it, never required, with a start timeout, after nvidia-persistenced, and a
+cap outside the card's range fails evaluation."""
 import subprocess
 import sys
 
@@ -30,6 +31,10 @@ check("ollama.service" in u["wantedBy"] and "multi-user.target" in u["wantedBy"]
       f"the cap is wanted by Ollama and multi-user.target, ordered before Ollama ({u['wantedBy']}, {u['before']})")
 check(not u["requiredBy"] and "nvidia-power-limit.service" not in u["ollamaRequires"] + u["ollamaBindsTo"],
       f"a failed cap does not stop Ollama: nothing requires or binds to it ({u['requiredBy']}, {u['ollamaRequires']}, {u['ollamaBindsTo']})")
+check(u["timeout"] == "30s",
+      f"a hung nvidia-smi fails after 30 s instead of holding Ollama's start and a switch (TimeoutStartSec {u['timeout']})")
+check(u["persistenced"] and "nvidia-persistenced.service" in u["after"],
+      f"persistence keeps the cap between model loads, and the cap is set after nvidia-persistenced ({u['after']})")
 for seed, watts in (("powerHigh", 271), ("powerLow", 99)):
     check(any(f"gpuPowerLimit is {watts} W" in m for m in failing[seed]),
           f"seeded: a {watts} W cap fails evaluation {failing[seed]}")

@@ -97,6 +97,9 @@ in
     open = true;
     package = config.boot.kernelPackages.nvidiaPackages.stable;
     nvidiaSettings = false;
+    # headless with no client between model loads: without it the driver may drop the GPU's state, power limit
+    # included, until the next load
+    nvidiaPersistenced = true;
   };
 
   services.ollama = {

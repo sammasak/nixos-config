@@ -72,9 +72,15 @@ in
         "multi-user.target"
       ];
       before = [ "ollama.service" ];
-      after = [ "systemd-modules-load.service" ];
+      after = [
+        "systemd-modules-load.service"
+      ]
+      ++ lib.optional config.hardware.nvidia.nvidiaPersistenced "nvidia-persistenced.service";
       serviceConfig = {
         Type = "oneshot";
+        # a oneshot has no start timeout by default: nvidia-smi hanging on a wedged GPU would hold Ollama's start, and
+        # a switch, forever; this turns the hang into the failed-unit case above
+        TimeoutStartSec = "30s";
         ExecStart = "${lib.getBin config.hardware.nvidia.package}/bin/nvidia-smi -pl ${toString config.homelab.ollama.gpuPowerLimit}";
       };
     };
