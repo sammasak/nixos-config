@@ -303,6 +303,7 @@ let
     alloy-otlp = {
       execStart = acer.systemd.services.alloy-otlp.serviceConfig.ExecStart or null;
       loki = "${hosts.lenovo.pkgs.grafana-loki}/bin/loki";
+      lokiUrl = acer.sam.fleet.loki.url;
     };
 
     # the work-hours power windows (modules/core/power-schedule.nix): the rendered units per host and the seeded failures
@@ -313,7 +314,7 @@ let
           c:
           lib.mapAttrs (_: u: u.text) (
             lib.filterAttrs (
-              n: _: lib.hasInfix "-wake." n || lib.hasInfix "-scheduled-shutdown." n
+              n: _: lib.hasInfix "-wake." n || lib.hasInfix "-scheduled-shutdown." n || lib.hasPrefix "wol-" n
             ) c.systemd.units
           );
       in
@@ -349,6 +350,37 @@ let
           );
         };
       };
+
+    # the dual-boot towers' GRUB (modules/hardware/windows-dual-boot.nix): the Windows entry and the ESP assertion's seeds
+    dual-boot = {
+      grub = lib.mapAttrs (_: h: {
+        inherit (h.config.boot.loader.grub) enable extraEntries mirroredBoots;
+        systemdBoot = h.config.boot.loader.systemd-boot.enable;
+      }) hosts;
+      failing = {
+        msi = failing msi;
+        asus = failing hosts.asus-b460m.config;
+        notVfat = failing (
+          extend "msi-ms7758" [ ({ lib, ... }: { fileSystems."/boot".fsType = lib.mkForce "ext4"; }) ]
+        );
+        noMount = failing (
+          extend "asus-b460m" [
+            (
+              { lib, ... }:
+              {
+                boot.loader.grub.mirroredBoots = lib.mkOverride 10 [
+                  {
+                    path = "/boot-nix";
+                    efiSysMountPoint = "/efi";
+                    devices = [ "nodev" ];
+                  }
+                ];
+              }
+            )
+          ]
+        );
+      };
+    };
 
     # lenovo's AdGuard (modules/homelab/adguardhome.nix, nixos-config#503): what it answers the LAN from, and the seeds
     adguard-dns = {
@@ -388,6 +420,7 @@ let
       };
       chatStreams = acer.systemd.sockets.open-webui-proxy.listenStreams;
       fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
+      ntfyPort = acer.sam.fleet.ntfy.port;
       # what lenovo's AdGuard answers for the names, and what black-pi's blackbox probes
       rewrites = lenovo.homelab.dns.rewrites;
       prometheusConfig = hosts.black-pi.config.services.prometheus.configText;
@@ -511,7 +544,7 @@ let
             {
               homelab.journalCollector = {
                 enable = true;
-                lokiUrl = "http://loki.example:3100/loki/api/v1/push";
+                lokiUrl = "http://loki.example/loki/api/v1/push";
               };
             }
           ]
@@ -552,6 +585,8 @@ let
       in
       {
         inherit (acer.sam.fleet) pageUrl;
+        ntfyAddress = acer.sam.fleet.hosts.${acer.sam.fleet.ntfy.host}.address;
+        inherit (acer.sam.fleet.ntfy) port;
         hosts = lib.mapAttrs (_: h: pages h.config) hosts;
         seeded = {
           acerWithoutWorkersUrl = pages (
@@ -585,6 +620,50 @@ let
           fleetRedefined =
             evaluates
               (extend "naked-pi" [ { sam.fleet.ntfy.port = 2587; } ]).sam.fleet.pageUrl;
+        };
+      };
+
+    # the fleet's ports (scripts/test-fleet-contract.py scans the tree for them), black-pi's Loki sources against the
+    # fleet's addresses, and the seeded cases: a port off its fleet fact, lenovo's machines or jump hosts off the
+    # runtime hosts of hosts.nix, a collector on a host without a fleet address
+    fleet-contract =
+      let
+        blackPi = hosts.black-pi.config;
+        inherit (lenovo.sam) herdr;
+      in
+      {
+        ports = {
+          ntfy = lenovo.sam.fleet.ntfy.port;
+          loki = lenovo.sam.fleet.loki.port;
+        };
+        allowedSources = blackPi.homelab.loki.allowedSources;
+        addresses = lib.mapAttrs (_: h: [ h.address ] ++ h.extraAddresses) lenovo.sam.fleet.hosts;
+        machines = map (m: m.target) herdr.machines;
+        jumpHosts = lenovo.services.devEnvironments.jumpHosts;
+        failing = {
+          lenovo = failing lenovo;
+          blackPi = failing blackPi;
+          ntfyPort = failing (extend "lenovo" [ ({ lib, ... }: { homelab.ntfy.port = lib.mkForce 2587; }) ]);
+          lokiPort = failing (
+            extend "black-pi" [ ({ lib, ... }: { homelab.loki.port = lib.mkForce 3101; }) ]
+          );
+          machineForgotten = failing (
+            extend "lenovo" [
+              (
+                { lib, ... }:
+                {
+                  sam.herdr.machines = lib.mkForce (lib.filter (m: m.target != "asus-b460m") herdr.machines);
+                }
+              )
+            ]
+          );
+          jumpHostRemoved = failing (extend "lenovo" [ { sam.workers.jumpHosts.old = "old-host"; } ]);
+          collectorOffFleet = failing (
+            extend "naked-pi" [
+              ../modules/homelab/journal-collector.nix
+              { homelab.journalCollector.enable = true; }
+            ]
+          );
         };
       };
   };

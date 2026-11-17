@@ -30,7 +30,7 @@ backends = {
     "grafana": f"{fleet['black-pi']}:3000",
     "llm-gateway": "127.0.0.1:8081",
     "otlp": "127.0.0.1:4318",
-    "ntfy": f"{fleet['lenovo-21CB001PMX']}:2586",
+    "ntfy": f"{fleet['lenovo-21CB001PMX']}:{P['ntfyPort']}",
 }
 headers = {"X-Authentik-Username", "X-Authentik-Groups", "X-Authentik-Email", "X-Authentik-Name", "X-Authentik-Uid"}
 
