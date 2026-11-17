@@ -21,8 +21,15 @@ let
   prefixes = map prefix (lib.attrNames windowed);
 in
 {
-  options.sam.powerSchedule.waker.enable =
-    mkEnableOption "sending every host with a fleet power window its Wake-on-LAN packet (enable on an always-on host)";
+  options.sam.powerSchedule = {
+    waker.enable = mkEnableOption "sending every host with a fleet power window its Wake-on-LAN packet (enable on an always-on host)";
+    # on by the fleet fact; off only for a configuration that borrows a window host's name, e.g. a VM test
+    poweroff.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = own != null;
+      description = "This host's scheduled poweroff and Wake-on-LAN requirement from its fleet power window.";
+    };
+  };
 
   config = mkMerge [
     {
@@ -40,7 +47,7 @@ in
           message = "modules/core/power-schedule.nix: two power-window hosts share the unit prefix of their names (${toString prefixes}).";
         }
       ]
-      ++ lib.optional (own != null) {
+      ++ lib.optional (own != null && cfg.poweroff.enable) {
         assertion =
           config.networking.interfaces.${own.interface}.wakeOnLan.enable or false
           && config.systemd.services ? "wol-${own.interface}";
@@ -75,7 +82,7 @@ in
       ) windowed;
     })
 
-    (mkIf (own != null) {
+    (mkIf (own != null && cfg.poweroff.enable) {
       systemd.services."${prefix host}-scheduled-shutdown" = {
         description = "Scheduled poweroff of ${prefix host}";
         serviceConfig = {

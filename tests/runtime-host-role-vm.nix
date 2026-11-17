@@ -32,6 +32,8 @@ let
         # Stubs for state a VM lacks: the host key the secrets are encrypted to, and an NTP
         # server, without which systemd-time-wait-sync never finishes.
         sam.hostSecrets.enable = lib.mkForce false;
+        # msi's name, not its NIC: no 21:00 poweroff and no Wake-on-LAN unit in the VM
+        sam.powerSchedule.poweroff.enable = false;
         systemd.services.systemd-time-wait-sync.wantedBy = lib.mkForce [ ];
         virtualisation.memorySize = 2048;
 
