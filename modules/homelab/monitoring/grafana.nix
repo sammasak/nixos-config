@@ -1,12 +1,7 @@
 # grafana.sammasak.dev on black-pi through upstream services.grafana, reached through Caddy on acer. Sign-in
 # through Authentik (generic_oauth, no proxy auth), and only through it: users and roles come with the first OIDC
 # sign-in. The dashboards are the host ones in ./dashboards, as ./dashboards.nix renders them.
-{
-  config,
-  lib,
-  pkgs,
-  ...
-}:
+{ config, lib, ... }:
 let
   inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
@@ -25,6 +20,7 @@ let
   # every dashboard parses at evaluation (importJSON throws), and each datasource reference anywhere in it (panels,
   # targets, templating, annotations) is a provisioned uid or a template variable; Grafana would only log the rest
   inherit (config.homelab.grafana) dashboards;
+  dashboardDir = "grafana-dashboards";
   provisioned = config.services.grafana.provision.datasources.settings.datasources;
   uids = map (d: d.uid or null) provisioned;
   # a legacy string datasource resolves by name too; the rest are Grafana's built-in sources
@@ -136,18 +132,20 @@ in
           {
             name = "homelab";
             folder = "Observability";
-            disableDeletion = true;
-            # copies, not a linkFarm: Grafana's walk may not follow a symlinked file
-            options.path = pkgs.runCommandLocal "grafana-dashboards" { } (
-              "mkdir $out\n"
-              + lib.concatStrings (
-                lib.mapAttrsToList (f: d: "cp ${builtins.toFile f (builtins.toJSON d)} $out/${f}\n") dashboards
-              )
-            );
+            # a file gone from the directory deletes its dashboard; with true Grafana only unprovisions it, and it stays
+            disableDeletion = false;
+            # a fixed path: Grafana keys a dashboard by its file name under it; with deletion on, a path that moves
+            # per deploy would delete and recreate every dashboard (new id, history lost). setup-etc removes a
+            # dropped file's link
+            options.path = "/etc/${dashboardDir}";
           }
         ];
       };
     };
+
+    environment.etc = lib.mapAttrs' (
+      f: d: lib.nameValuePair "${dashboardDir}/${f}" { source = builtins.toFile f (builtins.toJSON d); }
+    ) dashboards;
 
     systemd.services.grafana = {
       environment.GOMEMLIMIT = "320MiB";
