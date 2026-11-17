@@ -23,6 +23,13 @@ let
   };
 in
 {
+  options.homelab.ollama.cudaRuntime = lib.mkOption {
+    type = lib.types.nullOr lib.types.package;
+    readOnly = true;
+    default = lib.findFirst (p: lib.getName p == "cuda_cudart") null cfg.package.buildInputs;
+    description = "The cuda_cudart services.ollama.package links, null for a build without CUDA. A host that installs a CUDA build should fail when this is null: nixpkgs renaming the package would otherwise make the graphics assertion vacuous.";
+  };
+
   options.homelab.ollama.modelDigests = lib.mkOption {
     type = lib.types.attrsOf (lib.types.strMatching "[0-9a-f]{64}");
     default = { };
@@ -78,6 +85,11 @@ in
       {
         assertion = lib.all (i: i == "lo") fw.trustedInterfaces;
         message = "modules/homelab/ollama-host.nix: a trusted interface bypasses the firewall and reaches Ollama; trust only loopback, not ${toString (lib.remove "lo" fw.trustedInterfaces)}.";
+      }
+      {
+        # libggml-cuda.so loads libcuda.so.1 from /run/opengl-driver/lib alone; without it Ollama serves on the CPU
+        assertion = config.homelab.ollama.cudaRuntime == null || config.hardware.graphics.enable;
+        message = "modules/homelab/ollama-host.nix: ${cfg.package.name} is a CUDA build; set hardware.graphics.enable = true, or Ollama finds no libcuda.so.1 and silently runs on the CPU.";
       }
       {
         assertion = config.systemd.services.ollama.serviceConfig ? MemoryMax;

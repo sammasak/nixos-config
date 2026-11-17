@@ -415,6 +415,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-ollama-pull-pinned.py
       '';
 
+  ollamaGpuTest =
+    gate "ollama-gpu-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
+      '';
+
   # the llm-bench harness and #492's G1 bench against the fake Ollama; no nix: the rules and the exporter are flake checks
   llmBenchTest =
     gate "llm-bench-test"
@@ -470,6 +480,16 @@ let
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-power-schedule.py
+      '';
+
+  adguardDnsTest =
+    gate "adguard-dns-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-adguard-dns.py
       '';
 
   buildBoundsTest =
@@ -540,9 +560,11 @@ let
     harnessTelemetryTest
     ollamaPortforwardTest
     ollamaPullPinnedTest
+    ollamaGpuTest
     llmBenchTest
     alertBridgeTest
     knownHostsTest
+    adguardDnsTest
     powerScheduleTest
     buildBoundsTest
     delegationTest
@@ -1036,6 +1058,8 @@ in
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:ollama-pull-pinned-test" =
       task "ollama-pull-pinned: a tag at its pin is left alone, a moved tag is removed again and fails the loader" ollamaPullPinnedTest;
+    "nixos:ollama-gpu-test" =
+      task "A CUDA Ollama build without hardware.graphics is rejected (it would run on the CPU)" ollamaGpuTest;
     "nixos:llm-bench-test" =
       task "llm-bench (#493): #492's G1 bench and the capacity run against the fake Ollama, the G1 import and rule, quantile floors, the MSI import, no prompt in an aggregate" llmBenchTest;
     "nixos:alert-bridge-test" =
@@ -1058,6 +1082,8 @@ in
       task "The systemd-calendar check passes parsing timer specs and fails, naming the timer, on a bad one (fixture trees)" systemdCalendarTest;
     "nixos:power-schedule-test" =
       task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
+    "nixos:adguard-dns-test" =
+      task "lenovo's AdGuard: not from /etc/hosts, every fleet name its fleet address, the loopback seeds fail" adguardDnsTest;
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =

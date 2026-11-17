@@ -277,6 +277,35 @@ let
         };
       };
 
+    # lenovo's AdGuard (modules/homelab/adguardhome.nix, nixos-config#503): what it answers the LAN from, and the seeds
+    adguard-dns = {
+      hostsfile = lenovo.services.adguardhome.settings.dns.hostsfile_enabled or null;
+      rewrites = map (r: {
+        inherit (r) domain answer;
+      }) lenovo.services.adguardhome.settings.filtering.rewrites;
+      fleet = lib.mapAttrs (_: h: h.address) lenovo.sam.fleet.hosts;
+      failing = {
+        lenovo = failing lenovo;
+        hostsfileOn = failing (
+          extend "lenovo" [
+            ({ lib, ... }: { services.adguardhome.settings.dns.hostsfile_enabled = lib.mkForce true; })
+          ]
+        );
+        loopbackRewrite = failing (
+          extend "lenovo" [
+            {
+              homelab.dns.rewrites = [
+                {
+                  domain = "acer-swift";
+                  answer = "127.0.0.2";
+                }
+              ];
+            }
+          ]
+        );
+      };
+    };
+
     # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
     caddy-edge = {
       caddy = lib.getExe acer.services.caddy.package;
@@ -297,6 +326,32 @@ let
         );
       };
     };
+
+    # asus's CUDA Ollama as deployed, and the seeded cases: the same host without hardware.graphics, and with
+    # graphics but no NVIDIA library in the drivers env (its gpu check as a .drv, context discarded: the seed must
+    # fail in the test, not in the probe's build)
+    ollama-gpu =
+      let
+        gpuCheck =
+          c:
+          builtins.unsafeDiscardStringContext (
+            (lib.findFirst (d: d.name == "asus-ollama-gpu-check") null c.system.checks).drvPath or ""
+          );
+      in
+      {
+        failing = {
+          asus = failing hosts.asus-b460m.config;
+          noGraphics = failing (
+            extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.enable = lib.mkForce false; }) ]
+          );
+        };
+        check = {
+          asus = gpuCheck hosts.asus-b460m.config;
+          noNvidiaLibs = gpuCheck (
+            extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.extraPackages = lib.mkForce [ ]; }) ]
+          );
+        };
+      };
 
     # acer's ak wrapper and the server unit environment it copies
     authentik = {

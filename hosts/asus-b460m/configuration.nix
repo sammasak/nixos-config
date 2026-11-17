@@ -14,9 +14,16 @@ let
   driver = config.hardware.nvidia.package.version;
   # the CUDA runtime the ollama build links, not the default cudaPackages set
   cuda =
-    (lib.findFirst (
-      p: lib.getName p == "cuda_cudart"
-    ) (throw "ollama has no cuda_cudart input") ollama.package.buildInputs).version;
+    (
+      if config.homelab.ollama.cudaRuntime == null then
+        throw "hosts/asus-b460m: homelab.ollama.cudaRuntime finds no cuda_cudart in ollama's buildInputs; fix its predicate in ollama-host.nix"
+      else
+        config.homelab.ollama.cudaRuntime
+    ).version;
+  # what activation links /run/opengl-driver to; absent without hardware.graphics, and the check then fails
+  driversEnv =
+    config.systemd.tmpfiles.settings.graphics-driver."/run/opengl-driver"."L+".argument
+      or "/nonexistent";
   # NVIDIA's minimum Linux driver per CUDA major (CUDA Toolkit release notes, table 3)
   minDriver = {
     "12" = "525.60.13";
@@ -88,6 +95,8 @@ in
   # Headless RTX 3070 (GA104, Ampere): videoDrivers only selects the driver, X stays off. The open modules are
   # NVIDIA's recommendation from Turing on; the console moves from nouveau to nvidia-drm's framebuffer.
   services.xserver.videoDrivers = [ "nvidia" ];
+  # libcuda.so.1 reaches ollama-cuda only via /run/opengl-driver/lib; without it Ollama silently runs on the CPU
+  hardware.graphics.enable = true;
   hardware.nvidia = {
     open = true;
     package = config.boot.kernelPackages.nvidiaPackages.stable;
@@ -145,10 +154,13 @@ in
       message = "hosts/asus-b460m: PoC A serves one model and one request at a time (OLLAMA_MAX_LOADED_MODELS and OLLAMA_NUM_PARALLEL = 1); VRAM is not shared by any cgroup.";
     }
   ];
-  # The rendered firewall admits the Ollama port from acer and nothing else, and the package carries the CUDA runner
-  # (a CUDA build missing its toolkit silently ships the CPU runner only).
+  # The rendered firewall admits the Ollama port from acer and nothing else; the package carries the CUDA runner (a
+  # CUDA build missing its toolkit silently ships the CPU runner only), whose RUNPATH holds /run/opengl-driver/lib,
+  # and the env activation links there holds libcuda.so.1. It does not prove the sandboxed unit loads it and sees the
+  # card: only "library=CUDA" in Ollama's journal after a switch and a restart does.
   system.checks = [
-    (pkgs.runCommand "asus-ollama-gpu-check" { } ''
+    (pkgs.runCommand "asus-ollama-gpu-check" { nativeBuildInputs = [ pkgs.binutils ]; } ''
+      echo "proves: firewall rule, CUDA runner, its RUNPATH, libcuda in the drivers env; not proven: GPU discovery at runtime (journal library=CUDA)"
       rules=$(grep -- '--dport ${toString ollama.port} ' ${firewallStart})
       echo "$rules"
       [ "$(echo "$rules" | wc -l)" = ${toString (lib.length acers)} ]
@@ -156,6 +168,12 @@ in
         echo "$rules" | grep -q -- '-s ${a} -p tcp --dport ${toString ollama.port} -j nixos-fw-accept'
       '') acers}
       ls ${ollama.package}/lib/ollama/*/libggml-cuda.so
+      for so in ${ollama.package}/lib/ollama/*/libggml-cuda.so; do
+        readelf -d "$so" | grep -E 'R(UN)?PATH' | grep -q '/run/opengl-driver/lib' \
+          || { echo "$so: /run/opengl-driver/lib not in its RUNPATH"; exit 1; }
+      done
+      [ -e ${driversEnv}/lib/libcuda.so.1 ] \
+        || { echo "${driversEnv}: no lib/libcuda.so.1, Ollama would run on the CPU"; exit 1; }
       touch $out
     '')
   ];
