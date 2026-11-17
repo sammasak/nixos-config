@@ -102,6 +102,28 @@ groups:
           summary: "{{ $labels.name }} on {{ $labels.node }} has not run for over 26 hours"
           description: "The daily Authentik backup timer {{ $labels.name }} on {{ $labels.node }} last fired {{ $value | humanizeDuration }} ago. Check systemctl list-timers {{ $labels.name }} there; without it the newest Authentik dump is that old."
 
+      # The fleet's resolver (adguardhome.nix), through adguard-textfile's minutely file on the DNS host.
+      - alert: DnsDown
+        expr: homelab_dns_up{job="node-exporter"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: homelab
+        annotations:
+          summary: "AdGuard on {{ $labels.node }} is not answering its control API"
+          description: "adguard-textfile on {{ $labels.node }} has found AdGuard down for 5 minutes: the LAN's DNS (and dns.sammasak.dev over TLS) is out. Run systemctl status adguardhome there."
+
+      - alert: DnsStatsStale
+        # the writer stopped (a failed run is NodeSystemdUnitFailed): DnsDown could not fire
+        expr: time() - node_textfile_mtime_seconds{job="node-exporter",file=~".*/adguard[.]prom"} > 300
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "AdGuard's statistics on {{ $labels.node }} are stale"
+          description: "adguard-textfile has not rewritten its file on {{ $labels.node }} for {{ $value | humanizeDuration }}, so DnsDown cannot see AdGuard. Check systemctl list-timers adguard-textfile there."
+
       - alert: RootFilesystemLow
         # The 3 GB root floor (nixos-config#302): black-pi's SD card holds Prometheus and Loki.
         expr: node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} < 3 * 1024 * 1024 * 1024

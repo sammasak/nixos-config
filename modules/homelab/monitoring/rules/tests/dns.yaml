@@ -1,0 +1,31 @@
+# promtool test rules for homelab.yaml's DNS alerts (flake-modules/monitoring-check.nix runs it).
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'homelab_dns_up{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '1x10 0x20'
+      - series: 'node_textfile_mtime_seconds{job="node-exporter",node="lenovo-21CB001PMX",file="/run/node-exporter-textfile/adguard.prom"}'
+        values: '0+60x10 600x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: DnsDown
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: DnsDown
+        exp_alerts:
+          - exp_labels: {severity: critical, team: homelab, job: node-exporter, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "AdGuard on lenovo-21CB001PMX is not answering its control API"
+              description: "adguard-textfile on lenovo-21CB001PMX has found AdGuard down for 5 minutes: the LAN's DNS (and dns.sammasak.dev over TLS) is out. Run systemctl status adguardhome there."
+      - eval_time: 10m
+        alertname: DnsStatsStale
+        exp_alerts: []
+      - eval_time: 26m
+        alertname: DnsStatsStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: lenovo-21CB001PMX, file: /run/node-exporter-textfile/adguard.prom}
+            exp_annotations:
+              summary: "AdGuard's statistics on lenovo-21CB001PMX are stale"
+              description: "adguard-textfile has not rewritten its file on lenovo-21CB001PMX for 16m 0s, so DnsDown cannot see AdGuard. Check systemctl list-timers adguard-textfile there."
