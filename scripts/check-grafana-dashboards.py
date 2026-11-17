@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The provisioned Grafana dashboards against what the fleet exports (flake-modules/grafana-dashboards-check.nix):
 each dashboard's structure; every PromQL expression, panel or variable, through promtool and every LogQL one through
-logcli's parser; every metric name in an exporter's own output, a rule file's records, a scraped service's source or
-the OTLP allow-list; every variable defined; and no host named by hand in a query.
+logcli's parser; every metric name in an exporter's own output, a rule file's records, a Go service's metric name
+literals or the OTLP allow-list; every variable defined; and no host named by hand in a query.
 Usage: check-grafana-dashboards.py SPEC.json PROMTOOL LOGCLI EXPOSITION...; exits non-zero on any FAIL. EXPOSITION is
 an exporter's /metrics output; SPEC names the dashboards, the fleet's hosts, the rule files and the metric sources."""
 import json
@@ -22,7 +22,7 @@ for f in spec["rule_files"]:
 # a generator's whole vocabulary: its rules exist only for the results committed so far
 for f in spec["record_sources"]:
     metrics |= set(re.findall(r'"([a-z_]+:[a-z_:]+)"', open(f).read()))
-# a service's names as string literals in its source, with or without its namespace and a sample suffix
+# a Go service's metric names as string literals in its source: the whole name, or the part after its namespace
 sources = [dict(s, literals=set(open(s["literals"]).read().split())) for s in spec["sources"]]
 # alloy-otlp's allow-list (codex\.(a|b)), as Prometheus names them: dots to underscores, then a unit and a suffix
 otlp = set()
@@ -36,6 +36,8 @@ HOST_LABELS = r"node|nodename|host|hostname|host_name|instance"
 QUOTED = r'"((?:\\.|[^"\\])*)"|\'((?:\\.|[^\'\\])*)\'|`([^`]*)`'
 VAR = re.compile(r"\$\{([A-Za-z_]\w*)(?::\w+)?\}|\$([A-Za-z_]\w*)|\[\[([A-Za-z_]\w*)\]\]")
 SUFFIX = re.compile(r"_(total|bucket|sum|count)$")
+# a Go histogram's literal is its base name; a counter's literal already ends in _total
+SERIES = re.compile(r"_(bucket|sum|count)$")
 
 
 def fail(where, what):
@@ -77,7 +79,8 @@ def known(name):
     for s in sources:
         if name.startswith(s["prefix"]):
             short = name[len(s["strip"]):]
-            return bool({name, short, SUFFIX.sub("", name), SUFFIX.sub("", short)} & s["literals"])
+            # an underscore: a bare word (name, model) is quoted in any source for other reasons
+            return any("_" in c and c in s["literals"] for c in {name, short, SERIES.sub("", short)})
     if name.startswith(("codex_", "claude_code_")):
         base = SUFFIX.sub("", name)
         return base in otlp or re.sub(r"_[A-Za-z]+$", "", base) in otlp
