@@ -287,6 +287,19 @@ let
       ''
         ${pkgs.python3}/bin/python scripts/test-system-checks.py
       '';
+  deployRecipesTest =
+    gate "deploy-recipes-test"
+      (with pkgs; [
+        python3
+        bash
+        just
+        coreutils
+        gnugrep
+        gnused
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-deploy-recipes.py
+      '';
   platformRecordsTest =
     gate "platform-records-test"
       (with pkgs; [
@@ -410,6 +423,16 @@ let
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-systemd-calendar.py
+      '';
+
+  systemdVerifyTest =
+    gate "systemd-verify-test"
+      (with pkgs; [
+        python3
+        systemd
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-systemd-verify.py
       '';
 
   powerScheduleTest =
@@ -555,7 +578,9 @@ let
           alloyOtlpTest
           caddyEdgeTest
           systemChecksTest
+          deployRecipesTest
           systemdCalendarTest
+          systemdVerifyTest
           platformRecordsTest
           authentikAkTest
           switchSafetyTest
@@ -936,6 +961,8 @@ in
       task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
     "nixos:systemd-calendar-test" =
       task "The systemd-calendar check passes parsing timer specs and fails, naming the timer, on a bad one (fixture trees)" systemdCalendarTest;
+    "nixos:systemd-verify-test" =
+      task "The systemd-verify check passes a clean tree and fails, printing the line, on an unknown key, unknown section or unparseable value (fixture trees)" systemdVerifyTest;
     "nixos:power-schedule-test" =
       task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
     "nixos:adguard-dns-test" =
@@ -954,6 +981,8 @@ in
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
     "nixos:system-checks-test" =
       task "just checks against stub nix/ssh: lists built or substituted, and refuses an empty list, a non-input, an unreachable host, a failed build and a still-invalid check" systemChecksTest;
+    "nixos:deploy-recipes-test" =
+      task "just deploy and dry-activate against stub nix/ssh/systemctl: a looping unit fails the post-deploy check, a failed dry activation or closure diff fails dry-activate though deploy-rs reports success" deployRecipesTest;
     "nixos:caddy-edge-test" =
       task "acer's Caddy edge, as caddy adapt reads it: admin off, every name routed, forward auth before chat and grafana, otlp allowlisted, llm-gateway /v1 only" caddyEdgeTest;
     "nixos:authentik-ak-test" =
