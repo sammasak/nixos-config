@@ -105,8 +105,8 @@ in
     package = pkgs.ollama-cuda.override { cudaArches = [ "sm_86" ]; };
     loadModels = builtins.attrNames config.homelab.ollama.modelDigests;
     # what /v1 clients (pi, llm-bench capacity) get: /v1 drops a request's num_ctx. The G1 bench sets options.num_ctx
-    # on every request, so this default never reaches it. At 32K each pinned tag stays fully on the GPU (qwen 5499 MiB
-    # of 8192, gemma4:e4b 4609).
+    # on every request, so this default never reaches it. At 32K each pinned tag stays fully on the GPU, also right
+    # after a swap: qwen 5499 MiB, gemma4:e4b 4609, of the 7833 the driver leaves usable (8192 less 359 reserved).
     environmentVariables.OLLAMA_CONTEXT_LENGTH = "32768";
   };
   # registry.ollama.ai manifest sha256 per tag, as /api/tags reports it
@@ -152,9 +152,12 @@ in
       message = "hosts/asus-b460m: PoC A serves one model and one request at a time (OLLAMA_MAX_LOADED_MODELS and OLLAMA_NUM_PARALLEL = 1); VRAM is not shared by any cgroup.";
     }
     {
-      # qwen2.5-coder's trained context: above it Ollama clamps to 32768 and silently drops the prompt's head
-      assertion = lib.toInt ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH <= 32768;
-      message = "hosts/asus-b460m: OLLAMA_CONTEXT_LENGTH is ${ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH}; qwen2.5-coder:7b is trained to 32768 and Ollama silently truncates a longer prompt.";
+      # qwen2.5-coder's trained context: above it Ollama clamps to 32768 and silently drops the prompt's head; below
+      # 4096 pi's own system prompt and tools (about 2.5K tokens) leave no room for a session
+      assertion =
+        lib.toInt ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH <= 32768
+        && lib.toInt ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH >= 4096;
+      message = "hosts/asus-b460m: OLLAMA_CONTEXT_LENGTH is ${ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH}; keep it from 4096 (pi's own prompt is about 2.5K tokens) to 32768 (qwen2.5-coder:7b's trained context, above which Ollama silently truncates).";
     }
   ];
   # The rendered firewall admits the Ollama port from acer and nothing else; the package carries the CUDA runner (a

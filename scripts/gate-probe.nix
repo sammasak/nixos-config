@@ -341,6 +341,11 @@ let
       {
         failing = {
           asus = failing hosts.asus-b460m.config;
+          ctx2k = failing (
+            extend "asus-b460m" [
+              ({ lib, ... }: { services.ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH = lib.mkForce "2048"; })
+            ]
+          );
           ctx64k = failing (
             extend "asus-b460m" [
               ({ lib, ... }: {

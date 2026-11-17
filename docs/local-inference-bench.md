@@ -64,6 +64,9 @@ done
 - **The server's context applies.** `/v1` takes no `num_ctx`, so the loaded context is the server's
   `OLLAMA_CONTEXT_LENGTH`. asus sets 32768, so `--ctx 4096` and `--ctx 8192` both measure, with a 32K KV cache
   (`context_length_loaded` in the result). Capacity results from before that change were taken at a loaded 4096.
+- **No pi session beside a G1 or capacity run.** A `/v1` client loads the model at the server's 32K and the bench at
+  its own `num_ctx`, so every switch between them reloads the model and lands a load in the warm rows. Hold
+  `/run/work-locks/heavy-work.lock` for the run, as the gates do.
 - **Through the gateway**, once asus is in its catalog (llm-gateway#101): `--base http://127.0.0.1:8081/v1 --route
   gateway --key-file /run/secrets/llm_gateway_pi_key`, the Pi project key on acer.
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """A CUDA Ollama build needs hardware.graphics (modules/homelab/ollama-host.nix): asus as deployed fails no
 assertion, and asus without it is rejected, since libcuda.so.1 is only found under /run/opengl-driver/lib. asus's
-gpu check builds, and fails on asus with graphics but no NVIDIA library in the drivers env. A server context above
-qwen2.5-coder's trained 32768 fails evaluation."""
+gpu check builds, and fails on asus with graphics but no NVIDIA library in the drivers env. A server context outside
+4096 to 32768 (pi's own prompt; qwen2.5-coder's trained context) fails evaluation."""
 import subprocess
 import sys
 
@@ -25,6 +25,8 @@ check(any("hardware.graphics.enable" in m and "CUDA" in m for m in failing["noGr
 
 check(any("OLLAMA_CONTEXT_LENGTH is 65536" in m for m in failing["ctx64k"]),
       f"seeded: a server context above qwen's trained 32768 fails evaluation {failing['ctx64k']}")
+check(any("OLLAMA_CONTEXT_LENGTH is 2048" in m for m in failing["ctx2k"]),
+      f"seeded: a server context under 4096, too small for pi's own prompt, fails evaluation {failing['ctx2k']}")
 
 
 def realise(drv):
