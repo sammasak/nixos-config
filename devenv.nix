@@ -93,11 +93,42 @@ let
       (with pkgs; [
         nix
         jq
+        git
+        gawk
+        gnugrep
+        coreutils
       ])
       ''
         export GC_FREE_SPACE_DIVISOR=16
         names() { nix eval --json --no-write-lock-file ".#$1" --apply builtins.attrNames | jq -r '.[]'; }
-        drv() { echo "nixos-flake-check: $1" >&2; nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null; }
+        # one line per output with its seconds, so a slow step shows where it spends them (#502)
+        took() { echo "nixos-flake-check: $1 took $((SECONDS - $2)) s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2; }
+        drv() {
+          local t=$SECONDS
+          echo "nixos-flake-check: $1" >&2
+          nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null
+          took "eval $1" "$t"
+        }
+        # A check is built here unless it would compile nothing (then the build only substitutes or confirms), its
+        # derivation equals main's (main's gate built it; main is merged green only), or it is another host's
+        # deploy-activate check that would compile a closure only that host builds, which is substituted or left to
+        # that host's own gate, said so. Every output is still evaluated above and below: that is not narrowed.
+        # args: this host, the check's name, its drv, main's drv for it, the derivations a build would compile, and their
+        # inputs: CUDA shows in those (cuda_cudart, nvidia-x11), not in a name (asus's CUDA Ollama is plain ollama-0.x)
+        heavy='cuda|nvidia-x11'
+        decide() {
+          if [ -z "$5" ]; then
+            echo build
+          elif [ -n "$4" ] && [ "$4" = "$3" ]; then
+            echo unchanged
+          elif [[ $2 == deploy-activate-* ]] && [[ $1 != "''${2#deploy-activate-}"* ]] && grep -qE "$heavy" <<<"$6"; then
+            echo foreign
+          else
+            echo build
+          fi
+        }
+        me=$(uname -n)
+        base=$(git merge-base HEAD origin/main 2>/dev/null || true)
         here=$(nix eval --raw --impure --expr builtins.currentSystem)
         # VM checks (NixOS tests, the ones with a driver) boot QEMU, up to 4 GiB: the gate refuses to run on lenovo
         # shellcheck disable=SC2016 # the single-quoted ''${n} is Nix's, not the shell's
@@ -122,8 +153,34 @@ let
             outputs=$(names "$kind.$s")
             for o in $outputs; do
               if [ "$kind.$s" = "checks.$here" ]; then
-                echo "nixos-flake-check: build checks.$s.$o" >&2
-                nix build --no-link --no-write-lock-file ".#checks.$s.$o"
+                c=checks.$s.$o
+                t=$SECONDS
+                d=$(nix eval --raw --no-write-lock-file ".#$c.drvPath")
+                took "eval $c" "$t"
+                todo=$(nix build --dry-run --no-link "$d^*" 2>&1 \
+                  | awk '/will be built:/ { f = 1; next } /will be fetched|^[^ ]/ { f = 0 } f { print $1 }')
+                b="" inputs=""
+                if [ -n "$todo" ]; then
+                  # shellcheck disable=SC2086 # one store path per word
+                  inputs=$(nix-store -q --references $todo)
+                  if [ -n "$base" ]; then b=$(nix eval --raw "git+file://$PWD?rev=$base#$c.drvPath" 2>/dev/null || true); fi
+                fi
+                t=$SECONDS
+                case $(decide "$me" "$o" "$d" "$b" "$todo" "$inputs") in
+                  build)
+                    echo "nixos-flake-check: build $c" >&2
+                    nix build --no-link "$d^*"
+                    took "build $c" "$t"
+                    ;;
+                  unchanged) echo "nixos-flake-check: $c is unchanged since main (built by main's gate), not built here" >&2 ;;
+                  foreign)
+                    if nix build --no-link --max-jobs 0 "$d^*" 2>/dev/null; then
+                      took "substitute $c" "$t"
+                    else
+                      echo "nixos-flake-check: $c would compile against $(grep -E "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')here: left to ''${o#deploy-activate-}'s own gate" >&2
+                    fi
+                    ;;
+                esac
               else
                 drv "$kind.$s.$o"
               fi
@@ -446,6 +503,7 @@ let
       ''
         ${pkgs.python3}/bin/python scripts/test-qa-push.py
         ${pkgs.python3}/bin/python scripts/test-prepush-one-ref.py
+        ${pkgs.python3}/bin/python scripts/test-gate-steps.py
       '';
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
@@ -469,11 +527,69 @@ let
     ${lib.getExe record} gate-step gate=nixos-qa step=${g.name} seconds=$((SECONDS - t)) result=$r sha="$sha"
     [ "$r" = pass ]
   '');
+  tests = [
+    nvimCheck
+    nativeOtelRelayTest
+    nativeOtelFishTest
+    claudeSettingsTest
+    coordinatorReportTest
+    bulkReaderTest
+    harnessTelemetryTest
+    ollamaPortforwardTest
+    ollamaPullPinnedTest
+    llmBenchTest
+    alertBridgeTest
+    knownHostsTest
+    powerScheduleTest
+    buildBoundsTest
+    delegationTest
+    journalCollectorTest
+    caddyEdgeTest
+    systemChecksTest
+    systemdCalendarTest
+    platformRecordsTest
+    authentikAkTest
+    switchSafetyTest
+    rfBeaconsTest
+    qaPushTest
+  ];
+  # A docs-only push still runs the tests whose scripts/test-* reads a changed doc (#502): each found by its file name in
+  # the gates' own text, after the probe they read. A reader no gate runs fails the push rather than pass unchecked.
+  docTests =
+    gate "nixos-doc-tests"
+      (with pkgs; [
+        coreutils
+        gnugrep
+      ])
+      ''
+        GATE_PROBE=$(${lib.getExe probe})
+        export GATE_PROBE
+        for f in "$@"; do
+          found=
+          for g in ${lib.concatMapStringsSep " " lib.getExe (sideBySide ++ tests)}; do
+            if grep -qF "$f" "$g"; then
+              found=1
+              t=$SECONDS
+              "$g"
+              echo "nixos-qa: $(basename "$g") for $f took $((SECONDS - t)) s"
+            fi
+          done
+          [ -n "$found" ] || { echo "nixos-doc-tests: no gate runs $f" >&2; exit 1; }
+        done
+      '';
+  sideBySide = [
+    flakeCheck
+    coordinatorWiringTest
+    workerPermissionsTest
+    workersEvalTest
+    alloyOtlpTest
+  ];
   # the run's own record is written on every exit, so a failed or interrupted gate still shows
   qa =
     gate "nixos-qa"
       (with pkgs; [
         coreutils
+        gawk
         git
         jq
         python3
@@ -494,13 +610,7 @@ let
         if [ -f "$HOME/.claude/CLAUDE.md" ]; then
           ${lib.getExe record} instructions file=global-CLAUDE.md bytes="$(wc -c <"$HOME/.claude/CLAUDE.md")"
         fi
-        ${timed (
-          lints
-          ++ [
-            secretsVerify
-            flakeCheck
-          ]
-        )}
+        ${timed (lints ++ [ secretsVerify ])}
         t=$SECONDS
         GATE_PROBE=$(${lib.getExe probe})
         export GATE_PROBE
@@ -510,45 +620,53 @@ let
           | while read -r node assertions checks; do
             ${lib.getExe record} coverage node="$node" assertions="$assertions" system_checks="$checks"
           done
-        ${timed [
-          nvimCheck
-          nativeOtelRelayTest
-          nativeOtelFishTest
-          claudeSettingsTest
-          coordinatorWiringTest
-          coordinatorReportTest
-          workerPermissionsTest
-          workersEvalTest
-          bulkReaderTest
-          harnessTelemetryTest
-          ollamaPortforwardTest
-          ollamaPullPinnedTest
-          llmBenchTest
-          alertBridgeTest
-          knownHostsTest
-          powerScheduleTest
-          buildBoundsTest
-          delegationTest
-          journalCollectorTest
-          alloyOtlpTest
-          caddyEdgeTest
-          systemChecksTest
-          systemdCalendarTest
-          platformRecordsTest
-          authentikAkTest
-          switchSafetyTest
-          rfBeaconsTest
-          qaPushTest
-        ]}
+        # The flake check and the four slowest tests side by side on a host with the memory, each into its own log,
+        # printed whole and recorded per step after all ended (#502); in this order, one after the other, elsewhere
+        side_by_side() {
+          local dir n e r secs bad=() order=()
+          dir=$(mktemp -d)
+          while [ $# -gt 0 ]; do
+            n=$1 e=$2
+            shift 2
+            order+=("$n")
+            (
+              t=$SECONDS
+              if "$e" >"$dir/$n.log" 2>&1; then r=pass; else r=fail; fi
+              echo "$r $((SECONDS - t))" >"$dir/$n.res"
+            ) &
+          done
+          wait
+          for n in "''${order[@]}"; do
+            read -r r secs <"$dir/$n.res"
+            echo "== $n: $r"
+            cat "$dir/$n.log"
+            echo "nixos-qa: $n took $secs s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+            ${lib.getExe record} gate-step gate=nixos-qa step="$n" seconds="$secs" result="$r" sha="$sha"
+            [ "$r" = pass ] || bad+=("$n")
+          done
+          [ ''${#bad[@]} -eq 0 ] || { echo "nixos-qa: failed side by side: ''${bad[*]}" >&2; return 1; }
+        }
+        together=
+        case $(uname -n) in
+          msi-ms7758 | asus-b460m)
+            if [ "$(awk '/^MemAvailable:/ { print int($2 / 1048576) }' /proc/meminfo)" -ge 10 ]; then together=1; fi
+            ;;
+        esac
+        if [ -n "$together" ]; then
+          side_by_side ${lib.concatMapStringsSep " " (g: "${g.name} ${lib.getExe g}") sideBySide}
+        else
+          ${timed sideBySide}
+        fi
+        ${timed tests}
       '';
 
   # Runs the gate on the PUSHED commit in a throwaway worktree, so neither
   # unstaged edits nor a different checked-out branch can make it pass.
   # prek runs it for the first ref that brings new commits only (the shim refuses a push that brings them to
   # two refs), and not at all for a push that brings none. A push that changes only
-  # documentation (docs/ or a top-level *.md) since origin/main gets the lints; no
-  # merge-base means the full gate, and so does a doc a test reads (scripts/test-*
-  # names it: docs/ssh-host-keys.md) and a nested *.md, which can be deployed config.
+  # documentation (docs/ or a top-level *.md) since origin/main gets the lints, plus the tests that read a changed doc
+  # (a scripts/test-* names it: CLAUDE.md, docs/ssh-host-keys.md); no merge-base means the full gate, and so does a
+  # nested *.md, which can be deployed config. On top of a green tree, a doc a test reads still means the full gate.
   # A docs-only push on top of a main merged on GitHub skips that combined tree's first full gate.
   # A green full gate records the tree in the clone's git dir with the gate executable and the system generation
   # (tests run its tools); that tree, or it plus documentation, gets the lints. Nothing else is keyed: a flaky green,
@@ -579,9 +697,22 @@ let
         }
         # Two pushes trimming at once can lose a line: a step time, or a record, which only costs a full gate.
         trim() { if tail -n "$2" "$1" > "$1.$$" 2>/dev/null; then mv "$1.$$" "$1"; else rm -f "$1.$$"; fi; }
+        # the tests that read a changed doc, when every change since $1 is documentation
+        readers() {
+          local changed
+          changed=$(git diff --no-renames --name-only "$1" HEAD --) \
+            && ! grep -qvE '^docs/|^[^/]+\.md$' <<<"$changed" && grep -rlF -f - --include='test-*' scripts <<<"$changed"
+        }
         if base=$(git merge-base HEAD origin/main) && docs_only "$base"; then
           echo "nixos-qa: $(git rev-parse --short HEAD) changes only documentation since origin/main, lints only"
           ${run lints}
+          exit
+        fi
+        if [ -n "$base" ] && r=$(readers "$base"); then
+          mapfile -t read_by <<<"$r"
+          echo "nixos-qa: $(git rev-parse --short HEAD) changes only documentation since origin/main, read by ''${read_by[*]}: the lints and those tests"
+          ${run lints}
+          ${lib.getExe docTests} "''${read_by[@]}"
           exit
         fi
         gitdir=$(git rev-parse --path-format=absolute --git-common-dir)
