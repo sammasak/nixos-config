@@ -420,6 +420,18 @@ let
           powerLow = failing (
             extend "asus-b460m" [ ({ lib, ... }: { homelab.ollama.gpuPowerLimit = lib.mkForce 99; }) ]
           );
+          ctx2k = failing (
+            extend "asus-b460m" [
+              ({ lib, ... }: { services.ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH = lib.mkForce "2048"; })
+            ]
+          );
+          ctx64k = failing (
+            extend "asus-b460m" [
+              ({ lib, ... }: {
+                services.ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH = lib.mkForce "65536";
+              })
+            ]
+          );
           noGraphics = failing (
             extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.enable = lib.mkForce false; }) ]
           );

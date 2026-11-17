@@ -3,7 +3,8 @@
 assertion, and asus without it is rejected, since libcuda.so.1 is only found under /run/opengl-driver/lib. asus's
 gpu check builds, and fails on asus with graphics but no NVIDIA library in the drivers env. The GPU power cap is a
 oneshot wanted by Ollama and ordered before it, never required, with a start timeout, after nvidia-persistenced, and a
-cap outside the card's range fails evaluation."""
+cap outside the card's range fails evaluation. A server context outside 4096 to 32768 (pi's own prompt; qwen2.5-coder's
+trained context) fails evaluation."""
 import subprocess
 import sys
 
@@ -38,6 +39,10 @@ check(u["persistenced"] and "nvidia-persistenced.service" in u["after"],
 for seed, watts in (("powerHigh", 271), ("powerLow", 99)):
     check(any(f"gpuPowerLimit is {watts} W" in m for m in failing[seed]),
           f"seeded: a {watts} W cap fails evaluation {failing[seed]}")
+check(any("OLLAMA_CONTEXT_LENGTH is 65536" in m for m in failing["ctx64k"]),
+      f"seeded: a server context above qwen's trained 32768 fails evaluation {failing['ctx64k']}")
+check(any("OLLAMA_CONTEXT_LENGTH is 2048" in m for m in failing["ctx2k"]),
+      f"seeded: a server context under 4096, too small for pi's own prompt, fails evaluation {failing['ctx2k']}")
 
 
 def realise(drv):
