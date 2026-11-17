@@ -1,6 +1,6 @@
 # black-pi's promtool (config and rule files), amtool and blackbox --config.check run only in its toplevel's build, so on
 # the Pi at deploy. Seeded onto msi, an x86 host, the same modules' checked files build in the flake check; building it
-# realises only those files and their tools, never a toplevel. The rule test below feeds monitoring/rules/homelab.yaml the
+# realises only those files and their tools, never a toplevel. The rule test below feeds modules/homelab/monitoring/rules/homelab.yaml the
 # node-exporter targets as the seed renders them, one case per host, so a host the fleet marks sleeps is checked.
 { config, lib, ... }:
 let
@@ -38,7 +38,7 @@ let
   labelled = map node (lib.filter (t: t.labels.sleeps or "" == "true") nodeTargets);
   awake = lib.subtractLists sleeping (map node nodeTargets);
   # promtool's clock starts at the Unix epoch, a Thursday 00:00 UTC, inside msi's off window; 10:00 is outside it,
-  # Saturday 12:00 inside again. msi alone has a window (monitoring/rules/homelab.yaml), the other sleeping hosts none.
+  # Saturday 12:00 inside again. msi alone has a window (modules/homelab/monitoring/rules/homelab.yaml), the other sleeping hosts none.
   night = "20m";
   day = "10h";
   saturday = "60h";

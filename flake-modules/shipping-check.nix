@@ -1,4 +1,4 @@
-# The shipping rules as black-pi's Prometheus loads them (monitoring/rules/shipping.nix from the policy file): every metric they,
+# The shipping rules as black-pi's Prometheus loads them (modules/homelab/monitoring/rules/shipping.nix from the policy file): every metric they,
 # the Shipping dashboard and the policy name is emitted or recorded (scripts/shipping-names.py), and a seeded unknown
 # name in a rule and in a panel fails it; promtool runs alerts against inputs and times sized from the policy's
 # thresholds and for minutes, so a changed value keeps the test honest without editing it.
