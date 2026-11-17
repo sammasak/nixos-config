@@ -33,6 +33,10 @@ in
 
   config = mkMerge [
     {
+      # not an assertion: the VM tests that borrow msi's name set it off and must still build
+      warnings =
+        lib.optional (own != null && !cfg.poweroff.enable)
+          "${host} has a fleet power window (modules/core/fleet.nix) but sam.powerSchedule.poweroff.enable is off: it will not power itself off at ${own.off}. Only a VM test that borrows its name should do that.";
       assertions = [
         {
           assertion = awake == [ ];
