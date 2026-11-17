@@ -6,6 +6,10 @@
 # fails the run. Usage: monitoring-exposition.sh OUT PROMETHEUS PROMCONFIG 'PROMFLAGS' ALERTMANAGER AMCONFIG ALLOY ALLOYCFG
 set -eu
 out=$1 prometheus=$2 promconfig=$3 promflags=$4 alertmanager=$5 amconfig=$6 alloy=$7 alloycfg=$8
+[ -f "$alloycfg" ] || {
+  echo "monitoring-exposition: no alloy-otlp config file at '$alloycfg'" >&2
+  exit 1
+}
 work=$(mktemp -d "$PWD/stack.XXXXXX")
 pids=()
 trap 'kill "${pids[@]}" 2>/dev/null || true' EXIT
@@ -29,7 +33,16 @@ sed 's/0\.0\.0\.0:/127.0.0.1:/g' "$alloycfg" >"$work/otlp.alloy"
 OTLP_BEARER_TOKEN=check "$alloy/bin/alloy" run --stability.level=experimental --disable-reporting \
   --server.http.listen-addr=127.0.0.1:19346 --storage.path="$work/alloy" "$work/otlp.alloy" >"$work/alloy.log" 2>&1 &
 pids+=($!)
-for _ in $(seq 60); do curl -fsS -o /dev/null http://127.0.0.1:19346/-/ready 2>/dev/null && break; sleep 1; done
+ready=0
+for _ in $(seq 60); do
+  curl -fsS -o /dev/null http://127.0.0.1:19346/-/ready 2>/dev/null && ready=1 && break
+  sleep 1
+done
+[ "$ready" = 1 ] || {
+  echo "monitoring-exposition: alloy-otlp never became ready" >&2
+  cat "$work/alloy.log" >&2
+  exit 1
+}
 now=$(date +%s)000000000
 resource='"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}}]}'
 post() {

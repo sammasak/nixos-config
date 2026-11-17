@@ -148,6 +148,11 @@ let
       ];
       reason = "rules seed SeedTargetDown: job 'kube-state-metrics': no scrape job";
     };
+    # a name the running Prometheus does not export
+    prometheus-typo = {
+      dashboard = seed "prometheus_tsdb_head_seriez" "prometheus";
+      reason = "unknown metric prometheus_tsdb_head_seriez:";
+    };
     gateway-typo = {
       dashboard = seed "rate(llm_gateway_no_such_total[5m])" "prometheus";
       reason = "unknown metric llm_gateway_no_such_total";
