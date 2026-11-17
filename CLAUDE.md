@@ -11,14 +11,14 @@ A NixOS + Home Manager configuration repository using **flake-parts**. Manages L
 ```bash
 # ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
 #    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
-devenv tasks run nixos:qa           # every gate in order (= just check): lints, secrets-verify, flake check, then the tests
-devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: builds every x86 host and the x86 checks (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them), evaluates the Pis (= just verify)
+devenv tasks run nixos:qa           # every gate (= just check): lints, secrets-verify, the probe, flake check, then the tests; on asus the flake check and the four slowest tests run side by side
+devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: evaluates every output and builds every x86 check (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them) except one that would compile against CUDA off its own node, which is deferred to that node's gate and listed; evaluates the Pis (= just verify)
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
 #   pre-push:   no-force guard, one ref with new commits per push, + nixos:qa on the PUSHED commit in a temp worktree
 #               (lints only when everything changed since origin/main is docs/ or a top-level *.md,
-#               unless a scripts/test-* file names one of the changed files; also lints only for a tree
+#               plus the tests whose scripts/test-* names a changed file; also lints only for a tree
 #               already green here under the same gate and system generation, or it plus such docs;
 #               deleting nixos-qa-green in the common git dir forces the full gate.
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).

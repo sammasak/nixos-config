@@ -29,9 +29,10 @@ if not m:
 BODY = textwrap.dedent(m.group(1)).replace("'''", "\0q").replace("''${", "\0d")
 
 
-def render(qa, lints, gen):
-    """The hook as writeShellApplication would build it, with qa, the lints and /run/current-system replaced."""
-    text = BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints))
+def render(qa, lints, gen, docs):
+    """The hook as writeShellApplication would build it, with qa, the lints, the doc readers' tests and
+    /run/current-system replaced."""
+    text = BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
     left = re.findall(r"\$\{[^}]*\}", text)
     if left:
         sys.exit(f"FAIL: Nix interpolations the test does not stub: {left}")
@@ -48,14 +49,16 @@ with tempfile.TemporaryDirectory() as t:
     gen.symlink_to(t / "gen1")
     lints = t / "lints"
     lints.write_text(f'#!/usr/bin/env bash\necho LINTS >> "{log}"\ncat >> "{t}/lint-stdin"\nexit "${{LINT_RC:-0}}"\n')
+    docs = t / "doc-tests"
+    docs.write_text(f'#!/usr/bin/env bash\necho "DOCTESTS $*" >> "{log}"\nexit "${{DOC_RC:-0}}"\n')
     gates = {}
     for name in ("qa", "qa-other"):
         qa = t / name
         qa.write_text(f'#!/usr/bin/env bash\necho FULL >> "{log}"\necho "nixos-qa: stub took 0 s" >> "${{NIXOS_QA_TIMES:-/dev/null}}"\n'
                       f'[ -z "${{QA_SWITCH:-}}" ] || ln -sfn "$QA_SWITCH" "{gen}"\nexit "${{QA_RC:-0}}"\n')
         gates[name] = t / f"gate-{name}.sh"
-        gates[name].write_text(render(qa, lints, gen))
-    for f in (lints, t / "qa", t / "qa-other", *gates.values()):
+        gates[name].write_text(render(qa, lints, gen, docs))
+    for f in (lints, docs, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
     env = {k: v for k, v in os.environ.items()
@@ -80,7 +83,8 @@ with tempfile.TemporaryDirectory() as t:
         r = subprocess.run([str(gates[which])], cwd=repo, env={**env, "PRE_COMMIT_TO_REF": rev, **extra},
                            stdin=subprocess.DEVNULL, capture_output=True, text=True)
         seen = log.read_text().split()
-        verdict = "FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"] else f"?{seen}"
+        verdict = ("FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"]
+                   else "LINTS+" + " ".join(seen[2:]) if seen[:2] == ["LINTS", "DOCTESTS"] else f"?{seen}")
         return verdict if r.returncode == 0 else f"{verdict}(rc={r.returncode})", r.stderr
 
     def case(what, rev, want, **kw):
@@ -180,6 +184,12 @@ with tempfile.TemporaryDirectory() as t:
     change("MDm a mode-only change under docs/ since origin/main", lambda: (repo / "docs/a.md").chmod(0o755), "LINTS")
     change("SDm a symlink under docs/ to code since origin/main", lambda: (repo / "docs/code").symlink_to("../flake.nix"), "LINTS")
     case("LFm a failing lint on the origin/main docs-only path fails the push", git("rev-parse", "HEAD"), "LINTS(rc=1)", LINT_RC="1")
+    git("switch", "-qc", "docs-read", base)
+    k = commit({"docs/keys.md": "k3\n", "docs/a.md": "a4\n"}, "a doc a test reads, since origin/main")
+    case("DR documentation since origin/main that a test reads runs the lints and that test, not the full gate", k,
+         "LINTS+scripts/test-keys.py")
+    case("DRf the doc's test failing fails the push", k, "LINTS+scripts/test-keys.py(rc=1)", DOC_RC="1")
+    case("DRc the same plus a code change is the full gate", commit({"flake.nix": "dr\n"}, "and code"), "FULL")
     git("switch", "-q", "main")
 
     hooks = t / "hooks"
@@ -248,7 +258,8 @@ if fc:
                                "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','nixosConfigurations','overlays','packages','templates']}))\n"
                                "elif '--expr' in a: print('x86_64-linux', end='')\n"
                                "elif any('? driver' in x for x in a): print(json.dumps(['rebind']))\n"
-                               "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n")
+                               "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
+                               "elif a[:2] == ['eval', '--raw'] and attr.endswith('.drvPath'): print('/nix/store/x-' + attr[:-8] + '.drv', end='')\n")
         for host in ("lenovo-21CB001PMX", "msi-ms7758"):
             (t / "uname").write_text(f"#!/usr/bin/env bash\necho {host}\n")
             for f in ("nix", "uname"):
@@ -258,7 +269,7 @@ if fc:
             body = body.replace("''$", "$")
             run = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True,
                                  env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}"})
-            built = [c for c in calls.read_text().splitlines() if c.startswith("build ")]
+            built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c]
             vm_built = any("rebind" in c for c in built)
             if host.startswith("lenovo"):
                 hosts_evaluated = any("toplevel" in c for c in calls.read_text().splitlines())

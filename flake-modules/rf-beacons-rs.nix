@@ -4,6 +4,16 @@
     { pkgs, system, ... }:
     let
       src = inputs.rf-proto;
+      # exactly what the parity check reads: a whole-repo source would give it a new drvPath on every change (#502)
+      paritySrc = lib.fileset.toSource {
+        root = ../.;
+        fileset = lib.fileset.unions [
+          ../modules/rf-lab/fixtures/beacon.pcap
+          ../modules/rf-lab/fixtures/beacon-hidden.pcap
+          ../modules/rf-lab/fixtures/beacon-escape.pcap
+          ../scripts/rf-beacons-table.sh
+        ];
+      };
       # the Rust beacon table of sammasak/rf-proto (slice 6, #42): reads a capture file only, opens no
       # interface, captures and sends nothing. The crate is zero-dependency; its own tests run in its repo.
       rfBeaconsRs = pkgs.rustPlatform.buildRustPackage {
@@ -44,7 +54,7 @@
               ];
             }
             ''
-              cd ${../.}
+              cd ${paritySrc}
               for f in beacon beacon-hidden beacon-escape; do
                 p=modules/rf-lab/fixtures/$f.pcap
                 rust=$(rf-beacons-rs "$p" ${rfBeaconsRs}/share/rf-beacons-rs/oui-sample.csv --text)
