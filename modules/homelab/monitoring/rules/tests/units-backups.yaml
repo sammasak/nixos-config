@@ -1,0 +1,40 @@
+# promtool test rules for homelab.yaml's unit and backup alerts (flake-modules/monitoring-check.nix runs it).
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",name="caddy.service",state="failed"}'
+        values: '0x10 1x30'
+      - series: 'node_systemd_timer_last_trigger_seconds{job="node-exporter",node="acer-swift",name="authentik-backup.timer"}'
+        values: '0x200'
+      - series: 'node_systemd_timer_last_trigger_seconds{job="node-exporter",node="lenovo-21CB001PMX",name="authentik-offhost.timer"}'
+        values: '0+60x200'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: NodeSystemdUnitFailed
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: NodeSystemdUnitFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: acer-swift, name: caddy.service, state: failed}
+            exp_annotations:
+              summary: "caddy.service failed on acer-swift"
+              description: "caddy.service has been in the failed state on acer-swift for 15 minutes. Run systemctl status caddy.service and journalctl -u caddy.service there; systemctl reset-failed clears it once fixed."
+  - interval: 1m
+    input_series:
+      - series: 'node_systemd_timer_last_trigger_seconds{job="node-exporter",node="acer-swift",name="authentik-backup.timer"}'
+        values: '0x1700'
+      - series: 'node_systemd_timer_last_trigger_seconds{job="node-exporter",node="lenovo-21CB001PMX",name="authentik-offhost.timer"}'
+        values: '0+60x1700'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: AuthentikBackupStale
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: AuthentikBackupStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: acer-swift, name: authentik-backup.timer}
+            exp_annotations:
+              summary: "authentik-backup.timer on acer-swift has not run for over 26 hours"
+              description: "The daily Authentik backup timer authentik-backup.timer on acer-swift last fired 1d 3h 0m 0s ago. Check systemctl list-timers authentik-backup.timer there; without it the newest Authentik dump is that old."
