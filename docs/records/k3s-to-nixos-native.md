@@ -27,8 +27,9 @@ NixOS module on a named host, and the deployment tool stays deploy-rs.
 
 1. No k3s at all, reached in four steps (all landed):
    1. monitoring native on black-pi (#414, #419);
-   2. Caddy on acer fronts every name and replaces Traefik; herman and karta
-      are Nix-built static sites; zot retired (#420, #437);
+   2. Caddy on acer fronts every name and replaces Traefik; herman is a
+      Nix-built static site; karta was dropped with k3s (#442, its name now
+      404s, #463); zot retired (#420, #437);
    3. Authentik and Postgres native, behind Caddy `forward_auth` (#421);
    4. k3s, Flux, Cilium, kyverno, KEDA, MetalLB, cert-manager, external-dns
       and metrics-server removed (#422, #442).
@@ -95,7 +96,8 @@ hosts by hand.
 - **Rollout order.** One host at a time, least critical first: msi, black-pi,
   acer, lenovo. After each deploy: `systemctl is-system-running`, the
   generation link, and the service's user-visible check
-  (`scripts/post-deploy-check.sh` does part of it).
+  (`scripts/post-deploy-check.sh` does part of it): magicRollback's
+  connectivity path is unrehearsed (#297).
 - **Persistent state.** A fixed `/var/lib/<service>` on a named host, with the
   backup job declared in the same module.
 - **Probe gotcha.** A failing `ExecStartPost` probe fails the whole host
@@ -117,8 +119,9 @@ hosts by hand.
 - **Paging when hosts fail.** lenovo down means no pages (ntfy is on lenovo;
   owner accepted, #399), and dashboards need client-side hosts entries
   (AdGuard is on lenovo). black-pi down pages only through cluster-watchdog on
-  lenovo. acer down leaves Grafana reachable on black-pi's LAN port with its
-  local login, and Alertmanager still posts to lenovo's ntfy.
+  lenovo. acer down takes Authentik and so Grafana's login with it (OIDC only,
+  no local fallback, grafana.nix); Alertmanager on black-pi still posts to
+  lenovo's ntfy.
 
 ## Open
 
