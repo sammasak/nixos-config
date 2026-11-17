@@ -27,6 +27,21 @@ in
                   type = types.bool;
                   default = false;
                 };
+                # a work-hours window (modules/core/power-schedule.nix): the waker sends a Wake-on-LAN packet to mac
+                # at wake, the host powers off at off (systemd OnCalendar); interface is the NIC whose wol unit it needs
+                power = mkOption {
+                  default = null;
+                  type = types.nullOr (
+                    types.submodule {
+                      options = {
+                        mac = mkOption { type = types.strMatching "[0-9a-f]{2}(:[0-9a-f]{2}){5}"; };
+                        interface = mkOption { type = types.str; };
+                        wake = mkOption { type = types.str; };
+                        off = mkOption { type = types.str; };
+                      };
+                    }
+                  );
+                };
               };
             }
           );
@@ -45,14 +60,26 @@ in
     hosts = {
       lenovo-21CB001PMX.address = "192.168.10.154";
       acer-swift.address = "192.168.10.110";
-      # dual-boot towers, often off or in Windows; msi powers off nights and weekends (msi-power-schedule.nix)
+      # dual-boot towers, often off or in Windows; both power off nights and weekends (power-schedule.nix)
       msi-ms7758 = {
         address = "192.168.10.235";
         sleeps = true;
+        power = {
+          mac = "d4:3d:7e:4a:f9:3d";
+          interface = "enp3s0";
+          wake = "Mon-Fri 08:30";
+          off = "Mon-Fri 21:00";
+        };
       };
       asus-b460m = {
         address = "192.168.10.113";
         sleeps = true;
+        power = {
+          mac = "f0:2f:74:32:6b:7f";
+          interface = "eno1";
+          wake = "Mon-Fri 08:30";
+          off = "Mon-Fri 21:00";
+        };
       };
       # address is end0, extraAddresses wlan0
       black-pi = {

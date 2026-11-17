@@ -84,7 +84,7 @@ just bump [input]       # update one flake input (default: skills); then just sw
 # Push from lenovo with deploy-rs (magic rollback); the deploy-rs client runs under a 7G cap and
 # skips deploy-rs's own flake check. The pre-push gate runs it on pushed non-docs
 # commits; the recipe refuses a dirty tree or a HEAD not on origin/main (DEPLOY_UNGATED=1 breaks glass).
-# HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~09:00-21:00), asus-b460m,
+# HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~08:30-21:00), asus-b460m,
 # black-pi (builds on the Pi, run inside zellij), naked-pi
 just deploy HOST
 just dry-activate HOST  # the units a deploy would restart, and the closure diff; activates nothing

@@ -11,15 +11,10 @@ in
   imports = [
     ./hardware-configuration.nix
     ../../modules/hardware/video/intel.nix
-    # Scheduled work-hours power window (self-shutdown half; lenovo does the wake).
-    ../../modules/homelab/msi-power-schedule.nix
     ../../modules/homelab/journal-collector.nix
     ../../modules/homelab/ollama-host.nix
     ../../modules/homelab/monitoring/node-exporter.nix
   ];
-
-  # Powered on Mon-Fri ~09:00 (WoL from lenovo) and gracefully shut down at 21:00.
-  homelab.msiPowerSchedule.selfShutdown.enable = true;
 
   homelab.journalCollector = {
     enable = true;

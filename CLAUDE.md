@@ -48,7 +48,7 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   fails every deploy: read `systemctl --failed` on the target.
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
-#   msi-ms7758  builds on msi; only in its Mon-Fri ~09:00-21:00 power window
+#   msi-ms7758  builds on msi; only in its Mon-Fri ~08:30-21:00 power window
 #   asus-b460m  builds on the asus (Windows dual-boot worker)
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only, except the patched deploy-rs (not cached, a
@@ -281,6 +281,8 @@ either side is only reported.
 - a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` (asserted);
 - its LAN address in `modules/core/fleet.nix` if another module reads it, and `sleeps = true` there if it
   may be powered off (the store caches skip it; `HostExpectedOff` covers it instead of `NodeChronicNotReady`);
+  for a work-hours window also `power` there (MAC, NIC, wake and off times): lenovo wakes it and it powers
+  itself off (`modules/core/power-schedule.nix`, asserted with its `wol-<nic>` unit);
 - optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`;
 - the hand-kept host lists in `docs/new-host.md` step 5 (until #480 derives them).
 

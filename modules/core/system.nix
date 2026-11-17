@@ -12,6 +12,7 @@ in
 {
   imports = [
     ./fleet.nix
+    ./power-schedule.nix
     ./systemd-verify.nix
   ];
 

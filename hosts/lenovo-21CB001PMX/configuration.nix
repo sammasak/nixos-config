@@ -15,7 +15,6 @@
     ../../modules/specialisations/desktop.nix
 
     # Wake msi (the intermittent LLM worker) on the work-hours schedule.
-    ../../modules/homelab/msi-power-schedule.nix
     ../../modules/homelab/authentik-offhost.nix
 
     ../../modules/homelab/monitoring/node-exporter.nix
@@ -87,8 +86,8 @@
     interactiveQuietSeconds = 600;
   };
 
-  # As the always-on control plane, lenovo sends msi its Mon-Fri 09:00 wake.
-  homelab.msiPowerSchedule.waker.enable = true;
+  # As the always-on control plane, lenovo sends every host with a fleet power window its wake.
+  sam.powerSchedule.waker.enable = true;
 
   # Declared here, not in the shared sam.hostSecrets tree, so acer never
   # decrypts the private signing key — it only needs the public half already

@@ -387,6 +387,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-systemd-calendar.py
       '';
 
+  powerScheduleTest =
+    gate "power-schedule-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-power-schedule.py
+      '';
+
   buildBoundsTest =
     gate "build-bounds-test"
       (with pkgs; [
@@ -500,6 +510,7 @@ let
           ollamaPullPinnedTest
           alertBridgeTest
           knownHostsTest
+          powerScheduleTest
           buildBoundsTest
           delegationTest
           journalCollectorTest
@@ -883,6 +894,8 @@ in
       task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
     "nixos:systemd-calendar-test" =
       task "The systemd-calendar check passes parsing timer specs and fails, naming the timer, on a bad one (fixture trees)" systemdCalendarTest;
+    "nixos:power-schedule-test" =
+      task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =
