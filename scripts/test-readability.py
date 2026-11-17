@@ -2,8 +2,9 @@
 """Readability gates (#295): every fleet size the current docs state ("six-host", "six hosts") is the number of
 entries in flake-modules/hosts.nix, and the README host table has one row per entry; and every sam.* and homelab.*
 option leaf any host declares, submodule sub-options included, has a description (scripts/gate-probe.nix,
-option-docs). docs/records/ is dated and out of scope. Seeded cases: wrong counts and a missing README row must be
-caught, an undescribed top-level and submodule leaf declared by the probe must be reported."""
+option-docs) that is a real sentence, not blank, a placeholder or the option's own name. docs/records/ is dated and out
+of scope. Seeded cases: wrong counts and a missing README row must be caught, and the probe's undescribed and
+filler-described leaves, top level and in a submodule, must be reported."""
 import pathlib
 import re
 import sys
@@ -14,13 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORDS = ["two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
 # "one host" is a scope ("one host at a time"), not a fleet size
 COUNT = re.compile(r"(?<![\w-])(" + "|".join(WORDS) + r"|[2-9]|1[0-9])[- ]hosts?\b", re.IGNORECASE)
-# fleet.nix is lane H's file (#295); each leaf leaves this list when it gets a description
-OWED = {
-    "sam.fleet.deployer", "sam.fleet.edge", "sam.fleet.gateway", "sam.fleet.hosts", "sam.fleet.hosts.address",
-    "sam.fleet.hosts.extraAddresses", "sam.fleet.hosts.gpu", "sam.fleet.hosts.power", "sam.fleet.hosts.power.interface",
-    "sam.fleet.hosts.power.mac", "sam.fleet.hosts.power.off", "sam.fleet.hosts.power.wake", "sam.fleet.hosts.sleeps",
-    "sam.fleet.lanCidr",
-}
+PLACEHOLDERS = {"todo", "fixme", "tbd", "xxx", "description", "none", "n/a"}
 failed = 0
 
 
@@ -43,8 +38,21 @@ def readme_hosts(text):
     return {m.group(2) or m.group(1) for m in re.finditer(r"^\| `([A-Za-z0-9-]+)`(?: \(`([a-z0-9-]+)`\))? \|", text, re.M)}
 
 
-def undescribed(leaves):
-    return {leaf["name"] for leaf in leaves if not leaf["described"]}
+def poor(leaf):
+    """Why a leaf's description is no description: missing, blank, a placeholder, its own name, or under 3 words."""
+    d = (leaf["description"] or "").strip()
+    own = leaf["name"].rsplit(".", 1)[-1]
+    if not d:
+        return "none" if leaf["description"] is None else "blank"
+    if d.strip(".:").lower() in PLACEHOLDERS | {own.lower(), leaf["name"].lower()}:
+        return f"placeholder {d!r}"
+    if len(d.split()) < 3 or len(d) < 15:
+        return f"too short {d!r}"
+    return None
+
+
+def poor_leaves(leaves):
+    return {leaf["name"]: why for leaf in leaves if (why := poor(leaf))}
 
 
 table = (ROOT / "flake-modules/hosts.nix").read_text()
@@ -68,14 +76,15 @@ check(rows == hosts, f"the README host table has one row per hosts.nix entry (mi
       f"extra {sorted(rows - hosts)})")
 
 P = gate_probe.section("option-docs")
-check(undescribed(P["seeded"]) - OWED == {"sam.seededUndescribed", "homelab.seededDescribed.port"},
-      f"seeded: an undescribed top-level and submodule leaf are reported ({sorted(undescribed(P['seeded']) - OWED)})")
+seeded = poor_leaves(P["seeded"])
+check({k: v.split()[0] for k, v in seeded.items()} == {
+    "sam.seededUndescribed": "none", "sam.seededEmpty": "blank", "sam.seededTodo": "placeholder",
+    "sam.seededOwnName": "placeholder", "homelab.seededDescribed.port": "none"},
+      f"seeded: a missing, blank, TODO and own-name description, top level and in a submodule, are reported ({seeded})")
 leaves = {leaf["name"]: leaf for ls in P["hosts"].values() for leaf in ls}
-missing = undescribed(leaves.values())
-check(len(leaves) > 100 and not missing - OWED,
-      f"every one of {len(leaves)} sam.*/homelab.* option leaves has a description (missing: "
-      f"{ {m: leaves[m]['files'] for m in sorted(missing - OWED)} })")
-check(OWED <= missing, f"the owed list holds only leaves still without one (described now: {sorted(OWED - missing)})")
-print(f"owed (fleet.nix, lane H): {len(missing & OWED)} leaves without a description")
+missing = poor_leaves(leaves.values())
+check(len(leaves) > 100 and not missing,
+      f"every one of {len(leaves)} sam.*/homelab.* option leaves has a real description "
+      f"({ {m: [why, leaves[m]['files']] for m, why in sorted(missing.items())} })")
 
 sys.exit(1 if failed else 0)

@@ -32,7 +32,7 @@ let
   };
 
   # every sam.* and homelab.* option leaf a host declares, submodule sub-options included (named by the parent's path,
-  # no attrsOf key: sam.fleet.hosts.address), with whether it has a description and the files declaring it
+  # no attrsOf key: sam.fleet.hosts.address), with its description (null if none) and the files declaring it
   optionLeaves =
     options:
     let
@@ -45,7 +45,12 @@ let
               [
                 {
                   name = lib.concatStringsSep "." (path ++ [ n ]);
-                  described = (o.description or null) != null;
+                  # a string, or a literalMD-style { text } from an older module
+                  description =
+                    let
+                      d = o.description or null;
+                    in
+                    if d == null || builtins.isString d then d else d.text or "";
                   files = map toString o.declarations;
                 }
               ]
@@ -67,7 +72,7 @@ let
       assertions = builtins.length h.config.assertions;
       checks = builtins.length h.config.system.checks;
     }) hosts;
-    # scripts/test-readability.py. Seeded: a top-level leaf and a submodule leaf declared without a description
+    # scripts/test-readability.py. Seeded: leaves without a description or with filler (blank, TODO, own name)
     option-docs = {
       hosts = lib.mapAttrs (_: h: optionLeaves h.options) hosts;
       seeded =
@@ -78,6 +83,21 @@ let
                 options.sam.seededUndescribed = lib.mkOption {
                   type = lib.types.bool;
                   default = false;
+                };
+                options.sam.seededEmpty = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = " ";
+                };
+                options.sam.seededTodo = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "TODO";
+                };
+                options.sam.seededOwnName = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "seededOwnName";
                 };
                 options.homelab.seededDescribed = lib.mkOption {
                   type = lib.types.attrsOf (
