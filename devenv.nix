@@ -1147,9 +1147,9 @@ in
     "nixos:known-hosts-test" =
       task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
     "nixos:systemd-calendar-test" =
-      task "The systemd-calendar check passes parsing timer specs and fails, naming the timer, on a bad one (fixture trees)" systemdCalendarTest;
+      task "The systemd-calendar check passes parsing NixOS and Home Manager timer specs and fails, naming the timer (and user), on a bad one (fixture trees)" systemdCalendarTest;
     "nixos:systemd-verify-test" =
-      task "The systemd-verify check passes a clean tree and fails, printing the line, on an unknown key, unknown section or unparseable value (fixture trees)" systemdVerifyTest;
+      task "The systemd-verify check passes a clean tree and fails, printing the line, on an unknown key, unknown section or unparseable value, in system or Home Manager units (fixture trees)" systemdVerifyTest;
     "nixos:power-schedule-test" =
       task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
     "nixos:adguard-dns-test" =
