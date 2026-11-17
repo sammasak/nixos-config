@@ -7,7 +7,9 @@
 let
   inherit (config.flake.nixosConfigurations) acer-swift black-pi msi-ms7758;
   pi = black-pi.config;
-  inherit (pi.homelab.grafana) dashboards;
+  # the Shipping dashboard's shipping_* names come from lenovo's textfile, and shipping-check.nix checks them against
+  # scripts/shipping-names.py; every other dashboard is checked here
+  dashboards = removeAttrs pi.homelab.grafana.dashboards [ "shipping.json" ];
   hosts = lib.attrNames pi.sam.fleet.hosts;
   discard = builtins.unsafeDiscardStringContext;
   prom = builtins.fromJSON (discard pi.services.prometheus.configText);
