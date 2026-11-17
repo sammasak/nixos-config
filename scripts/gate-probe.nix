@@ -341,6 +341,13 @@ let
       {
         failing = {
           asus = failing hosts.asus-b460m.config;
+          ctx64k = failing (
+            extend "asus-b460m" [
+              ({ lib, ... }: {
+                services.ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH = lib.mkForce "65536";
+              })
+            ]
+          );
           noGraphics = failing (
             extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.enable = lib.mkForce false; }) ]
           );

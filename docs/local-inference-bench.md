@@ -61,9 +61,9 @@ for m in qwen2.5-coder:7b-instruct-q4_K_M gemma4:e4b-it-qat gemma4:e2b-it-qat; d
 done
 ```
 
-- **4096 only.** `/v1` takes no `num_ctx`, so the server's loaded context applies. asus sets
-  `OLLAMA_CONTEXT_LENGTH=4096`, so `--ctx 8192` warns "history was dropped" and gives no number. An 8K capacity
-  needs the server to load 8K first.
+- **The server's context applies.** `/v1` takes no `num_ctx`, so the loaded context is the server's
+  `OLLAMA_CONTEXT_LENGTH`. asus sets 32768, so `--ctx 4096` and `--ctx 8192` both measure, with a 32K KV cache
+  (`context_length_loaded` in the result). Capacity results from before that change were taken at a loaded 4096.
 - **Through the gateway**, once asus is in its catalog (llm-gateway#101): `--base http://127.0.0.1:8081/v1 --route
   gateway --key-file /run/secrets/llm_gateway_pi_key`, the Pi project key on acer.
 

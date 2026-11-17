@@ -542,7 +542,7 @@ def main(argv=None):
     c.add_argument("--base", required=True, help="OpenAI-compatible base: Ollama's /v1 or the gateway's /v1")
     c.add_argument("--host", required=True)
     c.add_argument("--model", required=True)
-    # /v1 takes no num_ctx: the server's loaded context applies (asus: OLLAMA_CONTEXT_LENGTH 4096), so 8192 only
+    # /v1 takes no num_ctx: the server's loaded context applies (asus: OLLAMA_CONTEXT_LENGTH 32768), so 8192 only
     # measures where that context is loaded, and otherwise warns and gives no number
     c.add_argument("--ctx", type=int, choices=(4096, 8192), default=4096)
     c.add_argument("--route", choices=("direct", "gateway"), required=True)

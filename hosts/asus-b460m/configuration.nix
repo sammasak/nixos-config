@@ -104,8 +104,10 @@ in
     # GA104 is sm_86: the default ten architectures cost a far longer build for the same runner
     package = pkgs.ollama-cuda.override { cudaArches = [ "sm_86" ]; };
     loadModels = builtins.attrNames config.homelab.ollama.modelDigests;
-    # the G1 headroom gate's context; the 8K runs pass options.num_ctx
-    environmentVariables.OLLAMA_CONTEXT_LENGTH = "4096";
+    # what /v1 clients (pi, llm-bench capacity) get: /v1 drops a request's num_ctx. The G1 bench sets options.num_ctx
+    # on every request, so this default never reaches it. At 32K each pinned tag stays fully on the GPU (qwen 5499 MiB
+    # of 8192, gemma4:e4b 4609).
+    environmentVariables.OLLAMA_CONTEXT_LENGTH = "32768";
   };
   # registry.ollama.ai manifest sha256 per tag, as /api/tags reports it
   homelab.ollama.modelDigests = {
@@ -148,6 +150,11 @@ in
         ollama.environmentVariables.OLLAMA_MAX_LOADED_MODELS == "1"
         && ollama.environmentVariables.OLLAMA_NUM_PARALLEL == "1";
       message = "hosts/asus-b460m: PoC A serves one model and one request at a time (OLLAMA_MAX_LOADED_MODELS and OLLAMA_NUM_PARALLEL = 1); VRAM is not shared by any cgroup.";
+    }
+    {
+      # qwen2.5-coder's trained context: above it Ollama clamps to 32768 and silently drops the prompt's head
+      assertion = lib.toInt ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH <= 32768;
+      message = "hosts/asus-b460m: OLLAMA_CONTEXT_LENGTH is ${ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH}; qwen2.5-coder:7b is trained to 32768 and Ollama silently truncates a longer prompt.";
     }
   ];
   # The rendered firewall admits the Ollama port from acer and nothing else; the package carries the CUDA runner (a
