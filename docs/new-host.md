@@ -145,18 +145,22 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
   `sops updatekeys -y` on each;
 - `scripts/test-ssh-known-hosts.py`: `EXPECTED`, `SOPS_RECIPIENTS`, the hard-coded host set;
 - every `HOST` recipe pattern in the `Justfile` (`test-ssh-known-hosts.py` fails on a missed one);
-- the hand-kept host lists no test derives yet (#480):
-  - `modules/homelab/edge.nix` `otlpSources` and its mirror in
-    `scripts/test-caddy-edge.py`, if the host runs native OTel;
-  - the `host.name` relabel regex in `modules/homelab/monitoring/alloy-otlp.alloy`
-    (two places) and the hosts `scripts/test-alloy-otlp-sanitizer.sh` feeds it;
+- the hand-kept host lists (#480). Caddy's OTLP allowlist (`modules/homelab/edge.nix`) is derived from
+  the fleet; these fail `nixos:known-hosts-test` until the host is added:
+  - the `host.name` relabel regex in `modules/homelab/monitoring/alloy-otlp.alloy` (two places);
   - the default host list in `scripts/ssh-known-hosts-verify.sh`;
-  - the host rows in `README.md` and `docs/architecture.md`;
+  - the host rows in `docs/architecture.md`, CLAUDE.md's deploy block and hostnames, and for a
+    runtime host `docs/nspawn-workers.md`;
+- not checked yet: the hosts `scripts/test-alloy-otlp-sanitizer.sh` feeds the relabel, and the
+  host rows in `README.md`;
 - for a host that is not always up (scheduled power-off, dual boot), `sleeps = true`
   on its `modules/core/fleet.nix` entry. That one fact keeps it out of every store
   cache's substituters and moves it from `NodeChronicNotReady` to `HostExpectedOff`;
   no rule edit. A power window, like msi's, is the one exception that
   `homelab:node:planned_off` in `rules/homelab.yaml` names by host.
+- for a work-hours window, `power = { mac; interface; wake; off; }` on the same entry: lenovo
+  wakes it and it powers itself off (`modules/core/power-schedule.nix`). Evaluation fails
+  unless it also has `sleeps = true` and its NIC's `wol-<nic>` unit.
 
 Commit and gate on a worker (msi or acer), not lenovo.
 
@@ -193,4 +197,4 @@ Only after that, `just deploy <name>` from lenovo, and step 7.
 Its store-cache key (`modules/core/store-cache.nix`; harmonia is socket-activated, so
 the key exists only after a first request: `curl http://127.0.0.1:5000/nix-cache-info`,
 then `cat /var/lib/store-cache/public-key`), `sam.workers` (`docs/nspawn-workers.md`), `sam.herdr.machines` and
-`sam.workers.jumpHosts` on lenovo, Wake-on-LAN and a power window if it sleeps.
+`sam.workers.jumpHosts` on lenovo, Wake-on-LAN and its fleet `power` window if it sleeps.
