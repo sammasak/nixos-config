@@ -407,18 +407,21 @@ mapfile -d '' alloy_argv < <(argv_of "127.0.0.1:$((otlp_port + 4))" "$sum_storag
 "${alloy_argv[@]}" > "$alloy_log" 2>&1 &
 alloy_pid=$!
 sum_status=
-for _ in $(seq 1 50); do
+deadline=$((SECONDS + 30))
+while ((SECONDS < deadline)); do
   sum_status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
     -H 'Content-Type: application/json' -d '{"resourceMetrics":[]}' "http://127.0.0.1:$sum_port/v1/metrics" || true)
   [[ "$sum_status" == 401 ]] && break
   kill -0 "$alloy_pid" 2>/dev/null || {
-    printf 'Alloy exited during the session-sum startup; see %s\n' "$alloy_log" >&2
+    printf 'Alloy exited during the session-sum startup; the end of its log:\n' >&2
+    tail -n 20 "$alloy_log" >&2
     exit 1
   }
   sleep 0.1
 done
 [[ "$sum_status" == 401 ]] || {
-  printf 'session sum: expected unauthenticated OTLP response 401, got %s\n' "$sum_status" >&2
+  printf 'session sum: expected unauthenticated OTLP response 401, got %s after 30 s; the end of the Alloy log:\n' "$sum_status" >&2
+  tail -n 20 "$alloy_log" >&2
   exit 1
 }
 
