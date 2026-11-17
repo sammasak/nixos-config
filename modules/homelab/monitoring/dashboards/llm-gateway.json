@@ -65,6 +65,14 @@
           "value": "$__all"
         },
         "refresh": 2
+      },
+      {
+        "name": "gpu_node",
+        "label": "GPU host",
+        "type": "custom",
+        "multi": true,
+        "includeAll": true,
+        "hide": 2
       }
     ]
   },
@@ -1410,7 +1418,7 @@
     {
       "id": 35,
       "type": "stat",
-      "title": "Local backend hosts (planned off is not down)",
+      "title": "Sleeping worker hosts (planned off is not down)",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1423,7 +1431,7 @@
       },
       "targets": [
         {
-          "expr": "((max by (node) (up{job=\"node-exporter\",node=~\"asus-b460m|msi-ms7758\"} == 0) and on (node) homelab:node:planned_off) * 0 + 2) or max by (node) (up{job=\"node-exporter\",node=~\"asus-b460m|msi-ms7758\"})",
+          "expr": "((max by (node) (up{job=\"node-exporter\",sleeps=\"true\"} == 0) and on (node) homelab:node:planned_off) * 0 + 2) or max by (node) (up{job=\"node-exporter\",sleeps=\"true\"})",
           "refId": "A",
           "legendFormat": "{{node}}",
           "instant": true
@@ -1623,7 +1631,7 @@
       },
       "targets": [
         {
-          "expr": "{job=\"host-journal\", host=\"asus-b460m\"} |~ \"NVRM: (Xid|GPU has fallen off)\"",
+          "expr": "{job=\"host-journal\", host=~\"$gpu_node\"} |~ \"NVRM: (Xid|GPU has fallen off)\"",
           "refId": "A"
         }
       ]
