@@ -88,6 +88,8 @@ in
   # Headless RTX 3070 (GA104, Ampere): videoDrivers only selects the driver, X stays off. The open modules are
   # NVIDIA's recommendation from Turing on; the console moves from nouveau to nvidia-drm's framebuffer.
   services.xserver.videoDrivers = [ "nvidia" ];
+  # libcuda.so.1 reaches ollama-cuda only via /run/opengl-driver/lib; without it Ollama silently runs on the CPU
+  hardware.graphics.enable = true;
   hardware.nvidia = {
     open = true;
     package = config.boot.kernelPackages.nvidiaPackages.stable;
