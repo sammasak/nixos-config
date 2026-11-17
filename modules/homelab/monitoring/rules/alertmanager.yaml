@@ -1,4 +1,5 @@
-# kube-prometheus-stack 85.0.3's alertmanager.rules, the chart's job selector replaced by the native job.
+# kube-prometheus-stack 85.0.3's alertmanager.rules, the chart's job selector replaced by the native job and
+# descriptions naming instance, not namespace/pod (neither label exists off Kubernetes).
 groups:
   - name: alertmanager.rules
     rules:

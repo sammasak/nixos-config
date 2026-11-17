@@ -1,4 +1,5 @@
-# kube-prometheus-stack 85.0.3's general.rules, as rendered for the cluster. Watchdog is what the lenovo watchdog
+# kube-prometheus-stack 85.0.3's general.rules; TargetDown's description names only the job
+# (no namespace or service label off Kubernetes). Watchdog is what the lenovo watchdog
 # reads from Alertmanager (modules/homelab/cluster-watchdog.nix).
 groups:
   - name: general.rules

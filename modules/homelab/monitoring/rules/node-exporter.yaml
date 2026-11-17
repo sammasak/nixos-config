@@ -1,5 +1,6 @@
-# kube-prometheus-stack 85.0.3's node-exporter mixin, as rendered for the cluster, less the two systemd-unit alerts:
-# a failed unit shows on the Hosts dashboard (prometheus.nix keeps its unit_state series) and pages nobody.
+# kube-prometheus-stack 85.0.3's node-exporter mixin, less the two systemd-unit alerts: a failed unit shows on the
+# Hosts dashboard (prometheus.nix keeps its unit_state series) and pages nobody. NodeNetworkInterfaceFlapping's
+# description names instance, not namespace/pod.
 groups:
   - name: node-exporter.rules
     rules:
