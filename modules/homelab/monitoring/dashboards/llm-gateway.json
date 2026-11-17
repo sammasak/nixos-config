@@ -65,14 +65,6 @@
           "value": "$__all"
         },
         "refresh": 2
-      },
-      {
-        "name": "gpu_node",
-        "label": "GPU host",
-        "type": "custom",
-        "multi": true,
-        "includeAll": true,
-        "hide": 2
       }
     ]
   },
@@ -1323,39 +1315,6 @@
       "description": "From llm-bench capacity runs. route=direct is Ollama itself; route=gateway goes through llm-gateway with the Pi key."
     },
     {
-      "id": 33,
-      "type": "timeseries",
-      "title": "Live queue depth and in flight per provider",
-      "gridPos": {
-        "h": 6,
-        "w": 12,
-        "x": 12,
-        "y": 136
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "expr": "sum by (provider) (llm_gateway_provider_queue_depth)",
-          "refId": "A",
-          "legendFormat": "queued {{provider}}"
-        },
-        {
-          "expr": "sum by (provider) (llm_gateway_provider_in_flight)",
-          "refId": "B",
-          "legendFormat": "in flight {{provider}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "noValue": "not exported yet (llm-gateway#101)"
-        }
-      },
-      "description": "Gauges proposed for llm-gateway#101; until the gateway exports them this panel has no data, never 0."
-    },
-    {
       "id": 34,
       "type": "timeseries",
       "title": "Local backends: requests and first byte p95",
@@ -1631,7 +1590,7 @@
       },
       "targets": [
         {
-          "expr": "{job=\"host-journal\", host=~\"$gpu_node\"} |~ \"NVRM: (Xid|GPU has fallen off)\"",
+          "expr": "{job=\"host-journal\"} |~ \"NVRM: (Xid|GPU has fallen off)\"",
           "refId": "A"
         }
       ]
