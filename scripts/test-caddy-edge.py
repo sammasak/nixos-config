@@ -3,7 +3,8 @@ socket only caddy may write to, every name has its route and backend, chat and g
 their backend with the five X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only,
 open-webui listens on the edge socket alone, the apex and any other name under the wildcard are 404, herman is
 its Nix build with the Cache-Control matrix and SPA fallback of its deploy/nginx.conf, and the metrics server is
-plain HTTP on the fleet address alone, serving /metrics only, which black-pi scrapes."""
+plain HTTP on the fleet address alone, serving Caddy's /metrics and Authentik's loopback metrics listeners under
+/authentik/server/ and /authentik/worker/ only, which black-pi scrapes."""
 import json
 import subprocess
 import sys
@@ -68,11 +69,20 @@ check(len(metrics) == 1 and all(v["listen"] == [metrics_listen] for v in metrics
       f"one server listens for metrics, on {metrics_listen} alone {[v.get('listen') for v in metrics.values()]}")
 served = [(h.get("handler"), m) for v in metrics.values() for r in v.get("routes", [])
           for h, m in flatten(r["handle"], tuple(r.get("match", []))) if h.get("handler") != "subroute"]
-check([h for h, _ in served] == ["metrics"] and all(not v.get("tls_connection_policies") for v in metrics.values()),
-      f"the metrics server serves Caddy's metrics alone, over plain HTTP {served}")
-scraped = [t for j in json.loads(P["prometheusConfig"])["scrape_configs"] if j["job_name"] == "caddy"
-           for sc in j["static_configs"] for t in sc["targets"]]
-check(scraped == [metrics_listen], f"black-pi scrapes it {scraped}")
+check([h for h, _ in served].count("metrics") == 1 and all(not v.get("tls_connection_policies") for v in metrics.values()),
+      f"the metrics server serves Caddy's metrics once, over plain HTTP {served}")
+check(set(h for h, _ in served) <= {"metrics", "reverse_proxy", "rewrite"},
+      f"the metrics server does nothing but serve metrics and proxy {sorted(set(h for h, _ in served))}")
+proxied = {tuple(p for x in m for p in x.get("path", [])): dials(h) for v in metrics.values() for r in v.get("routes", [])
+           for h, m in flatten(r["handle"], tuple(r.get("match", []))) if h.get("handler") == "reverse_proxy"}
+check(set(proxied) == {("/authentik/server/*",), ("/authentik/worker/*",)}
+      and all(len(d) == 1 and d[0].startswith("127.0.0.1:") for d in proxied.values()),
+      f"it proxies only /authentik/server/* and /authentik/worker/*, each to a loopback listener {proxied}")
+jobs = json.loads(P["prometheusConfig"])["scrape_configs"]
+scraped = {j["job_name"]: (j.get("metrics_path", "/metrics"), t) for j in jobs
+           if j["job_name"] in ("caddy", "authentik-server", "authentik-worker") for sc in j["static_configs"] for t in sc["targets"]}
+check(scraped == {"caddy": ("/metrics", metrics_listen), "authentik-server": ("/authentik/server/metrics", metrics_listen),
+                  "authentik-worker": ("/authentik/worker/metrics", metrics_listen)}, f"black-pi scrapes all three {scraped}")
 routes = {}
 for server in servers.values():
     for route in server["routes"]:

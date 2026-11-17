@@ -12,6 +12,12 @@
 let
   inherit (import ../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts ntfy edgeMetrics;
+  # Authentik's server and worker metrics listeners, on loopback (authentik.nix); black-pi reaches them through the
+  # metrics site below
+  authentikMetrics = {
+    server = lib.head (builtins.fromJSON config.environment.etc."authentik/config.yml".text).listen.metrics;
+    worker = config.systemd.services.authentik-worker.environment.AUTHENTIK_LISTEN__METRICS;
+  };
   fw = config.networking.firewall;
   domain = "sammasak.dev";
   caddy = config.services.caddy;
@@ -127,7 +133,16 @@ in
         "http://${hosts.${edgeMetrics.host}.address}:${toString edgeMetrics.port}" = {
           listenAddresses = [ hosts.${edgeMetrics.host}.address ];
           logFormat = "output discard";
-          extraConfig = "metrics /metrics";
+          extraConfig = ''
+            metrics /metrics
+            ${lib.concatStrings (
+              lib.mapAttrsToList (part: listen: ''
+                handle_path /authentik/${part}/* {
+                  reverse_proxy ${listen}
+                }
+              '') authentikMetrics
+            )}
+          '';
         };
       };
   };

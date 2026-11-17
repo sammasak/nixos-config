@@ -190,6 +190,19 @@ in
         (static "llm-gateway" [ "${hosts.acer-swift.address}:9091" ])
         (static "alloy-otlp" [ "${hosts.acer-swift.address}:12346" ])
         (static "caddy" [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ])
+      ]
+      # Authentik's loopback listeners, through the edge's metrics site (edge.nix)
+      ++ map
+        (part: {
+          job_name = "authentik-${part}";
+          metrics_path = "/authentik/${part}/metrics";
+          static_configs = [ { targets = [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ]; } ];
+        })
+        [
+          "server"
+          "worker"
+        ]
+      ++ [
         (static "blackbox-exporter" [ "${blackbox.listenAddress}:${toString blackbox.port}" ])
         {
           job_name = "blackbox";
