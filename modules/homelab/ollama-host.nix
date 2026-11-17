@@ -30,6 +30,12 @@ in
     description = "The cuda_cudart services.ollama.package links, null for a build without CUDA. A host that installs a CUDA build should fail when this is null: nixpkgs renaming the package would otherwise make the graphics assertion vacuous.";
   };
 
+  options.homelab.ollama.gpuPowerLimit = lib.mkOption {
+    type = lib.types.nullOr lib.types.ints.positive;
+    default = null;
+    description = "Board power cap in watts that nvidia-smi -pl sets before every Ollama start; null leaves the driver default. The host asserts its card's range (nvidia-smi --query-gpu=power.min_limit,power.max_limit).";
+  };
+
   options.homelab.ollama.modelDigests = lib.mkOption {
     type = lib.types.attrsOf (lib.types.strMatching "[0-9a-f]{64}");
     default = { };
@@ -55,6 +61,28 @@ in
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
       unitConfig.StartLimitIntervalSec = 0;
+    };
+    # Wanted, not required, and ordered before Ollama: a failed cap leaves the host degraded but Ollama starts at the
+    # driver default. No RemainAfterExit, so each Ollama (re)start applies it again; multi-user.target makes a switch
+    # that adds it run it at once, without restarting Ollama.
+    systemd.services.nvidia-power-limit = lib.mkIf (config.homelab.ollama.gpuPowerLimit != null) {
+      description = "Cap the GPU's board power before Ollama starts";
+      wantedBy = [
+        "ollama.service"
+        "multi-user.target"
+      ];
+      before = [ "ollama.service" ];
+      after = [
+        "systemd-modules-load.service"
+      ]
+      ++ lib.optional config.hardware.nvidia.nvidiaPersistenced "nvidia-persistenced.service";
+      serviceConfig = {
+        Type = "oneshot";
+        # a oneshot has no start timeout by default: nvidia-smi hanging on a wedged GPU would hold Ollama's start, and
+        # a switch, forever; this turns the hang into the failed-unit case above
+        TimeoutStartSec = "30s";
+        ExecStart = "${lib.getBin config.hardware.nvidia.package}/bin/nvidia-smi -pl ${toString config.homelab.ollama.gpuPowerLimit}";
+      };
     };
     # an OOM takes Ollama before any worker
     systemd.services.ollama.serviceConfig = {

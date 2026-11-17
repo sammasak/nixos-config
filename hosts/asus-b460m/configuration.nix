@@ -97,6 +97,9 @@ in
     open = true;
     package = config.boot.kernelPackages.nvidiaPackages.stable;
     nvidiaSettings = false;
+    # headless with no client between model loads: without it the driver may drop the GPU's state, power limit
+    # included, until the next load
+    nvidiaPersistenced = true;
   };
 
   services.ollama = {
@@ -107,6 +110,8 @@ in
     # the G1 headroom gate's context; the 8K runs pass options.num_ctx
     environmentVariables.OLLAMA_CONTEXT_LENGTH = "4096";
   };
+  # the sweep's knee (qwen2.5-coder 7b, steady load): 75.6 tok/s at 60 C and 70 % fan, against 81.5 at 270 W, 85 C, 100 %
+  homelab.ollama.gpuPowerLimit = 130;
   # registry.ollama.ai manifest sha256 per tag, as /api/tags reports it
   homelab.ollama.modelDigests = {
     "qwen2.5-coder:7b-instruct-q4_K_M" =
@@ -135,6 +140,13 @@ in
   };
 
   assertions = [
+    {
+      # the RTX 3070's power.min_limit and power.max_limit; nvidia-smi -pl refuses anything outside them
+      assertion =
+        config.homelab.ollama.gpuPowerLimit == null
+        || (config.homelab.ollama.gpuPowerLimit >= 100 && config.homelab.ollama.gpuPowerLimit <= 270);
+      message = "hosts/asus-b460m: homelab.ollama.gpuPowerLimit is ${toString config.homelab.ollama.gpuPowerLimit} W; the RTX 3070 takes 100 to 270 W.";
+    }
     {
       assertion =
         minDriver ? ${lib.versions.major cuda}
