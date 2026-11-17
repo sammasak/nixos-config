@@ -80,7 +80,7 @@ in
                         };
                         manualOff = mkOption {
                           type = types.bool;
-                          description = "The owner also powers the host off by hand, so the alerts expect it off at any time, not only outside this window (rules/homelab.nix).";
+                          description = "The owner also powers the host off by hand, so the alerts expect it off at any time, not only outside this window (modules/homelab/monitoring/rules/homelab.nix).";
                           default = false;
                         };
                       };

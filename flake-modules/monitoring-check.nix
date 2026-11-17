@@ -107,9 +107,9 @@ let
       ++ [
         (windowCase "msi off Thursday 10:00 UTC is an outage" "10h" "msi-ms7758" false)
         (windowCase "msi off Thursday 18:59 UTC is an outage" "18h59m" "msi-ms7758" false)
-        (windowCase "msi off Thursday 19:02 UTC is planned" "19h5m" "msi-ms7758" true)
+        (windowCase "msi off Thursday 19:05 UTC is planned" "19h5m" "msi-ms7758" true)
         (windowCase "msi off Friday 08:00 UTC is planned" "32h" "msi-ms7758" true)
-        (windowCase "msi off Friday 08:30 UTC is an outage" "32h46m" "msi-ms7758" false)
+        (windowCase "msi off Friday 08:46 UTC is an outage" "32h46m" "msi-ms7758" false)
         (windowCase "asus off Thursday 10:00 UTC is planned" "10h" "asus-b460m" true)
         (windowCase "asus off Friday 12:00 UTC is planned" "36h" "asus-b460m" true)
       ]

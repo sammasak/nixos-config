@@ -4,7 +4,7 @@
 #
 # A host is windowed when it sleeps, has a power window and the owner does not also power it off by hand
 # (power.manualOff); the rest of the sleeping hosts are planned off at any time. PromQL time is UTC with no time zone,
-# so a window "Mon-Fri <wake> / Mon-Fri <off>" (Europe/Stockholm, UTC+1 or +2) becomes the union of both seasons:
+# so a window "Mon-Fri <wake> / Mon-Fri <off>" (the fleet's time.timeZone, Europe/Stockholm, UTC+1 or +2: modules/core/system.nix) becomes the union of both seasons:
 #   from <off hour> - 2h UTC (the summer off, the earlier of the two) to <wake> read as UTC (the winter wake is an hour
 #   and the summer wake two hours earlier in UTC, so the exporter has that long to come up), plus Saturday and Sunday.
 # Only that shape is rendered; any other window fails the build rather than being rendered wrongly.
@@ -76,6 +76,9 @@ assert lib.assertMsg (names == [ ] || (window.off.m == 0 && window.off.h >= 2 &&
 assert lib.assertMsg (lib.all (
   n: lib.elem n sleeping
 ) names) "rules/homelab.nix: a windowed host must sleep";
+assert lib.assertMsg (lib.hasInfix placeholder (
+  builtins.readFile ./homelab.yaml
+)) "rules/homelab.nix: homelab.yaml no longer holds ${placeholder}";
 {
   inherit windowed;
   file = builtins.toFile "homelab.yaml" (
