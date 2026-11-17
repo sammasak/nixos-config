@@ -47,7 +47,7 @@ NixOS module on a named host, and the deployment tool stays deploy-rs.
    (`nix-native-delivery.md`).
 
 Removed instead of migrated: styrka-web, system-one, monty-runner, kokoro,
-whisper and workout.
+whisper, workout and karta (#442).
 
 ## What replaced what
 
