@@ -120,7 +120,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (host) (rate({job=\"host-journal\",host=~\"$node\"} |~ `(?i)(error|fail|fatal|panic|segfault|\\boom\\b)` != \"caller=metrics.go\" [$__interval]))",
+          "expr": "sum by (host) (rate({job=\"host-journal\",host=~\"$node\"} |~ `(?i)(error|fail|fatal|panic|segfault|\\boom\\b)` !~ `caller=(metrics|roundtrip|engine)\\.go` [$__interval]))",
           "legendFormat": "{{host}}"
         }
       ],
@@ -162,6 +162,7 @@
       "options": {
         "orientation": "horizontal",
         "reduceOptions": {
+          "values": true,
           "calcs": [
             "lastNotNull"
           ]
@@ -215,7 +216,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{job=\"host-journal\",host=~\"$node\"} |~ `(?i)(error|fail|fatal|panic|segfault|\\boom\\b)` != \"caller=metrics.go\"",
+          "expr": "{job=\"host-journal\",host=~\"$node\"} |~ `(?i)(error|fail|fatal|panic|segfault|\\boom\\b)` !~ `caller=(metrics|roundtrip|engine)\\.go`",
           "legendFormat": "{{host}}"
         }
       ],
