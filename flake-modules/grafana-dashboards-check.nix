@@ -1,8 +1,9 @@
 # black-pi's dashboards, as grafana.nix provisions them, against what the fleet exports: the deployed node-exporter
 # command runs on node_exporter's own sysfs/procfs fixtures, so its metric names are this version's with these flags;
 # the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus loads;
-# llm-gateway's from its registrations and Loki's and Alloy's from their name literals, in the source each host runs;
-# the OTLP ones are alloy-otlp's allow-list. Each seeded dashboard below must fail scripts/check-grafana-dashboards.py with its own reason.
+# llm-gateway's from its registrations and Loki's, Alloy's and blackbox's from their name literals, in the source
+# each host runs; the OTLP ones are alloy-otlp's allow-list. Each seeded dashboard below must fail
+# scripts/check-grafana-dashboards.py with its own reason.
 { config, lib, ... }:
 let
   inherit (config.flake.nixosConfigurations) acer-swift black-pi msi-ms7758;
@@ -47,6 +48,12 @@ let
       strip = "loki_";
       job = "loki";
       src = msi-ms7758.pkgs.grafana-loki.src;
+    }
+    {
+      prefix = "probe_";
+      strip = "";
+      job = "blackbox";
+      src = msi-ms7758.pkgs.prometheus-blackbox-exporter.src;
     }
   ];
   otlp = lib.elem "--web.enable-otlp-receiver" pi.services.prometheus.extraFlags;
@@ -120,6 +127,10 @@ let
     gateway-suffix = {
       dashboard = seed "rate(llm_gateway_requests[5m])" "prometheus";
       reason = "unknown metric llm_gateway_requests:";
+    };
+    probe-typo = {
+      dashboard = seed ''probe_sucess{job="blackbox"}'' "prometheus";
+      reason = "unknown metric probe_sucess:";
     };
     loki-word = {
       dashboard = seed "loki_name" "prometheus";
@@ -260,6 +271,12 @@ in
         assert lib.assertMsg
           (
             discard pi.services.loki.package.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
+            && lib.hasPrefix (discard "${black-pi.pkgs.prometheus-blackbox-exporter}/bin/") (
+              discard pi.systemd.services.prometheus-blackbox-exporter.serviceConfig.ExecStart
+            )
+            &&
+              discard black-pi.pkgs.prometheus-blackbox-exporter.src.outPath
+              == discard msi-ms7758.pkgs.prometheus-blackbox-exporter.src.outPath
             && discard pkgs.grafana-loki.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
             && lib.hasInfix (discard "${acer-swift.pkgs.grafana-alloy}/bin/alloy") (
               discard (toString acer.systemd.services.alloy-otlp.serviceConfig.ExecStart)
@@ -268,7 +285,7 @@ in
               discard acer.systemd.services.llm-gateway.serviceConfig.ExecStart
             )
           )
-          "grafana-dashboards: black-pi's Loki (or this check's logcli), acer's alloy-otlp or acer's llm-gateway is not the source this check reads";
+          "grafana-dashboards: black-pi's Loki (or this check's logcli) or blackbox exporter, acer's alloy-otlp or acer's llm-gateway is not the source this check reads";
         assert lib.assertMsg (
           !handList.success
         ) "grafana-dashboards: a dashboard listing the node variable's hosts by hand evaluated";

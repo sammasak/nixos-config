@@ -1,0 +1,470 @@
+{
+  "uid": "edge",
+  "title": "Edge and public names",
+  "description": "Every public *.sammasak.dev name as a browser meets it, through Caddy on the edge host: up or down, how long, the certificate, and the edge's own logs.",
+  "tags": [
+    "fleet",
+    "edge"
+  ],
+  "editable": false,
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Public names now",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (instance) (probe_success{job=\"blackbox\"})",
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "no probe"
+        },
+        "overrides": []
+      },
+      "description": "Black-pi's blackbox probes of each public name through Caddy on the edge host, each against its expected answer (2xx; 302 to Authentik for chat; 401 for llm-gateway and otlp without a key). Down here for 5 minutes is what AppDown pages on.",
+      "options": {
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "state-timeline",
+      "title": "Up and down over time",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (instance) (probe_success{job=\"blackbox\"})",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "custom": {
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true
+      }
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "Availability over the range",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "avg by (instance) (avg_over_time(probe_success{job=\"blackbox\"}[$__range]))",
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.99
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "TLS certificate days left",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "min by (instance) (probe_ssl_earliest_cert_expiry{job=\"blackbox\"} - time()) / 86400",
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 14
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "The earliest expiry in the chain each name serves; ACME renews 30 days ahead, so under 14 means renewal failed. A name whose TLS handshake fails has no bar: see Public names now.",
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Probe time",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (instance) (probe_duration_seconds{job=\"blackbox\"})",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "The whole probe from black-pi: DNS, connect, TLS and the answer through Caddy."
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "HTTP status now",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (instance) (probe_http_status_code{job=\"blackbox\"})",
+          "legendFormat": "{{instance}}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "instance": "Name",
+              "Value": "Status"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "logs",
+      "title": "Caddy errors",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"host-journal\",unit=\"caddy.service\"} |= `\"level\":\"error\"`",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Caddy logs at level ERROR (services.caddy.logFormat), so warnings never reach the journal.",
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      }
+    },
+    {
+      "id": 8,
+      "type": "logs",
+      "title": "Certificate renewals (ACME, every host)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"host-journal\",unit=~\"acme-.+\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "showLabels": true
+      }
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Authentik backups: last run and state",
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node, name) (time() - node_systemd_timer_last_trigger_seconds{name=~\"authentik-(backup|offhost)[.]timer\"})",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "max by (node, name) (label_replace(node_systemd_unit_state{name=~\"authentik-(backup|offhost)[.]service\",state=\"failed\"}, \"name\", \"$1.timer\", \"name\", \"(.+)[.]service\"))",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Since last run"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "description": "The dump on the edge host (authentik-backup) and its pull to the deployer (authentik-offhost): how long since each timer fired, and 1 if its service is failed now. Both run quietly; the journal has their lines only on an error.",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "node": "Host",
+              "name": "Timer",
+              "Value #A": "Since last run",
+              "Value #B": "Failed"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "logs",
+      "title": "Authentik backup errors (empty = none)",
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 39
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"host-journal\",unit=~\"authentik-(backup|offhost).*\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "authentik.service and its worker never ship (their lines carry OAuth codes); only the backup units do, and they log only on an error.",
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "showLabels": true
+      }
+    }
+  ]
+}
