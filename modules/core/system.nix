@@ -90,9 +90,9 @@ in
       description = "User identity data: git profile and SSH keys.";
     };
 
-    # The single "is this a GUI desktop?" signal. Modules used to probe
-    # `programs.hyprland.enable`, which silently tied every desktop gate to one
-    # compositor — a second compositor (niri) would have evaluated as headless.
+    # The single "is this a GUI desktop?" signal. Probing a compositor's own flag
+    # (`programs.hyprland.enable`) ties every desktop gate to that compositor, and
+    # another one (niri) evaluates as headless.
     desktop.enable = mkOption {
       type = types.bool;
       default = false;

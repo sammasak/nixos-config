@@ -4,7 +4,7 @@
 # hwsim. The gate is fail-closed and session-aware: it refuses unless EVERY
 # default route rides a non-wireless link AND no established SSH session sits on a
 # radio interface, so it structurally cannot cut the link the way enabling the AP
-# on wlan0 would. Closes #38's hardware gap only when actually run with Ethernet.
+# on wlan0 would. It covers the hardware case only when actually run with Ethernet.
 {
   config,
   lib,

@@ -99,7 +99,7 @@
   # would otherwise reject anything copied in over SSH as lukas.
   nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];
 
-  # nixos-config#109: a cold devenv gate builds cargo-semver-checks from source in the daemon,
+  # A cold devenv gate builds cargo-semver-checks from source in the daemon,
   # outside every user cgroup and oomd's reach; at cores 8 it peaked at 7.5 GiB plus 1.6 GiB swap
   # on acer, at cores 2 at 6.1 GiB with none. The cap keeps a build from pushing the control plane
   # into zram exhaustion; MemoryHigh throttles first, MemoryMax fails the build, not the host.
@@ -122,7 +122,7 @@
         max = "6400M";
         swapMax = "1600M";
       };
-      # nixos-config#353: all login users combined, a client-side evaluation included; NOT MemoryHigh, or a runaway
+      # All login users combined, a client-side evaluation included; NOT MemoryHigh, or a runaway
       # stalls every session instead of being killed. The idle sessions' 4.6 GiB that cannot be dropped plus the
       # largest measured unit (3.0 GiB) fit under it (scripts/test-lenovo-build-bounds.py).
       "user.slice" = {
@@ -168,8 +168,7 @@
     rewrites = [
       # Wildcard and apex to Caddy on the edge host (modules/homelab/edge.nix). External-DNS
       # writes AdGuard *filtering rules*, not rewrites, which persist under
-      # mutableSettings; a stale one could pin a name to the old address. When
-      # the repoint landed, external-dns managed no record and user_rules was empty.
+      # mutableSettings; a stale one could pin a name to the old address.
       {
         domain = "*.sammasak.dev";
         answer = config.sam.fleet.hosts.${config.sam.fleet.edge}.address;

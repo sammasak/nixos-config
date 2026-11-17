@@ -45,7 +45,7 @@ in
   # lenovo's native ntfy on its LAN port, not the public name: pages must not need acer's Caddy
   sam.workers.ntfyUrl = lib.mkDefault config.sam.fleet.pageUrl;
 
-  # Headless, Stylix has nothing to theme and its Home Manager half has failed an activation (#185).
+  # Headless, Stylix has nothing to theme and its Home Manager half can fail an activation.
   stylix.enable = lib.mkForce desktop;
 
   # Without this unit time-sync.target is reached on an unsynchronised clock and a reset RTC fires every calendar timer when NTP steps it.
