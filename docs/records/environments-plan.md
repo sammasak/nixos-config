@@ -24,10 +24,10 @@ permission, what a host deploys, repo settings, money).
 | # | Finding | Evidence |
 |---|---------|----------|
 | 1 | Done (#230). Guests sent `max-jobs 8, cores 0` to a daemon bounded at 2 x 2; the daemon takes the client's | guest and host `nix config show` on acer; Nix `daemon.cc` |
-| 2 | Done for neighbours (`MemoryMin` per environment); against host pressure still open. `MemoryLow` protects nothing: cgroup2 is mounted without `memory_recursiveprot` on acer and msi (a second cgroup2 mount at `/run/cilium/cgroupv2`) | `/proc/self/mountinfo` on both; `memory.events low 0` |
+| 2 | Done for neighbours (`MemoryMin` per environment); against host pressure still open. `MemoryLow` protects nothing: cgroup2 is mounted without `memory_recursiveprot` on acer and msi (a second cgroup2 mount, Cilium's; Cilium is gone) | `/proc/self/mountinfo` on both; `memory.events low 0` |
 | 3 | Done. Per-environment `MemoryHigh` stalls a lone gate while the pool sits idle | `memory.events high` 2913 (acer), 7401 (msi); the 11 to 35 min gate |
 | 4 | Done. Swap is not in the pool: zram is charged to no cgroup, 3 x 3G can exceed the device | kernel docs; zram 7.7G |
-| 5 | On acer a full pool lands on kubelet's eviction line | 15.6G minus pods, system and a 7G pool |
+| 5 | Moot since the cluster was removed (#442): a full pool landed on kubelet's eviction line | 15.6G minus pods, system and a 7G pool |
 | 6 | Without `egress.github.repos` (all of msi) a guest holds the owner's SSH key and, on acer, a `gh` token (none with it); `nixos-config` main is public, unprotected, and acer applies it as root weekly | `gh api`, `modules/core/automation.nix` |
 | 7 | Done. The shared `~/.cache/nix` held the unsigned evaluation cache | Nix `eval-cache.cc` |
 | 8 | Done (#231). `blockedNetworks` was off and covered forwarded traffic only | iptables semantics; runtime-checked on acer |
@@ -47,14 +47,12 @@ permission, what a host deploys, repo settings, money).
 2. **Burst at the pool, not the instance** (3, 4): **Done** (#245). An
    environment has no `memory.max` or `MemoryHigh`; `environments.slice` has
    no `MemoryHigh` either, only `MemoryMax` and a `MemorySwapMax` of a quarter of it.
-3. **Restore `memory_recursiveprot`** (2) so the 2G reserve is real: remount
-   after Cilium, or stop Cilium mounting its own cgroup2
-   (`cgroup.autoMount.enabled=false`, `cgroup.hostRoot=/sys/fs/cgroup`).
-   Measure first on msi: idle environment A, B fills the pool, compare A's
-   major faults with and without. On acer real protection means pods are
-   reclaimed before environments: **owner** for acer.
+3. **Restore `memory_recursiveprot`** (2) so the 2G reserve is real. Cilium's
+   second cgroup2 mount is gone with the cluster; whether the flag is now on is
+   unmeasured. Measure first on msi: idle environment A, B fills the pool,
+   compare A's major faults with and without.
 4. **`blockedNetworks` on, with an INPUT rule** for guest to host (8). **Done**
-   (#231): on in `runtime-host.nix`, checked next to Cilium on acer.
+   (#231): on in `runtime-host.nix`, checked on acer.
 5. **In-flight marker and shutdown drain** (11): the restart and shutdown
    notices (merged with the port branch) tell the agent; next, a
    PreToolUse/PostToolUse hook writes what is running to `~/.in-flight`, so the
@@ -98,7 +96,6 @@ permission, what a host deploys, repo settings, money).
 | Root path through autoUpgrade (6) | Resolved by removal (#300): acer no longer upgrades from `main` | No unattended root switch remains |
 | lenovo serving a cache (9) | Keep, knowingly, or stop lenovo serving | Any process as the owner on lenovo can sign a path acer and msi prefer |
 | Claude login at 10+ environments | Workspace API keys with spend limits per host | One shared one-year token; plan terms assume individual use |
-| acer pool size (5) | Pool 6G, or count the pool in kubelet's `system-reserved` | A full pool evicts pods on the single worker |
 | nixos-config#200 | Adopt the signed LAN cache (already deployed), reject the SSH builder (needs a trusted client); run the three-cold, three-warm measurement on msi | |
 | nixos-config#201 | Keep the whole-store read-only mount | A closure-only view breaks the shared daemon |
 | Stale items | Close or rescope devenv-platform#93, #91, skills PR #92 (written against the removed agent-runtime) | |
@@ -213,9 +210,8 @@ then the daemon's patch level is the root boundary: keep Nix current.
 
 ## Store paths on k3s
 
-How Anthropic delivers store paths to pods, how these environments compare,
-and the plan to run the workloads built here without images:
-[nix-native-delivery.md](nix-native-delivery.md).
+Moot: the cluster was removed. How Anthropic delivers store paths and how these
+environments compare: [nix-native-delivery.md](nix-native-delivery.md).
 
 ## Credentials, users and rented hosts
 

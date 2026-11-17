@@ -1,7 +1,7 @@
 # Pi coding agent
 
 Module: `modules/programs/cli/pi/` (Home Manager, opt-in per host via `sam.profile.pi`). Enabled on
-`lenovo` and `acer-swift`. The default model is `homelab/auto`, the in-cluster llm-gateway.
+`lenovo` and `acer-swift`. The default model is `homelab/auto`, the llm-gateway on acer.
 `router/free` is an explicit fallback.
 
 ## Distribution decision (2026-10-14)
@@ -23,7 +23,7 @@ Verified on the pinned 1.1.0 build:
 
 | Capability | Status |
 |---|---|
-| `pi.registerVirtualModel()` / `route(request, ctx)` with `reason`, `previous`, `failed`, `state` (docs/virtual-models.md) | present: this is the API for the devenv-platform#5 `router/free` extension |
+| `pi.registerVirtualModel()` / `route(request, ctx)` with `reason`, `previous`, `failed`, `state` (pi's own `docs/virtual-models.md`) | present: this is the API for the devenv-platform#5 `router/free` extension |
 | `pi.registerProvider()`, `ctx.modelRegistry` | present |
 | Groq (`groq`, `GROQ_API_KEY`) | built in, authenticated, tool calls hit free-tier TPM limits (below) |
 | Cloudflare Workers AI (`cloudflare-workers-ai`, `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID`) | built in, end-to-end tool use verified |
@@ -164,7 +164,7 @@ edit, run with bash"), `-p --no-session`:
 | `cloudflare-workers-ai/@cf/qwen/qwen3.8-27b` | pass: read→edit→bash, printed `5`, ~40s |
 | `cloudflare-workers-ai/@cf/openai/gpt-oss-120b` | 400 on the turn after a tool call (Workers AI rejects assistant `content: null`; the llm-gateway rewrites it to `""` and routes this model since 2026-10-17) |
 | `cloudflare-workers-ai/@cf/moonshotai/kimi-k2.7-code`, `@cf/zai-org/glm-5.3-flash` | 403 "not available on the Workers Free plan" (fails closed, no charge) |
-| `groq/openai/gpt-oss-120b` | 400 on the first turn: "Tool call validation failed: parameters for tool bash did not match schema" (devenv-platform `docs/pi-bench.md`) |
+| `groq/openai/gpt-oss-120b` | 400 on the first turn: "Tool call validation failed: parameters for tool bash did not match schema" (devenv-platform repo `docs/pi-bench.md`) |
 | `groq/openai/gpt-oss-20b` | first turn works, then 429: free tier is 8k tokens/min and one Pi turn is ~3-6k |
 | `groq/qwen/qwen3.8-27b` | 400 chat-template error on tool-result role |
 | `groq/llama-3.3-70b-versatile` | 404: in Pi's catalog, no longer served by Groq |
