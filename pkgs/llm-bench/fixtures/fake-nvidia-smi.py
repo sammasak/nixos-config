@@ -8,7 +8,7 @@ VALUES = {
     "pci.bus_id": "00000000:01:00.0", "serial": "[N/A]", "compute_cap": "8.6", "pci.sub_device_id": "0x00000000",
     "index": "0", "memory.total": ("MiB", "8192 MiB"), "memory.used": ("MiB", "6656 MiB"),
     "memory.free": ("MiB", "1536 MiB"), "utilization.gpu": ("%", "42 %"), "temperature.gpu": "65",
-    "power.draw": ("W", "150.00 W"),
+    "power.draw": ("W", "150.00 W"), "power.limit": ("W", "220.00 W"), "fan.speed": ("%", "45 %"),
 }
 args = dict(a.split("=", 1) for a in sys.argv[1:] if "=" in a)
 fields = args["--query-gpu"].split(",")

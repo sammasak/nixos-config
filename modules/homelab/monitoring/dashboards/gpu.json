@@ -1,0 +1,416 @@
+{
+  "uid": "gpu",
+  "title": "GPU",
+  "description": "The fleet's NVIDIA GPUs (sam.fleet gpu = \"nvidia\"): memory, load, power against its cap, temperature, fan, throttling, driver errors.",
+  "tags": [
+    "fleet",
+    "gpu"
+  ],
+  "editable": false,
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "GPU exporter",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "((max by (node) (up{job=\"nvidia-gpu\"} == 0) and on (node) homelab:node:planned_off) * 0 + 2) or max by (node) (up{job=\"nvidia-gpu\"})",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green",
+                  "index": 1
+                },
+                "2": {
+                  "text": "asleep (planned)",
+                  "color": "blue",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "noValue": "no GPU host declared (sam.fleet gpu)"
+        },
+        "overrides": []
+      },
+      "description": "One per host whose fleet entry says gpu = \"nvidia\"; the nvidia-gpu job scrapes exactly those."
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "VRAM used",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (nvidia_smi_memory_used_bytes{job=\"nvidia-gpu\"} / nvidia_smi_memory_total_bytes{job=\"nvidia-gpu\"})",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Power draw / limit",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (nvidia_smi_power_draw_watts{job=\"nvidia-gpu\"})",
+          "legendFormat": "{{node}} draw",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "max by (node) (nvidia_smi_power_limit_watts{job=\"nvidia-gpu\"})",
+          "legendFormat": "{{node}} limit",
+          "instant": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Temperature and fan",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (nvidia_smi_temperature_gpu{job=\"nvidia-gpu\"})",
+          "legendFormat": "{{node}} °C",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "max by (node) (nvidia_smi_fan_speed_ratio{job=\"nvidia-gpu\"})",
+          "legendFormat": "{{node}} fan",
+          "instant": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "VRAM",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "nvidia_smi_memory_used_bytes{job=\"nvidia-gpu\"}",
+          "legendFormat": "used {{node}}",
+          "refId": "A"
+        },
+        {
+          "expr": "nvidia_smi_memory_total_bytes{job=\"nvidia-gpu\"}",
+          "legendFormat": "total {{node}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Utilisation and fan",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "nvidia_smi_utilization_gpu_ratio{job=\"nvidia-gpu\"}",
+          "legendFormat": "utilisation {{node}}",
+          "refId": "A"
+        },
+        {
+          "expr": "nvidia_smi_fan_speed_ratio{job=\"nvidia-gpu\"}",
+          "legendFormat": "fan {{node}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Power: draw against the limit",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "nvidia_smi_power_draw_watts{job=\"nvidia-gpu\"}",
+          "legendFormat": "draw {{node}}",
+          "refId": "A"
+        },
+        {
+          "expr": "nvidia_smi_power_limit_watts{job=\"nvidia-gpu\"}",
+          "legendFormat": "limit {{node}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt"
+        },
+        "overrides": []
+      },
+      "description": "power.limit is the enforced cap (nvidia-smi -pl); the board throttles at it (power-cap throttle below)."
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Temperature and throttling",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "nvidia_smi_temperature_gpu{job=\"nvidia-gpu\"}",
+          "legendFormat": "°C {{node}}",
+          "refId": "A"
+        },
+        {
+          "expr": "nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job=\"nvidia-gpu\"} * 100",
+          "legendFormat": "thermal throttle {{node}}",
+          "refId": "B"
+        },
+        {
+          "expr": "nvidia_smi_clocks_throttle_reasons_sw_power_cap{job=\"nvidia-gpu\"} * 100",
+          "legendFormat": "power-cap throttle {{node}}",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "A throttle series at 100 means the reason was active at that scrape."
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Measured decode speed (llm-bench scorecard)",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "llm_bench:decode_tokens_per_second{stat=\"p50\"}",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "not measured"
+        },
+        "overrides": []
+      },
+      "description": "Median tokens per second from the committed llm-bench results (pkgs/llm-bench/scorecard); Ollama exports no live rate.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "stat": true
+            },
+            "renameByName": {
+              "Value": "tokens/s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "logs",
+      "title": "NVIDIA driver errors (Xid)",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"host-journal\"} |~ \"NVRM: (Xid|GPU has fallen off)\"",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "showLabels": true
+      }
+    }
+  ]
+}

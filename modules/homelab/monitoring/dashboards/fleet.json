@@ -1,0 +1,519 @@
+{
+  "uid": "fleet",
+  "title": "Fleet",
+  "description": "Every host in sam.fleet.hosts: up, asleep inside its plan, or down; the alerts firing and the deploys.",
+  "tags": [
+    "fleet"
+  ],
+  "editable": false,
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Host",
+        "type": "custom",
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Up",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count(max by (node) (up{job=\"node-exporter\",node=~\"$node\"}) == 1) or vector(0)",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Asleep as planned",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count(max by (node) (up{job=\"node-exporter\",node=~\"$node\"} == 0) and on (node) homelab:node:planned_off) or vector(0)",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Down unexpectedly",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count(max by (node) (up{job=\"node-exporter\",node=~\"$node\"} == 0) unless on (node) homelab:node:planned_off) or vector(0)",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Alerts firing",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count(ALERTS{alertstate=\"firing\",severity!=\"none\"}) or vector(0)",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "Firing alerts, without HostExpectedOff (severity none: the planned-off marker, never a notification)."
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Hosts in the fleet",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count(max by (node) (up{job=\"node-exporter\",node=~\"$node\"}))",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Scraped node-exporter targets; the scrape job lists every host in sam.fleet.hosts (checked at build)."
+    },
+    {
+      "id": 6,
+      "type": "state-timeline",
+      "title": "Who was up, asleep or down",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "((max by (node) (up{job=\"node-exporter\",node=~\"$node\"} == 0) and on (node) homelab:node:planned_off) * 0 + 2) or max by (node) (up{job=\"node-exporter\",node=~\"$node\"})",
+          "legendFormat": "{{node}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green",
+                  "index": 1
+                },
+                "2": {
+                  "text": "asleep (planned)",
+                  "color": "blue",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "custom": {
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true
+      }
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Fleet now",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "((max by (node) (up{job=\"node-exporter\",node=~\"$node\"} == 0) and on (node) homelab:node:planned_off) * 0 + 2) or max by (node) (up{job=\"node-exporter\",node=~\"$node\"})",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "max by (node) (time() - node_boot_time_seconds{node=~\"$node\"})",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "expr": "100 * (1 - avg by (node) (rate(node_cpu_seconds_total{mode=\"idle\",node=~\"$node\"}[$__rate_interval])))",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "C"
+        },
+        {
+          "expr": "100 * (1 - max by (node) (node_memory_MemAvailable_bytes{node=~\"$node\"}) / max by (node) (node_memory_MemTotal_bytes{node=~\"$node\"}))",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "D"
+        },
+        {
+          "expr": "100 * (1 - max by (node) (node_filesystem_avail_bytes{mountpoint=\"/\",node=~\"$node\"}) / max by (node) (node_filesystem_size_bytes{mountpoint=\"/\",node=~\"$node\"}))",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "E"
+        },
+        {
+          "expr": "max by (node) (node_thermal_zone_temp{node=~\"$node\"} or node_hwmon_temp_celsius{node=~\"$node\"})",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "F"
+        },
+        {
+          "expr": "count by (node) (ALERTS{alertstate=\"firing\",severity!=\"none\",node=~\"$node\"})",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "G"
+        },
+        {
+          "expr": "count by (node) (node_systemd_unit_state{state=\"failed\",node=~\"$node\"} == 1) or max by (node) (node_systemd_units{node=~\"$node\"}) * 0",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "H"
+        },
+        {
+          "expr": "max by (node) (homelab_nixos_generation{node=~\"$node\"})",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "I"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "down",
+                        "color": "red",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "up",
+                        "color": "green",
+                        "index": 1
+                      },
+                      "2": {
+                        "text": "asleep (planned)",
+                        "color": "blue",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Uptime"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Root fs %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Hottest °C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "description": "One row per host: status, uptime, CPU %, memory %, root filesystem %, hottest sensor, alerts firing on it, failed units, NixOS generation.",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "node": "Host",
+              "Value #A": "Status",
+              "Value #B": "Uptime",
+              "Value #C": "CPU %",
+              "Value #D": "Memory %",
+              "Value #E": "Root fs %",
+              "Value #F": "Hottest °C",
+              "Value #G": "Alerts",
+              "Value #H": "Failed units",
+              "Value #I": "Generation"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "logs",
+      "title": "Deploys (just deploy from lenovo, by flake attribute)",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"platform\",kind=\"deploy\"} | logfmt | line_format \"{{.node}} {{.result}} sha={{.sha}} {{.seconds}}s rolled_back={{.rolled_back}} units_restarted={{.units_restarted}} failed_units={{.failed_units}}\"",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,696 @@
+{
+  "uid": "hosts",
+  "title": "Hosts",
+  "description": "Every host in sam.fleet.hosts, one row each (the Host variable, filled from the fleet facts). A host that sleeps shows asleep, not down, inside its plan.",
+  "tags": [
+    "node",
+    "fleet"
+  ],
+  "editable": false,
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Host",
+        "type": "custom",
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "$node",
+      "repeat": "node",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Status",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "((max by (node) (up{job=\"node-exporter\",node=\"$node\"} == 0) and on (node) homelab:node:planned_off) * 0 + 2) or max by (node) (up{job=\"node-exporter\",node=\"$node\"})",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green",
+                  "index": 1
+                },
+                "2": {
+                  "text": "asleep (planned)",
+                  "color": "blue",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "noValue": "not scraped"
+        },
+        "overrides": []
+      },
+      "description": "up = node-exporter answers; asleep = off inside the host's sleeps plan (homelab:node:planned_off); down = off outside it."
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Uptime",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (time() - node_boot_time_seconds{node=\"$node\"})",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "CPU busy",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "100 * (1 - avg by (node) (rate(node_cpu_seconds_total{mode=\"idle\",node=\"$node\"}[$__rate_interval])))",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "Memory used",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "100 * (1 - max by (node) (node_memory_MemAvailable_bytes{node=\"$node\"}) / max by (node) (node_memory_MemTotal_bytes{node=\"$node\"}))",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "gauge",
+      "title": "Root filesystem used",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "100 * (1 - max by (node) (node_filesystem_avail_bytes{mountpoint=\"/\",node=\"$node\"}) / max by (node) (node_filesystem_size_bytes{mountpoint=\"/\",node=\"$node\"}))",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Hottest sensor",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (node_thermal_zone_temp{node=\"$node\"} or node_hwmon_temp_celsius{node=\"$node\"})",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 75
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "The hottest of the thermal zones and hwmon sensors the kernel exposes."
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Load 5m per core",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (node_load5{node=\"$node\"}) / count by (node) (node_cpu_seconds_total{mode=\"idle\",node=\"$node\"})",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "OOM kills (range)",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (node) (increase(node_vmstat_oom_kill{node=\"$node\"}[$__range]))",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "CPU and memory",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "100 * (1 - avg by (node) (rate(node_cpu_seconds_total{mode=\"idle\",node=\"$node\"}[$__rate_interval])))",
+          "legendFormat": "CPU %",
+          "refId": "A"
+        },
+        {
+          "expr": "100 * (1 - max by (node) (node_memory_MemAvailable_bytes{node=\"$node\"}) / max by (node) (node_memory_MemTotal_bytes{node=\"$node\"}))",
+          "legendFormat": "memory %",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Network (physical interfaces)",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (node) (rate(node_network_receive_bytes_total{device!~\"lo|ve-.*|vb-.*|veth.*|br.*|virbr.*|docker.*|cni.*|flannel.*|vxlan.*|tailscale.*|wg.*|tun.*|tap.*\",node=\"$node\"}[$__rate_interval]))",
+          "legendFormat": "receive",
+          "refId": "A"
+        },
+        {
+          "expr": "-sum by (node) (rate(node_network_transmit_bytes_total{device!~\"lo|ve-.*|vb-.*|veth.*|br.*|virbr.*|docker.*|cni.*|flannel.*|vxlan.*|tailscale.*|wg.*|tun.*|tap.*\",node=\"$node\"}[$__rate_interval]))",
+          "legendFormat": "transmit (down)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Disk I/O",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (node) (rate(node_disk_read_bytes_total{device!~\"dm-.*|md.*\",node=\"$node\"}[$__rate_interval]))",
+          "legendFormat": "read",
+          "refId": "A"
+        },
+        {
+          "expr": "-sum by (node) (rate(node_disk_written_bytes_total{device!~\"dm-.*|md.*\",node=\"$node\"}[$__rate_interval]))",
+          "legendFormat": "written (down)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Failed units",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "count by (node) (node_systemd_unit_state{state=\"failed\",node=\"$node\"} == 1) or max by (node) (node_systemd_units{node=\"$node\"}) * 0",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "no systemd data"
+        },
+        "overrides": []
+      },
+      "description": "Failed service, socket, timer, target and path units; the exporter leaves out mounts, devices, scopes, slices and automounts."
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Generation",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (homelab_nixos_generation{node=\"$node\"})",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "not written"
+        },
+        "overrides": []
+      },
+      "description": "The system profile generation the host activated last (scripts/nixos-textfile.sh at activation)."
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "NixOS toplevel",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node, version, toplevel) (homelab_nixos_info{node=\"$node\"})",
+          "legendFormat": "{{version}} {{toplevel}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "not written"
+        },
+        "overrides": []
+      },
+      "description": "The activated system's NixOS version and store hash; the deploy records on Fleet carry the commit.",
+      "options": {
+        "textMode": "name",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "table",
+      "title": "Failed units now",
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (name) (node_systemd_unit_state{state=\"failed\",node=\"$node\"} == 1)",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "none"
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "Timers: time since last run",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "time() - max by (name) (node_systemd_timer_last_trigger_seconds{node=\"$node\"} > 0)",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "Every systemd timer on the host: the power schedule, backups, the gate records. A timer that never ran is left out.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "name": "Timer",
+              "Value": "Since last run"
+            }
+          }
+        }
+      ],
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Since last run",
+            "desc": true
+          }
+        ]
+      }
+    }
+  ]
+}
