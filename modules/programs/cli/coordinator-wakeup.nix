@@ -18,7 +18,7 @@
 }:
 let
   wk = osConfig.sam.herdr.coordinatorWakeup;
-  coordinatorHost = (osConfig.sam.herdr.machines or [ ]) != [ ];
+  coordinatorHost = osConfig.sam.herdr.machines != [ ];
   skillsDir = "${config.home.homeDirectory}/claude-code-skills";
   platformRecord = pkgs.writeShellApplication {
     name = "platform-record";

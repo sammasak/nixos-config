@@ -10,7 +10,7 @@
   ...
 }:
 let
-  inherit (config.sam.fleet) hosts;
+  inherit (config.sam.fleet) hosts ntfy;
   domain = "sammasak.dev";
   caddy = config.services.caddy;
   adminSocket = "unix//run/caddy/admin.sock|0200";
@@ -52,7 +52,7 @@ let
         reverse_proxy 127.0.0.1:4318
       }
     '';
-    ntfy = "reverse_proxy ${hosts.lenovo-21CB001PMX.address}:2586";
+    ntfy = "reverse_proxy ${hosts.${ntfy.host}.address}:${toString ntfy.port}";
     # herman's deploy/nginx.conf: hashed wasm/js/css that exist immutable and never the SPA fallback, the rest no-cache
     herman = ''
       root * ${pkgs.hermanWeb}
@@ -130,7 +130,7 @@ in
       DynamicUser = true;
     };
     script = ''
-      ${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 --retry-all-errors --retry-max-time 60 -H "Priority: high" -d "caddy failed on ${config.networking.hostName}: every *.${domain} name is down" ${lib.escapeShellArg config.sam.workers.ntfyUrl}
+      ${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 --retry-all-errors --retry-max-time 60 -H "Priority: high" -d "caddy failed on ${config.networking.hostName}: every *.${domain} name is down" ${lib.escapeShellArg config.sam.fleet.pageUrl}
     '';
   };
 

@@ -127,14 +127,16 @@ in
   options.homelab.journalCollector = {
     enable = lib.mkEnableOption "shipping this host's journal to Loki with Alloy";
     lokiUrl = lib.mkOption {
-      type = lib.types.str;
-      example = "http://loki.example:3100/loki/api/v1/push";
+      type = lib.types.strMatching "https?://.+";
+      default = "${config.sam.fleet.loki.url}/loki/api/v1/push";
+      defaultText = lib.literalExpression ''"''${config.sam.fleet.loki.url}/loki/api/v1/push"'';
       description = "Loki push endpoint.";
     };
     ntfyUrl = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "ntfy topic URL paged when Alloy fails; null, no page.";
+      type = lib.types.strMatching "https?://.+";
+      default = config.sam.fleet.pageUrl;
+      defaultText = lib.literalExpression "config.sam.fleet.pageUrl";
+      description = "ntfy topic URL paged when Alloy fails.";
     };
   };
 
@@ -167,7 +169,7 @@ in
       environment.GOMEMLIMIT = "200MiB";
       startLimitIntervalSec = 600;
       startLimitBurst = 4;
-      onFailure = lib.optional (cfg.ntfyUrl != null) "journal-collector-failed.service";
+      onFailure = [ "journal-collector-failed.service" ];
       serviceConfig = {
         # Local only: a probe of Loki would fail the host deploy whenever Loki is away. It covers the config load;
         # a dead journal reader shows only in the post-deploy Loki query.
@@ -179,7 +181,7 @@ in
       };
     };
 
-    systemd.services.journal-collector-failed = lib.mkIf (cfg.ntfyUrl != null) {
+    systemd.services.journal-collector-failed = {
       serviceConfig = {
         Type = "oneshot";
         DynamicUser = true;

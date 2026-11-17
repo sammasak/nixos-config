@@ -87,7 +87,7 @@ just bump [input]       # update one flake input (default: skills); then just sw
 # HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~08:30-21:00), asus-b460m,
 # black-pi (builds on the Pi, run inside zellij), naked-pi
 just deploy HOST
-just dry-activate HOST  # the units a deploy would restart, and the closure diff; activates nothing
+just dry-activate HOST  # the units a deploy would restart, and the closure diff; activates nothing, fails if the dry activation does
 
 just check              # full QA (lint, flake check with every host build, the tests)
 just verify             # flake check: build every x86 host, evaluate the Pis
@@ -95,8 +95,10 @@ just parity [BASE]      # fail if any host's toplevel or deploy node moved since
 ```
 
 `just deploy` ends, whatever deploy-rs returned, by checking on the target that
-`systemctl is-system-running` says `running` and `/run/current-system` is the system profile's
-generation, and exits non-zero if either fails. That catches a deploy that left the host degraded
+`systemctl is-system-running` says `running`, no unit is in a restart loop (`auto-restart`, or
+`activating` after a restart, which `running` hides) and `/run/current-system` is the system profile's
+generation, and exits non-zero if any fails; it lists condition-skipped units without failing
+(`scripts/post-deploy-check.sh`). That catches a deploy that left the host degraded, looping
 or off that generation, for example a unit that fails after activation reported success. A failed check
 rolls nothing back: the new generation stays. A host degraded for an unrelated, pre-existing
 reason fails every deploy until fixed; read `systemctl --failed` on the target.
