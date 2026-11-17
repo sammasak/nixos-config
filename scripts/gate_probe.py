@@ -1,5 +1,7 @@
 """A test's section of scripts/gate-probe.nix: the probe nixos:qa built once (GATE_PROBE), or, for a test run on
-its own, a probe of that section alone. As a command it prints the section, for the shell gates."""
+its own, a probe of that section alone. As a command it prints the section, for the shell gates.
+Also the tests' shared check()/finish() and flipped(); a test importing them needs its script dir on sys.path
+(`python scripts/test-X.py`, not `python -I`)."""
 import json
 import os
 import pathlib
