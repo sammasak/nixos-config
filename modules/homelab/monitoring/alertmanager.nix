@@ -32,8 +32,34 @@ in
             receiver = "null";
             matchers = [ ''alertname =~ "Watchdog|InfoInhibitor|HostExpectedOff"'' ];
           }
+          # shipping alerts (rules/shipping.nix) wait for the morning; one firing then is sent when the night ends
+          {
+            receiver = "alert-bridge";
+            matchers = [ ''team = "shipping"'' ];
+            mute_time_intervals = [ "night" ];
+          }
         ];
       };
+      # 21:00 to 08:30 Europe/Stockholm in both seasons, in UTC: a location would need tzdata where amtool checks it
+      time_intervals = [
+        {
+          name = "night";
+          time_intervals = [
+            {
+              times = [
+                {
+                  start_time = "19:00";
+                  end_time = "24:00";
+                }
+                {
+                  start_time = "00:00";
+                  end_time = "07:30";
+                }
+              ];
+            }
+          ];
+        }
+      ];
       receivers = [
         { name = "null"; }
         {

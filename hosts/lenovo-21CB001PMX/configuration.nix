@@ -19,6 +19,7 @@
 
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/journal-collector.nix
+    ../../modules/homelab/shipping-metrics.nix
   ];
 
   # a quarter of the collector's 256M MemoryMax, as the daemon and the user slice: zram is charged to no cgroup
