@@ -1,16 +1,6 @@
-{
-  osConfig ? null,
-  ...
-}:
+{ osConfig, ... }:
 let
-  resolvedUserConfig =
-    if osConfig != null && osConfig ? sam && osConfig.sam ? userConfig then
-      osConfig.sam.userConfig
-    else
-      { };
-  gitConfig = resolvedUserConfig.git or { };
-  gitUserName = gitConfig.userName or "Your Name";
-  gitEmail = gitConfig.email or "you@example.com";
+  inherit (osConfig.sam.userConfig) git;
 in
 {
   # Global by structural necessity: gitconfig references the diff binary from
@@ -24,8 +14,8 @@ in
   programs.git = {
     enable = true;
     settings = {
-      user.name = gitUserName;
-      user.email = gitEmail;
+      user.name = git.userName;
+      user.email = git.email;
       init.defaultBranch = "main";
       pull.rebase = true;
 
