@@ -40,8 +40,8 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # (flake-modules/deploy.nix); the host list is the table in
 # flake-modules/hosts.nix, which the pattern repeats. --skip-checks:
 # otherwise deploy-rs runs the full flake check first, building every x86 host
-# on lenovo, which runs it out of memory. The pre-push gate runs that check on pushed
-# non-docs commits, but `.#HOST` is the working tree, so the recipe refuses a
+# on lenovo, which runs it out of memory. The pre-push gate runs that check on
+# pushed non-docs commits, but `.#HOST` is the working tree, so the recipe refuses a
 # dirty tree or a HEAD not on origin/main (a detached checkout of it passes).
 # Break-glass: DEPLOY_UNGATED=1 just deploy HOST deploys it anyway, with a
 # warning. A scope, not `capped`: it keeps the caller's environment,
