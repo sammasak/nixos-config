@@ -65,7 +65,7 @@
         },
         "overrides": []
       },
-      "description": "Black-pi's blackbox probes of each public name through Caddy on the edge host, each against its expected answer (2xx; 302 to Authentik for chat; 401 for llm-gateway and otlp without a key). Down here is what AppDown pages on.",
+      "description": "Black-pi's blackbox probes of each public name through Caddy on the edge host, each against its expected answer (2xx; 302 to Authentik for chat; 401 for llm-gateway and otlp without a key). Down here for 5 minutes is what AppDown pages on.",
       "options": {
         "colorMode": "background",
         "textMode": "value_and_name",
@@ -223,7 +223,7 @@
         },
         "overrides": []
       },
-      "description": "The earliest expiry in the chain each name serves; ACME renews 30 days ahead, so under 14 means renewal failed.",
+      "description": "The earliest expiry in the chain each name serves; ACME renews 30 days ahead, so under 14 means renewal failed. A name whose TLS handshake fails has no bar: see Public names now.",
       "options": {
         "orientation": "horizontal",
         "reduceOptions": {
@@ -308,7 +308,7 @@
     {
       "id": 7,
       "type": "logs",
-      "title": "Caddy warnings and errors",
+      "title": "Caddy errors",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -321,7 +321,7 @@
       },
       "targets": [
         {
-          "expr": "{job=\"host-journal\",unit=\"caddy.service\"} |~ `\"level\":\"(warn|error)\"`",
+          "expr": "{job=\"host-journal\",unit=\"caddy.service\"} |= `\"level\":\"error\"`",
           "refId": "A"
         }
       ],
@@ -329,6 +329,7 @@
         "defaults": {},
         "overrides": []
       },
+      "description": "Caddy logs at level ERROR (services.caddy.logFormat), so warnings never reach the journal.",
       "options": {
         "showTime": true,
         "sortOrder": "Descending",
@@ -338,7 +339,7 @@
     {
       "id": 8,
       "type": "logs",
-      "title": "Certificate renewals (ACME)",
+      "title": "Certificate renewals (ACME, every host)",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -367,13 +368,82 @@
     },
     {
       "id": 9,
-      "type": "logs",
-      "title": "Authentik backups (dump on the edge host, pull to the deployer)",
+      "type": "table",
+      "title": "Authentik backups: last run and state",
       "gridPos": {
-        "h": 8,
+        "h": 4,
         "w": 12,
         "x": 12,
         "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node, name) (time() - node_systemd_timer_last_trigger_seconds{name=~\"authentik-(backup|offhost)[.]timer\"})",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "max by (node, name) (label_replace(node_systemd_unit_state{name=~\"authentik-(backup|offhost)[.]service\",state=\"failed\"}, \"name\", \"$1.timer\", \"name\", \"(.+)[.]service\"))",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Since last run"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "description": "The dump on the edge host (authentik-backup) and its pull to the deployer (authentik-offhost): how long since each timer fired, and 1 if its service is failed now. Both run quietly; the journal has their lines only on an error.",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "node": "Host",
+              "name": "Timer",
+              "Value #A": "Since last run",
+              "Value #B": "Failed"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "logs",
+      "title": "Authentik backup errors (empty = none)",
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 39
       },
       "datasource": {
         "type": "loki",
@@ -389,7 +459,7 @@
         "defaults": {},
         "overrides": []
       },
-      "description": "authentik.service and its worker never ship (their lines carry OAuth codes); only the backup units do.",
+      "description": "authentik.service and its worker never ship (their lines carry OAuth codes); only the backup units do, and they log only on an error.",
       "options": {
         "showTime": true,
         "sortOrder": "Descending",

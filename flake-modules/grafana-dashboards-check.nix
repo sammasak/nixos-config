@@ -271,9 +271,12 @@ in
         assert lib.assertMsg
           (
             discard pi.services.loki.package.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
-            && lib.hasInfix "-blackbox_exporter-${msi-ms7758.pkgs.prometheus-blackbox-exporter.version}/bin/" (
+            && lib.hasPrefix (discard "${black-pi.pkgs.prometheus-blackbox-exporter}/bin/") (
               discard pi.systemd.services.prometheus-blackbox-exporter.serviceConfig.ExecStart
             )
+            &&
+              discard black-pi.pkgs.prometheus-blackbox-exporter.src.outPath
+              == discard msi-ms7758.pkgs.prometheus-blackbox-exporter.src.outPath
             && discard pkgs.grafana-loki.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
             && lib.hasInfix (discard "${acer-swift.pkgs.grafana-alloy}/bin/alloy") (
               discard (toString acer.systemd.services.alloy-otlp.serviceConfig.ExecStart)
