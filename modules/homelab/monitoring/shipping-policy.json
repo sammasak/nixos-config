@@ -23,10 +23,10 @@
     "LeadTimeFallbacksHigh": {
       "maxRatio": {
         "value": 0.5,
-        "tunedBy": "sum(shipping_pr_lead_time_fallbacks{reason=\"http_error\"}) / sum(shipping_prs_merged)"
+        "tunedBy": "sum(shipping_pr_lead_time_fallbacks{reason=\"http_error\",window=\"7d\"}) / sum(shipping_prs_merged{window=\"7d\"})"
       },
       "forMinutes": {
-        "value": 60,
+        "value": 45,
         "tunedBy": "count_over_time(ALERTS{alertname=\"LeadTimeFallbacksHigh\"}[1d])"
       }
     },

@@ -67,11 +67,16 @@ let
         ];
       }
       {
-        name = "lead time from open time on most merged PRs fires after its for, under the ratio not";
+        name = "lead time from open time on most merged PRs fires after its for and not before, under the ratio not";
         interval = "1m";
         input_series = [
           {
             series = ''shipping_prs_merged{window="7d"}'';
+            values = "${n merged}x${n (2 * fallbackFor + 30)}";
+          }
+          # every PR also counted under another reason: the rule must read http_error alone
+          {
+            series = ''shipping_pr_lead_time_fallbacks{reason="no_commits",window="7d"}'';
             values = "${n merged}x${n (2 * fallbackFor + 30)}";
           }
           {
@@ -82,6 +87,11 @@ let
           }
         ];
         alert_rule_test = [
+          {
+            alertname = "LeadTimeFallbacksHigh";
+            eval_time = "${n (fallbackFor - 5)}m";
+            exp_alerts = [ ];
+          }
           {
             alertname = "LeadTimeFallbacksHigh";
             eval_time = "${n (fallbackFor + 5)}m";
