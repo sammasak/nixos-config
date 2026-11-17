@@ -115,8 +115,9 @@ is the remaining exposure.
 Across hosts, lenovo, acer, msi and asus each serve their store to the LAN as a
 binary cache (`modules/core/store-cache.nix`, harmonia on port 5000) and
 substitute from the always-on ones ahead of cache.nixos.org: what one machine
-built the others download. msi and asus (both `sleeps` in `modules/core/fleet.nix`) serve their store while up but
-nobody substitutes from them: with msi powered off, every path lookup on acer waited
+built the others download. msi and asus (both `sleeps` in
+`modules/core/fleet.nix`) serve their store while up but nobody substitutes
+from them: with msi powered off, every path lookup on acer waited
 out the 3 s connect timeout one after another (180 lookups, 9 minutes of a
 first `devenv` evaluation, measured 2026-11-12). Each cache signs with a key its host generated on first
 start (`/var/lib/store-cache/`, never in git); the public halves are in the

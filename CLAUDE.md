@@ -72,7 +72,7 @@ Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`),
 and `naked-pi` (Pi 3 `rf-lab` node; `just deploy naked-pi`;
 runbook `~/knowledge/homelab/runbooks/naked-pi-rf-lab.md`).
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
-`host` variable at the top of the Justfile does that mapping, so `switch`, `build` and `diff` need
+`host` variable at the top of the Justfile does that mapping, so `switch`, `build`, `diff` and `audit-candidate` need
 the argument only when targeting another machine; `deploy`, `dry-activate` and `checks` always need it.
 
 ## Architecture

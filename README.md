@@ -73,7 +73,7 @@ and [docs/flake-wiring.md](docs/flake-wiring.md).
 ## Build, Switch, Deploy
 
 Everything goes through the [Justfile](Justfile). `HOST` is the flake
-attribute. `build`, `diff` and `switch` default it to the machine you are on;
+attribute. `build`, `diff`, `switch` and `audit-candidate` default it to the machine you are on;
 `deploy`, `dry-activate` and `checks` require it.
 
 ```bash
