@@ -7,22 +7,15 @@ of scope. Seeded cases: wrong counts and a missing README row must be caught, an
 filler-described leaves, top level and in a submodule, must be reported."""
 import pathlib
 import re
-import sys
 
 import gate_probe
+from gate_probe import check, finish
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORDS = ["two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
 # "one host" is a scope ("one host at a time"), not a fleet size
 COUNT = re.compile(r"(?<![\w-])(" + "|".join(WORDS) + r"|[2-9]|1[0-9])[- ]hosts?\b", re.IGNORECASE)
 PLACEHOLDERS = {"todo", "fixme", "tbd", "xxx", "description", "none", "n/a"}
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def number(token):
@@ -87,4 +80,4 @@ check(len(leaves) > 100 and not missing,
       f"every one of {len(leaves)} sam.*/homelab.* option leaves has a real description "
       f"({ {m: [why, leaves[m]['files']] for m, why in sorted(missing.items())} })")
 
-sys.exit(1 if failed else 0)
+finish()

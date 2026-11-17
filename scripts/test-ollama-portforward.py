@@ -11,6 +11,7 @@ import tempfile
 import time
 
 import gate_probe
+from gate_probe import check, finish
 
 FAKE = r'''
 import socket, sys, time
@@ -34,13 +35,6 @@ while True:
     c.close()
 '''
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def free_port():
@@ -105,4 +99,4 @@ except subprocess.TimeoutExpired:
 check(rc is not None and rc != 0, f"a forward that exits 0 still ends the supervisor non-zero ({rc})")
 
 subprocess.run(["pkill", "-f", fake])
-sys.exit(1 if failed else 0)
+finish()

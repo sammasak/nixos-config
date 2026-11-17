@@ -4,17 +4,10 @@ journal-collector-failed, loki-failed) pages lenovo's ntfy by sam.fleet.pageUrl,
 runtime-host role's sam.workers.ntfyUrl is absent (acer with it forced null, Loki and the collector on naked-pi with
 no URL set). An empty URL does not evaluate, ntfy on a host other than sam.fleet.ntfy.host fails an assertion, and a
 host redefining a fleet fact does not evaluate."""
-import sys
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("fleet-endpoints")
@@ -54,4 +47,4 @@ check(any("sam.fleet.ntfy.host is lenovo-21CB001PMX" in m for m in S["ntfyOffHos
       f"seeded: ntfy enabled on acer fails the fleet-host assertion ({S['ntfyOffHost']})")
 check(S["fleetRedefined"] is False, "seeded: a host setting sam.fleet.ntfy.port does not evaluate (read-only)")
 
-sys.exit(1 if failed else 0)
+finish()

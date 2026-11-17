@@ -3,17 +3,10 @@ waker, sends every host whose fleet entry has a power window its Wake-on-LAN pac
 powers itself off at its off and arms Wake-on-LAN on its fleet interface, and no other host gets any of these units.
 The assertions refuse a window on a host that is not marked sleeps, a waker on a sleeping host, and a window host whose
 NIC's Wake-on-LAN is turned off."""
-import sys
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("power-schedule")
@@ -73,4 +66,4 @@ check(awake in F["awake"], f"seeded: a power window on a host not marked sleeps 
 check(sleeper in F["sleepingWaker"], f"seeded: the waker on msi, a sleeping host, fails ({F['sleepingWaker']})")
 check(nowol in F["noWol"], f"seeded: asus without eno1's Wake-on-LAN fails ({F['noWol']})")
 
-sys.exit(1 if failed else 0)
+finish()

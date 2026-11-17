@@ -5,22 +5,12 @@ module its host declares, beside its own no-verify-guard. Both skills sources ar
 the pinned one (scripts/gate-probe.nix) and a copy of it with the two hooks added, or removed (--override-input)."""
 import json
 import pathlib
-import shutil
-import subprocess
-import sys
 import tempfile
 
 import gate_probe
+from gate_probe import check, finish, flipped
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 HOOKS = ("shunt-check-read.sh", "shunt-check-bash-read.sh", "shunt-spill-output.sh")
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def commands(entries):
@@ -33,29 +23,6 @@ def bash_lists(s):
 
 def shunt_env(s):
     return {k: v for k, v in s["env"].items() if k.startswith("SHUNT_")}
-
-
-def flipped(skills, tmp, has):
-    """The pinned skills tree with the shunt hooks added (stubs) when it lacks them, or removed when it has them."""
-    fixture = pathlib.Path(tmp, "skills")
-    shutil.copytree(skills, fixture, symlinks=True)
-    for p in [fixture, *fixture.rglob("*")]:
-        if not p.is_symlink():
-            p.chmod(p.stat().st_mode | 0o200)
-    for h in HOOKS:
-        f = fixture / "hooks" / h
-        if has:
-            f.unlink()
-        else:
-            f.write_text("#!/bin/sh\nexit 0\n")
-            f.chmod(0o755)
-    out = subprocess.run(
-        ["nix", "eval", "--json", "--impure", "--no-write-lock-file", "--override-input", "skills", f"path:{fixture}",
-         f"{ROOT}#nixosConfigurations", "--apply", f"import {ROOT}/scripts/bulk-reader-probe.nix"],
-        capture_output=True, text=True)
-    if out.returncode != 0:
-        sys.exit(f"nix eval with the flipped skills source failed:\n{out.stderr[-800:]}")
-    return json.loads(out.stdout)
 
 
 def with_hooks(P, src):
@@ -119,11 +86,11 @@ def main():
     has = all(pathlib.Path(skills, "hooks", h).exists() for h in HOOKS)
     print(f"pinned skills {skills} {'carries' if has else 'lacks'} the shunt hooks")
     with tempfile.TemporaryDirectory() as tmp:
-        F = flipped(skills, tmp, has)
+        F = flipped(skills, tmp, has, HOOKS, "bulk-reader-probe.nix")
         src = next((c.split(" ")[-1].rsplit("/hooks/", 1)[0] for c in commands(F["off"]["hooks"]["PreToolUse"])), "")
     with_hooks(*((P, skills) if has else (F, src)))
     without_hooks(F if has else P)
-    sys.exit(1 if failed else 0)
+    finish()
 
 
 if __name__ == "__main__":

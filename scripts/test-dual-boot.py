@@ -3,17 +3,10 @@
 systemd-boot off, the loader on the /boot ESP with its directory on root, and the Windows entry chainloading
 bootmgfw.efi; no other host imports it. Its assertion refuses an efiSysMountPoint that is not a vfat filesystem in
 fileSystems (seeded: msi's /boot as ext4, asus's loader pointed at an /efi that is not mounted)."""
-import sys
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("dual-boot")
@@ -39,4 +32,4 @@ check(any("efiSysMountPoint /boot is not a vfat filesystem" in m for m in F["not
 check(any("efiSysMountPoint /efi is not a vfat filesystem" in m for m in F["noMount"]),
       f"seeded: asus's loader on an unmounted /efi fails ({F['noMount']})")
 
-sys.exit(1 if failed else 0)
+finish()
