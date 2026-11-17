@@ -11,8 +11,8 @@ A NixOS + Home Manager configuration repository using **flake-parts**. Manages L
 ```bash
 # ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
 #    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
-devenv tasks run nixos:qa           # every gate (= just check): lints, secrets-verify, the probe, flake check, then the tests; on msi and asus the flake check and the four slowest tests run side by side
-devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: evaluates every output, builds the x86 checks that changed since main (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them) but leaves another host's CUDA closure to that host's gate, evaluates the Pis (= just verify)
+devenv tasks run nixos:qa           # every gate (= just check): lints, secrets-verify, the probe, flake check, then the tests; on asus the flake check and the four slowest tests run side by side
+devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: evaluates every output and builds every x86 check (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them) except one that would compile against CUDA off its own node, which is deferred to that node's gate and listed; evaluates the Pis (= just verify)
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;

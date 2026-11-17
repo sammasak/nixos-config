@@ -111,23 +111,31 @@ let
         }
         # Every output is evaluated, as before; only a build is ever left out. A check whose build would compile against
         # CUDA or the NVIDIA driver is built only on the host it deploys to (deploy-activate-<node>, deploy-schema-<node>,
-        # both of which pull the node's closure), and elsewhere substituted or deferred to that host's gate: listed at the
-        # end, in NIXOS_QA_TIMES and as a deferred gate-step record. CUDA shows in the to-build derivations' inputs
-        # (cuda_cudart, nvidia-x11), not in a name: asus's CUDA Ollama is plain ollama-0.x (#502).
-        # args: this host, the check's name, the derivations a build would compile, their inputs
+        # both of which pull the node's closure) and deferred to that host's gate elsewhere: the dry-run that found it
+        # already asked the substituters. A heavy check of no node is built only on a host whose own system has CUDA,
+        # and fails the step elsewhere rather than go unbuilt. Deferrals are listed at the end, in NIXOS_QA_TIMES and as
+        # deferred gate-step records. CUDA shows in the to-build derivations' inputs (cuda_cudart, nvidia-x11), not in a
+        # name: asus's CUDA Ollama is plain ollama-0.x (#502).
+        # args: this host, the check's name, the derivations a build would compile, their inputs, 1 if this host's system
+        # has CUDA
         heavy='-cuda[0-9._]*-|cuda_|nvidia-x11'
         decide() {
           local node=
           case $2 in deploy-activate-* | deploy-schema-*) node=''${2#deploy-*-} ;; esac
-          if [ -n "$3" ] && grep -qE -e "$heavy" <<<"$4" && { [ -z "$node" ] || [[ $1 != "$node"* ]]; }; then
-            echo foreign
-          else
+          if [ -z "$3" ] || ! grep -qE -e "$heavy" <<<"$4"; then
             echo build
+          elif [ -n "$node" ]; then
+            if [[ $1 == "$node"* ]]; then echo build; else echo foreign; fi
+          elif [ "$5" = 1 ]; then
+            echo build
+          else
+            echo nodeless
           fi
         }
         me=$(uname -n)
+        cudahost=0
+        if nix-store -qR /run/current-system 2>/dev/null | grep -qE -e "$heavy"; then cudahost=1; fi
         deferred=()
-        sub=$(mktemp)
         here=$(nix eval --raw --impure --expr builtins.currentSystem)
         # VM checks (NixOS tests, the ones with a driver) boot QEMU, up to 4 GiB: the gate refuses to run on lenovo
         # shellcheck disable=SC2016 # the single-quoted ''${n} is Nix's, not the shell's
@@ -156,30 +164,36 @@ let
                 t=$SECONDS
                 d=$(nix eval --raw --no-write-lock-file ".#$c.drvPath")
                 took "eval $c" "$t"
-                todo=$(nix build --dry-run --no-link "$d^*" 2>&1 \
-                  | awk '/will be built:/ { f = 1; next } /will be fetched|^[^ ]/ { f = 0 } f { print $1 }')
+                # a failed dry-run fails the step: read as "nothing to build" it would hide the check (nix 2.34 also
+                # exits 0 on "don't know how to build")
+                if ! dry=$(nix build --dry-run --no-link "$d^*" 2>&1) || grep -q "know how to build" <<<"$dry"; then
+                  printf '%s\n' "$dry" >&2
+                  echo "nixos-flake-check: the dry-run of $c failed" >&2
+                  exit 1
+                fi
+                todo=$(awk '/will be built:/ { f = 1; next } /will be fetched|^[^ ]/ { f = 0 } f { print $1 }' <<<"$dry")
                 inputs=""
                 # shellcheck disable=SC2086 # one store path per word
                 if [ -n "$todo" ]; then inputs=$(nix-store -q --references $todo); fi
                 n=$(grep -c . <<<"$todo" || true)
                 t=$SECONDS
-                if [ "$(decide "$me" "$o" "$todo" "$inputs")" = build ]; then
-                  echo "nixos-flake-check: build $c (compiles $n)" >&2
-                  [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ] || nix build --no-link "$d^*"
-                  took "build $c" "$t"
-                elif [ -z "''${NIXOS_FLAKE_CHECK_DRY:-}" ] && nix build --no-link --max-jobs 0 "$d^*" 2>"$sub"; then
-                  took "substitute $c" "$t"
-                elif [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ] || grep -q "Unable to start any build" "$sub"; then
-                  owner=''${o#deploy-*-}
-                  [[ $o == deploy-* ]] || owner="a host that has the CUDA closure"
-                  deferred+=("$c")
-                  echo "nixos-flake-check: deferred $c to $owner (compiles $n): it would compile against $(grep -E -e "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
-                  ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" result=deferred
-                else
-                  cat "$sub" >&2
-                  echo "nixos-flake-check: substituting $c failed for another reason than needing a build" >&2
-                  exit 1
-                fi
+                case $(decide "$me" "$o" "$todo" "$inputs" "$cudahost") in
+                  build)
+                    echo "nixos-flake-check: build $c (compiles $n) $d" >&2
+                    [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ] || nix build --no-link "$d^*"
+                    took "build $c" "$t"
+                    ;;
+                  foreign)
+                    owner=''${o#deploy-*-}
+                    deferred+=("$c")
+                    echo "nixos-flake-check: deferred $c to $owner (compiles $n) $d: it would compile against $(grep -E -e "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
+                    ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" seconds=0 result=deferred
+                    ;;
+                  nodeless)
+                    echo "nixos-flake-check: $c would compile against CUDA on $me, whose system has none, and names no deploy node to defer to: name it deploy-*-<node> or run this gate on a CUDA host" >&2
+                    exit 1
+                    ;;
+                esac
               else
                 drv "$kind.$s.$o"
               fi
@@ -517,6 +531,7 @@ let
   qaPushTest =
     gate "qa-push-test"
       (with pkgs; [
+        nix
         python3
         git
         coreutils
@@ -653,7 +668,7 @@ let
           | while read -r node assertions checks; do
             ${lib.getExe record} coverage node="$node" assertions="$assertions" system_checks="$checks"
           done
-        # The flake check and the four slowest tests side by side on a host with the memory, each into its own log,
+        # The flake check and the four slowest tests side by side where measured safe, each into its own log,
         # printed whole and recorded per step after all ended (#502); in this order, one after the other, elsewhere
         side_by_side() {
           local dir n e r secs bad=() order=()
@@ -672,7 +687,11 @@ let
           wait
           for n in "''${order[@]}"; do
             # no .res: the step's subshell died (OOM, a signal) before writing one; its log is printed all the same
-            if [ -f "$dir/$n.res" ]; then read -r r secs <"$dir/$n.res"; else r=fail secs="?"; fi
+            # seconds=0, not "?": the dashboard unwraps it as a number
+            if [ -f "$dir/$n.res" ]; then read -r r secs <"$dir/$n.res"; else
+              r=fail secs=0
+              echo "== $n: no result written (killed?)"
+            fi
             echo "== $n: $r"
             cat "$dir/$n.log"
             echo "nixos-qa: $n took $secs s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
@@ -681,12 +700,21 @@ let
           done
           [ ''${#bad[@]} -eq 0 ] || { echo "nixos-qa: failed side by side: ''${bad[*]}" >&2; return 1; }
         }
+        # asus only: the only host with a measured side-by-side run (24 GiB free); msi joins once its peak is measured.
+        # Free memory is the smaller of the host's MemAvailable and this gate's own cgroup headroom, read once at the start:
+        # a capped unit on asus saw 24 GiB available and was killed (#502)
+        free_gib() {
+          local avail cg max cur
+          avail=$(awk '/^MemAvailable:/ { print $2 * 1024 }' /proc/meminfo)
+          cg=/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)
+          max=$(cat "$cg/memory.max" 2>/dev/null || echo max)
+          if [ "$max" != max ] && cur=$(cat "$cg/memory.current" 2>/dev/null) && [ $((max - cur)) -lt "$avail" ]; then
+            avail=$((max - cur))
+          fi
+          echo $((avail / 1073741824))
+        }
         together=
-        case $(uname -n) in
-          msi-ms7758 | asus-b460m)
-            if [ "$(awk '/^MemAvailable:/ { print int($2 / 1048576) }' /proc/meminfo)" -ge 10 ]; then together=1; fi
-            ;;
-        esac
+        if [ "$(uname -n)" = asus-b460m ] && [ "$(free_gib)" -ge 10 ]; then together=1; fi
         if [ -n "$together" ]; then
           side_by_side ${lib.concatMapStringsSep " " (g: "${g.name} ${lib.getExe g}") sideBySide}
         else

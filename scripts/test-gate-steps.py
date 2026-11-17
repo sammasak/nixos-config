@@ -35,8 +35,8 @@ if not heavy:
 DECIDE = heavy.group(1) + "\n" + function("decide")
 
 
-def decide(here, check_name, todo, inputs=""):
-    r = subprocess.run(["bash", "-euo", "pipefail", "-c", DECIDE + '\ndecide "$@"', "decide", here, check_name, todo, inputs],
+def decide(here, check_name, todo, inputs="", cudahost="0"):
+    r = subprocess.run(["bash", "-euo", "pipefail", "-c", DECIDE + '\ndecide "$@"', "decide", here, check_name, todo, inputs, cudahost],
                        capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 else f"rc={r.returncode} {r.stderr.strip()}"
 
@@ -52,7 +52,8 @@ cases = [
     ("and on msi", ("msi-ms7758", "deploy-schema-asus-b460m", todo, cuda), "foreign"),
     ("both on asus itself are built", ("asus-b460m", "deploy-schema-asus-b460m", todo, cuda), "build"),
     ("lenovo's own check, the hostname longer than the node name, is its own", ("lenovo-21CB001PMX", "deploy-activate-lenovo", todo, cuda), "build"),
-    ("a check of no node built against CUDA is deferred everywhere it would compile it", ("msi-ms7758", "gpu-telemetry-exporter", todo, cuda), "foreign"),
+    ("seeded: a check of no node built against CUDA fails the step on a host without CUDA, not silently deferred", ("msi-ms7758", "gpu-telemetry-exporter", todo, cuda), "nodeless"),
+    ("the same on a host whose own system has CUDA is built", ("asus-b460m", "gpu-telemetry-exporter", todo, cuda, "1"), "build"),
     ("another host's Ollama built without CUDA (acer's CPU build) is built here", ("msi-ms7758", "deploy-activate-acer-swift", todo, cpu), "build"),
     ("a CUDA name in what is built, not in its inputs, does not count: inputs decide", ("acer-swift", "deploy-activate-msi-ms7758", "/nix/store/u-cuda-docs.drv", cpu), "build"),
     ("the pattern is anchored: barracuda is not CUDA", ("acer-swift", "deploy-activate-msi-ms7758", todo, "/nix/store/h-barracuda-1.0.drv"), "build"),
@@ -93,7 +94,7 @@ with tempfile.TemporaryDirectory() as t:
     recs = rec.read_text().splitlines()
     check(len(recs) == 4 and "step=fails" in recs[1] and "result=fail" in recs[1] and "result=pass" in recs[0] and "sha=abc" in recs[2],
           f"each step is recorded with its result ({recs})")
-    check("== killed: fail\nbefore the kill" in out and "step=killed seconds=? result=fail" in recs[3] and "each step's log in" in out,
+    check("no result written (killed?)" in out and "before the kill" in out and "step=killed seconds=0 result=fail" in recs[3] and "each step's log in" in out,
           f"seeded: a step whose subshell died before writing its result still has its log printed and counts as failed ({recs[3]!r})")
     # all three ran at once: the slow one did not hold back the others' start
     check(int(lines[0].split()[3]) >= 1 and int(lines[2].split()[3]) <= 1, f"the steps ran side by side ({lines})")
@@ -103,8 +104,15 @@ fc = re.search(r"\n  flakeCheck =\s+gate\s+\"nixos-flake-check\".*?''\n(.*?)\n *
 check(fc is not None, "flakeCheck found in devenv.nix")
 names = {"nixosConfigurations": [], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
          "checks.x86_64-linux": ["deploy-schema-asus-b460m", "plain"]}
-for mode, sub_err in (("defer", "error: Unable to start any build; either increase '--max-jobs' or enable remote builds."),
-                      ("broken", "error: hash mismatch in fixed-output derivation")):
+# the dry-run text is Nix 2.34's own: "these N derivations" or "this derivation will be built:", and "don't know how to
+# build these paths:" for a missing drv, with exit status 0
+dryruns = {
+    "defer": "these 2 derivations will be built:\\n  /nix/store/a-ollama-0.40.3.drv\\n  /nix/store/b-etc.drv",
+    "single": "this derivation will be built:\\n  /nix/store/a-ollama-0.40.3.drv",
+    "unknown": "don't know how to build these paths:\\n  /nix/store/0-missing.drv",
+    "fails": None,
+}
+for mode, dryrun in dryruns.items():
     with tempfile.TemporaryDirectory() as t:
         t = pathlib.Path(t)
         calls, rec, deferred = t / "calls", t / "records", t / "deferred"
@@ -117,9 +125,10 @@ for mode, sub_err in (("defer", "error: Unable to start any build; either increa
                                "elif any('? driver' in x for x in a): print(json.dumps([]))\n"
                                "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
                                "elif a[:2] == ['eval', '--raw'] and attr.endswith('.drvPath'): print('/nix/store/x-' + attr[:-8] + '.drv', end='')\n"
-                               "elif '--dry-run' in a and 'asus' in a[-1]: print('these 2 derivations will be built:\\n  /nix/store/a-ollama-0.40.3.drv\\n  /nix/store/b-etc.drv', file=sys.stderr)\n"
-                               f"elif '--max-jobs' in a: print({sub_err!r}, file=sys.stderr); sys.exit(1)\n")
-        (t / "nix-store").write_text("#!/usr/bin/env bash\necho /nix/store/c-cuda13.4-cuda_cudart-13.4.drv\n")
+                               + ("elif '--dry-run' in a and 'asus' in a[-1]: print('error: path is not valid', file=sys.stderr); sys.exit(1)\n" if dryrun is None else
+                                  f"elif '--dry-run' in a and 'asus' in a[-1]: print({dryrun!r}.replace('\\\\n', '\\n'), file=sys.stderr)\n"))
+        # this guest's own system has no CUDA (-qR /run/current-system); the to-build derivations' inputs do
+        (t / "nix-store").write_text('#!/usr/bin/env bash\n[ "$2" = -qR ] && exit 0\necho /nix/store/c-cuda13.4-cuda_cudart-13.4.drv\n')
         (t / "uname").write_text("#!/usr/bin/env bash\necho acer-swift\n")
         (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
         for f in ("nix", "nix-store", "uname", "record"):
@@ -128,18 +137,39 @@ for mode, sub_err in (("defer", "error: Unable to start any build; either increa
         body = body.replace("${lib.getExe record}", str(t / "record")).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred)})
-        built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c and "--max-jobs" not in c]
-        if mode == "defer":
+        built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c]
+        check(not any("--max-jobs" in c for c in calls.read_text().splitlines()), f"{mode}: no substitute attempt with --max-jobs 0")
+        if mode in ("defer", "single"):
             check(r.returncode == 0 and not any("asus" in c for c in built) and any("plain" in c for c in built),
                   f"flake check on acer: asus's deploy-schema check is not compiled, the plain one is built ({r.returncode}, {built})")
             check("deferred checks.x86_64-linux.deploy-schema-asus-b460m to asus-b460m" in r.stderr and "cuda13.4-cuda_cudart" in r.stderr
                   and "not built here, deferred to their own host's gate: checks.x86_64-linux.deploy-schema-asus-b460m" in r.stderr,
                   f"the deferral is printed with its reason and in the end summary ({r.stderr[-400:]!r})")
             check(deferred.read_text().split() == ["checks.x86_64-linux.deploy-schema-asus-b460m"]
-                  and "result=deferred" in rec.read_text() and "owner=asus-b460m" in rec.read_text(),
-                  "the deferral reaches nixos-qa's list and a deferred gate-step record")
+                  and "result=deferred" in rec.read_text() and "owner=asus-b460m" in rec.read_text() and "seconds=0" in rec.read_text(),
+                  f"{mode}: the deferral reaches nixos-qa's list and a deferred gate-step record with seconds=0")
         else:
-            check(r.returncode != 0 and "hash mismatch" in r.stderr and "failed for another reason" in r.stderr,
-                  f"seeded: a substitution failing for another reason fails the step, its error shown ({r.returncode}, {r.stderr[-300:]!r})")
+            check(r.returncode != 0 and "the dry-run of checks.x86_64-linux.deploy-schema-asus-b460m failed" in r.stderr and not built,
+                  f"seeded: a dry-run that {'exits non-zero' if dryrun is None else 'cannot find the derivation'} fails the step, not read as nothing to build ({r.returncode}, {r.stderr[-200:]!r})")
+
+# and the step's own dry-run parsing on this nix's real output: a fresh derivation (instantiated, never built) must be the
+# one line of "would compile", and a missing one must hit the step's failure test
+awk = re.search(r"todo=\$\(awk '([^']*)' <<<\"\$dry\"\)", src)
+check(awk is not None, "the step's dry-run awk is found")
+if awk:
+    import shutil, time
+    nix = shutil.which("nix")
+    if nix is None:
+        check(False, "nix is on PATH for the real dry-run check")
+    else:
+        expr = f'derivation {{ name = "gate-steps-{time.time_ns()}"; system = builtins.currentSystem; builder = "/bin/sh"; args = [ "-c" "echo > $out" ]; }}'
+        drv = subprocess.run(["nix-instantiate", "--expr", expr], capture_output=True, text=True, check=True).stdout.strip()
+        dry = subprocess.run([nix, "build", "--dry-run", "--no-link", drv + "^*"], capture_output=True, text=True)
+        todo = subprocess.run(["awk", awk.group(1)], input=dry.stdout + dry.stderr, capture_output=True, text=True).stdout.split()
+        check(dry.returncode == 0 and todo == [drv], f"real nix: a derivation to build is the one parsed line ({todo}, {dry.stderr.strip()!r})")
+        miss = subprocess.run([nix, "build", "--dry-run", "--no-link", "/nix/store/00000000000000000000000000000000-missing.drv^*"],
+                              capture_output=True, text=True)
+        check(miss.returncode != 0 or "know how to build" in miss.stderr,
+              f"real nix: a missing derivation fails the dry-run or says it does not know how to build it ({miss.returncode}, {miss.stderr.strip()!r})")
 
 sys.exit(1 if failed else 0)
