@@ -62,13 +62,13 @@ in
       # and, without a desktop's platform theme, falls back to qtct + a Kvantum theme: a headless boot
       # has no Qt GUI to theme, and that ~/.config/Kvantum tree failed msi-ms7758's Home Manager
       # activation. Desktops (sam.desktop.enable) keep it, unchanged.
-      qt.enable = lib.mkDefault (config.sam.desktop.enable or false);
+      qt.enable = lib.mkDefault config.sam.desktop.enable;
     };
   };
 
   # the Home Manager half of the same gate; a host with Stylix off (roles/rf-lab.nix) has no
   # Home Manager stylix options, so it gets nothing here
   home-manager.sharedModules = lib.mkIf config.stylix.enable [
-    { stylix.targets.qt.enable = lib.mkDefault (config.sam.desktop.enable or false); }
+    { stylix.targets.qt.enable = lib.mkDefault config.sam.desktop.enable; }
   ];
 }
