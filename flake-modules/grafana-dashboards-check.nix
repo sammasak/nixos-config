@@ -1,8 +1,8 @@
 # black-pi's dashboards, as grafana.nix provisions them, against what the fleet exports: the deployed node-exporter
-# command runs on node_exporter's own sysfs/procfs fixtures, so its metric names are this version's with these flags;
-# the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus loads;
-# llm-gateway's from its registrations and Loki's, Alloy's and blackbox's from their name literals, in the source
-# each host runs; the OTLP ones are alloy-otlp's allow-list. Each seeded dashboard below must fail
+# command runs on node_exporter's own sysfs/procfs fixtures, so its metric names are this version's with these
+# flags; the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus
+# loads; llm-gateway's from its registrations and Loki's, Alloy's, Caddy's and blackbox's from their name literals,
+# in the source each host runs; the OTLP ones are alloy-otlp's allow-list. Each seeded dashboard below must fail
 # scripts/check-grafana-dashboards.py with its own reason.
 { config, lib, ... }:
 let
@@ -48,6 +48,12 @@ let
       strip = "loki_";
       job = "loki";
       src = msi-ms7758.pkgs.grafana-loki.src;
+    }
+    {
+      prefix = "caddy_http_";
+      strip = "caddy_http_";
+      job = "caddy";
+      src = acer-swift.pkgs.caddy.src;
     }
     {
       prefix = "probe_";
@@ -281,11 +287,14 @@ in
             && lib.hasInfix (discard "${acer-swift.pkgs.grafana-alloy}/bin/alloy") (
               discard (toString acer.systemd.services.alloy-otlp.serviceConfig.ExecStart)
             )
+            && lib.hasInfix (discard "${acer-swift.pkgs.caddy}/bin/caddy") (
+              discard (toString acer.systemd.services.caddy.serviceConfig.ExecStart)
+            )
             && lib.hasInfix (discard "${acer-swift.pkgs.llmGateway}/bin/") (
               discard acer.systemd.services.llm-gateway.serviceConfig.ExecStart
             )
           )
-          "grafana-dashboards: black-pi's Loki (or this check's logcli) or blackbox exporter, acer's alloy-otlp or acer's llm-gateway is not the source this check reads";
+          "grafana-dashboards: black-pi's Loki (or this check's logcli) or blackbox exporter, acer's alloy-otlp, Caddy or llm-gateway is not the source this check reads";
         assert lib.assertMsg (
           !handList.success
         ) "grafana-dashboards: a dashboard listing the node variable's hosts by hand evaluated";
