@@ -348,7 +348,7 @@
           "refId": "E"
         },
         {
-          "expr": "max by (node) (node_thermal_zone_temp{node=~\"$node\"}) or max by (node) (node_hwmon_temp_celsius{node=~\"$node\"})",
+          "expr": "max by (node) (node_thermal_zone_temp{node=~\"$node\"} or node_hwmon_temp_celsius{node=~\"$node\"})",
           "legendFormat": "{{node}}",
           "format": "table",
           "instant": true,
