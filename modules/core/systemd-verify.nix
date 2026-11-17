@@ -1,10 +1,12 @@
-# Ordering cycles and unit lines systemd ignores (an unknown key or section, a value that does not parse) fail the
-# build: systemd-analyze verify over this host's units, in the manager's user mode (system mode needs a writable
-# /run/systemd, which the sandbox lacks). User mode refuses DynamicUser= units, which would drop them from the
-# transaction, so they are verified with that line removed. verify exits 0 on both: the check reads its output, and a
-# fixture cycle and a fixture Restartsec= wanted by multi-user.target must be reported through it and default.target
-# first, so a verify that did not walk this host's tree, or a renamed message, fails instead of passing. No user-mode
-# message matches the three patterns on the six hosts' trees (measured), so nothing is allowlisted. Not covered:
+# Ordering cycles and unit lines systemd ignores (any `<unit>:<line>: ... ignoring` message: an unknown key or section,
+# a value or limit that does not parse, a bad dependency name) fail the build: systemd-analyze verify over this host's
+# units, in the manager's user mode (system mode needs a writable /run/systemd, which the sandbox lacks). User mode
+# refuses DynamicUser= units, which would drop them from the transaction, so they are verified with that line removed.
+# verify exits 0 on both: the check reads its output, and a fixture cycle and a fixture Restartsec= wanted by
+# multi-user.target must be reported through it and default.target first, so a verify that did not walk this host's
+# tree, or a renamed message, fails instead of passing. Measured: the allowlisted user-mode message is the only such
+# line in msi's full tree, in every host's NixOS-generated units, and in asus's packaged and systemd units; the Pis'
+# packaged and systemd units were not measured. Not covered:
 # generator-made units (mounts), the initrd, units only started on demand, and edges only the system manager adds,
 # e.g. the implicit After=sysinit.target of sockets, paths and timers and the default dependencies of declared mounts
 # and swaps, so a cycle through those edges passes.
@@ -35,7 +37,9 @@ in
 
       verify() { SYSTEMD_UNIT_PATH="$PWD/units" systemd-analyze --user verify --man=no "$PWD/units/$1" 2>&1 || true; }
       cycles() { grep -E 'Found ordering cycle|deleted to break ordering cycle' || true; }
-      ignored() { grep -E 'Unknown key|Unknown section|Failed to parse' || true; }
+      # allowlist: user mode refuses a system action (reboot, poweroff, soft-reboot-force, ...) in JobTimeoutAction=,
+      # SuccessAction= and FailureAction= (27 lines in systemd's own units); the system manager, which runs them, accepts it
+      ignored() { grep -Ei ':[0-9]+: .*ignoring' | grep -Ev ': [A-Za-z]+Action= specified as user mode action, ignoring' || true; }
 
       printf '[Unit]\nWants=fixture-b.service\nAfter=fixture-b.service\n[Service]\nExecStart=${trueBin}\n' > units/fixture-a.service
       printf '[Unit]\nAfter=fixture-a.service\n[Service]\nExecStart=${trueBin}\n' > units/fixture-b.service
