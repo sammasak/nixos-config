@@ -198,6 +198,9 @@ let
       ];
     }) true
   );
+  providers = pi.services.grafana.provision.dashboards.settings.providers;
+  provider = lib.head providers;
+  etcDashboards = lib.filter (lib.hasPrefix "grafana-dashboards/") (lib.attrNames pi.environment.etc);
   promConfig = pi.services.prometheus.configText;
   # the rule files reach the build through configText's context; a derivation there would be an aarch64 build
   plainContext = lib.all (c: !(c ? outputs) && !(c.allOutputs or false)) (
@@ -212,6 +215,27 @@ in
       self',
       ...
     }:
+    let
+      toplevel =
+        name:
+        pkgs.runCommand name { } ''
+          mkdir $out
+          echo "# ${name}" > $out/activate
+          echo 26.11 > $out/nixos-version
+        '';
+      fakeSystem = toplevel "nixos-system-fake";
+      otherSystem = toplevel "nixos-system-other";
+      # as deploy-rs's lib.activate.custom wraps a toplevel for its profile
+      activatable =
+        top:
+        pkgs.buildEnv {
+          name = "activatable-${top.name}";
+          paths = [
+            top
+            (pkgs.writeTextDir "deploy-rs-activate" "")
+          ];
+        };
+    in
     lib.optionalAttrs (system == "x86_64-linux") {
       checks.grafana-dashboards =
         assert lib.assertMsg (nodesOf "node-exporter" == hosts)
@@ -291,11 +315,24 @@ in
             bash $src/ttar -C fixtures -x -f fixtures/udev.ttar
             # the fixture predates Linux 3.14, which every host's kernel adds this line from
             echo 'MemAvailable:    1200000 kB' >> fixtures/proc/meminfo
-            # the generation file every host writes at activation, from a fake toplevel and profile
-            mkdir -p system profiles
-            echo 26.11 > system/nixos-version
-            ln -s "$PWD/system" profiles/system-1-link
-            bash ${../scripts/nixos-textfile.sh} textfile "$PWD/system" profiles
+            # the generation file every host writes at activation: deploy-rs's profile holds its activatable buildEnv
+            # around the toplevel, so generation 27 must be found through it (the exporter reads this one)
+            mkdir -p profiles
+            ln -s ${activatable fakeSystem} profiles/system-27-link
+            ln -s ${activatable otherSystem} profiles/system-26-link
+            ln -s system-27-link profiles/system
+            bash ${../scripts/nixos-textfile.sh} textfile ${fakeSystem} profiles
+            # nixos-rebuild's profile holds the toplevel; booted into 3 while the profile is at 4
+            mkdir -p rebuild booted
+            ln -s ${fakeSystem} rebuild/system-3-link
+            ln -s ${otherSystem} rebuild/system-4-link
+            ln -s system-4-link rebuild/system
+            bash ${../scripts/nixos-textfile.sh} booted ${fakeSystem} rebuild
+            grep -qx 'homelab_nixos_generation 3' booted/nixos.prom || {
+              cat booted/nixos.prom
+              echo "grafana-dashboards: booted into generation 3, the writer did not say so" >&2
+              exit 1
+            }
             # systemd needs D-Bus, which the sandbox lacks: its names come from this version's collector source and flags
             python3 -I ${../scripts/node-exporter-systemd-names.py} $src ${
               lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] exec
@@ -311,6 +348,11 @@ in
             exporter=$!
             for _ in $(seq 50); do curl -fsS -o node.prom http://127.0.0.1:${toString node.port}/metrics && break; sleep 0.2; done
             kill "$exporter"
+            grep -qx 'homelab_nixos_generation 27' node.prom || {
+              cat textfile/nixos.prom
+              echo "grafana-dashboards: the exporter does not report generation 27 through deploy-rs's profile" >&2
+              exit 1
+            }
             grep -q '^node_cpu_seconds_total{' node.prom || {
               cat exporter.log
               echo "grafana-dashboards: node-exporter gave no CPU metrics on the fixtures" >&2
@@ -340,6 +382,36 @@ in
               }
               echo "$s fails: $reason"
             done > $out
+            cat $out
+          '';
+      # a dashboard file dropped from the repo leaves /etc/grafana-dashboards at the next switch, and Grafana, as
+      # black-pi configures its provider, deletes the dashboard; the seeded disableDeletion = true must keep it
+      checks.grafana-dashboard-removal =
+        assert lib.assertMsg
+          (
+            lib.length providers == 1
+            && provider.options.path == "/etc/grafana-dashboards"
+            && etcDashboards == map (f: "grafana-dashboards/${f}") (lib.attrNames dashboards)
+          )
+          "grafana-dashboard-removal: black-pi's provider does not read exactly its dashboards from /etc/grafana-dashboards";
+        assert lib.assertMsg (pi.services.grafana.package.version == pkgs.grafana.version)
+          "grafana-dashboard-removal: black-pi runs Grafana ${pi.services.grafana.package.version}, this check ${pkgs.grafana.version}";
+        pkgs.runCommand "grafana-dashboard-removal"
+          {
+            nativeBuildInputs = [
+              pkgs.python3
+              pkgs.curl
+            ];
+            deployed = builtins.toJSON provider;
+            seeded = builtins.toJSON (provider // { disableDeletion = true; });
+            passAsFile = [
+              "deployed"
+              "seeded"
+            ];
+          }
+          ''
+            bash ${../scripts/test-grafana-dashboard-removal.sh} ${pkgs.grafana} "$deployedPath" gone > $out
+            bash ${../scripts/test-grafana-dashboard-removal.sh} ${pkgs.grafana} "$seededPath" kept >> $out
             cat $out
           '';
     };
