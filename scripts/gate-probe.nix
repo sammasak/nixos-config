@@ -327,6 +327,32 @@ let
       };
     };
 
+    # asus's CUDA Ollama as deployed, and the seeded cases: the same host without hardware.graphics, and with
+    # graphics but no NVIDIA library in the drivers env (its gpu check as a .drv, context discarded: the seed must
+    # fail in the test, not in the probe's build)
+    ollama-gpu =
+      let
+        gpuCheck =
+          c:
+          builtins.unsafeDiscardStringContext (
+            (lib.findFirst (d: d.name == "asus-ollama-gpu-check") null c.system.checks).drvPath or ""
+          );
+      in
+      {
+        failing = {
+          asus = failing hosts.asus-b460m.config;
+          noGraphics = failing (
+            extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.enable = lib.mkForce false; }) ]
+          );
+        };
+        check = {
+          asus = gpuCheck hosts.asus-b460m.config;
+          noNvidiaLibs = gpuCheck (
+            extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.extraPackages = lib.mkForce [ ]; }) ]
+          );
+        };
+      };
+
     # acer's ak wrapper and the server unit environment it copies
     authentik = {
       ak = lib.findFirst (p: (p.name or "") == "ak") null acer.environment.systemPackages;

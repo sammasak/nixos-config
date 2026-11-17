@@ -355,6 +355,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-ollama-pull-pinned.py
       '';
 
+  ollamaGpuTest =
+    gate "ollama-gpu-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
+      '';
+
   # the llm-bench harness and #492's G1 bench against the fake Ollama; no nix: the rules and the exporter are flake checks
   llmBenchTest =
     gate "llm-bench-test"
@@ -533,6 +543,7 @@ let
           harnessTelemetryTest
           ollamaPortforwardTest
           ollamaPullPinnedTest
+          ollamaGpuTest
           llmBenchTest
           alertBridgeTest
           knownHostsTest
@@ -903,6 +914,8 @@ in
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:ollama-pull-pinned-test" =
       task "ollama-pull-pinned: a tag at its pin is left alone, a moved tag is removed again and fails the loader" ollamaPullPinnedTest;
+    "nixos:ollama-gpu-test" =
+      task "A CUDA Ollama build without hardware.graphics is rejected (it would run on the CPU)" ollamaGpuTest;
     "nixos:llm-bench-test" =
       task "llm-bench (#493): #492's G1 bench and the capacity run against the fake Ollama, the G1 import and rule, quantile floors, the MSI import, no prompt in an aggregate" llmBenchTest;
     "nixos:alert-bridge-test" =
