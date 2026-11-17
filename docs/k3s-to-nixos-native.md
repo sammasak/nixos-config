@@ -209,7 +209,7 @@ discovery (replaced by a declared scrape target), scale to zero through KEDA
 - **Several hosts down.** Each host's services are independent of the
   deploying host once activated; a host that was off is deployed when it
   returns. Nothing reconciles it automatically, which is accepted.
-- **Scale.** Five hosts, with one or two more plausible. Nothing here changes
+- **Scale.** Six hosts, with one or two more plausible. Nothing here changes
   with that count.
 
 ### Gaps to close, in order

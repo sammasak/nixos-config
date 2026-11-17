@@ -51,7 +51,7 @@ in
     port = lib.mkOption {
       type = lib.types.port;
       default = 3100;
-      description = "HTTP port.";
+      description = "Loki's HTTP listen port, opened to allowedSources only and probed for /ready at start.";
     };
     retention = lib.mkOption {
       type = lib.types.strMatching "[0-9]+[hdw]";
