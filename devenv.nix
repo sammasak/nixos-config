@@ -93,9 +93,9 @@ let
       (with pkgs; [
         nix
         jq
-        git
         gawk
         gnugrep
+        gnused
         coreutils
       ])
       ''
@@ -109,26 +109,25 @@ let
           nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null
           took "eval $1" "$t"
         }
-        # A check is built here unless it would compile nothing (then the build only substitutes or confirms), its
-        # derivation equals main's (main's gate built it; main is merged green only), or it is another host's
-        # deploy-activate check that would compile a closure only that host builds, which is substituted or left to
-        # that host's own gate, said so. Every output is still evaluated above and below: that is not narrowed.
-        # args: this host, the check's name, its drv, main's drv for it, the derivations a build would compile, and their
-        # inputs: CUDA shows in those (cuda_cudart, nvidia-x11), not in a name (asus's CUDA Ollama is plain ollama-0.x)
-        heavy='cuda|nvidia-x11'
+        # Every output is evaluated, as before; only a build is ever left out. A check whose build would compile against
+        # CUDA or the NVIDIA driver is built only on the host it deploys to (deploy-activate-<node>, deploy-schema-<node>,
+        # both of which pull the node's closure), and elsewhere substituted or deferred to that host's gate: listed at the
+        # end, in NIXOS_QA_TIMES and as a deferred gate-step record. CUDA shows in the to-build derivations' inputs
+        # (cuda_cudart, nvidia-x11), not in a name: asus's CUDA Ollama is plain ollama-0.x (#502).
+        # args: this host, the check's name, the derivations a build would compile, their inputs
+        heavy='-cuda[0-9._]*-|cuda_|nvidia-x11'
         decide() {
-          if [ -z "$5" ]; then
-            echo build
-          elif [ -n "$4" ] && [ "$4" = "$3" ]; then
-            echo unchanged
-          elif [[ $2 == deploy-activate-* ]] && [[ $1 != "''${2#deploy-activate-}"* ]] && grep -qE "$heavy" <<<"$6"; then
+          local node=
+          case $2 in deploy-activate-* | deploy-schema-*) node=''${2#deploy-*-} ;; esac
+          if [ -n "$3" ] && grep -qE -e "$heavy" <<<"$4" && { [ -z "$node" ] || [[ $1 != "$node"* ]]; }; then
             echo foreign
           else
             echo build
           fi
         }
         me=$(uname -n)
-        base=$(git merge-base HEAD origin/main 2>/dev/null || true)
+        deferred=()
+        sub=$(mktemp)
         here=$(nix eval --raw --impure --expr builtins.currentSystem)
         # VM checks (NixOS tests, the ones with a driver) boot QEMU, up to 4 GiB: the gate refuses to run on lenovo
         # shellcheck disable=SC2016 # the single-quoted ''${n} is Nix's, not the shell's
@@ -159,34 +158,38 @@ let
                 took "eval $c" "$t"
                 todo=$(nix build --dry-run --no-link "$d^*" 2>&1 \
                   | awk '/will be built:/ { f = 1; next } /will be fetched|^[^ ]/ { f = 0 } f { print $1 }')
-                b="" inputs=""
-                if [ -n "$todo" ]; then
-                  # shellcheck disable=SC2086 # one store path per word
-                  inputs=$(nix-store -q --references $todo)
-                  if [ -n "$base" ]; then b=$(nix eval --raw "git+file://$PWD?rev=$base#$c.drvPath" 2>/dev/null || true); fi
-                fi
+                inputs=""
+                # shellcheck disable=SC2086 # one store path per word
+                if [ -n "$todo" ]; then inputs=$(nix-store -q --references $todo); fi
+                n=$(grep -c . <<<"$todo" || true)
                 t=$SECONDS
-                case $(decide "$me" "$o" "$d" "$b" "$todo" "$inputs") in
-                  build)
-                    echo "nixos-flake-check: build $c" >&2
-                    nix build --no-link "$d^*"
-                    took "build $c" "$t"
-                    ;;
-                  unchanged) echo "nixos-flake-check: $c is unchanged since main (built by main's gate), not built here" >&2 ;;
-                  foreign)
-                    if nix build --no-link --max-jobs 0 "$d^*" 2>/dev/null; then
-                      took "substitute $c" "$t"
-                    else
-                      echo "nixos-flake-check: $c would compile against $(grep -E "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')here: left to ''${o#deploy-activate-}'s own gate" >&2
-                    fi
-                    ;;
-                esac
+                if [ "$(decide "$me" "$o" "$todo" "$inputs")" = build ]; then
+                  echo "nixos-flake-check: build $c (compiles $n)" >&2
+                  [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ] || nix build --no-link "$d^*"
+                  took "build $c" "$t"
+                elif [ -z "''${NIXOS_FLAKE_CHECK_DRY:-}" ] && nix build --no-link --max-jobs 0 "$d^*" 2>"$sub"; then
+                  took "substitute $c" "$t"
+                elif [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ] || grep -q "Unable to start any build" "$sub"; then
+                  owner=''${o#deploy-*-}
+                  [[ $o == deploy-* ]] || owner="a host that has the CUDA closure"
+                  deferred+=("$c")
+                  echo "nixos-flake-check: deferred $c to $owner (compiles $n): it would compile against $(grep -E -e "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
+                  ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" result=deferred
+                else
+                  cat "$sub" >&2
+                  echo "nixos-flake-check: substituting $c failed for another reason than needing a build" >&2
+                  exit 1
+                fi
               else
                 drv "$kind.$s.$o"
               fi
             done
           done
         done
+        if [ ''${#deferred[@]} -gt 0 ]; then
+          echo "nixos-flake-check: not built here, deferred to their own host's gate: ''${deferred[*]}" >&2
+          printf '%s\n' "''${deferred[@]}" >>"''${NIXOS_QA_DEFERRED:-/dev/null}"
+        fi
       '';
 
   # The values the tests below assert on, from one evaluation (scripts/gate-probe.nix); a test task run on
@@ -599,10 +602,18 @@ let
         mode=manual
         [ -z "''${NIXOS_QA_TIMES:-}" ] || mode=push
         start=$SECONDS
+        # checks nixos-flake-check left to their own host's gate: in the summary and the gate's record, never silent
+        NIXOS_QA_DEFERRED=$(mktemp)
+        export NIXOS_QA_DEFERRED
         on_exit() {
-          local rc=$? result=fail
+          local rc=$? result=fail n
           [ "$rc" != 0 ] || result=pass
-          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode
+          n=$(grep -c . "$NIXOS_QA_DEFERRED" || true)
+          if [ "$n" -gt 0 ]; then
+            echo "nixos-qa: $result, but $n check(s) were not built here, deferred to their own host's gate: $(tr '\n' ' ' <"$NIXOS_QA_DEFERRED")" \
+              | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+          fi
+          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode deferred="$n"
         }
         trap on_exit EXIT
         # always-loaded instructions: this repo's CLAUDE.md and the global one Home Manager links (names only, no path)
@@ -625,6 +636,7 @@ let
         side_by_side() {
           local dir n e r secs bad=() order=()
           dir=$(mktemp -d)
+          echo "nixos-qa: side by side, each step's log in $dir"
           while [ $# -gt 0 ]; do
             n=$1 e=$2
             shift 2
@@ -637,7 +649,8 @@ let
           done
           wait
           for n in "''${order[@]}"; do
-            read -r r secs <"$dir/$n.res"
+            # no .res: the step's subshell died (OOM, a signal) before writing one; its log is printed all the same
+            if [ -f "$dir/$n.res" ]; then read -r r secs <"$dir/$n.res"; else r=fail secs="?"; fi
             echo "== $n: $r"
             cat "$dir/$n.log"
             echo "nixos-qa: $n took $secs s" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"

@@ -35,27 +35,27 @@ if not heavy:
 DECIDE = heavy.group(1) + "\n" + function("decide")
 
 
-def decide(here, check_name, drv, base, todo, inputs=""):
-    r = subprocess.run(["bash", "-euo", "pipefail", "-c", DECIDE + '\ndecide "$@"', "decide", here, check_name, drv, base, todo, inputs],
+def decide(here, check_name, todo, inputs=""):
+    r = subprocess.run(["bash", "-euo", "pipefail", "-c", DECIDE + '\ndecide "$@"', "decide", here, check_name, todo, inputs],
                        capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 else f"rc={r.returncode} {r.stderr.strip()}"
 
 
-# what a dry-run of asus's deploy check lists on acer: the CUDA Ollama is plain ollama-0.x by name, its inputs say CUDA
+# what a dry-run of asus's deploy checks lists on acer: the CUDA Ollama is plain ollama-0.x by name, its inputs say CUDA
 todo = "/nix/store/aaa-ollama-0.40.3.drv\n/nix/store/bbb-unit-ollama.service.drv"
 cuda = "/nix/store/ccc-cuda13.4-cuda_cudart-13.4.92.drv\n/nix/store/ddd-nvidia-x11-595.104.02.drv\n/nix/store/eee-cmake.drv"
 cpu = "/nix/store/fff-cmake.drv\n/nix/store/ggg-go-1.25.drv"
 cases = [
-    ("a check that compiles nothing is built (a substitution or a no-op)", ("msi-ms7758", "deploy-activate-asus-b460m", "/d1", "", ""), "build"),
-    ("a check whose drv equals main's is not built", ("msi-ms7758", "llm-bench-scorecard", "/d1", "/d1", "/nix/store/x.drv"), "unchanged"),
-    ("seeded: a changed check is built", ("msi-ms7758", "llm-bench-scorecard", "/d2", "/d1", "/nix/store/x.drv"), "build"),
-    ("a check new since main (no base drv) is built", ("msi-ms7758", "new-check", "/d2", "", "/nix/store/x.drv"), "build"),
-    ("seeded: another host's changed closure built against CUDA is left to that host", ("acer-swift", "deploy-activate-asus-b460m", "/d2", "/d1", todo, cuda), "foreign"),
-    ("the same closure on its own host is built", ("asus-b460m", "deploy-activate-asus-b460m", "/d2", "/d1", todo, cuda), "build"),
-    ("lenovo's own check, the hostname longer than the node name, is its own", ("lenovo-21CB001PMX", "deploy-activate-lenovo", "/d2", "/d1", todo, cuda), "build"),
-    ("another host's Ollama built without CUDA (acer's CPU build) is built here", ("msi-ms7758", "deploy-activate-acer-swift", "/d2", "/d1", todo, cpu), "build"),
-    ("a CUDA name in what is built, not in its inputs, does not count: inputs decide", ("acer-swift", "deploy-activate-msi-ms7758", "/d2", "/d1", "/nix/store/u-cuda-docs.drv", cpu), "build"),
-    ("an unchanged CUDA closure of another host is not built either", ("acer-swift", "deploy-activate-asus-b460m", "/d1", "/d1", todo, cuda), "unchanged"),
+    ("a check that compiles nothing is built (a substitution or a no-op)", ("acer-swift", "deploy-activate-asus-b460m", "", ""), "build"),
+    ("seeded: asus's deploy-activate check on acer, built against CUDA, is deferred", ("acer-swift", "deploy-activate-asus-b460m", todo, cuda), "foreign"),
+    ("seeded: asus's deploy-schema check on acer pulls the same closure and is deferred too", ("acer-swift", "deploy-schema-asus-b460m", todo, cuda), "foreign"),
+    ("and on msi", ("msi-ms7758", "deploy-schema-asus-b460m", todo, cuda), "foreign"),
+    ("both on asus itself are built", ("asus-b460m", "deploy-schema-asus-b460m", todo, cuda), "build"),
+    ("lenovo's own check, the hostname longer than the node name, is its own", ("lenovo-21CB001PMX", "deploy-activate-lenovo", todo, cuda), "build"),
+    ("a check of no node built against CUDA is deferred everywhere it would compile it", ("msi-ms7758", "gpu-telemetry-exporter", todo, cuda), "foreign"),
+    ("another host's Ollama built without CUDA (acer's CPU build) is built here", ("msi-ms7758", "deploy-activate-acer-swift", todo, cpu), "build"),
+    ("a CUDA name in what is built, not in its inputs, does not count: inputs decide", ("acer-swift", "deploy-activate-msi-ms7758", "/nix/store/u-cuda-docs.drv", cpu), "build"),
+    ("the pattern is anchored: barracuda is not CUDA", ("acer-swift", "deploy-activate-msi-ms7758", todo, "/nix/store/h-barracuda-1.0.drv"), "build"),
 ]
 for what, args, want in cases:
     got = decide(*args)
@@ -69,7 +69,7 @@ with tempfile.TemporaryDirectory() as t:
     stub.write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
     steps = []
     for name, body in (("slow-ok", "sleep 1; echo slow output"), ("fails", "echo the failing output; echo on stderr >&2; exit 3"),
-                       ("fast-ok", "echo fast output")):
+                       ("fast-ok", "echo fast output"), ("killed", "echo before the kill; kill -9 $PPID")):
         f = t / name
         f.write_text(f"#!/usr/bin/env bash\n{body}\n")
         f.chmod(0o755)
@@ -82,18 +82,64 @@ with tempfile.TemporaryDirectory() as t:
     r = subprocess.run(["bash", "-euo", "pipefail", "-c", script + '\nsha=abc\nside_by_side "$@"', "qa", *steps],
                        capture_output=True, text=True, env=dict(os.environ, NIXOS_QA_TIMES=str(times)))
     out = r.stdout
-    check(r.returncode != 0 and "failed side by side: fails" in r.stderr,
+    check(r.returncode != 0 and "failed side by side: fails killed" in r.stderr,
           f"seeded: one failing step fails the run and is named ({r.returncode}, {r.stderr.strip()!r})")
     check("== fails: fail\nthe failing output\non stderr" in out, f"its own output is printed whole, stderr included ({out!r})")
     check(out.index("== slow-ok") < out.index("== fails") < out.index("== fast-ok") and "slow output" in out and "fast output" in out,
           "every step's output is printed, in the given order, after all ended")
     lines = times.read_text().splitlines()
-    check([l.split()[1] for l in lines] == ["slow-ok", "fails", "fast-ok"] and all(l.endswith(" s") for l in lines),
+    check([l.split()[1] for l in lines] == ["slow-ok", "fails", "fast-ok", "killed"] and all(l.endswith(" s") for l in lines),
           f"each step's seconds go to NIXOS_QA_TIMES ({lines})")
     recs = rec.read_text().splitlines()
-    check(len(recs) == 3 and "step=fails" in recs[1] and "result=fail" in recs[1] and "result=pass" in recs[0] and "sha=abc" in recs[2],
+    check(len(recs) == 4 and "step=fails" in recs[1] and "result=fail" in recs[1] and "result=pass" in recs[0] and "sha=abc" in recs[2],
           f"each step is recorded with its result ({recs})")
+    check("== killed: fail\nbefore the kill" in out and "step=killed seconds=? result=fail" in recs[3] and "each step's log in" in out,
+          f"seeded: a step whose subshell died before writing its result still has its log printed and counts as failed ({recs[3]!r})")
     # all three ran at once: the slow one did not hold back the others' start
     check(int(lines[0].split()[3]) >= 1 and int(lines[2].split()[3]) <= 1, f"the steps ran side by side ({lines})")
+
+# nixos-flake-check's own body on a fake flake, acer-swift: asus's deploy-schema check would compile against CUDA
+fc = re.search(r"\n  flakeCheck =\s+gate\s+\"nixos-flake-check\".*?''\n(.*?)\n *'';\n", src, re.S)
+check(fc is not None, "flakeCheck found in devenv.nix")
+names = {"nixosConfigurations": [], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
+         "checks.x86_64-linux": ["deploy-schema-asus-b460m", "plain"]}
+for mode, sub_err in (("defer", "error: Unable to start any build; either increase '--max-jobs' or enable remote builds."),
+                      ("broken", "error: hash mismatch in fixed-output derivation")):
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        calls, rec, deferred = t / "calls", t / "records", t / "deferred"
+        (t / "nix").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
+                               f"open({str(calls)!r}, 'a').write(' '.join(a) + '\\n')\n"
+                               f"names = {names!r}\n"
+                               "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
+                               "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','nixosConfigurations','overlays','packages','templates']}))\n"
+                               "elif '--expr' in a: print('x86_64-linux', end='')\n"
+                               "elif any('? driver' in x for x in a): print(json.dumps([]))\n"
+                               "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
+                               "elif a[:2] == ['eval', '--raw'] and attr.endswith('.drvPath'): print('/nix/store/x-' + attr[:-8] + '.drv', end='')\n"
+                               "elif '--dry-run' in a and 'asus' in a[-1]: print('these 2 derivations will be built:\\n  /nix/store/a-ollama-0.40.3.drv\\n  /nix/store/b-etc.drv', file=sys.stderr)\n"
+                               f"elif '--max-jobs' in a: print({sub_err!r}, file=sys.stderr); sys.exit(1)\n")
+        (t / "nix-store").write_text("#!/usr/bin/env bash\necho /nix/store/c-cuda13.4-cuda_cudart-13.4.drv\n")
+        (t / "uname").write_text("#!/usr/bin/env bash\necho acer-swift\n")
+        (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
+        for f in ("nix", "nix-store", "uname", "record"):
+            (t / f).chmod(0o755)
+        body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("''$", "$")
+        r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
+                           env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred)})
+        built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c and "--max-jobs" not in c]
+        if mode == "defer":
+            check(r.returncode == 0 and not any("asus" in c for c in built) and any("plain" in c for c in built),
+                  f"flake check on acer: asus's deploy-schema check is not compiled, the plain one is built ({r.returncode}, {built})")
+            check("deferred checks.x86_64-linux.deploy-schema-asus-b460m to asus-b460m" in r.stderr and "cuda13.4-cuda_cudart" in r.stderr
+                  and "not built here, deferred to their own host's gate: checks.x86_64-linux.deploy-schema-asus-b460m" in r.stderr,
+                  f"the deferral is printed with its reason and in the end summary ({r.stderr[-400:]!r})")
+            check(deferred.read_text().split() == ["checks.x86_64-linux.deploy-schema-asus-b460m"]
+                  and "result=deferred" in rec.read_text() and "owner=asus-b460m" in rec.read_text(),
+                  "the deferral reaches nixos-qa's list and a deferred gate-step record")
+        else:
+            check(r.returncode != 0 and "hash mismatch" in r.stderr and "failed for another reason" in r.stderr,
+                  f"seeded: a substitution failing for another reason fails the step, its error shown ({r.returncode}, {r.stderr[-300:]!r})")
 
 sys.exit(1 if failed else 0)
