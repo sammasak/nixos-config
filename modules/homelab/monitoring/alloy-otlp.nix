@@ -124,6 +124,13 @@ in
 
   assertions = [
     {
+      # the names go into the host.name alternation unescaped
+      assertion = lib.all (n: builtins.match "[a-z0-9-]+" (lib.toLower n) != null) (lib.attrNames hosts);
+      message = "modules/homelab/monitoring/alloy-otlp.nix: every sam.fleet host name, lower-cased, is [a-z0-9-]+ (not: ${
+        toString (lib.filter (n: builtins.match "[a-z0-9-]+" (lib.toLower n) == null) (lib.attrNames hosts))
+      }).";
+    }
+    {
       # declared by native-otel-relay.nix from the file acer is a recipient of; this unit adds no recipient
       assertion = config.sops.secrets ? native_otlp_auth;
       message = "modules/homelab/monitoring/alloy-otlp.nix: the bearer token is the relay's native_otlp_auth; set sam.profile.nativeOtel.";
