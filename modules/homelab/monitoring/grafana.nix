@@ -57,7 +57,7 @@ let
 in
 {
   options.homelab.grafana.dashboards = lib.mkOption {
-    type = lib.types.attrsOf lib.types.attrs;
+    type = lib.types.attrsOf (lib.types.attrsOf lib.types.anything);
     readOnly = true;
     default = (import ./dashboards.nix { inherit lib hosts; }).dashboards;
     description = "The provisioned dashboards by file name, host variables filled from sam.fleet.hosts; flake-modules/grafana-dashboards-check.nix checks these.";
