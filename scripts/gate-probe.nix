@@ -31,12 +31,85 @@ let
     services = builtins.attrNames (hm c).systemd.user.services;
   };
 
+  # every sam.* and homelab.* option leaf a host declares, submodule sub-options included (named by the parent's path,
+  # no attrsOf key: sam.fleet.hosts.address), with its description (null if none) and the files declaring it
+  optionLeaves =
+    options:
+    let
+      walk =
+        path: opts:
+        lib.concatLists (
+          lib.mapAttrsToList (
+            n: o:
+            if lib.isOption o then
+              [
+                {
+                  name = lib.concatStringsSep "." (path ++ [ n ]);
+                  # a string, or a literalMD-style { text } from an older module
+                  description =
+                    let
+                      d = o.description or null;
+                    in
+                    if d == null || builtins.isString d then d else d.text or "";
+                  files = map toString o.declarations;
+                }
+              ]
+              ++ walk (path ++ [ n ]) (
+                lib.filterAttrs (k: _: !lib.hasPrefix "_" k) (o.type.getSubOptions (path ++ [ n ]))
+              )
+            else if builtins.isAttrs o then
+              walk (path ++ [ n ]) o
+            else
+              [ ]
+          ) opts
+        );
+    in
+    walk [ "sam" ] (options.sam or { }) ++ walk [ "homelab" ] (options.homelab or { });
+
   sections = {
     # counts for the Platform health dashboard, recorded by nixos:qa (scripts/platform-record.sh), not asserted on
     coverage = lib.mapAttrs (_: h: {
       assertions = builtins.length h.config.assertions;
       checks = builtins.length h.config.system.checks;
     }) hosts;
+    # scripts/test-readability.py. Seeded: leaves without a description or with filler (blank, TODO, own name)
+    option-docs = {
+      hosts = lib.mapAttrs (_: h: optionLeaves h.options) hosts;
+      seeded =
+        optionLeaves
+          (hosts.lenovo.extendModules {
+            modules = [
+              {
+                options.sam.seededUndescribed = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                };
+                options.sam.seededEmpty = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = " ";
+                };
+                options.sam.seededTodo = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "TODO";
+                };
+                options.sam.seededOwnName = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "seededOwnName";
+                };
+                options.homelab.seededDescribed = lib.mkOption {
+                  type = lib.types.attrsOf (
+                    lib.types.submodule { options.port = lib.mkOption { type = lib.types.port; }; }
+                  );
+                  default = { };
+                  description = "Seeded: described itself, its submodule's port is not.";
+                };
+              }
+            ];
+          }).options;
+    };
     # ~/.claude.json activation
     switch-safety = {
       claudeActivation = (hm lenovo).home.activation.acceptClaudeStartupDialogs.data;

@@ -4,19 +4,26 @@
 let
   inherit (lib) mkOption types;
   ipv4 = types.strMatching "[0-9]{1,3}([.][0-9]{1,3}){3}";
-  # networking.hostName and port of a service, and its base URL (no trailing slash) derived from them
   endpoint =
-    fleet:
+    fleet: what:
     mkOption {
+      description = "The ${what}: the host it runs on and its port, with the base URL derived from them.";
       type = types.submodule (
         { config, ... }:
         {
           options = {
-            host = mkOption { type = types.enum (lib.attrNames fleet.hosts); };
-            port = mkOption { type = types.port; };
+            host = mkOption {
+              type = types.enum (lib.attrNames fleet.hosts);
+              description = "networking.hostName of the host serving it; its address comes from hosts.";
+            };
+            port = mkOption {
+              type = types.port;
+              description = "The TCP port it listens on, on that host's LAN address.";
+            };
             url = mkOption {
               type = types.str;
               readOnly = true;
+              description = "http://<host's address>:<port>, without a trailing slash; derived, not set.";
               default = "http://${fleet.hosts.${config.host}.address}:${toString config.port}";
             };
           };
@@ -30,59 +37,83 @@ in
     description = "Fleet-wide LAN facts, set in modules/core/fleet.nix only.";
     type = types.submodule (fleet: {
       options = {
-        # keyed by networking.hostName
         hosts = mkOption {
+          description = "The fleet's hosts, keyed by networking.hostName (not the flake attribute).";
           type = types.attrsOf (
             types.submodule {
               options = {
-                address = mkOption { type = ipv4; };
-                # a second LAN address the host can send from (another NIC), for a source-scoped rule
+                address = mkOption {
+                  type = ipv4;
+                  description = "The host's LAN IPv4 address, the one other hosts reach it on.";
+                };
                 extraAddresses = mkOption {
                   type = types.listOf ipv4;
+                  description = "Other LAN addresses the host can send from (another NIC), for a source-scoped rule.";
                   default = [ ];
                 };
-                # may be powered off at any time: the store caches skip it, the alerts expect it (rules/homelab.yaml)
                 sleeps = mkOption {
                   type = types.bool;
+                  description = "The host may be powered off at any time: the store caches skip it, the alerts expect it (rules/homelab.yaml).";
                   default = false;
                 };
-                # a work-hours window (modules/core/power-schedule.nix): the waker sends a Wake-on-LAN packet to mac
-                # at wake, the host powers off at off (systemd OnCalendar); interface is the NIC whose wol unit it needs
                 power = mkOption {
                   default = null;
+                  description = "A work-hours power window (modules/core/power-schedule.nix); null for an always-on host.";
                   type = types.nullOr (
                     types.submodule {
                       options = {
-                        mac = mkOption { type = types.strMatching "[0-9a-f]{2}(:[0-9a-f]{2}){5}"; };
-                        interface = mkOption { type = types.str; };
-                        wake = mkOption { type = types.str; };
-                        off = mkOption { type = types.str; };
+                        mac = mkOption {
+                          type = types.strMatching "[0-9a-f]{2}(:[0-9a-f]{2}){5}";
+                          description = "The MAC the waker sends the Wake-on-LAN packet to.";
+                        };
+                        interface = mkOption {
+                          type = types.str;
+                          description = "The NIC whose Wake-on-LAN unit the host needs (wol-<interface>).";
+                        };
+                        wake = mkOption {
+                          type = types.str;
+                          description = "When the waker sends the packet, as a systemd OnCalendar expression.";
+                        };
+                        off = mkOption {
+                          type = types.str;
+                          description = "When the host powers itself off, as a systemd OnCalendar expression.";
+                        };
                       };
                     }
                   );
                 };
-                # its GPU, for the telemetry (monitoring/gpu-exporter.nix) and black-pi's nvidia-gpu scrape job
                 gpu = mkOption {
                   type = types.nullOr (types.enum [ "nvidia" ]);
+                  description = "The host's GPU, for its telemetry (monitoring/gpu-exporter.nix) and black-pi's nvidia-gpu scrape job.";
                   default = null;
                 };
               };
             }
           );
         };
-        gateway = mkOption { type = ipv4; };
-        lanCidr = mkOption { type = types.str; };
-        # networking.hostName of the host whose user key deploys every host
-        deployer = mkOption { type = types.str; };
-        # networking.hostName of the host that serves *.sammasak.dev (edge.nix): the DNS rewrite and the OTLP relay
-        edge = mkOption { type = types.str; };
-        # the alert and log endpoints every host pages and ships to, by LAN address: a page must not need acer's Caddy
-        ntfy = endpoint fleet.config;
-        loki = endpoint fleet.config;
-        # the ntfy topic a failed service pages
+        gateway = mkOption {
+          type = ipv4;
+          description = "The LAN's default gateway, which the Wi-Fi watchdogs ping to judge the link.";
+        };
+        lanCidr = mkOption {
+          type = types.str;
+          description = "The trusted LAN as a CIDR: the firewall's and store caches' source scope, and Tailscale's advertised route.";
+        };
+        deployer = mkOption {
+          type = types.str;
+          description = "networking.hostName of the host whose user key deploys every host.";
+        };
+        edge = mkOption {
+          type = types.str;
+          description = "networking.hostName of the host that serves *.sammasak.dev (edge.nix): the DNS rewrite and the OTLP relay.";
+        };
+        # by LAN address: a page must not need acer's Caddy
+        ntfy = endpoint fleet.config "ntfy server every host pages";
+        loki = endpoint fleet.config "Loki every host ships its logs to";
         pageUrl = mkOption {
           type = types.str;
           readOnly = true;
+          description = "The ntfy topic URL a failed service pages; derived from ntfy, not set.";
           default = "${fleet.config.ntfy.url}/homelab-alerts";
         };
       };

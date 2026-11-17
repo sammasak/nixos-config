@@ -193,7 +193,7 @@ runbook above — never rotate the authkey while an auth URL is pending.
 
 ### Key Inputs
 
-See `flake.nix`. factum, nix-audit, alert-bridge, llm-gateway and rf-proto are pinned by `?rev=` in their URL, so `nix flake update`
+See `flake.nix`. factum, nix-audit, alert-bridge, llm-gateway, rf-proto and herman are pinned by `?rev=` in their URL, so `nix flake update`
 does not move them: edit the rev.
 
 ## Comment Policy
@@ -287,7 +287,7 @@ either side is only reported.
   for a work-hours window also `power` there (MAC, NIC, wake and off times): lenovo wakes it and it powers
   itself off (`modules/core/power-schedule.nix`, asserted with its `wol-<nic>` unit);
 - optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`;
-- the hand-kept host lists in `docs/new-host.md` step 5 (until #480 derives them).
+- the hand-kept host lists in `docs/new-host.md` step 5 (`nixos:known-hosts-test` checks most; step 5 names the ones it does not).
 
 `just parity` picks the host up on its own. Full procedure, including a Windows
 dual boot: `docs/new-host.md`.

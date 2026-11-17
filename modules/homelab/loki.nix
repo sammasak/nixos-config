@@ -52,7 +52,7 @@ in
       type = lib.types.port;
       default = config.sam.fleet.loki.port;
       defaultText = lib.literalExpression "config.sam.fleet.loki.port";
-      description = "HTTP port.";
+      description = "Loki's HTTP listen port, opened to allowedSources only and probed for /ready at start.";
     };
     retention = lib.mkOption {
       type = lib.types.strMatching "[0-9]+[hdw]";
