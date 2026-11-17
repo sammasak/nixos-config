@@ -462,7 +462,7 @@ let
         python3
       ])
       ''
-        ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
+        PLATFORM_RECORD=${lib.getExe record} ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
       '';
 
   # the llm-bench harness and #492's G1 bench against the fake Ollama; no nix: the rules and the exporter are flake checks

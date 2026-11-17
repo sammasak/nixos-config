@@ -4,7 +4,14 @@ assertion, and asus without it is rejected, since libcuda.so.1 is only found und
 gpu check builds, and fails on asus with graphics but no NVIDIA library in the drivers env. The GPU power cap is a
 oneshot wanted by Ollama and ordered before it, never required, with a start timeout, after nvidia-persistenced, and a
 cap outside the card's range fails evaluation. A server context outside 4096 to 32768 (pi's own prompt; qwen2.5-coder's
-trained context) fails evaluation."""
+trained context) fails evaluation.
+
+The two gpu-check builds compile asus's CUDA closure. They follow nixos-flake-check's rule for checks (#502):
+- **Built** where nothing would compile against CUDA, and on asus itself.
+- **Deferred** elsewhere: printed, recorded with seconds=0, and listed in the gate's deferred summary, instead of
+  compiling CUDA on msi, acer or lenovo."""
+import os
+import re
 import subprocess
 import sys
 
@@ -45,16 +52,56 @@ check(any("OLLAMA_CONTEXT_LENGTH is 2048" in m for m in failing["ctx2k"]),
       f"seeded: a server context under 4096, too small for pi's own prompt, fails evaluation {failing['ctx2k']}")
 
 
-def realise(drv):
+# nixos-flake-check's rule, the same pattern and owner: a build whose to-build inputs compile against CUDA runs on its
+# node only, and anything a substituter has is no compile at all
+HEAVY = re.compile(r"-cuda[0-9._]*-|cuda_|nvidia-x11")
+OWNER = "asus-b460m"
+
+
+def deferred(drv, name):
+    """The rule for one build: None to run it here, else the CUDA inputs it would compile against."""
+    dry = subprocess.run(["nix", "build", "--dry-run", "--no-link", drv + "^*"], capture_output=True, text=True, check=False)
+    text = dry.stdout + dry.stderr
+    if dry.returncode != 0 or "know how to build" in text:
+        print(text, file=sys.stderr)
+        sys.exit(f"ollama-gpu-test: the dry-run of {name} failed")
+    todo, inside = [], False
+    for line in text.splitlines():
+        if "will be built:" in line:
+            inside = True
+        elif "will be fetched" in line or not line.startswith(" "):
+            inside = False
+        elif inside:
+            todo.append(line.split()[0])
+    if not todo or os.uname().nodename.startswith(OWNER):
+        return None
+    refs = subprocess.run(["nix-store", "-q", "--references", *todo], capture_output=True, text=True, check=False).stdout.split()
+    heavy = sorted({re.sub(r"^/nix/store/[a-z0-9]*-", "", r) for r in refs if HEAVY.search(r)})
+    return (len(todo), heavy) if heavy else None
+
+
+def realise(drv, name):
     if not drv:
         return None, "no asus-ollama-gpu-check in system.checks"
-    out = subprocess.run(["nix-store", "--realise", drv], capture_output=True, text=True)
+    defer = deferred(drv, name)
+    if defer:
+        n, heavy = defer
+        print(f"ollama-gpu-test: deferred {name} to {OWNER} (compiles {n}) {drv}: it would compile against {' '.join(heavy)}")
+        record = os.environ.get("PLATFORM_RECORD")
+        if record:
+            subprocess.run([record, "gate-step", "gate=nixos-qa", "step=ollama-gpu-test", f"check={name}", f"owner={OWNER}",
+                            "seconds=0", "result=deferred"], check=False)
+        with open(os.environ.get("NIXOS_QA_DEFERRED", os.devnull), "a") as f:
+            f.write(f"{name}\n")
+        return "deferred", ""
+    out = subprocess.run(["nix-store", "--realise", drv], capture_output=True, text=True, check=False)
     return out.returncode, out.stdout + out.stderr
 
 
-rc, log = realise(P["check"]["asus"])
-check(rc == 0, f"asus-ollama-gpu-check builds: RUNPATH has /run/opengl-driver/lib, the drivers env has libcuda.so.1 (rc {rc}: {log.strip()[-300:]})")
-rc, log = realise(P["check"]["noNvidiaLibs"])
-check(rc not in (0, None) and "no lib/libcuda.so.1" in log,
-      f"seeded: graphics without the NVIDIA library fails the gpu check (rc {rc}: {log.strip()[-300:]})")
+rc, log = realise(P["check"]["asus"], "asus-ollama-gpu-check")
+check(rc in (0, "deferred"),
+      f"asus-ollama-gpu-check builds: RUNPATH has /run/opengl-driver/lib, the drivers env has libcuda.so.1, or it is deferred to {OWNER} (rc {rc}: {log.strip()[-300:]})")
+rc, log = realise(P["check"]["noNvidiaLibs"], "asus-ollama-gpu-check (no NVIDIA libs)")
+check(rc == "deferred" or (rc not in (0, None) and "no lib/libcuda.so.1" in log),
+      f"seeded: graphics without the NVIDIA library fails the gpu check, or it is deferred to {OWNER} (rc {rc}: {log.strip()[-300:]})")
 sys.exit(failed)
