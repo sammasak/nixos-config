@@ -501,7 +501,7 @@
       },
       "targets": [
         {
-          "expr": "max by (node) (node_systemd_units{state=\"failed\",node=\"$node\"})",
+          "expr": "count by (node) (node_systemd_unit_state{state=\"failed\",node=\"$node\"} == 1) or max by (node) (node_systemd_units{node=\"$node\"}) * 0",
           "legendFormat": "{{node}}",
           "instant": true,
           "refId": "A"
@@ -525,7 +525,8 @@
           "noValue": "no systemd data"
         },
         "overrides": []
-      }
+      },
+      "description": "Failed service, socket, timer, target and path units; the exporter leaves out mounts, devices, scopes, slices and automounts."
     },
     {
       "id": 14,

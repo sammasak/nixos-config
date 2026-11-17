@@ -22,7 +22,7 @@ in
     listenAddress = hosts.${config.networking.hostName}.address;
     # a host's own checks drop *.prom files here (open-webui.nix's edge-socket check, the generation below)
     extraFlags = [ "--collector.textfile.directory=${textfiles}" ];
-    # failed units and timers over D-Bus; black-pi keeps only the failed unit_state series (prometheus.nix)
+    # needs AF_UNIX for D-Bus (upstream adds it); black-pi keeps only the failed unit_state series (prometheus.nix)
     enabledCollectors = [ "systemd" ];
   };
   systemd.tmpfiles.rules = [ "d ${textfiles} 0755 root root -" ];

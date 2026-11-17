@@ -323,7 +323,7 @@
           "refId": "G"
         },
         {
-          "expr": "max by (node) (node_systemd_units{state=\"failed\",node=~\"$node\"})",
+          "expr": "count by (node) (node_systemd_unit_state{state=\"failed\",node=~\"$node\"} == 1) or max by (node) (node_systemd_units{node=~\"$node\"}) * 0",
           "legendFormat": "{{node}}",
           "format": "table",
           "instant": true,

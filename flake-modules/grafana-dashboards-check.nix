@@ -115,6 +115,11 @@ let
       dashboard = seed "loki_name" "prometheus";
       reason = "unknown metric loki_name:";
     };
+    # behind --collector.systemd.enable-restarts-metrics, which no host sets
+    systemd-flag-off = {
+      dashboard = seed "increase(node_systemd_service_restart_total[1h])" "prometheus";
+      reason = "unknown metric node_systemd_service_restart_total";
+    };
     # the logind collector is off on every host, so a panel on it would stay empty
     collector-off = {
       dashboard = seed ''node_logind_sessions{node=~"$node"}'' "prometheus";
@@ -276,9 +281,10 @@ in
             echo 26.11 > system/nixos-version
             ln -s "$PWD/system" profiles/system-1-link
             bash ${../scripts/nixos-textfile.sh} textfile "$PWD/system" profiles
-            # systemd needs D-Bus, which the sandbox lacks: its names come from this version's collector source
-            sed -n 's/.*BuildFQName(namespace, subsystem, "\([a-z_]*\)").*/node_systemd_\1 0/p' \
-              $src/collector/systemd_linux.go > systemd.prom
+            # systemd needs D-Bus, which the sandbox lacks: its names come from this version's collector source and flags
+            python3 -I ${../scripts/node-exporter-systemd-names.py} $src ${
+              lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] exec
+            } > systemd.prom
             grep -q '^node_systemd_units ' systemd.prom
             # the deployed command line, with only the listener, the textfile directory and the fixture roots swapped
             ${
