@@ -180,7 +180,7 @@
       "title": "Hosts in the fleet",
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 8,
         "x": 16,
         "y": 0
       },
@@ -204,45 +204,6 @@
     },
     {
       "id": 6,
-      "type": "stat",
-      "title": "Failed deploys (range)",
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 20,
-        "y": 0
-      },
-      "datasource": {
-        "type": "loki",
-        "uid": "loki"
-      },
-      "targets": [
-        {
-          "expr": "sum(count_over_time({job=\"platform\",kind=\"deploy\"} | logfmt | result!=\"ok\" [$__range])) or vector(0)",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      }
-    },
-    {
-      "id": 7,
       "type": "state-timeline",
       "title": "Who was up, asleep or down",
       "gridPos": {
@@ -298,7 +259,7 @@
       }
     },
     {
-      "id": 8,
+      "id": 7,
       "type": "table",
       "title": "Fleet now",
       "gridPos": {
@@ -461,7 +422,7 @@
       ]
     },
     {
-      "id": 9,
+      "id": 8,
       "type": "logs",
       "title": "Deploys (just deploy from lenovo, by flake attribute)",
       "gridPos": {
