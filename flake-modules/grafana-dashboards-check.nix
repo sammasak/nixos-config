@@ -7,9 +7,7 @@
 let
   inherit (config.flake.nixosConfigurations) acer-swift black-pi msi-ms7758;
   pi = black-pi.config;
-  # the Shipping dashboard's shipping_* names come from lenovo's textfile, and shipping-check.nix checks them against
-  # scripts/shipping-names.py; every other dashboard is checked here
-  dashboards = removeAttrs pi.homelab.grafana.dashboards [ "shipping.json" ];
+  inherit (pi.homelab.grafana) dashboards;
   hosts = lib.attrNames pi.sam.fleet.hosts;
   discard = builtins.unsafeDiscardStringContext;
   prom = builtins.fromJSON (discard pi.services.prometheus.configText);
@@ -325,9 +323,11 @@ in
                 | tr -d '"' | sort -u > literals-${toString (i - 1)}
             '') sources}
             python3 -I ${../scripts/llm-gateway-metric-names.py} ${acer-swift.pkgs.llmGateway.src} > llm-gateway.prom
+            # lenovo's shipping textfile (modules/homelab/shipping-metrics.nix): the names its collector emits
+            python3 -I ${../scripts/shipping-metrics.py} --list > shipping.prom
             check() {
               python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"
