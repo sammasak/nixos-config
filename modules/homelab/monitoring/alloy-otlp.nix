@@ -21,8 +21,13 @@ let
   blackPi = hosts.black-pi.address;
   configFile = pkgs.writeText "alloy-otlp.alloy" (
     lib.replaceStrings
-      [ "@prometheus@" "@loki@" ]
-      [ "http://${blackPi}:9090" config.sam.fleet.loki.url ]
+      [ "@prometheus@" "@loki@" "@hosts@" ]
+      [
+        "http://${blackPi}:9090"
+        config.sam.fleet.loki.url
+        # host.name is kept only for a fleet host, lower-cased as Claude Code reports it; any other becomes "other"
+        (lib.concatMapStringsSep "|" lib.toLower (lib.attrNames hosts))
+      ]
       (builtins.readFile ./alloy-otlp.alloy)
   );
   stability = "--stability.level=experimental";
