@@ -270,15 +270,22 @@ def run_eval(expr):
     return subprocess.run(["nix", "eval", "--impure", "--json", "--expr", expr], capture_output=True, text=True)
 
 
+# evaluations per prefetch process: the old script ran one nix process at a time (two for the TYPED pool, about 230 MB
+# each), so a few per process keeps the peak near that while still loading the flake once per few cases
+PREFETCH_CHUNK = 4
+
+
 def prefetch(exprs):
-    """Evaluates the expressions (each complete and independent, as run_eval takes them) in one nix process, so the flake
-    is loaded once; each value comes back as its JSON text. If the batch fails as a whole nothing is cached."""
-    batch = "{\n" + "".join(
-        f"  \"{i}\" = let r = builtins.tryEval (builtins.toJSON (\n{e}\n)); in if r.success then builtins.unsafeDiscardStringContext r.value else null;\n"
-        for i, e in enumerate(exprs)) + "}"
-    out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", batch], capture_output=True, text=True)
-    if out.returncode == 0:
-        EVALUATED.update({e: json.loads(out.stdout)[str(i)] for i, e in enumerate(exprs)})
+    """Evaluates the expressions (each complete and independent, as run_eval takes them) PREFETCH_CHUNK to a nix process,
+    so the flake is loaded once per chunk; each value comes back as its JSON text. A chunk that fails as a whole caches nothing."""
+    for start in range(0, len(exprs), PREFETCH_CHUNK):
+        chunk = exprs[start:start + PREFETCH_CHUNK]
+        batch = "{\n" + "".join(
+            f"  \"{i}\" = let r = builtins.tryEval (builtins.toJSON (\n{e}\n)); in if r.success then builtins.unsafeDiscardStringContext r.value else null;\n"
+            for i, e in enumerate(chunk)) + "}"
+        out = subprocess.run(["nix", "eval", "--impure", "--json", "--expr", batch], capture_output=True, text=True)
+        if out.returncode == 0:
+            EVALUATED.update({e: json.loads(out.stdout)[str(i)] for i, e in enumerate(chunk)})
 
 
 def stub_expr(case, what=FAILING):
@@ -918,7 +925,7 @@ BLOCKED = (("", True), ("networking.enableIPv6 = false;", False))
 
 
 def main():
-    # every evaluation below that is not expected to fail, in two processes (the stub host's, the fleet's) instead of one
+    # every evaluation below that is not expected to fail, in chunks of PREFETCH_CHUNK per process instead of one process
     # each: the order of the checks, and so of their lines, is unchanged. The TYPED cases must throw, so each stays its own.
     prefetch([stub_expr(c, w) for c, w in [
         ("{ }", FAILING), ("{ }", GUEST), (ROOT_IN_GUEST_CASE, ROOT_IN_GUEST), ("{ }", NO_ROOT), (NONE_DECLARED, NO_ROOT), ("{ }", LIMITS),
