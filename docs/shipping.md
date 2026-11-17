@@ -10,7 +10,8 @@ Are we keeping up with the issues, how fast does work land, and how often does i
 node-exporter. Its calls are read-only:
 
 - **GitHub REST**, with the owner's `gh` login (the one the coordinator tasks use). Without a login it counts public
-  repos only, and `shipping_collector_authenticated` is 0.
+  repos only, `shipping_collector_authenticated` is 0, and PR lead time falls back to open-to-merge (one commits call
+  per PR would exceed the 60 calls an hour GitHub allows without a token).
 - **Loki**: the platform records (`scripts/platform-record.sh`) of gates, gate steps and deploys.
 
 | Metric | What it is |
@@ -19,7 +20,7 @@ node-exporter. Its calls are read-only:
 | `shipping_issues_open_labelled{label}` | Actionable issues carrying needs-live, needs-decision, blocked, approved or ready-for-agent |
 | `shipping_issues_opened` / `_closed{window}` | Issues opened and closed in the last 24 h and 7 d, in every repo, parked and archived ones included |
 | `shipping_issue_age_days{quantile}` | Age of the open actionable issues, median and p90 |
-| `shipping_prs_merged`, `shipping_pr_lead_time_hours{quantile}` | PRs merged in 7 d, and their lead time: from the author date of the PR's oldest commit not on its base to the merge (a batch PR is opened after its gate, so its open time would measure the PR, not the work) |
+| `shipping_prs_merged`, `shipping_pr_lead_time_hours{quantile}` | PRs merged in 7 d, and their lead time: from the earliest author date among the PR's commits not on its base (at most GitHub's 250) to the merge, never below 0. A batch PR is opened after its gate, so its open time would measure the PR, not the work. The open time stands in for a PR whose commits cannot be read (an HTTP error, e.g. a deleted repo) or that lists none, and for every PR without a login |
 | `shipping_review_rounds`, `_first_pass_ratio`, `_prs_counted`, `_unreviewed_prs` | `Grade: N/10` comments per PR, over the last reviewed merged PRs; first pass means the first grade reached `review.passGrade` |
 | `shipping_escapes{kind,window}` | Commits starting `Revert "` on default branches, and issues labelled `escape` |
 | `shipping_gate_fail_ratio`, `_runs_counted`, `shipping_gate_seconds` | The last push-mode `nixos-qa` gates |
