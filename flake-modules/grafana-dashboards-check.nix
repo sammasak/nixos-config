@@ -115,10 +115,15 @@ let
       dashboard = seed "loki_name" "prometheus";
       reason = "unknown metric loki_name:";
     };
-    # the systemd collector is off on every host, so a panel on it would stay empty
+    # behind --collector.systemd.enable-restarts-metrics, which no host sets
+    systemd-flag-off = {
+      dashboard = seed "increase(node_systemd_service_restart_total[1h])" "prometheus";
+      reason = "unknown metric node_systemd_service_restart_total";
+    };
+    # the logind collector is off on every host, so a panel on it would stay empty
     collector-off = {
-      dashboard = seed ''node_systemd_unit_state{node=~"$node",state="failed"}'' "prometheus";
-      reason = "unknown metric node_systemd_unit_state";
+      dashboard = seed ''node_logind_sessions{node=~"$node"}'' "prometheus";
+      reason = "unknown metric node_logind_sessions";
     };
     unknown-host = {
       dashboard = seed ''up{node="no-such-host"}'' "prometheus";
@@ -233,6 +238,8 @@ in
         assert lib.assertMsg (
           !handList.success
         ) "grafana-dashboards: a dashboard listing the node variable's hosts by hand evaluated";
+        assert lib.assertMsg (lib.all (c: c == "systemd") node.enabledCollectors)
+          "grafana-dashboards: a collector beyond the defaults and systemd is on; the fixtures may not run it, so add its names as systemd's are";
         assert lib.assertMsg plainContext
           "grafana-dashboards: black-pi's Prometheus configuration names a derivation";
         pkgs.runCommand "grafana-dashboards"
@@ -269,8 +276,16 @@ in
             bash $src/ttar -C fixtures -x -f fixtures/udev.ttar
             # the fixture predates Linux 3.14, which every host's kernel adds this line from
             echo 'MemAvailable:    1200000 kB' >> fixtures/proc/meminfo
-            mkdir textfile
-            echo 'homelab_check 1' > textfile/check.prom
+            # the generation file every host writes at activation, from a fake toplevel and profile
+            mkdir -p system profiles
+            echo 26.11 > system/nixos-version
+            ln -s "$PWD/system" profiles/system-1-link
+            bash ${../scripts/nixos-textfile.sh} textfile "$PWD/system" profiles
+            # systemd needs D-Bus, which the sandbox lacks: its names come from this version's collector source and flags
+            python3 -I ${../scripts/node-exporter-systemd-names.py} $src ${
+              lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] exec
+            } > systemd.prom
+            grep -q '^node_systemd_units ' systemd.prom
             # the deployed command line, with only the listener, the textfile directory and the fixture roots swapped
             ${
               lib.replaceStrings
@@ -293,7 +308,7 @@ in
             python3 -I ${../scripts/llm-gateway-metric-names.py} ${acer-swift.pkgs.llmGateway.src} > llm-gateway.prom
             check() {
               python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom llm-gateway.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"

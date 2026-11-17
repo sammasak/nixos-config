@@ -137,6 +137,17 @@ in
           # sleeps marks a host the fleet expects off at times, which ./rules/homelab.yaml keys on
           job_name = "node-exporter";
           scrape_timeout = "30s";
+          # five unit_state series per unit, one of them failed: the rest would add thousands for no panel
+          metric_relabel_configs = [
+            {
+              source_labels = [
+                "__name__"
+                "state"
+              ];
+              regex = "node_systemd_unit_state;(active|activating|deactivating|inactive)";
+              action = "drop";
+            }
+          ];
           static_configs = lib.mapAttrsToList (name: h: {
             targets = [ "${h.address}:${toString cfg.exporters.node.port}" ];
             labels = {

@@ -1,5 +1,5 @@
 # kube-prometheus-stack 85.0.3's node-exporter mixin, as rendered for the cluster, less the two systemd-unit alerts:
-# they need the systemd collector, which the exporters leave off (series cost), as the chart's did.
+# a failed unit shows on the Hosts dashboard (prometheus.nix keeps its unit_state series) and pages nobody.
 groups:
   - name: node-exporter.rules
     rules:
