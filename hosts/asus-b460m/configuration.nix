@@ -42,11 +42,7 @@ in
     ../../modules/homelab/monitoring/node-exporter.nix
   ];
 
-  homelab.journalCollector = {
-    enable = true;
-    lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";
-    ntfyUrl = config.sam.workers.ntfyUrl;
-  };
+  homelab.journalCollector.enable = true;
 
   # 32 GB RAM, the host's own use not yet measured (msi's 2.8G assumed): a 20G pool reserves 2G each for at most 10,
   # 4 recommended (docs/nspawn-workers.md, Sizing). No ghHostsFile until lukas has a gh login here.
