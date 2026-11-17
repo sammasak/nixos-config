@@ -278,6 +278,11 @@ in
               discard black-pi.pkgs.prometheus-blackbox-exporter.src.outPath
               == discard msi-ms7758.pkgs.prometheus-blackbox-exporter.src.outPath
             && discard pkgs.grafana-loki.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
+            &&
+              discard pi.services.prometheus.package.src.outPath == discard msi-ms7758.pkgs.prometheus.src.outPath
+            &&
+              discard pi.services.prometheus.alertmanager.package.src.outPath
+              == discard msi-ms7758.pkgs.prometheus-alertmanager.src.outPath
             && lib.hasInfix (discard "${acer-swift.pkgs.grafana-alloy}/bin/alloy") (
               discard (toString acer.systemd.services.alloy-otlp.serviceConfig.ExecStart)
             )
@@ -285,7 +290,7 @@ in
               discard acer.systemd.services.llm-gateway.serviceConfig.ExecStart
             )
           )
-          "grafana-dashboards: black-pi's Loki (or this check's logcli) or blackbox exporter, acer's alloy-otlp or acer's llm-gateway is not the source this check reads";
+          "grafana-dashboards: black-pi's Loki (or this check's logcli), Prometheus, Alertmanager or blackbox exporter, acer's alloy-otlp or acer's llm-gateway is not the source this check reads";
         assert lib.assertMsg (
           !handList.success
         ) "grafana-dashboards: a dashboard listing the node variable's hosts by hand evaluated";
@@ -302,6 +307,9 @@ in
               pkgs.ripgrep
             ];
             inherit promConfig;
+            amConfig = builtins.toJSON pi.services.prometheus.alertmanager.configuration;
+            # with its context: acer's own config file, token wrapper and Alloy, all x86
+            alloyExec = acer.systemd.services.alloy-otlp.serviceConfig.ExecStart;
             spec = builtins.toJSON {
               inherit dashboards hosts builtin;
               sources = lib.imap0 (i: s: {
@@ -322,6 +330,7 @@ in
             seeds = builtins.toJSON seeds;
             passAsFile = [
               "promConfig"
+              "amConfig"
               "spec"
               "seeds"
             ];
@@ -384,9 +393,13 @@ in
             python3 -I ${../scripts/llm-gateway-metric-names.py} ${acer-swift.pkgs.llmGateway.src} > llm-gateway.prom
             # lenovo's shipping textfile (modules/homelab/shipping-metrics.nix): the names its collector emits
             python3 -I ${../scripts/shipping-metrics.py} --list > shipping.prom
+            mkdir stack
+            bash ${../scripts/monitoring-exposition.sh} stack ${msi-ms7758.pkgs.prometheus} "$promConfigPath" \
+              ${lib.escapeShellArg (toString pi.services.prometheus.extraFlags)} ${msi-ms7758.pkgs.prometheus-alertmanager} \
+              "$amConfigPath" ${acer-swift.pkgs.grafana-alloy} "$(grep -oE '/nix/store/[a-z0-9]+-alloy-otlp\.alloy' <<<"$alloyExec")"
             check() {
               python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom stack/*.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"
