@@ -414,9 +414,43 @@ let
       {
         failing = {
           asus = failing hosts.asus-b460m.config;
+          powerHigh = failing (
+            extend "asus-b460m" [ ({ lib, ... }: { homelab.ollama.gpuPowerLimit = lib.mkForce 271; }) ]
+          );
+          powerLow = failing (
+            extend "asus-b460m" [ ({ lib, ... }: { homelab.ollama.gpuPowerLimit = lib.mkForce 99; }) ]
+          );
+          ctx2k = failing (
+            extend "asus-b460m" [
+              ({ lib, ... }: { services.ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH = lib.mkForce "2048"; })
+            ]
+          );
+          ctx64k = failing (
+            extend "asus-b460m" [
+              ({ lib, ... }: {
+                services.ollama.environmentVariables.OLLAMA_CONTEXT_LENGTH = lib.mkForce "65536";
+              })
+            ]
+          );
           noGraphics = failing (
             extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.enable = lib.mkForce false; }) ]
           );
+        };
+        powerUnit = {
+          inherit (hosts.asus-b460m.config.systemd.services.nvidia-power-limit)
+            wantedBy
+            before
+            after
+            requiredBy
+            ;
+          inherit (hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig) Type ExecStart;
+          timeout =
+            hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig.TimeoutStartSec or null;
+          persistenced = hosts.asus-b460m.config.hardware.nvidia.nvidiaPersistenced;
+          remain =
+            hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig.RemainAfterExit or false;
+          ollamaRequires = hosts.asus-b460m.config.systemd.services.ollama.requires;
+          ollamaBindsTo = hosts.asus-b460m.config.systemd.services.ollama.bindsTo;
         };
         check = {
           asus = gpuCheck hosts.asus-b460m.config;
