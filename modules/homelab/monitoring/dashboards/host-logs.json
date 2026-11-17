@@ -1,0 +1,216 @@
+{
+  "uid": "host-logs",
+  "title": "Host logs",
+  "description": "Each fleet host's journal in Loki, by the Host variable from sam.fleet.hosts.",
+  "tags": [
+    "fleet",
+    "logs"
+  ],
+  "editable": false,
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Host",
+        "type": "custom",
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Journal lines per second",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (host) (rate({job=\"host-journal\",host=~\"$node\"}[$__interval]))",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Each host's own journal through its journal collector (modules/homelab/journal-collector.nix). A host whose line stops while it is up has a stuck collector."
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Lines in the last 15 minutes",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (host) (count_over_time({job=\"host-journal\",host=~\"$node\"}[15m]))",
+          "legendFormat": "{{host}}",
+          "queryType": "instant",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "A fleet host missing here shipped nothing for 15 minutes: asleep (see Fleet), or its collector or Loki is down.",
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Error-like lines per host",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (host) (count_over_time({job=\"host-journal\",host=~\"$node\"} |~ \"(?i)(error|fail|fatal|panic|segfault|oom)\" [$__interval]))",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Lines matching error, fail, fatal, panic, segfault or oom: the journal ships no priority label, so this is a text match."
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "Noisiest units (range)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum by (host, unit) (count_over_time({job=\"host-journal\",host=~\"$node\"}[$__range])))",
+          "legendFormat": "{{host}} {{unit}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "logs",
+      "title": "Journal collector (alloy) warnings and errors",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"host-journal\",host=~\"$node\",unit=\"alloy.service\"} |~ \"level=(warn|error)\"",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Error-like lines",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"host-journal\",host=~\"$node\"} |~ \"(?i)(error|fail|fatal|panic|segfault|oom)\"",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "showLabels": true
+      }
+    }
+  ]
+}
