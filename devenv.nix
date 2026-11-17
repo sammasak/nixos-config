@@ -412,6 +412,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-systemd-calendar.py
       '';
 
+  systemdVerifyTest =
+    gate "systemd-verify-test"
+      (with pkgs; [
+        python3
+        systemd
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-systemd-verify.py
+      '';
+
   powerScheduleTest =
     gate "power-schedule-test"
       (with pkgs; [
@@ -556,6 +566,7 @@ let
           caddyEdgeTest
           systemChecksTest
           systemdCalendarTest
+          systemdVerifyTest
           platformRecordsTest
           authentikAkTest
           switchSafetyTest
@@ -936,6 +947,8 @@ in
       task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
     "nixos:systemd-calendar-test" =
       task "The systemd-calendar check passes parsing timer specs and fails, naming the timer, on a bad one (fixture trees)" systemdCalendarTest;
+    "nixos:systemd-verify-test" =
+      task "The systemd-verify check passes a clean tree and fails, printing the line, on an unknown key, unknown section or unparseable value (fixture trees)" systemdVerifyTest;
     "nixos:power-schedule-test" =
       task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
     "nixos:adguard-dns-test" =
