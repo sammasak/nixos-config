@@ -15,6 +15,8 @@
 - `templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
 - `rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
 - `loki-check.nix`: the `loki-config-msi-ms7758` check (x86_64-linux), homelab.loki on a seeded msi: `loki -verify-config` on the rendered file and the module's assertions, held and failing
+- `monitoring-check.nix`, `journal-collector-check.nix`, `grafana-dashboards-check.nix`, `llm-bench.nix`, `shipping-check.nix`, `alert-bridge-check.nix`: the monitoring stack's checks, listed in `docs/monitoring.md`
+- `authentik-backup-check.nix`: the `authentik-backup-wiring` check, acer's dump and lenovo's pull of it seen together
 - `deploy.nix`: deploy-rs push targets, one node per hosts table entry
 - `hosts.nix`: the hosts table (roles, `hostDir`, `deploy.hostname`, `deploy.remoteBuild`)
 
