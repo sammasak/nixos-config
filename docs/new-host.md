@@ -155,9 +155,11 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
     runtime host `docs/nspawn-workers.md`;
 - the host rows in `README.md` and the fleet size the docs state (`nixos:readability-test`);
 - not checked yet: the hosts `scripts/test-alloy-otlp-sanitizer.sh` feeds the relabel;
-- for a host with the `runtime-host` role, its `sam.herdr.machines` entry and `sam.workers.jumpHosts` name on
-  lenovo, in this same PR: lenovo's evaluation fails while they differ from the runtime hosts of
-  `flake-modules/hosts.nix` (and on a host's removal there until they drop it);
+- not the `runtime-host` role yet: it enables `sam.storeCache`, whose key the host only generates once it runs
+  (step 7), and evaluation fails without it (`modules/core/store-cache.nix`). A host with the role also needs its
+  `sam.herdr.machines` entry and `sam.workers.jumpHosts` name on lenovo in the same PR: lenovo's evaluation fails
+  while they differ from the runtime hosts of `flake-modules/hosts.nix` (and on a host's removal there until they
+  drop it);
 - for a host that is not always up (scheduled power-off, dual boot), `sleeps = true`
   on its `modules/core/fleet.nix` entry. That one fact keeps it out of every store
   cache's substituters and moves it from `NodeChronicNotReady` to `HostExpectedOff`;
@@ -199,7 +201,8 @@ Only after that, `just deploy <name>` from lenovo, and step 7.
 
 ## 7. Make it a worker (second PR)
 
-Its store-cache key (`modules/core/store-cache.nix`; harmonia is socket-activated, so
-the key exists only after a first request: `curl http://127.0.0.1:5000/nix-cache-info`,
-then `cat /var/lib/store-cache/public-key`), `sam.workers` (`docs/nspawn-workers.md`), and its fleet `power` window if it
-sleeps, which arms Wake-on-LAN (lenovo's `sam.herdr.machines` and `sam.workers.jumpHosts` came with step 5).
+The `runtime-host` role in `flake-modules/hosts.nix`, with its store-cache key (`modules/core/store-cache.nix`;
+harmonia is socket-activated, so the key exists only after a first request:
+`curl http://127.0.0.1:5000/nix-cache-info`, then `cat /var/lib/store-cache/public-key`), lenovo's
+`sam.herdr.machines` entry and `sam.workers.jumpHosts` name, `sam.workers` (`docs/nspawn-workers.md`), and its fleet
+`power` window if it sleeps, which arms Wake-on-LAN.

@@ -73,7 +73,8 @@ and [docs/flake-wiring.md](docs/flake-wiring.md).
 ## Build, Switch, Deploy
 
 Everything goes through the [Justfile](Justfile). `HOST` is the flake
-attribute and defaults to the machine you are on.
+attribute. `build`, `diff` and `switch` default it to the machine you are on;
+`deploy`, `dry-activate` and `checks` require it.
 
 ```bash
 just build  [HOST]      # build without activating
@@ -130,8 +131,7 @@ No host upgrades itself: every host asserts `system.autoUpgrade` off, so it chan
 
 `hosts/<name>/` plus an entry in `flake-modules/hosts.nix` (its deploy node
 follows), the `just deploy` pattern, its known-hosts key and sops recipient
-(list in CLAUDE.md). The full procedure is an operator runbook kept outside
-this repository.
+(list in CLAUDE.md). The full procedure is [docs/new-host.md](docs/new-host.md).
 
 ## Adding a New Service (Modular)
 
@@ -182,7 +182,7 @@ in
   and reboot verification.
 - [docs/new-host.md](docs/new-host.md): onboarding a new host, Windows dual boot included.
 - [docs/factum-pilot.md](docs/factum-pilot.md): the Lenovo-only, advisory Factum CLI pilot.
-- [docs/nix-audit-pilot.md](docs/nix-audit-pilot.md): the advisory nix-audit pilot on lenovo, acer-swift and msi-ms7758.
+- [docs/nix-audit-pilot.md](docs/nix-audit-pilot.md): the advisory nix-audit pilot on lenovo and the runtime hosts (acer-swift, msi-ms7758, asus-b460m).
 
 References: [flake-parts](https://flake.parts/options/flake-parts-modules.html); inspired by
 [Sly-Harvey/NixOS](https://github.com/Sly-Harvey/NixOS).

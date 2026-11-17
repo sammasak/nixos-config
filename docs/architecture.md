@@ -15,6 +15,13 @@
 - `templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
 - `rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
 - `loki-check.nix`: the `loki-config-msi-ms7758` check (x86_64-linux), homelab.loki on a seeded msi: `loki -verify-config` on the rendered file and the module's assertions, held and failing
+- `alert-bridge-check.nix`: lenovo's alert-bridge admits only the Alertmanager host, read from the rendered firewall rules
+- `authentik-backup-check.nix`: Authentik's off-host copy spans acer (dump, `latest`) and lenovo (pull); neither host's evaluation sees both halves
+- `grafana-dashboards-check.nix`: black-pi's dashboards against the metrics the fleet exports, with seeded failing dashboards
+- `journal-collector-check.nix`: `alloy validate` on the config black-pi's journal collector renders (an aarch64 host is only evaluated)
+- `llm-bench.nix`: the local-inference benchmark package and its `gpu-telemetry-exporter` and `llm-bench-scorecard` checks
+- `monitoring-check.nix`: black-pi's promtool, amtool and blackbox config checks seeded onto an x86 host, plus the per-host rule test
+- `shipping-check.nix`: the shipping rules and dashboard against the metric names emitted or recorded, and promtool alert tests
 - `deploy.nix`: deploy-rs push targets, one node per hosts table entry
 - `hosts.nix`: the hosts table (roles, `hostDir`, `deploy.hostname`, `deploy.remoteBuild`)
 
@@ -88,7 +95,7 @@ Sibling options, outside the profile:
 - `sam.thermal.*` — fan/CPU thermal policy, see `modules/hardware/thermal.nix`
 - `sam.hostSecrets.enable` (bool) — per-machine operator credentials, see `modules/core/sops.nix`
 - `sam.cliTools.factum.enable`, `sam.cliTools.nixAudit.enable` (bool, default false): per-host CLI tools in the user's Home Manager profile; outside the profile because a developer environment's guest copies its host's profile
-- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), `lanCidr`, the trusted LAN subnet of the firewall rules, `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments, and `ntfy`/`loki` (`host`, `port`, and the derived `url`) with `pageUrl`, the ntfy topic every failed service pages and the default of each module's page URL; a host that sets it fails evaluation
+- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), per host `extraAddresses` (other NIC addresses, for source-scoped rules), `sleeps` (may be off: store caches skip it, alerts expect it), `power` (work-hours window: `mac`, `interface`, `wake`, `off`; `modules/core/power-schedule.nix`) and `gpu` (`"nvidia"`, for its telemetry), `edge`, the hostName that serves `*.sammasak.dev`, `lanCidr`, the trusted LAN subnet of the firewall rules, `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments, and `ntfy`/`loki` (`host`, `port`, and the derived `url`) with `pageUrl`, the ntfy topic every failed service pages and the default of each module's page URL; a host that sets it fails evaluation
 
 Everything this repo defines lives under `sam.*` or `homelab.*` so it is never
 confused with an upstream NixOS option. Which of the two is the Namespace
