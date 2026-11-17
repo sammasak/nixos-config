@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""`just deploy HOST` and `just dry-activate HOST` against stub git, nix, ssh, sudo, systemd-run, systemctl and readlink
+on PATH and stub system-checks.sh and platform-record.sh; ssh runs its command here, stdin included. deploy feeds the
+real scripts/post-deploy-check.sh to the target, so a unit in a restart loop, which is-system-running reads as running,
+fails it with result=check-failed. deploy-rs's --dry-activate exits 0 whatever the dry activation did, so dry-activate
+reruns switch-to-configuration dry-activate over ssh and exits non-zero, with its output, when that or the closure diff
+fails, and 0 when both pass."""
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+failed = 0
+
+
+def check(ok, what):
+    global failed
+    print(("PASS: " if ok else "FAIL: ") + what)
+    failed += not ok
+
+
+STUBS = {
+    "bin/systemd-run": 'echo "systemd-run $*" >> "$LOG"; while [ "${1:-}" != nix ]; do shift; done; exec "$@"',
+    # `nix run … deploy-rs -- …` is deploy-rs, which prints success over a failed dry activation
+    "bin/nix": """echo "nix $*" >> "$LOG"
+case "$*" in
+  run*--dry-activate*) echo "Completed dry-activate!" ;;
+  run*) echo "Success activating, done!" ;;
+  *toplevel*) printf '%s' "$FIX/top" ;;
+  *hostname*) printf target ;;
+  *diff-closures*) exit "${DIFF_RC:-0}" ;;
+esac""",
+    "bin/ssh": 'echo "ssh $*" >> "$LOG"; shift 3; exec bash -c "$*"',
+    "bin/sudo": 'echo "sudo $*" >> "$LOG"; exec "$@"',
+    # a clean tree on origin/main
+    "bin/git": 'case $1 in rev-parse) echo abc123 ;; esac',
+    # the target's systemd: running, with waiting.service in auto-restart when LOOP is set
+    "bin/systemctl": """case "$*" in
+  is-system-running*) echo running ;;
+  list-units*) printf 'sshd.service loaded active running SSH\\nwaiting.service loaded activating auto-restart w\\n' ;;
+  show*) printf 'Id=sshd.service\\nActiveState=active\\nSubState=running\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\n\\n'
+         sub=running; [ -z "${LOOP:-}" ] || sub=auto-restart
+         printf 'Id=waiting.service\\nActiveState=activating\\nSubState=%s\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\n' "$sub" ;;
+esac""",
+    # the system profile's generation is the running one
+    "bin/readlink": 'case "$*" in -f*) echo /nix/store/sys/init ;; *) echo /nix/store/sys ;; esac',
+    "scripts/system-checks.sh": 'echo "system-checks $*" >> "$LOG"',
+    "scripts/platform-record.sh": 'echo "record $*" >> "$LOG"',
+    "top/bin/switch-to-configuration": 'echo "would restart: x.service"; [ "$1" = dry-activate ]; exit "${DRY_RC:-0}"',
+}
+
+
+def run(recipe, **env):
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = pathlib.Path(tmp)
+        for rel, body in STUBS.items():
+            (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp / rel).write_text("#!/usr/bin/env bash\n" + body + "\n")
+            (tmp / rel).chmod(0o755)
+        shutil.copy(ROOT / "scripts/post-deploy-check.sh", tmp / "scripts")
+        (tmp / "log").touch()
+        out = subprocess.run([shutil.which("just"), "--justfile", str(ROOT / "Justfile"), "--working-directory", str(tmp),
+                              recipe, "acer-swift"], capture_output=True, text=True,
+                             env=dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", FIX=str(tmp),
+                                      LOG=str(tmp / "log"), **env))
+        return out.returncode, out.stdout + out.stderr, (tmp / "log").read_text()
+
+
+rc, out, log = run("deploy")
+check(rc == 0 and "result=ok" in log and "post-deploy: unit in a restart loop" not in out,
+      f"deploy: a healthy target passes the post-deploy check and records ok (rc {rc}: {out.strip()[-300:]})")
+rc, out, log = run("deploy", LOOP="1")
+check(rc == 1 and "unit in a restart loop: waiting.service (activating/auto-restart" in out and "result=check-failed" in log,
+      f"deploy: a unit in auto-restart on a running system fails the check, result=check-failed (rc {rc}: {out.strip()[-300:]})")
+
+rc, out, log = run("dry-activate")
+check(rc == 0 and "--dry-activate" in log, f"dry-activate: a passing dry activation exits 0 (rc {rc}: {out.strip()})")
+check("ssh -o StrictHostKeyChecking=yes deploy@target sudo " in log and "/top/bin/switch-to-configuration dry-activate" in log
+      and "diff-closures /run/current-system" in log,
+      "dry-activate: it reruns on the node's hostname through the deploy user's sudo, then the closure diff")
+check("would restart" not in out, "dry-activate: a passing rerun stays quiet: deploy-rs already printed its output")
+
+rc, out, log = run("dry-activate", DRY_RC="3")
+check(rc != 0 and "Completed dry-activate!" in out and "dry activation of acer-swift failed (exit 3)" in out,
+      f"dry-activate: a seeded failing dry activation exits non-zero though deploy-rs reported success (rc {rc}: {out.strip()})")
+check("would restart: x.service" in out and "diff-closures" in log,
+      "dry-activate: the failing run's output is printed and the closure diff still runs")
+
+rc, out, log = run("dry-activate", DIFF_RC="1")
+check(rc != 0 and "closure diff on acer-swift failed (exit 1)" in out,
+      f"dry-activate: a failing closure diff fails the recipe (rc {rc}: {out.strip()[-200:]})")
+
+sys.exit(1 if failed else 0)
