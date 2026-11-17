@@ -29,6 +29,8 @@ in
       "utilization.gpu"
       "temperature.gpu"
       "power.draw"
+      "power.limit"
+      "fan.speed"
       "clocks_throttle_reasons.active"
       "clocks_throttle_reasons.hw_thermal_slowdown"
       "clocks_throttle_reasons.sw_power_cap"

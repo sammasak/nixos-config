@@ -35,6 +35,8 @@ let
     "nvidia_smi_utilization_gpu_ratio"
     "nvidia_smi_temperature_gpu"
     "nvidia_smi_power_draw_watts"
+    "nvidia_smi_power_limit_watts"
+    "nvidia_smi_fan_speed_ratio"
     "nvidia_smi_clocks_throttle_reasons_active"
     "nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown"
     "nvidia_smi_clocks_throttle_reasons_sw_power_cap"
