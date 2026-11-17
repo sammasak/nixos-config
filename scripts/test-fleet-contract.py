@@ -29,9 +29,9 @@ P = gate_probe.section("fleet-contract")
 ports = P["ports"]
 check(sorted(ports) == ["loki", "ntfy"] and all(isinstance(p, int) for p in ports.values()), f"the fleet's ports are read {ports}")
 
-# (path, port name) -> why the literal may stay
+# (path, port name, text the line must contain) -> why that one line may keep the literal
 ALLOWED = {
-    ("scripts/platform-record.sh", "loki"):
+    ("scripts/platform-record.sh", "loki", "${PLATFORM_LOKI_URL:-http://"):
         "run from the Justfile without Nix; test-platform-records.py holds its default to sam.fleet.loki",
 }
 
@@ -46,7 +46,7 @@ def literals(files):
                     continue
                 if path == "modules/core/fleet.nix" and line.strip() == f"port = {port};":
                     continue
-                if (path, name) in ALLOWED:
+                if any((path, name) == (p, k) and marker in line for p, k, marker in ALLOWED):
                     continue
                 found.append((path, n, name, line.strip()))
     return found
@@ -60,12 +60,13 @@ defined = [p for p, t in files if p == "modules/core/fleet.nix" for port in port
 check(len(defined) == 2, "modules/core/fleet.nix defines both ports")
 hits = literals(files)
 check(hits == [], "no tracked file but fleet.nix names the ntfy or Loki port: " + "; ".join(f"{p}:{n} ({k}) {l}" for p, n, k, l in hits))
-for (path, name), why in ALLOWED.items():
-    text = dict(files).get(path, "")
-    check(re.search(rf"(?<![0-9]){ports[name]}(?![0-9])", text) is not None, f"allowlisted {path} still names the {name} port ({why})")
-seeded = literals(files + [("modules/homelab/x.nix", f'  listen = ":{ports["ntfy"]}";')])
-check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy")],
-      f"seeded: a module naming the ntfy port as a literal is found ({seeded})")
+for (path, name, marker), why in ALLOWED.items():
+    lines = [l for l in dict(files).get(path, "").splitlines() if re.search(rf"(?<![0-9]){ports[name]}(?![0-9])", l)]
+    check(len(lines) == 1 and marker in lines[0], f"allowlisted {path} names the {name} port on its one marked line only ({why})")
+seeded = literals(files + [("modules/homelab/x.nix", f'  listen = ":{ports["ntfy"]}";'),
+                           ("scripts/platform-record.sh", f'curl http://loki:{ports["loki"]}/ready')])
+check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy"), ("scripts/platform-record.sh", "loki")],
+      f"seeded: a module naming the ntfy port, and a second Loki literal in the allowlisted script, are found ({seeded})")
 
 F = P["failing"]
 check(F["lenovo"] == [] and F["blackPi"] == [], f"lenovo and black-pi pass their assertions ({F['lenovo']}, {F['blackPi']})")
