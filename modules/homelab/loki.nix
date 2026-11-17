@@ -50,7 +50,8 @@ in
     };
     port = lib.mkOption {
       type = lib.types.port;
-      default = 3100;
+      default = config.sam.fleet.loki.port;
+      defaultText = lib.literalExpression "config.sam.fleet.loki.port";
       description = "HTTP port.";
     };
     retention = lib.mkOption {
@@ -74,6 +75,11 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        # the collectors, pi-offload and alloy-otlp push to sam.fleet.loki.url
+        assertion = cfg.port == config.sam.fleet.loki.port;
+        message = "homelab.loki.port ${toString cfg.port} is not sam.fleet.loki.port ${toString config.sam.fleet.loki.port}: every pusher would miss Loki.";
+      }
       {
         assertion = cfg.allowedSources != [ ] -> !lib.hasPrefix "127." cfg.listenAddress;
         message = "homelab.loki.allowedSources: listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach Loki.";

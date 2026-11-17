@@ -185,7 +185,7 @@
   };
 
   # Runs outside k8s so paging survives a worker outage. Mobile subscribes to
-  # port 2586 on the LAN or Tailscale IP; the web UI is the name below, through Caddy on acer.
+  # sam.fleet.ntfy.port on the LAN or Tailscale IP; the web UI is the name below, through Caddy on acer.
   homelab.ntfy.baseUrl = "https://ntfy.sammasak.dev";
 
   # Alertmanager on black-pi posts to lenovo's LAN address, so loopback is not
