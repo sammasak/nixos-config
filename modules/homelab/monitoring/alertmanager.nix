@@ -160,6 +160,10 @@ in
 
   assertions = [
     {
+      assertion = lib.elem "--cluster.listen-address=" config.services.prometheus.alertmanager.extraFlags;
+      message = "modules/homelab/monitoring/alertmanager.nix: Alertmanager runs unclustered; rules/alertmanager.yaml leaves out the cluster consistency alerts, so add them back with a second instance.";
+    }
+    {
       assertion = !cfg.openFirewall && fw.enable && anySourceTcp fw [ cfg.port ] == [ ];
       message = "modules/homelab/monitoring/alertmanager.nix: Alertmanager has no authentication; keep the firewall on and port ${toString cfg.port} out of openFirewall and allowedTCPPorts.";
     }

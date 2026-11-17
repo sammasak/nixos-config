@@ -252,6 +252,28 @@ in
 
   assertions = [
     {
+      assertion =
+        let
+          c = builtins.fromJSON (builtins.unsafeDiscardStringContext config.services.prometheus.configText);
+        in
+        !(c ? remote_write)
+        && lib.all (
+          s:
+          lib.attrNames (
+            removeAttrs s [
+              "job_name"
+              "scrape_interval"
+              "scrape_timeout"
+              "metrics_path"
+              "static_configs"
+              "relabel_configs"
+              "metric_relabel_configs"
+            ]
+          ) == [ ]
+        ) c.scrape_configs;
+      message = "modules/homelab/monitoring/prometheus.nix: rules/prometheus.yaml leaves out the remote-write and service-discovery alerts; with remote_write or a discovered target, add them back.";
+    }
+    {
       assertion = fw.enable && anySourceTcp fw [ cfg.port ] == [ ];
       message = "modules/homelab/monitoring/prometheus.nix: Prometheus has no authentication and takes OTLP writes; keep the firewall on and port ${toString cfg.port} out of allowedTCPPorts.";
     }
