@@ -360,6 +360,20 @@
           "format": "table",
           "instant": true,
           "refId": "G"
+        },
+        {
+          "expr": "max by (node) (node_systemd_units{state=\"failed\",node=~\"$node\"})",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "H"
+        },
+        {
+          "expr": "max by (node) (homelab_nixos_generation{node=~\"$node\"})",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "I"
         }
       ],
       "fieldConfig": {
@@ -418,7 +432,7 @@
           }
         ]
       },
-      "description": "One row per host: status, uptime, CPU %, memory %, root filesystem %, hottest sensor, alerts firing on it.",
+      "description": "One row per host: status, uptime, CPU %, memory %, root filesystem %, hottest sensor, alerts firing on it, failed units, NixOS generation.",
       "transformations": [
         {
           "id": "merge",
@@ -438,7 +452,9 @@
               "Value #D": "Memory %",
               "Value #E": "Root fs %",
               "Value #F": "Hottest °C",
-              "Value #G": "Alerts"
+              "Value #G": "Alerts",
+              "Value #H": "Failed units",
+              "Value #I": "Generation"
             }
           }
         }
