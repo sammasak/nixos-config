@@ -277,6 +277,35 @@ let
         };
       };
 
+    # lenovo's AdGuard (modules/homelab/adguardhome.nix, nixos-config#503): what it answers the LAN from, and the seeds
+    adguard-dns = {
+      hostsfile = lenovo.services.adguardhome.settings.dns.hostsfile_enabled or null;
+      rewrites = map (r: {
+        inherit (r) domain answer;
+      }) lenovo.services.adguardhome.settings.filtering.rewrites;
+      fleet = lib.mapAttrs (_: h: h.address) lenovo.sam.fleet.hosts;
+      failing = {
+        lenovo = failing lenovo;
+        hostsfileOn = failing (
+          extend "lenovo" [
+            ({ lib, ... }: { services.adguardhome.settings.dns.hostsfile_enabled = lib.mkForce true; })
+          ]
+        );
+        loopbackRewrite = failing (
+          extend "lenovo" [
+            {
+              homelab.dns.rewrites = [
+                {
+                  domain = "acer-swift";
+                  answer = "127.0.0.2";
+                }
+              ];
+            }
+          ]
+        );
+      };
+    };
+
     # acer's Caddyfile as deployed (realised, so caddy fmt has run) and the Caddy that runs it
     caddy-edge = {
       caddy = lib.getExe acer.services.caddy.package;
