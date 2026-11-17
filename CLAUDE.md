@@ -281,10 +281,11 @@ either side is only reported.
 - a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` (asserted);
 - its LAN address in `modules/core/fleet.nix` if another module reads it, and `sleeps = true` there if it
   may be powered off (the store caches skip it; `HostExpectedOff` covers it instead of `NodeChronicNotReady`);
-- optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`.
+- optionally `sam.cliTools.*` (factum, nix-audit) in its `configuration.nix`;
+- the hand-kept host lists in `docs/new-host.md` step 5 (until #480 derives them).
 
-`just parity` picks the host up on its own. Full procedure:
-`~/knowledge/homelab/runbooks/add-new-host.md`.
+`just parity` picks the host up on its own. Full procedure, including a Windows
+dual boot: `docs/new-host.md`.
 
 ## Further Documentation
 
