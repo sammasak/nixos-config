@@ -78,6 +78,11 @@ in
                           type = types.str;
                           description = "When the host powers itself off, as a systemd OnCalendar expression.";
                         };
+                        manualOff = mkOption {
+                          type = types.bool;
+                          description = "The owner also powers the host off by hand, so the alerts expect it off at any time, not only outside this window (rules/homelab.nix).";
+                          default = false;
+                        };
                       };
                     }
                   );
@@ -143,6 +148,7 @@ in
           interface = "eno1";
           wake = "Mon-Fri 08:30";
           off = "Mon-Fri 21:00";
+          manualOff = true;
         };
       };
       # address is end0, extraAddresses wlan0

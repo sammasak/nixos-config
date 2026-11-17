@@ -1,6 +1,6 @@
 # black-pi's promtool (config and rule files), amtool and blackbox --config.check run only in its toplevel's build, so on
 # the Pi at deploy. Seeded onto msi, an x86 host, the same modules' checked files build in the flake check; building it
-# realises only those files and their tools, never a toplevel. The rule test below feeds ./rules/homelab.yaml the
+# realises only those files and their tools, never a toplevel. The rule test below feeds the rendered ./rules/homelab.nix the
 # node-exporter targets as the seed renders them, one case per host, so a host the fleet marks sleeps is checked.
 { config, lib, ... }:
 let
@@ -38,11 +38,24 @@ let
   labelled = map node (lib.filter (t: t.labels.sleeps or "" == "true") nodeTargets);
   awake = lib.subtractLists sleeping (map node nodeTargets);
   # promtool's clock starts at the Unix epoch, a Thursday 00:00 UTC, inside msi's off window; 10:00 is outside it,
-  # Saturday 12:00 inside again. msi alone has a window (rules/homelab.yaml), the other sleeping hosts none.
+  # Saturday 12:00 inside again. A host with a fleet power window and no power.manualOff (msi) is planned off in it
+  # alone (rules/homelab.nix); the other sleeping hosts are planned off at any time.
   night = "20m";
   day = "10h";
   saturday = "60h";
-  plannedByDay = h: h != "msi-ms7758";
+  homelabRules = import ../modules/homelab/monitoring/rules/homelab.nix {
+    inherit lib;
+    inherit (seeded.sam.fleet) hosts;
+  };
+  plannedByDay = h: !(homelabRules.windowed ? ${h});
+  # a case at an instant (since the epoch, a Thursday 00:00 UTC) for one host, stated literally so the fleet facts and
+  # the rule cannot drift together: the window's edges are 19:00 and 08:30 UTC, read after the alerts' for (2m planned, 15m outage)
+  windowCase =
+    name: at: host: planned:
+    ruleTest name at [ host ] {
+      HostExpectedOff = lib.optional planned host;
+      NodeChronicNotReady = lib.optional (!planned) host;
+    };
   ruleTest = name: at: down: firing: {
     inherit name;
     interval = "1m";
@@ -64,7 +77,7 @@ let
     }) firing;
   };
   ruleTests = {
-    rule_files = [ "${../modules/homelab/monitoring/rules/homelab.yaml}" ];
+    rule_files = [ homelabRules.file ];
     tests =
       lib.concatMap (h: [
         (ruleTest "${h} sleeps, off alone at night" night [ h ] {
@@ -90,6 +103,15 @@ let
           HostExpectedOff = if lib.all plannedByDay sleeping then sleeping else [ ];
           NodeChronicNotReady = lib.filter (h: !plannedByDay h) sleeping;
         })
+      ]
+      ++ [
+        (windowCase "msi off Thursday 10:00 UTC is an outage" "10h" "msi-ms7758" false)
+        (windowCase "msi off Thursday 18:59 UTC is an outage" "18h59m" "msi-ms7758" false)
+        (windowCase "msi off Thursday 19:02 UTC is planned" "19h5m" "msi-ms7758" true)
+        (windowCase "msi off Friday 08:00 UTC is planned" "32h" "msi-ms7758" true)
+        (windowCase "msi off Friday 08:30 UTC is an outage" "32h46m" "msi-ms7758" false)
+        (windowCase "asus off Thursday 10:00 UTC is planned" "10h" "asus-b460m" true)
+        (windowCase "asus off Friday 12:00 UTC is planned" "36h" "asus-b460m" true)
       ]
       ++ lib.concatMap (h: [
         (ruleTest "${h} does not sleep, off" night [ h ] {
