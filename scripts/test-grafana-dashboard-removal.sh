@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Grafana itself, with black-pi's dashboard provider: two dashboards provisioned from a directory of symlinks, as
-# /etc/grafana-dashboards is, then one link removed; its dashboard must be gone and the other kept. With EXPECT=kept
-# (the seeded disableDeletion = true) the removed one must stay, so the check tells the two settings apart.
+# /etc/grafana-dashboards is; a restart keeps their ids; then one link removed, its dashboard must be gone and the
+# other kept. With EXPECT=kept (the seeded disableDeletion = true) the removed one must stay, so the check tells the
+# two settings apart.
 # Usage: test-grafana-dashboard-removal.sh GRAFANA PROVIDER.json EXPECT(gone|kept)
 set -eu
 grafana=$1 provider=$2 expect=$3
@@ -35,8 +36,11 @@ check_for_plugin_updates = false
 [plugins]
 preinstall_disabled = true
 INI
-HOME=$work "$grafana/bin/grafana" server --homepath "$grafana/share/grafana" --config "$work/grafana.ini" >"$work/out.log" 2>&1 &
-pid=$!
+start() {
+  HOME=$work "$grafana/bin/grafana" server --homepath "$grafana/share/grafana" --config "$work/grafana.ini" >>"$work/out.log" 2>&1 &
+  pid=$!
+}
+start
 trap 'kill $pid 2>/dev/null || true' EXIT
 uids() { curl -fsS "http://127.0.0.1:$port/api/search?type=dash-db" | python3 -I -c 'import json, sys; print(" ".join(sorted(d["uid"] for d in json.load(sys.stdin))))'; }
 wait_for() {
@@ -48,7 +52,18 @@ wait_for() {
   tail -5 "$work/out.log" >&2
   return 1
 }
+ids() { curl -fsS "http://127.0.0.1:$port/api/search?type=dash-db" | python3 -I -c 'import json, sys; print(sorted((d["uid"], d["id"]) for d in json.load(sys.stdin)))'; }
 wait_for "kept removed"
+before=$(ids)
+kill "$pid"
+wait "$pid" || true
+start
+wait_for "kept removed"
+after=$(ids)
+[ "$before" = "$after" ] || {
+  echo "grafana-dashboard-removal: a restart changed the dashboards' ids: $before, then $after" >&2
+  exit 1
+}
 rm "$work/dashboards/removed.json"
 if [ "$expect" = gone ]; then
   wait_for "kept"

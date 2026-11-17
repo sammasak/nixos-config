@@ -134,9 +134,9 @@ in
             folder = "Observability";
             # a file gone from the directory deletes its dashboard; with true Grafana only unprovisions it, and it stays
             disableDeletion = false;
-            allowUiUpdates = false;
-            # a fixed path: Grafana keys a dashboard by its file name under it, and a new store path per deploy
-            # recreated every dashboard (new id, history lost); setup-etc removes a dropped file's link
+            # a fixed path: Grafana keys a dashboard by its file name under it; with deletion on, a path that moves
+            # per deploy would delete and recreate every dashboard (new id, history lost). setup-etc removes a
+            # dropped file's link
             options.path = "/etc/${dashboardDir}";
           }
         ];
