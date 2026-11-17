@@ -36,6 +36,16 @@ let
       }
     )
   );
+  # thresholds and windows from the policy file alone; the shipping collector runs on the deployer
+  shipping = builtins.toFile "shipping.yaml" (
+    builtins.toJSON (
+      import ./rules/shipping.nix {
+        inherit lib;
+        policy = lib.importJSON ./shipping-policy.json;
+        collectorNode = config.sam.fleet.deployer;
+      }
+    )
+  );
   gpuHosts = lib.filterAttrs (_: h: h.gpu == "nvidia") hosts;
   blackbox = cfg.exporters.blackbox;
   # the public names as a browser reaches them, through Caddy on acer. Authentik's Postgres has no exporter, so a
@@ -127,6 +137,7 @@ in
         ./rules/llm-gateway.yaml
         ./rules/homelab.yaml
         llmBench
+        shipping
       ];
       alerting.alertmanagers = [
         { static_configs = [ { targets = [ (at config.services.prometheus.alertmanager.port) ]; } ]; }

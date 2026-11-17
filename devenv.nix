@@ -88,6 +88,9 @@ let
   # fails the step, so a new kind cannot go unchecked.
   # GC_FREE_SPACE_DIVISOR=16 (Boehm default 3) collects more often: acer-swift deploy check 2809 MiB, not
   # 3174 MiB, under the 4G cap, for about +40% evaluation time on that process (#359).
+  # what a gate step built off its own node would compile against: CUDA or the NVIDIA driver (#502); one pattern for the
+  # flake check and scripts/gate_defer.py (GATE_HEAVY)
+  gateHeavy = "-cuda[0-9._]*-|cuda_|nvidia-x11";
   flakeCheck =
     gate "nixos-flake-check"
       (with pkgs; [
@@ -118,7 +121,7 @@ let
         # name: asus's CUDA Ollama is plain ollama-0.x (#502).
         # args: this host, the check's name, the derivations a build would compile, their inputs, 1 if this host's system
         # has CUDA
-        heavy='-cuda[0-9._]*-|cuda_|nvidia-x11'
+        heavy='${gateHeavy}'
         decide() {
           local node=
           case $2 in deploy-activate-* | deploy-schema-*) node=''${2#deploy-*-} ;; esac
@@ -410,6 +413,9 @@ let
       ''
         ${pkgs.python3}/bin/python scripts/test-platform-records.py
       '';
+  shippingMetricsTest = gate "shipping-metrics-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python scripts/test-shipping-metrics.py
+  '';
   # acer's Caddyfile through acer's Caddy, from the gate probe
   caddyEdgeTest =
     gate "caddy-edge-test"
@@ -473,7 +479,7 @@ let
         python3
       ])
       ''
-        ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
+        GATE_HEAVY='${gateHeavy}' PLATFORM_RECORD=${lib.getExe record} ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
       '';
 
   # the llm-bench harness and #492's G1 bench against the fake Ollama; no nix: the rules and the exporter are flake checks
@@ -662,6 +668,7 @@ let
     systemdCalendarTest
     systemdVerifyTest
     platformRecordsTest
+    shippingMetricsTest
     authentikAkTest
     switchSafetyTest
     rfBeaconsTest
@@ -1208,6 +1215,8 @@ in
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
+    "nixos:shipping-metrics-test" =
+      task "Shipping collector on a fake GitHub and Loki: issues split actionable/parked/archived, a failed source leaves no series and keeps its stale timestamp, an undeclared name is refused" shippingMetricsTest;
     "nixos:typed-interfaces-test" =
       task "no types.attrs option and no `or` fallback on a sam.* option read; seeded snippets of both are caught" typedInterfacesTest;
     "nixos:system-checks-test" =

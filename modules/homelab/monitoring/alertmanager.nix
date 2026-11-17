@@ -7,6 +7,40 @@ let
   cfg = config.services.prometheus.alertmanager;
   fw = config.networking.firewall;
   hostOff = [ "alertname = HostExpectedOff" ];
+  # the shipping policy's quiet hours, in UTC: a location would need tzdata where amtool checks the file. 19:00 to
+  # 07:30 covers 21:00 to 08:30 Stockholm in both seasons, and mutes one more hour: 20:00 to 21:00 in winter (CET),
+  # 08:30 to 09:30 in summer (CEST)
+  quiet = (lib.importJSON ./shipping-policy.json).notify;
+  clock =
+    h:
+    let
+      m = builtins.floor (h * 60.0);
+    in
+    "${lib.fixedWidthNumber 2 (m / 60)}:${lib.fixedWidthNumber 2 (lib.mod m 60)}";
+  from = clock quiet.quietFromUtcHour.value;
+  until = clock quiet.quietUntilUtcHour.value;
+  night =
+    assert lib.assertMsg (
+      from != until
+    ) "shipping-policy.json: notify's quiet hours start and end at ${from}";
+    if quiet.quietFromUtcHour.value > quiet.quietUntilUtcHour.value then
+      [
+        {
+          start_time = from;
+          end_time = "24:00";
+        }
+        {
+          start_time = "00:00";
+          end_time = until;
+        }
+      ]
+    else
+      [
+        {
+          start_time = from;
+          end_time = until;
+        }
+      ];
 in
 {
   services.prometheus.alertmanager = {
@@ -32,8 +66,20 @@ in
             receiver = "null";
             matchers = [ ''alertname =~ "Watchdog|InfoInhibitor|HostExpectedOff"'' ];
           }
+          # shipping alerts (rules/shipping.nix) wait for the morning; one firing then is sent when the night ends
+          {
+            receiver = "alert-bridge";
+            matchers = [ ''team = "shipping"'' ];
+            mute_time_intervals = [ "night" ];
+          }
         ];
       };
+      time_intervals = [
+        {
+          name = "night";
+          time_intervals = [ { times = night; } ];
+        }
+      ];
       receivers = [
         { name = "null"; }
         {
