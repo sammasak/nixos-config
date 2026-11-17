@@ -422,6 +422,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-power-schedule.py
       '';
 
+  adguardDnsTest =
+    gate "adguard-dns-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-adguard-dns.py
+      '';
+
   buildBoundsTest =
     gate "build-bounds-test"
       (with pkgs; [
@@ -537,6 +547,7 @@ let
           llmBenchTest
           alertBridgeTest
           knownHostsTest
+          adguardDnsTest
           powerScheduleTest
           buildBoundsTest
           delegationTest
@@ -927,6 +938,8 @@ in
       task "The systemd-calendar check passes parsing timer specs and fails, naming the timer, on a bad one (fixture trees)" systemdCalendarTest;
     "nixos:power-schedule-test" =
       task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
+    "nixos:adguard-dns-test" =
+      task "lenovo's AdGuard: not from /etc/hosts, every fleet name its fleet address, the loopback seeds fail" adguardDnsTest;
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =
