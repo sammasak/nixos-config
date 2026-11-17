@@ -13,7 +13,7 @@ an alert until a later PR implements it and the owner merges it.
 | `shipping_review_unreviewed_prs` in that sample | 4 | Some merged PRs carry no verdict comment today; a tier rule makes that an explicit choice. |
 | `shipping_gate_fail_ratio` over the last 20 push gates | 0.2 | One push in five fails. The failed steps (7 d) are spread: `nixos-flake-check` 2, `platform-records-test` 2, four other tests and `nixos-lint-shell` 1 each. No single step can be skipped on that evidence. |
 | `shipping_gate_seconds` p50 / p90 | 595 s / 904 s | The full gate costs about 10 to 15 minutes; the docs-only path (lints, plus the tests that read a changed doc) already exists. |
-| `shipping_issues_open{class="actionable"}` | 36 (the coordinator's reading earlier: 37) | The queue is not shrinking fast enough to spend gate time on PRs that cannot break a host. |
+| `shipping_issues_open{class="actionable"}`, all owner repos | 36 (the coordinator's reading earlier: 37) | The queue is not shrinking fast enough to spend gate time on PRs that cannot break a host. |
 | `shipping_issues_opened{window="24h"}` | 5 | |
 | `shipping_pr_lead_time_hours` p50 | 0.01 h | Still the open-to-merge figure: lenovo had not deployed #522 yet. Read it again after the deploy before tuning anything on it. |
 | `shipping_escapes` (24 h and 7 d) | 0 | No revert and no `escape` label yet: there is no evidence that today's depth is too low anywhere. |
@@ -26,15 +26,18 @@ a host runs can change: documentation and the gate's own tests.
 A PR's tier is the highest tier any changed path falls in (changes since the merge base with `origin/main`).
 First match from the top wins; a path no pattern names is `config`, never lower. Patterns are anchored at the repo
 root and `*` never crosses a `/` (git's `:(glob)` pathspec); only `**` does. So `*.md` is top-level only: a nested
-`SKILL.md` that a module reads into a closure stays `config`. The classifier reads the tiers from `origin/main`'s
-policy file, never the pushed one, so a PR cannot widen a cheap tier to cover itself.
+`SKILL.md` that a module reads into a closure stays `config`. The classifier and the tiers it reads both come from
+`origin/main` (`git show origin/main:scripts/risk-tier.py`, and the policy file the same way), never from the pushed
+tree, and a range that touches either is `critical` before any classifier runs. So a PR cannot lower its own tier by
+widening a pattern or by editing the classifier; the implementing PR seeds both cases. The collector classifies a
+merged PR against its base commit's policy, not today's main, which already holds that PR's own edits.
 
 | Tier | Paths | Why this tier |
 |---|---|---|
 | `critical` | `flake.lock`, `flake.nix`, `secrets/**`, `.githooks/**`, `devenv.nix`, `Justfile`, `scripts/post-deploy-check.sh`, `scripts/gate-probe.nix`, `scripts/gate_probe.py`, `scripts/risk-tier.py`,
 `modules/homelab/monitoring/shipping-policy.json`, `devenv.yaml`, `devenv.lock`, `modules/core/{boot,network,users,ssh-known-hosts,sops,fleet}.nix`, `modules/homelab/{adguardhome,tailscale,edge}.nix`, `flake-modules/hosts.nix` | Boot, reaching a host, DNS, secrets, the deploy path and the gate itself: a mistake here can strand a host or let later mistakes through. |
 | `config` | everything else under `modules/`, `hosts/`, `flake-modules/`, `lib/`, `pkgs/`, and every `scripts/*` a module reads | Builds into a host. |
-| `tests` | `scripts/test-*` | Only the gate reads them. A test that only a flake check runs (e.g. `scripts/test-grafana-dashboard-removal.sh`) has no `changedTests` gate, so a PR touching it is `config`. |
+| `tests` | `scripts/test-*` | Only the gate reads them. A test that only a flake check runs (e.g. `scripts/test-grafana-dashboard-removal.sh`) has no `changedTests` gate, and neither has a fixture a test loads by another name (`scripts/test-native-otel-fish.nix`): any `scripts/test-*` file no gate names makes the PR `config`. |
 | `docs` | `docs/**`, top-level `*.md` | No host and no gate reads them, except the tests that read a named doc (those still run). |
 
 `scripts/*` outside `test-*` is `config`: several are store paths in a unit (`shipping-metrics.py`,
