@@ -1,6 +1,6 @@
 # Nix store paths instead of images: environments (k3s half superseded)
 
-Research and plan, 2026-11-12. Nothing here is built yet. It answers one
+Research and plan, 2026-11-12; phase 1 of the environments half is live. It answers one
 question: what Anthropic's "Nix instead of Docker on Kubernetes" setup really
 is, and how the same workflow fits this fleet when developer environments run
 on the NixOS hosts and only "production" workloads run on k3s (since removed).

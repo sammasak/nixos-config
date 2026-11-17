@@ -37,7 +37,7 @@ NixOS module on a named host, and the deployment tool stays deploy-rs.
    No host upgrades itself (`system.autoUpgrade` is asserted off, #311).
 3. No service framework. A service is one `homelab.<name>` module in
    `modules/homelab/` that wraps the upstream NixOS module, opens its port with
-   `mkDualBackendFirewall`, and has one `scripts/test-<name>.py` gate. A shared
+   `mkDualBackendFirewall`, and gets a `scripts/test-<name>.py` gate when it has behaviour to pin. A shared
    helper is written only when a third service repeats the same wiring.
 4. Pod telemetry ended with the pods. Hosts ship their own journals through the
    journald collector; Prometheus, Alertmanager, Grafana and Loki run on
@@ -53,7 +53,7 @@ whisper and workout.
 | Was | Now |
 |---|---|
 | Flux reconcile from Git | an explicit `just deploy HOST` after merge |
-| Flux health checks and remediation | an `ExecStartPost` probe per module plus deploy-rs rollback |
+| Flux health checks and remediation | an `ExecStartPost` probe on the long-start units plus deploy-rs rollback |
 | Flux SOPS decryption | sops-nix with per-host age keys |
 | Traefik, cert-manager, external-dns | Caddy on acer with ACME; AdGuard on lenovo rewrites the names |
 | Prometheus operator, kube-state-metrics, Alloy DaemonSet | native Prometheus, Alertmanager, Grafana, Loki on black-pi; journald collector per host |
@@ -78,8 +78,29 @@ declared scrape target replaces it).
 | nixpkgs modular services | wait | upstream still in development (nixpkgs #428084) |
 | GitHub Actions building closures | no | no runner reaches the LAN cache |
 
+comin (pull) is not now: every host would evaluate the flake, including the
+Pis, and it is pre-1.0. With several hosts down nothing reconciles
+automatically; that is accepted (push, not pull).
+
 Push fits because changes are few, approved by one person, and ordered across
 hosts by hand.
+
+## Conventions
+
+- **Placement.** black-pi has a 29 GB SD card. A host whose journal would add
+  more than Loki's daily intake gets a drop rule for its noisiest units first
+  (#301). After a change there: MemAvailable stays at or above 600 MiB for
+  24 h with no new OOM kill, and the root filesystem keeps at least 3 GB free
+  over 72 h; otherwise roll back and reopen placement.
+- **Rollout order.** One host at a time, least critical first: msi, black-pi,
+  acer, lenovo. After each deploy: `systemctl is-system-running`, the
+  generation link, and the service's user-visible check
+  (`scripts/post-deploy-check.sh` does part of it).
+- **Persistent state.** A fixed `/var/lib/<service>` on a named host, with the
+  backup job declared in the same module.
+- **Probe gotcha.** A failing `ExecStartPost` probe fails the whole host
+  activation, so it checks only the service's own local ready endpoint, never
+  a remote dependency.
 
 ## Operations
 
@@ -93,14 +114,22 @@ hosts by hand.
   checks black-pi's Prometheus and Alertmanager from another host, the paging
   floor when black-pi is down. `nixos-rebuild-trigger` is also live (ADR-024).
   Neither is a cluster leftover.
+- **Paging when hosts fail.** lenovo down means no pages (ntfy is on lenovo;
+  owner accepted, #399), and dashboards need client-side hosts entries
+  (AdGuard is on lenovo). black-pi down pages only through cluster-watchdog on
+  lenovo. acer down leaves Grafana reachable on black-pi's LAN port with its
+  local login, and Alertmanager still posts to lenovo's ntfy.
 
 ## Open
 
 - Archive the homelab-gitops repository (owner). Deleting its PVC and other
-  state stays on the owner's by-hand list (homelab-gitops #146).
-- Backups: only Postgres dumps exist; Loki has none, accepted. A stateful
-  service moves only with an off-host backup and a rehearsed restore, or the
-  owner's acceptance in its issue.
+  state stays on the owner's by-hand list (homelab-gitops #146). The claim list is at
+  `git show 716fdf91^:docs/k3s-to-nixos-native.md` ("Removed or decided").
+- Backups: Authentik's Postgres dump is pulled off-host to lenovo nightly
+  (`authentik-offhost.nix`). open-webui and llm-gateway back up daily on the
+  same disk only; Loki has none, accepted. A stateful service moves only with
+  an off-host backup and a rehearsed restore, or the owner's acceptance in its
+  issue.
 - naked-pi takes the patched deploy-rs rollback at its next deploy (#474).
 
 Vault ADR-001 (Flux) and ADR-005 (single k3s cluster) are superseded by this

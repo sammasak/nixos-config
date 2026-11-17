@@ -32,7 +32,7 @@ one host bucket, so a flooding environment cannot starve the host's clients. A
 local process can set the header itself, so a value is trustworthy only when
 it came through an environment's proxy. The per-header limit therefore binds
 only environments: a host process can vary `X-Otel-Worker` per request or
-borrow a guest's name. On acer a host process can post
+borrow a guest's name. On any host a host process can post
 forged events under an environment's name (telemetry pollution, bounded by the
 gateway's allowlist; the token stays out of its reach).
 

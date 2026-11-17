@@ -24,7 +24,7 @@ permission, what a host deploys, repo settings, money).
 | # | Finding | Evidence |
 |---|---------|----------|
 | 1 | Done (#230). Guests sent `max-jobs 8, cores 0` to a daemon bounded at 2 x 2; the daemon takes the client's | guest and host `nix config show` on acer; Nix `daemon.cc` |
-| 2 | Done for neighbours (`MemoryMin` per environment); against host pressure still open. `MemoryLow` protects nothing: cgroup2 is mounted without `memory_recursiveprot` on acer and msi (a second cgroup2 mount, Cilium's; Cilium is gone) | `/proc/self/mountinfo` on both; `memory.events low 0` |
+| 2 | Done for neighbours (`MemoryMin` per environment); against host pressure still open. `MemoryLow` protects nothing: cgroup2 was mounted without `memory_recursiveprot` on acer and msi while Cilium's second mount existed; unmeasured since #442 | `/proc/self/mountinfo` on both; `memory.events low 0` |
 | 3 | Done. Per-environment `MemoryHigh` stalls a lone gate while the pool sits idle | `memory.events high` 2913 (acer), 7401 (msi); the 11 to 35 min gate |
 | 4 | Done. Swap is not in the pool: zram is charged to no cgroup, 3 x 3G can exceed the device | kernel docs; zram 7.7G |
 | 5 | Moot since the cluster was removed (#442): a full pool landed on kubelet's eviction line | 15.6G minus pods, system and a 7G pool |

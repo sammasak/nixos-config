@@ -72,7 +72,7 @@ SSH key once a repo is listed.
   or older checkout.
 - No standing environments. Each one is retired when its work has landed.
 - msi stays a weekday host (power window); acer is the always-on one, with 2 environments recommended as the cap
-  because pods took 4.6G there when it ran k3s (since removed).
+  because k3s pods took 4.6G there; remeasure now that k3s is gone.
 
 ## Checked on a live host, not covered by a test
 
