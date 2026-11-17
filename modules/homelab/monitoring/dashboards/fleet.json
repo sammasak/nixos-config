@@ -337,7 +337,7 @@
           "refId": "I"
         },
         {
-          "expr": "max by (node, version, toplevel) (homelab_nixos_info{node=~\"$node\"})",
+          "expr": "label_replace(topk by (node) (1, timestamp(homelab_nixos_info{node=~\"$node\"})) * 0 + on (node, version, toplevel) group_left max by (node, version, toplevel) (homelab_nixos_info{node=~\"$node\"}), \"toplevel\", \"$1\", \"toplevel\", \"(.{12}).*\")",
           "legendFormat": "{{node}}",
           "format": "table",
           "instant": true,
@@ -524,7 +524,7 @@
         },
         "overrides": []
       },
-      "description": "Every unit in the failed state now, on every awake host (a sleeping host has no current series).",
+      "description": "Every failed service, socket, timer, target or path unit now, on every awake host (a sleeping host has no current series). The exporter leaves out mounts, devices, scopes, slices and automounts.",
       "transformations": [
         {
           "id": "organize",
@@ -537,6 +537,16 @@
               "node": "Host",
               "name": "Unit"
             }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Host"
+              }
+            ]
           }
         }
       ]
