@@ -8,7 +8,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 argv_of() { python3 "$repo_root/scripts/alloy_otlp_argv.py" "$@"; }
 deployed_config=$(argv_of config)
 
-for executable in python3 jq curl grep mktemp rm rmdir cat sed awk seq sleep head tr cmp cp; do
+for executable in python3 jq curl grep mktemp rm rmdir cat sed awk seq sleep head tail tr cmp cp; do
   command -v "$executable" >/dev/null || {
     printf 'required executable not found: %s\n' "$executable" >&2
     exit 2
@@ -86,7 +86,9 @@ alloy_pid=$!
 endpoint="http://127.0.0.1:$otlp_port"
 unauthenticated_payload='{"resourceMetrics":[]}'
 unauthenticated_status=
-for _ in $(seq 1 50); do
+# Alloy can take longer than 5 s to listen on a busy gate host (msi, 17 Nov: 000 after 8 s); wait up to 30 s
+deadline=$((SECONDS + 30))
+while ((SECONDS < deadline)); do
   unauthenticated_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --max-time 2 -H 'Content-Type: application/json' -d "$unauthenticated_payload" \
     "$endpoint/v1/metrics" || true)
@@ -98,7 +100,8 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 [[ "$unauthenticated_status" == 401 ]] || {
-  printf 'expected unauthenticated OTLP response 401, got %s\n' "$unauthenticated_status" >&2
+  printf 'expected unauthenticated OTLP response 401, got %s after 30 s; the end of the Alloy log:\n' "$unauthenticated_status" >&2
+  tail -n 20 "$alloy_log" >&2
   exit 1
 }
 
@@ -299,7 +302,8 @@ alloy_pid=
 alloy_pid=$!
 
 restarted_unauthenticated_status=
-for _ in $(seq 1 50); do
+deadline=$((SECONDS + 30))
+while ((SECONDS < deadline)); do
   restarted_unauthenticated_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --max-time 2 -H 'Content-Type: application/json' -d "$unauthenticated_payload" \
     "$endpoint/v1/metrics" || true)
@@ -311,7 +315,8 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 [[ "$restarted_unauthenticated_status" == 401 ]] || {
-  printf 'expected 401 after restart, got %s\n' "$restarted_unauthenticated_status" >&2
+  printf 'expected 401 after restart, got %s after 30 s; the end of the Alloy log:\n' "$restarted_unauthenticated_status" >&2
+  tail -n 20 "$alloy_log" >&2
   exit 1
 }
 
