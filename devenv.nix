@@ -355,6 +355,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-ollama-pull-pinned.py
       '';
 
+  ollamaGpuTest =
+    gate "ollama-gpu-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-ollama-gpu.py
+      '';
+
   alertBridgeTest =
     gate "alert-bridge-test"
       (with pkgs; [
@@ -488,6 +498,7 @@ let
           harnessTelemetryTest
           ollamaPortforwardTest
           ollamaPullPinnedTest
+          ollamaGpuTest
           alertBridgeTest
           knownHostsTest
           buildBoundsTest
@@ -854,6 +865,8 @@ in
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:ollama-pull-pinned-test" =
       task "ollama-pull-pinned: a tag at its pin is left alone, a moved tag is removed again and fails the loader" ollamaPullPinnedTest;
+    "nixos:ollama-gpu-test" =
+      task "A CUDA Ollama build without hardware.graphics is rejected (it would run on the CPU)" ollamaGpuTest;
     "nixos:alert-bridge-test" =
       task "lenovo alone runs alert-bridge: sandboxed, publishing to the native ntfy on loopback, the built binary starts" alertBridgeTest;
     "nixos:coordinator-test" =

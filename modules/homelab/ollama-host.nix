@@ -80,6 +80,13 @@ in
         message = "modules/homelab/ollama-host.nix: a trusted interface bypasses the firewall and reaches Ollama; trust only loopback, not ${toString (lib.remove "lo" fw.trustedInterfaces)}.";
       }
       {
+        # libggml-cuda.so loads libcuda.so.1 from /run/opengl-driver/lib alone; without it Ollama serves on the CPU
+        assertion =
+          !lib.any (p: lib.getName p == "cuda_cudart") cfg.package.buildInputs
+          || config.hardware.graphics.enable;
+        message = "modules/homelab/ollama-host.nix: ${cfg.package.name} is a CUDA build; set hardware.graphics.enable = true, or Ollama finds no libcuda.so.1 and silently runs on the CPU.";
+      }
+      {
         assertion = config.systemd.services.ollama.serviceConfig ? MemoryMax;
         message = "modules/homelab/ollama-host.nix: set systemd.services.ollama.serviceConfig.MemoryMax to what one loaded model needs.";
       }

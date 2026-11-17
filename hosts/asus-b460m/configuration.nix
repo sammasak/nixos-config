@@ -148,9 +148,11 @@ in
     }
   ];
   # The rendered firewall admits the Ollama port from acer and nothing else, and the package carries the CUDA runner
-  # (a CUDA build missing its toolkit silently ships the CPU runner only).
+  # (a CUDA build missing its toolkit silently ships the CPU runner only). It does not prove Ollama uses the GPU: that
+  # the runner finds libcuda and the card is seen only at runtime, "library=CUDA" in Ollama's journal after a switch.
   system.checks = [
     (pkgs.runCommand "asus-ollama-gpu-check" { } ''
+      echo "proves: firewall rule, CUDA runner shipped; not proven: GPU discovery at runtime (journal library=CUDA)"
       rules=$(grep -- '--dport ${toString ollama.port} ' ${firewallStart})
       echo "$rules"
       [ "$(echo "$rules" | wc -l)" = ${toString (lib.length acers)} ]

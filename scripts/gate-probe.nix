@@ -116,7 +116,10 @@ let
         open = lenovo.networking.firewall.allowedTCPPorts;
         rules = lenovo.networking.firewall.extraCommands;
       };
-      alertmanager = [ lenovo.sam.fleet.hosts.black-pi.address ] ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
+      alertmanager = [
+        lenovo.sam.fleet.hosts.black-pi.address
+      ]
+      ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
       failing = {
         lenovo = failing lenovo;
         loopbackFirewall = failing (
@@ -178,7 +181,9 @@ let
             )
           ]
         );
-        uncached = failing (extend "black-pi" [ ({ lib, ... }: { sam.storeCache.enable = lib.mkForce true; }) ]);
+        uncached = failing (
+          extend "black-pi" [ ({ lib, ... }: { sam.storeCache.enable = lib.mkForce true; }) ]
+        );
       };
       roles = lib.mapAttrs (_: h: h.config.sam.profile.roles) hosts;
     };
@@ -232,6 +237,14 @@ let
           extend "acer-swift" [ ({ lib, ... }: { services.caddy.enable = lib.mkForce false; }) ]
         );
       };
+    };
+
+    # asus's CUDA Ollama as deployed, and the seeded case: the same host without hardware.graphics
+    ollama-gpu.failing = {
+      asus = failing hosts.asus-b460m.config;
+      noGraphics = failing (
+        extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.enable = lib.mkForce false; }) ]
+      );
     };
 
     # acer's ak wrapper and the server unit environment it copies
