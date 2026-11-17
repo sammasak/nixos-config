@@ -4,9 +4,11 @@ each dashboard's structure; every PromQL expression, panel or variable, through 
 logcli's parser; every metric name in an exporter's own output, a rule file's records, a Go service's metric name
 literals or the OTLP allow-list; every `job` a query selects scraped by Prometheus or written to Loki by the repo; every variable
 defined; and no host named by hand in a query.
+Black-pi's alert and recording rules (SPEC alert_rules, YAML: run with PyYAML) are held to the same names and jobs.
 Usage: check-grafana-dashboards.py SPEC.json PROMTOOL LOGCLI EXPOSITION...; exits non-zero on any FAIL. EXPOSITION is
 an exporter's /metrics output; SPEC names the dashboards, the fleet's hosts, the rule files and the metric sources."""
 import json
+import pathlib
 import re
 import subprocess
 import sys
@@ -37,8 +39,9 @@ for f in spec["loki_job_sources"]:
     loki_jobs |= set(re.findall(r'"service\.name"\], "([a-z][a-z-]*)"', text))
 failed = []
 
+# PromQL's keywords, in any case
 KEYWORDS = {"and", "or", "unless", "by", "without", "on", "ignoring", "group_left", "group_right", "bool", "offset",
-            "inf", "nan", "Inf", "NaN", "atan2"}
+            "inf", "nan", "atan2"}
 HOST_LABELS = r"node|nodename|host|hostname|host_name|instance"
 QUOTED = r'"((?:\\.|[^"\\])*)"|\'((?:\\.|[^\'\\])*)\'|`([^`]*)`'
 VAR = re.compile(r"\$\{([A-Za-z_]\w*)(?::\w+)?\}|\$([A-Za-z_]\w*)|\[\[([A-Za-z_]\w*)\]\]")
@@ -68,13 +71,14 @@ def metric_names(expr):
     names = {next(g for g in m.groups()[1:] if g is not None)
              for m in re.finditer(r"__name__\s*=\s*(?:" + QUOTED + ")", e)}
     e = re.sub(QUOTED, '""', e)
+    e = re.sub(r"#[^\n]*", " ", e)
     e = re.sub(r"\{[^}]*\}", " ", e)
     e = re.sub(r"\[[^\]]*\]", " ", e)
-    e = re.sub(r"\b(by|without|on|ignoring|group_left|group_right)\s*\([^)]*\)", " ", e)
-    e = re.sub(r"\boffset\s+\w+", " ", e)
+    e = re.sub(r"(?i)\b(by|without|on|ignoring|group_left|group_right)\s*\([^)]*\)", " ", e)
+    e = re.sub(r"(?i)\boffset\s+\w+", " ", e)
     e = re.sub(r"(?<![\w:])\d+(\.\d+)?([eE][+-]?\d+)?", " ", e)
     for m in re.finditer(r"[A-Za-z_:][\w:]*", e):
-        if m.group(0) in KEYWORDS or re.match(r"\s*\(", e[m.end():]):
+        if m.group(0).lower() in KEYWORDS or re.match(r"\s*\(", e[m.end():]):
             continue
         names.add(m.group(0))
     return names
@@ -115,6 +119,17 @@ def check_expr(where, expr, variables, loki):
         logql.append((where, expr))
         return
     promql.append((where, expr))
+    for name in sorted(metric_names(expr)):
+        if not known(name):
+            fail(where, f"unknown metric {name}: no exporter, record or scraped service provides it")
+
+
+def check_rule(where, expr):
+    """An alert or recording rule: its jobs scraped, its metric names provided (hosts may be named: a rule is per host)."""
+    for m in re.finditer(r"\bjob\s*=\s*(?:" + QUOTED + ")", expr):
+        value = next(g for g in m.groups() if g is not None)
+        if value not in spec["scrape_jobs"]:
+            fail(where, f"job {value!r}: no scrape job by that name")
     for name in sorted(metric_names(expr)):
         if not known(name):
             fail(where, f"unknown metric {name}: no exporter, record or scraped service provides it")
@@ -183,8 +198,17 @@ for where, expr in logql:
     if "parse error" in r.stdout + r.stderr:
         fail(where, f"LogQL: {(r.stdout + r.stderr).strip()}")
 
+rules = 0
+if spec.get("alert_rules"):
+    import yaml
+for f in spec.get("alert_rules", []):
+    for group in yaml.safe_load(open(f))["groups"]:
+        for r in group["rules"]:
+            rules += 1
+            check_rule(f"rules {pathlib.Path(f).stem} {r.get('alert') or r.get('record')}", r["expr"])
+
 for line in failed:
     print("FAIL: " + line)
-print(f"{len(spec['dashboards'])} dashboards, {len(promql)} PromQL and {len(logql)} LogQL expressions, "
+print(f"{len(spec['dashboards'])} dashboards, {len(promql)} PromQL and {len(logql)} LogQL expressions, {rules} rules, "
       f"{len(failed)} failures")
 sys.exit(1 if failed else 0)
