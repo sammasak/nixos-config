@@ -88,7 +88,7 @@ Sibling options, outside the profile:
 - `sam.thermal.*` — fan/CPU thermal policy, see `modules/hardware/thermal.nix`
 - `sam.hostSecrets.enable` (bool) — per-machine operator credentials, see `modules/core/sops.nix`
 - `sam.cliTools.factum.enable`, `sam.cliTools.nixAudit.enable` (bool, default false): per-host CLI tools in the user's Home Manager profile; outside the profile because a developer environment's guest copies its host's profile
-- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), `lanCidr`, the trusted LAN subnet of the firewall rules, and `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments; a host that sets it fails evaluation
+- `sam.fleet` (read-only, set in `modules/core/fleet.nix`): LAN facts more than one module reads, `hosts.<hostName>.address` and `gateway` (IPv4), `lanCidr`, the trusted LAN subnet of the firewall rules, `deployer`, the hostName whose key `deploy-target.nix` accepts and that refuses developer environments, and `ntfy`/`loki` (`host`, `port`, and the derived `url`) with `pageUrl`, the ntfy topic every failed service pages and the default of each module's page URL; a host that sets it fails evaluation
 
 Everything this repo defines lives under `sam.*` or `homelab.*` so it is never
 confused with an upstream NixOS option. Which of the two is the Namespace

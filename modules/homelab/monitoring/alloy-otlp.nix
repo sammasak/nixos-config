@@ -20,7 +20,9 @@ let
   httpPort = 12346;
   blackPi = hosts.black-pi.address;
   configFile = pkgs.writeText "alloy-otlp.alloy" (
-    lib.replaceStrings [ "@prometheus@" "@loki@" ] [ "http://${blackPi}:9090" "http://${blackPi}:3100" ]
+    lib.replaceStrings
+      [ "@prometheus@" "@loki@" ]
+      [ "http://${blackPi}:9090" config.sam.fleet.loki.url ]
       (builtins.readFile ./alloy-otlp.alloy)
   );
   stability = "--stability.level=experimental";
