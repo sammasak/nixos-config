@@ -256,6 +256,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-journal-collector.py
       '';
 
+  fleetEndpointsTest =
+    gate "fleet-endpoints-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-fleet-endpoints.py
+      '';
+
   # acer's Alloy, config and ExecStart from the gate probe, not devenv's packages
   alloyOtlpTest =
     gate "alloy-otlp-test"
@@ -275,6 +285,9 @@ let
         ${pkgs.python3}/bin/python scripts/test-alloy-otlp-log-loki.py
       '';
 
+  typedInterfacesTest = gate "typed-interfaces-test" (with pkgs; [ python3 ]) ''
+    ${pkgs.python3}/bin/python scripts/test-typed-interfaces.py
+  '';
   systemChecksTest =
     gate "system-checks-test"
       (with pkgs; [
@@ -586,8 +599,10 @@ let
           buildBoundsTest
           delegationTest
           journalCollectorTest
+          fleetEndpointsTest
           alloyOtlpTest
           caddyEdgeTest
+          typedInterfacesTest
           systemChecksTest
           deployRecipesTest
           systemdCalendarTest
@@ -988,10 +1003,14 @@ in
       task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs" qaPushTest;
     "nixos:journal-collector-test" =
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
+    "nixos:fleet-endpoints-test" =
+      task "Every paging unit pages sam.fleet.pageUrl, also without runtime-host's sam.workers.ntfyUrl; an empty URL, ntfy off its fleet host and a redefined fleet fact fail" fleetEndpointsTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
+    "nixos:typed-interfaces-test" =
+      task "no types.attrs option and no `or` fallback on a sam.* option read; seeded snippets of both are caught" typedInterfacesTest;
     "nixos:system-checks-test" =
       task "just checks against stub nix/ssh: lists built or substituted, and refuses an empty list, a non-input, an unreachable host, a failed build and a still-invalid check" systemChecksTest;
     "nixos:deploy-recipes-test" =

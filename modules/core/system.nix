@@ -67,10 +67,27 @@ in
       default = { };
     };
 
+    # Set from lib/users.nix (flake-modules/nixos-configurations.nix); a field it adds must be declared here.
     userConfig = mkOption {
-      type = types.attrs;
+      type = types.submodule {
+        options = {
+          git.userName = mkOption {
+            type = types.str;
+            description = "Git author name, and the GitHub account the unattended coordinator may write to.";
+          };
+          git.email = mkOption {
+            type = types.str;
+            description = "Git author email.";
+          };
+          sshKeys = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = "The user's authorized SSH public keys; the deployer's key also admits the deploy user.";
+          };
+        };
+      };
       default = { };
-      description = "User identity data (for example git profile and SSH keys).";
+      description = "User identity data: git profile and SSH keys.";
     };
 
     # The single "is this a GUI desktop?" signal. Modules used to probe

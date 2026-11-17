@@ -159,6 +159,10 @@ with one reader (host keys, cache keys, the Pis' addresses) stays in its reader.
 ## Not changed
 
 flake-parts, one nixpkgs, no specialArgs, curried `import file inputs.x`,
-the `lenovo` attribute vs its hostname, untyped `sam.userConfig`,
-`hardware-configuration.nix`, role file contents, flake-module file names, any
-deploy.
+the `lenovo` attribute vs its hostname, `hardware-configuration.nix`, role file
+contents, flake-module file names, any deploy.
+
+`sam.userConfig` was on this list untyped and is now a submodule (`git.userName`, `git.email`, `sshKeys`), reopened
+by #295: `types.attrs` merges by `//`, so a second definition silently drops the first's keys and `mkDefault`/`mkIf`
+are not discharged (the deprecation warning on `attrs` in nixpkgs `lib/types.nix`), and its readers needed `or`
+fallbacks that turn a renamed field into an empty value. `scripts/test-typed-interfaces.py` keeps both out.

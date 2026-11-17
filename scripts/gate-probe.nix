@@ -461,6 +461,76 @@ let
           ]
         );
       };
+
+    # each paging unit's script and sam.workers.ntfyUrl on every host, and the seeded cases: acer without the
+    # runtime-host role's sam.workers.ntfyUrl, Loki and the collector on naked-pi with no URL set, an empty URL, ntfy
+    # off its fleet host and a host redefining a fleet fact; context discarded: nothing here needs a build
+    fleet-endpoints =
+      let
+        pages =
+          c:
+          builtins.fromJSON (
+            builtins.unsafeDiscardStringContext (
+              builtins.toJSON (
+                lib.filterAttrs (_: v: v != null) (
+                  lib.genAttrs [ "caddy-failed" "journal-collector-failed" "loki-failed" ] (
+                    n: c.systemd.services.${n}.script or null
+                  )
+                )
+                // {
+                  workers = c.sam.workers.ntfyUrl;
+                }
+              )
+            )
+          );
+        evaluates = x: (builtins.tryEval (builtins.deepSeq x x)).success;
+        collector = extra: [
+          ../modules/homelab/journal-collector.nix
+          {
+            homelab.journalCollector = {
+              enable = true;
+            }
+            // extra;
+          }
+        ];
+      in
+      {
+        inherit (acer.sam.fleet) pageUrl;
+        hosts = lib.mapAttrs (_: h: pages h.config) hosts;
+        seeded = {
+          acerWithoutWorkersUrl = pages (
+            extend "acer-swift" [ ({ lib, ... }: { sam.workers.ntfyUrl = lib.mkForce null; }) ]
+          );
+          nakedPi = pages (
+            extend "naked-pi" (
+              collector { }
+              ++ [
+                ../modules/homelab/loki.nix
+                { homelab.loki.enable = true; }
+              ]
+            )
+          );
+          emptyUrl = evaluates (
+            (extend "naked-pi" (collector {
+              ntfyUrl = "";
+            })).systemd.services.journal-collector-failed.script
+          );
+          ntfyOffHost = failing (
+            extend "acer-swift" [
+              ../modules/homelab/ntfy.nix
+              {
+                homelab.ntfy = {
+                  enable = true;
+                  baseUrl = "https://ntfy.example";
+                };
+              }
+            ]
+          );
+          fleetRedefined =
+            evaluates
+              (extend "naked-pi" [ { sam.fleet.ntfy.port = 2587; } ]).sam.fleet.pageUrl;
+        };
+      };
   };
 in
 {

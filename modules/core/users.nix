@@ -7,7 +7,7 @@
 let
   profile = config.sam.profile;
   inherit (profile) username;
-  sshAuthorizedKeys = config.sam.userConfig.sshKeys or [ ];
+  sshAuthorizedKeys = config.sam.userConfig.sshKeys;
 in
 {
   programs.dconf.enable = true;

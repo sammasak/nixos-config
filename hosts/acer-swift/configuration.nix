@@ -15,11 +15,7 @@
     ../../modules/homelab/journal-collector.nix
   ];
 
-  homelab.journalCollector = {
-    enable = true;
-    lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";
-    ntfyUrl = config.sam.workers.ntfyUrl;
-  };
+  homelab.journalCollector.enable = true;
 
   sam.profile = {
     username = "lukas";
