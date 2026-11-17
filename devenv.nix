@@ -377,6 +377,16 @@ let
         ${pkgs.python3}/bin/python scripts/test-ssh-known-hosts.py
       '';
 
+  systemdCalendarTest =
+    gate "systemd-calendar-test"
+      (with pkgs; [
+        python3
+        systemd
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-systemd-calendar.py
+      '';
+
   buildBoundsTest =
     gate "build-bounds-test"
       (with pkgs; [
@@ -496,6 +506,7 @@ let
           alloyOtlpTest
           caddyEdgeTest
           systemChecksTest
+          systemdCalendarTest
           platformRecordsTest
           authentikAkTest
           switchSafetyTest
@@ -870,6 +881,8 @@ in
       task "sam.claude.telemetry: Claude exports through the local relay with session and repository attributes; emit-work-ref.sh only when on and pinned" harnessTelemetryTest;
     "nixos:known-hosts-test" =
       task "Verified SSH host keys pinned fleet-wide, clients and deploy-rs fail closed, each declared sops secret encrypted to its host and present in its file" knownHostsTest;
+    "nixos:systemd-calendar-test" =
+      task "The systemd-calendar check passes parsing timer specs and fails, naming the timer, on a bad one (fixture trees)" systemdCalendarTest;
     "nixos:delegation-test" =
       task "lenovo's generated devenv.local.nix delegates approval to an interactive Coordinator (real devenv, fake gh)" delegationTest;
     "nixos:build-bounds-test" =
