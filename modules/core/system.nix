@@ -10,7 +10,6 @@ let
 in
 {
   imports = [
-    ./agent-assertions.nix
     ./fleet.nix
     ./power-schedule.nix
     ./systemd-verify.nix
