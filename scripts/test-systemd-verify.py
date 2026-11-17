@@ -3,7 +3,9 @@
 systemd-analyze: a clean tree passes, and so does the allowlisted user-mode message; any line systemd ignores (an
 unknown key or section, a value, memory or CPU limit that does not parse, a bad dependency name, in a unit or its
 drop-in) in a unit multi-user.target wants fails the check, printing the line; and a check whose pattern no longer
-matches systemd's message fails on the fixture Restartsec= instead of passing the tree."""
+matches systemd's message fails on the fixture Restartsec= instead of passing the tree. Each Home Manager user's units
+(a timers.target.wants copy included) are verified file by file: a misspelt key or a bad drop-in value there fails the
+check naming the user, a check that skips the user fixture fails, and a host with no Home Manager unit fails."""
 import os
 import pathlib
 import re
@@ -31,9 +33,12 @@ body = m.group(1).replace("''${", "${")
 true = shutil.which("true")
 
 
-def run(extra, script=body, dropins={}):
-    """extra: {unit name: text}, each wanted by multi-user.target; dropins: {path under the unit dir: text}
-    -> (rc, output, out written)"""
+HM_CLEAN = {"lukas": {"tray.target": "[Unit]\nDescription=tray\n"}}
+
+
+def run(extra, script=body, dropins={}, hm=HM_CLEAN):
+    """extra: {unit name: text}, each wanted by multi-user.target; dropins: {path under the unit dir: text};
+    hm: {user: {path under systemd/user: text}} -> (rc, output, out written)"""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = pathlib.Path(tmp)
         system = tmp / "etc/systemd/system"
@@ -49,9 +54,17 @@ def run(extra, script=body, dropins={}):
         for rel, text in dropins.items():
             (system / rel).parent.mkdir(parents=True, exist_ok=True)
             (system / rel).write_text(text)
+        trees = []
+        for user, files in hm.items():
+            for rel, text in files.items():
+                p = tmp / "hm" / user / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(text)
+            trees.append(f"{user}={tmp / 'hm' / user}")
         work = tmp / "build"
         work.mkdir()
-        script = script.replace("${config.system.build.etc}", str(tmp)).replace("${trueBin}", true)
+        script = (script.replace("${config.system.build.etc}", str(tmp)).replace("${trueBin}", true)
+                  .replace("${hmTrees}", " ".join(trees)))
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=work, capture_output=True, text=True, check=False,
                            env=dict(os.environ, out=str(tmp / "out")))
         return r.returncode, r.stdout + r.stderr, (tmp / "out").exists()
@@ -81,6 +94,30 @@ check(rc != 0 and not made and re.search(r"s0\.service\.d/override\.conf:\d+: Fa
       f"seeded: a value that does not parse in a drop-in fails too ({rc}, {out.strip()!r})")
 rc, out, made = run({"reboot.service": "[Unit]\nSuccessAction=soft-reboot-force\n[Service]\nExecStart=/bin/true\n"})
 check(rc == 0 and made, f"the allowlisted user-mode message (a system action in *Action=) passes ({rc}, {out.strip()!r})")
+
+timer = "[Timer]\nOnCalendar=daily\n"
+hm = {"lukas": {"repo-sweep.service": f"[Service]\nExecStart={true}\n", "repo-sweep.timer": timer,
+                "timers.target.wants/repo-sweep.timer": timer},
+      "guest": {"tray.target": "[Unit]\n"}}
+rc, out, made = run({}, hm=hm)
+check(rc == 0 and made, f"clean Home Manager trees of two users, with a .wants copy, pass ({rc}, {out.strip()!r})")
+bad = {**hm, "guest": {"herdr.service": f"[Service]\nRestartsec=5\nExecStart={true}\n"}}
+rc, out, made = run({}, hm=bad)
+check(rc != 0 and not made and "guest's Home Manager unit lines systemd ignores:" in out
+      and re.search(r"herdr\.service:\d+: Unknown key 'Restartsec'", out) is not None,
+      f"seeded: a misspelt key in a Home Manager user unit fails, naming the user and the line ({rc}, {out.strip()!r})")
+rc, out, made = run({}, hm={"lukas": {"herdr.service": f"[Service]\nExecStart={true}\n",
+                                      "herdr.service.d/x.conf": "[Service]\nRestartSec=5x\n"}})
+check(rc != 0 and not made and re.search(r"herdr\.service\.d/x\.conf:\d+: Failed to parse RestartSec=5x", out) is not None,
+      f"seeded: a bad value in a Home Manager unit's drop-in fails ({rc}, {out.strip()!r})")
+rc, out, made = run({}, hm={})
+check(rc != 0 and not made and "no Home Manager user unit on this host" in out,
+      f"a host without any Home Manager unit fails as not this host's ({rc}, {out.strip()!r})")
+skips = body.replace("hmverify hm/fixture-c.service", "hmverify hm/tray.target")
+check(skips != body, "the user fixture's verify is found to skip it")
+rc, out, made = run({}, skips)
+check(rc != 0 and not made and "the fixture Restartsec= in lukas's Home Manager units was not reported" in out,
+      f"seeded: a check that does not verify the user fixture fails, not passing the users ({rc}, {out.strip()!r})")
 
 blind = body.replace("':[0-9]+: .*ignoring'", "':[0-9]+: .*ignored'")
 check(blind != body, "the check's pattern is found to blind it")
