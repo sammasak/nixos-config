@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Every metric the shipping rules, the Shipping dashboard and the policy's tunedBy expressions name is one the
-collector emits (scripts/shipping-metrics.py --list), one the rules record, or node-exporter's up: a typo or a series
+collector emits (scripts/shipping-metrics.py --list), one the rules record, up or ALERTS: a typo or a series
 the collector dropped fails the build instead of drawing an empty panel or an alert that can never fire.
 
 Usage: shipping-names.py EMITTED RULES.json DASHBOARD.json POLICY.json   (exit 1 and the unknown names on a miss)"""
@@ -8,7 +8,8 @@ import json
 import re
 import sys
 
-EXTERNAL = {"up"}
+# node-exporter's up, and Prometheus's own alert series the policy's for and quiet hours are read against
+EXTERNAL = {"up", "ALERTS"}
 KEYWORDS = {"and", "or", "unless", "by", "on", "without", "ignoring", "group_left", "group_right", "offset", "bool",
             "inf", "nan"}
 

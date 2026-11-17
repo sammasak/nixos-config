@@ -15,9 +15,9 @@ node-exporter. Its calls are read-only:
 
 | Metric | What it is |
 |---|---|
-| `shipping_issues_open{repo,class}` | Open issues. `class` is `actionable`, `parked` (a repo in the policy's `issues.parkedRepos`) or `archived` (the repo is archived on GitHub) |
+| `shipping_issues_open{repo,class}` | Open issues. `class` is `actionable`, `parked` (a repo in the policy's `issues.parkedRepos`) or `archived` (the repo is archived on GitHub). Actionable means neither; an issue labelled blocked or needs-decision still counts as actionable |
 | `shipping_issues_open_labelled{label}` | Actionable issues carrying needs-live, needs-decision, blocked, approved or ready-for-agent |
-| `shipping_issues_opened` / `_closed{window}` | Issues opened and closed in the last 24 h and 7 d, all repos |
+| `shipping_issues_opened` / `_closed{window}` | Issues opened and closed in the last 24 h and 7 d, in every repo, parked and archived ones included |
 | `shipping_issue_age_days{quantile}` | Age of the open actionable issues, median and p90 |
 | `shipping_prs_merged`, `shipping_pr_lead_time_hours{quantile}` | PRs merged in 7 d, and their time from open to merge |
 | `shipping_review_rounds`, `_first_pass_ratio`, `_prs_counted`, `_unreviewed_prs` | `Grade: N/10` comments per PR, over the last reviewed merged PRs; first pass means the first grade reached `review.passGrade` |
@@ -33,8 +33,10 @@ Not measured:
 
 ## Alerts
 
-All are severity `warning`, team `shipping`. Alertmanager holds them from 19:00 to 07:30 UTC (21:00 to 08:30
-Stockholm in both seasons) and sends any still firing in the morning.
+All are severity `warning`, team `shipping`, and each waits its `forMinutes` before firing. Alertmanager holds them
+during the policy's quiet hours (`notify`, in UTC) and sends any still firing when the hours end. 19:00 to 07:30 UTC
+covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 to 08:30 in winter (CET), 21:00 to
+09:30 in summer (CEST).
 
 | Alert | Fires when |
 |---|---|
@@ -45,11 +47,12 @@ Stockholm in both seasons) and sends any still firing in the morning.
 | HostBehindMain | The host has been up and more than `maxHours` behind main for `upHours`. A sleeping host is not paged |
 | DeployRolledBack | Rollbacks in the last 24 h exceed `max` |
 | EscapeFound | Escapes in the last 24 h exceed `max` |
-| ShippingCollectorStale | A section has not succeeded for `maxHours`, unless lenovo itself is down |
+| ShippingCollectorStale | A section has not succeeded for `maxHours`, or the collector ran without the owner's gh login (`shipping_collector_authenticated` under `minAuthenticated`: public repos only), unless lenovo itself is down |
 
 ## Changing a number
 
-Every threshold, window and list is in `modules/homelab/monitoring/shipping-policy.json`. Each value names the metric it
+Every threshold, window, `for` duration, the quiet hours and the parked repos are in
+`modules/homelab/monitoring/shipping-policy.json`. Each value names the metric it
 is tuned by (`tunedBy`), and the dashboard's **Policy signals** row shows the setting beside that metric's current
 reading. Change a value with a PR that quotes that row: the reading, over what period, and why the new value fits it.
 The rules are generated from the file (`modules/homelab/monitoring/rules/shipping.nix`). The flake check

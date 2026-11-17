@@ -72,7 +72,7 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Net issues, last 7 d (opened - closed)",
+      "title": "Net issues, last 7 d (opened - closed, every repo incl. parked and archived)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

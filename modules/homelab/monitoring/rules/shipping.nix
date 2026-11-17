@@ -15,7 +15,8 @@ let
     {
       inherit expr;
       alert = name;
-      "for" = "30m";
+      # HostBehindMain alone has none: its upHours is its for
+      "for" = "${toString a.${name}.forMinutes.value}m";
       labels = {
         severity = "warning";
         team = "shipping";
@@ -88,17 +89,17 @@ in
         (alert "DeployRolledBack"
           ''sum(shipping_deploy_rollbacks{window="24h"}) > ${toString a.DeployRolledBack.max.value}''
           "{{ $value }} deploy(s) rolled back in the last 24 h."
-          { "for" = "0m"; }
+          { }
         )
         (alert "EscapeFound" ''sum(shipping_escapes{window="24h"}) > ${toString a.EscapeFound.max.value}''
           "{{ $value }} escape(s) in the last 24 h: a revert on a default branch or an issue labelled escape."
-          { "for" = "0m"; }
+          { }
         )
         (alert "ShippingCollectorStale"
           ''(time() - min(shipping_collector_success_timestamp_seconds) > ${
             toString (a.ShippingCollectorStale.maxHours.value * 3600)
-          } or absent(shipping_collector_success_timestamp_seconds)) unless on () up{job="node-exporter", node="${collectorNode}"} == 0''
-          "A shipping-metrics section on ${collectorNode} has not succeeded within ${toString a.ShippingCollectorStale.maxHours.value} h (journalctl -u shipping-metrics)."
+          } or absent(shipping_collector_success_timestamp_seconds) or shipping_collector_authenticated < ${toString a.ShippingCollectorStale.minAuthenticated.value}) unless on () up{job="node-exporter", node="${collectorNode}"} == 0''
+          "A shipping-metrics section on ${collectorNode} has not succeeded within ${toString a.ShippingCollectorStale.maxHours.value} h, or it ran without the owner's gh login and counted public repos only (journalctl -u shipping-metrics; gh auth status as the owner)."
           { }
         )
       ];

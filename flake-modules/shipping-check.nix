@@ -1,7 +1,7 @@
 # The shipping rules as black-pi's Prometheus loads them (rules/shipping.nix from the policy file): every metric they,
 # the Shipping dashboard and the policy name is emitted or recorded (scripts/shipping-names.py), and a seeded unknown
-# name in a rule and in a panel fails it; promtool runs alerts against inputs sized from the policy, so a threshold
-# change keeps the test honest without editing it.
+# name in a rule and in a panel fails it; promtool runs alerts against inputs and times sized from the policy's
+# thresholds and for minutes, so a changed value keeps the test honest without editing it.
 { config, lib, ... }:
 let
   inherit (config.flake.nixosConfigurations) black-pi;
@@ -22,6 +22,8 @@ let
       builtins.unsafeDiscardStringContext black-pi.config.services.prometheus.configText
     )).rule_files;
   n = toString;
+  gateFor = a.GateFailRateHigh.forMinutes.value;
+  staleFor = a.ShippingCollectorStale.forMinutes.value;
   tests = {
     # the copy without annotations, which promtool would otherwise compare word for word
     rule_files = [ "rules-test.json" ];
@@ -33,19 +35,19 @@ let
         input_series = [
           {
             series = "shipping_gate_fail_ratio";
-            values = "${n (a.GateFailRateHigh.maxRatio.value + 0.1)}x90";
+            values = "${n (a.GateFailRateHigh.maxRatio.value + 0.1)}x${n (2 * gateFor + 30)}";
           }
           {
             series = "shipping_gate_runs_counted";
-            values = "${n a.GateFailRateHigh.lastRuns.value}x40 ${
+            values = "${n a.GateFailRateHigh.lastRuns.value}x${n (gateFor + 10)} ${
               n (a.GateFailRateHigh.lastRuns.value - 1)
-            }x40";
+            }x${n (gateFor + 20)}";
           }
         ];
         alert_rule_test = [
           {
             alertname = "GateFailRateHigh";
-            eval_time = "35m";
+            eval_time = "${n (gateFor + 5)}m";
             exp_alerts = [
               {
                 exp_labels = {
@@ -57,7 +59,7 @@ let
           }
           {
             alertname = "GateFailRateHigh";
-            eval_time = "80m";
+            eval_time = "${n (gateFor + 25)}m";
             exp_alerts = [ ];
           }
         ];
@@ -106,18 +108,28 @@ let
         ];
       }
       {
-        name = "a collector that never wrote is stale, unless its host is down";
+        name = "a fresh collector without the owner's gh login pages, with it not";
         interval = "1m";
         input_series = [
           {
             series = ''up{job="node-exporter",node="${collector}"}'';
-            values = "1x40 0x40";
+            values = "1x${n (2 * staleFor + 80)}";
+          }
+          {
+            series = ''shipping_collector_success_timestamp_seconds{section="issues"}'';
+            values = "0+60x${n (2 * staleFor + 80)}";
+          }
+          {
+            series = "shipping_collector_authenticated";
+            values = "${
+              n (a.ShippingCollectorStale.minAuthenticated.value - 1)
+            }x${n (staleFor + 10)} ${n a.ShippingCollectorStale.minAuthenticated.value}x${n (staleFor + 70)}";
           }
         ];
         alert_rule_test = [
           {
             alertname = "ShippingCollectorStale";
-            eval_time = "35m";
+            eval_time = "${n (staleFor + 5)}m";
             exp_alerts = [
               {
                 exp_labels = {
@@ -129,7 +141,36 @@ let
           }
           {
             alertname = "ShippingCollectorStale";
-            eval_time = "80m";
+            eval_time = "${n (staleFor + 25)}m";
+            exp_alerts = [ ];
+          }
+        ];
+      }
+      {
+        name = "a collector that never wrote is stale, unless its host is down";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''up{job="node-exporter",node="${collector}"}'';
+            values = "1x${n (staleFor + 10)} 0x${n (staleFor + 20)}";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "ShippingCollectorStale";
+            eval_time = "${n (staleFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
+            ];
+          }
+          {
+            alertname = "ShippingCollectorStale";
+            eval_time = "${n (staleFor + 25)}m";
             exp_alerts = [ ];
           }
         ];

@@ -309,7 +309,8 @@ def main(argv=None):
             for k, rows in part.lines.items():
                 out.lines.setdefault(k, []).extend(rows)
             return r
-        except (urllib.error.URLError, OSError, KeyError, ValueError, TimeoutError) as e:
+        # any error, an unexpected JSON shape included, costs this section alone its update
+        except Exception as e:
             print(f"shipping-metrics: {name} failed, its series are left out: {e!r}", file=sys.stderr)
             return None
 
