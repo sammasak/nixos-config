@@ -119,6 +119,11 @@ let
       dashboard = seed ''{job="journal"}'' "loki";
       reason = "job 'journal': no Loki stream";
     };
+    # a name the running Prometheus does not export
+    prometheus-typo = {
+      dashboard = seed "prometheus_tsdb_head_seriez" "prometheus";
+      reason = "unknown metric prometheus_tsdb_head_seriez:";
+    };
     gateway-typo = {
       dashboard = seed "rate(llm_gateway_no_such_total[5m])" "prometheus";
       reason = "unknown metric llm_gateway_no_such_total";
