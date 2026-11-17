@@ -1,0 +1,121 @@
+{
+  "alerts": {
+    "OpenIssuesGrowing": {
+      "days": {
+        "value": 3,
+        "tunedBy": "sum(shipping_issues_open{class=\"actionable\"})"
+      },
+      "forMinutes": {
+        "value": 30,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"OpenIssuesGrowing\"}[1d])"
+      }
+    },
+    "PrLeadTimeHigh": {
+      "medianHours": {
+        "value": 24,
+        "tunedBy": "shipping_pr_lead_time_hours{quantile=\"0.5\"}"
+      },
+      "forMinutes": {
+        "value": 30,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"PrLeadTimeHigh\"}[1d])"
+      }
+    },
+    "ReviewFirstPassLow": {
+      "minRatio": {
+        "value": 0.5,
+        "tunedBy": "shipping_review_first_pass_ratio"
+      },
+      "lastVerdicts": {
+        "value": 20,
+        "tunedBy": "shipping_review_prs_counted"
+      },
+      "forMinutes": {
+        "value": 30,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"ReviewFirstPassLow\"}[1d])"
+      }
+    },
+    "GateFailRateHigh": {
+      "maxRatio": {
+        "value": 0.3,
+        "tunedBy": "shipping_gate_fail_ratio"
+      },
+      "lastRuns": {
+        "value": 20,
+        "tunedBy": "shipping_gate_runs_counted"
+      },
+      "forMinutes": {
+        "value": 30,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"GateFailRateHigh\"}[1d])"
+      }
+    },
+    "HostBehindMain": {
+      "maxHours": {
+        "value": 24,
+        "tunedBy": "max(shipping_deploy_lag_hours)"
+      },
+      "upHours": {
+        "value": 2,
+        "tunedBy": "max(shipping_deploy_lag_hours)"
+      }
+    },
+    "DeployRolledBack": {
+      "max": {
+        "value": 0,
+        "tunedBy": "sum(shipping_deploy_rollbacks{window=\"24h\"})"
+      },
+      "forMinutes": {
+        "value": 0,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"DeployRolledBack\"}[1d])"
+      }
+    },
+    "EscapeFound": {
+      "max": {
+        "value": 0,
+        "tunedBy": "sum(shipping_escapes{window=\"24h\"})"
+      },
+      "forMinutes": {
+        "value": 0,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"EscapeFound\"}[1d])"
+      }
+    },
+    "ShippingCollectorStale": {
+      "maxHours": {
+        "value": 2,
+        "tunedBy": "(time() - min(shipping_collector_success_timestamp_seconds)) / 3600"
+      },
+      "forMinutes": {
+        "value": 30,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"ShippingCollectorStale\"}[1d])"
+      },
+      "minAuthenticated": {
+        "value": 1,
+        "tunedBy": "min(shipping_collector_authenticated)"
+      }
+    }
+  },
+  "review": {
+    "passGrade": {
+      "value": 9,
+      "tunedBy": "shipping_review_first_pass_ratio"
+    }
+  },
+  "issues": {
+    "parkedRepos": {
+      "value": [
+        "herman",
+        "karta"
+      ],
+      "tunedBy": "sum(shipping_issues_open{class=\"parked\"})"
+    }
+  },
+  "notify": {
+    "quietFromUtcHour": {
+      "value": 19,
+      "tunedBy": "sum(ALERTS{team=\"shipping\",alertstate=\"firing\"})"
+    },
+    "quietUntilUtcHour": {
+      "value": 7.5,
+      "tunedBy": "sum(ALERTS{team=\"shipping\",alertstate=\"firing\"})"
+    }
+  }
+}

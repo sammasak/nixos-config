@@ -413,6 +413,9 @@ let
       ''
         ${pkgs.python3}/bin/python scripts/test-platform-records.py
       '';
+  shippingMetricsTest = gate "shipping-metrics-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python scripts/test-shipping-metrics.py
+  '';
   # acer's Caddyfile through acer's Caddy, from the gate probe
   caddyEdgeTest =
     gate "caddy-edge-test"
@@ -665,6 +668,7 @@ let
     systemdCalendarTest
     systemdVerifyTest
     platformRecordsTest
+    shippingMetricsTest
     authentikAkTest
     switchSafetyTest
     rfBeaconsTest
@@ -1211,6 +1215,8 @@ in
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
+    "nixos:shipping-metrics-test" =
+      task "Shipping collector on a fake GitHub and Loki: issues split actionable/parked/archived, a failed source leaves no series and keeps its stale timestamp, an undeclared name is refused" shippingMetricsTest;
     "nixos:typed-interfaces-test" =
       task "no types.attrs option and no `or` fallback on a sam.* option read; seeded snippets of both are caught" typedInterfacesTest;
     "nixos:system-checks-test" =
