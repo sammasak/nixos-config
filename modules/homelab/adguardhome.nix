@@ -145,7 +145,7 @@ in
           pid=$!
           # dig exits non-zero on no answer; that is a result here, not a build failure
           ask() { dig +time=1 +tries=1 +short -p 15353 @127.0.0.1 "$1" A || true; }
-          for _ in $(seq 60); do [ -n "$(ask '${lib.head (lib.attrNames fleet)}')" ] && break; sleep 0.5; done
+          for _ in $(seq 60); do ask '${lib.head (lib.attrNames fleet)}' | grep -Eq '^[0-9]+[.]' && break; sleep 0.5; done
           bad=0
           ${lib.concatStrings (
             lib.mapAttrsToList (name: h: ''
