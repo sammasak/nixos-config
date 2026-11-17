@@ -308,7 +308,7 @@
       "id": 27,
       "type": "bargauge",
       "title": "Lead time from open time instead (fallbacks, 7 d)",
-      "description": "PRs whose lead time fell back to their open time. http_error near PRs merged means GitHub's commits API failed for every PR and the lead time above is open-to-merge; no_token means the collector ran without a login.",
+      "description": "PRs whose lead time fell back to their open time. http_error near PRs merged means GitHub's commits API failed for every PR and the PR lead time panel shows open-to-merge; no_token means the collector ran without a login.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
