@@ -10,6 +10,7 @@ The two gpu-check builds compile asus's CUDA closure. They follow nixos-flake-ch
 - **Built** where nothing would compile against CUDA, and on asus itself.
 - **Deferred** elsewhere: printed, recorded with seconds=0, and listed in the gate's deferred summary, instead of
   compiling CUDA on msi, acer or lenovo."""
+import json
 import os
 import re
 import subprocess
@@ -98,10 +99,26 @@ def realise(drv, name):
     return out.returncode, out.stdout + out.stderr
 
 
-rc, log = realise(P["check"]["asus"], "asus-ollama-gpu-check")
+def instantiated(drvs):
+    """The probe keeps only the .drv paths (no string context), and the gate's GC (GC_FREE_SPACE_DIVISOR) may have
+    collected those unrooted .drv files by now: then re-evaluate this section, which writes them again."""
+    paths = [d for d in drvs.values() if d]
+    valid = subprocess.run(["nix-store", "--check-validity", *paths], capture_output=True, text=True, check=False)
+    if valid.returncode == 0:
+        return drvs
+    out = subprocess.run(["nix", "eval", "--json", "--impure", "--expr",
+                          '(import ./scripts/gate-probe.nix { only = [ "ollama-gpu" ]; }).sections."ollama-gpu".check'],
+                         capture_output=True, text=True, check=False)
+    if out.returncode != 0:
+        sys.exit(f"ollama-gpu-test: re-instantiating the gpu checks failed: {out.stderr.strip()[-300:]}")
+    return json.loads(out.stdout)
+
+
+checks = instantiated(P["check"])
+rc, log = realise(checks["asus"], "asus-ollama-gpu-check")
 check(rc in (0, "deferred"),
       f"asus-ollama-gpu-check builds: RUNPATH has /run/opengl-driver/lib, the drivers env has libcuda.so.1, or it is deferred to {OWNER} (rc {rc}: {log.strip()[-300:]})")
-rc, log = realise(P["check"]["noNvidiaLibs"], "asus-ollama-gpu-check (no NVIDIA libs)")
+rc, log = realise(checks["noNvidiaLibs"], "asus-ollama-gpu-check (no NVIDIA libs)")
 check(rc == "deferred" or (rc not in (0, None) and "no lib/libcuda.so.1" in log),
       f"seeded: graphics without the NVIDIA library fails the gpu check, or it is deferred to {OWNER} (rc {rc}: {log.strip()[-300:]})")
 sys.exit(failed)
