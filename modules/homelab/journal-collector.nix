@@ -159,6 +159,11 @@ in
 
     assertions = [
       {
+        # Loki admits the fleet's addresses only (black-pi's homelab.loki.allowedSources)
+        assertion = config.sam.fleet.hosts ? ${config.networking.hostName};
+        message = "modules/homelab/journal-collector.nix: ${config.networking.hostName} has no address in sam.fleet.hosts (modules/core/fleet.nix), so Loki would refuse its journal.";
+      }
+      {
         assertion = unlisted == [ ];
         message = "modules/homelab/journal-collector.nix: put ${toString unlisted} in privateAuthentik (never shipped) or shippedAuthentik; a new Authentik unit's lines may carry OAuth codes.";
       }

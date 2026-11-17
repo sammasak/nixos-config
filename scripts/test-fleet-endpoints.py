@@ -19,7 +19,8 @@ def check(ok, what):
 
 P = gate_probe.section("fleet-endpoints")
 page = P["pageUrl"]
-check(page == "http://192.168.10.154:2586/homelab-alerts", f"sam.fleet.pageUrl is lenovo's ntfy homelab-alerts topic on its LAN port ({page})")
+check(page == f"http://{P['ntfyAddress']}:{P['port']}/homelab-alerts",
+      f"sam.fleet.pageUrl is the ntfy host's homelab-alerts topic on its LAN address and fleet port ({page})")
 
 
 def pages_fleet(where, units, want):

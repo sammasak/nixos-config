@@ -279,7 +279,10 @@ either side is only reported.
 - its rows in this file's deploy block and hostnames, `docs/architecture.md`, and for a runtime host
   `docs/nspawn-workers.md` (checked by the same test);
 - a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` (asserted);
-- its LAN address in `modules/core/fleet.nix` if another module reads it, and `sleeps = true` there if it
+- a runtime host: its `sam.herdr.machines` entry and `sam.workers.jumpHosts` name on lenovo (asserted against
+  this table, so adding or removing a runtime host without them fails lenovo's evaluation);
+- its LAN address in `modules/core/fleet.nix` if another module reads it or it ships its journal (black-pi's Loki
+  admits the fleet's addresses; asserted), and `sleeps = true` there if it
   may be powered off (the store caches skip it; `HostExpectedOff` covers it instead of `NodeChronicNotReady`);
   for a work-hours window also `power` there (MAC, NIC, wake and off times): lenovo wakes it and it powers
   itself off (`modules/core/power-schedule.nix`, asserted with its `wol-<nic>` unit);

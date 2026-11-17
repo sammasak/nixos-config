@@ -62,6 +62,10 @@ in
         assertion = config.networking.hostName == config.sam.fleet.ntfy.host;
         message = "modules/homelab/ntfy.nix runs on ${config.networking.hostName}, but sam.fleet.ntfy.host is ${config.sam.fleet.ntfy.host}: every page would go to the wrong host.";
       }
+      {
+        assertion = cfg.port == config.sam.fleet.ntfy.port;
+        message = "homelab.ntfy.port ${toString cfg.port} is not sam.fleet.ntfy.port ${toString config.sam.fleet.ntfy.port}: every page would go to the wrong port.";
+      }
     ];
   };
 }

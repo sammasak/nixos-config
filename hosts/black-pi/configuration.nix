@@ -23,12 +23,9 @@
   homelab.loki = {
     enable = true;
     listenAddress = config.sam.fleet.hosts.black-pi.address;
-    allowedSources = map (h: config.sam.fleet.hosts.${h}.address) [
-      "lenovo-21CB001PMX"
-      "acer-swift"
-      "msi-ms7758"
-      "asus-b460m"
-    ];
+    allowedSources = lib.concatMap (h: [ h.address ] ++ h.extraAddresses) (
+      lib.attrValues (removeAttrs config.sam.fleet.hosts [ config.networking.hostName ])
+    );
   };
 
   # to its own LAN address, which the kernel delivers on lo (always accepted), so it needs no allowedSources entry
