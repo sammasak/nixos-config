@@ -8,21 +8,15 @@ import os
 import pathlib
 import re
 import subprocess
-import sys
 import tempfile
 import threading
+
+from gate_probe import check, finish
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HELPER = ROOT / "scripts/platform-record.sh"
 DASHBOARD = ROOT / "modules/homelab/monitoring/dashboards/platform-health.json"
 CALLERS = ["devenv.nix", "Justfile", "scripts/system-checks.sh", "modules/programs/cli/coordinator-wakeup.nix"]
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 case = re.search(r"case \$kind in\n\s*([a-z| -]+)\)", HELPER.read_text())
@@ -109,4 +103,4 @@ check(fields == ["verified_deliveries=18", "prs_reviewed=unknown", "review_passe
                  "repeated_reviews=unknown", "parked=0", "lead_time_hours=2.5"],
       f"the delivery record: numbers kept (0 too), a null metric unknown, lead time the median in hours ({fields})")
 
-sys.exit(1 if failed else 0)
+finish()

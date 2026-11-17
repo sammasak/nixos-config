@@ -5,20 +5,14 @@ which turns a renamed or removed option into the fallback value instead of an ev
 of both shapes must be caught and their allowed neighbours (attrsOf, a dynamic attrsOf lookup) must not."""
 import pathlib
 import re
-import sys
+
+from gate_probe import check, finish
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # a sam.* option path read through config or osConfig (also a guest's …config.sam…), then `or`, across newlines;
 # a ${…} segment is an attrsOf lookup, where `or` is the only way to read a missing key, so it stops the match
 FALLBACK = re.compile(r"\b(?:osConfig|config)\.sam(?:\.[A-Za-z0-9_'-]+)+\s+or\b")
 UNTYPED = re.compile(r"\btypes\.attrs\b(?!Of)")
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def hits(text):
@@ -43,4 +37,4 @@ files = [p for d in ("modules", "flake-modules", "lib", "hosts", "tests") for p 
 found = [f"{p.relative_to(ROOT)}: {h}" for p in files for h in hits(p.read_text())]
 check(len(files) > 100 and not found, f"no types.attrs and no sam.* `or` fallback in {len(files)} .nix files ({found})")
 
-sys.exit(1 if failed else 0)
+finish()
