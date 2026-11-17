@@ -266,7 +266,8 @@ if fc:
                 (t / f).chmod(0o755)
             calls.write_text("")
             body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
-            body = body.replace("''$", "$")
+            heavy = re.search(r'\n *gateHeavy = "([^"]*)";\n', src)
+            body = body.replace("${gateHeavy}", heavy.group(1) if heavy else "").replace("''$", "$")
             run = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True,
                                  env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}"})
             built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c]
