@@ -1,5 +1,5 @@
 {
-  "title": "Black Pi (node)",
+  "title": "Host detail (node)",
   "uid": "black-pi-node",
   "schemaVersion": 36,
   "version": 1,
@@ -9,26 +9,14 @@
     "to": "now"
   },
   "tags": [
-    "node",
-    "black-pi",
-    "arm64"
+    "node"
   ],
   "templating": {
     "list": [
       {
         "name": "node",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus"
-        },
-        "query": "label_values(node_uname_info{job=\"node-exporter\"}, node)",
-        "current": {
-          "text": "black-pi",
-          "value": "black-pi"
-        },
-        "refresh": 1,
-        "definition": "label_values(node_uname_info{job=\"node-exporter\"}, node)"
+        "label": "Host",
+        "type": "custom"
       }
     ]
   },
@@ -129,7 +117,7 @@
     },
     {
       "id": 4,
-      "title": "SoC temperature",
+      "title": "Temperature (hottest sensor)",
       "type": "gauge",
       "gridPos": {
         "h": 4,
@@ -143,7 +131,7 @@
       },
       "targets": [
         {
-          "expr": "max(node_thermal_zone_temp{node=\"$node\"})"
+          "expr": "max(node_thermal_zone_temp{node=\"$node\"} or node_hwmon_temp_celsius{node=\"$node\"})"
         }
       ],
       "fieldConfig": {
@@ -243,7 +231,7 @@
       },
       "targets": [
         {
-          "expr": "max(node_thermal_zone_temp{node=\"$node\"})",
+          "expr": "max(node_thermal_zone_temp{node=\"$node\"} or node_hwmon_temp_celsius{node=\"$node\"})",
           "legendFormat": "soc °C"
         },
         {
@@ -288,7 +276,7 @@
     },
     {
       "id": 10,
-      "title": "SD card I/O (mmcblk0)",
+      "title": "Disk I/O",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -307,11 +295,11 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(node_disk_read_bytes_total{node=\"$node\",device=~\"mmcblk[0-9]+|nvme[0-9]+n[0-9]+|sd[a-z]\"}[5m]))",
+          "expr": "sum(rate(node_disk_read_bytes_total{node=\"$node\",device=~\"mmcblk[0-9]+|nvme[0-9]+n[0-9]+|sd[a-z]|vd[a-z]\"}[5m]))",
           "legendFormat": "read"
         },
         {
-          "expr": "sum(rate(node_disk_written_bytes_total{node=\"$node\",device=~\"mmcblk[0-9]+|nvme[0-9]+n[0-9]+|sd[a-z]\"}[5m]))",
+          "expr": "sum(rate(node_disk_written_bytes_total{node=\"$node\",device=~\"mmcblk[0-9]+|nvme[0-9]+n[0-9]+|sd[a-z]|vd[a-z]\"}[5m]))",
           "legendFormat": "written"
         }
       ]

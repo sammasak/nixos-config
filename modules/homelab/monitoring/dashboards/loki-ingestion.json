@@ -137,7 +137,7 @@
     },
     {
       "id": 10,
-      "title": "Log volume per job (last 1h)",
+      "title": "Log volume per job and host",
       "type": "timeseries",
       "gridPos": {
         "h": 10,
@@ -148,8 +148,8 @@
       "description": "Lines per second shipped to Loki per namespace. A flat line at 0 indicates a silent namespace.",
       "targets": [
         {
-          "expr": "sum by (job) (rate({job=~\".+\"}[5m]))",
-          "legendFormat": "{{job}}",
+          "expr": "sum by (job, host) (rate({job=~\".+\"}[5m]))",
+          "legendFormat": "{{job}} {{host}}",
           "datasource": {
             "type": "loki",
             "uid": "loki"
