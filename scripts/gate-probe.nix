@@ -341,9 +341,27 @@ let
       {
         failing = {
           asus = failing hosts.asus-b460m.config;
+          powerHigh = failing (
+            extend "asus-b460m" [ ({ lib, ... }: { homelab.ollama.gpuPowerLimit = lib.mkForce 271; }) ]
+          );
+          powerLow = failing (
+            extend "asus-b460m" [ ({ lib, ... }: { homelab.ollama.gpuPowerLimit = lib.mkForce 99; }) ]
+          );
           noGraphics = failing (
             extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.enable = lib.mkForce false; }) ]
           );
+        };
+        powerUnit = {
+          inherit (hosts.asus-b460m.config.systemd.services.nvidia-power-limit)
+            wantedBy
+            before
+            requiredBy
+            ;
+          inherit (hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig) Type ExecStart;
+          remain =
+            hosts.asus-b460m.config.systemd.services.nvidia-power-limit.serviceConfig.RemainAfterExit or false;
+          ollamaRequires = hosts.asus-b460m.config.systemd.services.ollama.requires;
+          ollamaBindsTo = hosts.asus-b460m.config.systemd.services.ollama.bindsTo;
         };
         check = {
           asus = gpuCheck hosts.asus-b460m.config;
