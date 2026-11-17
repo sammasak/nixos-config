@@ -1,6 +1,6 @@
 { pkgs, ... }:
 let
-  # hypridle's usual `hyprctl dispatch dpms` is a silent no-op under niri, so DPMS goes
+  # The stock hypridle recipe (`hyprctl dispatch dpms`) does nothing under niri, so DPMS goes
   # through niri's own action. No idle logout: niri quit would close every app, defeating resume.
   dpms = pkgs.writeShellScript "hypridle-dpms" ''
     case "$1" in

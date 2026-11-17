@@ -3,7 +3,7 @@
   programs.niri.enable = true;
 
   # Bare, not mkDefault: daily-driver default; explicit so it never ties with
-  # another module's mkDefault (hyprland's did exactly that before).
+  # another module's mkDefault.
   services.displayManager.defaultSession = "niri";
 
   # X11 clients under niri need an external Xwayland shim; the nixpkgs niri
