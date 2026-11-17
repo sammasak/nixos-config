@@ -10,6 +10,8 @@ let
   textfiles = "/run/node-exporter-textfile";
 in
 {
+  imports = [ ./gpu-exporter.nix ];
+
   services.prometheus.exporters.node = {
     enable = true;
     listenAddress = hosts.${config.networking.hostName}.address;

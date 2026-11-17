@@ -167,7 +167,8 @@ def main():
     check(': > "$pending"; rm -f "$attempts"' in script and 'if [ "$rc" -eq 0 ]; then' in script
           and script.index("|| rc=$?") < script.index(': > "$pending"; rm -f "$attempts"', script.index('if [ "$rc" -eq 0 ]; then')),
           "pending changes and the attempt counter are cleared only after claude exited 0")
-    check('[ "$rec" -nt "$state/.started" ]' in script, "a latest.json not rewritten by this run is not trusted")
+    check('[ -n "$after" ] && [ "$after" != "$before" ]' in script and "-nt" not in script,
+          "a latest.json not rewritten by this run is not trusted, judged by its inode (coord:changed renames a new record in), not the clock")
     check('rm -f "$state/quiet.last"' in script and script.index('rm -f "$state/quiet.last"') < script.index("starting one Coordinator session"),
           "a session start forgets the last quiet reason, so the first quiet tick after a session is explained again")
     check('[ "$tries" -ge 2 ]' in script and 'cat "$pending" >> "$parked"' in script and script.index('[ "$tries" -ge 2 ]') < script.index("claude -p"),
@@ -234,7 +235,9 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
             '  exit "${FAKE_BRIEF_RC:-0}";; esac\n'
             'if [ -n "${FAKE_OLD:-}" ]; then echo "error: The option \\`coordinator.panes\' does not exist. Definition values:" >&2; exit 1; fi\n'
             'if [ -n "${FAKE_FAIL:-}" ]; then echo "error: some other evaluation failure" >&2; exit 1; fi\n'
-            'printf \'{"schema_version":1,"task":"coord:changed","observed_at":"now","changes":%s%s}\\n\' "${FAKE_CHANGES:-[]}" "${FAKE_EXTRA:-}" > "$XDG_STATE_HOME/coordinator/changed/latest.json"\n')
+            'case "${FAKE_STALE:-}" in none) exit 0;; touch) touch "$XDG_STATE_HOME/coordinator/changed/latest.json"; exit 0;; esac\n'
+            'printf \'{"schema_version":1,"task":"coord:changed","observed_at":"now","changes":%s%s}\\n\' "${FAKE_CHANGES:-[]}" "${FAKE_EXTRA:-}" > "$XDG_STATE_HOME/coordinator/changed/.rec.tmp"\n'
+            'mv "$XDG_STATE_HOME/coordinator/changed/.rec.tmp" "$XDG_STATE_HOME/coordinator/changed/latest.json"\n')
         (fakes / "herdr").write_text('#!/bin/sh\necho "herdr $*" >> "$XDG_STATE_HOME/toasts.log"\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED >> "$XDG_STATE_HOME/toasts.log"; fi\n')
         (fakes / "claude").write_text('#!/bin/sh\nif [ -e /proc/$$/fd/9 ]; then echo FD9_LEAKED; else echo FD9_CLOSED; fi; echo "oauth token ${CLAUDE_CODE_OAUTH_TOKEN:+set}${CLAUDE_CODE_OAUTH_TOKEN:-unset}" | sed "s/set.*/set/"\n')
         for f in fakes.iterdir():
@@ -264,7 +267,12 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
               "so no new session until the fleet or the work changes" in r.stdout,
               "an idle fleet whose fingerprint already woke a session is explained in the journal once (the overnight no-wake of skills#28)")
         r = run(idle)
-        check(r.returncode == 0 and "no session" not in r.stdout, "the idle explanation is not repeated while nothing changes")
+        check(r.returncode == 0 and "no session" not in r.stdout,
+              f"the idle explanation is not repeated while nothing changes (rc {r.returncode}, {r.stdout.strip()!r})")
+        for stale in ("none", "touch"):
+            r = run(dict(idle, FAKE_STALE=stale))
+            check(r.returncode == 1 and "was not rewritten by this run; not trusted" in r.stdout,
+                  f"a run that leaves latest.json in place ({stale}: kept, or only its mtime moved) is not trusted (rc {r.returncode}, {r.stdout.strip()!r})")
         r = run({"FAKE_EXTRA": ',"wake":{"deferred":true,"reason":"per_hour_cap","next_allowed_at":"2026-11-04T00:44:00Z"}'})
         check("no session: wake budget deferred (per_hour_cap) until 2026-11-04T00:44:00Z" in r.stdout, "a run deferred by the wake budget says so once")
         r = run({"FAKE_EXTRA": ',"idle_wake":{"fleet_idle":true,"agents":4,"hosts":2,"evaluated":false,"skipped":{"kind":"gh_failed"},"fired":false,"fingerprint":null}'})

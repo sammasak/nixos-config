@@ -23,6 +23,8 @@ pkgs.testers.runNixOSTest {
         nativeOtel = false;
       };
       sam.hostSecrets.enable = lib.mkForce false;
+      # msi's name, not its NIC: no 21:00 poweroff and no Wake-on-LAN unit in the VM
+      sam.powerSchedule.poweroff.enable = false;
       systemd.services.systemd-time-wait-sync.wantedBy = lib.mkForce [ ];
       sam.workers.instances.t.agent = "none";
       sam.workers.pool.memory = "3G";

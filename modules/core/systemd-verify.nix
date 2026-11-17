@@ -55,5 +55,32 @@ in
       done
       touch $out
     '')
+
+    # Every OnCalendar= of this host's timers parses (systemd-analyze calendar): a typo in a schedule otherwise only
+    # shows as a timer systemd refuses at switch time, or one that never fires. A bad and a good fixture spec run
+    # first, so a calendar parser that accepts anything, or cannot run in the sandbox, fails instead of passing.
+    # Covers the NixOS system and user units in /etc; Home Manager's user timers live in ~/.config and are not read.
+    (pkgs.runCommand "systemd-calendar" { nativeBuildInputs = [ config.systemd.package ]; } ''
+      export XDG_RUNTIME_DIR=$PWD/xdg HOME=$PWD/home
+      mkdir -p xdg home
+      parses() { systemd-analyze calendar --iterations=1 -- "$1" >/dev/null 2>&1; }
+      ! parses 'Mon-Fri 25:00' || { echo "the fixture 'Mon-Fri 25:00' parsed: systemd-analyze calendar no longer rejects a bad spec"; exit 1; }
+      parses 'Mon-Fri 08:30' || { echo "the fixture 'Mon-Fri 08:30' did not parse: systemd-analyze calendar does not run here"; exit 1; }
+      etc=${config.system.build.etc}/etc/systemd
+      n=0 bad=0
+      for f in "$etc"/system/*.timer "$etc"/system/*.timer.d/*.conf "$etc"/user/*.timer "$etc"/user/*.timer.d/*.conf; do
+        [ -e "$f" ] || continue
+        while IFS= read -r spec; do
+          # an empty OnCalendar= resets the list in a drop-in
+          [ -n "$spec" ] || continue
+          n=$((n + 1))
+          parses "$spec" || { echo "''${f#"$etc"/}: OnCalendar=$spec does not parse"; bad=1; }
+        done < <(sed -n 's/^OnCalendar=//p' "$f")
+      done
+      [ "$n" -gt 0 ] || { echo "no OnCalendar= in this host's timers: the unit tree is not this host's"; exit 1; }
+      [ "$bad" = 0 ] || exit 1
+      echo "$n OnCalendar= specs parse"
+      touch $out
+    '')
   ];
 }
