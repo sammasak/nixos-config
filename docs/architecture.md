@@ -11,7 +11,7 @@
 - `hosts-option.nix` — typed host declaration options
 - `nixos-configurations.nix` — transforms declarations into `nixosConfigurations`
 - `rf-hwsim-test.nix` — the rf-lab hwsim test package
-- `runtime-host-vm-test.nix`: the three QEMU tests (x86_64-linux only), `runtime-host-role-vm` (the base and runtime-host roles with msi-ms7758's role list), `dev-env-reset-vm` and `socket-rebind-vm`, as both flake checks (`nix flake check` and the pre-push gate boot them) and packages (`just role-vm-test`, `.broken`)
+- `runtime-host-vm-test.nix`: the QEMU tests (x86_64-linux only), `runtime-host-role-vm` (the base and runtime-host roles with msi-ms7758's role list), `dev-env-reset-vm`, `socket-rebind-vm`, `rebuild-trigger-vm` and `post-deploy-check-vm` (`just deploy`'s unit check against real systemd states), as both flake checks (`nix flake check` and the pre-push gate boot them) and packages (`just role-vm-test`, `.broken`)
 - `templates.nix`: devShell flake templates (with `.envrc`) stamped by `dev-init`
 - `rf-beacons-rs.nix`: the rf-proto beacon table package and its `rf-beacons-parity` check
 - `loki-check.nix`: the `loki-config-msi-ms7758` check (x86_64-linux), homelab.loki on a seeded msi: `loki -verify-config` on the rendered file and the module's assertions, held and failing
