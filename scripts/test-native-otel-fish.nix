@@ -20,9 +20,19 @@ let
   evaluated = lib.evalModules {
     specialArgs = {
       inherit pkgs;
-      osConfig.sam.profile.devTools = devTools;
-      osConfig.sam.claude.telemetry.resourceAttributes = {
-        "host.name" = "lenovo-21cb001pmx";
+      osConfig.sam = {
+        profile = {
+          inherit devTools;
+          pi = false;
+        };
+        desktop.enable = false;
+        herdr = {
+          machines = [ ];
+          worker.enable = false;
+        };
+        claude.telemetry.resourceAttributes = {
+          "host.name" = "lenovo-21cb001pmx";
+        };
       };
     };
     modules = [

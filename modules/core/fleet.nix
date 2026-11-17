@@ -4,12 +4,31 @@
 let
   inherit (lib) mkOption types;
   ipv4 = types.strMatching "[0-9]{1,3}([.][0-9]{1,3}){3}";
+  # networking.hostName and port of a service, and its base URL (no trailing slash) derived from them
+  endpoint =
+    fleet:
+    mkOption {
+      type = types.submodule (
+        { config, ... }:
+        {
+          options = {
+            host = mkOption { type = types.enum (lib.attrNames fleet.hosts); };
+            port = mkOption { type = types.port; };
+            url = mkOption {
+              type = types.str;
+              readOnly = true;
+              default = "http://${fleet.hosts.${config.host}.address}:${toString config.port}";
+            };
+          };
+        }
+      );
+    };
 in
 {
   options.sam.fleet = mkOption {
     readOnly = true;
     description = "Fleet-wide LAN facts, set in modules/core/fleet.nix only.";
-    type = types.submodule {
+    type = types.submodule (fleet: {
       options = {
         # keyed by networking.hostName
         hosts = mkOption {
@@ -57,8 +76,17 @@ in
         deployer = mkOption { type = types.str; };
         # networking.hostName of the host that serves *.sammasak.dev (edge.nix): the DNS rewrite and the OTLP relay
         edge = mkOption { type = types.str; };
+        # the alert and log endpoints every host pages and ships to, by LAN address: a page must not need acer's Caddy
+        ntfy = endpoint fleet.config;
+        loki = endpoint fleet.config;
+        # the ntfy topic a failed service pages
+        pageUrl = mkOption {
+          type = types.str;
+          readOnly = true;
+          default = "${fleet.config.ntfy.url}/homelab-alerts";
+        };
       };
-    };
+    });
   };
 
   config.sam.fleet = {
@@ -96,5 +124,13 @@ in
     lanCidr = "192.168.10.0/24";
     deployer = "lenovo-21CB001PMX";
     edge = "acer-swift";
+    ntfy = {
+      host = "lenovo-21CB001PMX";
+      port = 2586;
+    };
+    loki = {
+      host = "black-pi";
+      port = 3100;
+    };
   };
 }

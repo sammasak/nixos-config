@@ -18,7 +18,8 @@ in
 
     port = mkOption {
       type = types.port;
-      default = 2586;
+      default = config.sam.fleet.ntfy.port;
+      defaultText = lib.literalExpression "config.sam.fleet.ntfy.port";
       description = "TCP port to listen on.";
     };
 
@@ -55,5 +56,12 @@ in
     };
 
     networking.firewall.allowedTCPPorts = [ cfg.port ];
+
+    assertions = [
+      {
+        assertion = config.networking.hostName == config.sam.fleet.ntfy.host;
+        message = "modules/homelab/ntfy.nix runs on ${config.networking.hostName}, but sam.fleet.ntfy.host is ${config.sam.fleet.ntfy.host}: every page would go to the wrong host.";
+      }
+    ];
   };
 }

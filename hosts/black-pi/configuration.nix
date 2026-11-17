@@ -29,15 +29,10 @@
       "msi-ms7758"
       "asus-b460m"
     ];
-    ntfyUrl = "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
   };
 
   # to its own LAN address, which the kernel delivers on lo (always accepted), so it needs no allowedSources entry
-  homelab.journalCollector = {
-    enable = true;
-    lokiUrl = "http://${config.sam.fleet.hosts.black-pi.address}:3100/loki/api/v1/push";
-    ntfyUrl = "http://${config.sam.fleet.hosts.lenovo-21CB001PMX.address}:2586/homelab-alerts";
-  };
+  homelab.journalCollector.enable = true;
 
   sam.profile = {
     username = "lukas";

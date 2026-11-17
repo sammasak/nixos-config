@@ -10,7 +10,7 @@ in
 {
   # The codex on PATH, so non-interactive callers export too; without both the gateway drops its metrics.
   # hiPrio: wins bin/codex over the codex module's pkgs.codex, whose other outputs stay.
-  home.packages = lib.optional (osConfig.sam.profile.devTools or false) (
+  home.packages = lib.optional osConfig.sam.profile.devTools (
     lib.hiPrio (
       pkgs.writeShellApplication {
         name = "codex";

@@ -7,7 +7,7 @@ let
   deployerKey =
     lib.findFirst (k: lib.hasSuffix "lukas@${deployer}" k)
       (throw "deploy-target: ${deployer}'s key is missing from lib/users.nix")
-      (config.sam.userConfig.sshKeys or [ ]);
+      config.sam.userConfig.sshKeys;
 in
 {
   users.groups.deploy = { };

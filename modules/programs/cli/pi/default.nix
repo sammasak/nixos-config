@@ -140,7 +140,7 @@ let
 
   # Loki on black-pi. Baked into the wrappers so non-login shells and timers get it too.
   lokiDefault = ''
-    export PI_OFFLOAD_LOKI_URL="''${PI_OFFLOAD_LOKI_URL:-http://${osConfig.sam.fleet.hosts.black-pi.address}:3100}"
+    export PI_OFFLOAD_LOKI_URL="''${PI_OFFLOAD_LOKI_URL:-${osConfig.sam.fleet.loki.url}}"
   '';
 
   piOffload = pkgs.writeShellApplication {

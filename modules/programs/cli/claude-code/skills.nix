@@ -8,7 +8,7 @@ let
 
   # The coordinator drives the workers this host saves in Herdr; on a worker it
   # would only see itself, so its adapter stays off there (docs/rollout-coordinator.md).
-  coordinatorHost = (osConfig.sam.herdr.machines or [ ]) != [ ];
+  coordinatorHost = osConfig.sam.herdr.machines != [ ];
   agentEntries = builtins.readDir "${skillsSrc}/agents";
   agentFiles = lib.filterAttrs (
     name: type:

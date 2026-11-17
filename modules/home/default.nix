@@ -1,7 +1,7 @@
 # Shared Home Manager configuration for all NixOS hosts
 { lib, osConfig, ... }:
 let
-  isDesktopMode = osConfig.sam.desktop.enable or false;
+  isDesktopMode = osConfig.sam.desktop.enable;
   hasDevTools = osConfig.sam.profile.devTools;
   baseImports = [
     ../programs/cli/fish.nix

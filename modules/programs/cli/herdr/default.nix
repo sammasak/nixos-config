@@ -11,9 +11,9 @@
 let
   # delivery = "system" needs an OS notification daemon; the headless worker has
   # none, so it falls back to herdr's own in-app toasts (rendered in the client).
-  toastDelivery = if (osConfig.sam.desktop.enable or false) then "system" else "herdr";
+  toastDelivery = if osConfig.sam.desktop.enable then "system" else "herdr";
   herdrBin = lib.getExe pkgs.herdr;
-  machines = osConfig.sam.herdr.machines or [ ];
+  machines = osConfig.sam.herdr.machines;
   herdrAlreadyRunning = pkgs.writeShellScript "herdr-already-running" ''
     if ${herdrBin} status --json | ${lib.getExe pkgs.jq} -e '.server.running == true' >/dev/null 2>&1; then
       exit 1
@@ -38,7 +38,7 @@ let
         }
       );
     }
-    // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
+    // lib.optionalAttrs osConfig.sam.herdr.worker.enable {
       # skills#28: a worker host's Herdr panes start claude in bypassPermissions, a restored one included
       HERDR_CLAUDE_WORKER_HOST = "1";
     };
@@ -78,7 +78,7 @@ in
       command ${herdrAgentLauncher}/bin/herdr-agent-launcher codex $argv
     '';
   }
-  // lib.optionalAttrs (osConfig.sam.herdr.worker.enable or false) {
+  // lib.optionalAttrs osConfig.sam.herdr.worker.enable {
     # The worker start by hand, through the same launcher; outside a Herdr pane plain `claude` still asks.
     claude-worker = ''
       command ${herdrAgentLauncher}/bin/herdr-agent-launcher claude --dangerously-skip-permissions $argv
@@ -89,7 +89,7 @@ in
     ".claude/hooks/herdr-agent-state.sh".source = "${integrationFiles}/claude/herdr-agent-state.sh";
     ".codex/herdr-agent-state.sh".source = "${integrationFiles}/codex/herdr-agent-state.sh";
   }
-  // lib.optionalAttrs (osConfig.sam.profile.pi or false) {
+  // lib.optionalAttrs osConfig.sam.profile.pi {
     ".pi/agent/extensions/herdr-agent-state.ts".source = "${integrationFiles}/pi/herdr-agent-state.ts";
   };
 

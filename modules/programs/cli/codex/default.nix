@@ -10,7 +10,7 @@ let
   # a host's Codex follows nativeOtel even with Claude's telemetry off (acer, msi); an environment has no
   # nativeOtel (no relay, no secret), so its Codex follows the sam.claude.telemetry its host sets
   nativeOtel = osConfig.sam.profile.nativeOtel || osConfig.sam.claude.telemetry.enable;
-  coordinatorHost = (osConfig.sam.herdr.machines or [ ]) != [ ];
+  coordinatorHost = osConfig.sam.herdr.machines != [ ];
   coordinatorRole = "${skillsSrc}/agents/coordinator/ROLE.md";
   coordinatorSkills =
     let

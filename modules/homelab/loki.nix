@@ -66,7 +66,9 @@ in
     };
     ntfyUrl = lib.mkOption {
       type = lib.types.strMatching "https?://.+";
-      description = "ntfy topic URL paged when Loki fails; no default, so a start-limit hit is never silent.";
+      default = config.sam.fleet.pageUrl;
+      defaultText = lib.literalExpression "config.sam.fleet.pageUrl";
+      description = "ntfy topic URL paged when Loki fails.";
     };
   };
 
