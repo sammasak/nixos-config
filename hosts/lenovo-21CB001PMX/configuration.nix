@@ -110,63 +110,43 @@
     max-jobs = 2;
     cores = 2;
   };
-  # swap a quarter of the cap, as the user slice and the worker pools: zram is charged to no cgroup
-  systemd.services.nix-daemon.serviceConfig = {
-    MemoryHigh = "6G";
-    MemoryMax = "7G";
-    MemorySwapMax = "1792M";
+  # The whole memory budget (modules/core/memory-budget.nix): 15.3 GiB of MemTotal; every MemoryMax on the host
+  # (these two, and alert-bridge 64M, alloy 256M and node-exporter 64M from their modules) plus the floors fits in it,
+  # 115M left. The kernel, page tables and the zram store (about 1 GiB measured) are outside: the caps meet only with
+  # the daemon pushed past its MemoryHigh while the user slice is at its ceiling. Swap is a quarter of each cap, as the
+  # worker pools: zram is charged to no cgroup.
+  sam.memory = {
+    ram = "15667M";
+    caps = {
+      # the measured cores-2 build peak is 6118 MiB with no swap: MemoryHigh throttles first, MemoryMax fails the
+      # build, not the host
+      "nix-daemon.service" = {
+        high = "6G";
+        max = "6400M";
+        swapMax = "1600M";
+      };
+      # nixos-config#353: all login users combined, a client-side evaluation included; NOT MemoryHigh, or a runaway
+      # stalls every session instead of being killed. The idle sessions' 4.6 GiB that cannot be dropped plus the
+      # largest measured unit (3.0 GiB) fit under it (scripts/test-lenovo-build-bounds.py).
+      "user.slice" = {
+        max = "8448M";
+        swapMax = "2112M";
+      };
+    };
+    # the LAN's DNS and the way in keep answering while the user slice and a build are both at their caps
+    floors = {
+      "adguardhome.service" = "256M";
+      "sshd.service" = "64M";
+    };
   };
 
-  # nixos-config#353: the daemon cap does not hold a client-side evaluation. All login users combined;
-  # daemon builds sit outside. Closes one runaway only: this plus the daemon cap still exceeds RAM.
-  # NOT MemoryHigh: a runaway then never reaches the limit and stalls every session instead (workers/core.nix).
-  # RAM less the measured control plane (scripts/test-lenovo-build-bounds.py); swap a quarter, as the worker pools.
-  systemd.slices.user.sliceConfig = {
-    MemoryMax = "8704M";
-    MemorySwapMax = "2176M";
-  };
-
-  # The caps still oversubscribe RAM: the user ceiling plus the daemon's MemoryHigh is 14.5 GiB before the kernel,
-  # zram and system.slice (about 1.9 GiB measured); MemoryHigh only throttles. Closing that needs the measured floor
-  # (#354). These hold what is known: the daemon throttles before its cap, and no swap cap exceeds a quarter of its cap.
   assertions =
     let
-      parse =
-        v:
-        let
-          m = builtins.match "([0-9]+)([KMG]?)" (toString v);
-        in
-        if m == null then
-          throw "lenovo: cannot size ${toString v} (want an integer, optionally with K, M or G)"
-        else
-          lib.toInt (builtins.elemAt m 0)
-          * {
-            "" = 1;
-            K = 1024;
-            M = 1048576;
-            G = 1073741824;
-          }
-          .${builtins.elemAt m 1};
-      daemon = config.systemd.services.nix-daemon.serviceConfig;
-      user = config.systemd.slices.user.sliceConfig;
       alloy = config.systemd.services.alloy.serviceConfig;
+      mib = v: lib.toInt (lib.removeSuffix "M" (toString v));
     in
-    [
-      {
-        assertion = parse daemon.MemoryHigh < parse daemon.MemoryMax;
-        message = "lenovo: nix-daemon MemoryHigh ${daemon.MemoryHigh} must be below its MemoryMax ${daemon.MemoryMax}, so a build is throttled before it is killed.";
-      }
-      {
-        assertion = parse daemon.MemorySwapMax * 4 <= parse daemon.MemoryMax;
-        message = "lenovo: nix-daemon MemorySwapMax ${daemon.MemorySwapMax} is above a quarter of its MemoryMax ${daemon.MemoryMax}; zram is charged to no cgroup.";
-      }
-      {
-        assertion = parse user.MemorySwapMax * 4 <= parse user.MemoryMax;
-        message = "lenovo: user.slice MemorySwapMax ${user.MemorySwapMax} is above a quarter of its MemoryMax ${user.MemoryMax}; zram is charged to no cgroup.";
-      }
-    ]
-    ++ lib.optional config.homelab.journalCollector.enable {
-      assertion = parse alloy.MemorySwapMax * 4 <= parse alloy.MemoryMax;
+    lib.optional config.homelab.journalCollector.enable {
+      assertion = mib alloy.MemorySwapMax * 4 <= mib alloy.MemoryMax;
       message = "lenovo: the journal collector's MemorySwapMax ${toString alloy.MemorySwapMax} is above a quarter of its MemoryMax ${toString alloy.MemoryMax}; zram is charged to no cgroup.";
     };
 
