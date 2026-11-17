@@ -151,8 +151,8 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
   - the default host list in `scripts/ssh-known-hosts-verify.sh`;
   - the host rows in `docs/architecture.md`, CLAUDE.md's deploy block and hostnames, and for a
     runtime host `docs/nspawn-workers.md`;
-- not checked yet: the hosts `scripts/test-alloy-otlp-sanitizer.sh` feeds the relabel, and the
-  host rows in `README.md`;
+- the host rows in `README.md` and the fleet size the docs state (`nixos:readability-test`);
+- not checked yet: the hosts `scripts/test-alloy-otlp-sanitizer.sh` feeds the relabel;
 - for a host that is not always up (scheduled power-off, dual boot), `sleeps = true`
   on its `modules/core/fleet.nix` entry. That one fact keeps it out of every store
   cache's substituters and moves it from `NodeChronicNotReady` to `HostExpectedOff`;
