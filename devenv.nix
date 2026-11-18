@@ -411,6 +411,18 @@ let
         ${pkgs.python3}/bin/python scripts/test-fleet-contract.py
       '';
 
+  # eleven nix evals of one host each, the real hosts' holding them twice: serial here, too heavy beside the flake check
+  seventhHostTest =
+    gate "seventh-host-test"
+      (with pkgs; [
+        git
+        nix
+        python3
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-seventh-host.py
+      '';
+
   # acer's Alloy, config and ExecStart from the gate probe, not devenv's packages
   alloyOtlpTest =
     gate "alloy-otlp-test"
@@ -760,6 +772,7 @@ let
     journalCollectorTest
     fleetEndpointsTest
     fleetContractTest
+    seventhHostTest
     caddyEdgeTest
     typedInterfacesTest
     systemChecksTest
@@ -1342,6 +1355,8 @@ in
       task "Every paging unit pages sam.fleet.pageUrl, also without runtime-host's sam.workers.ntfyUrl; an empty URL, ntfy off its fleet host and a redefined fleet fact fail" fleetEndpointsTest;
     "nixos:fleet-contract-test" =
       task "No file but fleet.nix names the ntfy or Loki port; every host's firewall admits each sam.fleet listener from its callers alone and opens nothing else, no service the probe reads binds off its listener's port; lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: an open port, an upstream openFirewall, a stray rule, a trusted interface, a host removed)" fleetContractTest;
+    "nixos:seventh-host-test" =
+      task "A seventh host seeded from fixture data (its hosts.nix and fleet.nix entries, hosts/seventh) into a temporary tree: it evaluates, every list derived from the fleet names it, only the hosts rendering one move; the places it still needs edited by hand are listed exactly (seeded: each derived list hard-coded without it)" seventhHostTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:trash-sweep-test" =
