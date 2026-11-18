@@ -107,7 +107,7 @@ in
           ];
         }
         # Planned power-off of a sleeping host (homelab-gitops#188): while HostExpectedOff fires for it
-        # (./rules/homelab.yaml), silence what it causes. With a host that does not sleep down, it does not fire.
+        # (./rules/homelab.yaml, ./rules/homelab.nix), silence what it causes. With a host that does not sleep down, it does not fire.
         # 1) anything labelled with that host;
         {
           source_matchers = hostOff;
