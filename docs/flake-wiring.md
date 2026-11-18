@@ -1,168 +1,36 @@
-# Flake wiring: one hosts table, the role registry stays
+# Flake wiring: the hosts table and the module registry
 
-Status: implemented in steps P to 5 (step 5 was the last); the owner's open
-questions below remain (option B's moves, the known fragility).
-`docs/architecture.md` describes the current code. Tracking issue: #292
-(roadmap #295, wave 3).
+`flake-modules/hosts.nix` is one typed table (option in `hosts-option.nix`): each entry holds `roles`, and `deploy`
+fields (`hostname`, and a required `remoteBuild`). From it `nixos-configurations.nix` derives `nixosConfigurations`
+and `deploy.nix` derives the deploy-rs nodes. There are six entries today. Architecture is stated once, by
+`nixpkgs.hostPlatform` in each host's hardware scan (the Pis: `modules/hardware/pi-sd-image.nix`), and
+`sam.profile.username` is an enum of `lib/users.nix`, so a typo fails at its definition. A new host's checklist is
+"Adding a New Host" in `CLAUDE.md`.
 
-| Step | Change | State |
-|---|---|---|
-| P | `just parity` derives its host list and compares deploy nodes and settings | landed with this file |
-| 0 | this document | landed |
-| 1 | `sam.profile.username` becomes an enum of `lib/users.nix` | landed |
-| 2 | architecture stated once (`hostPlatform`) | landed |
-| 3 | one table value file `flake-modules/hosts.nix`, roles in it | landed |
-| 4 | deploy nodes derived from the table | landed |
-| 5 | registry comment: its depth fixes merge order | landed |
+A field goes in the table only if something outside the host's own evaluation reads it (`roles`, since imports cannot
+depend on config, and `deploy.*`). A fact read by two or more modules goes in `sam.fleet` (`modules/core/fleet.nix`),
+not in the table: nothing at flake level reads an address, and a module under `core/system.nix` also reaches worker
+guests and the runtime-host VM test. A fact with one reader stays in its reader.
 
-Evidence: flake.nix, flake-modules/, hosts/*/, lib/users.nix and the roles at
-main 72d7bd5; nixpkgs fe13242 (eval-config.nix, misc/nixpkgs.nix,
-lib/modules.nix); flake-parts 024633c (extras/modules.nix). Prototypes were
-evaluated, not built, from `git archive` copies, one host at a time.
+## Why the registry's depth matters
 
-## Context
-
-Before step 3, flake wiring for a host lived in two files,
-`flake-modules/hosts/<name>.nix` and its node in `deploy.nix`; since step 4
-it is one `flake-modules/hosts.nix` entry, and the node is derived from it. Before step 2, architecture was stated three
-times: `system` there, `nixpkgs.hostPlatform` in `hardware-configuration.nix`, and the
-`x86`/`aarch64` activate per node. Nothing checked that they agreed.
-
-The issue's other claims, checked against the code:
-
-- **"A username typo yields a host with no SSH keys."** Not quite. With
-  naked-pi's username set to `lukass`, the toplevel already fails to
-  evaluate, with the misleading `deploy-target: lenovo's key is missing`.
-  Reading an option directly (`config.users.users.lukass.openssh.authorizedKeys.keys`)
-  silently gives `[ ]`, because of `users.${username} or { }`.
-- **"import-tree is used for one call; docs claim an ordering."** #306
-  already fixed the docs. One small input loading one directory is a style
-  point.
-- **"The registry only turns a name into a path."** True as code, but **its
-  nesting decides merge order**. The module system collects imports
-  breadth-first (`genericClosure`), so import depth decides where definitions
-  land in list and lines merges, and flake-parts nests each `flake.modules`
-  entry three levels deep. Plain paths moved all five toplevels. Attributed
-  on lenovo, each lookup on its own:
-  - the Home Manager lookup (`config.flake.modules.homeManager.default`)
-    reorders `home-manager-path`, fish completions, man paths, fontconfig,
-    and swaps the cascade in `waybar-style.css` and `swaync-style.css`. The
-    repo's rules move after Stylix's, so `12px` overrides `10pt`, a visible
-    change;
-  - the nixos role lookups reorder `system-path`, `dbus-1` and polkit's
-    restart triggers.
-  Nesting plain paths four levels deep restored lenovo's drvPath, which
-  confirms the cause.
-
-## Options considered
-
-| Option | Parity (as measured then) | Fit here |
-|---|---|---|
-| A. Status quo | yes | the wiring stays split in two places |
-| B. Direct role and HM paths, explicit flake-module list | **no**: all five move, CSS precedence flips | only after #315 pins the order-dependent definitions and the owner accepts the moves |
-| C. Self-registering role files (dendritic `flake.modules.nixos.<role>`) | likely (same depth), unmeasured | rewrites every role file into a flake-parts module; buys nothing over D for 7 roles |
-| D. **The existing typed table, collapsed and extended; registry and import-tree stay** | **yes, measured** | smallest diff |
-
-Plain `nixosSystem` per host with an explicit module list, and nodes from
-`mapAttrs` over the configurations (the deploy-rs README pattern), both fit
-inside D.
-
-## Decision
-
-1. **The table is the existing `configurations.nixos` option**
-   (`hosts-option.nix`). The five `flake-modules/hosts/*.nix`
-   files collapse into one value file, `flake-modules/hosts.nix`. It gains
-   `deploy` fields and loses `system` and `username`, and `hostDir`
-   defaults to the attribute name. The option is not renamed: no reader
-   gains, and the rename would touch every consumer.
-2. **What belongs in the table:** a field goes in only if something outside
-   the host's own evaluation reads it. That covers `roles` (imports cannot
-   depend on config) and `deploy.*` (read by deploy-rs). #291's addresses,
-   read by other hosts' NixOS modules but nothing at flake level, went to
-   `sam.fleet` instead (below). Username and feature flags are read only
-   inside the host, so they stay in `sam.profile` in
-   `hosts/<dir>/configuration.nix`.
-
-   ```nix
-   configurations.nixos = {
-     # deploy-rs runs only on lenovo: its own deploy is a loopback self-push.
-     lenovo = { hostDir = "lenovo-21CB001PMX"; roles = [ "base" "laptop" "homelab-server" ]; deploy = { hostname = "localhost"; remoteBuild = false; }; };
-     # lenovo, memory-constrained, has crashed building these closures.
-     acer-swift = { roles = [ "base" "laptop" "homelab-agent" "runtime-host" ]; deploy.remoteBuild = true; };
-     # Same reason; reachable only in its Mon-Fri ~08:30-21:00 power window.
-     msi-ms7758 = { roles = [ "base" "homelab-agent" "runtime-host" ]; deploy.remoteBuild = true; };
-     # lenovo has no aarch64 builder; untrusted lukas is enough (.drv and sources are CA paths).
-     black-pi = { roles = [ "base" "homelab-agent" ]; deploy.remoteBuild = true; };
-     # Same reason; rf-lab keeps the closure to cache hits and text derivations, so 1 GiB is enough.
-     naked-pi = { roles = [ "base" "rf-lab" "embedded" ]; deploy.remoteBuild = true; };
-   };
-   ```
-3. **Derived:** `nixosConfigurations.<name>` without a `system` argument
-   (the flake's `nixosSystem` passes `system = null`, so `hostPlatform`
-   decides pkgs; architecture is stated once). `deploy.nodes.<name>` picks
-   its activate from `pkgs.stdenv.hostPlatform.system` and emits
-   `remoteBuild` only when true. `deploy.remoteBuild` has no default: a
-   host that omits it fails evaluation instead of building on lenovo.
-4. **Unknown user: `sam.profile.username` becomes
-   `types.enum (attrNames (import lib/users.nix))`.** A typo then fails at
-   the definition, with its file, for every reader, including direct option
-   probes. The user lookup reads the option, without `or { }`. The enum is
-   preferred to a throw at the lookup because it makes the bad value
-   unrepresentable, not merely detected.
-5. **The registry stays.** A comment in `module-registry.nix` records
-   that its depth fixes merge order. The "must include base" assertion stays:
-   `laptop.nix` does not import base, so dropping it would be a behaviour
-   change.
-6. **import-tree stays.** An explicit list of eight files removes one input
-   and adds a list to maintain.
-
-Measured on the combined prototype at 72d7bd5: five toplevels and five
-deploy-node attrsets (activation drv included) identical. That prototype used
-a throw at the lookup; the enum is unmeasured and its step verifies it. Each
-step is checked with `just parity` against its own merge base, which since
-step P covers deploy nodes as well as toplevels.
+`flake-modules/module-registry.nix` only turns a role or home file name into a path, but its nesting decides merge
+order. The module system collects imports breadth-first, so import depth decides where definitions land in list and
+lines merges, and flake-parts nests each `flake.modules` entry three levels deep. Importing the plain paths instead
+moves every host's toplevel: reordered `system-path`, `home-manager-path` and fish completions, and a swapped cascade
+in the waybar and swaync CSS where the repo's rules land after Stylix's. The registry and its lookups
+(`config.flake.modules.nixos.role-<name>`, `...homeManager.<name>`) therefore stay, and `just parity` is the check that
+the order did not move.
 
 ## Known fragility
 
-Merge order now rests on import depth, which nobody chose. #315 tracks
-pinning the waybar and swaync CSS with `mkBefore`/`mkAfter`. The full set of
-order-dependent definitions is unknown. A flake-parts bump (wrapper depth) or
-a Stylix bump (its own depth) could flip one, and parity would not catch it:
-the drvPath moves with the bump anyway, so an ordering change looks like the
-update.
+Merge order rests on import depth, which nobody chose. The waybar and swaync CSS are pinned with `lib.mkBefore`
+(`modules/desktop/common/programs/waybar/minimal.nix`, `swaync/default.nix`), but the full set of order-dependent
+definitions is unknown. A flake-parts bump (wrapper depth) or a Stylix bump (its own depth) can flip one, and parity
+cannot catch it: the drvPath moves with the bump anyway, so an ordering change looks like the update.
 
-## Consequences
+`sam.userConfig` is a typed submodule (`git.userName`, `git.email`, `sshKeys`): it was `types.attrs`, which merged by
+`//`, silently dropping keys, and did not discharge `mkDefault`/`mkIf`; `scripts/test-typed-interfaces.py` keeps it
+typed.
 
-- A sixth host's flake wiring goes from two files to one table entry. Still
-  needed: `hosts/<dir>/`, the `just deploy` HOST pattern (checked by
-  `test-ssh-known-hosts.py`), its pinned key in
-  `modules/core/ssh-known-hosts.nix`, its sops recipient, its address in
-  `modules/core/fleet.nix` if another module reads it, and optionally
-  `sam.cliTools.*` in its `configuration.nix` (#291). `just parity` picks the
-  host up on its own.
-- Every table entry is a deploy node, as all five were before step 4.
-- Plain paths (B) stay possible once #315 and its successors make order
-  explicit.
-
-## Composition with #291
-
-#291 owns the facts (addresses, host keys, cache keys,
-per-host tool choices). #292 adds no fact fields, and #291 adds none to this
-table either: a LAN fact read by two or more modules is a typed, read-only
-`sam.fleet` set in `modules/core/fleet.nix`, imported by `core/system.nix`.
-Nothing at flake level reads an address (`deploy.hostname` uses names), the
-table is keyed by flake attribute while every reader keys by
-`networking.hostName`, and a module under `system.nix` also reaches worker
-guests and the runtime-host VM test without threading a value through. A fact
-with one reader (host keys, cache keys, the Pis' addresses) stays in its reader.
-
-## Not changed
-
-flake-parts, one nixpkgs, no specialArgs, curried `import file inputs.x`,
-the `lenovo` attribute vs its hostname, `hardware-configuration.nix`, role file
-contents, flake-module file names, any deploy.
-
-`sam.userConfig` was on this list untyped and is now a submodule (`git.userName`, `git.email`, `sshKeys`), reopened
-by #295: `types.attrs` merges by `//`, so a second definition silently drops the first's keys and `mkDefault`/`mkIf`
-are not discharged (the deprecation warning on `attrs` in nixpkgs `lib/types.nix`), and its readers needed `or`
-fallbacks that turn a renamed field into an empty value. `scripts/test-typed-interfaces.py` keeps both out.
+The migration plan and its evidence: `git log -- docs/flake-wiring.md`.

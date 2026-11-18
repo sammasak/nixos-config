@@ -133,7 +133,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 
 - `skills/<name>/SKILL.md` → `~/.claude/skills/<name>/SKILL.md`
 - `agents/<name>.md` → `~/.claude/agents/<name>.md` (role adapters included: plain subagents whose prompt states the one allowed command form; Claude Code's permission prompt is the gate, see `docs/herdr.md` and the skills repo `docs/operator-runbook.md`)
-- The coordinator adapter only on the coordinator host (the one with `sam.herdr.machines`, lenovo), which also declares Codex's `[agents.coordinator] config_file` in `~/.codex/config.toml` as the skills input's `agents/coordinator/codex.toml` (never a symlink under `~/.codex/agents`: Codex opens it with O_NOFOLLOW); rollout in `docs/rollout-coordinator.md`
+- The coordinator adapter only on the coordinator host (the one with `sam.herdr.machines`, lenovo), which also declares Codex's `[agents.coordinator] config_file` in `~/.codex/config.toml` as the skills input's `agents/coordinator/codex.toml` (never a symlink under `~/.codex/agents`: Codex opens it with O_NOFOLLOW); operation in `docs/rollout-coordinator.md`
 
 
 **Update workflow**:
