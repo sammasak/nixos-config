@@ -82,7 +82,8 @@ check(any("homelab.loki.port 3101 is not sam.fleet.loki.port" in m for m in F["l
 # accepted sources are its callers' addresses, once each; every other accepting line is loopback or a lan public entry.
 L, PUB, FW, ADDR = P["listeners"], P["public"], P["firewall"], P["addresses"]
 RULE = re.compile(r"^iptables -w -A nixos-fw -s (\S+) -p (tcp|udp) --dport ([0-9]+) -j nixos-fw-accept$")
-INPUT_ACCEPT = re.compile(r"(-j|-g|--jump|--goto) +(nixos-fw-accept|ACCEPT|[\"$])|-[AI] +(nixos-fw|INPUT) .*-j +RETURN")
+INPUT_ACCEPT = re.compile(r"(-j|-g|--jump|--goto)(\s+|=)?(nixos-fw-accept|ACCEPT|\$)|(^|\s)(-g|--goto)(\s|=)|-[AI] +(nixos-fw|INPUT) .*-j +RETURN")
+LOOPBACK = re.compile(r"(^|\s)(-i|--in-interface)\s+lo(\s|$)")
 FORWARD = re.compile(r"-[AI] +(FORWARD|nixos-filter-forward|dev-env-forward)( |$)|-t +(nat|mangle|raw)( |$)")
 mine = lambda host: [p for p in PUB if p["host"] in (None, host)]
 check(len(FW) >= 6 and all(fw["enable"] and fw["backend"] == "iptables" for fw in FW.values()),
@@ -90,8 +91,9 @@ check(len(FW) >= 6 and all(fw["enable"] and fw["backend"] == "iptables" for fw i
 check(all(p["why"].strip() for p in PUB) and "loki" in L and L["loki"]["from"] == sorted(h for h in ADDR if h != "black-pi"),
       f"every public entry gives its reason, and Loki's callers are every other fleet host ({L.get('loki')})")
 for host, fw in sorted(FW.items()):
-    lines = [l.strip() for l in fw["extraCommands"].replace("\\\n", " ").splitlines()]
-    accepted = [l for l in lines if INPUT_ACCEPT.search(l) and not FORWARD.search(l) and " -i lo " not in l]
+    lines = [c.strip().replace("'", "").replace('"', "") for l in fw["extraCommands"].replace("\\\n", " ").splitlines()
+             for c in re.split(r";|&&|\|\|", l)]
+    accepted = [l for l in lines if INPUT_ACCEPT.search(l) and not FORWARD.search(l) and not (LOOPBACK.search(l) and "!" not in l)]
     scoped = [RULE.match(l) for l in accepted]
     want = sorted((a, l["proto"], l["port"]) for l in L.values() if l["host"] == host for h in l["from"] for a in ADDR[h])
     got = sorted((m[1], m[2], int(m[3])) for m in scoped if m and (m[2], int(m[3])) in {(l["proto"], l["port"]) for l in L.values() if l["host"] == host})

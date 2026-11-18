@@ -55,25 +55,37 @@ in
       )
     );
 
-  # Does a rendered rule line (backslash continuations joined) let traffic in to this host, on any port: an accept
-  # target, a variable target (unreadable, so fails closed), or a RETURN out of nixos-fw or INPUT, whose policy
-  # accepts. Forwarding (networking.nat's nixos-filter-forward, the workers' dev-env-forward) and the nat, mangle
-  # and raw tables reach no listener here, so they are not read.
+  # Does one rendered command (backslash continuations joined, split at ; && ||) let traffic in to this host, on any
+  # port: an accept target (quoted, `--jump=`, a variable: unreadable, so fails closed), any goto, a RETURN out of
+  # nixos-fw or INPUT (whose policy accepts), deleting a rule that names nixos-fw, or flushing, deleting or setting
+  # the policy of INPUT or nixos-fw (or of every chain). Loopback (`-i lo`, not negated) is accepted by nixos-fw
+  # anyway. Forwarding (networking.nat's nixos-filter-forward, the workers' dev-env-forward) and the nat, mangle
+  # and raw tables reach no listener here, so they are not read; nor are rules a unit adds at runtime.
   admitting =
     backend: l:
+    let
+      c = lib.replaceStrings [ "'" "\"" ] [ "" "" ] l;
+      ws = "(^|.*[[:space:]])";
+      has = re: builtins.match "${ws}${re}([[:space:]].*|$)" c != null;
+      target = t: has "(-j|-g|--jump|--goto)([[:space:]]+|=)?(${t})";
+      chain = builtins.match "${ws}(-[FXP]|--flush|--delete-chain|--policy)([[:space:]]+([^-[:space:]][^[:space:]]*))?([[:space:]].*|$)" c;
+      chainName = if chain == null then null else lib.elemAt chain 3;
+    in
     if backend == "iptables" then
-      builtins.match ".*(-[AI] +(FORWARD|nixos-filter-forward|dev-env-forward)|-t +(nat|mangle|raw))( .*|$)" l
-      == null
+      !has "(-t[[:space:]]+(nat|mangle|raw)|-[AIDRFX][[:space:]]+(FORWARD|nixos-filter-forward|dev-env-forward))"
+      && !(has "(-i|--in-interface)[[:space:]]+lo" && !lib.hasInfix "!" c)
       && (
-        builtins.match ".*(-j|-g|--jump|--goto) +(nixos-fw-accept|ACCEPT|[\"$]).*" l != null
-        || (
-          builtins.match ".*-[AI] +(nixos-fw|INPUT) .*" l != null
-          && builtins.match ".*(-j|--jump) +RETURN.*" l != null
-        )
+        target "nixos-fw-accept|ACCEPT|[$][^[:space:]]*"
+        || has "(-g|--goto)([[:space:]]+|=)?[^[:space:]]+"
+        || has "-[AI][[:space:]]+(nixos-fw|INPUT)" && target "RETURN"
+        || has "(-[DR]|--delete|--replace)" && lib.hasInfix "nixos-fw" c
+        ||
+          chain != null && (chainName == null || chainName == "INPUT" || lib.hasPrefix "nixos-fw" chainName)
       )
     else
       builtins.match "[[:space:]]*#.*" l == null
-      && builtins.match "(.*[[:space:];])?accept([[:space:];].*)?" l != null;
+      && builtins.match "(.*[[:space:];])?accept([[:space:];].*)?" l != null
+      && builtins.match "[[:space:]]*iifname \"lo\" .*" l == null;
 
   # `nftComment` and `dropOthers` land in the nftables output only, hence the name.
   # The assert is the point of the file. `networking.firewall.backend` is

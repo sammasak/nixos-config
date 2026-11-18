@@ -101,7 +101,6 @@ in
     };
   };
 
-  # black-pi's Prometheus scrapes the collector's own metrics; 4318 listens on loopback alone
   assertions = [
     {
       # declared by native-otel-relay.nix from the file acer is a recipient of; this unit adds no recipient

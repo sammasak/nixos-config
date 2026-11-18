@@ -38,9 +38,12 @@ let
 
   # The one check of the rendered firewall: what it opens, trusts or accepts is a listener's rule or a public entry,
   # so an upstream openFirewall, a stray allowedTCPPorts or a hand-written rule on any module fails the build.
-  text = lib.splitString "\n" (
-    lib.replaceStrings [ "\\\n" ] [ " " ] (
-      if fw.backend == "iptables" then fw.extraCommands else fw.extraInputRules
+  # one command per entry: backslash continuations joined, lines split at ; && ||
+  text = lib.filter builtins.isString (
+    builtins.split "\n|;|&&|[|][|]" (
+      lib.replaceStrings [ "\\\n" ] [ " " ] (
+        if fw.backend == "iptables" then fw.extraCommands else fw.extraInputRules
+      )
     )
   );
   derived =
@@ -51,11 +54,7 @@ let
           lib.filter (p: p.lan && p.port != null) mayOpen
         )
       );
-  # loopback is accepted by nixos-fw before any of these
-  loopback = l: lib.hasInfix " -i lo " l || lib.hasPrefix ''iifname "lo" '' (lib.trim l);
-  strayLines = lib.filter (
-    l: admitting fw.backend l && !lib.elem (lib.trim l) derived && !loopback l
-  ) text;
+  strayLines = lib.filter (l: admitting fw.backend l && !lib.elem (lib.trim l) derived) text;
   public' =
     proto: iface: port:
     lib.any (

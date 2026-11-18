@@ -1,6 +1,6 @@
 # services.ollama for the llm-gateway, bound to the node address. The port is opened to no source, so the LAN is
-# dropped unless sam.fleet has a listener for it (modules/core/fleet.nix). The host sets the models, the context and the MemoryMax that fits one
-# loaded model.
+# dropped unless sam.fleet has a listener for it (modules/core/fleet.nix). The host sets the models, the context and
+# the MemoryMax that fits one loaded model.
 {
   config,
   lib,

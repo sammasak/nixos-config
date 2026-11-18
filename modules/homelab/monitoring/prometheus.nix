@@ -229,8 +229,6 @@ in
     };
   };
 
-  # acer's alloy-otlp pushes OTLP; lenovo's watchdog and the harness usage report on either host read; Grafana on this
-  # host arrives on loopback
   assertions = [
     {
       assertion =

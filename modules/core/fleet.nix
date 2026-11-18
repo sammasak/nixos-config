@@ -256,7 +256,7 @@ in
       prometheus = {
         host = "black-pi";
         port = 9090;
-        # acer's OTLP relay writes, lenovo's checks query
+        # acer's alloy-otlp pushes OTLP, lenovo's watchdog and harness usage report read; Grafana there is loopback
         from = [
           "acer-swift"
           "lenovo-21CB001PMX"
