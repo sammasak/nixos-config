@@ -192,6 +192,11 @@ let
       dashboard = seed ''nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job="nvidia-gpu"}'' "prometheus";
       reason = "unknown metric nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown";
     };
+    # a real name under another job's selector: the panel would stay empty
+    wrong-job = {
+      dashboard = seed ''node_load1{job="prometheus"}'' "prometheus";
+      reason = "metric node_load1 is not exported by job 'prometheus'";
+    };
     caddy-typo = {
       dashboard = seed "rate(caddy_http_requets_total[5m])" "prometheus";
       reason = "unknown metric caddy_http_requets_total";
@@ -380,7 +385,7 @@ in
             spec = builtins.toJSON {
               inherit dashboards hosts builtin;
               sources = lib.imap0 (i: s: {
-                inherit (s) prefix strip;
+                inherit (s) prefix strip job;
                 literals = "literals-${toString i}";
               }) sources;
               otlp_allowlist = "${../modules/homelab/monitoring/alloy-otlp.alloy}";
@@ -486,7 +491,11 @@ in
               ${
                 pkgs.python3.withPackages (ps: [ ps.pyyaml ])
               }/bin/python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom writers.prom llm-gateway.prom authentik.prom ${adguardCheck}/dns.prom stack/*.prom shipping.prom nav.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node-exporter=node.prom node-exporter=systemd.prom \
+                node-exporter=writers.prom node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom \
+                node-exporter=nav.prom llm-gateway=llm-gateway.prom authentik-server=authentik.prom \
+                authentik-worker=authentik.prom prometheus=stack/prometheus.prom alertmanager=stack/alertmanager.prom \
+                alloy-otlp=stack/alloy.prom nvidia-gpu=${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"

@@ -43,11 +43,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ports the kernel hands out free now: ones derived from the PID landed in the ephemeral range, where another
-# process's connection could already hold one (a gate failed on "address already in use")
-free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
-otlp_port=$(free_port)
-server_port=$(free_port)
+# four ports the kernel hands out free now, all bound at once so they are distinct: ones derived from the PID landed in
+# the ephemeral range, where another process's connection could already hold one ("address already in use")
+read -r otlp_port server_port sum_port sum_server_port < <(python3 -c '
+import socket
+socks = [socket.socket() for _ in range(4)]
+for s in socks:
+    s.bind(("127.0.0.1", 0))
+print(*(s.getsockname()[1] for s in socks))')
 test_token="native-otlp-smoke-${$}"
 export OTLP_BEARER_TOKEN=$test_token
 
@@ -384,8 +387,6 @@ printf 'PASS: authenticated OTLP ingestion recovered after restart; 1 MiB reques
 kill -INT "$alloy_pid" 2>/dev/null || true
 wait "$alloy_pid" 2>/dev/null || true
 alloy_pid=
-sum_port=$(free_port)
-sum_server_port=$(free_port)
 cp "$deployed_config" "$rewritten_file"
 chmod u+w "$rewritten_file"
 for rewrite in \
