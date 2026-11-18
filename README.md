@@ -104,8 +104,11 @@ or off that generation, for example a unit that fails after activation reported 
 rolls nothing back: the new generation stays. A host degraded for an unrelated, pre-existing
 reason fails every deploy until fixed; read `systemctl --failed` on the target.
 
-Rollback with `sudo nixos-rebuild switch --rollback`, or pick an older
-generation in the boot menu.
+Rollback with `sudo nixos-rebuild switch --rollback --no-reexec`, or pick an older generation in the boot menu
+(systemd-boot on lenovo and acer-swift, GRUB on msi-ms7758 and asus-b460m, which dual-boot Windows:
+`modules/hardware/windows-dual-boot.nix`). Without `--no-reexec`, nixos-rebuild first re-executes itself from
+`<nixpkgs/nixos>`, which these flake-only hosts lack on `NIX_PATH`: it fails with "file 'nixos-config' was not found
+in the Nix search path" and changes nothing.
 
 ## SSH Hardening
 

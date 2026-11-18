@@ -68,8 +68,9 @@ to look for: nothing runs until an operator calls it. The first report appears i
 
 ## Rollback
 
-On one host: `sudo nixos-rebuild switch --rollback`, or pick the previous generation in
-the boot menu (systemd-boot; GRUB on msi-ms7758); Home Manager is a NixOS module here, so
+On one host: `sudo nixos-rebuild switch --rollback --no-reexec` (without `--no-reexec` it fails on these
+flake-only hosts and changes nothing: README.md), or pick the previous generation in the boot menu (systemd-boot;
+GRUB on msi-ms7758 and asus-b460m); Home Manager is a NixOS module here, so
 its packages go with it. Everywhere: revert this change, or drop
 `sam.cliTools.nixAudit.enable` from lenovo's `configuration.nix` or from
 `modules/roles/runtime-host.nix` (acer-swift, msi-ms7758), then switch or deploy as
