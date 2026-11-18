@@ -1211,7 +1211,7 @@ in
     "nixos:systemd-calendar-test" =
       task "The systemd-calendar check passes parsing NixOS and Home Manager timer specs and fails, naming the timer (and user), on a bad one (fixture trees)" systemdCalendarTest;
     "nixos:systemd-verify-test" =
-      task "The systemd-verify check passes a clean tree and fails, printing the line, on an unknown key, unknown section or unparseable value, in system or Home Manager units (fixture trees)" systemdVerifyTest;
+      task "The systemd-verify check passes a clean tree and fails, printing the line, on an unknown key, unknown section, unparseable value, non-absolute path, removed option or refused unit, in system or Home Manager units (fixture trees)" systemdVerifyTest;
     "nixos:power-schedule-test" =
       task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
     "nixos:readability-test" =

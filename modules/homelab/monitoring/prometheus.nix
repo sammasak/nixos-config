@@ -76,9 +76,13 @@ in
   services.prometheus.exporters.blackbox = {
     enable = true;
     listenAddress = "127.0.0.1";
-    # info logs every redirect each probe follows, Authentik's login URLs included, into the journal and so Loki;
-    # a failed probe still logs at error, and /probe?debug=true still shows a probe's redirect trail
-    extraFlags = [ "--log.level=warn" ];
+    # info logs every redirect each probe follows, Authentik's login URLs included, into the journal and so Loki.
+    # --log.level is the exporter's own logger only; the per-probe one (and /probe?debug=true's trail) is --log.prober.
+    # A failed probe still logs at error.
+    extraFlags = [
+      "--log.level=warn"
+      "--log.prober=warn"
+    ];
     configFile = pkgs.writeText "blackbox.yml" (
       builtins.toJSON {
         modules = {
@@ -137,7 +141,7 @@ in
         ./rules/alertmanager.yaml
         ./rules/prometheus.yaml
         ./rules/llm-gateway.yaml
-        ./rules/homelab.yaml
+        (import ./rules/homelab.nix { inherit lib hosts; }).file
         llmBench
         shipping
       ];
@@ -147,7 +151,7 @@ in
       scrape_configs = [
         {
           # instance and node carry the host name, as the chart's relabelling did, for the mixin and the dashboards;
-          # sleeps marks a host the fleet expects off at times, which ./rules/homelab.yaml keys on
+          # sleeps marks a host the fleet expects off at times, which ./rules/homelab.yaml (rendered by ./rules/homelab.nix) keys on
           job_name = "node-exporter";
           scrape_timeout = "30s";
           # five unit_state series per unit, one of them failed: the rest would add thousands for no panel
@@ -192,6 +196,29 @@ in
         (static "llm-gateway" [ "${hosts.acer-swift.address}:9091" ])
         (static "alloy-otlp" [ "${hosts.acer-swift.address}:12346" ])
         (static "caddy" [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ])
+      ]
+      # Authentik's loopback listeners, through the edge's metrics site (edge.nix). The embedded outpost labels its
+      # request histogram with the client's HTTP method, so any client could add series: no panel reads that family,
+      # so it is dropped, and sample_limit fails a scrape that grows anyway
+      ++ map
+        (part: {
+          job_name = "authentik-${part}";
+          metrics_path = "/authentik/${part}/metrics";
+          static_configs = [ { targets = [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ]; } ];
+          sample_limit = 20000;
+          metric_relabel_configs = [
+            {
+              source_labels = [ "__name__" ];
+              regex = "authentik_outpost_.*";
+              action = "drop";
+            }
+          ];
+        })
+        [
+          "server"
+          "worker"
+        ]
+      ++ [
         (static "blackbox-exporter" [ "${blackbox.listenAddress}:${toString blackbox.port}" ])
         {
           job_name = "blackbox";

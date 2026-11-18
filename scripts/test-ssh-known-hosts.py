@@ -377,15 +377,14 @@ def main():
     cut = dict(texts, **{"docs/architecture.md": texts["docs/architecture.md"].replace("| `asus-b460m` |", "| asus |")})
     check(undocumented(cut, nodes, host_name, P["roles"])["docs/architecture.md host table"] == ["asus-b460m"],
           "seeded: the architecture host table without asus-b460m fails")
-    # alloy-otlp keeps host.name only for a fleet host (lower-cased, as Claude Code reports it), else "other"
+    # alloy-otlp keeps host.name only for a fleet host: alloy-otlp.nix renders @hosts@ from sam.fleet.hosts
     def alloy_hosts(text):
-        return [set(m.split("|")) for m in re.findall(r'IsMatch\(resource\.attributes\["host\.name"\], "\^\(([^)]*)\)\$"\)', text)]
+        return re.findall(r'IsMatch\(resource\.attributes\["host\.name"\], "\^\(([^)]*)\)\$"\)', text)
     alloy = (ROOT / "modules/homelab/monitoring/alloy-otlp.alloy").read_text()
-    fleet_lower = {n.lower() for n in P["fleet"]}
-    check(alloy_hosts(alloy) and all(h == fleet_lower for h in alloy_hosts(alloy)),
-          f"alloy-otlp's host.name allowlists are exactly sam.fleet's hosts ({alloy_hosts(alloy)} vs {sorted(fleet_lower)})")
-    check(not all(h == fleet_lower for h in alloy_hosts(alloy.replace("|asus-b460m", ""))),
-          "seeded: alloy-otlp's allowlist without asus-b460m fails")
+    check(len(alloy_hosts(alloy)) == 2 and set(alloy_hosts(alloy)) == {"@hosts@"},
+          f"alloy-otlp's host.name allowlists are both rendered from sam.fleet ({alloy_hosts(alloy)})")
+    check(set(alloy_hosts(alloy.replace("@hosts@", "acer-swift", 1))) != {"@hosts@"},
+          "seeded: a hand-listed host.name allowlist fails")
     sops_checks(P["sops"], P["deployNodes"])
     services = (ROOT / "modules/core/services.nix").read_text()
     check("knownHosts" not in services, "the old github pin in services.nix is gone: one module owns host keys")

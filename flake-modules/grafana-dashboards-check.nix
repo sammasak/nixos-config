@@ -433,9 +433,12 @@ in
                 )
               } ${msi-ms7758.pkgs.prometheus-alertmanager} "$amConfigPath" \
               ${lib.escapeShellArg (toString pi.services.prometheus.alertmanager.extraFlags)} "$alloyExec"
+            # Authentik's names from the Python package and the Go server acer runs
+            python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
+              ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
             check() {
               python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom ${adguardCheck}/dns.prom stack/*.prom shipping.prom nav.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom authentik.prom ${adguardCheck}/dns.prom stack/*.prom shipping.prom nav.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"
