@@ -360,7 +360,7 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   `host=<prefix>-<name>`. A line ships only if the whole of it parses as
   what `platform-record.sh` writes: printable ASCII, no backslash or quote,
   `<date -Is> <kind>` then single-space `key=value` tokens, keys
-  `[a-z_][a-z0-9_]*`, values `[A-Za-z0-9_.,:/-]*` (paths, shas, drv names,
+  `[a-z_][a-z0-9_]*` not starting with `__` (Loki's own), values `[A-Za-z0-9_.,:/-]*` (paths, shas, drv names,
   comma lists), no key twice; what ships is rebuilt from the parsed fields,
   never the guest's bytes (Loki's logfmt splits at any byte up to 0x20,
   unquotes and decodes `\uXXXX`). Dropped and counted by reason in the unit's

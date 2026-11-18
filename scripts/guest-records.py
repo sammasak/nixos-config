@@ -32,7 +32,8 @@ NAME = re.compile(r"[a-z][a-z0-9-]{0,10}")
 # forms Loki reads as another field. The grammar is what platform-record.sh writes, `<date -Is> <kind>` then
 # single-space key=value tokens, values in the characters real records use (paths, shas, drv names, comma lists)
 STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:[+-]\d\d:\d\d|Z)"
-KEY = re.compile(r"[a-z_][a-z0-9_]*")
+# a key may not start with __: Loki keeps those names for its own (__error__, __line__)
+KEY = re.compile(r"(?!__)[a-z_][a-z0-9_]*")
 VALUE = re.compile(r"[A-Za-z0-9_.,:/-]*")
 LINE = re.compile(rf"({STAMP}) ([a-z][a-z-]*) (\S+(?: \S+)*)")
 # a stream label's name as a field would read, in Loki, as that label

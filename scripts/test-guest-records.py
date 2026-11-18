@@ -199,6 +199,7 @@ bad = {
     "a token with no =": ("coverage x=1 (no NVIDIA libs)", "not key=value tokens"),
     "an upper-case key": ("coverage X=1", "not key=value tokens"),
     "a value outside the charset": ("coverage x=a;b", "not key=value tokens"),
+    "a key starting with __": ("coverage __error__=x", "not key=value tokens"),
 }
 got_bad = {n: gr.parse(f"{STAMP} {line}".encode()) for n, (line, _) in bad.items()}
 check(all(got_bad[n] == why for n, (_, why) in bad.items()), f"each form outside the grammar is refused for its own reason ({got_bad})")
