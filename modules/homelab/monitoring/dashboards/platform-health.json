@@ -699,6 +699,79 @@
           "options": {}
         }
       ]
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "Environment trash (dev-environments-trash, daily on each environment host)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 62
+      },
+      "panels": []
+    },
+    {
+      "id": 24,
+      "type": "table",
+      "title": "Sweeps by host and result, entries deleted and bytes freed",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "targets": [
+        {
+          "expr": "sum by (host, result) (count_over_time({job=\"platform\",kind=\"trash-sweep\"} | logfmt [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "sum by (host) (sum_over_time({job=\"platform\",kind=\"trash-sweep\"} | logfmt | unwrap deleted [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "expr": "sum by (host) (sum_over_time({job=\"platform\",kind=\"trash-sweep\"} | logfmt | unwrap bytes [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "refId": "C",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
     }
   ]
 }

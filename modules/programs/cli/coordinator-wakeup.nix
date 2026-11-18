@@ -20,16 +20,7 @@ let
   wk = osConfig.sam.herdr.coordinatorWakeup;
   coordinatorHost = osConfig.sam.herdr.machines != [ ];
   skillsDir = "${config.home.homeDirectory}/claude-code-skills";
-  platformRecord = pkgs.writeShellApplication {
-    name = "platform-record";
-    runtimeInputs = with pkgs; [
-      curl
-      jq
-      coreutils
-      findutils
-    ];
-    text = builtins.readFile ../../../scripts/platform-record.sh;
-  };
+  platformRecord = pkgs.callPackage ../../../pkgs/platform-record/package.nix { };
   # a metric the report leaves null (its unknown_reason says why) is recorded as unknown, never as 0
   deliveryRecord = pkgs.writeShellApplication {
     name = "platform-delivery-record";

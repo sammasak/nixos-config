@@ -20,8 +20,9 @@
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
   sam.workers = {
-    # A task slot (#535): each task starts from dev-env-reset@t1, no deploy. No credential, so it cannot push; and
-    # egress.github would need a gh login here (ghHostsFile), so it reaches GitHub anonymously, public repos only.
+    # A task slot (#535): each task starts from dev-env-reset@t1, no deploy. No GitHub credential, so it cannot push
+    # (it still signs Anthropic /v1 calls through the egress proxy); and egress.github would need a gh login here
+    # (ghHostsFile), so it reaches GitHub anonymously, public repos only.
     instances.t1 = {
       credentials = [ ];
       memory.reserved = "2G";

@@ -352,7 +352,7 @@ in
         inherit (config.sam.fleet.loki) url;
         address = config.sam.fleet.hosts.${config.sam.fleet.loki.host}.address;
         # scripts/platform-record.sh's kinds a guest makes (scripts/test-guest-records.py holds them a subset): a guest
-        # never deploys or records deliveries, so a deploy or delivery line from one is not shipped
+        # never deploys, records deliveries or sweeps the host's trash, so such a line from one is not shipped
         kinds = [
           "gate"
           "gate-step"

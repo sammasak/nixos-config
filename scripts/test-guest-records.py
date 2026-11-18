@@ -32,9 +32,9 @@ case = re.search(r"case \$kind in\n\s*([a-z| -]+)\)", (ROOT / "scripts/platform-
 helper_kinds = case.group(1).replace(" ", "").split("|") if case else []
 block = re.search(r"records = \{.*?kinds = \[(.*?)\];", (ROOT / "modules/workers/default.nix").read_text(), re.S)
 kinds = re.findall(r'"([a-z-]+)"', block.group(1)) if block else []
-check(len(helper_kinds) == 7 and set(kinds) < set(helper_kinds) and not {"deploy", "delivery"} & set(kinds)
-      and sorted(set(helper_kinds) - set(kinds)) == ["delivery", "deploy"],
-      f"default.nix's records.kinds is platform-record.sh's list less deploy and delivery, which a guest never makes ({kinds} vs {helper_kinds})")
+check(len(helper_kinds) == 8 and set(kinds) < set(helper_kinds) and not {"deploy", "delivery", "trash-sweep"} & set(kinds)
+      and sorted(set(helper_kinds) - set(kinds)) == ["delivery", "deploy", "trash-sweep"],
+      f"default.nix's records.kinds is platform-record.sh's list less deploy, delivery and trash-sweep, which a guest never makes ({kinds} vs {helper_kinds})")
 FLEET = ["acer-swift", "asus-b460m", "black-pi", OWNER_HOST, "msi-ms7758", "naked-pi"]
 
 core = CORE.read_text()

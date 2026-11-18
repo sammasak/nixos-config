@@ -16,12 +16,13 @@ from gate_probe import check, finish
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HELPER = ROOT / "scripts/platform-record.sh"
 DASHBOARD = ROOT / "modules/homelab/monitoring/dashboards/platform-health.json"
-CALLERS = ["devenv.nix", "Justfile", "scripts/system-checks.sh", "modules/programs/cli/coordinator-wakeup.nix"]
+CALLERS = ["devenv.nix", "Justfile", "scripts/system-checks.sh", "modules/programs/cli/coordinator-wakeup.nix",
+           "modules/workers/core.nix"]
 
 
 case = re.search(r"case \$kind in\n\s*([a-z| -]+)\)", HELPER.read_text())
 kinds = set(case.group(1).replace(" ", "").split("|")) if case else set()
-check(len(kinds) == 7, f"the helper's kind vocabulary is read ({sorted(kinds)})")
+check(len(kinds) == 8, f"the helper's kind vocabulary is read ({sorted(kinds)})")
 
 # the helper's default Loki against the evaluated sam.fleet.loki.url: scripts/test-fleet-contract.py (it has the probe)
 
@@ -33,7 +34,7 @@ check(all('job="platform"' in e for e in exprs if "kind=" in e), "every Loki pan
 
 written = {}
 for c in CALLERS:
-    for k in re.findall(r"(?:platform-record\.sh|getExe (?:record|platformRecord)\})\"? ([a-z-]+)", (ROOT / c).read_text()):
+    for k in re.findall(r"(?:platform-record\.sh|getExe (?:record|platformRecord)\}|\$recorder)\"? ([a-z-]+)", (ROOT / c).read_text()):
         written.setdefault(k, set()).add(c)
 check(set(written) <= kinds, f"every caller writes a known kind (unknown: {sorted(set(written) - kinds)})")
 check(set(written) == kinds, f"every kind has a writer ({ {k: sorted(v) for k, v in written.items()} })")

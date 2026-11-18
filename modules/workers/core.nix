@@ -82,7 +82,9 @@ let
   '';
   # Aged by when it was trashed (the rename sets the entry's ctime), not by tmpfiles: that ages each file by its own
   # times, so a retired home's old files would go at its next clean. A .trash that is a link or another mount would
-  # put a live home in reach: refused.
+  # put a live home in reach: refused. A second argument, the recorder (platform-record), gets one trash-sweep record
+  # of counts alone (entries seen, deleted, the bytes of their files and links), never a name; the activation passes
+  # none, so it never waits on Loki.
   trashSweep = pkgs.writeShellApplication {
     name = "dev-env-trash-sweep";
     runtimeInputs = [
@@ -91,12 +93,25 @@ let
     ];
     text = ''
       t=$1/.trash
+      recorder=''${2:-}
       [[ -e $t || -L $t ]] || exit 0
       if [[ -L $t || ! -d $t || $(stat -c %d "$1") != "$(stat -c %d "$t")" ]]; then
         echo "dev-env-trash-sweep: $t is a link, not a directory or on another filesystem than $1; not swept" >&2
+        [[ -z $recorder ]] || "$recorder" trash-sweep seen=0 deleted=0 bytes=0 result=refused
         exit 1
       fi
-      find -P "$t" -xdev -mindepth 1 -maxdepth 1 -cmin +10080 -exec rm -rf --one-file-system {} +
+      seen=$(find -P "$t" -xdev -mindepth 1 -maxdepth 1 -printf . | wc -c)
+      deleted=0 bytes=0 result=ok
+      while IFS= read -r -d "" e; do
+        size=$((0 $(find -P "$e" -xdev ! -type d -printf '+%s')))
+        if rm -rf --one-file-system -- "$e"; then
+          deleted=$((deleted + 1)) bytes=$((bytes + size))
+        else
+          result=failed
+        fi
+      done < <(find -P "$t" -xdev -mindepth 1 -maxdepth 1 -cmin +10080 -print0)
+      [[ -z $recorder ]] || "$recorder" trash-sweep seen="$seen" deleted="$deleted" bytes="$bytes" result="$result"
+      [[ $result == ok ]]
     '';
   };
   # A dynamic user with CAP_DAC_READ_SEARCH alone: it reads every home whoever owns it, writes only its
@@ -866,11 +881,35 @@ in
         unitConfig.ConditionPathExists = "${cfg.stateDir}/.trash";
         serviceConfig = {
           Type = "oneshot";
-          ExecStart = "${lib.getExe trashSweep} ${lib.escapeShellArg cfg.stateDir}";
-          PrivateNetwork = true;
+          ExecStart = lib.escapeShellArgs (
+            [
+              (lib.getExe trashSweep)
+              cfg.stateDir
+            ]
+            ++ lib.optional (cfg.records != null) (
+              lib.getExe (pkgs.callPackage ../../pkgs/platform-record/package.nix { })
+            )
+          );
           ProtectSystem = "strict";
           ReadWritePaths = [ cfg.stateDir ];
-        };
+        }
+        # with no records it records nothing, so it reaches nothing
+        // (
+          if cfg.records == null then
+            { PrivateNetwork = true; }
+          else
+            {
+              IPAddressDeny = "any";
+              IPAddressAllow = cfg.records.address;
+              # platform-record's spool and Loki-down marker: the only writable place under strict besides the state dir
+              StateDirectory = "dev-environments-trash";
+              StateDirectoryMode = "0700";
+              Environment = [
+                "PLATFORM_LOKI_URL=${cfg.records.url}"
+                "PLATFORM_RECORD_SPOOL=/var/lib/dev-environments-trash/platform-records"
+              ];
+            }
+        );
       };
       systemd.timers.dev-environments-trash = lib.mkIf (cfg.instances != { } || cfg.retired != [ ]) {
         wantedBy = [ "timers.target" ];

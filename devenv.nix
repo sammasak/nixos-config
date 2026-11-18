@@ -1371,7 +1371,7 @@ in
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:trash-sweep-test" =
-      task "The environments' .trash sweep, its core.nix text run: a week-old entry goes, a fresh one and a live dir stay, a .trash that is a link, a file or another mount is refused" trashSweepTest;
+      task "The environments' .trash sweep, its core.nix text run: a week-old entry goes, a fresh one and a live dir stay, a .trash that is a link, a file or another mount is refused; each timer run records its counts, never a name" trashSweepTest;
     "nixos:guest-records-test" =
       task "The host ships guest platform records on a fake Loki: each line once, also after a rewrite; host labels only; label keys, unknown kinds, oversize and too-old lines dropped; 500 per run; a link or FIFO on the spool's path refused; trashOne ships before its rename" guestRecordsTest;
     "nixos:platform-records-test" =
