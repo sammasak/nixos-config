@@ -21,6 +21,8 @@ let
   # DoH, on this address's IP too (internal/home/web.go), so it is 0: no DoH; DNS and DoT bind dns.bind_hosts
   webPort = 3003;
   webAddress = "127.0.0.1:${toString webPort}";
+  textfile = "/run/node-exporter-textfile/adguard.prom";
+  writer = "${pkgs.python3}/bin/python3 -I ${../../scripts/adguard-textfile.py}";
   # every fleet name answers its LAN address, and none is served as loopback (NixOS maps this host's own name to
   # 127.0.0.2 in /etc/hosts, which AdGuard would otherwise answer the whole LAN from)
   fleet = config.sam.fleet.hosts;
@@ -82,6 +84,10 @@ in
 
   config = mkIf cfg.enable {
     assertions = [
+      {
+        assertion = config.services.prometheus.exporters.node.enable;
+        message = "modules/homelab/adguardhome.nix: adguard-textfile writes a textfile metric; import monitoring/node-exporter.nix.";
+      }
       {
         assertion = cfg.tls.enable -> config.homelab.acme.enable;
         message = "homelab.dns.tls serves the ACME certificate for homelab.dns.tls.domain, which needs homelab.acme.enable.";
@@ -153,9 +159,16 @@ in
           # a name with no rewrite must not borrow a fleet address: the answers above are the rewrites', not a catch-all
           got=$(ask not-a-fleet-host | tr '\n' ' ')
           case " $got" in *" 192.168."*) echo "not-a-fleet-host answered '$got'"; bad=1 ;; esac
+          # the textfile writer against this AdGuard: its control API must give every series the DNS dashboard reads
+          ${writer} http://127.0.0.1:13003 dns.prom
+          for m in up protection_enabled queries blocked avg_processing_seconds queries_this_hour; do
+            grep -q "^homelab_dns_$m " dns.prom || { echo "adguard-textfile wrote no homelab_dns_$m"; cat dns.prom; bad=1; }
+          done
+          grep -qx 'homelab_dns_up 1' dns.prom || { echo "adguard-textfile: AdGuard not up"; bad=1; }
           kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
           [ "$bad" = 0 ] || { echo "--- AdGuard log"; tail -n 20 adguard.log; exit 1; }
-          touch $out
+          mkdir $out
+          cp dns.prom $out/
         ''
       )
     ];
@@ -226,6 +239,36 @@ in
     networking.firewall = {
       allowedUDPPorts = [ 53 ];
       allowedTCPPorts = optionals cfg.tls.enable [ dotPort ];
+    };
+
+    # AdGuard's counters for black-pi through node-exporter's textfile directory, so the control API stays on
+    # loopback and no port opens. Root, as open-webui-edge-check: the directory is root's 0755 (node-exporter.nix).
+    systemd.services.adguard-textfile = {
+      after = [ "adguardhome.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${writer} http://${webAddress} ${textfile}";
+        CapabilityBoundingSet = "";
+        ProtectSystem = "strict";
+        ReadWritePaths = [ (builtins.dirOf textfile) ];
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        NoNewPrivileges = true;
+        RestrictAddressFamilies = [ "AF_INET" ];
+        IPAddressAllow = "localhost";
+        IPAddressDeny = "any";
+        # soft: a MemoryMax would count in sam.memory's sum, and lenovo's caps leave no room for it (its RSS is ~23M)
+        MemoryHigh = "64M";
+        TimeoutStartSec = 30;
+      };
+    };
+    systemd.timers.adguard-textfile = {
+      wantedBy = [ "timers.target" ];
+      timerConfig.OnCalendar = "minutely";
     };
 
     # Without the ACME group AdGuard cannot read its own certificate.

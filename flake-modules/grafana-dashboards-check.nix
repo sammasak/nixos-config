@@ -6,7 +6,11 @@
 # scripts/check-grafana-dashboards.py with its own reason.
 { config, lib, ... }:
 let
-  inherit (config.flake.nixosConfigurations) acer-swift black-pi msi-ms7758;
+  inherit (config.flake.nixosConfigurations) acer-swift black-pi lenovo msi-ms7758;
+  # its output holds what adguard-textfile wrote against a running AdGuard (modules/homelab/adguardhome.nix)
+  adguardCheck = lib.findFirst (
+    c: c.name == "adguardhome-fleet-names"
+  ) (throw "grafana-dashboards: lenovo has no adguardhome-fleet-names check") lenovo.config.system.checks;
   pi = black-pi.config;
   inherit (pi.homelab.grafana) dashboards;
   hosts = lib.attrNames pi.sam.fleet.hosts;
@@ -461,7 +465,7 @@ in
               ${
                 pkgs.python3.withPackages (ps: [ ps.pyyaml ])
               }/bin/python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom writers.prom llm-gateway.prom stack/*.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom writers.prom llm-gateway.prom ${adguardCheck}/dns.prom stack/*.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"
