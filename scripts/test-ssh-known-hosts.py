@@ -239,6 +239,21 @@ def unchecked_recipes(justfile):
     return sorted(name for name, first in re.findall(r"^([a-z-]+) HOST:\n([^\n]*)", justfile, re.M) if first != CHECK_LINE)
 
 
+def deploy_checks(nodes):
+    """`just deploy` accepts exactly the deploy-rs nodes: its first line is the hosts-table check, and the table reads
+    exactly the nodes. Seeded both ways: deploy without the check, and a table entry that is no deploy node."""
+    justfile = (ROOT / "Justfile").read_text()
+    check("deploy" not in unchecked_recipes(justfile) and sorted(hosts_table("nodes")[1]) == sorted(nodes),
+          f"`just deploy` accepts exactly the deploy-rs nodes {sorted(nodes)}")
+    check("deploy" in unchecked_recipes(justfile.replace("deploy HOST:\n" + CHECK_LINE + "\n", "deploy HOST:\n")),
+          "seeded: `just deploy` without the hosts-table check is found")
+    table = (ROOT / "flake-modules/hosts.nix").read_text()
+    stray = table.replace("  configurations.nixos = {\n",
+                          '  configurations.nixos = {\n    stray = { roles = [ "base" ]; deploy.remoteBuild = true; };\n', 1)
+    check(stray != table and gap(hosts_table("nodes", table=stray)[1], nodes) == ["+stray"],
+          "seeded: a hosts-table entry that is no deploy node breaks the equality")
+
+
 def table_checks(nodes, host_name):
     """The hosts table as scripts/hosts-table.sh reads it, against the evaluated deploy nodes and hostNames."""
     rc, got, _ = hosts_table("nodes")
@@ -496,10 +511,7 @@ def main():
     for node in ("lenovo", "acer-swift", "black-pi"):
         opts = P["sshOpts"][node]
         check(opts == ["-o", "StrictHostKeyChecking=yes"], f"deploy-rs node {node} refuses unknown or changed host keys")
-    pattern = re.search(r'\[arg\("HOST", pattern="([^"]+)"\)\]\ndeploy HOST:',
-                        re.sub(r'\[doc\([^\n]*\)\]\n', "", (ROOT / "Justfile").read_text()))
-    check(pattern is not None and sorted(pattern.group(1).split("|")) == sorted(P["deployNodes"]),
-          f"`just deploy` accepts exactly the deploy-rs nodes {sorted(P['deployNodes'])}")
+    deploy_checks(P["deployNodes"])
     nodes = P["deployNodes"]
     host_name = {n: P["sops"]["hosts"][n]["hostName"] for n in nodes}
     names = host_name.values()
