@@ -6,10 +6,10 @@ earlier head does (the check did not change). Read-only: it queries the existing
 {job="platform"} stream, filtered in LogQL, newest first), or reads a spool file (a host's local copy, or a test).
 Usage: deferred-checks.py HEAD [--days N] [--limit N] [--loki URL | --spool FILE...]
 An owner record from Loki counts only if its stream's host label is that owner (the owner= field is the writer's own
-claim); a spool is one host's local copy and carries no label.
-Exit 0: a passing gate on HEAD is recorded and every check its deferred_checks list names is covered (or it names none).
-1: a check waits for its owner. 2: the records cannot say: no passing gate record for HEAD, a listed check without its
-deferral record, a query that hit its limit, an unreachable Loki, or a malformed HEAD."""
+claim; a record without the label does not count); a spool is one host's local copy and carries no label.
+Exit 0: a passing gate on a clean checkout of HEAD is recorded and every check its deferred_checks list names is
+covered (or it names none). 1: a check waits for its owner. 2: the records cannot say: no such gate record, a listed
+check without its deferral record, a query that hit its limit, an unreachable Loki, or a malformed HEAD."""
 import argparse
 import json
 import pathlib
@@ -59,7 +59,7 @@ class Records:
             try:
                 with urllib.request.urlopen(f"{self.args.loki}/loki/api/v1/query_range?{query}", timeout=60) as r:
                     body = json.load(r)
-                values = [(int(ts), v, s["stream"].get("host")) for s in body["data"]["result"] for ts, v in s["values"]]
+                values = [(int(ts), v, s["stream"].get("host", "")) for s in body["data"]["result"] for ts, v in s["values"]]
             except (OSError, ValueError, KeyError) as e:
                 raise Unreadable(f"Loki query {q!r} failed: {e}") from e
             if len(values) >= self.args.limit:
@@ -75,9 +75,11 @@ class Records:
 
 def verdict(records, head):
     """([(owner, check, how)] covered, [(owner, check, drv)] waiting), or Unreadable."""
-    gates = records.find("gate", [f"head={head}", "result=pass"])
+    # checkout=clean: a manual gate on a dirty checkout built the edited checks, not HEAD's
+    gates = records.find("gate", [f"head={head}", "result=pass", "checkout=clean"])
     if not gates:
-        raise Unreadable(f"no passing gate record for {head[:12]}: its gate has not passed, or its records are not in the window")
+        raise Unreadable(f"no passing gate record on a clean checkout of {head[:12]}: its gate has not passed, ran only on a "
+                         "dirty checkout, or its records are not in the window")
     listed = {tuple(item.split(":", 1)) for g in gates for item in g.get("deferred_checks", "").split(",") if ":" in item}
     found = {}
     for r in records.find("gate-step", ["result=deferred", f"head={head}"]):

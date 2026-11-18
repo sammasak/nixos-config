@@ -27,10 +27,10 @@ def step(result, check_name, owner, head, drv):
                          f"result={result} head={head} drv={drv}")
 
 
-def gate(head, checks, result="pass"):
+def gate(head, checks, result="pass", checkout="clean"):
     listed = ",".join(f"asus-b460m:{c}" for c in checks)
     return ("gate", f"gate=nixos-qa seconds=1 result={result} sha={head[:7]} mode=push deferred={len(checks)} head={head} "
-                    f"checkout=clean deferred_checks={listed}")
+                    f"checkout={checkout} deferred_checks={listed}")
 
 
 BASE = [gate(H2, [A, B]), step("deferred", A, "asus-b460m", H2, "/nix/store/a.drv"),
@@ -58,7 +58,7 @@ rc, out = run(BASE + [step("fail", A, "asus-b460m", H2, "/nix/store/a.drv"), ste
 check(rc == 1 and f"waiting  asus-b460m:{A}" in out and f"waiting  asus-b460m:{B}" in out,
       f"seeded: a failed owner run, and an owner run on this head of another drv (a dirty checkout), do not count ({rc}: {out.strip()})")
 rc, out = run(BASE[1:] + [step("built", A, "asus-b460m", H2, "/nix/store/a.drv")])
-check(rc == 2 and "no passing gate record" in out, f"seeded: no gate record for the head: cannot say, exit 2 ({rc}: {out.strip()})")
+check(rc == 2 and "no passing gate record on a clean checkout" in out, f"seeded: no gate record for the head: cannot say, exit 2 ({rc}: {out.strip()})")
 rc, out = run([gate(H2, [A, B]), BASE[1], step("built", A, "asus-b460m", H2, "/nix/store/a.drv")])
 check(rc == 2 and f"lists asus-b460m:{B} as deferred, without its deferral record" in out,
       f"seeded: a check the gate lists, without its deferral record: cannot say, exit 2 ({rc}: {out.strip()})")
@@ -67,6 +67,9 @@ rc, out = run([gate(H2, [A, B], result="fail")] + BASE[1:] + [step("built", A, "
 check(rc == 2 and "no passing gate record" in out, f"seeded: only a failed gate on the head: cannot say, exit 2 ({rc}: {out.strip()})")
 rc, out = run([gate(H2, [])])
 check(rc == 0 and "deferred nothing" in out, f"a passing gate that deferred nothing: exit 0 ({rc}: {out.strip()})")
+rc, out = run([gate(H2, [], checkout="dirty")])
+check(rc == 2 and "dirty checkout" in out,
+      f"seeded: only a manual gate on a dirty checkout, deferring nothing: cannot say, exit 2 ({rc}: {out.strip()})")
 rc, out = run(BASE, "abc123")
 check(rc == 2 and "full 40-character sha" in out, f"a short sha is refused, exit 2 ({rc})")
 
@@ -75,7 +78,9 @@ LOKI_LINES = [(k, v, "acer-swift") for k, v in BASE] + [
     (*step("built", A, "asus-b460m", H2, "/nix/store/a.drv"), "asus-b460m"),
     (*step("built", B, "asus-b460m", H2, "/nix/store/b.drv"), "msi-ms7758"),
     (*step("present", B, "asus-b460m", H1, "/nix/store/b.drv"), "asus-b460m")]
-FORGED_ONLY = False
+# which owner record for B the stand-in serves: asus's own (honest), only msi's claim (forged), or asus's without a
+# host label (unlabeled)
+MODE = "honest"
 queries = []
 
 
@@ -87,14 +92,16 @@ class Loki(http.server.BaseHTTPRequestHandler):
         kind = re.search(r'kind="([^"]+)"', query)[1]
         needles = re.findall(r'\|= "([^"]+)"', query)
         regex = re.search(r'\|~ "([^"]+)"', query)
-        lines = LOKI_LINES[:-1] if FORGED_ONLY else LOKI_LINES
+        lines = {"honest": LOKI_LINES, "forged": LOKI_LINES[:-1],
+                 "unlabeled": LOKI_LINES[:-2] + [(*LOKI_LINES[-1][:2], None)]}[MODE]
         hits = [(v, h) for k, v, h in lines if k == kind and all(n in v for n in needles) and (not regex or re.search(regex[1], v))]
         hits = hits[: int(q["limit"][0])]
         streams = {}
         for i, (v, h) in enumerate(hits):
             streams.setdefault(h, []).append([str(i), v])
-        body = json.dumps({"data": {"result": [{"stream": {"job": "platform", "kind": kind, "host": h}, "values": vs}
-                                               for h, vs in streams.items()]}}).encode()
+        # a stream without a host label (h None) is sent without the key
+        body = json.dumps({"data": {"result": [{"stream": {"job": "platform", "kind": kind, **({"host": h} if h else {})},
+                                                "values": vs} for h, vs in streams.items()]}}).encode()
         self.send_response(200)
         self.end_headers()
         self.wfile.write(body)
@@ -110,11 +117,15 @@ r = subprocess.run([sys.executable, str(SCRIPT), H2, "--loki", url], capture_out
 check(r.returncode == 0 and f"ok       asus-b460m:{B} (present same drv on 111111111111)" in r.stdout
       and all(f'|= "head={H2}"' in q for q in queries[:2]) and any('|~ "result=(built|present|expected-fail)' in q for q in queries),
       f"from Loki, filtered in LogQL by head and by owner, check and drv: the same verdict ({r.returncode}: {(r.stdout + r.stderr).strip()})")
-FORGED_ONLY = True
+MODE = "forged"
 r = subprocess.run([sys.executable, str(SCRIPT), H2, "--loki", url], capture_output=True, text=True)
 check(r.returncode == 1 and f"waiting  asus-b460m:{B}" in r.stdout,
       f"seeded: a built record claiming owner asus-b460m but sent by msi-ms7758 (the stream's host) does not count ({r.returncode}: {r.stdout.strip()})")
-FORGED_ONLY = False
+MODE = "unlabeled"
+r = subprocess.run([sys.executable, str(SCRIPT), H2, "--loki", url], capture_output=True, text=True)
+check(r.returncode == 1 and f"waiting  asus-b460m:{B}" in r.stdout,
+      f"seeded: from Loki, an owner record whose stream has no host label does not count ({r.returncode}: {r.stdout.strip()})")
+MODE = "honest"
 r = subprocess.run([sys.executable, str(SCRIPT), H2, "--loki", url, "--limit", "2"], capture_output=True, text=True)
 check(r.returncode == 2 and "hit its limit" in r.stderr, f"seeded: a query that fills its limit cannot say, exit 2 ({r.returncode})")
 server.shutdown()
