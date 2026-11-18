@@ -71,14 +71,19 @@ let
   stepFor = a.RetroDueStepFailsRepeat.forMinutes.value;
   minFails = a.RetroDueStepFailsRepeat.minFailures.value;
   lastRuns = a.RetroDueStepFailsRepeat.lastRuns.value;
-  # failures: the step's 7-d failure count; runs: the gate sample behind it
-  stepCase = name: failures: runs: fires: {
+  # check: the flake check's inner check ("" for a step-level count); failures: its 7-d count of heads; runs: the gate
+  # sample behind it. A second check of the same step sits one under the threshold: checks are counted apart.
+  stepCase = name: check: failures: runs: fires: {
     inherit name;
     interval = "1m";
     input_series = [
       {
-        series = ''shipping_gate_step_failures{step="nixos-flake-check",window="7d"}'';
+        series = ''shipping_gate_step_failures{check="${check}",step="nixos-flake-check",window="7d"}'';
         values = "${n failures}x${n (stepFor + 20)}";
+      }
+      {
+        series = ''shipping_gate_step_failures{check="checks.x86_64-linux.other",step="nixos-flake-check",window="7d"}'';
+        values = "${n (minFails - 1)}x${n (stepFor + 20)}";
       }
       {
         series = ''shipping_gate_step_failures{step="lint",window="7d"}'';
@@ -103,7 +108,8 @@ let
             step = "nixos-flake-check";
             severity = "warning";
             team = "shipping";
-          };
+          }
+          // lib.optionalAttrs (check != "") { inherit check; };
         };
       }
     ];
@@ -345,12 +351,25 @@ let
       (retroCase "slower but failing no more than its 7-d average does not fire: long is not a retro" (
         6 * 1440
       ) false false)
-      (stepCase "one step failing minFailures times over a full sample fires after its for" minFails
+      (stepCase "one step failing minFailures times over a full sample fires after its for" "" minFails
         lastRuns
         true
       )
-      (stepCase "one step failing once less does not fire" (minFails - 1) lastRuns false)
-      (stepCase "a short sample does not fire" minFails (lastRuns - 1) false)
+      (stepCase "one step failing once less does not fire" "" (minFails - 1) lastRuns false)
+      (stepCase "a short sample does not fire" "" minFails (lastRuns - 1) false)
+      (stepCase "one inner check failing minFailures times fires, named by its check"
+        "checks.x86_64-linux.grafana-dashboards"
+        minFails
+        lastRuns
+        true
+      )
+      (stepCase
+        "two checks of one step, each once under the threshold, do not fire: the umbrella is not summed"
+        "checks.x86_64-linux.grafana-dashboards"
+        (minFails - 1)
+        lastRuns
+        false
+      )
       {
         name = "a gate median at its own baseline does not fire";
         interval = "4m";

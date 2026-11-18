@@ -811,7 +811,7 @@
       "targets": [
         {
           "expr": "shipping_gate_step_failures",
-          "legendFormat": "{{step}}",
+          "legendFormat": "{{step}} {{check}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",

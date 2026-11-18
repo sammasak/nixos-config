@@ -169,6 +169,34 @@ def run(out):
 
 
 SECTIONS = ("issues", "prs", "reviews", "escapes", "gates", "deploys", "phases")
+# step_failures: what RetroDueStepFailsRepeat counts. Records as the gate writes them: the step's own (sha=<short>)
+# and, inside the flake check, one per check (check=, head=<full>).
+H1, H2, H3 = "a" * 40, "b" * 40, "c" * 40
+def rec(line):
+    return (0, dict(kv.split("=", 1) for kv in line.split()))
+def step_rec(step, head, gate="nixos-qa"):
+    return rec(f"gate={gate} step={step} seconds=5 result=fail sha={head[:8]}")
+def check_rec(check, head):
+    return rec(f"gate=nixos-qa step=nixos-flake-check check={check} owner=msi-ms7758 seconds=9 result=fail head={head} drv=/nix/store/x.drv")
+DASH = "checks.x86_64-linux.grafana-dashboards"
+check(sm.step_failures([step_rec("alloy-otlp-test", H1), step_rec("alloy-otlp-test", H1)]) == {("alloy-otlp-test", ""): 1},
+      "seeded: a re-run on one head counts once")
+check(sm.step_failures([check_rec(DASH, H1), step_rec("nixos-flake-check", H1)]) == {("nixos-flake-check", DASH): 1},
+      "seeded: the flake check's own record and its failing check's on one head count once, under the check")
+check(sm.step_failures([step_rec("nixos-flake-check", H2)]) == {("nixos-flake-check", ""): 1},
+      "a flake check that failed with no inner check record (an evaluation error) counts at the step")
+check(sm.step_failures([step_rec("seventh-host-test", H1, gate="on-demand"), step_rec("seventh-host-test", H2, gate="on-demand")]) == {},
+      "seeded: an on-demand check's failures are not the push gate's")
+three = [r for h in (H1, H2, H3) for r in (check_rec(DASH, h), step_rec("nixos-flake-check", h))]
+check(sm.step_failures(three) == {("nixos-flake-check", DASH): 3},
+      "seeded: one inner check failing on three heads counts 3 under that check, which the rule's threshold fires on")
+check(sm.step_failures([check_rec(DASH, H1), check_rec("checks.x86_64-linux.deploy-activate-asus-b460m", H2),
+                        check_rec("checks.x86_64-linux.vm-test", H3)]) == {("nixos-flake-check", DASH): 1,
+      ("nixos-flake-check", "checks.x86_64-linux.deploy-activate-asus-b460m"): 1, ("nixos-flake-check", "checks.x86_64-linux.vm-test"): 1},
+      "three different checks on three heads are three units at 1, not the umbrella at 3")
+check(sm.step_failures([rec("gate=nixos-qa step=lint result=fail"), rec("gate=nixos-qa step=lint result=fail")]) == {("lint", ""): 2},
+      "a record with no head counts on its own")
+
 with tempfile.TemporaryDirectory() as tmp:
     out = f"{tmp}/shipping.prom"
     rc, m = run(out)
@@ -198,6 +226,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check(m.get('shipping_gate_seconds{host="lenovo",quantile="0.5"}') == 109
           and m.get(f'shipping_gate_seconds{{host="{GUEST}",quantile="0.5"}}') == 109,
           "each host's median is its own gates' alone")
+    check(m.get('shipping_gate_step_failures{check="",step="lint",window="7d"}') == 1
+          and not any(k.startswith("shipping_gate_step_failures") and 'step="lint"' not in k for k in m),
+          "a failed push-gate step from Loki is written with an empty check label")
     check(m.get('shipping_gate_runs_counted{host="unknown"}') == 1
           and not any('host=""' in k for k in m),
           "a stream without a host label counts as host=\"unknown\", never as an empty host")
