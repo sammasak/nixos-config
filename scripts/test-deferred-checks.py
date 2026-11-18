@@ -52,6 +52,22 @@ check(rc == 0 and f"ok       asus-b460m:{A} (built on this head)" in out
       f"built on this head, or expected-fail for the same drv on an earlier head: covered, exit 0 ({rc}: {out.strip()})")
 rc, out = run(BASE + [step("built", A, "asus-b460m", H2, "/nix/store/a.drv")])
 check(rc == 1 and f"waiting  asus-b460m:{B}" in out, f"seeded: no owner record for one check: it waits, exit 1 ({rc}: {out.strip()})")
+rc, out = run(BASE + [step("fetched", A, "asus-b460m", H2, "/nix/store/a.drv"), step("expected-fail", B, "asus-b460m", H2, "/nix/store/b.drv")])
+check(rc == 0 and f"ok       asus-b460m:{A} (fetched on this head)" in out,
+      f"the owner fetched the check's drv (a valid output exists there): covered ({rc}: {out.strip()})")
+rc, out = run(BASE + [step("dry", A, "asus-b460m", H2, "/nix/store/a.drv"), step("fail", B, "asus-b460m", H2, "/nix/store/b.drv")])
+check(rc == 1 and f"waiting  asus-b460m:{A}" in out and f"waiting  asus-b460m:{B}" in out,
+      f"seeded: an owner record of dry (not built) or fail does not cover ({rc}: {out.strip()})")
+r = subprocess.run([sys.executable, str(SCRIPT), H2, "--spool", "/nonexistent/platform-records"], capture_output=True, text=True)
+check(r.returncode == 2 and "cannot say" in r.stderr, f"seeded: a missing spool file cannot say, exit 2, not waiting ({r.returncode}: {r.stderr.strip()})")
+with tempfile.TemporaryDirectory() as t:
+    lone = pathlib.Path(t) / "scripts" / "deferred-checks.py"
+    lone.parent.mkdir()
+    lone.write_text(SCRIPT.read_text())
+    env = {k: v for k, v in __import__("os").environ.items() if k != "PLATFORM_LOKI_URL"}
+    r = subprocess.run([sys.executable, str(lone), H2], capture_output=True, text=True, env=env)
+    check(r.returncode == 2 and "cannot say" in r.stderr and "platform-record.sh" in r.stderr,
+          f"seeded: with no platform-record.sh to read Loki's address from, cannot say, exit 2 ({r.returncode}: {r.stderr.strip()[-160:]})")
 rc, out = run(BASE + [step("built", A, "msi-ms7758", H2, "/nix/store/a.drv"), step("built", B, "asus-b460m", H2, "/nix/store/b.drv")])
 check(rc == 1 and f"waiting  asus-b460m:{A}" in out, f"seeded: a record from another host does not count ({rc}: {out.strip()})")
 rc, out = run(BASE + [step("fail", A, "asus-b460m", H2, "/nix/store/a.drv"), step("built", B, "asus-b460m", H2, "/nix/store/dirty.drv")])
@@ -118,7 +134,7 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 url = f"http://127.0.0.1:{server.server_port}"
 r = subprocess.run([sys.executable, str(SCRIPT), H2, "--loki", url], capture_output=True, text=True)
 check(r.returncode == 0 and f"ok       asus-b460m:{B} (present same drv on 111111111111)" in r.stdout
-      and all(f'|= "head={H2}"' in q for q in queries[:2]) and any('|~ "result=(built|present|expected-fail)' in q for q in queries),
+      and all(f'|= "head={H2}"' in q for q in queries[:2]) and any('|~ "result=(built|present|fetched|expected-fail)' in q for q in queries),
       f"from Loki, filtered in LogQL by head and by owner, check and drv: the same verdict ({r.returncode}: {(r.stdout + r.stderr).strip()})")
 MODE = "forged"
 r = subprocess.run([sys.executable, str(SCRIPT), H2, "--loki", url], capture_output=True, text=True)

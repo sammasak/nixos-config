@@ -1,6 +1,7 @@
 """Whether a head may merge as far as deferred checks go: for each check a gate left to its owning host on HEAD
 (result=deferred gate-step records, from the flake check or a gate step through scripts/gate_defer.py), does the owner
-have a record for that check's derivation: built or present, or expected-fail for a seeded check that must fail? The
+have a record for that check's derivation: built, present or fetched (a valid output of that drv exists on the
+owner), or expected-fail for a seeded check that must fail? dry (not built) and fail never count. The
 derivation, not the head: an owner run of another drv (a dirty checkout) does not count, and the same drv run on an
 earlier head does (the check did not change). Read-only: it queries the existing platform records (Loki's
 {job="platform"} stream, filtered in LogQL, newest first), or reads a spool file (a host's local copy, or a test).
@@ -37,7 +38,7 @@ def default_loki():
         raise Unreadable("scripts/platform-record.sh has no ${PLATFORM_LOKI_URL:-…} default to read Loki's address from")
     return m[1]
 PAIR = re.compile(r'(\w+)=("[^"]*"|\S*)')
-COVERING = re.compile(r"result=(built|present|expected-fail)( |$)")
+COVERING = re.compile(r"result=(built|present|fetched|expected-fail)( |$)")
 
 
 class Unreadable(Exception):
@@ -81,7 +82,7 @@ class Records:
         else:
             q = f'{{job="platform",kind="{kind}"}}' + "".join(f' |= "{n}"' for n in needles)
             if covering:
-                q += ' |~ "result=(built|present|expected-fail)( |$)"'
+                q += ' |~ "result=(built|present|fetched|expected-fail)( |$)"'
             end = time.time_ns()
             query = urllib.parse.urlencode({"query": q, "start": end - self.args.days * 86400 * 10**9, "end": end,
                                             "limit": self.args.limit, "direction": "backward"})
@@ -155,13 +156,14 @@ def main():
         if not a.spool and not a.loki:
             a.loki = default_loki()
         covered, waiting = verdict(Records(a), a.head)
-    except Unreadable as e:
+    except (Unreadable, OSError) as e:
+        # a missing spool or platform-record.sh is "cannot say" (2), never "waiting" (1)
         print(f"deferred-checks: cannot say: {e}", file=sys.stderr)
         sys.exit(2)
     for owner, check, how in covered:
         print(f"ok       {owner}:{check} ({how})")
     for owner, check, drv in waiting:
-        print(f"waiting  {owner}:{check}: no built, present or expected-fail record from {owner} for drv {drv}")
+        print(f"waiting  {owner}:{check}: no built, present, fetched or expected-fail record from {owner} for drv {drv}")
     if not covered and not waiting:
         print(f"deferred-checks: the passing gate on {a.head[:12]} deferred nothing")
     sys.exit(1 if waiting else 0)
