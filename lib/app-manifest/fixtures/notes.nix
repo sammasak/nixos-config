@@ -1,4 +1,4 @@
-# A service app with ingress behind Authentik and a backed-up volume, the shape the invalid fixtures bend.
+# A service app with ingress behind Authentik, metrics and a backed-up volume, the shape the invalid fixtures bend.
 {
   apiVersion = "v1alpha1";
   owner = "sammasak";
@@ -13,6 +13,7 @@
   runtime.service = {
     program = "notes-server";
     port = 8090;
+    metricsPath = "/metrics";
     resources = {
       memoryMiB = 128;
       cpuPercent = 50;

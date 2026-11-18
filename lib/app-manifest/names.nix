@@ -35,4 +35,6 @@ in
   attr = "[A-Za-z0-9_][A-Za-z0-9._-]*";
   secret = "[a-z0-9_-]+(/[a-z0-9_-]+)*";
   credential = "[A-Za-z0-9_][A-Za-z0-9._-]*";
+  # an absolute HTTP path the edge and the scrape interpolate: no space, brace, quote or query can end the directive
+  path = "/[A-Za-z0-9._~/-]*";
 }

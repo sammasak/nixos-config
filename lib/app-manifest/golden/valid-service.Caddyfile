@@ -1,0 +1,19 @@
+herman-next.sammasak.dev {
+	route {
+		root * /nix/store/00000000000000000000000000000000-herman
+		try_files {path} /index.html
+		file_server
+	}
+}
+notes.sammasak.dev {
+	route {
+		import authentik
+		reverse_proxy 127.0.0.1:8090
+	}
+}
+http://:9180 {
+	handle /apps/notes/metrics {
+		rewrite * /metrics
+		reverse_proxy 127.0.0.1:8090
+	}
+}

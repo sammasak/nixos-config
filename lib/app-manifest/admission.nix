@@ -39,15 +39,23 @@ let
         "grants.${n}.host: ${g.host} is not the edge (${facts.edge}); a static site or an app with ingress runs there."
       )
     ]
-    ++ lib.concatMap (l: [
-      (rule (lib.elem l g.hostnames) "${at}.ingress.${l}: not in grants.${n}.hostnames.")
-      (rule (!lib.elem l facts.edgeNames)
-        "${at}.ingress.${l}: ${l}.${facts.domain} is already served by the edge (modules/homelab/edge.nix)."
-      )
-      (rule (
-        claimants l == [ n ]
-      ) "${at}.ingress.${l}: ${l}.${facts.domain} is also claimed by ${others n (claimants l)}.")
-    ]) (lib.attrNames a.ingress)
+    ++ lib.concatLists (
+      lib.mapAttrsToList (l: i: [
+        (rule (lib.elem l g.hostnames) "${at}.ingress.${l}: not in grants.${n}.hostnames.")
+        (rule (!lib.elem l facts.edgeNames)
+          "${at}.ingress.${l}: ${l}.${facts.domain} is already served by the edge (modules/homelab/edge.nix)."
+        )
+        (rule (
+          claimants l == [ n ]
+        ) "${at}.ingress.${l}: ${l}.${facts.domain} is also claimed by ${others n (claimants l)}.")
+        (
+          if i.auth == "public" then
+            rule g.public "${at}.ingress.${l}.auth: public, but grants.${n}.public is false."
+          else
+            rule (lib.elem i.auth facts.forwardAuth) "${at}.ingress.${l}.auth: ${i.auth}, but the edge defines no (${i.auth}) forward_auth snippet to import (modules/homelab/edge.nix)."
+        )
+      ]) a.ingress
+    )
     ++ lib.optionals (s != null) (
       [
         (rule (s.resources.memoryMiB <= g.memoryMiB)
@@ -58,6 +66,9 @@ let
         ) "${at}.runtime.service.port: ${toString s.port}/tcp on ${g.host} is ${fleetPort.by}.")
         (rule (listening g.host s.port == [ n ])
           "${at}.runtime.service.port: ${toString s.port}/tcp on ${g.host} is also ${others n (listening g.host s.port)}'s."
+        )
+        (rule (s.metricsPath == null || g.host == facts.edge)
+          "${at}.runtime.service.metricsPath: ${g.host} is not the edge (${facts.edge}); black-pi scrapes an app's loopback metrics through the edge's metrics site."
         )
       ]
       ++ lib.concatMap (k: [
