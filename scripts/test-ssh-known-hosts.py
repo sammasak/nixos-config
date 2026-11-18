@@ -205,6 +205,18 @@ def pinned_ips(expected, addresses):
                   and [x for x in names if re.fullmatch(r"[0-9.]+", x)] != addresses[n])
 
 
+def keepalive(config_text):
+    """ssh -G's ServerAliveInterval and ServerAliveCountMax for github.com under a rendered ssh_config."""
+    with tempfile.NamedTemporaryFile("w", suffix=".ssh_config", delete=False) as cfg:
+        cfg.write(config_text); path = cfg.name
+    try:
+        out = subprocess.run(["ssh", "-G", "-F", path, "github.com"], capture_output=True, text=True).stdout
+    finally:
+        pathlib.Path(path).unlink()
+    opts = dict(l.split(" ", 1) for l in out.splitlines() if " " in l)
+    return opts.get("serveraliveinterval"), opts.get("serveralivecountmax")
+
+
 def verify_defaults(script_text):
     """The hosts scripts/ssh-known-hosts-verify.sh checks when given none."""
     m = re.search(r'\|\| hosts=\(([^)]*)\)', script_text)
@@ -318,6 +330,10 @@ def main():
         check(run.returncode == 0 and "stricthostkeychecking true" in eff and "updatehostkeys false" in eff
               and "globalknownhostsfile /etc/ssh/ssh_known_hosts" in eff,
               f"{host}: ssh -G on the rendered file resolves to strict checking against the pinned file")
+        check(keepalive(plain) == ("20", "60"),
+              f"{host}: ssh to github.com sends a keepalive every 20 s, as a long pre-push gate needs ({keepalive(plain)})")
+    without = re.sub(r"Host github\.com\n(?:[ \t]+\S.*\n)+", "", plain)
+    check(keepalive(without) == ("0", "3"), f"seeded: without the github.com block the push gets no keepalive ({keepalive(without)})")
     for node in ("lenovo", "acer-swift", "black-pi"):
         opts = P["sshOpts"][node]
         check(opts == ["-o", "StrictHostKeyChecking=yes"], f"deploy-rs node {node} refuses unknown or changed host keys")

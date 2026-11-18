@@ -22,6 +22,9 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               already green here under the same gate and system generation, or it plus such docs;
 #               deleting nixos-qa-green in the common git dir forces the full gate.
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
+#               The push is the gate: a manual nixos:qa records no green tree (it checks the working tree, which
+#               may be dirty, while a record keys a commit's tree), so a push after one runs the full gate again;
+#               a re-push of a tree the hook passed (GitHub dropped the push) runs lints only.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table
@@ -264,12 +267,14 @@ either side is only reported.
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.
 - **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
+- **`git diff` is difftastic** for the Home Manager user (`diff.external`, `modules/programs/cli/git/default.nix`):
+  its side-by-side output has no unified `+`/`-` lines, so pipe `git diff --no-ext-diff` into grep or a script.
 - **Firewall**: the trusted LAN CIDR is `sam.fleet.lanCidr` (`192.168.10.0/24`). SSH is key-only, no root login.
   A port one host serves another is a `sam.fleet.listeners` entry (`modules/core/fleet.nix`: host, port, the calling
   hosts in `from`); `modules/core/network.nix` renders its rule and fails any host whose firewall opens, trusts or
   accepts anything that is neither such a rule nor a `sam.fleet.public` entry with its reason (an upstream
-  `openFirewall` included). A new listener also needs its service's bound port in `scripts/gate-probe.nix`
-  (section `fleet-contract`, `bound`), or `nixos:fleet-contract-test` fails.
+  `openFirewall` included). The serving module takes its port from its listener
+  (`config.sam.fleet.listeners.<name>.port`), so a new listener is that one entry plus the module.
 - **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (antigravity-cli, claude-code, open-webui, unrar, and on asus the NVIDIA driver and the CUDA runtime ollama-cuda needs); otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
 - **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` and `rf-lab.nix` force `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.

@@ -16,6 +16,7 @@ in
   services.prometheus.exporters.node = {
     enable = true;
     listenAddress = hosts.${config.networking.hostName}.address;
+    inherit (config.sam.fleet.listeners."node-exporter-${config.networking.hostName}") port;
     # a host's own checks drop *.prom files here (open-webui.nix's edge-socket check, the generation below)
     extraFlags = [ "--collector.textfile.directory=${textfiles}" ];
     # needs AF_UNIX for D-Bus (upstream adds it); black-pi keeps only the failed unit_state series (prometheus.nix)

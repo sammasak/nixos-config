@@ -117,6 +117,7 @@ in
   services.prometheus = {
     enable = true;
     listenAddress = address;
+    inherit (config.sam.fleet.listeners.prometheus) port;
     retentionTime = "15d";
     extraFlags = [
       # the 15 d projection is 0.8 to 1.1 GB; the cap keeps the SD card's 3 GB root floor with Loki

@@ -141,7 +141,7 @@ Use modules + roles, not ad-hoc host edits.
    (`modules/homelab/monitoring/grafana.nix`); give it an enable option (`mkEnableOption` + `mkIf`) only when a role
    or several hosts switch it (`modules/homelab/ntfy.nix`). Copy the one of the same shape.
 2. A port another fleet host calls is a `sam.fleet.listeners` entry in `modules/core/fleet.nix` (host, port, the
-   calling hosts in `from`), plus its bound port in `scripts/gate-probe.nix` (`fleet-contract`); anything open wider is
+   calling hosts in `from`), and the module takes its port from that entry; anything open wider is
    a `sam.fleet.public` entry with its reason. `modules/core/network.nix` renders the rules and fails any other
    opening, so the module itself opens nothing.
 3. A fact more than one module reads (an address, a port, a host name) goes in `sam.fleet` too, not in the module.
