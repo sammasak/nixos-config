@@ -32,13 +32,20 @@ let
   gateRise = 2 * a.RetroDueGateSlower.factor.value * gateBase;
   # history: minutes before the rise (6 d clears the 5-d guard, 4 d does not); samples every 4 m, under the 5 m
   # lookback: 6 d of 1 m samples take promtool 14 s
-  retroCase = name: history: fires: {
+  # failsMore: the fail ratio rises above its own 7-d average with the gate time; without it slower alone stays quiet
+  retroCase = name: history: failsMore: fires: {
     inherit name;
     interval = "4m";
     input_series = [
       {
         series = ''shipping_gate_seconds{quantile="0.5"}'';
         values = "${n gateBase}x${n (history / 4 - 1)} ${n gateRise}x${n ((retroFor + 30) / 4)}";
+      }
+      {
+        series = "shipping_gate_fail_ratio";
+        values = "0.1x${n (history / 4 - 1)} ${
+          if failsMore then "0.4" else "0.1"
+        }x${n ((retroFor + 30) / 4)}";
       }
     ];
     alert_rule_test = [
@@ -53,6 +60,46 @@ let
         exp_alerts = lib.optional fires {
           exp_labels = {
             quantile = "0.5";
+            severity = "warning";
+            team = "shipping";
+          };
+        };
+      }
+    ];
+  };
+  stepFor = a.RetroDueStepFailsRepeat.forMinutes.value;
+  minFails = a.RetroDueStepFailsRepeat.minFailures.value;
+  lastRuns = a.RetroDueStepFailsRepeat.lastRuns.value;
+  # failures: the step's 7-d failure count; runs: the gate sample behind it
+  stepCase = name: failures: runs: fires: {
+    inherit name;
+    interval = "1m";
+    input_series = [
+      {
+        series = ''shipping_gate_step_failures{step="nixos-flake-check",window="7d"}'';
+        values = "${n failures}x${n (stepFor + 20)}";
+      }
+      {
+        series = ''shipping_gate_step_failures{step="lint",window="7d"}'';
+        values = "1x${n (stepFor + 20)}";
+      }
+      {
+        series = "shipping_gate_runs_counted";
+        values = "${n runs}x${n (stepFor + 20)}";
+      }
+    ];
+    alert_rule_test = [
+      {
+        alertname = "RetroDueStepFailsRepeat";
+        eval_time = "${n (stepFor - 5)}m";
+        exp_alerts = [ ];
+      }
+      {
+        alertname = "RetroDueStepFailsRepeat";
+        eval_time = "${n (stepFor + 5)}m";
+        exp_alerts = lib.optional fires {
+          exp_labels = {
+            step = "nixos-flake-check";
             severity = "warning";
             team = "shipping";
           };
@@ -279,10 +326,22 @@ let
           }
         ];
       }
-      (retroCase "gate median over factor x its 7-d average after 5 d of history fires after its for" (
+      (retroCase
+        "gate median over factor x its 7-d average, failing more, after 5 d of history fires after its for"
+        (6 * 1440)
+        true
+        true
+      )
+      (retroCase "the same rise on under 5 d of history does not fire" (4 * 1440) true false)
+      (retroCase "slower but failing no more than its 7-d average does not fire: long is not a retro" (
         6 * 1440
-      ) true)
-      (retroCase "the same rise on under 5 d of history does not fire" (4 * 1440) false)
+      ) false false)
+      (stepCase "one step failing minFailures times over a full sample fires after its for" minFails
+        lastRuns
+        true
+      )
+      (stepCase "one step failing once less does not fire" (minFails - 1) lastRuns false)
+      (stepCase "a short sample does not fire" minFails (lastRuns - 1) false)
       {
         name = "a gate median at its own baseline does not fire";
         interval = "4m";

@@ -30,12 +30,15 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               holds it (`flock -o`) counts, and a launcher holding it across systemd-run sets NIXOS_QA_LOCKED=1.
 #               A check deferred to its own host is printed as `nixos-qa: deferred-checks head=<sha>
 #               checkout=clean|dirty <owner>:<check>…` and in the gate record (head=, checkout=, deferred_checks=);
-#               the owner's flake check records each of its own deploy checks as `result=built|present|dry
-#               owner=<host> head=<sha> drv=<drv>`, the deferral as `result=deferred … drv=<drv>`.
+#               the flake check records every check it builds, an owner's own deploy checks included, as
+#               `check=<check> owner=<host> seconds= eval_seconds= compiled=<n> fetched=<n>
+#               result=built|fetched|present|fail|dry head=<sha> drv=<drv>`, the deferral as `result=deferred … drv=<drv>`;
+#               Shipping's "where a gate's time goes" panels read them.
 #               `just deferred-checks <full sha>` lists them and exits 1 while one still waits for its owner; merge on 0.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
-nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table
+nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table; nixos:qa runs it
+                                    # in CI mode (nixos:fmt-check), so an unformatted file fails the gate
 
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link

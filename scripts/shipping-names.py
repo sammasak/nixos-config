@@ -33,11 +33,16 @@ def main(emitted, rules, dashboard, policy):
     known |= {r["record"] for g in groups for r in g["rules"] if "record" in r}
     exprs = [(f"rule {r.get('alert') or r.get('record')}", r["expr"]) for g in groups for r in g["rules"]]
 
+    # a Loki panel's LogQL names fields, not metrics: check-grafana-dashboards.py parses it with logcli instead
+    def loki(x):
+        return (x.get("datasource") or {}).get("type") == "loki"
+
     def targets(panels):
         for p in panels:
             yield from targets(p.get("panels", []))
             for t in p.get("targets", []):
-                yield f"panel {p.get('title')!r}", t["expr"]
+                if not loki(t) and not (loki(p) and "datasource" not in t):
+                    yield f"panel {p.get('title')!r}", t["expr"]
     exprs += list(targets(json.load(open(dashboard))["panels"]))
 
     def leaves(v, path):

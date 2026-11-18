@@ -12,6 +12,19 @@ in
 {
   programs.dconf.enable = true;
 
+  # a hand-made user unit in a home shadows the NixOS one, and a deploy then changes nothing for that user: a warning
+  # in the activation's output (scripts/shadowed-user-units.sh), after /etc is linked
+  system.activationScripts.shadowedUserUnits = {
+    deps = [ "etc" ];
+    text = ''
+      ${pkgs.bash}/bin/bash ${../../scripts/shadowed-user-units.sh} ${
+        lib.escapeShellArgs (
+          map (u: u.home) (lib.filter (u: u.isNormalUser) (lib.attrValues config.users.users))
+        )
+      } || true
+    '';
+  };
+
   home-manager = {
     users.${username} = {
       programs.home-manager.enable = true;

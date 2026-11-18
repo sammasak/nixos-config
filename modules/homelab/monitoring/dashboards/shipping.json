@@ -670,6 +670,84 @@
       }
     },
     {
+      "id": 33,
+      "type": "bargauge",
+      "title": "Where a gate's time goes: average seconds per run, by gate step",
+      "description": "Platform gate-step records (Loki {job=\"platform\",kind=\"gate-step\"}), every gate in the range, push or manual. nixos-flake-check is the flake check's whole step; the panel beside it splits it by check.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic"
+      },
+      "targets": [
+        {
+          "expr": "topk(15, avg_over_time({job=\"platform\",kind=\"gate-step\"} | logfmt | check=\"\" | unwrap seconds | __error__=\"\" [$__range]) by (step))",
+          "legendFormat": "{{step}}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 34,
+      "type": "bargauge",
+      "title": "Inside the flake check: average build seconds per run, by check",
+      "description": "One record per check the flake check builds (devenv.nix flakeCheck): build seconds, whether it compiled anything (result=built), only substituted (fetched) or was already in the store (present); a deferred check (result=deferred) is left out, its owner's gate builds it. Evaluation seconds are in each record's eval_seconds.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic"
+      },
+      "targets": [
+        {
+          "expr": "topk(15, avg_over_time({job=\"platform\",kind=\"gate-step\"} | logfmt | step=\"nixos-flake-check\" | check!=\"\" | result=~\"built|fetched|present|fail\" | unwrap seconds | __error__=\"\" [$__range]) by (check))",
+          "legendFormat": "{{check}}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
       "id": 16,
       "type": "row",
       "title": "How often do we fail",
@@ -678,7 +756,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 51
       },
       "panels": []
     },
@@ -694,7 +772,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 52
       },
       "targets": [
         {
@@ -726,7 +804,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 44
+        "y": 52
       },
       "targets": [
         {
@@ -758,7 +836,7 @@
         "h": 8,
         "w": 4,
         "x": 16,
-        "y": 44
+        "y": 52
       },
       "targets": [
         {
@@ -790,7 +868,7 @@
         "h": 8,
         "w": 4,
         "x": 20,
-        "y": 44
+        "y": 52
       },
       "targets": [
         {
@@ -822,7 +900,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 52
+        "y": 60
       },
       "targets": [
         {
@@ -854,7 +932,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 52
+        "y": 60
       },
       "targets": [
         {
@@ -883,7 +961,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 60
+        "y": 68
       },
       "panels": []
     },
@@ -899,7 +977,7 @@
         "h": 10,
         "w": 18,
         "x": 0,
-        "y": 61
+        "y": 69
       },
       "targets": [
         {
@@ -971,7 +1049,7 @@
         "h": 10,
         "w": 3,
         "x": 18,
-        "y": 61
+        "y": 69
       },
       "targets": [
         {
@@ -1005,7 +1083,7 @@
         "h": 10,
         "w": 3,
         "x": 21,
-        "y": 61
+        "y": 69
       },
       "targets": [
         {

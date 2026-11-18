@@ -170,6 +170,8 @@ let
         );
       };
       msi-ms7758.fish.claude = (hm msi).programs.fish.functions.claude or null;
+      # what every environment's Claude starts as (modules/workers/core.nix's agents default), evaluated on acer
+      agentCommand = acer.services.devEnvironments.agents.claude.command;
     };
 
     ollama-portforward = {
@@ -469,6 +471,9 @@ let
               })
             ]
           );
+          cacheAtCap = failing (
+            extend "asus-b460m" [ ({ lib, ... }: { homelab.ollama.promptCacheMiB = lib.mkForce 8192; }) ]
+          );
           noGraphics = failing (
             extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.enable = lib.mkForce false; }) ]
           );
@@ -650,6 +655,8 @@ let
           ntfy = lenovo.sam.fleet.ntfy.port;
           loki = lenovo.sam.fleet.loki.port;
         };
+        # scripts/platform-record.sh's default Loki, run without Nix, is checked against this
+        lokiUrl = lenovo.sam.fleet.loki.url;
         listeners = lib.mapAttrs (_: l: {
           inherit (l)
             host
@@ -769,6 +776,7 @@ let
             ]
           );
           jumpHostRemoved = failing (extend "lenovo" [ { sam.workers.jumpHosts.old = "old-host"; } ]);
+          exporterOffFleet = failing (extend "naked-pi" [ ../modules/homelab/monitoring/node-exporter.nix ]);
           collectorOffFleet = failing (
             extend "naked-pi" [
               ../modules/homelab/journal-collector.nix

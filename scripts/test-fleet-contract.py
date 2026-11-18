@@ -28,7 +28,7 @@ check(sorted(ports) == ["loki", "ntfy"] and all(isinstance(p, int) for p in port
 # (path, port name, text the line must contain) -> why that one line may keep the literal
 ALLOWED = {
     ("scripts/platform-record.sh", "loki", "${PLATFORM_LOKI_URL:-http://"):
-        "run from the Justfile without Nix; test-platform-records.py holds its default to sam.fleet.loki",
+        "run from the Justfile without Nix; its default is held to the evaluated sam.fleet.loki.url below",
 }
 
 
@@ -59,6 +59,9 @@ check(hits == [], "no tracked file but fleet.nix names the ntfy or Loki port: " 
 for (path, name, marker), why in ALLOWED.items():
     lines = [l for l in dict(files).get(path, "").splitlines() if re.search(rf"(?<![0-9]){ports[name]}(?![0-9])", l)]
     check(len(lines) == 1 and marker in lines[0], f"allowlisted {path} names the {name} port on its one marked line only ({why})")
+helper = (ROOT / "scripts/platform-record.sh").read_text()
+check("${PLATFORM_LOKI_URL:-" + P["lokiUrl"] + "}" in helper,
+      f"platform-record.sh's default Loki is the evaluated sam.fleet.loki.url ({P['lokiUrl']})")
 seeded = literals(files + [("modules/homelab/x.nix", f'  listen = ":{ports["ntfy"]}";'),
                            ("scripts/platform-record.sh", f'curl http://loki:{ports["loki"]}/ready')])
 check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy"), ("scripts/platform-record.sh", "loki")],
@@ -127,6 +130,9 @@ for seed, host, marker, what in [("openPort", "acer-swift", '"port":9999', "allo
     check(any(f"{host}'s {OPENS}" in m and marker in m for m in F[seed]), f"seeded: {what} fails ({F[seed]})")
 check(any("sam.fleet.loki is served here" in m and "loopback" in m for m in F["lokiLoopback"]),
       f"seeded: black-pi's Loki on loopback fails ({F['lokiLoopback']})")
+check(any("naked-pi has no sam.fleet listener node-exporter-naked-pi" in m for m in F["exporterOffFleet"]),
+      f"seeded: node-exporter on naked-pi, which is not a fleet host, fails with node-exporter.nix's message, not an "
+      f"attribute error ({F['exporterOffFleet']})")
 # scripts/deferred-checks.py reads the fleet's host names from fleet.nix's text, not by evaluating it: the same names
 spec = importlib.util.spec_from_file_location("deferred_checks", ROOT / "scripts" / "deferred-checks.py")
 deferred_checks = importlib.util.module_from_spec(spec)
