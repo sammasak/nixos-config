@@ -12,11 +12,15 @@ rendering a derived list that names it. Seeded: a copy whose prometheus, AdGuard
 lists each leave the seed out fails each of those checks.
 
 #295's criterion is not met while COUPLINGS or HAND_KEPT is non-empty: each is a place besides the seed's own three
-that a seventh host still needs edited. A new one, or one that went away, fails the test, so both stay exact."""
+that a seventh host still needs edited. A new one, or one that went away, fails the test, so both stay exact.
+
+Removing a host is #295's other half and is not seeded here: scripts/test-fleet-contract.py copies hosts.nix with
+asus-b460m removed and shows lenovo's machines and jump-host assertions fail (its "removed from hosts.nix" seed)."""
 import importlib.util
 import json
 import pathlib
 import re
+import resource
 import shutil
 import subprocess
 import sys
@@ -258,8 +262,13 @@ for place, listing in hand.items():
     check(listing is not None and all(listing & n for n in names.values()),
           f"{place} still lists every real host by hand ({listing}; derived or moved? update HAND_KEPT)")
     check(listing is None or SEED not in listing, f"{place} lacks the seed: a seventh host must be added there by hand")
-check(docs != [], f"the docs state the fleet size the seed outgrows ({docs})")
+# a docs change that drops the count is right: the check then names what to update here instead of failing obscurely
+check(docs != [], f"the docs state the fleet size the seed outgrows ({docs})" if docs else
+      "no doc states the fleet size any more (README.md, CLAUDE.md, flake.nix, docs/*.md): that coupling is gone; "
+      "update the test: drop this check and the fleet size from the report below (scripts/seventh-host-check.py)")
 print(f"seventh-host: #295 reusability not met: besides hosts.nix, fleet.nix and hosts/{SEED}, a seventh host needs "
       f"{'; '.join(COUPLINGS.values())}; its name in {', '.join(HAND_KEPT)}; and the fleet size in {', '.join(docs)}")
 
+# the largest single nix eval's resident peak (Linux: KiB), for the gate host's memory budget
+print(f"seventh-host: peak child RSS {resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss} KiB")
 finish()

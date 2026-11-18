@@ -411,9 +411,8 @@ let
         ${pkgs.python3}/bin/python scripts/test-fleet-contract.py
       '';
 
-  # On demand, not in nixos:qa: eleven nix evals of one host each, unmeasured. Its gate-step record gives the seconds a
-  # gate host spends, to decide on data whether it joins the tests. Not named test-*, so a docs-only push that edits a
-  # host table it reads does not look for a gate running it.
+  # In nixos:qa's tests (about 110 s on asus, its on-demand gate-step record, 18 Nov) and on demand. Not named test-*:
+  # a docs-only push that edits a host table it reads would run it, and docs-only pushes run on lenovo, which it refuses.
   seventhHostTest =
     gate "seventh-host-test"
       (with pkgs; [
@@ -431,7 +430,8 @@ let
         t=$SECONDS
         if ${pkgs.python3}/bin/python scripts/seventh-host-check.py; then r=pass; else r=fail; fi
         echo "seventh-host-test took $((SECONDS - t)) s"
-        ${lib.getExe record} gate-step gate=on-demand step=seventh-host-test seconds=$((SECONDS - t)) result=$r sha="$(git rev-parse HEAD)"
+        # inside nixos:qa its tests loop writes the step's record
+        [ -n "''${NIXOS_QA_HEAD:-}" ] || ${lib.getExe record} gate-step gate=on-demand step=seventh-host-test seconds=$((SECONDS - t)) result=$r sha="$(git rev-parse HEAD)"
         [ "$r" = pass ]
       '';
 
@@ -784,6 +784,7 @@ let
     journalCollectorTest
     fleetEndpointsTest
     fleetContractTest
+    seventhHostTest
     caddyEdgeTest
     typedInterfacesTest
     systemChecksTest
@@ -1367,7 +1368,7 @@ in
     "nixos:fleet-contract-test" =
       task "No file but fleet.nix names the ntfy or Loki port; every host's firewall admits each sam.fleet listener from its callers alone and opens nothing else, no service the probe reads binds off its listener's port; lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: an open port, an upstream openFirewall, a stray rule, a trusted interface, a host removed)" fleetContractTest;
     "nixos:seventh-host-test" =
-      task "On demand, not in nixos:qa (records its seconds as a gate-step): a seventh host seeded from fixture data (its hosts.nix and fleet.nix entries, hosts/seventh) into a temporary tree: it evaluates, every list derived from the fleet names it, only the hosts rendering one move; the places it still needs edited by hand are listed exactly (seeded: each derived list hard-coded without it)" seventhHostTest;
+      task "Also on demand (then it records its own gate-step): a seventh host seeded from fixture data (its hosts.nix and fleet.nix entries, hosts/seventh) into a temporary tree: it evaluates, every list derived from the fleet names it, only the hosts rendering one move; the places it still needs edited by hand are listed exactly (seeded: each derived list hard-coded without it)" seventhHostTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:trash-sweep-test" =
