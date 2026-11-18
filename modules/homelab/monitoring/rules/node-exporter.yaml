@@ -1,5 +1,6 @@
-# kube-prometheus-stack 85.0.3's node-exporter mixin, as rendered for the cluster, less the two systemd-unit alerts:
-# a failed unit shows on the Hosts dashboard (prometheus.nix keeps its unit_state series) and pages nobody.
+# kube-prometheus-stack 85.0.3's node-exporter mixin, less the two systemd-unit alerts: a failed unit shows on the
+# Hosts dashboard (prometheus.nix keeps its unit_state series) and pages nobody. NodeNetworkInterfaceFlapping's
+# description names instance, not namespace/pod.
 groups:
   - name: node-exporter.rules
     rules:
@@ -390,7 +391,7 @@ groups:
     rules:
       - alert: NodeNetworkInterfaceFlapping
         annotations:
-          description: Network interface "{{ $labels.device }}" changing its up status often on node-exporter {{ $labels.namespace }}/{{ $labels.pod }}
+          description: Network interface "{{ $labels.device }}" changing its up status often on {{ $labels.instance }}
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/general/nodenetworkinterfaceflapping
           summary: Network interface is often changing its status
         expr: changes(node_network_up{job="node-exporter",device!~"veth.+"}[2m]) > 2

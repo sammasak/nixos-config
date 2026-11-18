@@ -1,10 +1,11 @@
-# kube-prometheus-stack 85.0.3's alertmanager.rules, the chart's job selector replaced by the native job.
+# kube-prometheus-stack 85.0.3's alertmanager.rules, the chart's job selector replaced by the native job and
+# descriptions naming instance, not namespace/pod (neither label exists off Kubernetes).
 groups:
   - name: alertmanager.rules
     rules:
       - alert: AlertmanagerFailedReload
         annotations:
-          description: Configuration has failed to load for {{ $labels.namespace }}/{{ $labels.pod}}.
+          description: Configuration has failed to load for {{ $labels.instance }}.
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagerfailedreload
           summary: Reloading an Alertmanager configuration has failed.
         expr: |-
@@ -16,7 +17,7 @@ groups:
           severity: critical
       - alert: AlertmanagerMembersInconsistent
         annotations:
-          description: Alertmanager {{ $labels.namespace }}/{{ $labels.pod}} has only found {{ $value }} members of the {{$labels.job}} cluster.
+          description: Alertmanager {{ $labels.instance }} has only found {{ $value }} members of the {{$labels.job}} cluster.
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagermembersinconsistent
           summary: A member of an Alertmanager cluster has not found all other cluster members.
         expr: |-
@@ -30,7 +31,7 @@ groups:
           severity: critical
       - alert: AlertmanagerFailedToSendAlerts
         annotations:
-          description: Alertmanager {{ $labels.namespace }}/{{ $labels.pod}} failed to send {{ $value | humanizePercentage }} of notifications to {{ $labels.integration }}.
+          description: Alertmanager {{ $labels.instance }} failed to send {{ $value | humanizePercentage }} of notifications to {{ $labels.integration }}.
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagerfailedtosendalerts
           summary: An Alertmanager instance failed to send notifications.
         expr: |-
