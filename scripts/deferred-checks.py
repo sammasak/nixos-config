@@ -16,6 +16,7 @@ covered (or it names none). 1: a check waits for its owner. 2: the records canno
 check without its deferral record, a query that hit its limit, an unreachable Loki, or a malformed HEAD."""
 import argparse
 import json
+import os
 import pathlib
 import re
 import sys
@@ -24,7 +25,17 @@ import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-LOKI = "http://192.168.10.137:3100"  # sam.fleet.loki (modules/core/fleet.nix), as scripts/platform-record.sh
+
+
+def default_loki():
+    """PLATFORM_LOKI_URL, else scripts/platform-record.sh's own default: the one place outside fleet.nix that may
+    name Loki's address (scripts/test-fleet-contract.py holds it to the evaluated sam.fleet.loki.url)."""
+    if os.environ.get("PLATFORM_LOKI_URL"):
+        return os.environ["PLATFORM_LOKI_URL"]
+    m = re.search(r"\$\{PLATFORM_LOKI_URL:-(https?://[^}]+)\}", (ROOT / "scripts/platform-record.sh").read_text())
+    if not m:
+        raise Unreadable("scripts/platform-record.sh has no ${PLATFORM_LOKI_URL:-…} default to read Loki's address from")
+    return m[1]
 PAIR = re.compile(r'(\w+)=("[^"]*"|\S*)')
 COVERING = re.compile(r"result=(built|present|expected-fail)( |$)")
 
@@ -134,13 +145,15 @@ def main():
     ap.add_argument("head")
     ap.add_argument("--days", type=int, default=14)
     ap.add_argument("--limit", type=int, default=5000)
-    ap.add_argument("--loki", default=LOKI)
+    ap.add_argument("--loki", help="Loki's base URL (default: PLATFORM_LOKI_URL, else platform-record.sh's default)")
     ap.add_argument("--spool", nargs="+")
     a = ap.parse_args()
     if not re.fullmatch(r"[0-9a-f]{40}", a.head):
         print("deferred-checks: HEAD must be a full 40-character sha (the records' head=)", file=sys.stderr)
         sys.exit(2)
     try:
+        if not a.spool and not a.loki:
+            a.loki = default_loki()
         covered, waiting = verdict(Records(a), a.head)
     except Unreadable as e:
         print(f"deferred-checks: cannot say: {e}", file=sys.stderr)
