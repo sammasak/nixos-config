@@ -134,6 +134,10 @@ with tempfile.TemporaryDirectory() as tmp:
           and 54.1 < m.get('shipping_pr_lead_time_hours{quantile="0.9"}', 0) < 54.3,
           "lead time runs from the oldest own commit's author date (second page included), not the PR's open time;"
           " a PR whose commits 404 keeps the section")
+    check(m.get('shipping_pr_lead_time_fallbacks{reason="http_error",window="7d"}') == 1
+          and m.get('shipping_pr_lead_time_fallbacks{reason="no_commits",window="7d"}') == 0
+          and m.get('shipping_pr_lead_time_fallbacks{reason="no_token",window="7d"}') == 0,
+          "fallbacks are counted per reason, a 0 written for each reason that did not occur")
     check(m.get("shipping_gate_fail_ratio") == 0.25 and m.get("shipping_gate_runs_counted") == 20,
           "gate fail ratio over the policy's last runs")
     check(m.get('shipping_deploy_lag_commits{host="lenovo",node="lenovo-21CB001PMX"}') == 2
@@ -178,16 +182,20 @@ def commits(*hours_ago):
 
 lead_pr = pr(20, 5, 1)  # opened 5 h ago, merged 1 h ago: open-to-merge is 4 h
 gh = StubGitHub([commits(0.5)])
-check(sm.lead_hours(gh, lead_pr) == 0, "a commit authored after the merge clamps lead time to 0, never negative")
-check(abs(sm.lead_hours(StubGitHub([[]]), lead_pr) - 4) < 1e-6, "a PR listing no commits falls back to open-to-merge")
+check(sm.lead_hours(gh, lead_pr) == (0, None), "a commit authored after the merge clamps lead time to 0, never negative")
+hours, reason = sm.lead_hours(StubGitHub([[]]), lead_pr)
+check(abs(hours - 4) < 1e-6 and reason == "no_commits", "a PR listing no commits falls back to open-to-merge, counted as no_commits")
 gh = StubGitHub([commits(*[2] * 100), urllib.error.HTTPError("u", 404, "gone", {}, None)])
-check(abs(sm.lead_hours(gh, lead_pr) - 4) < 1e-6 and gh.calls == 2,
-      "an HTTP error on this PR's commits falls back to open-to-merge for it alone, not an error for the section")
+hours, reason = sm.lead_hours(gh, lead_pr)
+check(abs(hours - 4) < 1e-6 and reason == "http_error" and gh.calls == 2,
+      "an HTTP error on this PR's commits falls back to open-to-merge for it alone, counted as http_error")
 gh = StubGitHub([commits(*[2] * 100), commits(*[2] * 100), commits(*[2] * 100), commits(500)])
-check(abs(sm.lead_hours(gh, lead_pr) - 1) < 1e-6 and gh.calls == 3, "commits are read for at most 3 pages (GitHub's 250)")
+hours, reason = sm.lead_hours(gh, lead_pr)
+check(abs(hours - 1) < 1e-6 and reason is None and gh.calls == 3, "commits are read for at most 3 pages (GitHub's 250)")
 gh = StubGitHub([commits(40)], token="")
-check(abs(sm.lead_hours(gh, lead_pr) - 4) < 1e-6 and gh.calls == 0,
-      "without a token no commits call is made and lead time is open-to-merge")
+hours, reason = sm.lead_hours(gh, lead_pr)
+check(abs(hours - 4) < 1e-6 and reason == "no_token" and gh.calls == 0,
+      "without a token no commits call is made and lead time is open-to-merge, counted as no_token")
 
 try:
     sm.Out().add("shipping_not_declared", 1)
