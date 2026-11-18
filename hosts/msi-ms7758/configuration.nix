@@ -20,8 +20,15 @@
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
   sam.workers = {
-    # With no instance declared, the activation that ages out `.trash` runs only while this list is
-    # non-empty: these two, the newest in .trash, stay until it is empty.
+    # A task slot (#535): each task starts from dev-env-reset@t1, no deploy. No credential, so it cannot push; and
+    # egress.github would need a gh login here (ghHostsFile), so it reaches GitHub anonymously, public repos only.
+    instances.t1 = {
+      credentials = [ ];
+      memory.reserved = "2G";
+      cpu.reserved = 2;
+    };
+    # Kept for a rollback that drops t1: with no instance declared, the `.trash` sweep runs only while this list is
+    # non-empty, so these two, the newest in .trash, stay until it is empty.
     retired = [
       "research"
       "nats"
