@@ -162,7 +162,7 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
   on its `modules/core/fleet.nix` entry. That one fact keeps it out of every store
   cache's substituters and moves it from `NodeChronicNotReady` to `HostExpectedOff`;
   no rule edit. A power window, like msi's, is the one exception that
-  `homelab:node:planned_off` in `rules/homelab.yaml` names by host.
+  `homelab:node:planned_off` in `modules/homelab/monitoring/rules/homelab.yaml` names by host.
 - for a work-hours window, `power = { mac; interface; wake; off; }` on the same entry: lenovo
   wakes it, and it arms Wake-on-LAN on `interface` (`wol-<interface>`) and powers itself off
   (`modules/core/power-schedule.nix`). Evaluation fails unless it also has `sleeps = true`.

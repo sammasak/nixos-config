@@ -30,7 +30,7 @@ let
     "aarch64-linux"
   ] activate;
 
-  # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
+  # Key-only, lenovo-only login with passwordless sudo (modules/homelab/deploy-target.nix).
   pushAs = {
     sshUser = "deploy";
     user = "root";
