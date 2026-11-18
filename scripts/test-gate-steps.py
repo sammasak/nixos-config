@@ -239,4 +239,29 @@ for mode, (dryrun, build_rc) in plain_runs.items():
               and (r.returncode != 0) == (mode == "fail"),
               f"{mode}: one gate-step record for the plain check with {' '.join(want)}, and the step {'fails' if mode == 'fail' else 'passes'} ({r.returncode}, {lines})")
 
+# the deferral contract a gate step outside the flake check uses (scripts/gate_defer.py; scripts/test-ollama-gpu.py):
+# the same owner:check line and head=/drv= record the flake check writes, which scripts/deferred-checks.py reads
+with tempfile.TemporaryDirectory() as t:
+    t = pathlib.Path(t)
+    rec, lst = t / "records", t / "deferred"
+    (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
+    (t / "record").chmod(0o755)
+    saved = {k: os.environ.get(k) for k in ("PLATFORM_RECORD", "NIXOS_QA_DEFERRED", "NIXOS_QA_HEAD")}
+    os.environ.update(PLATFORM_RECORD=str(t / "record"), NIXOS_QA_DEFERRED=str(lst), NIXOS_QA_HEAD="0123abc")
+    gate_defer.record_deferral("ollama-gpu-test", "ollama-gpu-test/asus-ollama-gpu-check", "asus-b460m", "/nix/store/x-a.drv")
+    gate_defer.record_owned("ollama-gpu-test", "ollama-gpu-test/asus-ollama-gpu-check", "asus-b460m", "/nix/store/x-a.drv")
+    records = rec.read_text().splitlines()
+    check(lst.read_text() == "asus-b460m:ollama-gpu-test/asus-ollama-gpu-check\n"
+          and records == ["gate-step gate=nixos-qa step=ollama-gpu-test check=ollama-gpu-test/asus-ollama-gpu-check "
+                          f"owner=asus-b460m seconds=0 result={r} head=0123abc drv=/nix/store/x-a.drv" for r in ("deferred", "built")],
+          f"a step's deferral is owner:check with a head= and drv= record, and its owner's is result=built ({records})")
+    try:
+        gate_defer.record_deferral("ollama-gpu-test", "asus-ollama-gpu-check (no NVIDIA libs)", "asus-b460m", "/nix/store/x-b.drv")
+        spaced = False
+    except AssertionError:
+        spaced = True
+    check(spaced and "no NVIDIA" not in lst.read_text(), "seeded: a check name with spaces is refused, not written to the list")
+    for k, v in saved.items():
+        os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
 finish()
