@@ -61,18 +61,14 @@ OWNER = "asus-b460m"
 
 
 def realise(drv, name):
+    """name is the check's id in records and the deferred list (ollama-gpu-test/<name>), without spaces."""
     if not drv:
         return None, "no asus-ollama-gpu-check in system.checks"
     defer = gate_defer.deferred(drv, name, OWNER, "ollama-gpu-test")
     if defer:
         n, heavy = defer
         print(f"ollama-gpu-test: deferred {name} to {OWNER} (compiles {n}) {drv}: it would compile against {' '.join(heavy)}")
-        record = os.environ.get("PLATFORM_RECORD")
-        if record:
-            subprocess.run([record, "gate-step", "gate=nixos-qa", "step=ollama-gpu-test", f"check={name}", f"owner={OWNER}",
-                            "seconds=0", "result=deferred"], check=False)
-        with open(os.environ.get("NIXOS_QA_DEFERRED", os.devnull), "a") as f:
-            f.write(f"{name}\n")
+        gate_defer.record_deferral("ollama-gpu-test", f"ollama-gpu-test/{name}", OWNER, drv)
         return "deferred", ""
     out = subprocess.run(["nix-store", "--realise", drv], capture_output=True, text=True, check=False)
     return out.returncode, out.stdout + out.stderr
@@ -93,11 +89,21 @@ def instantiated(drvs):
     return json.loads(out.stdout)
 
 
+def owned(name, drv, ok, result="built"):
+    """On the owning host, a check that did what this test expects is recorded for the head: the deferral's other half
+    (expected-fail for the seeded one, whose build must fail)."""
+    if ok and os.uname().nodename.startswith(OWNER):
+        gate_defer.record_owned("ollama-gpu-test", f"ollama-gpu-test/{name}", OWNER, drv, result)
+
+
 checks = instantiated(P["check"])
 rc, log = realise(checks["asus"], "asus-ollama-gpu-check")
 check(rc in (0, "deferred"),
       f"asus-ollama-gpu-check builds: RUNPATH has /run/opengl-driver/lib, the drivers env has libcuda.so.1, or it is deferred to {OWNER} (rc {rc}: {log.strip()[-300:]})")
-rc, log = realise(checks["noNvidiaLibs"], "asus-ollama-gpu-check (no NVIDIA libs)")
+owned("asus-ollama-gpu-check", checks["asus"], rc == 0)
+rc, log = realise(checks["noNvidiaLibs"], "asus-ollama-gpu-check-no-nvidia-libs")
 check(rc == "deferred" or (rc not in (0, None) and "no lib/libcuda.so.1" in log),
       f"seeded: graphics without the NVIDIA library fails the gpu check, or it is deferred to {OWNER} (rc {rc}: {log.strip()[-300:]})")
+owned("asus-ollama-gpu-check-no-nvidia-libs", checks["noNvidiaLibs"], rc not in (0, None, "deferred") and "no lib/libcuda.so.1" in log,
+      "expected-fail")
 sys.exit(failed)

@@ -22,9 +22,10 @@ let
       {
         # msi's roles minus homelab-agent.
         imports = roleModules ++ fleetModules;
+        # a name outside sam.fleet, so no fleet host's facts (listeners, power window) apply to the VM
         sam.profile = {
           username = "lukas";
-          hostname = "msi-ms7758";
+          hostname = "vm-runtime-host";
           inherit roles;
           # The relay needs msi's native_otlp_auth secret.
           nativeOtel = false;
@@ -32,7 +33,9 @@ let
         # Stubs for state a VM lacks: the host key the secrets are encrypted to, and an NTP
         # server, without which systemd-time-wait-sync never finishes.
         sam.hostSecrets.enable = lib.mkForce false;
-        # msi's name, not its NIC: no 21:00 poweroff and no Wake-on-LAN unit in the VM
+        # a store cache serves the fleet (store-cache.nix asserts its sam.fleet listener): none in a VM off the fleet
+        sam.storeCache.enable = lib.mkForce false;
+        # no 21:00 poweroff and no Wake-on-LAN unit in the VM
         sam.powerSchedule.poweroff.enable = false;
         systemd.services.systemd-time-wait-sync.wantedBy = lib.mkForce [ ];
         virtualisation.memorySize = 2048;

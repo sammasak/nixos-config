@@ -340,6 +340,25 @@ let
         ${pkgs.python3}/bin/python scripts/test-workers-eval.py
       '';
 
+  trashSweepTest =
+    gate "trash-sweep-test"
+      (with pkgs; [
+        bash
+        coreutils
+        findutils
+        gawk
+        gnugrep
+        gnused
+        util-linux
+      ])
+      ''
+        bash scripts/test-trash-sweep.sh
+      '';
+
+  guestRecordsTest = gate "guest-records-test" (with pkgs; [ python3 ]) ''
+    ${pkgs.python3}/bin/python scripts/test-guest-records.py
+  '';
+
   # sam.claude.bulkReader: shunt hooks only when on and pinned, appended after the fleet's; guests via a guest module
   bulkReaderTest =
     gate "bulk-reader-test"
@@ -684,6 +703,7 @@ let
         ${pkgs.python3}/bin/python scripts/test-prepush-one-ref.py
         ${pkgs.python3}/bin/python scripts/test-gate-steps.py
         ${pkgs.python3}/bin/python scripts/test-heavy-lock.py
+        ${pkgs.python3}/bin/python scripts/test-deferred-checks.py
       '';
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
@@ -747,6 +767,8 @@ let
     systemdCalendarTest
     systemdVerifyTest
     platformRecordsTest
+    trashSweepTest
+    guestRecordsTest
     shippingMetricsTest
     navMetricsTest
     triggerRollbackTest
@@ -1313,7 +1335,7 @@ in
     "nixos:build-bounds-test" =
       task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts; lenovo's user slice has a ceiling" buildBoundsTest;
     "nixos:qa-push-test" =
-      task "The pre-push hook without Nix: a green tree is recorded per gate and generation, by the hook or a clean manual nixos:qa, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs; nixos:qa takes the heavy-work lock once (an ancestor's counts); a deferred check is recorded owner:check per head, and built by its owner" qaPushTest;
+      task "The pre-push hook without Nix: a green tree is recorded per gate and generation, by the hook or a clean manual nixos:qa, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs; nixos:qa takes the heavy-work lock once (an ancestor's counts); a deferred check is recorded owner:check per head, and built by its owner; deferred-checks.py says which still wait for their owner" qaPushTest;
     "nixos:journal-collector-test" =
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:fleet-endpoints-test" =
@@ -1322,6 +1344,10 @@ in
       task "No file but fleet.nix names the ntfy or Loki port; every host's firewall admits each sam.fleet listener from its callers alone and opens nothing else, no service the probe reads binds off its listener's port; lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: an open port, an upstream openFirewall, a stray rule, a trusted interface, a host removed)" fleetContractTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
+    "nixos:trash-sweep-test" =
+      task "The environments' .trash sweep, its core.nix text run: a week-old entry goes, a fresh one and a live dir stay, a .trash that is a link, a file or another mount is refused" trashSweepTest;
+    "nixos:guest-records-test" =
+      task "The host ships guest platform records on a fake Loki: each line once, also after a rewrite; host labels only; label keys, unknown kinds, oversize and too-old lines dropped; 500 per run; a link or FIFO on the spool's path refused; trashOne ships before its rename" guestRecordsTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
     "nixos:shipping-metrics-test" =
