@@ -112,7 +112,13 @@ skips the flake check and the other tests for a PR that touches nothing a host o
 3. **The pre-push hook reads `gateSteps`** for the pushed range's tier and prints which steps it skipped and why, as
    the docs-only path does now. A tier the classifier cannot decide is `config`.
 4. **Review requirements stay a checklist the coordinator applies**, read from the file; nothing enforces them
-   mechanically yet. The `shipping_review_*` metrics show whether they are met.
+   mechanically yet. The `shipping_review_*` metrics show whether they are met. The coordinator takes a PR's tier
+   from its own run of main's classifier and policy on the PR's file list (the pulls API, against `base.sha` on
+   GitHub, not a local `origin/main` the pusher can move), never from the gate record: the pre-push hook runs the
+   pusher's own `devenv.nix` gate code, so a PR could make it record `tier=docs`. The record's `tier=` is a
+   cross-check only, and a mismatch makes the PR `critical`. A PR touching `devenv.nix` or `.githooks/**` runs its
+   own gate code, so its safety rests on its two `critical` reviewers, not on the hook. The `tests` fallback for a
+   `scripts/test-*` file no gate names lives in the classifier's code, since `tests.paths` cannot express it.
 
 Then run a week with the values above before changing any of them.
 
