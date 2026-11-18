@@ -718,7 +718,12 @@ let
           ntfyElsewhere = failing (
             extend "msi-ms7758" [
               ../modules/homelab/ntfy.nix
-              { homelab.ntfy.enable = true; }
+              {
+                homelab.ntfy = {
+                  enable = true;
+                  baseUrl = "https://ntfy.example";
+                };
+              }
             ]
           );
           lokiLoopback = failing (
