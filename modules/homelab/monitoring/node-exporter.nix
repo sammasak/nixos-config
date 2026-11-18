@@ -1,17 +1,13 @@
 # node-exporter on the host's fleet address, for black-pi's Prometheus alone (modules/homelab/monitoring/prometheus.nix
-# scrapes every host in sam.fleet.hosts). The address is reachable through the trusted interfaces too, whatever the
-# rule below admits; upstream's openFirewall would admit any source.
+# scrapes every host in sam.fleet.hosts; its firewall rule is the host's node-exporter listener there). The address is
+# reachable through the trusted interfaces too, whatever that rule admits.
 {
   config,
-  lib,
   pkgs,
   ...
 }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
-  cfg = config.services.prometheus.exporters.node;
-  fw = config.networking.firewall;
   textfiles = "/run/node-exporter-textfile";
 in
 {
@@ -41,25 +37,4 @@ in
       MemoryMax = "64M";
     };
   };
-
-  networking.firewall = {
-    inherit
-      (mkDualBackendFirewall {
-        nftComment = "node-exporter answers black-pi's Prometheus.";
-        ports = [ cfg.port ];
-        sources = [ hosts.black-pi.address ];
-        interfaces = [ ];
-        inherit (fw) backend;
-      })
-      extraInputRules
-      extraCommands
-      ;
-  };
-
-  assertions = [
-    {
-      assertion = !cfg.openFirewall && fw.enable && anySourceTcp fw [ cfg.port ] == [ ];
-      message = "modules/homelab/monitoring/node-exporter.nix: keep the firewall on and port ${toString cfg.port} out of openFirewall and allowedTCPPorts; only black-pi is admitted.";
-    }
-  ];
 }

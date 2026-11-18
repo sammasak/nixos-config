@@ -263,6 +263,10 @@ either side is only reported.
 - **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
 - **Firewall**: the trusted LAN CIDR is `sam.fleet.lanCidr` (`192.168.10.0/24`). SSH is key-only, no root login.
+  A port one host serves another is a `sam.fleet.listeners` entry (`modules/core/fleet.nix`: host, port, the calling
+  hosts in `from`); `modules/core/network.nix` renders its rule and fails any host whose firewall opens, trusts or
+  accepts anything that is neither such a rule nor a `sam.fleet.public` entry with its reason (an upstream
+  `openFirewall` included).
 - **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (antigravity-cli, claude-code, open-webui, unrar, and on asus the NVIDIA driver and the CUDA runtime ollama-cuda needs); otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
 - **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` and `rf-lab.nix` force `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.

@@ -16,29 +16,21 @@ let
     mkPackageOption
     types
     ;
-  inherit (import ../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
-  fw = config.networking.firewall;
   cfg = config.homelab.alertBridge;
+  listener = config.sam.fleet.listeners.alert-bridge;
+  # the firewall admits it from here (modules/core/network.nix)
+  served = listener.host == config.networking.hostName;
 
   healthUrl = "http://${
     if cfg.listenAddress == "0.0.0.0" then "127.0.0.1" else cfg.listenAddress
   }:${toString cfg.port}/health";
 
-  # the only sender; the unit's IP filter holds it on trusted interfaces too (lenovo trusts tailscale0)
-  # both of black-pi's LAN addresses: Alertmanager has no outgoing-source setting, so with end0 down it sends from wlan0
-  admitted = [
-    config.sam.fleet.hosts.black-pi.address
-  ]
-  ++ config.sam.fleet.hosts.black-pi.extraAddresses;
-
-  firewallRules = mkDualBackendFirewall {
-    nftComment = "alert-bridge: black-pi's Alertmanager only.";
-    ports = [ cfg.port ];
-    # any other source could page homelab-alerts; flake-modules/alert-bridge-check.nix ties this to the Alertmanager host
-    sources = admitted;
-    interfaces = [ ];
-    backend = config.networking.firewall.backend;
-  };
+  # the listener's callers, the firewall's sources too; the unit's IP filter holds them on trusted interfaces as well
+  # (lenovo trusts tailscale0). Any other source could page homelab-alerts; flake-modules/alert-bridge-check.nix ties
+  # this to the Alertmanager host.
+  admitted = lib.concatMap (
+    h: [ config.sam.fleet.hosts.${h}.address ] ++ config.sam.fleet.hosts.${h}.extraAddresses
+  ) listener.from;
 in
 {
   # ntfy.nix: so the `ntfyUrl` default can read homelab.ntfy.port on hosts
@@ -68,28 +60,22 @@ in
       defaultText = "http://127.0.0.1:<ntfy.port>/homelab-alerts";
       description = "ntfy topic URL pages are published to. Plain http only: the bridge has no TLS stack.";
     };
-
-    openFirewall = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Accept the port from black-pi's Alertmanager.";
-    };
   };
 
   config = mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.openFirewall -> !lib.hasPrefix "127." cfg.listenAddress;
-        message = "homelab.alertBridge.openFirewall: listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach the bridge.";
+        assertion = served -> !lib.hasPrefix "127." cfg.listenAddress;
+        message = "homelab.alertBridge: sam.fleet.listeners.alert-bridge is served here, but listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach the bridge.";
       }
       {
         assertion =
-          (cfg.openFirewall -> (fw.enable && anySourceTcp fw [ cfg.port ] == [ ]))
+          (served -> cfg.port == listener.port)
           && (config.systemd.services.alert-bridge.serviceConfig.IPAddressDeny or null) == "any"
           &&
             (config.systemd.services.alert-bridge.serviceConfig.IPAddressAllow or null)
             == admitted ++ [ "localhost" ];
-        message = "homelab.alertBridge: keep the firewall on, port ${toString cfg.port} out of allowedTCPPorts and allowedTCPPortRanges, and the unit's IPAddressDeny = any with IPAddressAllow = ${toString admitted} localhost: only the Alertmanager host may page, from the LAN or a trusted interface.";
+        message = "homelab.alertBridge: listen on sam.fleet.listeners.alert-bridge's port ${toString listener.port}, and keep the unit's IPAddressDeny = any with IPAddressAllow = ${toString admitted} localhost: only the Alertmanager host may page, from the LAN or a trusted interface.";
       }
       {
         # IPAddressDeny = any holds outgoing traffic too: a publish anywhere but loopback is dropped without a page
@@ -159,10 +145,6 @@ in
         ];
         UMask = "0077";
       };
-    };
-
-    networking.firewall = mkIf cfg.openFirewall {
-      inherit (firewallRules) extraInputRules extraCommands;
     };
   };
 }
