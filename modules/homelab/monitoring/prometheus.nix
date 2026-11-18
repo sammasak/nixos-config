@@ -124,7 +124,7 @@ in
       };
       # keeps the remote-write names, e.g. claude_code_cost_usage_USD_total
       otlp.translation_strategy = "UnderscoreEscapingWithSuffixes";
-      # homelab-gitops#202: a replayed in-flight request lands behind newer ones; younger than this, kept
+      # A replayed in-flight request lands behind newer ones; younger than this, kept
       storage.tsdb.out_of_order_time_window = "1m";
       # interpolated, not toString: the store copies are promtool's inputs
       rule_files = map (f: "${f}") [
@@ -187,6 +187,7 @@ in
         # the admin listener, /metrics beside /status (modules/homelab/llm-gateway.toml)
         (static "llm-gateway" [ "${hosts.acer-swift.address}:9091" ])
         (static "alloy-otlp" [ "${hosts.acer-swift.address}:12346" ])
+        (static "caddy" [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ])
         (static "blackbox-exporter" [ "${blackbox.listenAddress}:${toString blackbox.port}" ])
         {
           job_name = "blackbox";

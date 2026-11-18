@@ -25,7 +25,7 @@ let
       (builtins.readFile ./alloy-otlp.alloy)
   );
   stability = "--stability.level=experimental";
-  # the config reads the token from the environment, as the pod did; $(<) drops the newline, as the relay's cat does
+  # the config reads the token from the environment; $(<) drops the newline, as the relay's cat does
   withToken = pkgs.writeShellScript "alloy-otlp-token" ''
     OTLP_BEARER_TOKEN="$(<"$CREDENTIALS_DIRECTORY/token")"
     export OTLP_BEARER_TOKEN
@@ -65,12 +65,12 @@ in
       TimeoutStartSec = 90;
       Restart = "always";
       RestartSec = 10;
-      # the same directory as the pod's hostPath; systemd moves it under /var/lib/private for the dynamic user
+      # systemd moves the state directory under /var/lib/private for the dynamic user
       DynamicUser = true;
       StateDirectory = "alloy-otlp";
       StateDirectoryMode = "0700";
       LoadCredential = [ "token:${config.sops.secrets.native_otlp_auth.path}" ];
-      # the pod's limit; memory_limiter in the config holds 128MiB
+      # twice the 128MiB memory_limiter in the config
       MemoryMax = "256M";
       MemorySwapMax = 0;
       CapabilityBoundingSet = "";

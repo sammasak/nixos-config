@@ -421,6 +421,10 @@ let
       chatStreams = acer.systemd.sockets.open-webui-proxy.listenStreams;
       fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
       ntfyPort = acer.sam.fleet.ntfy.port;
+      edgeMetrics = {
+        address = acer.sam.fleet.hosts.${acer.sam.fleet.edgeMetrics.host}.address;
+        inherit (acer.sam.fleet.edgeMetrics) port;
+      };
       # what lenovo's AdGuard answers for the names, and what black-pi's blackbox probes
       rewrites = lenovo.homelab.dns.rewrites;
       prometheusConfig = hosts.black-pi.config.services.prometheus.configText;
@@ -677,6 +681,14 @@ let
         # what each listener's service binds, where Nix sets it; the gateway's is in llm-gateway.toml
         bound = {
           alertmanager = blackPi.services.prometheus.alertmanager.port;
+          # the metrics server's virtual host, http://:<port> (edge.nix)
+          edge-metrics = lib.head (
+            lib.concatLists (
+              lib.filter (m: m != null) (
+                map (builtins.match "http://:([0-9]+)") (lib.attrNames acer.services.caddy.virtualHosts)
+              )
+            )
+          );
           alert-bridge = lenovo.homelab.alertBridge.port;
           prometheus = blackPi.services.prometheus.port;
           grafana = blackPi.services.grafana.settings.server.http_port;

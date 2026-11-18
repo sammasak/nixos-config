@@ -14,14 +14,9 @@ import subprocess
 import sys
 import tempfile
 
+from gate_probe import check, finish
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 module = (ROOT / "modules/core/systemd-verify.nix").read_text()
@@ -125,4 +120,4 @@ rc, out, made = run({"msi-wake.service": "[Service]\nRestartsec=5\nExecStart=/bi
 check(rc != 0 and not made and "the fixture Restartsec= under multi-user.target was not reported" in out,
       f"seeded: a pattern that misses systemd's message fails on the fixture, not passing the tree ({rc}, {out.strip()!r})")
 
-sys.exit(1 if failed else 0)
+finish()

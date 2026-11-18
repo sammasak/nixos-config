@@ -27,7 +27,8 @@ Workers run unattended in `bypassPermissions` on worker hosts only
 (`sam.herdr.worker`, set inside the nspawn developer environments and on no physical
 host, docs/nspawn-workers.md): Claude Code's settings carry
 `skipDangerousModePermissionPrompt`, so a `--dangerously-skip-permissions`
-start no longer stops at the acknowledgment dialog. On every host activation
+start no longer stops at the acknowledgment dialog. On every host the Home Manager
+activation (`acceptClaudeStartupDialogs`, `modules/programs/cli/claude-code/mcp.nix`)
 pre-trusts `$HOME` plus `sam.herdr.trustedDirs` (and their subdirectories),
 nothing else. The flag itself comes
 from the caller: skills `coord:spawn`, or `claude-worker` (the `claude` wrapper

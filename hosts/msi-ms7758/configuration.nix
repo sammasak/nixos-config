@@ -48,7 +48,7 @@
   # The llm-gateway's bigger tier, off with msi at 21:00 (the gateway falls back to acer).
   services.ollama = {
     enable = true;
-    # The pod's tags (five pulled, the factum one below): the gateway's /api fails over on a failed connect, not a 404.
+    # The tags (five pulled, the factum one below): the gateway's /api fails over on a failed connect, not a 404.
     # qwen2.5-coder:7b is the instruct tag's alias (same blob), Pi's name for it; qwen2.5-coder:3b is pi-harness's.
     loadModels = [
       "llama3.1:8b"
@@ -67,6 +67,6 @@
       PARAMETER num_ctx 8192
     ''}
   '';
-  # llama3.1:8b (4.9G) and a 16K q8_0 KV cache (about 0.9G), as in the pod's 8Gi limit
+  # llama3.1:8b (4.9G) and a 16K q8_0 KV cache (about 0.9G), fit in 8G
   systemd.services.ollama.serviceConfig.MemoryMax = "8G";
 }

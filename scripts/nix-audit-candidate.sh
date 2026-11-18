@@ -56,5 +56,5 @@ if [ -s current.json ] && [ -s candidate.json ]; then
     step gate-grype nix-audit diff current.json candidate.json --scanners grype --policy "$policy" --gate
   fi
 fi
-echo "evidence in $run; record it per nix-audit docs/PILOT.md"
+echo "evidence in $run; record it per the nix-audit repo's docs/PILOT.md"
 exit 0

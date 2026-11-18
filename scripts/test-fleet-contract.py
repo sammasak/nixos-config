@@ -12,20 +12,13 @@ import pathlib
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import tomllib
 
 import gate_probe
+from gate_probe import check, finish
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("fleet-contract")
@@ -154,4 +147,4 @@ with tempfile.TemporaryDirectory() as tmp:
           and "sam.workers.jumpHosts names" in out,
           f"seeded: asus-b460m removed from hosts.nix fails lenovo's machines and jump-host assertions ({out[-400:]!r})")
 
-sys.exit(1 if failed else 0)
+finish()
