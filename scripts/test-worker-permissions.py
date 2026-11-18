@@ -44,7 +44,7 @@ def launched(host, args, herdr=True, home=None):
 
 def check(condition, message):
     if not condition:
-        print(f"FAIL: {message}")
+        print(f"FAIL (scripts/{__file__.rsplit('/', 1)[-1]}): {message}")
         sys.exit(1)
     print(f"PASS: {message}")
 

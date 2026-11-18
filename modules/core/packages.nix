@@ -42,7 +42,7 @@ in
       devenv
       # nodejs + chromium look desktop-only but stay on headless devTools hosts
       # for agents' browser tooling; the Playwright MCP servers
-      # (claude-code/mcp.nix) carry their own store paths. Do not gate behind hasDesktop.
+      # (modules/programs/cli/claude-code/mcp.nix) carry their own store paths. Do not gate behind hasDesktop.
       nodejs
       chromium
     ]

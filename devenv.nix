@@ -1,3 +1,9 @@
+# The gates, by binding (search `^  <name> =`): each check is a `gate` (writeShellApplication) in the let below.
+# `lints` (also pre-commit's hooks), `tests` (nixos:qa runs them in order after the probe), `sideBySide` (the flake
+# check and the slowest tests, in parallel on asus), `qa` (nixos:qa: every gate), `qaPush` (pre-push: qa on the pushed
+# commit in a temporary worktree, recording a green tree); then `tasks` (one nixos:* task per gate, its description
+# what `devenv tasks list` shows) and `git-hooks.hooks`. A new test is three hunks: its `gate` binding, its entry in
+# `tests` or `sideBySide`, and its `tasks` entry.
 {
   pkgs,
   lib,
@@ -33,6 +39,13 @@ let
           exit 1
         fi
         bash scripts/nix-comment-lint.sh "$fx/rollback-pointer.nix.fixture" >/dev/null
+        rc=0
+        out=$(bash scripts/nix-comment-lint.sh "$fx/dangling-pointer.nix.fixture" 2>&1) || rc=$?
+        if [ "$rc" -ne 1 ] || ! grep -q '^path-pointer: .*/power-windows[.]nix ' <<<"$out"; then
+          printf '%s\n' "$out" >&2
+          echo "comment lint: $fx/dangling-pointer.nix.fixture was not refused by path-pointer (exit $rc)" >&2
+          exit 1
+        fi
       '';
 
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
@@ -1181,7 +1194,7 @@ in
     "nixos:coordinator-report-test" =
       task "The coordinator-report job: an even ISO week renders the two weeklies before it, an odd week exits 0 without devenv" coordinatorReportTest;
     "nixos:worker-permissions-test" =
-      task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
+      task "#145/#157/#487: Herdr workers in the nspawn guests start in bypassPermissions, a restored pane too, and switch models on a safeguards flag; every host accepts cross-session messages; plain claude and the Coordinator (dontAsk) keep their modes" workerPermissionsTest;
     "nixos:workers-eval-test" =
       task "The developer-environment module rejects each wrong configuration at eval; agent argv survives the guest shell" workersEvalTest;
     "nixos:bulk-reader-test" =
@@ -1211,7 +1224,7 @@ in
     "nixos:fleet-endpoints-test" =
       task "Every paging unit pages sam.fleet.pageUrl, also without runtime-host's sam.workers.ntfyUrl; an empty URL, ntfy off its fleet host and a redefined fleet fact fail" fleetEndpointsTest;
     "nixos:fleet-contract-test" =
-      task "No file but fleet.nix names the ntfy or Loki port, each port is asserted to its fleet fact, Loki admits the fleet, lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: port 2587, a host removed)" fleetContractTest;
+      task "No file but fleet.nix names the ntfy or Loki port; every host's firewall admits each sam.fleet listener from its callers alone and opens nothing else, each listener's service binds its port (scripts/gate-probe.nix bound); lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: an open port, an upstream openFirewall, a stray rule, a trusted interface, a host removed)" fleetContractTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:platform-records-test" =

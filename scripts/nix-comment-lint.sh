@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ratchet on the Comment Policy in CLAUDE.md. Two checks, both fatal:
+# Ratchet on the Comment Policy in CLAUDE.md. Three checks, all fatal:
 #
 #   1. density  — a .nix file of MIN_NIX_LINES or more nix-code lines may not
 #                 exceed MAX_PERCENT comment lines. Counted by
@@ -10,6 +10,10 @@
 #   2. patterns — comment shapes the policy names as never-allowed, over .nix
 #                 and .sh alike. A commented-out assignment is dead code in
 #                 shell too, and the trigger scripts moved there in cycle 2.
+#   3. pointers — a repo path named in a .nix file (comment or string), a .sh
+#                 or .py comment, or a doc (docs/records/ is frozen) must name a
+#                 tracked file: scripts/path-pointers.awk, its allowlist
+#                 scripts/path-pointers.allow for paths in other repositories.
 #
 # The pattern check is textual `grep`, not the awk scanner, so it also sees
 # comments inside `''` strings and inside .sh files. That is deliberate. The
@@ -31,9 +35,13 @@ report() {
 if [ "$#" -gt 0 ]; then
   NIXFILES=("$@")
   SHFILES=()
+  PYFILES=()
+  DOCS=()
 else
   mapfile -d '' NIXFILES < <(git ls-files -z '*.nix')
   mapfile -d '' SHFILES < <(git ls-files -z '*.sh')
+  mapfile -d '' PYFILES < <(git ls-files -z '*.py')
+  mapfile -d '' DOCS < <(git ls-files -z '*.md' ':!docs/records/*')
 fi
 
 # ── 1. density ────────────────────────────────────────────────────────
@@ -88,6 +96,20 @@ rule bare-date "$PROSE" '[0-9]{4}-[0-9]{2}-[0-9]{2}' 'revisit'
 # prose that merely mentions `foo = bar`.
 rule commented-out-binding "$COMMENTS" "^[^:]*:[0-9]+:[[:space:]]*#[[:space:]]*[a-zA-Z_][a-zA-Z0-9._'-]*[[:space:]]*=.*[;{[(][[:space:]]*$"
 
+# ── 3. path pointers ──────────────────────────────────────────────────
+tracked=$(mktemp)
+trap 'rm -f "$tracked"' EXIT
+git ls-files >"$tracked"
+pointers=$(
+  {
+    grep -HnE '[A-Za-z0-9_]/[A-Za-z0-9_.@+-]+\.[a-z]' "${NIXFILES[@]}" "${DOCS[@]}" || true
+    if [ "$#" -eq 0 ]; then grep -HnE '^[[:space:]]*#.*/' "${SHFILES[@]}" "${PYFILES[@]}" || true; fi
+  } | gawk -v tracked="$tracked" -v allowed=scripts/path-pointers.allow -f scripts/path-pointers.awk
+)
+while IFS= read -r line; do
+  if [ -n "$line" ]; then report "$line"; fi
+done <<<"$pointers"
+
 if [ "$fail" -ne 0 ]; then
   echo "" >&2
   echo "Comment Policy violations above. The policy is in CLAUDE.md; long" >&2
@@ -95,4 +117,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "comment lint: ${#NIXFILES[@]} .nix + ${#SHFILES[@]} .sh files clean (density <=${MAX_PERCENT}%, no forbidden shapes)"
+echo "comment lint: ${#NIXFILES[@]} .nix + ${#SHFILES[@]} .sh files clean (density <=${MAX_PERCENT}%, no forbidden shapes, every path pointer resolves)"

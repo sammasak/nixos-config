@@ -44,7 +44,7 @@ def check(condition, message):
     global FAILED
     if not condition:
         FAILED = True
-        print(f"FAIL: {message}")
+        print(f"FAIL (scripts/{__file__.rsplit('/', 1)[-1]}): {message}")
     else:
         print(f"PASS: {message}")
 

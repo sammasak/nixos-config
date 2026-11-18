@@ -1,6 +1,6 @@
 # Native OTLP canary
 
-lenovo, acer-swift and msi-ms7758 enable native telemetry (`nativeOtel = true`). On acer and msi that is the relay, its secret, host Codex metrics and their environments' telemetry: the runtime-host role's `sam.claude.telemetry.enable = false` keeps host Claude sessions as they were (no export, no change to `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` or `permissions.defaultMode`), so only lenovo's host Claude sessions report. The secret is root-owned (evaluation fails otherwise); only the relay's `LoadCredential` reads it. Traces are
+lenovo, acer-swift, msi-ms7758 and asus-b460m enable native telemetry (`nativeOtel = true`). On acer, msi and asus that is the relay, its secret, host Codex metrics and their environments' telemetry: the runtime-host role's `sam.claude.telemetry.enable = false` keeps host Claude sessions as they were (no export, no change to `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` or `permissions.defaultMode`), so only lenovo's host Claude sessions report. The secret is root-owned (evaluation fails otherwise); only the relay's `LoadCredential` reads it. Traces are
 disabled, Codex logs are disabled, and Claude log forwarding is limited to
 collector-sanitized tool-result events. The client configuration is gated on
 the private OTLP receiver being reviewed and live; this change does not alter
@@ -151,7 +151,7 @@ environment, fails the build of a configuration whose telemetry surfaces do not 
 `nativeOtel = false` and `sam.claude.telemetry` at its default, no Claude telemetry variable (`OTEL_*`,
 `HARNESS_*`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`), OTEL codex wrapper, relay
 or receiver secret is left, and Claude's `DISABLE_TELEMETRY = "1"` is set. Codex's `[otel]` stanza is not
-asserted (reading `config.toml` forces chromium); `codex/default.nix` writes it on the wrapper's rule. The
+asserted (reading `config.toml` forces chromium); `modules/programs/cli/codex/default.nix` writes it on the wrapper's rule. The
 standard Claude telemetry-disable setting is restored, Codex's OTLP exporter stanza and telemetry preludes
 are removed, and the host secret and relay are no longer installed. Verify no new requests
 arrive at the receiver. Keep the prior NixOS generation available until

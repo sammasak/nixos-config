@@ -69,7 +69,7 @@ in
   assertions = [
     {
       assertion = config.networking.hostName == deployer;
-      message = "modules/homelab/shipping-metrics.nix: rules/shipping.nix pages on the collector of sam.fleet.deployer (${deployer}); import it there alone.";
+      message = "modules/homelab/shipping-metrics.nix: modules/homelab/monitoring/rules/shipping.nix pages on the collector of sam.fleet.deployer (${deployer}); import it there alone.";
     }
   ];
 }

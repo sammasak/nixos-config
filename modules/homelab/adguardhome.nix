@@ -103,7 +103,8 @@ in
     ];
 
     # upstream's own validator on the rendered file: nixpkgs puts it in a checkPhase that pkgs.formats.yaml's
-    # runCommand never runs, so without this a value its parser rejects is only found by preStart on lenovo
+    # runCommand never runs, and with mutableSettings preStart checks only the file at rest before merging this one in,
+    # so without this a value its parser rejects is found only when AdGuard starts on lenovo
     system.checks = [
       (pkgs.runCommand "adguardhome-config-check"
         { nativeBuildInputs = [ config.services.adguardhome.package ]; }

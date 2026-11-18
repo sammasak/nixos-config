@@ -106,7 +106,9 @@ for host, fw in sorted(FW.items()):
 toml = tomllib.loads((ROOT / "modules/homelab/llm-gateway.toml").read_text())["server"]
 bound = dict(P["bound"], **{"gateway-api": toml["listen"].rsplit(":", 1)[1], "gateway-admin": toml["admin_listen"].rsplit(":", 1)[1]})
 check(sorted(bound) == sorted(L) and all(int(bound[n]) == L[n]["port"] for n in L),
-      f"every listener's service binds the listener's port ({ {n: (bound.get(n), L[n]['port']) for n in L} })")
+      f"every listener's service binds the listener's port ({ {n: (bound.get(n), L[n]['port']) for n in L} }); a new "
+      "listener (sam.fleet.listeners, modules/core/fleet.nix) needs its service's bound port in scripts/gate-probe.nix, "
+      "section fleet-contract, `bound`")
 OPENS = "firewall opens what sam.fleet does not list"
 for seed, host, marker, what in [("openPort", "acer-swift", '"port":9999', "allowedTCPPorts = [ 9999 ] on acer"),
                                  ("upstreamOpen", "msi-ms7758", "--dport 9100", "the node exporter's upstream openFirewall on msi"),
