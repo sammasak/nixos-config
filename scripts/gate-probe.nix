@@ -704,7 +704,14 @@ let
         // lib.mapAttrs' (
           _: h:
           lib.nameValuePair "node-exporter-${h.config.networking.hostName}" h.config.services.prometheus.exporters.node.port
-        ) (removeAttrs hosts [ "naked-pi" ]);
+        ) (removeAttrs hosts [ "naked-pi" ])
+        # harmonia's bind, [::]:<port>, on each host that serves a store cache (store-cache.nix)
+        // lib.mapAttrs' (
+          _: h:
+          lib.nameValuePair "store-cache-${h.config.networking.hostName}" (
+            lib.last (lib.splitString ":" h.config.services.harmonia.cache.settings.bind)
+          )
+        ) (lib.filterAttrs (_: h: h.config.sam.storeCache.enable) hosts);
         addresses = lib.mapAttrs (_: h: [ h.address ] ++ h.extraAddresses) lenovo.sam.fleet.hosts;
         machines = map (m: m.target) herdr.machines;
         jumpHosts = lenovo.services.devEnvironments.jumpHosts;
