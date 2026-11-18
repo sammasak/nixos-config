@@ -411,6 +411,30 @@ let
         ${pkgs.python3}/bin/python scripts/test-fleet-contract.py
       '';
 
+  # On demand, not in nixos:qa: eleven nix evals of one host each, unmeasured. Its gate-step record gives the seconds a
+  # gate host spends, to decide on data whether it joins the tests. Not named test-*, so a docs-only push that edits a
+  # host table it reads does not look for a gate running it.
+  seventhHostTest =
+    gate "seventh-host-test"
+      (with pkgs; [
+        git
+        nix
+        python3
+      ])
+      ''
+        # eleven host evals: the memory flake-check spares lenovo, and the same heavy-work lane as nixos:qa (once)
+        if [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
+          echo "seventh-host-test: refused on lenovo: eleven host evaluations (memory); run it on msi, asus or acer" >&2
+          exit 1
+        fi
+        if [ -z "''${NIXOS_QA_LOCKED:-}" ]; then NIXOS_QA_LOCKED=1 exec ${lib.getExe heavyLock} "$0" "$@"; fi
+        t=$SECONDS
+        if ${pkgs.python3}/bin/python scripts/seventh-host-check.py; then r=pass; else r=fail; fi
+        echo "seventh-host-test took $((SECONDS - t)) s"
+        ${lib.getExe record} gate-step gate=on-demand step=seventh-host-test seconds=$((SECONDS - t)) result=$r sha="$(git rev-parse HEAD)"
+        [ "$r" = pass ]
+      '';
+
   # acer's Alloy, config and ExecStart from the gate probe, not devenv's packages
   alloyOtlpTest =
     gate "alloy-otlp-test"
@@ -1342,6 +1366,8 @@ in
       task "Every paging unit pages sam.fleet.pageUrl, also without runtime-host's sam.workers.ntfyUrl; an empty URL, ntfy off its fleet host and a redefined fleet fact fail" fleetEndpointsTest;
     "nixos:fleet-contract-test" =
       task "No file but fleet.nix names the ntfy or Loki port; every host's firewall admits each sam.fleet listener from its callers alone and opens nothing else, no service the probe reads binds off its listener's port; lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: an open port, an upstream openFirewall, a stray rule, a trusted interface, a host removed)" fleetContractTest;
+    "nixos:seventh-host-test" =
+      task "On demand, not in nixos:qa (records its seconds as a gate-step): a seventh host seeded from fixture data (its hosts.nix and fleet.nix entries, hosts/seventh) into a temporary tree: it evaluates, every list derived from the fleet names it, only the hosts rendering one move; the places it still needs edited by hand are listed exactly (seeded: each derived list hard-coded without it)" seventhHostTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:trash-sweep-test" =
