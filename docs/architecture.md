@@ -21,6 +21,7 @@
 - `journal-collector-check.nix`: `alloy validate` on the config black-pi's journal collector renders (an aarch64 host is only evaluated)
 - `llm-bench.nix`: the local-inference benchmark package and its `gpu-telemetry-exporter` and `llm-bench-scorecard` checks
 - `monitoring-check.nix`: black-pi's promtool, amtool and blackbox config checks seeded onto an x86 host, plus the per-host rule test
+- `app-manifest-check.nix`: the `app-manifest` check, app manifest admission (`lib/app-manifest`, no host imports it) over its fixtures against the fleet's facts; see `docs/app-manifest.md`
 - `shipping-check.nix`: the shipping rules and dashboard against the metric names emitted or recorded, and promtool alert tests
 - `deploy.nix`: deploy-rs push targets, one node per hosts table entry
 - `hosts.nix`: the hosts table (roles, `hostDir`, `deploy.hostname`, `deploy.remoteBuild`)
