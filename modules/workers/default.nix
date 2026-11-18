@@ -142,7 +142,7 @@ let
   fleetGuest =
     { devEnvironment, ... }@os:
     let
-      github = onGithub dev.instances.${devEnvironment.name};
+      bound = n: lib.elem n devEnvironment.credentials;
     in
     {
       imports = [
@@ -241,9 +241,10 @@ let
         # where the agent logs friction with the environment (docs/environments-feedback.md)
         "f ${home}/ENV-FEEDBACK.md 0644 ${user} users -"
       ]
-      # the host's credentials, bound read-only under ${creds}, linked where the host's own tools look for them
-      ++ lib.optional (!github) "L+ ${home}/.ssh/id_ed25519 - - - - ${creds}/id_ed25519"
-      ++ lib.optionals (cfg.ghHostsFile != null && !github) [
+      # the host's credentials bound into this guest, read-only under ${creds}, linked where the host's own tools look
+      # for them: from the bound list itself, so no link can point at a credential the instance does not get
+      ++ lib.optional (bound "id_ed25519") "L+ ${home}/.ssh/id_ed25519 - - - - ${creds}/id_ed25519"
+      ++ lib.optionals (bound "gh-hosts.yml") [
         "d ${home}/.config/gh 0700 ${user} users -"
         "L+ ${home}/.config/gh/hosts.yml - - - - ${creds}/gh-hosts.yml"
       ];
