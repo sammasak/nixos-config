@@ -78,7 +78,14 @@ in
       description = "What the platform approves for each app, by app name.";
     };
     assertions = mkOption {
-      type = types.listOf types.attrs;
+      type = types.listOf (
+        types.submodule {
+          options = {
+            assertion = mkOption { type = types.bool; };
+            message = mkOption { type = types.str; };
+          };
+        }
+      );
       internal = true;
       default = [ ];
       description = "The admission rules, each an assertion and the message it fails with.";
