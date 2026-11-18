@@ -7,6 +7,10 @@ earlier head does (the check did not change). Read-only: it queries the existing
 Usage: deferred-checks.py HEAD [--days N] [--limit N] [--loki URL | --spool FILE...]
 An owner record from Loki counts only if its stream's host label is that owner (the owner= field is the writer's own
 claim; a record without the label does not count); a spool is one host's local copy and carries no label.
+The gate record must come from a fleet host's own stream: a gate run in a worker guest (stream host <host>-<guest>) is
+reported and not counted. The fleet's host names are the keys of the hosts table in modules/core/fleet.nix (sam.fleet.hosts,
+networking.hostName, which platform-record.sh labels its stream with), read from the file's text: no evaluation here;
+scripts/test-fleet-contract.py holds the parse to the evaluated sam.fleet.hosts.
 Exit 0: a passing gate on a clean checkout of HEAD is recorded and every check its deferred_checks list names is
 covered (or it names none). 1: a check waits for its owner. 2: the records cannot say: no such gate record, a listed
 check without its deferral record, a query that hit its limit, an unreachable Loki, or a malformed HEAD."""
@@ -19,6 +23,7 @@ import time
 import urllib.parse
 import urllib.request
 
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOKI = "http://192.168.10.137:3100"  # sam.fleet.loki (modules/core/fleet.nix), as scripts/platform-record.sh
 PAIR = re.compile(r'(\w+)=("[^"]*"|\S*)')
 COVERING = re.compile(r"result=(built|present|expected-fail)( |$)")
@@ -26,6 +31,19 @@ COVERING = re.compile(r"result=(built|present|expected-fail)( |$)")
 
 class Unreadable(Exception):
     pass
+
+
+def fleet_hosts(root=ROOT):
+    """The keys of fleet.nix's `hosts = { ... };` table, without evaluating it: `name.address = …;` or `name = {` at the
+    table's own indentation."""
+    text = (pathlib.Path(root) / "modules/core/fleet.nix").read_text()
+    table = re.search(r"\n  hosts = \{\n(.*?)\n  \};\n", text, re.S)
+    if not table:
+        raise Unreadable("modules/core/fleet.nix has no `  hosts = {` table to read the fleet's host names from")
+    names = set(re.findall(r"^    ([A-Za-z0-9-]+)(?:\.address)? = ", table[1], re.M))
+    if not names:
+        raise Unreadable("modules/core/fleet.nix's hosts table names no host")
+    return names
 
 
 def fields(line):
@@ -77,9 +95,14 @@ def verdict(records, head):
     """([(owner, check, how)] covered, [(owner, check, drv)] waiting), or Unreadable."""
     # checkout=clean: a manual gate on a dirty checkout built the edited checks, not HEAD's
     gates = records.find("gate", [f"head={head}", "result=pass", "checkout=clean"])
+    fleet = fleet_hosts()
+    for g in gates:
+        if g["_host"] is not None and g["_host"] not in fleet:
+            print(f"gate ran in {g['_host'] or 'a stream without a host label'}: not counted (not a fleet host's own stream)")
+    gates = [g for g in gates if g["_host"] is None or g["_host"] in fleet]
     if not gates:
-        raise Unreadable(f"no passing gate record on a clean checkout of {head[:12]}: its gate has not passed, ran only on a "
-                         "dirty checkout, or its records are not in the window")
+        raise Unreadable(f"no passing gate record on a clean checkout of {head[:12]} from a fleet host: its gate has not "
+                         "passed, ran only on a dirty checkout or in a guest, or its records are not in the window")
     listed = {tuple(item.split(":", 1)) for g in gates for item in g.get("deferred_checks", "").split(",") if ":" in item}
     found = {}
     for r in records.find("gate-step", ["result=deferred", f"head={head}"]):

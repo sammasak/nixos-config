@@ -82,6 +82,8 @@ LOKI_LINES = [(k, v, "acer-swift") for k, v in BASE] + [
 # host label (unlabeled)
 MODE = "honest"
 queries = []
+# a guest's stream (host <host>-<guest>) with the only gate record: run in the guest, not counted
+GUEST_GATE = [(LOKI_LINES[0][0], LOKI_LINES[0][1], "msi-ms7758-canary")]
 
 
 class Loki(http.server.BaseHTTPRequestHandler):
@@ -93,7 +95,8 @@ class Loki(http.server.BaseHTTPRequestHandler):
         needles = re.findall(r'\|= "([^"]+)"', query)
         regex = re.search(r'\|~ "([^"]+)"', query)
         lines = {"honest": LOKI_LINES, "forged": LOKI_LINES[:-1],
-                 "unlabeled": LOKI_LINES[:-2] + [(*LOKI_LINES[-1][:2], None)]}[MODE]
+                 "unlabeled": LOKI_LINES[:-2] + [(*LOKI_LINES[-1][:2], None)],
+                 "guest": GUEST_GATE + LOKI_LINES[1:]}[MODE]
         hits = [(v, h) for k, v, h in lines if k == kind and all(n in v for n in needles) and (not regex or re.search(regex[1], v))]
         hits = hits[: int(q["limit"][0])]
         streams = {}
@@ -125,6 +128,11 @@ MODE = "unlabeled"
 r = subprocess.run([sys.executable, str(SCRIPT), H2, "--loki", url], capture_output=True, text=True)
 check(r.returncode == 1 and f"waiting  asus-b460m:{B}" in r.stdout,
       f"seeded: from Loki, an owner record whose stream has no host label does not count ({r.returncode}: {r.stdout.strip()})")
+MODE = "guest"
+r = subprocess.run([sys.executable, str(SCRIPT), H2, "--loki", url], capture_output=True, text=True)
+check(r.returncode == 2 and "gate ran in msi-ms7758-canary: not counted" in r.stdout and "from a fleet host" in r.stderr,
+      f"seeded: the only passing gate record comes from a guest's stream: reported, not counted, exit 2 ({r.returncode}: "
+      f"{(r.stdout + r.stderr).strip()})")
 MODE = "honest"
 r = subprocess.run([sys.executable, str(SCRIPT), H2, "--loki", url, "--limit", "2"], capture_output=True, text=True)
 check(r.returncode == 2 and "hit its limit" in r.stderr, f"seeded: a query that fills its limit cannot say, exit 2 ({r.returncode})")

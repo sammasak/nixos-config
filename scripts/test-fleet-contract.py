@@ -7,6 +7,7 @@ openFirewall, a stray rule and a trusted interface each fail evaluation), each l
 lenovo's sam.herdr.machines and jump hosts must be the runtime hosts of flake-modules/hosts.nix: one left out, one the
 table no longer has, and the table with asus-b460m removed each fail evaluation; a collector on a host without a fleet
 address fails too."""
+import importlib.util
 import os
 import pathlib
 import re
@@ -126,6 +127,13 @@ for seed, host, marker, what in [("openPort", "acer-swift", '"port":9999', "allo
     check(any(f"{host}'s {OPENS}" in m and marker in m for m in F[seed]), f"seeded: {what} fails ({F[seed]})")
 check(any("sam.fleet.loki is served here" in m and "loopback" in m for m in F["lokiLoopback"]),
       f"seeded: black-pi's Loki on loopback fails ({F['lokiLoopback']})")
+# scripts/deferred-checks.py reads the fleet's host names from fleet.nix's text, not by evaluating it: the same names
+spec = importlib.util.spec_from_file_location("deferred_checks", ROOT / "scripts" / "deferred-checks.py")
+deferred_checks = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(deferred_checks)
+check(deferred_checks.fleet_hosts(ROOT) == set(P["addresses"]),
+      f"deferred-checks.py's text parse of fleet.nix names the hosts sam.fleet.hosts evaluates to "
+      f"({sorted(deferred_checks.fleet_hosts(ROOT))} vs {sorted(P['addresses'])})")
 check(any("naked-pi has no address in sam.fleet.hosts" in m for m in F["collectorOffFleet"]),
       f"seeded: a collector on naked-pi, which has no fleet address, fails ({F['collectorOffFleet']})")
 
