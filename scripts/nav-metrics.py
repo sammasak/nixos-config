@@ -62,6 +62,10 @@ REV_RE = re.compile(r"^(?:origin|upstream)/|\.\.|^HEAD|^[0-9a-f]{7,40}$")
 REPO_RE = re.compile(r"(?:/nixos-config|^" + re.escape(HOME) + r"/(?:\.cache/)?wt/[^/\s'\"]+)(?:/(.*))?$")
 HEREDOC_RE = re.compile(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?")
 # lines that cannot hold a tool call, its result, a prompt or the session's name are not parsed
+# a run reads the day's transcripts through the page cache, which the unit's cgroup is charged for: hundreds of MB on
+# a busy day against a 48M MemoryMax. Reading drops each file's pages behind it, every DROP_EVERY bytes and at the end,
+# so the cgroup's peak stays at the process's own few MB, flat in the transcripts' size
+DROP_EVERY = 8 * 1024 * 1024
 WANTED = ('"tool_use"', '"tool_result"', '"origin"', '"agentName"')
 
 
@@ -341,14 +345,35 @@ def tool_call(name, inp, cwd):
     return None
 
 
-def scan_file(path, since):
-    """One main-session transcript -> (role, calls in the window in order, indices where in-window prompts start a
-    stretch). A nav call keeps only its repo flag, repo-relative paths and its miss once its result arrives."""
-    role, calls, pending, starts = "worker", [], {}, []
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
+def tally():
+    """One role's running counts over the day: per repo stretch the nav calls and top-level directories before its
+    first change, and the repo nav calls judged (their result seen) and missed, repo file reads and repeats."""
+    return {"before": [], "dirs": [], "judged": 0, "missed": 0, "reads": 0, "repeats": 0}
+
+
+def scan_file(path, since, t):
+    """One main-session transcript, line by line, into its role's tally `t[role]`. Nothing per call outlives the
+    call: a stretch keeps its counters and the directories it saw, a nav call waits only for its result, and the
+    session keeps the set of repo files it read (for repeats). Returns the session's role."""
+    role, pending, reads_seen = "worker", {}, set()
+    stretch = None  # [nav calls, repo nav calls, top dirs, saw a change, saw a repo change]; None before a prompt
+    done = []  # finished stretches as (nav calls, top dirs), counted once the role is known at the end
+
+    def close():
+        if stretch is not None and (stretch[1] or stretch[4]):
+            done.append((stretch[0], len(stretch[2])))
+
+    judged = missed = reads = repeats = 0
+    with open(path, "rb") as fh:
+        fd, read, dropped = fh.fileno(), 0, 0
+        for raw in fh:
             if time.monotonic() > DEADLINE:
                 raise TimeoutError("run deadline reached")
+            read += len(raw)
+            if read - dropped >= DROP_EVERY:
+                os.posix_fadvise(fd, 0, read, os.POSIX_FADV_DONTNEED)
+                dropped = read
+            line = raw.decode("utf-8", errors="replace")
             if not any(k in line for k in WANTED):
                 continue
             try:
@@ -362,11 +387,12 @@ def scan_file(path, since):
                 role = "coordinator" if "coordinator" in rec["agentName"] else "worker"
             if rec.get("isSidechain"):
                 continue
-            t = stamp(rec)
-            if t is None or t < since:
+            ts_ = stamp(rec)
+            if ts_ is None or ts_ < since:
                 continue
             if is_prompt(rec):
-                starts.append(len(calls))
+                close()
+                stretch = [0, 0, set(), False, False]
                 continue
             m = rec.get("message")
             if not isinstance(m, dict) or not isinstance(m.get("content"), list):
@@ -378,16 +404,35 @@ def scan_file(path, since):
                     c = tool_call(x.get("name"), x.get("input"), rec.get("cwd"))
                     if c is None:
                         continue
-                    c["name"] = x.get("name")
                     if c["nav"]:
-                        c["miss"] = None
-                        pending[x.get("id")] = c
-                    calls.append(c)
+                        pending[x.get("id")] = (x.get("name"), c["repo"])
+                        for r in c["reads"]:
+                            reads += 1
+                            repeats += r in reads_seen
+                            reads_seen.add(r)
+                    if stretch is not None:
+                        if c.get("change"):
+                            stretch[3] = True
+                            stretch[4] = stretch[4] or c["repo_change"]
+                        elif not stretch[3]:
+                            stretch[0] += 1
+                            stretch[1] += c["repo"]
+                            stretch[2] |= {d for d in map(topdir, c["paths"] + c["reads"]) if d}
                 elif x.get("type") == "tool_result":
-                    c = pending.pop(x.get("tool_use_id"), None)
-                    if c is not None:
-                        c["miss"] = is_miss(c["name"], result_text(x.get("content")), bool(x.get("is_error")))
-    return role, calls, starts
+                    hit = pending.pop(x.get("tool_use_id"), None)
+                    if hit is not None and hit[1]:
+                        judged += 1
+                        missed += is_miss(hit[0], result_text(x.get("content")), bool(x.get("is_error")))
+        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    close()
+    r = t[role]
+    r["before"] += [n for n, _ in done]
+    r["dirs"] += [d for _, d in done]
+    r["judged"] += judged
+    r["missed"] += missed
+    r["reads"] += reads
+    r["repeats"] += repeats
+    return role
 
 
 def transcripts(projects, since):
@@ -413,73 +458,43 @@ def transcripts(projects, since):
 
 
 def scan(projects, since):
-    """Every transcript's calls, by role. A file that vanishes or cannot be read is skipped."""
-    by_role = {r: [] for r in ROLES}
+    """Every transcript's counts, by role. A file that vanishes or cannot be read is skipped."""
+    t = {r: tally() for r in ROLES}
     for p in transcripts(projects, since):
         try:
-            role, calls, starts = scan_file(p, since)
+            scan_file(p, since, t)
         except TimeoutError:  # an OSError too, but the run's, not the file's
             raise
         except OSError as e:
             print(f"nav-metrics: a transcript was unreadable, skipped: {e.strerror}", file=sys.stderr)
             continue
-        by_role[role].append((calls, starts))
-    return by_role
+    return t
 
 
-def judged(sessions):
-    return [c for calls, _ in sessions for c in calls if c["nav"] and c["repo"] and c["miss"] is not None]
-
-
-def stretches(out, by_role, enough):
-    for role, sessions in by_role.items():
+def stretches(out, t, enough):
+    for role, r in t.items():
         if not enough[role]:
             continue
-        before, dirs = [], []
-        for calls, starts in sessions:
-            for k, start in enumerate(starts):
-                end = starts[k + 1] if k + 1 < len(starts) else len(calls)
-                navn, repo_nav, seen, first_change = 0, 0, set(), None
-                for i in range(start, end):
-                    if calls[i].get("change"):
-                        first_change = i
-                        break
-                    navn += 1
-                    repo_nav += calls[i]["repo"]
-                    seen |= {d for d in map(topdir, calls[i]["paths"] + calls[i]["reads"]) if d}
-                repo_change = any(c.get("repo_change") for c in calls[first_change:end]) if first_change is not None else False
-                if repo_nav or repo_change:
-                    before.append(navn)
-                    dirs.append(len(seen))
-        out.add("agent_nav_stretches", len(before), role=role)
+        out.add("agent_nav_stretches", len(r["before"]), role=role)
         for q in (0.5, 0.9):
-            if before:
-                out.add("agent_nav_calls_before_first_edit", quantile(before, q), role=role, quantile=str(q))
-                out.add("agent_nav_topdirs_before_first_edit", quantile(dirs, q), role=role, quantile=str(q))
+            if r["before"]:
+                out.add("agent_nav_calls_before_first_edit", quantile(r["before"], q), role=role, quantile=str(q))
+                out.add("agent_nav_topdirs_before_first_edit", quantile(r["dirs"], q), role=role, quantile=str(q))
 
 
-def misses(out, by_role, enough):
-    for role, sessions in by_role.items():
+def misses(out, t, enough):
+    for role, r in t.items():
         if enough[role]:
-            j = judged(sessions)
-            out.add("agent_nav_repo_miss_ratio", sum(c["miss"] for c in j) / len(j), role=role)
+            out.add("agent_nav_repo_miss_ratio", r["missed"] / r["judged"], role=role)
 
 
-def rereads(out, by_role, enough):
-    for role, sessions in by_role.items():
+def rereads(out, t, enough):
+    for role, r in t.items():
         if not enough[role]:
             continue
-        reads = repeats = 0
-        for calls, _ in sessions:
-            seen = set()
-            for c in calls:
-                for r in c.get("reads", []):
-                    reads += 1
-                    repeats += r in seen
-                    seen.add(r)
-        out.add("agent_nav_repo_reads", reads, role=role)
-        if reads:
-            out.add("agent_nav_repeat_read_ratio", repeats / reads, role=role)
+        out.add("agent_nav_repo_reads", r["reads"], role=role)
+        if r["reads"]:
+            out.add("agent_nav_repeat_read_ratio", r["repeats"] / r["reads"], role=role)
 
 
 def previous_success(path):
@@ -523,12 +538,12 @@ def main(argv=None):
     def sample(o):
         by_role = scan(a.projects, since)
         for role in ROLES:
-            o.add("agent_nav_repo_nav_calls", len(judged(by_role[role])), role=role)
+            o.add("agent_nav_repo_nav_calls", by_role[role]["judged"], role=role)
         return by_role
 
     by_role = section("scan", sample)
     if by_role is not None:
-        enough = {r: len(judged(by_role[r])) >= MIN_SAMPLE for r in ROLES}
+        enough = {r: by_role[r]["judged"] >= MIN_SAMPLE for r in ROLES}
         section("stretches", lambda o: stretches(o, by_role, enough))
         section("misses", lambda o: misses(o, by_role, enough))
         section("rereads", lambda o: rereads(o, by_role, enough))
