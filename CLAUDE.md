@@ -283,7 +283,8 @@ either side is only reported.
   recipient, both also in `scripts/test-ssh-known-hosts.py`;
 - its rows in this file's deploy block and hostnames, `docs/architecture.md`, and for a runtime host
   `docs/nspawn-workers.md` (checked by the same test);
-- a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` (asserted);
+- a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` and its name in
+  `storeCaches` in `modules/core/fleet.nix`, which admits every other fleet host to its port (both asserted);
 - a runtime host: its `sam.herdr.machines` entry and `sam.workers.jumpHosts` name on lenovo (asserted against
   this table, so adding or removing a runtime host without them fails lenovo's evaluation);
 - its LAN address in `modules/core/fleet.nix` if another module reads it or it ships its journal (black-pi's Loki

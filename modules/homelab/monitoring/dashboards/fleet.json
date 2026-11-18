@@ -335,6 +335,13 @@
           "format": "table",
           "instant": true,
           "refId": "I"
+        },
+        {
+          "expr": "label_replace(topk by (node) (1, timestamp(homelab_nixos_info{node=~\"$node\"})) * 0 + on (node, version, toplevel) group_left max by (node, version, toplevel) (homelab_nixos_info{node=~\"$node\"}), \"toplevel\", \"$1\", \"toplevel\", \"(.{12}).*\")",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "J"
         }
       ],
       "fieldConfig": {
@@ -457,7 +464,7 @@
           }
         ]
       },
-      "description": "One row per host: status, uptime, CPU %, memory %, root filesystem %, hottest sensor, alerts firing on it, failed units, NixOS generation.",
+      "description": "One row per host: status, uptime, CPU %, memory %, root filesystem %, hottest sensor, alerts firing on it, failed units, NixOS generation, version and toplevel hash (the deploy log below carries the commit).",
       "transformations": [
         {
           "id": "merge",
@@ -467,7 +474,8 @@
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true
+              "Time": true,
+              "Value #J": true
             },
             "renameByName": {
               "node": "Host",
@@ -479,7 +487,9 @@
               "Value #F": "Hottest °C",
               "Value #G": "Alerts",
               "Value #H": "Failed units",
-              "Value #I": "Generation"
+              "Value #I": "Generation",
+              "version": "NixOS",
+              "toplevel": "Toplevel"
             }
           }
         }
@@ -487,13 +497,69 @@
     },
     {
       "id": 8,
+      "type": "table",
+      "title": "Failed units across the fleet",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node, name) (node_systemd_unit_state{state=\"failed\",node=~\"$node\"} == 1)",
+          "legendFormat": "{{node}}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "none"
+        },
+        "overrides": []
+      },
+      "description": "Every failed service, socket, timer, target or path unit now, on every awake host (a sleeping host has no current series). The exporter leaves out mounts, devices, scopes, slices and automounts.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            },
+            "renameByName": {
+              "node": "Host",
+              "name": "Unit"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Host"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
       "type": "logs",
       "title": "Deploys (just deploy from lenovo, by flake attribute)",
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 26
       },
       "datasource": {
         "type": "loki",
