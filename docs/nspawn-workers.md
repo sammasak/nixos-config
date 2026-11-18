@@ -95,7 +95,7 @@ neighbour was reclaimed to 59M.
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |
-| Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later, except on a host that declares no instance, where the last name stays until `.trash` is empty (the activation that ages it out runs only while `instances` or `retired` is set) | 23 s; profile and GC roots deleted, the home moved to `<stateDir>/.trash/<name>-<date>` and deleted at the first activation a week later (recover it with `mv` meanwhile) |
+| Retire | move the name from `instances` to `retired`, deploy; drop it from `retired` any time later, except on a host that declares no instance, where the last name stays until `.trash` is empty (the daily `dev-environments-trash` timer that ages it out, and the activation, exist only while `instances` or `retired` is set) | 23 s; profile and GC roots deleted, the home's unsent platform records shipped (at most 30 s), the home moved to `<stateDir>/.trash/<name>-<date>` and deleted by that timer (or an activation) a week later (recover it with `mv` meanwhile); a `.trash` that is a link, a file or another mount is refused and fails the timer's unit |
 | Reset | `sudo systemctl start dev-env-reset@<name>` (the coordinator, through the deploy user, or the owner); no deploy. It refuses, and changes nothing, while a `claude` or `codex` process runs in the guest or a clone under its home has uncommitted changes, commits on no remote, or a stash: to discard those on purpose, retire the name instead. The check runs inside the guest as its user, never as host git on guest-owned clones | the container stopped, its home, profile and GC roots trashed as Retire does, the home recreated as for a new instance (fresh `~/.cache`, eval and fetcher caches, and for `rootInGuest` a new host key, so a client that trusted the old one drops its line from `~/.ssh/known_hosts_environments`), the container started again; the host store is not touched (`tests/dev-env-reset-vm.nix`, `nix build .#dev-env-reset-vm` on msi) |
 
 Removing a declaration only stops the environment: a rollback or a deploy from
@@ -346,6 +346,34 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   token in `hosts.yml` the proxy still starts and GitHub answers 401.
 - Without `egress.github`, the host user's `~/.ssh/id_ed25519` and on acer
   `~/.config/gh/hosts.yml` are still bound read-only.
+- The guest cannot reach Loki, so the host ships its platform records
+  (`scripts/guest-records.py`): `dev-env-records` every 5 minutes for every
+  declared instance, and `dev-env-records@<name>` before a retire or reset
+  renames the home (`timeout 30 … || true`: Loki down never holds either).
+  It reads `<stateDir>/<name>/home/.local/state/platform-records`
+  (`scripts/platform-record.sh`'s spool), opening each path component
+  without following a link, and the spool only as a regular file, its last
+  2 MiB; a link or FIFO anywhere there skips that instance and fails the
+  unit. The host sets every label: `job=platform`, `kind` from
+  `services.devEnvironments.records.kinds` (`platform-record.sh`'s list less
+  `deploy` and `delivery`: a guest never makes those),
+  `host=<prefix>-<name>`. A line ships only if the whole of it parses as
+  what `platform-record.sh` writes: printable ASCII, no backslash or quote,
+  `<date -Is> <kind>` then single-space `key=value` tokens, keys
+  `[a-z_][a-z0-9_]*` not starting with `__` (Loki's own), values `[A-Za-z0-9_.,:/-]*` (paths, shas, drv names,
+  comma lists), no key twice; what ships is rebuilt from the parsed fields,
+  never the guest's bytes (Loki's logfmt splits at any byte up to 0x20,
+  unquotes and decodes `\uXXXX`). Dropped and counted by reason in the unit's
+  log: a line outside that grammar, one with a `host`, `job` or `kind` field
+  (a guest cannot pose as the owner's host in a gate record), one whose
+  `node` or `owner` names a fleet host (its hostname in any case, or its
+  flake attribute: consumers attribute deploys and built or deferred checks
+  by those fields), an unknown kind, a line over 4 KiB, a time ahead of
+  now; lines older than Loki takes (167 h) are skipped. At most 500 lines
+  per instance and run. Progress is the last handled line's hash and time
+  in the unit's StateDirectory, out of every guest's reach. It runs as a
+  dynamic user with `CAP_DAC_READ_SEARCH` alone (read any home, write
+  nothing but its state), `IPAddressAllow` Loki's address only.
 
 The committed config declares none.
 
