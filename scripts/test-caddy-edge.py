@@ -10,6 +10,7 @@ import copy
 import http.server as http_server
 import json
 import os
+import re
 import socket
 import ssl
 import subprocess
@@ -90,6 +91,16 @@ scraped = {j["job_name"]: (j.get("metrics_path", "/metrics"), t) for j in jobs
            if j["job_name"] in ("caddy", "authentik-server", "authentik-worker") for sc in j["static_configs"] for t in sc["targets"]}
 check(scraped == {"caddy": ("/metrics", metrics_target), "authentik-server": ("/authentik/server/metrics", metrics_target),
                   "authentik-worker": ("/authentik/worker/metrics", metrics_target)}, f"black-pi scrapes all three {scraped}")
+authentik_jobs = [j for j in jobs if j["job_name"].startswith("authentik-")]
+dropped = [re.compile(r["regex"]) for j in authentik_jobs for r in j.get("metric_relabel_configs", [])
+           if r == {"source_labels": ["__name__"], "regex": r["regex"], "action": "drop"}]
+# the outpost histogram's method label is the client's; the panels' own families must survive the drop
+check(len(authentik_jobs) == 2 and len(dropped) == 2 and all(j.get("sample_limit") for j in authentik_jobs)
+      and all(d.fullmatch("authentik_outpost_proxy_request_duration_seconds_bucket") for d in dropped)
+      and not any(d.fullmatch(n) for d in dropped for n in ("authentik_main_request_duration_seconds_count",
+                                                            "authentik_flows_execution_stage_time_bucket",
+                                                            "authentik_tasks_queued")),
+      f"both Authentik jobs drop the outpost family, keep the panels' and cap their samples {authentik_jobs}")
 check(config["apps"]["http"].get("metrics") == {}, f"Caddy's metrics carry no host label {config['apps']['http'].get('metrics')}")
 routes = {}
 for server in servers.values():

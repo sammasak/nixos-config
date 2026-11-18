@@ -192,12 +192,22 @@ in
         (static "alloy-otlp" [ "${hosts.acer-swift.address}:12346" ])
         (static "caddy" [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ])
       ]
-      # Authentik's loopback listeners, through the edge's metrics site (edge.nix)
+      # Authentik's loopback listeners, through the edge's metrics site (edge.nix). The embedded outpost labels its
+      # request histogram with the client's HTTP method, so any client could add series: no panel reads that family,
+      # so it is dropped, and sample_limit fails a scrape that grows anyway
       ++ map
         (part: {
           job_name = "authentik-${part}";
           metrics_path = "/authentik/${part}/metrics";
           static_configs = [ { targets = [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ]; } ];
+          sample_limit = 20000;
+          metric_relabel_configs = [
+            {
+              source_labels = [ "__name__" ];
+              regex = "authentik_outpost_.*";
+              action = "drop";
+            }
+          ];
         })
         [
           "server"
