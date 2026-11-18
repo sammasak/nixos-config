@@ -28,7 +28,7 @@ for m in qwen2.5-coder:7b-instruct-q4_K_M gemma4:e4b-it-qat gemma4:e2b-it-qat; d
 done
 ```
 
-msi's row for the same model and context sets the decode bar at 5× msi's. Run it in msi's Mon-Fri 09:00-21:00
+msi's row for the same model and context sets the decode bar at 5× msi's. Run it in msi's Mon-Fri ~08:30-21:00
 window, and only for tags msi loads, here `qwen2.5-coder:7b-instruct-q4_K_M`:
 
 ```

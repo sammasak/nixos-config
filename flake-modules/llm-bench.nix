@@ -244,7 +244,9 @@ in
                   (lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] (discard exec))
               } > exporter.log 2>&1 &
               exporter=$!
-              for _ in $(seq 50); do curl -fsS -o metrics http://127.0.0.1:${toString gpuHost.services.prometheus.exporters.nvidia-gpu.port}/metrics && break; sleep 0.2; done
+              # bounded, and a clear failure rather than a partial scrape read as missing metrics (scripts/wait-metrics.sh)
+              bash ${../scripts/wait-metrics.sh} gpu-exporter http://127.0.0.1:${toString gpuHost.services.prometheus.exporters.nvidia-gpu.port}/metrics \
+                metrics exporter.log "$exporter" 120 ${lib.concatMapStringsSep " " (m: "'^${m}{'") needed}
               cat exporter.log
               for m in ${lib.concatStringsSep " " needed}; do
                 grep -q "^$m{" metrics || { echo "gpu-telemetry-exporter: no $m in the exporter's output" >&2; exit 1; }

@@ -4,7 +4,7 @@
 # unit's ExecStart as evaluated, less the token wrapper, listener and storage pointed here; fed one OTLP metric and one
 # log, since its receiver counters appear only with traffic), each run on loopback with no peer reachable, and each's
 # /metrics saved as OUT/<name>.prom once its ready endpoint answers and the series this check depends on are in it.
-# Anything not there in 60 s fails the run with that service's log.
+# Anything not there in 120 s (gate load) fails the run as "did not start", with that service's log.
 # Usage: monitoring-exposition.sh OUT PROMETHEUS PROMCONFIG 'PROMFLAGS' ALERTMANAGER AMCONFIG 'AMFLAGS' 'ALLOYEXEC'
 set -eu
 out=$1 prometheus=$2 promconfig=$3 promflags=$4 alertmanager=$5 amconfig=$6 amflags=$7 alloyexec=$8
@@ -15,8 +15,8 @@ trap 'kill "${pids[@]}" 2>/dev/null || true' EXIT
 wait_for() {
   local name=$1 url=$2
   shift 2
-  for _ in $(seq 60); do
-    if curl -fsS -o "$work/$name.try" "$url" 2>/dev/null; then
+  for _ in $(seq 120); do
+    if curl -fsS --max-time 5 -o "$work/$name.try" "$url" 2>/dev/null; then
       local missing=0
       for p in "$@"; do grep -q -- "$p" "$work/$name.try" || missing=1; done
       if [ "$missing" = 0 ]; then
@@ -26,7 +26,7 @@ wait_for() {
     fi
     sleep 1
   done
-  echo "monitoring-exposition: $name: $url did not answer with $* in 60 s" >&2
+  echo "monitoring-exposition: exporter did not start: $name: $url did not answer with $* in 120 s" >&2
   cat "$work/$name.log" >&2
   return 1
 }
