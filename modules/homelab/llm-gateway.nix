@@ -1,5 +1,6 @@
-# llm-gateway as a host service. From the LAN lenovo reaches 8081 and black-pi's Prometheus 9091; Caddy reaches 8081
-# over loopback. Any process on acer still reaches 9091 and the keyless 11435 over loopback. llm-gateway.toml is the
+# llm-gateway as a host service. From the LAN lenovo reaches 8081 and black-pi's Prometheus 9091 (sam.fleet.listeners
+# gateway-api and gateway-admin); Caddy reaches 8081 over loopback. Any process on acer still reaches 9091 and the
+# keyless 11435 over loopback. llm-gateway.toml is the
 # one deployed config: a model or provider change lands there. Without state.sqlite3 the unit is skipped, not failed, and a
 # database restored after the switch needs `systemd-tmpfiles --create` (the Z rule below), then
 # `systemctl start llm-gateway`.
@@ -10,10 +11,7 @@
   ...
 }:
 let
-  inherit (import ../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   fw = config.networking.firewall;
-  api = 8081;
-  admin = 9091;
   state = "/var/lib/llm-gateway";
   configText = builtins.readFile ./llm-gateway.toml;
   configFile = pkgs.writeText "llm-gateway.toml" configText;
@@ -162,46 +160,7 @@ in
     '')
   ];
 
-  networking.firewall = lib.mkMerge [
-    {
-      inherit
-        (mkDualBackendFirewall {
-          nftComment = "llm-gateway answers lenovo's host on the LAN.";
-          ports = [ api ];
-          sources = [ config.sam.fleet.hosts.lenovo-21CB001PMX.address ];
-          interfaces = [ ];
-          inherit (fw) backend;
-        })
-        extraInputRules
-        extraCommands
-        ;
-    }
-    {
-      inherit
-        (mkDualBackendFirewall {
-          nftComment = "llm-gateway's admin port answers black-pi's Prometheus.";
-          ports = [ admin ];
-          sources = [ config.sam.fleet.hosts.black-pi.address ];
-          interfaces = [ ];
-          inherit (fw) backend;
-        })
-        extraInputRules
-        extraCommands
-        ;
-    }
-  ];
-
   assertions = [
-    {
-      assertion =
-        fw.enable
-        &&
-          anySourceTcp fw [
-            api
-            admin
-          ] == [ ];
-      message = "modules/homelab/llm-gateway.nix: keep the firewall on and ports ${toString api} and ${toString admin} out of allowedTCPPorts and allowedTCPPortRanges, global and per interface; admit a caller with a source-scoped rule.";
-    }
     {
       assertion = lib.all (i: i == "lo") fw.trustedInterfaces;
       message = "modules/homelab/llm-gateway.nix: a trusted interface bypasses the firewall and reaches the gateway's listeners; trust only loopback, not ${toString (lib.remove "lo" fw.trustedInterfaces)}.";

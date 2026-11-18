@@ -35,19 +35,9 @@ let
   expectFailure =
     name: c: prefix:
     lib.assertMsg (lib.any (lib.hasPrefix prefix) (failing c)) "loki-check: ${name} passes the assertion ${prefix}";
-  lan = seed {
-    homelab.loki = {
-      listenAddress = "192.0.2.10";
-      allowedSources = [ "192.0.2.0/24" ];
-    };
-  };
-  # the loopback default with sources and a retention under 24h
-  local = seed {
-    homelab.loki = {
-      allowedSources = [ "192.0.2.0/24" ];
-      retention = "12h";
-    };
-  };
+  lan = seed { homelab.loki.listenAddress = "192.0.2.10"; };
+  # a retention under 24h; loopback on the host sam.fleet.loki names is seeded in the probe (scripts/gate-probe.nix)
+  local = seed { homelab.loki.retention = "12h"; };
   anyAddress = seed {
     homelab.loki.listenAddress = "0.0.0.0";
     networking.firewall.enable = lib.mkForce false;
@@ -62,7 +52,6 @@ in
           assert lib.assertMsg (
             failing lan == [ ]
           ) "loki-check: the seeded msi fails ${toString (failing lan)}";
-          assert expectFailure "loopback with sources" local "homelab.loki.allowedSources";
           assert expectFailure "retention 12h" local "homelab.loki.retention 12h";
           assert expectFailure "0.0.0.0 without the firewall" anyAddress "homelab.loki.listenAddress 0.0.0.0";
           assert lib.assertMsg (lib.head periods == firstPeriod)

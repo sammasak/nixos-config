@@ -81,7 +81,7 @@ let
   # by tier and fails over. `!cat` reads the sops key per request, so it never
   # enters the store or the environment.
   homelabProvider = builtins.toJSON {
-    # acer's firewall admits lenovo on 8081 (modules/homelab/llm-gateway.nix); acer reaches its own address locally
+    # acer's firewall admits lenovo on 8081 (sam.fleet.listeners.gateway-api); acer reaches its own address locally
     baseUrl = "http://${osConfig.sam.fleet.hosts.acer-swift.address}:8081/v1";
     api = "openai-completions";
     apiKey = "!cat /run/secrets/llm_gateway_pi_key";

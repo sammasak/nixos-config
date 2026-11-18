@@ -12,12 +12,11 @@
   ...
 }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
   fw = config.networking.firewall;
   alloy = pkgs.grafana-alloy;
   otlpPort = 4318;
-  httpPort = 12346;
+  httpPort = config.sam.fleet.listeners.alloy-http.port;
   blackPi = hosts.black-pi.address;
   unsafeNames = lib.filter (n: builtins.match "[a-z0-9-]+" (lib.toLower n) == null) (
     lib.attrNames hosts
@@ -110,21 +109,6 @@ in
     };
   };
 
-  # black-pi's Prometheus scrapes the collector's own metrics; 4318 listens on loopback alone
-  networking.firewall = {
-    inherit
-      (mkDualBackendFirewall {
-        nftComment = "alloy-otlp's metrics answer black-pi's Prometheus.";
-        ports = [ httpPort ];
-        sources = [ blackPi ];
-        interfaces = [ ];
-        inherit (fw) backend;
-      })
-      extraInputRules
-      extraCommands
-      ;
-  };
-
   assertions = [
     {
       # the names go into the host.name alternation unescaped
@@ -137,15 +121,8 @@ in
       message = "modules/homelab/monitoring/alloy-otlp.nix: the bearer token is the relay's native_otlp_auth; set sam.profile.nativeOtel.";
     }
     {
-      assertion =
-        fw.enable
-        &&
-          anySourceTcp fw [
-            otlpPort
-            httpPort
-          ] == [ ]
-        && lib.all (i: i == "lo") fw.trustedInterfaces;
-      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback: no LAN host may reach the metrics port.";
+      assertion = lib.all (i: i == "lo") fw.trustedInterfaces;
+      message = "modules/homelab/monitoring/alloy-otlp.nix: trust only loopback: a trusted interface reaches the metrics port ${toString httpPort} and the OTLP intake ${toString otlpPort} whatever the firewall admits.";
     }
   ];
 }

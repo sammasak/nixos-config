@@ -10,9 +10,7 @@
   ...
 }:
 let
-  inherit (import ../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts ntfy edgeMetrics;
-  fw = config.networking.firewall;
   domain = "sammasak.dev";
   caddy = config.services.caddy;
   adminSocket = "unix//run/caddy/admin.sock|0200";
@@ -128,7 +126,7 @@ in
           logFormat = "output file ${config.services.caddy.logDir}/access-unserved.log";
           extraConfig = "respond 404";
         };
-        # plain HTTP for black-pi's scrape alone (the rule below), on every address: bound to the DHCP Wi-Fi address,
+        # plain HTTP for black-pi's scrape alone (sam.fleet.listeners.edge-metrics), on every address: bound to the DHCP Wi-Fi address,
         # a start before the address exists exits 1, which the unit never restarts (RestartPreventExitStatus), and
         # every name would stay down
         "http://:${toString edgeMetrics.port}" = {
@@ -136,20 +134,6 @@ in
           extraConfig = "metrics /metrics";
         };
       };
-  };
-
-  networking.firewall = {
-    inherit
-      (mkDualBackendFirewall {
-        nftComment = "Caddy's metrics answer black-pi's Prometheus.";
-        ports = [ edgeMetrics.port ];
-        sources = [ hosts.black-pi.address ];
-        interfaces = [ ];
-        inherit (fw) backend;
-      })
-      extraInputRules
-      extraCommands
-      ;
   };
 
   systemd.services.caddy = {
@@ -173,8 +157,9 @@ in
       message = "modules/homelab/edge.nix runs on ${config.networking.hostName}, but sam.fleet.edge is ${config.sam.fleet.edge}: the DNS rewrite and the OTLP relays would point at the wrong host.";
     }
     {
-      assertion = edgeMetrics.host == config.sam.fleet.edge && fw.enable && anySourceTcp fw [ edgeMetrics.port ] == [ ];
-      message = "modules/homelab/edge.nix: sam.fleet.edgeMetrics must be on the edge host (${config.sam.fleet.edge}), and port ${toString edgeMetrics.port} out of allowedTCPPorts: only black-pi is admitted.";
+      # the firewall admits its `from` (black-pi) there: sam.fleet.listeners.edge-metrics, modules/core/network.nix
+      assertion = edgeMetrics.host == config.sam.fleet.edge;
+      message = "modules/homelab/edge.nix: sam.fleet.edgeMetrics must be on the edge host (${config.sam.fleet.edge}).";
     }
     {
       assertion =
