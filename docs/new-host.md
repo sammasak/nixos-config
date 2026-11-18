@@ -147,9 +147,9 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
   `sops updatekeys -y` on each;
 - `scripts/test-ssh-known-hosts.py`: `EXPECTED`, `SOPS_RECIPIENTS`, the hard-coded host set;
 - every `HOST` recipe pattern in the `Justfile` (`test-ssh-known-hosts.py` fails on a missed one);
-- the hand-kept host lists (#480). Caddy's OTLP allowlist (`modules/homelab/edge.nix`) is derived from
-  the fleet; these fail `nixos:known-hosts-test` until the host is added:
-  - the `host.name` relabel regex in `modules/homelab/monitoring/alloy-otlp.alloy` (two places);
+- the hand-kept host lists (#480). Caddy's OTLP allowlist (`modules/homelab/edge.nix`) and alloy-otlp's
+  `host.name` allowlist (`modules/homelab/monitoring/alloy-otlp.nix`) are derived from the fleet; these fail
+  `nixos:known-hosts-test` until the host is added:
   - the default host list in `scripts/ssh-known-hosts-verify.sh`;
   - the host rows in `docs/architecture.md`, CLAUDE.md's deploy block and hostnames;
 - the host rows in `README.md` and the fleet size the docs state (`nixos:readability-test`);

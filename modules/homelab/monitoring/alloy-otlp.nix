@@ -19,10 +19,18 @@ let
   otlpPort = 4318;
   httpPort = 12346;
   blackPi = hosts.black-pi.address;
+  unsafeNames = lib.filter (n: builtins.match "[a-z0-9-]+" (lib.toLower n) == null) (
+    lib.attrNames hosts
+  );
   configFile = pkgs.writeText "alloy-otlp.alloy" (
     lib.replaceStrings
-      [ "@prometheus@" "@loki@" ]
-      [ "http://${blackPi}:9090" config.sam.fleet.loki.url ]
+      [ "@prometheus@" "@loki@" "@hosts@" ]
+      [
+        "http://${blackPi}:9090"
+        config.sam.fleet.loki.url
+        # host.name is kept only for a fleet host, lower-cased as Claude Code reports it; any other becomes "other"
+        (lib.concatMapStringsSep "|" lib.toLower (lib.attrNames hosts))
+      ]
       (builtins.readFile ./alloy-otlp.alloy)
   );
   stability = "--stability.level=experimental";
@@ -118,6 +126,11 @@ in
   };
 
   assertions = [
+    {
+      # the names go into the host.name alternation unescaped
+      assertion = unsafeNames == [ ];
+      message = "modules/homelab/monitoring/alloy-otlp.nix: every sam.fleet host name, lower-cased, is [a-z0-9-]+ (not: ${toString unsafeNames}).";
+    }
     {
       # declared by native-otel-relay.nix from the file acer is a recipient of; this unit adds no recipient
       assertion = config.sops.secrets ? native_otlp_auth;
