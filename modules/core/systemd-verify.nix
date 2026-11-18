@@ -81,6 +81,7 @@ in
         # a parse error whose message does not say "ignoring" must be reported too
         grep -q "fixture-d.service:.*WorkingDirectory" <<<"$found" || {
           echo "the fixture WorkingDirectory=relative under $target was not reported: the pattern misses systemd's parse errors that do not say ignoring"
+          [ -z "$found" ] || { echo "lines it did report:"; echo "$found"; }
           exit 1
         }
       done
@@ -91,7 +92,7 @@ in
         found=$(cycles <<<"$output")
         [ -z "$found" ] || { echo "ordering cycle reaching $target:"; echo "$found"; exit 1; }
         found=$(ignored <<<"$output")
-        [ -z "$found" ] || { echo "unit lines systemd ignores, reaching $target:"; echo "$found"; exit 1; }
+        [ -z "$found" ] || { echo "unit lines systemd rejects, ignores or warns about, reaching $target:"; echo "$found"; exit 1; }
       done
 
       hmverify() { SYSTEMD_UNIT_PATH="$PWD/hm:" systemd-analyze --user verify --man=no "$PWD/$1" 2>&1 || true; }
@@ -110,7 +111,7 @@ in
         rm hm/fixture-c.service
         n=$((n + $(find hm -maxdepth 1 -type f | wc -l)))
         found=$(for f in hm/*; do if [ -f "$f" ]; then hmverify "$f"; fi; done | ignored)
-        [ -z "$found" ] || { echo "$user's Home Manager unit lines systemd ignores:"; echo "$found"; exit 1; }
+        [ -z "$found" ] || { echo "$user's Home Manager unit lines systemd rejects, ignores or warns about:"; echo "$found"; exit 1; }
       done
       [ "$n" -gt 0 ] || { echo "no Home Manager user unit on this host: the user trees are not this host's"; exit 1; }
       touch $out
