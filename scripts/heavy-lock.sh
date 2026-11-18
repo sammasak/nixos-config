@@ -23,10 +23,11 @@ holders() { awk -v id="$id" '$2 == "FLOCK" && $6 == id { print $5 }' /proc/locks
 held_by=$(holders)
 
 # a descriptor this script locked, inherited (HEAVY_LOCK_HELD marks it): /proc/locks names the flock command that took
-# it, which has exited, so the holder cannot be found by pid
+# it, which has exited, so the holder cannot be found by pid. flock -n on it proves it: the lock it already holds is
+# taken again at once, while an unlocked descriptor (a leaked marker) fails whenever someone else holds the lock.
 if [ "${HEAVY_LOCK_HELD:-}" = "$id" ]; then
   for fd in "/proc/$$/fd"/*; do
-    if [ "$(stat -L -c %d:%i "$fd" 2>/dev/null)" = "$dev:$(stat -L -c %i "$lock")" ]; then
+    if [ "$(stat -L -c %d:%i "$fd" 2>/dev/null)" = "$dev:$(stat -L -c %i "$lock")" ] && flock -n "${fd##*/}"; then
       echo "heavy-lock: $lock is already held, by a heavy-lock this process descends from; running at once" >&2
       exec "$@"
     fi

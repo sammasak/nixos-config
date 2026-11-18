@@ -54,6 +54,18 @@ with tempfile.TemporaryDirectory() as t:
     check(r.returncode == 0 and waited >= 1.2 and "waiting for" in r.stderr,
           f"seeded: a parent that only has the file open, while another process holds the lock, does not count ({waited:.1f} s)")
 
+    st = os.stat(lock)
+    lock_id = f"{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}"
+    holder = subprocess.Popen(["flock", str(lock), "sleep", "2"])
+    time.sleep(0.3)
+    start = time.monotonic()
+    r = subprocess.run(["bash", "-c", f'exec 9<"{lock}"; HEAVY_LOCK_HELD={lock_id} bash "{SCRIPT}" true'], env=env,
+                       capture_output=True, text=True, timeout=20)
+    waited = time.monotonic() - start
+    holder.wait()
+    check(r.returncode == 0 and waited >= 1.2 and "waiting for" in r.stderr and "descends from" not in r.stderr,
+          f"seeded: a leaked HEAVY_LOCK_HELD with an unlocked descriptor, while another process holds the lock, waits ({waited:.1f} s)")
+
     blind = t / "heavy-lock-blind.sh"
     text = SCRIPT.read_text()
     cut = text.index("# this process or an ancestor holding it")
