@@ -13,11 +13,12 @@ in
   programs.dconf.enable = true;
 
   # a hand-made user unit in a home shadows the NixOS one, and a deploy then changes nothing for that user: a warning
-  # in the activation's output (scripts/shadowed-user-units.sh), after /etc is linked
+  # in the activation's output (scripts/shadowed-user-units.sh), after /etc is linked, and a report the post-deploy
+  # check fails on (scripts/post-deploy-check.sh)
   system.activationScripts.shadowedUserUnits = {
     deps = [ "etc" ];
     text = ''
-      ${pkgs.bash}/bin/bash ${../../scripts/shadowed-user-units.sh} ${
+      SHADOW_REPORT=/run/shadowed-user-units ${pkgs.bash}/bin/bash ${../../scripts/shadowed-user-units.sh} ${
         lib.escapeShellArgs (
           map (u: u.home) (lib.filter (u: u.isNormalUser) (lib.attrValues config.users.users))
         )
