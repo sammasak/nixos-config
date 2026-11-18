@@ -148,6 +148,7 @@ let
       imports = [
         ../core/system.nix
         ../core/agent-options.nix
+        ../core/agent-assertions.nix
         ../core/users.nix
         ../core/packages.nix
         ../core/ssh-known-hosts.nix

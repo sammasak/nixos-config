@@ -146,7 +146,7 @@ usage remains separate from harness-observed metrics.
 
 Set `nativeOtel = false` in
 `sam.profile` in `hosts/lenovo-21CB001PMX/configuration.nix`, rebuild and switch to that generation,
-then start a fresh shell. An assertion in `modules/core/system.nix`, evaluated on every host and
+then start a fresh shell. An assertion in `modules/core/agent-assertions.nix`, evaluated on every host and
 environment, fails the build of a configuration whose telemetry surfaces do not follow its switches: with
 `nativeOtel = false` and `sam.claude.telemetry` at its default, no Claude telemetry variable (`OTEL_*`,
 `HARNESS_*`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`), OTEL codex wrapper, relay
