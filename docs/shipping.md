@@ -97,6 +97,7 @@ content. The classification is the retro's `navcost.py`, trimmed:
 | `agent_nav_repeat_read_ratio{role}` | 56 % | creeping toward 70 % and above: files too big to hold, or context lost and fetched again |
 | `agent_nav_repo_nav_calls{role}`, `agent_nav_stretches`, `agent_nav_repo_reads` | | the sample sizes behind them |
 | `agent_nav_collector_success_timestamp_seconds{section}`, `agent_nav_collector_section_failed{section}` | | as the shipping collector's |
+| `agent_nav_collector_skipped{worker,reason}` (guests only) | | above 0: a guest's transcripts left out, see below |
 
 The window is the last 24 h. A role with fewer than 50 repo navigation calls in it writes `agent_nav_repo_nav_calls`
 alone: a thin day is absent, not a swing (24 calls once read as a 21 % miss ratio).
@@ -109,5 +110,36 @@ It cannot see:
   counts once);
 - which worktree: every checkout collapses to one repo, and a `~/.cache/wt` scratch dir counts as one;
 - whether a re-read was wasteful or legitimate (the file changed after an edit or a merge);
-- outcome quality: fewer lookups is better only if the change was right;
-- sessions in dev-environment guests, whose transcripts stay in the guest.
+- outcome quality: fewer lookups is better only if the change was right.
+
+**Guests.** On a host that declares dev environments (acer-swift: herman), each declared instance gets its own
+`nav-metrics-guest@<name>.service` and timer (hourly at :38, same module): the same script with `--worker <name>`, over
+`<stateDir>/<name>/home/.claude/projects/*/*.jsonl` with the guest's home path for `~`, writing
+`/var/lib/nav-metrics-guests/nav-guest-<name>.prom` in its own textfile directory: the same series, each with
+`worker=<name>`, the collector's own series included, so no two files share a series. One process, file and MemoryMax per
+guest: a guest whose transcripts kill or stall its run stales its own series alone. A removed instance's file is
+deleted two days after its last write (tmpfiles). The name comes from the host's declaration, never from a transcript. The dashboard's host panels select `worker=""`; its Guests
+row selects `worker!=""`.
+
+The guest controls everything in its home, so the reader:
+- runs as root with `CAP_DAC_READ_SEARCH` as its only capability (the instance dirs and homes are 0700), and is read-only
+  everywhere but its own directory, with no network, no devices and MemoryMax 64M. Root, not a dynamic user: node-exporter
+  cannot read a dynamic user's state dir under the 0700 `/var/lib/private`;
+- opens each directory from its parent's fd without following a link, and opens a transcript only if it is a regular
+  file, non-blocking so a FIFO cannot hold the open. A link, FIFO or other special file anywhere on the path is refused
+  and counted (`reason="refused"`), and nothing behind it is read;
+- reads at most 256 transcripts per guest and run (`too_many`) and none over 256 MiB (`too_large`), and skips any line
+  over 2 MiB. The owner's busiest day had 107 transcripts, the largest 119 MB and the longest line 660 KB;
+- abandons a transcript whose per-session state passes 10,000 entries (distinct repo files read, calls awaiting a
+  result, a stretch's top-level directories, the run's stretches) or that holds a Bash command over 64 KiB, and keeps
+  none of its counts (`too_much_state`). Bytes alone do not bound memory: 400,000 distinct reads in a 108 MB transcript
+  took 167 MB. The owner's 325 transcripts peak at 159 files read, 3 pending, 12 directories, 180 stretches in a
+  session (530 in all) and a 23 KB command, so the owner's run has the same caps and they never trigger;
+- exports counts only. A session's name, cwd, prompts and paths decide its role and what counts as the repo, but none
+  of them reaches a label.
+
+The guest reader also cannot see:
+- anything the guest chooses to hide or fake: it can delete, rewrite or invent its own transcripts, so its numbers are
+  self-reported. It cannot change another worker's series or the host's;
+- a home that was reset or retired: its transcripts go to `.trash` with it, and the next run reads the new home alone;
+- what lies past the caps: those transcripts are counted but not read.
