@@ -59,6 +59,12 @@ let
     shellcheck scripts/*.sh
   '';
 
+  # deploy-rs is pinned in devenv.yaml/devenv.lock and in flake.lock; a differing rev fails with each one printed
+  deployRsPins = gate "nixos-deploy-rs-pins" [ pkgs.python3 ] ''
+    python3 scripts/deploy-rs-pins.py
+    python3 scripts/deploy-rs-pins.py --seeds
+  '';
+
   # Skips (exit 0) on hosts without the age key; only lenovo enforces it.
   secretsVerify =
     gate "nixos-secrets-verify"
@@ -734,6 +740,7 @@ let
   lints = [
     lintComments
     lintShell
+    deployRsPins
   ];
   heavyLock = gate "heavy-lock" (with pkgs; [
     util-linux
@@ -1310,6 +1317,8 @@ in
     "nixos:lint-comments" =
       task "Comment Policy lint (density, forbidden shapes, path pointers that resolve to no tracked file)" lintComments;
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
+    "nixos:deploy-rs-pins" =
+      task "deploy-rs's rev agrees in devenv.yaml, devenv.lock and flake.lock (seeded: each drift fails with both revs)" deployRsPins;
     "nixos:fmt-check" =
       task "nix fmt -- --ci: the flake's formatter fails on any file it would change (and rewrites it)" fmtCheck;
     "nixos:secrets-verify" =
@@ -1433,6 +1442,7 @@ in
   git-hooks.hooks = {
     nixos-lint-comments = hook "Comment Policy lint" "pre-commit" lintComments;
     nixos-lint-shell = hook "shellcheck" "pre-commit" lintShell;
+    nixos-deploy-rs-pins = hook "deploy-rs pins agree" "pre-commit" deployRsPins;
     nixos-qa-push = hook "Full QA on the pushed commit" "pre-push" qaPush;
   };
 }
