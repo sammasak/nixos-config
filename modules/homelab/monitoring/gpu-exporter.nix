@@ -6,6 +6,7 @@
 let
   inherit (config.sam.fleet) hosts;
   gpu = (hosts.${config.networking.hostName} or { }).gpu or null;
+  listener = "nvidia-gpu-${config.networking.hostName}";
 in
 {
   options.homelab.gpuTelemetry.enable = lib.mkOption {
@@ -39,6 +40,10 @@ in
     services.prometheus.exporters.nvidia-gpu = {
       enable = true;
       listenAddress = hosts.${config.networking.hostName}.address;
+      # the listener's port where sam.fleet has one; the build check's seeded host has none
+      port = lib.mkIf (
+        config.sam.fleet.listeners ? ${listener}
+      ) config.sam.fleet.listeners.${listener}.port;
       extraFlags = [
         "--query-field-names=${lib.concatStringsSep "," config.homelab.gpuTelemetry.fields}"
       ];

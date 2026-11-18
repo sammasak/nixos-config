@@ -13,7 +13,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import tomllib
 
 import gate_probe
 from gate_probe import check, finish
@@ -103,12 +102,20 @@ for host, fw in sorted(FW.items()):
     trusted = [i for i in fw["trustedInterfaces"] if i != "lo" and not any(p["port"] is None and p["interface"] == i for p in mine(host))]
     check(stray == [] and trusted == [], f"{host} opens and trusts only public entries ({opened}, {fw['trustedInterfaces']})")
 
-toml = tomllib.loads((ROOT / "modules/homelab/llm-gateway.toml").read_text())["server"]
-bound = dict(P["bound"], **{"gateway-api": toml["listen"].rsplit(":", 1)[1], "gateway-admin": toml["admin_listen"].rsplit(":", 1)[1]})
-check(sorted(bound) == sorted(L) and all(int(bound[n]) == L[n]["port"] for n in L),
-      f"every listener's service binds the listener's port ({ {n: (bound.get(n), L[n]['port']) for n in L} }); a new "
-      "listener (sam.fleet.listeners, modules/core/fleet.nix) needs its service's bound port in scripts/gate-probe.nix, "
-      "section fleet-contract, `bound`")
+# Each serving module takes its port from its listener (or asserts it: alert-bridge, store-cache, loki, the gateway's
+# toml), so a new listener is one edit in modules/core/fleet.nix. scripts/gate-probe.nix `bound` reads the ports it
+# can as a drift check: an override off the listener's port (mkForce) fails here; a listener it does not read is fine.
+def drift(bound, listeners):
+    return {n: (int(p), listeners.get(n, {}).get("port")) for n, p in bound.items() if int(p) != listeners.get(n, {}).get("port")}
+
+
+check(len(P["bound"]) >= 15 and drift(P["bound"], L) == {},
+      f"every service the probe reads binds its listener's port ({ {n: (P['bound'][n], L.get(n, {}).get('port')) for n in P['bound']} })")
+fewer = dict(P["bound"])
+fewer.pop("prometheus")
+check(drift(fewer, L) == {}, "seeded: a listener the probe does not read (prometheus dropped from bound) needs no second edit")
+check(drift(dict(P["bound"], prometheus=9091), L) == {"prometheus": (9091, L["prometheus"]["port"])},
+      "seeded: prometheus bound off its listener's port (9091) is caught")
 OPENS = "firewall opens what sam.fleet does not list"
 for seed, host, marker, what in [("openPort", "acer-swift", '"port":9999', "allowedTCPPorts = [ 9999 ] on acer"),
                                  ("upstreamOpen", "msi-ms7758", "--dport 9100", "the node exporter's upstream openFirewall on msi"),

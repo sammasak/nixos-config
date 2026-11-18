@@ -678,7 +678,8 @@ let
             }
           )
         ) hosts;
-        # what each listener's service binds, where Nix sets it; the gateway's is in llm-gateway.toml
+        # what the services bind, a drift check: each takes its port from its listener, so a new listener needs no
+        # entry here (scripts/test-fleet-contract.py); the gateway's toml is asserted in llm-gateway.nix
         bound = {
           alertmanager = blackPi.services.prometheus.alertmanager.port;
           # the metrics server's virtual host, http://:<port> (edge.nix)

@@ -78,6 +78,7 @@ in
 
   services.ollama = {
     enable = true;
+    inherit (config.sam.fleet.listeners.ollama-asus) port;
     # GA104 is sm_86: the default ten architectures cost a far longer build for the same runner
     package = pkgs.ollama-cuda.override { cudaArches = [ "sm_86" ]; };
     loadModels = builtins.attrNames config.homelab.ollama.modelDigests;

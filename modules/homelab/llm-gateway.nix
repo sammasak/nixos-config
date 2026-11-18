@@ -167,6 +167,16 @@ in
 
   assertions = [
     {
+      # the toml's own listen ports, parsed: the firewall opens the listeners' (modules/core/fleet.nix)
+      assertion =
+        lib.last (lib.splitString ":" catalog.server.listen)
+        == toString config.sam.fleet.listeners.gateway-api.port
+        &&
+          lib.last (lib.splitString ":" catalog.server.admin_listen)
+          == toString config.sam.fleet.listeners.gateway-admin.port;
+      message = "modules/homelab/llm-gateway.toml: [server] listen ${catalog.server.listen} and admin_listen ${catalog.server.admin_listen} must use sam.fleet.listeners.gateway-api's and gateway-admin's ports.";
+    }
+    {
       assertion = lib.all (i: i == "lo") fw.trustedInterfaces;
       message = "modules/homelab/llm-gateway.nix: a trusted interface bypasses the firewall and reaches the gateway's listeners; trust only loopback, not ${toString (lib.remove "lo" fw.trustedInterfaces)}.";
     }
