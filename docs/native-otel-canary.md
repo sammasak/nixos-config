@@ -23,7 +23,7 @@ Neither client nor its tool subprocesses receive the receiver credential.
 The upstream certificate chain is verified to depth 3; Nginx's default depth
 of 1 rejects the receiver's valid certificate chain.
 
-Any local process reaches `127.0.0.1:4319`, hostNetwork pods included, and
+Any local process reaches `127.0.0.1:4319`, and
 since this change it takes `/v1/logs` as well as `/v1/metrics`, signed with
 the host's token. It forwards `X-Otel-Worker` as sent (an environment's egress
 proxy overwrites it with the instance name) and rate-limits per value of that
@@ -32,7 +32,7 @@ one host bucket, so a flooding environment cannot starve the host's clients. A
 local process can set the header itself, so a value is trustworthy only when
 it came through an environment's proxy. The per-header limit therefore binds
 only environments: a host process can vary `X-Otel-Worker` per request or
-borrow a guest's name. On acer that includes hostNetwork pods: one can post
+borrow a guest's name. On any host a host process can post
 forged events under an environment's name (telemetry pollution, bounded by the
 gateway's allowlist; the token stays out of its reach).
 
