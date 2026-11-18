@@ -36,6 +36,16 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               Shipping's "where a gate's time goes" panels read them.
 #               `just deferred-checks <full sha>` lists them and exits 1 while one still waits for its owner; merge on 0.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
+# ── Gate runner: a host gating a branch it did not write ──
+#   Fresh worktree cut from origin/main, the branch fetched into it (from its bundle when handed one), HEAD checked
+#   against the sha handed over; `devenv shell -- true` in it first, or the hook shims use the main checkout's config.
+#   `just parity` without BASE compares with the merge base with origin/main: the commit the branch was cut from, or
+#   main as last merged in. Passing a newer origin/main counts main's own commits as movers. One line per host,
+#   `node <host>` and `deploy-settings`: `same`, `MOVED` (base:/tree: below), `ADDED`/`REMOVED`, `none` (no node).
+#   No gate while that host is deployed or switched: `just deploy` takes no heavy lock, and the green is keyed on
+#   /run/current-system, so a switch mid-run leaves its green unrecorded and the next push of that tree gates in full.
+#   `gh` is not signed in on asus-b460m and msi-ms7758 (no sam.workers.ghHostsFile there): git pushes over SSH work,
+#   `gh` (PRs, comments, reviews) fails; leave the PR text in a file for a host with a login to post.
 
 nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table; nixos:qa runs it
                                     # in CI mode (nixos:fmt-check), so an unformatted file fails the gate
