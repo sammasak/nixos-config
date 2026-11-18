@@ -166,6 +166,8 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
       chmod 0644 public-key && mv secret-key.new secret-key
     ```
 
+  - its name in `storeCaches` in `modules/core/fleet.nix`, the listener that admits the other fleet hosts to its
+    port 5000: `modules/core/store-cache.nix` fails evaluation while it and `sam.storeCache` disagree;
   - its `sam.herdr.machines` entry and `sam.workers.jumpHosts` name on lenovo: lenovo's evaluation fails while they
     differ from the runtime hosts of `flake-modules/hosts.nix` (and on a host's removal there until they drop it);
   - the `docs/nspawn-workers.md` row (`nixos:known-hosts-test`), its pool columns "not measured yet" until
