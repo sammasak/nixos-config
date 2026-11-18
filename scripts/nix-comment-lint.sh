@@ -13,7 +13,8 @@
 #   3. pointers — a repo path named in a .nix file (comment or string), a .sh
 #                 or .py comment, or a doc (docs/records/ is frozen) must name a
 #                 tracked file: scripts/path-pointers.awk, its allowlist
-#                 scripts/path-pointers.allow for paths in other repositories.
+#                 scripts/path-pointers.allow for paths in other repositories,
+#                 or a run-time relative path a shell string in Nix names.
 #
 # The pattern check is textual `grep`, not the awk scanner, so it also sees
 # comments inside `''` strings and inside .sh files. That is deliberate. The
@@ -102,7 +103,7 @@ trap 'rm -f "$tracked"' EXIT
 git ls-files >"$tracked"
 pointers=$(
   {
-    grep -HnE '[A-Za-z0-9_]/[A-Za-z0-9_.@+-]+\.[a-z]' "${NIXFILES[@]}" "${DOCS[@]}" || true
+    grep -HnE '/[A-Za-z0-9_.@+-]+\.[a-z]' "${NIXFILES[@]}" "${DOCS[@]}" || true
     if [ "$#" -eq 0 ]; then grep -HnE '^[[:space:]]*#.*/' "${SHFILES[@]}" "${PYFILES[@]}" || true; fi
   } | gawk -v tracked="$tracked" -v allowed=scripts/path-pointers.allow -f scripts/path-pointers.awk
 )

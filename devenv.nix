@@ -1168,7 +1168,7 @@ in
   platform.commit-conventions.enable = true;
 
   tasks = {
-    "nixos:lint-comments" = task "Comment Policy lint (density + forbidden shapes)" lintComments;
+    "nixos:lint-comments" = task "Comment Policy lint (density, forbidden shapes, path pointers that resolve to no tracked file)" lintComments;
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
     "nixos:secrets-verify" =
       task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
