@@ -284,6 +284,13 @@ def verify_script_checks(known_hosts_text):
         check(r.returncode == 0 and "CONTRADICTION" not in r.stdout, "verify: a user entry equal to the pin is not a contradiction")
 
 
+def bare_rollbacks(texts):
+    """Docs lines that tell `nixos-rebuild … --rollback` without --no-reexec: nixos-rebuild then re-executes itself from
+    <nixpkgs/nixos>, which these flake-only hosts lack on NIX_PATH, and fails having changed nothing."""
+    return [f"{path}:{n}" for path, text in texts.items() for n, line in enumerate(text.splitlines(), 1)
+            if re.search(r"nixos-rebuild (switch|boot|test) --rollback", line) and "--no-reexec" not in line]
+
+
 def main():
     P = gate_probe.section("known-hosts")
     hosts = P["pinned"]["lenovo"]
@@ -399,6 +406,10 @@ def main():
     for word in ("onboard", "rotation", "recover", "reinstall", "ssh-keyscan"):
         check(word in docs.lower(), f"the runbook covers {word}")
     print("FAILED" if FAILED else "all checks passed")
+    rollback_docs = {str(p.relative_to(ROOT)): p.read_text() for p in [*sorted(ROOT.glob("*.md")), *sorted((ROOT / "docs").glob("*.md"))]}
+    check(bare_rollbacks(rollback_docs) == [], f"every documented rollback uses --no-reexec ({bare_rollbacks(rollback_docs)})")
+    check(bare_rollbacks({"docs/x.md": "ssh deploy@acer-swift sudo nixos-rebuild switch --rollback\n"}) == ["docs/x.md:1"],
+          "seeded: a doc giving `nixos-rebuild switch --rollback` without --no-reexec fails")
     sys.exit(1 if FAILED else 0)
 
 

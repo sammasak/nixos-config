@@ -149,8 +149,9 @@ with `</dev/null`.
   bump). That overlay also changes every devTools host, because
   `modules/home/pi-harness` installs the same package. Re-run the verification
   below, since provider catalogs change between releases.
-- Rollback: `sudo nixos-rebuild switch --rollback` (or pick the previous
-  systemd-boot entry). Pi state in `~/.pi/agent` is version-tolerant and untouched.
+- Rollback: `sudo nixos-rebuild switch --rollback --no-reexec` (without `--no-reexec` it fails on these flake-only
+  hosts: README.md), or pick the previous boot-menu entry (systemd-boot on lenovo and acer-swift, the Pi hosts).
+  Pi state in `~/.pi/agent` is version-tolerant and untouched.
 - Remove: set `pi = false` in the host's `sam.profile`.
   Seeded keys stay in `~/.pi/agent/settings.json` until you delete them.
 
