@@ -705,6 +705,11 @@ let
           _: h:
           lib.nameValuePair "node-exporter-${h.config.networking.hostName}" h.config.services.prometheus.exporters.node.port
         ) (removeAttrs hosts [ "naked-pi" ])
+        # the GPU hosts' exporters (gpu-exporter.nix, on where sam.fleet says gpu)
+        // lib.mapAttrs' (
+          _: h:
+          lib.nameValuePair "nvidia-gpu-${h.config.networking.hostName}" h.config.services.prometheus.exporters.nvidia-gpu.port
+        ) (lib.filterAttrs (_: h: h.config.homelab.gpuTelemetry.enable or false) hosts)
         # harmonia's bind, [::]:<port>, on each host that serves a store cache (store-cache.nix)
         // lib.mapAttrs' (
           _: h:
