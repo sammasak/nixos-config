@@ -90,7 +90,7 @@ let
         if [[ ! -d $d/${w.name}/home ]]; then
           echo ${
             toString (if w.rootInGuest then baseOf w else 0)
-          } > "$d/${w.name}/.id-base.new" && mv -f "$d/${w.name}/.id-base.new" "$d/${w.name}/.id-base"
+          } > "$d/${w.name}/.id-base.new" && chmod 0644 "$d/${w.name}/.id-base.new" && mv -f "$d/${w.name}/.id-base.new" "$d/${w.name}/.id-base"
           install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/home"
         fi
         # mkdir and chown -h: the guest owns ~/.cache, and install -d follows a symlink there and chmods and chowns its target

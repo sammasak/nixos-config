@@ -31,6 +31,7 @@ METRICS = {
     "shipping_prs_merged": "PRs merged in the window.",
     "shipping_pr_lead_time_hours": "Earliest author date of a PR's own commits (its open time without a token) to merge, PRs merged in the last 7 d, by quantile.",
     "shipping_pr_lead_time_fallbacks": "PRs merged in the last 7 d whose lead time fell back to their open time, by reason.",
+    "shipping_collector_section_failed": "1 when the section failed this run (an error or the run deadline), else 0.",
     "shipping_review_rounds": "Verdict comments (Grade: N/10) per reviewed merged PR, by quantile.",
     "shipping_review_first_pass_ratio": "Share of the last reviewed merged PRs whose first verdict met the policy grade.",
     "shipping_review_prs_counted": "Reviewed merged PRs behind the review ratio and rounds.",
@@ -49,6 +50,9 @@ LABELS = ["needs-live", "needs-decision", "blocked", "approved", "ready-for-agen
 GRADE = re.compile(r"Grade:\s*(\d+)\s*/\s*10")
 LOKI_DAYS = 14  # how far back a host's last good deploy is looked for; Loki keeps the platform stream 720 h
 DEADLINE = time.monotonic() + 240  # the unit's TimeoutStartSec is above this; a slow API ends a run, not the timer
+# seconds a run may spend on commits calls for PRs not yet in the lead cache: a week holds hundreds of merged PRs
+# across the owner's repos, one call each, which alone outlast DEADLINE and starve the sections after prs
+LEAD_BUDGET = 90
 
 
 class Out:
@@ -176,17 +180,44 @@ def lead_hours(gh, it):
     return max((ts(it["pull_request"]["merged_at"]) - start).total_seconds() / 3600, 0), reason
 
 
-def prs(gh, out, owner, now):
+def load_cache(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def prs(gh, out, owner, now, cache_path):
+    """A merged PR's lead time never changes, so it is read once and kept in the cache file; only a final answer is
+    kept (from its commits, or none listed), never a fallback after an error or without a token. New PRs are read
+    until LEAD_BUDGET is spent; the rest count as `pending` (open time) and are read on the next runs."""
     since = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     items, total = gh.search("issues", f"user:{owner} is:pr is:merged merged:>={since}")
     out.add("shipping_prs_merged", total, window="7d")
-    measured = [lead_hours(gh, it) for it in items]
+    cache, kept, measured = load_cache(cache_path), {}, []
+    stop = time.monotonic() + LEAD_BUDGET
+    for it in items:
+        key = f"{it['repository_url']}#{it['number']}@{it['pull_request']['merged_at']}"
+        if key in cache:
+            hours, reason = cache[key]
+        elif time.monotonic() < stop:
+            hours, reason = lead_hours(gh, it)
+        else:
+            hours, reason = max((ts(it["pull_request"]["merged_at"]) - ts(it["created_at"])).total_seconds() / 3600, 0), "pending"
+        if reason in (None, "no_commits"):
+            kept[key] = [hours, reason]
+        measured.append((hours, reason))
+    # only the PRs still in the window: the file stays the size of a week
+    with open(f"{cache_path}.tmp", "w") as f:
+        json.dump(kept, f)
+    os.replace(f"{cache_path}.tmp", cache_path)
     lead = [hours for hours, _ in measured]
     for q in (0.5, 0.9):
         if lead:
             out.add("shipping_pr_lead_time_hours", quantile(lead, q), quantile=str(q))
     # every reason, 0 included: an error that hits every PR shows as a jump, not as a series appearing
-    for reason in ("http_error", "no_commits", "no_token"):
+    for reason in ("http_error", "no_commits", "no_token", "pending"):
         out.add("shipping_pr_lead_time_fallbacks", sum(r == reason for _, r in measured), reason=reason, window="7d")
     return sorted(items, key=lambda it: it["pull_request"]["merged_at"], reverse=True)
 
@@ -329,6 +360,7 @@ def main(argv=None):
     out = Out()
     out.add("shipping_collector_authenticated", 1 if gh.token else 0)
     stamps = previous_success(a.out)
+    failed = {}
 
     # each section writes to its own Out, merged only when the whole section succeeded: no partial family
     def section(name, fn):
@@ -336,6 +368,7 @@ def main(argv=None):
         try:
             r = fn(part)
             stamps[name] = time.time()
+            failed[name] = 0
             for k, rows in part.lines.items():
                 out.lines.setdefault(k, []).extend(rows)
             return r
@@ -346,13 +379,15 @@ def main(argv=None):
 
     alerts = policy["alerts"]
     section("issues", lambda o: issues(gh, o, a.owner, set(policy["issues"]["parkedRepos"]["value"]), now))
-    merged = section("prs", lambda o: prs(gh, o, a.owner, now))
+    merged = section("prs", lambda o: prs(gh, o, a.owner, now, os.path.join(os.path.dirname(a.out), "lead-cache.json")))
     if merged is not None:
         section("reviews", lambda o: reviews(gh, o, merged, alerts["ReviewFirstPassLow"]["lastVerdicts"]["value"], policy["review"]["passGrade"]["value"]))
     section("escapes", lambda o: escapes(gh, o, a.owner, now))
     section("gates", lambda o: gates(a.loki, o, alerts["GateFailRateHigh"]["lastRuns"]["value"]))
     section("deploys", lambda o: deploys(a.loki, gh, o, a.owner, a.deploy_repo, hostnames, now))
     for name in ("issues", "prs", "reviews", "escapes", "gates", "deploys"):
+        # a section that did not succeed this run failed, a skipped reviews (no prs list) included
+        out.add("shipping_collector_section_failed", failed.get(name, 1), section=name)
         if name in stamps:
             out.add("shipping_collector_success_timestamp_seconds", stamps[name], section=name)
     tmp = f"{a.out}.tmp"
