@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shipping metrics (docs/shipping.md) as one Prometheus textfile: issue flow and PR speed from GitHub's REST API,
 gate, deploy and rollback numbers from the platform records in Loki (scripts/platform-record.sh), merge-to-deploy lag
-from each host's last good deploy. Read-only calls only. A source that fails leaves its series out (never a 0 in their
+from each host's last good deploy, and where a deploy-repo PR's time went (phases). Read-only calls only. A source that fails leaves its series out (never a 0 in their
 place) and keeps the previous success timestamp of its section, so a stale section is visible, not invented. Exits 0
 whenever it could write the file: a timer must not turn a GitHub outage into a restart loop.
 
@@ -45,6 +45,10 @@ METRICS = {
     "shipping_deploy_rollbacks": "Deploys deploy-rs rolled back, in the window.",
     "shipping_deploy_lag_commits": "Commits on main the host's last good deploy does not have.",
     "shipping_deploy_lag_hours": "Hours since the oldest commit on main the host does not have was made (0 when current).",
+    "shipping_pr_phase_hours": "Hours per phase of deploy-repo PRs merged in the last 7 d, by quantile: idle (last commit to the start of its passing push gate, gate queue wait included: the records carry none), gate, gate_to_merge, merge_to_deploy (to the end of the first good deploy containing the merge).",
+    "shipping_pr_phase_prs": "Deploy-repo PRs merged in the last 7 d behind each phase's quantiles.",
+    "shipping_pr_gate_retries": "Failed push gates on a deploy-repo PR's commits before its passing one, PRs merged in the last 7 d, by quantile.",
+    "shipping_pr_phase_unmatched": "Deploy-repo PRs merged in the last 7 d with no passing push gate on their commits (no_gate), no good deploy containing their merge yet (not_deployed), or merged before deploys were recorded (before_records).",
 }
 LABELS = ["needs-live", "needs-decision", "blocked", "approved", "ready-for-agent"]
 GRADE = re.compile(r"Grade:\s*(\d+)\s*/\s*10")
@@ -53,6 +57,16 @@ DEADLINE = time.monotonic() + 240  # the unit's TimeoutStartSec is above this; a
 # seconds a run may spend on commits calls for PRs not yet in the lead cache: a week holds hundreds of merged PRs
 # across the owner's repos, one call each, which alone outlast DEADLINE and starve the sections after prs
 LEAD_BUDGET = 90
+# seconds a run may spend on compare calls matching merges to deploys; a PR left unmatched is tried on the next run
+PHASE_BUDGET = 20
+PHASES = ("idle", "gate", "gate_to_merge", "merge_to_deploy")
+# the first deploy record in Loki (Justfile's deploy, #475): a merge before it has no deploy to find, and the first
+# record after it would read as days of merge_to_deploy. Inert once the 7 d window holds no older merge (23 Nov on)
+DEPLOY_RECORDS_SINCE = datetime(2026, 11, 16, 12, 53, tzinfo=timezone.utc).timestamp()
+GATE_QUERY = '{job="platform",kind="gate"} |= "mode=push"'
+DEPLOY_QUERY = '{job="platform",kind="deploy"}'
+# a run's Loki days by (query, days back): phases re-reads the days gates and deploys fetched; main() empties it
+LOKI_READ = {}
 
 
 class Out:
@@ -159,25 +173,25 @@ def lead_hours(gh, it):
     """Hours from the earliest author date among the PR's own commits (those not on its base) to its merge, never
     below 0. The PR's open time stands in when its commits cannot be read: without a token (60 REST calls an hour
     would not cover one call per PR), on an HTTP error for this PR alone (a deleted or private repo), or when it
-    lists none. Returns the hours and the fallback's reason, or None when the commits gave the start."""
-    start, reason = ts(it["created_at"]), "no_token"
+    lists none. Returns the hours, the fallback's reason (None when the commits gave the start) and the commits read."""
+    start, reason, listed = ts(it["created_at"]), "no_token", []
     if gh.token:
-        path, dates, page = f"/repos/{it['repository_url'].split('/repos/', 1)[1]}/pulls/{it['number']}/commits", [], 1
+        path, page = f"/repos/{it['repository_url'].split('/repos/', 1)[1]}/pulls/{it['number']}/commits", 1
         try:
             while True:
                 commits = gh.get(path, per_page=100, page=page)
-                dates += [ts(c["commit"]["author"]["date"]) for c in commits]
+                listed += commits
                 # GitHub lists at most 250 commits of a PR
                 if len(commits) < 100 or page == 3:
                     break
                 page += 1
         except urllib.error.HTTPError as e:
             print(f"shipping-metrics: commits of {path} unreadable ({e.code}), lead time from its open time", file=sys.stderr)
-            dates, reason = [], "http_error"
+            listed, reason = [], "http_error"
         else:
-            reason = None if dates else "no_commits"
-        start = min(dates, default=start)
-    return max((ts(it["pull_request"]["merged_at"]) - start).total_seconds() / 3600, 0), reason
+            reason = None if listed else "no_commits"
+        start = min((ts(c["commit"]["author"]["date"]) for c in listed), default=start)
+    return max((ts(it["pull_request"]["merged_at"]) - start).total_seconds() / 3600, 0), reason, listed
 
 
 def load_cache(path):
@@ -188,25 +202,41 @@ def load_cache(path):
         return {}
 
 
-def prs(gh, out, owner, now, cache_path):
+def pr_key(it):
+    return f"{it['repository_url']}#{it['number']}@{it['pull_request']['merged_at']}"
+
+
+def prs(gh, out, owner, deploy_repo, now, cache_path):
     """A merged PR's lead time never changes, so it is read once and kept in the cache file; only a final answer is
     kept (from its commits, or none listed), never a fallback after an error or without a token. New PRs are read
-    until LEAD_BUDGET is spent; the rest count as `pending` (open time) and are read on the next runs."""
+    until LEAD_BUDGET is spent; the rest count as `pending` (open time) and are read on the next runs. A deploy-repo
+    PR's entry also keeps what phases() needs, its last commit's time, its shas and its merge commit (one more call);
+    an entry without them (written before phases) is read again."""
     since = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     items, total = gh.search("issues", f"user:{owner} is:pr is:merged merged:>={since}")
     out.add("shipping_prs_merged", total, window="7d")
     cache, kept, measured = load_cache(cache_path), {}, []
     stop = time.monotonic() + LEAD_BUDGET
     for it in items:
-        key = f"{it['repository_url']}#{it['number']}@{it['pull_request']['merged_at']}"
-        if key in cache:
-            hours, reason = cache[key]
+        key, phased, facts = pr_key(it), repo_of(it) == deploy_repo, None
+        if key in cache and len(cache[key]) == 2 + phased:
+            hours, reason, *rest = cache[key]
+            facts = rest[0] if phased else None
         elif time.monotonic() < stop:
-            hours, reason = lead_hours(gh, it)
+            hours, reason, listed = lead_hours(gh, it)
+            if phased and reason in (None, "no_commits"):
+                try:
+                    pull = gh.get(f"/repos/{it['repository_url'].split('/repos/', 1)[1]}/pulls/{it['number']}")
+                    last = ts(listed[-1]["commit"]["committer"]["date"]).timestamp() if listed else None
+                    facts = {"last": last, "shas": [c["sha"] for c in listed], "merge": pull["merge_commit_sha"]}
+                except urllib.error.HTTPError as e:
+                    print(f"shipping-metrics: PR {key} unreadable ({e.code}), its phases wait for the next run", file=sys.stderr)
         else:
             hours, reason = max((ts(it["pull_request"]["merged_at"]) - ts(it["created_at"])).total_seconds() / 3600, 0), "pending"
-        if reason in (None, "no_commits"):
-            kept[key] = [hours, reason]
+        if reason in (None, "no_commits") and (facts or not phased):
+            kept[key] = [hours, reason] + ([facts] if phased else [])
+        if facts:
+            it["phase_facts"] = facts
         measured.append((hours, reason))
     # only the PRs still in the window: the file stays the size of a week
     with open(f"{cache_path}.tmp", "w") as f:
@@ -259,23 +289,26 @@ def escapes(gh, out, owner, now):
 
 def loki_records(loki, query, days, enough=None):
     """Platform records newest first, one day per query (the Pi answers a day in seconds and two weeks not at all),
-    until `enough(records)` holds or `days` are read."""
-    recs, end = [], time.time()
-    for _ in range(days):
-        if time.monotonic() > DEADLINE:
-            raise TimeoutError("run deadline reached")
-        params = {"query": query, "start": int((end - 86400) * 1e9), "end": int(end * 1e9), "limit": 5000, "direction": "backward"}
-        with urllib.request.urlopen(f"{loki}/loki/api/v1/query_range?{urllib.parse.urlencode(params)}", timeout=30) as r:
-            vals = [v for s in json.load(r)["data"]["result"] for v in s["values"]]
-        recs += [(int(t) / 1e9, dict(kv.split("=", 1) for kv in line.split() if "=" in kv)) for t, line in sorted(vals, reverse=True)]
-        end -= 86400
+    until `enough(records)` holds or `days` are read. Each day is fetched once a run (LOKI_READ)."""
+    recs, end = [], LOKI_READ.setdefault("end", time.time())
+    for day in range(days):
+        if (query, day) not in LOKI_READ:
+            if time.monotonic() > DEADLINE:
+                raise TimeoutError("run deadline reached")
+            hi = end - day * 86400
+            params = {"query": query, "start": int((hi - 86400) * 1e9), "end": int(hi * 1e9), "limit": 5000, "direction": "backward"}
+            with urllib.request.urlopen(f"{loki}/loki/api/v1/query_range?{urllib.parse.urlencode(params)}", timeout=30) as r:
+                vals = [v for s in json.load(r)["data"]["result"] for v in s["values"]]
+            LOKI_READ[(query, day)] = [(int(t) / 1e9, dict(kv.split("=", 1) for kv in line.split() if "=" in kv))
+                                       for t, line in sorted(vals, reverse=True)]
+        recs += LOKI_READ[(query, day)]
         if enough and enough(recs):
             break
     return recs
 
 
 def gates(loki, out, want):
-    runs = loki_records(loki, '{job="platform",kind="gate"} |= "mode=push"', 14, lambda r: len(r) >= want)[:want]
+    runs = loki_records(loki, GATE_QUERY, 14, lambda r: len(r) >= want)[:want]
     out.add("shipping_gate_runs_counted", len(runs))
     if runs:
         out.add("shipping_gate_fail_ratio", sum(r["result"] != "pass" for _, r in runs) / len(runs))
@@ -297,7 +330,7 @@ def node_of(host, hostnames):
 
 
 def deploys(loki, gh, out, owner, repo, hostnames, now):
-    recs = loki_records(loki, '{job="platform",kind="deploy"}', LOKI_DAYS,
+    recs = loki_records(loki, DEPLOY_QUERY, LOKI_DAYS,
                         lambda r: set(hostnames) <= {node_of(d.get("node", ""), hostnames) for _, d in r if d.get("result") == "ok"})
     week = [d for t, d in recs if t >= now.timestamp() - 7 * 86400]
     by = {}
@@ -319,6 +352,84 @@ def deploys(loki, gh, out, owner, repo, hostnames, now):
         hours = (now - min(ts(c["commit"]["committer"]["date"]) for c in merges)).total_seconds() / 3600 if commits else 0
         out.add("shipping_deploy_lag_commits", cmp["ahead_by"], host=host, node=node_of(host, hostnames))
         out.add("shipping_deploy_lag_hours", max(hours, 0), host=host, node=node_of(host, hostnames))
+
+
+def contains(gh, owner, repo, merge, sha):
+    """Whether deployed commit `sha` has commit `merge`; a sha GitHub does not know (404) has nothing."""
+    try:
+        return gh.get(f"/repos/{owner}/{repo}/compare/{merge}...{sha}", per_page=1)["status"] in ("ahead", "identical")
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+        return False
+
+
+def phases(gh, loki, out, merged, owner, repo, now, cache_path):
+    """Where a deploy-repo PR's time went, from the facts prs() kept and the gate and deploy records: idle (last
+    commit to the start of the first passing push gate on one of its shas after it; queue wait included), gate,
+    gate_to_merge, merge_to_deploy (to the end of the first good deploy after the merge whose sha has it), and the
+    failed push gates on its shas before the passing one. A deploy is matched once and kept in the cache file; a
+    deploy that lacks the merge is kept as tried, so no pair is compared twice. Compare calls stop at PHASE_BUDGET;
+    a PR left unmatched by it is counted on a later run."""
+    known = [(it, it["phase_facts"]) for it in merged if "phase_facts" in it]
+    cache, kept = load_cache(cache_path), {}
+
+    def days(times):
+        return min(LOKI_DAYS, int((now.timestamp() - min(times)) / 86400) + 1) if times else 0
+    gate_recs = sorted(loki_records(loki, GATE_QUERY, days([f["last"] for _, f in known if f["last"]])), key=lambda x: x[0])
+    # a deploy query costs the Pi seconds a day: only back to the oldest merge not matched yet
+    open_merges = [ts(it["pull_request"]["merged_at"]).timestamp() for it, _ in known if cache.get(pr_key(it), {}).get("deployed") is None]
+    deploy_recs = sorted(((t, d) for t, d in loki_records(loki, DEPLOY_QUERY, days(open_merges)) if d.get("result") == "ok" and d.get("sha")),
+                         key=lambda x: x[0])
+    stop = time.monotonic() + PHASE_BUDGET
+    hours = {p: [] for p in PHASES}
+    retries, unmatched = [], {"no_gate": 0, "not_deployed": 0, "before_records": 0}
+    for it, f in known:
+        merged_at = ts(it["pull_request"]["merged_at"]).timestamp()
+        mine = [(t, r) for t, r in gate_recs if r.get("sha") and any(s.startswith(r["sha"]) for s in f["shas"])]
+        passed = next(((t, r) for t, r in mine if r.get("result") == "pass" and r.get("seconds", "").isdigit()
+                       and f["last"] <= t <= merged_at), None)
+        if passed:
+            t, r = passed
+            hours["idle"].append(max(t - int(r["seconds"]) - f["last"], 0) / 3600)
+            hours["gate"].append(int(r["seconds"]) / 3600)
+            hours["gate_to_merge"].append((merged_at - t) / 3600)
+            retries.append(sum(r2.get("result") == "fail" for t2, r2 in mine if t2 < t))
+        else:
+            unmatched["no_gate"] += 1
+        if merged_at < DEPLOY_RECORDS_SINCE:
+            unmatched["before_records"] += 1
+            continue
+        entry = kept[pr_key(it)] = cache.get(pr_key(it), {"deployed": None, "tried": []})
+        if entry["deployed"] is None:
+            for t, d in deploy_recs:
+                if t <= merged_at or d["sha"] in entry["tried"]:
+                    continue
+                if not f["merge"].startswith(d["sha"]):
+                    if time.monotonic() > stop:
+                        break
+                    if not contains(gh, owner, repo, f["merge"], d["sha"]):
+                        entry["tried"].append(d["sha"])
+                        continue
+                entry["deployed"] = t
+                break
+            else:
+                unmatched["not_deployed"] += 1
+        if entry["deployed"] is not None:
+            hours["merge_to_deploy"].append((entry["deployed"] - merged_at) / 3600)
+    with open(f"{cache_path}.tmp", "w") as fh:
+        json.dump(kept, fh)
+    os.replace(f"{cache_path}.tmp", cache_path)
+    for p in PHASES:
+        out.add("shipping_pr_phase_prs", len(hours[p]), phase=p)
+        for q in (0.5, 0.9):
+            if hours[p]:
+                out.add("shipping_pr_phase_hours", quantile(hours[p], q), phase=p, quantile=str(q))
+    for q in (0.5, 0.9):
+        if retries:
+            out.add("shipping_pr_gate_retries", quantile(retries, q), quantile=str(q))
+    for reason, n in unmatched.items():
+        out.add("shipping_pr_phase_unmatched", n, reason=reason)
 
 
 def previous_success(path):
@@ -357,6 +468,7 @@ def main(argv=None):
     hostnames = [h for h in a.hostnames.split(",") if h]
     now = datetime.now(timezone.utc)
     gh = GitHub(a.github_api, token())
+    LOKI_READ.clear()
     out = Out()
     out.add("shipping_collector_authenticated", 1 if gh.token else 0)
     stamps = previous_success(a.out)
@@ -379,14 +491,17 @@ def main(argv=None):
 
     alerts = policy["alerts"]
     section("issues", lambda o: issues(gh, o, a.owner, set(policy["issues"]["parkedRepos"]["value"]), now))
-    merged = section("prs", lambda o: prs(gh, o, a.owner, now, os.path.join(os.path.dirname(a.out), "lead-cache.json")))
+    state = os.path.dirname(a.out)
+    merged = section("prs", lambda o: prs(gh, o, a.owner, a.deploy_repo, now, os.path.join(state, "lead-cache.json")))
     if merged is not None:
         section("reviews", lambda o: reviews(gh, o, merged, alerts["ReviewFirstPassLow"]["lastVerdicts"]["value"], policy["review"]["passGrade"]["value"]))
     section("escapes", lambda o: escapes(gh, o, a.owner, now))
     section("gates", lambda o: gates(a.loki, o, alerts["GateFailRateHigh"]["lastRuns"]["value"]))
     section("deploys", lambda o: deploys(a.loki, gh, o, a.owner, a.deploy_repo, hostnames, now))
-    for name in ("issues", "prs", "reviews", "escapes", "gates", "deploys"):
-        # a section that did not succeed this run failed, a skipped reviews (no prs list) included
+    if merged is not None:
+        section("phases", lambda o: phases(gh, a.loki, o, merged, a.owner, a.deploy_repo, now, os.path.join(state, "phase-cache.json")))
+    for name in ("issues", "prs", "reviews", "escapes", "gates", "deploys", "phases"):
+        # a section that did not succeed this run failed, a skipped reviews or phases (no prs list) included
         out.add("shipping_collector_section_failed", failed.get(name, 1), section=name)
         if name in stamps:
             out.add("shipping_collector_success_timestamp_seconds", stamps[name], section=name)

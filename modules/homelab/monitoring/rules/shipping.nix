@@ -9,6 +9,7 @@
 let
   a = policy.alerts;
   actionable = ''shipping_issues_open{class="actionable"}'';
+  gateMedian = ''shipping_gate_seconds{quantile="0.5"}'';
   at = i: if i == 0 then "sum(${actionable})" else "sum(${actionable} offset ${toString i}d)";
   alert =
     name: expr: summary: extra:
@@ -99,6 +100,12 @@ in
         )
         (alert "EscapeFound" ''sum(shipping_escapes{window="24h"}) > ${toString a.EscapeFound.max.value}''
           "{{ $value }} escape(s) in the last 24 h: a revert on a default branch or an issue labelled escape."
+          { }
+        )
+        # offset 5d: on a younger series the 7-d average is still filling, so a warm-up rise would fire
+        (alert "RetroDueGateSlower"
+          "${gateMedian} > ${toString a.RetroDueGateSlower.factor.value} * avg_over_time(${gateMedian}[7d]) and ${gateMedian} offset 5d"
+          "The median push gate takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average: a retro is due (Shipping dashboard: failed gate steps, where a PR's time goes)."
           { }
         )
         # min_over_time over 45 m spans two runs (every 30 min): one failed run that the next one fixes stays quiet

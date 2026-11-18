@@ -27,12 +27,19 @@ node-exporter. Its calls are read-only:
 | `shipping_gate_fail_ratio`, `_runs_counted`, `shipping_gate_seconds` | The last push-mode `nixos-qa` gates |
 | `shipping_gate_step_failures{step}`, `shipping_deploys{result}`, `shipping_deploy_rollbacks{window}` | From the gate-step and deploy records |
 | `shipping_deploy_lag_commits` / `_hours{host,node}` | Commits on main that the host's last good `just deploy` lacks, and the age of the oldest merge among them |
+| `shipping_pr_phase_hours{phase,quantile}` | Where a deploy-repo (nixos-config) PR merged in 7 d spent its time, median and p90 per phase. `idle`: its last commit's committer time to the start of the first passing push gate on one of its commits after it (end minus `seconds`). It **includes any gate queue wait**: the gate record carries no queue time, so the wait cannot be split out without a new collector. `gate`: that gate's `seconds`. `gate_to_merge`: the gate's end to the merge. `merge_to_deploy`: the merge to the end of the first good deploy record after it whose sha has the merge commit (GitHub compare `ahead` or `identical`) |
+| `shipping_pr_phase_prs{phase}`, `shipping_pr_gate_retries{quantile}`, `shipping_pr_phase_unmatched{reason}` | The PRs behind each phase (0 written); failed push gates on a PR's commits before its pass; PRs with `no_gate` (no passing push gate on their commits between the last commit and the merge) `not_deployed` (no good deploy has the merge yet) or `before_records` (merged before the first deploy record, 16 Nov 12:53 UTC: no deploy can be found for it, so it is left out of `merge_to_deploy` rather than timed to the first record). A PR's commits, last commit time and merge commit are kept with its lead time in `lead-cache.json` (one more call, `/pulls/{n}`); its matched deploy, and the deploys that lacked it, in `phase-cache.json`, so no merge and deploy pair is compared twice. A run spends at most 20 s on compare calls; a PR it did not reach is counted on a later run. A warm run adds about two GitHub calls per newly merged deploy-repo PR (`/pulls/{n}` and usually one compare; none when the deploy is the merge itself) and the gate records back to the oldest last commit |
 | `shipping_collector_success_timestamp_seconds{section}` | When each section last succeeded. A failed source writes no series, never a 0 |
-| `shipping_collector_section_failed{section}` | 1 when the section failed this run (an error, or the 240 s run deadline), else 0; a skipped `reviews` (its `prs` failed) counts as failed |
+| `shipping_collector_section_failed{section}` | 1 when the section failed this run (an error, or the 240 s run deadline), else 0; a skipped `reviews` or `phases` (their `prs` failed) counts as failed |
 
 Not measured:
 - Hosts with no good deploy record in the last 14 days of Loki have no lag series. A `just switch` writes no record.
 - Reviews posted as PR reviews rather than issue comments are not counted.
+- PR phases see only push-mode `nixos-qa` gates and `just deploy` records: a PR gated another way (a green-tree
+  shortcut, a host whose record never reached Loki) is `no_gate`, and a `just switch` writes no deploy record, so its PRs match the next `just deploy`.
+  PRs in other repos have no phases. A PR whose commits were not read yet (`pending`) is left out until a run reads it.
+- Until the gate and deploy records cover the whole week (they begin 16 Nov), PRs merged before them read `no_gate`,
+  and their `merge_to_deploy` runs to the first recorded deploy.
 
 ## Alerts
 
@@ -51,6 +58,7 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 | HostBehindMain | The host has been up and more than `maxHours` behind main for `upHours`. A sleeping host is not paged |
 | DeployRolledBack | Rollbacks in the last 24 h exceed `max` |
 | EscapeFound | Escapes in the last 24 h exceed `max` |
+| RetroDueGateSlower | The median push gate (`shipping_gate_seconds{quantile="0.5"}`) is over `factor` times its own 7-d average for `forMinutes`, once the series is at least 5 d old (`offset 5d`: a younger series' average is still filling). No fixed duration: it says a retro on the gate is due. Over its history so far (since 17 Nov 19:50 UTC, median 585-596 s) the ratio stayed at 0.98-1.00: quiet, and the 5-d guard keeps it quiet until 22 Nov |
 | ShippingCollectorStale | A section has not succeeded for `maxHours`, or failed two runs in a row, or the collector ran without the owner's gh login (`shipping_collector_authenticated` under `minAuthenticated`: public repos only), unless lenovo itself is down |
 
 ## Changing a number
