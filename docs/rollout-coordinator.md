@@ -101,15 +101,17 @@ good: set `sam.herdr.coordinatorWakeup.enable = false` on lenovo. Nothing else i
 
 ### Rollback
 
-Each switch is one NixOS generation; Home Manager's files roll back with it.
+Each switch is one NixOS generation; Home Manager's files roll back with it. `--no-reexec` is required: without it
+nixos-rebuild re-executes itself from `<nixpkgs/nixos>`, which these flake-only hosts lack, and changes nothing
+(README.md).
 
 ```sh
 # lenovo
-sudo nixos-rebuild switch --rollback     # or pick the previous entry at boot (systemd-boot)
+sudo nixos-rebuild switch --rollback --no-reexec     # or pick the previous entry at boot (systemd-boot)
 
 # acer-swift: deploy-rs rolls back by itself when the confirm step fails; otherwise
-ssh -t acer-swift sudo nixos-rebuild switch --rollback          # from a real terminal (lukas's sudo password)
-ssh deploy@acer-swift sudo nixos-rebuild switch --rollback      # or as deploy, from lenovo only (passwordless sudo)
+ssh -t acer-swift sudo nixos-rebuild switch --rollback --no-reexec          # from a real terminal (lukas's sudo password)
+ssh deploy@acer-swift sudo nixos-rebuild switch --rollback --no-reexec      # or as deploy, from lenovo only (passwordless sudo)
 ```
 
 Rolling back also returns the skills input on that host. The writable `~/claude-code-skills` checkout is not part of
