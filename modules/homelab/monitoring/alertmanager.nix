@@ -43,6 +43,7 @@ in
   services.prometheus.alertmanager = {
     enable = true;
     listenAddress = hosts.${config.networking.hostName}.address;
+    inherit (config.sam.fleet.listeners.alertmanager) port;
     # one instance: no gossip listener on 9094
     extraFlags = [ "--cluster.listen-address=" ];
     configuration = {

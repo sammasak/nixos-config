@@ -200,7 +200,7 @@ in
         ntfy = endpoint fleet.config "ntfy server every host pages";
         loki = endpoint fleet.config "Loki every host ships its logs to";
         listeners = mkOption {
-          description = "Every port one fleet host serves another: modules/core/network.nix renders each one's firewall rule from `from`, and fails a host whose firewall admits anything not here or in public. A new one also needs its service's bound port in scripts/gate-probe.nix (fleet-contract, `bound`), which scripts/test-fleet-contract.py compares.";
+          description = "Every port one fleet host serves another: modules/core/network.nix renders each one's firewall rule from `from`, and fails a host whose firewall admits anything not here or in public. Its serving module takes its port from here (config.sam.fleet.listeners.<name>.port).";
           type = types.attrsOf (endpointType fleet.config);
         };
         public = mkOption {

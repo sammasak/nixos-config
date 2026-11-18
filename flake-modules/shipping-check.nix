@@ -26,6 +26,40 @@ let
   staleFor = a.ShippingCollectorStale.forMinutes.value;
   fallbackFor = a.LeadTimeFallbacksHigh.forMinutes.value;
   merged = 40;
+  retroFor = a.RetroDueGateSlower.forMinutes.value;
+  # a baseline gate median, and a rise far enough above factor x baseline to stay above the 7-d average it lifts
+  gateBase = 600;
+  gateRise = 2 * a.RetroDueGateSlower.factor.value * gateBase;
+  # history: minutes before the rise (6 d clears the 5-d guard, 4 d does not); samples every 4 m, under the 5 m
+  # lookback: 6 d of 1 m samples take promtool 14 s
+  retroCase = name: history: fires: {
+    inherit name;
+    interval = "4m";
+    input_series = [
+      {
+        series = ''shipping_gate_seconds{quantile="0.5"}'';
+        values = "${n gateBase}x${n (history / 4 - 1)} ${n gateRise}x${n ((retroFor + 30) / 4)}";
+      }
+    ];
+    alert_rule_test = [
+      {
+        alertname = "RetroDueGateSlower";
+        eval_time = "${n (history + retroFor - 5)}m";
+        exp_alerts = [ ];
+      }
+      {
+        alertname = "RetroDueGateSlower";
+        eval_time = "${n (history + retroFor + 5)}m";
+        exp_alerts = lib.optional fires {
+          exp_labels = {
+            quantile = "0.5";
+            severity = "warning";
+            team = "shipping";
+          };
+        };
+      }
+    ];
+  };
   tests = {
     # the copy without annotations, which promtool would otherwise compare word for word
     rule_files = [ "rules-test.json" ];
@@ -242,6 +276,27 @@ let
                 };
               }
             ];
+          }
+        ];
+      }
+      (retroCase "gate median over factor x its 7-d average after 5 d of history fires after its for" (
+        6 * 1440
+      ) true)
+      (retroCase "the same rise on under 5 d of history does not fire" (4 * 1440) false)
+      {
+        name = "a gate median at its own baseline does not fire";
+        interval = "4m";
+        input_series = [
+          {
+            series = ''shipping_gate_seconds{quantile="0.5"}'';
+            values = "${n gateBase}x${n ((6 * 1440 + retroFor + 30) / 4)}";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "RetroDueGateSlower";
+            eval_time = "${n (6 * 1440 + retroFor + 5)}m";
+            exp_alerts = [ ];
           }
         ];
       }

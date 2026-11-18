@@ -88,6 +88,16 @@
         "tunedBy": "count_over_time(ALERTS{alertname=\"EscapeFound\"}[1d])"
       }
     },
+    "RetroDueGateSlower": {
+      "factor": {
+        "value": 1.5,
+        "tunedBy": "shipping_gate_seconds{quantile=\"0.5\"} / avg_over_time(shipping_gate_seconds{quantile=\"0.5\"}[7d])"
+      },
+      "forMinutes": {
+        "value": 120,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"RetroDueGateSlower\"}[1d])"
+      }
+    },
     "ShippingCollectorStale": {
       "maxHours": {
         "value": 2,
