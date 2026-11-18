@@ -21,7 +21,7 @@ in
   # The relay and environments' telemetry only: host sessions keep their Claude settings (docs/native-otel-canary.md).
   sam.claude.telemetry.enable = false;
 
-  # An agent that is talked into it reaches the internet, not the LAN, the cluster or this host (DNS excepted).
+  # An agent that is talked into it reaches the internet, not the LAN or this host (DNS excepted).
   services.devEnvironments.blockedNetworks = [
     "10.0.0.0/8"
     "172.16.0.0/12"

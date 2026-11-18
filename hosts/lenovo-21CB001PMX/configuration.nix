@@ -185,7 +185,7 @@
     ];
   };
 
-  # Runs outside k8s so paging survives a worker outage. Mobile subscribes to
+  # Runs on lenovo, not the acer worker, so paging survives a worker outage. Mobile subscribes to
   # sam.fleet.ntfy.port on the LAN or Tailscale IP; the web UI is the name below, through Caddy on acer.
   homelab.ntfy.baseUrl = "https://ntfy.sammasak.dev";
 
