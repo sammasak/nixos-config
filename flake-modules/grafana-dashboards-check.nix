@@ -181,6 +181,11 @@ let
       dashboard = seed "agent_nav_repo_mis_ratio" "prometheus";
       reason = "unknown metric agent_nav_repo_mis_ratio:";
     };
+    # the pre-595 name: nvidia-smi now heads these fields clocks_event_reasons, and the exporter names from the header
+    gpu-throttle-name = {
+      dashboard = seed ''nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job="nvidia-gpu"}'' "prometheus";
+      reason = "unknown metric nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown";
+    };
     caddy-typo = {
       dashboard = seed "rate(caddy_http_requets_total[5m])" "prometheus";
       reason = "unknown metric caddy_http_requets_total";

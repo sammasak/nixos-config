@@ -15,7 +15,10 @@ tests:
         values: '0x40'
       - series: 'node_thermal_zone_temp{job="node-exporter",node="black-pi",type="cpu-thermal",zone="0"}'
         values: '70x10 86x30'
-      - series: 'nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job="nvidia-gpu",node="asus-b460m",uuid="GPU-0"}'
+      # an x86 package zone through a long build: hwmon judges x86 hosts, so it stays silent
+      - series: 'node_thermal_zone_temp{job="node-exporter",node="acer-swift",type="x86_pkg_temp",zone="1"}'
+        values: '89x40'
+      - series: 'nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job="nvidia-gpu",node="asus-b460m",uuid="GPU-0"}'
         values: '0x10 1x30'
     alert_rule_test:
       - eval_time: 20m

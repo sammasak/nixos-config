@@ -57,14 +57,26 @@ server, not by name. Authentik gets the matched name without a client port as Ho
   causes (`alertmanager.nix`).
 - lenovo's watchdog (`cluster-watchdog.nix`) checks the pipeline from outside: Prometheus and Alertmanager ready, and
   Watchdog firing.
+- Host pages in `homelab.yaml`, beside the reachability ones:
+  - NodeSystemdUnitFailed (warning, 15 m): any failed service, socket, timer, target or path unit.
+  - DnsDown (critical, 5 m): lenovo's AdGuard does not answer its status API.
+  - DnsStatsStale (warning): `adguard.prom` has not been rewritten for over 5 min.
+  - NodeTemperatureHigh (warning, 15 m): an hwmon sensor within 5 °C of its own critical mark, or the Pi's
+    `cpu-thermal` zone at 85 °C or more. x86 thermal zones are left to hwmon.
+  - GpuThermalThrottling (warning, 10 m): the GPU reports hardware thermal slowdown
+    (`nvidia_smi_clocks_event_reasons_hw_thermal_slowdown`).
+- The upstream Prometheus and Alertmanager rules leave out what this deployment cannot fire: the cluster-consistency
+  and remote-write/service-discovery alerts. Assertions in `alertmanager.nix` and `prometheus.nix` keep it unclustered
+  and static, and name the rules to restore if that changes.
 
 ## Build checks
 
 | check | holds |
 |---|---|
-| `grafana-dashboards` | every query on every dashboard: metric names against what the exporters really emit (node-exporter on its own fixtures with the deployed flags; the GPU check's output; Loki's, Alloy's, Caddy's and blackbox's name literals; llm-gateway's and Authentik's registrations; black-pi's Prometheus and Alertmanager and acer's alloy-otlp run on loopback (`scripts/monitoring-exposition.sh`); the writers' textfiles, AdGuard's from lenovo's sandboxed AdGuard; the OTLP allow-list; the rule files' records); PromQL through promtool, LogQL through logcli; jobs scraped or written; no host named by hand; seeded failures |
+| `grafana-dashboards` | every query on every dashboard: metric names against what the exporters really emit (node-exporter on its own fixtures with the deployed flags; the GPU check's output; Loki's, Alloy's, Caddy's and blackbox's name literals; llm-gateway's and Authentik's registrations; black-pi's Prometheus and Alertmanager and acer's alloy-otlp run on loopback (`scripts/monitoring-exposition.sh`); the writers' textfiles, AdGuard's from lenovo's sandboxed AdGuard; the OTLP allow-list; the rule files' records); PromQL through promtool, LogQL through logcli; jobs scraped or written; no host named by hand; every rule file Prometheus loads held to the same names and jobs; seeded failures, rule files included |
 | `grafana-dashboard-removal` | Grafana itself, with black-pi's provider settings, deletes a removed file's dashboard and keeps ids across a restart |
-| `gpu-telemetry-exporter` | the GPU exporter's fields against a fake nvidia-smi |
+| `gpu-telemetry-exporter` | the GPU exporter's fields against a fake nvidia-smi that heads the throttle fields `clocks_event_reasons`, as asus's driver does |
+| `monitoring-rules-tests` | `promtool test rules` on every file in `modules/homelab/monitoring/rules/tests`, against `homelab.yaml` as rendered |
 | `monitoring-config-msi-ms7758`, `monitoring-rules-sleeping-hosts` | black-pi's Prometheus, Alertmanager and blackbox configs checked on an x86 seed; the sleeping-host rules per host |
 | `loki-config-msi-ms7758`, `journal-collector-config-black-pi` | Loki's config and the Pi's journal collector, on x86 |
 | `alert-bridge-sources` | the bridge admits Alertmanager's host alone |

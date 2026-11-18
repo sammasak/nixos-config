@@ -1497,7 +1497,7 @@
           "legendFormat": "W {{node}} (GPU only)"
         },
         {
-          "expr": "nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job=\"nvidia-gpu\"} + nvidia_smi_clocks_throttle_reasons_sw_power_cap{job=\"nvidia-gpu\"} > 0",
+          "expr": "nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job=\"nvidia-gpu\"} + nvidia_smi_clocks_event_reasons_sw_power_cap{job=\"nvidia-gpu\"} > 0",
           "refId": "D",
           "legendFormat": "thermal or power-cap throttle {{node}}"
         }
