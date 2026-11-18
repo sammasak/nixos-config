@@ -319,12 +319,12 @@
           "refId": "A"
         },
         {
-          "expr": "nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job=\"nvidia-gpu\"} * 100",
+          "expr": "nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job=\"nvidia-gpu\"} * 100",
           "legendFormat": "thermal throttle {{node}}",
           "refId": "B"
         },
         {
-          "expr": "nvidia_smi_clocks_throttle_reasons_sw_power_cap{job=\"nvidia-gpu\"} * 100",
+          "expr": "nvidia_smi_clocks_event_reasons_sw_power_cap{job=\"nvidia-gpu\"} * 100",
           "legendFormat": "power-cap throttle {{node}}",
           "refId": "C"
         }

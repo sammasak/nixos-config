@@ -1,5 +1,6 @@
 """nvidia-smi --query-gpu=... --format=csv in nvidia-smi's CSV form (units in the header, the throttle bitmask in hex)
-for one RTX 3070, for the exporter check. Written from the driver's documented output, not captured from it."""
+for one RTX 3070, for the exporter check. Written from the driver's documented output, not captured from it, except
+that asus's driver (595) heads the clocks_throttle_reasons.* fields clocks_event_reasons.*, which names the metrics."""
 import sys
 
 VALUES = {
@@ -21,7 +22,8 @@ for f in fields:
     if v is None:
         sys.exit(f"fake nvidia-smi: Field \"{f}\" is not a valid field to query.")
     unit, val = v if isinstance(v, tuple) else (None, v)
-    head.append(f"{f} [{unit}]" if unit else f)
+    name = f.replace("clocks_throttle_reasons.", "clocks_event_reasons.", 1)
+    head.append(f"{name} [{unit}]" if unit else name)
     row.append(val)
 print(", ".join(head))
 print(", ".join(row))

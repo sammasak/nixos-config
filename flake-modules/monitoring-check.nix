@@ -180,6 +180,43 @@ in
               promtool test rules tests.yaml
               touch $out
             '';
+        # who an alert notifies: Alertmanager's own routing (amtool) on black-pi's configuration. A near-critical
+        # sensor (notify="none") reaches no one; the paging temperature alert reaches the bridge.
+        monitoring-alert-routes =
+          pkgs.runCommand "monitoring-alert-routes"
+            {
+              nativeBuildInputs = [ pkgs.prometheus-alertmanager ];
+              config = builtins.toJSON black-pi.config.services.prometheus.alertmanager.configuration;
+              passAsFile = [ "config" ];
+            }
+            ''
+              route() {
+                want=$1
+                shift
+                amtool config routes test --config.file="$configPath" --verify.receivers="$want" "$@"
+              }
+              route null alertname=NodeSensorNearCritical notify=none severity=warning team=homelab node=msi-ms7758
+              route alert-bridge alertname=NodeTemperatureHigh severity=warning team=homelab node=black-pi
+              # seeded: without the label the same alert would notify
+              if route null alertname=NodeSensorNearCritical severity=warning team=homelab node=msi-ms7758; then
+                echo "monitoring-alert-routes: the seed without notify=none reached no one" >&2
+                exit 1
+              fi
+              touch $out
+            '';
+        # the alerts' own cases, beside the rule files they read (their rule_files path is relative); homelab.yaml as
+        # Prometheus loads it, rendered
+        monitoring-rules-tests =
+          pkgs.runCommand "monitoring-rules-tests" { nativeBuildInputs = [ pkgs.prometheus.cli ]; }
+            ''
+              cp -r ${../modules/homelab/monitoring/rules} rules
+              chmod -R u+w rules
+              cd rules
+              cp ${homelabRules.file} homelab.yaml
+              cd tests
+              for t in *.yaml; do promtool test rules "$t"; done
+              touch $out
+            '';
       };
     };
 }

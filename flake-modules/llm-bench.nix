@@ -37,9 +37,9 @@ let
     "nvidia_smi_power_draw_watts"
     "nvidia_smi_power_limit_watts"
     "nvidia_smi_fan_speed_ratio"
-    "nvidia_smi_clocks_throttle_reasons_active"
-    "nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown"
-    "nvidia_smi_clocks_throttle_reasons_sw_power_cap"
+    "nvidia_smi_clocks_event_reasons_active"
+    "nvidia_smi_clocks_event_reasons_hw_thermal_slowdown"
+    "nvidia_smi_clocks_event_reasons_sw_power_cap"
     "nvidia_smi_gpu_info"
   ];
   # every tag a host's Ollama loads must be a model the scorecard's rules accept, or committing its result would fail

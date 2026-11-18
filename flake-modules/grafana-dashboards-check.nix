@@ -129,6 +129,35 @@ let
       dashboard = seed ''{job="journal"}'' "loki";
       reason = "job 'journal': no Loki stream";
     };
+    # a rule on a metric nothing exports, as the remote-write alerts were
+    rule-unknown-metric = {
+      rules.groups = [
+        {
+          name = "seed";
+          rules = [
+            {
+              alert = "SeedRemoteWriteBehind";
+              expr = "prometheus_remote_storage_shards_desired > 0";
+            }
+          ];
+        }
+      ];
+      reason = "rules rules-rule-unknown-metric SeedRemoteWriteBehind: unknown metric prometheus_remote_storage_shards_desired";
+    };
+    rule-unknown-job = {
+      rules.groups = [
+        {
+          name = "seed";
+          rules = [
+            {
+              alert = "SeedTargetDown";
+              expr = ''up{job="kube-state-metrics"} == 0'';
+            }
+          ];
+        }
+      ];
+      reason = "rules rules-rule-unknown-job SeedTargetDown: job 'kube-state-metrics': no scrape job";
+    };
     # a name the running Prometheus does not export
     prometheus-typo = {
       dashboard = seed "prometheus_tsdb_head_seriez" "prometheus";
@@ -151,6 +180,11 @@ let
     nav-typo = {
       dashboard = seed "agent_nav_repo_mis_ratio" "prometheus";
       reason = "unknown metric agent_nav_repo_mis_ratio:";
+    };
+    # the pre-595 name: nvidia-smi now heads these fields clocks_event_reasons, and the exporter names from the header
+    gpu-throttle-name = {
+      dashboard = seed ''nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job="nvidia-gpu"}'' "prometheus";
+      reason = "unknown metric nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown";
     };
     caddy-typo = {
       dashboard = seed "rate(caddy_http_requets_total[5m])" "prometheus";
@@ -352,6 +386,8 @@ in
                 "${../modules/homelab/monitoring/alloy-otlp.alloy}"
               ];
               inherit (prom) rule_files;
+              # black-pi's alert and recording rules, held to the same names and jobs as the panels
+              alert_rules = prom.rule_files;
               record_sources = [ "${../pkgs/llm-bench/rules.nix}" ];
             };
             seeds = builtins.toJSON seeds;
@@ -389,10 +425,14 @@ in
               exit 1
             }
             # systemd needs D-Bus, which the sandbox lacks: its names come from this version's collector source and flags
-            python3 -I ${../scripts/node-exporter-systemd-names.py} $src ${
+            python3 -I ${../scripts/node-exporter-collector-names.py} $src systemd ${
               lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] exec
             } > systemd.prom
             grep -q '^node_systemd_units ' systemd.prom
+            # timex needs adjtimex, which the sandbox may refuse
+            python3 -I ${../scripts/node-exporter-collector-names.py} $src timex >> systemd.prom
+            # what the repo's own textfile writers print (open-webui's edge check, the generation file)
+            rg --no-filename -o "printf '(homelab_[a-z_]+)" -r '$1 0' ${../modules} ${../scripts} | sort -u > writers.prom
             # the deployed command line, with only the listener, the textfile directory and the fixture roots swapped
             ${
               lib.replaceStrings
@@ -437,8 +477,10 @@ in
             python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
               ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
             check() {
-              python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom authentik.prom ${adguardCheck}/dns.prom stack/*.prom shipping.prom nav.prom ${self'.checks.gpu-telemetry-exporter}
+              ${
+                pkgs.python3.withPackages (ps: [ ps.pyyaml ])
+              }/bin/python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom writers.prom llm-gateway.prom authentik.prom ${adguardCheck}/dns.prom stack/*.prom shipping.prom nav.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"

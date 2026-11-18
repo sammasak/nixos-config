@@ -75,6 +75,78 @@ groups:
           summary: "The kernel OOM-killed a process on {{ $labels.node }}"
           description: "{{ $value | humanize }} OOM kill(s) on {{ $labels.node }} in the last 15 minutes. A unit at its MemoryMax or the host out of memory: read that host's kernel journal before raising any limit."
 
+      # The systemd collector reports services, sockets, timers, targets and paths; mounts and devices it leaves out.
+      - alert: NodeSystemdUnitFailed
+        expr: node_systemd_unit_state{job="node-exporter",state="failed"} == 1
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "{{ $labels.name }} failed on {{ $labels.node }}"
+          description: "{{ $labels.name }} has been in the failed state on {{ $labels.node }} for 15 minutes. Run systemctl status {{ $labels.name }} and journalctl -u {{ $labels.name }} there; systemctl reset-failed clears it once fixed."
+
+      # the Pi's zone against 85 °C, where its firmware throttles hardest. x86 zones are not paged: acer's package zone
+      # sits near 89 °C through a build.
+      - alert: NodeTemperatureHigh
+        expr: node_thermal_zone_temp{job="node-exporter",type="cpu-thermal"} >= 85
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "{{ $labels.node }} runs hot"
+          description: "{{ $labels.node }}'s {{ $labels.type }} zone has read {{ $value }} °C for 15 minutes, at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+
+      # each hwmon sensor against its own critical mark (a desktop board's unwired sensors read nonsense, but have
+      # none; max by keeps the join single across a target's label change). msi and lenovo sit there through every
+      # gate, so it notifies no one (notify="none", alertmanager.nix): it shows in the alert list and on Hosts.
+      - alert: NodeSensorNearCritical
+        expr: |
+          node_hwmon_temp_celsius{job="node-exporter"}
+          > on (node, chip, sensor) group_left ()
+            (max by (node, chip, sensor) (node_hwmon_temp_crit_celsius{job="node-exporter"} > 0) - 5)
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+          notify: none
+        annotations:
+          summary: "A sensor on {{ $labels.node }} is near its critical mark"
+          description: "{{ $labels.chip }} {{ $labels.sensor }} on {{ $labels.node }} has read {{ $value }} °C for 15 minutes, within 5 °C of its own critical mark. Expected during long builds on msi and lenovo; outside them, check the fan and airflow."
+
+      - alert: GpuThermalThrottling
+        expr: nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job="nvidia-gpu"} == 1
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "The GPU on {{ $labels.node }} slows itself for heat"
+          description: "The board on {{ $labels.node }} has reported hardware thermal slowdown for 10 minutes: model runs are slower than measured. The GPU dashboard shows its temperature, fan and power."
+
+      # The fleet's resolver (adguardhome.nix), through adguard-textfile's minutely file on the DNS host.
+      - alert: DnsDown
+        expr: homelab_dns_up{job="node-exporter"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: homelab
+        annotations:
+          summary: "AdGuard on {{ $labels.node }} is not answering its control API"
+          description: "adguard-textfile on {{ $labels.node }} has found AdGuard down for 5 minutes: the LAN's DNS (and dns.sammasak.dev over TLS) is out. Run systemctl status adguardhome there."
+
+      - alert: DnsStatsStale
+        # the writer stopped (a failed run is NodeSystemdUnitFailed): DnsDown could not fire
+        expr: time() - node_textfile_mtime_seconds{job="node-exporter",file=~".*/adguard[.]prom"} > 300
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "AdGuard's statistics on {{ $labels.node }} are stale"
+          description: "adguard-textfile has not rewritten its file on {{ $labels.node }} for {{ $value | humanizeDuration }}, so DnsDown cannot see AdGuard. Check systemctl list-timers adguard-textfile there."
+
       - alert: RootFilesystemLow
         # The 3 GB root floor (nixos-config#302): black-pi's SD card holds Prometheus and Loki.
         expr: node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} < 3 * 1024 * 1024 * 1024

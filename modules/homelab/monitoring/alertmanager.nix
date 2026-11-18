@@ -64,6 +64,11 @@ in
             receiver = "null";
             matchers = [ ''alertname =~ "Watchdog|InfoInhibitor|HostExpectedOff"'' ];
           }
+          # a rule's notify="none" keeps it in the alert list and off the bridge (NodeSensorNearCritical)
+          {
+            receiver = "null";
+            matchers = [ ''notify = "none"'' ];
+          }
           # shipping alerts (rules/shipping.nix) wait for the morning; one firing then is sent when the night ends
           {
             receiver = "alert-bridge";
@@ -140,4 +145,11 @@ in
     RestartSec = 10;
     MemoryMax = "64M";
   };
+
+  assertions = [
+    {
+      assertion = lib.elem "--cluster.listen-address=" config.services.prometheus.alertmanager.extraFlags;
+      message = "modules/homelab/monitoring/alertmanager.nix: Alertmanager runs unclustered; rules/alertmanager.yaml leaves out the cluster consistency alerts, so add them back with a second instance.";
+    }
+  ];
 }

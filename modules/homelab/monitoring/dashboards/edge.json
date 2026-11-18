@@ -823,6 +823,53 @@
         "overrides": []
       },
       "description": "Each stage of a sign-in flow (identification, password, consent, ...)."
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "Chat's upstream socket",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 71
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "min(homelab_edge_socket_listening)",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "down",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "up",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "check not reporting"
+        },
+        "overrides": []
+      },
+      "description": "open-webui-edge-check's minutely look at Caddy's unix upstream for chat (EdgeSocketDown pages on it): the probe of chat sees only forward auth's 302, so a dead socket shows here alone."
     }
   ]
 }
