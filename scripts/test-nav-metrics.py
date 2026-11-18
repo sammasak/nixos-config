@@ -3,7 +3,14 @@
 nixos-config checkout (Read, Grep, Glob and Bash navigation, a missed lookup, repeat reads, an Edit, a malformed line,
 an event older than the window) and a coordinator session named as such. The exported values; no prompt, command or
 path in the textfile; a thin role writes its sample size alone; a failed section writes section_failed 1 and keeps its
-last timestamp; `--list` is METRICS. Seeded: a name outside METRICS is refused."""
+last timestamp; `--list` is METRICS. Seeded: a name outside METRICS is refused. The owner's file, timestamps aside, is
+GOLDEN, its text before guests were read.
+
+Guests (--worker): a temp state dir whose instances hold the same transcripts get the same series with worker=<name>;
+a link anywhere on an instance's path (the instance dir, home, .claude, projects, a project dir, a transcript) or a
+FIFO transcript is refused and counted, and nothing behind it is read; label-like text in a transcript never changes
+a label; the file and size caps; the homes are left as they were. Usage: test-nav-metrics.py [SCRIPT] (a mutated copy
+for a seed)."""
 import importlib.util
 import json
 import os
@@ -15,8 +22,46 @@ import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts/nav-metrics.py"
+SCRIPT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "scripts/nav-metrics.py"
 failed = 0
+GOLDEN = """\
+# HELP agent_nav_repo_nav_calls Navigation calls on a nixos-config checkout that got a result in the window: the sample size, always written.
+# TYPE agent_nav_repo_nav_calls gauge
+agent_nav_repo_nav_calls{role="coordinator"} 2
+agent_nav_repo_nav_calls{role="worker"} 57
+# HELP agent_nav_stretches Repo stretches in the window: prompts whose tool calls navigated the repo or changed a file in it.
+# TYPE agent_nav_stretches gauge
+agent_nav_stretches{role="worker"} 2
+# HELP agent_nav_calls_before_first_edit Navigation calls before the first Edit/Write of a repo stretch (or its end), by quantile.
+# TYPE agent_nav_calls_before_first_edit gauge
+agent_nav_calls_before_first_edit{quantile="0.5",role="worker"} 28.5
+agent_nav_calls_before_first_edit{quantile="0.9",role="worker"} 45.7
+# HELP agent_nav_topdirs_before_first_edit Distinct top-level repo directories navigated before the first Edit/Write of a repo stretch, by quantile.
+# TYPE agent_nav_topdirs_before_first_edit gauge
+agent_nav_topdirs_before_first_edit{quantile="0.5",role="worker"} 2
+agent_nav_topdirs_before_first_edit{quantile="0.9",role="worker"} 2.8
+# HELP agent_nav_repo_miss_ratio Share of repo navigation calls whose result was an error, empty, no match or no such file.
+# TYPE agent_nav_repo_miss_ratio gauge
+agent_nav_repo_miss_ratio{role="worker"} 0.0350877192982456
+# HELP agent_nav_repo_reads Reads of repo files (Read, cat, head, tail, sed -n) in the window.
+# TYPE agent_nav_repo_reads gauge
+agent_nav_repo_reads{role="worker"} 54
+# HELP agent_nav_repeat_read_ratio Share of repo file reads that read a file the same session already read in the window.
+# TYPE agent_nav_repeat_read_ratio gauge
+agent_nav_repeat_read_ratio{role="worker"} 0.851851851851852
+# HELP agent_nav_collector_section_failed 1 when the section failed this run (an error or the run deadline), else 0.
+# TYPE agent_nav_collector_section_failed gauge
+agent_nav_collector_section_failed{section="scan"} 0
+agent_nav_collector_section_failed{section="stretches"} 0
+agent_nav_collector_section_failed{section="misses"} 0
+agent_nav_collector_section_failed{section="rereads"} 0
+# HELP agent_nav_collector_success_timestamp_seconds Unix time a section last collected without error.
+# TYPE agent_nav_collector_success_timestamp_seconds gauge
+agent_nav_collector_success_timestamp_seconds{section="scan"} <ts>
+agent_nav_collector_success_timestamp_seconds{section="stretches"} <ts>
+agent_nav_collector_success_timestamp_seconds{section="misses"} <ts>
+agent_nav_collector_success_timestamp_seconds{section="rereads"} <ts>
+"""
 
 
 def check(ok, what):
@@ -198,6 +243,136 @@ with tempfile.TemporaryDirectory() as tmp:
     except AssertionError:
         check(True, "seeded: a name outside METRICS is refused")
 
+    masked = re.sub(r"(_timestamp_seconds\{[^}]*\}) \S+", r"\1 <ts>", text)
+    check(masked == GOLDEN, "the owner's file is byte-identical to before guests were read (timestamps aside)"
+          + ("" if masked == GOLDEN else f"\n{masked}"))
+    owner = {k: v for k, v in run(f"{tmp}/owner.prom")[2].items() if "_timestamp_" not in k}
+
+    # guests: the instances' homes in a state dir, and what a link out of one would reach
+    state, outside = pathlib.Path(tmp, "workers"), pathlib.Path(tmp, "outside")
+    w.write(outside / ".claude/projects/-x/s.jsonl")
+
+    def instance(name):
+        return state / name / "home/.claude/projects"
+
+    w.write(instance("herman") / "-home-nixos-config/worker.jsonl")
+    c.write(instance("herman") / "-home/coordinator.jsonl")
+    sub.write(instance("herman") / "-home-nixos-config/worker/subagents/agent-a.jsonl")
+    LINKS = {  # an instance whose path holds a link: where it is, and the outside target
+        "l-inst": (state / "l-inst", outside.parent / "outside-inst"),
+        "l-home": (state / "l-home/home", outside),
+        "l-claude": (state / "l-claude/home/.claude", outside / ".claude"),
+        "l-projects": (instance("l-projects"), outside / ".claude/projects"),
+        "l-dir": (instance("l-dir") / "-x", outside / ".claude/projects/-x"),
+        "l-file": (instance("l-file") / "-x/s.jsonl", outside / ".claude/projects/-x/s.jsonl"),
+    }
+    (outside.parent / "outside-inst").mkdir()
+    os.symlink(outside, outside.parent / "outside-inst/home")
+    for link, target in LINKS.values():
+        link.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(target, link)
+    (instance("fifo") / "-x").mkdir(parents=True)
+    os.mkfifo(instance("fifo") / "-x/s.jsonl")
+    # a good transcript beside a linked one: the link alone is refused
+    w.write(instance("half") / "-x/s.jsonl")
+    os.symlink(outside / ".claude/projects/-x/s.jsonl", instance("half") / "-x/t.jsonl")
+
+    # label-like text everywhere a transcript has text: the session's name, its cwd, a prompt, a path
+    evil = 'coordinator",worker="lenovo"} 1\nagent_nav_repo_nav_calls{role="x'
+    inj = Session('/home/u/nixos-config"} 9\n#', name=evil)
+    inj.prompt('worker="lenovo",role="admin"} 1')
+    for i in range(60):
+        inj.call("Read", {"file_path": f'/home/u/nixos-config/a{i % 3}"}},worker="x'}, result='"} 1\nfoo{a="b')
+    inj.write(instance("inject") / "-x/s.jsonl")
+
+    # the caps: past FILES_MAX; over FILE_MAX (sparse); a line over LINE_MAX holding a call; a file older than the window
+    for i in range(nm.FILES_MAX + 3):
+        one = Session("/home/u/nixos-config")
+        one.call("Read", {"file_path": f"/home/u/nixos-config/m{i}.nix"})
+        one.write(instance("many") / f"-x/{i}.jsonl")
+    big = instance("big") / "-x"
+    big.mkdir(parents=True)
+    with open(big / "huge.jsonl", "wb") as f:
+        f.truncate(nm.FILE_MAX + 1)
+    long_ = Session("/home/u/nixos-config")
+    long_.call("Read", {"file_path": "/home/u/nixos-config/long.nix", "pad": "x" * nm.LINE_MAX})
+    long_.call("Read", {"file_path": "/home/u/nixos-config/short.nix"})
+    long_.write(big / "long.jsonl")
+    w.write(big / "old.jsonl")
+    os.utime(big / "old.jsonl", (NOW - 30 * 3600, NOW - 30 * 3600))
+
+    def tree(root):
+        return sorted((str(q), os.lstat(q).st_mtime_ns, q.is_file() and not q.is_symlink() and q.stat().st_size < 1 << 20
+                       and q.read_bytes()) for q in root.rglob("*") if not q.is_fifo())
+
+    names = ["herman", *LINKS, "fifo", "half", "inject", "many", "big", "absent"]
+    homes_before = tree(state), tree(outside)
+
+    def guest(out, *argv):
+        try:
+            r = subprocess.run([sys.executable, "-I", str(SCRIPT), "--out", out, *argv], capture_output=True, text=True,
+                               timeout=60)
+        except subprocess.TimeoutExpired:
+            return None, "", {}
+        try:
+            text = pathlib.Path(out).read_text()
+        except OSError:
+            return r.returncode, "", {}
+        rows = [l for l in text.splitlines() if l and not l.startswith("#")]
+        return r.returncode, text, {l.rsplit(" ", 1)[0]: float(l.rsplit(" ", 1)[1]) for l in rows}
+
+    gout = f"{tmp}/guests.prom"
+    rc, gtext, g = guest(gout, "--state-dir", str(state), "--home", str(home), *[x for n in names for x in ("--worker", n)])
+    check(rc == 0, f"a guest run over every instance exits 0 ({rc})")
+
+    def as_worker(key, name):
+        base, _, lab = key.partition("{")
+        pairs = re.findall(r'(\w+)="([^"]*)"', lab) + [("worker", name)]
+        return base + "{" + ",".join(f'{k}="{v}"' for k, v in sorted(pairs)) + "}"
+
+    want = {as_worker(k, "herman"): v for k, v in owner.items()}
+    got = {k: v for k, v in g.items() if 'worker="herman"' in k and "_timestamp_" not in k and "_skipped" not in k}
+    check(got == want, f"an instance with the owner's transcripts gets the owner's series with worker=\"herman\" "
+          f"({len(got)} series; differ: {sorted(set(got.items()) ^ set(want.items()))[:4]})")
+    check(all(g.get(f'agent_nav_collector_skipped{{reason="{r}",worker="herman"}}') == 0 for r in nm.SKIPS),
+          "an instance with nothing to refuse skips nothing (every reason written as 0)")
+
+    def calls(name):
+        return sum(v for k, v in g.items() if k.startswith("agent_nav_repo_nav_calls{") and f'worker="{name}"' in k)
+
+    def skipped(name, reason):
+        return g.get(f'agent_nav_collector_skipped{{reason="{reason}",worker="{name}"}}')
+
+    for name in [*LINKS, "fifo"]:
+        check(skipped(name, "refused") == 1 and calls(name) == 0,
+              f"{name}: a link or FIFO on the path is refused and counted, and nothing behind it is read "
+              f"(refused {skipped(name, 'refused')}, calls {calls(name)})")
+    check(skipped("half", "refused") == 1 and calls("half") == 57,
+          f"a linked transcript beside a good one: the link refused, the good one read ({calls('half')})")
+    check(calls("absent") == 0 and all(skipped("absent", r) == 0 for r in nm.SKIPS)
+          and g.get('agent_nav_collector_section_failed{section="scan",worker="absent"}') == 0,
+          "an instance without a home is empty, not refused")
+    check(skipped("many", "too_many") == 3 and calls("many") == nm.FILES_MAX,
+          f"past FILES_MAX a transcript is counted too_many, not read ({skipped('many', 'too_many')}, {calls('many')})")
+    check(skipped("big", "too_large") == 1 and calls("big") == 1 and skipped("big", "too_many") == 0,
+          f"a file over FILE_MAX is too_large; a line over LINE_MAX is skipped, the next read; an old file is neither "
+          f"({skipped('big', 'too_large')}, {calls('big')})")
+
+    labels = re.findall(r'[{,]([a-z_]+)="([^"]*)"', gtext)
+    allowed = {"role": set(nm.ROLES), "quantile": {"0.5", "0.9"}, "section": set(nm.SECTIONS), "reason": set(nm.SKIPS),
+               "worker": set(names)}
+    bad = sorted({(k, v) for k, v in labels if v not in allowed.get(k, ())})
+    grammar = re.compile(r'# (HELP|TYPE) agent_nav_[a-z_]+ .*|agent_nav_[a-z_]+\{[a-z_]+="[a-z0-9._-]+"(,[a-z_]+="[a-z0-9._-]+")*\} '
+                         r'-?[0-9.e+-]+')
+    check(not bad and all(grammar.fullmatch(l) for l in gtext.splitlines()) and calls("inject") == 60
+          and 'agent_nav_repo_nav_calls{role="coordinator",worker="inject"} 60' in gtext and "lenovo" not in gtext
+          and "admin" not in gtext,
+          f"label-like text in a session's name, cwd, prompt or paths changes no label: every value is a declared "
+          f"name or a fixed one, every line a plain sample ({bad[:4]})")
+    check((tree(state), tree(outside)) == homes_before, "the guests' homes and the outside are left as they were")
+    rc, _, _ = guest(f"{tmp}/bad.prom", "--state-dir", str(state), "--home", str(home), "--worker", 'x"}')
+    check(rc not in (0, None) and not os.path.exists(f"{tmp}/bad.prom"), "a worker name outside [a-z][a-z0-9-]{0,10} is refused")
+
 
 
 def day(path, calls):
@@ -217,10 +392,11 @@ def day(path, calls):
 
 
 def peak_kb(projects, out):
-    """The collector's own peak RSS on `projects`, in a fresh interpreter."""
-    code = ("import resource, runpy, sys; s, p, o = sys.argv[1:4]; sys.argv = ['nav-metrics.py', '--out', o, '--projects', p]\n"
+    """The collector's own peak RSS on `projects`, in a fresh interpreter: VmHWM, not ru_maxrss, which keeps the RSS
+    of this process when it forked."""
+    code = ("import re, runpy, sys; s, p, o = sys.argv[1:4]; sys.argv = ['nav-metrics.py', '--out', o, '--projects', p]\n"
             "try:\n    runpy.run_path(s, run_name='__main__')\nexcept SystemExit:\n    pass\n"
-            "print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)")
+            "print(re.search(r'VmHWM:\\s+(\\d+)', open('/proc/self/status').read()).group(1))")
     r = subprocess.run([sys.executable, "-I", "-c", code, str(SCRIPT), str(projects), out], capture_output=True, text=True)
     return int(r.stdout.split()[-1]) if r.returncode == 0 and r.stdout.split() else None
 
