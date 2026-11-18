@@ -9,7 +9,10 @@ A name selected with a literal job="X" must come from that job: X's expositions 
 builtin series, or a job the check has no vocabulary for, is not held to it).
 Usage: check-grafana-dashboards.py SPEC.json PROMTOOL LOGCLI [JOB=]EXPOSITION...; exits non-zero on any FAIL.
 EXPOSITION is an exporter's /metrics output, JOB the scrape job it is served under; SPEC names the dashboards, the
-fleet's hosts, the rule files and the metric sources."""
+fleet's hosts, the rule files and the metric sources.
+check-grafana-dashboards.py --needs SPEC.json LIVEJOB,... [JOB=]EXPOSITION... prints, as "JOB NAME" lines, what the
+services run live (scripts/monitoring-exposition.sh) must export before the check reads them: each name selected under
+a live job, and as "* NAME" each name no other source provides."""
 import json
 import pathlib
 import re
@@ -17,6 +20,12 @@ import subprocess
 import sys
 import tempfile
 
+needs = None
+if sys.argv[1] == "--needs":
+    needs = {}
+    sys.argv[1:4] = [sys.argv[2], None, None, sys.argv[3]]
+    live = set(sys.argv[4].split(","))
+    del sys.argv[4]
 spec = json.load(open(sys.argv[1]))
 promtool, logcli = sys.argv[2], sys.argv[3]
 hosts = set(spec["hosts"])
@@ -124,6 +133,10 @@ def check_jobs(where, expr):
             continue
         job = j.group(1)
         own = [s for s in sources if s["job"] == job]
+        if needs is not None:
+            if job in live and not any(from_source(name, s) for s in own):
+                needs.setdefault(job, set()).add(name)
+            continue
         if job not in by_job and not own:
             continue
         if name not in by_job.get(job, set()) and not any(from_source(name, s) for s in own):
@@ -153,7 +166,10 @@ def check_expr(where, expr, variables, loki):
     promql.append((where, expr))
     for name in sorted(metric_names(expr)):
         if not known(name):
-            fail(where, f"unknown metric {name}: no exporter, record or scraped service provides it")
+            if needs is not None:
+                needs.setdefault("*", set()).add(name)
+            else:
+                fail(where, f"unknown metric {name}: no exporter, record or scraped service provides it")
     check_jobs(where, expr)
 
 
@@ -165,7 +181,10 @@ def check_rule(where, expr):
             fail(where, f"job {value!r}: no scrape job by that name")
     for name in sorted(metric_names(expr)):
         if not known(name):
-            fail(where, f"unknown metric {name}: no exporter, record or scraped service provides it")
+            if needs is not None:
+                needs.setdefault("*", set()).add(name)
+            else:
+                fail(where, f"unknown metric {name}: no exporter, record or scraped service provides it")
     check_jobs(where, expr)
 
 
@@ -213,11 +232,26 @@ for f, d in sorted(spec["dashboards"].items()):
     if len(ids) != len(set(ids)) or None in ids:
         fail(f, "panel ids missing or repeated")
 
-with tempfile.NamedTemporaryFile("w", suffix=".json") as rules:
+rules = 0
+if spec.get("alert_rules"):
+    import yaml
+for f in spec.get("alert_rules", []):
+    for group in yaml.safe_load(open(f))["groups"]:
+        for r in group["rules"]:
+            rules += 1
+            check_rule(f"rules {pathlib.Path(f).stem} {r.get('alert') or r.get('record')}", r["expr"])
+
+if needs is not None:
+    for job, names in sorted(needs.items()):
+        for name in sorted(names):
+            print(job, name)
+    sys.exit(0)
+
+with tempfile.NamedTemporaryFile("w", suffix=".json") as recorded:
     json.dump({"groups": [{"name": "dashboards", "rules": [
-        {"record": f"dashboard:expr:{i}", "expr": substitute(e)} for i, (_, e) in enumerate(promql)]}]}, rules)
-    rules.flush()
-    r = subprocess.run([promtool, "check", "rules", rules.name], capture_output=True, text=True)
+        {"record": f"dashboard:expr:{i}", "expr": substitute(e)} for i, (_, e) in enumerate(promql)]}]}, recorded)
+    recorded.flush()
+    r = subprocess.run([promtool, "check", "rules", recorded.name], capture_output=True, text=True)
     if r.returncode != 0:
         for line in (r.stdout + r.stderr).splitlines():
             n = re.search(r"dashboard:expr:(\d+)", line)
@@ -231,15 +265,6 @@ for where, expr in logql:
                        text=True)
     if "parse error" in r.stdout + r.stderr:
         fail(where, f"LogQL: {(r.stdout + r.stderr).strip()}")
-
-rules = 0
-if spec.get("alert_rules"):
-    import yaml
-for f in spec.get("alert_rules", []):
-    for group in yaml.safe_load(open(f))["groups"]:
-        for r in group["rules"]:
-            rules += 1
-            check_rule(f"rules {pathlib.Path(f).stem} {r.get('alert') or r.get('record')}", r["expr"])
 
 for line in failed:
     print("FAIL: " + line)

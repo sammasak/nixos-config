@@ -34,6 +34,7 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               `check=<check> owner=<host> seconds= eval_seconds= compiled=<n> fetched=<n>
 #               result=built|fetched|present|fail|dry head=<sha> drv=<drv>`, the deferral as `result=deferred … drv=<drv>`;
 #               Shipping's "where a gate's time goes" panels read them.
+#               `just deferred-checks <full sha>` lists them and exits 1 while one still waits for its owner; merge on 0.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table; nixos:qa runs it

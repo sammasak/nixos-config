@@ -116,6 +116,8 @@ FLEET_CASES = [
     ("telemetry without nativeOtel", "{ sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
     ("telemetry from a guest module", "{ sam.workers.instances.t.telemetry = false; services.devEnvironments.guestModules = [ { sam.claude.telemetry.enable = true; } ]; }",
      "a guest module turned on sam.claude.telemetry"),
+    ("a record stream named as a fleet host", '{ services.devEnvironments.prefix = lib.mkForce "black"; sam.workers.instances.pi = { }; }',
+     "the record stream of black-pi would equal a fleet host's name"),
 ]
 USER_SECRET = ("the relay's secret readable by a user", '{ sops.secrets.native_otlp_auth.owner = "lukas"; }', "native_otlp_auth must be owned by root with mode 0400")
 # msi with two instances behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads

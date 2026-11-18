@@ -3,7 +3,8 @@
 The asus model-fit table and the agent capacity per model (#491, #493) come from two runs and one import. G1 has one
 contract: the fixture, sampling and rule of `scripts/ollama-g1-bench.sh` and `scripts/ollama-g1-table.py` (#492).
 `llm-bench import-g1` carries that output into the committed scorecard (`pkgs/llm-bench/scorecard/`), which becomes
-black-pi's `llm_bench:*` recording rules and the "Local inference" row of the LLM gateway dashboard.
+black-pi's `llm_bench:*` recording rules and the "Local inference" row of the LLM gateway dashboard. Section 5 holds
+the measured asus baseline, its limits and the records behind it.
 
 All commands run from acer: asus's and msi's Ollama admit acer only. Use a nixos-config checkout on acer, since the
 bench reads its fixture from git at a pinned commit.
@@ -95,3 +96,128 @@ nvidia-smi --query-gpu=name,uuid,driver_version,memory.total,memory.used,memory.
   - `GpuTelemetryDown` is inactive.
 - **If it refuses a field:** drop that field from `homelab.gpuTelemetry.fields` (`modules/homelab/monitoring/gpu-exporter.nix`)
   first. The exporter refuses to start on a field the driver rejects.
+
+## 5. The asus baseline (#493)
+
+The figures below come only from six measurement reports, kept verbatim in `docs/records/` as this section's artifacts.
+Each figure names its report. The raw files the reports cite (per-request JSONL, GPU logs, journals) stayed in the run
+host's `~/.local/state/fleet-lead/` and are not in the repo.
+
+| Short name | Record | What it measured |
+|---|---|---|
+| g1 | `docs/records/llm-baseline-g1-result.md` | G1 run, all three pinned tags, 4K and 8K, plus agent capacity; 17 Nov, 270 W |
+| stress | `docs/records/llm-baseline-g1-stress-run.md` | qwen 30-minute one-request stress, runs 1 to 3; 18 Nov, 130 W |
+| ctx | `docs/records/llm-baseline-ctx-result.md` | context ceiling 4K to 128K and long Pi-shaped sessions; 17 Nov, 130 W |
+| swap | `docs/records/llm-baseline-swap-32k.md` | qwen and gemma4:e4b swapping at 32K; 17 Nov, 130 W |
+| pi | `docs/records/llm-baseline-pi-32k-result.md` | real `pi` sessions at 32K, judged by tests; 17 Nov, 130 W |
+| closeout | `docs/records/llm-baseline-g1-closeout.md` | #492 and #493 boxes against the evidence; 18 Nov |
+
+None of them holds a token or secret. The `"apiKey": "ollama"` in the ctx and pi records is the placeholder Ollama
+ignores. Their `~/.cache/...` and `~/.local/state/...` paths are the run host's working files, kept so the reports stay
+verbatim.
+
+### Baseline table
+
+asus-b460m: RTX 3070 (8192 MiB, of which 359 reserved and 7833 usable), driver 595.104.02, Ollama 0.40.3 CUDA,
+`OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1` (stress, swap, ctx). Every row ran 100 % on the GPU: every
+layer offloaded and `size_vram == size` (g1, stress).
+
+A tag is pinned by its registry manifest digest in `homelab.ollama.modelDigests` (`hosts/asus-b460m/configuration.nix`):
+qwen2.5-coder:7b-instruct-q4_K_M `dae161e2…` (the digest the stress run captured per request), gemma4:e4b-it-qat
+`ee665637…`, gemma4:e2b-it-qat `07ea59a4…`. The g1 run found all three at their pinned digests in `/api/tags`.
+
+| Model (quant) | Cap | ctx | n cold / warm | Decode tok/s p50 | TTFT warm p50 / p95 s | VRAM steady MiB | Headroom MiB of 8192 | Cold load p50 s | Source |
+|---|---|---|---|---|---|---|---|---|---|
+| qwen2.5-coder:7b-instruct-q4_K_M (Q4_K_M) | 130 W | 4096 | 1 / 400 | 70.0 | 0.952 / 0.971 | 4639 | 3553 | | stress, run 3 |
+| qwen2.5-coder:7b-instruct-q4_K_M | 130 W | 8192 | 1 / 10 | 65.9 | 1.75 / 1.75 | 4909 | 3283 | | stress, run 3 |
+| qwen2.5-coder:7b-instruct-q4_K_M | 270 W | 4096 | 5 / 20 | 75.4 | 0.76 / 0.80 | 4639 | 3553 | 1.98 | g1 |
+| qwen2.5-coder:7b-instruct-q4_K_M | 270 W | 8192 | 5 / 20 | 71.7 | 1.47 / 1.50 | 4909 | 3283 | 1.99 | g1 |
+| gemma4:e4b-it-qat (Q4_0) | 270 W | 4096 | 5 / 20 | 87.7 | 0.68 / 0.70 | 4247 | 3945 | 2.77 | g1 |
+| gemma4:e4b-it-qat | 270 W | 8192 | 5 / 20 | 85.0 | 1.28 / 1.33 | 4285 | 3907 | 2.80 | g1 |
+| gemma4:e2b-it-qat (Q4_0) | 270 W | 4096 | 5 / 20 | 148.3 | 0.41 / 0.41 | 2861 | 5331 | 2.50 | g1 |
+| gemma4:e2b-it-qat | 270 W | 8192 | 5 / 20 | 143.3 | 0.74 / 0.75 | 3013 | 5179 | 2.50 | g1 |
+
+Quants are as the closeout states them. TTFT here is Ollama's own (load plus prompt eval).
+
+- **Rejected, not measured:** `llama3.1:8b`, `gemma3:4b-it-qat` and `qwen3.5:4b`. None is in `homelab.ollama.modelDigests`,
+  so asus does not have them as deployed. Pulling one is a config change, and pinning them or accepting the rejection is
+  the owner's call (closeout).
+- **Agent capacity:** qwen sustains 2 closed-loop agents under the proposed `capacity` thresholds. gemma4 was not
+  evaluable: both models spent the 128-token budget on reasoning (g1).
+- **As a `pi` agent:** 0 of 9 real sessions with gemma4 produced a correct, test-verified result. qwen2.5-coder emits no
+  structured tool calls through `/v1` (pi, ctx).
+- **Long contexts at 130 W**, 4K to 128K per model: the ctx record's ceiling table.
+
+### Re-run
+
+Per model and context: `scripts/ollama-g1-bench.sh HOST MODEL CTX COLD WARM OUT.jsonl [CLIENTS]`, then
+`python3 scripts/ollama-g1-table.py DIR`, as in section 1, holding `/run/work-locks/heavy-work.lock`. The stress
+row is one invocation of 1 cold and 400 warm requests (stress):
+
+```
+scripts/ollama-g1-bench.sh 192.168.10.113 qwen2.5-coder:7b-instruct-q4_K_M 4096 1 400 ~/g1-stress/g1-stress.jsonl
+```
+
+Both scripts exist on main. The drivers the records name under `~/.cache/g1-run/bin/` (`g1-main.sh`, `g1-stress.sh`,
+`ctx_ceiling.py`, `long_session.py`, `swap32k_chat.py`, `pi_session.sh`, `pi_calls.py`) were never committed, so the ctx,
+swap and pi measurements have no command on main; each record quotes the requests it sent.
+
+### Measurement limits
+
+- **Sample counts.** Per row in the table. Capacity: 20 to 21 requests per level (g1). Context ceiling: 1 cold and 1
+  warm request per row, VRAM peaks from 0.5 s samples (ctx). Swap: 4 loads, each direction twice, 209 samples at 0.2 s
+  (swap). `pi`: 9 sessions, one or two per task, so the failure pattern is clear but no rate is (pi). The other GPU
+  logs are 1 Hz.
+- **Nearest-rank quantiles.** `scripts/ollama-g1-table.py` takes the sorted value at rank ceil(n × p), with no
+  interpolation. With n 20, p95 is the 19th value, the second slowest request, so two requests decide it. With n 10, p95
+  is the maximum, which is why the 8K stress row reads 1.75 / 1.75.
+- **Power is the GPU's only.** It is nvidia-smi `power.draw`, the board's draw, not the host at the wall. No energy per
+  token is given.
+- **270 W against 130 W.** The g1 rows ran before the 130 W cap (`homelab.ollama.gpuPowerLimit`); stress, ctx, swap and
+  pi ran at 130 W. qwen at 4K decodes 75.4 tok/s at 270 W and 70.0 at 130 W, with different sample counts. Prefill at
+  270 W for long contexts was not measured (ctx).
+- **VRAM headroom is measured on an idle desktop.** asus runs no graphical session; a desktop-in-use scenario was not
+  measured (stress, closeout). Headroom is against 8192 MiB, the G1 table's definition; against the 7833 usable it is
+  359 MiB less (stress). A load-time VRAM reading can include the previous model during its swap-out: g1's e2b 4K load
+  read 4285 MiB (g1). Each load also maps a fixed host-memory buffer (`CPU_Mapped`, 292.36 MiB for qwen, 2730.00 MiB for
+  e4b), the same at every context; it is not a spill (swap).
+- **The prompt cache.** A repeated prompt is served from the runner's cache: stress run 1 reused 20 prompts, so its TTFT
+  of 0.016 s is invalid, and the bench puts a nonce first in every request for this reason. The cache's host-RAM limit
+  was 8192 MiB, the whole `MemoryMax=8G`: run 2's runner was OOM-killed after 97 distinct 4K prompts (stress). #551 caps
+  it at 1024 MiB (`homelab.ollama.promptCacheMiB`, `modules/homelab/ollama-host.nix`), and run 3 plateaued at about
+  968 MiB. The g1, ctx, swap and pi rows ran before that cap.
+- **Quantization.** qwen is Q4_K_M and gemma4 is a QAT Q4_0, so rows across models compare different quants as well as
+  models.
+- **Where the client sat.** g1 and stress ran from asus against its own LAN address, so client wall times have no LAN
+  hop; Ollama's timings are unaffected (g1). No msi row was taken, so the decode bar is the 24 tok/s floor, not 5× msi.
+  Gateway latency was not measured: asus is not in the gateway's catalog (closeout, llm-gateway#101).
+- **qwen above 32768 truncates silently:** Ollama clamps to 32768 and evaluates part of the prompt, with no error (ctx).
+
+### GPU readings in Prometheus
+
+On black-pi's Prometheus or Grafana Explore. The job is `nvidia-gpu`, scraped every 10 s with `node` and `instance`
+labels (`modules/homelab/monitoring/prometheus.nix`); the metric names are the ones
+`modules/homelab/monitoring/dashboards/gpu.json` reads. The closeout gives these for a 2-hour known-on window. Its run
+could not reach Prometheus from asus, so no value is recorded yet.
+
+```
+up{job="nvidia-gpu",node="asus-b460m"}
+avg_over_time(up{job="nvidia-gpu",node="asus-b460m"}[2h])          # the box: >= 0.99
+count_over_time(up{job="nvidia-gpu",node="asus-b460m"}[2h])
+max_over_time(nvidia_smi_memory_used_bytes{node="asus-b460m"}[2h])
+nvidia_smi_memory_total_bytes{node="asus-b460m"}
+max_over_time(nvidia_smi_utilization_gpu_ratio{node="asus-b460m"}[2h])
+avg_over_time(nvidia_smi_utilization_gpu_ratio{node="asus-b460m"}[2h])
+max_over_time(nvidia_smi_power_draw_watts{node="asus-b460m"}[2h])
+max_over_time(nvidia_smi_temperature_gpu{node="asus-b460m"}[2h])
+```
+
+### Rollback and recovery
+
+- **Recovery, observed:** after run 2's OOM kill at 15:22:15, systemd restarted Ollama at 15:22:16, and it served the
+  8K run with no re-pull (closeout).
+- **Rollback, not demonstrated:** generations system-2 to system-14 are present on asus. The command is in
+  `docs/nix-audit-pilot.md` "Rollback" (on main it adds `--no-reexec`, which the closeout's quote lacks); running it is
+  the owner's call (closeout).
+- **Model cache kept:** the models live under `/var/lib/ollama/models`, outside the Nix store, and each loader run after
+  a restart received 5.2 to 7.2 KB, so nothing was downloaded again (closeout).
