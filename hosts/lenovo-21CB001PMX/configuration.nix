@@ -20,6 +20,7 @@
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/journal-collector.nix
     ../../modules/homelab/shipping-metrics.nix
+    ../../modules/homelab/nav-metrics.nix
   ];
 
   # a quarter of the collector's 256M MemoryMax, as the daemon and the user slice: zram is charged to no cgroup
@@ -99,7 +100,7 @@
   # would otherwise reject anything copied in over SSH as lukas.
   nix.settings.secret-key-files = [ config.sops.secrets."nix_signing_key".path ];
 
-  # nixos-config#109: a cold devenv gate builds cargo-semver-checks from source in the daemon,
+  # A cold devenv gate builds cargo-semver-checks from source in the daemon,
   # outside every user cgroup and oomd's reach; at cores 8 it peaked at 7.5 GiB plus 1.6 GiB swap
   # on acer, at cores 2 at 6.1 GiB with none. The cap keeps a build from pushing the control plane
   # into zram exhaustion; MemoryHigh throttles first, MemoryMax fails the build, not the host.
@@ -108,10 +109,10 @@
     cores = 2;
   };
   # The whole memory budget (modules/core/memory-budget.nix): 15.3 GiB of MemTotal; every MemoryMax on the host
-  # (these two, and alert-bridge 64M, alloy 256M and node-exporter 64M from their modules) plus the floors fits in it,
-  # 115M left. The kernel, page tables and the zram store (about 1 GiB measured) are outside: the caps meet only with
-  # the daemon pushed past its MemoryHigh while the user slice is at its ceiling. Swap is a quarter of each cap, as the
-  # worker pools: zram is charged to no cgroup.
+  # (these two, and alert-bridge 64M, alloy 256M, node-exporter 64M, shipping-metrics 96M and nav-metrics 48M from
+  # their modules) plus the floors fits in it, 19M left. The kernel, page tables and the zram store (about 1 GiB
+  # measured) are outside: the caps meet only with the daemon pushed past its MemoryHigh while the user slice is at
+  # its ceiling. Swap is a quarter of each cap, as the worker pools: zram is charged to no cgroup.
   sam.memory = {
     ram = "15667M";
     caps = {
@@ -122,12 +123,12 @@
         max = "6400M";
         swapMax = "1600M";
       };
-      # nixos-config#353: all login users combined, a client-side evaluation included; NOT MemoryHigh, or a runaway
+      # All login users combined, a client-side evaluation included; NOT MemoryHigh, or a runaway
       # stalls every session instead of being killed. The idle sessions' 4.6 GiB that cannot be dropped plus the
       # largest measured unit (3.0 GiB) fit under it (scripts/test-lenovo-build-bounds.py).
       "user.slice" = {
-        max = "8448M";
-        swapMax = "2112M";
+        max = "8400M";
+        swapMax = "2100M";
       };
     };
     # the LAN's DNS and the way in keep answering while the user slice and a build are both at their caps
@@ -168,8 +169,7 @@
     rewrites = [
       # Wildcard and apex to Caddy on the edge host (modules/homelab/edge.nix). External-DNS
       # writes AdGuard *filtering rules*, not rewrites, which persist under
-      # mutableSettings; a stale one could pin a name to the old address. When
-      # the repoint landed, external-dns managed no record and user_rules was empty.
+      # mutableSettings; a stale one could pin a name to the old address.
       {
         domain = "*.sammasak.dev";
         answer = config.sam.fleet.hosts.${config.sam.fleet.edge}.address;
@@ -185,16 +185,15 @@
     ];
   };
 
-  # Runs outside k8s so paging survives a worker outage. Mobile subscribes to
+  # Runs on lenovo, not the acer worker, so paging survives a worker outage. Mobile subscribes to
   # sam.fleet.ntfy.port on the LAN or Tailscale IP; the web UI is the name below, through Caddy on acer.
   homelab.ntfy.baseUrl = "https://ntfy.sammasak.dev";
 
-  # Alertmanager on black-pi posts to lenovo's LAN address, so loopback is not
+  # Alertmanager on black-pi posts to lenovo's LAN address (sam.fleet.listeners.alert-bridge), so loopback is not
   # enough. Pages go to the module's default topic, homelab-alerts.
   homelab.alertBridge = {
     enable = true;
     listenAddress = "0.0.0.0";
-    openFirewall = true;
   };
 
   # secrets/ is edited here, where the personal age key lives (nixos-config's devenv has them too)

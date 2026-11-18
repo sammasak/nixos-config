@@ -421,6 +421,10 @@ let
       chatStreams = acer.systemd.sockets.open-webui-proxy.listenStreams;
       fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
       ntfyPort = acer.sam.fleet.ntfy.port;
+      edgeMetrics = {
+        address = acer.sam.fleet.hosts.${acer.sam.fleet.edgeMetrics.host}.address;
+        inherit (acer.sam.fleet.edgeMetrics) port;
+      };
       # what lenovo's AdGuard answers for the names, and what black-pi's blackbox probes
       rewrites = lenovo.homelab.dns.rewrites;
       prometheusConfig = hosts.black-pi.config.services.prometheus.configText;
@@ -623,26 +627,132 @@ let
         };
       };
 
-    # the fleet's ports (scripts/test-fleet-contract.py scans the tree for them), black-pi's Loki sources against the
-    # fleet's addresses, and the seeded cases: a port off its fleet fact, lenovo's machines or jump hosts off the
+    # the fleet's ports (scripts/test-fleet-contract.py scans the tree for them), every host's rendered firewall
+    # against the sam.fleet listeners and public entries, the port each listener's service binds, and the seeded
+    # cases: a port off its fleet fact, an opening the facts do not list, lenovo's machines or jump hosts off the
     # runtime hosts of hosts.nix, a collector on a host without a fleet address
     fleet-contract =
       let
         blackPi = hosts.black-pi.config;
         inherit (lenovo.sam) herdr;
+        inherit (lenovo.sam.fleet) listeners;
+        ports = i: {
+          inherit (i)
+            allowedTCPPorts
+            allowedUDPPorts
+            allowedTCPPortRanges
+            allowedUDPPortRanges
+            ;
+        };
       in
       {
         ports = {
           ntfy = lenovo.sam.fleet.ntfy.port;
           loki = lenovo.sam.fleet.loki.port;
         };
-        allowedSources = blackPi.homelab.loki.allowedSources;
+        listeners = lib.mapAttrs (_: l: {
+          inherit (l)
+            host
+            port
+            proto
+            from
+            ;
+        }) listeners;
+        inherit (lenovo.sam.fleet) public lanCidr;
+        firewall = lib.mapAttrs' (
+          _: h:
+          let
+            fw = h.config.networking.firewall;
+          in
+          lib.nameValuePair h.config.networking.hostName (
+            ports fw
+            // {
+              inherit (fw)
+                enable
+                backend
+                extraCommands
+                extraInputRules
+                trustedInterfaces
+                ;
+              interfaces = lib.mapAttrs (_: ports) fw.interfaces;
+            }
+          )
+        ) hosts;
+        # what each listener's service binds, where Nix sets it; the gateway's is in llm-gateway.toml
+        bound = {
+          alertmanager = blackPi.services.prometheus.alertmanager.port;
+          # the metrics server's virtual host, http://:<port> (edge.nix)
+          edge-metrics = lib.head (
+            lib.concatLists (
+              lib.filter (m: m != null) (
+                map (builtins.match "http://:([0-9]+)") (lib.attrNames acer.services.caddy.virtualHosts)
+              )
+            )
+          );
+          alert-bridge = lenovo.homelab.alertBridge.port;
+          prometheus = blackPi.services.prometheus.port;
+          grafana = blackPi.services.grafana.settings.server.http_port;
+          loki = blackPi.homelab.loki.port;
+          ollama-msi = msi.services.ollama.port;
+          ollama-asus = hosts.asus-b460m.config.services.ollama.port;
+          alloy-http = lib.head (
+            builtins.match ".*--server[.]http[.]listen-addr=[^ ]*:([0-9]+).*" (
+              builtins.unsafeDiscardStringContext acer.systemd.services.alloy-otlp.serviceConfig.ExecStart
+            )
+          );
+        }
+        // lib.mapAttrs' (
+          _: h:
+          lib.nameValuePair "node-exporter-${h.config.networking.hostName}" h.config.services.prometheus.exporters.node.port
+        ) (removeAttrs hosts [ "naked-pi" ])
+        # the GPU hosts' exporters (gpu-exporter.nix, on where sam.fleet says gpu)
+        // lib.mapAttrs' (
+          _: h:
+          lib.nameValuePair "nvidia-gpu-${h.config.networking.hostName}" h.config.services.prometheus.exporters.nvidia-gpu.port
+        ) (lib.filterAttrs (_: h: h.config.homelab.gpuTelemetry.enable or false) hosts)
+        # harmonia's bind, [::]:<port>, on each host that serves a store cache (store-cache.nix)
+        // lib.mapAttrs' (
+          _: h:
+          lib.nameValuePair "store-cache-${h.config.networking.hostName}" (
+            lib.last (lib.splitString ":" h.config.services.harmonia.cache.settings.bind)
+          )
+        ) (lib.filterAttrs (_: h: h.config.sam.storeCache.enable) hosts);
         addresses = lib.mapAttrs (_: h: [ h.address ] ++ h.extraAddresses) lenovo.sam.fleet.hosts;
         machines = map (m: m.target) herdr.machines;
         jumpHosts = lenovo.services.devEnvironments.jumpHosts;
         failing = {
+          hosts = lib.mapAttrs (_: h: failing h.config) hosts;
           lenovo = failing lenovo;
           blackPi = failing blackPi;
+          openPort = failing (extend "acer-swift" [ { networking.firewall.allowedTCPPorts = [ 9999 ]; } ]);
+          upstreamOpen = failing (
+            extend "msi-ms7758" [ { services.prometheus.exporters.node.openFirewall = true; } ]
+          );
+          strayRule = failing (
+            extend "lenovo" [
+              {
+                networking.firewall.extraCommands = "iptables -w -A nixos-fw -s 192.168.10.50 -p tcp --dport 9100 -j nixos-fw-accept";
+              }
+            ]
+          );
+          trusted = failing (extend "black-pi" [ { networking.firewall.trustedInterfaces = [ "eth0" ]; } ]);
+          lokiAnySource = failing (
+            extend "black-pi" [ { networking.firewall.allowedTCPPorts = [ lenovo.sam.fleet.loki.port ]; } ]
+          );
+          ntfyElsewhere = failing (
+            extend "msi-ms7758" [
+              ../modules/homelab/ntfy.nix
+              {
+                homelab.ntfy = {
+                  enable = true;
+                  baseUrl = "https://ntfy.example";
+                };
+              }
+            ]
+          );
+          lokiLoopback = failing (
+            extend "black-pi" [ ({ lib, ... }: { homelab.loki.listenAddress = lib.mkForce "127.0.0.1"; }) ]
+          );
           ntfyPort = failing (extend "lenovo" [ ({ lib, ... }: { homelab.ntfy.port = lib.mkForce 2587; }) ]);
           lokiPort = failing (
             extend "black-pi" [ ({ lib, ... }: { homelab.loki.port = lib.mkForce 3101; }) ]

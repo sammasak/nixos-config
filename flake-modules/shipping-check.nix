@@ -1,4 +1,4 @@
-# The shipping rules as black-pi's Prometheus loads them (rules/shipping.nix from the policy file): every metric they,
+# The shipping rules as black-pi's Prometheus loads them (modules/homelab/monitoring/rules/shipping.nix from the policy file): every metric they,
 # the Shipping dashboard and the policy name is emitted or recorded (scripts/shipping-names.py), and a seeded unknown
 # name in a rule and in a panel fails it; promtool runs alerts against inputs and times sized from the policy's
 # thresholds and for minutes, so a changed value keeps the test honest without editing it.
@@ -24,6 +24,8 @@ let
   n = toString;
   gateFor = a.GateFailRateHigh.forMinutes.value;
   staleFor = a.ShippingCollectorStale.forMinutes.value;
+  fallbackFor = a.LeadTimeFallbacksHigh.forMinutes.value;
+  merged = 40;
   tests = {
     # the copy without annotations, which promtool would otherwise compare word for word
     rule_files = [ "rules-test.json" ];
@@ -60,6 +62,55 @@ let
           {
             alertname = "GateFailRateHigh";
             eval_time = "${n (gateFor + 25)}m";
+            exp_alerts = [ ];
+          }
+        ];
+      }
+      {
+        name = "lead time from open time on most merged PRs fires after its for and not before, under the ratio not";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''shipping_prs_merged{window="7d"}'';
+            values = "${n merged}x${n (2 * fallbackFor + 30)}";
+          }
+          # every PR also counted under another reason and another window: the rule must read 7 d http_error alone
+          {
+            series = ''shipping_pr_lead_time_fallbacks{reason="http_error",window="30d"}'';
+            values = "${n merged}x${n (2 * fallbackFor + 30)}";
+          }
+          {
+            series = ''shipping_pr_lead_time_fallbacks{reason="no_commits",window="7d"}'';
+            values = "${n merged}x${n (2 * fallbackFor + 30)}";
+          }
+          {
+            series = ''shipping_pr_lead_time_fallbacks{reason="http_error",window="7d"}'';
+            values = "${n (merged * a.LeadTimeFallbacksHigh.maxRatio.value + 2)}x${n (fallbackFor + 10)} ${
+              n (merged * a.LeadTimeFallbacksHigh.maxRatio.value - 2)
+            }x${n (fallbackFor + 20)}";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "LeadTimeFallbacksHigh";
+            eval_time = "${n (fallbackFor - 5)}m";
+            exp_alerts = [ ];
+          }
+          {
+            alertname = "LeadTimeFallbacksHigh";
+            eval_time = "${n (fallbackFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
+            ];
+          }
+          {
+            alertname = "LeadTimeFallbacksHigh";
+            eval_time = "${n (fallbackFor + 25)}m";
             exp_alerts = [ ];
           }
         ];
@@ -147,6 +198,54 @@ let
         ];
       }
       {
+        name = "a section failing two runs in a row pages; one failed run the next one fixes does not";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''up{job="node-exporter",node="${collector}"}'';
+            values = "1x200";
+          }
+          {
+            series = ''shipping_collector_success_timestamp_seconds{section="issues"}'';
+            values = "0+60x200";
+          }
+          {
+            series = "shipping_collector_authenticated";
+            values = "1x200";
+          }
+          # deploys succeeds for an hour, then fails run after run
+          {
+            series = ''shipping_collector_section_failed{section="deploys"}'';
+            values = "0x60 1x140";
+          }
+          # gates fails one run (30 min), then the next run succeeds
+          {
+            series = ''shipping_collector_section_failed{section="gates"}'';
+            values = "0x60 1x30 0x110";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "ShippingCollectorStale";
+            eval_time = "100m";
+            exp_alerts = [ ];
+          }
+          {
+            alertname = "ShippingCollectorStale";
+            eval_time = "${n (60 + 45 + staleFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  section = "deploys";
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
+            ];
+          }
+        ];
+      }
+      {
         name = "a collector that never wrote is stale, unless its host is down";
         interval = "1m";
         input_series = [
@@ -185,7 +284,7 @@ in
       checks = lib.optionalAttrs (system == "x86_64-linux") {
         shipping-rules =
           assert lib.assertMsg (lib.elem (builtins.unsafeDiscardStringContext rules) loaded)
-            "shipping-check: black-pi's Prometheus does not load ${rules}; rules/shipping.nix is called differently there";
+            "shipping-check: black-pi's Prometheus does not load ${rules}; modules/homelab/monitoring/rules/shipping.nix is called differently there";
           pkgs.runCommand "shipping-rules"
             {
               nativeBuildInputs = [

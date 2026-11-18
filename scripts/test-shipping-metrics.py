@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The shipping collector (scripts/shipping-metrics.py) against a fake GitHub and Loki: open issues split into
 actionable, parked (the policy's repos) and archived (the API's flag); the first verdict against the policy grade; a
-deploy record's flake attribute joined to its host; every section stamped. Then GitHub down: exit 0, no GitHub series
+deploy record's flake attribute joined to its host;
+PR lead time from the earliest own author date, with its fallbacks; every section stamped. Then GitHub down: exit 0, no GitHub series
 (no 0 in their place), the Loki sections still written and GitHub's last success timestamps carried over. Seeded: a
 name outside METRICS is refused."""
 import http.server
@@ -13,6 +14,7 @@ import re
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -26,7 +28,7 @@ failed = 0
 
 def check(ok, what):
     global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
+    print(("PASS: " if ok else f"FAIL (scripts/{__file__.rsplit('/', 1)[-1]}): ") + what)
     failed += not ok
 
 
@@ -50,11 +52,15 @@ parked = json.loads(POLICY.read_text())["issues"]["parkedRepos"]["value"][0]
 OPEN = [issue("nixos-config", 1, 10, ["needs-live"]), issue("nixos-config", 2, 50, ["approved"]),
         issue(parked, 3, 100), issue("old", 4, 1000)]
 PRS = [pr(10, 5, 1), pr(11, 30, 2), pr(12, 3, 2.5)]
+# PR 10 is a batch: opened 5 h ago, its lanes' commits authored 40 and 20 h ago; PR 11's oldest commit is on its
+# second page; PR 12's commits answer 404 (a deleted repo), so it falls back to its open time
+COMMITS = {10: [40, 20], 11: [30] * 100 + [60, 31]}
 COMMENTS = {10: ["Grade: 9/10 (head a)"], 11: ["Grade: 6/10 (head b)", "Grade: 9/10 (head c)"], 12: ["looks fine"]}
 GATES = [f"gate=nixos-qa seconds={100 + i} result={'fail' if i < 5 else 'pass'} sha=x mode=push deferred=0" for i in range(20)]
 DEPLOYS = ["node=lenovo result=ok seconds=9 rolled_back=0 sha=abc1234",
            "node=acer-swift result=deploy-failed seconds=9 rolled_back=1 sha=def5678"]
 github_up = True
+commit_calls = []
 
 
 class Fake(http.server.BaseHTTPRequestHandler):
@@ -78,6 +84,12 @@ class Fake(http.server.BaseHTTPRequestHandler):
             body = {"total_count": len(items) if items else (7 if "created:" in s else 4), "items": items}
         elif u.path == "/search/commits":
             body = {"total_count": 1, "items": [{"commit": {"message": 'Revert "x"', "committer": {"date": iso(30)}}}]}
+        elif m := re.match(r"/repos/sammasak/nixos-config/pulls/(\d+)/commits", u.path):
+            commit_calls.append(int(m.group(1)))
+            if int(m.group(1)) not in COMMITS:
+                return self.send_error(404)
+            page = int(q["page"][0])
+            body = [{"commit": {"author": {"date": iso(h)}}} for h in COMMITS[int(m.group(1))][(page - 1) * 100:page * 100]]
         elif m := re.match(r"/repos/sammasak/nixos-config/issues/(\d+)/comments", u.path):
             body = [{"body": b} for b in COMMENTS[int(m.group(1))]]
         elif u.path == "/repos/sammasak/nixos-config/compare/abc1234...HEAD":
@@ -120,6 +132,14 @@ with tempfile.TemporaryDirectory() as tmp:
     check(m.get("shipping_review_prs_counted") == 2 and m.get("shipping_review_first_pass_ratio") == 0.5
           and m.get("shipping_review_unreviewed_prs") == 1,
           "first verdict against the policy grade; a PR without a verdict is unreviewed, not a pass")
+    check(38.9 < m.get('shipping_pr_lead_time_hours{quantile="0.5"}', 0) < 39.1
+          and 54.1 < m.get('shipping_pr_lead_time_hours{quantile="0.9"}', 0) < 54.3,
+          "lead time runs from the oldest own commit's author date (second page included), not the PR's open time;"
+          " a PR whose commits 404 keeps the section")
+    check(m.get('shipping_pr_lead_time_fallbacks{reason="http_error",window="7d"}') == 1
+          and m.get('shipping_pr_lead_time_fallbacks{reason="no_commits",window="7d"}') == 0
+          and m.get('shipping_pr_lead_time_fallbacks{reason="no_token",window="7d"}') == 0,
+          "fallbacks are counted per reason, a 0 written for each reason that did not occur")
     check(m.get("shipping_gate_fail_ratio") == 0.25 and m.get("shipping_gate_runs_counted") == 20,
           "gate fail ratio over the policy's last runs")
     check(m.get('shipping_deploy_lag_commits{host="lenovo",node="lenovo-21CB001PMX"}') == 2
@@ -130,8 +150,39 @@ with tempfile.TemporaryDirectory() as tmp:
           "a revert on a default branch is an escape in its window only")
     sections = {k for k in m if k.startswith("shipping_collector_success_timestamp_seconds")}
     check(len(sections) == 6, f"every section is stamped ({len(sections)})")
+    check(all(m.get(f'shipping_collector_section_failed{{section="{s}"}}') == 0
+              for s in ("issues", "prs", "reviews", "escapes", "gates", "deploys")),
+          "a full run writes section_failed 0 for every section")
     before = m
 
+    # PR 10 and 11 are cached with their answer; PR 12's 404 is not, so it alone is read again
+    commit_calls.clear()
+    rc, m = run(out)
+    check(sorted(set(commit_calls)) == [12] and 38.9 < m.get('shipping_pr_lead_time_hours{quantile="0.5"}', 0) < 39.1,
+          f"a second run reads only the PR whose commits failed; the cached ones give the same lead time {sorted(set(commit_calls))}")
+    cache = json.loads(pathlib.Path(f"{tmp}/lead-cache.json").read_text())
+    check(sorted(k.split("#")[1].split("@")[0] for k in cache) == ["10", "11"],
+          f"the cache keeps final answers only, never an http_error fallback {sorted(cache)}")
+
+    # no budget left: an uncached PR is not read, it counts as pending at its open time
+    pathlib.Path(f"{tmp}/lead-cache.json").unlink()
+    commit_calls.clear()
+    budget, sm.LEAD_BUDGET = sm.LEAD_BUDGET, -1
+    rc, m = run(out)
+    sm.LEAD_BUDGET = budget
+    check(commit_calls == [] and m.get('shipping_pr_lead_time_fallbacks{reason="pending",window="7d"}') == 3
+          and 3.9 < m.get('shipping_pr_lead_time_hours{quantile="0.5"}', 0) < 4.1,
+          "past the lookup budget no commits call is made; those PRs count as pending at their open-to-merge time")
+
+    # the run deadline passed: every section fails, and says so
+    deadline, sm.DEADLINE = sm.DEADLINE, time.monotonic() - 1
+    rc, m = run(out)
+    sm.DEADLINE = deadline
+    check(rc == 0 and all(m.get(f'shipping_collector_section_failed{{section="{s}"}}') == 1
+                          for s in ("issues", "prs", "reviews", "escapes", "gates", "deploys")),
+          "past the run deadline each section writes section_failed 1, so a timeout is a series, not a gap")
+
+    before = m
     github_up = False
     rc, m = run(out)
     check(rc == 0, "GitHub down: still exits 0, no restart loop")
@@ -142,6 +193,46 @@ with tempfile.TemporaryDirectory() as tmp:
     check(m.get(stamp) == before[stamp], "GitHub down: the issues section keeps its last success timestamp, so it goes stale")
     check(not any(k.startswith("shipping_deploy_lag") for k in m) and "shipping_deploys" not in str(m.keys()),
           "GitHub down: the deploy section writes nothing partial")
+    check(m.get('shipping_collector_section_failed{section="prs"}') == 1
+          and m.get('shipping_collector_section_failed{section="reviews"}') == 1
+          and m.get('shipping_collector_section_failed{section="gates"}') == 0,
+          "GitHub down: prs failed, reviews (skipped with it) failed, the Loki gates section did not")
+
+
+class StubGitHub:
+    """lead_hours against canned pages: each call pops one; an exception in the list is raised."""
+
+    def __init__(self, pages, token="fake"):
+        self.pages, self.token, self.calls = list(pages), token, 0
+
+    def get(self, path, **params):
+        self.calls += 1
+        page = self.pages.pop(0)
+        if isinstance(page, Exception):
+            raise page
+        return page
+
+
+def commits(*hours_ago):
+    return [{"commit": {"author": {"date": iso(h)}}} for h in hours_ago]
+
+
+lead_pr = pr(20, 5, 1)  # opened 5 h ago, merged 1 h ago: open-to-merge is 4 h
+gh = StubGitHub([commits(0.5)])
+check(sm.lead_hours(gh, lead_pr) == (0, None), "a commit authored after the merge clamps lead time to 0, never negative")
+hours, reason = sm.lead_hours(StubGitHub([[]]), lead_pr)
+check(abs(hours - 4) < 1e-6 and reason == "no_commits", "a PR listing no commits falls back to open-to-merge, counted as no_commits")
+gh = StubGitHub([commits(*[2] * 100), urllib.error.HTTPError("u", 404, "gone", {}, None)])
+hours, reason = sm.lead_hours(gh, lead_pr)
+check(abs(hours - 4) < 1e-6 and reason == "http_error" and gh.calls == 2,
+      "an HTTP error on this PR's commits falls back to open-to-merge for it alone, counted as http_error")
+gh = StubGitHub([commits(*[2] * 100), commits(*[2] * 100), commits(*[2] * 100), commits(500)])
+hours, reason = sm.lead_hours(gh, lead_pr)
+check(abs(hours - 1) < 1e-6 and reason is None and gh.calls == 3, "commits are read for at most 3 pages (GitHub's 250)")
+gh = StubGitHub([commits(40)], token="")
+hours, reason = sm.lead_hours(gh, lead_pr)
+check(abs(hours - 4) < 1e-6 and reason == "no_token" and gh.calls == 0,
+      "without a token no commits call is made and lead time is open-to-merge, counted as no_token")
 
 try:
     sm.Out().add("shipping_not_declared", 1)

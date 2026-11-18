@@ -4,19 +4,12 @@ only; the unit's binary is built and answers /health on the address the unit's s
 import os
 import socket
 import subprocess
-import sys
 import time
 import urllib.request
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("alert-bridge")
@@ -35,8 +28,8 @@ check(bounds == {"MemoryMax": "64M", "TasksMax": 64, "LimitNOFILE": 256}, f"its 
 
 failing = P["failing"]
 check(failing["lenovo"] == [], f"lenovo fails no assertion {failing['lenovo']}")
-check(any("openFirewall" in m and "loopback" in m for m in failing["loopbackFirewall"]),
-      f"openFirewall with a loopback listenAddress is rejected {failing['loopbackFirewall']}")
+check(any("sam.fleet.listeners.alert-bridge is served here" in m and "loopback" in m for m in failing["loopbackFirewall"]),
+      f"the listener's host with a loopback listenAddress is rejected {failing['loopbackFirewall']}")
 check(any("homelab.ntfy.enable" in m for m in failing["noNtfy"]), f"the bridge without the native ntfy is rejected {failing['noNtfy']}")
 check(P["httpsUrl"] is False, "an https ntfyUrl is a type error: the bridge has no TLS stack")
 
@@ -68,4 +61,4 @@ finally:
     bridge.kill()
     bridge.wait()
 
-sys.exit(1 if failed else 0)
+finish()

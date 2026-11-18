@@ -10,10 +10,8 @@
   ...
 }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
   cfg = config.services.prometheus;
-  fw = config.networking.firewall;
   address = hosts.${config.networking.hostName}.address;
   at = port: "${address}:${toString port}";
   static = job: targets: {
@@ -78,6 +76,13 @@ in
   services.prometheus.exporters.blackbox = {
     enable = true;
     listenAddress = "127.0.0.1";
+    # info logs every redirect each probe follows, Authentik's login URLs included, into the journal and so Loki.
+    # --log.level is the exporter's own logger only; the per-probe one (and /probe?debug=true's trail) is --log.prober.
+    # A failed probe still logs at error.
+    extraFlags = [
+      "--log.level=warn"
+      "--log.prober=warn"
+    ];
     configFile = pkgs.writeText "blackbox.yml" (
       builtins.toJSON {
         modules = {
@@ -126,7 +131,7 @@ in
       };
       # keeps the remote-write names, e.g. claude_code_cost_usage_USD_total
       otlp.translation_strategy = "UnderscoreEscapingWithSuffixes";
-      # homelab-gitops#202: a replayed in-flight request lands behind newer ones; younger than this, kept
+      # A replayed in-flight request lands behind newer ones; younger than this, kept
       storage.tsdb.out_of_order_time_window = "1m";
       # interpolated, not toString: the store copies are promtool's inputs
       rule_files = map (f: "${f}") [
@@ -135,7 +140,7 @@ in
         ./rules/alertmanager.yaml
         ./rules/prometheus.yaml
         ./rules/llm-gateway.yaml
-        ./rules/homelab.yaml
+        (import ./rules/homelab.nix { inherit lib hosts; }).file
         llmBench
         shipping
       ];
@@ -145,7 +150,7 @@ in
       scrape_configs = [
         {
           # instance and node carry the host name, as the chart's relabelling did, for the mixin and the dashboards;
-          # sleeps marks a host the fleet expects off at times, which ./rules/homelab.yaml keys on
+          # sleeps marks a host the fleet expects off at times, which ./rules/homelab.yaml (rendered by ./rules/homelab.nix) keys on
           job_name = "node-exporter";
           scrape_timeout = "30s";
           # five unit_state series per unit, one of them failed: the rest would add thousands for no panel
@@ -189,6 +194,30 @@ in
         # the admin listener, /metrics beside /status (modules/homelab/llm-gateway.toml)
         (static "llm-gateway" [ "${hosts.acer-swift.address}:9091" ])
         (static "alloy-otlp" [ "${hosts.acer-swift.address}:12346" ])
+        (static "caddy" [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ])
+      ]
+      # Authentik's loopback listeners, through the edge's metrics site (edge.nix). The embedded outpost labels its
+      # request histogram with the client's HTTP method, so any client could add series: no panel reads that family,
+      # so it is dropped, and sample_limit fails a scrape that grows anyway
+      ++ map
+        (part: {
+          job_name = "authentik-${part}";
+          metrics_path = "/authentik/${part}/metrics";
+          static_configs = [ { targets = [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ]; } ];
+          sample_limit = 20000;
+          metric_relabel_configs = [
+            {
+              source_labels = [ "__name__" ];
+              regex = "authentik_outpost_.*";
+              action = "drop";
+            }
+          ];
+        })
+        [
+          "server"
+          "worker"
+        ]
+      ++ [
         (static "blackbox-exporter" [ "${blackbox.listenAddress}:${toString blackbox.port}" ])
         {
           job_name = "blackbox";
@@ -231,30 +260,7 @@ in
     };
   };
 
-  # acer's alloy-otlp pushes OTLP; lenovo's watchdog and the harness usage report on either host read; Grafana on this
-  # host arrives on loopback
-  networking.firewall = {
-    inherit
-      (mkDualBackendFirewall {
-        nftComment = "Prometheus: OTLP and queries from acer and lenovo.";
-        ports = [ cfg.port ];
-        sources = [
-          hosts.acer-swift.address
-          hosts.lenovo-21CB001PMX.address
-        ];
-        interfaces = [ ];
-        inherit (fw) backend;
-      })
-      extraInputRules
-      extraCommands
-      ;
-  };
-
   assertions = [
-    {
-      assertion = fw.enable && anySourceTcp fw [ cfg.port ] == [ ];
-      message = "modules/homelab/monitoring/prometheus.nix: Prometheus has no authentication and takes OTLP writes; keep the firewall on and port ${toString cfg.port} out of allowedTCPPorts.";
-    }
     {
       assertion =
         cfg.scrapeConfigs == [ ] && cfg.ruleFiles == [ ] && cfg.rules == [ ] && cfg.alertmanagers == [ ];

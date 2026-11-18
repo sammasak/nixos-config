@@ -4,10 +4,7 @@
 # a field the real driver refuses shows only live, as GpuTelemetryDown.
 { config, lib, ... }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
-  cfg = config.services.prometheus.exporters.nvidia-gpu;
-  fw = config.networking.firewall;
   gpu = (hosts.${config.networking.hostName} or { }).gpu or null;
 in
 {
@@ -56,28 +53,10 @@ in
       };
     };
 
-    networking.firewall = {
-      inherit
-        (mkDualBackendFirewall {
-          nftComment = "nvidia-gpu-exporter answers black-pi's Prometheus.";
-          ports = [ cfg.port ];
-          sources = [ hosts.black-pi.address ];
-          interfaces = [ ];
-          inherit (fw) backend;
-        })
-        extraInputRules
-        extraCommands
-        ;
-    };
-
     assertions = [
       {
         assertion = lib.elem "nvidia" config.services.xserver.videoDrivers;
         message = "modules/homelab/monitoring/gpu-exporter.nix: GPU telemetry is on for ${config.networking.hostName} (sam.fleet gpu), but its NVIDIA driver is not configured (services.xserver.videoDrivers has no \"nvidia\"); the exporter runs the driver's nvidia-smi.";
-      }
-      {
-        assertion = !cfg.openFirewall && fw.enable && anySourceTcp fw [ cfg.port ] == [ ];
-        message = "modules/homelab/monitoring/gpu-exporter.nix: keep the firewall on and port ${toString cfg.port} out of openFirewall and allowedTCPPorts; only black-pi is admitted.";
       }
     ];
   };

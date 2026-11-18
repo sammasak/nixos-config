@@ -36,13 +36,14 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
     scripts/nix-audit-candidate.sh {{HOST}} {{TARGET}}
 
 # Run from lenovo; logs in as `deploy` (key-only, passwordless sudo, so no
-# prompt; homelab/deploy-target.nix). Rollback settings come from the node
+# prompt; modules/homelab/deploy-target.nix). Rollback settings come from the node
 # (flake-modules/deploy.nix); the host list is the table in
 # flake-modules/hosts.nix, which the pattern repeats. --skip-checks:
 # otherwise deploy-rs runs the full flake check first, building every x86 host
-# on lenovo (the 2026-11-11 OOM). The pre-push gate runs that check on pushed
-# non-docs commits, but `.#HOST` is the working tree, so the recipe refuses a
-# dirty tree or a HEAD not on origin/main (a detached checkout of it passes).
+# on lenovo, which runs it out of memory. The pre-push gate runs that check on
+# pushed non-docs commits, but `.#HOST` is the working tree, so the recipe
+# refuses a dirty tree or a HEAD not on origin/main (a detached checkout of it
+# passes).
 # Break-glass: DEPLOY_UNGATED=1 just deploy HOST deploys it anyway, with a
 # warning. A scope, not `capped`: it keeps the caller's environment,
 # terminal and Ctrl-C. The cap covers the deploy-rs client and its evaluation;
@@ -172,6 +173,9 @@ bench-diff:
 # side sees tracked files incl. uncommitted edits, not untracked ones. Non-zero if
 # any host toplevel or deploy node moved, was added or was removed, or any deploy
 # setting outside nodes moved.
+# Output, a line each: `same`, `MOVED` (then its base: and tree: values), `ADDED`/`REMOVED` (one side only, not
+# evaluated), `none` (no deploy node on either side). It evaluates every host twice: run it in the heavy lane,
+# `flock -o /run/work-locks/heavy-work.lock just parity`.
 [doc("Compare every host's toplevel, deploy node and deploy settings at BASE (default: merge base with origin/main) with the working tree")]
 parity BASE="":
     {{capped}} bash scripts/bench.sh parity {{quote(BASE)}}

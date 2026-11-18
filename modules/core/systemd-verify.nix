@@ -1,4 +1,4 @@
-# Ordering cycles and unit lines systemd ignores (`<unit>:<line>: ... ignoring`) fail the build: systemd-analyze verify
+# Ordering cycles and unit lines systemd rejects or ignores (any `<unit>:<line>: ...` parse message) fail the build: systemd-analyze verify
 # in user mode (system mode needs a writable /run/systemd), DynamicUser= removed (user mode refuses it). verify exits 0
 # on both, so fixtures (a cycle and a Restartsec= under multi-user.target, a Restartsec= beside each Home Manager user's
 # units, which are verified file by file) must be reported first, or the check fails. Not covered: cycles among Home
@@ -51,15 +51,21 @@ in
       cycles() { grep -E 'Found ordering cycle|deleted to break ordering cycle' || true; }
       # allowlist: user mode refuses a system action (reboot, poweroff, soft-reboot-force, ...) in JobTimeoutAction=,
       # SuccessAction= and FailureAction= (27 lines in systemd's own units); the system manager, which runs them, accepts it
-      ignored() { grep -Ei ':[0-9]+: .*ignoring' | grep -Ev ': [A-Za-z]+Action= specified as user mode action, ignoring' || true; }
+      # every <file>:<line>: message systemd logs while parsing (unknown key or section, Failed to parse, a path that is not
+      # absolute: not all say "ignoring") and the "bad unit file setting" verdict that follows a refused unit
+      ignored() { grep -Ei ':[0-9]+: |has a bad unit file setting' | grep -Ev ': [A-Za-z]+Action= specified as user mode action, ignoring' || true; }
 
       printf '[Unit]\nWants=fixture-b.service\nAfter=fixture-b.service\n[Service]\nExecStart=${trueBin}\n' > units/fixture-a.service
       printf '[Unit]\nAfter=fixture-a.service\n[Service]\nExecStart=${trueBin}\n' > units/fixture-b.service
       printf '[Service]\nRestartsec=5\nExecStart=${trueBin}\n' > units/fixture-c.service
+      printf '[Service]\nWorkingDirectory=relative\nExecStart=${trueBin}\n' > units/fixture-d.service
+      printf '[Service]\nType=oneshot\nRestart=always\nExecStart=${trueBin}\n' > units/fixture-e.service
       wants=units/multi-user.target.wants
       chmod u+w "$wants"
       ln -s ../fixture-a.service "$wants/fixture-a.service"
       ln -s ../fixture-c.service "$wants/fixture-c.service"
+      ln -s ../fixture-d.service "$wants/fixture-d.service"
+      ln -s ../fixture-e.service "$wants/fixture-e.service"
       for target in multi-user.target default.target; do
         output=$(verify "$target")
         found=$(cycles <<<"$output")
@@ -71,18 +77,31 @@ in
         found=$(ignored <<<"$output")
         grep -q "fixture-c.service:.*Restartsec" <<<"$found" || {
           echo "the fixture Restartsec= under $target was not reported: verify did not load fixture-c.service, or its message changed"
-          [ -z "$found" ] || { echo "ignored lines it did report:"; echo "$found"; }
+          [ -z "$found" ] || { echo "lines it did report:"; echo "$found"; }
+          exit 1
+        }
+        # a parse error whose message does not say "ignoring" must be reported too
+        grep -q "fixture-d.service:.*WorkingDirectory" <<<"$found" || {
+          echo "the fixture WorkingDirectory=relative under $target was not reported: the pattern misses systemd's parse errors that do not say ignoring"
+          [ -z "$found" ] || { echo "lines it did report:"; echo "$found"; }
+          exit 1
+        }
+        # a unit systemd refuses says so only as a verdict, with no file:line
+        grep -q "fixture-e.service has a bad unit file setting" <<<"$found" || {
+          echo "the fixture refused unit (Restart=always on a oneshot) under $target was not reported: the pattern misses systemd's verdicts"
+          [ -z "$found" ] || { echo "lines it did report:"; echo "$found"; }
           exit 1
         }
       done
-      rm "$wants/fixture-a.service" "$wants/fixture-c.service" units/fixture-a.service units/fixture-b.service units/fixture-c.service
+      rm "$wants/fixture-a.service" "$wants/fixture-c.service" "$wants/fixture-d.service" "$wants/fixture-e.service" \
+        units/fixture-[abcde].service
 
       for target in multi-user.target default.target; do
         output=$(verify "$target")
         found=$(cycles <<<"$output")
         [ -z "$found" ] || { echo "ordering cycle reaching $target:"; echo "$found"; exit 1; }
         found=$(ignored <<<"$output")
-        [ -z "$found" ] || { echo "unit lines systemd ignores, reaching $target:"; echo "$found"; exit 1; }
+        [ -z "$found" ] || { echo "unit lines systemd rejects, ignores or warns about, reaching $target:"; echo "$found"; exit 1; }
       done
 
       hmverify() { SYSTEMD_UNIT_PATH="$PWD/hm:" systemd-analyze --user verify --man=no "$PWD/$1" 2>&1 || true; }
@@ -101,7 +120,7 @@ in
         rm hm/fixture-c.service
         n=$((n + $(find hm -maxdepth 1 -type f | wc -l)))
         found=$(for f in hm/*; do if [ -f "$f" ]; then hmverify "$f"; fi; done | ignored)
-        [ -z "$found" ] || { echo "$user's Home Manager unit lines systemd ignores:"; echo "$found"; exit 1; }
+        [ -z "$found" ] || { echo "$user's Home Manager unit lines systemd rejects, ignores or warns about:"; echo "$found"; exit 1; }
       done
       [ "$n" -gt 0 ] || { echo "no Home Manager user unit on this host: the user trees are not this host's"; exit 1; }
       touch $out

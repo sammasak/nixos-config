@@ -49,7 +49,7 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~08:30-21:00 power window
-#   asus-b460m  builds on the asus (Windows dual-boot worker)
+#   asus-b460m  builds on the asus (Windows dual-boot worker); only in its Mon-Fri ~08:30-21:00 power window
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only, except the patched deploy-rs (not cached, a
 #               2.3 GiB Rust build): first, from lenovo,
@@ -72,8 +72,8 @@ Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`),
 and `naked-pi` (Pi 3 `rf-lab` node; `just deploy naked-pi`;
 runbook `~/knowledge/homelab/runbooks/naked-pi-rf-lab.md`).
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
-`host` variable at the top of the Justfile does that mapping, so the argument is
-only needed when targeting the other machine.
+`host` variable at the top of the Justfile does that mapping, so `switch`, `build`, `diff` and `audit-candidate` need
+the argument only when targeting another machine; `deploy`, `dry-activate` and `checks` always need it.
 
 ## Architecture
 
@@ -107,9 +107,10 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/tailscale.yaml` | Personal + lenovo, acer `lukas` | Tailscale authkey |
 | `homelab/*.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, asus-b460m, black-pi | GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
-| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | Claude OAuth token |
+| `claude/oauth.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, asus-b460m | Claude OAuth token |
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | OTLP auth |
-| `claude/*.yaml` | Personal + lenovo, acer-swift | Pi's gateway key |
+| `claude/coordinator-login.yaml` | Personal | the coordinator agent's own Authentik login for checks; no host reads it |
+| `claude/*.yaml` | Personal + lenovo, acer-swift, acer `lukas` | Pi's gateway key |
 
 Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml`, `llm-gateway.yaml` and `authentik.yaml` also includes acer's own `lukas` user
 key. A fleet host is a recipient only of files it declares a secret from (`nixos:known-hosts-test`); trimming a
@@ -133,7 +134,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 
 - `skills/<name>/SKILL.md` → `~/.claude/skills/<name>/SKILL.md`
 - `agents/<name>.md` → `~/.claude/agents/<name>.md` (role adapters included: plain subagents whose prompt states the one allowed command form; Claude Code's permission prompt is the gate, see `docs/herdr.md` and the skills repo `docs/operator-runbook.md`)
-- The coordinator adapter only on the coordinator host (the one with `sam.herdr.machines`, lenovo), which also declares Codex's `[agents.coordinator] config_file` in `~/.codex/config.toml` as the skills input's `agents/coordinator/codex.toml` (never a symlink under `~/.codex/agents`: Codex opens it with O_NOFOLLOW); rollout in `docs/rollout-coordinator.md`
+- The coordinator adapter only on the coordinator host (the one with `sam.herdr.machines`, lenovo), which also declares Codex's `[agents.coordinator] config_file` in `~/.codex/config.toml` as the skills input's `agents/coordinator/codex.toml` (never a symlink under `~/.codex/agents`: Codex opens it with O_NOFOLLOW); operation in `docs/rollout-coordinator.md`
 
 
 **Update workflow**:
@@ -148,7 +149,7 @@ just switch
 PreToolUse entry (`shunt-check-read.sh`) and `shunt-check-bash-read.sh` appended to the `Bash` list after the
 existing hooks. A whole-file read estimated over 8000 tokens (`minTokens`, null = the skills default; source code and
 instruction files are never redirected) is redirected once to
-`scripts/bulk-read.sh` (bulk-reader skill), which summarises it with headless `claude -p` on `model` (null =
+the skills repo's `scripts/bulk-read.sh` (bulk-reader skill), which summarises it with headless `claude -p` on `model` (null =
 haiku) under the session's own auth. `spillOutput` (default on with `enable`) adds a `Bash` PostToolUse entry
 (`shunt-spill-output.sh`): a successful command output over 12000 chars is saved under `~/.cache/claude-spill/` and
 the session gets the path with a head and tail excerpt; failed commands are untouched. With a skills pin that lacks the hooks it registers nothing.
@@ -232,7 +233,9 @@ Long rationale goes to the knowledge vault, and the code keeps a single pointer:
 
 The pointer must name a file that **exists**. Check before you write it; the
 board prune of 2026-08-25 left several in-code references to deleted tickets
-pointing at nothing.
+pointing at nothing. Inside this repo `just lint-comments` checks it: a repo path in
+a `.nix` file, a `.sh`/`.py` comment or a doc must name a tracked file (paths in
+other repositories go in `scripts/path-pointers.allow`, with their reason).
 
 Target band 7–13% comment density; `just lint-comments` is the enforced floor
 (fails any 30+ nix-code-line `.nix` file above **25%**, plus the never-allowed
@@ -262,6 +265,11 @@ either side is only reported.
 - **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
 - **Firewall**: the trusted LAN CIDR is `sam.fleet.lanCidr` (`192.168.10.0/24`). SSH is key-only, no root login.
+  A port one host serves another is a `sam.fleet.listeners` entry (`modules/core/fleet.nix`: host, port, the calling
+  hosts in `from`); `modules/core/network.nix` renders its rule and fails any host whose firewall opens, trusts or
+  accepts anything that is neither such a rule nor a `sam.fleet.public` entry with its reason (an upstream
+  `openFirewall` included). A new listener also needs its service's bound port in `scripts/gate-probe.nix`
+  (section `fleet-contract`, `bound`), or `nixos:fleet-contract-test` fails.
 - **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (antigravity-cli, claude-code, open-webui, unrar, and on asus the NVIDIA driver and the CUDA runtime ollama-cuda needs); otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
 - **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` and `rf-lab.nix` force `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
@@ -278,7 +286,8 @@ either side is only reported.
   recipient, both also in `scripts/test-ssh-known-hosts.py`;
 - its rows in this file's deploy block and hostnames, `docs/architecture.md`, and for a runtime host
   `docs/nspawn-workers.md` (checked by the same test);
-- a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` (asserted);
+- a host with `sam.storeCache.enable` (runtime-host and lenovo): its key in `modules/core/store-cache.nix` and its name in
+  `storeCaches` in `modules/core/fleet.nix`, which admits every other fleet host to its port (both asserted);
 - a runtime host: its `sam.herdr.machines` entry and `sam.workers.jumpHosts` name on lenovo (asserted against
   this table, so adding or removing a runtime host without them fails lenovo's evaluation);
 - its LAN address in `modules/core/fleet.nix` if another module reads it or it ships its journal (black-pi's Loki

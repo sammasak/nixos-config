@@ -1,6 +1,6 @@
 # nix-audit pilot
 
-Advisory, report-only nix-audit on lenovo, acer-swift and msi-ms7758. Nothing here blocks a
+Advisory, report-only nix-audit on lenovo and the runtime hosts (acer-swift, msi-ms7758, asus-b460m). Nothing here blocks a
 switch, deploy or CI run. Making the gate blocking needs a separate owner decision. The
 operator guide, the exit codes and the pilot record format are upstream:
 `docs/USER-GUIDE.md` and `docs/PILOT.md` in sammasak/nix-audit.

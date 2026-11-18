@@ -1,13 +1,13 @@
-# Nix store paths instead of images: environments and k3s workloads
+# Nix store paths instead of images: environments (k3s half superseded)
 
-Research and plan, 2026-11-12. Nothing here is built yet. It answers one
+Research and plan, 2026-11-12; phase 1 of the environments half is live. It answers one
 question: what Anthropic's "Nix instead of Docker on Kubernetes" setup really
 is, and how the same workflow fits this fleet when developer environments run
-on the NixOS hosts and only "production" workloads run on k3s.
+on the NixOS hosts and only "production" workloads run on k3s (since removed).
 
 Sources: the two PlanetNix talks (captions read in full), the five RFC issues
 that cite them (nixos-config #200, #201, homelab-gitops #146, devenv-platform
-#120, #121), upstream repos, and an inventory of the live cluster.
+#120, #121), upstream repos, and an inventory of the cluster as it was.
 
 ## What Anthropic does
 
@@ -90,92 +90,7 @@ No new runtime is needed. extra-container and microvm.nix were looked at:
 extra-container adds an imperative path this fleet does not want, and microVMs
 stay the exit named in "When to leave nspawn".
 
-## k3s workloads: store paths instead of images
+## k3s workloads
 
-### Where the cluster is
-
-- 61 distinct images. 8 are built here and pulled from zot
-  (`registry.sammasak.dev/lab/`); 53 are upstream.
-- Builds are manual on lenovo. Nothing is signed or verified at admission.
-- acer holds 7.4 GB of images; msi 134 GB, mostly about 14 stale
-  `claude-worker` images.
-- All nodes: k3s v1.36.5, containerd 2.3.4, kernel 7.2, `landlock` in the LSM
-  list. acer has 762 GB free.
-
-### Options
-
-| Option | Registry | Shares host store | Risk to acer | State |
-|---|---|---|---|---|
-| nix-store-csi | no | no (own store on the node) | low: a DaemonSet, only pods that use it depend on it | 4 weeks old, one author |
-| Images preloaded with `services.k3s.images` | no | no | lowest | stock nixpkgs |
-| k3s `--snapshotter=nix` | no | yes, with real GC roots | high: changes every pod on the node | `nix:0` refs fail in k3s's containerd (k3s #14393, open) |
-| hostPath `/nix/store` | no | yes | medium | forbidden by baseline pod security; whole store visible |
-| Layered images through zot | yes | no | none | today |
-
-### Choice
-
-**nix-store-csi for the workloads built here, upstream images unchanged.** It
-is the published design closest to `nix-sidecar`: the pod lists store paths,
-the node keeps a cache, the pod sees only its closure, and old paths are
-collected. Unlike a snapshotter change it is additive, which matters on a
-cluster where acer is the only general worker.
-
-How it fits what already runs:
-
-- **Cache.** The harmonia caches the hosts serve on port 5000, with their
-  per-host keys as the driver's trusted keys. No new service.
-- **Pin.** The manifest carries the store path. Flux syncs it as it syncs an
-  image digest today.
-- **Base image.** One small runner image without `/nix`, built with Nix and
-  preloaded through `services.k3s.images`, so the pilot needs no registry.
-- **Arm64.** The driver takes a path per system. Pilot on amd64 only.
-
-Costs and limits, stated plainly:
-
-- The driver's store is separate from the host's, so a closure on acer exists
-  twice. Disk is not the constraint there.
-- Anyone who can create a pod can mount any path the caches serve, and harmonia
-  serves each host's whole store. Set the driver's namespace allowlist and its
-  store size cap from the start.
-- The project is new and has no scaling data. The fallback is preloaded images,
-  which use only stock parts but tie every rollout to a NixOS deploy.
-- Revisit the snapshotter when k3s #14393 closes, on msi first. It is the only
-  option that shares the host store.
-
-### Phases
-
-Each phase ends with a measurement; "no change" is a valid result.
-
-1. **Baseline.** For `llm-gateway` on acer, time a cold and a warm rollout from
-   scheduled to Ready, three runs each, and record image and closure size. This
-   is the figure homelab-gitops #146 asks for.
-2. **Pilot.** Install the driver in `kube-system` (kubelet root is
-   `/var/lib/kubelet` here; confirm at install). Run `llm-gateway` from its
-   existing static derivation as a second Deployment beside the image-based
-   one. Repeat the baseline runs. Check that a pod outside the allowlist is
-   refused and that the driver's collection leaves a running pod alone.
-3. **Decide.** Adopt if the warm start is no worse and the cold start or the
-   build-to-running path is clearly better. Otherwise fall back to preloaded
-   images or stop.
-4. **Migrate.** In order of how ready the derivation is: karta-web,
-   herman-web, then the rest (system-one and styrka-web were removed instead,
-   owner, 2026-11-15). Each app repo renders its manifest
-   with the store path.
-5. **Remove.** When nothing pulls from zot, remove zot and the manual build
-   steps. Prune the stale images on msi.
-
-### Owner decisions
-
-- Start the pilot (a privileged DaemonSet on the cluster is a new privileged
-  component).
-- Record the choice on homelab-gitops #146, and close or restate #201 and
-  devenv-platform #120 against the current environments.
-- Removing zot and pruning msi images, when phase 5 is reached.
-
-### Not verified
-
-- Image volumes (stable in Kubernetes 1.36) were not tested on k3s; they still
-  need a registry or a preload.
-- Whether the driver's pods can reach port 5000 on the hosts through Cilium and
-  the host firewall.
-- Kernel KVM support on black-pi, which only matters for the microVM exit.
+Superseded: the cluster was removed (see [k3s-to-nixos-native.md](k3s-to-nixos-native.md)).
+The store-path delivery pilot (nix-store-csi, preloaded images, snapshotter) was dropped with it.

@@ -3,11 +3,9 @@
 # sign-in. The dashboards are the host ones in ./dashboards, as ./dashboards.nix renders them.
 { config, lib, ... }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
-  fw = config.networking.firewall;
   address = hosts.${config.networking.hostName}.address;
-  port = 3000;
+  inherit (config.sam.fleet.listeners.grafana) port;
   keys = [
     "admin_user"
     "admin_password"
@@ -150,27 +148,12 @@ in
     systemd.services.grafana = {
       environment.GOMEMLIMIT = "320MiB";
       serviceConfig = {
-        # the pod peaked at 354 MB without its sidecars
+        # Grafana alone peaked at 354 MB
         MemoryMax = "384M";
         # DHCP: .137 can appear after the unit, and upstream's Restart=on-failure would spend its start limit at once
         RestartSec = 10;
         MemorySwapMax = 0;
       };
-    };
-
-    networking.firewall = {
-      inherit
-        (mkDualBackendFirewall {
-          nftComment = "Grafana answers Caddy on the edge host.";
-          ports = [ port ];
-          # Caddy on the edge host (edge.nix)
-          sources = [ hosts.${config.sam.fleet.edge}.address ];
-          interfaces = [ ];
-          inherit (fw) backend;
-        })
-        extraInputRules
-        extraCommands
-        ;
     };
 
     assertions = [
@@ -188,10 +171,6 @@ in
       {
         assertion = config.sam.hostSecrets.enable;
         message = "modules/homelab/monitoring/grafana.nix: its credentials are sops secrets; set sam.hostSecrets.enable.";
-      }
-      {
-        assertion = !config.services.grafana.openFirewall && fw.enable && anySourceTcp fw [ port ] == [ ];
-        message = "modules/homelab/monitoring/grafana.nix: keep the firewall on and port ${toString port} out of openFirewall and allowedTCPPorts; admit a caller with a source-scoped rule.";
       }
       {
         assertion = unknownUids == [ ];

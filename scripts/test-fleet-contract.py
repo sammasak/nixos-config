@@ -1,28 +1,24 @@
 #!/usr/bin/env python3
 """The fleet's ntfy and Loki ports and its host list, held to their definitions: no tracked file but
 modules/core/fleet.nix names either port (one allowlisted line, with its reason), ntfy or Loki on a port off its
-sam.fleet fact fails an assertion, black-pi's Loki admits exactly the other fleet hosts' addresses, and lenovo's
-sam.herdr.machines and jump hosts must be the runtime hosts of flake-modules/hosts.nix: one left out, one the table no
-longer has, and the table with asus-b460m removed each fail evaluation; a collector on a host without a fleet address
-fails too."""
+sam.fleet fact fails an assertion, every host's rendered firewall admits each sam.fleet listener's port from exactly
+its callers' addresses and opens nothing the listeners and public entries do not list (an open port, an upstream
+openFirewall, a stray rule and a trusted interface each fail evaluation), each listener's service binds its port, and
+lenovo's sam.herdr.machines and jump hosts must be the runtime hosts of flake-modules/hosts.nix: one left out, one the
+table no longer has, and the table with asus-b460m removed each fail evaluation; a collector on a host without a fleet
+address fails too."""
 import os
 import pathlib
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
+import tomllib
 
 import gate_probe
+from gate_probe import check, finish
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("fleet-contract")
@@ -69,15 +65,60 @@ check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy"), (
       f"seeded: a module naming the ntfy port, and a second Loki literal in the allowlisted script, are found ({seeded})")
 
 F = P["failing"]
-check(F["lenovo"] == [] and F["blackPi"] == [], f"lenovo and black-pi pass their assertions ({F['lenovo']}, {F['blackPi']})")
+check(len(F["hosts"]) >= 6 and all(m == [] for m in F["hosts"].values()), f"every host passes its assertions ({F['hosts']})")
 check(any("homelab.ntfy.port 2587 is not sam.fleet.ntfy.port" in m for m in F["ntfyPort"]),
       f"seeded: homelab.ntfy.port = 2587 on lenovo fails ({F['ntfyPort']})")
 check(any("homelab.loki.port 3101 is not sam.fleet.loki.port" in m for m in F["lokiPort"]),
       f"seeded: homelab.loki.port = 3101 on black-pi fails ({F['lokiPort']})")
 
-others = sorted(a for h, addrs in P["addresses"].items() if h != "black-pi" for a in addrs)
-check(sorted(P["allowedSources"]) == others and len(set(P["allowedSources"])) == len(others),
-      f"black-pi's Loki admits each other fleet host's addresses once ({P['allowedSources']})")
+# Every host's rendered rules, read here without the Nix check (modules/core/network.nix): per listener port the
+# accepted sources are its callers' addresses, once each; every other accepting line is loopback or a lan public entry.
+# A cross-read of accept lines only: unhooking, flushing and policy rules are the Nix check's alone.
+L, PUB, FW, ADDR = P["listeners"], P["public"], P["firewall"], P["addresses"]
+RULE = re.compile(r"^iptables -w -A nixos-fw -s (\S+) -p (tcp|udp) --dport ([0-9]+) -j nixos-fw-accept$")
+INPUT_ACCEPT = re.compile(r"(-j|-g|--jump|--goto)(\s+|=)?(nixos-fw-accept|ACCEPT|\$)|(^|\s)(-g|--goto)(\s|=)|-[AI] +(nixos-fw|INPUT) .*-j +RETURN")
+LOOPBACK = re.compile(r"(^|\s)(-i|--in-interface)\s+lo(\s|$)")
+FORWARD = re.compile(r"-[AI] +(FORWARD|nixos-filter-forward|dev-env-forward)( |$)|-t +(nat|mangle|raw)( |$)")
+mine = lambda host: [p for p in PUB if p["host"] in (None, host)]
+check(len(FW) >= 6 and all(fw["enable"] and fw["backend"] == "iptables" for fw in FW.values()),
+      f"every host runs the iptables firewall, the backend these checks read ({ {h: fw['backend'] for h, fw in FW.items()} })")
+check(all(p["why"].strip() for p in PUB) and "loki" in L and L["loki"]["from"] == sorted(h for h in ADDR if h != "black-pi"),
+      f"every public entry gives its reason, and Loki's callers are every other fleet host ({L.get('loki')})")
+for host, fw in sorted(FW.items()):
+    lines = [c.strip().replace("'", "").replace('"', "") for l in fw["extraCommands"].replace("\\\n", " ").splitlines()
+             for c in re.split(r";|&&|\|\|", l)]
+    accepted = [l for l in lines if INPUT_ACCEPT.search(l) and not FORWARD.search(l) and not (LOOPBACK.search(l) and "!" not in l)]
+    scoped = [RULE.match(l) for l in accepted]
+    want = sorted((a, l["proto"], l["port"]) for l in L.values() if l["host"] == host for h in l["from"] for a in ADDR[h])
+    got = sorted((m[1], m[2], int(m[3])) for m in scoped if m and (m[2], int(m[3])) in {(l["proto"], l["port"]) for l in L.values() if l["host"] == host})
+    rest = [l for l, m in zip(accepted, scoped) if not m or (m[1], m[2], int(m[3])) not in want]
+    lan = [l for l in rest if (m := RULE.match(l)) and m[1] == P["lanCidr"]
+           and any(p["lan"] and p["port"] == int(m[3]) and p["proto"] == m[2] for p in mine(host))]
+    check(got == want, f"{host} admits each listener port from exactly its callers' addresses ({got} vs {want})")
+    check(rest == lan, f"{host} accepts nothing else but lan public entries: {[l for l in rest if l not in lan]}")
+    opened = [(i, proto, port) for i, sc in [(None, fw)] + list(fw["interfaces"].items()) for proto in ("tcp", "udp")
+              for port in sc[f"allowed{proto.upper()}Ports"] + [f"{r['from']}-{r['to']}" for r in sc[f"allowed{proto.upper()}PortRanges"]]]
+    stray = [o for o in opened if not any(not p["lan"] and p["port"] == o[2] and p["proto"] == o[1]
+                                          and p["interface"] in (None, o[0]) for p in mine(host))]
+    trusted = [i for i in fw["trustedInterfaces"] if i != "lo" and not any(p["port"] is None and p["interface"] == i for p in mine(host))]
+    check(stray == [] and trusted == [], f"{host} opens and trusts only public entries ({opened}, {fw['trustedInterfaces']})")
+
+toml = tomllib.loads((ROOT / "modules/homelab/llm-gateway.toml").read_text())["server"]
+bound = dict(P["bound"], **{"gateway-api": toml["listen"].rsplit(":", 1)[1], "gateway-admin": toml["admin_listen"].rsplit(":", 1)[1]})
+check(sorted(bound) == sorted(L) and all(int(bound[n]) == L[n]["port"] for n in L),
+      f"every listener's service binds the listener's port ({ {n: (bound.get(n), L[n]['port']) for n in L} }); a new "
+      "listener (sam.fleet.listeners, modules/core/fleet.nix) needs its service's bound port in scripts/gate-probe.nix, "
+      "section fleet-contract, `bound`")
+OPENS = "firewall opens what sam.fleet does not list"
+for seed, host, marker, what in [("openPort", "acer-swift", '"port":9999', "allowedTCPPorts = [ 9999 ] on acer"),
+                                 ("upstreamOpen", "msi-ms7758", "--dport 9100", "the node exporter's upstream openFirewall on msi"),
+                                 ("strayRule", "lenovo-21CB001PMX", "192.168.10.50", "a hand-written accept rule on lenovo"),
+                                 ("trusted", "black-pi", "eth0", "trustedInterfaces = [ eth0 ] on black-pi"),
+                                 ("lokiAnySource", "black-pi", f'"port":{ports["loki"]}', "Loki in black-pi's allowedTCPPorts"),
+                                 ("ntfyElsewhere", "msi-ms7758", f'"port":{ports["ntfy"]}', "ntfy on msi, off its public entry's host")]:
+    check(any(f"{host}'s {OPENS}" in m and marker in m for m in F[seed]), f"seeded: {what} fails ({F[seed]})")
+check(any("sam.fleet.loki is served here" in m and "loopback" in m for m in F["lokiLoopback"]),
+      f"seeded: black-pi's Loki on loopback fails ({F['lokiLoopback']})")
 check(any("naked-pi has no address in sam.fleet.hosts" in m for m in F["collectorOffFleet"]),
       f"seeded: a collector on naked-pi, which has no fleet address, fails ({F['collectorOffFleet']})")
 
@@ -110,4 +151,4 @@ with tempfile.TemporaryDirectory() as tmp:
           and "sam.workers.jumpHosts names" in out,
           f"seeded: asus-b460m removed from hosts.nix fails lenovo's machines and jump-host assertions ({out[-400:]!r})")
 
-sys.exit(1 if failed else 0)
+finish()

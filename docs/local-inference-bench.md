@@ -66,7 +66,7 @@ done
   (`context_length_loaded` in the result). Capacity results from before that change were taken at a loaded 4096.
 - **No pi session beside a G1 or capacity run.** A `/v1` client loads the model at the server's 32K and the bench at
   its own `num_ctx`, so every switch between them reloads the model and lands a load in the warm rows. Hold
-  `/run/work-locks/heavy-work.lock` for the run, as the gates do.
+  `/run/work-locks/heavy-work.lock` for the run; the gates do not take it, so start no gate on that host meanwhile.
 - **Through the gateway**, once asus is in its catalog (llm-gateway#101): `--base http://127.0.0.1:8081/v1 --route
   gateway --key-file /run/secrets/llm_gateway_pi_key`, the Pi project key on acer.
 
@@ -83,10 +83,11 @@ Open a PR. The gate renders the rules, so an unlisted model or label fails it. L
 Only after #492's deploy and reboot. On asus, check that the driver accepts every field the exporter asks for:
 
 ```
-nvidia-smi --query-gpu=name,uuid,driver_version,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,clocks_throttle_reasons.active,clocks_throttle_reasons.hw_thermal_slowdown,clocks_throttle_reasons.sw_power_cap --format=csv
+nvidia-smi --query-gpu=name,uuid,driver_version,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,power.limit,fan.speed,clocks_throttle_reasons.active,clocks_throttle_reasons.hw_thermal_slowdown,clocks_throttle_reasons.sw_power_cap --format=csv
 ```
 
-- **If it prints a data row:** set `asus-b460m.gpu = "nvidia"` in `modules/core/fleet.nix` (a one-line PR). After
+- **If it prints a data row** (it did on 18 Nov, driver 595.104.02, all 14 fields): set `asus-b460m.gpu = "nvidia"` in
+  `modules/core/fleet.nix` (done, #493's telemetry slice). After
   the deploy, on black-pi:
   - `up{job="nvidia-gpu"}` is 1;
   - `nvidia_smi_memory_total_bytes{node="asus-b460m"}` is about 8 GiB;

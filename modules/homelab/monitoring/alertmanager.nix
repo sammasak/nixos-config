@@ -2,10 +2,7 @@
 # one webhook to lenovo's alert-bridge, which pages homelab-alerts. Upstream passes the file through envsubst, so a literal `$` must be written `$$`.
 { config, lib, ... }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
-  cfg = config.services.prometheus.alertmanager;
-  fw = config.networking.firewall;
   hostOff = [ "alertname = HostExpectedOff" ];
   # the shipping policy's quiet hours, in UTC: a location would need tzdata where amtool checks the file. 19:00 to
   # 07:30 covers 21:00 to 08:30 Stockholm in both seasons, and mutes one more hour: 20:00 to 21:00 in winter (CET),
@@ -110,7 +107,7 @@ in
           ];
         }
         # Planned power-off of a sleeping host (homelab-gitops#188): while HostExpectedOff fires for it
-        # (./rules/homelab.yaml), silence what it causes. With a host that does not sleep down, it does not fire.
+        # (./rules/homelab.yaml, ./rules/homelab.nix), silence what it causes. With a host that does not sleep down, it does not fire.
         # 1) anything labelled with that host;
         {
           source_matchers = hostOff;
@@ -142,26 +139,4 @@ in
     RestartSec = 10;
     MemoryMax = "64M";
   };
-
-  # lenovo's watchdog reads /-/ready and the Watchdog alert; Prometheus on this host arrives on loopback
-  networking.firewall = {
-    inherit
-      (mkDualBackendFirewall {
-        nftComment = "Alertmanager answers the watchdog on lenovo.";
-        ports = [ cfg.port ];
-        sources = [ hosts.lenovo-21CB001PMX.address ];
-        interfaces = [ ];
-        inherit (fw) backend;
-      })
-      extraInputRules
-      extraCommands
-      ;
-  };
-
-  assertions = [
-    {
-      assertion = !cfg.openFirewall && fw.enable && anySourceTcp fw [ cfg.port ] == [ ];
-      message = "modules/homelab/monitoring/alertmanager.nix: Alertmanager has no authentication; keep the firewall on and port ${toString cfg.port} out of openFirewall and allowedTCPPorts.";
-    }
-  ];
 }

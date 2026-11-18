@@ -10,7 +10,17 @@
   ...
 }:
 let
-  inherit (config.sam.fleet) hosts ntfy;
+  inherit (config.sam.fleet) hosts ntfy edgeMetrics;
+  # Authentik's server and worker metrics listeners, on loopback (authentik.nix); black-pi reaches them through the
+  # metrics site below
+  authentikMetrics = {
+    server =
+      lib.head
+        (builtins.fromJSON (
+          builtins.unsafeDiscardStringContext config.environment.etc."authentik/config.yml".text
+        )).listen.metrics;
+    worker = config.systemd.services.authentik-worker.environment.AUTHENTIK_LISTEN__METRICS;
+  };
   domain = "sammasak.dev";
   caddy = config.services.caddy;
   adminSocket = "unix//run/caddy/admin.sock|0200";
@@ -18,8 +28,19 @@ let
   authentik = "127.0.0.1:9000";
   # the only OTLP pushers: each host's native-otel-relay, and black-pi's blackbox probe
   otlpSources = map (h: h.address) (lib.attrValues hosts);
+  # Authentik's embedded outpost labels its metrics with the Host it gets (X-Forwarded-Host first), and any client can
+  # put a port on it: the name alone, as the route matched it, keeps that label to the names served. Caddy's adapter
+  # calls the X-Forwarded-Host line unnecessary; without it the upstream still gets the Host with its port
+  authentikHost = ''
+    header_up Host {host}
+    header_up X-Forwarded-Host {host}
+  '';
   sites = {
-    auth = "reverse_proxy ${authentik}";
+    auth = ''
+      reverse_proxy ${authentik} {
+        ${authentikHost}
+      }
+    '';
     chat = ''
       route {
         import authentik
@@ -86,16 +107,28 @@ in
     # 80/tcp, 443/tcp and 443/udp on every interface
     openFirewall = true;
     # a TCP admin API would let any local process load a config; with none, a change restarts (every site drops)
+    # no per_host: Caddy labels any HTTPS Host as sent (a random name under the wildcard, a name with a port), so any
+    # client could grow the series without bound; the named servers split public from scrape traffic instead
     globalConfig = ''
       admin ${adminSocket}
       grace_period 10s
+      metrics
+      servers :443 {
+        name public
+      }
+      servers :${toString edgeMetrics.port} {
+        name metrics
+      }
     '';
     # Caddy deletes a client-sent copy of each copied header before it sets the outpost's value.
     extraConfig = ''
       (authentik) {
-        reverse_proxy /outpost.goauthentik.io/* ${authentik}
+        reverse_proxy /outpost.goauthentik.io/* ${authentik} {
+          ${authentikHost}
+        }
         forward_auth ${authentik} {
           uri /outpost.goauthentik.io/auth/caddy
+          ${authentikHost}
           copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
         }
       }
@@ -116,6 +149,23 @@ in
           useACMEHost = domain;
           logFormat = "output file ${config.services.caddy.logDir}/access-unserved.log";
           extraConfig = "respond 404";
+        };
+        # plain HTTP for black-pi's scrape alone (sam.fleet.listeners.edge-metrics), on every address: bound to the DHCP Wi-Fi address,
+        # a start before the address exists exits 1, which the unit never restarts (RestartPreventExitStatus), and
+        # every name would stay down
+        "http://:${toString edgeMetrics.port}" = {
+          logFormat = "output discard";
+          extraConfig = ''
+            metrics /metrics
+            ${lib.concatStrings (
+              lib.mapAttrsToList (part: listen: ''
+                handle /authentik/${part}/metrics {
+                  rewrite * /metrics
+                  reverse_proxy ${listen}
+                }
+              '') authentikMetrics
+            )}
+          '';
         };
       };
   };
@@ -139,6 +189,11 @@ in
       # lenovo's *.sammasak.dev rewrite and every OTLP relay send here by sam.fleet.edge
       assertion = config.networking.hostName == config.sam.fleet.edge;
       message = "modules/homelab/edge.nix runs on ${config.networking.hostName}, but sam.fleet.edge is ${config.sam.fleet.edge}: the DNS rewrite and the OTLP relays would point at the wrong host.";
+    }
+    {
+      # the firewall admits its `from` (black-pi) there: sam.fleet.listeners.edge-metrics, modules/core/network.nix
+      assertion = edgeMetrics.host == config.sam.fleet.edge;
+      message = "modules/homelab/edge.nix: sam.fleet.edgeMetrics must be on the edge host (${config.sam.fleet.edge}).";
     }
     {
       assertion =

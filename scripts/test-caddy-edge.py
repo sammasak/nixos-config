@@ -1,21 +1,27 @@
 """acer's Caddy edge (modules/homelab/edge.nix), as `caddy adapt` reads the deployed Caddyfile: the admin API is a
 socket only caddy may write to, every name has its route and backend, chat and grafana pass forward auth before
 their backend with the five X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only,
-open-webui listens on the edge socket alone, the apex and any other name under the wildcard are 404, and herman is
-its Nix build with the Cache-Control matrix and SPA fallback of its deploy/nginx.conf."""
+open-webui listens on the edge socket alone, the apex and any other name under the wildcard are 404, herman is
+its Nix build with the Cache-Control matrix and SPA fallback of its deploy/nginx.conf, and the metrics server is
+plain HTTP on its own port, serving Caddy's /metrics and, at /authentik/server/metrics and /authentik/worker/metrics,
+Authentik's loopback metrics listeners only, which black-pi scrapes at the fleet address; the deployed config, run on
+loopback, gives a stray name or port in the Host no series of its own."""
+import copy
+import http.server as http_server
 import json
+import os
+import re
+import socket
+import ssl
 import subprocess
-import sys
+import tempfile
+import threading
+import time
+import urllib.request
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("caddy-edge")
@@ -60,6 +66,42 @@ check(any("services.caddy" in m and "open-webui" in m for m in P["failing"]["noC
       f"the open-webui edge socket without Caddy is rejected {P['failing']['noCaddy']}")
 
 servers = config["apps"]["http"]["servers"]
+metrics_listen = f":{P['edgeMetrics']['port']}"
+metrics_target = f"{P['edgeMetrics']['address']}:{P['edgeMetrics']['port']}"
+metrics = {k: v for k, v in servers.items() if metrics_listen in v.get("listen", [])}
+servers = {k: v for k, v in servers.items() if k not in metrics}
+check(len(metrics) == 1 and all(v["listen"] == [metrics_listen] for v in metrics.values()),
+      f"one server listens for metrics, on {metrics_listen} alone {[v.get('listen') for v in metrics.values()]}")
+served = [(h.get("handler"), m) for v in metrics.values() for r in v.get("routes", [])
+          for h, m in flatten(r["handle"], tuple(r.get("match", []))) if h.get("handler") != "subroute"]
+check([m for h, m in served if h == "metrics"] == [({"path": ["/metrics"]},)] and all(not v.get("tls_connection_policies") for v in metrics.values()),
+      f"the metrics server serves Caddy's metrics once, over plain HTTP {served}")
+check(set(h for h, _ in served) <= {"metrics", "reverse_proxy", "rewrite"},
+      f"the metrics server does nothing but serve metrics and proxy {sorted(set(h for h, _ in served))}")
+proxied = {tuple(p for x in m for p in x.get("path", [])): dials(h) for v in metrics.values() for r in v.get("routes", [])
+           for h, m in flatten(r["handle"], tuple(r.get("match", []))) if h.get("handler") == "reverse_proxy"}
+check(set(proxied) == {("/authentik/server/metrics",), ("/authentik/worker/metrics",)}
+      and all(len(d) == 1 and d[0].startswith("127.0.0.1:") for d in proxied.values()),
+      f"it proxies only /authentik/server/metrics and /authentik/worker/metrics, each to a loopback listener {proxied}")
+rewrites = [h.get("uri") for v in metrics.values() for r in v.get("routes", [])
+            for h, _ in flatten(r["handle"]) if h.get("handler") == "rewrite"]
+check(rewrites == ["/metrics", "/metrics"], f"each proxied path is rewritten to the listener's /metrics {rewrites}")
+jobs = json.loads(P["prometheusConfig"])["scrape_configs"]
+scraped = {j["job_name"]: (j.get("metrics_path", "/metrics"), t) for j in jobs
+           if j["job_name"] in ("caddy", "authentik-server", "authentik-worker") for sc in j["static_configs"] for t in sc["targets"]}
+check(scraped == {"caddy": ("/metrics", metrics_target), "authentik-server": ("/authentik/server/metrics", metrics_target),
+                  "authentik-worker": ("/authentik/worker/metrics", metrics_target)}, f"black-pi scrapes all three {scraped}")
+authentik_jobs = [j for j in jobs if j["job_name"].startswith("authentik-")]
+dropped = [re.compile(r["regex"]) for j in authentik_jobs for r in j.get("metric_relabel_configs", [])
+           if r == {"source_labels": ["__name__"], "regex": r["regex"], "action": "drop"}]
+# the outpost histogram's method label is the client's; the panels' own families must survive the drop
+check(len(authentik_jobs) == 2 and len(dropped) == 2 and all(j.get("sample_limit") for j in authentik_jobs)
+      and all(d.fullmatch("authentik_outpost_proxy_request_duration_seconds_bucket") for d in dropped)
+      and not any(d.fullmatch(n) for d in dropped for n in ("authentik_main_request_duration_seconds_count",
+                                                            "authentik_flows_execution_stage_time_bucket",
+                                                            "authentik_tasks_queued")),
+      f"both Authentik jobs drop the outpost family, keep the panels' and cap their samples {authentik_jobs}")
+check(config["apps"]["http"].get("metrics") == {}, f"Caddy's metrics carry no host label {config['apps']['http'].get('metrics')}")
 routes = {}
 for server in servers.values():
     for route in server["routes"]:
@@ -167,4 +209,120 @@ probed = {t.split("://", 1)[1].split("/", 1)[0] for j in blackbox for sc in j["s
 unprobed = sorted(h for h in routes if h not in probed)
 check(blackbox and not unprobed, f"black-pi probes every Caddy name (unprobed: {unprobed})")
 
-sys.exit(1 if failed else 0)
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def redial(node, old, new):
+    """Every reverse_proxy upstream at `old` sent to `new` instead, in place."""
+    if isinstance(node, dict):
+        if node.get("dial") == old:
+            node["dial"] = new
+        for v in node.values():
+            redial(v, old, new)
+    elif isinstance(node, list):
+        for v in node:
+            redial(v, old, new)
+
+
+def stray_run(run):
+    """`run`, the deployed config or a changed copy, on loopback ports with a throwaway certificate for the same names
+    and Authentik replaced by a listener that records each request's Host and X-Forwarded-Host. Four TLS requests:
+    an unserved name under the wildcard, and chat, chat's outpost ping and auth, each with a port in the Host.
+    Returns Caddy's caddy_http_ lines and the Host values Authentik saw."""
+    run = copy.deepcopy(run)
+    run["admin"] = {"disabled": True}
+    for log in run.get("logging", {}).get("logs", {}).values():
+        if "writer" in log:
+            log["writer"] = {"output": "discard"}
+    http = run["apps"]["http"]
+    https, plain, scrape = free_port(), free_port(), free_port()
+    http["http_port"], http["https_port"] = plain, https
+    for srv in http["servers"].values():
+        srv["listen"] = [f"127.0.0.1:{scrape if srv['listen'] == [metrics_listen] else https}"]
+    seen = set()
+
+    class Authentik(http_server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.update(v for v in (self.headers["Host"], self.headers["X-Forwarded-Host"]) if v)
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_):
+            pass
+
+    upstream = http_server.ThreadingHTTPServer(("127.0.0.1", 0), Authentik)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    redial(run, authentik, f"127.0.0.1:{upstream.server_port}")
+    with tempfile.TemporaryDirectory() as tmp:
+        cert, key = f"{tmp}/cert.pem", f"{tmp}/key.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                        "-nodes", "-days", "1", "-subj", "/CN=sammasak.dev", "-keyout", key, "-out", cert,
+                        "-addext", "subjectAltName=DNS:sammasak.dev,DNS:*.sammasak.dev"],
+                       check=True, capture_output=True)
+        for f in run["apps"]["tls"]["certificates"]["load_files"]:
+            f["certificate"], f["key"] = cert, key
+        with open(f"{tmp}/caddy.json", "w") as f:
+            json.dump(run, f)
+        env = {**os.environ, "HOME": tmp, "XDG_DATA_HOME": tmp, "XDG_CONFIG_HOME": tmp}
+        proc = subprocess.Popen([P["caddy"], "run", "--config", f"{tmp}/caddy.json"], env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        try:
+            url = f"http://127.0.0.1:{scrape}/metrics"
+            for _ in range(100):
+                try:
+                    urllib.request.urlopen(url, timeout=1).read()
+                    break
+                except OSError:
+                    if proc.poll() is not None:
+                        raise RuntimeError(f"caddy exited {proc.returncode}: {proc.stderr.read()}")
+                    time.sleep(0.1)
+            tls = ssl.create_default_context()
+            tls.check_hostname, tls.verify_mode = False, ssl.CERT_NONE
+            for sni, host, path in (("stray-x7k2.sammasak.dev", "stray-x7k2.sammasak.dev", "/"),
+                                    ("chat.sammasak.dev", "chat.sammasak.dev:4711", "/"),
+                                    ("chat.sammasak.dev", "chat.sammasak.dev:4711", "/outpost.goauthentik.io/ping"),
+                                    ("auth.sammasak.dev", "auth.sammasak.dev:4711", "/")):
+                with socket.create_connection(("127.0.0.1", https), timeout=5) as raw, \
+                        tls.wrap_socket(raw, server_hostname=sni) as c:
+                    c.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\nX-Forwarded-Host: {host}\r\n"
+                              f"Connection: close\r\n\r\n".encode())
+                    while c.recv(65536):
+                        pass
+            body = urllib.request.urlopen(url, timeout=5).read().decode()
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+            upstream.shutdown()
+    return [line for line in body.splitlines() if line.startswith("caddy_http_")], seen
+
+
+def stray(lines):
+    return [line for line in lines if "stray-x7k2" in line or ":4711" in line]
+
+
+lines, seen = stray_run(config)
+counted = [line for line in lines if line.startswith("caddy_http_requests_total{") and 'server="public"' in line]
+check(stray(lines) == [] and counted, f"a stray name or Host port adds no caddy_http_ series, the public server counts "
+      f"them {stray(lines)[:3]} {counted}")
+check(seen == {"chat.sammasak.dev", "auth.sammasak.dev"},
+      f"Authentik gets the served name alone as Host and X-Forwarded-Host, whatever port the client sent {sorted(seen)}")
+# seeded: per_host (as Caddy 2.11 runs it on a TLS server), and Authentik's calls without the Host rewrite, must let
+# the stray values through, or the probe proves nothing
+seeded = copy.deepcopy(config)
+seeded["apps"]["http"]["metrics"] = {"per_host": True}
+for h, _ in flatten([h for srv in seeded["apps"]["http"]["servers"].values() for r in srv["routes"] for h in r["handle"]]):
+    if authentik in dials(h):
+        for k in ("Host", "X-Forwarded-Host"):
+            h.get("headers", {}).get("request", {}).get("set", {}).pop(k, None)
+lines, seen = stray_run(seeded)
+check(any("stray-x7k2" in line for line in lines) and any(":4711" in line for line in lines)
+      and "auth.sammasak.dev:4711" in seen and "chat.sammasak.dev:4711" in seen,
+      f"seeded: with per_host and no Host rewrite the stray name and port show {len(stray(lines))} {sorted(seen)}")
+
+finish()

@@ -1,12 +1,16 @@
 # black-pi's dashboards, as grafana.nix provisions them, against what the fleet exports: the deployed node-exporter
-# command runs on node_exporter's own sysfs/procfs fixtures, so its metric names are this version's with these flags;
-# the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus loads;
-# llm-gateway's from its registrations and Loki's, Alloy's and blackbox's from their name literals, in the source
-# each host runs; the OTLP ones are alloy-otlp's allow-list. Each seeded dashboard below must fail
+# command runs on node_exporter's own sysfs/procfs fixtures, so its metric names are this version's with these
+# flags; the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus
+# loads; llm-gateway's from its registrations and Loki's, Alloy's, Caddy's and blackbox's from their name literals,
+# in the source each host runs; the OTLP ones are alloy-otlp's allow-list. Each seeded dashboard below must fail
 # scripts/check-grafana-dashboards.py with its own reason.
 { config, lib, ... }:
 let
-  inherit (config.flake.nixosConfigurations) acer-swift black-pi msi-ms7758;
+  inherit (config.flake.nixosConfigurations) acer-swift black-pi lenovo msi-ms7758;
+  # its output holds what adguard-textfile wrote against a running AdGuard (modules/homelab/adguardhome.nix)
+  adguardCheck = lib.findFirst (
+    c: c.name == "adguardhome-fleet-names"
+  ) (throw "grafana-dashboards: lenovo has no adguardhome-fleet-names check") lenovo.config.system.checks;
   pi = black-pi.config;
   inherit (pi.homelab.grafana) dashboards;
   hosts = lib.attrNames pi.sam.fleet.hosts;
@@ -24,8 +28,8 @@ let
   exporterHosts = lib.filterAttrs (
     _: h: h.config.services.prometheus.exporters.node.enable
   ) config.flake.nixosConfigurations;
-  # a textfile directory adds only the metrics of its own files (lenovo's shipping_* are checked by shipping-check.nix),
-  # so those flags are left out of the comparison
+  # a textfile directory adds only the metrics of its own files (shipping_* and agent_nav_* come from their collectors'
+  # --list below), so those flags are left out of the comparison
   flagsOf =
     c: with c.services.prometheus.exporters.node; [
       (lib.filter (f: !lib.hasPrefix "--collector.textfile.directory=" f) extraFlags)
@@ -48,6 +52,12 @@ let
       strip = "loki_";
       job = "loki";
       src = msi-ms7758.pkgs.grafana-loki.src;
+    }
+    {
+      prefix = "caddy_http_";
+      strip = "caddy_http_";
+      job = "caddy";
+      src = acer-swift.pkgs.caddy.src;
     }
     {
       prefix = "probe_";
@@ -119,6 +129,11 @@ let
       dashboard = seed ''{job="journal"}'' "loki";
       reason = "job 'journal': no Loki stream";
     };
+    # a name the running Prometheus does not export
+    prometheus-typo = {
+      dashboard = seed "prometheus_tsdb_head_seriez" "prometheus";
+      reason = "unknown metric prometheus_tsdb_head_seriez:";
+    };
     gateway-typo = {
       dashboard = seed "rate(llm_gateway_no_such_total[5m])" "prometheus";
       reason = "unknown metric llm_gateway_no_such_total";
@@ -131,6 +146,15 @@ let
     probe-typo = {
       dashboard = seed ''probe_sucess{job="blackbox"}'' "prometheus";
       reason = "unknown metric probe_sucess:";
+    };
+    # agent_nav_repo_miss_ratio, from nav.prom
+    nav-typo = {
+      dashboard = seed "agent_nav_repo_mis_ratio" "prometheus";
+      reason = "unknown metric agent_nav_repo_mis_ratio:";
+    };
+    caddy-typo = {
+      dashboard = seed "rate(caddy_http_requets_total[5m])" "prometheus";
+      reason = "unknown metric caddy_http_requets_total";
     };
     loki-word = {
       dashboard = seed "loki_name" "prometheus";
@@ -278,14 +302,22 @@ in
               discard black-pi.pkgs.prometheus-blackbox-exporter.src.outPath
               == discard msi-ms7758.pkgs.prometheus-blackbox-exporter.src.outPath
             && discard pkgs.grafana-loki.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
+            &&
+              discard pi.services.prometheus.package.src.outPath == discard msi-ms7758.pkgs.prometheus.src.outPath
+            &&
+              discard pi.services.prometheus.alertmanager.package.src.outPath
+              == discard msi-ms7758.pkgs.prometheus-alertmanager.src.outPath
             && lib.hasInfix (discard "${acer-swift.pkgs.grafana-alloy}/bin/alloy") (
               discard (toString acer.systemd.services.alloy-otlp.serviceConfig.ExecStart)
+            )
+            && lib.hasInfix (discard "${acer-swift.pkgs.caddy}/bin/caddy") (
+              discard (toString acer.systemd.services.caddy.serviceConfig.ExecStart)
             )
             && lib.hasInfix (discard "${acer-swift.pkgs.llmGateway}/bin/") (
               discard acer.systemd.services.llm-gateway.serviceConfig.ExecStart
             )
           )
-          "grafana-dashboards: black-pi's Loki (or this check's logcli) or blackbox exporter, acer's alloy-otlp or acer's llm-gateway is not the source this check reads";
+          "grafana-dashboards: black-pi's Loki (or this check's logcli), Prometheus, Alertmanager or blackbox exporter, acer's alloy-otlp, Caddy or llm-gateway is not the source this check reads";
         assert lib.assertMsg (
           !handList.success
         ) "grafana-dashboards: a dashboard listing the node variable's hosts by hand evaluated";
@@ -302,6 +334,9 @@ in
               pkgs.ripgrep
             ];
             inherit promConfig;
+            amConfig = builtins.toJSON pi.services.prometheus.alertmanager.configuration;
+            # with its context: acer's own config file, token wrapper and Alloy, all x86
+            alloyExec = acer.systemd.services.alloy-otlp.serviceConfig.ExecStart;
             spec = builtins.toJSON {
               inherit dashboards hosts builtin;
               sources = lib.imap0 (i: s: {
@@ -322,6 +357,7 @@ in
             seeds = builtins.toJSON seeds;
             passAsFile = [
               "promConfig"
+              "amConfig"
               "spec"
               "seeds"
             ];
@@ -384,9 +420,25 @@ in
             python3 -I ${../scripts/llm-gateway-metric-names.py} ${acer-swift.pkgs.llmGateway.src} > llm-gateway.prom
             # lenovo's shipping textfile (modules/homelab/shipping-metrics.nix): the names its collector emits
             python3 -I ${../scripts/shipping-metrics.py} --list > shipping.prom
+            # the devTools hosts' navigation textfile (modules/homelab/nav-metrics.nix)
+            python3 -I ${../scripts/nav-metrics.py} --list > nav.prom
+            mkdir stack
+            bash ${../scripts/monitoring-exposition.sh} stack ${msi-ms7758.pkgs.prometheus} "$promConfigPath" \
+              ${
+                lib.escapeShellArg (
+                  toString (
+                    pi.services.prometheus.extraFlags
+                    ++ [ "--storage.tsdb.retention.time=${pi.services.prometheus.retentionTime}" ]
+                  )
+                )
+              } ${msi-ms7758.pkgs.prometheus-alertmanager} "$amConfigPath" \
+              ${lib.escapeShellArg (toString pi.services.prometheus.alertmanager.extraFlags)} "$alloyExec"
+            # Authentik's names from the Python package and the Go server acer runs
+            python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
+              ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
             check() {
               python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom authentik.prom ${adguardCheck}/dns.prom stack/*.prom shipping.prom nav.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"

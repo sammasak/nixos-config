@@ -70,6 +70,12 @@ in
           "The median PR lead time over the last 7 d is {{ $value | humanize }} h."
           { }
         )
+        # an API-wide error leaves the prs section fresh, and the lead time quietly open-to-merge
+        (alert "LeadTimeFallbacksHigh"
+          ''sum(shipping_pr_lead_time_fallbacks{reason="http_error",window="7d"}) / sum(shipping_prs_merged{window="7d"}) > ${toString a.LeadTimeFallbacksHigh.maxRatio.value}''
+          "{{ $value | humanizePercentage }} of the PRs merged in 7 d have their lead time from their open time: GitHub's commits API failed for them (journalctl -u shipping-metrics)."
+          { }
+        )
         (alert "ReviewFirstPassLow"
           "shipping_review_first_pass_ratio < ${toString a.ReviewFirstPassLow.minRatio.value} and on () shipping_review_prs_counted >= ${toString a.ReviewFirstPassLow.lastVerdicts.value}"
           "Only {{ $value | humanizePercentage }} of the last ${toString a.ReviewFirstPassLow.lastVerdicts.value} reviewed PRs passed their first review."
@@ -95,11 +101,12 @@ in
           "{{ $value }} escape(s) in the last 24 h: a revert on a default branch or an issue labelled escape."
           { }
         )
+        # min_over_time over 45 m spans two runs (every 30 min): one failed run that the next one fixes stays quiet
         (alert "ShippingCollectorStale"
           ''(time() - min(shipping_collector_success_timestamp_seconds) > ${
             toString (a.ShippingCollectorStale.maxHours.value * 3600)
-          } or absent(shipping_collector_success_timestamp_seconds) or shipping_collector_authenticated < ${toString a.ShippingCollectorStale.minAuthenticated.value}) unless on () up{job="node-exporter", node="${collectorNode}"} == 0''
-          "A shipping-metrics section on ${collectorNode} has not succeeded within ${toString a.ShippingCollectorStale.maxHours.value} h, or it ran without the owner's gh login and counted public repos only (journalctl -u shipping-metrics; gh auth status as the owner)."
+          } or absent(shipping_collector_success_timestamp_seconds) or shipping_collector_authenticated < ${toString a.ShippingCollectorStale.minAuthenticated.value} or min_over_time(shipping_collector_section_failed[45m]) == 1) unless on () up{job="node-exporter", node="${collectorNode}"} == 0''
+          "A shipping-metrics section on ${collectorNode} has not succeeded within ${toString a.ShippingCollectorStale.maxHours.value} h, failed two runs in a row (an error or the run deadline), or it ran without the owner's gh login and counted public repos only (journalctl -u shipping-metrics; gh auth status as the owner)."
           { }
         )
       ];

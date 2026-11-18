@@ -56,7 +56,7 @@ let
   # only `msi-ollama` is replaced on every activation. contextWindow is the
   # server's OLLAMA_CONTEXT_LENGTH: Ollama truncates longer prompts silently.
   msiOllamaProvider = builtins.toJSON {
-    # msi's host Ollama, which admits the lenovo and acer hosts (hosts/msi-ms7758/configuration.nix)
+    # msi's host Ollama, which admits the lenovo and acer hosts (sam.fleet.listeners.ollama-msi)
     baseUrl = "http://${osConfig.sam.fleet.hosts.msi-ms7758.address}:11434/v1";
     api = "openai-completions";
     apiKey = "ollama";
@@ -81,7 +81,7 @@ let
   # by tier and fails over. `!cat` reads the sops key per request, so it never
   # enters the store or the environment.
   homelabProvider = builtins.toJSON {
-    # acer's firewall admits lenovo on 8081 (modules/homelab/llm-gateway.nix); acer reaches its own address locally
+    # acer's firewall admits lenovo on 8081 (sam.fleet.listeners.gateway-api); acer reaches its own address locally
     baseUrl = "http://${osConfig.sam.fleet.hosts.acer-swift.address}:8081/v1";
     api = "openai-completions";
     apiKey = "!cat /run/secrets/llm_gateway_pi_key";

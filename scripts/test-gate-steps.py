@@ -9,16 +9,11 @@ import sys
 import tempfile
 import textwrap
 
+from gate_probe import check, finish
+
 import gate_defer
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 src = (ROOT / "devenv.nix").read_text()
@@ -27,7 +22,7 @@ src = (ROOT / "devenv.nix").read_text()
 def function(name):
     m = re.search(r"\n( *)" + name + r"\(\) \{\n.*?\n\1\}\n", src, re.S)
     if not m:
-        sys.exit(f"FAIL: {name}() not found in devenv.nix")
+        sys.exit(f"FAIL (scripts/test-gate-steps.py): {name}() not found in devenv.nix")
     return textwrap.dedent(m.group(0)).replace("''${", "${")
 
 
@@ -35,7 +30,7 @@ def function(name):
 gate_heavy = re.search(r'\n *gateHeavy = "([^"]*)";\n', src)
 heavy = re.search(r"\n *heavy='\$\{gateHeavy\}'\n", src)
 if not gate_heavy or not heavy:
-    sys.exit("FAIL: gateHeavy, or the flake check's heavy='${gateHeavy}', not found in devenv.nix")
+    sys.exit("FAIL (scripts/test-gate-steps.py): gateHeavy, or the flake check's heavy='${gateHeavy}', not found in devenv.nix")
 check("GATE_HEAVY='${gateHeavy}'" in src and "-cuda" not in src.replace(gate_heavy.group(0), ""),
       "the heavy pattern has one definition (gateHeavy): the flake check and ollama-gpu-test's GATE_HEAVY both read it")
 DECIDE = f"heavy='{gate_heavy.group(1)}'\n" + function("decide")
@@ -85,7 +80,7 @@ with tempfile.TemporaryDirectory() as t:
     script = SIDE.replace("${lib.getExe record}", str(stub))
     left = re.findall(r"\$\{lib\.[^}]*\}", script)
     if left:
-        sys.exit(f"FAIL: side_by_side has Nix interpolations the test does not stub: {left}")
+        sys.exit(f"FAIL (scripts/test-gate-steps.py): side_by_side has Nix interpolations the test does not stub: {left}")
     r = subprocess.run(["bash", "-euo", "pipefail", "-c", script + '\nsha=abc\nside_by_side "$@"', "qa", *steps],
                        capture_output=True, text=True, env=dict(os.environ, NIXOS_QA_TIMES=str(times)))
     out = r.stdout
@@ -185,4 +180,4 @@ if awk:
         check(miss.returncode != 0 or "know how to build" in miss.stderr,
               f"real nix: a missing derivation fails the dry-run or says it does not know how to build it ({miss.returncode}, {miss.stderr.strip()!r})")
 
-sys.exit(1 if failed else 0)
+finish()

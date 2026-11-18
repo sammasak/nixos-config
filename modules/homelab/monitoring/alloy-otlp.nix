@@ -12,21 +12,28 @@
   ...
 }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
   fw = config.networking.firewall;
   alloy = pkgs.grafana-alloy;
   otlpPort = 4318;
-  httpPort = 12346;
+  httpPort = config.sam.fleet.listeners.alloy-http.port;
   blackPi = hosts.black-pi.address;
+  unsafeNames = lib.filter (n: builtins.match "[a-z0-9-]+" (lib.toLower n) == null) (
+    lib.attrNames hosts
+  );
   configFile = pkgs.writeText "alloy-otlp.alloy" (
     lib.replaceStrings
-      [ "@prometheus@" "@loki@" ]
-      [ "http://${blackPi}:9090" config.sam.fleet.loki.url ]
+      [ "@prometheus@" "@loki@" "@hosts@" ]
+      [
+        "http://${blackPi}:9090"
+        config.sam.fleet.loki.url
+        # host.name is kept only for a fleet host, lower-cased as Claude Code reports it; any other becomes "other"
+        (lib.concatMapStringsSep "|" lib.toLower (lib.attrNames hosts))
+      ]
       (builtins.readFile ./alloy-otlp.alloy)
   );
   stability = "--stability.level=experimental";
-  # the config reads the token from the environment, as the pod did; $(<) drops the newline, as the relay's cat does
+  # the config reads the token from the environment; $(<) drops the newline, as the relay's cat does
   withToken = pkgs.writeShellScript "alloy-otlp-token" ''
     OTLP_BEARER_TOKEN="$(<"$CREDENTIALS_DIRECTORY/token")"
     export OTLP_BEARER_TOKEN
@@ -38,6 +45,8 @@ let
     "run"
     stability
     "--disable-reporting"
+    # 0.0.0.0, not the fleet address: the one process also serves the OTLP intake, and a bind to acer's Wi-Fi address
+    # fails while its lease is missing; the firewall admits black-pi alone (sam.fleet.listeners.alloy-http)
     "--server.http.listen-addr=0.0.0.0:${toString httpPort}"
     "--storage.path=/var/lib/alloy-otlp"
     configFile
@@ -66,12 +75,12 @@ in
       TimeoutStartSec = 90;
       Restart = "always";
       RestartSec = 10;
-      # the same directory as the pod's hostPath; systemd moves it under /var/lib/private for the dynamic user
+      # systemd moves the state directory under /var/lib/private for the dynamic user
       DynamicUser = true;
       StateDirectory = "alloy-otlp";
       StateDirectoryMode = "0700";
       LoadCredential = [ "token:${config.sops.secrets.native_otlp_auth.path}" ];
-      # the pod's limit; memory_limiter in the config holds 128MiB
+      # twice the 128MiB memory_limiter in the config
       MemoryMax = "256M";
       MemorySwapMax = 0;
       CapabilityBoundingSet = "";
@@ -102,37 +111,20 @@ in
     };
   };
 
-  # black-pi's Prometheus scrapes the collector's own metrics; 4318 listens on loopback alone
-  networking.firewall = {
-    inherit
-      (mkDualBackendFirewall {
-        nftComment = "alloy-otlp's metrics answer black-pi's Prometheus.";
-        ports = [ httpPort ];
-        sources = [ blackPi ];
-        interfaces = [ ];
-        inherit (fw) backend;
-      })
-      extraInputRules
-      extraCommands
-      ;
-  };
-
   assertions = [
+    {
+      # the names go into the host.name alternation unescaped
+      assertion = unsafeNames == [ ];
+      message = "modules/homelab/monitoring/alloy-otlp.nix: every sam.fleet host name, lower-cased, is [a-z0-9-]+ (not: ${toString unsafeNames}).";
+    }
     {
       # declared by native-otel-relay.nix from the file acer is a recipient of; this unit adds no recipient
       assertion = config.sops.secrets ? native_otlp_auth;
       message = "modules/homelab/monitoring/alloy-otlp.nix: the bearer token is the relay's native_otlp_auth; set sam.profile.nativeOtel.";
     }
     {
-      assertion =
-        fw.enable
-        &&
-          anySourceTcp fw [
-            otlpPort
-            httpPort
-          ] == [ ]
-        && lib.all (i: i == "lo") fw.trustedInterfaces;
-      message = "modules/homelab/monitoring/alloy-otlp.nix: keep the firewall on, ports ${toString otlpPort} and ${toString httpPort} out of allowedTCPPorts, and trust only loopback: no LAN host may reach the metrics port.";
+      assertion = lib.all (i: i == "lo") fw.trustedInterfaces;
+      message = "modules/homelab/monitoring/alloy-otlp.nix: trust only loopback: a trusted interface reaches the metrics port ${toString httpPort} and the OTLP intake ${toString otlpPort} whatever the firewall admits.";
     }
   ];
 }

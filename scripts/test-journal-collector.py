@@ -1,6 +1,7 @@
 """homelab.journalCollector (modules/homelab/journal-collector.nix): Alloy ships the journal on every host but naked-pi,
 reads journald and nothing else, references no secret, keeps its readiness probe on the host, restarts on a config
-change, never ships Authentik's or user units' lines, drops the egress proxy's info-level 2xx/3xx access lines and pages ntfy (with retries) when it fails. The
+change, never ships Authentik's or user units' lines, drops the egress proxy's info-level 2xx/3xx access lines and Loki's info-level
+per-query lines, and pages ntfy (with retries) when it fails. The
 negative case enables the module on naked-pi in the probe only. The detailed checks read msi-ms7758's unit.
 
 Evaluation only: options, the generated config.alloy and the unit, never a build. The drop stage's semantics (the
@@ -8,17 +9,10 @@ Evaluation only: options, the generated config.alloy and the unit, never a build
 once against real Alloy 1.17.1, not in this gate."""
 import json
 import re
-import sys
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def enabled(hosts):
@@ -99,19 +93,25 @@ got = {u: re.fullmatch(private_rx, u) is None for u in units}
 check(got == units, f"Authentik's, user units' and login sessions' lines never ship, every other unit's do {got}")
 ak = re.search(r'stage\.match \{ selector = "\{job = \\"([^"\\]+)\\"\} \|~ \\"([^"\\]+)\\"" action = "drop"', pc)
 check(ak is not None and ak[1] == "host-journal", f"a drop stage on any line naming ak's command {ak and ak.groups()}")
+# read from the raw config: norm() would put spaces around the regex's own "=" signs
+lq = re.search(r'stage\.match \{\s*selector\s*=\s*"\{unit=\\"loki\.service\\"\} \|~ \\"([^"\\]+)\\""\s*action\s*=\s*"drop"',
+               m.get("config") or "")
+check(lq is not None, "a drop stage on loki.service's query lines")
 sel = re.search(r'stage\.match \{ selector = "\{unit = \\"([^"\\]+)\\"\}"', pc)
 src_f = re.search(r'stage\.drop \{ source = "([^"]+)"', pc)
 drop_rx = re.search(r'stage\.drop \{[^}]*expression = "((?:[^"\\]|\\.)*)"', pc)
 json_f = re.search(r'stage\.json \{ expressions = \{([^}]*)\}', pc)
 check(None not in (sel, src_f, drop_rx, json_f), "drop stage: a unit match, a JSON parse and a drop on its fields")
 stages = re.findall(r"stage\.[a-z_]+", pc)
-check(stages == ["stage.match", "stage.match", "stage.match", "stage.json", "stage.drop"] and "separator" not in pc,
-      f"process block: the private-unit and ak drops, then match, json, drop, default separator {stages}")
+check(stages == ["stage.match"] * 4 + ["stage.json", "stage.drop"] and "separator" not in pc,
+      f"process block: the private-unit, ak and Loki query drops, then match, json, drop, default separator {stages}")
 
 
 def shipped(unit, line):
     """The rendered match and drop stage applied to one line (Go regexp: unanchored search)."""
     if re.fullmatch(private_rx, unit) or (ak and re.search(ak[2], line)):
+        return False
+    if unit == "loki.service" and lq and re.search(lq[1], line):
         return False
     if None in (sel, src_f, drop_rx, json_f) or unit != sel[1]:
         return True
@@ -156,11 +156,33 @@ lines = {
     ("session", "lukas : USER=root ; COMMAND=/run/current-system/sw/bin/bash -c true&&ak\tshell -c print(1)"): False,
     ("init.scope", "Started run-u9.service - /nix/store/y-authentik/bin/ak worker."): False,
     ("init.scope", "Started lint.service - tweak shellcheck over the scripts."): True,
+    # Loki's own lines on black-pi, as Loki 3 writes them: each query it serves logs itself at info
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.4Z caller=metrics.go:285 component=frontend org_id=fake latency=fast '
+     'query="{host=\\"black-pi\\"}" query_hash=1387074202 query_type=limited range_type=range length=10m0s status=200'): False,
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=engine.go:274 component=querier org_id=fake msg="executing query" '
+     'query="{host=\\"black-pi\\"}" query_hash=1402581774 type=range length=9s step=2s'): False,
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=metrics.go:457 org_id=fake latency=fast query_type=stats '
+     'status=200 query="{unit=\\"x\\"}" query_hash=1 total_entries=1'): False,
+    ("loki.service", 'ts=2026-11-17T21:03:20.3Z caller=spanlogger.go:152 middleware=QueryShard.astMapperware org_id=fake '
+     'level=warn msg="failed mapping AST" err="context canceled" query="{job=\\"host-journal\\"}"'): True,
+    # a failed query's own stats line is still info: it goes with the rest
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.4Z caller=metrics.go:285 component=querier org_id=fake '
+     'query="{host=\\"black-pi\\"}" status=500 duration=30s'): False,
+    ("loki.service", 'level=error ts=2026-11-17T21:15:09.4Z caller=metrics.go:285 component=querier org_id=fake '
+     'query="{host=\\"black-pi\\"}" status=500 err="context deadline exceeded"'): True,
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=table_manager.go:195 index-store=tsdb-2024-01-01 '
+     'msg="get or create table" found=true table=loki_index_20774'): True,
+    ("loki.service", 'level=info ts=2026-11-17T21:00:00Z caller=roundtrip.go:96 msg="splitting by interval" interval=30m'): True,
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=roundtrip.go:412 org_id=fake msg="executing query" type=range '
+     'query="{host=\\"black-pi\\"}" length=10m0s step=2000'): False,
+    ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=retry.go:95 org_id=fake msg="retrying" query="{host=\\"x\\"}"'): True,
+    ("loki.service", "level=info ts=2026-11-17T21:00:00Z caller=main.go:126 msg=\"Starting Loki\" version=3.5.0"): True,
+    ("sshd.service", 'level=info ts=2026-11-17T21:15:09.4Z caller=metrics.go:285 component=frontend query="{x}" status=200'): True,
 }
 got = {f"{u} {l}": shipped(u, l) for u, l in lines}
 want = {f"{u} {l}": keep for (u, l), keep in lines.items()}
 check(len(want) == len(lines), "every case line is its own comparison key")
-check(got == want, f"drops private units and only info 2xx/3xx access lines of {egress} {got}")
+check(got == want, f"drops private units, Loki's info-level query lines and only info 2xx/3xx access lines of {egress} {got}")
 wr = comps.get(("loki.write", write), "")
 check(re.search(r'url = "http://[^"]+/loki/api/v1/push"', wr) is not None and "max_backoff_retries = 0" in wr,
       "writes to a Loki push endpoint and retries forever (the journal holds the backlog)")
@@ -196,4 +218,4 @@ check(isinstance(m.get("configPath"), str) and m["configPath"].startswith("/nix/
       "the config is a store file named in ExecStart: a config change restarts Alloy (through the probe)")
 check("alloy-config-check" in m.get("checks", []), f"the build validates the config (system.checks) {m.get('checks')}")
 check(svc.get("RestartSec") == 30, f"RestartSec 30: four starts cannot burn out in seconds {svc.get('RestartSec')}")
-sys.exit(1 if failed else 0)
+finish()

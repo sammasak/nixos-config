@@ -31,7 +31,7 @@ sam.workers.instances = {
 | `credentials` | `null` | which of the host's credentials it gets (`id_ed25519`, `gh-hosts.yml`); `null` is all. `[ ]` is an agent that cannot push |
 | `egress.github.repos` | `[ ]` | `owner/repo` the instance reaches through the host's proxy (git and REST); non-empty, it gets neither credential; a repo whose devenv imports a private input needs that input listed too (factum and herman need `sammasak/devenv-platform`), else no `devenv shell` works; git and nix fetch it through the proxy rewrite without an SSH key |
 | `egress.github.graphql` | `false` | also pass GraphQL, which no repository list bounds; nearly every `gh pr`/`gh issue` command needs it |
-| `telemetry` | the host's `nativeOtel` | on by default on a `nativeOtel` host, so every environment's work can be reviewed later; `false` opts one out. The guest's Claude exports OTLP metrics and events (no content), and its Codex metrics, as `host.name=<host>,worker.name=<name>` to its `127.0.0.1:4319`, which `otlp.sock` passes (`POST` to exactly `/v1/metrics` or `/v1/logs`, bodies up to 1MiB, stamped `X-Otel-Worker: <name>` over whatever the guest sent; the stamp names the worker on logs only, metrics carry no worker and count under `host.name`) to the host's `native-otel-relay`; the relay adds the token, which never enters the guest, and limits each environment to 20 requests/s (burst 50) apart from the host's own clients. Setting it `true` on a host without `sam.profile.nativeOtel` fails evaluation; setting `sam.claude.telemetry` in a guest module instead fails too. acer and msi are `nativeOtel` hosts (lenovo too, which runs no environments). Details in [native-otel-canary.md](native-otel-canary.md) |
+| `telemetry` | the host's `nativeOtel` | on by default on a `nativeOtel` host, so every environment's work can be reviewed later; `false` opts one out. The guest's Claude exports OTLP metrics and events (no content), and its Codex metrics, as `host.name=<host>,worker.name=<name>` to its `127.0.0.1:4319`, which `otlp.sock` passes (`POST` to exactly `/v1/metrics` or `/v1/logs`, bodies up to 1MiB, stamped `X-Otel-Worker: <name>` over whatever the guest sent; the stamp names the worker on logs only, metrics carry no worker and count under `host.name`) to the host's `native-otel-relay`; the relay adds the token, which never enters the guest, and limits each environment to 20 requests/s (burst 50) apart from the host's own clients. Setting it `true` on a host without `sam.profile.nativeOtel` fails evaluation; setting `sam.claude.telemetry` in a guest module instead fails too. acer, msi and asus are `nativeOtel` hosts (lenovo too, which runs no environments). Details in [native-otel-canary.md](native-otel-canary.md) |
 | `memory.reserved` | `"2G"` | `MemoryMin`: never reclaimed for a neighbour; above it, whatever the pool has idle |
 | `cpu.reserved` | `2` | cores: `CPUWeight` 100 per core, its share under contention; idle cores are all usable |
 | `rootInGuest` | `false` | its own 65536 uids (`--private-users`): guest root is an unprivileged host uid, and the user gets passwordless sudo. Its home and caches are owned on disk by its mapped ids (not id-mapped), so the option needs a fresh instance: an existing environment toggled either way refuses to start until it is retired or declared under a new name, it has its own sshd key and HostKeyAlias `<name>.environments.<prefix>`, and the state dir and per-container profiles and roots are mounted nosuid. Ran on msi (root1, root2) |
@@ -69,7 +69,7 @@ CPU-throttled 947 s of 1275 s used while cores sat idle; msi `skills91`
 
 | Host | Pool | Prefix | Host's own use | At most (by reserve) | Recommended |
 |------|------|--------|----------------|----------------------|-------------|
-| acer-swift | 7G, 8 cores | `acer` | host services and system about 7.5G (measured with k3s, an upper bound) | 3 | 2 |
+| acer-swift | 7G, 8 cores | `acer` | host services and system about 7.5G (measured before the k3s removal, an upper bound) | 3 | 2 |
 | msi-ms7758 | 10G, 8 cores | `msi` | about 2.8G | 5 | 3 |
 | asus-b460m | 20G, 10 cores | `asus` | not measured yet (32 GB RAM) | 10 | 4 |
 
@@ -112,14 +112,16 @@ A timer also runs it at boot and every 15 minutes, because the daemon collects
 by itself once `min-free` is set; a path a guest built within the last interval
 is the remaining exposure.
 
-Across hosts, lenovo, acer and msi each serve their store to the LAN as a
-binary cache (`modules/core/store-cache.nix`, harmonia on port 5000) and
+Across hosts, lenovo, acer, msi and asus each serve their store to the other fleet hosts as a
+binary cache (`modules/core/store-cache.nix`, harmonia on port 5000, admitted by the `store-cache-<host>`
+listeners in `modules/core/fleet.nix`) and
 substitute from the always-on ones ahead of cache.nixos.org: what one machine
-built the others download. msi serves its store while it is up but nobody
-substitutes from it: with msi powered off, every path lookup on acer waited
+built the others download. msi and asus (both `sleeps` in
+`modules/core/fleet.nix`) serve their store while up but nobody substitutes
+from them: with msi powered off, every path lookup on acer waited
 out the 3 s connect timeout one after another (180 lookups, 9 minutes of a
-first `devenv` evaluation, measured 2026-11-12). Each cache signs with a key its host generated on first
-start (`/var/lib/store-cache/`, never in git); the public halves are in the
+first `devenv` evaluation, measured 2026-11-12). Each cache signs with a key generated on its host
+before it joins (`/var/lib/store-cache/`, never in git; docs/new-host.md step 5); the public halves are in the
 module. A dead peer costs a fetch of 20 paths 118 s without `fallback`, about
 20 s with `fallback = true`, which the module sets and an environment takes
 from its host, and 3 s with `download-attempts = 1`, which nothing sets
@@ -316,7 +318,7 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   and link-local ranges on acer and msi) drops forwarding from `ve-*` to those
   networks and new connections from a guest to the host itself, DNS and the
   fleet's store caches (port 5000) excepted: an environment reaches the
-  internet, not the LAN, the cluster, another environment or its host.
+  internet, not the LAN, another environment or its host.
 - Headless guest: no Herdr server, repo-sweep or flake-update timers,
   gpg-agent, dconf or guest firewall; `flake-registry` is empty and `nixpkgs`
   resolves to the store's.

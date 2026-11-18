@@ -1,0 +1,287 @@
+{
+  "uid": "navigation",
+  "title": "Navigation",
+  "tags": [
+    "platform",
+    "agents"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-14d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Host",
+        "type": "custom",
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "How agents find their way in nixos-config (main sessions, last 24 h, hourly)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Navigation calls before the first edit",
+      "description": "Read, Grep, Glob and Bash lookups before the first Edit/Write of each prompt stretch that touched the repo, median and p90. Retro baseline (18 Nov): median 3, p90 11. Bad: p90 above about 15, or the median rising week over week: agents cannot find the place to change. A role with fewer than 50 repo navigation calls in the window has no point here (see Sample size).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "agent_nav_calls_before_first_edit{job=\"node-exporter\", node=~\"$node\"}",
+          "legendFormat": "{{node}} {{role}} p{{quantile}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Top-level directories before the first edit",
+      "description": "Distinct top-level repo directories looked at before the first edit of a repo stretch, median and p90. Retro baseline: median 1, p90 4. Bad: p90 above about 6: one change needs touching many areas (scattered wiring). A role with fewer than 50 repo navigation calls in the window has no point here (see Sample size).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "agent_nav_topdirs_before_first_edit{job=\"node-exporter\", node=~\"$node\"}",
+          "legendFormat": "{{node}} {{role}} p{{quantile}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Repo lookups that missed",
+      "description": "Share of repo navigation calls that errored, came back empty, found no match or no such file. Retro baseline: 3.6 %, daily 1.4 to 6.6 %. Bad: sustained above about 6 %: the paths and names agents expect are wrong or moved. Reads low: `|| true`, `2>/dev/null` and `; echo rc=$?` hide a failed grep. A role with fewer than 50 repo navigation calls in the window has no point here (see Sample size).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "expr": "agent_nav_repo_miss_ratio{job=\"node-exporter\", node=~\"$node\"}",
+          "legendFormat": "{{node}} {{role}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Repeat reads of repo files",
+      "description": "Share of repo file reads (Read, cat, head, tail, sed -n) of a file the same session already read in the window. Retro baseline: 56 %, daily 49 to 66 %. Bad: creeping toward 70 % and above: files too big to hold, or context lost (compaction) and fetched again. It cannot tell a wasteful re-read from one after an edit. A role with fewer than 50 repo navigation calls in the window has no point here (see Sample size).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 9
+      },
+      "targets": [
+        {
+          "expr": "agent_nav_repeat_read_ratio{job=\"node-exporter\", node=~\"$node\"}",
+          "legendFormat": "{{node}} {{role}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Sample size",
+      "description": "Repo navigation calls with a result in the last 24 h, always written; repo stretches and repo file reads beside them when there are enough. Under 50 calls a role's ratios and quantiles are left out on purpose: a thin day is absent, not a swing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 9
+      },
+      "targets": [
+        {
+          "expr": "agent_nav_repo_nav_calls{job=\"node-exporter\", node=~\"$node\"}",
+          "legendFormat": "{{node}} {{role}} calls",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "agent_nav_stretches{job=\"node-exporter\", node=~\"$node\"}",
+          "legendFormat": "{{node}} {{role}} stretches",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "agent_nav_repo_reads{job=\"node-exporter\", node=~\"$node\"}",
+          "legendFormat": "{{node}} {{role}} reads",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Collector: hours since the stalest section",
+      "description": "Per host. The timer runs hourly, so above about 2 h the collector is failing or the host was off (journalctl -u nav-metrics).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "targets": [
+        {
+          "expr": "(time() - min by (node) (agent_nav_collector_success_timestamp_seconds{job=\"node-exporter\", node=~\"$node\"})) / 3600",
+          "legendFormat": "{{node}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Collector: sections failed in the last run",
+      "description": "Per host, out of 4 (scan, stretches, misses, rereads). Above 0: a section raised or the 240 s deadline passed; its series are left out until it succeeds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "targets": [
+        {
+          "expr": "sum by (node) (agent_nav_collector_section_failed{job=\"node-exporter\", node=~\"$node\"})",
+          "legendFormat": "{{node}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ]
+}
