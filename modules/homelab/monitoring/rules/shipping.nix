@@ -102,10 +102,17 @@ in
           "{{ $value }} escape(s) in the last 24 h: a revert on a default branch or an issue labelled escape."
           { }
         )
-        # offset 5d: on a younger series the 7-d average is still filling, so a warm-up rise would fire
+        # offset 5d: on a younger series the 7-d average is still filling, so a warm-up rise would fire. Slower alone is
+        # no reason for a retro (a bigger change gates longer): the gates must also fail more than their own average
         (alert "RetroDueGateSlower"
-          "${gateMedian} > ${toString a.RetroDueGateSlower.factor.value} * avg_over_time(${gateMedian}[7d]) and ${gateMedian} offset 5d"
-          "The median push gate takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average: a retro is due (Shipping dashboard: failed gate steps, where a PR's time goes)."
+          "${gateMedian} > ${toString a.RetroDueGateSlower.factor.value} * avg_over_time(${gateMedian}[7d]) and on () shipping_gate_fail_ratio > avg_over_time(shipping_gate_fail_ratio[7d]) and ${gateMedian} offset 5d"
+          "The median push gate takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average, and gates fail more than their 7-d average: a retro is due (Shipping dashboard: failed gate steps, where a PR's time goes)."
+          { }
+        )
+        # one step failing again and again over a full sample: one bad change on two hosts makes 2, so 3 is a pattern
+        (alert "RetroDueStepFailsRepeat"
+          ''max by (step) (shipping_gate_step_failures{window="7d"}) >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} and on () shipping_gate_runs_counted >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}''
+          "Gate step {{ $labels.step }} failed {{ $value }} times in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs)."
           { }
         )
         # min_over_time over 45 m spans two runs (every 30 min): one failed run that the next one fixes stays quiet
