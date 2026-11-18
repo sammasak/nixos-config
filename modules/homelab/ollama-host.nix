@@ -11,6 +11,23 @@ let
   cfg = config.services.ollama;
   fw = config.networking.firewall;
   pins = config.homelab.ollama.modelDigests;
+  # systemd's size syntax as MiB: bytes, or a K, M, G or T suffix
+  mib =
+    v:
+    let
+      s = toString v;
+      n = suffix: lib.toInt (lib.removeSuffix suffix s);
+    in
+    if lib.hasSuffix "T" s then
+      n "T" * 1048576
+    else if lib.hasSuffix "G" s then
+      n "G" * 1024
+    else if lib.hasSuffix "M" s then
+      n "M"
+    else if lib.hasSuffix "K" s then
+      n "K" / 1024
+    else
+      lib.toInt s / 1048576;
   pullPinned = pkgs.writeShellApplication {
     name = "ollama-pull-pinned";
     runtimeInputs = [
@@ -35,6 +52,12 @@ in
     description = "Board power cap in watts that nvidia-smi -pl sets before every Ollama start; null leaves the driver default. The host asserts its card's range (nvidia-smi --query-gpu=power.min_limit,power.max_limit).";
   };
 
+  options.homelab.ollama.promptCacheMiB = lib.mkOption {
+    type = lib.types.ints.positive;
+    default = 1024;
+    description = "MiB of host RAM the runner (llama-server) may keep for finished prompts, its prompt cache (LLAMA_ARG_CACHE_RAM). Unset it is 8192, the whole MemoryMax on msi and asus and twice acer's, so about 100 distinct 4K prompts get the runner OOM-killed. At most half of ollama.service's MemoryMax.";
+  };
+
   options.homelab.ollama.modelDigests = lib.mkOption {
     type = lib.types.attrsOf (lib.types.strMatching "[0-9a-f]{64}");
     default = { };
@@ -51,6 +74,8 @@ in
         OLLAMA_FLASH_ATTENTION = "1";
         OLLAMA_KV_CACHE_TYPE = "q8_0";
         OLLAMA_KEEP_ALIVE = "5m";
+        # read by the runner Ollama spawns (llama-server --cache-ram), which inherits this environment
+        LLAMA_ARG_CACHE_RAM = toString config.homelab.ollama.promptCacheMiB;
       };
     };
     # The bind needs the node address: wait for it at boot, then keep retrying if it comes later
@@ -117,6 +142,17 @@ in
       {
         assertion = config.systemd.services.ollama.serviceConfig ? MemoryMax;
         message = "modules/homelab/ollama-host.nix: set systemd.services.ollama.serviceConfig.MemoryMax to what one loaded model needs.";
+      }
+      {
+        # the other half is the model's host memory and the runner's own (about 0.5 GiB anonymous on asus)
+        assertion =
+          !(config.systemd.services.ollama.serviceConfig ? MemoryMax)
+          ||
+            config.homelab.ollama.promptCacheMiB * 2
+            <= mib config.systemd.services.ollama.serviceConfig.MemoryMax;
+        message = "modules/homelab/ollama-host.nix: homelab.ollama.promptCacheMiB ${toString config.homelab.ollama.promptCacheMiB} is above half of ollama.service's MemoryMax ${
+          toString (config.systemd.services.ollama.serviceConfig.MemoryMax or "")
+        }; the runner's prompt cache would reach the cap and get it OOM-killed.";
       }
     ];
   };

@@ -4,7 +4,7 @@ assertion, and asus without it is rejected, since libcuda.so.1 is only found und
 gpu check builds, and fails on asus with graphics but no NVIDIA library in the drivers env. The GPU power cap is a
 oneshot wanted by Ollama and ordered before it, never required, with a start timeout, after nvidia-persistenced, and a
 cap outside the card's range fails evaluation. A server context outside 4096 to 32768 (pi's own prompt; qwen2.5-coder's
-trained context) fails evaluation.
+trained context) fails evaluation, and so does a runner prompt cache over half of ollama.service's MemoryMax.
 
 The two gpu-check builds compile asus's CUDA closure. They follow nixos-flake-check's rule for checks (#502):
 - **Built** where nothing would compile against CUDA, and on asus itself.
@@ -47,6 +47,8 @@ check(u["persistenced"] and "nvidia-persistenced.service" in u["after"],
 for seed, watts in (("powerHigh", 271), ("powerLow", 99)):
     check(any(f"gpuPowerLimit is {watts} W" in m for m in failing[seed]),
           f"seeded: a {watts} W cap fails evaluation {failing[seed]}")
+check(any("promptCacheMiB 8192 is above half of ollama.service's MemoryMax 8G" in m for m in failing["cacheAtCap"]),
+      f"seeded: a prompt cache of 8192 MiB, the whole MemoryMax, fails evaluation {failing['cacheAtCap']}")
 check(any("OLLAMA_CONTEXT_LENGTH is 65536" in m for m in failing["ctx64k"]),
       f"seeded: a server context above qwen's trained 32768 fails evaluation {failing['ctx64k']}")
 check(any("OLLAMA_CONTEXT_LENGTH is 2048" in m for m in failing["ctx2k"]),
