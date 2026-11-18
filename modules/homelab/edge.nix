@@ -30,8 +30,19 @@ let
   authentik = "127.0.0.1:9000";
   # the only OTLP pushers: each host's native-otel-relay, and black-pi's blackbox probe
   otlpSources = map (h: h.address) (lib.attrValues hosts);
+  # Authentik's embedded outpost labels its metrics with the Host it gets (X-Forwarded-Host first), and any client can
+  # put a port on it: the name alone, as the route matched it, keeps that label to the names served. Caddy's adapter
+  # calls the X-Forwarded-Host line unnecessary; without it the upstream still gets the Host with its port
+  authentikHost = ''
+    header_up Host {host}
+    header_up X-Forwarded-Host {host}
+  '';
   sites = {
-    auth = "reverse_proxy ${authentik}";
+    auth = ''
+      reverse_proxy ${authentik} {
+        ${authentikHost}
+      }
+    '';
     chat = ''
       route {
         import authentik
@@ -114,9 +125,12 @@ in
     # Caddy deletes a client-sent copy of each copied header before it sets the outpost's value.
     extraConfig = ''
       (authentik) {
-        reverse_proxy /outpost.goauthentik.io/* ${authentik}
+        reverse_proxy /outpost.goauthentik.io/* ${authentik} {
+          ${authentikHost}
+        }
         forward_auth ${authentik} {
           uri /outpost.goauthentik.io/auth/caddy
+          ${authentikHost}
           copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
         }
       }

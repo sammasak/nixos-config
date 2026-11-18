@@ -7,12 +7,14 @@ plain HTTP on its own port, serving Caddy's /metrics and, at /authentik/server/m
 Authentik's loopback metrics listeners only, which black-pi scrapes at the fleet address; the deployed config, run on
 loopback, gives a stray name or port in the Host no series of its own."""
 import copy
+import http.server as http_server
 import json
 import os
 import socket
 import ssl
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.request
 
@@ -204,21 +206,48 @@ def free_port():
         return s.getsockname()[1]
 
 
-def stray_series(metrics):
-    """The deployed config with `metrics`, on loopback ports and a throwaway certificate for the same names: the
-    caddy_http_ lines that name a stray host after two TLS requests, one for an unserved name under the wildcard and
-    one for chat with a port in the Host."""
-    run = copy.deepcopy(config)
+def redial(node, old, new):
+    """Every reverse_proxy upstream at `old` sent to `new` instead, in place."""
+    if isinstance(node, dict):
+        if node.get("dial") == old:
+            node["dial"] = new
+        for v in node.values():
+            redial(v, old, new)
+    elif isinstance(node, list):
+        for v in node:
+            redial(v, old, new)
+
+
+def stray_run(run):
+    """`run`, the deployed config or a changed copy, on loopback ports with a throwaway certificate for the same names
+    and Authentik replaced by a listener that records each request's Host and X-Forwarded-Host. Four TLS requests:
+    an unserved name under the wildcard, and chat, chat's outpost ping and auth, each with a port in the Host.
+    Returns Caddy's caddy_http_ lines and the Host values Authentik saw."""
+    run = copy.deepcopy(run)
     run["admin"] = {"disabled": True}
     for log in run.get("logging", {}).get("logs", {}).values():
         if "writer" in log:
             log["writer"] = {"output": "discard"}
     http = run["apps"]["http"]
-    http["metrics"] = metrics
     https, plain, scrape = free_port(), free_port(), free_port()
     http["http_port"], http["https_port"] = plain, https
     for srv in http["servers"].values():
         srv["listen"] = [f"127.0.0.1:{scrape if srv['listen'] == [metrics_listen] else https}"]
+    seen = set()
+
+    class Authentik(http_server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.update(v for v in (self.headers["Host"], self.headers["X-Forwarded-Host"]) if v)
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_):
+            pass
+
+    upstream = http_server.ThreadingHTTPServer(("127.0.0.1", 0), Authentik)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    redial(run, authentik, f"127.0.0.1:{upstream.server_port}")
     with tempfile.TemporaryDirectory() as tmp:
         cert, key = f"{tmp}/cert.pem", f"{tmp}/key.pem"
         subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
@@ -244,28 +273,45 @@ def stray_series(metrics):
                     time.sleep(0.1)
             tls = ssl.create_default_context()
             tls.check_hostname, tls.verify_mode = False, ssl.CERT_NONE
-            for sni, host in (("stray-x7k2.sammasak.dev", "stray-x7k2.sammasak.dev"),
-                              ("chat.sammasak.dev", "chat.sammasak.dev:4711")):
+            for sni, host, path in (("stray-x7k2.sammasak.dev", "stray-x7k2.sammasak.dev", "/"),
+                                    ("chat.sammasak.dev", "chat.sammasak.dev:4711", "/"),
+                                    ("chat.sammasak.dev", "chat.sammasak.dev:4711", "/outpost.goauthentik.io/ping"),
+                                    ("auth.sammasak.dev", "auth.sammasak.dev:4711", "/")):
                 with socket.create_connection(("127.0.0.1", https), timeout=5) as raw, \
                         tls.wrap_socket(raw, server_hostname=sni) as c:
-                    c.sendall(f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
+                    c.sendall(f"GET {path} HTTP/1.1\r\nHost: {host}\r\nX-Forwarded-Host: {host}\r\n"
+                              f"Connection: close\r\n\r\n".encode())
                     while c.recv(65536):
                         pass
             body = urllib.request.urlopen(url, timeout=5).read().decode()
         finally:
             proc.terminate()
             proc.wait(timeout=10)
-    lines = [line for line in body.splitlines() if line.startswith("caddy_http_")]
-    return [line for line in lines if "stray-x7k2" in line or ":4711" in line], lines
+            upstream.shutdown()
+    return [line for line in body.splitlines() if line.startswith("caddy_http_")], seen
 
 
-stray, lines = stray_series(config["apps"]["http"].get("metrics"))
+def stray(lines):
+    return [line for line in lines if "stray-x7k2" in line or ":4711" in line]
+
+
+lines, seen = stray_run(config)
 counted = [line for line in lines if line.startswith("caddy_http_requests_total{") and 'server="public"' in line]
-check(stray == [] and counted, f"a stray name or Host port adds no caddy_http_ series, the public server counts them "
-      f"{stray[:3]} {counted}")
-# seeded: per_host (as Caddy 2.11 runs it on a TLS server) must give both their own host, or the probe proves nothing
-seeded, _ = stray_series({"per_host": True})
-check(any("stray-x7k2" in line for line in seeded) and any(":4711" in line for line in seeded),
-      f"seeded: with per_host the stray name and port show {len(seeded)} lines")
+check(stray(lines) == [] and counted, f"a stray name or Host port adds no caddy_http_ series, the public server counts "
+      f"them {stray(lines)[:3]} {counted}")
+check(seen == {"chat.sammasak.dev", "auth.sammasak.dev"},
+      f"Authentik gets the served name alone as Host and X-Forwarded-Host, whatever port the client sent {sorted(seen)}")
+# seeded: per_host (as Caddy 2.11 runs it on a TLS server), and Authentik's calls without the Host rewrite, must let
+# the stray values through, or the probe proves nothing
+seeded = copy.deepcopy(config)
+seeded["apps"]["http"]["metrics"] = {"per_host": True}
+for h, _ in flatten([h for srv in seeded["apps"]["http"]["servers"].values() for r in srv["routes"] for h in r["handle"]]):
+    if authentik in dials(h):
+        for k in ("Host", "X-Forwarded-Host"):
+            h.get("headers", {}).get("request", {}).get("set", {}).pop(k, None)
+lines, seen = stray_run(seeded)
+check(any("stray-x7k2" in line for line in lines) and any(":4711" in line for line in lines)
+      and "auth.sammasak.dev:4711" in seen and "chat.sammasak.dev:4711" in seen,
+      f"seeded: with per_host and no Host rewrite the stray name and port show {len(stray(lines))} {sorted(seen)}")
 
 finish()
