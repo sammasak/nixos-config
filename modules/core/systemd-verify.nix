@@ -59,11 +59,13 @@ in
       printf '[Unit]\nAfter=fixture-a.service\n[Service]\nExecStart=${trueBin}\n' > units/fixture-b.service
       printf '[Service]\nRestartsec=5\nExecStart=${trueBin}\n' > units/fixture-c.service
       printf '[Service]\nWorkingDirectory=relative\nExecStart=${trueBin}\n' > units/fixture-d.service
+      printf '[Service]\nType=oneshot\nRestart=always\nExecStart=${trueBin}\n' > units/fixture-e.service
       wants=units/multi-user.target.wants
       chmod u+w "$wants"
       ln -s ../fixture-a.service "$wants/fixture-a.service"
       ln -s ../fixture-c.service "$wants/fixture-c.service"
       ln -s ../fixture-d.service "$wants/fixture-d.service"
+      ln -s ../fixture-e.service "$wants/fixture-e.service"
       for target in multi-user.target default.target; do
         output=$(verify "$target")
         found=$(cycles <<<"$output")
@@ -75,7 +77,7 @@ in
         found=$(ignored <<<"$output")
         grep -q "fixture-c.service:.*Restartsec" <<<"$found" || {
           echo "the fixture Restartsec= under $target was not reported: verify did not load fixture-c.service, or its message changed"
-          [ -z "$found" ] || { echo "ignored lines it did report:"; echo "$found"; }
+          [ -z "$found" ] || { echo "lines it did report:"; echo "$found"; }
           exit 1
         }
         # a parse error whose message does not say "ignoring" must be reported too
@@ -84,8 +86,15 @@ in
           [ -z "$found" ] || { echo "lines it did report:"; echo "$found"; }
           exit 1
         }
+        # a unit systemd refuses says so only as a verdict, with no file:line
+        grep -q "fixture-e.service has a bad unit file setting" <<<"$found" || {
+          echo "the fixture refused unit (Restart=always on a oneshot) under $target was not reported: the pattern misses systemd's verdicts"
+          [ -z "$found" ] || { echo "lines it did report:"; echo "$found"; }
+          exit 1
+        }
       done
-      rm "$wants/fixture-a.service" "$wants/fixture-c.service" "$wants/fixture-d.service" units/fixture-[abcd].service
+      rm "$wants/fixture-a.service" "$wants/fixture-c.service" "$wants/fixture-d.service" "$wants/fixture-e.service" \
+        units/fixture-[abcde].service
 
       for target in multi-user.target default.target; do
         output=$(verify "$target")

@@ -107,7 +107,8 @@ for what, text in REFUSED:
 no_verdict = body.replace("|has a bad unit file setting'", "'")
 check(no_verdict != body, "the check's verdict branch is found to drop it")
 rc, out, made = run({"msi-wake.service": REFUSED[0][1]}, no_verdict)
-check(rc == 0 and made, f"without the verdict branch a refused unit passes: the branch is what catches it ({rc}, {out.strip()!r})")
+check(rc != 0 and not made and "the fixture refused unit (Restart=always on a oneshot) under multi-user.target was not reported" in out,
+      f"seeded: a pattern that misses systemd's verdicts fails on the fixture, not passing the tree ({rc}, {out.strip()!r})")
 
 rc, out, made = run({}, dropins={"s0.service.d/override.conf": "[Service]\nRestartSec=5x\n"})
 check(rc != 0 and not made and re.search(r"s0\.service\.d/override\.conf:\d+: Failed to parse RestartSec=5x", out) is not None,
