@@ -429,6 +429,9 @@ let
   shippingMetricsTest = gate "shipping-metrics-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-shipping-metrics.py
   '';
+  navMetricsTest = gate "nav-metrics-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python scripts/test-nav-metrics.py
+  '';
   # acer's Caddyfile through acer's Caddy, from the gate probe
   caddyEdgeTest =
     gate "caddy-edge-test"
@@ -683,6 +686,7 @@ let
     systemdVerifyTest
     platformRecordsTest
     shippingMetricsTest
+    navMetricsTest
     authentikAkTest
     switchSafetyTest
     rfBeaconsTest
@@ -1231,6 +1235,8 @@ in
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
     "nixos:shipping-metrics-test" =
       task "Shipping collector on a fake GitHub and Loki: issues split actionable/parked/archived, a failed source leaves no series and keeps its stale timestamp, an undeclared name is refused" shippingMetricsTest;
+    "nixos:nav-metrics-test" =
+      task "Navigation collector on fixture transcripts: counts, misses and repeat reads by role, no prompt, command or path in the textfile, a thin role writes its sample size alone, a failed section is a series" navMetricsTest;
     "nixos:typed-interfaces-test" =
       task "no types.attrs option and no `or` fallback on a sam.* option read; seeded snippets of both are caught" typedInterfacesTest;
     "nixos:system-checks-test" =

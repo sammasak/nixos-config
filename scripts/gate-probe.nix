@@ -704,7 +704,19 @@ let
         // lib.mapAttrs' (
           _: h:
           lib.nameValuePair "node-exporter-${h.config.networking.hostName}" h.config.services.prometheus.exporters.node.port
-        ) (removeAttrs hosts [ "naked-pi" ]);
+        ) (removeAttrs hosts [ "naked-pi" ])
+        # the GPU hosts' exporters (gpu-exporter.nix, on where sam.fleet says gpu)
+        // lib.mapAttrs' (
+          _: h:
+          lib.nameValuePair "nvidia-gpu-${h.config.networking.hostName}" h.config.services.prometheus.exporters.nvidia-gpu.port
+        ) (lib.filterAttrs (_: h: h.config.homelab.gpuTelemetry.enable or false) hosts)
+        # harmonia's bind, [::]:<port>, on each host that serves a store cache (store-cache.nix)
+        // lib.mapAttrs' (
+          _: h:
+          lib.nameValuePair "store-cache-${h.config.networking.hostName}" (
+            lib.last (lib.splitString ":" h.config.services.harmonia.cache.settings.bind)
+          )
+        ) (lib.filterAttrs (_: h: h.config.sam.storeCache.enable) hosts);
         addresses = lib.mapAttrs (_: h: [ h.address ] ++ h.extraAddresses) lenovo.sam.fleet.hosts;
         machines = map (m: m.target) herdr.machines;
         jumpHosts = lenovo.services.devEnvironments.jumpHosts;
@@ -724,6 +736,20 @@ let
             ]
           );
           trusted = failing (extend "black-pi" [ { networking.firewall.trustedInterfaces = [ "eth0" ]; } ]);
+          lokiAnySource = failing (
+            extend "black-pi" [ { networking.firewall.allowedTCPPorts = [ lenovo.sam.fleet.loki.port ]; } ]
+          );
+          ntfyElsewhere = failing (
+            extend "msi-ms7758" [
+              ../modules/homelab/ntfy.nix
+              {
+                homelab.ntfy = {
+                  enable = true;
+                  baseUrl = "https://ntfy.example";
+                };
+              }
+            ]
+          );
           lokiLoopback = failing (
             extend "black-pi" [ ({ lib, ... }: { homelab.loki.listenAddress = lib.mkForce "127.0.0.1"; }) ]
           );

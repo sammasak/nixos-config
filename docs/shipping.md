@@ -62,3 +62,44 @@ reading. Change a value with a PR that quotes that row: the reading, over what p
 The rules are generated from the file (`modules/homelab/monitoring/rules/shipping.nix`). The flake check
 `shipping-rules` fails if a rule, panel or `tunedBy` names a metric the collector does not emit. Its promtool tests
 size their inputs from the policy, so a changed value needs no test edit.
+
+## Navigation
+
+How much looking around an agent does in this repo before it changes something: the Grafana dashboard
+**Navigation**, per host and role, beside Shipping (nixos-config#535). No alert rules yet.
+
+`nav-metrics.service` on every devTools host with node-exporter (lenovo, acer-swift, msi-ms7758, asus-b460m;
+`modules/homelab/nav-metrics.nix`, hourly, no network) runs `scripts/nav-metrics.py` as the owner over the main-session
+transcripts `~/.claude/projects/*/*.jsonl` and writes `/var/lib/nav-metrics/nav.prom`: counts only, labelled `role`
+(`coordinator` when the session's name contains "coordinator", else `worker`), never a prompt, command, path or file
+content. The classification is the retro's `navcost.py`, trimmed:
+
+- **Navigation call**: Read, Grep, Glob, or a Bash command running grep/rg/find/fd/ls/tree/cat/head/tail/`sed -n`/
+  `git grep|log|show` that is not a build or test and not a filter on another command's pipe.
+- **Repo**: a call that names a path in a checkout (`*/nixos-config`, `~/.cache/wt/<name>`, `~/wt/<name>`), or names
+  none and runs there.
+- **Stretch**: the calls after a prompt from the owner or a peer session, up to the next; a repo stretch navigated
+  the repo or edited a file in it. A miss: an error, an empty result, no match, no such file.
+
+| Metric | Retro reading (12-18 Nov) | What bad looks like |
+|---|---|---|
+| `agent_nav_calls_before_first_edit{role,quantile}` | median 3, p90 11 | p90 above about 15, or the median rising week over week: agents cannot find the place to change |
+| `agent_nav_topdirs_before_first_edit{role,quantile}` | median 1, p90 4 | p90 above about 6: one change touches many top-level areas |
+| `agent_nav_repo_miss_ratio{role}` | 3.6 % | sustained above about 6 %: the paths and names agents expect are wrong or moved |
+| `agent_nav_repeat_read_ratio{role}` | 56 % | creeping toward 70 % and above: files too big to hold, or context lost and fetched again |
+| `agent_nav_repo_nav_calls{role}`, `agent_nav_stretches`, `agent_nav_repo_reads` | | the sample sizes behind them |
+| `agent_nav_collector_success_timestamp_seconds{section}`, `agent_nav_collector_section_failed{section}` | | as the shipping collector's |
+
+The window is the last 24 h. A role with fewer than 50 repo navigation calls in it writes `agent_nav_repo_nav_calls`
+alone: a thin day is absent, not a swing (24 calls once read as a 21 % miss ratio).
+
+It cannot see:
+- subagents' navigation: the transcripts of Agent/Task calls are not read, so a delegating session reads low;
+- hidden failures: a command ending `|| true`, `2>/dev/null` or `; echo rc=$?` turns a failed grep into output, so
+  misses are under-counted;
+- precisely what Bash does: its classification is a heuristic (build/test wins over navigation, a compound command
+  counts once);
+- which worktree: every checkout collapses to one repo, and a `~/.cache/wt` scratch dir counts as one;
+- whether a re-read was wasteful or legitimate (the file changed after an edit or a merge);
+- outcome quality: fewer lookups is better only if the change was right;
+- sessions in dev-environment guests, whose transcripts stay in the guest.

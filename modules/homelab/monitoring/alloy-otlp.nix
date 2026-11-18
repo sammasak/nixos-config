@@ -37,6 +37,8 @@ let
     "run"
     stability
     "--disable-reporting"
+    # 0.0.0.0, not the fleet address: the one process also serves the OTLP intake, and a bind to acer's Wi-Fi address
+    # fails while its lease is missing; the firewall admits black-pi alone (sam.fleet.listeners.alloy-http)
     "--server.http.listen-addr=0.0.0.0:${toString httpPort}"
     "--storage.path=/var/lib/alloy-otlp"
     configFile
