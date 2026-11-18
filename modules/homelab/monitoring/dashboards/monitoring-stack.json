@@ -199,7 +199,7 @@
       },
       "targets": [
         {
-          "expr": "(max(prometheus_tsdb_storage_blocks_bytes{job=\"prometheus\"}) + max(prometheus_tsdb_wal_storage_size_bytes{job=\"prometheus\"}) + max(prometheus_tsdb_head_chunks_storage_size_bytes{job=\"prometheus\"})) / max(prometheus_tsdb_retention_limit_bytes{job=\"prometheus\"})",
+          "expr": "(max(prometheus_tsdb_storage_blocks_bytes{job=\"prometheus\"}) + max(prometheus_tsdb_wal_storage_size_bytes{job=\"prometheus\"}) + max(prometheus_tsdb_head_chunks_storage_size_bytes{job=\"prometheus\"}) + max(prometheus_tsdb_out_of_order_wbl_storage_size_bytes{job=\"prometheus\"})) / max(prometheus_tsdb_retention_limit_bytes{job=\"prometheus\"})",
           "legendFormat": "",
           "instant": true,
           "refId": "A"
@@ -226,7 +226,7 @@
         },
         "overrides": []
       },
-      "description": "Blocks, WAL and head chunks on the SD card, as Prometheus counts them against --storage.tsdb.retention.size; at the cap it drops the oldest block, so retention shortens rather than the disk filling."
+      "description": "Blocks, WAL, head chunks and the out-of-order WBL on the SD card, as Prometheus counts them against --storage.tsdb.retention.size; at the cap it drops the oldest block, so retention shortens rather than the disk filling."
     },
     {
       "id": 7,
@@ -456,7 +456,7 @@
     {
       "id": 14,
       "type": "timeseries",
-      "title": "Webhook notifications to the alert bridge: attempted and failed",
+      "title": "Webhook notifications to the alert bridge",
       "gridPos": {
         "h": 7,
         "w": 12,
@@ -470,13 +470,23 @@
       "targets": [
         {
           "expr": "sum(rate(alertmanager_notifications_total{job=\"alertmanager\",integration=\"webhook\"}[$__rate_interval]))",
-          "legendFormat": "attempted",
+          "legendFormat": "notifications",
           "refId": "A"
         },
         {
           "expr": "sum(rate(alertmanager_notifications_failed_total{job=\"alertmanager\",integration=\"webhook\"}[$__rate_interval]))",
-          "legendFormat": "failed",
+          "legendFormat": "failed after retries",
           "refId": "B"
+        },
+        {
+          "expr": "sum(rate(alertmanager_notification_requests_total{job=\"alertmanager\",integration=\"webhook\"}[$__rate_interval]))",
+          "legendFormat": "requests (retries too)",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(rate(alertmanager_notification_requests_failed_total{job=\"alertmanager\",integration=\"webhook\"}[$__rate_interval]))",
+          "legendFormat": "requests failed",
+          "refId": "D"
         }
       ],
       "fieldConfig": {
@@ -485,7 +495,7 @@
         },
         "overrides": []
       },
-      "description": "The only integration configured: the alert bridge on lenovo, which pages through ntfy. Attempts count retries; a failed one is a page that did not leave."
+      "description": "The only integration configured: the alert bridge on lenovo, which pages through ntfy. A notification counts once however many requests it takes; failed after retries is a page that did not leave, a failed request alone one that is still retrying."
     },
     {
       "id": 15,
@@ -621,7 +631,7 @@
       },
       "targets": [
         {
-          "expr": "max by (exporter) (otelcol_exporter_queue_size{job=\"alloy-otlp\"} / otelcol_exporter_queue_capacity{job=\"alloy-otlp\"})",
+          "expr": "max by (exporter) (otelcol_exporter_queue_size{job=\"alloy-otlp\"}) / max by (exporter) (otelcol_exporter_queue_capacity{job=\"alloy-otlp\"})",
           "legendFormat": "{{exporter}}",
           "refId": "A"
         }
@@ -634,7 +644,7 @@
         },
         "overrides": []
       },
-      "description": "The metrics exporter's queue to black-pi's Prometheus (logs go to Loki without one): filling up means Prometheus is not taking the writes; full, the collector drops."
+      "description": "The metrics exporter's queue to black-pi's Prometheus (logs go to Loki without one): filling up means Prometheus is not taking the writes; full, the receiver answers 503 and the senders' points show as refused."
     },
     {
       "id": 20,
@@ -676,7 +686,7 @@
         },
         "overrides": []
       },
-      "description": "Each scraped service's own RSS, against the MemoryMax its module sets (modules/homelab/monitoring/*.nix, loki.nix): over it the kernel OOM-kills the unit."
+      "description": "Each scraped service's own RSS; its module's MemoryMax is where the kernel OOM-kills the unit."
     }
   ]
 }

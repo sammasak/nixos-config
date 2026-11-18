@@ -400,8 +400,15 @@ in
             python3 -I ${../scripts/shipping-metrics.py} --list > shipping.prom
             mkdir stack
             bash ${../scripts/monitoring-exposition.sh} stack ${msi-ms7758.pkgs.prometheus} "$promConfigPath" \
-              ${lib.escapeShellArg (toString pi.services.prometheus.extraFlags)} ${msi-ms7758.pkgs.prometheus-alertmanager} \
-              "$amConfigPath" ${acer-swift.pkgs.grafana-alloy} "$(grep -oE '/nix/store/[a-z0-9]+-alloy-otlp\.alloy' <<<"$alloyExec")"
+              ${
+                lib.escapeShellArg (
+                  toString (
+                    pi.services.prometheus.extraFlags
+                    ++ [ "--storage.tsdb.retention.time=${pi.services.prometheus.retentionTime}" ]
+                  )
+                )
+              } ${msi-ms7758.pkgs.prometheus-alertmanager} "$amConfigPath" \
+              ${lib.escapeShellArg (toString pi.services.prometheus.alertmanager.extraFlags)} "$alloyExec"
             check() {
               python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
                 ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom stack/*.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
