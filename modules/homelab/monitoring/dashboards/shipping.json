@@ -516,6 +516,160 @@
       }
     },
     {
+      "id": 28,
+      "type": "row",
+      "title": "Where a PR's time goes (deploy-repo PRs merged in 7 d)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "panels": []
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Median hours by phase",
+      "description": "idle: last commit to the start of its passing push gate, gate queue wait included (the platform records carry no queue time); gate: that gate's run; gate_to_merge: gate end to merge; merge_to_deploy: merge to the end of the first good recorded deploy (just deploy) whose sha has the merge. Deploy-repo PRs merged in 7 d; a PR gated outside the push hook has no gate phases (unmatched no_gate).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 35
+      },
+      "targets": [
+        {
+          "expr": "shipping_pr_phase_hours{quantile=\"0.5\"}",
+          "legendFormat": "{{phase}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "p90 hours by phase",
+      "description": "idle: last commit to the start of its passing push gate, gate queue wait included (the platform records carry no queue time); gate: that gate's run; gate_to_merge: gate end to merge; merge_to_deploy: merge to the end of the first good recorded deploy (just deploy) whose sha has the merge. Deploy-repo PRs merged in 7 d; a PR gated outside the push hook has no gate phases (unmatched no_gate).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 35
+      },
+      "targets": [
+        {
+          "expr": "shipping_pr_phase_hours{quantile=\"0.9\"}",
+          "legendFormat": "{{phase}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Failed push gates before the pass, per PR",
+      "description": "Failed push-mode gates on a PR's commits before the gate that passed it; reruns of the same commit count.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 16,
+        "y": 35
+      },
+      "targets": [
+        {
+          "expr": "shipping_pr_gate_retries",
+          "legendFormat": "p{{quantile}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 32,
+      "type": "bargauge",
+      "title": "PRs behind each phase, and unmatched",
+      "description": "The sample behind each phase. no_gate: no passing push gate on the PR's commits between its last commit and its merge (gated outside the push hook, or merged before the gate records began). not_deployed: no good recorded deploy has its merge yet.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 35
+      },
+      "targets": [
+        {
+          "expr": "shipping_pr_phase_prs",
+          "legendFormat": "{{phase}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "range": false
+        },
+        {
+          "expr": "shipping_pr_phase_unmatched",
+          "legendFormat": "unmatched {{reason}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
       "id": 16,
       "type": "row",
       "title": "How often do we fail",
@@ -524,7 +678,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 43
       },
       "panels": []
     },
@@ -540,7 +694,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 35
+        "y": 44
       },
       "targets": [
         {
@@ -572,7 +726,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 35
+        "y": 44
       },
       "targets": [
         {
@@ -604,7 +758,7 @@
         "h": 8,
         "w": 4,
         "x": 16,
-        "y": 35
+        "y": 44
       },
       "targets": [
         {
@@ -636,7 +790,7 @@
         "h": 8,
         "w": 4,
         "x": 20,
-        "y": 35
+        "y": 44
       },
       "targets": [
         {
@@ -668,7 +822,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 43
+        "y": 52
       },
       "targets": [
         {
@@ -700,7 +854,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 43
+        "y": 52
       },
       "targets": [
         {
@@ -729,7 +883,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 51
+        "y": 60
       },
       "panels": []
     },
@@ -745,7 +899,7 @@
         "h": 10,
         "w": 18,
         "x": 0,
-        "y": 52
+        "y": 61
       },
       "targets": [
         {
@@ -817,7 +971,7 @@
         "h": 10,
         "w": 3,
         "x": 18,
-        "y": 52
+        "y": 61
       },
       "targets": [
         {
@@ -851,7 +1005,7 @@
         "h": 10,
         "w": 3,
         "x": 21,
-        "y": 52
+        "y": 61
       },
       "targets": [
         {
