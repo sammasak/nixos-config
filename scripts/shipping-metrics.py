@@ -29,7 +29,7 @@ METRICS = {
     "shipping_issues_closed": "Issues closed in the window, all owner repos.",
     "shipping_issue_age_days": "Age of open actionable issues, by quantile.",
     "shipping_prs_merged": "PRs merged in the window.",
-    "shipping_pr_lead_time_hours": "Open-to-merge time of PRs merged in the last 7 d, by quantile.",
+    "shipping_pr_lead_time_hours": "Earliest author date of a PR's own commits (its open time without a token) to merge, PRs merged in the last 7 d, by quantile.",
     "shipping_review_rounds": "Verdict comments (Grade: N/10) per reviewed merged PR, by quantile.",
     "shipping_review_first_pass_ratio": "Share of the last reviewed merged PRs whose first verdict met the policy grade.",
     "shipping_review_prs_counted": "Reviewed merged PRs behind the review ratio and rounds.",
@@ -150,11 +150,34 @@ def issues(gh, out, owner, parked, now):
         out.add("shipping_issues_closed", gh.count(f"user:{owner} is:issue closed:>={since}"), window=window)
 
 
+def lead_hours(gh, it):
+    """Hours from the earliest author date among the PR's own commits (those not on its base) to its merge, never
+    below 0. The PR's open time stands in when its commits cannot be read: without a token (60 REST calls an hour
+    would not cover one call per PR), on an HTTP error for this PR alone (a deleted or private repo), or when it
+    lists none."""
+    start = ts(it["created_at"])
+    if gh.token:
+        path, dates, page = f"/repos/{it['repository_url'].split('/repos/', 1)[1]}/pulls/{it['number']}/commits", [], 1
+        try:
+            while True:
+                commits = gh.get(path, per_page=100, page=page)
+                dates += [ts(c["commit"]["author"]["date"]) for c in commits]
+                # GitHub lists at most 250 commits of a PR
+                if len(commits) < 100 or page == 3:
+                    break
+                page += 1
+        except urllib.error.HTTPError as e:
+            print(f"shipping-metrics: commits of {path} unreadable ({e.code}), lead time from its open time", file=sys.stderr)
+            dates = []
+        start = min(dates, default=start)
+    return max((ts(it["pull_request"]["merged_at"]) - start).total_seconds() / 3600, 0)
+
+
 def prs(gh, out, owner, now):
     since = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     items, total = gh.search("issues", f"user:{owner} is:pr is:merged merged:>={since}")
     out.add("shipping_prs_merged", total, window="7d")
-    lead = [(ts(it["pull_request"]["merged_at"]) - ts(it["created_at"])).total_seconds() / 3600 for it in items]
+    lead = [lead_hours(gh, it) for it in items]
     for q in (0.5, 0.9):
         if lead:
             out.add("shipping_pr_lead_time_hours", quantile(lead, q), quantile=str(q))
