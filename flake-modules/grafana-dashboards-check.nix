@@ -441,7 +441,10 @@ in
                 (lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] exec)
             } --path.procfs=fixtures/proc --path.sysfs=fixtures/sys --path.udev.data=fixtures/udev/data > exporter.log 2>&1 &
             exporter=$!
-            for _ in $(seq 50); do curl -fsS -o node.prom http://127.0.0.1:${toString node.port}/metrics && break; sleep 0.2; done
+            # bounded, and a clear failure: a slow start under gate load once left a scrape the check read as metrics
+            # provided by nothing (scripts/wait-metrics.sh)
+            bash ${../scripts/wait-metrics.sh} node-exporter http://127.0.0.1:${toString node.port}/metrics node.prom \
+              exporter.log "$exporter" 120 '^node_cpu_seconds_total{' '^homelab_nixos_generation '
             kill "$exporter"
             grep -qx 'homelab_nixos_generation 27' node.prom || {
               cat textfile/nixos.prom
