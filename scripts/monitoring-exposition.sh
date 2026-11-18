@@ -3,31 +3,24 @@
 # configuration and rule files, its flags) and Alertmanager (its configuration and flags), and acer's alloy-otlp (its
 # unit's ExecStart as evaluated, less the token wrapper, listener and storage pointed here; fed one OTLP metric and one
 # log, since its receiver counters appear only with traffic), each run on loopback with no peer reachable, and each's
-# /metrics saved as OUT/<name>.prom once its ready endpoint answers and the series this check depends on are in it.
-# Anything not there in 120 s (gate load) fails the run as "did not start", with that service's log.
-# Usage: monitoring-exposition.sh OUT PROMETHEUS PROMCONFIG 'PROMFLAGS' ALERTMANAGER AMCONFIG 'AMFLAGS' 'ALLOYEXEC'
+# /metrics saved as OUT/<name>.prom once its ready endpoint answers and every name in NEEDS is in it.
+# NEEDS is `check-grafana-dashboards.py --needs` output: "JOB NAME" for a name the panels and rules select under that
+# job, "* NAME" for one only these services can provide (some appear only after a first scrape, sync or evaluation).
+# A service not ready, or a name still missing, after 120 s (gate load) fails the run with the missing names and logs.
+# Usage: monitoring-exposition.sh OUT PROMETHEUS PROMCONFIG 'PROMFLAGS' ALERTMANAGER AMCONFIG 'AMFLAGS' 'ALLOYEXEC' NEEDS
 set -eu
-out=$1 prometheus=$2 promconfig=$3 promflags=$4 alertmanager=$5 amconfig=$6 amflags=$7 alloyexec=$8
+out=$1 prometheus=$2 promconfig=$3 promflags=$4 alertmanager=$5 amconfig=$6 amflags=$7 alloyexec=$8 needs=$9
 work=$(mktemp -d "$PWD/stack.XXXXXX")
 pids=()
 trap 'kill "${pids[@]}" 2>/dev/null || true' EXIT
-# wait NAME URL [PATTERN...]: URL answers, and (for /metrics) holds every PATTERN; saved as OUT/NAME.prom
+# wait NAME URL: URL answers within 120 s
 wait_for() {
-  local name=$1 url=$2
-  shift 2
   for _ in $(seq 120); do
-    if curl -fsS --max-time 5 -o "$work/$name.try" "$url" 2>/dev/null; then
-      local missing=0
-      for p in "$@"; do grep -q -- "$p" "$work/$name.try" || missing=1; done
-      if [ "$missing" = 0 ]; then
-        [ $# = 0 ] || mv "$work/$name.try" "$out/$name.prom"
-        return 0
-      fi
-    fi
+    curl -fsS --max-time 5 -o /dev/null "$2" 2>/dev/null && return 0
     sleep 1
   done
-  echo "monitoring-exposition: exporter did not start: $name: $url did not answer with $* in 120 s" >&2
-  cat "$work/$name.log" >&2
+  echo "monitoring-exposition: exporter did not start: $1: $2 did not answer in 120 s" >&2
+  cat "$work/$1.log" >&2
   return 1
 }
 # shellcheck disable=SC2086 # the deployed flags, one word each
@@ -67,10 +60,37 @@ post() {
 }
 post metrics '{"resourceMetrics":[{'"$resource"',"scopeMetrics":[{"metrics":[{"name":"claude_code.cost.usage","unit":"USD","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"asDouble":1,"timeUnixNano":"'"$now"'"}]}}]}]}]}'
 post logs '{"resourceLogs":[{'"$resource"',"scopeLogs":[{"logRecords":[{"timeUnixNano":"'"$now"'","body":{"stringValue":"check"}}]}]}]}'
-# the late series: the notifier's per-Alertmanager counters, the TSDB's (samples appended needs a first rule
-# evaluation, up to the 30 s interval), the rule groups', the receiver's
-wait_for prometheus http://127.0.0.1:19090/metrics '^prometheus_notifications_errors_total{' \
-  '^prometheus_tsdb_head_series ' '^prometheus_rule_group_last_duration_seconds{' '^prometheus_tsdb_head_samples_appended_total'
-wait_for alertmanager http://127.0.0.1:19093/metrics '^alertmanager_notifications_total{'
-wait_for alloy http://127.0.0.1:19346/metrics '^otelcol_receiver_accepted_metric_points_total' \
-  '^otelcol_receiver_accepted_log_records_total'
+# every needed name, polled from all three until present: a name selected under a job from that job's /metrics, a
+# "*" name from any of them
+python3 -I - "$needs" "$out" <<'EOF' || { cat "$work/prometheus.log" "$work/alertmanager.log" "$work/alloy.log" >&2; exit 1; }
+import re, sys, time, urllib.request
+services = {"prometheus": 19090, "alertmanager": 19093, "alloy-otlp": 19346}
+files = {"prometheus": "prometheus", "alertmanager": "alertmanager", "alloy-otlp": "alloy"}
+want = {}
+for line in open(sys.argv[1]):
+    job, name = line.split()
+    want.setdefault(job, set()).add(name)
+unknown = set(want) - set(services) - {"*"}
+if unknown:
+    sys.exit(f"monitoring-exposition: names needed from jobs not run here: {sorted(unknown)}")
+missing = {}
+for waited in range(120):
+    bodies, have = {}, {}
+    for job, port in services.items():
+        try:
+            bodies[job] = urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=5).read().decode()
+        except OSError:
+            bodies[job] = ""
+        have[job] = set(re.findall(r"(?m)^[A-Za-z_:][\w:]*", bodies[job]))
+    missing = {job: sorted(want.get(job, set()) - have[job]) for job in services}
+    missing["*"] = sorted(want.get("*", set()) - set().union(*have.values()))
+    if not any(missing.values()):
+        for job, body in bodies.items():
+            open(f"{sys.argv[2]}/{files[job]}.prom", "w").write(body)
+        print(f"monitoring-exposition: {sum(map(len, want.values()))} needed names present after {waited} s",
+              file=sys.stderr)
+        sys.exit(0)
+    time.sleep(1)
+sys.exit("monitoring-exposition: still missing after 120 s: "
+         + "; ".join(f"{job}: {' '.join(names)}" for job, names in missing.items() if names))
+EOF
