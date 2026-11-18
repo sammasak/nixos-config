@@ -25,10 +25,13 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               A manual nixos:qa that passes on a clean checkout, unchanged through the run, records its tree the
 #               same way (scripts/qa-green.sh), so pushing that commit afterwards runs the lints only; with any
 #               change no commit holds it records nothing. A re-push of a green tree also runs the lints only.
-#               nixos:qa takes /run/work-locks/heavy-work.lock itself (scripts/heavy-lock.sh): do not wrap it in
-#               flock (an ancestor's lock is detected and counts). A check deferred to its own host is printed as
-#               `nixos-qa: deferred-checks head=<sha> <owner>:<check>…` and in the gate record (head=,
-#               deferred_checks=); its owner's gate records `result=built owner=<host> head=<sha>` for it.
+#               Tracked files only: what .gitignore hides is not compared.
+#               nixos:qa takes /run/work-locks/heavy-work.lock itself (scripts/heavy-lock.sh); an ancestor that
+#               holds it (`flock -o`) counts, and a launcher holding it across systemd-run sets NIXOS_QA_LOCKED=1.
+#               A check deferred to its own host is printed as `nixos-qa: deferred-checks head=<sha>
+#               checkout=clean|dirty <owner>:<check>…` and in the gate record (head=, checkout=, deferred_checks=);
+#               the owner's flake check records each of its own deploy checks as `result=built|present|dry
+#               owner=<host> head=<sha> drv=<drv>`, the deferral as `result=deferred … drv=<drv>`.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table

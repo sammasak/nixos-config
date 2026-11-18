@@ -246,11 +246,11 @@ with tempfile.TemporaryDirectory() as t:
     qg = ROOT / "scripts" / "qa-green.sh"
     genv = {**env, "QA_SYSTEM": str(gen), "QA_GATE_PREFIX": f"{t}/"}
 
-    def manual(gate=str(t / "qa"), during=None):
+    def manual(gate=str(t / "qa"), during=None, result="pass", mode="manual"):
         begin = subprocess.run(["bash", str(qg), "begin"], cwd=repo, env=genv, capture_output=True, text=True, check=True).stdout.split()
         if during:
             during()
-        r = subprocess.run(["bash", str(qg), "record", gate, *begin], cwd=repo, env=genv, capture_output=True, text=True)
+        r = subprocess.run(["bash", str(qg), "record", gate, result, mode, *begin], cwd=repo, env=genv, capture_output=True, text=True)
         return r.returncode, r.stdout + r.stderr
 
     def switch_gen(to):
@@ -265,19 +265,27 @@ with tempfile.TemporaryDirectory() as t:
     check(rc == 0 and "recorded green" in out and green.read_text().split("\n")[-2] == want,
           f"M1 a clean manual green is recorded as the hook records its own ({out.strip()})")
     case("M1 then the push of that tree runs the lints only", m1, "LINTS")
-    for what, files, during, gate_exe in (
-        ("M2 an untracked file at the start", {"flake.nix": "m2\n"}, None, None),
-        ("M3 a tracked file modified at the start", {"flake.nix": "m3\n"}, None, None),
-        ("M4 HEAD moved during the run", {"flake.nix": "m4\n"}, lambda: commit({"flake.nix": "m4b\n"}, "during"), None),
-        ("M5 the generation switched during the run", {"flake.nix": "m5\n"}, lambda: switch_gen("gen2"), None),
-        ("M6 the gate not run as its store path", {"flake.nix": "m6\n"}, None, "nixos-qa"),
+    for what, files, during, gate_exe, extra in (
+        ("M2 an untracked file at the start", {"flake.nix": "m2\n"}, None, None, {}),
+        ("M3 a tracked file modified at the start", {"flake.nix": "m3\n"}, None, None, {}),
+        ("M4 HEAD moved during the run", {"flake.nix": "m4\n"}, lambda: commit({"flake.nix": "m4b\n"}, "during"), None, {}),
+        ("M5 the generation switched during the run", {"flake.nix": "m5\n"}, lambda: switch_gen("gen2"), None, {}),
+        ("M6 the gate not run as its store path", {"flake.nix": "m6\n"}, None, "nixos-qa", {}),
+        ("M7 a failed gate", {"flake.nix": "m7\n"}, None, None, {"result": "fail"}),
+        ("M8 the hook's own run (push mode)", {"flake.nix": "m8\n"}, None, None, {"mode": "push"}),
+        ("M9 a file marked skip-worktree", {"flake.nix": "m9\n"}, None, None, {}),
     ):
         rev = commit(files, what[:2])
         if what.startswith("M2"):
             (repo / "scratch.txt").write_text("x\n")
         if what.startswith("M3"):
             (repo / "flake.nix").write_text("edited\n")
-        rc, out = manual(gate_exe or str(t / "qa"), during)
+        if what.startswith("M9"):
+            git("update-index", "--skip-worktree", "flake.nix")
+            (repo / "flake.nix").write_text("hidden\n")
+        rc, out = manual(gate_exe or str(t / "qa"), during, **extra)
+        if what.startswith("M9"):
+            git("update-index", "--no-skip-worktree", "flake.nix")
         (repo / "scratch.txt").unlink(missing_ok=True)
         git("checkout", "-q", "--", "flake.nix")
         switch_gen("gen1")

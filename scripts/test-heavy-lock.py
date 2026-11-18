@@ -43,11 +43,20 @@ with tempfile.TemporaryDirectory() as t:
     check(r.returncode == 0 and "by this process or an ancestor" in r.stderr,
           f"under `flock -o` (the old way to gate) it runs at once ({r.stderr.strip()!r})")
     r = run("bash", str(SCRIPT), "true")
-    check(r.returncode == 0 and "by this process or an ancestor" in r.stderr, f"a nested call runs at once ({r.stderr.strip()!r})")
+    check(r.returncode == 0 and "by a heavy-lock this process descends from" in r.stderr, f"a nested call runs at once ({r.stderr.strip()!r})")
+
+    holder = subprocess.Popen(["flock", str(lock), "sleep", "2"])
+    time.sleep(0.3)
+    start = time.monotonic()
+    r = run("bash", "-c", f'exec 9<"{lock}"; bash "{SCRIPT}" true', script=SCRIPT)
+    waited = time.monotonic() - start
+    holder.wait()
+    check(r.returncode == 0 and waited >= 1.2 and "waiting for" in r.stderr,
+          f"seeded: a parent that only has the file open, while another process holds the lock, does not count ({waited:.1f} s)")
 
     blind = t / "heavy-lock-blind.sh"
     text = SCRIPT.read_text()
-    cut = text.index("# this process or an ancestor holding the file open")
+    cut = text.index("# this process or an ancestor holding it")
     blind.write_text(text[:cut] + text[text.index('exec {held}<"$lock"'):])
     try:
         r = subprocess.run(["flock", "-o", str(lock), "bash", str(blind), "true"], env=env, capture_output=True,

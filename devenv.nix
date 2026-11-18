@@ -198,16 +198,22 @@ let
                     echo "nixos-flake-check: build $c (compiles $n) $d" >&2
                     [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ] || nix build --no-link "$d^*"
                     took "build $c" "$t"
-                    # the other half of a deferral: the owning host built its heavy check, for this head
-                    if [ -n "$todo" ] && grep -qE -e "$heavy" <<<"$inputs"; then
-                      ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) result=built head="''${NIXOS_QA_HEAD:-}"
-                    fi
+                    # the other half of a deferral: the owning host has its own deploy check for this head and drv, built
+                    # here (built), already in the store or substituted (present), or not built at all (dry)
+                    case $o in
+                      deploy-activate-* | deploy-schema-*)
+                        if [[ $me == "''${o#deploy-*-}"* ]]; then
+                          if [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ]; then r=dry; elif [ -n "$todo" ]; then r=built; else r=present; fi
+                          ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                        fi
+                        ;;
+                    esac
                     ;;
                   foreign)
                     owner=''${o#deploy-*-}
                     deferred+=("$owner:$c")
                     echo "nixos-flake-check: deferred $c to $owner (compiles $n) $d: it would compile against $(grep -E -e "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
-                    ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" seconds=0 result=deferred head="''${NIXOS_QA_HEAD:-}"
+                    ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" seconds=0 result=deferred head="''${NIXOS_QA_HEAD:-}" drv="$d"
                     ;;
                   nodeless)
                     echo "nixos-flake-check: $c would compile against CUDA on $me, whose system has none, and names no deploy node to defer to: name it deploy-*-<node> or run this gate on a CUDA host" >&2
@@ -762,6 +768,10 @@ let
         # a manual run's green counts for the pre-push hook when the checkout was clean throughout (scripts/qa-green.sh)
         began=
         [ "$mode" != manual ] || began=$(${lib.getExe qaGreen} begin 2>/dev/null) || began=
+        # whether head= names what was checked: the hook's worktree is the pushed commit; a manual run may be dirty
+        checkout=clean
+        [ "$mode" != manual ] || checkout=''${began##* }
+        checkout=''${checkout:-unknown}
         start=$SECONDS
         # checks nixos-flake-check left to their own host's gate: in the summary and the gate's record, never silent
         NIXOS_QA_DEFERRED=$(mktemp)
@@ -775,12 +785,12 @@ let
             echo "nixos-qa: $result, but $n check(s) were not built here, deferred to their own host's gate: $(tr '\n' ' ' <"$NIXOS_QA_DEFERRED")" \
               | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
             # one line a coordinator reads: the head, then owner:check for each check its owning host must build
-            echo "nixos-qa: deferred-checks head=$NIXOS_QA_HEAD $(tr '\n' ' ' <"$NIXOS_QA_DEFERRED")" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+            echo "nixos-qa: deferred-checks head=$NIXOS_QA_HEAD checkout=$checkout $(tr '\n' ' ' <"$NIXOS_QA_DEFERRED")" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
           fi
-          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode deferred="$n" head="$NIXOS_QA_HEAD" deferred_checks="$deferred"
-          if [ "$result" = pass ] && [ -n "$began" ]; then
+          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode deferred="$n" head="$NIXOS_QA_HEAD" checkout="$checkout" deferred_checks="$deferred"
+          if [ -n "$began" ]; then
             # shellcheck disable=SC2086 # the state is three words
-            ${lib.getExe qaGreen} record "$0" $began || true
+            ${lib.getExe qaGreen} record "$0" "$result" "$mode" $began || true
           fi
         }
         trap on_exit EXIT
