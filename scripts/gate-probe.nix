@@ -316,13 +316,18 @@ let
           c:
           lib.mapAttrs (_: u: u.text) (
             lib.filterAttrs (
-              n: _: lib.hasInfix "-wake." n || lib.hasInfix "-scheduled-shutdown." n || lib.hasPrefix "wol-" n
+              n: _:
+              lib.hasInfix "-wake." n
+              || lib.hasInfix "-scheduled-shutdown." n
+              || lib.hasPrefix "wol-" n
+              || lib.hasPrefix "night-quiet" n
             ) c.systemd.units
           );
       in
       {
         units = lib.mapAttrs (_: h: unitsOf h.config) hosts;
-        fleet = lib.mapAttrs (_: h: { inherit (h) sleeps power; }) lenovo.sam.fleet.hosts;
+        fleet = lib.mapAttrs (_: h: { inherit (h) sleeps power quiet; }) lenovo.sam.fleet.hosts;
+        inherit (lenovo.sam.fleet) night;
         failing = {
           lenovo = failing lenovo;
           msi = failing msi;
@@ -331,6 +336,59 @@ let
           noWol = failing (
             extend "asus-b460m" [
               ({ lib, ... }: { networking.interfaces.eno1.wakeOnLan.enable = lib.mkForce false; })
+            ]
+          );
+          # a quiet host whose kernel would not run intel_pstate
+          quietNoPstate = failing (
+            extend "acer-swift" [ { boot.kernelParams = [ "intel_pstate=disable" ]; } ]
+          );
+          # fleet.nix is read-only: these seeds swap it for a copy, msi both windowed and quiet, black-pi quiet
+          quietWithWindow = failing (
+            extend "lenovo" [
+              {
+                disabledModules = [ fleetModule ];
+                imports = [
+                  (
+                    args:
+                    let
+                      m = import fleetModule args;
+                    in
+                    m
+                    // {
+                      config = lib.recursiveUpdate m.config {
+                        sam.fleet.hosts.msi-ms7758.quiet = {
+                          driver = "intel_pstate";
+                          maxPerfPct = 60;
+                        };
+                      };
+                    }
+                  )
+                ];
+              }
+            ]
+          );
+          quietPi = failing (
+            extend "black-pi" [
+              {
+                disabledModules = [ fleetModule ];
+                imports = [
+                  (
+                    args:
+                    let
+                      m = import fleetModule args;
+                    in
+                    m
+                    // {
+                      config = lib.recursiveUpdate m.config {
+                        sam.fleet.hosts.black-pi.quiet = {
+                          driver = "intel_pstate";
+                          maxPerfPct = 60;
+                        };
+                      };
+                    }
+                  )
+                ];
+              }
             ]
           );
           # fleet.nix is read-only, so the seed swaps the module for a copy whose asus entry is awake
