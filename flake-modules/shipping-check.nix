@@ -38,11 +38,11 @@ let
     interval = "4m";
     input_series = [
       {
-        series = ''shipping_gate_seconds{quantile="0.5"}'';
+        series = ''shipping_gate_seconds{host="lenovo",quantile="0.5"}'';
         values = "${n gateBase}x${n (history / 4 - 1)} ${n gateRise}x${n ((retroFor + 30) / 4)}";
       }
       {
-        series = "shipping_gate_fail_ratio";
+        series = ''shipping_gate_fail_ratio{host="lenovo"}'';
         values = "0.1x${n (history / 4 - 1)} ${
           if failsMore then "0.4" else "0.1"
         }x${n ((retroFor + 30) / 4)}";
@@ -59,6 +59,7 @@ let
         eval_time = "${n (history + retroFor + 5)}m";
         exp_alerts = lib.optional fires {
           exp_labels = {
+            host = "lenovo";
             quantile = "0.5";
             severity = "warning";
             team = "shipping";
@@ -84,7 +85,7 @@ let
         values = "1x${n (stepFor + 20)}";
       }
       {
-        series = "shipping_gate_runs_counted";
+        series = ''shipping_gate_runs_counted{host="lenovo"}'';
         values = "${n runs}x${n (stepFor + 20)}";
       }
     ];
@@ -113,18 +114,26 @@ let
     evaluation_interval = "1m";
     tests = [
       {
-        name = "gate fail rate: over the threshold on a full sample fires, on a short sample not";
+        name = "gate fail rate: over the threshold on a full sample of two hosts' runs fires, on a short sample not";
         interval = "1m";
         input_series = [
           {
-            series = "shipping_gate_fail_ratio";
+            series = ''shipping_gate_fail_ratio{host="lenovo"}'';
             values = "${n (a.GateFailRateHigh.maxRatio.value + 0.1)}x${n (2 * gateFor + 30)}";
           }
           {
-            series = "shipping_gate_runs_counted";
-            values = "${n a.GateFailRateHigh.lastRuns.value}x${n (gateFor + 10)} ${
-              n (a.GateFailRateHigh.lastRuns.value - 1)
+            series = ''shipping_gate_fail_ratio{host="acer-herman"}'';
+            values = "${n (a.GateFailRateHigh.maxRatio.value + 0.1)}x${n (2 * gateFor + 30)}";
+          }
+          {
+            series = ''shipping_gate_runs_counted{host="lenovo"}'';
+            values = "${n (a.GateFailRateHigh.lastRuns.value / 2)}x${n (gateFor + 10)} ${
+              n (a.GateFailRateHigh.lastRuns.value / 2 - 1)
             }x${n (gateFor + 20)}";
+          }
+          {
+            series = ''shipping_gate_runs_counted{host="acer-herman"}'';
+            values = "${n (a.GateFailRateHigh.lastRuns.value / 2)}x${n (2 * gateFor + 30)}";
           }
         ];
         alert_rule_test = [
@@ -347,8 +356,39 @@ let
         interval = "4m";
         input_series = [
           {
-            series = ''shipping_gate_seconds{quantile="0.5"}'';
+            series = ''shipping_gate_seconds{host="lenovo",quantile="0.5"}'';
             values = "${n gateBase}x${n ((6 * 1440 + retroFor + 30) / 4)}";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "RetroDueGateSlower";
+            eval_time = "${n (6 * 1440 + retroFor + 5)}m";
+            exp_alerts = [ ];
+          }
+        ];
+      }
+      # a guest joins after 6 d of lenovo at its baseline, its gates far slower and failing from the first: no host has
+      # risen over its own past, so nothing fires (against a fleet-wide average the join alone would)
+      {
+        name = "a new host slow and failing from the start fires nothing, and moves no other host";
+        interval = "4m";
+        input_series = [
+          {
+            series = ''shipping_gate_seconds{host="lenovo",quantile="0.5"}'';
+            values = "${n gateBase}x${n ((6 * 1440 + retroFor + 30) / 4)}";
+          }
+          {
+            series = ''shipping_gate_fail_ratio{host="lenovo"}'';
+            values = "0.1x${n ((6 * 1440 + retroFor + 30) / 4)}";
+          }
+          {
+            series = ''shipping_gate_seconds{host="acer-herman",quantile="0.5"}'';
+            values = "_x${n (6 * 1440 / 4 - 1)} ${n (2 * gateRise)}x${n ((retroFor + 30) / 4)}";
+          }
+          {
+            series = ''shipping_gate_fail_ratio{host="acer-herman"}'';
+            values = "_x${n (6 * 1440 / 4 - 1)} 0.4x${n ((retroFor + 30) / 4)}";
           }
         ];
         alert_rule_test = [

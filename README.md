@@ -100,7 +100,9 @@ just parity [BASE]      # fail if any host's toplevel or deploy node moved since
 `activating` after a restart, which `running` hides) and `/run/current-system` is the system profile's
 generation, and exits non-zero if any fails; it lists condition-skipped units without failing
 (`scripts/post-deploy-check.sh`). That catches a deploy that left the host degraded, looping
-or off that generation, for example a unit that fails after activation reported success. A failed check
+or off that generation, for example a unit that fails after activation reported success. It also fails when a
+home's `~/.config/systemd/user` shadows a NixOS user unit, so the deploy did not change it for that user: the
+activation scans the homes as root and writes `/run/shadowed-user-units`, which the check reads. A failed check
 rolls nothing back: the new generation stays. A host degraded for an unrelated, pre-existing
 reason fails every deploy until fixed; read `systemctl --failed` on the target.
 

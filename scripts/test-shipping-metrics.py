@@ -69,6 +69,7 @@ MERGES = {10: "a10" + "0" * 37, 11: "d0000001" + "f" * 32, 13: "a13" + "0" * 37}
 # idle, gate, gate_to_merge, retries: PR 10's last commit 20 h ago, its pass at 35 h predates it, fails at 30 h and
 # 18 h, then a 1 h pass ending 16 h ago (idle 3, gate 1, to merge 15, 2 retries); PR 11's last commit 31 h ago (its
 # first listed 30 h), a 0.5 h pass ending 29 h ago (idle 1.5, to merge 27); PR 13 has no gate
+GUEST = "acer-herman"
 GATES = [f"gate=nixos-qa seconds={100 + i} result={'fail' if i < 5 else 'pass'} sha=x mode=push deferred=0" for i in range(20)] + [
     (35, f"gate=nixos-qa seconds=600 result=pass sha={sha(10, 0)[:7]} mode=push deferred=0"),
     (30, f"gate=nixos-qa seconds=500 result=fail sha={sha(10, 0)[:7]} mode=push deferred=0"),
@@ -99,8 +100,15 @@ class Fake(http.server.BaseHTTPRequestHandler):
             span = range(int(q["start"][0]), int(q["end"][0]))
             # a line is i seconds old, a (hours, line) pair that many hours
             stamped = [(NOW - l[0] * 3600, l[1]) if isinstance(l, tuple) else (NOW - i, l) for i, l in enumerate(lines)]
-            values = [[str(int(t * 1e9)), l] for t, l in stamped if int(t * 1e9) in span]
-            body = {"data": {"result": [{"stream": {}, "values": values}]}}
+            # the gate records come from two streams: the numbered ones alternate lenovo and a guest, the rest lenovo
+            hosts = [GUEST if 'kind="gate"' in query and isinstance(l, str) and i % 2 == 0 else "lenovo"
+                     for i, l in enumerate(lines)]
+            streams = {}
+            for (t, l), h in zip(stamped, hosts):
+                if int(t * 1e9) in span:
+                    streams.setdefault(h, []).append([str(int(t * 1e9)), l])
+            body = {"data": {"result": [{"stream": {"job": "platform", "host": h}, "values": v}
+                                        for h, v in streams.items()]}}
         elif not github_up:
             return self.send_error(503)
         elif u.path in ("/user/repos", "/users/sammasak/repos"):
@@ -180,8 +188,14 @@ with tempfile.TemporaryDirectory() as tmp:
           and m.get('shipping_pr_lead_time_fallbacks{reason="no_commits",window="7d"}') == 0
           and m.get('shipping_pr_lead_time_fallbacks{reason="no_token",window="7d"}') == 0,
           "fallbacks are counted per reason, a 0 written for each reason that did not occur")
-    check(m.get("shipping_gate_fail_ratio") == 0.25 and m.get("shipping_gate_runs_counted") == 20,
-          "gate fail ratio over the policy's last runs")
+    # the last 20 push gates: 10 each; fails at 0, 2, 4 (the guest) and 1, 3 (lenovo); seconds 100+i
+    check(m.get('shipping_gate_runs_counted{host="lenovo"}') == 10 and m.get(f'shipping_gate_runs_counted{{host="{GUEST}"}}') == 10
+          and m.get('shipping_gate_fail_ratio{host="lenovo"}') == 0.2 and m.get(f'shipping_gate_fail_ratio{{host="{GUEST}"}}') == 0.3
+          and "shipping_gate_fail_ratio" not in m,
+          "gate runs and fail ratio over the policy's last runs, per host that ran them")
+    check(m.get('shipping_gate_seconds{host="lenovo",quantile="0.5"}') == 110
+          and m.get(f'shipping_gate_seconds{{host="{GUEST}",quantile="0.5"}}') == 109,
+          "each host's median is its own gates' alone")
     check(m.get('shipping_deploy_lag_commits{host="lenovo",node="lenovo-21CB001PMX"}') == 2
           and 4.9 < m.get('shipping_deploy_lag_hours{host="lenovo",node="lenovo-21CB001PMX"}', 0) < 5.1,
           "a deploy record's flake attribute joins its host; lag hours run from the oldest merge it lacks")
@@ -297,7 +311,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(rc == 0, "GitHub down: still exits 0, no restart loop")
     check(not any(k.startswith(("shipping_issues", "shipping_pr", "shipping_review", "shipping_escapes")) for k in m),
           "GitHub down: no GitHub series, no 0 in their place")
-    check("shipping_gate_fail_ratio" in m, "GitHub down: the Loki sections are still written")
+    check(any(k.startswith("shipping_gate_fail_ratio{") for k in m), "GitHub down: the Loki sections are still written")
     stamp = 'shipping_collector_success_timestamp_seconds{section="issues"}'
     check(m.get(stamp) == before[stamp], "GitHub down: the issues section keeps its last success timestamp, so it goes stale")
     check(not any(k.startswith("shipping_deploy_lag") for k in m) and "shipping_deploys" not in str(m.keys()),

@@ -10,6 +10,9 @@ let
   a = policy.alerts;
   actionable = ''shipping_issues_open{class="actionable"}'';
   gateMedian = ''shipping_gate_seconds{quantile="0.5"}'';
+  # the gate series are per host; the fleet's fail ratio and sample are their run-weighted sums
+  gateRuns = "sum(shipping_gate_runs_counted)";
+  gateFailRatio = "sum(shipping_gate_fail_ratio * shipping_gate_runs_counted) / ${gateRuns}";
   at = i: if i == 0 then "sum(${actionable})" else "sum(${actionable} offset ${toString i}d)";
   alert =
     name: expr: summary: extra:
@@ -83,7 +86,7 @@ in
           { }
         )
         (alert "GateFailRateHigh"
-          "shipping_gate_fail_ratio > ${toString a.GateFailRateHigh.maxRatio.value} and on () shipping_gate_runs_counted >= ${toString a.GateFailRateHigh.lastRuns.value}"
+          "${gateFailRatio} > ${toString a.GateFailRateHigh.maxRatio.value} and on () ${gateRuns} >= ${toString a.GateFailRateHigh.lastRuns.value}"
           "{{ $value | humanizePercentage }} of the last ${toString a.GateFailRateHigh.lastRuns.value} push gates failed."
           { }
         )
@@ -102,16 +105,17 @@ in
           "{{ $value }} escape(s) in the last 24 h: a revert on a default branch or an issue labelled escape."
           { }
         )
-        # offset 5d: on a younger series the 7-d average is still filling, so a warm-up rise would fire. Slower alone is
-        # no reason for a retro (a bigger change gates longer): the gates must also fail more than their own average
+        # per host, against its own past: a host joining (a guest) moves no other median. offset 5d: on a younger series
+        # the 7-d average is still filling, so a warm-up rise, or a new host slow from the start, would fire. Slower
+        # alone is no reason for a retro (a bigger change gates longer): its gates must also fail more than their average
         (alert "RetroDueGateSlower"
-          "${gateMedian} > ${toString a.RetroDueGateSlower.factor.value} * avg_over_time(${gateMedian}[7d]) and on () shipping_gate_fail_ratio > avg_over_time(shipping_gate_fail_ratio[7d]) and ${gateMedian} offset 5d"
-          "The median push gate takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average, and gates fail more than their 7-d average: a retro is due (Shipping dashboard: failed gate steps, where a PR's time goes)."
+          "${gateMedian} > ${toString a.RetroDueGateSlower.factor.value} * avg_over_time(${gateMedian}[7d]) and on (host) shipping_gate_fail_ratio > avg_over_time(shipping_gate_fail_ratio[7d]) and ${gateMedian} offset 5d"
+          "The median push gate on {{ $labels.host }} takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average, and its gates fail more than their 7-d average: a retro is due (Shipping dashboard: failed gate steps, where a PR's time goes)."
           { }
         )
         # one step failing again and again over a full sample: one bad change on two hosts makes 2, so 3 is a pattern
         (alert "RetroDueStepFailsRepeat"
-          ''max by (step) (shipping_gate_step_failures{window="7d"}) >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} and on () shipping_gate_runs_counted >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}''
+          ''max by (step) (shipping_gate_step_failures{window="7d"}) >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}''
           "Gate step {{ $labels.step }} failed {{ $value }} times in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs)."
           { }
         )
