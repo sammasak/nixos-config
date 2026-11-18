@@ -4,19 +4,12 @@ only; the unit's binary is built and answers /health on the address the unit's s
 import os
 import socket
 import subprocess
-import sys
 import time
 import urllib.request
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("alert-bridge")
@@ -68,4 +61,4 @@ finally:
     bridge.kill()
     bridge.wait()
 
-sys.exit(1 if failed else 0)
+finish()
