@@ -151,6 +151,10 @@ for mode, dryrun in dryruns.items():
             check("deferred checks.x86_64-linux.deploy-schema-asus-b460m to asus-b460m" in r.stderr and "cuda13.4-cuda_cudart" in r.stderr
                   and "not built here, deferred to their own host's gate: asus-b460m:checks.x86_64-linux.deploy-schema-asus-b460m" in r.stderr,
                   f"the deferral is printed with its reason and in the end summary ({r.stderr[-400:]!r})")
+            plain = [l for l in rec.read_text().splitlines() if "check=checks.x86_64-linux.plain " in l]
+            check(len(plain) == 1 and "result=present" in plain[0] and "compiled=0" in plain[0] and "fetched=0" in plain[0]
+                  and "owner=acer-swift" in plain[0] and "eval_seconds=" in plain[0] and "head=0123abc" in plain[0],
+                  f"{mode}: a check with nothing to build or fetch is recorded present, with its eval seconds ({plain})")
             check(deferred.read_text().split() == ["asus-b460m:checks.x86_64-linux.deploy-schema-asus-b460m"]
                   and "result=deferred" in rec.read_text() and "owner=asus-b460m" in rec.read_text() and "seconds=0" in rec.read_text()
                   and "head=0123abc" in rec.read_text() and "drv=/nix/store/x-checks.x86_64-linux.deploy-schema-asus-b460m.drv" in rec.read_text(),
@@ -194,5 +198,45 @@ if awk:
                               capture_output=True, text=True)
         check(miss.returncode != 0 or "know how to build" in miss.stderr,
               f"real nix: a missing derivation fails the dry-run or says it does not know how to build it ({miss.returncode}, {miss.stderr.strip()!r})")
+
+# every check built here gets one gate-step record: compiled (built), only substituted (fetched), or a failed build
+plain_runs = {
+    "built": ("these 2 derivations will be built:\\n  /nix/store/p-plain.drv\\n  /nix/store/q-dep.drv", 0),
+    "fetched": ("these 3 paths will be fetched (1.0 MiB download, 4.0 MiB unpacked):\\n  /nix/store/r-a\\n  /nix/store/s-b\\n  /nix/store/t-c", 0),
+    "fail": ("this derivation will be built:\\n  /nix/store/p-plain.drv", 1),
+}
+for mode, (dryrun, build_rc) in plain_runs.items():
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        rec = t / "records"
+        plain_names = {"nixosConfigurations": [], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
+                       "checks.x86_64-linux": ["plain"]}
+        (t / "nix").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
+                               f"names = {plain_names!r}\n"
+                               "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
+                               "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','nixosConfigurations','overlays','packages','templates']}))\n"
+                               "elif '--expr' in a: print('x86_64-linux', end='')\n"
+                               "elif any('? driver' in x for x in a): print(json.dumps([]))\n"
+                               "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
+                               "elif a[:2] == ['eval', '--raw'] and attr.endswith('.drvPath'): print('/nix/store/x-' + attr[:-8] + '.drv', end='')\n"
+                               f"elif '--dry-run' in a: print({dryrun!r}.replace('\\\\n', '\\n'), file=sys.stderr)\n"
+                               f"elif a[:1] == ['build']: sys.exit({build_rc})\n")
+        # no CUDA anywhere: nothing is deferred
+        (t / "nix-store").write_text('#!/usr/bin/env bash\n[ "$2" = -qR ] && exit 0\necho /nix/store/c-gcc-13.drv\n')
+        (t / "uname").write_text("#!/usr/bin/env bash\necho msi-ms7758\n")
+        (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
+        for f in ("nix", "nix-store", "uname", "record"):
+            (t / f).chmod(0o755)
+        body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
+        body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("''$", "$")
+        r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
+                           env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_HEAD": "0123abc"})
+        lines = rec.read_text().splitlines() if rec.exists() else []
+        want = {"built": ("result=built", "compiled=2", "fetched=0"), "fetched": ("result=fetched", "compiled=0", "fetched=3"),
+                "fail": ("result=fail", "compiled=1", "fetched=0")}[mode]
+        check(len(lines) == 1 and all(w in lines[0] for w in want) and "check=checks.x86_64-linux.plain" in lines[0]
+              and "owner=msi-ms7758" in lines[0] and "step=nixos-flake-check" in lines[0]
+              and (r.returncode != 0) == (mode == "fail"),
+              f"{mode}: one gate-step record for the plain check with {' '.join(want)}, and the step {'fails' if mode == 'fail' else 'passes'} ({r.returncode}, {lines})")
 
 finish()
