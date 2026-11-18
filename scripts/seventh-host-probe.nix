@@ -29,6 +29,14 @@ let
     else
       null;
   orEmpty = v: if v == null then [ ] else v;
+  # black-pi renders Prometheus whole through configText (prometheus.nix asserts scrapeConfigs empty): read its
+  # scrape_configs as prometheus.nix's own assertion does
+  scrapeJobs =
+    if c.services.prometheus.configText != null then
+      (builtins.fromJSON (builtins.unsafeDiscardStringContext c.services.prometheus.configText))
+      .scrape_configs or [ ]
+    else
+      c.services.prometheus.scrapeConfigs;
 in
 {
   inherit (c.networking) hostName;
@@ -53,10 +61,10 @@ in
         s:
         map (t: {
           target = t;
-          instance = (if s.labels == null then { } else s.labels).instance or null;
+          instance = (if (s.labels or null) == null then { } else s.labels).instance or null;
         }) s.targets
-      ) (orEmpty j.static_configs);
-    }) c.services.prometheus.scrapeConfigs
+      ) (orEmpty (j.static_configs or null));
+    }) scrapeJobs
   );
   rewrites = lib.optionals c.services.adguardhome.enable (
     map (r: { inherit (r) domain answer; }) c.services.adguardhome.settings.filtering.rewrites

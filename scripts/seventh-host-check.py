@@ -123,7 +123,9 @@ def derived(P):
         "deploy node": (node == {"hostname": SEED, "remoteBuild": True}, node),
         "node-exporter target (black-pi)": (scraped(pi, "node-exporter").get(SEED) == f"{ADDR}:9100",
                                             scraped(pi, "node-exporter").get(SEED)),
-        "no nvidia-gpu target (no gpu)": (SEED not in scraped(pi, "nvidia-gpu"), sorted(scraped(pi, "nvidia-gpu"))),
+        # not vacuous: the job is read and lists the GPU hosts, just not the seed
+        "no nvidia-gpu target (no gpu)": (scraped(pi, "nvidia-gpu") != {} and SEED not in scraped(pi, "nvidia-gpu"),
+                                          sorted(scraped(pi, "nvidia-gpu"))),
         "AdGuard rewrite (lenovo)": ({"domain": SEED, "answer": ADDR} in lenovo["rewrites"],
                                      [r for r in lenovo["rewrites"] if r["domain"] == SEED]),
         "Loki caller (sam.fleet.loki.from, black-pi's firewall)": (
@@ -229,6 +231,15 @@ blank = dict(P, **{"black-pi": dict(P["black-pi"], firewall={"extraCommands": ""
                                     dashboardsName=None)})
 check("black-pi" not in moved or unexplained(blank) == ["black-pi"],
       "seeded: black-pi moving with no derived list naming the seed fails the mover check")
+# black-pi's explanation must include its scrape list itself, not only the firewall and dashboards beside it
+pi_names = lambda P: "node-exporter targets" in names_seed(P["black-pi"])
+check(pi_names(P), f"black-pi's move is explained by its node-exporter targets too ({names_seed(P['black-pi'])})")
+check(not pi_names(dict(P, **{"black-pi": dict(P["black-pi"], scrape=[])})),
+      "seeded: black-pi without its scrape list no longer names the seed in its node-exporter targets")
+gpu_seeded = dict(P, **{"black-pi": dict(P["black-pi"], scrape=P["black-pi"]["scrape"] + [
+    {"job": "nvidia-gpu", "targets": [{"target": f"{ADDR}:9835", "instance": SEED}]}])})
+check(not derived(gpu_seeded)["no nvidia-gpu target (no gpu)"][0],
+      "seeded: the seed added to the nvidia-gpu targets fails the no-gpu check")
 
 # 4. each derived list hard-coded without the seed fails its check
 broke = derived(dict(P, **B))
@@ -236,6 +247,11 @@ for name in ["deploy node", "node-exporter target (black-pi)", "AdGuard rewrite 
              "Loki caller (sam.fleet.loki.from, black-pi's firewall)", "store-cache caller (each cache's firewall)",
              "edge OTLP source (acer)"]:
     check(not broke[name][0], f"seeded: hard-coded without the seed, {name} fails ({broke[name][1]})")
+# not vacuous: the broken copy's node-exporter job is read and lists the real hosts, only not the seed
+broke_targets = scraped(dict(P, **B)["black-pi"], "node-exporter")
+seeded_targets = scraped(P["black-pi"], "node-exporter")
+check(broke_targets != {} and set(broke_targets) == set(seeded_targets) - {SEED},
+      f"the hard-coded node-exporter list is read, with every fleet host but the seed ({sorted(broke_targets)})")
 
 # what a seventh host still needs edited besides its own three places
 for place, listing in hand.items():
