@@ -48,7 +48,7 @@ METRICS = {
     "shipping_pr_phase_hours": "Hours per phase of deploy-repo PRs merged in the last 7 d, by quantile: idle (last commit to the start of its passing push gate, gate queue wait included: the records carry none), gate, gate_to_merge, merge_to_deploy (to the end of the first good deploy containing the merge).",
     "shipping_pr_phase_prs": "Deploy-repo PRs merged in the last 7 d behind each phase's quantiles.",
     "shipping_pr_gate_retries": "Failed push gates on a deploy-repo PR's commits before its passing one, PRs merged in the last 7 d, by quantile.",
-    "shipping_pr_phase_unmatched": "Deploy-repo PRs merged in the last 7 d with no passing push gate on their commits (no_gate) or no good deploy containing their merge yet (not_deployed).",
+    "shipping_pr_phase_unmatched": "Deploy-repo PRs merged in the last 7 d with no passing push gate on their commits (no_gate), no good deploy containing their merge yet (not_deployed), or merged before deploys were recorded (before_records).",
 }
 LABELS = ["needs-live", "needs-decision", "blocked", "approved", "ready-for-agent"]
 GRADE = re.compile(r"Grade:\s*(\d+)\s*/\s*10")
@@ -60,6 +60,9 @@ LEAD_BUDGET = 90
 # seconds a run may spend on compare calls matching merges to deploys; a PR left unmatched is tried on the next run
 PHASE_BUDGET = 20
 PHASES = ("idle", "gate", "gate_to_merge", "merge_to_deploy")
+# the first deploy record in Loki (Justfile's deploy, #475): a merge before it has no deploy to find, and the first
+# record after it would read as days of merge_to_deploy. Inert once the 7 d window holds no older merge (23 Nov on)
+DEPLOY_RECORDS_SINCE = datetime(2026, 11, 16, 12, 53, tzinfo=timezone.utc).timestamp()
 GATE_QUERY = '{job="platform",kind="gate"} |= "mode=push"'
 DEPLOY_QUERY = '{job="platform",kind="deploy"}'
 # a run's Loki days by (query, days back): phases re-reads the days gates and deploys fetched; main() empties it
@@ -380,7 +383,7 @@ def phases(gh, loki, out, merged, owner, repo, now, cache_path):
                          key=lambda x: x[0])
     stop = time.monotonic() + PHASE_BUDGET
     hours = {p: [] for p in PHASES}
-    retries, unmatched = [], {"no_gate": 0, "not_deployed": 0}
+    retries, unmatched = [], {"no_gate": 0, "not_deployed": 0, "before_records": 0}
     for it, f in known:
         merged_at = ts(it["pull_request"]["merged_at"]).timestamp()
         mine = [(t, r) for t, r in gate_recs if r.get("sha") and any(s.startswith(r["sha"]) for s in f["shas"])]
@@ -394,6 +397,9 @@ def phases(gh, loki, out, merged, owner, repo, now, cache_path):
             retries.append(sum(r2.get("result") == "fail" for t2, r2 in mine if t2 < t))
         else:
             unmatched["no_gate"] += 1
+        if merged_at < DEPLOY_RECORDS_SINCE:
+            unmatched["before_records"] += 1
+            continue
         entry = kept[pr_key(it)] = cache.get(pr_key(it), {"deployed": None, "tried": []})
         if entry["deployed"] is None:
             for t, d in deploy_recs:

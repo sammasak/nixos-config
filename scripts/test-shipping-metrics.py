@@ -209,7 +209,8 @@ with tempfile.TemporaryDirectory() as tmp:
           "retries count the failed push gates on the PR's shas before its pass, not the passes")
     check(all(m.get(f'shipping_pr_phase_prs{{phase="{p}"}}') == 2 for p in sm.PHASES)
           and m.get('shipping_pr_phase_unmatched{reason="no_gate"}') == 1
-          and m.get('shipping_pr_phase_unmatched{reason="not_deployed"}') == 1,
+          and m.get('shipping_pr_phase_unmatched{reason="not_deployed"}') == 1
+          and m.get('shipping_pr_phase_unmatched{reason="before_records"}') == 0,
           "a PR with no gate and no deploy yet is unmatched for both; a PR whose commits failed is left out")
     labels = {kv.split("=")[0] for k in m if k.startswith(("shipping_pr_phase", "shipping_pr_gate_retries")) and "{" in k
               for kv in k.split("{")[1].rstrip("}").split(",")}
@@ -248,6 +249,20 @@ with tempfile.TemporaryDirectory() as tmp:
     check(compare_calls == [] and m.get('shipping_pr_phase_prs{phase="merge_to_deploy"}') == 0
           and m.get('shipping_pr_phase_unmatched{reason="not_deployed"}') == 0,
           "past the compare budget no compare call is made, and the unmatched PRs wait for the next run")
+
+    # every merge predates the first deploy record: merge_to_deploy counts none of them, no compare is made, nothing is
+    # cached as a final deploy, and they show as before_records, not as undeployed
+    pathlib.Path(f"{tmp}/phase-cache.json").unlink()
+    compare_calls.clear()
+    since, sm.DEPLOY_RECORDS_SINCE = sm.DEPLOY_RECORDS_SINCE, time.time()
+    rc, m = run(out)
+    sm.DEPLOY_RECORDS_SINCE = since
+    kept = json.loads(pathlib.Path(f"{tmp}/phase-cache.json").read_text())
+    check(compare_calls == [] and m.get('shipping_pr_phase_prs{phase="merge_to_deploy"}') == 0
+          and m.get('shipping_pr_phase_unmatched{reason="before_records"}') == 3
+          and m.get('shipping_pr_phase_unmatched{reason="not_deployed"}') == 0 and kept == {}
+          and m.get('shipping_pr_phase_prs{phase="gate"}') == 2,
+          f"a merge before the first deploy record is before_records: no merge_to_deploy, no compare, no cached deploy {kept}")
 
     # compare fails: phases alone fails, writes none of its series, the other sections stand
     pathlib.Path(f"{tmp}/phase-cache.json").unlink()
