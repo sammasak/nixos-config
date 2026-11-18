@@ -325,6 +325,21 @@ let
         ${pkgs.python3}/bin/python scripts/test-workers-eval.py
       '';
 
+  trashSweepTest =
+    gate "trash-sweep-test"
+      (with pkgs; [
+        bash
+        coreutils
+        findutils
+        gawk
+        gnugrep
+        gnused
+        util-linux
+      ])
+      ''
+        bash scripts/test-trash-sweep.sh
+      '';
+
   # sam.claude.bulkReader: shunt hooks only when on and pinned, appended after the fleet's; guests via a guest module
   bulkReaderTest =
     gate "bulk-reader-test"
@@ -709,6 +724,7 @@ let
     systemdCalendarTest
     systemdVerifyTest
     platformRecordsTest
+    trashSweepTest
     shippingMetricsTest
     navMetricsTest
     authentikAkTest
@@ -1274,6 +1290,8 @@ in
       task "No file but fleet.nix names the ntfy or Loki port; every host's firewall admits each sam.fleet listener from its callers alone and opens nothing else, no service the probe reads binds off its listener's port; lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: an open port, an upstream openFirewall, a stray rule, a trusted interface, a host removed)" fleetContractTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
+    "nixos:trash-sweep-test" =
+      task "The environments' .trash sweep, its core.nix text run: a week-old entry goes, a fresh one and a live dir stay, a .trash that is a link, a file or another mount is refused" trashSweepTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
     "nixos:shipping-metrics-test" =

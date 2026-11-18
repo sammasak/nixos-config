@@ -74,6 +74,25 @@ let
     [[ ! -L $d/$n && -d $d/$n ]] && mv -T --no-copy "$d/$n" "$d/.trash/$n-$(date +%Y%m%d-%H%M%S)"
     rm -rf --one-file-system "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
   '';
+  # Aged by when it was trashed (the rename sets the entry's ctime), not by tmpfiles: that ages each file by its own
+  # times, so a retired home's old files would go at its next clean. A .trash that is a link or another mount would
+  # put a live home in reach: refused.
+  trashSweep = pkgs.writeShellApplication {
+    name = "dev-env-trash-sweep";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+    ];
+    text = ''
+      t=$1/.trash
+      [[ -e $t || -L $t ]] || exit 0
+      if [[ -L $t || ! -d $t || $(stat -c %d "$1") != "$(stat -c %d "$t")" ]]; then
+        echo "dev-env-trash-sweep: $t is a link, not a directory or on another filesystem than $1; not swept" >&2
+        exit 1
+      fi
+      find -P "$t" -xdev -mindepth 1 -maxdepth 1 -cmin +10080 -exec rm -rf --one-file-system {} +
+    '';
+  };
   prepareDirs = ''
     install -d -m 0711 "$d"
     install -d -m 0700 -o ${user} -g ${group} "$d/.nix-cache"
@@ -753,11 +772,31 @@ in
             ${config.systemd.package}/bin/systemctl is-active --quiet "container@$n.service" && continue
             ${trashOne}
           done
-          # Aged by when it was trashed (the rename sets the entry's ctime), not by tmpfiles: that ages each file by its
-          # own times, so a retired home's old files would go at its next clean.
-          [[ -d $d/.trash ]] && ${pkgs.findutils}/bin/find "$d/.trash" -mindepth 1 -maxdepth 1 -cmin +10080 -exec rm -rf --one-file-system {} +
+          # a refusal fails dev-environments-trash, which alerts, not the activation
+          ${lib.getExe trashSweep} "$d" || true
           ${prepareDirs}
         '';
+      };
+
+      # daily, not only at an activation: a reset trashes a home with no deploy
+      systemd.services.dev-environments-trash = lib.mkIf (cfg.instances != { } || cfg.retired != [ ]) {
+        description = "Delete the developer environments' homes trashed over a week ago";
+        onFailure = lib.optional (cfg.instances != { } && cfg.alert != null) "dev-env-alert@%n.service";
+        unitConfig.ConditionPathExists = "${cfg.stateDir}/.trash";
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStart = "${lib.getExe trashSweep} ${lib.escapeShellArg cfg.stateDir}";
+          PrivateNetwork = true;
+          ProtectSystem = "strict";
+          ReadWritePaths = [ cfg.stateDir ];
+        };
+      };
+      systemd.timers.dev-environments-trash = lib.mkIf (cfg.instances != { } || cfg.retired != [ ]) {
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnCalendar = "daily";
+          Persistent = true;
+        };
       };
     }
 
