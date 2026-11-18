@@ -881,6 +881,22 @@ in
         description = "Ship developer environment %i's platform records to Loki";
         serviceConfig = recordsUnit [ "%i" ] "25s";
       };
+      # a guest's stream is host=<prefix>-<name>, and `just deferred-checks` trusts a fleet host's stream as that host's
+      assertions =
+        let
+          fleet = map lib.toLower cfg.records.fleet;
+          clash = lib.filter (n: lib.elem (lib.toLower "${cfg.prefix}-${n}") fleet) (
+            lib.attrNames cfg.instances ++ cfg.retired
+          );
+        in
+        [
+          {
+            assertion = clash == [ ];
+            message = "services.devEnvironments: the record stream of ${
+              lib.concatMapStringsSep ", " (n: "${cfg.prefix}-${n}") clash
+            } would equal a fleet host's name (sam.fleet.hosts), so its guest's records would read as that host's; rename the instance or the prefix.";
+          }
+        ];
     })
     (lib.mkIf (cfg.instances != { } && cfg.records != null) {
       systemd.services.dev-env-records = {
