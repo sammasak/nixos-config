@@ -4,8 +4,9 @@
 # waiting to restart (auto-restart) or activating again after a restart, as ollama does with no start limit while its
 # bind address is missing (ollama-host.nix). is-system-running reads both as running. Units whose condition skipped
 # them are listed, not failed: a skip is often intended. A system unit whose file or drop-in is not the deployed
-# generation's (it resolves outside the store, and is not systemd's own generated or transient unit in /run/systemd) is
-# a warning: a hand-made file in /etc/systemd/system shadows or overrides what the deploy shipped. User units are not
+# generation's (it resolves outside the store, and is not systemd's own generated or transient unit) is a warning:
+# /etc/systemd/system is the store's, so that is a runtime edit (/run/systemd/system, `systemctl edit --runtime`) or a
+# set-property in a system.control directory, overriding what the deploy shipped. User units are not
 # readable here (homes are 0700 to the deploy user); the activation warns about those (modules/core/users.nix).
 set -uo pipefail
 
@@ -32,9 +33,10 @@ while read -r kind unit files; do
     looping) echo "post-deploy: unit in a restart loop: $unit $files" >&2; rc=1 ;;
     skipped) skipped+=("$unit") ;;
     files)
-      for f in $files; do
-        case $f in /nix/store/* | /run/systemd/*) continue ;; esac
-        case $(readlink -f "$f") in /nix/store/* | /run/systemd/*) ;; *) foreign+=("$unit ($f)") ;; esac
+      read -ra paths <<<"$files"
+      for f in "${paths[@]}"; do
+        case $f in /nix/store/* | /run/systemd/generator* | /run/systemd/transient/*) continue ;; esac
+        case $(readlink -f "$f") in /nix/store/* | /run/systemd/generator* | /run/systemd/transient/*) ;; *) foreign+=("$unit ($f)") ;; esac
       done
       ;;
   esac

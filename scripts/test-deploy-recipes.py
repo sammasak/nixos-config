@@ -37,8 +37,10 @@ esac""",
   list-units*) printf 'sshd.service loaded active running SSH\\nwaiting.service loaded activating auto-restart w\\n' ;;
   show*) printf 'Id=sshd.service\\nActiveState=active\\nSubState=running\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\nFragmentPath=/etc/systemd/system/sshd.service\\nDropInPaths=\\n\\n'
          sub=running; [ -z "${LOOP:-}" ] || sub=auto-restart
-         # SHADOW: a hand-made drop-in in /etc/systemd/system, outside the store
-         printf 'Id=waiting.service\\nActiveState=activating\\nSubState=%s\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\nFragmentPath=/etc/systemd/system/waiting.service\\nDropInPaths=%s\\n' "$sub" "${SHADOW:+/etc/systemd/system/waiting.service.d/override.conf}" ;;
+         # SHADOW: a runtime drop-in (`systemctl edit --runtime`), outside the store; generator and transient units are
+         # systemd's own
+         printf 'Id=waiting.service\\nActiveState=activating\\nSubState=%s\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\nFragmentPath=/etc/systemd/system/waiting.service\\nDropInPaths=/run/systemd/generator/waiting.service.d/x.conf%s\\n\\n' "$sub" "${SHADOW:+ /run/systemd/system/waiting.service.d/override.conf}"
+         printf 'Id=run-u1.scope\\nActiveState=active\\nSubState=running\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\nFragmentPath=/run/systemd/transient/run-u1.scope\\nDropInPaths=\\n' ;;
 esac""",
     # the system profile's generation is the running one
     "bin/readlink": 'case "$*" in *override.conf) echo "$2" ;; -f*) echo /nix/store/sys/init ;; *) echo /nix/store/sys ;; esac',
@@ -73,9 +75,10 @@ check(rc == 1 and "unit in a restart loop: waiting.service (activating/auto-rest
 
 rc, out, log = run("deploy", SHADOW="1")
 check(rc == 0 and "result=ok" in log and "warning: unit files not from the deployed generation (not a failure): "
-      "waiting.service (/etc/systemd/system/waiting.service.d/override.conf)" in out,
-      f"deploy: a hand-made drop-in outside the store is a warning, not a failure (rc {rc}: {out.strip()[-300:]})")
-check("not from the deployed generation" not in run("deploy")[1], "deploy: units whose files resolve into the store raise no warning")
+      "waiting.service (/run/systemd/system/waiting.service.d/override.conf)" in out and "generator" not in out.split("warning:")[-1],
+      f"deploy: a runtime drop-in outside the store is a warning, not a failure (rc {rc}: {out.strip()[-300:]})")
+check("not from the deployed generation" not in run("deploy")[1],
+      "deploy: store units, generator drop-ins and transient units raise no warning")
 
 rc, out, log = run("dry-activate")
 check(rc == 0 and "--dry-activate" in log, f"dry-activate: a passing dry activation exits 0 (rc {rc}: {out.strip()})")
@@ -107,6 +110,8 @@ with tempfile.TemporaryDirectory() as tmp:
     (user / "linked.service").symlink_to(units / "linked.service")
     (user / "kept.service.d").mkdir()
     (user / "own.service").write_text("[Service]\nExecStart=/bin/true\n")
+    (units / "default.target").write_text("[Unit]\n")
+    (user / "default.target.wants").mkdir()
     other = tmp / "home" / "other"
     other.mkdir()
     r = subprocess.run(["bash", str(ROOT / "scripts/shadowed-user-units.sh"), str(tmp / "home" / "lukas"), str(other),
