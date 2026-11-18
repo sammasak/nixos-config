@@ -24,6 +24,8 @@ let
   n = toString;
   gateFor = a.GateFailRateHigh.forMinutes.value;
   staleFor = a.ShippingCollectorStale.forMinutes.value;
+  fallbackFor = a.LeadTimeFallbacksHigh.forMinutes.value;
+  merged = 40;
   tests = {
     # the copy without annotations, which promtool would otherwise compare word for word
     rule_files = [ "rules-test.json" ];
@@ -60,6 +62,55 @@ let
           {
             alertname = "GateFailRateHigh";
             eval_time = "${n (gateFor + 25)}m";
+            exp_alerts = [ ];
+          }
+        ];
+      }
+      {
+        name = "lead time from open time on most merged PRs fires after its for and not before, under the ratio not";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''shipping_prs_merged{window="7d"}'';
+            values = "${n merged}x${n (2 * fallbackFor + 30)}";
+          }
+          # every PR also counted under another reason and another window: the rule must read 7 d http_error alone
+          {
+            series = ''shipping_pr_lead_time_fallbacks{reason="http_error",window="30d"}'';
+            values = "${n merged}x${n (2 * fallbackFor + 30)}";
+          }
+          {
+            series = ''shipping_pr_lead_time_fallbacks{reason="no_commits",window="7d"}'';
+            values = "${n merged}x${n (2 * fallbackFor + 30)}";
+          }
+          {
+            series = ''shipping_pr_lead_time_fallbacks{reason="http_error",window="7d"}'';
+            values = "${n (merged * a.LeadTimeFallbacksHigh.maxRatio.value + 2)}x${n (fallbackFor + 10)} ${
+              n (merged * a.LeadTimeFallbacksHigh.maxRatio.value - 2)
+            }x${n (fallbackFor + 20)}";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "LeadTimeFallbacksHigh";
+            eval_time = "${n (fallbackFor - 5)}m";
+            exp_alerts = [ ];
+          }
+          {
+            alertname = "LeadTimeFallbacksHigh";
+            eval_time = "${n (fallbackFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
+            ];
+          }
+          {
+            alertname = "LeadTimeFallbacksHigh";
+            eval_time = "${n (fallbackFor + 25)}m";
             exp_alerts = [ ];
           }
         ];
