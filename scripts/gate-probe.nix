@@ -170,6 +170,8 @@ let
         );
       };
       msi-ms7758.fish.claude = (hm msi).programs.fish.functions.claude or null;
+      # what every environment's Claude starts as (modules/workers/core.nix's agents default), evaluated on acer
+      agentCommand = acer.services.devEnvironments.agents.claude.command;
     };
 
     ollama-portforward = {
@@ -653,6 +655,8 @@ let
           ntfy = lenovo.sam.fleet.ntfy.port;
           loki = lenovo.sam.fleet.loki.port;
         };
+        # scripts/platform-record.sh's default Loki, run without Nix, is checked against this
+        lokiUrl = lenovo.sam.fleet.loki.url;
         listeners = lib.mapAttrs (_: l: {
           inherit (l)
             host

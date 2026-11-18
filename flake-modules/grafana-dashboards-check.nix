@@ -1,8 +1,13 @@
-# black-pi's dashboards, as grafana.nix provisions them, against what the fleet exports: the deployed node-exporter
-# command runs on node_exporter's own sysfs/procfs fixtures, so its metric names are this version's with these
-# flags; the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus
-# loads; llm-gateway's from its registrations and Loki's, Alloy's, Caddy's and blackbox's from their name literals,
-# in the source each host runs; the OTLP ones are alloy-otlp's allow-list. Each seeded dashboard below must fail
+# black-pi's dashboards, as grafana.nix provisions them, against the names the fleet can export: every metric a
+# dashboard queries must come from one of these sources, each read from what its host runs (from none is a finding):
+# - node-exporter: the deployed command on node_exporter's own sysfs/procfs fixtures (node.prom); the systemd and
+#   timex collectors' names from their source and flags (systemd.prom); the repo's textfile writers (writers.prom),
+#   and the names scripts/shipping-metrics.py and scripts/nav-metrics.py print with --list (shipping.prom, nav.prom);
+# - the monitoring stack's own /metrics, run here (scripts/monitoring-exposition.sh: Prometheus, Alertmanager, Alloy);
+# - name literals and registrations in the source each host runs: Loki, Alloy, Caddy and blackbox (`sources` below),
+#   llm-gateway, Authentik; AdGuard's (dns.prom); the GPU exporter's (the gpu-telemetry-exporter check's output);
+# - the records of the rule files Prometheus loads, and alloy-otlp's OTLP allow-list.
+# A new series a dashboard reads needs its source here. Each seeded dashboard below must fail
 # scripts/check-grafana-dashboards.py with its own reason.
 { config, lib, ... }:
 let

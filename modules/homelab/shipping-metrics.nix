@@ -2,7 +2,8 @@
 # as the owner's user, whose gh login the coordinator's tasks already use (no token of its own; without one it counts
 # public repos only, says so, and measures PR lead time from the PR's open time), and the platform records in Loki, and leaves one textfile for this host's
 # node-exporter. A failed source keeps its stale timestamp, which ShippingCollectorStale alerts on; the unit has no
-# Restart, so an outage never loops.
+# Restart, so an outage never loops. The dashboards check (flake-modules/grafana-dashboards-check.nix) takes the series
+# names from `scripts/shipping-metrics.py --list`: a series the shipping dashboard reads must be in that list.
 {
   config,
   lib,
