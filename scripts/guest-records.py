@@ -28,6 +28,8 @@ from datetime import datetime
 SPOOL = (".local", "state", "platform-records")
 NAME = re.compile(r"[a-z][a-z0-9-]{0,10}")
 LABEL_KEY = re.compile(r"(?:^|[\s\"'])(?:job|kind|host)\s*=", re.IGNORECASE)
+# fields a consumer attributes a record by: a deploy's node, a deferred or built check's owner
+SPEAKS_FOR = re.compile(r"(?:^|[\s\"'])(?:node|owner)\s*=\s*\"?([^\s\"']*)", re.IGNORECASE)
 DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 # O_NONBLOCK: a FIFO in the spool's place would otherwise hold the open until a writer comes
 FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
@@ -91,7 +93,13 @@ def digest(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
-def judge(raw, kinds, now):
+def fleet_name(value, fleet):
+    """Does `value` name a fleet host: its hostname, or its flake attribute (lenovo for lenovo-21CB001PMX)?"""
+    v = value.lower()
+    return bool(v) and any(h == v or h.startswith(v + "-") for h in fleet)
+
+
+def judge(raw, kinds, now, fleet=frozenset()):
     """(time, kind, body) to push, or the reason it is not pushed."""
     if len(raw) > MAX_LINE:
         return "oversize"
@@ -111,6 +119,8 @@ def judge(raw, kinds, now):
         return "unknown kind"
     if LABEL_KEY.search(parts[2]):
         return "a label key in its fields"
+    if any(fleet_name(m.group(1), fleet) for m in SPEAKS_FOR.finditer(parts[2])):
+        return "names a fleet host in node= or owner="
     return t, parts[1], parts[2]
 
 
@@ -139,7 +149,7 @@ def push(url, streams):
         return False
 
 
-def ship(base, name, args, kinds):
+def ship(base, name, args, kinds, fleet=frozenset()):
     host = f"{args.prefix}-{name}"
     with open(os.path.join(args.progress, f"{name}.lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -155,7 +165,7 @@ def ship(base, name, args, kinds):
         for raw in pending(lines, progress):
             if sent == PER_RUN:
                 break
-            v = judge(raw, kinds, now)
+            v = judge(raw, kinds, now, fleet)
             last = raw
             if isinstance(v, str):
                 dropped[v] = dropped.get(v, 0) + 1
@@ -188,11 +198,13 @@ def main():
     p.add_argument("--prefix", required=True)
     p.add_argument("--url", required=True, help="Loki's push URL")
     p.add_argument("--kinds", required=True, help="comma-separated allow-list")
+    p.add_argument("--fleet", default="", help="comma-separated fleet hostnames a guest line may not name in node= or owner=")
     p.add_argument("names", nargs="*")
     args = p.parse_args()
     if not args.progress:
         p.error("--progress or STATE_DIRECTORY is required")
     kinds = set(args.kinds.split(","))
+    fleet = frozenset(h.lower() for h in args.fleet.split(",") if h)
     base = os.open(args.state_dir, DIR)
     ok = True
     for name in args.names:
@@ -201,7 +213,7 @@ def main():
             ok = False
             continue
         try:
-            ok = ship(base, name, args, kinds) and ok
+            ok = ship(base, name, args, kinds, fleet) and ok
         except Refused as e:
             print(f"{name}: not shipped, {e}", file=sys.stderr)
             ok = False

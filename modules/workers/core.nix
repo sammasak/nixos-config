@@ -116,6 +116,8 @@ let
         "${cfg.records.url}/loki/api/v1/push"
         "--kinds"
         (lib.concatStringsSep "," cfg.records.kinds)
+        "--fleet"
+        (lib.concatStringsSep "," cfg.records.fleet)
       ]
       ++ names
     );
@@ -705,6 +707,10 @@ in
             kinds = mkOption {
               type = types.listOf (types.strMatching "[a-z][a-z-]*");
               description = "The record kinds shipped, as the `kind` label; a line of any other kind is dropped.";
+            };
+            fleet = mkOption {
+              type = types.listOf (types.strMatching "[A-Za-z0-9][A-Za-z0-9-]*");
+              description = "The fleet's hostnames: a guest line whose node= or owner= names one (or its flake attribute, the name before a dash) is dropped, so a guest cannot speak for a fleet host.";
             };
           };
         }

@@ -355,11 +355,15 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   without following a link, and the spool only as a regular file, its last
   2 MiB; a link or FIFO anywhere there skips that instance and fails the
   unit. The host sets every label: `job=platform`, `kind` from
-  `services.devEnvironments.records.kinds` (`platform-record.sh`'s list),
+  `services.devEnvironments.records.kinds` (`platform-record.sh`'s list less
+  `deploy` and `delivery`: a guest never makes those),
   `host=<prefix>-<name>`. The line body goes as the guest wrote it, at its
   own time. Dropped and counted in the unit's log: a line whose own fields
   name `host=`, `job=` or `kind=` (a guest cannot pose as the owner's host
-  in a gate record), an unknown kind, a line over 4 KiB, a time ahead of
+  in a gate record), a line whose `node=` or `owner=` names a fleet host
+  (its hostname in any case, or its flake attribute: consumers attribute
+  deploys and built or deferred checks by those fields), an unknown kind, a
+  line over 4 KiB, a time ahead of
   now; lines older than Loki takes (167 h) are skipped. At most 500 lines
   per instance and run. Progress is the last handled line's hash and time
   in the unit's StateDirectory, out of every guest's reach. It runs as a

@@ -31,8 +31,10 @@ case = re.search(r"case \$kind in\n\s*([a-z| -]+)\)", (ROOT / "scripts/platform-
 helper_kinds = case.group(1).replace(" ", "").split("|") if case else []
 block = re.search(r"records = \{.*?kinds = \[(.*?)\];", (ROOT / "modules/workers/default.nix").read_text(), re.S)
 kinds = re.findall(r'"([a-z-]+)"', block.group(1)) if block else []
-check(len(helper_kinds) == 7 and sorted(kinds) == sorted(helper_kinds),
-      f"default.nix's records.kinds is platform-record.sh's list ({kinds} vs {helper_kinds})")
+check(len(helper_kinds) == 7 and set(kinds) < set(helper_kinds) and not {"deploy", "delivery"} & set(kinds)
+      and sorted(set(helper_kinds) - set(kinds)) == ["delivery", "deploy"],
+      f"default.nix's records.kinds is platform-record.sh's list less deploy and delivery, which a guest never makes ({kinds} vs {helper_kinds})")
+FLEET = ["acer-swift", "asus-b460m", "black-pi", OWNER_HOST, "msi-ms7758", "naked-pi"]
 
 core = CORE.read_text()
 trash = re.search(r"\n  trashOne = ''\n(.*?)\n  '';\n", core, re.S)
@@ -100,7 +102,7 @@ def run(*names):
     Loki.pushes.clear()
     try:
         p = subprocess.run([sys.executable, "-I", str(SHIPPER), "--state-dir", str(state), "--progress", str(progress),
-                            "--prefix", PREFIX, "--url", URL, "--kinds", ",".join(kinds), *names],
+                            "--prefix", PREFIX, "--url", URL, "--kinds", ",".join(kinds), "--fleet", ",".join(FLEET), *names],
                            capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired:
         return 124, "", "timed out", []
@@ -125,9 +127,16 @@ L = {
     "kind": rec(350, "bogus", "x=1"),
     "big": rec(300, "gate", "pad=" + "a" * 5000),
     "job": rec(250, "gate", 'note="a" job=platform'),
-    "deploy": rec(100, "deploy", "target=acer-swift result=ok"),
+    "deploy": rec(100, "deploy", "node=acer-swift result=ok"),
+    "delivery": rec(95, "delivery", "verified_deliveries=3"),
+    # a guest speaking for a fleet host: a deferral's or a build's owner, a deploy's node, by hostname or flake attribute
+    "owner": rec(90, "gate-step", f"step=nixos-flake-check check=c owner={OWNER_HOST} result=built"),
+    "ownercase": rec(85, "gate-step", f"step=nixos-flake-check check=c owner={OWNER_HOST.lower()} result=built"),
+    "node": rec(80, "gate", 'gate=nixos-qa result=pass node="lenovo"'),
+    # its own name is no fleet host's
+    "own": rec(70, "gate-step", f"step=nixos-flake-check check=c owner={PREFIX}-herman result=built"),
 }
-herman = [L[k] for k in ("old", "qa", "step", "host", "kind", "big", "job", "deploy")]
+herman = [L[k] for k in ("old", "qa", "step", "host", "kind", "big", "job", "deploy", "delivery", "owner", "ownercase", "node", "own")]
 ino1 = write("herman", herman)
 fields = lambda k: L[k].split(" ", 2)[2]
 
@@ -149,18 +158,23 @@ os.mkfifo(state / "fifo/home/.local/state/platform-records")
 homes = tree(state)
 
 rc, out, err, got = run("herman", "linka", "linkb", "linkc", "empty")
-check(sorted(bodies(got)) == sorted(fields(k) for k in ("qa", "step", "deploy")),
+check(sorted(bodies(got)) == sorted(fields(k) for k in ("qa", "step", "own")),
       f"the first run pushes the gate's lines alone (got {bodies(got)}; {out.strip()} {err.strip()})")
 check(all(s == {"job": "platform", "kind": s.get("kind"), "host": f"{PREFIX}-herman"} for s, _, _ in got)
-      and {s["kind"]: b for s, _, b in got} == {"gate": fields("qa"), "gate-step": fields("step"), "deploy": fields("deploy")},
+      and sorted((s["kind"], b) for s, _, b in got) == sorted([("gate", fields("qa")), ("gate-step", fields("step")), ("gate-step", fields("own"))]),
       f"labels are exactly job=platform, the line's kind and host={PREFIX}-herman, though a field names "
       f"{OWNER_HOST} ({[s for s, _, _ in got]})")
 check(not any(f"host={OWNER_HOST}" in b for b in bodies(got)), "a line with host= in its fields is dropped")
 check(fields("job") not in bodies(got), "a line with job= in its fields is dropped")
-check(fields("kind") not in bodies(got) and "1 unknown kind" in out, f"an unknown kind is dropped and counted ({out.strip()})")
+check(fields("kind") not in bodies(got) and "3 unknown kind" in out, f"an unknown kind is dropped and counted ({out.strip()})")
+check(fields("deploy") not in bodies(got) and fields("delivery") not in bodies(got),
+      "a guest's deploy or delivery line is not shipped: guests never deploy")
+check(not any(fields(k) in bodies(got) for k in ("owner", "ownercase", "node")) and "3 names a fleet host in node= or owner=" in out,
+      f"a line whose owner= or node= names a fleet host (hostname, any case, or flake attribute) is dropped and counted ({out.strip()})")
+check(fields("own") in bodies(got), "a line whose owner= is the guest's own name is shipped")
 check(fields("big") not in bodies(got) and "1 oversize" in out, "a line over 4 KiB is dropped and counted")
 check(fields("old") not in bodies(got) and "1 older than Loki takes" in out, "a line older than Loki's window is skipped")
-check(sorted(int(t) // 10**9 for _, t, _ in got) == sorted(int(NOW - a) for a in (600, 500, 100)),
+check(sorted(int(t) // 10**9 for _, t, _ in got) == sorted(int(NOW - a) for a in (600, 500, 70)),
       "each entry carries the line's own time")
 check(all(p == "/loki/api/v1/push" for p, _ in Loki.pushes) and len(Loki.pushes) == 1, "one push to the push path")
 check(not any("leak=" in b for b in bodies(got)) and all(f"{n}: not shipped" in err for n in ("linka", "linkb", "linkc")),
