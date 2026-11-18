@@ -112,6 +112,8 @@ dryruns = {
     "single": "this derivation will be built:\\n  /nix/store/a-ollama-0.40.3.drv",
     "unknown": "don't know how to build these paths:\\n  /nix/store/0-missing.drv",
     "fails": None,
+    # the same check on its own node (uname asus-b460m): built there, and recorded as built for the head
+    "owner": "these 2 derivations will be built:\\n  /nix/store/a-ollama-0.40.3.drv\\n  /nix/store/b-etc.drv",
 }
 for mode, dryrun in dryruns.items():
     with tempfile.TemporaryDirectory() as t:
@@ -130,25 +132,33 @@ for mode, dryrun in dryruns.items():
                                   f"elif '--dry-run' in a and 'asus' in a[-1]: print({dryrun!r}.replace('\\\\n', '\\n'), file=sys.stderr)\n"))
         # this guest's own system has no CUDA (-qR /run/current-system); the to-build derivations' inputs do
         (t / "nix-store").write_text('#!/usr/bin/env bash\n[ "$2" = -qR ] && exit 0\necho /nix/store/c-cuda13.4-cuda_cudart-13.4.drv\n')
-        (t / "uname").write_text("#!/usr/bin/env bash\necho acer-swift\n")
+        (t / "uname").write_text(f"#!/usr/bin/env bash\necho {'asus-b460m' if mode == 'owner' else 'acer-swift'}\n")
         (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
         for f in ("nix", "nix-store", "uname", "record"):
             (t / f).chmod(0o755)
         body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
         body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
-                           env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred)})
+                           env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred),
+                                "NIXOS_QA_HEAD": "0123abc"})
         built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c]
         check(not any("--max-jobs" in c for c in calls.read_text().splitlines()), f"{mode}: no substitute attempt with --max-jobs 0")
         if mode in ("defer", "single"):
             check(r.returncode == 0 and not any("asus" in c for c in built) and any("plain" in c for c in built),
                   f"flake check on acer: asus's deploy-schema check is not compiled, the plain one is built ({r.returncode}, {built})")
             check("deferred checks.x86_64-linux.deploy-schema-asus-b460m to asus-b460m" in r.stderr and "cuda13.4-cuda_cudart" in r.stderr
-                  and "not built here, deferred to their own host's gate: checks.x86_64-linux.deploy-schema-asus-b460m" in r.stderr,
+                  and "not built here, deferred to their own host's gate: asus-b460m:checks.x86_64-linux.deploy-schema-asus-b460m" in r.stderr,
                   f"the deferral is printed with its reason and in the end summary ({r.stderr[-400:]!r})")
-            check(deferred.read_text().split() == ["checks.x86_64-linux.deploy-schema-asus-b460m"]
-                  and "result=deferred" in rec.read_text() and "owner=asus-b460m" in rec.read_text() and "seconds=0" in rec.read_text(),
-                  f"{mode}: the deferral reaches nixos-qa's list and a deferred gate-step record with seconds=0")
+            check(deferred.read_text().split() == ["asus-b460m:checks.x86_64-linux.deploy-schema-asus-b460m"]
+                  and "result=deferred" in rec.read_text() and "owner=asus-b460m" in rec.read_text() and "seconds=0" in rec.read_text()
+                  and "head=0123abc" in rec.read_text(),
+                  f"{mode}: the deferral reaches nixos-qa's list as owner:check, and a deferred gate-step record for the head")
+        elif mode == "owner":
+            check(r.returncode == 0 and any("asus" in c for c in built) and not deferred.exists(),
+                  f"on asus its own deploy-schema check is built, not deferred ({r.returncode}, {built})")
+            check("result=built" in rec.read_text() and "owner=asus-b460m" in rec.read_text() and "head=0123abc" in rec.read_text()
+                  and "check=checks.x86_64-linux.deploy-schema-asus-b460m" in rec.read_text(),
+                  f"the owning host records its heavy check as built for the head ({rec.read_text()!r})")
         else:
             check(r.returncode != 0 and "the dry-run of checks.x86_64-linux.deploy-schema-asus-b460m failed" in r.stderr and not built,
                   f"seeded: a dry-run that {'exits non-zero' if dryrun is None else 'cannot find the derivation'} fails the step, not read as nothing to build ({r.returncode}, {r.stderr[-200:]!r})")

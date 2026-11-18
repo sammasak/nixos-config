@@ -239,6 +239,51 @@ with tempfile.TemporaryDirectory() as t:
     listed = git("worktree", "list", "--porcelain").count("worktree ")
     check(listed == 2, f"no gate worktree left behind ({listed} registered, the repository and wt expected)")
 
+    # A manual nixos:qa's green (scripts/qa-green.sh, called by qa in devenv.nix): recorded for a clean checkout that
+    # did not change during the run, under the key the hook looks up, so pushing that tree runs the lints only; any
+    # change no commit holds, a HEAD or generation that moved, or a gate not run as its store path records nothing.
+    git("config", "--unset", "core.hooksPath")
+    qg = ROOT / "scripts" / "qa-green.sh"
+    genv = {**env, "QA_SYSTEM": str(gen), "QA_GATE_PREFIX": f"{t}/"}
+
+    def manual(gate=str(t / "qa"), during=None):
+        begin = subprocess.run(["bash", str(qg), "begin"], cwd=repo, env=genv, capture_output=True, text=True, check=True).stdout.split()
+        if during:
+            during()
+        r = subprocess.run(["bash", str(qg), "record", gate, *begin], cwd=repo, env=genv, capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def switch_gen(to):
+        gen.unlink()
+        gen.symlink_to(t / to)
+
+    switch_gen("gen1")
+    green.unlink(missing_ok=True)
+    m1 = commit({"flake.nix": "m1\n"}, "m1")
+    rc, out = manual()
+    want = f"{git('rev-parse', 'HEAD^{tree}')} {t / 'qa'} {t / 'gen1'}"
+    check(rc == 0 and "recorded green" in out and green.read_text().split("\n")[-2] == want,
+          f"M1 a clean manual green is recorded as the hook records its own ({out.strip()})")
+    case("M1 then the push of that tree runs the lints only", m1, "LINTS")
+    for what, files, during, gate_exe in (
+        ("M2 an untracked file at the start", {"flake.nix": "m2\n"}, None, None),
+        ("M3 a tracked file modified at the start", {"flake.nix": "m3\n"}, None, None),
+        ("M4 HEAD moved during the run", {"flake.nix": "m4\n"}, lambda: commit({"flake.nix": "m4b\n"}, "during"), None),
+        ("M5 the generation switched during the run", {"flake.nix": "m5\n"}, lambda: switch_gen("gen2"), None),
+        ("M6 the gate not run as its store path", {"flake.nix": "m6\n"}, None, "nixos-qa"),
+    ):
+        rev = commit(files, what[:2])
+        if what.startswith("M2"):
+            (repo / "scratch.txt").write_text("x\n")
+        if what.startswith("M3"):
+            (repo / "flake.nix").write_text("edited\n")
+        rc, out = manual(gate_exe or str(t / "qa"), during)
+        (repo / "scratch.txt").unlink(missing_ok=True)
+        git("checkout", "-q", "--", "flake.nix")
+        switch_gen("gen1")
+        check(rc == 0 and "green not recorded" in out, f"seeded: {what}: nothing is recorded ({out.strip()})")
+        case(f"{what}: the push of that tree runs the full gate", rev, "FULL")
+
 
 # The flake check (flakeCheck in devenv.nix) refuses to run on lenovo when a check is a VM test (it has a driver,
 # whatever its name), and builds them elsewhere: nix and uname stubbed, a fake flake with one VM check ("rebind") and

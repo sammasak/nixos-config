@@ -22,9 +22,13 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               already green here under the same gate and system generation, or it plus such docs;
 #               deleting nixos-qa-green in the common git dir forces the full gate.
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
-#               The push is the gate: a manual nixos:qa records no green tree (it checks the working tree, which
-#               may be dirty, while a record keys a commit's tree), so a push after one runs the full gate again;
-#               a re-push of a tree the hook passed (GitHub dropped the push) runs lints only.
+#               A manual nixos:qa that passes on a clean checkout, unchanged through the run, records its tree the
+#               same way (scripts/qa-green.sh), so pushing that commit afterwards runs the lints only; with any
+#               change no commit holds it records nothing. A re-push of a green tree also runs the lints only.
+#               nixos:qa takes /run/work-locks/heavy-work.lock itself (scripts/heavy-lock.sh): do not wrap it in
+#               flock (an ancestor's lock is detected and counts). A check deferred to its own host is printed as
+#               `nixos-qa: deferred-checks head=<sha> <owner>:<check>…` and in the gate record (head=,
+#               deferred_checks=); its owner's gate records `result=built owner=<host> head=<sha>` for it.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table
