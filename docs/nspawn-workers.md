@@ -344,6 +344,10 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   `<socket>-<name>`. A rotated token restarts the proxy: sops restarts it for
   the Claude login, a path unit on `hosts.yml` for gh's. Without a GitHub
   token in `hosts.yml` the proxy still starts and GitHub answers 401.
+- Every instance's `loki.sock` passes `POST` to exactly `/loki/api/v1/push`
+  (bodies up to 1MiB, everything else 403) to `sam.fleet.loki`, so the gates'
+  platform records reach Loki: `PLATFORM_LOKI_URL=http://127.0.0.1:4103`.
+  The guest still cannot reach Loki's address itself; the labels are its own.
 - Without `egress.github`, the host user's `~/.ssh/id_ed25519` and on acer
   `~/.config/gh/hosts.yml` are still bound read-only.
 

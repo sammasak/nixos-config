@@ -483,6 +483,24 @@ in
             };
           };
         };
+        # Every guest's gates write platform records (scripts/platform-record.sh), and blockedNetworks keeps it from
+        # Loki's LAN address. The labels are the guest's own: it can push any stream, as any fleet host can.
+        loki = {
+          for = _: true;
+          site = _: ''
+            @other not {
+              method POST
+              expression `{path} == "/loki/api/v1/push"`
+            }
+            respond @other 403
+            request_body {
+              max_size 1MiB
+            }
+            reverse_proxy ${config.sam.fleet.loki.url}
+          '';
+          port = 4103;
+          guest.env.PLATFORM_LOKI_URL = "http://127.0.0.1:${toString dev.egress.loki.port}";
+        };
       };
     };
 
