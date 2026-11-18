@@ -64,10 +64,15 @@ in
             receiver = "null";
             matchers = [ ''alertname =~ "Watchdog|InfoInhibitor|HostExpectedOff"'' ];
           }
-          # a rule's notify="none" keeps it in the alert list and off the bridge (NodeSensorNearCritical)
+          # a rule's notify="none" keeps it in the alert list and off the bridge (NodeSensorNearCritical); so does
+          # severity="info" (NodeCPUHighUsage: every gate holds a builder above 90 % for longer than its 15 m)
           {
             receiver = "null";
             matchers = [ ''notify = "none"'' ];
+          }
+          {
+            receiver = "null";
+            matchers = [ ''severity = "info"'' ];
           }
           # shipping alerts (rules/shipping.nix) wait for the morning; one firing then is sent when the night ends
           {
