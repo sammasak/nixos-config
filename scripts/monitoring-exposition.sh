@@ -74,7 +74,7 @@ unknown = set(want) - set(services) - {"*"}
 if unknown:
     sys.exit(f"monitoring-exposition: names needed from jobs not run here: {sorted(unknown)}")
 missing = {}
-for _ in range(120):
+for waited in range(120):
     bodies, have = {}, {}
     for job, port in services.items():
         try:
@@ -87,6 +87,8 @@ for _ in range(120):
     if not any(missing.values()):
         for job, body in bodies.items():
             open(f"{sys.argv[2]}/{files[job]}.prom", "w").write(body)
+        print(f"monitoring-exposition: {sum(map(len, want.values()))} needed names present after {waited} s",
+              file=sys.stderr)
         sys.exit(0)
     time.sleep(1)
 sys.exit("monitoring-exposition: still missing after 120 s: "
