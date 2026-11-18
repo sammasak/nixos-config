@@ -347,6 +347,20 @@ in
           ${pkgs.curl}/bin/curl -fsS -m 10 -H "Title: Environment host" -H "Priority: high" -H "Tags: warning" -d "$1" ${lib.escapeShellArg cfg.ntfyUrl}
         ''
       );
+      records = {
+        inherit (config.sam.fleet.loki) url;
+        address = config.sam.fleet.hosts.${config.sam.fleet.loki.host}.address;
+        # scripts/platform-record.sh's own list; scripts/test-guest-records.py holds the two equal
+        kinds = [
+          "gate"
+          "gate-step"
+          "deploy"
+          "checks-run"
+          "coverage"
+          "instructions"
+          "delivery"
+        ];
+      };
       egressInaccessible = [ "/run/secrets.d" ]; # sops-nix: every host secret; the proxy gets its own as a credential
       egress = {
         anthropic = {

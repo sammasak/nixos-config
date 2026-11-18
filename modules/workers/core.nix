@@ -71,7 +71,13 @@ let
   # new declaration would.
   trashOne = ''
     # a rename on the state dir's filesystem, never a copy, and never through a link
-    [[ ! -L $d/$n && -d $d/$n ]] && mv -T --no-copy "$d/$n" "$d/.trash/$n-$(date +%Y%m%d-%H%M%S)"
+    if [[ ! -L $d/$n && -d $d/$n ]]; then
+      ${lib.optionalString (cfg.records != null) ''
+        # its last records first, bounded: Loki down never holds a retire, a reset or an activation
+        ${pkgs.coreutils}/bin/timeout 30 ${config.systemd.package}/bin/systemctl start "dev-env-records@$n.service" || true
+      ''}
+      mv -T --no-copy "$d/$n" "$d/.trash/$n-$(date +%Y%m%d-%H%M%S)"
+    fi
     rm -rf --one-file-system "/nix/var/nix/profiles/per-container/$n" "/nix/var/nix/gcroots/per-container/$n"
   '';
   # Aged by when it was trashed (the rename sets the entry's ctime), not by tmpfiles: that ages each file by its own
@@ -92,6 +98,47 @@ let
       fi
       find -P "$t" -xdev -mindepth 1 -maxdepth 1 -cmin +10080 -exec rm -rf --one-file-system {} +
     '';
+  };
+  # A dynamic user with CAP_DAC_READ_SEARCH alone: it reads every home whoever owns it, writes only its
+  # StateDirectory and reaches only Loki. The timer's unit and the per-instance one share the user, so the state.
+  recordsUnit = names: timeout: {
+    Type = "oneshot";
+    ExecStart = lib.escapeShellArgs (
+      [
+        (lib.getExe pkgs.python3)
+        "-I"
+        "${../../scripts/guest-records.py}"
+        "--state-dir"
+        cfg.stateDir
+        "--prefix"
+        cfg.prefix
+        "--url"
+        "${cfg.records.url}/loki/api/v1/push"
+        "--kinds"
+        (lib.concatStringsSep "," cfg.records.kinds)
+      ]
+      ++ names
+    );
+    TimeoutStartSec = timeout;
+    DynamicUser = true;
+    User = "dev-env-records";
+    StateDirectory = "dev-env-records";
+    StateDirectoryMode = "0700";
+    AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];
+    CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
+    NoNewPrivileges = true;
+    ProtectSystem = "strict";
+    ProtectHome = true;
+    PrivateTmp = true;
+    PrivateDevices = true;
+    RestrictAddressFamilies = [
+      "AF_INET"
+      "AF_INET6"
+      "AF_UNIX"
+    ];
+    IPAddressDeny = "any";
+    IPAddressAllow = cfg.records.address;
+    MemoryMax = "128M";
   };
   prepareDirs = ''
     install -d -m 0711 "$d"
@@ -643,6 +690,28 @@ in
       default = null;
       description = "Program run with a message when an instance's container fails, the pool's OOM killer fires or a disk runs low; null, no alerts.";
     };
+    records = mkOption {
+      type = types.nullOr (
+        types.submodule {
+          options = {
+            url = mkOption {
+              type = types.str;
+              description = "Loki's base URL, http://<address>:<port>.";
+            };
+            address = mkOption {
+              type = types.str;
+              description = "Loki's IP address, the only one the shipper may reach.";
+            };
+            kinds = mkOption {
+              type = types.listOf (types.strMatching "[a-z][a-z-]*");
+              description = "The record kinds shipped, as the `kind` label; a line of any other kind is dropped.";
+            };
+          };
+        }
+      );
+      default = null;
+      description = "Loki the host ships each guest's platform records to (the spool ~/.local/state/platform-records), every 5 minutes and before a home is trashed, labelled job=platform, kind and host=<prefix>-<name> by the host, never by the guest; null, not shipped.";
+    };
     credentials = mkOption {
       type = types.attrsOf types.externalPath;
       default = { };
@@ -799,6 +868,27 @@ in
         };
       };
     }
+
+    # the guest cannot reach Loki (blockedNetworks), and a push of its own could carry any labels
+    (lib.mkIf ((cfg.instances != { } || cfg.retired != [ ]) && cfg.records != null) {
+      systemd.services."dev-env-records@" = {
+        description = "Ship developer environment %i's platform records to Loki";
+        serviceConfig = recordsUnit [ "%i" ] "25s";
+      };
+    })
+    (lib.mkIf (cfg.instances != { } && cfg.records != null) {
+      systemd.services.dev-env-records = {
+        description = "Ship the developer environments' platform records to Loki";
+        serviceConfig = recordsUnit (map (w: w.name) instances) "2min";
+      };
+      systemd.timers.dev-env-records = {
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnCalendar = "*:0/5";
+          Persistent = true;
+        };
+      };
+    })
 
     # The host's daemon registers an environment's devenv roots under the guest's path, which dangles on the
     # host: without this the host's collection deletes every environment's built shells. The daemon also collects

@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""The host's shipper of guest platform records (scripts/guest-records.py, core.nix's dev-env-records units), run on
+a temp state dir against a fake Loki: each line once, also after the spool is rewritten; labels set by the host
+alone; a line naming a label key, an unknown kind, an oversize or too old line dropped; the per-run cap; a link or
+FIFO anywhere on the spool's path refused; progress kept outside the guest's home. Its allow-list is
+scripts/platform-record.sh's, and core.nix's trashOne ships before its rename, never failing it.
+Usage: test-guest-records.py [SHIPPER [CORE_NIX]] (a seeded copy of either must fail it)."""
+import hashlib
+import http.server
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+
+from gate_probe import check, finish
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+SHIPPER = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "scripts/guest-records.py"
+CORE = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "modules/workers/core.nix"
+PREFIX = "acer-swift"
+OWNER_HOST = "lenovo-21CB001PMX"
+
+case = re.search(r"case \$kind in\n\s*([a-z| -]+)\)", (ROOT / "scripts/platform-record.sh").read_text())
+helper_kinds = case.group(1).replace(" ", "").split("|") if case else []
+block = re.search(r"records = \{.*?kinds = \[(.*?)\];", (ROOT / "modules/workers/default.nix").read_text(), re.S)
+kinds = re.findall(r'"([a-z-]+)"', block.group(1)) if block else []
+check(len(helper_kinds) == 7 and sorted(kinds) == sorted(helper_kinds),
+      f"default.nix's records.kinds is platform-record.sh's list ({kinds} vs {helper_kinds})")
+
+core = CORE.read_text()
+trash = re.search(r"\n  trashOne = ''\n(.*?)\n  '';\n", core, re.S)
+body = trash.group(1) if trash else ""
+ship = re.search(r'^\s*\S*timeout 30 \S*systemctl start "dev-env-records@\$n\.service" \|\| true$', body, re.M)
+mv = re.search(r'^\s*mv -T --no-copy "\$d/\$n"', body, re.M)
+guard = re.search(r"^\s*if \[\[ ! -L \$d/\$n && -d \$d/\$n \]\]; then$", body, re.M)
+check(bool(ship and mv and guard) and guard.start() < ship.start() < mv.start(),
+      "trashOne ships the instance's records (timeout 30, || true) before its rename, inside the not-a-link guard")
+unit = re.search(r"\n  recordsUnit = names: timeout: \{\n(.*?)\n  \};\n", core, re.S)
+u = unit.group(1) if unit else ""
+want = ['"-I"', "DynamicUser = true;", 'CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];',
+        'AmbientCapabilities = [ "CAP_DAC_READ_SEARCH" ];', 'IPAddressDeny = "any";',
+        "IPAddressAllow = cfg.records.address;", 'StateDirectory = "dev-env-records";', "NoNewPrivileges = true;",
+        'ProtectSystem = "strict";']
+check(all(w in u for w in want) and "guest-records.py" in u and "User = \"root\"" not in u,
+      f"the units run python -I as a dynamic user with CAP_DAC_READ_SEARCH alone, reaching Loki's address only "
+      f"(missing: {[w for w in want if w not in u]})")
+
+
+class Loki(http.server.BaseHTTPRequestHandler):
+    pushes = []
+    status = 204
+
+    def do_POST(self):
+        Loki.pushes.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+        self.send_response(Loki.status)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Loki)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+URL = f"http://127.0.0.1:{server.server_port}/loki/api/v1/push"
+
+tmp = pathlib.Path(tempfile.mkdtemp(prefix="guest-records-"))
+state, progress, outside = tmp / "state", tmp / "progress", tmp / "outside"
+for d in (state, progress, outside):
+    d.mkdir()
+NOW = time.time()
+TZ = timezone(timedelta(hours=1))
+
+
+def rec(age, kind, fields):
+    return f"{datetime.fromtimestamp(int(NOW - age), TZ).isoformat()} {kind} {fields}"
+
+
+def spool_of(home):
+    return home / ".local/state/platform-records"
+
+
+def write(name, lines):
+    """As platform-record.sh does: a new file renamed over the spool, so a new inode each time."""
+    s = spool_of(state / name / "home")
+    s.parent.mkdir(parents=True, exist_ok=True)
+    new = s.with_name("platform-records.new")
+    new.write_text("".join(line + "\n" for line in lines))
+    os.replace(new, s)
+    return s.stat().st_ino
+
+
+def run(*names):
+    Loki.pushes.clear()
+    try:
+        p = subprocess.run([sys.executable, "-I", str(SHIPPER), "--state-dir", str(state), "--progress", str(progress),
+                            "--prefix", PREFIX, "--url", URL, "--kinds", ",".join(kinds), *names],
+                           capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return 124, "", "timed out", []
+    entries = [(s["stream"], v[0], v[1]) for _, b in Loki.pushes for s in b["streams"] for v in s["values"]]
+    return p.returncode, p.stdout, p.stderr, entries
+
+
+def bodies(entries):
+    return [e[2] for e in entries]
+
+
+def tree(root):
+    return sorted((str(p.relative_to(root)), p.stat(follow_symlinks=False).st_mtime_ns) for p in root.rglob("*"))
+
+
+# herman: what a gate writes, and what a guest might write besides
+L = {
+    "old": rec(8 * 86400, "gate", "gate=nixos-qa result=pass old=1"),
+    "qa": rec(600, "gate", "gate=nixos-qa result=pass sha=abc"),
+    "step": rec(500, "gate-step", f"gate=nixos-qa step=flake-check seconds=3 result=pass hostname={OWNER_HOST}"),
+    "host": rec(400, "gate", f"gate=nixos-qa result=pass host={OWNER_HOST}"),
+    "kind": rec(350, "bogus", "x=1"),
+    "big": rec(300, "gate", "pad=" + "a" * 5000),
+    "job": rec(250, "gate", 'note="a" job=platform'),
+    "deploy": rec(100, "deploy", "target=acer-swift result=ok"),
+}
+herman = [L[k] for k in ("old", "qa", "step", "host", "kind", "big", "job", "deploy")]
+ino1 = write("herman", herman)
+fields = lambda k: L[k].split(" ", 2)[2]
+
+# links and a FIFO out of an instance dir, each to a spool of good lines
+good = "".join(rec(60, "gate", f"leak={i}") + "\n" for i in range(3))
+for d in (outside / ".local/state", outside / "state"):
+    d.mkdir(parents=True)
+    (d / "platform-records").write_text(good)
+(outside / "platform-records").write_text(good)
+(state / "linka/home").mkdir(parents=True)
+(state / "linka/home/.local").symlink_to(outside / ".local")
+(state / "linkb/home/.local").mkdir(parents=True)
+(state / "linkb/home/.local/state").symlink_to(outside / "state")
+(state / "linkc/home/.local/state").mkdir(parents=True)
+(state / "linkc/home/.local/state/platform-records").symlink_to(outside / "platform-records")
+(state / "fifo/home/.local/state").mkdir(parents=True)
+os.mkfifo(state / "fifo/home/.local/state/platform-records")
+(state / "empty/home").mkdir(parents=True)
+homes = tree(state)
+
+rc, out, err, got = run("herman", "linka", "linkb", "linkc", "empty")
+check(sorted(bodies(got)) == sorted(fields(k) for k in ("qa", "step", "deploy")),
+      f"the first run pushes the gate's lines alone (got {bodies(got)}; {out.strip()} {err.strip()})")
+check(all(s == {"job": "platform", "kind": s.get("kind"), "host": f"{PREFIX}-herman"} for s, _, _ in got)
+      and {s["kind"]: b for s, _, b in got} == {"gate": fields("qa"), "gate-step": fields("step"), "deploy": fields("deploy")},
+      f"labels are exactly job=platform, the line's kind and host={PREFIX}-herman, though a field names "
+      f"{OWNER_HOST} ({[s for s, _, _ in got]})")
+check(not any(f"host={OWNER_HOST}" in b for b in bodies(got)), "a line with host= in its fields is dropped")
+check(fields("job") not in bodies(got), "a line with job= in its fields is dropped")
+check(fields("kind") not in bodies(got) and "1 unknown kind" in out, f"an unknown kind is dropped and counted ({out.strip()})")
+check(fields("big") not in bodies(got) and "1 oversize" in out, "a line over 4 KiB is dropped and counted")
+check(fields("old") not in bodies(got) and "1 older than Loki takes" in out, "a line older than Loki's window is skipped")
+check(sorted(int(t) // 10**9 for _, t, _ in got) == sorted(int(NOW - a) for a in (600, 500, 100)),
+      "each entry carries the line's own time")
+check(all(p == "/loki/api/v1/push" for p, _ in Loki.pushes) and len(Loki.pushes) == 1, "one push to the push path")
+check(not any("leak=" in b for b in bodies(got)) and all(f"{n}: not shipped" in err for n in ("linka", "linkb", "linkc")),
+      f"a link at .local, at state or at the spool is refused and nothing of theirs is pushed ({err.strip()})")
+check(rc == 1, f"a refused instance fails the run (rc {rc})")
+check("empty" not in err, "a home without a spool is no error")
+frc, _, ferr, fgot = run("fifo")
+check(frc == 1 and fgot == [] and "fifo: not shipped" in ferr, f"a FIFO spool is refused at once (rc {frc}, {ferr.strip()})")
+check(tree(state) == homes, "the guest homes are left exactly as they were")
+check((progress / "herman.json").is_file(),
+      f"progress is kept under --progress, the unit's StateDirectory ({sorted(p.name for p in progress.iterdir())})")
+
+rc, out, err, got = run("herman")
+check(rc == 0 and got == [] and Loki.pushes == [], f"a second run pushes nothing (rc {rc}, {bodies(got)})")
+
+L["new"] = rec(50, "gate", "gate=nixos-qa result=fail sha=def")
+ino2 = write("herman", herman + [L["new"]])
+rc, out, err, got = run("herman")
+check(ino2 != ino1 and rc == 0 and bodies(got) == [fields("new")],
+      f"a rewritten spool (new inode, same lines and one more) pushes only the new one ({bodies(got)})")
+
+L["late"] = rec(1000, "gate", "late=1")
+L["a"] = rec(40, "gate", "after=1")
+L["b"] = rec(30, "gate", "after=2")
+write("herman", [L["late"], L["a"], L["b"]])
+rc, out, err, got = run("herman")
+check(bodies(got) == [fields("a"), fields("b")],
+      f"with the last shipped line gone, only lines no older than it go ({bodies(got)})")
+
+L["down"] = rec(20, "gate", "while-down=1")
+write("herman", [L["late"], L["a"], L["b"], L["down"]])
+Loki.status = 500
+rc, out, err, _ = run("herman")
+Loki.status = 204
+rc2, _, _, got = run("herman")
+check(rc == 1 and rc2 == 0 and bodies(got) == [fields("down")],
+      f"a push Loki did not take is sent again on the next run ({bodies(got)})")
+
+bulk = [rec(8 * 86400 + i, "gate", f"stale={i}") for i in range(50, 0, -1)]
+bulk += [rec(3000 - i, "gate", f"n={i}") for i in range(1200)]
+write("bulk", bulk)
+counts, first = [], ""
+for i in range(4):
+    rc, out, err, got = run("bulk")
+    counts.append(len(got))
+    first = first or out
+check(counts == [500, 500, 200, 0], f"at most 500 lines per instance and run ({counts})")
+check("50 older than Loki takes" in first, f"the backlog's too-old lines are skipped and counted ({first.strip()})")
+
+shutil.rmtree(tmp)
+finish()
