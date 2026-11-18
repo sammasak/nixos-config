@@ -138,7 +138,7 @@ in
         ./rules/alertmanager.yaml
         ./rules/prometheus.yaml
         ./rules/llm-gateway.yaml
-        ./rules/homelab.yaml
+        (import ./rules/homelab.nix { inherit lib hosts; }).file
         llmBench
         shipping
       ];
@@ -148,7 +148,7 @@ in
       scrape_configs = [
         {
           # instance and node carry the host name, as the chart's relabelling did, for the mixin and the dashboards;
-          # sleeps marks a host the fleet expects off at times, which ./rules/homelab.yaml keys on
+          # sleeps marks a host the fleet expects off at times, which ./rules/homelab.yaml (rendered by ./rules/homelab.nix) keys on
           job_name = "node-exporter";
           scrape_timeout = "30s";
           # five unit_state series per unit, one of them failed: the rest would add thousands for no panel
