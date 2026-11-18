@@ -52,11 +52,20 @@ health_check() {
   return 1
 }
 
+# Back to PREV live, as the system profile's newest generation, and as the boot default. Not `nixos-rebuild boot
+# --rollback`: without --no-reexec it first builds itself from <nixpkgs/nixos>, which this flake-only host lacks on
+# NIX_PATH, and fails having changed nothing. Each step runs even if one before failed; a failed one is audited and
+# printed, never swallowed, since the host could then boot into the failed generation.
 rollback() {
   echo "nixos-rebuild-activation: ROLLING BACK to $PREV_SYSTEM" >&2
-  "$PREV_SYSTEM/bin/switch-to-configuration" switch || true
-  # Reset it as the boot default too, not just live.
-  nixos-rebuild boot --rollback || true
+  local failed=""
+  "$PREV_SYSTEM/bin/switch-to-configuration" switch || failed="$failed live-switch"
+  nix-env --profile /nix/var/nix/profiles/system --set "$PREV_SYSTEM" || failed="$failed profile"
+  "$PREV_SYSTEM/bin/switch-to-configuration" boot || failed="$failed boot-default"
+  if [ -n "$failed" ]; then
+    audit "result=rollback-incomplete failed=${failed# } new=$NEW_SYSTEM prev=$PREV_SYSTEM"
+    echo "nixos-rebuild-activation: ROLLBACK INCOMPLETE (${failed# } failed): check the boot default before a reboot" >&2
+  fi
 }
 
 echo "nixos-rebuild-activation: activating $NEW_SYSTEM (prev=$PREV_SYSTEM)"
