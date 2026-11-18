@@ -59,7 +59,7 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 | DeployRolledBack | Rollbacks in the last 24 h exceed `max` |
 | EscapeFound | Escapes in the last 24 h exceed `max` |
 | RetroDueGateSlower | The median push gate (`shipping_gate_seconds{quantile="0.5"}`) is over `factor` times its own 7-d average and the gate fail ratio is above its own 7-d average, for `forMinutes`, once the series is at least 5 d old (`offset 5d`): slower alone is no retro, a bigger change gates longer |
-| RetroDueStepFailsRepeat | One gate step failed at least `minFailures` times in 7 d (`shipping_gate_step_failures`) over a full sample of `lastRuns` push gates, for `forMinutes`. One bad change failing on two hosts makes 2, so 3 is a pattern; it names the step |
+| RetroDueStepFailsRepeat | One gate step failed at least `minFailures` times in 7 d (`shipping_gate_step_failures`) over a full sample of `lastRuns` push gates, for `forMinutes`. One bad change that fails on a second host makes 2, so 3 is a pattern; it names the step |
 | ShippingCollectorStale | A section has not succeeded for `maxHours`, or failed two runs in a row, or the collector ran without the owner's gh login (`shipping_collector_authenticated` under `minAuthenticated`: public repos only), unless lenovo itself is down |
 
 ## Changing a number
