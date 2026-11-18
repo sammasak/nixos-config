@@ -769,6 +769,7 @@ let
             ]
           );
           jumpHostRemoved = failing (extend "lenovo" [ { sam.workers.jumpHosts.old = "old-host"; } ]);
+          exporterOffFleet = failing (extend "naked-pi" [ ../modules/homelab/monitoring/node-exporter.nix ]);
           collectorOffFleet = failing (
             extend "naked-pi" [
               ../modules/homelab/journal-collector.nix
