@@ -3,11 +3,16 @@
 # reachable through the trusted interfaces too, whatever that rule admits.
 {
   config,
+  lib,
   pkgs,
   ...
 }:
 let
   inherit (config.sam.fleet) hosts;
+  host = config.networking.hostName;
+  listener = "node-exporter-${host}";
+  # a host off the fleet has no address and no listener: the assertion below says so, instead of an attribute error
+  served = config.sam.fleet.listeners ? ${listener};
   textfiles = "/run/node-exporter-textfile";
 in
 {
@@ -15,8 +20,8 @@ in
 
   services.prometheus.exporters.node = {
     enable = true;
-    listenAddress = hosts.${config.networking.hostName}.address;
-    inherit (config.sam.fleet.listeners."node-exporter-${config.networking.hostName}") port;
+    listenAddress = lib.mkIf served hosts.${host}.address;
+    port = lib.mkIf served config.sam.fleet.listeners.${listener}.port;
     # a host's own checks drop *.prom files here (open-webui.nix's edge-socket check, the generation below)
     extraFlags = [ "--collector.textfile.directory=${textfiles}" ];
     # needs AF_UNIX for D-Bus (upstream adds it); black-pi keeps only the failed unit_state series (prometheus.nix)
@@ -38,4 +43,11 @@ in
       MemoryMax = "64M";
     };
   };
+
+  assertions = [
+    {
+      assertion = served;
+      message = "modules/homelab/monitoring/node-exporter.nix: ${host} has no sam.fleet listener ${listener} (modules/core/fleet.nix generates one per sam.fleet host): import this module on fleet hosts only, or add the host to sam.fleet.hosts.";
+    }
+  ];
 }

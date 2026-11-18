@@ -321,6 +321,8 @@ if fc:
             body = textwrap.dedent(fc.group(1)).replace("${pkgs.coreutils}/bin/uname", str(t / "uname"))
             heavy = re.search(r'\n *gateHeavy = "([^"]*)";\n', src)
             body = body.replace("${gateHeavy}", heavy.group(1) if heavy else "").replace("''$", "$")
+            # every built check writes a gate-step record; this test reads only what is built
+            body = body.replace("${lib.getExe record}", "true")
             run = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True,
                                  env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}"})
             built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c]

@@ -35,12 +35,15 @@ esac""",
     "bin/systemctl": """case "$*" in
   is-system-running*) echo running ;;
   list-units*) printf 'sshd.service loaded active running SSH\\nwaiting.service loaded activating auto-restart w\\n' ;;
-  show*) printf 'Id=sshd.service\\nActiveState=active\\nSubState=running\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\n\\n'
+  show*) printf 'Id=sshd.service\\nActiveState=active\\nSubState=running\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\nFragmentPath=/etc/systemd/system/sshd.service\\nDropInPaths=\\n\\n'
          sub=running; [ -z "${LOOP:-}" ] || sub=auto-restart
-         printf 'Id=waiting.service\\nActiveState=activating\\nSubState=%s\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\n' "$sub" ;;
+         # SHADOW: a runtime drop-in (`systemctl edit --runtime`), outside the store; generator and transient units are
+         # systemd's own
+         printf 'Id=waiting.service\\nActiveState=activating\\nSubState=%s\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\nFragmentPath=/etc/systemd/system/waiting.service\\nDropInPaths=/run/systemd/generator/waiting.service.d/x.conf%s\\n\\n' "$sub" "${SHADOW:+ /run/systemd/system/waiting.service.d/override.conf}"
+         printf 'Id=run-u1.scope\\nActiveState=active\\nSubState=running\\nNRestarts=0\\nConditionResult=yes\\nConditionTimestampMonotonic=1\\nFragmentPath=/run/systemd/transient/run-u1.scope\\nDropInPaths=\\n' ;;
 esac""",
     # the system profile's generation is the running one
-    "bin/readlink": 'case "$*" in -f*) echo /nix/store/sys/init ;; *) echo /nix/store/sys ;; esac',
+    "bin/readlink": 'case "$*" in *override.conf) echo "$2" ;; -f*) echo /nix/store/sys/init ;; *) echo /nix/store/sys ;; esac',
     "scripts/system-checks.sh": 'echo "system-checks $*" >> "$LOG"',
     "scripts/platform-record.sh": 'echo "record $*" >> "$LOG"',
     "top/bin/switch-to-configuration": 'echo "would restart: x.service"; [ "$1" = dry-activate ]; exit "${DRY_RC:-0}"',
@@ -70,6 +73,13 @@ rc, out, log = run("deploy", LOOP="1")
 check(rc == 1 and "unit in a restart loop: waiting.service (activating/auto-restart" in out and "result=check-failed" in log,
       f"deploy: a unit in auto-restart on a running system fails the check, result=check-failed (rc {rc}: {out.strip()[-300:]})")
 
+rc, out, log = run("deploy", SHADOW="1")
+check(rc == 0 and "result=ok" in log and "warning: unit files not from the deployed generation (not a failure): "
+      "waiting.service (/run/systemd/system/waiting.service.d/override.conf)" in out and "generator" not in out.split("warning:")[-1],
+      f"deploy: a runtime drop-in outside the store is a warning, not a failure (rc {rc}: {out.strip()[-300:]})")
+check("not from the deployed generation" not in run("deploy")[1],
+      "deploy: store units, generator drop-ins and transient units raise no warning")
+
 rc, out, log = run("dry-activate")
 check(rc == 0 and "--dry-activate" in log, f"dry-activate: a passing dry activation exits 0 (rc {rc}: {out.strip()})")
 check("ssh -o StrictHostKeyChecking=yes deploy@target sudo " in log and "/top/bin/switch-to-configuration dry-activate" in log
@@ -86,5 +96,32 @@ check("would restart: x.service" in out and "diff-closures" in log,
 rc, out, log = run("dry-activate", DIFF_RC="1")
 check(rc != 0 and "closure diff on acer-swift failed (exit 1)" in out,
       f"dry-activate: a failing closure diff fails the recipe (rc {rc}: {out.strip()[-200:]})")
+
+# the activation's user-unit warning (scripts/shadowed-user-units.sh), on homes in a temporary directory
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    units = tmp / "etc-systemd-user"
+    units.mkdir()
+    for n in ("ollama-portforward.service", "kept.service", "linked.service"):
+        (units / n).write_text(f"[Service]\nExecStart=/nix/store/x-{n}\n")
+    user = tmp / "home" / "lukas" / ".config" / "systemd" / "user"
+    user.mkdir(parents=True)
+    (user / "ollama-portforward.service").write_text("[Service]\nExecStart=/home/lukas/bin/forward\n")
+    (user / "linked.service").symlink_to(units / "linked.service")
+    (user / "kept.service.d").mkdir()
+    (user / "own.service").write_text("[Service]\nExecStart=/bin/true\n")
+    (units / "default.target").write_text("[Unit]\n")
+    (user / "default.target.wants").mkdir()
+    (user / "default.target.requires").mkdir()
+    other = tmp / "home" / "other"
+    other.mkdir()
+    r = subprocess.run(["bash", str(ROOT / "scripts/shadowed-user-units.sh"), str(tmp / "home" / "lukas"), str(other),
+                        str(tmp / "absent")], env=dict(os.environ, SYSTEM_USER_UNITS=str(units)), capture_output=True, text=True)
+    lines = sorted(r.stderr.splitlines())
+    check(r.returncode == 0 and len(lines) == 2 and "ollama-portforward.service shadows the NixOS user unit" in lines[1]
+          and "kept.service.d overrides the NixOS user unit kept.service" in lines[0],
+          f"activation: a home's own copy of a NixOS user unit, and a .d override, are warned; a link to the same file, "
+          f"a unit NixOS lacks, .wants and .requires directories (merged, not shadowing) and a home without the "
+          f"directory are not; it never fails ({r.returncode}, {lines})")
 
 finish()

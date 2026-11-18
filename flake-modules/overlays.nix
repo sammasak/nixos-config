@@ -19,9 +19,10 @@ let
         wasmBindgenCli =
           src:
           let
-            crate = lib.findSingle (p: p.name == "wasm-bindgen") (throw "${src}: no wasm-bindgen in Cargo.lock") (
-              throw "${src}: two wasm-bindgen versions in Cargo.lock"
-            ) (lib.importTOML "${src}/Cargo.lock").package;
+            crate =
+              lib.findSingle (p: p.name == "wasm-bindgen") (throw "${src}: no wasm-bindgen in Cargo.lock")
+                (throw "${src}: two wasm-bindgen versions in Cargo.lock")
+                (lib.importTOML "${src}/Cargo.lock").package;
           in
           final."wasm-bindgen-cli_${lib.replaceStrings [ "." ] [ "_" ] crate.version}";
       in
