@@ -101,11 +101,12 @@ in
           "{{ $value }} escape(s) in the last 24 h: a revert on a default branch or an issue labelled escape."
           { }
         )
+        # min_over_time over 45 m spans two runs (every 30 min): one failed run that the next one fixes stays quiet
         (alert "ShippingCollectorStale"
           ''(time() - min(shipping_collector_success_timestamp_seconds) > ${
             toString (a.ShippingCollectorStale.maxHours.value * 3600)
-          } or absent(shipping_collector_success_timestamp_seconds) or shipping_collector_authenticated < ${toString a.ShippingCollectorStale.minAuthenticated.value}) unless on () up{job="node-exporter", node="${collectorNode}"} == 0''
-          "A shipping-metrics section on ${collectorNode} has not succeeded within ${toString a.ShippingCollectorStale.maxHours.value} h, or it ran without the owner's gh login and counted public repos only (journalctl -u shipping-metrics; gh auth status as the owner)."
+          } or absent(shipping_collector_success_timestamp_seconds) or shipping_collector_authenticated < ${toString a.ShippingCollectorStale.minAuthenticated.value} or min_over_time(shipping_collector_section_failed[45m]) == 1) unless on () up{job="node-exporter", node="${collectorNode}"} == 0''
+          "A shipping-metrics section on ${collectorNode} has not succeeded within ${toString a.ShippingCollectorStale.maxHours.value} h, failed two runs in a row (an error or the run deadline), or it ran without the owner's gh login and counted public repos only (journalctl -u shipping-metrics; gh auth status as the owner)."
           { }
         )
       ];
