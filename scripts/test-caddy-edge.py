@@ -1,10 +1,19 @@
 """acer's Caddy edge (modules/homelab/edge.nix), as `caddy adapt` reads the deployed Caddyfile: the admin API is a
 socket only caddy may write to, every name has its route and backend, chat and grafana pass forward auth before
 their backend with the five X-Authentik-* fields copied, otlp admits the fleet alone, llm-gateway serves /v1 only,
-open-webui listens on the edge socket alone, the apex and any other name under the wildcard are 404, and herman is
-its Nix build with the Cache-Control matrix and SPA fallback of its deploy/nginx.conf."""
+open-webui listens on the edge socket alone, the apex and any other name under the wildcard are 404, herman is
+its Nix build with the Cache-Control matrix and SPA fallback of its deploy/nginx.conf, and the metrics server is
+plain HTTP on its own port, serving /metrics only, which black-pi scrapes at the fleet address; the deployed config,
+run on loopback, gives a stray name or port in the Host no series of its own."""
+import copy
 import json
+import os
+import socket
+import ssl
 import subprocess
+import tempfile
+import time
+import urllib.request
 
 import gate_probe
 from gate_probe import check, finish
@@ -53,6 +62,20 @@ check(any("services.caddy" in m and "open-webui" in m for m in P["failing"]["noC
       f"the open-webui edge socket without Caddy is rejected {P['failing']['noCaddy']}")
 
 servers = config["apps"]["http"]["servers"]
+metrics_listen = f":{P['edgeMetrics']['port']}"
+metrics_target = f"{P['edgeMetrics']['address']}:{P['edgeMetrics']['port']}"
+metrics = {k: v for k, v in servers.items() if metrics_listen in v.get("listen", [])}
+servers = {k: v for k, v in servers.items() if k not in metrics}
+check(len(metrics) == 1 and all(v["listen"] == [metrics_listen] for v in metrics.values()),
+      f"one server listens for metrics, on {metrics_listen} alone {[v.get('listen') for v in metrics.values()]}")
+served = [(h.get("handler"), m) for v in metrics.values() for r in v.get("routes", [])
+          for h, m in flatten(r["handle"], tuple(r.get("match", []))) if h.get("handler") != "subroute"]
+check(served == [("metrics", ({"path": ["/metrics"]},))] and all(not v.get("tls_connection_policies") for v in metrics.values()),
+      f"the metrics server serves Caddy's metrics alone, over plain HTTP {served}")
+scraped = [t for j in json.loads(P["prometheusConfig"])["scrape_configs"] if j["job_name"] == "caddy"
+           for sc in j["static_configs"] for t in sc["targets"]]
+check(scraped == [metrics_target], f"black-pi scrapes it {scraped}")
+check(config["apps"]["http"].get("metrics") == {}, f"Caddy's metrics carry no host label {config['apps']['http'].get('metrics')}")
 routes = {}
 for server in servers.values():
     for route in server["routes"]:
@@ -159,5 +182,77 @@ blackbox = [j for j in json.loads(P["prometheusConfig"])["scrape_configs"] if j[
 probed = {t.split("://", 1)[1].split("/", 1)[0] for j in blackbox for sc in j["static_configs"] for t in sc["targets"]}
 unprobed = sorted(h for h in routes if h not in probed)
 check(blackbox and not unprobed, f"black-pi probes every Caddy name (unprobed: {unprobed})")
+
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def stray_series(metrics):
+    """The deployed config with `metrics`, on loopback ports and a throwaway certificate for the same names: the
+    caddy_http_ lines that name a stray host after two TLS requests, one for an unserved name under the wildcard and
+    one for chat with a port in the Host."""
+    run = copy.deepcopy(config)
+    run["admin"] = {"disabled": True}
+    for log in run.get("logging", {}).get("logs", {}).values():
+        if "writer" in log:
+            log["writer"] = {"output": "discard"}
+    http = run["apps"]["http"]
+    http["metrics"] = metrics
+    https, plain, scrape = free_port(), free_port(), free_port()
+    http["http_port"], http["https_port"] = plain, https
+    for srv in http["servers"].values():
+        srv["listen"] = [f"127.0.0.1:{scrape if srv['listen'] == [metrics_listen] else https}"]
+    with tempfile.TemporaryDirectory() as tmp:
+        cert, key = f"{tmp}/cert.pem", f"{tmp}/key.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                        "-nodes", "-days", "1", "-subj", "/CN=sammasak.dev", "-keyout", key, "-out", cert,
+                        "-addext", "subjectAltName=DNS:sammasak.dev,DNS:*.sammasak.dev"],
+                       check=True, capture_output=True)
+        for f in run["apps"]["tls"]["certificates"]["load_files"]:
+            f["certificate"], f["key"] = cert, key
+        with open(f"{tmp}/caddy.json", "w") as f:
+            json.dump(run, f)
+        env = {**os.environ, "HOME": tmp, "XDG_DATA_HOME": tmp, "XDG_CONFIG_HOME": tmp}
+        proc = subprocess.Popen([P["caddy"], "run", "--config", f"{tmp}/caddy.json"], env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        try:
+            url = f"http://127.0.0.1:{scrape}/metrics"
+            for _ in range(100):
+                try:
+                    urllib.request.urlopen(url, timeout=1).read()
+                    break
+                except OSError:
+                    if proc.poll() is not None:
+                        raise RuntimeError(f"caddy exited {proc.returncode}: {proc.stderr.read()}")
+                    time.sleep(0.1)
+            tls = ssl.create_default_context()
+            tls.check_hostname, tls.verify_mode = False, ssl.CERT_NONE
+            for sni, host in (("stray-x7k2.sammasak.dev", "stray-x7k2.sammasak.dev"),
+                              ("chat.sammasak.dev", "chat.sammasak.dev:4711")):
+                with socket.create_connection(("127.0.0.1", https), timeout=5) as raw, \
+                        tls.wrap_socket(raw, server_hostname=sni) as c:
+                    c.sendall(f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
+                    while c.recv(65536):
+                        pass
+            body = urllib.request.urlopen(url, timeout=5).read().decode()
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+    lines = [line for line in body.splitlines() if line.startswith("caddy_http_")]
+    return [line for line in lines if "stray-x7k2" in line or ":4711" in line], lines
+
+
+stray, lines = stray_series(config["apps"]["http"].get("metrics"))
+counted = [line for line in lines if line.startswith("caddy_http_requests_total{") and 'server="public"' in line]
+check(stray == [] and counted, f"a stray name or Host port adds no caddy_http_ series, the public server counts them "
+      f"{stray[:3]} {counted}")
+# seeded: per_host (as Caddy 2.11 runs it on a TLS server) must give both their own host, or the probe proves nothing
+seeded, _ = stray_series({"per_host": True})
+check(any("stray-x7k2" in line for line in seeded) and any(":4711" in line for line in seeded),
+      f"seeded: with per_host the stray name and port show {len(seeded)} lines")
 
 finish()

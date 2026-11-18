@@ -192,6 +192,7 @@ in
         # the admin listener, /metrics beside /status (modules/homelab/llm-gateway.toml)
         (static "llm-gateway" [ "${hosts.acer-swift.address}:9091" ])
         (static "alloy-otlp" [ "${hosts.acer-swift.address}:12346" ])
+        (static "caddy" [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ])
         (static "blackbox-exporter" [ "${blackbox.listenAddress}:${toString blackbox.port}" ])
         {
           job_name = "blackbox";

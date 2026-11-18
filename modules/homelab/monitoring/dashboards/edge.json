@@ -307,13 +307,129 @@
     },
     {
       "id": 7,
+      "type": "timeseries",
+      "title": "Requests per second, by server",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (server) (rate(caddy_http_requests_total{job=\"caddy\"}[$__rate_interval]))",
+          "legendFormat": "{{server}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "description": "Caddy's own count by server: public is every name on :443, metrics is black-pi's scrapes, remaining_auto_https_redirects the :80 redirects. Caddy keeps no per-name count: it would label any HTTPS Host as sent, so a stray name could add series without bound; per-name traffic is in the access logs."
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "5xx share, by server",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "(sum by (server) (rate(caddy_http_request_duration_seconds_count{job=\"caddy\",code=~\"5..\"}[$__rate_interval])) or 0 * sum by (server) (rate(caddy_http_request_duration_seconds_count{job=\"caddy\"}[$__rate_interval]))) / sum by (server) (rate(caddy_http_request_duration_seconds_count{job=\"caddy\"}[$__rate_interval]))",
+          "legendFormat": "{{server}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "description": "Responses with a 5xx status, the backend's or Caddy's own (a 502 is a backend that did not answer)."
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Response time p95, by server",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (server, le) (rate(caddy_http_request_duration_seconds_bucket{job=\"caddy\"}[$__rate_interval])))",
+          "legendFormat": "{{server}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "From the request's arrival to the last byte, at Caddy; a streaming chat answer counts its whole length."
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "In flight, by server",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (server) (caddy_http_requests_in_flight{job=\"caddy\"})",
+          "legendFormat": "{{server}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
       "type": "logs",
       "title": "Caddy errors",
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 43
       },
       "datasource": {
         "type": "loki",
@@ -337,14 +453,14 @@
       }
     },
     {
-      "id": 8,
+      "id": 12,
       "type": "logs",
       "title": "Certificate renewals (ACME, every host)",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 35
+        "y": 51
       },
       "datasource": {
         "type": "loki",
@@ -367,14 +483,14 @@
       }
     },
     {
-      "id": 9,
+      "id": 13,
       "type": "table",
       "title": "Authentik backups: last run and state",
       "gridPos": {
         "h": 4,
         "w": 12,
         "x": 12,
-        "y": 35
+        "y": 51
       },
       "datasource": {
         "type": "prometheus",
@@ -492,14 +608,14 @@
       ]
     },
     {
-      "id": 10,
+      "id": 14,
       "type": "logs",
       "title": "Authentik backup errors (empty = none)",
       "gridPos": {
         "h": 4,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 55
       },
       "datasource": {
         "type": "loki",
