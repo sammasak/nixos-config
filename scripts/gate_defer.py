@@ -37,3 +37,28 @@ def deferred(drv, name, owner, step):
     refs = subprocess.run(["nix-store", "-q", "--references", *todo], capture_output=True, text=True, check=False).stdout.split()
     hits = sorted({re.sub(r"^/nix/store/[a-z0-9]*-", "", r) for r in refs if heavy.search(r)})
     return (len(todo), hits) if hits else None
+
+
+def _record(step, check, owner, result, drv):
+    record = os.environ.get("PLATFORM_RECORD")
+    if record:
+        subprocess.run([record, "gate-step", "gate=nixos-qa", f"step={step}", f"check={check}", f"owner={owner}",
+                        "seconds=0", f"result={result}", f"head={os.environ.get('NIXOS_QA_HEAD', '')}", f"drv={drv}"],
+                       check=False)
+
+
+def record_deferral(step, check, owner, drv):
+    """A check left to its owning host, as the flake check records one: "owner:check" in nixos-qa's deferred list and a
+    gate-step record with head= and drv= (scripts/deferred-checks.py matches them). check names a check without spaces."""
+    assert " " not in check and ":" not in owner, f"{step}: check {check!r} or owner {owner!r} breaks owner:check"
+    _record(step, check, owner, "deferred", drv)
+    with open(os.environ.get("NIXOS_QA_DEFERRED", os.devnull), "a") as f:
+        f.write(f"{owner}:{check}\n")
+
+
+def record_owned(step, check, owner, drv, result="built"):
+    """The other half, on the owning host: its check did what the step expects, for this head and drv: built, or
+    expected-fail for a seeded check whose build must fail."""
+    assert " " not in check, f"{step}: check {check!r} has a space"
+    assert result in ("built", "present", "expected-fail"), f"{step}: result {result!r}"
+    _record(step, check, owner, result, drv)

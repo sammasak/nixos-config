@@ -481,6 +481,17 @@ in
             python3 -I ${../scripts/shipping-metrics.py} --list > shipping.prom
             # the devTools hosts' navigation textfile (modules/homelab/nav-metrics.nix)
             python3 -I ${../scripts/nav-metrics.py} --list > nav.prom
+            # Authentik's names from the Python package and the Go server acer runs
+            python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
+              ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
+            checker=${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3
+            static=(node-exporter=node.prom node-exporter=systemd.prom node-exporter=writers.prom
+              node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom
+              llm-gateway=llm-gateway.prom authentik-server=authentik.prom authentik-worker=authentik.prom
+              nvidia-gpu=${self'.checks.gpu-telemetry-exporter})
+            # what the stack run below must export before it is read: the panels' and rules' own names
+            "$checker" -I ${../scripts/check-grafana-dashboards.py} --needs "$specPath" prometheus,alertmanager,alloy-otlp \
+              "''${static[@]}" > needs.txt
             mkdir stack
             bash ${../scripts/monitoring-exposition.sh} stack ${msi-ms7758.pkgs.prometheus} "$promConfigPath" \
               ${
@@ -491,19 +502,11 @@ in
                   )
                 )
               } ${msi-ms7758.pkgs.prometheus-alertmanager} "$amConfigPath" \
-              ${lib.escapeShellArg (toString pi.services.prometheus.alertmanager.extraFlags)} "$alloyExec"
-            # Authentik's names from the Python package and the Go server acer runs
-            python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
-              ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
+              ${lib.escapeShellArg (toString pi.services.prometheus.alertmanager.extraFlags)} "$alloyExec" needs.txt
             check() {
-              ${
-                pkgs.python3.withPackages (ps: [ ps.pyyaml ])
-              }/bin/python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node-exporter=node.prom node-exporter=systemd.prom \
-                node-exporter=writers.prom node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom \
-                node-exporter=nav.prom llm-gateway=llm-gateway.prom authentik-server=authentik.prom \
-                authentik-worker=authentik.prom prometheus=stack/prometheus.prom alertmanager=stack/alertmanager.prom \
-                alloy-otlp=stack/alloy.prom nvidia-gpu=${self'.checks.gpu-telemetry-exporter}
+              "$checker" -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
+                ${pkgs.grafana-loki}/bin/logcli "''${static[@]}" prometheus=stack/prometheus.prom \
+                alertmanager=stack/alertmanager.prom alloy-otlp=stack/alloy.prom
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"
