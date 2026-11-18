@@ -377,7 +377,7 @@ printf 'PASS: authenticated OTLP ingestion recovered after restart; 1 MiB reques
 # The session sum (homelab-gitops#226) in Claude Code's live shape: one request per session, cumulative, a start time
 # from before the collector started and fixed per stream, the time moving on per export. After a start nothing leaves
 # until each session's second export (cumulativetodelta's "auto" takes the first as the baseline), then the output
-# is the sessions' summed increase since. This is what acer showed after its first start (#414).
+# is the sessions' summed increase since.
 kill -INT "$alloy_pid" 2>/dev/null || true
 wait "$alloy_pid" 2>/dev/null || true
 alloy_pid=

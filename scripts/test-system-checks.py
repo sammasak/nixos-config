@@ -7,18 +7,12 @@ import json
 import os
 import pathlib
 import subprocess
-import sys
 import tempfile
+
+from gate_probe import check, finish
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts/system-checks.sh"
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 STUBS = {
@@ -91,4 +85,4 @@ rc, out, log = run(INVALID_AFTER=CHECK["out"])
 check(rc != 0 and "still not valid" in out and "nix path-info" not in log,
       f"a check still not valid on the target after the build is refused (rc {rc})")
 
-sys.exit(1 if failed else 0)
+finish()

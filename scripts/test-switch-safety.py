@@ -8,18 +8,11 @@ import os
 import pathlib
 import re
 import subprocess
-import sys
 import tempfile
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 s = gate_probe.section("switch-safety")
@@ -50,4 +43,4 @@ for case, content in (("missing", None), ("valid", VALID), ("empty", ""), ("half
         check(run.returncode == 0 and ok and not stray,
               f"~/.claude.json {case}: the activation exits {run.returncode} and {outcome}{f', stray files {stray}' if stray else ''}")
 
-sys.exit(1 if failed else 0)
+finish()

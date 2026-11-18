@@ -148,6 +148,7 @@ let
       imports = [
         ../core/system.nix
         ../core/agent-options.nix
+        ../core/agent-assertions.nix
         ../core/users.nix
         ../core/packages.nix
         ../core/ssh-known-hosts.nix
@@ -539,7 +540,7 @@ in
     ]
     ++ lib.optionals (dev.instances != { }) [
       {
-        # homelab/deploy-target.nix: that key, from that host's address (a guest's traffic leaves by it), is root fleet-wide
+        # modules/homelab/deploy-target.nix: that key, from that host's address (a guest's traffic leaves by it), is root fleet-wide
         assertion = profile.hostname != config.sam.fleet.deployer;
         message = "sam.workers: an instance holds the host user's SSH key, and this host's is the fleet's deploy key.";
       }
