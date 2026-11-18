@@ -36,11 +36,14 @@ in
       StateDirectoryMode = "0755";
       # above the script's own 240 s deadline
       TimeoutStartSec = 300;
-      # 24 MB peak over lenovo's 24 h of transcripts (1.6 s); counted in lenovo's sam.memory budget
+      # 24 MB peak, page cache included (the script drops it behind its reads), flat from lenovo's day to a 500 MB
+      # synthetic one; counted in lenovo's sam.memory budget
       MemoryMax = "48M";
       Nice = 10;
       ProtectSystem = "strict";
-      ProtectHome = "read-only";
+      # an empty /home with the transcripts alone bound in, read-only; "-": a host without them yet still starts
+      ProtectHome = "tmpfs";
+      BindReadOnlyPaths = [ "-/home/${user}/.claude/projects" ];
       PrivateTmp = true;
       PrivateNetwork = true;
       NoNewPrivileges = true;
