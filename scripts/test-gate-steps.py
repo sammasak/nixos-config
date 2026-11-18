@@ -9,16 +9,11 @@ import sys
 import tempfile
 import textwrap
 
+from gate_probe import check, finish
+
 import gate_defer
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 src = (ROOT / "devenv.nix").read_text()
@@ -185,4 +180,4 @@ if awk:
         check(miss.returncode != 0 or "know how to build" in miss.stderr,
               f"real nix: a missing derivation fails the dry-run or says it does not know how to build it ({miss.returncode}, {miss.stderr.strip()!r})")
 
-sys.exit(1 if failed else 0)
+finish()

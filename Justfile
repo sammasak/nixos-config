@@ -36,13 +36,14 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
     scripts/nix-audit-candidate.sh {{HOST}} {{TARGET}}
 
 # Run from lenovo; logs in as `deploy` (key-only, passwordless sudo, so no
-# prompt; homelab/deploy-target.nix). Rollback settings come from the node
+# prompt; modules/homelab/deploy-target.nix). Rollback settings come from the node
 # (flake-modules/deploy.nix); the host list is the table in
 # flake-modules/hosts.nix, which the pattern repeats. --skip-checks:
 # otherwise deploy-rs runs the full flake check first, building every x86 host
-# on lenovo (the 2026-11-11 OOM). The pre-push gate runs that check on pushed
-# non-docs commits, but `.#HOST` is the working tree, so the recipe refuses a
-# dirty tree or a HEAD not on origin/main (a detached checkout of it passes).
+# on lenovo, which runs it out of memory. The pre-push gate runs that check on
+# pushed non-docs commits, but `.#HOST` is the working tree, so the recipe
+# refuses a dirty tree or a HEAD not on origin/main (a detached checkout of it
+# passes).
 # Break-glass: DEPLOY_UNGATED=1 just deploy HOST deploys it anyway, with a
 # warning. A scope, not `capped`: it keeps the caller's environment,
 # terminal and Ctrl-C. The cap covers the deploy-rs client and its evaluation;

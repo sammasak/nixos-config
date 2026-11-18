@@ -8,15 +8,10 @@ import subprocess
 import sys
 import tempfile
 
+from gate_probe import check, finish
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SHIM = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / ".githooks" / "pre-push"
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 text = SHIM.read_text()
@@ -115,4 +110,4 @@ with tempfile.TemporaryDirectory() as tmp:
     p, seen = push(f"{d}:refs/heads/main", f"{c}:refs/heads/old1")
     check(p.returncode == 0 and seen.count("run") == 1, "control: without the block the same shape goes through (so the cases above test the block)")
 
-sys.exit(1 if failed else 0)
+finish()

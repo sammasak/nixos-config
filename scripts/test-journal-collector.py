@@ -8,17 +8,10 @@ Evaluation only: options, the generated config.alloy and the unit, never a build
 once against real Alloy 1.17.1, not in this gate."""
 import json
 import re
-import sys
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def enabled(hosts):
@@ -196,4 +189,4 @@ check(isinstance(m.get("configPath"), str) and m["configPath"].startswith("/nix/
       "the config is a store file named in ExecStart: a config change restarts Alloy (through the probe)")
 check("alloy-config-check" in m.get("checks", []), f"the build validates the config (system.checks) {m.get('checks')}")
 check(svc.get("RestartSec") == 30, f"RestartSec 30: four starts cannot burn out in seconds {svc.get('RestartSec')}")
-sys.exit(1 if failed else 0)
+finish()

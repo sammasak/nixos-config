@@ -2,51 +2,19 @@
 repository attributes, no content, and the HARNESS_ copies its emit-work-ref.sh hook reads; the hook runs on Stop after
 check-git-state.sh and on SessionStart only while the skills pin carries it. Off, none of it. Both skills sources are
 evaluated, whichever the pin is: the pinned one and a copy with the hook added, or removed (--override-input)."""
-import json
 import pathlib
-import shutil
-import subprocess
-import sys
 import tempfile
 
 import gate_probe
+from gate_probe import check, finish, flipped
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 HOOK = "emit-work-ref.sh"
 SKILL_HOOK = "emit-skill-use.sh"
 RELAY = "http://127.0.0.1:4319"
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def commands(s):
     return [h["command"] for entries in s["hooks"].values() for e in entries for h in e["hooks"]]
-
-
-def flipped(skills, tmp, has):
-    fixture = pathlib.Path(tmp, "skills")
-    shutil.copytree(skills, fixture, symlinks=True)
-    for p in [fixture, *fixture.rglob("*")]:
-        if not p.is_symlink():
-            p.chmod(p.stat().st_mode | 0o200)
-    for f in (fixture / "hooks" / h for h in (HOOK, SKILL_HOOK)):
-        if has:
-            f.unlink(missing_ok=True)
-        else:
-            f.write_text("#!/bin/sh\nexit 0\n")
-            f.chmod(0o755)
-    out = subprocess.run(
-        ["nix", "eval", "--json", "--impure", "--no-write-lock-file", "--override-input", "skills", f"path:{fixture}",
-         f"{ROOT}#nixosConfigurations", "--apply", f"import {ROOT}/scripts/harness-telemetry-probe.nix"],
-        capture_output=True, text=True)
-    if out.returncode != 0:
-        sys.exit(f"nix eval with the flipped skills source failed:\n{out.stderr[-800:]}")
-    return json.loads(out.stdout)
 
 
 def env_checks(P):
@@ -96,11 +64,11 @@ def main():
     print(f"pinned skills {skills} {'carries' if has else 'lacks'} {HOOK} and {SKILL_HOOK}")
     env_checks(P)
     with tempfile.TemporaryDirectory() as tmp:
-        F = flipped(skills, tmp, has)
+        F = flipped(skills, tmp, has, (HOOK, SKILL_HOOK), "harness-telemetry-probe.nix", missing_ok=True)
         src = next(c.split(" ")[-1].rsplit("/hooks/", 1)[0] for c in commands(F["off"]) if "/hooks/check-git-state.sh" in c)
     with_hook(*((P, skills) if has else (F, src)))
     without_hook(F if has else P)
-    sys.exit(1 if failed else 0)
+    finish()
 
 
 if __name__ == "__main__":
