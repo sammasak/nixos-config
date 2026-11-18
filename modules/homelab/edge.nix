@@ -17,7 +17,9 @@ let
   authentikMetrics = {
     server =
       lib.head
-        (builtins.fromJSON config.environment.etc."authentik/config.yml".text).listen.metrics;
+        (builtins.fromJSON (
+          builtins.unsafeDiscardStringContext config.environment.etc."authentik/config.yml".text
+        )).listen.metrics;
     worker = config.systemd.services.authentik-worker.environment.AUTHENTIK_LISTEN__METRICS;
   };
   fw = config.networking.firewall;
