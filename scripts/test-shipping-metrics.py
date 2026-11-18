@@ -60,6 +60,7 @@ GATES = [f"gate=nixos-qa seconds={100 + i} result={'fail' if i < 5 else 'pass'} 
 DEPLOYS = ["node=lenovo result=ok seconds=9 rolled_back=0 sha=abc1234",
            "node=acer-swift result=deploy-failed seconds=9 rolled_back=1 sha=def5678"]
 github_up = True
+commit_calls = []
 
 
 class Fake(http.server.BaseHTTPRequestHandler):
@@ -84,6 +85,7 @@ class Fake(http.server.BaseHTTPRequestHandler):
         elif u.path == "/search/commits":
             body = {"total_count": 1, "items": [{"commit": {"message": 'Revert "x"', "committer": {"date": iso(30)}}}]}
         elif m := re.match(r"/repos/sammasak/nixos-config/pulls/(\d+)/commits", u.path):
+            commit_calls.append(int(m.group(1)))
             if int(m.group(1)) not in COMMITS:
                 return self.send_error(404)
             page = int(q["page"][0])
@@ -148,8 +150,39 @@ with tempfile.TemporaryDirectory() as tmp:
           "a revert on a default branch is an escape in its window only")
     sections = {k for k in m if k.startswith("shipping_collector_success_timestamp_seconds")}
     check(len(sections) == 6, f"every section is stamped ({len(sections)})")
+    check(all(m.get(f'shipping_collector_section_failed{{section="{s}"}}') == 0
+              for s in ("issues", "prs", "reviews", "escapes", "gates", "deploys")),
+          "a full run writes section_failed 0 for every section")
     before = m
 
+    # PR 10 and 11 are cached with their answer; PR 12's 404 is not, so it alone is read again
+    commit_calls.clear()
+    rc, m = run(out)
+    check(sorted(set(commit_calls)) == [12] and 38.9 < m.get('shipping_pr_lead_time_hours{quantile="0.5"}', 0) < 39.1,
+          f"a second run reads only the PR whose commits failed; the cached ones give the same lead time {sorted(set(commit_calls))}")
+    cache = json.loads(pathlib.Path(f"{tmp}/lead-cache.json").read_text())
+    check(sorted(k.split("#")[1].split("@")[0] for k in cache) == ["10", "11"],
+          f"the cache keeps final answers only, never an http_error fallback {sorted(cache)}")
+
+    # no budget left: an uncached PR is not read, it counts as pending at its open time
+    pathlib.Path(f"{tmp}/lead-cache.json").unlink()
+    commit_calls.clear()
+    budget, sm.LEAD_BUDGET = sm.LEAD_BUDGET, -1
+    rc, m = run(out)
+    sm.LEAD_BUDGET = budget
+    check(commit_calls == [] and m.get('shipping_pr_lead_time_fallbacks{reason="pending",window="7d"}') == 3
+          and 3.9 < m.get('shipping_pr_lead_time_hours{quantile="0.5"}', 0) < 4.1,
+          "past the lookup budget no commits call is made; those PRs count as pending at their open-to-merge time")
+
+    # the run deadline passed: every section fails, and says so
+    deadline, sm.DEADLINE = sm.DEADLINE, time.monotonic() - 1
+    rc, m = run(out)
+    sm.DEADLINE = deadline
+    check(rc == 0 and all(m.get(f'shipping_collector_section_failed{{section="{s}"}}') == 1
+                          for s in ("issues", "prs", "reviews", "escapes", "gates", "deploys")),
+          "past the run deadline each section writes section_failed 1, so a timeout is a series, not a gap")
+
+    before = m
     github_up = False
     rc, m = run(out)
     check(rc == 0, "GitHub down: still exits 0, no restart loop")
@@ -160,6 +193,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check(m.get(stamp) == before[stamp], "GitHub down: the issues section keeps its last success timestamp, so it goes stale")
     check(not any(k.startswith("shipping_deploy_lag") for k in m) and "shipping_deploys" not in str(m.keys()),
           "GitHub down: the deploy section writes nothing partial")
+    check(m.get('shipping_collector_section_failed{section="prs"}') == 1
+          and m.get('shipping_collector_section_failed{section="reviews"}') == 1
+          and m.get('shipping_collector_section_failed{section="gates"}') == 0,
+          "GitHub down: prs failed, reviews (skipped with it) failed, the Loki gates section did not")
 
 
 class StubGitHub:

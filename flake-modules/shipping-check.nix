@@ -198,6 +198,54 @@ let
         ];
       }
       {
+        name = "a section failing two runs in a row pages; one failed run the next one fixes does not";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''up{job="node-exporter",node="${collector}"}'';
+            values = "1x200";
+          }
+          {
+            series = ''shipping_collector_success_timestamp_seconds{section="issues"}'';
+            values = "0+60x200";
+          }
+          {
+            series = "shipping_collector_authenticated";
+            values = "1x200";
+          }
+          # deploys succeeds for an hour, then fails run after run
+          {
+            series = ''shipping_collector_section_failed{section="deploys"}'';
+            values = "0x60 1x140";
+          }
+          # gates fails one run (30 min), then the next run succeeds
+          {
+            series = ''shipping_collector_section_failed{section="gates"}'';
+            values = "0x60 1x30 0x110";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "ShippingCollectorStale";
+            eval_time = "100m";
+            exp_alerts = [ ];
+          }
+          {
+            alertname = "ShippingCollectorStale";
+            eval_time = "${n (60 + 45 + staleFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  section = "deploys";
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
+            ];
+          }
+        ];
+      }
+      {
         name = "a collector that never wrote is stale, unless its host is down";
         interval = "1m";
         input_series = [
