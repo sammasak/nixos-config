@@ -24,8 +24,8 @@ let
   exporterHosts = lib.filterAttrs (
     _: h: h.config.services.prometheus.exporters.node.enable
   ) config.flake.nixosConfigurations;
-  # a textfile directory adds only the metrics of its own files (lenovo's shipping_* are checked by shipping-check.nix),
-  # so those flags are left out of the comparison
+  # a textfile directory adds only the metrics of its own files (shipping_* and agent_nav_* come from their collectors'
+  # --list below), so those flags are left out of the comparison
   flagsOf =
     c: with c.services.prometheus.exporters.node; [
       (lib.filter (f: !lib.hasPrefix "--collector.textfile.directory=" f) extraFlags)
@@ -142,6 +142,11 @@ let
     probe-typo = {
       dashboard = seed ''probe_sucess{job="blackbox"}'' "prometheus";
       reason = "unknown metric probe_sucess:";
+    };
+    # agent_nav_repo_miss_ratio, from nav.prom
+    nav-typo = {
+      dashboard = seed "agent_nav_repo_mis_ratio" "prometheus";
+      reason = "unknown metric agent_nav_repo_mis_ratio:";
     };
     caddy-typo = {
       dashboard = seed "rate(caddy_http_requets_total[5m])" "prometheus";
@@ -411,6 +416,8 @@ in
             python3 -I ${../scripts/llm-gateway-metric-names.py} ${acer-swift.pkgs.llmGateway.src} > llm-gateway.prom
             # lenovo's shipping textfile (modules/homelab/shipping-metrics.nix): the names its collector emits
             python3 -I ${../scripts/shipping-metrics.py} --list > shipping.prom
+            # the devTools hosts' navigation textfile (modules/homelab/nav-metrics.nix)
+            python3 -I ${../scripts/nav-metrics.py} --list > nav.prom
             mkdir stack
             bash ${../scripts/monitoring-exposition.sh} stack ${msi-ms7758.pkgs.prometheus} "$promConfigPath" \
               ${
@@ -424,7 +431,7 @@ in
               ${lib.escapeShellArg (toString pi.services.prometheus.alertmanager.extraFlags)} "$alloyExec"
             check() {
               python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom stack/*.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom stack/*.prom shipping.prom nav.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"
