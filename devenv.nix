@@ -422,6 +422,12 @@ let
         python3
       ])
       ''
+        # eleven host evals: the memory flake-check spares lenovo, and the same heavy-work lane as nixos:qa (once)
+        if [ "$(${pkgs.coreutils}/bin/uname -n)" = lenovo-21CB001PMX ]; then
+          echo "seventh-host-test: refused on lenovo: eleven host evaluations (memory); run it on msi, asus or acer" >&2
+          exit 1
+        fi
+        if [ -z "''${NIXOS_QA_LOCKED:-}" ]; then NIXOS_QA_LOCKED=1 exec ${lib.getExe heavyLock} "$0" "$@"; fi
         t=$SECONDS
         if ${pkgs.python3}/bin/python scripts/seventh-host-check.py; then r=pass; else r=fail; fi
         echo "seventh-host-test took $((SECONDS - t)) s"
