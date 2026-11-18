@@ -19,7 +19,7 @@ check("no-force-guard v5" in text, "the shim carries the no-force guard v5")
 check("only the first would be gated" in text, "the one-ref block is in the shim (a prek install -f drops it)")
 prek_lines = [l for l in text.splitlines() if l.startswith('PREK="/')]
 if len(prek_lines) != 1:
-    sys.exit("FAIL: expected exactly one PREK= line with an absolute path in the shim")
+    sys.exit("FAIL (scripts/test-prepush-one-ref.py): expected exactly one PREK= line with an absolute path in the shim")
 
 ENV = {
     **os.environ,
@@ -35,7 +35,7 @@ for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
 def git(cwd, *args, ok=True):
     p = subprocess.run(["git", *args], cwd=cwd, env=ENV, capture_output=True, text=True)
     if ok and p.returncode:
-        sys.exit(f"FAIL: git {' '.join(args)}: {p.stderr}")
+        sys.exit(f"FAIL (scripts/test-prepush-one-ref.py): git {' '.join(args)}: {p.stderr}")
     return p
 
 
