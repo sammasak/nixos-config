@@ -469,6 +469,9 @@ let
               })
             ]
           );
+          cacheAtCap = failing (
+            extend "asus-b460m" [ ({ lib, ... }: { homelab.ollama.promptCacheMiB = lib.mkForce 8192; }) ]
+          );
           noGraphics = failing (
             extend "asus-b460m" [ ({ lib, ... }: { hardware.graphics.enable = lib.mkForce false; }) ]
           );
