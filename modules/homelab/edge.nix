@@ -11,6 +11,16 @@
 }:
 let
   inherit (config.sam.fleet) hosts ntfy edgeMetrics;
+  # Authentik's server and worker metrics listeners, on loopback (authentik.nix); black-pi reaches them through the
+  # metrics site below
+  authentikMetrics = {
+    server =
+      lib.head
+        (builtins.fromJSON (
+          builtins.unsafeDiscardStringContext config.environment.etc."authentik/config.yml".text
+        )).listen.metrics;
+    worker = config.systemd.services.authentik-worker.environment.AUTHENTIK_LISTEN__METRICS;
+  };
   domain = "sammasak.dev";
   caddy = config.services.caddy;
   adminSocket = "unix//run/caddy/admin.sock|0200";
@@ -18,8 +28,19 @@ let
   authentik = "127.0.0.1:9000";
   # the only OTLP pushers: each host's native-otel-relay, and black-pi's blackbox probe
   otlpSources = map (h: h.address) (lib.attrValues hosts);
+  # Authentik's embedded outpost labels its metrics with the Host it gets (X-Forwarded-Host first), and any client can
+  # put a port on it: the name alone, as the route matched it, keeps that label to the names served. Caddy's adapter
+  # calls the X-Forwarded-Host line unnecessary; without it the upstream still gets the Host with its port
+  authentikHost = ''
+    header_up Host {host}
+    header_up X-Forwarded-Host {host}
+  '';
   sites = {
-    auth = "reverse_proxy ${authentik}";
+    auth = ''
+      reverse_proxy ${authentik} {
+        ${authentikHost}
+      }
+    '';
     chat = ''
       route {
         import authentik
@@ -102,9 +123,12 @@ in
     # Caddy deletes a client-sent copy of each copied header before it sets the outpost's value.
     extraConfig = ''
       (authentik) {
-        reverse_proxy /outpost.goauthentik.io/* ${authentik}
+        reverse_proxy /outpost.goauthentik.io/* ${authentik} {
+          ${authentikHost}
+        }
         forward_auth ${authentik} {
           uri /outpost.goauthentik.io/auth/caddy
+          ${authentikHost}
           copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
         }
       }
@@ -131,7 +155,17 @@ in
         # every name would stay down
         "http://:${toString edgeMetrics.port}" = {
           logFormat = "output discard";
-          extraConfig = "metrics /metrics";
+          extraConfig = ''
+            metrics /metrics
+            ${lib.concatStrings (
+              lib.mapAttrsToList (part: listen: ''
+                handle /authentik/${part}/metrics {
+                  rewrite * /metrics
+                  reverse_proxy ${listen}
+                }
+              '') authentikMetrics
+            )}
+          '';
         };
       };
   };
