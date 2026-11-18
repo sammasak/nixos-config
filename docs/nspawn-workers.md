@@ -363,7 +363,9 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   in a gate record), a line whose `node=` or `owner=` names a fleet host
   (its hostname in any case, or its flake attribute: consumers attribute
   deploys and built or deferred checks by those fields), an unknown kind, a
-  line over 4 KiB, a time ahead of
+  line over 4 KiB, a line with any byte below 0x20 (tab included: Loki's
+  logfmt splits fields at every byte up to 0x20, and the shipper reads
+  `node=`, `owner=` and label keys with that same rule), a time ahead of
   now; lines older than Loki takes (167 h) are skipped. At most 500 lines
   per instance and run. Progress is the last handled line's hash and time
   in the unit's StateDirectory, out of every guest's reach. It runs as a

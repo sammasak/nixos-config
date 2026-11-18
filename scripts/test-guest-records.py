@@ -6,6 +6,7 @@ FIFO anywhere on the spool's path refused; progress kept outside the guest's hom
 scripts/platform-record.sh's, and core.nix's trashOne ships before its rename, never failing it.
 Usage: test-guest-records.py [SHIPPER [CORE_NIX]] (a seeded copy of either must fail it)."""
 import hashlib
+import importlib.util
 import http.server
 import json
 import os
@@ -135,8 +136,15 @@ L = {
     "node": rec(80, "gate", 'gate=nixos-qa result=pass node="lenovo"'),
     # its own name is no fleet host's
     "own": rec(70, "gate-step", f"step=nixos-flake-check check=c owner={PREFIX}-herman result=built"),
+    # Loki's logfmt splits at any byte <= 0x20: each of these would read as acer-swift's coverage there
+    "nul": rec(65, "coverage", "x=1\x00node=acer-swift"),
+    "soh": rec(60, "coverage", "x=1\x01node=acer-swift"),
+    # a control byte with no host in it: only the control-byte rule drops it
+    "ctl": rec(55, "coverage", "x=1\x02y=2"),
+    "tab": rec(50, "coverage", "x=1\ty=2"),
 }
-herman = [L[k] for k in ("old", "qa", "step", "host", "kind", "big", "job", "deploy", "delivery", "owner", "ownercase", "node", "own")]
+herman = [L[k] for k in ("old", "qa", "step", "host", "kind", "big", "job", "deploy", "delivery", "owner", "ownercase", "node", "own",
+                         "nul", "soh", "ctl", "tab")]
 ino1 = write("herman", herman)
 fields = lambda k: L[k].split(" ", 2)[2]
 
@@ -172,6 +180,16 @@ check(fields("deploy") not in bodies(got) and fields("delivery") not in bodies(g
 check(not any(fields(k) in bodies(got) for k in ("owner", "ownercase", "node")) and "3 names a fleet host in node= or owner=" in out,
       f"a line whose owner= or node= names a fleet host (hostname, any case, or flake attribute) is dropped and counted ({out.strip()})")
 check(fields("own") in bodies(got), "a line whose owner= is the guest's own name is shipped")
+check(not any(fields(k) in bodies(got) for k in ("nul", "soh", "ctl", "tab")) and "4 a control byte" in out,
+      f"a line with any byte below 0x20 (NUL, SOH, another control byte, a tab) is dropped and counted ({out.strip()})")
+# the field rule on its own, as Loki reads fields: a node= after a control byte names acer-swift
+spec = importlib.util.spec_from_file_location("guest_records", SHIPPER)
+gr = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gr)
+check(all(any(gr.fleet_name(m.group(1), set(f.lower() for f in FLEET)) for m in gr.SPEAKS_FOR.finditer(t))
+          for t in ("x=1\x00node=acer-swift", "x=1\x01node=acer-swift", "x=1\x1bowner=acer-swift"))
+      and gr.LABEL_KEY.search("x=1\x05host=acer-swift") is not None,
+      "node=, owner= and host= are found after any byte Loki splits at, not only after \\s")
 check(fields("big") not in bodies(got) and "1 oversize" in out, "a line over 4 KiB is dropped and counted")
 check(fields("old") not in bodies(got) and "1 older than Loki takes" in out, "a line older than Loki's window is skipped")
 check(sorted(int(t) // 10**9 for _, t, _ in got) == sorted(int(NOW - a) for a in (600, 500, 70)),

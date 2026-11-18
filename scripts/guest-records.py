@@ -27,9 +27,13 @@ from datetime import datetime
 
 SPOOL = (".local", "state", "platform-records")
 NAME = re.compile(r"[a-z][a-z0-9-]{0,10}")
-LABEL_KEY = re.compile(r"(?:^|[\s\"'])(?:job|kind|host)\s*=", re.IGNORECASE)
+# Loki's logfmt decoder splits fields at every byte <= 0x20, which Python's \s does not cover (\x00-\x08,
+# \x0e-\x1f): fields are read with Loki's rule, and a line holding any byte below 0x20 is not shipped at all
+# (platform-record.sh joins its fields with spaces and writes no tab or other control byte)
+CONTROL = re.compile(rb"[\x00-\x1f]")
+LABEL_KEY = re.compile(r"(?:^|[\x00-\x20\"'])(?:job|kind|host)[\x00-\x20]*=", re.IGNORECASE)
 # fields a consumer attributes a record by: a deploy's node, a deferred or built check's owner
-SPEAKS_FOR = re.compile(r"(?:^|[\s\"'])(?:node|owner)\s*=\s*\"?([^\s\"']*)", re.IGNORECASE)
+SPEAKS_FOR = re.compile(r"(?:^|[\x00-\x20\"'])(?:node|owner)[\x00-\x20]*=[\x00-\x20]*\"?([^\x00-\x20\"']*)", re.IGNORECASE)
 DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 # O_NONBLOCK: a FIFO in the spool's place would otherwise hold the open until a writer comes
 FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
@@ -103,6 +107,8 @@ def judge(raw, kinds, now, fleet=frozenset()):
     """(time, kind, body) to push, or the reason it is not pushed."""
     if len(raw) > MAX_LINE:
         return "oversize"
+    if CONTROL.search(raw):
+        return "a control byte"
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
