@@ -11,6 +11,6 @@ inputs:
     inputs:
       nixpkgs:
         follows: nixpkgs
-  # Same rev as flake.lock: the deploy CLI must match the activation side.
+  # Same rev as flake.lock: the deploy CLI must match the activation side (scripts/deploy-rs-pins.py checks it).
   deploy-rs:
     url: github:serokell/deploy-rs/45ba3f8c5cb28396fff71671806e2550b464ac86
