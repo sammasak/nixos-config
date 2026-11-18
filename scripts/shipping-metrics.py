@@ -37,9 +37,9 @@ METRICS = {
     "shipping_review_prs_counted": "Reviewed merged PRs behind the review ratio and rounds.",
     "shipping_review_unreviewed_prs": "Merged PRs in the review sample with no verdict comment.",
     "shipping_escapes": "Reverts on default branches and issues labelled escape, in the window.",
-    "shipping_gate_fail_ratio": "Share of the last push-mode nixos-qa gate runs that failed.",
-    "shipping_gate_runs_counted": "Push-mode gate runs behind the fail ratio.",
-    "shipping_gate_seconds": "Duration of the last push-mode gate runs, by quantile.",
+    "shipping_gate_fail_ratio": "Share of the last push-mode nixos-qa gate runs that failed, by the host that ran them.",
+    "shipping_gate_runs_counted": "Push-mode gate runs behind the fail ratio, by host.",
+    "shipping_gate_seconds": "Duration of the last push-mode gate runs, by host and quantile.",
     "shipping_gate_step_failures": "Failed gate steps in the last 7 d, by step.",
     "shipping_deploys": "Recorded deploys in the last 7 d, by result.",
     "shipping_deploy_rollbacks": "Deploys deploy-rs rolled back, in the window.",
@@ -289,7 +289,8 @@ def escapes(gh, out, owner, now):
 
 def loki_records(loki, query, days, enough=None):
     """Platform records newest first, one day per query (the Pi answers a day in seconds and two weeks not at all),
-    until `enough(records)` holds or `days` are read. Each day is fetched once a run (LOKI_READ)."""
+    until `enough(records)` holds or `days` are read. Each day is fetched once a run (LOKI_READ). A record's "@host" is
+    its stream's host label, which the shipper sets (never a field: a logfmt key holds no @)."""
     recs, end = [], LOKI_READ.setdefault("end", time.time())
     for day in range(days):
         if (query, day) not in LOKI_READ:
@@ -298,9 +299,11 @@ def loki_records(loki, query, days, enough=None):
             hi = end - day * 86400
             params = {"query": query, "start": int((hi - 86400) * 1e9), "end": int(hi * 1e9), "limit": 5000, "direction": "backward"}
             with urllib.request.urlopen(f"{loki}/loki/api/v1/query_range?{urllib.parse.urlencode(params)}", timeout=30) as r:
-                vals = [v for s in json.load(r)["data"]["result"] for v in s["values"]]
-            LOKI_READ[(query, day)] = [(int(t) / 1e9, dict(kv.split("=", 1) for kv in line.split() if "=" in kv))
-                                       for t, line in sorted(vals, reverse=True)]
+                vals = [(t, line, s["stream"].get("host", "")) for s in json.load(r)["data"]["result"]
+                        for t, line in s["values"]]
+            LOKI_READ[(query, day)] = [(int(t) / 1e9, {**dict(kv.split("=", 1) for kv in line.split() if "=" in kv),
+                                                       "@host": host})
+                                       for t, line, host in sorted(vals, reverse=True)]
         recs += LOKI_READ[(query, day)]
         if enough and enough(recs):
             break
@@ -308,14 +311,17 @@ def loki_records(loki, query, days, enough=None):
 
 
 def gates(loki, out, want):
+    """The last `want` push gates, by the host that ran them: a host is compared with its own past (RetroDueGateSlower),
+    and a new one, a guest included, does not move another's median."""
     runs = loki_records(loki, GATE_QUERY, 14, lambda r: len(r) >= want)[:want]
-    out.add("shipping_gate_runs_counted", len(runs))
-    if runs:
-        out.add("shipping_gate_fail_ratio", sum(r["result"] != "pass" for _, r in runs) / len(runs))
-        secs = [float(r["seconds"]) for _, r in runs if r.get("seconds", "").isdigit()]
+    for host in sorted({r["@host"] for _, r in runs}):
+        mine = [r for _, r in runs if r["@host"] == host]
+        out.add("shipping_gate_runs_counted", len(mine), host=host)
+        out.add("shipping_gate_fail_ratio", sum(r["result"] != "pass" for r in mine) / len(mine), host=host)
+        secs = [float(r["seconds"]) for r in mine if r.get("seconds", "").isdigit()]
         for q in (0.5, 0.9):
             if secs:
-                out.add("shipping_gate_seconds", quantile(secs, q), quantile=str(q))
+                out.add("shipping_gate_seconds", quantile(secs, q), host=host, quantile=str(q))
     fails = {}
     for _, r in loki_records(loki, '{job="platform",kind="gate-step"} |= "result=fail"', 7):
         fails[r.get("step", "?")] = fails.get(r.get("step", "?"), 0) + 1

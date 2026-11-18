@@ -24,7 +24,7 @@ node-exporter. Its calls are read-only:
 | `shipping_pr_lead_time_fallbacks{reason,window}` | Of those PRs, how many fell back to their open time: `http_error`, `no_commits`, `no_token`, `pending` (not read yet: a run reads new PRs for at most 90 s, the rest on the next runs); every reason is written, 0 included. `http_error` close to `shipping_prs_merged` means the commits API failed for every PR, so the lead time quantiles are open-to-merge and read low (Shipping dashboard, beside PRs merged) |
 | `shipping_review_rounds`, `_first_pass_ratio`, `_prs_counted`, `_unreviewed_prs` | `Grade: N/10` comments per PR, over the last reviewed merged PRs; first pass means the first grade reached `review.passGrade` |
 | `shipping_escapes{kind,window}` | Commits starting `Revert "` on default branches, and issues labelled `escape` |
-| `shipping_gate_fail_ratio`, `_runs_counted`, `shipping_gate_seconds` | The last push-mode `nixos-qa` gates |
+| `shipping_gate_fail_ratio{host}`, `_runs_counted{host}`, `shipping_gate_seconds{host,quantile}` | The last push-mode `nixos-qa` gates, by the host that ran them (the record stream's `host`: a guest is its own) |
 | `shipping_gate_step_failures{step}`, `shipping_deploys{result}`, `shipping_deploy_rollbacks{window}` | From the gate-step and deploy records |
 | `shipping_deploy_lag_commits` / `_hours{host,node}` | Commits on main that the host's last good `just deploy` lacks, and the age of the oldest merge among them |
 | `shipping_pr_phase_hours{phase,quantile}` | Where a deploy-repo (nixos-config) PR merged in 7 d spent its time, median and p90 per phase. `idle`: its last commit's committer time to the start of the first passing push gate on one of its commits after it (end minus `seconds`). It **includes any gate queue wait**: the gate record carries no queue time, so the wait cannot be split out without a new collector. `gate`: that gate's `seconds`. `gate_to_merge`: the gate's end to the merge. `merge_to_deploy`: the merge to the end of the first good deploy record after it whose sha has the merge commit (GitHub compare `ahead` or `identical`) |
@@ -54,11 +54,11 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 | PrLeadTimeHigh | The median lead time is over `medianHours` |
 | LeadTimeFallbacksHigh | More than `maxRatio` of the PRs merged in 7 d took their lead time from their open time after an HTTP error on GitHub's commits API, so the lead time reads low while the section looks fresh |
 | ReviewFirstPassLow | The first-pass rate is under `minRatio` over a full sample of `lastVerdicts` reviewed PRs |
-| GateFailRateHigh | The fail rate is over `maxRatio` over a full sample of `lastRuns` push gates |
+| GateFailRateHigh | The fleet's fail rate (run-weighted over the hosts) is over `maxRatio` over a full sample of `lastRuns` push gates |
 | HostBehindMain | The host has been up and more than `maxHours` behind main for `upHours`. A sleeping host is not paged |
 | DeployRolledBack | Rollbacks in the last 24 h exceed `max` |
 | EscapeFound | Escapes in the last 24 h exceed `max` |
-| RetroDueGateSlower | The median push gate (`shipping_gate_seconds{quantile="0.5"}`) is over `factor` times its own 7-d average and the gate fail ratio is above its own 7-d average, for `forMinutes`, once the series is at least 5 d old (`offset 5d`): slower alone is no retro, a bigger change gates longer |
+| RetroDueGateSlower | Per host: its median push gate (`shipping_gate_seconds{quantile="0.5"}`) is over `factor` times its own 7-d average and its gate fail ratio is above its own 7-d average, for `forMinutes`, once its series is at least 5 d old (`offset 5d`): slower alone is no retro, a bigger change gates longer, and a new host (a guest) slow from the start fires nothing and moves no other host's median |
 | RetroDueStepFailsRepeat | One gate step failed at least `minFailures` times in 7 d (`shipping_gate_step_failures`) over a full sample of `lastRuns` push gates, for `forMinutes`. One bad change that fails on a second host makes 2, so 3 is a pattern; it names the step |
 | ShippingCollectorStale | A section has not succeeded for `maxHours`, or failed two runs in a row, or the collector ran without the owner's gh login (`shipping_collector_authenticated` under `minAuthenticated`: public repos only), unless lenovo itself is down |
 

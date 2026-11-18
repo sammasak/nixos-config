@@ -436,7 +436,7 @@
       "targets": [
         {
           "expr": "shipping_gate_seconds",
-          "legendFormat": "p{{quantile}}",
+          "legendFormat": "{{host}} p{{quantile}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -449,7 +449,8 @@
           "unit": "s"
         },
         "overrides": []
-      }
+      },
+      "description": "Per host that ran them, its own last push gates: a guest's gates are a line of their own."
     },
     {
       "id": 14,
@@ -777,7 +778,7 @@
       "targets": [
         {
           "expr": "shipping_gate_fail_ratio",
-          "legendFormat": "fail rate",
+          "legendFormat": "{{host}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -790,7 +791,8 @@
           "unit": "percentunit"
         },
         "overrides": []
-      }
+      },
+      "description": "Per host, over its share of the last push gates; GateFailRateHigh reads the run-weighted fleet ratio."
     },
     {
       "id": 18,
