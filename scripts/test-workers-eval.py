@@ -10,14 +10,14 @@ import re
 import socket
 import shutil
 import subprocess
-import sys
 import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from gate_probe import check, finish
+
 ROOT = os.getcwd()
-failed = 0
 
 BASE = r"""
 { lib, pkgs, ... }: {
@@ -251,12 +251,6 @@ VALID_ARGV = r"""{
     instances.n = { agent = "nasty"; model = "m"; };
   };
 }"""
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def run_eval(expr):
@@ -1052,7 +1046,7 @@ def main():
                                  env={"PATH": f"{d}:{os.environ['PATH']}", "HOME": d})
         got = run.stdout.split("\0")[:-1]
         check(got == [*NASTY, "--model", "m"], f"{shell}: the agent's argv survives the login shell verbatim (got {got!r}, {run.stderr.strip()[:200]})")
-    sys.exit(1 if failed else 0)
+    finish()
 
 
 if __name__ == "__main__":

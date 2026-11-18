@@ -7,19 +7,13 @@ import os
 import pathlib
 import shutil
 import subprocess
-import sys
 import tempfile
+
+from gate_probe import check, finish
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "modules/programs/cli/coordinator-report.sh"
 OPTS = ["--option", "coordinator.mayApprove:bool", "true"]
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def run(tmp, today, mode):
@@ -73,7 +67,7 @@ def main():
         p, _, n = run(tmp, "2026-11-23", "fortnight")
         check(p.returncode == 0 and n == 0 and "no skills checkout" in p.stdout,
               "an even week without a skills checkout exits 0 and calls nothing")
-    sys.exit(1 if failed else 0)
+    finish()
 
 
 if __name__ == "__main__":

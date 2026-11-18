@@ -5,17 +5,10 @@ open-webui listens on the edge socket alone, the apex and any other name under t
 its Nix build with the Cache-Control matrix and SPA fallback of its deploy/nginx.conf."""
 import json
 import subprocess
-import sys
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("caddy-edge")
@@ -167,4 +160,4 @@ probed = {t.split("://", 1)[1].split("/", 1)[0] for j in blackbox for sc in j["s
 unprobed = sorted(h for h in routes if h not in probed)
 check(blackbox and not unprobed, f"black-pi probes every Caddy name (unprobed: {unprobed})")
 
-sys.exit(1 if failed else 0)
+finish()

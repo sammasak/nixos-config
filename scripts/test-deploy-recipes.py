@@ -9,17 +9,11 @@ import os
 import pathlib
 import shutil
 import subprocess
-import sys
 import tempfile
 
+from gate_probe import check, finish
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 STUBS = {
@@ -93,4 +87,4 @@ rc, out, log = run("dry-activate", DIFF_RC="1")
 check(rc != 0 and "closure diff on acer-swift failed (exit 1)" in out,
       f"dry-activate: a failing closure diff fails the recipe (rc {rc}: {out.strip()[-200:]})")
 
-sys.exit(1 if failed else 0)
+finish()

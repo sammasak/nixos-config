@@ -329,7 +329,7 @@
         "defaults": {},
         "overrides": []
       },
-      "description": "Caddy logs at level ERROR (services.caddy.logFormat), so warnings never reach the journal.",
+      "description": "Caddy logs at level ERROR (services.caddy.logFormat): runtime warnings never reach the journal; only adapter warnings at a start or reload can.",
       "options": {
         "showTime": true,
         "sortOrder": "Descending",
@@ -408,12 +408,68 @@
               {
                 "id": "unit",
                 "value": "s"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 93600
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failed"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "ok",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "failed",
+                        "color": "red",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
               }
             ]
           }
         ]
       },
-      "description": "The dump on the edge host (authentik-backup) and its pull to the deployer (authentik-offhost): how long since each timer fired, and 1 if its service is failed now. Both run quietly; the journal has their lines only on an error.",
+      "description": "The dump on the edge host (authentik-backup) and its pull to the deployer (authentik-offhost): how long since each timer fired (red past 26 h: both are daily) and whether its service is failed now. Both run quietly; the journal has their lines only on an error.",
       "transformations": [
         {
           "id": "merge",
