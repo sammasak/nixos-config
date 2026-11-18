@@ -11,7 +11,6 @@
   ...
 }:
 let
-  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   cfg = config.homelab.loki;
   dataDir = config.services.loki.dataDir;
   retentionHours =
@@ -28,14 +27,8 @@ let
   probeHost = if cfg.listenAddress == "0.0.0.0" then "127.0.0.1" else cfg.listenAddress;
   probeBudget = 180;
   unit = config.systemd.services.loki;
-
-  firewallRules = mkDualBackendFirewall {
-    nftComment = "loki: push and query from the listed sources.";
-    ports = [ cfg.port ];
-    sources = cfg.allowedSources;
-    interfaces = [ ];
-    backend = config.networking.firewall.backend;
-  };
+  # the firewall admits sam.fleet.loki's callers here (modules/core/network.nix)
+  served = config.sam.fleet.loki.host == config.networking.hostName;
 in
 {
   options.homelab.loki = {
@@ -45,25 +38,19 @@ in
       default = "127.0.0.1";
       description = ''
         IPv4 address of the HTTP API (push and query). gRPC stays on loopback. Any other address is reachable through
-        the firewall's trusted interfaces (tailscale0 where it runs) whatever allowedSources says.
+        the firewall's trusted interfaces (tailscale0 where it runs) whatever sam.fleet.loki.from says.
       '';
     };
     port = lib.mkOption {
       type = lib.types.port;
       default = config.sam.fleet.loki.port;
       defaultText = lib.literalExpression "config.sam.fleet.loki.port";
-      description = "Loki's HTTP listen port, opened to allowedSources only and probed for /ready at start.";
+      description = "Loki's HTTP listen port, opened to sam.fleet.loki.from only and probed for /ready at start.";
     };
     retention = lib.mkOption {
       type = lib.types.strMatching "[0-9]+[hdw]";
       default = "72h";
       description = "Default retention, at least 24h (the index period); the two agent telemetry streams and the platform records keep 720h regardless.";
-    };
-    allowedSources = lib.mkOption {
-      type = lib.types.listOf (lib.types.strMatching "[0-9]+(\\.[0-9]+){3}(/[0-9]+)?");
-      default = [ ];
-      example = [ "192.168.10.0/24" ];
-      description = "IPv4 addresses or CIDRs admitted to the port; empty adds no firewall rule (trusted interfaces still pass).";
     };
     ntfyUrl = lib.mkOption {
       type = lib.types.strMatching "https?://.+";
@@ -81,8 +68,8 @@ in
         message = "homelab.loki.port ${toString cfg.port} is not sam.fleet.loki.port ${toString config.sam.fleet.loki.port}: every pusher would miss Loki.";
       }
       {
-        assertion = cfg.allowedSources != [ ] -> !lib.hasPrefix "127." cfg.listenAddress;
-        message = "homelab.loki.allowedSources: listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach Loki.";
+        assertion = served -> !lib.hasPrefix "127." cfg.listenAddress;
+        message = "homelab.loki: sam.fleet.loki is served here, but listenAddress ${cfg.listenAddress} is loopback, so nothing the firewall admits can reach Loki.";
       }
       {
         assertion = retentionHours >= 24;
@@ -240,10 +227,6 @@ in
       script = ''
         ${pkgs.curl}/bin/curl -fsS -m 10 --retry 3 --retry-all-errors --retry-max-time 60 -H "Priority: high" -d "loki failed on ${config.networking.hostName}" ${lib.escapeShellArg cfg.ntfyUrl}
       '';
-    };
-
-    networking.firewall = lib.mkIf (cfg.allowedSources != [ ]) {
-      inherit (firewallRules) extraInputRules extraCommands;
     };
   };
 }

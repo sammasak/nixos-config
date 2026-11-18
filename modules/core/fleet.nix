@@ -4,32 +4,102 @@
 let
   inherit (lib) mkOption types;
   ipv4 = types.strMatching "[0-9]{1,3}([.][0-9]{1,3}){3}";
+  hostName = fleet: types.enum (lib.attrNames fleet.hosts);
+  endpointType =
+    fleet:
+    types.submodule (
+      { config, ... }:
+      {
+        options = {
+          host = mkOption {
+            type = hostName fleet;
+            description = "networking.hostName of the host serving it; its address comes from hosts.";
+          };
+          port = mkOption {
+            type = types.port;
+            description = "The port it listens on, at least on that host's LAN address.";
+          };
+          proto = mkOption {
+            type = types.enum [
+              "tcp"
+              "udp"
+            ];
+            default = "tcp";
+            description = "The port's protocol.";
+          };
+          from = mkOption {
+            type = types.listOf (hostName fleet);
+            default = [ ];
+            description = "The hosts that call it: modules/core/network.nix admits each one's address and extraAddresses, nothing else.";
+          };
+          url = mkOption {
+            type = types.str;
+            readOnly = true;
+            description = "http://<host's address>:<port>, without a trailing slash; derived, not set.";
+            default = "http://${fleet.hosts.${config.host}.address}:${toString config.port}";
+          };
+        };
+      }
+    );
   endpoint =
     fleet: what:
     mkOption {
       description = "The ${what}: the host it runs on and its port, with the base URL derived from them.";
-      type = types.submodule (
-        { config, ... }:
-        {
-          options = {
-            host = mkOption {
-              type = types.enum (lib.attrNames fleet.hosts);
-              description = "networking.hostName of the host serving it; its address comes from hosts.";
-            };
-            port = mkOption {
-              type = types.port;
-              description = "The TCP port it listens on, at least on that host's LAN address.";
-            };
-            url = mkOption {
-              type = types.str;
-              readOnly = true;
-              description = "http://<host's address>:<port>, without a trailing slash; derived, not set.";
-              default = "http://${fleet.hosts.${config.host}.address}:${toString config.port}";
-            };
-          };
-        }
-      );
+      type = endpointType fleet;
     };
+  # every other host ships its journal there (journal-collector.nix)
+  loki = {
+    host = "black-pi";
+    port = 3100;
+    from = lib.remove loki.host (lib.attrNames hosts);
+  };
+  hosts = {
+    lenovo-21CB001PMX.address = "192.168.10.154";
+    acer-swift.address = "192.168.10.110";
+    # dual-boot towers, often off or in Windows; both power off nights and weekends (power-schedule.nix)
+    msi-ms7758 = {
+      address = "192.168.10.235";
+      sleeps = true;
+      power = {
+        mac = "d4:3d:7e:4a:f9:3d";
+        interface = "enp3s0";
+        wake = "Mon-Fri 08:30";
+        off = "Mon-Fri 21:00";
+      };
+    };
+    asus-b460m = {
+      address = "192.168.10.113";
+      sleeps = true;
+      power = {
+        mac = "f0:2f:74:32:6b:7f";
+        interface = "eno1";
+        wake = "Mon-Fri 08:30";
+        off = "Mon-Fri 21:00";
+      };
+    };
+    # address is end0, extraAddresses wlan0
+    black-pi = {
+      address = "192.168.10.137";
+      extraAddresses = [ "192.168.10.136" ];
+    };
+  };
+  edge = "acer-swift";
+  edgeMetrics = {
+    host = edge;
+    port = 9180;
+    from = [ "black-pi" ];
+  };
+  # black-pi's Prometheus scrapes every host's node-exporter, and nvidia-gpu where sam.fleet says gpu
+  scraped =
+    name: port: only:
+    lib.mapAttrs' (
+      h: _:
+      lib.nameValuePair "${name}-${h}" {
+        host = h;
+        inherit port;
+        from = [ "black-pi" ];
+      }
+    ) (lib.filterAttrs (_: only) hosts);
 in
 {
   options.sam.fleet = mkOption {
@@ -110,6 +180,51 @@ in
         # by LAN address: a page must not need acer's Caddy
         ntfy = endpoint fleet.config "ntfy server every host pages";
         loki = endpoint fleet.config "Loki every host ships its logs to";
+        listeners = mkOption {
+          description = "Every port one fleet host serves another: modules/core/network.nix renders each one's firewall rule from `from`, and fails a host whose firewall admits anything not here or in public.";
+          type = types.attrsOf (endpointType fleet.config);
+        };
+        public = mkOption {
+          description = "What may be open beyond the listeners, each with its reason: a port to any source or (lan) to lanCidr, or a trusted interface (port null).";
+          type = types.listOf (
+            types.submodule {
+              options = {
+                host = mkOption {
+                  type = types.nullOr (hostName fleet.config);
+                  default = null;
+                  description = "networking.hostName it may be open on; null: every host, naked-pi too.";
+                };
+                port = mkOption {
+                  type = types.nullOr types.port;
+                  default = null;
+                  description = "The port; null: every port of `interface`, a trusted interface.";
+                };
+                proto = mkOption {
+                  type = types.enum [
+                    "tcp"
+                    "udp"
+                  ];
+                  default = "tcp";
+                  description = "The port's protocol.";
+                };
+                interface = mkOption {
+                  type = types.nullOr types.str;
+                  default = null;
+                  description = "Open on this interface only; null: every interface.";
+                };
+                lan = mkOption {
+                  type = types.bool;
+                  default = false;
+                  description = "Admitted from lanCidr by a source rule its module renders, not open to any source.";
+                };
+                why = mkOption {
+                  type = types.str;
+                  description = "Why it is open.";
+                };
+              };
+            }
+          );
+        };
         edgeMetrics = endpoint fleet.config "Caddy's /metrics on the edge host, for black-pi's Prometheus alone";
         pageUrl = mkOption {
           type = types.str;
@@ -122,51 +237,141 @@ in
   };
 
   config.sam.fleet = {
-    hosts = {
-      lenovo-21CB001PMX.address = "192.168.10.154";
-      acer-swift.address = "192.168.10.110";
-      # dual-boot towers, often off or in Windows; both power off nights and weekends (power-schedule.nix)
-      msi-ms7758 = {
-        address = "192.168.10.235";
-        sleeps = true;
-        power = {
-          mac = "d4:3d:7e:4a:f9:3d";
-          interface = "enp3s0";
-          wake = "Mon-Fri 08:30";
-          off = "Mon-Fri 21:00";
-        };
-      };
-      asus-b460m = {
-        address = "192.168.10.113";
-        sleeps = true;
-        power = {
-          mac = "f0:2f:74:32:6b:7f";
-          interface = "eno1";
-          wake = "Mon-Fri 08:30";
-          off = "Mon-Fri 21:00";
-        };
-      };
-      # address is end0, extraAddresses wlan0
-      black-pi = {
-        address = "192.168.10.137";
-        extraAddresses = [ "192.168.10.136" ];
-      };
-    };
+    inherit
+      hosts
+      edge
+      loki
+      edgeMetrics
+      ;
     gateway = "192.168.10.1";
     lanCidr = "192.168.10.0/24";
     deployer = "lenovo-21CB001PMX";
-    edge = "acer-swift";
     ntfy = {
       host = "lenovo-21CB001PMX";
       port = 2586;
     };
-    loki = {
-      host = "black-pi";
-      port = 3100;
-    };
-    edgeMetrics = {
-      host = "acer-swift";
-      port = 9180;
-    };
+    listeners = {
+      inherit loki;
+      edge-metrics = edgeMetrics;
+      alertmanager = {
+        host = "black-pi";
+        port = 9093;
+        # the cluster-watchdog reads /-/ready and the Watchdog alert; Prometheus there arrives on loopback
+        from = [ "lenovo-21CB001PMX" ];
+      };
+      alert-bridge = {
+        host = "lenovo-21CB001PMX";
+        port = 9099;
+        # Alertmanager has no outgoing-source setting: with end0 down it sends from wlan0 (extraAddresses)
+        from = [ "black-pi" ];
+      };
+      prometheus = {
+        host = "black-pi";
+        port = 9090;
+        # acer's alloy-otlp pushes OTLP, lenovo's watchdog and harness usage report read; Grafana there is loopback
+        from = [
+          "acer-swift"
+          "lenovo-21CB001PMX"
+        ];
+      };
+      grafana = {
+        host = "black-pi";
+        port = 3000;
+        # Caddy on the edge (edge.nix)
+        from = [ edge ];
+      };
+      gateway-api = {
+        host = "acer-swift";
+        port = 8081;
+        from = [ "lenovo-21CB001PMX" ];
+      };
+      gateway-admin = {
+        host = "acer-swift";
+        port = 9091;
+        from = [ "black-pi" ];
+      };
+      alloy-http = {
+        host = "acer-swift";
+        port = 12346;
+        from = [ "black-pi" ];
+      };
+      # Pi on lenovo and acer, and acer's gateway, call it directly
+      ollama-msi = {
+        host = "msi-ms7758";
+        port = 11434;
+        from = [
+          "lenovo-21CB001PMX"
+          "acer-swift"
+        ];
+      };
+      ollama-asus = {
+        host = "asus-b460m";
+        port = 11434;
+        from = [ "acer-swift" ];
+      };
+    }
+    // scraped "node-exporter" 9100 (_: true)
+    // scraped "nvidia-gpu" 9835 (h: h.gpu or null != null);
+    public = [
+      {
+        port = 22;
+        lan = true;
+        why = "SSH, key-only: management and break-glass from the LAN (network.nix).";
+      }
+      {
+        port = 5000;
+        lan = true;
+        why = "harmonia, on hosts with sam.storeCache: signed store paths for the LAN (store-cache.nix).";
+      }
+      {
+        port = 67;
+        proto = "udp";
+        interface = "wlan0";
+        why = "DHCP for the rf-lab AP's own clients, on its radio only (rf-lab/ap.nix; off while nothing enables it).";
+      }
+      {
+        host = "lenovo-21CB001PMX";
+        port = 53;
+        proto = "udp";
+        why = "AdGuard, the LAN's resolver.";
+      }
+      {
+        host = "lenovo-21CB001PMX";
+        port = 853;
+        why = "AdGuard DNS-over-TLS, Android Private DNS.";
+      }
+      {
+        host = "lenovo-21CB001PMX";
+        port = 2586;
+        why = "ntfy for the phone on home Wi-Fi; unauthenticated, scoping it is the owner's call.";
+      }
+      {
+        host = "lenovo-21CB001PMX";
+        port = 41641;
+        proto = "udp";
+        why = "tailscaled's direct path.";
+      }
+      {
+        host = "lenovo-21CB001PMX";
+        interface = "tailscale0";
+        why = "the phone's tailnet path: every port, to every tailnet peer (tailscale.nix).";
+      }
+      {
+        host = edge;
+        port = 80;
+        why = "Caddy, the edge: ACME and the redirect to 443.";
+      }
+      {
+        host = edge;
+        port = 443;
+        why = "Caddy, the edge: every *.sammasak.dev site, each with its own auth.";
+      }
+      {
+        host = edge;
+        port = 443;
+        proto = "udp";
+        why = "Caddy, the edge: HTTP/3.";
+      }
+    ];
   };
 }

@@ -10,10 +10,8 @@
   ...
 }:
 let
-  inherit (import ../../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
   inherit (config.sam.fleet) hosts;
   cfg = config.services.prometheus;
-  fw = config.networking.firewall;
   address = hosts.${config.networking.hostName}.address;
   at = port: "${address}:${toString port}";
   static = job: targets: {
@@ -78,6 +76,9 @@ in
   services.prometheus.exporters.blackbox = {
     enable = true;
     listenAddress = "127.0.0.1";
+    # info logs every redirect each probe follows, Authentik's login URLs included, into the journal and so Loki;
+    # a failed probe still logs at error, and /probe?debug=true still shows a probe's redirect trail
+    extraFlags = [ "--log.level=warn" ];
     configFile = pkgs.writeText "blackbox.yml" (
       builtins.toJSON {
         modules = {
@@ -245,30 +246,7 @@ in
     };
   };
 
-  # acer's alloy-otlp pushes OTLP; lenovo's watchdog and the harness usage report on either host read; Grafana on this
-  # host arrives on loopback
-  networking.firewall = {
-    inherit
-      (mkDualBackendFirewall {
-        nftComment = "Prometheus: OTLP and queries from acer and lenovo.";
-        ports = [ cfg.port ];
-        sources = [
-          hosts.acer-swift.address
-          hosts.lenovo-21CB001PMX.address
-        ];
-        interfaces = [ ];
-        inherit (fw) backend;
-      })
-      extraInputRules
-      extraCommands
-      ;
-  };
-
   assertions = [
-    {
-      assertion = fw.enable && anySourceTcp fw [ cfg.port ] == [ ];
-      message = "modules/homelab/monitoring/prometheus.nix: Prometheus has no authentication and takes OTLP writes; keep the firewall on and port ${toString cfg.port} out of allowedTCPPorts.";
-    }
     {
       assertion =
         cfg.scrapeConfigs == [ ] && cfg.ruleFiles == [ ] && cfg.rules == [ ] && cfg.alertmanagers == [ ];
