@@ -4,26 +4,22 @@ groups:
     rules:
       # One series per node that may be off right now: a host the fleet
       # marks sleeps (modules/core/fleet.nix, the sleeps label on its
-      # node-exporter target), at any time, except msi: it powers off Mon-Fri
-      # 21:00 and is woken Mon-Fri 08:30 Europe/Stockholm (its power entry in
-      # modules/core/fleet.nix, modules/core/power-schedule.nix), so off outside
-      # that window is an outage. asus-b460m has the same window but stays
-      # planned-off at any time here: the owner also powers it off by hand.
-      # PromQL time is UTC and has no time zone, so msi's window is the union
-      # of both seasons: 19:00 to 08:30 UTC plus Saturday and Sunday. That is
-      # one hour early in winter evenings, and 08:30 UTC leaves the wake an
+      # node-exporter target), at any time, except a host with a fleet power
+      # window (power, minus power.manualOff): msi powers off Mon-Fri 21:00
+      # and is woken Mon-Fri 08:30 Europe/Stockholm (modules/core/power-schedule.nix),
+      # so off outside that window is an outage. asus-b460m has the same window
+      # but sets power.manualOff: the owner also powers it off by hand, so it
+      # stays planned-off at any time here.
+      # PromQL time is UTC and has no time zone, so the window is the union of
+      # both seasons, rendered by ./homelab.nix from the fleet facts (the
+      # placeholder below): from the off hour minus 2 (19:00 UTC) to the wake
+      # time read as UTC (08:30), plus Saturday and Sunday. That is one hour
+      # early in winter evenings, and the wake time as UTC leaves the wake an
       # hour (winter) or two (summer) to bring the exporter up.
       # Recorded before the alerts below, which this group evaluates after it.
       - record: homelab:node:planned_off
         expr: |
-          max by (node) (up{job="node-exporter",sleeps="true",node!="msi-ms7758"})
-          or (
-            max by (node) (up{job="node-exporter",sleeps="true",node="msi-ms7758"})
-            and on () (
-              hour() >= 19 or hour() < 8 or (hour() == 8 and minute() < 30)
-              or day_of_week() == 0 or day_of_week() == 6
-            )
-          )
+          @PLANNED_OFF_EXPR@
 
       - alert: HostExpectedOff
         # The one signal for "this host is off and that is planned", per node.

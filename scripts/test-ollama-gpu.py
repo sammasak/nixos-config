@@ -23,7 +23,7 @@ failed = 0
 
 def check(ok, what):
     global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
+    print(("PASS: " if ok else f"FAIL (scripts/{__file__.rsplit('/', 1)[-1]}): ") + what)
     failed += not ok
 
 

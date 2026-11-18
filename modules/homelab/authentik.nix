@@ -321,7 +321,13 @@ in
     }
     {
       assertion = lib.all (l: lib.hasPrefix "127.0.0.1:" l) (
-        settings.listen.http ++ settings.listen.https ++ settings.listen.metrics
+        settings.listen.http
+        ++ settings.listen.https
+        ++ settings.listen.metrics
+        ++ (with config.systemd.services.authentik-worker.environment; [
+          AUTHENTIK_LISTEN__HTTP
+          AUTHENTIK_LISTEN__METRICS
+        ])
       );
       message = "modules/homelab/authentik.nix: every Authentik listener stays on loopback; Caddy is the way in.";
     }

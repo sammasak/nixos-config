@@ -147,9 +147,9 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
   `sops updatekeys -y` on each;
 - `scripts/test-ssh-known-hosts.py`: `EXPECTED`, `SOPS_RECIPIENTS`, the hard-coded host set;
 - every `HOST` recipe pattern in the `Justfile` (`test-ssh-known-hosts.py` fails on a missed one);
-- the hand-kept host lists (#480). Caddy's OTLP allowlist (`modules/homelab/edge.nix`) is derived from
-  the fleet; these fail `nixos:known-hosts-test` until the host is added:
-  - the `host.name` relabel regex in `modules/homelab/monitoring/alloy-otlp.alloy` (two places);
+- the hand-kept host lists (#480). Caddy's OTLP allowlist (`modules/homelab/edge.nix`) and alloy-otlp's
+  `host.name` allowlist (`modules/homelab/monitoring/alloy-otlp.nix`) are derived from the fleet; these fail
+  `nixos:known-hosts-test` until the host is added:
   - the default host list in `scripts/ssh-known-hosts-verify.sh`;
   - the host rows in `docs/architecture.md`, CLAUDE.md's deploy block and hostnames;
 - the host rows in `README.md` and the fleet size the docs state (`nixos:readability-test`);
@@ -175,11 +175,13 @@ Only once both systems boot. Per `CLAUDE.md` "Adding a New Host", plus:
 - for a host that is not always up (scheduled power-off, dual boot), `sleeps = true`
   on its `modules/core/fleet.nix` entry. That one fact keeps it out of every store
   cache's substituters and moves it from `NodeChronicNotReady` to `HostExpectedOff`;
-  no rule edit. A power window, like msi's, is the one exception that
-  `homelab:node:planned_off` in `modules/homelab/monitoring/rules/homelab.yaml` names by host.
+  no rule edit. With a `power` window it is planned off only outside that window
+  (`homelab:node:planned_off`, rendered from the fleet by `modules/homelab/monitoring/rules/homelab.nix`).
 - for a work-hours window, `power = { mac; interface; wake; off; }` on the same entry: lenovo
   wakes it, and it arms Wake-on-LAN on `interface` (`wol-<interface>`) and powers itself off
-  (`modules/core/power-schedule.nix`). Evaluation fails unless it also has `sleeps = true`.
+  (`modules/core/power-schedule.nix`). Evaluation fails unless it also has `sleeps = true`. Add
+  `power.manualOff = true` when the owner also powers it off by hand (asus-b460m): the alerts then expect it
+  off at any time, not only outside its window.
 
 Commit and gate on a worker (msi or acer), not lenovo.
 

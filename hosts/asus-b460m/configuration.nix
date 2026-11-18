@@ -40,6 +40,7 @@ in
     ../../modules/homelab/journal-collector.nix
     ../../modules/homelab/ollama-host.nix
     ../../modules/homelab/monitoring/node-exporter.nix
+    ../../modules/homelab/nav-metrics.nix
   ];
 
   homelab.journalCollector.enable = true;

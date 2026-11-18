@@ -17,7 +17,7 @@ failed = 0
 
 def check(ok, what):
     global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
+    print(("PASS: " if ok else f"FAIL (scripts/{__file__.rsplit('/', 1)[-1]}): ") + what)
     failed += not ok
 
 
@@ -25,7 +25,7 @@ src = (ROOT / "devenv.nix").read_text()
 # any layout of the gate call; the body is dedented as Nix does for an indented string
 m = re.search(r"\n  qaPush =\s+gate\s+\"nixos-qa-push\".*?''\n(.*?)\n *'';\n", src, re.S)
 if not m:
-    sys.exit("FAIL: qaPush not found in devenv.nix")
+    sys.exit("FAIL (scripts/test-qa-push.py): qaPush not found in devenv.nix")
 BODY = textwrap.dedent(m.group(1)).replace("'''", "\0q").replace("''${", "\0d")
 
 
@@ -35,9 +35,9 @@ def render(qa, lints, gen, docs):
     text = BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
     left = re.findall(r"\$\{[^}]*\}", text)
     if left:
-        sys.exit(f"FAIL: Nix interpolations the test does not stub: {left}")
+        sys.exit(f"FAIL (scripts/test-qa-push.py): Nix interpolations the test does not stub: {left}")
     if text.count("/run/current-system") != 2:
-        sys.exit("FAIL: expected /run/current-system twice in qaPush (key and re-check)")
+        sys.exit("FAIL (scripts/test-qa-push.py): expected /run/current-system twice in qaPush (key and re-check)")
     text = text.replace("/run/current-system", str(gen)).replace("\0q", "''").replace("\0d", "${")
     return "#!/usr/bin/env bash\nset -o errexit\nset -o nounset\nset -o pipefail\n" + text + "\n"
 

@@ -85,7 +85,7 @@ just bump [input]       # update one flake input (default: skills); then just sw
 # Push from lenovo with deploy-rs (magic rollback); the deploy-rs client runs under a 7G cap and
 # skips deploy-rs's own flake check. The pre-push gate runs it on pushed non-docs
 # commits; the recipe refuses a dirty tree or a HEAD not on origin/main (DEPLOY_UNGATED=1 breaks glass).
-# HOST: lenovo (loopback), acer-swift, msi-ms7758 (Mon-Fri ~08:30-21:00), asus-b460m,
+# HOST: lenovo (loopback), acer-swift, msi-ms7758 and asus-b460m (each Mon-Fri ~08:30-21:00),
 # black-pi (builds on the Pi, run inside zellij), naked-pi
 just deploy HOST
 just dry-activate HOST  # the units a deploy would restart, and the closure diff; activates nothing, fails if the dry activation does
@@ -137,30 +137,17 @@ follows), the `just deploy` pattern, its known-hosts key and sops recipient
 
 Use modules + roles, not ad-hoc host edits.
 
-1. Create a reusable service module in `modules/<domain>/<service>.nix`.
-2. Expose an option and guard config with `mkIf`:
-   - Example: `options.homelab.<service>.enable = mkEnableOption "...";`
-3. Add required ports/rules in the module itself (firewall stays close to service).
-4. Attach module via a role (`modules/roles/*.nix`) if shared by multiple hosts.
-5. Add that role to the host's `roles` in `flake-modules/hosts.nix` (or set the service option in `hosts/<name>/configuration.nix`).
-6. Build/apply locally, then remote deploy if needed.
-
-Template:
-
-```nix
-{ config, lib, ... }:
-let
-  inherit (lib) mkEnableOption mkIf;
-  cfg = config.homelab.myservice;
-in
-{
-  options.homelab.myservice.enable = mkEnableOption "My service";
-
-  config = mkIf cfg.enable {
-    # service config
-  };
-}
-```
+1. Create a module in `modules/<domain>/<service>.nix`. Most homelab modules are on wherever they are imported
+   (`modules/homelab/monitoring/grafana.nix`); give it an enable option (`mkEnableOption` + `mkIf`) only when a role
+   or several hosts switch it (`modules/homelab/ntfy.nix`). Copy the one of the same shape.
+2. A port another fleet host calls is a `sam.fleet.listeners` entry in `modules/core/fleet.nix` (host, port, the
+   calling hosts in `from`), plus its bound port in `scripts/gate-probe.nix` (`fleet-contract`); anything open wider is
+   a `sam.fleet.public` entry with its reason. `modules/core/network.nix` renders the rules and fails any other
+   opening, so the module itself opens nothing.
+3. A fact more than one module reads (an address, a port, a host name) goes in `sam.fleet` too, not in the module.
+4. Attach the module via a role (`modules/roles/*.nix`) if shared by multiple hosts, or import it in
+   `hosts/<name>/configuration.nix`; add the role to the host's `roles` in `flake-modules/hosts.nix`.
+5. Build/apply locally, then remote deploy if needed.
 
 ## Customization
 

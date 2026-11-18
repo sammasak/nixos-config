@@ -11,6 +11,7 @@
     ../../modules/homelab/llm-gateway.nix
     ../../modules/homelab/authentik.nix
     ../../modules/homelab/monitoring/node-exporter.nix
+    ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/monitoring/alloy-otlp.nix
     ../../modules/homelab/journal-collector.nix
   ];

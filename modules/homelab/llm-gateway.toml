@@ -89,7 +89,7 @@ api_key_file = "/run/secrets/llm-gateway/cerebras-api-key"
 name = "msi"
 kind = "ollama"
 # msi: services.ollama on the node itself (#260), bound to its address.
-base_url = "http://192.168.10.235:11434/v1"
+base_url = "http://@msi@:11434/v1"
 max_concurrency = 1  # one CPU-bound client saturates msi (Phase 0)
 # Both msi models answer `400 "<model>" does not support thinking` to these
 # (live 2026-10-15); store, stream_options, parallel_tool_calls and
@@ -97,7 +97,7 @@ max_concurrency = 1  # one CPU-bound client saturates msi (Phase 0)
 drop_fields = ["reasoning_effort", "reasoning"]
 # Probed every 30s (2s timeout) so /status shows msi unreachable while it is
 # off (llm-gateway#4).
-health_url = "http://192.168.10.235:11434/api/tags"
+health_url = "http://@msi@:11434/api/tags"
 
 # --- Ollama-native passthrough (/api/*) -------------------------------------
 # Replaces nginx ollama-router: first reachable backend wins; one whose
@@ -109,9 +109,9 @@ health_url = "http://192.168.10.235:11434/api/tags"
 local_listen = "127.0.0.1:11435"
 backends = [
   # msi: services.ollama on the node itself (#260), bound to its address.
-  { name = "msi", url = "http://192.168.10.235:11434" },
+  { name = "msi", url = "http://@msi@:11434" },
   # acer: services.ollama on the node itself (#252), bound to its address.
-  { name = "acer", url = "http://192.168.10.110:11434" },
+  { name = "acer", url = "http://@acer@:11434" },
 ]
 
 [[models]]

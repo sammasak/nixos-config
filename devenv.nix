@@ -1,3 +1,9 @@
+# The gates, by binding (search `^  <name> =`): each check is a `gate` (writeShellApplication) in the let below.
+# `lints` (also pre-commit's hooks), `tests` (nixos:qa runs them in order after the probe), `sideBySide` (the flake
+# check and the slowest tests, in parallel on asus), `qa` (nixos:qa: every gate), `qaPush` (pre-push: qa on the pushed
+# commit in a temporary worktree, recording a green tree); then `tasks` (one nixos:* task per gate, its description
+# what `devenv tasks list` shows) and `git-hooks.hooks`. A new test is three hunks: its `gate` binding, its entry in
+# `tests` or `sideBySide`, and its `tasks` entry.
 {
   pkgs,
   lib,
@@ -33,6 +39,13 @@ let
           exit 1
         fi
         bash scripts/nix-comment-lint.sh "$fx/rollback-pointer.nix.fixture" >/dev/null
+        rc=0
+        out=$(bash scripts/nix-comment-lint.sh "$fx/dangling-pointer.nix.fixture" 2>&1) || rc=$?
+        if [ "$rc" -ne 1 ] || ! grep -q '^path-pointer: .*/power-windows[.]nix ' <<<"$out"; then
+          printf '%s\n' "$out" >&2
+          echo "comment lint: $fx/dangling-pointer.nix.fixture was not refused by path-pointer (exit $rc)" >&2
+          exit 1
+        fi
       '';
 
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
@@ -416,6 +429,9 @@ let
   shippingMetricsTest = gate "shipping-metrics-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-shipping-metrics.py
   '';
+  navMetricsTest = gate "nav-metrics-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python scripts/test-nav-metrics.py
+  '';
   # acer's Caddyfile through acer's Caddy, from the gate probe
   caddyEdgeTest =
     gate "caddy-edge-test"
@@ -670,6 +686,7 @@ let
     systemdVerifyTest
     platformRecordsTest
     shippingMetricsTest
+    navMetricsTest
     authentikAkTest
     switchSafetyTest
     rfBeaconsTest
@@ -1155,7 +1172,7 @@ in
   platform.commit-conventions.enable = true;
 
   tasks = {
-    "nixos:lint-comments" = task "Comment Policy lint (density + forbidden shapes)" lintComments;
+    "nixos:lint-comments" = task "Comment Policy lint (density, forbidden shapes, path pointers that resolve to no tracked file)" lintComments;
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
     "nixos:secrets-verify" =
       task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
@@ -1181,7 +1198,7 @@ in
     "nixos:coordinator-report-test" =
       task "The coordinator-report job: an even ISO week renders the two weeklies before it, an odd week exits 0 without devenv" coordinatorReportTest;
     "nixos:worker-permissions-test" =
-      task "#145/#157: Herdr workers start in bypassPermissions and switch models on a safeguards flag; claude and the Coordinator unchanged" workerPermissionsTest;
+      task "#145/#157/#487: Herdr workers in the nspawn guests start in bypassPermissions, a restored pane too, and switch models on a safeguards flag; every host accepts cross-session messages; plain claude and the Coordinator (dontAsk) keep their modes" workerPermissionsTest;
     "nixos:workers-eval-test" =
       task "The developer-environment module rejects each wrong configuration at eval; agent argv survives the guest shell" workersEvalTest;
     "nixos:bulk-reader-test" =
@@ -1193,7 +1210,7 @@ in
     "nixos:systemd-calendar-test" =
       task "The systemd-calendar check passes parsing NixOS and Home Manager timer specs and fails, naming the timer (and user), on a bad one (fixture trees)" systemdCalendarTest;
     "nixos:systemd-verify-test" =
-      task "The systemd-verify check passes a clean tree and fails, printing the line, on an unknown key, unknown section or unparseable value, in system or Home Manager units (fixture trees)" systemdVerifyTest;
+      task "The systemd-verify check passes a clean tree and fails, printing the line, on an unknown key, unknown section, unparseable value, non-absolute path, removed option or refused unit, in system or Home Manager units (fixture trees)" systemdVerifyTest;
     "nixos:power-schedule-test" =
       task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
     "nixos:readability-test" =
@@ -1211,13 +1228,15 @@ in
     "nixos:fleet-endpoints-test" =
       task "Every paging unit pages sam.fleet.pageUrl, also without runtime-host's sam.workers.ntfyUrl; an empty URL, ntfy off its fleet host and a redefined fleet fact fail" fleetEndpointsTest;
     "nixos:fleet-contract-test" =
-      task "No file but fleet.nix names the ntfy or Loki port, each port is asserted to its fleet fact, Loki admits the fleet, lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: port 2587, a host removed)" fleetContractTest;
+      task "No file but fleet.nix names the ntfy or Loki port; every host's firewall admits each sam.fleet listener from its callers alone and opens nothing else, each listener's service binds its port (scripts/gate-probe.nix bound); lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: an open port, an upstream openFirewall, a stray rule, a trusted interface, a host removed)" fleetContractTest;
     "nixos:alloy-otlp-test" =
       task "acer's alloy-otlp unit, as evaluated, on its own Alloy: log prompts, identities and trace ids never reach Loki (metric exemplars stop at acer's queue: Prometheus stores none)" alloyOtlpTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
     "nixos:shipping-metrics-test" =
       task "Shipping collector on a fake GitHub and Loki: issues split actionable/parked/archived, a failed source leaves no series and keeps its stale timestamp, an undeclared name is refused" shippingMetricsTest;
+    "nixos:nav-metrics-test" =
+      task "Navigation collector on fixture transcripts: counts, misses and repeat reads by role, no prompt, command or path in the textfile, a thin role writes its sample size alone, a failed section is a series" navMetricsTest;
     "nixos:typed-interfaces-test" =
       task "no types.attrs option and no `or` fallback on a sam.* option read; seeded snippets of both are caught" typedInterfacesTest;
     "nixos:system-checks-test" =

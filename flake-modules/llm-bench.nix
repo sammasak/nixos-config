@@ -133,9 +133,16 @@ let
   };
   renders =
     r: (builtins.tryEval (builtins.deepSeq (render { "bad.json" = fixture.fit // r; }) true)).success;
-  # GpuTelemetryDown (rules/homelab.yaml): asus's GPU exporter down is a page only while asus itself answers
+  # GpuTelemetryDown (modules/homelab/monitoring/rules/homelab.yaml): asus's GPU exporter down is a page only while asus
+  # itself answers
   gpuTests = {
-    rule_files = [ "${../modules/homelab/monitoring/rules/homelab.yaml}" ];
+    rule_files = [
+      "${(import ../modules/homelab/monitoring/rules/homelab.nix {
+        inherit lib;
+        hosts = asus-b460m.config.sam.fleet.hosts;
+      }).file
+      }"
+    ];
     tests =
       map
         (
