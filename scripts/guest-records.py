@@ -27,13 +27,18 @@ from datetime import datetime
 
 SPOOL = (".local", "state", "platform-records")
 NAME = re.compile(r"[a-z][a-z0-9-]{0,10}")
-# Loki's logfmt decoder splits fields at every byte <= 0x20, which Python's \s does not cover (\x00-\x08,
-# \x0e-\x1f): fields are read with Loki's rule, and a line holding any byte below 0x20 is not shipped at all
-# (platform-record.sh joins its fields with spaces and writes no tab or other control byte)
-CONTROL = re.compile(rb"[\x00-\x1f]")
-LABEL_KEY = re.compile(r"(?:^|[\x00-\x20\"'])(?:job|kind|host)[\x00-\x20]*=", re.IGNORECASE)
+# A guest line ships only if the whole of it parses, and what ships is rebuilt from the parse, never the guest's
+# bytes: Loki's logfmt splits at any byte <= 0x20, unquotes and decodes \uXXXX, so a filter over the raw text missed
+# forms Loki reads as another field. The grammar is what platform-record.sh writes, `<date -Is> <kind>` then
+# single-space key=value tokens, values in the characters real records use (paths, shas, drv names, comma lists)
+STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:[+-]\d\d:\d\d|Z)"
+KEY = re.compile(r"[a-z_][a-z0-9_]*")
+VALUE = re.compile(r"[A-Za-z0-9_.,:/-]*")
+LINE = re.compile(rf"({STAMP}) ([a-z][a-z-]*) (\S+(?: \S+)*)")
+# a stream label's name as a field would read, in Loki, as that label
+LABELS = {"job", "kind", "host"}
 # fields a consumer attributes a record by: a deploy's node, a deferred or built check's owner
-SPEAKS_FOR = re.compile(r"(?:^|[\x00-\x20\"'])(?:node|owner)[\x00-\x20]*=[\x00-\x20]*\"?([^\x00-\x20\"']*)", re.IGNORECASE)
+SPEAKS_FOR = ("node", "owner")
 DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 # O_NONBLOCK: a FIFO in the spool's place would otherwise hold the open until a writer comes
 FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
@@ -103,31 +108,50 @@ def fleet_name(value, fleet):
     return bool(v) and any(h == v or h.startswith(v + "-") for h in fleet)
 
 
+def parse(raw):
+    """(stamp, kind, [(key, value)]) when the whole line is the grammar, else the reason it is not."""
+    if any(b < 0x20 or b > 0x7E for b in raw):
+        return "not printable ASCII"
+    text = raw.decode("ascii")
+    if "\\" in text or '"' in text:
+        return "a backslash or quote"
+    m = LINE.fullmatch(text)
+    if not m:
+        return "not key=value tokens"
+    fields, seen = [], set()
+    for tok in m.group(3).split(" "):
+        key, eq, value = tok.partition("=")
+        if not eq or not KEY.fullmatch(key) or not VALUE.fullmatch(value):
+            return "not key=value tokens"
+        if key in seen:
+            return "a duplicate key"
+        seen.add(key)
+        fields.append((key, value))
+    return m.group(1), m.group(2), fields
+
+
 def judge(raw, kinds, now, fleet=frozenset()):
-    """(time, kind, body) to push, or the reason it is not pushed."""
+    """(time, kind, body) to push, the body rebuilt from the parse, or the reason it is not pushed."""
     if len(raw) > MAX_LINE:
         return "oversize"
-    if CONTROL.search(raw):
-        return "a control byte"
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return "not utf-8"
-    parts = text.split(" ", 2)
+    parsed = parse(raw)
+    if isinstance(parsed, str):
+        return parsed
+    stamp, kind, fields = parsed
     t = time_of(raw)
-    if t is None or len(parts) < 3:
-        return "malformed"
+    if t is None:
+        return "not key=value tokens"
     if t > now + TOO_NEW:
         return "ahead of now"
     if t < now - TOO_OLD:
         return "older than Loki takes"
-    if parts[1] not in kinds:
+    if kind not in kinds:
         return "unknown kind"
-    if LABEL_KEY.search(parts[2]):
+    if any(k in LABELS for k, _ in fields):
         return "a label key in its fields"
-    if any(fleet_name(m.group(1), fleet) for m in SPEAKS_FOR.finditer(parts[2])):
+    if any(k in SPEAKS_FOR and fleet_name(v, fleet) for k, v in fields):
         return "names a fleet host in node= or owner="
-    return t, parts[1], parts[2]
+    return t, kind, " ".join(f"{k}={v}" for k, v in fields)
 
 
 def pending(lines, progress):

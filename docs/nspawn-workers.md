@@ -357,15 +357,18 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   unit. The host sets every label: `job=platform`, `kind` from
   `services.devEnvironments.records.kinds` (`platform-record.sh`'s list less
   `deploy` and `delivery`: a guest never makes those),
-  `host=<prefix>-<name>`. The line body goes as the guest wrote it, at its
-  own time. Dropped and counted in the unit's log: a line whose own fields
-  name `host=`, `job=` or `kind=` (a guest cannot pose as the owner's host
-  in a gate record), a line whose `node=` or `owner=` names a fleet host
-  (its hostname in any case, or its flake attribute: consumers attribute
-  deploys and built or deferred checks by those fields), an unknown kind, a
-  line over 4 KiB, a line with any byte below 0x20 (tab included: Loki's
-  logfmt splits fields at every byte up to 0x20, and the shipper reads
-  `node=`, `owner=` and label keys with that same rule), a time ahead of
+  `host=<prefix>-<name>`. A line ships only if the whole of it parses as
+  what `platform-record.sh` writes: printable ASCII, no backslash or quote,
+  `<date -Is> <kind>` then single-space `key=value` tokens, keys
+  `[a-z_][a-z0-9_]*`, values `[A-Za-z0-9_.,:/-]*` (paths, shas, drv names,
+  comma lists), no key twice; what ships is rebuilt from the parsed fields,
+  never the guest's bytes (Loki's logfmt splits at any byte up to 0x20,
+  unquotes and decodes `\uXXXX`). Dropped and counted by reason in the unit's
+  log: a line outside that grammar, one with a `host`, `job` or `kind` field
+  (a guest cannot pose as the owner's host in a gate record), one whose
+  `node` or `owner` names a fleet host (its hostname in any case, or its
+  flake attribute: consumers attribute deploys and built or deferred checks
+  by those fields), an unknown kind, a line over 4 KiB, a time ahead of
   now; lines older than Loki takes (167 h) are skipped. At most 500 lines
   per instance and run. Progress is the last handled line's hash and time
   in the unit's StateDirectory, out of every guest's reach. It runs as a

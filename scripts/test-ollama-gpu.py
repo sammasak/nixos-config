@@ -95,7 +95,7 @@ checks = instantiated(P["check"])
 rc, log = realise(checks["asus"], "asus-ollama-gpu-check")
 check(rc in (0, "deferred"),
       f"asus-ollama-gpu-check builds: RUNPATH has /run/opengl-driver/lib, the drivers env has libcuda.so.1, or it is deferred to {OWNER} (rc {rc}: {log.strip()[-300:]})")
-rc, log = realise(checks["noNvidiaLibs"], "asus-ollama-gpu-check (no NVIDIA libs)")
+rc, log = realise(checks["noNvidiaLibs"], "asus-ollama-gpu-check-no-nvidia-libs")
 check(rc == "deferred" or (rc not in (0, None) and "no lib/libcuda.so.1" in log),
       f"seeded: graphics without the NVIDIA library fails the gpu check, or it is deferred to {OWNER} (rc {rc}: {log.strip()[-300:]})")
 sys.exit(failed)

@@ -133,7 +133,7 @@ L = {
     # a guest speaking for a fleet host: a deferral's or a build's owner, a deploy's node, by hostname or flake attribute
     "owner": rec(90, "gate-step", f"step=nixos-flake-check check=c owner={OWNER_HOST} result=built"),
     "ownercase": rec(85, "gate-step", f"step=nixos-flake-check check=c owner={OWNER_HOST.lower()} result=built"),
-    "node": rec(80, "gate", 'gate=nixos-qa result=pass node="lenovo"'),
+    "node": rec(80, "gate", "gate=nixos-qa result=pass node=lenovo"),
     # its own name is no fleet host's
     "own": rec(70, "gate-step", f"step=nixos-flake-check check=c owner={PREFIX}-herman result=built"),
     # Loki's logfmt splits at any byte <= 0x20: each of these would read as acer-swift's coverage there
@@ -180,16 +180,33 @@ check(fields("deploy") not in bodies(got) and fields("delivery") not in bodies(g
 check(not any(fields(k) in bodies(got) for k in ("owner", "ownercase", "node")) and "3 names a fleet host in node= or owner=" in out,
       f"a line whose owner= or node= names a fleet host (hostname, any case, or flake attribute) is dropped and counted ({out.strip()})")
 check(fields("own") in bodies(got), "a line whose owner= is the guest's own name is shipped")
-check(not any(fields(k) in bodies(got) for k in ("nul", "soh", "ctl", "tab")) and "4 a control byte" in out,
+check(not any(fields(k) in bodies(got) for k in ("nul", "soh", "ctl", "tab")) and "4 not printable ASCII" in out,
       f"a line with any byte below 0x20 (NUL, SOH, another control byte, a tab) is dropped and counted ({out.strip()})")
-# the field rule on its own, as Loki reads fields: a node= after a control byte names acer-swift
+check(fields("job") not in bodies(got) and "1 a backslash or quote" in out, f"a quoted value is dropped and counted ({out.strip()})")
+# the grammar on its own: each of these is a form Loki would read as node=acer-swift or as another field
 spec = importlib.util.spec_from_file_location("guest_records", SHIPPER)
 gr = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gr)
-check(all(any(gr.fleet_name(m.group(1), set(f.lower() for f in FLEET)) for m in gr.SPEAKS_FOR.finditer(t))
-          for t in ("x=1\x00node=acer-swift", "x=1\x01node=acer-swift", "x=1\x1bowner=acer-swift"))
-      and gr.LABEL_KEY.search("x=1\x05host=acer-swift") is not None,
-      "node=, owner= and host= are found after any byte Loki splits at, not only after \\s")
+STAMP = "2026-11-18T12:00:00+01:00"
+bad = {
+    "a \\u escape": ('coverage x=1 node="acer\\u002dswift"', "a backslash or quote"),
+    "a quote": ('coverage x=1 node="acer-swift"', "a backslash or quote"),
+    "a backslash": ("coverage x=1 node=acer\\-swift", "a backslash or quote"),
+    "Cyrillic a": ("coverage x=1 node=\u0430cer-swift", "not printable ASCII"),
+    "a zero-width space": ("coverage x=1 node=acer\u200b-swift", "not printable ASCII"),
+    "a duplicate key": ("coverage x=1 node=a node=b", "a duplicate key"),
+    "two spaces": ("coverage x=1  y=2", "not key=value tokens"),
+    "a token with no =": ("coverage x=1 (no NVIDIA libs)", "not key=value tokens"),
+    "an upper-case key": ("coverage X=1", "not key=value tokens"),
+    "a value outside the charset": ("coverage x=a;b", "not key=value tokens"),
+}
+got_bad = {n: gr.parse(f"{STAMP} {line}".encode()) for n, (line, _) in bad.items()}
+check(all(got_bad[n] == why for n, (_, why) in bad.items()), f"each form outside the grammar is refused for its own reason ({got_bad})")
+ok = gr.parse(f"{STAMP} gate gate=nixos-qa seconds=12 result=pass head= deferred_checks=a:checks.x86_64-linux.b,c drv=/nix/store/x-y.drv".encode())
+check(not isinstance(ok, str) and ok[2][3] == ("head", ""),
+      f"a real record parses: empty value, comma list, store path, colons ({ok})")
+lone = gr.judge(f"{STAMP} gate gate=nixos-qa result=pass".encode(), {"gate"}, time.time(), frozenset())
+check(not isinstance(lone, str) and lone[2] == "gate=nixos-qa result=pass", f"what ships is rebuilt from the parsed fields ({lone})")
 check(fields("big") not in bodies(got) and "1 oversize" in out, "a line over 4 KiB is dropped and counted")
 check(fields("old") not in bodies(got) and "1 older than Loki takes" in out, "a line older than Loki's window is skipped")
 check(sorted(int(t) // 10**9 for _, t, _ in got) == sorted(int(NOW - a) for a in (600, 500, 70)),
@@ -222,7 +239,7 @@ rc, out, err, got = run("herman")
 check(bodies(got) == [fields("a"), fields("b")],
       f"with the last shipped line gone, only lines no older than it go ({bodies(got)})")
 
-L["down"] = rec(20, "gate", "while-down=1")
+L["down"] = rec(20, "gate", "while_down=1")
 write("herman", [L["late"], L["a"], L["b"], L["down"]])
 Loki.status = 500
 rc, out, err, _ = run("herman")
