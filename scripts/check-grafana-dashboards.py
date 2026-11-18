@@ -5,8 +5,11 @@ logcli's parser; every metric name in an exporter's own output, a rule file's re
 literals or the OTLP allow-list; every `job` a query selects scraped by Prometheus or written to Loki by the repo; every variable
 defined; and no host named by hand in a query.
 Black-pi's alert and recording rules (SPEC alert_rules, YAML: run with PyYAML) are held to the same names and jobs.
-Usage: check-grafana-dashboards.py SPEC.json PROMTOOL LOGCLI EXPOSITION...; exits non-zero on any FAIL. EXPOSITION is
-an exporter's /metrics output; SPEC names the dashboards, the fleet's hosts, the rule files and the metric sources."""
+A name selected with a literal job="X" must come from that job: X's expositions or X's name literals (a record, a
+builtin series, or a job the check has no vocabulary for, is not held to it).
+Usage: check-grafana-dashboards.py SPEC.json PROMTOOL LOGCLI [JOB=]EXPOSITION...; exits non-zero on any FAIL.
+EXPOSITION is an exporter's /metrics output, JOB the scrape job it is served under; SPEC names the dashboards, the
+fleet's hosts, the rule files and the metric sources."""
 import json
 import pathlib
 import re
@@ -17,14 +20,21 @@ import tempfile
 spec = json.load(open(sys.argv[1]))
 promtool, logcli = sys.argv[2], sys.argv[3]
 hosts = set(spec["hosts"])
-metrics = set(spec["builtin"])
-for f in sys.argv[4:]:
-    metrics |= {re.match(r"[A-Za-z_:][\w:]*", line).group(0) for line in open(f) if line[:1].isalpha()}
+# names any job may carry: Prometheus's own per-target series, and the records
+anyjob = set(spec["builtin"])
 for f in spec["rule_files"]:
-    metrics |= set(re.findall(r'record"?\s*:\s*"?([A-Za-z_:][\w:]*)', open(f).read()))
+    anyjob |= set(re.findall(r'record"?\s*:\s*"?([A-Za-z_:][\w:]*)', open(f).read()))
 # a generator's whole vocabulary: its rules exist only for the results committed so far
 for f in spec["record_sources"]:
-    metrics |= set(re.findall(r'"([a-z_]+:[a-z_:]+)"', open(f).read()))
+    anyjob |= set(re.findall(r'"([a-z_]+:[a-z_:]+)"', open(f).read()))
+metrics = set(anyjob)
+by_job = {}
+for a in sys.argv[4:]:
+    job, f = a.split("=", 1) if re.match(r"[a-z][a-z-]*=", a) else (None, a)
+    names = {re.match(r"[A-Za-z_:][\w:]*", line).group(0) for line in open(f) if line[:1].isalpha()}
+    metrics |= names
+    if job:
+        by_job.setdefault(job, set()).update(names)
 # a Go service's metric names as string literals in its source: the whole name, or the part after its namespace
 sources = [dict(s, literals=set(open(s["literals"]).read().split())) for s in spec["sources"]]
 # alloy-otlp's allow-list (codex\.(a|b)), as Prometheus names them: dots to underscores, then a unit and a suffix
@@ -89,13 +99,35 @@ def known(name):
         return True
     for s in sources:
         if name.startswith(s["prefix"]):
-            short = name[len(s["strip"]):]
-            # an underscore: a bare word (name, model) is quoted in any source for other reasons
-            return any("_" in c and c in s["literals"] for c in {name, short, SERIES.sub("", short)})
+            return from_source(name, s)
     if name.startswith(("codex_", "claude_code_")):
         base = SUFFIX.sub("", name)
         return base in otlp or re.sub(r"_[A-Za-z]+$", "", base) in otlp
     return False
+
+
+def from_source(name, s):
+    if not name.startswith(s["prefix"]):
+        return False
+    short = name[len(s["strip"]):]
+    # an underscore: a bare word (name, model) is quoted in any source for other reasons
+    return any("_" in c and c in s["literals"] for c in {name, short, SERIES.sub("", short)})
+
+
+def check_jobs(where, expr):
+    """Each name selected with a literal job="X" that the check has X's vocabulary for comes from X."""
+    e = substitute(expr)
+    for m in re.finditer(r"([A-Za-z_:][\w:]*)\s*\{([^}]*)\}", e):
+        name, matchers = m.groups()
+        j = re.search(r'\bjob\s*=\s*"([^"]*)"', matchers)
+        if not j or name in anyjob or name.lower() in KEYWORDS:
+            continue
+        job = j.group(1)
+        own = [s for s in sources if s["job"] == job]
+        if job not in by_job and not own:
+            continue
+        if name not in by_job.get(job, set()) and not any(from_source(name, s) for s in own):
+            fail(where, f"metric {name} is not exported by job {job!r}")
 
 
 def check_expr(where, expr, variables, loki):
@@ -122,6 +154,7 @@ def check_expr(where, expr, variables, loki):
     for name in sorted(metric_names(expr)):
         if not known(name):
             fail(where, f"unknown metric {name}: no exporter, record or scraped service provides it")
+    check_jobs(where, expr)
 
 
 def check_rule(where, expr):
@@ -133,6 +166,7 @@ def check_rule(where, expr):
     for name in sorted(metric_names(expr)):
         if not known(name):
             fail(where, f"unknown metric {name}: no exporter, record or scraped service provides it")
+    check_jobs(where, expr)
 
 
 uids = {}
