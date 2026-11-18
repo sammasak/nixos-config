@@ -48,6 +48,13 @@ let
         fi
       '';
 
+  # the flake's own formatter (nixfmt-tree, flake-modules/overlays.nix) in CI mode: it fails on any file it would
+  # change, so formatting fails here first, not in a late step or review. It rewrites what it would change, so a
+  # manual run leaves the fix in the checkout; the hook runs it in a temporary worktree.
+  fmtCheck = gate "nixos-fmt-check" [ pkgs.nix ] ''
+    nix fmt --no-write-lock-file -- --ci
+  '';
+
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
     shellcheck scripts/*.sh
   '';
@@ -807,7 +814,13 @@ let
         if [ -f "$HOME/.claude/CLAUDE.md" ]; then
           ${lib.getExe record} instructions file=global-CLAUDE.md bytes="$(wc -c <"$HOME/.claude/CLAUDE.md")"
         fi
-        ${timed (lints ++ [ secretsVerify ])}
+        ${timed (
+          lints
+          ++ [
+            fmtCheck
+            secretsVerify
+          ]
+        )}
         t=$SECONDS
         GATE_PROBE=$(${lib.getExe probe})
         export GATE_PROBE
@@ -1225,6 +1238,8 @@ in
     "nixos:lint-comments" =
       task "Comment Policy lint (density, forbidden shapes, path pointers that resolve to no tracked file)" lintComments;
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
+    "nixos:fmt-check" =
+      task "nix fmt -- --ci: the flake's formatter fails on any file it would change (and rewrites it)" fmtCheck;
     "nixos:secrets-verify" =
       task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;

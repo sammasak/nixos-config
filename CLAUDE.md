@@ -36,7 +36,8 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               Shipping's "where a gate's time goes" panels read them.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
-nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table
+nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table; nixos:qa runs it
+                                    # in CI mode (nixos:fmt-check), so an unformatted file fails the gate
 
 # Or manually verify specific host:
 nix build .#nixosConfigurations.<hostname>.config.system.build.toplevel --no-link
