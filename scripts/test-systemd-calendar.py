@@ -11,14 +11,9 @@ import subprocess
 import sys
 import tempfile
 
+from gate_probe import check, finish
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 module = (ROOT / "modules/core/systemd-verify.nix").read_text()
@@ -81,4 +76,4 @@ rc, out, made = run({"system/a.service": "[Service]\nExecStart=/bin/true\n"})
 check(rc != 0 and not made and "no OnCalendar= in this host's timers" in out,
       f"a tree without any OnCalendar= fails as not this host's ({rc}, {out.strip()!r})")
 
-sys.exit(1 if failed else 0)
+finish()

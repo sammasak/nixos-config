@@ -2,17 +2,10 @@
 server unit's sandbox and state directory, a memory cap, and its env file by path; the -E names are the unit's
 environment keys less the prometheus multiproc dir."""
 import shlex
-import sys
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("authentik")
@@ -32,4 +25,4 @@ check("PROMETHEUS_MULTIPROC_DIR" in P["envKeys"] and "PROMETHEUS_MULTIPROC_DIR" 
       "ak leaves out the server's prometheus multiproc dir")
 check(env == set(P["envKeys"]) - {"PROMETHEUS_MULTIPROC_DIR"}, f"ak's -E names are the unit's environment {sorted(env)}")
 
-sys.exit(1 if failed else 0)
+finish()

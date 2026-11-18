@@ -1,5 +1,5 @@
 # Shared desktop services (system-wide): xdg portal, thunar file manager, gvfs.
-{ pkgs, ... }:
+{ ... }:
 {
   config = {
     xdg.portal.enable = true;

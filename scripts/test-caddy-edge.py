@@ -11,20 +11,13 @@ import os
 import socket
 import ssl
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.request
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 P = gate_probe.section("caddy-edge")
@@ -262,4 +255,4 @@ seeded, _ = stray_series({"per_host": True})
 check(any("stray-x7k2" in line for line in seeded) and any(":4711" in line for line in seeded),
       f"seeded: with per_host the stray name and port show {len(seeded)} lines")
 
-sys.exit(1 if failed else 0)
+finish()
