@@ -2,19 +2,32 @@
 """Navigation metrics (docs/shipping.md, Navigation): how agents find their way around nixos-config, from the owner's
 Claude Code main-session transcripts (~/.claude/projects/*/*.jsonl) of the last 24 h, as one Prometheus textfile.
 Counts only: no prompt, command, file content or path leaves the process; the only labels are role, quantile and
-section. The classification is the retro's (nixos-config#535, navcost.py), trimmed to what the metrics need.
+section, and for guests worker and reason. The classification is the retro's (nixos-config#535, navcost.py), trimmed
+to what the metrics need.
 
 A role (coordinator, worker) with fewer than MIN_SAMPLE repo navigation calls in the window gets its sample size and
 nothing else: a thin day is absent, not a swing (24 calls once read as a 21 % miss ratio). A section that fails
 leaves its series out and keeps its previous success timestamp. Exits 0 whenever it could write the file.
 
+With --worker, the same series for dev-environment guests instead, each with a `worker` label from the host's own
+argv, never from a transcript: `<state-dir>/<name>/home/.claude/projects/*/*.jsonl`, which the guest controls. No
+link is followed and nothing but a regular file is opened (guest_transcripts); a file over FILE_MAX bytes, past
+FILES_MAX in a run, or a line over LINE_MAX is not read. One guest per run, so that one guest's transcripts can
+exhaust only its own run's memory or deadline.
+
+A transcript that needs more per-session state than STATE_MAX entries, or holds a Bash command over CMD_MAX, is
+abandoned and none of its counts kept: for a guest, agent_nav_collector_skipped{reason="too_much_state"}; for the
+owner, a line on stderr (the caps sit far above his transcripts).
+
 Usage: nav-metrics.py --out FILE [--projects DIR] [--hours 24]
+       nav-metrics.py --out FILE --state-dir DIR --home GUEST_HOME --worker NAME [--hours 24]
        nav-metrics.py --list   (the metric names it can emit, one per line: the build-time check reads them)"""
 import argparse
 import json
 import os
 import re
 import shlex
+import stat
 import sys
 import time
 from datetime import datetime
@@ -29,11 +42,23 @@ METRICS = {
     "agent_nav_repo_miss_ratio": "Share of repo navigation calls whose result was an error, empty, no match or no such file.",
     "agent_nav_repo_reads": "Reads of repo files (Read, cat, head, tail, sed -n) in the window.",
     "agent_nav_repeat_read_ratio": "Share of repo file reads that read a file the same session already read in the window.",
+    "agent_nav_collector_skipped": "A guest's transcripts left out this run: refused (a link, FIFO or other non-regular file on the path), too_large (over FILE_MAX bytes), too_many (past FILES_MAX) or too_much_state (over STATE_MAX or CMD_MAX).",
 }
 ROLES = ("coordinator", "worker")
 SECTIONS = ("scan", "stretches", "misses", "rereads")
 MIN_SAMPLE = 50  # repo navigation calls; the retro's minimum before a day's ratios stop swinging
 DEADLINE = time.monotonic() + 240  # the unit's TimeoutStartSec is above this
+# guests only, from the owner's transcripts: 107 written in his busiest day, the largest 119 MB, the longest line 660 KB
+FILES_MAX = 256
+FILE_MAX = 256 * 1024 * 1024
+LINE_MAX = 2 * 1024 * 1024  # a line is decoded and parsed whole: this keeps the worst one within the unit's MemoryMax
+# per-session state, owner and guests: in the owner's 325 transcripts (all time) a session read at most 159 distinct
+# repo files, had 3 calls awaiting a result at once, 12 top-level dirs in a stretch and 180 stretches (530 in all), and
+# the longest Bash command was 23 KB. At these caps a run stays far below the guest unit's MemoryMax.
+STATE_MAX = 10000
+CMD_MAX = 64 * 1024
+SKIPS = ("refused", "too_large", "too_many", "too_much_state")
+WORKER_RE = re.compile(r"[a-z][a-z0-9-]{0,10}")
 HOME = os.path.expanduser("~")
 CHANGE_TOOLS = {"Edit", "Write", "NotebookEdit", "MultiEdit"}
 NAV_CMDS = {"grep", "rg", "ugrep", "egrep", "fgrep", "find", "fd", "ls", "tree", "cat", "head", "tail"}
@@ -59,7 +84,11 @@ VALUE_FLAGS = {
 REV_RE = re.compile(r"^(?:origin|upstream)/|\.\.|^HEAD|^[0-9a-f]{7,40}$")
 # a nixos-config checkout: */nixos-config, or a worktree under ~/.cache/wt or ~/wt (some are other repos' or scratch
 # dirs; the retro counted them as checkouts too)
-REPO_RE = re.compile(r"(?:/nixos-config|^" + re.escape(HOME) + r"/(?:\.cache/)?wt/[^/\s'\"]+)(?:/(.*))?$")
+def repo_re(home):
+    return re.compile(r"(?:/nixos-config|^" + re.escape(home) + r"/(?:\.cache/)?wt/[^/\s'\"]+)(?:/(.*))?$")
+
+
+REPO_RE = repo_re(HOME)
 HEREDOC_RE = re.compile(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?")
 # lines that cannot hold a tool call, its result, a prompt or the session's name are not parsed
 # a run reads the day's transcripts through the page cache, which the unit's cgroup is charged for: hundreds of MB on
@@ -69,12 +98,17 @@ DROP_EVERY = 8 * 1024 * 1024
 WANTED = ('"tool_use"', '"tool_result"', '"origin"', '"agentName"')
 
 
+class TooMuchState(Exception):
+    """A transcript over STATE_MAX or CMD_MAX: it is abandoned, none of its counts kept."""
+
+
 class Out:
-    def __init__(self):
-        self.lines = {}
+    def __init__(self, **labels):
+        self.lines, self.labels = {}, labels
 
     def add(self, name, value, **labels):
         assert name in METRICS, f"{name} is not in METRICS"
+        labels = {**self.labels, **labels}
         lab = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
         self.lines.setdefault(name, []).append(f"{name}{{{lab}}} {value:.15g}" if lab else f"{name} {value:.15g}")
 
@@ -337,6 +371,8 @@ def tool_call(name, inp, cwd):
     if name in CHANGE_TOOLS:
         return {"nav": False, "change": True, "repo_change": repo_rel(inp.get("file_path") or inp.get("notebook_path"), cwd) is not None}
     if name == "Bash":
+        if isinstance(inp.get("command"), str) and len(inp["command"]) > CMD_MAX:
+            raise TooMuchState("a Bash command over CMD_MAX")
         nav, paths, reads, ecwd = classify_bash(inp.get("command", ""), cwd)
         if not nav:
             return None
@@ -351,34 +387,45 @@ def tally():
     return {"before": [], "dirs": [], "judged": 0, "missed": 0, "reads": 0, "repeats": 0}
 
 
-def scan_file(path, since, t):
-    """One main-session transcript, line by line, into its role's tally `t[role]`. Nothing per call outlives the
-    call: a stretch keeps its counters and the directories it saw, a nav call waits only for its result, and the
-    session keeps the set of repo files it read (for repeats). Returns the session's role."""
+def scan_file(path, since, t, line_max=-1, byte_max=None):
+    """One main-session transcript (a path, or a binary file it closes), line by line, into its role's tally
+    `t[role]`. Nothing per call outlives the call: a stretch keeps its counters and the directories it saw, a nav call
+    waits only for its result, and the session keeps the set of repo files it read (for repeats). A line longer than
+    line_max is skipped in line_max pieces, and reading stops after byte_max. Raises TooMuchState, before anything
+    reaches `t`, once the files read, the calls pending, a stretch's directories or the run's stretches pass STATE_MAX.
+    Returns the session's role."""
     role, pending, reads_seen = "worker", {}, set()
+    earlier = sum(len(r["before"]) for r in t.values())
     stretch = None  # [nav calls, repo nav calls, top dirs, saw a change, saw a repo change]; None before a prompt
     done = []  # finished stretches as (nav calls, top dirs), counted once the role is known at the end
 
     def close():
         if stretch is not None and (stretch[1] or stretch[4]):
             done.append((stretch[0], len(stretch[2])))
+            if earlier + len(done) > STATE_MAX:
+                raise TooMuchState("stretches")
 
     judged = missed = reads = repeats = 0
-    with open(path, "rb") as fh:
-        fd, read, dropped = fh.fileno(), 0, 0
-        for raw in fh:
+    with open(path, "rb") if isinstance(path, (str, os.PathLike)) else path as fh:
+        fd, read, dropped, overlong = fh.fileno(), 0, 0, False
+        while raw := fh.readline(line_max):
             if time.monotonic() > DEADLINE:
                 raise TimeoutError("run deadline reached")
             read += len(raw)
             if read - dropped >= DROP_EVERY:
                 os.posix_fadvise(fd, 0, read, os.POSIX_FADV_DONTNEED)
                 dropped = read
+            if byte_max is not None and read > byte_max:
+                break
+            if overlong or (len(raw) == line_max and not raw.endswith(b"\n")):
+                overlong = not raw.endswith(b"\n")
+                continue
             line = raw.decode("utf-8", errors="replace")
             if not any(k in line for k in WANTED):
                 continue
             try:
                 rec = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if not isinstance(rec, dict):
                 continue
@@ -410,6 +457,8 @@ def scan_file(path, since, t):
                             reads += 1
                             repeats += r in reads_seen
                             reads_seen.add(r)
+                        if len(pending) > STATE_MAX or len(reads_seen) > STATE_MAX:
+                            raise TooMuchState("calls pending or files read")
                     if stretch is not None:
                         if c.get("change"):
                             stretch[3] = True
@@ -418,6 +467,8 @@ def scan_file(path, since, t):
                             stretch[0] += 1
                             stretch[1] += c["repo"]
                             stretch[2] |= {d for d in map(topdir, c["paths"] + c["reads"]) if d}
+                            if len(stretch[2]) > STATE_MAX:
+                                raise TooMuchState("a stretch's directories")
                 elif x.get("type") == "tool_result":
                     hit = pending.pop(x.get("tool_use_id"), None)
                     if hit is not None and hit[1]:
@@ -457,12 +508,94 @@ def transcripts(projects, since):
     return found
 
 
-def scan(projects, since):
-    """Every transcript's counts, by role. A file that vanishes or cannot be read is skipped."""
-    t = {r: tally() for r in ROLES}
-    for p in transcripts(projects, since):
+def guest_transcripts(state_dir, name, since, skipped):
+    """A guest's main-session transcripts written to in the window, as binary files opened one at a time, never through
+    a link: each directory from its parent's fd with O_NOFOLLOW, each transcript O_NONBLOCK (a FIFO cannot hold the
+    open) and kept only if fstat says a regular file. Anything else on the path is refused and counted in `skipped`,
+    as are files over FILE_MAX and past FILES_MAX; a missing directory is a home without transcripts."""
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fds = []
+    try:
         try:
-            scan_file(p, since, t)
+            fds.append(os.open(state_dir, dir_flags))
+            for part in (name, "home", ".claude", "projects"):
+                fds.append(os.open(part, dir_flags, dir_fd=fds[-1]))
+        except FileNotFoundError:
+            return
+        except OSError:
+            skipped["refused"] += 1
+            return
+        n = 0
+        # directory order, unsorted: a guest's million entries cost time (its deadline share), not memory
+        with os.scandir(fds[-1]) as projects:
+            for d in projects:
+                if time.monotonic() > DEADLINE:
+                    raise TimeoutError("run deadline reached")
+                if not d.is_dir(follow_symlinks=False):
+                    skipped["refused"] += not d.is_file(follow_symlinks=False)
+                    continue
+                try:
+                    pfd = os.open(d.name, dir_flags, dir_fd=fds[-1])
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    skipped["refused"] += 1
+                    continue
+                try:
+                    with os.scandir(pfd) as files:
+                        for e in files:
+                            if time.monotonic() > DEADLINE:
+                                raise TimeoutError("run deadline reached")
+                            if not e.name.endswith(".jsonl"):
+                                continue
+                            if not e.is_file(follow_symlinks=False):
+                                skipped["refused"] += 1
+                                continue
+                            try:
+                                f = os.open(e.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=pfd)
+                            except FileNotFoundError:
+                                continue
+                            except OSError:
+                                skipped["refused"] += 1
+                                continue
+                            st = os.fstat(f)
+                            if not stat.S_ISREG(st.st_mode):
+                                why = "refused"
+                            elif st.st_mtime < since:
+                                why = "old"
+                            elif st.st_size > FILE_MAX:
+                                why = "too_large"
+                            elif n >= FILES_MAX:
+                                why = "too_many"
+                            else:
+                                n += 1
+                                yield os.fdopen(f, "rb")
+                                continue
+                            os.close(f)
+                            if why != "old":
+                                skipped[why] += 1
+                except TimeoutError:
+                    raise
+                except OSError:
+                    skipped["refused"] += 1
+                finally:
+                    os.close(pfd)
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def scan(projects, since, files=None, skipped=None, **caps):
+    """Every transcript's counts, by role: those under `projects`, or the open `files`. A file that vanishes or
+    cannot be read is skipped, one over the state caps too (counted in `skipped`, if given)."""
+    t = {r: tally() for r in ROLES}
+    for p in transcripts(projects, since) if files is None else files:
+        try:
+            scan_file(p, since, t, **caps)
+        except TooMuchState as e:
+            print(f"nav-metrics: a transcript was over a state cap ({e}), skipped", file=sys.stderr)
+            if skipped is not None:
+                skipped["too_much_state"] += 1
         except TimeoutError:  # an OSError too, but the run's, not the file's
             raise
         except OSError as e:
@@ -498,31 +631,27 @@ def rereads(out, t, enough):
 
 
 def previous_success(path):
+    """The success timestamps of the last file, by (section, worker); the owner's have worker ""."""
     try:
         text = open(path).read()
     except OSError:
         return {}
-    return {m.group(1): float(m.group(2)) for m in re.finditer(r'agent_nav_collector_success_timestamp_seconds\{section="([^"]+)"\} (\S+)', text)}
+    found = {}
+    for m in re.finditer(r"^agent_nav_collector_success_timestamp_seconds\{([^}]*)\} (\S+)$", text, re.M):
+        labels = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
+        if "section" in labels:
+            found[labels["section"], labels.get("worker", "")] = float(m.group(2))
+    return found
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser()
-    p.add_argument("--list", action="store_true")
-    p.add_argument("--out")
-    p.add_argument("--projects", default=os.path.join(HOME, ".claude", "projects"))
-    p.add_argument("--hours", type=float, default=24)
-    a = p.parse_args(argv)
-    if a.list:
-        print("\n".join(METRICS))
-        return 0
-    since = time.time() - a.hours * 3600
-    out = Out()
-    stamps = previous_success(a.out)
+def collect(out, stamps, scan_fn, **labels):
+    """The sections over one set of transcripts (scan_fn() -> tallies by role) into `out`, every series with `labels`;
+    `stamps` holds the set's previous success timestamps by section and gets the new ones."""
     failed = {}
 
     # each section writes to its own Out, merged only when the whole section succeeded: no partial family
     def section(name, fn):
-        part = Out()
+        part = Out(**labels)
         try:
             r = fn(part)
             stamps[name] = time.time()
@@ -536,7 +665,7 @@ def main(argv=None):
             return None
 
     def sample(o):
-        by_role = scan(a.projects, since)
+        by_role = scan_fn()
         for role in ROLES:
             o.add("agent_nav_repo_nav_calls", by_role[role]["judged"], role=role)
         return by_role
@@ -549,9 +678,49 @@ def main(argv=None):
         section("rereads", lambda o: rereads(o, by_role, enough))
     for name in SECTIONS:
         # a section that did not run (scan failed) failed
-        out.add("agent_nav_collector_section_failed", failed.get(name, 1), section=name)
+        out.add("agent_nav_collector_section_failed", failed.get(name, 1), section=name, **labels)
         if name in stamps:
-            out.add("agent_nav_collector_success_timestamp_seconds", stamps[name], section=name)
+            out.add("agent_nav_collector_success_timestamp_seconds", stamps[name], section=name, **labels)
+
+
+def worker_name(s):
+    if not WORKER_RE.fullmatch(s):
+        raise argparse.ArgumentTypeError(f"{s!r} is not an instance name ([a-z][a-z0-9-]{{0,10}})")
+    return s
+
+
+def main(argv=None):
+    global HOME, REPO_RE
+    p = argparse.ArgumentParser()
+    p.add_argument("--list", action="store_true")
+    p.add_argument("--out")
+    p.add_argument("--projects", default=os.path.join(HOME, ".claude", "projects"))
+    p.add_argument("--hours", type=float, default=24)
+    p.add_argument("--state-dir", help="the dev environments' state dir: <state-dir>/<worker>/home is a guest's home")
+    p.add_argument("--home", help="the guests' home as they see it, which their transcripts' paths name")
+    p.add_argument("--worker", type=worker_name, action="append", default=[], help="a declared instance")
+    a = p.parse_args(argv)
+    if a.list:
+        print("\n".join(METRICS))
+        return 0
+    since = time.time() - a.hours * 3600
+    out = Out()
+    previous = previous_success(a.out)
+    if not a.worker:
+        collect(out, {s: v for (s, w), v in previous.items() if not w}, lambda: scan(a.projects, since))
+    else:
+        if not (a.state_dir and a.home and os.path.isabs(a.home)):
+            p.error("--worker needs --state-dir and an absolute --home")
+        if len(a.worker) > 1:
+            p.error("one --worker per run: a guest that exhausts the run's memory or deadline must cost no other")
+        HOME, REPO_RE = a.home.rstrip("/") or "/", repo_re(a.home.rstrip("/") or "/")
+        w, skipped = a.worker[0], dict.fromkeys(SKIPS, 0)
+        files = guest_transcripts(a.state_dir, w, since, skipped)
+        collect(out, {s: v for (s, ww), v in previous.items() if ww == w},
+                lambda: scan(None, since, files, skipped, line_max=LINE_MAX, byte_max=FILE_MAX), worker=w)
+        files.close()
+        for r in SKIPS:
+            out.add("agent_nav_collector_skipped", skipped[r], reason=r, worker=w)
     tmp = f"{a.out}.tmp"
     with open(tmp, "w") as f:
         f.write(out.text())
