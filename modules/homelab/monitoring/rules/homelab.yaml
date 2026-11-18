@@ -86,22 +86,34 @@ groups:
           summary: "{{ $labels.name }} failed on {{ $labels.node }}"
           description: "{{ $labels.name }} has been in the failed state on {{ $labels.node }} for 15 minutes. Run systemctl status {{ $labels.name }} and journalctl -u {{ $labels.name }} there; systemctl reset-failed clears it once fixed."
 
-      # each hwmon sensor against its own critical mark (a desktop board's unwired sensors read nonsense, but have
-      # none; max by keeps the join single across a target's label change), and the Pi's zone against 85 °C, where its
-      # firmware throttles hardest. x86 zones are left to hwmon: acer's package zone sits near 89 °C through a build.
+      # the Pi's zone against 85 °C, where its firmware throttles hardest. x86 zones are not paged: acer's package zone
+      # sits near 89 °C through a build.
       - alert: NodeTemperatureHigh
-        expr: |
-          node_hwmon_temp_celsius{job="node-exporter"}
-          > on (node, chip, sensor) group_left ()
-            (max by (node, chip, sensor) (node_hwmon_temp_crit_celsius{job="node-exporter"} > 0) - 5)
-          or node_thermal_zone_temp{job="node-exporter",type="cpu-thermal"} >= 85
+        expr: node_thermal_zone_temp{job="node-exporter",type="cpu-thermal"} >= 85
         for: 15m
         labels:
           severity: warning
           team: homelab
         annotations:
           summary: "{{ $labels.node }} runs hot"
-          description: "A sensor on {{ $labels.node }} ({{ $labels.chip }}{{ $labels.zone }} {{ $labels.sensor }}{{ $labels.type }}) has read {{ $value }} °C for 15 minutes, within 5 °C of its critical mark or at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+          description: "{{ $labels.node }}'s {{ $labels.type }} zone has read {{ $value }} °C for 15 minutes, at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+
+      # each hwmon sensor against its own critical mark (a desktop board's unwired sensors read nonsense, but have
+      # none; max by keeps the join single across a target's label change). msi and lenovo sit there through every
+      # gate, so it notifies no one (notify="none", alertmanager.nix): it shows in the alert list and on Hosts.
+      - alert: NodeSensorNearCritical
+        expr: |
+          node_hwmon_temp_celsius{job="node-exporter"}
+          > on (node, chip, sensor) group_left ()
+            (max by (node, chip, sensor) (node_hwmon_temp_crit_celsius{job="node-exporter"} > 0) - 5)
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+          notify: none
+        annotations:
+          summary: "A sensor on {{ $labels.node }} is near its critical mark"
+          description: "{{ $labels.chip }} {{ $labels.sensor }} on {{ $labels.node }} has read {{ $value }} °C for 15 minutes, within 5 °C of its own critical mark. Expected during long builds on msi and lenovo; outside them, check the fan and airflow."
 
       - alert: GpuThermalThrottling
         expr: nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job="nvidia-gpu"} == 1

@@ -51,8 +51,8 @@ server, not by name. Authentik gets the matched name without a client port as Ho
 
 - Prometheus loads `modules/homelab/monitoring/rules/*.yaml` (`homelab.yaml` rendered by `modules/homelab/monitoring/rules/homelab.nix` from the fleet's power windows), the
   llm-bench scorecard and the shipping rules from `modules/homelab/monitoring/rules/shipping.nix` (the list is in `prometheus.nix`).
-- Alertmanager sends every alert to the alert bridge except Watchdog, InfoInhibitor and HostExpectedOff (a null
-  receiver). The shipping team's alerts are muted at night.
+- Alertmanager sends every alert to the alert bridge except Watchdog, InfoInhibitor, HostExpectedOff and any alert
+  labelled `notify="none"` (a null receiver). The shipping team's alerts are muted at night.
 - HostExpectedOff marks a sleeping host that is off as planned. Inhibit rules keyed on it silence what the power-off
   causes (`alertmanager.nix`).
 - lenovo's watchdog (`cluster-watchdog.nix`) checks the pipeline from outside: Prometheus and Alertmanager ready, and
@@ -61,8 +61,10 @@ server, not by name. Authentik gets the matched name without a client port as Ho
   - NodeSystemdUnitFailed (warning, 15 m): any failed service, socket, timer, target or path unit.
   - DnsDown (critical, 5 m): lenovo's AdGuard does not answer its status API.
   - DnsStatsStale (warning): `adguard.prom` has not been rewritten for over 5 min.
-  - NodeTemperatureHigh (warning, 15 m): an hwmon sensor within 5 °C of its own critical mark, or the Pi's
-    `cpu-thermal` zone at 85 °C or more. x86 thermal zones are left to hwmon.
+  - NodeTemperatureHigh (warning, 15 m): the Pi's `cpu-thermal` zone at 85 °C or more. x86 zones page no one.
+  - NodeSensorNearCritical (warning, 15 m, `notify="none"`): an hwmon sensor within 5 °C of its own critical mark.
+    msi and lenovo reach it through every gate, so it notifies no one. It shows in the alert list, in Fleet's
+    "Alerts firing" count, and on the Hosts dashboard's hottest sensor.
   - GpuThermalThrottling (warning, 10 m): the GPU reports hardware thermal slowdown
     (`nvidia_smi_clocks_event_reasons_hw_thermal_slowdown`).
 - The upstream Prometheus and Alertmanager rules leave out what this deployment cannot fire: the cluster-consistency
@@ -76,6 +78,7 @@ server, not by name. Authentik gets the matched name without a client port as Ho
 | `grafana-dashboards` | every query on every dashboard: metric names against what the exporters really emit (node-exporter on its own fixtures with the deployed flags; the GPU check's output; Loki's, Alloy's, Caddy's and blackbox's name literals; llm-gateway's and Authentik's registrations; black-pi's Prometheus and Alertmanager and acer's alloy-otlp run on loopback (`scripts/monitoring-exposition.sh`); the writers' textfiles, AdGuard's from lenovo's sandboxed AdGuard; the OTLP allow-list; the rule files' records); PromQL through promtool, LogQL through logcli; jobs scraped or written; no host named by hand; every rule file Prometheus loads held to the same names and jobs; seeded failures, rule files included |
 | `grafana-dashboard-removal` | Grafana itself, with black-pi's provider settings, deletes a removed file's dashboard and keeps ids across a restart |
 | `gpu-telemetry-exporter` | the GPU exporter's fields against a fake nvidia-smi that heads the throttle fields `clocks_event_reasons`, as asus's driver does |
+| `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` reaches no one, NodeTemperatureHigh reaches the bridge, and the same alert without the label would notify |
 | `monitoring-rules-tests` | `promtool test rules` on every file in `modules/homelab/monitoring/rules/tests`, against `homelab.yaml` as rendered |
 | `monitoring-config-msi-ms7758`, `monitoring-rules-sleeping-hosts` | black-pi's Prometheus, Alertmanager and blackbox configs checked on an x86 seed; the sleeping-host rules per host |
 | `loki-config-msi-ms7758`, `journal-collector-config-black-pi` | Loki's config and the Pi's journal collector, on x86 |

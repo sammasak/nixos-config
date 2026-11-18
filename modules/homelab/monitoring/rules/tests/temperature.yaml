@@ -27,14 +27,17 @@ tests:
       - eval_time: 30m
         alertname: NodeTemperatureHigh
         exp_alerts:
-          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: msi-ms7758, chip: platform_coretemp_0, sensor: temp1}
-            exp_annotations:
-              summary: "msi-ms7758 runs hot"
-              description: "A sensor on msi-ms7758 (platform_coretemp_0 temp1) has read 96 °C for 15 minutes, within 5 °C of its critical mark or at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
           - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: black-pi, type: cpu-thermal, zone: "0"}
             exp_annotations:
               summary: "black-pi runs hot"
-              description: "A sensor on black-pi (0 cpu-thermal) has read 86 °C for 15 minutes, within 5 °C of its critical mark or at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+              description: "black-pi's cpu-thermal zone has read 86 °C for 15 minutes, at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+      - eval_time: 30m
+        alertname: NodeSensorNearCritical
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, notify: none, job: node-exporter, node: msi-ms7758, chip: platform_coretemp_0, sensor: temp1}
+            exp_annotations:
+              summary: "A sensor on msi-ms7758 is near its critical mark"
+              description: "platform_coretemp_0 temp1 on msi-ms7758 has read 96 °C for 15 minutes, within 5 °C of its own critical mark. Expected during long builds on msi and lenovo; outside them, check the fan and airflow."
       - eval_time: 18m
         alertname: GpuThermalThrottling
         exp_alerts: []
@@ -45,3 +48,22 @@ tests:
             exp_annotations:
               summary: "The GPU on asus-b460m slows itself for heat"
               description: "The board on asus-b460m has reported hardware thermal slowdown for 10 minutes: model runs are slower than measured. The GPU dashboard shows its temperature, fan and power."
+  # msi through a gate: 102 °C against a 105 °C mark for 20 minutes. NodeTemperatureHigh stays silent; the near-critical
+  # warning fires with notify="none", which the monitoring-alert-routes check holds to the null receiver
+  - interval: 1m
+    input_series:
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="msi-ms7758",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '102x40'
+      - series: 'node_hwmon_temp_crit_celsius{job="node-exporter",node="msi-ms7758",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '105x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: NodeTemperatureHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: NodeSensorNearCritical
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, notify: none, job: node-exporter, node: msi-ms7758, chip: platform_coretemp_0, sensor: temp1}
+            exp_annotations:
+              summary: "A sensor on msi-ms7758 is near its critical mark"
+              description: "platform_coretemp_0 temp1 on msi-ms7758 has read 102 °C for 15 minutes, within 5 °C of its own critical mark. Expected during long builds on msi and lenovo; outside them, check the fan and airflow."
