@@ -75,6 +75,10 @@ in
     # included, until the next load
     nvidiaPersistenced = true;
   };
+  # mkForce: nixpkgs' unit names /var/run, which systemd-verify (modules/core/systemd-verify.nix) rejects as legacy;
+  # /var/run links to /run, so the daemon still writes the same file
+  systemd.services.nvidia-persistenced.serviceConfig.PIDFile =
+    lib.mkForce "/run/nvidia-persistenced/nvidia-persistenced.pid";
 
   services.ollama = {
     enable = true;
