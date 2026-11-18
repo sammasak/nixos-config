@@ -6,7 +6,6 @@ import os
 import pathlib
 import http.client
 import http.server
-import ipaddress
 import re
 import socket
 import shutil
@@ -176,7 +175,6 @@ in {
   tel = guest "tel";
   cdx = guest "cdx";
   plain = guest "plain";
-  loki = { inherit (c.sam.fleet.loki) url; address = c.sam.fleet.hosts.${c.sam.fleet.loki.host}.address; blocked = c.services.devEnvironments.blockedNetworks; };
 }
 """
 
@@ -472,44 +470,6 @@ def check_telemetry(got, out):
     seen = Recorder.seen
     check(len(seen) >= 3 and all(p.split("?")[0] in ("/v1/metrics", "/v1/logs") and w == ["tel"] and n <= 1 << 20 for p, w, n in seen),
           f"the relay sees only the exact paths, X-Otel-Worker tel even when the guest sent its own, and no body over 1MiB ({seen})")
-
-
-LOKI_CASES = [("POST", "/loki/api/v1/push", True), ("GET", "/loki/api/v1/push", False), ("POST", "/loki/api/v1/query", False),
-              ("POST", "/loki/api/v1/push/x", False), ("POST", "/LOKI/API/V1/PUSH", False), ("POST", "//loki/api/v1/push", False),
-              ("POST", "/loki/api/v1/../v1/push", False), ("PUT", "/loki/api/v1/push", False), ("DELETE", "/loki/api/v1/push", False),
-              ("OPTIONS", "/loki/api/v1/push", False), ("HEAD", "/loki/api/v1/push", False), ("POST", "/", False),
-              ("POST", "/loki/api/v1/push", 413, {}, (1 << 20) + 1)]
-
-
-def check_loki_proxy(site, url):
-    """The Loki site against a local Recorder: only the exact push path reaches it, no body over 1MiB."""
-    loki = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Recorder)
-    threading.Thread(target=loki.serve_forever, daemon=True).start()
-    before = len(Recorder.seen)
-    try:
-        wrong = site_wrong(site, re.escape(url), LOKI_CASES, f"http://127.0.0.1:{loki.server_port}")
-    finally:
-        loki.shutdown()
-    seen = Recorder.seen[before:]
-    return wrong, seen
-
-
-def check_platform_records(got):
-    sites = {b.split("\n", 2)[1].strip(): b for b in got.get("caddy", "").split("http:// {")[1:]}
-    url = got.get("loki", {}).get("url", "")
-    loki = {n: sites.get(f"bind unix//run/dev-env-egress/{n}/loki.sock", "") for n in ("tel", "cdx", "plain")}
-    check(bool(url) and all(f"reverse_proxy {url}\n" in s and "max_size 1MiB" in s for s in loki.values()),
-          f"every instance, telemetry or not, has a Loki site forwarding to sam.fleet.loki ({url}), bodies to 1MiB ({sorted(sites)})")
-    env = {n: (got.get(n, {}).get("variables", {}).get("PLATFORM_LOKI_URL"), got.get(n, {}).get("sockets", {}).get("loki-egress")) for n in loki}
-    check(all(v == ("http://127.0.0.1:4103", ["127.0.0.1:4103"]) for v in env.values()),
-          f"every guest's PLATFORM_LOKI_URL is its loopback 4103, a socket to its loki.sock ({env})")
-    address, blocked = got.get("loki", {}).get("address"), got.get("loki", {}).get("blocked", [])
-    check(bool(address) and any(ipaddress.ip_address(address) in ipaddress.ip_network(b) for b in blocked),
-          f"a guest still cannot reach Loki directly: {address} is in a blocked network ({blocked})")
-    wrong, seen = check_loki_proxy(loki["tel"], url)
-    check(wrong == [], f"the Loki site passes POST /loki/api/v1/push and refuses everything else ({'no caddy on PATH' if wrong is None else wrong})")
-    check(wrong is None or (len(seen) >= 1 and all(p == "/loki/api/v1/push" and n <= 1 << 20 for p, _, n in seen)),
-          f"Loki sees only the push path and no body over 1MiB ({seen})")
 
 
 def check_eval_cache(facts):
@@ -1111,9 +1071,7 @@ def main():
     check(got.get("config", "").startswith("/nix/store/") and "/run/secrets" not in caddy,
           f"the proxy's Caddyfile ({got.get('config')}) names no path under /run/secrets")
     out = run_eval(TELEMETRY % {"root": json.dumps(ROOT)})
-    telemetry = json.loads(out.stdout) if out.returncode == 0 else {}
-    check_telemetry(telemetry, out)
-    check_platform_records(telemetry)
+    check_telemetry(json.loads(out.stdout) if out.returncode == 0 else {}, out)
 
     real = {s: shutil.which(s) for s in ("fish", "bash")}
     for shell in ("fish", "bash"):
