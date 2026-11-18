@@ -72,8 +72,8 @@ Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`),
 and `naked-pi` (Pi 3 `rf-lab` node; `just deploy naked-pi`;
 runbook `~/knowledge/homelab/runbooks/naked-pi-rf-lab.md`).
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
-`host` variable at the top of the Justfile does that mapping, so the argument is
-only needed when targeting the other machine.
+`host` variable at the top of the Justfile does that mapping, so `switch`, `build`, `diff` and `audit-candidate` need
+the argument only when targeting another machine; `deploy`, `dry-activate` and `checks` always need it.
 
 ## Architecture
 
@@ -107,9 +107,10 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/tailscale.yaml` | Personal + lenovo, acer `lukas` | Tailscale authkey |
 | `homelab/*.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, asus-b460m, black-pi | GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
-| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | Claude OAuth token |
+| `claude/oauth.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, asus-b460m | Claude OAuth token |
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | OTLP auth |
-| `claude/*.yaml` | Personal + lenovo, acer-swift | Pi's gateway key |
+| `claude/coordinator-login.yaml` | Personal | the coordinator agent's own Authentik login for checks; no host reads it |
+| `claude/*.yaml` | Personal + lenovo, acer-swift, acer `lukas` | Pi's gateway key |
 
 Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml`, `llm-gateway.yaml` and `authentik.yaml` also includes acer's own `lukas` user
 key. A fleet host is a recipient only of files it declares a secret from (`nixos:known-hosts-test`); trimming a
