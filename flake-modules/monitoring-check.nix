@@ -180,12 +180,16 @@ in
               promtool test rules tests.yaml
               touch $out
             '';
-        # the alerts' own cases, beside the rule file they read (its rule_files path is relative)
+        # the alerts' own cases, beside the rule files they read (their rule_files path is relative); homelab.yaml as
+        # Prometheus loads it, rendered
         monitoring-rules-tests =
           pkgs.runCommand "monitoring-rules-tests" { nativeBuildInputs = [ pkgs.prometheus.cli ]; }
             ''
               cp -r ${../modules/homelab/monitoring/rules} rules
-              cd rules/tests
+              chmod -R u+w rules
+              cd rules
+              cp ${homelabRules.file} homelab.yaml
+              cd tests
               for t in *.yaml; do promtool test rules "$t"; done
               touch $out
             '';
