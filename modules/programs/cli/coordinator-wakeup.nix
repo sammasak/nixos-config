@@ -51,7 +51,9 @@ let
     '';
   };
   # The long-lived OAuth token the Fish session also exports; the service has no interactive login.
-  oauthTokenFile = osConfig.sops.secrets.claude_oauth_token.path or "/run/secrets/claude_oauth_token";
+  oauthTokenFile =
+    osConfig.sops.secrets.claude_oauth_token.path
+      or (throw "${osConfig.networking.hostName}: sops.secrets.claude_oauth_token is not declared (sam.hostSecrets.enable, modules/core/sops.nix); the coordinator wake-up reads it");
   # the only GitHub account the unattended session may write to (gh:comment, gh:label); the skills tasks accept any OWNER/REPO
   ghOwner = osConfig.sam.userConfig.git.userName;
   # the owner's skills config for this host (sam.herdr.coordinatorWakeup), appended as fixed --option flags to every devenv

@@ -42,7 +42,9 @@
           inherit (config.sam.profile) devTools nativeOtel;
           claudeOtel = config.sam.claude.telemetry.enable;
           codexOtel = devTools && (nativeOtel || claudeOtel);
-          hm = config.home-manager.users.${config.sam.profile.username} or { };
+          hm =
+            config.home-manager.users.${config.sam.profile.username}
+              or (throw "${config.networking.hostName}: home-manager.users.${config.sam.profile.username} is not set (fleetHome in flake-modules/nixos-configurations.nix); modules/core/agent-assertions.nix reads it");
           env = hm.programs.claude-code.settings.env or { };
           # The rollback (docs/native-otel-canary.md) is nativeOtel = false with sam.claude.telemetry at its default:
           # every surface off. Checked both ways: a surface whose option path moves fails where it is on, not passes as gone.
@@ -75,7 +77,7 @@
             # Not Codex's [otel] stanza: config.toml's text forces chromium and playwright-mcp.
             # `? text`, not the text: only native-otel.nix's script carries one, and reading it forces pkgs.codex.
             "the OTEL_ codex wrapper" = {
-              present = lib.any (p: (p.pname or p.name or "") == "codex" && p ? text) (hm.home.packages or [ ]);
+              present = lib.any (p: (p.pname or p.name or "") == "codex" && p ? text) hm.home.packages;
               want = codexOtel;
             };
           };

@@ -10,9 +10,10 @@
 let
   dir = "/var/lib/nav-metrics";
   user = config.sam.profile.username;
-  # a host without modules/workers has no such option
-  envs = config.services.devEnvironments or { };
-  guests = lib.attrNames (envs.instances or { });
+  envs =
+    config.services.devEnvironments
+      or (throw "${config.networking.hostName}: services.devEnvironments is not declared (modules/workers, in every host's fleetModules); modules/homelab/nav-metrics.nix reads it");
+  guests = lib.attrNames envs.instances;
   guestDir = "/var/lib/nav-metrics-guests";
 in
 {
