@@ -421,6 +421,7 @@ let
     gate "caddy-edge-test"
       (with pkgs; [
         nix
+        openssl
         python3
       ])
       ''
