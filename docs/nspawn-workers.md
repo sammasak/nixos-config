@@ -119,8 +119,8 @@ built the others download. msi and asus (both `sleeps` in
 `modules/core/fleet.nix`) serve their store while up but nobody substitutes
 from them: with msi powered off, every path lookup on acer waited
 out the 3 s connect timeout one after another (180 lookups, 9 minutes of a
-first `devenv` evaluation, measured 2026-11-12). Each cache signs with a key its host generated on first
-start (`/var/lib/store-cache/`, never in git); the public halves are in the
+first `devenv` evaluation, measured 2026-11-12). Each cache signs with a key generated on its host
+before it joins (`/var/lib/store-cache/`, never in git; docs/new-host.md step 5); the public halves are in the
 module. A dead peer costs a fetch of 20 paths 118 s without `fallback`, about
 20 s with `fallback = true`, which the module sets and an environment takes
 from its host, and 3 s with `download-attempts = 1`, which nothing sets
