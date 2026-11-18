@@ -1,4 +1,4 @@
-# What scripts/test-seventh-host.py reads for one host of a temporary tree: what it renders from the fleet, the
+# What scripts/seventh-host-check.py reads for one host of a temporary tree: what it renders from the fleet, the
 # assertions it fails and, with full, its toplevel there and in the unseeded copy (each its own nix eval, so one
 # evaluator never holds more than one host twice).
 {

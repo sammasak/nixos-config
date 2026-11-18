@@ -1,4 +1,4 @@
-# Not a machine: scripts/test-seventh-host.py copies this directory to hosts/seventh in a temporary tree. Only base's
+# Not a machine: scripts/seventh-host-check.py copies this directory to hosts/seventh in a temporary tree. Only base's
 # requirements: the user, a root filesystem, a platform; no secrets, so no sops recipient.
 {
   sam.profile = {

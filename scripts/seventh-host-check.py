@@ -82,7 +82,7 @@ def probe(tree, host, baseline=None, full=False):
                         f"import {ROOT}/scripts/seventh-host-probe.nix {{ {args} }}"], capture_output=True, text=True)
     print(f"seventh-host: {host} in the {tree.name} copy evaluated in {time.monotonic() - t:.0f} s", flush=True)
     if r.returncode != 0:
-        sys.exit(f"FAIL (scripts/test-seventh-host.py): {host} in the {tree.name} copy did not evaluate:\n{r.stderr[-1500:]}")
+        sys.exit(f"FAIL (scripts/seventh-host-check.py): {host} in the {tree.name} copy did not evaluate:\n{r.stderr[-1500:]}")
     return json.loads(r.stdout)
 
 
