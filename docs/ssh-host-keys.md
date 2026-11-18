@@ -47,8 +47,7 @@ name fails closed until that name is added to lenovo's entry. No Mac or CI
 runner is managed by this repository. The owner's own `~/.ssh/config` keeps
 a `StrictHostKeyChecking no` block for ephemeral workstation VMs
 (192.168.10.20x, keys change on every boot); that file is outside this
-repository and wins over the system file for the hosts it names. The `# naked-pi — FILL` comment in `secrets/.sops.yaml` is stale
-(the recipient below it is filled in); it is left alone here.
+repository and wins over the system file for the hosts it names.
 
 Each host runs the same `ssh_known_hosts`; a host additionally pins
 `localhost`, `127.0.0.1` and `::1` to its own key, which is what keeps

@@ -8,7 +8,7 @@ Append; move a line to fixed when its change lands.
 
 - Secretless GitHub rollout (acer `push`, 2026-11-12): an environment moved onto the proxy keeps dangling `~/.ssh/id_ed25519` and `~/.config/gh/hosts.yml` links in its persistent home (harmless, the targets are gone; a tmpfiles `r` rule would remove them), and a retired instance leaves an empty `/run/dev-env-egress/<name>` until the proxy next restarts.
 
-- The reserve is hard between environments (`MemoryMin`) but soft against the host: `environments.slice` has only `MemoryLow`, and cgroup2 is mounted without `memory_recursiveprot` on acer and msi (a second cgroup2 mount at `/run/cilium/cgroupv2`). Not measured under host pressure (docs/records/environments-plan.md, item 3).
+- The reserve is hard between environments (`MemoryMin`) but soft against the host: `environments.slice` has only `MemoryLow`. Not measured under host pressure (docs/records/environments-plan.md, item 3).
 - Inside the Claude sandbox (acer, after #244) these still fail: `nix build nixpkgs#hello` (`cannot create Unix domain socket: Operation not permitted`, so the nix daemon is unreachable), `free` (`Memory information file /proc/meminfo does not exist`), `uptime` (`Cannot get system uptime: No such file or directory`), `htop`. `top` sees 6 tasks. `ps`, `nproc` and `git status` work; `pgrep` sees no host process.
 - Nested sandboxes (acer `push`, 2026-11-12): nspawn's masks on `/proc` make the kernel refuse a full procfs in any nested user and pid namespace; the clean fix is nspawn's (systemd#34226, open). `subset=pid` works but has no `/proc/sys`, `meminfo`, `cpuinfo`, `stat`: `free`, `uptime`, `sysctl` fail; `nproc`, cargo and daemon `nix build` work.
   - bwrap 0.12 cannot start on a subset proc (reads `/proc/sys/kernel/overflowuid`). Works: bind the outer `/proc`, mount `subset=pid` from inside as mapped uid 0, then run the command as mapped root with only `CAP_SETFCAP` and no-new-privs (wrapper verified by hand, also under `claude -p` with the sandbox on).
@@ -35,8 +35,8 @@ Append; move a line to fixed when its change lands.
 - skills `skills:test` runs its suites in parallel: run suites one at a time in an environment.
 - skopeo and buildah are on PATH only inside `devenv shell` (by design, note only).
 - Herdr's `agent prompt` with a multi-line prompt is untested: the shell layer keeps the newlines, whether Herdr types them as Enter is not known.
-- The host user's uid is assumed 1000 (mutableUsers, no declared uid); `clientKey` and `ghHostsFile` are home files whose existence only shows at container start. Not declared fleet-wide: black-pi's user is uid 1001. Side find: `core/automation.nix` reads the same undeclared uid, so its upgrade notice looks in `/run/user/`.
-- Owner decision: msi environments and any instance without `egress.github.repos` still hold the user's GitHub ssh key (msi has no gh token), so an agent can push to nixos-config `main`, which acer applies weekly as root. Mitigation: branch protection on `main`, or a scoped key. With `egress.github.repos` (acer) neither.
+- The host user's uid is assumed 1000 (mutableUsers, no declared uid); `clientKey` and `ghHostsFile` are home files whose existence only shows at container start. Not declared fleet-wide: black-pi's user is uid 1001.
+- Owner decision: msi environments and any instance without `egress.github.repos` still hold the user's GitHub ssh key (msi has no gh token), so an agent can push to nixos-config `main`. Mitigation: branch protection on `main`, or a scoped key. With `egress.github.repos` (acer) neither.
 - acer still has `/nix/var/nix/{profiles,gcroots}/per-container/worker-1` from the old naming (the cleanup loop that removed msi's is gone): `sudo rm -rf /nix/var/nix/profiles/per-container/worker-1 /nix/var/nix/gcroots/per-container/worker-1`.
 - First `devenv shell` in a new environment is 25 to 32 s of evaluation. Seeding a new home's `~/.cache/nix` from the host user's was not done: copying the live sqlite fetcher cache can corrupt it, and the cost looks like devenv's per-repo evaluation, not fetching. The empty `flake-registry` only removes the global registry fetch.
 
@@ -159,50 +159,3 @@ Append; move a line to fixed when its change lands.
 - 2026-11-12 bounded builds (max-jobs 2, cores 2) cost the nixos-config gate nothing on msi: every step within 1 s
   of the unbounded run, peak 5.5G, `memory.events high 0`. #233 (reclaim threshold at the pool) has no throttling
   left to remove there; acer's 2913 is the case it addresses, to be re-counted at the next gate on acer.
-
-## Time to shell
-
-msi `gate`, 2026-11-12, bounded builds, `devenv shell -- true`, one run at a time (nixos-config #200). Fresh = new
-clone, no `.devenv`, emptied eval cache; the host store cannot be emptied from a guest.
-
-| Repo | Fresh 1 | Fresh 2 / 3 | Warm |
-|------|------:|------:|------:|
-| devenv-platform `examples/rust-service` | 101.7 s | 9.5 / 9.3 s | 7.2 s |
-| factum | 6.7 s | 6.4 / 6.6 s | 1.0 s |
-| nixos-config | 7.5 s | 7.6 / 7.8 s | 0.4 s |
-
-- With the closure in the host store a fresh repo costs 6 to 10 s, nearly all one uncached evaluation.
-- The 101.7 s run: about 50 s of Rust toolchain from acer's cache, 29 s building `devenv-nixpkgs-patched` locally
-  (no cache had it), 10 s of flake inputs. Nothing from cache.nixos.org. Building that path once on a serving host
-  when the pin moves removes the 29 s elsewhere.
-- devenv-platform's example misses devenv's eval cache on every warm run (7.2 s). Suspected, not confirmed: its
-  `path:../..` input includes the example's own `.devenv`.
-- `memory.events` all zero over the 18 runs.
-
-## Gate timing
-
-After #237 (msi `gate`, bounded builds, fresh clone): `nixos:delegation-test` 16 s (was 467 s with the LAN caches blocked, 12 s before bounds), full `nixos:qa` 221 s (was 671 s, 204 s before bounds). `memory.events` all zero, peak 5.2 GiB.
-
-
-`nixos:qa` per step on msi-gate, warm store, seconds, before (`f4f6b87`) and after `feat/gate-speed-tests`, both with unbounded builds (max-jobs 8, cores 0).
-Total 690 s before, 218 s after (207 s before workers-eval's type cases went to two at a time after the batch, for memory). Every PASS line is unchanged but one
-(workers-eval's nftables case now lists only the module's own assertion). A docs-only push now runs the lints alone.
-
-| Step | Before | After | Change |
-|------|-------:|------:|--------|
-| lint-comments, lint-shell, secrets-verify | 1 | 1 | |
-| nvim-check | 19 | 0 | values from the probe |
-| flake-check | 56 | 57 | unchanged; it already built every x86 host (deploy-activate) and evaluated the Pis |
-| verify | 59 | — | removed: repeated flake-check |
-| gate-probe (new) | — | 28 | one evaluation of every value the tests read (`scripts/gate-probe.nix`) |
-| native-otel-relay, native-otel-fish | 4 | 2 | relay helper from the probe |
-| claude-settings | 14 | 2 | paths from the probe |
-| coordinator-wiring | 56 | 21 | 12 nix calls to the probe; 20 s of it is the script's own lock wait |
-| worker-permissions | 245 | 32 | ~25 nix calls to the probe; the three 30 s startup screens side by side |
-| workers-eval | 134 | 46 | non-type cases in one process (only core.nix's assertions), then the type cases two at a time |
-| ollama-portforward | 16 | 11 | the rest is the test's own sleeps |
-| known-hosts | 14 | 1 | 10 nix calls to the probe |
-| build-bounds | 5 | 0 | |
-| delegation | 16 | 12 | the rest is devenv |
-| otel-rollback | 30 | 5 | 15 nix calls to the probe plus one evaluation of the rolled-back copy |
-| rf-lab-boundary, runtime-host, rf-beacons | 18 | 0 | |

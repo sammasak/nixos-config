@@ -52,7 +52,7 @@ the host's `sam.workers.pool.memory` (protecting the host and its services) and 
 own and the pool no `MemoryHigh`: the only limit is the pool's `MemoryMax`,
 with the pool's swap (zram) capped at a quarter of it, so one gate alone uses what
 its neighbours leave idle, down to their reserves (`MemoryMin`). nix builds
-run in the host's daemon, outside the pool; acer and msi bound that daemon
+run in the host's daemon, outside the pool; acer, msi and asus bound that daemon
 (2 jobs of 2 cores, `MemoryHigh` 4G, `MemoryMax` 6G), so a build
 fails before the host's services do. msi powers off at 21:00
 (Mon-Fri window); its environments come back at its next boot.
@@ -141,7 +141,7 @@ it again with a fresh allowance; by hand, `systemctl reset-failed container@<n>`
 
 ## Alerts
 
-A runtime host (msi, acer) posts to lenovo's ntfy topic `homelab-alerts` when
+A runtime host (msi, acer, asus) posts to lenovo's ntfy topic `homelab-alerts` when
 `container@<name>` or the egress proxy (`dev-env-egress`) fails, at once; when
 the kernel kills a process in the pool (`oom_kill` of `environments.slice`
 rose), within 2 minutes; and when the state directory or `/nix` has under 10G
@@ -267,7 +267,7 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
 
 - `/nix/store`, the nix db and the daemon socket are the host's (stock
   containers), so `nix build` and devenv use the host's store; `lukas` is not a
-  trusted user on acer and msi.
+  trusted user on acer, msi and asus.
 - A nested sandbox cannot mount a full procfs in a guest (nspawn masks parts of
   `/proc`), so `modules/workers/nested-sandbox.nix` packages two wrappers that
   mount `subset=pid`: one for Claude's `sandbox.bwrapPath` (managed settings,
@@ -315,7 +315,7 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   `i` hashed from the name (a collision fails eval); NAT for egress. DNS is
   the host's `resolv.conf` at start; the container waits up to 30 s for it to
   carry a nameserver. `services.devEnvironments.blockedNetworks` (the private
-  and link-local ranges on acer and msi) drops forwarding from `ve-*` to those
+  and link-local ranges on acer, msi and asus) drops forwarding from `ve-*` to those
   networks and new connections from a guest to the host itself, DNS and the
   fleet's store caches (port 5000) excepted: an environment reaches the
   internet, not the LAN, another environment or its host.
@@ -374,27 +374,6 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   in the unit's StateDirectory, out of every guest's reach. It runs as a
   dynamic user with `CAP_DAC_READ_SEARCH` alone (read any home, write
   nothing but its state), `IPAddressAllow` Loki's address only.
-
-The committed config declares none.
-
-## Store options tried
-
-1. **Shared host daemon (what runs).** A guest sees the host `/nix/store` read-only and builds and fetches through
-   the host's nix daemon. It is the only option that makes a fresh clone's `devenv shell` work, and a path any
-   guest builds is there for all of them. The price is that the daemon is a write path from guest to host store.
-2. **Read-only store, no daemon socket** (branch `feat/no-daemon-socket`). Running binaries, `nix eval`, locked
-   github flakes and a `devenv shell` in an already-entered project work. A fresh clone's `devenv shell` fails: it
-   must add a new `devenv-files.drv` to the store, which nothing can do without a writable store.
-3. **Per-environment `local-overlay` tier** (branch `feat/store-overlay`). Fails on a live host store: the lower
-   store opens the host db immutable and so misses everything in its WAL, so paths the host registered since the
-   last checkpoint, the guest's own system among them, are "not valid" and Home Manager fails. It would need a
-   frozen lower store (a snapshot), not the live one. Both branches stay unmerged as the record.
-4. **Root-built fetcher-cache seed for a new `rootInGuest` environment** (branch `feat/fetch-cache-seed`, dropped).
-   It warmed a new environment's empty `~/.cache/nix`, but each repo pins its own nixpkgs (six distinct revisions
-   across nixos-config, factum and herman), so a seed made from one lock misses the others. Measured: a shared nixpkgs
-   pin alone shares 13 of 262 store paths (the toolchain closure is keyed by nixpkgs and rust-overlay together), and
-   copying an older pin set breaks a repo that needs a newer Rust. The lever is one pin set (nixpkgs, rust-overlay,
-   devenv, git-hooks) owned by devenv-platform at the newest revision any repo needs.
 
 ## Working an issue in one
 
