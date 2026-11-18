@@ -10,11 +10,13 @@ import subprocess
 import sys
 
 failed = 0
+OWNER = "scripts/" + os.path.basename(sys.argv[0])
 
 
 def check(ok, what):
+    """A FAIL line names the test that printed it: the gate interleaves several tests' output."""
     global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
+    print(("PASS: " if ok else f"FAIL ({OWNER}): ") + what)
     failed += not ok
 
 

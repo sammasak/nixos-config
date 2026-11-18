@@ -49,7 +49,7 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~08:30-21:00 power window
-#   asus-b460m  builds on the asus (Windows dual-boot worker)
+#   asus-b460m  builds on the asus (Windows dual-boot worker); only in its Mon-Fri ~08:30-21:00 power window
 #   black-pi    builds on the Pi; run inside zellij, it takes hours on a cache miss
 #   naked-pi    Pi 3 rf-lab; builds on the Pi, cache hits only, except the patched deploy-rs (not cached, a
 #               2.3 GiB Rust build): first, from lenovo,
@@ -233,7 +233,9 @@ Long rationale goes to the knowledge vault, and the code keeps a single pointer:
 
 The pointer must name a file that **exists**. Check before you write it; the
 board prune of 2026-08-25 left several in-code references to deleted tickets
-pointing at nothing.
+pointing at nothing. Inside this repo `just lint-comments` checks it: a repo path in
+a `.nix` file, a `.sh`/`.py` comment or a doc must name a tracked file (paths in
+other repositories go in `scripts/path-pointers.allow`, with their reason).
 
 Target band 7–13% comment density; `just lint-comments` is the enforced floor
 (fails any 30+ nix-code-line `.nix` file above **25%**, plus the never-allowed
@@ -266,7 +268,8 @@ either side is only reported.
   A port one host serves another is a `sam.fleet.listeners` entry (`modules/core/fleet.nix`: host, port, the calling
   hosts in `from`); `modules/core/network.nix` renders its rule and fails any host whose firewall opens, trusts or
   accepts anything that is neither such a rule nor a `sam.fleet.public` entry with its reason (an upstream
-  `openFirewall` included).
+  `openFirewall` included). A new listener also needs its service's bound port in `scripts/gate-probe.nix`
+  (section `fleet-contract`, `bound`), or `nixos:fleet-contract-test` fails.
 - **Unfree is opt-in**: `nixpkgs.config.allowUnfree` is `false`. Adding an unfree package means adding its name to `allowUnfreePredicate` in `core/system.nix` (antigravity-cli, claude-code, open-webui, unrar, and on asus the NVIDIA driver and the CUDA runtime ollama-cuda needs); otherwise eval fails and names it. Redistributable firmware is unaffected (separate nixpkgs knob).
 - **Workers are not trusted-users**: `modules/roles/homelab-agent.nix` and `rf-lab.nix` force `nix.settings.trusted-users = [ "root" ]`. Deploys are push-from-lenovo; lenovo itself keeps `root` + `lukas` from `core/users.nix`.
 - **stateVersion**: Set to `25.11` in `core/system.nix`.
