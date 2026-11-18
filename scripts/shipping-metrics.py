@@ -290,7 +290,8 @@ def escapes(gh, out, owner, now):
 def loki_records(loki, query, days, enough=None):
     """Platform records newest first, one day per query (the Pi answers a day in seconds and two weeks not at all),
     until `enough(records)` holds or `days` are read. Each day is fetched once a run (LOKI_READ). A record's "@host" is
-    its stream's host label, which the shipper sets (never a field: a logfmt key holds no @)."""
+    its stream's host label, which the shipper sets (never a field: a logfmt key holds no @); a stream without one is
+    "unknown", so its gates still count and show as their own line instead of an unlabelled series."""
     recs, end = [], LOKI_READ.setdefault("end", time.time())
     for day in range(days):
         if (query, day) not in LOKI_READ:
@@ -299,7 +300,7 @@ def loki_records(loki, query, days, enough=None):
             hi = end - day * 86400
             params = {"query": query, "start": int((hi - 86400) * 1e9), "end": int(hi * 1e9), "limit": 5000, "direction": "backward"}
             with urllib.request.urlopen(f"{loki}/loki/api/v1/query_range?{urllib.parse.urlencode(params)}", timeout=30) as r:
-                vals = [(t, line, s["stream"].get("host", "")) for s in json.load(r)["data"]["result"]
+                vals = [(t, line, s["stream"].get("host") or "unknown") for s in json.load(r)["data"]["result"]
                         for t, line in s["values"]]
             LOKI_READ[(query, day)] = [(int(t) / 1e9, {**dict(kv.split("=", 1) for kv in line.split() if "=" in kv),
                                                        "@host": host})

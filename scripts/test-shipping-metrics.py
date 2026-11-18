@@ -101,13 +101,14 @@ class Fake(http.server.BaseHTTPRequestHandler):
             # a line is i seconds old, a (hours, line) pair that many hours
             stamped = [(NOW - l[0] * 3600, l[1]) if isinstance(l, tuple) else (NOW - i, l) for i, l in enumerate(lines)]
             # the gate records come from two streams: the numbered ones alternate lenovo and a guest, the rest lenovo
-            hosts = [GUEST if 'kind="gate"' in query and isinstance(l, str) and i % 2 == 0 else "lenovo"
-                     for i, l in enumerate(lines)]
+            hosts = [("" if i == 19 else GUEST if i % 2 == 0 else "lenovo")
+                     if 'kind="gate"' in query and isinstance(l, str) else "lenovo" for i, l in enumerate(lines)]
             streams = {}
             for (t, l), h in zip(stamped, hosts):
                 if int(t * 1e9) in span:
                     streams.setdefault(h, []).append([str(int(t * 1e9)), l])
-            body = {"data": {"result": [{"stream": {"job": "platform", "host": h}, "values": v}
+            # a stream with no host label (or an empty one) is read as "unknown"
+            body = {"data": {"result": [{"stream": {"job": "platform", **({"host": h} if h else {})}, "values": v}
                                         for h, v in streams.items()]}}
         elif not github_up:
             return self.send_error(503)
@@ -188,14 +189,18 @@ with tempfile.TemporaryDirectory() as tmp:
           and m.get('shipping_pr_lead_time_fallbacks{reason="no_commits",window="7d"}') == 0
           and m.get('shipping_pr_lead_time_fallbacks{reason="no_token",window="7d"}') == 0,
           "fallbacks are counted per reason, a 0 written for each reason that did not occur")
-    # the last 20 push gates: 10 each; fails at 0, 2, 4 (the guest) and 1, 3 (lenovo); seconds 100+i
-    check(m.get('shipping_gate_runs_counted{host="lenovo"}') == 10 and m.get(f'shipping_gate_runs_counted{{host="{GUEST}"}}') == 10
-          and m.get('shipping_gate_fail_ratio{host="lenovo"}') == 0.2 and m.get(f'shipping_gate_fail_ratio{{host="{GUEST}"}}') == 0.3
+    # the last 20 push gates: the guest 10, lenovo 9, one from a stream without a host label (19); fails at 0, 2, 4
+    # (the guest) and 1, 3 (lenovo); seconds 100+i
+    check(m.get('shipping_gate_runs_counted{host="lenovo"}') == 9 and m.get(f'shipping_gate_runs_counted{{host="{GUEST}"}}') == 10
+          and abs(m.get('shipping_gate_fail_ratio{host="lenovo"}', 0) - 2 / 9) < 1e-9 and m.get(f'shipping_gate_fail_ratio{{host="{GUEST}"}}') == 0.3
           and "shipping_gate_fail_ratio" not in m,
           "gate runs and fail ratio over the policy's last runs, per host that ran them")
-    check(m.get('shipping_gate_seconds{host="lenovo",quantile="0.5"}') == 110
+    check(m.get('shipping_gate_seconds{host="lenovo",quantile="0.5"}') == 109
           and m.get(f'shipping_gate_seconds{{host="{GUEST}",quantile="0.5"}}') == 109,
           "each host's median is its own gates' alone")
+    check(m.get('shipping_gate_runs_counted{host="unknown"}') == 1
+          and not any('host=""' in k for k in m),
+          "a stream without a host label counts as host=\"unknown\", never as an empty host")
     check(m.get('shipping_deploy_lag_commits{host="lenovo",node="lenovo-21CB001PMX"}') == 2
           and 4.9 < m.get('shipping_deploy_lag_hours{host="lenovo",node="lenovo-21CB001PMX"}', 0) < 5.1,
           "a deploy record's flake attribute joins its host; lag hours run from the oldest merge it lacks")
