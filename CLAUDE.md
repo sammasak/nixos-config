@@ -22,6 +22,8 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               already green here under the same gate and system generation, or it plus such docs;
 #               deleting nixos-qa-green in the common git dir forces the full gate.
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
+#               The push is the gate: a manual nixos:qa records no green tree, so a push after one runs the
+#               full gate again; a re-push of a tree the hook passed (GitHub dropped the push) runs lints only.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table
@@ -264,6 +266,8 @@ either side is only reported.
 - **No specialArgs**: Host data flows through `sam.profile` typed options, not `specialArgs` pass-through.
 - **Desktop is per-host, not a role**: Lenovo imports `modules/specialisations/desktop.nix` in its default boot; Acer imports it as an optional specialisation. Gate GUI config on `sam.desktop.enable`.
 - **User identity**: `lib/users.nix` holds git config and SSH keys, referenced as `sam.userConfig`.
+- **`git diff` is difftastic** (`diff.external`, `modules/programs/cli/git/default.nix`, every host): pipe
+  `git diff --no-ext-diff` into grep or a script, or it prints nothing they can match.
 - **Firewall**: the trusted LAN CIDR is `sam.fleet.lanCidr` (`192.168.10.0/24`). SSH is key-only, no root login.
   A port one host serves another is a `sam.fleet.listeners` entry (`modules/core/fleet.nix`: host, port, the calling
   hosts in `from`); `modules/core/network.nix` renders its rule and fails any host whose firewall opens, trusts or
