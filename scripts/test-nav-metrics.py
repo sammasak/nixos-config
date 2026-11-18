@@ -9,13 +9,18 @@ GOLDEN, its text before guests were read.
 Guests (--worker): a temp state dir whose instances hold the same transcripts get the same series with worker=<name>;
 a link anywhere on an instance's path (the instance dir, home, .claude, projects, a project dir, a transcript) or a
 FIFO transcript is refused and counted, and nothing behind it is read; label-like text in a transcript never changes
-a label; the file and size caps; the homes are left as they were. Usage: test-nav-metrics.py [SCRIPT] (a mutated copy
-for a seed)."""
+a label; the file and size caps; the homes are left as they were. One process per guest, as the units run it: each
+file holds its own worker's series alone, a second --worker is refused, and a guest whose run crashes leaves the
+others' files written and its own last one intact. The per-session state caps (lowered here): files read, calls
+pending, a stretch's directories, the run's stretches, a Bash command's length each abandon the transcript with none of
+its counts kept; at the real caps 400,000 distinct reads and a 2 MiB command stay well under the guest unit's MemoryMax.
+Usage: test-nav-metrics.py [SCRIPT] (a mutated copy for a seed)."""
 import importlib.util
 import json
 import os
 import pathlib
 import re
+import resource
 import subprocess
 import sys
 import tempfile
@@ -321,9 +326,18 @@ with tempfile.TemporaryDirectory() as tmp:
         rows = [l for l in text.splitlines() if l and not l.startswith("#")]
         return r.returncode, text, {l.rsplit(" ", 1)[0]: float(l.rsplit(" ", 1)[1]) for l in rows}
 
-    gout = f"{tmp}/guests.prom"
-    rc, gtext, g = guest(gout, "--state-dir", str(state), "--home", str(home), *[x for n in names for x in ("--worker", n)])
-    check(rc == 0, f"a guest run over every instance exits 0 ({rc})")
+    # one process and file per guest, as the nav-metrics-guest@ units run it
+    gdir = pathlib.Path(tmp, "guests")
+    gdir.mkdir()
+    runs = {n: guest(f"{gdir}/nav-guest-{n}.prom", "--state-dir", str(state), "--home", str(home), "--worker", n)
+            for n in names}
+    rcs = {n: r[0] for n, r in runs.items() if r[0] != 0}
+    check(not rcs, f"a guest run for every instance exits 0 ({rcs})")
+    gtext = "".join(r[1] for r in runs.values())
+    g = {k: v for r in runs.values() for k, v in r[2].items()}
+    check(all(r[2] and all(f'worker="{n}"' in k for k in r[2]) for n, r in runs.items())
+          and len(g) == sum(len(r[2]) for r in runs.values()),
+          "each guest's file holds its own worker's series alone, the collector's included: no two files share a series")
 
     def as_worker(key, name):
         base, _, lab = key.partition("{")
@@ -372,6 +386,27 @@ with tempfile.TemporaryDirectory() as tmp:
     check((tree(state), tree(outside)) == homes_before, "the guests' homes and the outside are left as they were")
     rc, _, _ = guest(f"{tmp}/bad.prom", "--state-dir", str(state), "--home", str(home), "--worker", 'x"}')
     check(rc not in (0, None) and not os.path.exists(f"{tmp}/bad.prom"), "a worker name outside [a-z][a-z0-9-]{0,10} is refused")
+    rc, _, _ = guest(f"{tmp}/two.prom", "--state-dir", str(state), "--home", str(home), "--worker", "herman", "--worker", "half")
+    check(rc not in (0, None) and not os.path.exists(f"{tmp}/two.prom"),
+          "a second --worker is refused: one guest per process, so one guest's run cannot take another's down")
+
+    # isolation: a guest whose run dies (an OOM kill, simulated by an address-space limit Python cannot start under)
+    # leaves the other guest's file written and fresh, and its own last file whole
+    crash_prom, ok_prom = gdir / "nav-guest-half.prom", gdir / "nav-guest-herman.prom"
+    crash_before, t0 = crash_prom.read_bytes(), time.time()
+    time.sleep(0.01)
+
+    def oom():
+        resource.setrlimit(resource.RLIMIT_AS, (8 << 20, 8 << 20))
+
+    dead = subprocess.run([sys.executable, "-I", str(SCRIPT), "--out", str(crash_prom), "--state-dir", str(state),
+                           "--home", str(home), "--worker", "half"], capture_output=True, preexec_fn=oom, timeout=60)
+    rc, _, alive = guest(str(ok_prom), "--state-dir", str(state), "--home", str(home), "--worker", "herman")
+    fresh = [v for k, v in alive.items() if k.startswith("agent_nav_collector_success_timestamp_seconds")]
+    check(dead.returncode != 0 and rc == 0 and ok_prom.stat().st_mtime >= t0 and len(fresh) == 4
+          and min(fresh) >= t0 and crash_prom.read_bytes() == crash_before,
+          f"a guest's run that dies costs the other guest nothing: its file is rewritten with fresh timestamps, and the "
+          f"dead one's last file is left whole (died rc {dead.returncode}, other rc {rc})")
 
 
 
@@ -391,13 +426,15 @@ def day(path, calls):
                 "content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": "x" * 200}]}}) + "\n")
 
 
-def peak_kb(projects, out):
-    """The collector's own peak RSS on `projects`, in a fresh interpreter: VmHWM, not ru_maxrss, which keeps the RSS
-    of this process when it forked."""
-    code = ("import re, runpy, sys; s, p, o = sys.argv[1:4]; sys.argv = ['nav-metrics.py', '--out', o, '--projects', p]\n"
-            "try:\n    runpy.run_path(s, run_name='__main__')\nexcept SystemExit:\n    pass\n"
+def peak_kb(projects, out, *argv):
+    """The collector's own peak RSS on `projects` (or with `argv`), in a fresh interpreter: VmHWM, not ru_maxrss, which
+    keeps the RSS of this process when it forked."""
+    argv = argv or ("--projects", str(projects))
+    code = ("import re, runpy, sys; sys.argv = ['nav-metrics.py', '--out', *sys.argv[2:]]\n"
+            "try:\n    runpy.run_path(sys.argv[0] if False else SCRIPT, run_name='__main__')\nexcept SystemExit:\n    pass\n"
             "print(re.search(r'VmHWM:\\s+(\\d+)', open('/proc/self/status').read()).group(1))")
-    r = subprocess.run([sys.executable, "-I", "-c", code, str(SCRIPT), str(projects), out], capture_output=True, text=True)
+    code = code.replace("sys.argv[0] if False else SCRIPT", repr(str(SCRIPT)))
+    r = subprocess.run([sys.executable, "-I", "-c", code, "-", out, *argv], capture_output=True, text=True)
     return int(r.stdout.split()[-1]) if r.returncode == 0 and r.stdout.split() else None
 
 
@@ -428,6 +465,99 @@ with tempfile.TemporaryDirectory() as tmp:
     dont = [(o, n) for o, n, a in calls if a == os.POSIX_FADV_DONTNEED]
     check(dont and dont[-1] == (0, 0) and len(dont) >= size // (64 * 1024),
           f"each transcript's pages are dropped every DROP_EVERY bytes and at its end ({len(dont)} drops over {size} bytes)")
+
+# the per-session state caps, lowered to 50 (CMD_MAX to 400): each abandons the transcript, none of its counts kept
+with tempfile.TemporaryDirectory() as tmp:
+    since, cwd = time.time() - 86400, "/u/nixos-config"
+
+    def pending(s, n):
+        for i in range(n):
+            s.raw(json.dumps({"type": "assistant", "timestamp": iso(1), "cwd": cwd, "message": {"content": [
+                {"type": "tool_use", "id": f"p{i}", "name": "Grep", "input": {"pattern": "x"}}]}}))
+
+    def stretches(s, n):
+        for _ in range(n):
+            s.prompt("p")
+            s.call("Read", {"file_path": f"{cwd}/m/a.nix"})
+
+    CASES = {  # name: what the transcript holds after one counted call, n at the cap and one over
+        "files read": lambda s, n: [s.call("Read", {"file_path": f"{cwd}/m/f{i}.nix"}) for i in range(n)],
+        "calls pending": pending,
+        "a stretch's directories": lambda s, n: [s.prompt("p"), s.call("Bash", {"command": "ls " + " ".join(f"d{i}/" for i in range(n))})],
+        "stretches": stretches,
+        "a Bash command's length": lambda s, n: s.call("Bash", {"command": "ls " + "x" * (n * 8 - 3)}),
+    }
+    caps = nm.STATE_MAX, nm.CMD_MAX
+    nm.STATE_MAX, nm.CMD_MAX = 50, 400
+    try:
+        for name, build in CASES.items():
+            got = []
+            for n in (50, 51):
+                s = Session(cwd)
+                s.call("Grep", {"pattern": "x"})
+                build(s, n)
+                path = pathlib.Path(tmp, f"{len(got)}-{n}.jsonl")
+                s.write(path)
+                skipped = dict.fromkeys(nm.SKIPS, 0)
+                t = nm.scan(None, since, [str(path)], skipped)
+                got.append((skipped["too_much_state"], sum(r["judged"] + r["reads"] + len(r["before"]) for r in t.values())))
+            check(got[0][0] == 0 and got[0][1] > 0 and got[1] == (1, 0),
+                  f"{name}: at the cap the transcript counts, one over it is abandoned (too_much_state) and none of its "
+                  f"counts kept (skipped, counts at the cap and over: {got})")
+        # the run's stretches, across transcripts: the one that passes the cap is abandoned, those before it count
+        paths = []
+        for i in range(2):
+            s = Session(cwd)
+            stretches(s, 30)
+            paths.append(pathlib.Path(tmp, f"run-{i}.jsonl"))
+            s.write(paths[-1])
+        skipped = dict.fromkeys(nm.SKIPS, 0)
+        t = nm.scan(None, since, [str(p) for p in paths], skipped)
+        n = sum(len(r["before"]) for r in t.values())
+        check(n == 30 and skipped["too_much_state"] == 1,
+              f"the run's stretches are capped across transcripts: the second 30 abandoned, the first kept ({n})")
+    finally:
+        nm.STATE_MAX, nm.CMD_MAX = caps
+
+
+def guest_peak(tmp, write):
+    """A one-transcript guest `g` written by write(file), as the guest unit runs it: peak kB and its skipped counts."""
+    d = pathlib.Path(tmp, "state/g/home/.claude/projects/-x")
+    d.mkdir(parents=True, exist_ok=True)
+    with open(d / "s.jsonl", "w") as f:
+        write(f)
+    out = f"{tmp}/g.prom"
+    kb = peak_kb(None, out, "--state-dir", f"{tmp}/state", "--home", "/home/u", "--worker", "g")
+    text = pathlib.Path(out).read_text() if os.path.exists(out) else ""
+    (d / "s.jsonl").unlink()
+    return kb, dict(re.findall(r'agent_nav_collector_skipped\{reason="(\w+)",worker="g"\} (\S+)', text))
+
+
+def distinct_reads(f, n=400000):
+    """n Reads of n distinct repo files, none answered (streamed: about 60 MB)."""
+    at = iso(0.5)
+    f.write(json.dumps({"type": "user", "origin": {"kind": "human"}, "timestamp": at, "message": {"content": "go"}}) + "\n")
+    for i in range(n):
+        f.write(f'{{"type": "assistant", "timestamp": "{at}", "message": {{"content": [{{"type": "tool_use", '
+                f'"id": "t{i}", "name": "Read", "input": {{"file_path": "/home/u/nixos-config/m/{i:06d}.nix"}}}}]}}}}\n')
+
+
+def long_command(f):
+    """One Bash command just under LINE_MAX: some 300,000 repo paths to cat."""
+    cmd = "cat " + " ".join(f"a{i}" for i in range(300000))
+    f.write(json.dumps({"type": "assistant", "timestamp": iso(0.5), "cwd": "/home/u/nixos-config", "message": {
+        "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": cmd[:2 * 1024 * 1024 - 400]}}]}}) + "\n")
+
+
+# at the real caps a transcript that would grow the state without bound stays well within the guest unit's MemoryMax
+unit = (ROOT / "modules/homelab/nav-metrics.nix").read_text().split('"nav-metrics-guest@"', 1)[1]
+memory_max = int(re.search(r'MemoryMax = "(\d+)M"', unit).group(1)) * 1024
+with tempfile.TemporaryDirectory() as tmp:
+    for what, write in (("400,000 distinct repo files read", distinct_reads), ("a 2 MiB Bash command", long_command)):
+        kb, skipped = guest_peak(tmp, write)
+        check(kb is not None and kb < memory_max * 3 // 4 and skipped.get("too_much_state") == "1",
+              f"{what}: abandoned as too_much_state at a peak of {kb} kB, under 3/4 of the unit's MemoryMax "
+              f"({memory_max} kB; skipped {skipped})")
 
 print(f"{failed} failed")
 raise SystemExit(1 if failed else 0)

@@ -32,8 +32,8 @@ What a host writes into node-exporter's textfile directory (`/run/node-exporter-
   (`scripts/adguard-textfile.py`, `adguardhome.nix`)
 
 Two collectors keep their own textfile directory, which node-exporter also reads: `shipping.prom` on lenovo
-(`shipping-metrics.nix`) and `nav.prom` on acer, lenovo, asus and msi (`nav-metrics.nix`), plus the guests' `nav.prom`
-on a host with dev environments (acer, `/var/lib/nav-metrics-guests`).
+(`shipping-metrics.nix`) and `nav.prom` on acer, lenovo, asus and msi (`nav-metrics.nix`), plus one
+`nav-guest-<name>.prom` per guest on a host with dev environments (acer, `/var/lib/nav-metrics-guests`).
 
 Bounded labels: Caddy runs `metrics` without `per_host` (it would label any HTTPS Host as sent), so its series split by
 server, not by name. Authentik gets the matched name without a client port as Host, and the Authentik jobs drop the

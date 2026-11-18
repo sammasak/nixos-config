@@ -1,6 +1,6 @@
 # The navigation collector (scripts/nav-metrics.py, docs/shipping.md) on each devTools host: hourly it reads the
 # owner's Claude Code transcripts on this host, read-only and offline, and leaves counts for this host's node-exporter;
-# on a host with dev environments a second unit does the same for each declared instance's home, labelled worker.
+# on a host with dev environments a unit per declared instance does the same for its home, labelled worker.
 {
   config,
   lib,
@@ -23,11 +23,11 @@ in
   ]
   ++ lib.optional (guests != [ ]) "--collector.textfile.directory=${guestDir}";
   # node-exporter counts a missing directory as a textfile scrape error (NodeTextFileCollectorScrapeError) until the
-  # first run creates it
+  # first run creates it. A removed instance's file ages out by its mtime: node-exporter's reads keep its atime fresh.
   systemd.tmpfiles.rules = [
     "d ${dir} 0755 ${user} - -"
   ]
-  ++ lib.optional (guests != [ ]) "d ${guestDir} 0755 root root -";
+  ++ lib.optional (guests != [ ]) "d ${guestDir} 0755 root root m:2d";
 
   systemd.services.nav-metrics = {
     description = "Navigation metrics from the owner's Claude Code transcripts, for node-exporter";
@@ -59,41 +59,31 @@ in
       NoNewPrivileges = true;
     };
   };
-  systemd.timers.nav-metrics = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "*:23";
-      Persistent = true;
-    };
-  };
-
   # The guest controls its home: the script opens nothing through a link and nothing but a regular file, and the
-  # worker label is the declared name.
-  systemd.services.nav-metrics-guests = lib.mkIf (guests != [ ]) {
-    description = "Navigation metrics from the dev-environment guests' Claude Code transcripts, for node-exporter";
+  # worker label is the declared name. One process, file and MemoryMax per guest: a guest whose transcripts kill or
+  # stall its run stales its own series alone.
+  systemd.services."nav-metrics-guest@" = lib.mkIf (guests != [ ]) {
+    description = "Navigation metrics from dev-environment guest %i's Claude Code transcripts, for node-exporter";
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = lib.escapeShellArgs (
-        [
-          (lib.getExe pkgs.python3)
-          "-I"
-          "${../../scripts/nav-metrics.py}"
-          "--out"
-          "${guestDir}/nav.prom"
-          "--state-dir"
-          envs.stateDir
-          "--home"
-          envs.paths.home
-        ]
-        ++ lib.concatMap (n: [
-          "--worker"
-          n
-        ]) guests
-      );
+      ExecStart = lib.escapeShellArgs [
+        (lib.getExe pkgs.python3)
+        "-I"
+        "${../../scripts/nav-metrics.py}"
+        "--out"
+        "${guestDir}/nav-guest-%i.prom"
+        "--state-dir"
+        envs.stateDir
+        "--home"
+        envs.paths.home
+        "--worker"
+        "%i"
+      ];
       StateDirectory = "nav-metrics-guests";
       StateDirectoryMode = "0755";
       TimeoutStartSec = 300;
-      # 27 MB peak on a real 226 MB day, 43 MB on lines just under the script's LINE_MAX
+      # 27 MB peak on a real 226 MB day, 50 MB with every per-session state at the script's caps plus lines just
+      # under its LINE_MAX
       MemoryMax = "64M";
       Nice = 10;
       # root, not DynamicUser: a dynamic user's StateDirectory sits under the 0700 /var/lib/private, which node-exporter
@@ -108,13 +98,22 @@ in
       PrivateNetwork = true;
     };
   };
-  systemd.timers.nav-metrics-guests = lib.mkIf (guests != [ ]) {
+  systemd.timers = {
+    nav-metrics = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "*:23";
+        Persistent = true;
+      };
+    };
+  }
+  // lib.genAttrs (map (n: "nav-metrics-guest@${n}") guests) (_: {
     wantedBy = [ "timers.target" ];
     timerConfig = {
       OnCalendar = "*:38";
       Persistent = true;
     };
-  };
+  });
 
   assertions = [
     {

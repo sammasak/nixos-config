@@ -477,7 +477,7 @@
       "id": 15,
       "type": "stat",
       "title": "Guests: collector: hours since the stalest section",
-      "description": "Per guest, hours since its stalest section last succeeded; the unit runs hourly at :38. Above about 2: the guests' run fails or stopped (`systemctl status nav-metrics-guests`).",
+      "description": "Per guest, hours since its stalest section last succeeded; the unit runs hourly at :38. Above about 2: that guest's run fails or stopped (`systemctl status nav-metrics-guest@<worker>`).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -545,7 +545,7 @@
       "id": 17,
       "type": "stat",
       "title": "Guests: transcripts not read in the last run",
-      "description": "Per guest and reason. refused: a link, FIFO or other non-regular file on the path from the instance dir to a transcript, which is never followed or opened; too_large: a transcript over 256 MiB; too_many: past 256 transcripts written in the window. Above 0: the guest's numbers leave those out.",
+      "description": "Per guest and reason. refused: a link, FIFO or other non-regular file on the path from the instance dir to a transcript, which is never followed or opened; too_large: a transcript over 256 MiB; too_many: past 256 transcripts written in the window; too_much_state: a transcript over 10,000 entries of per-session state or with a Bash command over 64 KiB, abandoned. Above 0: the guest's numbers leave those out.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
