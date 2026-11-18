@@ -14,20 +14,13 @@ import sys
 import tempfile
 
 import gate_probe
+from gate_probe import check, finish
 
 DECISION = "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996"
 APPROVE = '{"repo":"sammasak/skills","number":36,"label":"approved","action":"add","reason":"fits a worker: no live hardware"}'
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def main():
-    global failed
     if shutil.which("devenv") is None:
         check(False, "devenv is on PATH (the system profile)")
         sys.exit(1)
@@ -92,7 +85,7 @@ def main():
         code, rec, audit, calls = run(off, "off")
         check(code != 0 and (rec.get("error") or {}).get("kind") == "not_delegated" and audit == [] and calls == "",
               f"with mayApprove = false the same act is refused as not_delegated before any gh call or audit line (exit {code}, {json.dumps(rec.get('error'))[:160]})")
-    sys.exit(1 if failed else 0)
+    finish()
 
 
 main()

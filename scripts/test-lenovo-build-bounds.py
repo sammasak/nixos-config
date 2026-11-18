@@ -1,15 +1,8 @@
 """lenovo's nix-daemon builds stay bounded, swap included (nixos-config#109, #354), and so do the environment hosts' (acer, msi); lenovo's user slice has a ceiling (#353)."""
-import sys
 
 import gate_probe
+from gate_probe import check, finish
 
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 def size(v):
@@ -73,4 +66,4 @@ for host in ("acer-swift", "msi-ms7758"):
           f"{host}, whose environments build in its daemon, bounds it at most 6G ({daemon.get('MemoryHigh')}, {daemon.get('MemoryMax')})")
     check(daemon.get("CPUQuota") == "400%",
           f"{host} caps the daemon's CPU at the 2 jobs x 2 cores a guest's -j and --cores cannot lift ({daemon.get('CPUQuota')})")
-sys.exit(1 if failed else 0)
+finish()
