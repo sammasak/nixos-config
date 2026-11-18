@@ -21,7 +21,7 @@ in
   # The relay and environments' telemetry only: host sessions keep their Claude settings (docs/native-otel-canary.md).
   sam.claude.telemetry.enable = false;
 
-  # An agent that is talked into it reaches the internet, not the LAN, the cluster or this host (DNS excepted).
+  # An agent that is talked into it reaches the internet, not the LAN or this host (DNS excepted).
   services.devEnvironments.blockedNetworks = [
     "10.0.0.0/8"
     "172.16.0.0/12"
@@ -45,7 +45,7 @@ in
   # lenovo's native ntfy on its LAN port, not the public name: pages must not need acer's Caddy
   sam.workers.ntfyUrl = lib.mkDefault config.sam.fleet.pageUrl;
 
-  # Headless, Stylix has nothing to theme and its Home Manager half has failed an activation (#185).
+  # Headless, Stylix has nothing to theme and its Home Manager half can fail an activation.
   stylix.enable = lib.mkForce desktop;
 
   # Without this unit time-sync.target is reached on an unsynchronised clock and a reset RTC fires every calendar timer when NTP steps it.

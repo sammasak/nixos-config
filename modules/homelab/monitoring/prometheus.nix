@@ -126,7 +126,7 @@ in
       };
       # keeps the remote-write names, e.g. claude_code_cost_usage_USD_total
       otlp.translation_strategy = "UnderscoreEscapingWithSuffixes";
-      # homelab-gitops#202: a replayed in-flight request lands behind newer ones; younger than this, kept
+      # A replayed in-flight request lands behind newer ones; younger than this, kept
       storage.tsdb.out_of_order_time_window = "1m";
       # interpolated, not toString: the store copies are promtool's inputs
       rule_files = map (f: "${f}") [

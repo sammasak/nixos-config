@@ -138,6 +138,10 @@ let
       dashboard = seed ''probe_sucess{job="blackbox"}'' "prometheus";
       reason = "unknown metric probe_sucess:";
     };
+    caddy-typo = {
+      dashboard = seed "rate(caddy_http_requets_total[5m])" "prometheus";
+      reason = "unknown metric caddy_http_requets_total";
+    };
     loki-word = {
       dashboard = seed "loki_name" "prometheus";
       reason = "unknown metric loki_name:";

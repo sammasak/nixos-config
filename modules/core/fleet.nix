@@ -18,7 +18,7 @@ let
             };
             port = mkOption {
               type = types.port;
-              description = "The TCP port it listens on, on that host's LAN address.";
+              description = "The TCP port it listens on, at least on that host's LAN address.";
             };
             url = mkOption {
               type = types.str;

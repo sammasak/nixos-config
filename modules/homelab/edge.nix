@@ -98,12 +98,17 @@ in
     # 80/tcp, 443/tcp and 443/udp on every interface
     openFirewall = true;
     # a TCP admin API would let any local process load a config; with none, a change restarts (every site drops)
-    # per_host: the Host header as a label; plain-HTTP requests (the :80 redirects, the scrapes) fall under _other
+    # no per_host: Caddy labels any HTTPS Host as sent (a random name under the wildcard, a name with a port), so any
+    # client could grow the series without bound; the named servers split public from scrape traffic instead
     globalConfig = ''
       admin ${adminSocket}
       grace_period 10s
-      metrics {
-        per_host
+      metrics
+      servers :443 {
+        name public
+      }
+      servers :${toString edgeMetrics.port} {
+        name metrics
       }
     '';
     # Caddy deletes a client-sent copy of each copied header before it sets the outpost's value.
