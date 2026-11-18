@@ -17,8 +17,6 @@ let
   # Android Private DNS only speaks DoT on 853.
   dotPort = 853;
   dnsDomain = cfg.tls.domain;
-  inherit (import ../../lib/firewall.nix lib) anySourceTcp;
-  fw = config.networking.firewall;
   # AdGuard's UI and control API have no users, so loopback keeps them off the LAN. port_https would serve them, and
   # DoH, on this address's IP too (internal/home/web.go), so it is 0: no DoH; DNS and DoT bind dns.bind_hosts
   webPort = 3003;
@@ -97,10 +95,8 @@ in
       {
         assertion =
           lib.hasPrefix "127.0.0.1:" config.services.adguardhome.settings.http.address
-          && (config.services.adguardhome.settings.tls.port_https or 0) == 0
-          && !config.services.adguardhome.openFirewall
-          && anySourceTcp fw [ webPort ] == [ ];
-        message = "modules/homelab/adguardhome.nix: AdGuard's control API has no users, so http.address stays on 127.0.0.1 (it is ${config.services.adguardhome.settings.http.address}), tls.port_https stays 0 and port ${toString webPort} stays closed.";
+          && (config.services.adguardhome.settings.tls.port_https or 0) == 0;
+        message = "modules/homelab/adguardhome.nix: AdGuard's control API has no users, so http.address stays on 127.0.0.1 (it is ${config.services.adguardhome.settings.http.address}), tls.port_https stays 0 (modules/core/network.nix keeps port ${toString webPort} closed).";
       }
       {
         assertion = (served.dns.hostsfile_enabled or true) == false || hostsLoopback == [ ];
