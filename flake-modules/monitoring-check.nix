@@ -144,6 +144,19 @@ in
               "-checked-blackbox-exporter.conf"
             ]
           )) "monitoring-check: a unit no longer references its checked config";
+          # --log.level alone left the per-probe logger at info: a redirect line per probe in the journal (#529)
+          assert lib.assertMsg
+            (lib.all
+              (
+                f:
+                lib.hasInfix f black-pi.config.systemd.services.prometheus-blackbox-exporter.serviceConfig.ExecStart
+              )
+              [
+                "--log.level=warn"
+                "--log.prober=warn"
+              ]
+            )
+            "monitoring-check: black-pi's blackbox exporter does not run with --log.level=warn and --log.prober=warn";
           assert lib.assertMsg
             (
               seeded.services.prometheus.alertmanager.configuration

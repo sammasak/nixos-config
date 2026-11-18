@@ -76,9 +76,13 @@ in
   services.prometheus.exporters.blackbox = {
     enable = true;
     listenAddress = "127.0.0.1";
-    # info logs every redirect each probe follows, Authentik's login URLs included, into the journal and so Loki;
-    # a failed probe still logs at error, and /probe?debug=true still shows a probe's redirect trail
-    extraFlags = [ "--log.level=warn" ];
+    # info logs every redirect each probe follows, Authentik's login URLs included, into the journal and so Loki.
+    # --log.level is the exporter's own logger only; the per-probe one (and /probe?debug=true's trail) is --log.prober.
+    # A failed probe still logs at error.
+    extraFlags = [
+      "--log.level=warn"
+      "--log.prober=warn"
+    ];
     configFile = pkgs.writeText "blackbox.yml" (
       builtins.toJSON {
         modules = {
