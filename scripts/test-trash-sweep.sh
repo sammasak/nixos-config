@@ -63,6 +63,8 @@ m=$tmp/mount
 mkdir -p "$m/.trash"
 a=$tmp/absent
 mkdir -p "$a/live"
+e=$tmp/finderr
+mkdir -p "$e/.trash/old-2/home" "$tmp/bin"
 sleep 4
 mkdir -p "$s/.trash/fresh-1/home" "$z/.trash/fresh-2/home"
 # what the old entries hold, directories not counted: "gone\n", the link's "../live" and 12345 zeros
@@ -82,6 +84,18 @@ d="a run with nothing old still records, deleted=0"
 rc=0 && out=$(sweep "$z" "$rec" 2>&1) || rc=$?
 got=$(cat "$records" 2>/dev/null)
 if [[ $rc == 0 && $got == "trash-sweep seen=1 deleted=0 bytes=0 result=ok" && -d $z/.trash/fresh-2 ]]; then ok "$d"; else no "$d (rc $rc: $out; $got)"; fi
+d="a find failing inside the size sum still records, result=failed, and the run exits non-zero"
+# a find that fails only for the size sum, as an unreadable entry makes it; every other call is the real one
+real_find=$(command -v find)
+# shellcheck disable=SC2016 # the wrapper's own script: it expands when the wrapper runs
+printf '#!/usr/bin/env bash\nfor a; do [[ $a == +%%s ]] && { echo "find: unreadable" >&2; exit 1; }; done\nexec %q "$@"\n' \
+  "$real_find" >"$tmp/bin/find"
+chmod +x "$tmp/bin/find"
+: >"$records"
+rc=0 && out=$(PATH=$tmp/bin:$PATH sweep "$e" "$rec" 2>&1) || rc=$?
+got=$(cat "$records" 2>/dev/null)
+if [[ $rc != 0 && $got == "trash-sweep seen=1 deleted="*" result=failed" ]]; then ok "$d"; else no "$d (rc $rc: $out; $got)"; fi
+
 d="an entry trashed over the threshold is deleted, a link entry as itself"
 if [[ ! -e $s/.trash/old-1 && ! -L $s/.trash/old-link ]]; then ok "$d"; else no "$d"; fi
 d="an entry trashed under the threshold stays"

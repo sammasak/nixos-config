@@ -100,10 +100,12 @@ let
         [[ -z $recorder ]] || "$recorder" trash-sweep seen=0 deleted=0 bytes=0 result=refused
         exit 1
       fi
-      seen=$(find -P "$t" -xdev -mindepth 1 -maxdepth 1 -printf . | wc -c)
+      # a find that fails (an unreadable entry) marks the run failed: under set -e it would end it before the record
       deleted=0 bytes=0 result=ok
+      seen=$(find -P "$t" -xdev -mindepth 1 -maxdepth 1 -printf . | wc -c) || result=failed
       while IFS= read -r -d "" e; do
-        size=$((0 $(find -P "$e" -xdev ! -type d -printf '+%s')))
+        sizes=$(find -P "$e" -xdev ! -type d -printf '+%s') || result=failed
+        size=$((0 $sizes))
         if rm -rf --one-file-system -- "$e"; then
           deleted=$((deleted + 1)) bytes=$((bytes + size))
         else
