@@ -47,11 +47,11 @@
     "GateFailRateHigh": {
       "maxRatio": {
         "value": 0.3,
-        "tunedBy": "shipping_gate_fail_ratio"
+        "tunedBy": "sum(shipping_gate_fail_ratio * shipping_gate_runs_counted) / sum(shipping_gate_runs_counted)"
       },
       "lastRuns": {
         "value": 20,
-        "tunedBy": "shipping_gate_runs_counted"
+        "tunedBy": "sum(shipping_gate_runs_counted)"
       },
       "forMinutes": {
         "value": 30,
@@ -105,7 +105,7 @@
       },
       "lastRuns": {
         "value": 20,
-        "tunedBy": "shipping_gate_runs_counted"
+        "tunedBy": "sum(shipping_gate_runs_counted)"
       },
       "forMinutes": {
         "value": 30,
