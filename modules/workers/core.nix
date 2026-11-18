@@ -221,6 +221,9 @@ let
   egressDir = "/run/dev-env-egress";
   egressAll = lib.mapAttrsToList (name: s: s // { inherit name; }) cfg.egress;
   egressOf = w: lib.filter (s: s.for w) egressAll;
+  # the host credentials bound into an instance: the guest links exactly these (devEnvironment.credentials)
+  boundOf =
+    w: lib.filterAttrs (n: _: w.credentials == null || lib.elem n w.credentials) cfg.credentials;
   egressed = lib.filter (w: egressOf w != [ ]) running;
   egressUsed = lib.filter (s: lib.any s.for instances) egressAll;
   egressSecrets = lib.concatMap (
@@ -385,7 +388,7 @@ let
         hostPath = src;
         isReadOnly = true;
       }
-    ) (lib.filterAttrs (n: _: w.credentials == null || lib.elem n w.credentials) cfg.credentials)
+    ) (boundOf w)
     // lib.optionalAttrs (egressOf w != [ ]) {
       "/run/egress" = {
         hostPath = "${egressDir}/${w.name}";
@@ -395,7 +398,10 @@ let
 
   guest = w: { ... }: {
     imports = cfg.guestModules ++ map (s: s.guest.config) (egressOf w);
-    _module.args.devEnvironment = { inherit (w) name hostName address; };
+    _module.args.devEnvironment = {
+      inherit (w) name hostName address;
+      credentials = lib.attrNames (boundOf w);
+    };
     # the host user's uid: its credential files and nix daemon identity
     # sudo is root of this namespace only; subordinate ids must fit the guest's 65536, or rootless podman fails
     users.users.${user} = {
@@ -739,7 +745,7 @@ in
     guestModules = mkOption {
       type = types.listOf types.deferredModule;
       default = [ ];
-      description = "NixOS modules of every guest; `devEnvironment` (name, hostName, address) is their argument.";
+      description = "NixOS modules of every guest; `devEnvironment` (name, hostName, address, credentials: the names bound) is their argument.";
     };
     sessionSurface = mkOption {
       type = types.nullOr (
