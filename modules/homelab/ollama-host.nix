@@ -1,5 +1,5 @@
 # services.ollama for the llm-gateway, bound to the node address. The port is opened to no source, so the LAN is
-# dropped unless the host adds a scoped rule. The host sets the models, the context and the MemoryMax that fits one
+# dropped unless sam.fleet has a listener for it (modules/core/fleet.nix). The host sets the models, the context and the MemoryMax that fits one
 # loaded model.
 {
   config,
@@ -8,7 +8,6 @@
   ...
 }:
 let
-  inherit (import ../../lib/firewall.nix lib) anySourceTcp;
   cfg = config.services.ollama;
   fw = config.networking.firewall;
   pins = config.homelab.ollama.modelDigests;
@@ -105,10 +104,6 @@ in
       {
         assertion = pins == { } || lib.sort lib.lessThan cfg.loadModels == lib.attrNames pins;
         message = "modules/homelab/ollama-host.nix: with homelab.ollama.modelDigests set, pin every services.ollama.loadModels tag and nothing else; unpinned: ${toString (lib.subtractLists (lib.attrNames pins) cfg.loadModels)}, not loaded: ${toString (lib.subtractLists cfg.loadModels (lib.attrNames pins))}.";
-      }
-      {
-        assertion = fw.enable && !cfg.openFirewall && anySourceTcp fw [ cfg.port ] == [ ];
-        message = "modules/homelab/ollama-host.nix: Ollama has no authentication; keep the firewall on, openFirewall off and port ${toString cfg.port} out of allowedTCPPorts and allowedTCPPortRanges, global and per interface. Admit a caller with a source-scoped rule.";
       }
       {
         assertion = lib.all (i: i == "lo") fw.trustedInterfaces;

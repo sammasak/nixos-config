@@ -12,42 +12,8 @@ let
   ]
   ++ alerting.sam.fleet.hosts.black-pi.extraAddresses;
   lines = text: lib.splitString "\n" text;
-  # does a port list ("9099", "9000:9100", "80,9099", "{ 22, 9000-9100 }") cover the bridge port
-  covers =
-    ports:
-    lib.any
-      (
-        item:
-        let
-          r = builtins.match "([0-9]+)[-:]([0-9]+)" item;
-        in
-        if r == null then
-          item == port
-        else
-          lib.toInt (lib.head r) <= lib.toInt port && lib.toInt port <= lib.toInt (lib.last r)
-      )
-      (
-        lib.filter (i: i != "") (
-          lib.splitString "," (lib.replaceStrings [ " " "{" "}" ] [ "" "" "" ] ports)
-        )
-      );
-  portsOf =
-    backend: l:
-    let
-      m = builtins.match (
-        if backend == "iptables" then ".*--dports? ([0-9:,]+).*" else ".*dport ([{][^}]*[}]|[0-9-]+).*"
-      ) l;
-    in
-    if m == null then null else lib.head m;
-  # fails closed: a port rule this cannot read (a set, a negation) counts as admitting the bridge port
-  admits =
-    backend: l:
-    lib.any (w: lib.hasInfix w l) [
-      "dport"
-      "destination-port"
-      "multiport"
-    ]
-    && (portsOf backend l == null || lib.hasInfix "!" l || covers (portsOf backend l));
+  inherit (import ../lib/firewall.nix lib) admitsPort;
+  admits = backend: admitsPort backend port;
   # every rule line that admits the bridge port, against the one shape mkDualBackendFirewall renders per admitted source
   rendered = lib.filter (admits fw.backend) (
     lines (if fw.backend == "iptables" then fw.extraCommands else fw.extraInputRules)
@@ -85,7 +51,10 @@ in
       checks = lib.optionalAttrs (system == "x86_64-linux") {
         alert-bridge-sources =
           assert lib.assertMsg
-            (bridge.homelab.alertBridge.openFirewall && alerting.services.prometheus.alertmanager.enable)
+            (
+              bridge.sam.fleet.listeners.alert-bridge.host == bridge.networking.hostName
+              && alerting.services.prometheus.alertmanager.enable
+            )
             "alert-bridge-check: lenovo no longer admits the bridge, or black-pi no longer runs Alertmanager; update this check";
           assert lib.assertMsg (
             missed == [ ]

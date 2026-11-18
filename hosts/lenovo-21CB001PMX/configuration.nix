@@ -189,12 +189,11 @@
   # sam.fleet.ntfy.port on the LAN or Tailscale IP; the web UI is the name below, through Caddy on acer.
   homelab.ntfy.baseUrl = "https://ntfy.sammasak.dev";
 
-  # Alertmanager on black-pi posts to lenovo's LAN address, so loopback is not
+  # Alertmanager on black-pi posts to lenovo's LAN address (sam.fleet.listeners.alert-bridge), so loopback is not
   # enough. Pages go to the module's default topic, homelab-alerts.
   homelab.alertBridge = {
     enable = true;
     listenAddress = "0.0.0.0";
-    openFirewall = true;
   };
 
   # secrets/ is edited here, where the personal age key lives (nixos-config's devenv has them too)

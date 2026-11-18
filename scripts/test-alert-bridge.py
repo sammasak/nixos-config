@@ -35,8 +35,8 @@ check(bounds == {"MemoryMax": "64M", "TasksMax": 64, "LimitNOFILE": 256}, f"its 
 
 failing = P["failing"]
 check(failing["lenovo"] == [], f"lenovo fails no assertion {failing['lenovo']}")
-check(any("openFirewall" in m and "loopback" in m for m in failing["loopbackFirewall"]),
-      f"openFirewall with a loopback listenAddress is rejected {failing['loopbackFirewall']}")
+check(any("sam.fleet.listeners.alert-bridge is served here" in m and "loopback" in m for m in failing["loopbackFirewall"]),
+      f"the listener's host with a loopback listenAddress is rejected {failing['loopbackFirewall']}")
 check(any("homelab.ntfy.enable" in m for m in failing["noNtfy"]), f"the bridge without the native ntfy is rejected {failing['noNtfy']}")
 check(P["httpsUrl"] is False, "an https ntfyUrl is a type error: the bridge has no TLS stack")
 

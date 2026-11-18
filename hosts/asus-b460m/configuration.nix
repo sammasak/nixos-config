@@ -5,12 +5,11 @@
   ...
 }:
 let
-  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   ollama = config.services.ollama;
-  acers = [
-    config.sam.fleet.hosts.acer-swift.address
-  ]
-  ++ config.sam.fleet.hosts.acer-swift.extraAddresses;
+  # Ollama's callers (sam.fleet.listeners.ollama-asus), as the firewall check below reads them
+  acers = lib.concatMap (
+    h: [ config.sam.fleet.hosts.${h}.address ] ++ config.sam.fleet.hosts.${h}.extraAddresses
+  ) config.sam.fleet.listeners.ollama-asus.from;
   driver = config.hardware.nvidia.package.version;
   # the CUDA runtime the ollama build links, not the default cudaPackages set
   cuda =
@@ -101,20 +100,6 @@ in
     MemoryMax = "8G";
     CPUQuota = "800%";
   };
-  networking.firewall = {
-    inherit
-      (mkDualBackendFirewall {
-        nftComment = "Ollama answers the llm-gateway on acer only.";
-        ports = [ config.services.ollama.port ];
-        sources = acers;
-        interfaces = [ ];
-        backend = config.networking.firewall.backend;
-      })
-      extraInputRules
-      extraCommands
-      ;
-  };
-
   assertions = [
     {
       # the RTX 3070's power.min_limit and power.max_limit; nvidia-smi -pl refuses anything outside them

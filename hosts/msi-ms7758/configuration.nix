@@ -4,9 +4,6 @@
   pkgs,
   ...
 }:
-let
-  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
-in
 {
   imports = [
     ./hardware-configuration.nix
@@ -72,21 +69,4 @@ in
   '';
   # llama3.1:8b (4.9G) and a 16K q8_0 KV cache (about 0.9G), as in the pod's 8Gi limit
   systemd.services.ollama.serviceConfig.MemoryMax = "8G";
-  # Pi on lenovo, and Pi and the gateway on acer, call it directly.
-  networking.firewall = {
-    inherit
-      (mkDualBackendFirewall {
-        nftComment = "Ollama answers Pi on lenovo and acer only.";
-        ports = [ config.services.ollama.port ];
-        sources = map (h: config.sam.fleet.hosts.${h}.address) [
-          "lenovo-21CB001PMX"
-          "acer-swift"
-        ];
-        interfaces = [ ];
-        backend = config.networking.firewall.backend;
-      })
-      extraInputRules
-      extraCommands
-      ;
-  };
 }

@@ -159,7 +159,7 @@ in
 
     assertions = [
       {
-        # Loki admits the fleet's addresses only (black-pi's homelab.loki.allowedSources)
+        # Loki admits the fleet's addresses only (sam.fleet.loki.from)
         assertion = config.sam.fleet.hosts ? ${config.networking.hostName};
         message = "modules/homelab/journal-collector.nix: ${config.networking.hostName} has no address in sam.fleet.hosts (modules/core/fleet.nix), so Loki would refuse its journal.";
       }
