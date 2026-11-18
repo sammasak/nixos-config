@@ -90,6 +90,7 @@ let
     runtimeInputs = [
       pkgs.coreutils
       pkgs.findutils
+      pkgs.gawk
     ];
     text = ''
       t=$1/.trash
@@ -103,15 +104,17 @@ let
       # a find that fails (an unreadable entry) marks the run failed: under set -e it would end it before the record
       deleted=0 bytes=0 result=ok
       seen=$(find -P "$t" -xdev -mindepth 1 -maxdepth 1 -printf . | wc -c) || result=failed
-      while IFS= read -r -d "" e; do
-        sizes=$(find -P "$e" -xdev ! -type d -printf '+%s') || result=failed
-        size=$((0 $sizes))
+      # read whole, so find's own exit status is seen: a process substitution's is otherwise lost
+      mapfile -d "" -t old < <(find -P "$t" -xdev -mindepth 1 -maxdepth 1 -cmin +10080 -print0)
+      wait "$!" || result=failed
+      for e in "''${old[@]}"; do
+        size=$(find -P "$e" -xdev ! -type d -printf '%s\n' | awk '{ s += $1 } END { print s + 0 }') || result=failed
         if rm -rf --one-file-system -- "$e"; then
           deleted=$((deleted + 1)) bytes=$((bytes + size))
         else
           result=failed
         fi
-      done < <(find -P "$t" -xdev -mindepth 1 -maxdepth 1 -cmin +10080 -print0)
+      done
       [[ -z $recorder ]] || "$recorder" trash-sweep seen="$seen" deleted="$deleted" bytes="$bytes" result="$result"
       [[ $result == ok ]]
     '';
