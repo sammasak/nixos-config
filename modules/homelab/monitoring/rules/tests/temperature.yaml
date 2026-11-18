@@ -1,0 +1,44 @@
+# promtool test rules for homelab.yaml's temperature alerts (flake-modules/monitoring-check.nix runs it).
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      # a real sensor near its mark, an unwired one reading nonsense with no mark, a Pi zone at its throttle point
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="msi-ms7758",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '60x10 96x30'
+      - series: 'node_hwmon_temp_crit_celsius{job="node-exporter",node="msi-ms7758",chip="platform_coretemp_0",sensor="temp1"}'
+        values: '100x40'
+      - series: 'node_hwmon_temp_celsius{job="node-exporter",node="msi-ms7758",chip="nct6775",sensor="temp7"}'
+        values: '127x40'
+      - series: 'node_hwmon_temp_crit_celsius{job="node-exporter",node="msi-ms7758",chip="nct6775",sensor="temp7"}'
+        values: '0x40'
+      - series: 'node_thermal_zone_temp{job="node-exporter",node="black-pi",type="cpu-thermal",zone="0"}'
+        values: '70x10 86x30'
+      - series: 'nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job="nvidia-gpu",node="asus-b460m",uuid="GPU-0"}'
+        values: '0x10 1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: NodeTemperatureHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: NodeTemperatureHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: msi-ms7758, chip: platform_coretemp_0, sensor: temp1}
+            exp_annotations:
+              summary: "msi-ms7758 runs hot"
+              description: "A sensor on msi-ms7758 (platform_coretemp_0 temp1) has read 96 °C for 15 minutes, within 5 °C of its critical mark or at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: black-pi, type: cpu-thermal, zone: "0"}
+            exp_annotations:
+              summary: "black-pi runs hot"
+              description: "A sensor on black-pi (0 cpu-thermal) has read 86 °C for 15 minutes, within 5 °C of its critical mark or at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+      - eval_time: 18m
+        alertname: GpuThermalThrottling
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: GpuThermalThrottling
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: nvidia-gpu, node: asus-b460m, uuid: GPU-0}
+            exp_annotations:
+              summary: "The GPU on asus-b460m slows itself for heat"
+              description: "The board on asus-b460m has reported hardware thermal slowdown for 10 minutes: model runs are slower than measured. The GPU dashboard shows its temperature, fan and power."
