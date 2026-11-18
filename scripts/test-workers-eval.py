@@ -119,6 +119,29 @@ FLEET_CASES = [
     ("a record stream named as a fleet host", '{ services.devEnvironments.prefix = lib.mkForce "black"; sam.workers.instances.pi = { }; }',
      "the record stream of black-pi would equal a fleet host's name"),
 ]
+# msi's task slot t1 as committed (#535): where it is declared, its reserve, and that it holds no GitHub credential
+SLOT = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  c = flake.nixosConfigurations.msi-ms7758.config;
+  t1 = c.services.devEnvironments.instances.t1;
+  unit = c.systemd.services."container@t1".serviceConfig;
+  egress = c.systemd.services.dev-env-egress.serviceConfig;
+  caddy = builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " egress.ExecStart));
+  lock = c.containers.t1.bindMounts."/run/work-locks" or { };
+in {
+  declaring = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: h: (h.config.services.devEnvironments.instances or { }) ? t1) flake.nixosConfigurations);
+  inherit (t1) agent credentials rootInGuest telemetry;
+  github = t1.egress.github;
+  site = flake.inputs.nixpkgs.lib.hasInfix "/run/dev-env-egress/t1/github.sock" caddy;
+  reserved = unit.MemoryMin;
+  weight = unit.CPUWeight;
+  pool = c.systemd.slices.environments.sliceConfig.MemoryMax;
+  binds = builtins.attrNames c.containers.t1.bindMounts;
+  links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) c.containers.t1.config.systemd.tmpfiles.rules;
+  lock = [ (lock.hostPath or null) (lock.isReadOnly or null) ];
+}
+"""
 USER_SECRET = ("the relay's secret readable by a user", '{ sops.secrets.native_otlp_auth.owner = "lukas"; }', "native_otlp_auth must be owned by root with mode 0400")
 # msi with two instances behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
 GITHUB = r"""
@@ -780,6 +803,23 @@ def check_bounded():
           f"container@ stops restarting after {got.get('burst')} starts of {start} s (stop {stop} s) each within {got.get('interval')} s ({got or out.stderr.strip()[-300:]})")
 
 
+def check_slot():
+    """msi's t1 is sized by the msi row of docs/nspawn-workers.md (10G pool, 2G and 2 cores reserved each) and gets no
+    GitHub credential: no SSH key, no gh login, no proxy site. Its assertions are the "as committed" check's."""
+    out = run_eval(SLOT % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("declaring") == ["msi-ms7758"], f"the task slot t1 is declared on msi-ms7758 alone ({got.get('declaring', out.stderr.strip()[-600:])})")
+    check(got.get("reserved") == 2 << 30 and got.get("weight") == 200 and got.get("pool") == 10 << 30,
+          f"t1 reserves 2G and 2 cores in msi's 10G pool ({got.get('reserved')}, {got.get('weight')}, {got.get('pool')})")
+    check(got.get("agent") == "claude" and got.get("rootInGuest") is False and got.get("telemetry") is True,
+          f"t1 is a claude agent without rootInGuest, telemetry left on ({got.get('agent')}, {got.get('rootInGuest')}, {got.get('telemetry')})")
+    creds = {"/var/lib/host-credentials/id_ed25519", "/var/lib/host-credentials/gh-hosts.yml"}
+    check(got.get("credentials") == [] and got.get("github") == {"repos": [], "graphql": False} and got.get("site") is False
+          and got.get("links") == [] and not creds & set(got.get("binds", creds)),
+          f"t1 holds no GitHub credential: no key or gh login bound or linked, no proxy site ({got.get('credentials')}, {got.get('github')}, {got.get('links')})")
+    check(got.get("lock") == ["/run/work-locks", True], f"t1 binds the host's /run/work-locks read-only, one heavy lane with msi's own gates ({got.get('lock')})")
+
+
 def check_nested(facts):
     managed = json.loads(facts["managed"]) if facts.get("managed") else {}
     conf = facts.get("containers", "")
@@ -936,7 +976,7 @@ def main():
         *[(BLOCKED_CASE % v6, BLOCKED_WHAT) for v6, _ in BLOCKED], *[(case, OWN) for _, case, _ in ASSERTED]]])
     prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(case) for _, case, _ in FLEET_CASES], fleet(USER_SECRET[1]),
               NO_OTEL % {"root": json.dumps(ROOT)}, GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)},
-              SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr()])
+              SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr(), SLOT % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
@@ -1022,6 +1062,7 @@ def main():
 
     out = run_eval(fleet("{ }"))
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
+    check_slot()
     out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
