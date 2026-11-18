@@ -79,6 +79,17 @@ groups:
           summary: "The kernel OOM-killed a process on {{ $labels.node }}"
           description: "{{ $value | humanize }} OOM kill(s) on {{ $labels.node }} in the last 15 minutes. A unit at its MemoryMax or the host out of memory: read that host's kernel journal before raising any limit."
 
+      # The systemd collector reports services, sockets, timers, targets and paths; mounts and devices it leaves out.
+      - alert: NodeSystemdUnitFailed
+        expr: node_systemd_unit_state{job="node-exporter",state="failed"} == 1
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "{{ $labels.name }} failed on {{ $labels.node }}"
+          description: "{{ $labels.name }} has been in the failed state on {{ $labels.node }} for 15 minutes. Run systemctl status {{ $labels.name }} and journalctl -u {{ $labels.name }} there; systemctl reset-failed clears it once fixed."
+
       - alert: RootFilesystemLow
         # The 3 GB root floor (nixos-config#302): black-pi's SD card holds Prometheus and Loki.
         expr: node_filesystem_avail_bytes{job="node-exporter",mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} < 3 * 1024 * 1024 * 1024
