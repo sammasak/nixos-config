@@ -457,6 +457,17 @@ let
   navMetricsTest = gate "nav-metrics-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-nav-metrics.py
   '';
+  triggerRollbackTest =
+    gate "trigger-rollback-test"
+      (with pkgs; [
+        python3
+        bash
+        coreutils
+        git
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-trigger-rollback.py
+      '';
   waitMetricsTest =
     gate "wait-metrics-test"
       (with pkgs; [
@@ -738,6 +749,7 @@ let
     platformRecordsTest
     shippingMetricsTest
     navMetricsTest
+    triggerRollbackTest
     waitMetricsTest
     authentikAkTest
     switchSafetyTest
@@ -1314,6 +1326,8 @@ in
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
     "nixos:shipping-metrics-test" =
       task "Shipping collector on a fake GitHub and Loki: issues split actionable/parked/archived, a failed source leaves no series and keeps its stale timestamp, an undeclared name is refused" shippingMetricsTest;
+    "nixos:trigger-rollback-test" =
+      task "The rebuild trigger's rollback on stubs: back to the previous generation live, in the system profile and the boot default, without nixos-rebuild; a failed step is audited (seeded: the old nixos-rebuild boot --rollback line fails)" triggerRollbackTest;
     "nixos:wait-metrics-test" =
       task "The dashboards check's exporter wait: a late exporter is waited for; none listening, no expected series or an exited exporter fails as 'exporter did not start' within its bound" waitMetricsTest;
     "nixos:nav-metrics-test" =
