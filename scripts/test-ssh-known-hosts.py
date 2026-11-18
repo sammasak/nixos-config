@@ -233,7 +233,8 @@ DOCS = {
 
 
 # a power window as the docs write it: "Mon-Fri ~08:30-21:00" (the ~ optional)
-WINDOW = re.compile(r"\b((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:-(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun))?) ~?(\d\d:\d\d)-(\d\d:\d\d)")
+# (an en dash or a one-digit hour too; a window in prose, "powers off at 21:00", is not read)
+WINDOW = re.compile(r"\b((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:[-–](?:Mon|Tue|Wed|Thu|Fri|Sat|Sun))?) ~?(\d{1,2}:\d\d)[-–](\d{1,2}:\d\d)")
 
 
 def power_window(power):
@@ -255,7 +256,7 @@ def window_drift(texts, fleet, deploy_block):
     for path, text in texts.items():
         for n, line in enumerate(text.splitlines(), 1):
             for m in WINDOW.finditer(line):
-                said = f"{m[1]} ~{m[2]}-{m[3]}"
+                said = f"{m[1].replace('–', '-')} ~{m[2].zfill(5)}-{m[3].zfill(5)}"
                 hosts = [h for h in windows if named(line, h)]
                 if not hosts:
                     out.append(f"{path}:{n}: {said} names no host with a power window")
@@ -269,22 +270,28 @@ def window_drift(texts, fleet, deploy_block):
 
 
 def sops_rules(text):
-    """{path_regex: [(age key, its comment)]} from .sops.yaml's creation rules."""
-    rules, cur = {}, None
+    """({path_regex: [(age key, its comment)]}, [path_regex listed again]) from .sops.yaml's creation rules: a key per
+    `- age1…` line or in an `age: k1,k2` string. sops uses the first rule a path matches, so a repeat is not read."""
+    rules, repeated, cur = {}, [], None
     for line in text.splitlines():
         if m := re.match(r"\s*- path_regex: (\S+)", line):
-            cur = m[1]
-            rules[cur] = []
-        elif cur and (m := re.match(r"\s*- (age1[0-9a-z]+)(?:\s*#\s*(.*))?$", line)):
+            cur = None if m[1] in rules else m[1]
+            if cur is None:
+                repeated.append(m[1])
+            else:
+                rules[cur] = []
+        elif cur and (m := re.match(r"\s*- (age1[0-9a-z]+)\s*(?:#\s*(.*))?$", line)):
             rules[cur].append((m[1], (m[2] or "").split("(")[0].strip()))
-    return rules
+        elif cur and (m := re.match(r"\s*age:\s*['\"]?(age1[0-9a-z]+(?:\s*,\s*age1[0-9a-z]+)*)['\"]?\s*$", line)):
+            rules[cur] += [(k.strip(), "") for k in m[1].split(",")]
+    return rules, repeated
 
 
 def secrets_table_drift(sops_text, claude_text, hosts):
     """Rows of CLAUDE.md's secrets table that .sops.yaml does not bear out, and rules it leaves out. Recipients by name:
     a host by its key (SOPS_RECIPIENTS), the key every rule lists as Personal, any other key by its .sops.yaml comment
     ("acer-swift lukas", which the table writes acer `lukas`)."""
-    rules = sops_rules(sops_text)
+    rules, repeated = sops_rules(sops_text)
     if not rules:
         return ["secrets/.sops.yaml: no creation rule read"]
     by_key = {k: n for n, k in hosts.items()}
@@ -299,8 +306,10 @@ def secrets_table_drift(sops_text, claude_text, hosts):
         return full[0] if len(full) == 1 else word
 
     table = re.search(r"\| Path pattern \| Recipients \|.*?\n\n", claude_text, re.DOTALL)
-    doc = {}
+    doc, twice = {}, []
     for row in re.findall(r"^\| `([^`]+)` \| ([^|]+) \|", table[0] if table else "", re.M):
+        if row[0] in doc:
+            twice.append(row[0])
         names = set()
         for part in re.sub(r"\([^)]*\)", "", row[1]).replace("+", ",").split(","):
             part = part.strip()
@@ -309,7 +318,9 @@ def secrets_table_drift(sops_text, claude_text, hosts):
             elif part:
                 names.add(host_of(part))
         doc[row[0]] = names
-    out = [f"secrets table: {g} has no .sops.yaml rule" for g in sorted(set(doc) - set(derived))]
+    out = [f"secrets/.sops.yaml: {r} is listed again; sops reads only its first rule" for r in repeated]
+    out += [f"secrets table: {g} has two rows" for g in twice]
+    out += [f"secrets table: {g} has no .sops.yaml rule" for g in sorted(set(doc) - set(derived))]
     out += [f"secrets table: no row for .sops.yaml's {g}" for g in sorted(set(derived) - set(doc))]
     out += [f"secrets table: {g} lists {sorted(doc[g] - derived[g])} that .sops.yaml does not, and leaves out {sorted(derived[g] - doc[g])}"
             for g in sorted(set(doc) & set(derived)) if doc[g] != derived[g]]
@@ -476,6 +487,15 @@ def main():
                          f"          - {SOPS_RECIPIENTS['msi-ms7758']}  # msi-ms7758\n")
     check(extra != sops and any("homelab/open-webui.yaml" in d and "msi-ms7758" in d for d in secrets_table_drift(extra, docs["CLAUDE.md"], SOPS_RECIPIENTS)),
           "seeded: a .sops.yaml rule with a recipient the table does not name fails")
+    row = re.search(r"^\| `homelab/grafana.yaml` .*$", docs["CLAUDE.md"], re.M)[0]
+    stale = docs["CLAUDE.md"].replace(row, row.replace("black-pi", "msi-ms7758") + "\n" + row)
+    check(any("homelab/grafana.yaml has two rows" in d for d in secrets_table_drift(sops, stale, SOPS_RECIPIENTS)),
+          "seeded: a stale second row for the same path fails, not read past")
+    again = sops + "  - path_regex: homelab/grafana\\.yaml$\n    key_groups:\n      - age:\n          - age1x\n"
+    check(any("listed again" in d for d in secrets_table_drift(again, docs["CLAUDE.md"], SOPS_RECIPIENTS)),
+          "seeded: a path_regex listed twice in .sops.yaml fails (sops reads only the first)")
+    check(any("not Mon-Fri ~09:00-21:00" in d for d in window_drift({"docs/x.md": "msi: Mon–Fri ~9:00–21:00\n"}, P["fleet"], docs["CLAUDE.md"])),
+          "seeded: a window with en dashes and a one-digit hour is read, and its drift found")
     texts = {path: (ROOT / path).read_text() for path, *_ in DOCS.values()}
     gaps = undocumented(texts, nodes, host_name, P["roles"])
     for doc, missing in gaps.items():
