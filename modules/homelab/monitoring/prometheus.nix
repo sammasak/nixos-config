@@ -251,6 +251,7 @@ in
               "static_configs"
               "relabel_configs"
               "metric_relabel_configs"
+              "sample_limit"
             ]
           ) == [ ]
         ) c.scrape_configs;
