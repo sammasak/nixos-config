@@ -60,7 +60,7 @@ Verified on the pinned 1.1.0 build:
 
 Pi on the hosts holds **no provider key**. Since 2026-10-16
 (sammasak/llm-gateway#8) llm-gateway on acer (`modules/homelab/llm-gateway.nix`)
-is the only path to cloud models. It holds the Gemini and Workers AI keys
+is the only path to cloud models. It holds the Gemini, Workers AI, Groq and Cerebras keys
 (`secrets/homelab/llm-gateway.yaml`) and the free-quota ledger that Pi shares with Open
 WebUI and factum. Pi authenticates with its project key `llm_gateway_pi_key`
 (above). Adding or rotating a provider key is a gateway change: edit that
@@ -195,8 +195,3 @@ sources: [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platf
 | `msi-ollama/*` (msi's Ollama, CPU-only i7-3770K) | local, no cost | none; 7 tok/s prefill, 4 tok/s output (7B), so the first Pi turn takes 5-7 min, over Pi's default 300s idle timeout | connection refused or timeout when msi is off | **excluded** for now (2026-10-15, idle timeout raised for the test): `qwen2.5-coder:7b` and `llama3.2:3b` return tool calls as plain text; `llama3.1:8b` calls tools but failed the task twice (wrong edits, wrong answer) |
 | `google/*` with the old `~/.env` key | prepaid billing project | | 402; would bill if topped up | **excluded**; delete that key |
 | `cerebras/qwen-3.8-27b`, `gpt-oss-120b` | prepaid trial credits ($5, 30 days); auto-recharge off by default | 5 RPM, 1M TPD on the trial per docs; the key showed 450 RPM, 150K TPM on 2026-10-17 | requests fail when credits run out; the card is only charged when credits are bought or auto-recharge is enabled | verified (logic 3/3 each); **not routed**: a card is on file and auto-recharge was never observed off, so the llm-gateway keeps it `trial-credit` (2026-10-17, llm-gateway#13) |
-
-Manual onboarding steps (historical: superseded on 2026-10-16, when provider keys moved to the llm-gateway; see Credentials):
-
-1. Groq: create a key named `pi` in the console, then `sops secrets/claude/llm-cloud.yaml` and replace `groq_api_key`. Revoke the old key once factum has its own. More quota needs a separate Groq account; a new key does not add any.
-4. Rotate the Cloudflare token and Groq key that predate the recipient narrowing.
