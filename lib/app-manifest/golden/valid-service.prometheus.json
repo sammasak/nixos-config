@@ -1,0 +1,21 @@
+{
+  "scrape_configs": [
+    {
+      "job_name": "apps",
+      "sample_limit": 10000,
+      "static_configs": [
+        {
+          "labels": {
+            "__metrics_path__": "/apps/notes/metrics",
+            "app": "notes",
+            "node": "acer-swift",
+            "owner": "sammasak"
+          },
+          "targets": [
+            "192.168.10.110:9180"
+          ]
+        }
+      ]
+    }
+  ]
+}

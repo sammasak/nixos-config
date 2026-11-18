@@ -4,8 +4,18 @@
   facts = import ./facts.nix lib;
 }
 // rec {
+  # the one upstream of a service: derived from the app name, never chosen by the manifest, so no app can point the
+  # edge at another listener; the name pattern bounds it to 51 bytes, within sun_path's 108
+  socket = n: "/run/apps/${n}/http.sock";
   # every refused rule's message, after the whole registry type-checks: a type error throws instead
   refusals = facts: registry: (admitted facts registry).refused;
+  # each admitted app's edge sites and metrics scrape (render.nix); package: app name -> its built store path
+  render =
+    facts: registry: package:
+    import ./render.nix {
+      inherit lib facts package;
+      granted = admit facts registry;
+    };
   # the capabilities each admitted app gets, or a throw listing every refused rule
   admit =
     facts: registry:
@@ -38,8 +48,10 @@
           source = "${a.source.repo}@${a.source.rev}#${a.source.package}";
           ingress = lib.mapAttrs' (l: i: lib.nameValuePair "${l}.${facts.domain}" i.auth) a.ingress;
         }
+        // lib.optionalAttrs (a.runtime ? static) { inherit (a.runtime) static; }
         // lib.optionalAttrs (a.runtime ? service) {
-          inherit (a.runtime.service) port resources;
+          inherit (a.runtime.service) resources metricsPath;
+          socket = socket n;
           secrets = lib.attrNames a.runtime.service.secrets;
           state = lib.attrNames a.runtime.service.state;
         }
