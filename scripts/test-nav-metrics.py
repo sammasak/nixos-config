@@ -198,5 +198,60 @@ with tempfile.TemporaryDirectory() as tmp:
     except AssertionError:
         check(True, "seeded: a name outside METRICS is refused")
 
+
+
+def day(path, calls):
+    """A worker transcript with `calls` repo Reads (50 files, a prompt every 100) in the last hour, each answered."""
+    t0 = time.time() - 1800
+    with open(path, "w") as f:
+        for i in range(calls):
+            at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t0 + i * 0.01))
+            if i % 100 == 0:
+                f.write(json.dumps({"type": "user", "origin": {"kind": "human"}, "timestamp": at,
+                                    "cwd": "/home/u/nixos-config", "message": {"role": "user", "content": "go"}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "timestamp": at, "cwd": "/home/u/nixos-config", "message": {
+                "content": [{"type": "tool_use", "id": f"t{i}", "name": "Read",
+                             "input": {"file_path": f"/home/u/nixos-config/modules/m{i % 50}.nix"}}]}}) + "\n")
+            f.write(json.dumps({"type": "user", "timestamp": at, "cwd": "/home/u/nixos-config", "message": {
+                "content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": "x" * 200}]}}) + "\n")
+
+
+def peak_kb(projects, out):
+    """The collector's own peak RSS on `projects`, in a fresh interpreter."""
+    code = ("import resource, runpy, sys; s, p, o = sys.argv[1:4]; sys.argv = ['nav-metrics.py', '--out', o, '--projects', p]\n"
+            "try:\n    runpy.run_path(s, run_name='__main__')\nexcept SystemExit:\n    pass\n"
+            "print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)")
+    r = subprocess.run([sys.executable, "-I", "-c", code, str(SCRIPT), str(projects), out], capture_output=True, text=True)
+    return int(r.stdout.split()[-1]) if r.returncode == 0 and r.stdout.split() else None
+
+
+# memory is flat in the day's size: 10x the transcript (calls and bytes) adds no per-call or per-line state
+with tempfile.TemporaryDirectory() as tmp:
+    small, big = pathlib.Path(tmp, "small/-home-u-nixos-config"), pathlib.Path(tmp, "big/-home-u-nixos-config")
+    small.mkdir(parents=True)
+    big.mkdir(parents=True)
+    day(small / "s.jsonl", 10000)
+    day(big / "s.jsonl", 100000)
+    lo, hi = peak_kb(small.parent, f"{tmp}/a.prom"), peak_kb(big.parent, f"{tmp}/b.prom")
+    check(lo is not None and hi is not None and hi - lo < 8 * 1024,
+          f"peak RSS is flat in the input: {lo} kB at 10k calls, {hi} kB at 100k ({(big / 's.jsonl').stat().st_size >> 20} MB)")
+
+# the page cache a run reads through is charged to the unit's cgroup: every file's pages are dropped behind it
+with tempfile.TemporaryDirectory() as tmp:
+    proj = pathlib.Path(tmp, "-home-u-nixos-config")
+    proj.mkdir()
+    day(proj / "s.jsonl", 3000)
+    size = (proj / "s.jsonl").stat().st_size
+    calls, real = [], os.posix_fadvise
+    every, nm.DROP_EVERY = nm.DROP_EVERY, 64 * 1024
+    os.posix_fadvise = lambda fd, off, n, advice: calls.append((off, n, advice))
+    try:
+        nm.scan(tmp, time.time() - 86400)
+    finally:
+        os.posix_fadvise, nm.DROP_EVERY = real, every
+    dont = [(o, n) for o, n, a in calls if a == os.POSIX_FADV_DONTNEED]
+    check(dont and dont[-1] == (0, 0) and len(dont) >= size // (64 * 1024),
+          f"each transcript's pages are dropped every DROP_EVERY bytes and at its end ({len(dont)} drops over {size} bytes)")
+
 print(f"{failed} failed")
 raise SystemExit(1 if failed else 0)

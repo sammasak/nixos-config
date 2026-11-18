@@ -339,7 +339,7 @@ in
       checks = lib.optionalAttrs (system == "x86_64-linux") {
         shipping-rules =
           assert lib.assertMsg (lib.elem (builtins.unsafeDiscardStringContext rules) loaded)
-            "shipping-check: black-pi's Prometheus does not load ${rules}; rules/shipping.nix is called differently there";
+            "shipping-check: black-pi's Prometheus does not load ${rules}; modules/homelab/monitoring/rules/shipping.nix is called differently there";
           pkgs.runCommand "shipping-rules"
             {
               nativeBuildInputs = [

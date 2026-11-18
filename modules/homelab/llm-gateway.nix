@@ -13,7 +13,12 @@
 let
   fw = config.networking.firewall;
   state = "/var/lib/llm-gateway";
-  configText = builtins.readFile ./llm-gateway.toml;
+  # the Ollama backends' addresses from sam.fleet (modules/core/fleet.nix), into llm-gateway.toml's @msi@ and @acer@
+  configText =
+    lib.replaceStrings
+      [ "@msi@" "@acer@" ]
+      [ config.sam.fleet.hosts.msi-ms7758.address config.sam.fleet.hosts.acer-swift.address ]
+      (builtins.readFile ./llm-gateway.toml);
   configFile = pkgs.writeText "llm-gateway.toml" configText;
   # every key file the config names, so a provider added there needs its key in the sops file to build: the gateway
   # reads each one at startup, enabled or not
