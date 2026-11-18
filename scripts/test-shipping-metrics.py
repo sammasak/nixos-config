@@ -196,6 +196,11 @@ check(sm.step_failures([check_rec(DASH, H1), check_rec("checks.x86_64-linux.depl
       "three different checks on three heads are three units at 1, not the umbrella at 3")
 check(sm.step_failures([rec("gate=nixos-qa step=lint result=fail"), rec("gate=nixos-qa step=lint result=fail")]) == {("lint", ""): 2},
       "a record with no head counts on its own")
+check(sm.step_failures([rec("gate=nixos-qa step=lint result=fail sha=none"), rec("gate=nixos-qa step=lint result=fail sha=none"),
+                        rec("gate=nixos-qa step=lint result=fail head=none")]) == {("lint", ""): 3},
+      "seeded: head none (NIXOS_QA_HEAD's fallback outside git) is no head: three such records count 3, not 1")
+check(sm.step_failures([check_rec(DASH, "none"), step_rec("nixos-flake-check", "none")]) == {("nixos-flake-check", DASH): 1, ("nixos-flake-check", ""): 1},
+      "seeded: an umbrella record with head none is not matched to a check record with head none")
 
 with tempfile.TemporaryDirectory() as tmp:
     out = f"{tmp}/shipping.prom"

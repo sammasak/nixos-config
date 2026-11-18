@@ -333,10 +333,12 @@ def step_failures(records):
     A unit counts once per head, so a re-run on one head is not a repeat. The flake check is one step over every
     check: its failure counts under the inner check that failed (that check's record, check=), and the step's own
     record only when no inner record failed on the same head (an evaluation error). A record with no head counts on
-    its own. Heads compare on 7 hex digits: the step record says sha=<short>, a check record head=<full>."""
+    its own. Heads compare on 7 hex digits: the step record says sha=<short>, a check record head=<full>. A head that
+    is not hex (`none`, NIXOS_QA_HEAD's fallback outside git) is no head: two such records are not one unit."""
     fails = [r for _, r in records if r.get("gate") == "nixos-qa" and r.get("result") == "fail"]
     def head(r):
-        return (r.get("head") or r.get("sha") or "")[:7]
+        h = r.get("head") or r.get("sha") or ""
+        return h[:7] if re.fullmatch(r"[0-9a-f]{7,64}", h) else ""
     inner = {(r.get("step"), head(r)) for r in fails if r.get("check") and head(r)}
     units = {}
     for i, r in enumerate(fails):
