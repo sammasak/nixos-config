@@ -7,7 +7,10 @@
 # generation's (it resolves outside the store, and is not systemd's own generated or transient unit) is a warning:
 # /etc/systemd/system is the store's, so that is a runtime edit (/run/systemd/system, `systemctl edit --runtime`) or a
 # set-property in a system.control directory, overriding what the deploy shipped. User units are not
-# readable here (homes are 0700 to the deploy user); the activation warns about those (modules/core/users.nix).
+# readable here (homes are 0700 to the deploy user): the activation scans them as root and writes what shadows a NixOS
+# user unit to /run/shadowed-user-units (modules/core/users.nix); a line there fails this check, as the deploy did not
+# change that unit for that user. No report is a warning: an activation older than the report, or one that could not
+# write it. SHADOWED_USER_UNITS overrides the path (scripts/test-deploy-recipes.py).
 set -uo pipefail
 
 rc=0
@@ -43,4 +46,12 @@ while read -r kind unit files; do
 done <<<"$report"
 [ "${#skipped[@]}" -eq 0 ] || echo "post-deploy: condition skipped (not a failure): ${skipped[*]}"
 [ "${#foreign[@]}" -eq 0 ] || echo "post-deploy: warning: unit files not from the deployed generation (not a failure): ${foreign[*]}"
+
+shadow=${SHADOWED_USER_UNITS:-/run/shadowed-user-units}
+if [ ! -r "$shadow" ]; then
+  echo "post-deploy: warning: no $shadow, so shadowed user units are not checked (not a failure)"
+elif [ -s "$shadow" ]; then
+  while IFS= read -r line; do echo "post-deploy: user unit shadowed at the last activation: $line" >&2; done <"$shadow"
+  rc=1
+fi
 exit "$rc"

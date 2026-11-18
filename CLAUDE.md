@@ -56,7 +56,8 @@ just diff   [HOST]            # Build and print the package diff vs the running 
 just deploy HOST              # HOST: a deploy-rs node, any other name is refused
 #   then, whatever deploy-rs returned, it checks the target (scripts/post-deploy-check.sh: running,
 #   no unit in a restart loop, condition-skipped units listed; /run/current-system = the system profile's
-#   generation) and exits non-zero if any fails: a host left degraded, looping or off that generation (deploy-rs rolls back a failed activation itself; naked-pi not until #474).
+#   generation; no home shadowing a NixOS user unit, per the activation's /run/shadowed-user-units) and exits
+#   non-zero if any fails: a host left degraded, looping, off that generation or with a shadowed user unit (deploy-rs rolls back a failed activation itself; naked-pi not until #474).
 #   A failed check rolls nothing back, and a host degraded for an unrelated, pre-existing reason
 #   fails every deploy: read `systemctl --failed` on the target.
 #   lenovo      loopback self-push, proves the deploy-rs path

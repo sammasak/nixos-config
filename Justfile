@@ -83,7 +83,7 @@ deploy HOST:
       case $check in \
         0) result=ok ;; \
         124|255) result=check-unreachable; echo "post-deploy check did not run on {{HOST}} (exit $check): timed out, unreachable, or no hostname" >&2 ;; \
-        *) result=check-failed; echo "post-deploy check failed on {{HOST}} (exit $check): degraded, a unit in a restart loop, or not on the profile's generation; nothing was rolled back, see the lines above" >&2 ;; \
+        *) result=check-failed; echo "post-deploy check failed on {{HOST}} (exit $check): degraded, a unit in a restart loop, a home shadowing a NixOS user unit, or not on the profile's generation; nothing was rolled back, see the lines above" >&2 ;; \
       esac; \
       [ "$rc" -eq 0 ] || result=deploy-failed; \
       rec "$result" "$rolled" "$units" "$failed"; \
