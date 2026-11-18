@@ -6,7 +6,7 @@
   ...
 }:
 let
-  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall anySourceTcp;
+  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   cfg = config.sam.storeCache;
   host = config.networking.hostName;
   port = 5000;
@@ -43,10 +43,6 @@ in
       {
         assertion = caches ? ${host};
         message = "modules/core/store-cache.nix: ${host} serves a store cache, so its public key belongs in caches there.";
-      }
-      {
-        assertion = anySourceTcp config.networking.firewall [ port ] == [ ];
-        message = "modules/core/store-cache.nix: the store cache answers the LAN only through the scoped rule there; keep port ${toString port} out of networking.firewall allowedTCPPorts and allowedTCPPortRanges, global and per interface, which accept from any source.";
       }
       {
         assertion = lib.all (

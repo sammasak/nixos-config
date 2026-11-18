@@ -23,12 +23,9 @@
   homelab.loki = {
     enable = true;
     listenAddress = config.sam.fleet.hosts.black-pi.address;
-    allowedSources = lib.concatMap (h: [ h.address ] ++ h.extraAddresses) (
-      lib.attrValues (removeAttrs config.sam.fleet.hosts [ config.networking.hostName ])
-    );
   };
 
-  # to its own LAN address, which the kernel delivers on lo (always accepted), so it needs no allowedSources entry
+  # to its own LAN address, which the kernel delivers on lo (always accepted), so sam.fleet.loki.from leaves it out
   homelab.journalCollector.enable = true;
 
   sam.profile = {
