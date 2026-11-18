@@ -16,7 +16,7 @@ pkgs.testers.runNixOSTest {
     { lib, ... }:
     {
       imports = roleModules ++ fleetModules;
-      # a name outside sam.fleet: borrowing msi's applied msi's fleet facts (listeners, power window) to the VM
+      # a name outside sam.fleet, so no fleet host's facts (listeners, power window) apply to the VM
       sam.profile = {
         username = "lukas";
         hostname = "vm-runtime-host";

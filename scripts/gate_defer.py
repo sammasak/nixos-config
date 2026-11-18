@@ -56,7 +56,9 @@ def record_deferral(step, check, owner, drv):
         f.write(f"{owner}:{check}\n")
 
 
-def record_owned(step, check, owner, drv):
-    """The other half, on the owning host: its check did what the step expects, for this head and drv."""
+def record_owned(step, check, owner, drv, result="built"):
+    """The other half, on the owning host: its check did what the step expects, for this head and drv: built, or
+    expected-fail for a seeded check whose build must fail."""
     assert " " not in check, f"{step}: check {check!r} has a space"
-    _record(step, check, owner, "built", drv)
+    assert result in ("built", "present", "expected-fail"), f"{step}: result {result!r}"
+    _record(step, check, owner, result, drv)

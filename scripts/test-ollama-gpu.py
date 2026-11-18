@@ -87,11 +87,11 @@ def instantiated(drvs):
     return json.loads(out.stdout)
 
 
-def owned(name, drv, ok):
-    """On the owning host, a check that did what this test expects is recorded for the head: the deferral's other half.
-    The seeded one is expected to fail its build, so that is what its record means."""
+def owned(name, drv, ok, result="built"):
+    """On the owning host, a check that did what this test expects is recorded for the head: the deferral's other half
+    (expected-fail for the seeded one, whose build must fail)."""
     if ok and os.uname().nodename.startswith(OWNER):
-        gate_defer.record_owned("ollama-gpu-test", f"ollama-gpu-test/{name}", OWNER, drv)
+        gate_defer.record_owned("ollama-gpu-test", f"ollama-gpu-test/{name}", OWNER, drv, result)
 
 
 checks = instantiated(P["check"])
@@ -102,5 +102,6 @@ owned("asus-ollama-gpu-check", checks["asus"], rc == 0)
 rc, log = realise(checks["noNvidiaLibs"], "asus-ollama-gpu-check-no-nvidia-libs")
 check(rc == "deferred" or (rc not in (0, None) and "no lib/libcuda.so.1" in log),
       f"seeded: graphics without the NVIDIA library fails the gpu check, or it is deferred to {OWNER} (rc {rc}: {log.strip()[-300:]})")
-owned("asus-ollama-gpu-check-no-nvidia-libs", checks["noNvidiaLibs"], rc not in (0, None, "deferred") and "no lib/libcuda.so.1" in log)
+owned("asus-ollama-gpu-check-no-nvidia-libs", checks["noNvidiaLibs"], rc not in (0, None, "deferred") and "no lib/libcuda.so.1" in log,
+      "expected-fail")
 sys.exit(failed)

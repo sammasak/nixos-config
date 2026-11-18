@@ -166,6 +166,13 @@ bench:
 bench-diff:
     bash scripts/bench.sh diff
 
+# Each check a passing gate deferred to its owning host on HEAD (a full sha), and whether that owner has a built,
+# present or expected-fail record for the check's derivation; exits 1 while one waits, 2 when the records cannot say.
+# Read-only: the platform records in Loki.
+[doc("List HEAD's deferred host checks and whether each owner has run it; non-zero while one waits")]
+deferred-checks HEAD:
+    python3 scripts/deferred-checks.py {{quote(HEAD)}}
+
 # Run this after a refactor that is meant to change nothing. Deliberately NOT part
 # of `check` or `verify`: a change that legitimately moves the derivation should
 # not fail the build gates. Runs under `capped`: needs a user systemd manager and
@@ -173,12 +180,6 @@ bench-diff:
 # side sees tracked files incl. uncommitted edits, not untracked ones. Non-zero if
 # any host toplevel or deploy node moved, was added or was removed, or any deploy
 # setting outside nodes moved.
-# Each check a gate deferred to its owning host on HEAD (a full sha), and whether the owner has a built or present record
-# for it on that head or for the same check derivation; exits 1 while one waits. Read-only: the platform records in Loki.
-[doc("List HEAD's deferred host checks and whether each owner has run it; non-zero while one waits")]
-deferred-checks HEAD:
-    python3 scripts/deferred-checks.py {{quote(HEAD)}}
-
 # Output, a line each: `same`, `MOVED` (then its base: and tree: values), `ADDED`/`REMOVED` (one side only, not
 # evaluated), `none` (no deploy node on either side). It evaluates every host twice: run it in the heavy lane,
 # `flock -o /run/work-locks/heavy-work.lock just parity`.
