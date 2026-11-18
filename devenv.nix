@@ -198,12 +198,22 @@ let
                     echo "nixos-flake-check: build $c (compiles $n) $d" >&2
                     [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ] || nix build --no-link "$d^*"
                     took "build $c" "$t"
+                    # the other half of a deferral: the owning host has its own deploy check for this head and drv, built
+                    # here (built), already in the store or substituted (present), or not built at all (dry)
+                    case $o in
+                      deploy-activate-* | deploy-schema-*)
+                        if [[ $me == "''${o#deploy-*-}"* ]]; then
+                          if [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ]; then r=dry; elif [ -n "$todo" ]; then r=built; else r=present; fi
+                          ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                        fi
+                        ;;
+                    esac
                     ;;
                   foreign)
                     owner=''${o#deploy-*-}
-                    deferred+=("$c")
+                    deferred+=("$owner:$c")
                     echo "nixos-flake-check: deferred $c to $owner (compiles $n) $d: it would compile against $(grep -E -e "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
-                    ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" seconds=0 result=deferred
+                    ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" seconds=0 result=deferred head="''${NIXOS_QA_HEAD:-}" drv="$d"
                     ;;
                   nodeless)
                     echo "nixos-flake-check: $c would compile against CUDA on $me, whose system has none, and names no deploy node to defer to: name it deploy-*-<node> or run this gate on a CUDA host" >&2
@@ -627,11 +637,15 @@ let
         coreutils
         gnugrep
         bash
+        util-linux
+        procps
+        gawk
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-qa-push.py
         ${pkgs.python3}/bin/python scripts/test-prepush-one-ref.py
         ${pkgs.python3}/bin/python scripts/test-gate-steps.py
+        ${pkgs.python3}/bin/python scripts/test-heavy-lock.py
       '';
 
   run = lib.concatMapStringsSep "\n" lib.getExe;
@@ -639,6 +653,16 @@ let
     lintComments
     lintShell
   ];
+  heavyLock = gate "heavy-lock" (with pkgs; [
+    util-linux
+    procps
+    gawk
+    coreutils
+  ]) (builtins.readFile ./scripts/heavy-lock.sh);
+  qaGreen = gate "qa-green" (with pkgs; [
+    git
+    coreutils
+  ]) (builtins.readFile ./scripts/qa-green.sh);
   record = gate "platform-record" (with pkgs; [
     curl
     jq
@@ -734,9 +758,20 @@ let
         python3
       ])
       ''
+        # one heavy job per host (scripts/heavy-lock.sh): the gate takes the heavy-work lane itself, once
+        if [ -z "''${NIXOS_QA_LOCKED:-}" ]; then NIXOS_QA_LOCKED=1 exec ${lib.getExe heavyLock} "$0" "$@"; fi
         sha=$(git rev-parse --short HEAD 2>/dev/null || echo none)
+        NIXOS_QA_HEAD=$(git rev-parse HEAD 2>/dev/null || echo none)
+        export NIXOS_QA_HEAD
         mode=manual
         [ -z "''${NIXOS_QA_TIMES:-}" ] || mode=push
+        # a manual run's green counts for the pre-push hook when the checkout was clean throughout (scripts/qa-green.sh)
+        began=
+        [ "$mode" != manual ] || began=$(${lib.getExe qaGreen} begin 2>/dev/null) || began=
+        # whether head= names what was checked: the hook's worktree is the pushed commit; a manual run may be dirty
+        checkout=clean
+        [ "$mode" != manual ] || checkout=''${began##* }
+        checkout=''${checkout:-unknown}
         start=$SECONDS
         # checks nixos-flake-check left to their own host's gate: in the summary and the gate's record, never silent
         NIXOS_QA_DEFERRED=$(mktemp)
@@ -745,11 +780,18 @@ let
           local rc=$? result=fail n
           [ "$rc" != 0 ] || result=pass
           n=$(grep -c . "$NIXOS_QA_DEFERRED" || true)
+          deferred=$(paste -sd, "$NIXOS_QA_DEFERRED")
           if [ "$n" -gt 0 ]; then
             echo "nixos-qa: $result, but $n check(s) were not built here, deferred to their own host's gate: $(tr '\n' ' ' <"$NIXOS_QA_DEFERRED")" \
               | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
+            # one line a coordinator reads: the head, then owner:check for each check its owning host must build
+            echo "nixos-qa: deferred-checks head=$NIXOS_QA_HEAD checkout=$checkout $(tr '\n' ' ' <"$NIXOS_QA_DEFERRED")" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
           fi
-          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode deferred="$n"
+          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode deferred="$n" head="$NIXOS_QA_HEAD" checkout="$checkout" deferred_checks="$deferred"
+          if [ -n "$began" ]; then
+            # shellcheck disable=SC2086 # the state is three words
+            ${lib.getExe qaGreen} record "$0" "$result" "$mode" $began || true
+          fi
         }
         trap on_exit EXIT
         # always-loaded instructions: this repo's CLAUDE.md and the global one Home Manager links (names only, no path)
@@ -1223,7 +1265,7 @@ in
     "nixos:build-bounds-test" =
       task "nix-daemon builds are bounded (cores, jobs, MemoryHigh/Max) on lenovo and the environment hosts; lenovo's user slice has a ceiling" buildBoundsTest;
     "nixos:qa-push-test" =
-      task "The pre-push hook without Nix: a green tree is recorded per gate and generation, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs" qaPushTest;
+      task "The pre-push hook without Nix: a green tree is recorded per gate and generation, by the hook or a clean manual nixos:qa, lints only for it plus docs, a linked worktree is judged on the pushed commit; the shim refuses new commits to two refs; nixos:qa takes the heavy-work lock once (an ancestor's counts); a deferred check is recorded owner:check per head, and built by its owner" qaPushTest;
     "nixos:journal-collector-test" =
       task "homelab.journalCollector on msi only: journald to Loki, no secret, a local readiness probe" journalCollectorTest;
     "nixos:fleet-endpoints-test" =
