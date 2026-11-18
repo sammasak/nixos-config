@@ -126,6 +126,9 @@ for seed, host, marker, what in [("openPort", "acer-swift", '"port":9999', "allo
     check(any(f"{host}'s {OPENS}" in m and marker in m for m in F[seed]), f"seeded: {what} fails ({F[seed]})")
 check(any("sam.fleet.loki is served here" in m and "loopback" in m for m in F["lokiLoopback"]),
       f"seeded: black-pi's Loki on loopback fails ({F['lokiLoopback']})")
+check(any("naked-pi has no sam.fleet listener node-exporter-naked-pi" in m for m in F["exporterOffFleet"]),
+      f"seeded: node-exporter on naked-pi, which is not a fleet host, fails with node-exporter.nix's message, not an "
+      f"attribute error ({F['exporterOffFleet']})")
 check(any("naked-pi has no address in sam.fleet.hosts" in m for m in F["collectorOffFleet"]),
       f"seeded: a collector on naked-pi, which has no fleet address, fails ({F['collectorOffFleet']})")
 

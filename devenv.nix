@@ -48,6 +48,13 @@ let
         fi
       '';
 
+  # the flake's own formatter (nixfmt-tree, flake-modules/overlays.nix) in CI mode: it fails on any file it would
+  # change, so formatting fails here first, not in a late step or review. It rewrites what it would change, so a
+  # manual run leaves the fix in the checkout; the hook runs it in a temporary worktree.
+  fmtCheck = gate "nixos-fmt-check" [ pkgs.nix ] ''
+    nix fmt --no-write-lock-file -- --ci
+  '';
+
   lintShell = gate "nixos-lint-shell" [ pkgs.shellcheck ] ''
     shellcheck scripts/*.sh
   '';
@@ -180,6 +187,7 @@ let
                 t=$SECONDS
                 d=$(nix eval --raw --no-write-lock-file ".#$c.drvPath")
                 took "eval $c" "$t"
+                ev=$((SECONDS - t))
                 # a failed dry-run fails the step: read as "nothing to build" it would hide the check (nix 2.34 also
                 # exits 0 on "don't know how to build")
                 if ! dry=$(nix build --dry-run --no-link "$d^*" 2>&1) || grep -q "know how to build" <<<"$dry"; then
@@ -192,22 +200,29 @@ let
                 # shellcheck disable=SC2086 # one store path per word
                 if [ -n "$todo" ]; then inputs=$(nix-store -q --references $todo); fi
                 n=$(grep -c . <<<"$todo" || true)
+                m=$(awk '/will be fetched/ { f = 1; next } /^[^ ]/ { f = 0 } f && $1 ~ /^[/]nix[/]store[/]/ { c++ } END { print c + 0 }' <<<"$dry")
                 t=$SECONDS
                 case $(decide "$me" "$o" "$todo" "$inputs" "$cudahost") in
                   build)
                     echo "nixos-flake-check: build $c (compiles $n) $d" >&2
-                    [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ] || nix build --no-link "$d^*"
+                    # one record per check built here, for "where a gate's time goes" (Shipping): build and eval seconds,
+                    # the derivations it compiled and fetched, and its result: compiled here (built), only substituted
+                    # (fetched), already in the store (present), a failed build (fail), or nothing built at all (dry).
+                    # owner is this host, so an owning host's own deploy check is the other half of a deferral
+                    if [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ]; then
+                      r=dry
+                    elif ! nix build --no-link "$d^*"; then
+                      ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev compiled="$n" fetched="$m" result=fail head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                      exit 1
+                    elif [ "$n" -gt 0 ]; then
+                      r=built
+                    elif [ "$m" -gt 0 ]; then
+                      r=fetched
+                    else
+                      r=present
+                    fi
                     took "build $c" "$t"
-                    # the other half of a deferral: the owning host has its own deploy check for this head and drv, built
-                    # here (built), already in the store or substituted (present), or not built at all (dry)
-                    case $o in
-                      deploy-activate-* | deploy-schema-*)
-                        if [[ $me == "''${o#deploy-*-}"* ]]; then
-                          if [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ]; then r=dry; elif [ -n "$todo" ]; then r=built; else r=present; fi
-                          ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
-                        fi
-                        ;;
-                    esac
+                    ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev compiled="$n" fetched="$m" result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
                     ;;
                   foreign)
                     owner=''${o#deploy-*-}
@@ -799,7 +814,13 @@ let
         if [ -f "$HOME/.claude/CLAUDE.md" ]; then
           ${lib.getExe record} instructions file=global-CLAUDE.md bytes="$(wc -c <"$HOME/.claude/CLAUDE.md")"
         fi
-        ${timed (lints ++ [ secretsVerify ])}
+        ${timed (
+          lints
+          ++ [
+            fmtCheck
+            secretsVerify
+          ]
+        )}
         t=$SECONDS
         GATE_PROBE=$(${lib.getExe probe})
         export GATE_PROBE
@@ -1217,6 +1238,8 @@ in
     "nixos:lint-comments" =
       task "Comment Policy lint (density, forbidden shapes, path pointers that resolve to no tracked file)" lintComments;
     "nixos:lint-shell" = task "shellcheck scripts/*.sh" lintShell;
+    "nixos:fmt-check" =
+      task "nix fmt -- --ci: the flake's formatter fails on any file it would change (and rewrites it)" fmtCheck;
     "nixos:secrets-verify" =
       task "Decrypt-check wifi credentials (skips without an age key)" secretsVerify;
     "nixos:nvim-check" = task "Build lenovo's nvim and start the generated config headless" nvimCheck;
