@@ -17,7 +17,7 @@ let
           };
           port = mkOption {
             type = types.port;
-            description = "The port it listens on, on that host's LAN address.";
+            description = "The port it listens on, at least on that host's LAN address.";
           };
           proto = mkOption {
             type = types.enum [
@@ -84,6 +84,11 @@ let
     };
   };
   edge = "acer-swift";
+  edgeMetrics = {
+    host = edge;
+    port = 9180;
+    from = [ "black-pi" ];
+  };
   # black-pi's Prometheus scrapes every host's node-exporter, and nvidia-gpu where sam.fleet says gpu
   scraped =
     name: port: only:
@@ -232,6 +237,7 @@ in
             }
           );
         };
+        edgeMetrics = endpoint fleet.config "Caddy's /metrics on the edge host, for black-pi's Prometheus alone";
         pageUrl = mkOption {
           type = types.str;
           readOnly = true;
@@ -243,13 +249,19 @@ in
   };
 
   config.sam.fleet = {
-    inherit hosts edge loki;
+    inherit
+      hosts
+      edge
+      loki
+      edgeMetrics
+      ;
     gateway = "192.168.10.1";
     lanCidr = "192.168.10.0/24";
     deployer = "lenovo-21CB001PMX";
     inherit ntfy;
     listeners = {
       inherit loki;
+      edge-metrics = edgeMetrics;
       alertmanager = {
         host = "black-pi";
         port = 9093;

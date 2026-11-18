@@ -82,7 +82,7 @@ in
       TimeoutStartSec = "6min";
       # uvicorn makes the socket 0666; the directory keeps it to root and the app's dynamic user, which the proxy shares.
       RuntimeDirectoryMode = lib.mkForce "0700";
-      # Not the pod's 1Gi: 0.12.2 peaked at 1.45G in its first start on acer.
+      # 0.12.2 peaked at 1.45G in its first start on acer, so 1G is too small.
       MemoryMax = "2G";
       MemorySwapMax = 0;
       CPUQuota = "100%";
@@ -116,7 +116,7 @@ in
     };
   };
   # Caddy's upstream, from the listener table: a connection would start the app (a ~50 s cold start), and black-pi's
-  # probe sees only forward auth's 302. EdgeSocketDown (rules/homelab.yaml) reads the metric.
+  # probe sees only forward auth's 302. EdgeSocketDown (modules/homelab/monitoring/rules/homelab.yaml) reads the metric.
   systemd.services.open-webui-edge-check = {
     path = [ pkgs.iproute2 ];
     serviceConfig = {
@@ -157,7 +157,7 @@ in
     };
   };
 
-  # The host twin of the pod's daily on-node backup: on the same disk, so it guards against a bad write or upgrade,
+  # A daily on-host backup: on the same disk, so it guards against a bad write or upgrade,
   # not a dead disk.
   systemd.services.open-webui-backup = {
     description = "Back up open-webui's database and uploads, with a restore check";

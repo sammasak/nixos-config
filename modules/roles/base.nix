@@ -10,6 +10,7 @@
     ../core/boot.nix
     ../core/system.nix
     ../core/agent-options.nix
+    ../core/agent-assertions.nix
     ../core/users.nix
     ../core/network.nix
     ../core/services.nix

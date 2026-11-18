@@ -4,18 +4,12 @@ import http.server
 import json
 import os
 import subprocess
-import sys
 import threading
+
+from gate_probe import check, finish
 
 SCRIPT = "modules/homelab/ollama-pull-pinned.sh"
 A, B = "a" * 64, "b" * 64
-failed = 0
-
-
-def check(ok, what):
-    global failed
-    print(("PASS: " if ok else "FAIL: ") + what)
-    failed += not ok
 
 
 class Registry(http.server.BaseHTTPRequestHandler):
@@ -94,4 +88,4 @@ check(rc == 3 and tags == {"x:y": A} and calls == [("pull", "m:t"), ("rm", "m:t"
       f"a moved tag does not stop the next pin, and a tag off its pin is pulled back to it (rc {rc}, {calls}, {tags})")
 
 server.shutdown()
-sys.exit(1 if failed else 0)
+finish()

@@ -72,8 +72,8 @@ Current hostnames: `acer-swift`, `lenovo-21CB001PMX` (flake attribute `lenovo`),
 and `naked-pi` (Pi 3 `rf-lab` node; `just deploy naked-pi`;
 runbook `~/knowledge/homelab/runbooks/naked-pi-rf-lab.md`).
 `HOST` is the **flake attribute**, which for lenovo is not its hostname — the
-`host` variable at the top of the Justfile does that mapping, so the argument is
-only needed when targeting the other machine.
+`host` variable at the top of the Justfile does that mapping, so `switch`, `build`, `diff` and `audit-candidate` need
+the argument only when targeting another machine; `deploy`, `dry-activate` and `checks` always need it.
 
 ## Architecture
 
@@ -107,9 +107,10 @@ Secret scopes in `secrets/.sops.yaml`:
 | `homelab/tailscale.yaml` | Personal + lenovo, acer `lukas` | Tailscale authkey |
 | `homelab/*.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, asus-b460m, black-pi | GitHub access token |
 | `claude/llm-cloud.yaml` | Personal | factum `dev/cloud-env.sh` cloud keys. Pi holds no provider key (llm-gateway), see `docs/pi.md` |
-| `claude/oauth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | Claude OAuth token |
+| `claude/oauth.yaml` | Personal + lenovo, acer-swift, acer `lukas`, msi-ms7758, asus-b460m | Claude OAuth token |
 | `claude/native-otlp-auth.yaml` | Personal + lenovo, acer-swift, msi-ms7758, asus-b460m | OTLP auth |
-| `claude/*.yaml` | Personal + lenovo, acer-swift | Pi's gateway key |
+| `claude/coordinator-login.yaml` | Personal | the coordinator agent's own Authentik login for checks; no host reads it |
+| `claude/*.yaml` | Personal + lenovo, acer-swift, acer `lukas` | Pi's gateway key |
 
 Every acer-swift recipient except `native-otlp-auth.yaml`, `open-webui.yaml`, `llm-gateway.yaml` and `authentik.yaml` also includes acer's own `lukas` user
 key. A fleet host is a recipient only of files it declares a secret from (`nixos:known-hosts-test`); trimming a
@@ -133,7 +134,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 
 - `skills/<name>/SKILL.md` → `~/.claude/skills/<name>/SKILL.md`
 - `agents/<name>.md` → `~/.claude/agents/<name>.md` (role adapters included: plain subagents whose prompt states the one allowed command form; Claude Code's permission prompt is the gate, see `docs/herdr.md` and the skills repo `docs/operator-runbook.md`)
-- The coordinator adapter only on the coordinator host (the one with `sam.herdr.machines`, lenovo), which also declares Codex's `[agents.coordinator] config_file` in `~/.codex/config.toml` as the skills input's `agents/coordinator/codex.toml` (never a symlink under `~/.codex/agents`: Codex opens it with O_NOFOLLOW); rollout in `docs/rollout-coordinator.md`
+- The coordinator adapter only on the coordinator host (the one with `sam.herdr.machines`, lenovo), which also declares Codex's `[agents.coordinator] config_file` in `~/.codex/config.toml` as the skills input's `agents/coordinator/codex.toml` (never a symlink under `~/.codex/agents`: Codex opens it with O_NOFOLLOW); operation in `docs/rollout-coordinator.md`
 
 
 **Update workflow**:
@@ -148,7 +149,7 @@ just switch
 PreToolUse entry (`shunt-check-read.sh`) and `shunt-check-bash-read.sh` appended to the `Bash` list after the
 existing hooks. A whole-file read estimated over 8000 tokens (`minTokens`, null = the skills default; source code and
 instruction files are never redirected) is redirected once to
-`scripts/bulk-read.sh` (bulk-reader skill), which summarises it with headless `claude -p` on `model` (null =
+the skills repo's `scripts/bulk-read.sh` (bulk-reader skill), which summarises it with headless `claude -p` on `model` (null =
 haiku) under the session's own auth. `spillOutput` (default on with `enable`) adds a `Bash` PostToolUse entry
 (`shunt-spill-output.sh`): a successful command output over 12000 chars is saved under `~/.cache/claude-spill/` and
 the session gets the path with a head and tail excerpt; failed commands are untouched. With a skills pin that lacks the hooks it registers nothing.

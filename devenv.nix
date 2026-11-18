@@ -421,6 +421,7 @@ let
     gate "caddy-edge-test"
       (with pkgs; [
         nix
+        openssl
         python3
       ])
       ''
@@ -1039,9 +1040,7 @@ let
           | gawk '{printf "  %6d  %s\n",$1,$2}'
       '';
 
-  # Offline classification test: assert rf:analyze's decode recognises each
-  # crafted fixture (beacon count, deauth/disassoc reason codes). No device.
-  # the Rust beacon table of rf-proto (#42 slice 6) on a local capture; reads the file only. Its parity with
+  # The Rust beacon table of rf-proto (#42 slice 6) on a local capture; reads the file only. Its parity with
   # rf:beacons' tshark table is checks.rf-beacons-parity (flake check, so nixos:qa)
   rfBeaconTable =
     gate "rf-beacon-table"
@@ -1072,6 +1071,8 @@ let
         bash scripts/rf-beacons-test.sh
       '';
 
+  # Offline classification test: assert rf:analyze's decode recognises each
+  # crafted fixture (beacon count, deauth/disassoc reason codes). No device.
   rfAnalyzeTest =
     gate "rf-analyze-test"
       (with pkgs; [

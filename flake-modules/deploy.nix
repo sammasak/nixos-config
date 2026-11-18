@@ -15,7 +15,7 @@ let
       inherit system;
       overlays = [
         inputs.deploy-rs.overlays.default
-        (final: prev: {
+        (_final: prev: {
           deploy-rs = prev.deploy-rs // {
             deploy-rs = prev.deploy-rs.deploy-rs.overrideAttrs (o: {
               patches = (o.patches or [ ]) ++ [ ../pkgs/patches/deploy-rs-412-rollback-before-cancel.patch ];
@@ -30,7 +30,7 @@ let
     "aarch64-linux"
   ] activate;
 
-  # Key-only, lenovo-only login with passwordless sudo (homelab/deploy-target.nix).
+  # Key-only, lenovo-only login with passwordless sudo (modules/homelab/deploy-target.nix).
   pushAs = {
     sshUser = "deploy";
     user = "root";
