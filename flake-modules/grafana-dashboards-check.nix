@@ -125,6 +125,35 @@ let
       dashboard = seed ''{job="journal"}'' "loki";
       reason = "job 'journal': no Loki stream";
     };
+    # a rule on a metric nothing exports, as the remote-write alerts were
+    rule-unknown-metric = {
+      rules.groups = [
+        {
+          name = "seed";
+          rules = [
+            {
+              alert = "SeedRemoteWriteBehind";
+              expr = "prometheus_remote_storage_shards_desired > 0";
+            }
+          ];
+        }
+      ];
+      reason = "rules seed SeedRemoteWriteBehind: unknown metric prometheus_remote_storage_shards_desired";
+    };
+    rule-unknown-job = {
+      rules.groups = [
+        {
+          name = "seed";
+          rules = [
+            {
+              alert = "SeedTargetDown";
+              expr = ''up{job="kube-state-metrics"} == 0'';
+            }
+          ];
+        }
+      ];
+      reason = "rules seed SeedTargetDown: job 'kube-state-metrics': no scrape job";
+    };
     # a name the running Prometheus does not export
     prometheus-typo = {
       dashboard = seed "prometheus_tsdb_head_seriez" "prometheus";
@@ -343,6 +372,8 @@ in
                 "${../modules/homelab/monitoring/alloy-otlp.alloy}"
               ];
               inherit (prom) rule_files;
+              # black-pi's alert and recording rules, held to the same names and jobs as the panels
+              alert_rules = prom.rule_files;
               record_sources = [ "${../pkgs/llm-bench/rules.nix}" ];
             };
             seeds = builtins.toJSON seeds;
@@ -380,10 +411,14 @@ in
               exit 1
             }
             # systemd needs D-Bus, which the sandbox lacks: its names come from this version's collector source and flags
-            python3 -I ${../scripts/node-exporter-systemd-names.py} $src ${
+            python3 -I ${../scripts/node-exporter-collector-names.py} $src systemd ${
               lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] exec
             } > systemd.prom
             grep -q '^node_systemd_units ' systemd.prom
+            # timex needs adjtimex, which the sandbox may refuse
+            python3 -I ${../scripts/node-exporter-collector-names.py} $src timex >> systemd.prom
+            # what the repo's own textfile writers print (open-webui's edge check, the generation file)
+            rg --no-filename -o "printf '(homelab_[a-z_]+)" -r '$1 0' ${../modules} ${../scripts} | sort -u > writers.prom
             # the deployed command line, with only the listener, the textfile directory and the fixture roots swapped
             ${
               lib.replaceStrings
@@ -423,8 +458,10 @@ in
               } ${msi-ms7758.pkgs.prometheus-alertmanager} "$amConfigPath" \
               ${lib.escapeShellArg (toString pi.services.prometheus.alertmanager.extraFlags)} "$alloyExec"
             check() {
-              python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom stack/*.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
+              ${
+                pkgs.python3.withPackages (ps: [ ps.pyyaml ])
+              }/bin/python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom writers.prom llm-gateway.prom stack/*.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"
