@@ -421,6 +421,10 @@ let
       chatStreams = acer.systemd.sockets.open-webui-proxy.listenStreams;
       fleet = lib.mapAttrs (_: h: h.address) acer.sam.fleet.hosts;
       ntfyPort = acer.sam.fleet.ntfy.port;
+      edgeMetrics = {
+        address = acer.sam.fleet.hosts.${acer.sam.fleet.edgeMetrics.host}.address;
+        inherit (acer.sam.fleet.edgeMetrics) port;
+      };
       # what lenovo's AdGuard answers for the names, and what black-pi's blackbox probes
       rewrites = lenovo.homelab.dns.rewrites;
       prometheusConfig = hosts.black-pi.config.services.prometheus.configText;
