@@ -32,11 +32,7 @@ CASES = {
     "forbidden-mount": 'The option `apps.notes.runtime.service.state\' has names ["../../etc/ssh"]',
     "oversized-resources": "option `apps.notes.runtime.service.resources.memoryMiB' is not of type",
     "memory-over-grant": ['apps.notes.runtime.service.resources.memoryMiB: 1024 is above grants.notes.memoryMiB (256).'],
-    "port-clash": ['apps.notes.runtime.service.port: 8081/tcp on acer-swift is sam.fleet.listeners.gateway-api.'],
-    "port-clash-apps": [
-        "apps.notes.runtime.service.port: 8090/tcp on acer-swift is also apps.wiki's.",
-        "apps.wiki.runtime.service.port: 8090/tcp on acer-swift is also apps.notes's.",
-    ],
+    "port-llm-gateway": "The option `apps.notes.runtime.service.port' does not exist",
     "missing-owner": "The option `apps.notes.owner' was accessed but has no value defined",
     "owner-not-granted": ['apps.notes.owner: mallory is not the owner grants.notes approves (sammasak).'],
     "unpinned-rev": "option `apps.notes.source.rev' is not of type",
@@ -50,7 +46,8 @@ CASES = {
     "unknown-auth": "option `apps.notes.ingress.notes.auth' is not of type",
     "metrics-path-relative": "option `apps.notes.runtime.service.metricsPath' is not of type",
     "caddy-injection": "option `apps.notes.runtime.service.metricsPath' is not of type",
-    "metrics-off-edge": ["apps.notes.runtime.service.metricsPath: msi-ms7758 is not the edge (acer-swift); black-pi scrapes an app's loopback metrics through the edge's metrics site."],
+    "metrics-via-loopback": "option `apps.notes.runtime.service.metricsPath' is not of type",
+    "metrics-off-edge": ["apps.notes.runtime.service.metricsPath: msi-ms7758 is not the edge (acer-swift); black-pi scrapes an app's metrics through the edge's metrics site, which reaches only the edge's sockets."],
 }
 # the host facts a case overrides
 FACTS = {"auth-no-provider": {"forwardAuth": []}}

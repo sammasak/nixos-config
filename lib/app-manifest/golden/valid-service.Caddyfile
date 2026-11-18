@@ -8,12 +8,12 @@ herman-next.sammasak.dev {
 notes.sammasak.dev {
 	route {
 		import authentik
-		reverse_proxy 127.0.0.1:8090
+		reverse_proxy unix//run/apps/notes/http.sock
 	}
 }
 http://:9180 {
 	handle /apps/notes/metrics {
 		rewrite * /metrics
-		reverse_proxy 127.0.0.1:8090
+		reverse_proxy unix//run/apps/notes/http.sock
 	}
 }

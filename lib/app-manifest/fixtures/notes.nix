@@ -12,7 +12,6 @@
   ingress.notes.auth = "authentik";
   runtime.service = {
     program = "notes-server";
-    port = 8090;
     metricsPath = "/metrics";
     resources = {
       memoryMiB = 128;

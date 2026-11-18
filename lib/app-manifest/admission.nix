@@ -13,20 +13,12 @@ let
   rule = assertion: message: { inherit assertion message; };
   others = n: list: lib.concatMapStringsSep ", " (o: "apps.${o}") (lib.remove n list);
   claimants = l: lib.attrNames (lib.filterAttrs (_: a: a.ingress ? ${l}) apps);
-  listening =
-    host: port:
-    lib.attrNames (
-      lib.filterAttrs (
-        n: a: grants ? ${n} && grants.${n}.host == host && (a.runtime.service.port or null) == port
-      ) apps
-    );
   admit =
     n: a:
     let
       g = grants.${n};
       at = "apps.${n}";
       s = a.runtime.service or null;
-      fleetPort = lib.findFirst (p: p.port == s.port && p.proto == "tcp") null facts.ports.${g.host};
     in
     [
       (rule (
@@ -61,14 +53,8 @@ let
         (rule (s.resources.memoryMiB <= g.memoryMiB)
           "${at}.runtime.service.resources.memoryMiB: ${toString s.resources.memoryMiB} is above grants.${n}.memoryMiB (${toString g.memoryMiB})."
         )
-        (rule (
-          fleetPort == null
-        ) "${at}.runtime.service.port: ${toString s.port}/tcp on ${g.host} is ${fleetPort.by}.")
-        (rule (listening g.host s.port == [ n ])
-          "${at}.runtime.service.port: ${toString s.port}/tcp on ${g.host} is also ${others n (listening g.host s.port)}'s."
-        )
         (rule (s.metricsPath == null || g.host == facts.edge)
-          "${at}.runtime.service.metricsPath: ${g.host} is not the edge (${facts.edge}); black-pi scrapes an app's loopback metrics through the edge's metrics site."
+          "${at}.runtime.service.metricsPath: ${g.host} is not the edge (${facts.edge}); black-pi scrapes an app's metrics through the edge's metrics site, which reaches only the edge's sockets."
         )
       ]
       ++ lib.concatMap (k: [

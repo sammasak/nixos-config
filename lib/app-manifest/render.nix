@@ -1,5 +1,5 @@
 # The edge's site for each admitted ingress name and black-pi's scrape of each app's metrics, from `admit`'s output
-# alone. Every value written into the Caddyfile is one a type bounds (app name, DNS label, port, HTTP path, auth enum)
+# alone. Every value written into the Caddyfile is one a type bounds (app name, DNS label, HTTP path, auth enum)
 # or the store path checked below, so an app cannot place a directive. An auth other than public imports the edge's
 # own snippet of that name (edge.nix's extraConfig, as chat and grafana do); admission refuses one the edge lacks.
 {
@@ -19,7 +19,7 @@ let
       throw "app-manifest render: apps.${n}'s package ${builtins.toJSON p} is not a store path."
     else
       p;
-  loopback = a: "127.0.0.1:${toString a.port}";
+  upstream = a: "unix/${a.socket}";
   block = head: directives: "${head} {\n${lib.concatMapStrings (d: "\t${d}\n") directives}}\n";
   lines = text: lib.splitString "\n" (lib.removeSuffix "\n" text);
   body =
@@ -28,8 +28,8 @@ let
     block "route" (
       lib.optional (auth != "public") "import ${auth}"
       ++ (
-        if a ? port then
-          [ "reverse_proxy ${loopback a}" ]
+        if a ? socket then
+          [ "reverse_proxy ${upstream a}" ]
         else
           [ "root * ${root n}" ]
           ++ lib.optional a.static.spa "try_files {path} /index.html"
@@ -52,7 +52,7 @@ rec {
       n: a:
       block "handle ${metricsPath n}" [
         "rewrite * ${a.metricsPath}"
-        "reverse_proxy ${loopback a}"
+        "reverse_proxy ${upstream a}"
       ]
     ) scraped
   );
