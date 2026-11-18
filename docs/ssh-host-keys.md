@@ -6,6 +6,18 @@ public key of every managed machine and of github.com in
 for all ssh clients and for every deploy-rs node. A known host connects
 without a prompt; an unknown name or a changed key fails the connection.
 Host keys only: user login keys (`authorized_keys`) live in `lib/users.nix`.
+
+Each managed machine's pin is in its own directory, `hosts/<dir>/ssh_known_hosts`:
+a `#` line with the evidence and the SHA256 fingerprint, then one line in
+`known_hosts` format, `<name>[,<alias or address>…] ssh-ed25519 <key>`. The
+module reads that file for every deploy node of `flake-modules/hosts.nix`,
+appends the host's `sam.fleet` address and extra addresses
+(`modules/core/fleet.nix`), and fails every host's build, naming the file,
+while a deploy node has none or it does not hold exactly one such line. List
+in the file only what `sam.fleet` does not give (msi's `msi` alias, naked-pi's
+addresses). github.com's pin stays in the module. The file is plain
+`known_hosts`, so `ssh-keygen -lf hosts/<dir>/ssh_known_hosts` prints the
+fingerprint to compare with its comment.
 `scripts/test-ssh-known-hosts.py` (gate `nixos:known-hosts-test`, part of
 `nixos:qa`) pins the fingerprints below; `scripts/ssh-known-hosts-verify.sh`
 re-reads the keys live from their sources.
@@ -62,7 +74,7 @@ On the machine, or over a connection already pinned:
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-compare with the table and with the module. From elsewhere, after the pin:
+compare with the table and with the host's `hosts/<dir>/ssh_known_hosts`. From elsewhere, after the pin:
 
 ```sh
 scripts/ssh-known-hosts-verify.sh            # all fleet hosts and github.com
@@ -91,8 +103,9 @@ who it is. It is fine as a cross-check once the fingerprint is known.
    installer's serial console or a key read before the machine left your
    desk) run `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` and note
    the SHA256 fingerprint. `cat` the `.pub` file for the key itself.
-3. Add an entry to `hosts` in `modules/core/ssh-known-hosts.nix` with every
-   name and address the host is reached by, the key and the fingerprint; add
+3. Write `hosts/<dir>/ssh_known_hosts`: a `#` line with how the key was read
+   and its fingerprint, then `<name>[,<alias>…] ssh-ed25519 <key>` with every
+   name and address the host is reached by that `sam.fleet` does not give; add
    the fingerprint to `EXPECTED` and, once the host has a sops recipient
    (`ssh-to-age` of the same key, the usual onboarding step), the recipient to
    `SOPS_RECIPIENTS` in `scripts/test-ssh-known-hosts.py`; add the row above.
@@ -109,7 +122,8 @@ who it is. It is fine as a cross-check once the fingerprint is known.
 A reinstall or `rm /etc/ssh/ssh_host_*` gives the machine a new key, and
 every pinned client refuses it ("REMOTE HOST IDENTIFICATION HAS CHANGED" or
 "Host key verification failed"); that refusal is the point. Verify the new
-fingerprint on the console as in onboarding, update the module entry, the
+fingerprint on the console as in onboarding, update the host's
+`hosts/<dir>/ssh_known_hosts`, the
 test table and this table in one PR, and switch the clients. Until the switch
 lands, reach the host only through a channel that does not depend on its ssh
 key (console, BMC, serial).

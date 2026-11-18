@@ -1,5 +1,6 @@
 # LAN facts that more than one module reads (#291), stated once. Read-only: a host that sets any of it fails as a
-# second definition. A fact with a single reader stays in that reader (host keys, cache keys, naked-pi's addresses).
+# second definition. A fact with a single reader stays in that reader (cache keys) or in its host's directory (its ssh
+# host key with the names sam.fleet does not give, as naked-pi's addresses).
 { lib, ... }:
 let
   inherit (lib) mkOption types;
