@@ -84,11 +84,19 @@ in
     }
   ];
   programs.ssh.knownHosts = hosts;
-  # mkAfter: a per-host exception another module adds to extraConfig stays ahead of this catch-all (ssh keeps the
-  # first value); the whole of extraConfig precedes nixpkgs' generated "Host *", and a user's own config precedes both
-  programs.ssh.extraConfig = lib.mkAfter ''
-    Host *
-      StrictHostKeyChecking yes
-      UpdateHostKeys no
-  '';
+  programs.ssh.extraConfig = lib.mkMerge [
+    # a pre-push gate runs for minutes with the push connection idle, and GitHub closes it ("closed by remote host")
+    ''
+      Host github.com
+        ServerAliveInterval 20
+        ServerAliveCountMax 60
+    ''
+    # mkAfter: a per-host exception another module adds to extraConfig stays ahead of this catch-all (ssh keeps the
+    # first value); the whole of extraConfig precedes nixpkgs' generated "Host *", and a user's own config precedes both
+    (lib.mkAfter ''
+      Host *
+        StrictHostKeyChecking yes
+        UpdateHostKeys no
+    '')
+  ];
 }
