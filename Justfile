@@ -44,6 +44,9 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # pushed non-docs commits, but `.#HOST` is the working tree, so the recipe
 # refuses a dirty tree or a HEAD not on origin/main (a detached checkout of it
 # passes).
+# A second deploy of a HOST being deployed is refused at once, recorded
+# result=locked: a flock on $XDG_RUNTIME_DIR/deploy-HOST.lock (every checkout of
+# this user), held by the deploy's processes, so it ends when they die.
 # Break-glass: DEPLOY_UNGATED=1 just deploy HOST deploys it anyway, with a
 # warning. A scope, not `capped`: it keeps the caller's environment,
 # terminal and Ctrl-C. The cap covers the deploy-rs client and its evaluation;
@@ -70,6 +73,9 @@ deploy HOST:
       rec() { recorded=1; scripts/platform-record.sh deploy node={{HOST}} result="$1" seconds=$((SECONDS - start)) \
         rolled_back="${2:-0}" units_restarted="${3:-0}" failed_units="${4:-unknown}" sha="$sha"; }; \
       trap '[ "$recorded" = 1 ] || rec interrupted; rm -f "$log"' EXIT; \
+      lock=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/deploy-{{HOST}}.lock; exec {held}<>"$lock"; \
+      flock -n "$held" || { holder=$(cat "$lock"); echo "deploy: refused, {{HOST}} is being deployed already (${holder:-holder unknown}); not queued, rerun when it ends" >&2; rec locked; exit 1; }; \
+      echo "pid $$, $sha, since $(date +%T)" >"$lock"; \
       scripts/system-checks.sh {{HOST}} {{memcap}} || { c=$?; rec checks-failed; exit "$c"; }; \
       rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}; \
       rolled=0; if grep -q 'rolled back to previous generation' "$log"; then rolled=1; fi; \
