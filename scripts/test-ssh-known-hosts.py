@@ -332,7 +332,7 @@ def main():
               f"{host}: ssh -G on the rendered file resolves to strict checking against the pinned file")
         check(keepalive(plain) == ("20", "60"),
               f"{host}: ssh to github.com sends a keepalive every 20 s, as a long pre-push gate needs ({keepalive(plain)})")
-    without = re.sub(r"Host github\.com\n(\s+\S.*\n)+", "", plain)
+    without = re.sub(r"Host github\.com\n(?:[ \t]+\S.*\n)+", "", plain)
     check(keepalive(without) == ("0", "3"), f"seeded: without the github.com block the push gets no keepalive ({keepalive(without)})")
     for node in ("lenovo", "acer-swift", "black-pi"):
         opts = P["sshOpts"][node]

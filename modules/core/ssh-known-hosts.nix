@@ -85,12 +85,14 @@ in
   ];
   programs.ssh.knownHosts = hosts;
   programs.ssh.extraConfig = lib.mkMerge [
-    # a pre-push gate runs for minutes with the push connection idle, and GitHub closes it ("closed by remote host")
-    ''
+    # a pre-push gate runs for minutes with the push connection idle, and GitHub closes it ("closed by remote host").
+    # mkOrder 1400: after other modules' plain lines, which a Host line here would otherwise scope to github.com (a
+    # guest's global ServerAliveInterval, workers/default.nix), and before the catch-all
+    (lib.mkOrder 1400 ''
       Host github.com
         ServerAliveInterval 20
         ServerAliveCountMax 60
-    ''
+    '')
     # mkAfter: a per-host exception another module adds to extraConfig stays ahead of this catch-all (ssh keeps the
     # first value); the whole of extraConfig precedes nixpkgs' generated "Host *", and a user's own config precedes both
     (lib.mkAfter ''
