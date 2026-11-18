@@ -243,14 +243,14 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "PR lead time, open to merge (PRs merged in 7 d)",
+      "title": "PR lead time, earliest own commit to merge (PRs merged in 7 d)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
         "y": 18
       },
@@ -282,14 +282,47 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 4,
-        "x": 8,
+        "w": 3,
+        "x": 6,
         "y": 18
       },
       "targets": [
         {
           "expr": "shipping_prs_merged{window=\"7d\"}",
           "legendFormat": "merged",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 27,
+      "type": "bargauge",
+      "title": "Lead time from open time instead (fallbacks, 7 d)",
+      "description": "PRs whose lead time fell back to their open time. http_error near PRs merged means GitHub's commits API failed for every PR and the PR lead time panel shows open-to-merge; no_token means the collector ran without a login.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 3,
+        "x": 9,
+        "y": 18
+      },
+      "targets": [
+        {
+          "expr": "shipping_pr_lead_time_fallbacks{window=\"7d\"}",
+          "legendFormat": "{{reason}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",

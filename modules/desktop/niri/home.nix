@@ -25,8 +25,7 @@
     // (creates the X11 sockets, exports DISPLAY) as long as the binary is on PATH.
     // waybar is NOT spawned: waybar.service already runs it; spawning here doubles it.
 
-    // These live in Hyprland's start hook, which never runs under niri; without
-    // them Mod+V opens an empty clipboard history and polkit prompts fail silently.
+    // Without these Mod+V opens an empty clipboard history and polkit prompts fail silently.
     spawn-sh-at-startup "wl-paste --type text --watch cliphist store"
     spawn-sh-at-startup "wl-paste --type image --watch cliphist store"
     spawn-at-startup "systemctl" "--user" "start" "hyprpolkitagent.service"
@@ -139,7 +138,7 @@
         Mod+Ctrl+WheelScrollDown cooldown-ms=150 { move-column-to-workspace-down; }
         Mod+Ctrl+WheelScrollUp   cooldown-ms=150 { move-column-to-workspace-up; }
 
-        // Screenshots + scripts kept from the Hyprland setup
+        // Screenshots and the shared desktop scripts
         Print       { screenshot; }
         Mod+Shift+S { screenshot; }
         Mod+P       { spawn-sh "~/.config/hypr/scripts/screenshot.sh s"; }

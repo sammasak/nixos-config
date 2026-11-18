@@ -78,6 +78,9 @@ in
   services.prometheus.exporters.blackbox = {
     enable = true;
     listenAddress = "127.0.0.1";
+    # info logs every redirect each probe follows, Authentik's login URLs included, into the journal and so Loki;
+    # a failed probe still logs at error, and /probe?debug=true still shows a probe's redirect trail
+    extraFlags = [ "--log.level=warn" ];
     configFile = pkgs.writeText "blackbox.yml" (
       builtins.toJSON {
         modules = {
@@ -189,6 +192,7 @@ in
         # the admin listener, /metrics beside /status (modules/homelab/llm-gateway.toml)
         (static "llm-gateway" [ "${hosts.acer-swift.address}:9091" ])
         (static "alloy-otlp" [ "${hosts.acer-swift.address}:12346" ])
+        (static "caddy" [ (lib.removePrefix "http://" config.sam.fleet.edgeMetrics.url) ])
         (static "blackbox-exporter" [ "${blackbox.listenAddress}:${toString blackbox.port}" ])
         {
           job_name = "blackbox";

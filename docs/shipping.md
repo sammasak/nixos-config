@@ -21,6 +21,7 @@ node-exporter. Its calls are read-only:
 | `shipping_issues_opened` / `_closed{window}` | Issues opened and closed in the last 24 h and 7 d, in every repo, parked and archived ones included |
 | `shipping_issue_age_days{quantile}` | Age of the open actionable issues, median and p90 |
 | `shipping_prs_merged`, `shipping_pr_lead_time_hours{quantile}` | PRs merged in 7 d, and their lead time: from the earliest author date among the PR's commits not on its base (at most GitHub's 250) to the merge, never below 0. A batch PR is opened after its gate, so its open time would measure the PR, not the work. The open time stands in for a PR whose commits cannot be read (an HTTP error, e.g. a deleted repo) or that lists none, and for every PR without a login |
+| `shipping_pr_lead_time_fallbacks{reason,window}` | Of those PRs, how many fell back to their open time: `http_error`, `no_commits`, `no_token`; every reason is written, 0 included. `http_error` close to `shipping_prs_merged` means the commits API failed for every PR, so the lead time quantiles are open-to-merge and read low (Shipping dashboard, beside PRs merged) |
 | `shipping_review_rounds`, `_first_pass_ratio`, `_prs_counted`, `_unreviewed_prs` | `Grade: N/10` comments per PR, over the last reviewed merged PRs; first pass means the first grade reached `review.passGrade` |
 | `shipping_escapes{kind,window}` | Commits starting `Revert "` on default branches, and issues labelled `escape` |
 | `shipping_gate_fail_ratio`, `_runs_counted`, `shipping_gate_seconds` | The last push-mode `nixos-qa` gates |
@@ -43,6 +44,7 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 |---|---|
 | OpenIssuesGrowing | Actionable open issues grew on each of the last `days` days |
 | PrLeadTimeHigh | The median lead time is over `medianHours` |
+| LeadTimeFallbacksHigh | More than `maxRatio` of the PRs merged in 7 d took their lead time from their open time after an HTTP error on GitHub's commits API, so the lead time reads low while the section looks fresh |
 | ReviewFirstPassLow | The first-pass rate is under `minRatio` over a full sample of `lastVerdicts` reviewed PRs |
 | GateFailRateHigh | The fail rate is over `maxRatio` over a full sample of `lastRuns` push gates |
 | HostBehindMain | The host has been up and more than `maxHours` behind main for `upHours`. A sleeping host is not paged |

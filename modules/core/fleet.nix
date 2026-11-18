@@ -18,7 +18,7 @@ let
             };
             port = mkOption {
               type = types.port;
-              description = "The TCP port it listens on, on that host's LAN address.";
+              description = "The TCP port it listens on, at least on that host's LAN address.";
             };
             url = mkOption {
               type = types.str;
@@ -110,6 +110,7 @@ in
         # by LAN address: a page must not need acer's Caddy
         ntfy = endpoint fleet.config "ntfy server every host pages";
         loki = endpoint fleet.config "Loki every host ships its logs to";
+        edgeMetrics = endpoint fleet.config "Caddy's /metrics on the edge host, for black-pi's Prometheus alone";
         pageUrl = mkOption {
           type = types.str;
           readOnly = true;
@@ -162,6 +163,10 @@ in
     loki = {
       host = "black-pi";
       port = 3100;
+    };
+    edgeMetrics = {
+      host = "acer-swift";
+      port = 9180;
     };
   };
 }
