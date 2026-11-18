@@ -145,7 +145,7 @@
         "x": 0,
         "y": 4
       },
-      "description": "Lines per second shipped to Loki per namespace. A flat line at 0 indicates a silent namespace.",
+      "description": "Lines per second shipped to Loki per job and host. A gap or 0 means that job on that host is silent.",
       "targets": [
         {
           "expr": "sum by (job, host) (rate({job=~\".+\"}[5m]))",
