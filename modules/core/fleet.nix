@@ -70,6 +70,7 @@ let
     asus-b460m = {
       address = "192.168.10.113";
       sleeps = true;
+      gpu = "nvidia";
       power = {
         mac = "f0:2f:74:32:6b:7f";
         interface = "eno1";
