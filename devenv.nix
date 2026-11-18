@@ -451,6 +451,7 @@ let
         python3
         bash
         just
+        gawk
         coreutils
         gnugrep
         gnused
@@ -608,6 +609,10 @@ let
         python3
         openssh
         ssh-to-age
+        just
+        gawk
+        coreutils
+        gnugrep
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-ssh-known-hosts.py

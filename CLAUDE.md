@@ -298,7 +298,6 @@ either side is only reported.
   `deploy.hostname` default to the entry name; `deploy.remoteBuild` is
   required, true unless lenovo can build it);
   its deploy-rs node follows from the entry;
-- the `just deploy` HOST pattern (checked by `scripts/test-ssh-known-hosts.py`);
 - its pinned key in `modules/core/ssh-known-hosts.nix` (asserted against the deploy nodes) and its sops
   recipient, both also in `scripts/test-ssh-known-hosts.py`;
 - its rows in this file's deploy block and hostnames, `docs/architecture.md`, and for a runtime host

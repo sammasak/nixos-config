@@ -12,7 +12,12 @@ set -euo pipefail
 for tool in ssh-keygen ssh-to-age curl jq; do command -v "$tool" >/dev/null || { echo "UNCHECKED: $tool is not on PATH"; exit 2; }; done
 here=$(cd "$(dirname "$0")/.." && pwd)
 known="${KNOWN_HOSTS:-/etc/ssh/ssh_known_hosts}"; user_known="${USER_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}"; sops="$here/secrets/.sops.yaml"
-hosts=("$@"); [ "${#hosts[@]}" -gt 0 ] || hosts=(lenovo-21CB001PMX acer-swift msi-ms7758 asus-b460m black-pi naked-pi)
+hosts=("$@")
+# none given: every host of the hosts table (scripts/hosts-table.sh)
+if [ "${#hosts[@]}" -eq 0 ]; then
+  names=$("$here/scripts/hosts-table.sh" hostnames) || { echo "UNCHECKED: the hosts table could not be read"; exit 2; }
+  mapfile -t hosts <<<"$names"
+fi
 rc=0
 pinned() { { ssh-keygen -F "$1" -f "$known" 2>/dev/null || true; } | { grep -v '^#' || true; } | awk '$2 == "ssh-ed25519" {print $3; exit}'; }
 user_key() { [ -r "$user_known" ] || return 0; { ssh-keygen -F "$1" -f "$user_known" 2>/dev/null || true; } | { grep -v '^#' || true; } | awk '$2 == "ssh-ed25519" {print $3; exit}'; }

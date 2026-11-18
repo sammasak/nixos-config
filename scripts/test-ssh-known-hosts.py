@@ -3,10 +3,12 @@
 (fingerprints recorded here and in docs/ssh-host-keys.md), every name and address of each host is covered, a host
 pins loopback to its own key only, every client fails closed, deploy-rs too, the old github pin is gone, and every
 sops secret a host declares is in a file encrypted to that host's key and names a key that file has. The hand-kept
-host lists (EXPECTED, SOPS_RECIPIENTS, the verify script's default, the docs' host rows) name every deploy node."""
+host lists (EXPECTED, SOPS_RECIPIENTS, the docs' host rows) name every deploy node; the Justfile's HOST recipes and the
+verify script's default read the hosts table instead (scripts/hosts-table.sh), held here to the evaluated nodes."""
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -217,10 +219,53 @@ def keepalive(config_text):
     return opts.get("serveraliveinterval"), opts.get("serveralivecountmax")
 
 
-def verify_defaults(script_text):
-    """The hosts scripts/ssh-known-hosts-verify.sh checks when given none."""
-    m = re.search(r'\|\| hosts=\(([^)]*)\)', script_text)
-    return m.group(1).split() if m else []
+def hosts_table(*args, table=None):
+    """scripts/hosts-table.sh ARGS (on TABLE's text when given): (exit code, output lines, stderr)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ)
+        if table is not None:
+            (pathlib.Path(tmp) / "hosts.nix").write_text(table)
+            env["HOSTS_TABLE"] = str(pathlib.Path(tmp) / "hosts.nix")
+        r = subprocess.run([str(ROOT / "scripts/hosts-table.sh"), *args], env=env, capture_output=True, text=True)
+    return r.returncode, r.stdout.split(), r.stderr
+
+
+CHECK_LINE = '    @{{quote(justfile_directory() / "scripts/hosts-table.sh")}} check {{quote(HOST)}}'
+
+
+def unchecked_recipes(justfile):
+    """The recipes that require a HOST (deploy-rs targets; `HOST=host` ones default to this machine) whose first line is
+    not the hosts-table check."""
+    return sorted(name for name, first in re.findall(r"^([a-z-]+) HOST:\n([^\n]*)", justfile, re.M) if first != CHECK_LINE)
+
+
+def table_checks(nodes, host_name):
+    """The hosts table as scripts/hosts-table.sh reads it, against the evaluated deploy nodes and hostNames."""
+    rc, got, _ = hosts_table("nodes")
+    check(rc == 0 and sorted(got) == sorted(nodes), f"hosts-table.sh reads exactly the deploy nodes ({got})")
+    rc, dirs, _ = hosts_table("hostnames")
+    check(rc == 0 and dict(zip(got, dirs)) == host_name, f"hosts-table.sh's host directories are the hostNames ({dict(zip(got, dirs))})")
+    text = (ROOT / "flake-modules/hosts.nix").read_text()
+    cut = "".join(l for l in text.splitlines(True) if not l.startswith("    asus-b460m = {"))
+    check(cut != text and gap(hosts_table("nodes", table=cut)[1], nodes) == ["-asus-b460m"],
+          "seeded: a table without asus-b460m's entry reads without it")
+    for name in nodes:
+        check(hosts_table("check", name)[0] == 0, f"hosts-table.sh check accepts the deploy node {name}")
+    for bad in ("acer", "lenovo-21CB001PMX", "lenovo;true", "", "github.com"):
+        rc, _, err = hosts_table("check", bad)
+        check(rc == 1 and "not an entry of flake-modules/hosts.nix" in err, f"seeded: hosts-table.sh check refuses {bad!r} ({rc})")
+    check(hosts_table("nodes", table="{ }\n")[0] == 2, "seeded: a table with no entry it can read exits 2, not an empty list")
+    justfile = (ROOT / "Justfile").read_text()
+    recipes = re.findall(r"^([a-z-]+) HOST:", justfile, re.M)
+    check(sorted(recipes) == ["checks", "deploy", "dry-activate"] and unchecked_recipes(justfile) == [],
+          f"every recipe requiring a HOST starts with the hosts-table check ({recipes}; not: {unchecked_recipes(justfile)})")
+    check(unchecked_recipes(justfile.replace("dry-activate HOST:\n" + CHECK_LINE + "\n", "dry-activate HOST:\n")) == ["dry-activate"],
+          "seeded: a HOST recipe without the check is found")
+    with tempfile.TemporaryDirectory() as tmp:
+        r = subprocess.run([shutil.which("just") or "just", "--justfile", str(ROOT / "Justfile"), "--working-directory", tmp,
+                            "deploy", f"bogus; touch {tmp}/ran"], capture_output=True, text=True)
+        check(r.returncode != 0 and "unknown host 'bogus; touch" in r.stderr and not (pathlib.Path(tmp) / "ran").exists(),
+              f"`just deploy` refuses a name outside the table before any other line, and runs nothing it carries ({r.returncode})")
 
 
 DOCS = {
@@ -340,7 +385,7 @@ def undocumented(texts, nodes, host_name, roles):
     return out
 
 
-def verify_script_checks(known_hosts_text):
+def verify_script_checks(known_hosts_text, names):
     """scripts/ssh-known-hosts-verify.sh over fakes: a host that answers with the pinned key is OK (exit 0), with a
     different key DIFF (1), not at all UNREACHABLE (2); a contradicting ~/.ssh/known_hosts entry is named (1)."""
     script = ROOT / "scripts/ssh-known-hosts-verify.sh"
@@ -377,6 +422,18 @@ def verify_script_checks(known_hosts_text):
         (tmp / "user_known_hosts").write_text(f"acer-swift {acer_key}\n")
         r = run(FAKE_SSH_KEY=acer_key)
         check(r.returncode == 0 and "CONTRADICTION" not in r.stdout, "verify: a user entry equal to the pin is not a contradiction")
+
+        def checked(**extra):
+            out = subprocess.run([str(script)], env=dict(env, **extra), capture_output=True, text=True).stdout
+            return {m for m in re.findall(r"^(?:OK|DIFF|UNCHECKED|UNREACHABLE) +([A-Za-z0-9-]+)\b", out, re.M)} - {"github"}
+        check(gap(checked(), names) == [], f"verify: given no host, it checks every deploy node's host ({sorted(checked())})")
+        table = (ROOT / "flake-modules/hosts.nix").read_text()
+        (tmp / "hosts.nix").write_text("".join(l for l in table.splitlines(True) if not l.startswith("    asus-b460m = {")))
+        check(gap(checked(HOSTS_TABLE=str(tmp / "hosts.nix")), names) == ["-asus-b460m"],
+              "seeded: given no host, it follows the table: an entry removed there is not checked")
+        r = subprocess.run([str(script)], env=dict(env, HOSTS_TABLE=str(tmp / "absent.nix")), capture_output=True, text=True)
+        check(r.returncode == 2 and "UNCHECKED: the hosts table could not be read" in r.stdout,
+              f"seeded: an unreadable table is UNCHECKED, exit 2, not a pass over no hosts ({r.returncode})")
 
 
 def bare_rollbacks(texts):
@@ -443,15 +500,11 @@ def main():
                         re.sub(r'\[doc\([^\n]*\)\]\n', "", (ROOT / "Justfile").read_text()))
     check(pattern is not None and sorted(pattern.group(1).split("|")) == sorted(P["deployNodes"]),
           f"`just deploy` accepts exactly the deploy-rs nodes {sorted(P['deployNodes'])}")
-    # every recipe taking a HOST (deploy, dry-activate, checks) names the same nodes: a new host missing from one
-    recipes = re.findall(r'\[arg\("HOST", pattern="([^"]+)"\)\]\n(?:\[doc\([^\n]*\)\]\n)?([a-z-]+) HOST:',
-                         (ROOT / "Justfile").read_text())
-    odd = [name for p, name in recipes if sorted(p.split("|")) != sorted(P["deployNodes"])]
-    check(len(recipes) >= 3 and not odd, f"every HOST recipe accepts exactly the deploy-rs nodes ({[n for _, n in recipes]}; not: {odd})")
-    verify_script_checks(known)
     nodes = P["deployNodes"]
     host_name = {n: P["sops"]["hosts"][n]["hostName"] for n in nodes}
     names = host_name.values()
+    table_checks(nodes, host_name)
+    verify_script_checks(known, names)
     check(gap(set(EXPECTED) - {"github"}, names) == [], f"EXPECTED pins exactly the deploy nodes' hosts ({gap(set(EXPECTED) - {'github'}, names)})")
     check(gap(SOPS_RECIPIENTS, names) == [], f"SOPS_RECIPIENTS names exactly the deploy nodes' hosts ({gap(SOPS_RECIPIENTS, names)})")
     seeded = {n: v for n, v in EXPECTED.items() if n != "asus-b460m"}
@@ -468,10 +521,6 @@ def main():
     check(unpin not in F["lenovo"] and uncache not in F["lenovo"], "lenovo fails neither fleet-list assertion")
     check(unpin in F["unpinned"], f"seeded: lenovo without asus-b460m's pin fails the deploy-node assertion ({F['unpinned']})")
     check(uncache in F["uncached"], f"seeded: black-pi serving a store cache with no key listed fails ({F['uncached']})")
-    script = (ROOT / "scripts/ssh-known-hosts-verify.sh").read_text()
-    check(gap(verify_defaults(script), names) == [], f"ssh-known-hosts-verify.sh checks every deploy node's host by default ({verify_defaults(script)})")
-    check(gap(verify_defaults(script.replace(" asus-b460m", "")), names) == ["-asus-b460m"],
-          "seeded: the verify script's default list without asus-b460m fails")
     # the docs' power windows and the CLAUDE.md secrets table, against sam.fleet and secrets/.sops.yaml
     docs = {str(p.relative_to(ROOT)): p.read_text() for p in [ROOT / "CLAUDE.md", ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]}
     drift = window_drift(docs, P["fleet"], docs["CLAUDE.md"])
