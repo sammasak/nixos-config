@@ -180,7 +180,7 @@
       "title": "Hosts in the fleet",
       "gridPos": {
         "h": 4,
-        "w": 8,
+        "w": 4,
         "x": 16,
         "y": 0
       },
@@ -204,6 +204,56 @@
     },
     {
       "id": 6,
+      "type": "stat",
+      "title": "Health score",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max(homelab:health:score)",
+          "legendFormat": "",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 100,
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "homelab:health:score (rules/homelab.yaml): nodes ready, no critical alert, disk free, targets up, the dead man's switch; HomelabHealthScoreLow pages under 70."
+    },
+    {
+      "id": 7,
       "type": "state-timeline",
       "title": "Who was up, asleep or down",
       "gridPos": {
@@ -259,7 +309,7 @@
       }
     },
     {
-      "id": 7,
+      "id": 8,
       "type": "table",
       "title": "Fleet now",
       "gridPos": {
@@ -496,7 +546,7 @@
       ]
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "table",
       "title": "Failed units across the fleet",
       "gridPos": {
@@ -552,7 +602,7 @@
       ]
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "logs",
       "title": "Deploys (just deploy from lenovo, by flake attribute)",
       "gridPos": {

@@ -645,7 +645,7 @@
       "title": "Timers: time since last run",
       "gridPos": {
         "h": 7,
-        "w": 24,
+        "w": 20,
         "x": 0,
         "y": 16
       },
@@ -690,6 +690,78 @@
             "desc": true
           }
         ]
+      }
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Clock",
+      "gridPos": {
+        "h": 7,
+        "w": 4,
+        "x": 20,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (node) (abs(node_timex_offset_seconds{node=\"$node\"}))",
+          "legendFormat": "offset",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "min by (node) (node_timex_sync_status{node=\"$node\"})",
+          "legendFormat": "synchronised",
+          "instant": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "no",
+                        "color": "red",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "yes",
+                        "color": "green",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "description": "The kernel's NTP offset and whether it is synchronised; NodeClockSkewDetected and NodeClockNotSynchronising page on these.",
+      "options": {
+        "orientation": "vertical"
       }
     }
   ]
