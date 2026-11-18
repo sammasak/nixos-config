@@ -139,4 +139,11 @@ in
     RestartSec = 10;
     MemoryMax = "64M";
   };
+
+  assertions = [
+    {
+      assertion = lib.elem "--cluster.listen-address=" config.services.prometheus.alertmanager.extraFlags;
+      message = "modules/homelab/monitoring/alertmanager.nix: Alertmanager runs unclustered; rules/alertmanager.yaml leaves out the cluster consistency alerts, so add them back with a second instance.";
+    }
+  ];
 }

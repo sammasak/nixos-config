@@ -1,5 +1,6 @@
 # kube-prometheus-stack 85.0.3's alertmanager.rules, the chart's job selector replaced by the native job and
-# descriptions naming instance, not namespace/pod (neither label exists off Kubernetes).
+# descriptions naming instance, not namespace/pod (neither label exists off Kubernetes), less the two a single
+# unclustered instance can never fire (members, config consistency; alertmanager.nix asserts it stays one).
 groups:
   - name: alertmanager.rules
     rules:
@@ -13,20 +14,6 @@ groups:
           # https://www.robustperception.io/alerting-on-gauges-in-prometheus-2-0 for details.
           max_over_time(alertmanager_config_last_reload_successful{job="alertmanager"}[5m]) == 0
         for: 10m
-        labels:
-          severity: critical
-      - alert: AlertmanagerMembersInconsistent
-        annotations:
-          description: Alertmanager {{ $labels.instance }} has only found {{ $value }} members of the {{$labels.job}} cluster.
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagermembersinconsistent
-          summary: A member of an Alertmanager cluster has not found all other cluster members.
-        expr: |-
-          # Without max_over_time, failed scrapes could create false negatives, see
-          # https://www.robustperception.io/alerting-on-gauges-in-prometheus-2-0 for details.
-            max_over_time(alertmanager_cluster_members{job="alertmanager"}[5m])
-          < on (namespace,service,cluster) group_left
-            count by (namespace,service,cluster) (max_over_time(alertmanager_cluster_members{job="alertmanager"}[5m]))
-        for: 15m
         labels:
           severity: critical
       - alert: AlertmanagerFailedToSendAlerts
@@ -74,19 +61,6 @@ groups:
         for: 5m
         labels:
           severity: warning
-      - alert: AlertmanagerConfigInconsistent
-        annotations:
-          description: Alertmanager instances within the {{$labels.job}} cluster have different configurations.
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/alertmanager/alertmanagerconfiginconsistent
-          summary: Alertmanager instances within the same cluster have different configurations.
-        expr: |-
-          count by (namespace,service,cluster) (
-            count_values by (namespace,service,cluster) ("config_hash", alertmanager_config_hash{job="alertmanager"})
-          )
-          != 1
-        for: 20m
-        labels:
-          severity: critical
       - alert: AlertmanagerClusterDown
         annotations:
           description: '{{ $value | humanizePercentage }} of Alertmanager instances within the {{$labels.job}} cluster have been up for less than half of the last 5m.'
