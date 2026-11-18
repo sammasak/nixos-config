@@ -33,4 +33,7 @@ cannot catch it: the drvPath moves with the bump anyway, so an ordering change l
 `//`, silently dropping keys, and did not discharge `mkDefault`/`mkIf`; `scripts/test-typed-interfaces.py` keeps it
 typed.
 
+This layout is kept on purpose, not migrated to dendritic aspects, and is revisited only for a named, measured problem
+it cannot solve: [docs/records/keep-hosts-table-no-dendritic.md](records/keep-hosts-table-no-dendritic.md).
+
 The migration plan and its evidence: `git log -- docs/flake-wiring.md`.
