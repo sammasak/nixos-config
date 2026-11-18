@@ -138,7 +138,7 @@ let
           ];
         }
       ];
-      reason = "rules seed SeedRemoteWriteBehind: unknown metric prometheus_remote_storage_shards_desired";
+      reason = "rules rules-rule-unknown-metric SeedRemoteWriteBehind: unknown metric prometheus_remote_storage_shards_desired";
     };
     rule-unknown-job = {
       rules.groups = [
@@ -152,7 +152,7 @@ let
           ];
         }
       ];
-      reason = "rules seed SeedTargetDown: job 'kube-state-metrics': no scrape job";
+      reason = "rules rules-rule-unknown-job SeedTargetDown: job 'kube-state-metrics': no scrape job";
     };
     # a name the running Prometheus does not export
     prometheus-typo = {
