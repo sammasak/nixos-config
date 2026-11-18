@@ -43,7 +43,7 @@ The recipe builds the candidate without activating it and scans the running syst
 candidate under `flock /run/work-locks/heavy-work.lock`. It then gates the pair. If that
 gate exits 3, it also runs a grype-only gate. Evidence goes to
 `~/nix-audit-pilot/<date>-<HHMM>-<host>-<nixos-config rev>/`, which stays private on that host, and the recipe
-always exits 0. acer-swift and msi are deployed from lenovo, which holds their derivations,
+always exits 0. acer-swift, msi and asus are deployed from lenovo, which holds their derivations,
 so run their comparisons on lenovo. vulnix needs the closure's `.drv` files in the local
 store: on a target that did not build its own system, vulnix fails (exit 3) and only a
 grype-only comparison is possible. If the running system is no longer in lenovo's store, the
@@ -73,7 +73,7 @@ flake-only hosts and changes nothing: README.md), or pick the previous generatio
 GRUB on msi-ms7758 and asus-b460m); Home Manager is a NixOS module here, so
 its packages go with it. Everywhere: revert this change, or drop
 `sam.cliTools.nixAudit.enable` from lenovo's `configuration.nix` or from
-`modules/roles/runtime-host.nix` (acer-swift, msi-ms7758), then switch or deploy as
+`modules/roles/runtime-host.nix` (acer-swift, msi-ms7758, asus-b460m), then switch or deploy as
 usual. nix-audit installs no
 service, hook or timer, and removing it changes no system it inspected. It writes:
 - its `--json-out` files and `~/nix-audit-pilot`;
