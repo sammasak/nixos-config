@@ -44,6 +44,7 @@ covers 21:00 to 08:30 Stockholm in both seasons, and mutes one hour more: 20:00 
 |---|---|
 | OpenIssuesGrowing | Actionable open issues grew on each of the last `days` days |
 | PrLeadTimeHigh | The median lead time is over `medianHours` |
+| LeadTimeFallbacksHigh | More than `maxRatio` of the PRs merged in 7 d took their lead time from their open time after an HTTP error on GitHub's commits API, so the lead time reads low while the section looks fresh |
 | ReviewFirstPassLow | The first-pass rate is under `minRatio` over a full sample of `lastVerdicts` reviewed PRs |
 | GateFailRateHigh | The fail rate is over `maxRatio` over a full sample of `lastRuns` push gates |
 | HostBehindMain | The host has been up and more than `maxHours` behind main for `upHours`. A sleeping host is not paged |
