@@ -6,7 +6,11 @@
 # scripts/check-grafana-dashboards.py with its own reason.
 { config, lib, ... }:
 let
-  inherit (config.flake.nixosConfigurations) acer-swift black-pi msi-ms7758;
+  inherit (config.flake.nixosConfigurations) acer-swift black-pi lenovo msi-ms7758;
+  # its output holds what adguard-textfile wrote against a running AdGuard (modules/homelab/adguardhome.nix)
+  adguardCheck = lib.findFirst (
+    c: c.name == "adguardhome-fleet-names"
+  ) (throw "grafana-dashboards: lenovo has no adguardhome-fleet-names check") lenovo.config.system.checks;
   pi = black-pi.config;
   inherit (pi.homelab.grafana) dashboards;
   hosts = lib.attrNames pi.sam.fleet.hosts;
@@ -124,6 +128,11 @@ let
     loki-job-typo = {
       dashboard = seed ''{job="journal"}'' "loki";
       reason = "job 'journal': no Loki stream";
+    };
+    # a name the running Prometheus does not export
+    prometheus-typo = {
+      dashboard = seed "prometheus_tsdb_head_seriez" "prometheus";
+      reason = "unknown metric prometheus_tsdb_head_seriez:";
     };
     gateway-typo = {
       dashboard = seed "rate(llm_gateway_no_such_total[5m])" "prometheus";
@@ -288,6 +297,11 @@ in
               discard black-pi.pkgs.prometheus-blackbox-exporter.src.outPath
               == discard msi-ms7758.pkgs.prometheus-blackbox-exporter.src.outPath
             && discard pkgs.grafana-loki.src.outPath == discard msi-ms7758.pkgs.grafana-loki.src.outPath
+            &&
+              discard pi.services.prometheus.package.src.outPath == discard msi-ms7758.pkgs.prometheus.src.outPath
+            &&
+              discard pi.services.prometheus.alertmanager.package.src.outPath
+              == discard msi-ms7758.pkgs.prometheus-alertmanager.src.outPath
             && lib.hasInfix (discard "${acer-swift.pkgs.grafana-alloy}/bin/alloy") (
               discard (toString acer.systemd.services.alloy-otlp.serviceConfig.ExecStart)
             )
@@ -298,7 +312,7 @@ in
               discard acer.systemd.services.llm-gateway.serviceConfig.ExecStart
             )
           )
-          "grafana-dashboards: black-pi's Loki (or this check's logcli) or blackbox exporter, acer's alloy-otlp, Caddy or llm-gateway is not the source this check reads";
+          "grafana-dashboards: black-pi's Loki (or this check's logcli), Prometheus, Alertmanager or blackbox exporter, acer's alloy-otlp, Caddy or llm-gateway is not the source this check reads";
         assert lib.assertMsg (
           !handList.success
         ) "grafana-dashboards: a dashboard listing the node variable's hosts by hand evaluated";
@@ -315,6 +329,9 @@ in
               pkgs.ripgrep
             ];
             inherit promConfig;
+            amConfig = builtins.toJSON pi.services.prometheus.alertmanager.configuration;
+            # with its context: acer's own config file, token wrapper and Alloy, all x86
+            alloyExec = acer.systemd.services.alloy-otlp.serviceConfig.ExecStart;
             spec = builtins.toJSON {
               inherit dashboards hosts builtin;
               sources = lib.imap0 (i: s: {
@@ -335,6 +352,7 @@ in
             seeds = builtins.toJSON seeds;
             passAsFile = [
               "promConfig"
+              "amConfig"
               "spec"
               "seeds"
             ];
@@ -397,12 +415,23 @@ in
             python3 -I ${../scripts/llm-gateway-metric-names.py} ${acer-swift.pkgs.llmGateway.src} > llm-gateway.prom
             # lenovo's shipping textfile (modules/homelab/shipping-metrics.nix): the names its collector emits
             python3 -I ${../scripts/shipping-metrics.py} --list > shipping.prom
+            mkdir stack
+            bash ${../scripts/monitoring-exposition.sh} stack ${msi-ms7758.pkgs.prometheus} "$promConfigPath" \
+              ${
+                lib.escapeShellArg (
+                  toString (
+                    pi.services.prometheus.extraFlags
+                    ++ [ "--storage.tsdb.retention.time=${pi.services.prometheus.retentionTime}" ]
+                  )
+                )
+              } ${msi-ms7758.pkgs.prometheus-alertmanager} "$amConfigPath" \
+              ${lib.escapeShellArg (toString pi.services.prometheus.alertmanager.extraFlags)} "$alloyExec"
             # Authentik's names from the Python package and the Go server acer runs
             python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
               ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
             check() {
               python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom authentik.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom llm-gateway.prom authentik.prom ${adguardCheck}/dns.prom stack/*.prom shipping.prom ${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"

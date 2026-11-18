@@ -919,7 +919,7 @@ def main():
           f"the state dir is bound nosuid,nodev and the per-container profiles and roots nosuid,nodev,noexec, nothing else ({got.get('mounts')})")
     base = r.get("privateUsers")
     owners = [(u, g, n, b) for b, n, u, g in re.findall(
-        r'echo (\S+) > "\$d/(r|ok)/\.id-base\.new" && mv -f "\$d/(?:r|ok)/\.id-base\.new" "\$d/(?:r|ok)/\.id-base"\n *install -d -m 0700 -o (\S+) -g (\S+) "\$d/(?:r|ok)/home"', act)]
+        r'echo (\S+) > "\$d/(r|ok)/\.id-base\.new" && chmod 0644 "\$d/(?:r|ok)/\.id-base\.new" && mv -f "\$d/(?:r|ok)/\.id-base\.new" "\$d/(?:r|ok)/\.id-base"\n *install -d -m 0700 -o (\S+) -g (\S+) "\$d/(?:r|ok)/home"', act)]
     checks = {n: next((c for c in got.get("pre", {}).get(n, []) if "dev-env-id-check" in c), "").split()[1:] for n in ("r", "ok")}
     check(isinstance(base, int) and sorted(owners) == sorted([(str(base + 1000), str(base + 100), "r", str(base)), ("alice", "users", "ok", "0")])
           and checks == {"r": ["/var/lib/dev-environments/r", str(base)], "ok": ["/var/lib/dev-environments/ok", "0"]}
