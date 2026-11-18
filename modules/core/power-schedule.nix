@@ -1,7 +1,9 @@
-# Work-hours power windows for the hosts whose fleet entry declares one (sam.fleet.hosts.<name>.power,
-# modules/core/fleet.nix): an always-on waker sends each its Wake-on-LAN packet at `wake`, and the host
+# The fleet's one night (sam.fleet.night, modules/core/fleet.nix), two behaviours. A host with a power window
+# (sam.fleet.hosts.<name>.power) is off: an always-on waker sends it its Wake-on-LAN packet at `wake`, and the host
 # arms Wake-on-LAN on its `interface` and powers itself off at `off`. No weekend wake fires, so a Mon-Fri window
-# stays off from Fri `off` to Mon `wake`.
+# stays off from Fri `off` to Mon `wake`. A quiet host (sam.fleet.hosts.<name>.quiet: fans that stay on) runs
+# throttled every night, weekends included: scripts/night-quiet.sh sets intel_pstate from the clock at boot, at a
+# deploy that changes it, and at both edges.
 {
   config,
   lib,
@@ -17,7 +19,18 @@ let
   windowed = lib.filterAttrs (_: h: h.power != null) hosts;
   # msi-ms7758 -> msi: the unit names predate the fleet fact and stay as they were
   prefix = name: lib.head (lib.splitString "-" name);
-  own = (hosts.${host} or { power = null; }).power;
+  entry =
+    hosts.${host} or {
+      power = null;
+      quiet = null;
+    };
+  own = entry.power;
+  quiet = entry.quiet;
+  inherit (config.sam.fleet) night;
+  both = lib.attrNames (lib.filterAttrs (_: h: h.power != null && h.quiet != null) hosts);
+  nightQuiet = "${pkgs.bash}/bin/bash ${../../scripts/night-quiet.sh} ${night.start} ${night.end} ${
+    toString (if quiet == null then 100 else quiet.maxPerfPct)
+  }";
   awake = lib.filter (n: !hosts.${n}.sleeps) (lib.attrNames windowed);
   prefixes = map prefix (lib.attrNames windowed);
 in
@@ -29,6 +42,12 @@ in
       type = lib.types.bool;
       default = own != null;
       description = "This host's scheduled poweroff and Wake-on-LAN unit from its fleet power window.";
+    };
+    # on by the fleet fact, like poweroff
+    quiet.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = quiet != null;
+      description = "This host's night throttle (scripts/night-quiet.sh) from its fleet quiet entry.";
     };
   };
 
@@ -46,6 +65,25 @@ in
         {
           assertion = !cfg.waker.enable || !(hosts.${host} or { sleeps = false; }).sleeps;
           message = "sam.powerSchedule.waker runs only on an always-on host; ${host} sleeps (modules/core/fleet.nix), so it would miss the wakes.";
+        }
+        {
+          assertion = both == [ ];
+          message = "modules/core/fleet.nix: ${toString both} has both a power window and a quiet night; a host is either off or throttled through the night.";
+        }
+        {
+          # the Pis are fanless and run no intel_pstate: neither behaviour is theirs
+          assertion = !pkgs.stdenv.hostPlatform.isAarch || (own == null && quiet == null);
+          message = "modules/core/fleet.nix: ${host} is an ARM board, fanless, with no Wake-on-LAN NIC or intel_pstate: it declares neither a power window nor a quiet night.";
+        }
+        {
+          assertion =
+            quiet == null
+            || (
+              quiet.driver == "intel_pstate"
+              && pkgs.stdenv.hostPlatform.isx86_64
+              && !lib.elem "intel_pstate=disable" config.boot.kernelParams
+            );
+          message = "${host} is quiet through the night with driver intel_pstate (modules/core/fleet.nix), so it must be an x86_64 Intel host that keeps intel_pstate (no intel_pstate=disable in boot.kernelParams); scripts/night-quiet.sh writes its no_turbo and max_perf_pct.";
         }
         {
           assertion = lib.length prefixes == lib.length (lib.unique prefixes);
@@ -85,6 +123,38 @@ in
           };
         }
       ) windowed;
+    })
+
+    (mkIf (quiet != null && cfg.quiet.enable) {
+      # the state at boot, and again at a deploy that changes the night or the percentage (the unit changes with them)
+      systemd.services.night-quiet = {
+        description = "CPU for the time of day: throttled through the fleet's night";
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = nightQuiet;
+        };
+      };
+      # the edges; no catch-up, as night-quiet already set the state from the clock at boot
+      systemd.services.night-quiet-edge = {
+        description = "CPU for the time of day, at the night's start and end";
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStart = nightQuiet;
+        };
+      };
+      systemd.timers.night-quiet-edge = {
+        description = "The fleet's night starting and ending";
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnCalendar = [
+            "*-*-* ${night.start}:00"
+            "*-*-* ${night.end}:00"
+          ];
+          Persistent = false;
+        };
+      };
     })
 
     (mkIf (own != null && cfg.poweroff.enable) {
