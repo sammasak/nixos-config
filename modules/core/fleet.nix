@@ -100,6 +100,18 @@ let
         from = [ "black-pi" ];
       }
     ) (lib.filterAttrs (_: only) hosts);
+  # the hosts with sam.storeCache (lenovo, the runtime-host role; store-cache.nix asserts both ways): every other fleet
+  # host substitutes from it, worker guests through their host's NAT
+  storeCaches = [
+    "lenovo-21CB001PMX"
+    "acer-swift"
+    "msi-ms7758"
+    "asus-b460m"
+  ];
+  ntfy = {
+    host = "lenovo-21CB001PMX";
+    port = 2586;
+  };
 in
 {
   options.sam.fleet = mkOption {
@@ -246,10 +258,7 @@ in
     gateway = "192.168.10.1";
     lanCidr = "192.168.10.0/24";
     deployer = "lenovo-21CB001PMX";
-    ntfy = {
-      host = "lenovo-21CB001PMX";
-      port = 2586;
-    };
+    inherit ntfy;
     listeners = {
       inherit loki;
       edge-metrics = edgeMetrics;
@@ -311,17 +320,22 @@ in
       };
     }
     // scraped "node-exporter" 9100 (_: true)
-    // scraped "nvidia-gpu" 9835 (h: h.gpu or null != null);
+    // scraped "nvidia-gpu" 9835 (h: h.gpu or null != null)
+    // lib.listToAttrs (
+      map (
+        h:
+        lib.nameValuePair "store-cache-${h}" {
+          host = h;
+          port = 5000;
+          from = lib.remove h (lib.attrNames hosts);
+        }
+      ) storeCaches
+    );
     public = [
       {
         port = 22;
         lan = true;
         why = "SSH, key-only: management and break-glass from the LAN (network.nix).";
-      }
-      {
-        port = 5000;
-        lan = true;
-        why = "harmonia, on hosts with sam.storeCache: signed store paths for the LAN (store-cache.nix).";
       }
       {
         port = 67;
@@ -341,8 +355,7 @@ in
         why = "AdGuard DNS-over-TLS, Android Private DNS.";
       }
       {
-        host = "lenovo-21CB001PMX";
-        port = 2586;
+        inherit (ntfy) host port;
         why = "ntfy for the phone on home Wi-Fi; unauthenticated, scoping it is the owner's call.";
       }
       {

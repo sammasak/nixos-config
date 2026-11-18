@@ -112,8 +112,9 @@ A timer also runs it at boot and every 15 minutes, because the daemon collects
 by itself once `min-free` is set; a path a guest built within the last interval
 is the remaining exposure.
 
-Across hosts, lenovo, acer, msi and asus each serve their store to the LAN as a
-binary cache (`modules/core/store-cache.nix`, harmonia on port 5000) and
+Across hosts, lenovo, acer, msi and asus each serve their store to the other fleet hosts as a
+binary cache (`modules/core/store-cache.nix`, harmonia on port 5000, admitted by the `store-cache-<host>`
+listeners in `modules/core/fleet.nix`) and
 substitute from the always-on ones ahead of cache.nixos.org: what one machine
 built the others download. msi and asus (both `sleeps` in
 `modules/core/fleet.nix`) serve their store while up but nobody substitutes
