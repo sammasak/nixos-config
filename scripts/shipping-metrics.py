@@ -30,6 +30,7 @@ METRICS = {
     "shipping_issue_age_days": "Age of open actionable issues, by quantile.",
     "shipping_prs_merged": "PRs merged in the window.",
     "shipping_pr_lead_time_hours": "Earliest author date of a PR's own commits (its open time without a token) to merge, PRs merged in the last 7 d, by quantile.",
+    "shipping_pr_lead_time_fallbacks": "PRs merged in the last 7 d whose lead time fell back to their open time, by reason.",
     "shipping_review_rounds": "Verdict comments (Grade: N/10) per reviewed merged PR, by quantile.",
     "shipping_review_first_pass_ratio": "Share of the last reviewed merged PRs whose first verdict met the policy grade.",
     "shipping_review_prs_counted": "Reviewed merged PRs behind the review ratio and rounds.",
@@ -154,8 +155,8 @@ def lead_hours(gh, it):
     """Hours from the earliest author date among the PR's own commits (those not on its base) to its merge, never
     below 0. The PR's open time stands in when its commits cannot be read: without a token (60 REST calls an hour
     would not cover one call per PR), on an HTTP error for this PR alone (a deleted or private repo), or when it
-    lists none."""
-    start = ts(it["created_at"])
+    lists none. Returns the hours and the fallback's reason, or None when the commits gave the start."""
+    start, reason = ts(it["created_at"]), "no_token"
     if gh.token:
         path, dates, page = f"/repos/{it['repository_url'].split('/repos/', 1)[1]}/pulls/{it['number']}/commits", [], 1
         try:
@@ -168,19 +169,25 @@ def lead_hours(gh, it):
                 page += 1
         except urllib.error.HTTPError as e:
             print(f"shipping-metrics: commits of {path} unreadable ({e.code}), lead time from its open time", file=sys.stderr)
-            dates = []
+            dates, reason = [], "http_error"
+        else:
+            reason = None if dates else "no_commits"
         start = min(dates, default=start)
-    return max((ts(it["pull_request"]["merged_at"]) - start).total_seconds() / 3600, 0)
+    return max((ts(it["pull_request"]["merged_at"]) - start).total_seconds() / 3600, 0), reason
 
 
 def prs(gh, out, owner, now):
     since = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     items, total = gh.search("issues", f"user:{owner} is:pr is:merged merged:>={since}")
     out.add("shipping_prs_merged", total, window="7d")
-    lead = [lead_hours(gh, it) for it in items]
+    measured = [lead_hours(gh, it) for it in items]
+    lead = [hours for hours, _ in measured]
     for q in (0.5, 0.9):
         if lead:
             out.add("shipping_pr_lead_time_hours", quantile(lead, q), quantile=str(q))
+    # every reason, 0 included: an error that hits every PR shows as a jump, not as a series appearing
+    for reason in ("http_error", "no_commits", "no_token"):
+        out.add("shipping_pr_lead_time_fallbacks", sum(r == reason for _, r in measured), reason=reason, window="7d")
     return sorted(items, key=lambda it: it["pull_request"]["merged_at"], reverse=True)
 
 

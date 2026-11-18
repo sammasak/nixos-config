@@ -70,6 +70,12 @@ in
           "The median PR lead time over the last 7 d is {{ $value | humanize }} h."
           { }
         )
+        # an API-wide error leaves the prs section fresh, and the lead time quietly open-to-merge
+        (alert "LeadTimeFallbacksHigh"
+          ''sum(shipping_pr_lead_time_fallbacks{reason="http_error",window="7d"}) / sum(shipping_prs_merged{window="7d"}) > ${toString a.LeadTimeFallbacksHigh.maxRatio.value}''
+          "{{ $value | humanizePercentage }} of the PRs merged in 7 d have their lead time from their open time: GitHub's commits API failed for them (journalctl -u shipping-metrics)."
+          { }
+        )
         (alert "ReviewFirstPassLow"
           "shipping_review_first_pass_ratio < ${toString a.ReviewFirstPassLow.minRatio.value} and on () shipping_review_prs_counted >= ${toString a.ReviewFirstPassLow.lastVerdicts.value}"
           "Only {{ $value | humanizePercentage }} of the last ${toString a.ReviewFirstPassLow.lastVerdicts.value} reviewed PRs passed their first review."

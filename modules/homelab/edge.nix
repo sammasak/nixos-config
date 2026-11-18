@@ -10,7 +10,9 @@
   ...
 }:
 let
-  inherit (config.sam.fleet) hosts ntfy;
+  inherit (import ../../lib/firewall.nix lib) anySourceTcp mkDualBackendFirewall;
+  inherit (config.sam.fleet) hosts ntfy edgeMetrics;
+  fw = config.networking.firewall;
   domain = "sammasak.dev";
   caddy = config.services.caddy;
   adminSocket = "unix//run/caddy/admin.sock|0200";
@@ -86,9 +88,18 @@ in
     # 80/tcp, 443/tcp and 443/udp on every interface
     openFirewall = true;
     # a TCP admin API would let any local process load a config; with none, a change restarts (every site drops)
+    # no per_host: Caddy labels any HTTPS Host as sent (a random name under the wildcard, a name with a port), so any
+    # client could grow the series without bound; the named servers split public from scrape traffic instead
     globalConfig = ''
       admin ${adminSocket}
       grace_period 10s
+      metrics
+      servers :443 {
+        name public
+      }
+      servers :${toString edgeMetrics.port} {
+        name metrics
+      }
     '';
     # Caddy deletes a client-sent copy of each copied header before it sets the outpost's value.
     extraConfig = ''
@@ -117,7 +128,28 @@ in
           logFormat = "output file ${config.services.caddy.logDir}/access-unserved.log";
           extraConfig = "respond 404";
         };
+        # plain HTTP for black-pi's scrape alone (the rule below), on every address: bound to the DHCP Wi-Fi address,
+        # a start before the address exists exits 1, which the unit never restarts (RestartPreventExitStatus), and
+        # every name would stay down
+        "http://:${toString edgeMetrics.port}" = {
+          logFormat = "output discard";
+          extraConfig = "metrics /metrics";
+        };
       };
+  };
+
+  networking.firewall = {
+    inherit
+      (mkDualBackendFirewall {
+        nftComment = "Caddy's metrics answer black-pi's Prometheus.";
+        ports = [ edgeMetrics.port ];
+        sources = [ hosts.black-pi.address ];
+        interfaces = [ ];
+        inherit (fw) backend;
+      })
+      extraInputRules
+      extraCommands
+      ;
   };
 
   systemd.services.caddy = {
@@ -139,6 +171,10 @@ in
       # lenovo's *.sammasak.dev rewrite and every OTLP relay send here by sam.fleet.edge
       assertion = config.networking.hostName == config.sam.fleet.edge;
       message = "modules/homelab/edge.nix runs on ${config.networking.hostName}, but sam.fleet.edge is ${config.sam.fleet.edge}: the DNS rewrite and the OTLP relays would point at the wrong host.";
+    }
+    {
+      assertion = edgeMetrics.host == config.sam.fleet.edge && fw.enable && anySourceTcp fw [ edgeMetrics.port ] == [ ];
+      message = "modules/homelab/edge.nix: sam.fleet.edgeMetrics must be on the edge host (${config.sam.fleet.edge}), and port ${toString edgeMetrics.port} out of allowedTCPPorts: only black-pi is admitted.";
     }
     {
       assertion =
