@@ -37,10 +37,12 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               `just deferred-checks <full sha>` lists them and exits 1 while one still waits for its owner; merge on 0.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 # ── Gate runner: a host gating a branch it did not write ──
-#   Fresh worktree cut from origin/main, the branch fetched into it (from its bundle when handed one), HEAD checked
-#   against the sha handed over; `devenv shell -- true` in it first, or the hook shims use the main checkout's config.
-#   `just parity` without BASE compares with the merge base with origin/main: the commit the branch was cut from, or
-#   main as last merged in. Passing a newer origin/main counts main's own commits as movers. One line per host,
+#   Fetch the branch (from its bundle when handed one) and add a fresh worktree at it, HEAD checked against the sha
+#   handed over; `devenv shell -- true` in it first, or the hook shims use the main checkout's config.
+#   Movers, two forms. `just parity` without BASE compares with the merge base with origin/main (the commit the branch
+#   was cut from, or main as last merged in); passing a newer origin/main counts main's own commits as movers. The
+#   hand-off form compares, per host, the branch head merged locally with current origin/main against current
+#   origin/main, so main's own commits never show; it is what the gate runner reports. Parity's lines, per host,
 #   `node <host>` and `deploy-settings`: `same`, `MOVED` (base:/tree: below), `ADDED`/`REMOVED`, `none` (no node).
 #   No gate while that host is deployed or switched: `just deploy` takes no heavy lock, and the green is keyed on
 #   /run/current-system, so a switch mid-run leaves its green unrecorded and the next push of that tree gates in full.
