@@ -21,10 +21,11 @@ for home in "$@"; do
       *) continue ;;
     esac
     [ -e "$units/$base" ] || continue
+    # %q: a file name is the user's, and goes to the deploy's output
     if [ "$n" != "$base" ]; then
-      echo "warning: $f overrides the NixOS user unit $base ($units); this deploy's version is not what runs for that user" >&2
+      printf 'warning: %q overrides the NixOS user unit %q (%s); this deploy'"'"'s version is not what runs for that user\n' "$f" "$base" "$units" >&2
     elif [ "$(readlink -f "$f")" != "$(readlink -f "$units/$n")" ]; then
-      echo "warning: $f shadows the NixOS user unit $n ($units): the home's copy runs, so this deploy does not change it for that user" >&2
+      printf 'warning: %q shadows the NixOS user unit %q (%s): the home'"'"'s copy runs, so this deploy does not change it for that user\n' "$f" "$n" "$units" >&2
     fi
   done
 done

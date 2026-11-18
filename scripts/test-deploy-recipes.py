@@ -112,6 +112,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (user / "own.service").write_text("[Service]\nExecStart=/bin/true\n")
     (units / "default.target").write_text("[Unit]\n")
     (user / "default.target.wants").mkdir()
+    (user / "default.target.requires").mkdir()
     other = tmp / "home" / "other"
     other.mkdir()
     r = subprocess.run(["bash", str(ROOT / "scripts/shadowed-user-units.sh"), str(tmp / "home" / "lukas"), str(other),
@@ -120,6 +121,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(r.returncode == 0 and len(lines) == 2 and "ollama-portforward.service shadows the NixOS user unit" in lines[1]
           and "kept.service.d overrides the NixOS user unit kept.service" in lines[0],
           f"activation: a home's own copy of a NixOS user unit, and a .d override, are warned; a link to the same file, "
-          f"a unit NixOS lacks and a home without the directory are not; it never fails ({r.returncode}, {lines})")
+          f"a unit NixOS lacks, .wants and .requires directories (merged, not shadowing) and a home without the "
+          f"directory are not; it never fails ({r.returncode}, {lines})")
 
 finish()
