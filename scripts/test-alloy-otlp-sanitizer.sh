@@ -43,8 +43,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-otlp_port=$((20000 + $$ % 20000))
-server_port=$((otlp_port + 1))
+# ports the kernel hands out free now: ones derived from the PID landed in the ephemeral range, where another
+# process's connection could already hold one (a gate failed on "address already in use")
+free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+otlp_port=$(free_port)
+server_port=$(free_port)
 test_token="native-otlp-smoke-${$}"
 export OTLP_BEARER_TOKEN=$test_token
 
@@ -381,7 +384,8 @@ printf 'PASS: authenticated OTLP ingestion recovered after restart; 1 MiB reques
 kill -INT "$alloy_pid" 2>/dev/null || true
 wait "$alloy_pid" 2>/dev/null || true
 alloy_pid=
-sum_port=$((otlp_port + 3))
+sum_port=$(free_port)
+sum_server_port=$(free_port)
 cp "$deployed_config" "$rewritten_file"
 chmod u+w "$rewritten_file"
 for rewrite in \
@@ -402,7 +406,7 @@ otelcol.exporter.debug "test" {
 }
 EOF
 : > "$alloy_log"
-mapfile -d '' alloy_argv < <(argv_of "127.0.0.1:$((otlp_port + 4))" "$sum_storage_dir" "$config_file")
+mapfile -d '' alloy_argv < <(argv_of "127.0.0.1:$sum_server_port" "$sum_storage_dir" "$config_file")
 "${alloy_argv[0]}" validate --stability.level=experimental "$config_file" >/dev/null
 "${alloy_argv[@]}" > "$alloy_log" 2>&1 &
 alloy_pid=$!
