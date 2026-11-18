@@ -228,7 +228,7 @@ def main():
                               ["--dangerously-skip-permissions"], "bypassPermissions")]:
         mode, result, authorized, output = run_case(claude, settings, args)
         ok = mode == want and result == "CLEAN" and authorized
-        print(f"{'PASS' if ok else 'FAIL'}: {name}: mode={mode} bash_otlp_header={result} "
+        print(f"{'PASS' if ok else 'FAIL (scripts/test-native-otel-subprocess-env.py)'}: {name}: mode={mode} bash_otlp_header={result} "
               f"otlp_export_authorized={authorized}")
         if not ok:
             failures += 1

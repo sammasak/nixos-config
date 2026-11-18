@@ -173,6 +173,9 @@ bench-diff:
 # side sees tracked files incl. uncommitted edits, not untracked ones. Non-zero if
 # any host toplevel or deploy node moved, was added or was removed, or any deploy
 # setting outside nodes moved.
+# Output, a line each: `same`, `MOVED` (then its base: and tree: values), `ADDED`/`REMOVED` (one side only, not
+# evaluated), `none` (no deploy node on either side). It evaluates every host twice: run it in the heavy lane,
+# `flock -o /run/work-locks/heavy-work.lock just parity`.
 [doc("Compare every host's toplevel, deploy node and deploy settings at BASE (default: merge base with origin/main) with the working tree")]
 parity BASE="":
     {{capped}} bash scripts/bench.sh parity {{quote(BASE)}}

@@ -25,7 +25,7 @@ the order did not move.
 ## Known fragility
 
 Merge order rests on import depth, which nobody chose. The waybar and swaync CSS are pinned with `lib.mkBefore`
-(`modules/desktop/common/programs/waybar/minimal.nix`, `swaync/default.nix`), but the full set of order-dependent
+(`modules/desktop/common/programs/waybar/minimal.nix`, `modules/desktop/common/programs/swaync/default.nix`), but the full set of order-dependent
 definitions is unknown. A flake-parts bump (wrapper depth) or a Stylix bump (its own depth) can flip one, and parity
 cannot catch it: the drvPath moves with the bump anyway, so an ordering change looks like the update.
 

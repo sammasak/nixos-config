@@ -1,0 +1,5 @@
+{ ... }:
+{
+  # the window is in modules/core/power-windows.nix, which does not exist
+  sam.claude.bulkReader.enable = true;
+}

@@ -512,7 +512,8 @@ def userns(*argv, **kw):
 def activation_run(text, state, active=()):
     """Runs the activation script as the host runs it (an ERR trap marks a failed snippet, as /activate does) as root in
     a user namespace with the subuid range mapped, so the instance's user is a second uid that root-only directories
-    shut out. Returns the exit status and a listing of what is under the state directory: path, mode, uid:gid."""
+    shut out, under umask 077 (what `devenv tasks run` inherits on msi): a mode left to the umask fails on every host.
+    Returns the exit status and a listing of what is under the state directory: path, mode, uid:gid."""
     stubs = pathlib.Path(state, "stubs")
     stubs.mkdir(exist_ok=True)
     stubs.joinpath("active").write_text("".join(f"container@{n}.service\n" for n in active))
@@ -522,7 +523,7 @@ def activation_run(text, state, active=()):
     text = re.sub(r"/nix/store/\S+/bin/systemctl", str(systemctl), text)
     text = text.replace("/nix/var/nix/profiles/per-container", f"{state}/profiles").replace("/nix/var/nix/gcroots/per-container", f"{state}/gcroots")
     text = re.sub(r"-o \S+ -g \S+", "-o 1000 -g 100", re.sub(r"chown -h \S+:\S+", "chown -h 1000:100", text))
-    harness = f"_status=0; trap '_status=1' ERR; set -E\n{text}\nrc=$_status; cd {state}/files && find . -mindepth 1 -printf '%P %m %U:%G\\n' | sort; exit $rc"
+    harness = f"umask 077; _status=0; trap '_status=1' ERR; set -E\n{text}\nrc=$_status; cd {state}/files && find . -mindepth 1 -printf '%P %m %U:%G\\n' | sort; exit $rc"
     run = userns("bash", "-c", harness)
     return run.returncode, dict((line.split()[0], tuple(line.split()[1:])) for line in run.stdout.splitlines() if line), run.stderr
 

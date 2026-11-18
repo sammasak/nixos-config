@@ -1,7 +1,7 @@
 # Path-activated, health-gated nixos-rebuild for a non-interactive deployer.
 # Enabling this grants the trigger principal CONTROL-PLANE DEPLOY: anyone who can
 # write /run/nixos-rebuild-trigger/request can deploy any pushed revision of
-# sammasak/nixos-config to this host. The source is a pinned 40-char SHA fetched
+# sammasak/nixos-config's `lenovo` configuration (hostAttr below) to this host. The source is a pinned 40-char SHA fetched
 # from the remote, never the local clone. Never deploy a change to THIS module
 # through the trigger itself.
 # See vault: homelab/decisions/ADR-024-nixos-rebuild-trigger-security-model.md

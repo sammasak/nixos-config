@@ -136,7 +136,7 @@ in
                 };
                 sleeps = mkOption {
                   type = types.bool;
-                  description = "The host may be powered off at any time: the store caches skip it, the alerts expect it (rules/homelab.yaml).";
+                  description = "The host may be powered off at any time: the store caches skip it, the alerts expect it (modules/homelab/monitoring/rules/homelab.yaml).";
                   default = false;
                 };
                 power = mkOption {
@@ -167,7 +167,7 @@ in
                 };
                 gpu = mkOption {
                   type = types.nullOr (types.enum [ "nvidia" ]);
-                  description = "The host's GPU, for its telemetry (monitoring/gpu-exporter.nix) and black-pi's nvidia-gpu scrape job.";
+                  description = "The host's GPU, for its telemetry (modules/homelab/monitoring/gpu-exporter.nix) and black-pi's nvidia-gpu scrape job.";
                   default = null;
                 };
               };
@@ -194,7 +194,7 @@ in
         ntfy = endpoint fleet.config "ntfy server every host pages";
         loki = endpoint fleet.config "Loki every host ships its logs to";
         listeners = mkOption {
-          description = "Every port one fleet host serves another: modules/core/network.nix renders each one's firewall rule from `from`, and fails a host whose firewall admits anything not here or in public.";
+          description = "Every port one fleet host serves another: modules/core/network.nix renders each one's firewall rule from `from`, and fails a host whose firewall admits anything not here or in public. A new one also needs its service's bound port in scripts/gate-probe.nix (fleet-contract, `bound`), which scripts/test-fleet-contract.py compares.";
           type = types.attrsOf (endpointType fleet.config);
         };
         public = mkOption {
