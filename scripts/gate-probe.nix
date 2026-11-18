@@ -609,6 +609,15 @@ let
           inherit (acer.sam.fleet.listeners.gateway-api) url host port;
           address = acer.sam.fleet.hosts.${acer.sam.fleet.listeners.gateway-api.host}.address;
         };
+        gatewayAdmin = {
+          inherit (acer.sam.fleet.listeners.gateway-admin)
+            url
+            host
+            port
+            from
+            ;
+          address = acer.sam.fleet.hosts.${acer.sam.fleet.listeners.gateway-admin.host}.address;
+        };
         seeded = {
           acerWithoutWorkersUrl = pages (
             extend "acer-swift" [ ({ lib, ... }: { sam.workers.ntfyUrl = lib.mkForce null; }) ]

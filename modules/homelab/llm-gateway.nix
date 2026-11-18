@@ -1,5 +1,5 @@
-# llm-gateway as a host service. From the LAN lenovo reaches 8081 and black-pi's Prometheus 9091 (sam.fleet.listeners
-# gateway-api and gateway-admin); Caddy reaches 8081 over loopback. Any process on acer still reaches 9091 and the
+# llm-gateway as a host service. From the LAN lenovo reaches 8081, and black-pi's Prometheus and lenovo's pi-ticket
+# (/status) 9091 (sam.fleet.listeners gateway-api and gateway-admin); Caddy reaches 8081 over loopback. Any process on acer still reaches 9091 and the
 # keyless 11435 over loopback. llm-gateway.toml is the
 # one deployed config: a model or provider change lands there. Without state.sqlite3 the unit is skipped, not failed, and a
 # database restored after the switch needs `systemd-tmpfiles --create` (the Z rule below), then

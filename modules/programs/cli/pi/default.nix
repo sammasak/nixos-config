@@ -13,6 +13,8 @@ let
   # The llm-gateway on acer (sam.fleet.listeners.gateway-api): acer's firewall admits
   # lenovo, and acer reaches its own address locally.
   gatewayUrl = osConfig.sam.fleet.listeners.gateway-api.url;
+  # pi-ticket's quota check reads /status, which the gateway serves on its admin listener alone (the API answers 404)
+  gatewayAdminUrl = osConfig.sam.fleet.listeners.gateway-admin.url;
 
   # Seeded only when missing.
   defaultSettings = builtins.toJSON {
@@ -196,7 +198,7 @@ in
         ];
         text = lokiDefault + ''
           export PI_TICKET_OFFLOAD="''${PI_TICKET_OFFLOAD:-${piOffload}/bin/pi-offload}"
-          export PI_TICKET_GATEWAY_URL="''${PI_TICKET_GATEWAY_URL:-${gatewayUrl}}"
+          export PI_TICKET_GATEWAY_URL="''${PI_TICKET_GATEWAY_URL:-${gatewayAdminUrl}}"
           exec bash ${devenvPlatform}/agents/pi/ticket/pi-ticket "$@"
         '';
       })
