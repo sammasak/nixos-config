@@ -261,7 +261,8 @@ in
         RestrictAddressFamilies = [ "AF_INET" ];
         IPAddressAllow = "localhost";
         IPAddressDeny = "any";
-        MemoryMax = "64M";
+        # soft: a MemoryMax would count in sam.memory's sum, and lenovo's caps leave no room for it (its RSS is ~23M)
+        MemoryHigh = "64M";
         TimeoutStartSec = 30;
       };
     };
