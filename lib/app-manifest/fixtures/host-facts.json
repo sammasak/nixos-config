@@ -1,5 +1,6 @@
 {
   "edgeNames": ["auth", "chat", "grafana", "herman", "llm-gateway", "ntfy", "otlp"],
+  "forwardAuth": ["authentik"],
   "secrets": {
     "acer-swift": ["cloudflare/api_token", "native_otlp_auth", "nix_access_token"],
     "lenovo-21CB001PMX": ["cloudflare/api_token", "nix_signing_key", "tailscale/authkey"]

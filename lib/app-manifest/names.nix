@@ -35,4 +35,7 @@ in
   attr = "[A-Za-z0-9_][A-Za-z0-9._-]*";
   secret = "[a-z0-9_-]+(/[a-z0-9_-]+)*";
   credential = "[A-Za-z0-9_][A-Za-z0-9._-]*";
+  # an absolute HTTP path the edge and the scrape interpolate: no space, brace, quote or query can end the directive,
+  # and no empty segment, so no leading `//` makes it an authority (`//127.0.0.1/metrics`)
+  path = "/|(/[A-Za-z0-9._~-]+)+/?";
 }

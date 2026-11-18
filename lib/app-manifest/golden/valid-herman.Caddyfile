@@ -1,0 +1,7 @@
+herman-next.sammasak.dev {
+	route {
+		root * /nix/store/00000000000000000000000000000000-herman
+		try_files {path} /index.html
+		file_server
+	}
+}

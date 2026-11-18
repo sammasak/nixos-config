@@ -13,9 +13,10 @@ let
         type = strMatching names.attr;
         description = "The executable under the built package's bin/ that the unit starts, without arguments.";
       };
-      port = mkOption {
-        type = types.ints.between 1024 65535;
-        description = "The TCP port the service listens on, on loopback; the edge proxies its ingress names to it.";
+      metricsPath = mkOption {
+        type = types.nullOr (strMatching names.path);
+        default = null;
+        description = "The HTTP path on its socket where the service serves Prometheus metrics; null: none is scraped.";
       };
       resources = mkOption {
         description = "The ceilings the platform's unit sets on the service.";
@@ -111,7 +112,7 @@ in
       description = "How the platform decides a release is serving.";
       type = submodule {
         options.path = mkOption {
-          type = strMatching "/[A-Za-z0-9._~/-]*";
+          type = strMatching names.path;
           description = "The HTTP path that answers 2xx once the app serves.";
         };
       };
@@ -125,7 +126,7 @@ in
             "authentik"
             "public"
           ];
-          description = "authentik: the edge's forward auth guards every request; public: none.";
+          description = "authentik: the edge's forward auth guards every request; public: none, only if its grant allows it.";
         };
       });
     };
@@ -143,7 +144,7 @@ in
           };
         };
         service = mkOption {
-          description = "A process the platform's own unit runs from the built package.";
+          description = "A process the platform's own unit runs from the built package, serving HTTP on the unix socket the platform names (/run/apps/<app>/http.sock), never a port.";
           type = service;
         };
       };

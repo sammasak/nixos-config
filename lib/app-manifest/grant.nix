@@ -30,6 +30,11 @@ in
       default = [ ];
       description = "The sops secret names the app may read.";
     };
+    public = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Whether the app's ingress names may be served without the edge's forward auth.";
+    };
     memoryMiB = mkOption {
       type = names.memoryMiB;
       default = 256;
