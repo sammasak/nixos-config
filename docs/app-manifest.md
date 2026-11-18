@@ -136,9 +136,33 @@ additive is v1alpha2: a `v1alpha2.nix` next to `v1alpha1.nix`, with `apps` choos
 manifest's `apiVersion` and admission reading the fields both versions share. Both stay admitted until no app
 declares v1alpha1; only then is it removed.
 
+## Dry-run bump
+
+`python3 scripts/app-bump-dry-run.py --registry FILE [--flake DIR] [--json]` prints, per registered app, the pin PR
+its repository's green `main` would get. It is the first slice of #560 and decides nothing about #558's lane.
+
+- **Reads:** the registry as JSON (`grants.<app>` and `apps.<app>.source`, the config admission declares,
+  evaluated elsewhere: it evaluates no Nix), `flake.nix` and `flake.lock`, and GitHub through read-only `gh api`.
+  The app's flake input is named after the app and pinned `git+ssh://git@github.com/<repo>?rev=<rev>`, as herman's.
+- **Green:** walking `main` newest first, the first commit with at least one successful check, every check run
+  completed and successful, neutral or skipped, and its combined status success when it has statuses. Every check
+  counts as required: a private repository on GitHub's free plan cannot read branch protection. A red, pending or
+  unchecked commit is skipped, never pinned; the green commit must descend from the pin (GitHub's compare). herman has
+  no checks today, so it reports `no-green` until its CI exists (#561).
+- **Prints:** `bump` with the `flake.nix` line, the `flake.lock` node's `rev`, `lastModified` (the commit time),
+  `revCount` and `original.rev`, and the PR's title and body (commit, old and new rev, compare URL, skipped commits,
+  the grant); `nothing-to-bump` when the pin is main's newest green commit, so a replay is an empty diff; or
+  `no-green`. `narHash` needs a fetch, so it is printed as pending, for `nix flake lock` on a gate host.
+- **Refuses** (exit 2, naming the field, before any GitHub read): an app without a grant, a repo outside its grant
+  (admission's own message), a rev that is not 40 hex, and a `flake.nix` or `flake.lock` pin that disagrees with the
+  registry; the patterns are `names.nix`'s and `v1alpha1.nix`'s, verbatim.
+- **Never:** writes a file, opens a PR, needs a token beyond gh's own read, runs a timer, or touches a host.
+
+`scripts/test-app-bump-dry-run.py` runs it on a fake GitHub, without network or Nix.
+
 ## Out of scope
 
 No runtime: nothing renders a unit or a sops declaration from a manifest yet, the rendered sites and scrape are
-consumed by no host, and no host imports these files. No health probe or alert is rendered from `health.path` yet. No executor, no repository registration or bot (#560), no build or provenance pipeline (#561), no
+consumed by no host, and no host imports these files. No health probe or alert is rendered from `health.path` yet. No executor, no repository registration or bot (#560; only the dry run above), no build or provenance pipeline (#561), no
 TCP-only app bridge (above). herman keeps its
 `edge.nix` site; the example uses `herman-next` because admission refuses `herman` while that site serves it.
