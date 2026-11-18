@@ -53,9 +53,28 @@ let
     port = 3100;
     from = lib.remove loki.host (lib.attrNames hosts);
   };
+  # the fleet's one night: the windowed hosts are off through it on weekdays (and all weekend), the quiet hosts run
+  # throttled through it every night (power-schedule.nix)
+  night = {
+    start = "21:00";
+    end = "08:30";
+  };
   hosts = {
-    lenovo-21CB001PMX.address = "192.168.10.154";
-    acer-swift.address = "192.168.10.110";
+    # fans that stay on: throttled at night; 60 % is the measured start (acer 90->71 C, lenovo 74->59 C under a gate)
+    lenovo-21CB001PMX = {
+      address = "192.168.10.154";
+      quiet = {
+        driver = "intel_pstate";
+        maxPerfPct = 60;
+      };
+    };
+    acer-swift = {
+      address = "192.168.10.110";
+      quiet = {
+        driver = "intel_pstate";
+        maxPerfPct = 60;
+      };
+    };
     # dual-boot towers, often off or in Windows; both power off nights and weekends (power-schedule.nix)
     msi-ms7758 = {
       address = "192.168.10.235";
@@ -63,8 +82,8 @@ let
       power = {
         mac = "d4:3d:7e:4a:f9:3d";
         interface = "enp3s0";
-        wake = "Mon-Fri 08:30";
-        off = "Mon-Fri 21:00";
+        wake = "Mon-Fri ${night.end}";
+        off = "Mon-Fri ${night.start}";
       };
     };
     asus-b460m = {
@@ -74,8 +93,8 @@ let
       power = {
         mac = "f0:2f:74:32:6b:7f";
         interface = "eno1";
-        wake = "Mon-Fri 08:30";
-        off = "Mon-Fri 21:00";
+        wake = "Mon-Fri ${night.end}";
+        off = "Mon-Fri ${night.start}";
         manualOff = true;
       };
     };
@@ -171,6 +190,24 @@ in
                     }
                   );
                 };
+                quiet = mkOption {
+                  default = null;
+                  description = "Throttled every night instead of powered off, for a host whose fans stay on (modules/core/power-schedule.nix); null for none. Not with a power window.";
+                  type = types.nullOr (
+                    types.submodule {
+                      options = {
+                        driver = mkOption {
+                          type = types.enum [ "intel_pstate" ];
+                          description = "The CPU frequency driver the throttle writes to (/sys/devices/system/cpu/intel_pstate): stated, not assumed; the host asserts it can have it.";
+                        };
+                        maxPerfPct = mkOption {
+                          type = types.ints.between 10 100;
+                          description = "intel_pstate's max_perf_pct through the night, with turbo off; 100 and turbo on by day.";
+                        };
+                      };
+                    }
+                  );
+                };
                 gpu = mkOption {
                   type = types.nullOr (types.enum [ "nvidia" ]);
                   description = "The host's GPU, for its telemetry (modules/homelab/monitoring/gpu-exporter.nix) and black-pi's nvidia-gpu scrape job.";
@@ -179,6 +216,21 @@ in
               };
             }
           );
+        };
+        night = mkOption {
+          description = "The fleet's night, as times of day: power windows switch off at its start and wake at its end on their days, quiet hosts throttle through it every night.";
+          type = types.submodule {
+            options = {
+              start = mkOption {
+                type = types.strMatching "([01][0-9]|2[0-3]):[0-5][0-9]";
+                description = "HH:MM the night starts.";
+              };
+              end = mkOption {
+                type = types.strMatching "([01][0-9]|2[0-3]):[0-5][0-9]";
+                description = "HH:MM the night ends.";
+              };
+            };
+          };
         };
         gateway = mkOption {
           type = ipv4;
@@ -258,6 +310,7 @@ in
   config.sam.fleet = {
     inherit
       hosts
+      night
       edge
       loki
       edgeMetrics

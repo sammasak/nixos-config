@@ -662,9 +662,12 @@ let
       (with pkgs; [
         nix
         python3
+        bash
+        coreutils
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-power-schedule.py
+        ${pkgs.python3}/bin/python scripts/test-night-quiet.py
       '';
 
   readabilityTest =
@@ -1350,7 +1353,7 @@ in
     "nixos:systemd-verify-test" =
       task "The systemd-verify check passes a clean tree and fails, printing the line, on an unknown key, unknown section, unparseable value, non-absolute path, removed option or refused unit, in system or Home Manager units (fixture trees)" systemdVerifyTest;
     "nixos:power-schedule-test" =
-      task "Power windows from the fleet facts: lenovo wakes each window host, each powers itself off, the seeded breaks fail" powerScheduleTest;
+      task "The fleet's night from the fleet facts: lenovo wakes each window host, each powers itself off, the quiet hosts throttle from the clock (decision tested over the edges and midnight), the seeded breaks fail" powerScheduleTest;
     "nixos:readability-test" =
       task "Docs state the hosts.nix fleet size and README lists every host; every sam.*/homelab.* option leaf has a description (fleet.nix's owed); seeded breaks fail" readabilityTest;
     "nixos:adguard-dns-test" =

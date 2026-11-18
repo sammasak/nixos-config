@@ -1,8 +1,10 @@
 """The work-hours power windows (modules/core/power-schedule.nix) as each host renders them: lenovo, the always-on
 waker, sends every host whose fleet entry has a power window its Wake-on-LAN packet at the window's wake, each such host
 powers itself off at its off and arms Wake-on-LAN on its fleet interface, and no other host gets any of these units.
-The assertions refuse a window on a host that is not marked sleeps, a waker on a sleeping host, and a window host whose
-NIC's Wake-on-LAN is turned off."""
+Both edges come from the fleet's one night (sam.fleet.night): the windows' off and wake on their days, and the quiet
+hosts' night-quiet units every night (scripts/test-night-quiet.py tests their decision). The assertions refuse a window
+on a host that is not marked sleeps, a waker on a sleeping host, a window host whose NIC's Wake-on-LAN is turned off,
+a host both windowed and quiet, a quiet Pi, and a quiet host that disables intel_pstate."""
 
 import gate_probe
 from gate_probe import check, finish
@@ -65,5 +67,38 @@ check(power == [], f"lenovo, msi and asus fail no power-window assertion ({power
 check(awake in F["awake"], f"seeded: a power window on a host not marked sleeps fails ({F['awake']})")
 check(sleeper in F["sleepingWaker"], f"seeded: the waker on msi, a sleeping host, fails ({F['sleepingWaker']})")
 check(nowol in F["noWol"], f"seeded: asus without eno1's Wake-on-LAN fails ({F['noWol']})")
+
+# the night: one fact, two behaviours
+night = P["night"]
+check(all(w["off"].endswith(" " + night["start"]) and w["wake"].endswith(" " + night["end"]) for w in windowed.values()),
+      f"every power window switches at the fleet's night ({night['start']}-{night['end']}): {windowed}")
+quiet = {n: h["quiet"] for n, h in fleet.items() if h["quiet"]}
+check(set(quiet) == {"lenovo-21CB001PMX", "acer-swift"} and all(q["driver"] == "intel_pstate" for q in quiet.values()),
+      f"lenovo and acer-swift are quiet at night, by intel_pstate ({quiet})")
+config_of = {"lenovo-21CB001PMX": "lenovo"}
+for host, us in units.items():
+    mine = sorted(u for u in us if u.startswith("night-quiet"))
+    name = next((n for n, c in config_of.items() if c == host), host)
+    if name in quiet:
+        pct = quiet[name]["maxPerfPct"]
+        args = f"night-quiet.sh {night['start']} {night['end']} {pct}"
+        boot, edge, timer = us.get("night-quiet.service", ""), us.get("night-quiet-edge.service", ""), us.get("night-quiet-edge.timer", "")
+        check(mine == ["night-quiet-edge.service", "night-quiet-edge.timer", "night-quiet.service"]
+              and args in boot and "RemainAfterExit=true" in boot and "WantedBy=multi-user.target" in boot
+              and args in edge and "RemainAfterExit" not in edge
+              and f"OnCalendar=*-*-* {night['start']}:00" in timer and f"OnCalendar=*-*-* {night['end']}:00" in timer
+              and "Persistent=false" in timer,
+              f"{host} sets its CPU from the clock at boot and at both edges of the night, to {pct} % ({mine})")
+    else:
+        check(mine == [], f"{host} has no night-quiet unit ({mine})")
+both = "modules/core/fleet.nix: msi-ms7758 has both a power window and a quiet night; a host is either off or throttled through the night."
+pi = ("modules/core/fleet.nix: black-pi is an ARM board, fanless, with no Wake-on-LAN NIC or intel_pstate: it declares "
+      "neither a power window nor a quiet night.")
+pstate = "acer-swift is quiet through the night with driver intel_pstate (modules/core/fleet.nix), so it must be an x86_64 Intel host"
+quietfails = [m for h in ("lenovo", "msi", "asus") for m in F[h] if "quiet" in m]
+check(quietfails == [], f"lenovo, msi and asus fail no quiet-night assertion ({quietfails})")
+check(both in F["quietWithWindow"], f"seeded: msi both windowed and quiet fails ({F['quietWithWindow']})")
+check(pi in F["quietPi"], f"seeded: a quiet black-pi fails ({F['quietPi']})")
+check(any(m.startswith(pstate) for m in F["quietNoPstate"]), f"seeded: acer with intel_pstate=disable fails ({F['quietNoPstate']})")
 
 finish()
