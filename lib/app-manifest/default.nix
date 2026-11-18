@@ -2,8 +2,21 @@
 { lib }:
 {
   facts = import ./facts.nix lib;
+}
+// rec {
+  # every refused rule's message, after the whole registry type-checks: a type error throws instead
+  refusals = facts: registry: (admitted facts registry).refused;
   # the capabilities each admitted app gets, or a throw listing every refused rule
   admit =
+    facts: registry:
+    let
+      inherit (admitted facts registry) refused granted;
+    in
+    if refused != [ ] then
+      throw "app admission refused:\n${lib.concatMapStrings (m: "  ${m}\n") refused}"
+    else
+      granted;
+  admitted =
     facts: registry:
     let
       eval = lib.evalModules {
@@ -14,7 +27,10 @@
         ];
       };
       inherit (eval.config) apps grants;
-      refused = map (a: a.message) (lib.filter (a: !a.assertion) eval.config.assertions);
+      checked = builtins.deepSeq [
+        apps
+        grants
+      ];
       granted = lib.mapAttrs (
         n: a:
         {
@@ -29,8 +45,8 @@
         }
       ) apps;
     in
-    if refused != [ ] then
-      throw "app admission refused:\n${lib.concatMapStrings (m: "  ${m}\n") refused}"
-    else
-      builtins.deepSeq [ apps grants ] granted;
+    {
+      refused = checked (map (a: a.message) (lib.filter (a: !a.assertion) eval.config.assertions));
+      granted = checked granted;
+    };
 }

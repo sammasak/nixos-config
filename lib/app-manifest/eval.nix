@@ -3,6 +3,8 @@
   nixpkgsLib,
   hostFacts,
   registry,
+  # "refusals": the refused rules' messages as a list, for the fixtures' exact comparison
+  what ? "admit",
 }:
 let
   lib = import nixpkgsLib;
@@ -10,4 +12,4 @@ let
   fleet = (lib.evalModules { modules = [ ../../modules/core/fleet.nix ]; }).config.sam.fleet;
   facts = manifest.facts ({ inherit fleet; } // lib.importJSON hostFacts);
 in
-manifest.admit facts registry
+manifest.${what} facts registry
