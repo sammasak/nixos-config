@@ -232,6 +232,101 @@ DOCS = {
 }
 
 
+# a power window as the docs write it: "Mon-Fri ~08:30-21:00" (the ~ optional)
+# (an en dash or a one-digit hour too; a window in prose, "powers off at 21:00", is not read)
+WINDOW = re.compile(r"\b((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:[-–](?:Mon|Tue|Wed|Thu|Fri|Sat|Sun))?) ~?(\d{1,2}:\d\d)[-–](\d{1,2}:\d\d)")
+
+
+def power_window(power):
+    """The doc phrase for a sam.fleet power window, from its wake and off OnCalendar values ("Mon-Fri 08:30")."""
+    days, wake = power["wake"].rsplit(" ", 1)
+    return f"{days} ~{wake}-{power['off'].rsplit(' ', 1)[1]}"
+
+
+def named(line, host):
+    """The line names the host: its hostName, or its first word (msi, asus) as the docs shorten it."""
+    return any(re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", line) for n in {host, host.split("-")[0]})
+
+
+def window_drift(texts, fleet, deploy_block):
+    """Power windows the docs state that sam.fleet does not: a window on a line must be the window of every host with
+    one it names, and name at least one; and the CLAUDE.md deploy block states each window on that host's row."""
+    windows = {h: power_window(v["power"]) for h, v in fleet.items() if v.get("power")}
+    out = []
+    for path, text in texts.items():
+        for n, line in enumerate(text.splitlines(), 1):
+            for m in WINDOW.finditer(line):
+                said = f"{m[1].replace('–', '-')} ~{m[2].zfill(5)}-{m[3].zfill(5)}"
+                hosts = [h for h in windows if named(line, h)]
+                if not hosts:
+                    out.append(f"{path}:{n}: {said} names no host with a power window")
+                out += [f"{path}:{n}: {h}'s window is {windows[h]}, not {said}" for h in hosts if windows[h] != said]
+    rows = re.search(r"\njust deploy HOST.*?\njust checks HOST", deploy_block, re.DOTALL)
+    for h, w in windows.items():
+        row = rows and re.search(rf"^#   {re.escape(h)} {{2,}}.*$", rows[0], re.M)
+        if not row or w not in row[0]:
+            out.append(f"CLAUDE.md deploy block: {h}'s row does not state its power window {w}")
+    return out
+
+
+def sops_rules(text):
+    """({path_regex: [(age key, its comment)]}, [path_regex listed again]) from .sops.yaml's creation rules: a key per
+    `- age1…` line or in an `age: k1,k2` string. sops uses the first rule a path matches, so a repeat is not read."""
+    rules, repeated, cur = {}, [], None
+    for line in text.splitlines():
+        if m := re.match(r"\s*- path_regex: (\S+)", line):
+            cur = None if m[1] in rules else m[1]
+            if cur is None:
+                repeated.append(m[1])
+            else:
+                rules[cur] = []
+        elif cur and (m := re.match(r"\s*- (age1[0-9a-z]+)\s*(?:#\s*(.*))?$", line)):
+            rules[cur].append((m[1], (m[2] or "").split("(")[0].strip()))
+        elif cur and (m := re.match(r"\s*age:\s*['\"]?(age1[0-9a-z]+(?:\s*,\s*age1[0-9a-z]+)*)['\"]?\s*$", line)):
+            rules[cur] += [(k.strip(), "") for k in m[1].split(",")]
+    return rules, repeated
+
+
+def secrets_table_drift(sops_text, claude_text, hosts):
+    """Rows of CLAUDE.md's secrets table that .sops.yaml does not bear out, and rules it leaves out. Recipients by name:
+    a host by its key (SOPS_RECIPIENTS), the key every rule lists as Personal, any other key by its .sops.yaml comment
+    ("acer-swift lukas", which the table writes acer `lukas`)."""
+    rules, repeated = sops_rules(sops_text)
+    if not rules:
+        return ["secrets/.sops.yaml: no creation rule read"]
+    by_key = {k: n for n, k in hosts.items()}
+    personal = set.intersection(*({k for k, _ in r} for r in rules.values()))
+    derived = {}
+    for regex, keys in rules.items():
+        glob = regex.replace("\\.", ".").replace(".*", "*").rstrip("$")
+        derived[glob] = {"Personal" if k in personal else by_key.get(k) or c or f"?{k[:12]}" for k, c in keys}
+
+    def host_of(word):
+        full = [h for h in hosts if h == word or h.startswith(word + "-")]
+        return full[0] if len(full) == 1 else word
+
+    table = re.search(r"\| Path pattern \| Recipients \|.*?\n\n", claude_text, re.DOTALL)
+    doc, twice = {}, []
+    for row in re.findall(r"^\| `([^`]+)` \| ([^|]+) \|", table[0] if table else "", re.M):
+        if row[0] in doc:
+            twice.append(row[0])
+        names = set()
+        for part in re.sub(r"\([^)]*\)", "", row[1]).replace("+", ",").split(","):
+            part = part.strip()
+            if m := re.fullmatch(r"(\S+) `(\w+)`", part):
+                names.add(f"{host_of(m[1])} {m[2]}")
+            elif part:
+                names.add(host_of(part))
+        doc[row[0]] = names
+    out = [f"secrets/.sops.yaml: {r} is listed again; sops reads only its first rule" for r in repeated]
+    out += [f"secrets table: {g} has two rows" for g in twice]
+    out += [f"secrets table: {g} has no .sops.yaml rule" for g in sorted(set(doc) - set(derived))]
+    out += [f"secrets table: no row for .sops.yaml's {g}" for g in sorted(set(derived) - set(doc))]
+    out += [f"secrets table: {g} lists {sorted(doc[g] - derived[g])} that .sops.yaml does not, and leaves out {sorted(derived[g] - doc[g])}"
+            for g in sorted(set(doc) & set(derived)) if doc[g] != derived[g]]
+    return out
+
+
 def undocumented(texts, nodes, host_name, roles):
     """Per document in DOCS, the deploy nodes its host list leaves out: by node name, by hostName, or (runtime-host)
     the hostNames of the nodes with that role."""
@@ -377,6 +472,37 @@ def main():
     check(gap(verify_defaults(script), names) == [], f"ssh-known-hosts-verify.sh checks every deploy node's host by default ({verify_defaults(script)})")
     check(gap(verify_defaults(script.replace(" asus-b460m", "")), names) == ["-asus-b460m"],
           "seeded: the verify script's default list without asus-b460m fails")
+    # the docs' power windows and the CLAUDE.md secrets table, against sam.fleet and secrets/.sops.yaml
+    docs = {str(p.relative_to(ROOT)): p.read_text() for p in [ROOT / "CLAUDE.md", ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]}
+    drift = window_drift(docs, P["fleet"], docs["CLAUDE.md"])
+    check(drift == [] and any(v.get("power") for v in P["fleet"].values()),
+          f"the docs' power windows are sam.fleet's (wake and off): {drift}")
+    seeded = dict(docs, **{"docs/x.md": "Run it in msi's Mon-Fri 09:00-21:00 window\n"})
+    check(any("msi-ms7758's window is Mon-Fri ~08:30-21:00, not Mon-Fri ~09:00-21:00" in d for d in window_drift(seeded, P["fleet"], docs["CLAUDE.md"])),
+          "seeded: a doc giving msi a 09:00 wake fails")
+    cut = re.sub(r"(#   asus-b460m .*?); only in its Mon-Fri ~08:30-21:00 power window", r"\1", docs["CLAUDE.md"])
+    check(any("asus-b460m's row does not state its power window" in d for d in window_drift(docs, P["fleet"], cut)),
+          "seeded: the CLAUDE.md deploy row of a host with a window, without it, fails")
+    sops = (ROOT / "secrets/.sops.yaml").read_text()
+    drift = secrets_table_drift(sops, docs["CLAUDE.md"], SOPS_RECIPIENTS)
+    check(drift == [], f"CLAUDE.md's secrets table is secrets/.sops.yaml's rules and recipients: {drift}")
+    cut = docs["CLAUDE.md"].replace("acer `lukas`, black-pi, naked-pi (msi is wired)", "acer `lukas`, naked-pi (msi is wired)")
+    check(any("homelab/wifi.yaml" in d and "black-pi" in d for d in secrets_table_drift(sops, cut, SOPS_RECIPIENTS)),
+          "seeded: a table row leaving out a recipient .sops.yaml lists fails")
+    extra = sops.replace("  - path_regex: homelab/open-webui\\.yaml$\n    key_groups:\n      - age:\n",
+                         "  - path_regex: homelab/open-webui\\.yaml$\n    key_groups:\n      - age:\n"
+                         f"          - {SOPS_RECIPIENTS['msi-ms7758']}  # msi-ms7758\n")
+    check(extra != sops and any("homelab/open-webui.yaml" in d and "msi-ms7758" in d for d in secrets_table_drift(extra, docs["CLAUDE.md"], SOPS_RECIPIENTS)),
+          "seeded: a .sops.yaml rule with a recipient the table does not name fails")
+    row = re.search(r"^\| `homelab/grafana.yaml` .*$", docs["CLAUDE.md"], re.M)[0]
+    stale = docs["CLAUDE.md"].replace(row, row.replace("black-pi", "msi-ms7758") + "\n" + row)
+    check(any("homelab/grafana.yaml has two rows" in d for d in secrets_table_drift(sops, stale, SOPS_RECIPIENTS)),
+          "seeded: a stale second row for the same path fails, not read past")
+    again = sops + "  - path_regex: homelab/grafana\\.yaml$\n    key_groups:\n      - age:\n          - age1x\n"
+    check(any("listed again" in d for d in secrets_table_drift(again, docs["CLAUDE.md"], SOPS_RECIPIENTS)),
+          "seeded: a path_regex listed twice in .sops.yaml fails (sops reads only the first)")
+    check(any("not Mon-Fri ~09:00-21:00" in d for d in window_drift({"docs/x.md": "msi: Mon–Fri ~9:00–21:00\n"}, P["fleet"], docs["CLAUDE.md"])),
+          "seeded: a window with en dashes and a one-digit hour is read, and its drift found")
     texts = {path: (ROOT / path).read_text() for path, *_ in DOCS.values()}
     gaps = undocumented(texts, nodes, host_name, P["roles"])
     for doc, missing in gaps.items():

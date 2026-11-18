@@ -686,7 +686,7 @@
         },
         "overrides": []
       },
-      "description": "Each scraped service's own RSS; its module's MemoryMax is where the kernel OOM-kills the unit."
+      "description": "Each scraped service's own RSS."
     }
   ]
 }

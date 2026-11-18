@@ -1,8 +1,13 @@
-# black-pi's dashboards, as grafana.nix provisions them, against what the fleet exports: the deployed node-exporter
-# command runs on node_exporter's own sysfs/procfs fixtures, so its metric names are this version's with these
-# flags; the GPU names are the gpu-telemetry-exporter check's output; records come from the rule files Prometheus
-# loads; llm-gateway's from its registrations and Loki's, Alloy's, Caddy's and blackbox's from their name literals,
-# in the source each host runs; the OTLP ones are alloy-otlp's allow-list. Each seeded dashboard below must fail
+# black-pi's dashboards, as grafana.nix provisions them, against the names the fleet can export: every metric a
+# dashboard queries must come from one of these sources, each read from what its host runs (from none is a finding):
+# - node-exporter: the deployed command on node_exporter's own sysfs/procfs fixtures (node.prom); the systemd and
+#   timex collectors' names from their source and flags (systemd.prom); the repo's textfile writers (writers.prom),
+#   and the names scripts/shipping-metrics.py and scripts/nav-metrics.py print with --list (shipping.prom, nav.prom);
+# - the monitoring stack's own /metrics, run here (scripts/monitoring-exposition.sh: Prometheus, Alertmanager, Alloy);
+# - name literals and registrations in the source each host runs: Loki, Alloy, Caddy and blackbox (`sources` below),
+#   llm-gateway, Authentik; AdGuard's (dns.prom); the GPU exporter's (the gpu-telemetry-exporter check's output);
+# - the records of the rule files Prometheus loads, and alloy-otlp's OTLP allow-list.
+# A new series a dashboard reads needs its source here. Each seeded dashboard below must fail
 # scripts/check-grafana-dashboards.py with its own reason.
 { config, lib, ... }:
 let
@@ -192,6 +197,11 @@ let
       dashboard = seed ''nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown{job="nvidia-gpu"}'' "prometheus";
       reason = "unknown metric nvidia_smi_clocks_throttle_reasons_hw_thermal_slowdown";
     };
+    # a real name under another job's selector: the panel would stay empty
+    wrong-job = {
+      dashboard = seed ''node_load1{job="prometheus"}'' "prometheus";
+      reason = "metric node_load1 is not exported by job 'prometheus'";
+    };
     caddy-typo = {
       dashboard = seed "rate(caddy_http_requets_total[5m])" "prometheus";
       reason = "unknown metric caddy_http_requets_total";
@@ -380,7 +390,7 @@ in
             spec = builtins.toJSON {
               inherit dashboards hosts builtin;
               sources = lib.imap0 (i: s: {
-                inherit (s) prefix strip;
+                inherit (s) prefix strip job;
                 literals = "literals-${toString i}";
               }) sources;
               otlp_allowlist = "${../modules/homelab/monitoring/alloy-otlp.alloy}";
@@ -447,7 +457,10 @@ in
                 (lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] exec)
             } --path.procfs=fixtures/proc --path.sysfs=fixtures/sys --path.udev.data=fixtures/udev/data > exporter.log 2>&1 &
             exporter=$!
-            for _ in $(seq 50); do curl -fsS -o node.prom http://127.0.0.1:${toString node.port}/metrics && break; sleep 0.2; done
+            # bounded, and a clear failure: a slow start under gate load once left a scrape the check read as metrics
+            # provided by nothing (scripts/wait-metrics.sh)
+            bash ${../scripts/wait-metrics.sh} node-exporter http://127.0.0.1:${toString node.port}/metrics node.prom \
+              exporter.log "$exporter" 120 '^node_cpu_seconds_total{' '^homelab_nixos_generation '
             kill "$exporter"
             grep -qx 'homelab_nixos_generation 27' node.prom || {
               cat textfile/nixos.prom
@@ -486,7 +499,11 @@ in
               ${
                 pkgs.python3.withPackages (ps: [ ps.pyyaml ])
               }/bin/python3 -I ${../scripts/check-grafana-dashboards.py} "$1" ${pkgs.prometheus.cli}/bin/promtool \
-                ${pkgs.grafana-loki}/bin/logcli node.prom systemd.prom writers.prom llm-gateway.prom authentik.prom ${adguardCheck}/dns.prom stack/*.prom shipping.prom nav.prom ${self'.checks.gpu-telemetry-exporter}
+                ${pkgs.grafana-loki}/bin/logcli node-exporter=node.prom node-exporter=systemd.prom \
+                node-exporter=writers.prom node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom \
+                node-exporter=nav.prom llm-gateway=llm-gateway.prom authentik-server=authentik.prom \
+                authentik-worker=authentik.prom prometheus=stack/prometheus.prom alertmanager=stack/alertmanager.prom \
+                alloy-otlp=stack/alloy.prom nvidia-gpu=${self'.checks.gpu-telemetry-exporter}
             }
             check "$specPath"
             python3 -I ${../scripts/seed-grafana-dashboards.py} "$specPath" "$seedsPath"

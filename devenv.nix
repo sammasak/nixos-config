@@ -468,6 +468,18 @@ let
       ''
         ${pkgs.python3}/bin/python scripts/test-trigger-rollback.py
       '';
+  waitMetricsTest =
+    gate "wait-metrics-test"
+      (with pkgs; [
+        python3
+        bash
+        curl
+        coreutils
+        gnugrep
+      ])
+      ''
+        ${pkgs.python3}/bin/python scripts/test-wait-metrics.py
+      '';
   # acer's Caddyfile through acer's Caddy, from the gate probe
   caddyEdgeTest =
     gate "caddy-edge-test"
@@ -738,6 +750,7 @@ let
     shippingMetricsTest
     navMetricsTest
     triggerRollbackTest
+    waitMetricsTest
     authentikAkTest
     switchSafetyTest
     rfBeaconsTest
@@ -1315,6 +1328,8 @@ in
       task "Shipping collector on a fake GitHub and Loki: issues split actionable/parked/archived, a failed source leaves no series and keeps its stale timestamp, an undeclared name is refused" shippingMetricsTest;
     "nixos:trigger-rollback-test" =
       task "The rebuild trigger's rollback on stubs: back to the previous generation live, in the system profile and the boot default, without nixos-rebuild; a failed step is audited (seeded: the old nixos-rebuild boot --rollback line fails)" triggerRollbackTest;
+    "nixos:wait-metrics-test" =
+      task "The dashboards check's exporter wait: a late exporter is waited for; none listening, no expected series or an exited exporter fails as 'exporter did not start' within its bound" waitMetricsTest;
     "nixos:nav-metrics-test" =
       task "Navigation collector on fixture transcripts: counts, misses and repeat reads by role, no prompt, command or path in the textfile, a thin role writes its sample size alone, a failed section is a series" navMetricsTest;
     "nixos:typed-interfaces-test" =

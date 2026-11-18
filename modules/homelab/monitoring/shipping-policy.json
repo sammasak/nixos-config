@@ -98,6 +98,20 @@
         "tunedBy": "count_over_time(ALERTS{alertname=\"RetroDueGateSlower\"}[1d])"
       }
     },
+    "RetroDueStepFailsRepeat": {
+      "minFailures": {
+        "value": 3,
+        "tunedBy": "max(shipping_gate_step_failures{window=\"7d\"})"
+      },
+      "lastRuns": {
+        "value": 20,
+        "tunedBy": "shipping_gate_runs_counted"
+      },
+      "forMinutes": {
+        "value": 30,
+        "tunedBy": "count_over_time(ALERTS{alertname=\"RetroDueStepFailsRepeat\"}[1d])"
+      }
+    },
     "ShippingCollectorStale": {
       "maxHours": {
         "value": 2,

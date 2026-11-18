@@ -32,7 +32,8 @@ What a host writes into node-exporter's textfile directory (`/run/node-exporter-
   (`scripts/adguard-textfile.py`, `adguardhome.nix`)
 
 Two collectors keep their own textfile directory, which node-exporter also reads: `shipping.prom` on lenovo
-(`shipping-metrics.nix`) and `nav.prom` on acer, lenovo, asus and msi (`nav-metrics.nix`).
+(`shipping-metrics.nix`) and `nav.prom` on acer, lenovo, asus and msi (`nav-metrics.nix`), plus one
+`nav-guest-<name>.prom` per guest on a host with dev environments (acer, `/var/lib/nav-metrics-guests`).
 
 Bounded labels: Caddy runs `metrics` without `per_host` (it would label any HTTPS Host as sent), so its series split by
 server, not by name. Authentik gets the matched name without a client port as Host, and the Authentik jobs drop the
@@ -51,8 +52,8 @@ server, not by name. Authentik gets the matched name without a client port as Ho
 
 - Prometheus loads `modules/homelab/monitoring/rules/*.yaml` (`homelab.yaml` rendered by `modules/homelab/monitoring/rules/homelab.nix` from the fleet's power windows), the
   llm-bench scorecard and the shipping rules from `modules/homelab/monitoring/rules/shipping.nix` (the list is in `prometheus.nix`).
-- Alertmanager sends every alert to the alert bridge except Watchdog, InfoInhibitor, HostExpectedOff and any alert
-  labelled `notify="none"` (a null receiver). The shipping team's alerts are muted at night.
+- Alertmanager sends every alert to the alert bridge except Watchdog, InfoInhibitor, HostExpectedOff, any alert
+  labelled `notify="none"` and any `severity="info"` alert (NodeCPUHighUsage): those go to a null receiver. The shipping team's alerts are muted at night.
 - HostExpectedOff marks a sleeping host that is off as planned. Inhibit rules keyed on it silence what the power-off
   causes (`alertmanager.nix`).
 - lenovo's watchdog (`cluster-watchdog.nix`) checks the pipeline from outside: Prometheus and Alertmanager ready, and
@@ -78,7 +79,7 @@ server, not by name. Authentik gets the matched name without a client port as Ho
 | `grafana-dashboards` | every query on every dashboard: metric names against what the exporters really emit (node-exporter on its own fixtures with the deployed flags; the GPU check's output; Loki's, Alloy's, Caddy's and blackbox's name literals; llm-gateway's and Authentik's registrations; black-pi's Prometheus and Alertmanager and acer's alloy-otlp run on loopback (`scripts/monitoring-exposition.sh`); the writers' textfiles, AdGuard's from lenovo's sandboxed AdGuard; the OTLP allow-list; the rule files' records); PromQL through promtool, LogQL through logcli; jobs scraped or written; no host named by hand; every rule file Prometheus loads held to the same names and jobs; seeded failures, rule files included |
 | `grafana-dashboard-removal` | Grafana itself, with black-pi's provider settings, deletes a removed file's dashboard and keeps ids across a restart |
 | `gpu-telemetry-exporter` | the GPU exporter's fields against a fake nvidia-smi that heads the throttle fields `clocks_event_reasons`, as asus's driver does |
-| `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` reaches no one, NodeTemperatureHigh reaches the bridge, and the same alert without the label would notify |
+| `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` and `severity="info"` reach no one, NodeTemperatureHigh and a warning reach the bridge, and the same alert without the label would notify |
 | `monitoring-rules-tests` | `promtool test rules` on every file in `modules/homelab/monitoring/rules/tests`, against `homelab.yaml` as rendered |
 | `monitoring-config-msi-ms7758`, `monitoring-rules-sleeping-hosts` | black-pi's Prometheus, Alertmanager and blackbox configs checked on an x86 seed; the sleeping-host rules per host |
 | `loki-config-msi-ms7758`, `journal-collector-config-black-pi` | Loki's config and the Pi's journal collector, on x86 |

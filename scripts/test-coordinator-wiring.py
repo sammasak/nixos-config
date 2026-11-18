@@ -11,6 +11,11 @@ import gate_probe
 COORDINATOR_FILES = {".claude/agents/coordinator.md"}
 
 
+def commands(text):
+    """A rendered script without its comment lines: a flag named in a comment is not one the script passes."""
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
 def check(condition, message):
     if not condition:
         print(f"FAIL (scripts/{__file__.rsplit('/', 1)[-1]}): {message}")
@@ -95,7 +100,7 @@ def main():
             " --option coordinator.interactiveQuietSeconds:int 600")
     check('devenv tasks run coord:changed --input-json \'{"consume":true}\' ' + OPTS + " >" in script,
           "the timer's coord:changed carries the host's fixed skills options: delegated approval citing the owner's decision comment, the Coordinator's pane")
-    check(script.count("--option coordinator.interactiveQuietSeconds:int 600") == script.count("--option coordinator.mayApprove:bool true"),
+    check(commands(script).count("--option coordinator.interactiveQuietSeconds:int 600") == commands(script).count("--option coordinator.mayApprove:bool true"),
           "lenovo's interactiveQuietSeconds (600) rides on every devenv call beside the delegation flags (skills#66: no wake while the interactive Coordinator works)")
     # the report timers ride on the wake-up's enable and gate; their job's week rule is scripts/test-coordinator-report.py
     for name, mode, cal in (("coordinator-report-daily", "daily", "*-*-* 03:00"), ("coordinator-report-fortnight", "fortnight", "Mon 07:00")):
@@ -110,7 +115,7 @@ def main():
           "the fortnight run orders after the daily, so a boot catch-up renders the weekly after Sunday's daily")
     report = P["reportScript"] or ""
     # writeShellApplication puts its shebang and set -o lines before the text
-    check(('\nset -- "$@" ' + OPTS + "\n") in report and report.count("--option coordinator.") == OPTS.count("--option coordinator.")
+    check(('\nset -- "$@" ' + OPTS + "\n") in report and commands(report).count("--option coordinator.") == OPTS.count("--option coordinator.")
           and 'no skills checkout at $skills' in report,
           f"the report job passes exactly the host's fixed skills options to devenv and skips without a checkout ({report[:160]!r})")
     seeded = "sam.herdr.coordinatorWakeup (the wake-up and the coordinator-report timers) runs only on the coordinator host"
@@ -192,7 +197,7 @@ def main():
     check(wrapper_dirs != [], "coordinator-read is on the wake-up script's PATH")
     wrapper = pathlib.Path(wrapper_dirs[0], "coordinator-read").read_text()
     check("coord:brief|coord:changed|coord:capacity|work:status|herdr:inventory|herdr:inspect|herdr:await|gh:work|gh:repos|git:recent|harness:session-summary) ;;" in wrapper
-          and wrapper.count("--option") == 2 * OPTS.count("--option") and wrapper.count(OPTS) == 2 and '[ "$#" -le 2 ]' in wrapper
+          and commands(wrapper).count("--option") == 2 * OPTS.count("--option") and wrapper.count(OPTS) == 2 and '[ "$#" -le 2 ]' in wrapper
           and "input=$(jq -c '. + {consume:false}'" in wrapper and "consume:true" not in wrapper,
           "coordinator-read takes only one of the role's read tasks and an input object, never consumes with coord:changed, and the only --option flags are the host's fixed ones (both devenv calls)")
     check(" 9>&-" in wrapper.split("exec devenv")[1], "coordinator-read closes the lock fd before devenv")
@@ -200,7 +205,7 @@ def main():
     prompt_dirs = re.findall(r"/nix/store/[a-z0-9]+-coordinator-prompt/bin", script)
     check(act_dirs != [] and prompt_dirs != [], "coordinator-act and coordinator-prompt are on the wake-up script's PATH")
     act = pathlib.Path(act_dirs[0], "coordinator-act").read_text()
-    check("coord:handoff|herdr:message|gh:label|gh:comment) ;;" in act and act.count("--option") == OPTS.count("--option") and OPTS in act
+    check("coord:handoff|herdr:message|gh:label|gh:comment) ;;" in act and commands(act).count("--option") == OPTS.count("--option") and OPTS in act
           and "coord:spawn" not in act and '[ "$#" -eq 2 ]' in act and " 9>&-" in act.split("exec devenv")[1],
           "coordinator-act takes exactly one of coord:handoff, herdr:message, gh:label, gh:comment plus one input object (never coord:spawn), the only --option flags the host's fixed ones, lock fd closed")
     prompt_wrapper = pathlib.Path(prompt_dirs[0], "coordinator-prompt").read_text()
