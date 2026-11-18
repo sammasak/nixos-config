@@ -118,7 +118,9 @@ OPENS = "firewall opens what sam.fleet does not list"
 for seed, host, marker, what in [("openPort", "acer-swift", '"port":9999', "allowedTCPPorts = [ 9999 ] on acer"),
                                  ("upstreamOpen", "msi-ms7758", "--dport 9100", "the node exporter's upstream openFirewall on msi"),
                                  ("strayRule", "lenovo-21CB001PMX", "192.168.10.50", "a hand-written accept rule on lenovo"),
-                                 ("trusted", "black-pi", "eth0", "trustedInterfaces = [ eth0 ] on black-pi")]:
+                                 ("trusted", "black-pi", "eth0", "trustedInterfaces = [ eth0 ] on black-pi"),
+                                 ("lokiAnySource", "black-pi", f'"port":{ports["loki"]}', "Loki in black-pi's allowedTCPPorts"),
+                                 ("ntfyElsewhere", "msi-ms7758", f'"port":{ports["ntfy"]}', "ntfy on msi, off its public entry's host")]:
     check(any(f"{host}'s {OPENS}" in m and marker in m for m in F[seed]), f"seeded: {what} fails ({F[seed]})")
 check(any("sam.fleet.loki is served here" in m and "loopback" in m for m in F["lokiLoopback"]),
       f"seeded: black-pi's Loki on loopback fails ({F['lokiLoopback']})")

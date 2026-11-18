@@ -17,6 +17,8 @@ let
   alloy = pkgs.grafana-alloy;
   otlpPort = 4318;
   httpPort = config.sam.fleet.listeners.alloy-http.port;
+  # the fleet address alone: black-pi's scrape is the only caller (sam.fleet.listeners.alloy-http)
+  httpListen = "${hosts.${config.networking.hostName}.address}:${toString httpPort}";
   blackPi = hosts.black-pi.address;
   configFile = pkgs.writeText "alloy-otlp.alloy" (
     lib.replaceStrings
@@ -37,7 +39,7 @@ let
     "run"
     stability
     "--disable-reporting"
-    "--server.http.listen-addr=0.0.0.0:${toString httpPort}"
+    "--server.http.listen-addr=${httpListen}"
     "--storage.path=/var/lib/alloy-otlp"
     configFile
   ];
@@ -61,7 +63,7 @@ in
     environment.GOMEMLIMIT = "200MiB";
     serviceConfig = {
       ExecStart = utils.escapeSystemdExecArgs args;
-      ExecStartPost = "${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 --retry 30 --retry-delay 2 --retry-connrefused --retry-max-time 60 http://127.0.0.1:${toString httpPort}/-/ready";
+      ExecStartPost = "${pkgs.curl}/bin/curl -fsS -o /dev/null --max-time 2 --retry 30 --retry-delay 2 --retry-connrefused --retry-max-time 60 http://${httpListen}/-/ready";
       TimeoutStartSec = 90;
       Restart = "always";
       RestartSec = 10;

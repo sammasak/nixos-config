@@ -1,4 +1,4 @@
-# lenovo and the environment hosts serve their own /nix/store to the fleet over the LAN (harmonia), so what one
+# lenovo and the environment hosts serve their own /nix/store to the fleet hosts (harmonia), so what one
 # machine built the others download. Each signs with a key generated on the host that never leaves it; its public half is below.
 {
   config,
@@ -7,7 +7,6 @@
   ...
 }:
 let
-  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   cfg = config.sam.storeCache;
   host = config.networking.hostName;
   port = 5000;
@@ -23,72 +22,78 @@ let
   strays = lib.filter (n: !(config.sam.fleet.hosts ? ${n})) (lib.attrNames caches);
   # a sleeping host (sam.fleet): an absent cache costs every path lookup the connect timeout, so nobody asks it
   peers = lib.filter (c: !c.sleeps) (lib.attrValues (removeAttrs caches [ host ]));
-
-  rules = mkDualBackendFirewall {
-    nftComment = "The store cache answers the LAN only.";
-    ports = [ port ];
-    sources = [ config.sam.fleet.lanCidr ];
-    interfaces = [ ];
-    backend = config.networking.firewall.backend;
-  };
+  # the firewall admits every other fleet host to it (modules/core/network.nix renders the listener)
+  name = "store-cache-${host}";
+  served = config.sam.fleet.listeners ? ${name};
 in
 {
-  options.sam.storeCache.enable = lib.mkEnableOption "serving this host's Nix store to the LAN as a signed binary cache, and substituting from the others'";
+  options.sam.storeCache.enable = lib.mkEnableOption "serving this host's Nix store to the other fleet hosts as a signed binary cache, and substituting from the others'";
 
-  config = lib.mkIf cfg.enable {
-    assertions = [
-      {
-        assertion = strays == [ ];
-        message = "modules/core/store-cache.nix: every cache is a host of sam.fleet.hosts (modules/core/fleet.nix); not: ${toString strays}.";
-      }
-      {
-        assertion = caches ? ${host};
-        message = "modules/core/store-cache.nix: ${host} serves a store cache, so its public key belongs in caches there.";
-      }
-      {
-        assertion = lib.all (
-          c: c.sleeps -> !lib.elem "http://${c.address}:${toString port}" config.nix.settings.substituters
-        ) (lib.attrValues caches);
-        message = "modules/core/store-cache.nix: a host sam.fleet marks sleeps is a substituter here; every lookup would wait the connect timeout while it is off.";
-      }
-    ];
-    services.harmonia.cache = {
-      enable = true;
-      signKeyPaths = [ "${dir}/secret-key" ];
-      # ahead of cache.nixos.org (40): a path a neighbour holds comes over the LAN
-      settings = {
-        bind = "[::]:${toString port}";
-        priority = 30;
+  config = lib.mkMerge [
+    {
+      assertions = [
+        {
+          assertion = cfg.enable == served && (served -> config.sam.fleet.listeners.${name}.port == port);
+          message = "modules/core/store-cache.nix: sam.storeCache.enable is ${lib.boolToString cfg.enable} on ${host}, so sam.fleet.listeners needs ${
+            if cfg.enable then "" else "no "
+          }${name} on port ${toString port} (storeCaches in modules/core/fleet.nix).";
+        }
+      ];
+    }
+    (lib.mkIf cfg.enable {
+      assertions = [
+        {
+          assertion = strays == [ ];
+          message = "modules/core/store-cache.nix: every cache is a host of sam.fleet.hosts (modules/core/fleet.nix); not: ${toString strays}.";
+        }
+        {
+          assertion = caches ? ${host};
+          message = "modules/core/store-cache.nix: ${host} serves a store cache, so its public key belongs in caches there.";
+        }
+        {
+          assertion = lib.all (
+            c: c.sleeps -> !lib.elem "http://${c.address}:${toString port}" config.nix.settings.substituters
+          ) (lib.attrValues caches);
+          message = "modules/core/store-cache.nix: a host sam.fleet marks sleeps is a substituter here; every lookup would wait the connect timeout while it is off.";
+        }
+      ];
+      services.harmonia.cache = {
+        enable = true;
+        signKeyPaths = [ "${dir}/secret-key" ];
+        # ahead of cache.nixos.org (40): a path a neighbour holds comes over the LAN
+        settings = {
+          bind = "[::]:${toString port}";
+          priority = 30;
+        };
       };
-    };
-    systemd.services.store-cache-key = {
-      description = "Signing key of this host's store cache";
-      requiredBy = [ "harmonia.service" ];
-      before = [ "harmonia.service" ];
-      unitConfig.ConditionPathExists = "!${dir}/secret-key";
-      serviceConfig = {
-        Type = "oneshot";
-        StateDirectory = "store-cache";
-        UMask = "0077";
+      systemd.services.store-cache-key = {
+        description = "Signing key of this host's store cache";
+        requiredBy = [ "harmonia.service" ];
+        before = [ "harmonia.service" ];
+        unitConfig.ConditionPathExists = "!${dir}/secret-key";
+        serviceConfig = {
+          Type = "oneshot";
+          StateDirectory = "store-cache";
+          UMask = "0077";
+        };
+        path = [ config.nix.package ];
+        enableStrictShellChecks = true;
+        script = ''
+          nix key generate-secret --key-name ${host}-store-1 > ${dir}/secret-key.new
+          nix key convert-secret-to-public < ${dir}/secret-key.new > ${dir}/public-key
+          chmod 0644 ${dir}/public-key
+          mv ${dir}/secret-key.new ${dir}/secret-key
+        '';
       };
-      path = [ config.nix.package ];
-      enableStrictShellChecks = true;
-      script = ''
-        nix key generate-secret --key-name ${host}-store-1 > ${dir}/secret-key.new
-        nix key convert-secret-to-public < ${dir}/secret-key.new > ${dir}/public-key
-        chmod 0644 ${dir}/public-key
-        mv ${dir}/secret-key.new ${dir}/secret-key
-      '';
-    };
-    networking.firewall = { inherit (rules) extraInputRules extraCommands; };
-    nix.settings = {
-      substituters = map (c: "http://${c.address}:${toString port}") peers;
-      trusted-public-keys = map (c: c.publicKey) peers;
-      # a peer that is rebooting: give up quickly and build
-      connect-timeout = 3;
-      fallback = true;
-      # the default hour hides a path a neighbour built a minute after it was asked for
-      narinfo-cache-negative-ttl = 300;
-    };
-  };
+      nix.settings = {
+        substituters = map (c: "http://${c.address}:${toString port}") peers;
+        trusted-public-keys = map (c: c.publicKey) peers;
+        # a peer that is rebooting: give up quickly and build
+        connect-timeout = 3;
+        fallback = true;
+        # the default hour hides a path a neighbour built a minute after it was asked for
+        narinfo-cache-negative-ttl = 300;
+      };
+    })
+  ];
 }

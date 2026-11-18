@@ -712,6 +712,15 @@ let
             ]
           );
           trusted = failing (extend "black-pi" [ { networking.firewall.trustedInterfaces = [ "eth0" ]; } ]);
+          lokiAnySource = failing (
+            extend "black-pi" [ { networking.firewall.allowedTCPPorts = [ lenovo.sam.fleet.loki.port ]; } ]
+          );
+          ntfyElsewhere = failing (
+            extend "msi-ms7758" [
+              ../modules/homelab/ntfy.nix
+              { homelab.ntfy.enable = true; }
+            ]
+          );
           lokiLoopback = failing (
             extend "black-pi" [ ({ lib, ... }: { homelab.loki.listenAddress = lib.mkForce "127.0.0.1"; }) ]
           );
