@@ -57,9 +57,9 @@ in
 
   # Does one rendered command (backslash continuations joined, split at ; && ||) let traffic in to this host, on any
   # port: an accept target (quoted, `--jump=`, a variable: unreadable, so fails closed), any goto, a RETURN out of
-  # nixos-fw or INPUT (whose policy accepts), deleting a rule that names nixos-fw, or flushing, deleting or setting
-  # the policy of INPUT or nixos-fw (or of every chain). Loopback (`-i lo`, not negated) is accepted by nixos-fw
-  # anyway. Forwarding (networking.nat's nixos-filter-forward, the workers' dev-env-forward) and the nat, mangle
+  # nixos-fw or INPUT (whose policy accepts), deleting a rule that names nixos-fw or one of INPUT's by number, or
+  # flushing, deleting or setting the policy of INPUT or nixos-fw (or of every chain). Loopback (`-i lo`, not
+  # negated) is accepted by nixos-fw anyway. Forwarding (networking.nat's nixos-filter-forward, the workers' dev-env-forward) and the nat, mangle
   # and raw tables reach no listener here, so they are not read; nor are rules a unit adds at runtime.
   admitting =
     backend: l:
@@ -77,8 +77,9 @@ in
       && (
         target "nixos-fw-accept|ACCEPT|[$][^[:space:]]*"
         || has "(-g|--goto)([[:space:]]+|=)?[^[:space:]]+"
-        || has "-[AI][[:space:]]+(nixos-fw|INPUT)" && target "RETURN"
+        || has "(-[AI]|--append|--insert)[[:space:]]+(nixos-fw|INPUT)" && target "RETURN"
         || has "(-[DR]|--delete|--replace)" && lib.hasInfix "nixos-fw" c
+        || has "(-[DR]|--delete|--replace)[[:space:]]+(INPUT|nixos-fw[^[:space:]]*)[[:space:]]+[0-9]+"
         ||
           chain != null && (chainName == null || chainName == "INPUT" || lib.hasPrefix "nixos-fw" chainName)
       )

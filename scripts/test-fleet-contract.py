@@ -80,6 +80,7 @@ check(any("homelab.loki.port 3101 is not sam.fleet.loki.port" in m for m in F["l
 
 # Every host's rendered rules, read here without the Nix check (modules/core/network.nix): per listener port the
 # accepted sources are its callers' addresses, once each; every other accepting line is loopback or a lan public entry.
+# A cross-read of accept lines only: unhooking, flushing and policy rules are the Nix check's alone.
 L, PUB, FW, ADDR = P["listeners"], P["public"], P["firewall"], P["addresses"]
 RULE = re.compile(r"^iptables -w -A nixos-fw -s (\S+) -p (tcp|udp) --dport ([0-9]+) -j nixos-fw-accept$")
 INPUT_ACCEPT = re.compile(r"(-j|-g|--jump|--goto)(\s+|=)?(nixos-fw-accept|ACCEPT|\$)|(^|\s)(-g|--goto)(\s|=)|-[AI] +(nixos-fw|INPUT) .*-j +RETURN")
