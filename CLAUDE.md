@@ -32,6 +32,7 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               checkout=clean|dirty <owner>:<check>…` and in the gate record (head=, checkout=, deferred_checks=);
 #               the owner's flake check records each of its own deploy checks as `result=built|present|dry
 #               owner=<host> head=<sha> drv=<drv>`, the deferral as `result=deferred … drv=<drv>`.
+#               `just deferred-checks <full sha>` lists them and exits 1 while one still waits for its owner; merge on 0.
 # The tests read the hosts through one probe evaluation (scripts/gate-probe.nix), built once by nixos:qa.
 
 nix fmt                             # nixfmt over every .nix file except the flake-modules/hosts.nix table
