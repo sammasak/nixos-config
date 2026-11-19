@@ -94,7 +94,7 @@ with tempfile.TemporaryDirectory(prefix='alloy-602-') as td:
             log.close()
         output = capture.read_text()
         if proc.returncode not in (0, -15):
-            print(output[-4000:])
+            raise RuntimeError(f'Alloy exited with status {proc.returncode}: {output[-4000:]}')
     for *_, marker, keep in fixtures:
         assert ('test_case=' + marker in output) == keep, (marker, output[-2500:])
     print('PASS: rendered Alloy pipeline dropped only found=true INFO lookup; creation/error/caller/unit/message cases survived; private units stayed excluded')

@@ -25,6 +25,16 @@ in
               python3 ${../scripts/test-journal-filter-runtime.py} \
                 ${pkgs.writeText "black-pi-config.alloy" pi.services.alloy.configPath.text} \
                 ${lib.getExe pkgs.grafana-alloy}
+              fake=${pkgs.writeShellScript "alloy-exit-failure" ''
+                exec ${pkgs.python3}/bin/python ${../scripts/fixtures/alloy-exit-failure.py} "$@"
+              ''}
+              if python3 ${../scripts/test-journal-filter-runtime.py} \
+                ${pkgs.writeText "black-pi-config.alloy" pi.services.alloy.configPath.text} \
+                "$fake" > exit-failure.log 2>&1; then
+                echo "journal-collector: runtime harness accepted an Alloy exit failure" >&2
+                exit 1
+              fi
+              grep -F 'Alloy exited with status 2:' exit-failure.log
               touch $out
             '';
       };
