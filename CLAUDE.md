@@ -73,6 +73,7 @@ just deploy HOST              # HOST: a deploy-rs node, any other name is refuse
 #   non-zero if any fails: a host left degraded, looping, off that generation or with a shadowed user unit (deploy-rs rolls back a failed activation itself; naked-pi not until #474).
 #   A failed check rolls nothing back, and a host degraded for an unrelated, pre-existing reason
 #   fails every deploy: read `systemctl --failed` on the target.
+#   A deploy of a HOST already being deployed is refused at once (result=locked, naming the holder); other hosts run concurrently.
 #   lenovo      loopback self-push, proves the deploy-rs path
 #   acer-swift  builds on acer (remoteBuild)
 #   msi-ms7758  builds on msi; only in its Mon-Fri ~08:30-21:00 power window
@@ -310,7 +311,6 @@ either side is only reported.
   `deploy.hostname` default to the entry name; `deploy.remoteBuild` is
   required, true unless lenovo can build it);
   its deploy-rs node follows from the entry;
-- the `just deploy` HOST pattern (checked by `scripts/test-ssh-known-hosts.py`);
 - its pinned key in `hosts/<dir>/ssh_known_hosts` (read by `modules/core/ssh-known-hosts.nix`, which fails every
   host while a deploy node has none; `docs/ssh-host-keys.md`) and its sops
   recipient, both also in `scripts/test-ssh-known-hosts.py`;

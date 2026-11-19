@@ -4,12 +4,15 @@ on PATH and stub system-checks.sh and platform-record.sh; ssh runs its command h
 real scripts/post-deploy-check.sh to the target, so a unit in a restart loop, which is-system-running reads as running,
 fails it with result=check-failed. deploy-rs's --dry-activate exits 0 whatever the dry activation did, so dry-activate
 reruns switch-to-configuration dry-activate over ssh and exits non-zero, with its output, when that or the closure diff
-fails, and 0 when both pass."""
+fails, and 0 when both pass. A deploy of a host whose lock (in XDG_RUNTIME_DIR, here a temporary directory) is held is
+refused at once with result=locked."""
+import fcntl
 import os
 import pathlib
 import shutil
 import subprocess
 import tempfile
+import time
 
 from gate_probe import check, finish
 
@@ -50,8 +53,9 @@ esac""",
 }
 
 
-def run(recipe, shadow="", check_script=None, **env):
-    """shadow: the activation's report on the target (None: there is none); check_script: the post-deploy check's text."""
+def run(recipe, shadow="", check_script=None, host="acer-swift", runtime=None, justfile=ROOT / "Justfile", **env):
+    """shadow: the activation's report on the target (None: there is none); check_script: the post-deploy check's text;
+    runtime: XDG_RUNTIME_DIR, where the deploy locks are (default: a fresh one)."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = pathlib.Path(tmp)
         for rel, body in STUBS.items():
@@ -62,9 +66,10 @@ def run(recipe, shadow="", check_script=None, **env):
         if shadow is not None:
             (tmp / "shadowed-user-units").write_text(shadow)
         (tmp / "log").touch()
-        out = subprocess.run([shutil.which("just"), "--justfile", str(ROOT / "Justfile"), "--working-directory", str(tmp),
-                              recipe, "acer-swift"], capture_output=True, text=True,
+        out = subprocess.run([shutil.which("just"), "--justfile", str(justfile), "--working-directory", str(tmp),
+                              recipe, host], capture_output=True, text=True,
                              env=dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", FIX=str(tmp),
+                                      XDG_RUNTIME_DIR=str(runtime or tmp),
                                       LOG=str(tmp / "log"), SHADOWED_USER_UNITS=str(tmp / "shadowed-user-units"), **env))
         return out.returncode, out.stdout + out.stderr, (tmp / "log").read_text()
 
@@ -97,6 +102,38 @@ if old.returncode == 0 and "shadowed-user-units" not in old.stdout:
     rc, out, log = run("deploy", shadow=SHADOWED + "\n", check_script=old.stdout)
     check(rc == 0 and "result=ok" in log,
           f"seeded: main's post-deploy check passes a host whose activation found a shadowed unit, so the check above is new (rc {rc})")
+
+with tempfile.TemporaryDirectory() as runtime:
+    lock = pathlib.Path(runtime) / "deploy-acer-swift.lock"
+    with open(lock, "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        held.write("pid 4242, def456, since 10:00:00\n")
+        held.flush()
+        t0 = time.monotonic()
+        rc, out, log = run("deploy", runtime=runtime)
+        took = time.monotonic() - t0
+        check(rc != 0 and took < 10 and "result=locked" in log and "nix run" not in log and "system-checks" not in log
+              and "acer-swift is being deployed already (pid 4242, def456, since 10:00:00)" in out,
+              f"deploy: a deploy of a host being deployed is refused at once ({took:.1f}s), naming the holder, and "
+              f"records result=locked (rc {rc}: {out.strip()[-200:]})")
+        rc, out, log = run("deploy", host="black-pi", runtime=runtime)
+        check(rc == 0 and "result=ok" in log and ".#black-pi" in log,
+              f"deploy: another host deploys while acer-swift is locked (rc {rc}: {out.strip()[-200:]})")
+        # seed: the recipe without its lock lines deploys the locked host; the links keep justfile_directory()'s files
+        seed = pathlib.Path(runtime) / "seed"
+        seed.mkdir()
+        for p in ROOT.iterdir():
+            if p.name not in ("Justfile", ".git"):
+                (seed / p.name).symlink_to(p)
+        (seed / "Justfile").write_text("".join(l for l in (ROOT / "Justfile").read_text().splitlines(True)
+                                               if "$lock" not in l))
+        rc, out, log = run("deploy", runtime=runtime, justfile=seed / "Justfile")
+        check(rc == 0 and "result=ok" in log,
+              f"seeded: without the lock lines a deploy of the locked host runs, so the refusal above is the lock's "
+              f"(rc {rc}: {out.strip()[-200:]})")
+    rc, out, log = run("deploy", runtime=runtime)
+    check(rc == 0 and "result=ok" in log and lock.read_text().startswith("pid "),
+          f"deploy: once the holder exits, the host deploys and records itself as the holder (rc {rc}: {out.strip()[-200:]})")
 
 rc, out, log = run("dry-activate")
 check(rc == 0 and "--dry-activate" in log, f"dry-activate: a passing dry activation exits 0 (rc {rc}: {out.strip()})")

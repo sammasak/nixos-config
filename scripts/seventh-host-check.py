@@ -45,8 +45,6 @@ COUPLINGS: dict[str, str] = {}
 # host lists kept by hand and held to the fleet by the gate (nixos:known-hosts-test, nixos:readability-test):
 # place -> (file, the block holding the list or None for the whole file, the pattern of one entry)
 HAND_KEPT = {
-    "Justfile HOST patterns": ("Justfile", None, r'\[arg\("HOST", pattern="([^"]+)"\)\]'),
-    "ssh-known-hosts-verify.sh default hosts": ("scripts/ssh-known-hosts-verify.sh", r"\|\| hosts=\([^)]*\)", r"([a-zA-Z0-9-]+)"),
     "test-ssh-known-hosts.py EXPECTED": ("scripts/test-ssh-known-hosts.py", r"\nEXPECTED = \{\n.*?\n\}", r'^    "([a-zA-Z0-9-]+)": '),
     "test-ssh-known-hosts.py SOPS_RECIPIENTS": ("scripts/test-ssh-known-hosts.py", r"\nSOPS_RECIPIENTS = \{\n.*?\n\}",
                                                 r'^    "([a-zA-Z0-9-]+)": '),
