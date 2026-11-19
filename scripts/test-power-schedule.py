@@ -1,6 +1,7 @@
 """The work-hours power windows (modules/core/power-schedule.nix) as each host renders them: lenovo, the always-on
 waker, sends every host whose fleet entry has a power window its Wake-on-LAN packet at the window's wake, each such host
 powers itself off at its off and arms Wake-on-LAN on its fleet interface, and no other host gets any of these units.
+asus alone unbinds its xHCI controller on poweroff, or it boots again.
 Both edges come from the fleet's one night (sam.fleet.night): the windows' off and wake on their days, and the quiet
 hosts' night-quiet units every night (scripts/test-night-quiet.py tests their decision). The assertions refuse a window
 on a host that is not marked sleeps, a waker on a sleeping host, a window host whose NIC's Wake-on-LAN is turned off,
@@ -55,6 +56,16 @@ for host, us in units.items():
               f"{host} arms Wake-on-LAN on {nic} at boot ({mine})")
     else:
         check(mine == [], f"{host} has no Wake-on-LAN unit ({mine})")
+
+# asus's xHCI unbind (hosts/asus-b460m/configuration.nix): on poweroff only, and on no other host
+for host, hooks in P["shutdownHooks"].items():
+    if host == "asus-b460m":
+        text = open(hooks["asus-xhci-unbind"]).read() if "asus-xhci-unbind" in hooks else ""
+        check('[ "$1" = poweroff ] || exit 0' in text
+              and "echo 0000:00:14.0 > /sys/bus/pci/drivers/xhci_hcd/unbind" in text,
+              f"asus-b460m unbinds xhci_hcd from 0000:00:14.0 on poweroff only ({sorted(hooks)})")
+    else:
+        check("asus-xhci-unbind" not in hooks, f"{host} has no xHCI unbind hook ({sorted(hooks)})")
 
 # assertions: clean on the real hosts, each seeded break fails with its message
 awake = "modules/core/fleet.nix: asus-b460m has a power window, so it is off by plan: set sleeps = true on its entry."
