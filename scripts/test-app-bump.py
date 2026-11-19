@@ -48,7 +48,7 @@ def github(main, compare="ahead"):
     return lambda path: routes[path]
 
 
-def shell(registry=REGISTRY, dirty="", nar=NAR, fail=None):
+def shell(registry=REGISTRY, dirty="", nar=NAR, fail=None, gh_login=True):
     """A stub for every subprocess the bump runs: answers by argv prefix and records each call."""
     calls = []
 
@@ -56,6 +56,8 @@ def shell(registry=REGISTRY, dirty="", nar=NAR, fail=None):
         calls.append(argv)
         if fail and argv[: len(fail)] == fail:
             raise RuntimeError(f"{' '.join(argv)}: stub failure")
+        if argv[:3] == ["gh", "auth", "status"] and not gh_login:
+            raise RuntimeError("gh auth status: You are not logged into any GitHub hosts")
         head = tuple(argv[:3])
         if head == ("git", "status", "--porcelain"):
             return dirty
@@ -92,10 +94,10 @@ want = json.loads(json.dumps(REGISTRY))
 want["apps"][APP]["source"] |= {"rev": GREEN, "narHash": NAR}
 check(code == 0 and written == want, f"bump: exit 0, only apps.{APP}.source.rev and narHash change ({code}, {err.strip()})")
 heads = [c[:3] for c in calls]
-order = [["git", "status", "--porcelain"], ["git", "fetch", "origin"], ["git", "show", "origin/main:apps/registry.json"],
+order = [["git", "status", "--porcelain"], ["gh", "auth", "status"], ["git", "fetch", "origin"], ["git", "show", "origin/main:apps/registry.json"],
          ["nix", "flake", "prefetch"], ["git", "switch", "--create"], ["git", "add", "apps/registry.json"],
          ["git", "commit", "-m"], ["git", "push", "--set-upstream"], ["gh", "pr", "create"]]
-check(heads == order, f"bump: status, fetch, read origin/main, prefetch, branch, add, commit, push, PR, in that order ({heads})")
+check(heads == order, f"bump: status, gh login, fetch, read origin/main, prefetch, branch, add, commit, push, PR, in that order ({heads})")
 by = {tuple(c[:3]): c for c in calls}
 check(by[("nix", "flake", "prefetch")][-1] == f"git+ssh://git@github.com/{REPO}?ref=refs/heads/main&rev={GREEN}",
       "bump: prefetches the green rev on main over ssh, as pins.nix fetches it")
@@ -126,6 +128,7 @@ short["apps"][APP]["source"]["rev"] = "e2d61abf"
 REFUSALS = (
     ("lenovo", [APP], github([GREEN, OLD]), shell(), "lenovo-21CB001PMX", "refused on lenovo-21CB001PMX"),
     ("dirty checkout", [APP], github([GREEN, OLD]), shell(dirty=" M flake.nix\n"), "acer-swift", "uncommitted changes"),
+    ("no gh login", [APP], github([GREEN, OLD]), shell(gh_login=False), "asus-b460m", "gh is not logged in here"),
     ("unknown app", ["nope"], github([GREEN, OLD]), shell(), "acer-swift", f"no apps.nope; registered: {APP}"),
     ("unallowlisted repo", [APP], github([GREEN, OLD]), shell(registry=bad_repo), "acer-swift", f"grants.{APP} allowlists ({REPO})"),
     ("short rev", [APP], github([GREEN, OLD]), shell(registry=short), "acer-swift", f"apps.{APP}.source.rev"),

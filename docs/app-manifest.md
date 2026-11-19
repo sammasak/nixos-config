@@ -166,12 +166,15 @@ its repository's green `main` would get. It is the first slice of #560 and decid
 type-checks the whole file on any use (names, the grant's repo allowlist and host, 40-hex rev, SRI `sha256-` narHash;
 an unknown field fails) and `src APP` fetches the tree with `builtins.fetchTree` by rev and narHash, so a bad entry
 or a hash that does not match the rev fails evaluation, never a deploy. The tree and its store path are the ones a
-flake input at that rev gives. alert-bridge is on it (the overlay's `alertBridge` src); the other apps stay flake
-inputs. `scripts/test-app-registry.py` (in the `app-manifest` flake check) evaluates the live file and bent copies.
+flake input at that rev gives. One difference: `nix flake archive` and `nix copy` of the flake's inputs carry flake
+inputs but not a tree fetched during evaluation, so an offline machine needs the app repository (or that store path)
+to evaluate; nothing in the fleet archives inputs today. alert-bridge is on it (the overlay's `alertBridge` src); the
+other apps stay flake inputs. `scripts/test-app-registry.py` (in the `app-manifest` flake check) evaluates the live file and bent copies.
 
 `scripts/app-bump.py APP` runs the dry run's `green_after` on the registry entry, prefetches the new rev's narHash,
 rewrites only that entry on `app-bump/APP-<sha12>` cut from origin/main, commits, pushes (the pre-push gate runs) and
-opens the PR with the dry run's text. It refuses lenovo and a dirty checkout; `--dry-run` stops after the prefetch.
+opens the PR with the dry run's text. It refuses lenovo, a dirty checkout and a host without a `gh` login (checked before anything is written, so no
+branch is pushed without its PR); `--dry-run` stops after the prefetch.
 `scripts/test-app-bump.py` runs it on stubs.
 
 ## Out of scope

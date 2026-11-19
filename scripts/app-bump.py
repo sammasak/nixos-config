@@ -70,6 +70,12 @@ def main(argv=None, api=dry.gh_api, run=sh, host=socket.gethostname):
             raise dry.Refused(f"refused on {LENOVO}: the prefetch fetches and hashes the app's tree; run it on acer.")
         if not a.dry_run and run(["git", "status", "--porcelain"]).strip():
             raise dry.Refused("the checkout has uncommitted changes; the bump cuts its branch from origin/main.")
+        # before anything is written: a host without a gh login (asus, msi) would push the branch and open no PR
+        if not a.dry_run:
+            try:
+                run(["gh", "auth", "status"])
+            except RuntimeError as e:
+                raise dry.Refused(f"gh is not logged in here, so the PR could not be opened; run it on acer ({e}).") from None
         run(["git", "fetch", "origin", "main"])
         registry = json.loads(run(["git", "show", f"origin/main:{REGISTRY}"]))
         pin = pin_of(registry, a.app)
