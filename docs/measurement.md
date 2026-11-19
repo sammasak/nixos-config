@@ -19,7 +19,8 @@ and prints the four tables below as metric, reading, target and verdict, then ea
 **pass** and **fail** against the metric's `threshold`; **stale** when a record kind its query reads has nothing
 newer than its maximum age, or a Prometheus metric's `fresh` query returns nothing (a long-window average still holds
 old samples after its exporter stops); **unknown** for no query, a failed or empty query, a reading that is not a number, or a
-target judged by hand (`by-hand`, reading shown). It exits 2 when either backend is unreachable or not ready. Its
+target judged by hand (`by-hand`, reading shown). A `checkout` metric is computed from the checked-out tree, not
+read from a backend; its `query` names the computation and it has no panel or `fresh` guard. It exits 2 when either backend is unreachable or not ready. Its
 addresses are `sam.fleet`'s (Prometheus answers lenovo and acer only); `SCORECARD_PROMETHEUS_URL` and
 `SCORECARD_LOKI_URL` override them.
 
@@ -29,7 +30,7 @@ addresses are `sam.fleet`'s (Prometheus answers lenovo and acer only); `SCORECAR
 2. Every metric has a question, a source, an exact query, a target, and the date the target last changed with the
    reading that justified it.
 3. Targets live in `metrics/targets.json`, never in code. The test fails if a live metric has no query, no
-   dashboard panel or no target.
+   dashboard panel (a `checkout` one: the scorecard row) or no target.
 4. An unknown reading is shown as unknown, never as a pass.
 5. Every record kind has a maximum age (`max_age_hours`). A kind that has gone quiet is stale, so a collector that
    stopped is visible.
@@ -65,7 +66,7 @@ morning-wake: count_over_time((max by (node) (up{job="node-exporter"}) == 0 unle
 
 | Id | Question | Source | Target | State |
 |---|---|---|---|---|
-| `registry-apps` | Are the apps delivered through the registry? | new: count from `apps/registry.json` vs apps in `modules/homelab` | all owner-chosen apps | new |
+| `registry-apps` | Are the apps delivered through the registry? | the checkout: `apps/registry.json` vs the app repositories `modules/homelab` runs | every app repository `modules/homelab` runs is in the registry | live |
 | `app-availability` | Are the apps up for their users? | blackbox `probe_success` | 99 % per public name over 14 days | live |
 | `ships-without-code-change` | Does an app ship without a nixos-config code change? | new: PRs touching only `apps/registry.json` vs all app changes | 9 of 10 | new |
 | `bump-to-live` | How long from a registry bump to live? | new: merge-to-deploy lag filtered to registry bumps (`shipping_deploy_lag_hours` is not) | under 30 min | new |
@@ -73,8 +74,15 @@ morning-wake: count_over_time((max by (node) (up{job="node-exporter"}) == 0 unle
 | `behind-authentik` | Is every public name behind Authentik? | new: a check per public name (only chat's redirect is probed today) | 100 % | new |
 
 ```
+registry-apps: registry_coverage
 app-availability: avg by (instance) (avg_over_time(probe_success{job="blackbox"}[14d]))
 ```
+
+`registry-apps` has no series: the scorecard computes it from the checkout it runs in (`checkout` backend), so it
+always matches that tree and needs no host. An app is a package `flake-modules/overlays.nix` builds from a pinned
+source repository (a flake input or a registry pin) that a module under `modules/homelab` runs (`pkgs.<attr>` or
+`mkPackageOption pkgs "<attr>"`); services nixpkgs packages are not, the registry pins app repositories. The reading
+is `<in the registry>/<apps>` with the ones not yet in named.
 
 Prometheus keeps 15 days (`modules/homelab/monitoring/prometheus.nix`), so availability reads 14 days, not 30.
 

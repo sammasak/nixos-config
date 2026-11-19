@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The platform scorecard (docs/measurement.md): every metric in metrics/targets.json read from Prometheus or Loki and
-printed per area as metric, reading, target and verdict, then each record kind's freshness. A metric without a query, a
+printed per area as metric, reading, target and verdict, then each record kind's freshness. A `checkout` metric is
+computed from the checkout the targets file is in (its parent's parent) instead. A metric without a query, a
 failed or empty query, or a reading that is not a number is unknown, never a pass; a metric reading a record kind that
 has gone quiet past its maximum age, or whose `fresh` query returns nothing, is stale. Exits 2 when Prometheus or Loki
 cannot be reached."""
@@ -12,6 +13,7 @@ import json
 import math
 import operator
 import os
+import pathlib
 import re
 import sys
 import urllib.error
@@ -30,6 +32,12 @@ TIMEOUT = 10
 OPS: dict[str, Callable[[float, float], bool]] = {"<=": operator.le, "<": operator.lt, ">=": operator.ge,
                                                   ">": operator.gt}
 BY_HAND = "by-hand"
+CHECKOUT_BACKEND = "checkout"
+OVERLAYS = "flake-modules/overlays.nix"
+# an overlay package `<attr> = final.callPackage ... {` up to its closing `};` line, and its source's two forms
+PACKAGE = re.compile(r"^\s*([\w-]+) = final\.callPackage [^\n]*\{\n(.*?)\n\s*\};", re.MULTILINE | re.DOTALL)
+FROM_INPUT = re.compile(r"\bsrc = inputs\.([\w-]+);")
+FROM_REGISTRY = re.compile(r'\bsrc = [^\n]*pins\.nix[^\n]*\.src "([\w-]+)";')
 Series = list[tuple[dict[str, str], float]]
 
 
@@ -53,6 +61,7 @@ class Row:
 @dataclass
 class Backends:
     urls: dict[str, str]
+    root: pathlib.Path
     down: dict[str, str] = field(default_factory=dict)
 
     def probe(self) -> None:
@@ -106,6 +115,70 @@ def series(body: Any) -> Series:
     raise QueryFailed(f"result type {data.get('resultType')!r}, not a vector or scalar")
 
 
+def input_repo(lock: Any, name: str) -> str:
+    """`owner/repo` of a root flake input, from flake.lock's `original` (github or a GitHub git URL)."""
+    orig = lock["nodes"][lock["nodes"][lock["root"]]["inputs"][name]]["original"]
+    if orig.get("type") == "github":
+        return f"{orig['owner']}/{orig['repo']}"
+    m = re.fullmatch(r"(?:git\+)?(?:ssh://git@|https://)github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?", orig.get("url", ""))
+    if not m:
+        raise QueryFailed(f"flake.lock: input {name} is not a GitHub repository ({orig})")
+    return str(m.group(1))
+
+
+def registry_coverage(root: pathlib.Path) -> tuple[float, str]:
+    """`registry-apps`: of the apps modules/homelab runs, how many apps/registry.json delivers. An app is a package
+    flake-modules/overlays.nix builds from a pinned source repository (a flake input or a registry pin) and a module
+    under modules/homelab runs (`pkgs.<attr>` or `mkPackageOption pkgs "<attr>"`); a service nixpkgs packages is not
+    one, the registry pins app repositories. Read as text and JSON, nothing evaluated. The value is the count not in
+    the registry; a run package whose source is neither form, or no app at all, is unknown, not a pass."""
+    try:
+        lock = json.loads((root / "flake.lock").read_text())
+        apps = json.loads((root / "apps/registry.json").read_text())["apps"]
+        pinned = {n: a["source"]["repo"] for n, a in apps.items()}
+        overlays = (root / OVERLAYS).read_text()
+        modules = "\n".join(p.read_text() for p in sorted((root / "modules/homelab").rglob("*.nix")))
+        declared: set[str] = set()
+        for attr, body in PACKAGE.findall(overlays):
+            if not re.search(rf'pkgs(?:\.{attr}|\s+"{attr}")(?![\w-])', modules):
+                continue
+            if m := FROM_INPUT.search(body):
+                declared.add(input_repo(lock, m.group(1)))
+            elif (m := FROM_REGISTRY.search(body)) and m.group(1) in pinned:
+                declared.add(pinned[m.group(1)])
+            else:
+                raise QueryFailed(f"{OVERLAYS}: {attr} runs under modules/homelab, its src neither inputs.<name> nor a "
+                                  "registry pin")
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+        raise QueryFailed(f"the checkout at {root}: {type(e).__name__} {e}") from None
+    if not declared:
+        raise QueryFailed(f"no app found: no {OVERLAYS} package from a pinned source runs under modules/homelab")
+    missing = sorted(r.split("/")[-1] for r in declared - set(pinned.values()))
+    reading = f"{len(declared) - len(missing)}/{len(declared)}"
+    return float(len(missing)), reading + (f"; not in the registry: {', '.join(missing)}" if missing else "")
+
+
+CHECKOUT: dict[str, Callable[[pathlib.Path], tuple[float, str]]] = {"registry_coverage": registry_coverage}
+
+
+def checkout(m: dict[str, Any], row: Row, root: pathlib.Path) -> Row:
+    read = CHECKOUT.get(m["query"])
+    if read is None:
+        row.reason = f"no checkout reading {m['query']!r}"
+        return row
+    try:
+        value, row.reading = read(root)
+    except QueryFailed as e:
+        row.reason = str(e)
+        return row
+    threshold = m["threshold"]
+    if threshold["op"] == BY_HAND:
+        row.reason = "judged by hand"
+        return row
+    row.verdict = "pass" if OPS[threshold["op"]](value, float(threshold["value"])) else "fail"
+    return row
+
+
 def kinds_of(query: str) -> list[str]:
     return sorted(set(re.findall(r'kind="([^"]+)"', query)))
 
@@ -137,6 +210,8 @@ def evaluate(m: dict[str, Any], fresh: dict[str, tuple[str, str]], backends: Bac
     if m.get("query") is None:
         row.reason = f"no query ({m['state']})"
         return row
+    if m.get("backend") == CHECKOUT_BACKEND:
+        return checkout(m, row, backends.root)
     quiet = [k for k in kinds_of(m["query"]) if fresh.get(k, ("unknown", ""))[0] != "fresh"]
     if quiet:
         stale = [k for k in quiet if fresh.get(k, ("unknown", ""))[0] == "stale"]
@@ -181,7 +256,7 @@ def cell(text: str) -> str:
 def render(targets: dict[str, Any], rows: list[Row], fresh: dict[str, tuple[str, str]], backends: Backends) -> str:
     when = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     out = [f"# Platform scorecard, {when}", "",
-           f"Prometheus {backends.urls['prometheus']}, Loki {backends.urls['loki']}", ""]
+           f"Prometheus {backends.urls['prometheus']}, Loki {backends.urls['loki']}, checkout {backends.root}", ""]
     by_id = {r.name: r for r in rows}
     for area, title in targets["areas"].items():
         out += [f"## {area}. {title}", "", "| Metric | Reading | Target | Verdict |", "|---|---|---|---|"]
@@ -209,7 +284,7 @@ def main(argv: list[str]) -> int:
     backends = Backends({
         "prometheus": os.environ.get("SCORECARD_PROMETHEUS_URL", DEFAULT_PROMETHEUS).rstrip("/"),
         "loki": os.environ.get("SCORECARD_LOKI_URL", DEFAULT_LOKI).rstrip("/"),
-    })
+    }, pathlib.Path(args.targets).resolve().parent.parent)
     backends.probe()
     fresh = freshness(targets["max_age_hours"], backends)
     rows = [evaluate(m, fresh, backends) for m in targets["metrics"]]

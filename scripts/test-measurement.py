@@ -3,11 +3,13 @@
 targets file and the reverse, with the same area, question, source, target, state and query; a live metric has a query,
 a target and a dashboard panel whose queries use the same kinds and series; an in-flight or new one has no query, and
 the scorecard's machine-readable backend, threshold and (Prometheus) fresh guard, which an in-flight or new one has none
-of; the area names are the doc's headings; at most six per area; every kind scripts/platform-record.sh writes has a
+of; a `checkout` one names a computation the scorecard has, with no panel or fresh guard;
+the area names are the doc's headings; at most six per area; every kind scripts/platform-record.sh writes has a
 maximum age. Seeded cases: each of those broken in a copy must be caught."""
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import pathlib
 import re
@@ -26,6 +28,11 @@ LIMIT = 6
 FIELDS = ["area", "question", "source", "target", "state"]
 OPS = {"<=", "<", ">=", ">"}
 BY_HAND = "by-hand"
+_spec = importlib.util.spec_from_file_location("scorecard", ROOT / "pkgs/scorecard/scorecard.py")
+assert _spec and _spec.loader
+scorecard = sys.modules["scorecard"] = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(scorecard)
+CHECKOUT = scorecard.CHECKOUT_BACKEND
 
 Metric = dict[str, Any]
 Problems = dict[str, list[str]]
@@ -89,7 +96,10 @@ def threshold_problems(m: Metric) -> list[str]:
     (or by-hand, which the scorecard reports as unknown with its reading)."""
     out = []
     logql = bool(re.search(r"\(\{|^\{", m.get("query") or ""))
-    if m.get("backend") != ("loki" if logql else "prometheus"):
+    if m.get("backend") == CHECKOUT:
+        if m.get("query") not in scorecard.CHECKOUT:
+            out.append(f"query {m.get('query')!r} is none of the scorecard's {sorted(scorecard.CHECKOUT)}")
+    elif m.get("backend") != ("loki" if logql else "prometheus"):
         out.append(f"backend {m.get('backend')!r}, but the query is {'LogQL' if logql else 'PromQL'}")
     t = m.get("threshold")
     if not isinstance(t, dict) or t.get("op") not in {*OPS, BY_HAND}:
@@ -104,6 +114,8 @@ def fresh_problems(m: Metric, everywhere: str) -> list[str]:
     returns nothing once the source stops (a long-window average still holds old samples), and reads only series a
     dashboard already shows."""
     guard = m.get("fresh")
+    if m.get("backend") == CHECKOUT:
+        return [] if guard is None else ["a checkout metric with a fresh guard: it is computed from its tree"]
     if m.get("backend") == "loki":
         return [] if guard is None else ["a Loki metric with a fresh guard: its record kinds' max ages keep it fresh"]
     if not isinstance(guard, str) or not guard.strip():
@@ -136,6 +148,10 @@ def problems(doc: dict[str, Metric], headings: list[str], targets: dict[str, Any
             continue
         out["threshold"] += [f"{mid}: {e}" for e in threshold_problems(m)]
         out["fresh"] += [f"{mid}: {e}" for e in fresh_problems(m, everywhere)]
+        if m.get("backend") == CHECKOUT:
+            if not m.get("query") or not m.get("target") or m.get("panels"):
+                out["live"].append(f"{mid}: a checkout metric needs a query and a target, and has no dashboard panel")
+            continue
         if not m.get("query") or not m.get("target") or not m.get("panels"):
             out["live"].append(f"{mid}: live without a query, a target or a panel")
             continue
@@ -234,6 +250,12 @@ seeded("a LogQL query sent to Prometheus", "threshold",
        with_metric(next(m["id"] for m in targets["metrics"] if m.get("backend") == "loki"), backend="prometheus"))
 seeded("an in-flight or new metric with a threshold", "threshold",
        with_metric(other["id"], threshold={"op": "<=", "value": 0}))
+checkout = next(m["id"] for m in targets["metrics"] if m.get("backend") == CHECKOUT)
+seeded("a checkout metric naming no computation the scorecard has", "threshold",
+       with_metric(checkout, query="registry_made_up"))
+seeded("a checkout metric with a fresh guard", "fresh", with_metric(checkout, fresh="time() > 0"))
+seeded("a checkout metric with a dashboard panel", "live",
+       with_metric(checkout, panels=["fleet.json: Down unexpectedly"]))
 prom = next(m["id"] for m in targets["metrics"] if m.get("backend") == "prometheus")
 loki = next(m["id"] for m in targets["metrics"] if m.get("backend") == "loki")
 seeded("a live Prometheus metric without a fresh query", "fresh", with_metric(prom, fresh=None))
