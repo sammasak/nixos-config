@@ -501,6 +501,9 @@ let
       ''
         ${pkgs.python3}/bin/python scripts/test-platform-records.py
       '';
+  measurementTest = gate "measurement-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python scripts/test-measurement.py docs/measurement.md metrics/targets.json
+  '';
   shippingMetricsTest = gate "shipping-metrics-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-shipping-metrics.py
   '';
@@ -811,6 +814,7 @@ let
     systemdCalendarTest
     systemdVerifyTest
     platformRecordsTest
+    measurementTest
     trashSweepTest
     guestRecordsTest
     shippingMetricsTest
@@ -1441,6 +1445,8 @@ in
       task "The host ships guest platform records on a fake Loki: each line once, also after a rewrite; host labels only; label keys, unknown kinds, oversize and too-old lines dropped; 500 per run; a link or FIFO on the spool's path refused; trashOne ships before its rename" guestRecordsTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
+    "nixos:measurement-test" =
+      task "Measurement doc and targets: every metric in both with the same fields, a live one with a query, target and a panel reading the same kinds and series, at most six per area or a named exception, a max age per record kind" measurementTest;
     "nixos:shipping-metrics-test" =
       task "Shipping collector on a fake GitHub and Loki: issues split actionable/parked/archived, a failed source leaves no series and keeps its stale timestamp, an undeclared name is refused" shippingMetricsTest;
     "nixos:trigger-rollback-test" =
