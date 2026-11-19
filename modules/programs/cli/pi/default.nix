@@ -10,6 +10,12 @@ devenvPlatform:
   ...
 }:
 let
+  # The llm-gateway on acer (sam.fleet.listeners.gateway-api): acer's firewall admits
+  # lenovo, and acer reaches its own address locally.
+  gatewayUrl = osConfig.sam.fleet.listeners.gateway-api.url;
+  # pi-ticket's quota check reads /status, which the gateway serves on its admin listener alone (the API answers 404)
+  gatewayAdminUrl = osConfig.sam.fleet.listeners.gateway-admin.url;
+
   # Seeded only when missing.
   defaultSettings = builtins.toJSON {
     # Free-tier 429s carry ~10-60s resets; the 2s default base gives up first.
@@ -81,8 +87,7 @@ let
   # by tier and fails over. `!cat` reads the sops key per request, so it never
   # enters the store or the environment.
   homelabProvider = builtins.toJSON {
-    # acer's firewall admits lenovo on 8081 (sam.fleet.listeners.gateway-api); acer reaches its own address locally
-    baseUrl = "http://${osConfig.sam.fleet.hosts.acer-swift.address}:8081/v1";
+    baseUrl = "${gatewayUrl}/v1";
     api = "openai-completions";
     apiKey = "!cat /run/secrets/llm_gateway_pi_key";
     models = [
@@ -193,6 +198,7 @@ in
         ];
         text = lokiDefault + ''
           export PI_TICKET_OFFLOAD="''${PI_TICKET_OFFLOAD:-${piOffload}/bin/pi-offload}"
+          export PI_TICKET_GATEWAY_URL="''${PI_TICKET_GATEWAY_URL:-${gatewayAdminUrl}}"
           exec bash ${devenvPlatform}/agents/pi/ticket/pi-ticket "$@"
         '';
       })

@@ -358,7 +358,11 @@ in
       gateway-admin = {
         host = "acer-swift";
         port = 9091;
-        from = [ "black-pi" ];
+        # black-pi scrapes its metrics; lenovo's pi-ticket reads /status, which only this listener serves
+        from = [
+          "black-pi"
+          "lenovo-21CB001PMX"
+        ];
       };
       alloy-http = {
         host = "acer-swift";

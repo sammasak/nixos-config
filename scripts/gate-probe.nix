@@ -618,9 +618,10 @@ let
         );
       };
 
-    # each paging unit's script and sam.workers.ntfyUrl on every host, and the seeded cases: acer without the
-    # runtime-host role's sam.workers.ntfyUrl, Loki and the collector on naked-pi with no URL set, an empty URL, ntfy
-    # off its fleet host and a host redefining a fleet fact; context discarded: nothing here needs a build
+    # each paging unit's script and sam.workers.ntfyUrl on every host, pi-ticket's wrapper on the Pi hosts with the
+    # gateway listener, and the seeded cases: acer without the runtime-host role's sam.workers.ntfyUrl, Loki and the
+    # collector on naked-pi with no URL set, an empty URL, ntfy off its fleet host and a host redefining a fleet fact;
+    # context discarded: nothing here needs a build
     fleet-endpoints =
       let
         pages =
@@ -655,6 +656,26 @@ let
         ntfyAddress = acer.sam.fleet.hosts.${acer.sam.fleet.ntfy.host}.address;
         inherit (acer.sam.fleet.ntfy) port;
         hosts = lib.mapAttrs (_: h: pages h.config) hosts;
+        # pi-ticket's wrapper text on every sam.profile.pi host, and the gateway listener it must name
+        piTicket = lib.mapAttrs (
+          _: h:
+          builtins.unsafeDiscardStringContext (
+            (lib.findFirst (p: (p.name or "") == "pi-ticket") { } (hm h.config).home.packages).text or ""
+          )
+        ) (lib.filterAttrs (_: h: h.config.sam.profile.pi) hosts);
+        gatewayApi = {
+          inherit (acer.sam.fleet.listeners.gateway-api) url host port;
+          address = acer.sam.fleet.hosts.${acer.sam.fleet.listeners.gateway-api.host}.address;
+        };
+        gatewayAdmin = {
+          inherit (acer.sam.fleet.listeners.gateway-admin)
+            url
+            host
+            port
+            from
+            ;
+          address = acer.sam.fleet.hosts.${acer.sam.fleet.listeners.gateway-admin.host}.address;
+        };
         seeded = {
           acerWithoutWorkersUrl = pages (
             extend "acer-swift" [ ({ lib, ... }: { sam.workers.ntfyUrl = lib.mkForce null; }) ]
