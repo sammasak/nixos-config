@@ -854,6 +854,27 @@ let
     alloyOtlpTest
   ];
   # the run's own record is written on every exit, so a failed or interrupted gate still shows
+  # what this shell's gates were built from. The pre-push hook and a long-lived shell run the gates evaluated at
+  # devenv entry: after a merge that changed these files they would check the new tree with the old test list
+  builtFrom =
+    lib.concatMapStringsSep " " (p: "${baseNameOf (toString p)}=${builtins.hashFile "sha256" p}")
+      [
+        ./devenv.nix
+        ./devenv.yaml
+        ./devenv.lock
+      ];
+  devenvFresh = gate "nixos-devenv-fresh" [ pkgs.coreutils ] ''
+    stale=""
+    for pair in ${builtFrom}; do
+      f=''${pair%%=*} want=''${pair#*=}
+      have=$(sha256sum "$f" 2>/dev/null) || have=missing
+      [ "''${have%% *}" = "$want" ] || stale="$stale $f"
+    done
+    if [ -n "$stale" ]; then
+      echo "nixos-qa: refused: this gate was built from another$stale than $PWD has (the devenv was entered before they changed): re-enter it (devenv shell -- true) and run again" >&2
+      exit 1
+    fi
+  '';
   qa =
     gate "nixos-qa"
       (with pkgs; [
@@ -864,6 +885,8 @@ let
         python3
       ])
       ''
+        # a gate built from other devenv files than this tree's would run a stale test list: refused, before the lock
+        ${lib.getExe devenvFresh}
         # one heavy job per host (scripts/heavy-lock.sh): the gate takes the heavy-work lane itself, once
         if [ -z "''${NIXOS_QA_LOCKED:-}" ]; then NIXOS_QA_LOCKED=1 exec ${lib.getExe heavyLock} "$0" "$@"; fi
         sha=$(git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -1004,6 +1027,9 @@ let
         # In a linked worktree git hands the hook its GIT_DIR: HEAD, the lints' git ls-files and git under qa
         # would all follow that checkout, not this tree. The siblings are unset for a tool that exports them.
         unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+        # the hook runs the gate evaluated at devenv entry: the pushed tree's devenv files must be what it was built from,
+        # or even the lints-only and green paths below would judge it with an old list
+        ${lib.getExe devenvFresh}
         # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
         # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
         docs_only() {

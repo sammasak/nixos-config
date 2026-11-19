@@ -29,10 +29,11 @@ if not m:
 BODY = textwrap.dedent(m.group(1)).replace("'''", "\0q").replace("''${", "\0d")
 
 
-def render(qa, lints, gen, docs):
-    """The hook as writeShellApplication would build it, with qa, the lints, the doc readers' tests and
-    /run/current-system replaced."""
-    text = BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
+def render(qa, lints, gen, docs, fresh):
+    """The hook as writeShellApplication would build it, with qa, the lints, the doc readers' tests, the devenv-fresh
+    guard and /run/current-system replaced."""
+    text = (BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
+            .replace("${lib.getExe devenvFresh}", str(fresh)))
     left = re.findall(r"\$\{[^}]*\}", text)
     if left:
         sys.exit(f"FAIL (scripts/test-qa-push.py): Nix interpolations the test does not stub: {left}")
@@ -51,14 +52,17 @@ with tempfile.TemporaryDirectory() as t:
     lints.write_text(f'#!/usr/bin/env bash\necho LINTS >> "{log}"\ncat >> "{t}/lint-stdin"\nexit "${{LINT_RC:-0}}"\n')
     docs = t / "doc-tests"
     docs.write_text(f'#!/usr/bin/env bash\necho "DOCTESTS $*" >> "{log}"\nexit "${{DOC_RC:-0}}"\n')
+    # the devenv-fresh guard (devenvFresh, tested on its own below): refuses when DEVENV_STALE is set
+    fresh = t / "devenv-fresh"
+    fresh.write_text('#!/usr/bin/env bash\n[ -z "${DEVENV_STALE:-}" ] || { echo "nixos-qa: refused: stub stale devenv" >&2; exit 1; }\n')
     gates = {}
     for name in ("qa", "qa-other"):
         qa = t / name
         qa.write_text(f'#!/usr/bin/env bash\necho FULL >> "{log}"\necho "nixos-qa: stub took 0 s" >> "${{NIXOS_QA_TIMES:-/dev/null}}"\n'
                       f'[ -z "${{QA_SWITCH:-}}" ] || ln -sfn "$QA_SWITCH" "{gen}"\nexit "${{QA_RC:-0}}"\n')
         gates[name] = t / f"gate-{name}.sh"
-        gates[name].write_text(render(qa, lints, gen, docs))
-    for f in (lints, docs, t / "qa", t / "qa-other", *gates.values()):
+        gates[name].write_text(render(qa, lints, gen, docs, fresh))
+    for f in (lints, docs, fresh, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
     env = {k: v for k, v in os.environ.items()
@@ -291,6 +295,49 @@ with tempfile.TemporaryDirectory() as t:
         switch_gen("gen1")
         check(rc == 0 and "green not recorded" in out, f"seeded: {what}: nothing is recorded ({out.strip()})")
         case(f"{what}: the push of that tree runs the full gate", rev, "FULL")
+
+
+    # a hook built before the pushed tree's devenv files changed (a shell entered before a merge) is refused before
+    # any gate, lints-only and green paths included; it records nothing
+    stale = commit({"devenv.nix": "changed after entry\n"}, "stale")
+    before = green.read_text() if green.exists() else ""
+    err = case("seeded: a gate built from other devenv files than the pushed tree's is refused, nothing run", stale, "?[](rc=1)",
+               DEVENV_STALE="1")
+    check("refused" in err and (green.read_text() if green.exists() else "") == before, f"seeded: the stale gate records no green ({err.strip()})")
+    case("the same tree from a freshly entered devenv runs the full gate", stale, "FULL")
+
+# devenvFresh on its own, with the hashes Nix would bake in (builtFrom) and sha256sum on a throwaway tree
+fm = re.search(r"\n  devenvFresh = gate \"nixos-devenv-fresh\" \[ pkgs.coreutils \] ''\n(.*?)\n *'';\n", src, re.S)
+bm = re.search(r"\n  builtFrom =.*?\[(.*?)\];", src, re.S)
+check(fm is not None and bm is not None and re.findall(r"\./(\S+)", bm.group(1)) == ["devenv.nix", "devenv.yaml", "devenv.lock"],
+      "devenvFresh and builtFrom found in devenv.nix; builtFrom hashes devenv.nix, devenv.yaml and devenv.lock")
+if fm and bm:
+    import hashlib
+    fbody = textwrap.dedent(fm.group(1)).replace("''${", "${")
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        files = {"devenv.nix": "{ }\n", "devenv.yaml": "inputs: {}\n", "devenv.lock": "{}\n"}
+        for n, c in files.items():
+            (t / n).write_text(c)
+        pairs = " ".join(f"{n}={hashlib.sha256(c.encode()).hexdigest()}" for n, c in files.items())
+        script = t / "fresh.sh"
+        left = re.findall(r"\$\{(?!pair|have)[^}]*\}", fbody.replace("${builtFrom}", ""))
+        check(left == [], f"devenvFresh has no interpolation besides builtFrom ({left})")
+        script.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + fbody.replace("${builtFrom}", pairs) + "\n")
+
+        def fresh_run():
+            r = subprocess.run(["bash", str(script)], cwd=t, capture_output=True, text=True)
+            return r.returncode, r.stderr
+        rc, err = fresh_run()
+        check(rc == 0 and err == "", f"devenvFresh passes a tree whose devenv files are the ones it was built from ({rc}: {err.strip()})")
+        (t / "devenv.lock").write_text('{"nodes": {}}\n')
+        rc, err = fresh_run()
+        check(rc == 1 and "refused" in err and " devenv.lock " in err and "devenv.nix" not in err and "devenv shell -- true" in err,
+              f"seeded: a changed devenv.lock is refused, naming it and how to re-enter ({rc}: {err.strip()})")
+        (t / "devenv.lock").write_text(files["devenv.lock"])
+        (t / "devenv.yaml").unlink()
+        rc, err = fresh_run()
+        check(rc == 1 and "devenv.yaml" in err, f"seeded: a missing devenv.yaml is refused, not passed ({rc}: {err.strip()})")
 
 
 # The flake check (flakeCheck in devenv.nix) refuses to run on lenovo when a check is a VM test (it has a driver,
