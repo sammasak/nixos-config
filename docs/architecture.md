@@ -37,12 +37,13 @@ Home Manager is shared, not per-host: every host gets
 
 ### Host Configuration Flow
 
-Each host has two files in `hosts/<name>/`:
+Each host has three files in `hosts/<name>/`:
 
 | File | Purpose |
 |------|---------|
 | `configuration.nix` | NixOS system modules; sets `sam.profile` (username, hostname, feature flags) |
 | `hardware-configuration.nix` | Auto-generated hardware scan |
+| `ssh_known_hosts` | Its verified SSH host key, pinned on every host (`docs/ssh-host-keys.md`) |
 
 The wiring: `flake-modules/hosts.nix` declares each host as a typed `configurations.nixos.<name>` entry (option in `hosts-option.nix`): its roles, `hostDir` where the directory differs from the name, `deploy.hostname` where it differs from the name, and the required `deploy.remoteBuild` (no default: a host without it fails evaluation). Then `nixos-configurations.nix` resolves roles to modules, sets `sam.profile.roles` from the entry, injects Stylix/SOPS/Home Manager/disko and `modules/workers`, and produces the final `nixosConfigurations.<name>`; `deploy.nix` maps every entry to `deploy.nodes.<name>`, with the fleet-wide ssh and rollback settings and `remoteBuild` only when true.
 

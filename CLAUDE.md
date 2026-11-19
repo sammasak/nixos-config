@@ -105,7 +105,7 @@ the argument only when targeting another machine; `deploy`, `dry-activate` and `
 ## Architecture
 
 `flake.nix` imports every file under `flake-modules/` (import-tree);
-`modules/roles|home/*.nix` auto-register; hosts are 2 files under
+`modules/roles|home/*.nix` auto-register; hosts are 3 files under
 `hosts/<name>/` wired by an entry (roles and deploy fields) in `flake-modules/hosts.nix`; all host metadata
 flows through the strict `sam.profile` submodule (unknown fields are build
 errors) and GUI-ness keys off `sam.desktop.enable` alone. Full detail:
@@ -310,7 +310,8 @@ either side is only reported.
   `deploy.hostname` default to the entry name; `deploy.remoteBuild` is
   required, true unless lenovo can build it);
   its deploy-rs node follows from the entry;
-- its pinned key in `modules/core/ssh-known-hosts.nix` (asserted against the deploy nodes) and its sops
+- its pinned key in `hosts/<dir>/ssh_known_hosts` (read by `modules/core/ssh-known-hosts.nix`, which fails every
+  host while a deploy node has none; `docs/ssh-host-keys.md`) and its sops
   recipient, both also in `scripts/test-ssh-known-hosts.py`;
 - its rows in this file's deploy block and hostnames, `docs/architecture.md`, and for a runtime host
   `docs/nspawn-workers.md` (checked by the same test);

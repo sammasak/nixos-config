@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Wiring test for modules/core/ssh-known-hosts.nix (nixos-config#86): the pinned host keys are the verified ones
-(fingerprints recorded here and in docs/ssh-host-keys.md), every name and address of each host is covered, a host
+(fingerprints recorded here, in docs/ssh-host-keys.md and beside each key in hosts/<dir>/ssh_known_hosts), every name and address of each host is covered, a host
 pins loopback to its own key only, every client fails closed, deploy-rs too, the old github pin is gone, and every
 sops secret a host declares is in a file encrypted to that host's key and names a key that file has. The hand-kept
 host lists (EXPECTED, SOPS_RECIPIENTS, the docs' host rows) name every deploy node; the Justfile's HOST recipes and the
@@ -283,6 +283,12 @@ def table_checks(nodes, host_name):
               f"`just deploy` refuses a name outside the table before any other line, and runs nothing it carries ({r.returncode})")
 
 
+def pin_files(root, hosts):
+    """{hostName: the text of hosts/<hostName>/ssh_known_hosts, or None}: modules/core/ssh-known-hosts.nix reads each."""
+    return {h: (root / "hosts" / h / "ssh_known_hosts").read_text() if (root / "hosts" / h / "ssh_known_hosts").is_file() else None
+            for h in hosts}
+
+
 DOCS = {
     # the `just deploy` host notes: one `#   <node>  <how>` line per deploy-rs node
     "CLAUDE.md deploy block": ("CLAUDE.md", r"\njust deploy HOST.*?\njust checks HOST", r"^#   ({}) {{2,}}\S", "node"),
@@ -527,7 +533,7 @@ def main():
           "seeded: a fleet address that moved fails the pinned address")
     order = [host_name[n] for n in sorted(nodes)]
     unpin = (f"modules/core/ssh-known-hosts.nix pins {' '.join(sorted(set(names) - {'asus-b460m'}))}, not the deploy nodes"
-             f" of flake-modules/hosts.nix ({' '.join(order)}): pin each host's key there.")
+             f" of flake-modules/hosts.nix ({' '.join(order)}): another module replaced programs.ssh.knownHosts.")
     uncache = "modules/core/store-cache.nix: black-pi serves a store cache, so its public key belongs in caches there."
     F = P["failing"]
     check(unpin not in F["lenovo"] and uncache not in F["lenovo"], "lenovo fails neither fleet-list assertion")
@@ -583,8 +589,11 @@ def main():
     services = (ROOT / "modules/core/services.nix").read_text()
     check("knownHosts" not in services, "the old github pin in services.nix is gone: one module owns host keys")
     module = (ROOT / "modules/core/ssh-known-hosts.nix").read_text()
-    check(module.count("SHA256:") == len(EXPECTED) and all(fp in module for _, fp in EXPECTED.values()),
-          "every pinned key carries its verified fingerprint in the module")
+    check(module.count("SHA256:") == 1 and EXPECTED["github"][1] in module, "github.com's key carries its fingerprint in the module")
+    files = pin_files(ROOT, names)
+    check(all(files.values()) and all(EXPECTED[h][1] in files[h] for h in files if h in EXPECTED),
+          f"every deploy node's key is in its own hosts/<dir>/ssh_known_hosts, beside its verified fingerprint ({sorted(files)})")
+    check(pin_files(ROOT, [*names, "seventh"])["seventh"] is None, "seeded: a host with no hosts/<dir>/ssh_known_hosts has no pin")
     docs = (ROOT / "docs/ssh-host-keys.md").read_text()
     check(all(fp.split(":", 1)[1] in docs and names[0] in docs for names, fp in EXPECTED.values()) and "ssh-to-age" in docs,
           "docs/ssh-host-keys.md lists every pinned host with its fingerprint and the sops-recipient evidence")

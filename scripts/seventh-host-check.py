@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """#295's reusability check: a seventh host seeded from fixture data alone, into a temporary copy of the tracked tree.
 The seed is one flake-modules/hosts.nix entry, one modules/core/fleet.nix hosts entry and hosts/seventh copied from
-scripts/fixtures/seventh-host (base role, no secrets, so no .sops.yaml recipient). Each host is its own nix eval
-(scripts/seventh-host-probe.nix) of the seeded copy, and for the real hosts of an unseeded copy of the same files.
+scripts/fixtures/seventh-host (base role, no secrets, so no .sops.yaml recipient; its pinned key a throwaway one).
+Each host is its own nix eval (scripts/seventh-host-probe.nix) of the seeded copy, and for the real hosts of an
+unseeded copy of the same files.
 
-Proved: the seed's toplevel drvPath evaluates; it is in every list derived from the fleet (deploy nodes, black-pi's
-node-exporter targets and dashboards, lenovo's AdGuard rewrites, Loki's and each store cache's firewall callers, the
-edge's OTLP sources, its own node-exporter listener, deferred-checks.py's parse of fleet.nix) and in none that does not
-apply to it (store caches and their substituters, the nvidia-gpu targets); the real hosts that moved are exactly those
-rendering a derived list that names it. Seeded: a copy whose prometheus, AdGuard, deploy, Loki, store-cache and edge
-lists each leave the seed out fails each of those checks.
+Proved: the seed's toplevel drvPath evaluates; it is in every list derived from the fleet (deploy nodes, every host's
+ssh known_hosts, black-pi's node-exporter targets and dashboards, lenovo's AdGuard rewrites, Loki's and each store
+cache's firewall callers, the edge's OTLP sources, its own node-exporter listener, deferred-checks.py's parse of
+fleet.nix) and in none that does not apply to it (store caches and their substituters, the nvidia-gpu targets); the
+real hosts that moved are exactly those rendering a derived list that names it. Seeded: a copy whose prometheus,
+AdGuard, deploy, Loki, store-cache, edge and known_hosts lists each leave the seed out fails each of those checks; the
+seed without its hosts/seventh/ssh_known_hosts fails the build, naming that file.
 
 #295's criterion is not met while COUPLINGS or HAND_KEPT is non-empty: each is a place besides the seed's own three
 that a seventh host still needs edited. A new one, or one that went away, fails the test, so both stay exact.
@@ -33,13 +35,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SEED, ADDR = "seventh", "192.168.10.77"
 ENTRY = f'    {SEED} = {{ roles = [ "base" ]; deploy.remoteBuild = true; }};\n'
 FLEET = f'    {SEED}.address = "{ADDR}";\n'
+LOOPBACK = ["localhost", "127.0.0.1", "::1"]
+PIN = (ROOT / "scripts/fixtures/seventh-host/ssh_known_hosts").read_text().splitlines()[-1].split(" ", 1)[1]
+UNPINNED = (f"modules/core/ssh-known-hosts.nix: no host key pinned at hosts/{SEED}/ssh_known_hosts: each must exist and "
+            "hold one `<names> ssh-ed25519 <key>` line (docs/ssh-host-keys.md).")
 
 # a failing assertion's text -> where it is, and what would remove the coupling
-COUPLINGS = {
-    "modules/core/ssh-known-hosts.nix pins": (
-        "modules/core/ssh-known-hosts.nix: every host and guest asserts its pinned keys are exactly hosts.nix's deploy "
-        "nodes, so the host's key must be added there; reading each key from its hosts/<dir> would end it"),
-}
+COUPLINGS: dict[str, str] = {}
 # host lists kept by hand and held to the fleet by the gate (nixos:known-hosts-test, nixos:readability-test):
 # place -> (file, the block holding the list or None for the whole file, the pattern of one entry)
 HAND_KEPT = {
@@ -66,6 +68,8 @@ BREAKS = [
      f'from = lib.remove "{SEED}" (lib.remove h (lib.attrNames hosts));'),
     ("modules/homelab/edge.nix", "otlpSources = map (h: h.address) (lib.attrValues hosts);",
      f'otlpSources = map (h: h.address) (lib.attrValues (removeAttrs hosts [ "{SEED}" ]));'),
+    ("modules/core/ssh-known-hosts.nix", "programs.ssh.knownHosts = hosts;",
+     f'programs.ssh.knownHosts = removeAttrs hosts [ "{SEED}" ];'),
 ]
 
 
@@ -75,8 +79,9 @@ def edit(path, old, new):
     path.write_text(text.replace(old, new, 1))
 
 
-def probe(tree, host, baseline=None, full=False):
-    args = f'tree = "path:{tree}"; host = "{host}"; seed = "{SEED}"; full = {"true" if full else "false"};'
+def probe(tree, host, baseline=None, full=False, asserts=False):
+    args = (f'tree = "path:{tree}"; host = "{host}"; seed = "{SEED}"; full = {"true" if full else "false"};'
+            f' asserts = {"true" if full or asserts else "false"};')
     if baseline:
         args += f' baseline = "path:{baseline}";'
     t = time.monotonic()
@@ -112,6 +117,8 @@ def names_seed(p):
         found.append("edge OTLP sources")
     if p["dashboardsName"]:
         found.append("dashboards")
+    if p["knownHost"]:
+        found.append("known_hosts pin")
     return found
 
 
@@ -121,8 +128,12 @@ def derived(P):
     node = s["deployNodes"].get(SEED)
     caches = sorted(h for h, p in P.items() if p["storeCache"])
     pi_addresses = s["fleet"]["hosts"]["black-pi"]
+    pins = {h: p["knownHost"] for h, p in P.items()}
     return {
         "deploy node": (node == {"hostname": SEED, "remoteBuild": True}, node),
+        "known_hosts pin (every host, loopback on itself)": (
+            all(k == {"hostNames": [SEED, ADDR] + (LOOPBACK if h == SEED else []), "publicKey": PIN} for h, k in pins.items()),
+            pins),
         "node-exporter target (black-pi)": (scraped(pi, "node-exporter").get(SEED) == f"{ADDR}:9100",
                                             scraped(pi, "node-exporter").get(SEED)),
         # not vacuous: the job is read and lists the GPU hosts, just not the seed
@@ -159,11 +170,11 @@ def listed(root, place):
     return names
 
 
-def couplings(failing):
+def couplings(failing, known_couplings=COUPLINGS):
     """The failing assertions as (the COUPLINGS keys they match, the messages that match none)."""
     known, unknown = set(), []
     for m in failing:
-        k = next((k for k in COUPLINGS if k in m), None)
+        k = next((k for k in known_couplings if k in m), None)
         if k:
             known.add(k)
         else:
@@ -172,7 +183,7 @@ def couplings(failing):
 
 
 with tempfile.TemporaryDirectory() as tmp:
-    base, seeded, broken = (pathlib.Path(tmp) / n for n in ("baseline", "seeded", "broken"))
+    base, seeded, broken, unpinned = (pathlib.Path(tmp) / n for n in ("baseline", "seeded", "broken", "unpinned"))
     tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], check=True, stdout=subprocess.PIPE, text=True).stdout.split()
     for p in tracked:
         if (ROOT / p).is_file():
@@ -185,12 +196,15 @@ with tempfile.TemporaryDirectory() as tmp:
     shutil.copytree(seeded, broken, symlinks=True)
     for path, old, new in BREAKS:
         edit(broken / path, old, new)
+    shutil.copytree(seeded, unpinned, symlinks=True)
+    (unpinned / "hosts" / SEED / "ssh_known_hosts").unlink()
 
     real = sorted(set(re.findall(r"^    ([a-z0-9-]+) = \{", (base / "flake-modules/hosts.nix").read_text(), re.M)))
     check(len(real) >= 6 and SEED not in real, f"the real hosts are read from hosts.nix ({real})")
     P = {h: probe(seeded, h, baseline=base, full=True) for h in real}
     P[SEED] = probe(seeded, SEED, full=True)
     B = {h: probe(broken, h) for h in ["black-pi", "lenovo", "acer-swift", SEED]}
+    U = probe(unpinned, SEED, asserts=True)
 
     spec = importlib.util.spec_from_file_location("deferred_checks", ROOT / "scripts" / "deferred-checks.py")
     deferred_checks = importlib.util.module_from_spec(spec)
@@ -209,9 +223,11 @@ for h, p in P.items():
     known, unknown = couplings(p["failing"] + p["guestsFailing"])
     check(unknown == [], f"{h} fails no assertion besides the known couplings ({unknown})")
     check(known == set(COUPLINGS), f"{h} still fails each known coupling (gone: {sorted(set(COUPLINGS) - known)}: drop it)")
-check(couplings(["modules/core/ssh-known-hosts.nix pins a b, not ...", "x.nix: something new"])
-      == ({"modules/core/ssh-known-hosts.nix pins"}, ["x.nix: something new"]),
+check(couplings(["a.nix pins a b, not ...", "x.nix: something new"], {"a.nix pins": "a.nix"})
+      == ({"a.nix pins"}, ["x.nix: something new"]),
       "seeded: an assertion outside COUPLINGS is reported as unknown")
+check(U["failing"] == [UNPINNED],
+      f"seeded: the seed without its hosts/{SEED}/ssh_known_hosts fails, naming it ({U['failing']})")
 
 # 2. it is in every derived list that applies to it, and in none that does not
 check(all(p["firewall"]["backend"] == "iptables" for p in P.values()), "every host renders iptables rules, the ones read here")
@@ -228,9 +244,10 @@ check(unexplained(P) == [] and unmoved(P) == [],
       f"the hosts that moved ({sorted(moved)}) are those whose derived lists name the seed "
       f"({ {h: names_seed(P[h]) for h in real if names_seed(P[h])} }; moved unexplained {unexplained(P)}, named "
       f"but unmoved {unmoved(P)})")
-check("naked-pi" not in moved, "naked-pi, with no fleet entry, reads no fleet list and does not move")
+check(names_seed(P["naked-pi"]) == ["known_hosts pin"],
+      f"naked-pi, with no fleet entry, names the seed in its known_hosts only ({names_seed(P['naked-pi'])})")
 blank = dict(P, **{"black-pi": dict(P["black-pi"], firewall={"extraCommands": "", "backend": "iptables"}, scrape=[],
-                                    dashboardsName=None)})
+                                    dashboardsName=None, knownHost=None)})
 check("black-pi" not in moved or unexplained(blank) == ["black-pi"],
       "seeded: black-pi moving with no derived list naming the seed fails the mover check")
 # black-pi's explanation must include its scrape list itself, not only the firewall and dashboards beside it
@@ -245,7 +262,8 @@ check(not derived(gpu_seeded)["no nvidia-gpu target (no gpu)"][0],
 
 # 4. each derived list hard-coded without the seed fails its check
 broke = derived(dict(P, **B))
-for name in ["deploy node", "node-exporter target (black-pi)", "AdGuard rewrite (lenovo)",
+for name in ["deploy node", "known_hosts pin (every host, loopback on itself)", "node-exporter target (black-pi)",
+             "AdGuard rewrite (lenovo)",
              "Loki caller (sam.fleet.loki.from, black-pi's firewall)", "store-cache caller (each cache's firewall)",
              "edge OTLP source (acer)"]:
     check(not broke[name][0], f"seeded: hard-coded without the seed, {name} fails ({broke[name][1]})")
@@ -265,7 +283,7 @@ check(docs != [], f"the docs state the fleet size the seed outgrows ({docs})" if
       "no doc states the fleet size any more (README.md, CLAUDE.md, flake.nix, docs/*.md): that coupling is gone; "
       "update the test: drop this check and the fleet size from the report below (scripts/seventh-host-check.py)")
 print(f"seventh-host: #295 reusability not met: besides hosts.nix, fleet.nix and hosts/{SEED}, a seventh host needs "
-      f"{'; '.join(COUPLINGS.values())}; its name in {', '.join(HAND_KEPT)}; and the fleet size in {', '.join(docs)}")
+      f"{''.join(f'{c}; ' for c in COUPLINGS.values())}its name in {', '.join(HAND_KEPT)}; and the fleet size in {', '.join(docs)}")
 
 # the largest single nix eval's resident peak (Linux: KiB), for the gate host's memory budget
 print(f"seventh-host: peak child RSS {resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss} KiB")
