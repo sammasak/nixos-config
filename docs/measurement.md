@@ -77,12 +77,8 @@ Prometheus keeps 15 days (`modules/homelab/monitoring/prometheus.nix`), so avail
 | `undeclared-connections` | Does a guest connect outside its declared list? | egress census (design on #564, owner enables) | 0 after the allowlist is enforced | in flight |
 | `time-to-shell` | How long until a guest has a working shell? | new: record from the timing in `docs/records/environments-timings-2026-11.md` | warm under 10 s, fresh under 120 s | new |
 | `verified-deliveries` | Does a handoff end verified? | `delivery` records count verified deliveries; new: handoff count (the coordinator audit log stopped 14 Nov) | 8 of 10 handoffs | new |
-| `first-pass-by-harness` | Which harness and model pass review first time? | new: `review` record, with `agent-harness` cost and tokens | known per harness; trend not falling | new |
-| `offload-first-pass` | Which task classes are worth offloading to Pi? | `offload` record (`workers/offload-kind`) | per class, offload only where the rate beats the threshold in the pi-offload skill's `advice.json` | in flight |
+| `first-pass-by-harness` | Which harness and model pass review first time, and which task classes are worth offloading to Pi? | new: `review` record, with `agent-harness` cost and tokens; per task class, `offload` record (`workers/offload-kind`) | known per harness, trend not falling; per task class, offload only where the rate beats the threshold in the pi-offload skill's `advice.json` | new |
 | `resource-per-task` | What does a guest task cost in resources? | usage record (#494) | recorded for 9 of 10 guest handoffs | in flight |
-
-Seven rows: one over rule 1's limit, kept as approved until the owner decides which to drop or merge
-(`limit_exceptions` in `metrics/targets.json`).
 
 ## D. Delivery and review loop
 

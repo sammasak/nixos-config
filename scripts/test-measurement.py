@@ -2,7 +2,7 @@
 """The measurement doc and its targets (docs/measurement.md, metrics/targets.json): every metric in the doc is in the
 targets file and the reverse, with the same area, question, source, target, state and query; a live metric has a
 query, a target and a dashboard panel whose queries use the same kinds and series; an in-flight or new one has no
-query; at most six per area unless the targets file names the exception; every kind scripts/platform-record.sh
+query; at most six per area; every kind scripts/platform-record.sh
 writes has a maximum age. Seeded cases: each of those broken in a copy must be caught."""
 from __future__ import annotations
 
@@ -113,14 +113,10 @@ def problems(doc: dict[str, Metric], targets: dict[str, Any], kinds: set[str], s
         tc = m.get("target_changed") or {}
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(tc.get("date"))) or not tc.get("reason"):
             out["changed"].append(f"{mid}: target_changed needs a date and a reason ({tc})")
-    exceptions = targets.get("limit_exceptions", {})
     per_area: dict[str, int] = {}
     for m in metrics.values():
         per_area[m.get("area", "?")] = per_area.get(m.get("area", "?"), 0) + 1
-    out["limit"] += [f"area {a}: {n} metrics, at most {LIMIT}" for a, n in sorted(per_area.items())
-                     if n > LIMIT and not exceptions.get(a)]
-    out["limit"] += [f"area {a}: an exception, but it has {per_area.get(a, 0)} metrics" for a in sorted(exceptions)
-                     if per_area.get(a, 0) <= LIMIT]
+    out["limit"] += [f"area {a}: {n} metrics, at most {LIMIT}" for a, n in sorted(per_area.items()) if n > LIMIT]
     ages = targets.get("max_age_hours", {})
     out["max_age"] += [f"{k}: no max_age_hours" for k in sorted(kinds - set(ages))]
     out["max_age"] += [f"{k}: a max age for a kind the helper does not write" for k in sorted(set(ages) - kinds)]
@@ -144,7 +140,7 @@ DESCRIBED = {
     "live": "every live metric has a query, a target and a panel that reads the same kinds and series",
     "unknown": "every metric has a known state, and only a live one has a query",
     "changed": "every target says when it last changed and why",
-    "limit": f"at most {LIMIT} metrics per area, an exception only where an area is over",
+    "limit": f"at most {LIMIT} metrics per area",
     "max_age": "every kind the helper writes has a maximum age, and only those",
     "kinds": "a live query reads only kinds the helper writes",
 }
@@ -182,10 +178,7 @@ seeded("a live query its panel never reads", "live",
 seeded("an in-flight or new metric with a made-up query", "unknown", with_metric(other["id"], query="shipping_made_up"))
 seeded("an unknown state", "unknown", with_metric(other["id"], state="planned"))
 seeded("a target with no reason", "changed", with_metric(live["id"], target_changed={"date": "2026-11-19"}))
-seeded("a seventh metric in an area without an exception", "limit",
-       lambda t: t.update(limit_exceptions={}) if sum(m["area"] == "C" for m in t["metrics"]) > LIMIT
-       else t["metrics"].extend(dict(live, id=f"extra-{i}") for i in range(LIMIT)))
-seeded("an exception for an area within the limit", "limit", lambda t: t["limit_exceptions"].update(A="none needed"))
+seeded("a seventh metric in an area", "limit", lambda t: t["metrics"].append(dict(live, id="extra")))
 seeded("a kind without a max age", "max_age", lambda t: t["max_age_hours"].pop(min(kinds)))
 seeded("a max age of zero", "max_age", lambda t: t["max_age_hours"].update({min(kinds): 0}))
 seeded("a live query on a kind the helper never writes", "kinds",
