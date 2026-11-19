@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='alloy-602-') as td:
     capture = pathlib.Path(td) / 'output.log'
     log = capture.open('w')
     proc = subprocess.Popen(
-        [binary, 'run', f'--server.http.listen-addr=127.0.0.1:{admin_port}',
+        [binary, 'run', '--disable-reporting', f'--server.http.listen-addr=127.0.0.1:{admin_port}',
          '--storage.path=' + td + '/data', str(path)],
         stdout=log, stderr=subprocess.STDOUT,
     )
