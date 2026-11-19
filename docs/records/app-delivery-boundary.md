@@ -14,8 +14,8 @@ its benefit is shown.
 
 Lane 3, built as lane 1 first. An app is registered and released by a bot PR that pins its repo and rev in nixos-config
 (the registry); the owner merges and `just deploy` ships it through the existing deploy-rs path. Nothing enumerates
-GitHub at evaluation time: Nix reads only literal inputs in `flake.nix`, and the allowlist is a file in this repo,
-checked by a flake check.
+GitHub at evaluation time: Nix reads only literal pins committed here (flake inputs, `apps/registry.json`), and the
+allowlist is a file in this repo, checked by a flake check.
 
 Lane 2 is added only through #562's measured go/no-go: when (d) holds AND at least one of (a), (b), (c) holds.
 
@@ -88,7 +88,7 @@ open.
 |---|---|
 | #559 | Done via #570: v1alpha1 manifest and lib-only admission ([../app-manifest.md](../app-manifest.md)). The artifact is derived from (repo, rev, attr), never supplied. |
 | #563 | First step done via #571: edge sites and app scrapes rendered from admission. Routes stay NixOS-rendered; no admin API; a deploy-gating per-app probe is still owed. |
-| #560 | Next, the core deliverable: typed app registry plus bump command (bot is a lenovo timer, no daemon), deploy records gain the app rev. First slice in flight. |
+| #560 | Next, the core deliverable: typed app registry plus bump command (the bump runs on acer or another gate host, never lenovo: it fetches and hashes trees; no daemon), deploy records gain the app rev. First slice in flight. |
 | #561 | "Publish" means the app flake exports a package the fleet builds and signs via harmonia; GitHub runners do not publish. First step: move `pkgs/herman-web` into herman. |
 | #564 | Lane-independent: reuse the llm-gateway and authentik-offhost patterns; restore drill in a VM. Real secrets are owner-gated. |
 | #565 | Lane 1 part: per-host deploy lock in `just deploy`, app health probe in the post-deploy check. Per-app rollback waits for #562. |
