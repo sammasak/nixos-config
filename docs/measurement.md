@@ -83,6 +83,10 @@ always matches that tree and needs no host. An app is a package `flake-modules/o
 source repository (a flake input or a registry pin) that a module under `modules/homelab` runs (`pkgs.<attr>` or
 `mkPackageOption pkgs "<attr>"`); services nixpkgs packages are not, the registry pins app repositories. The reading
 is `<in the registry>/<apps>` with the ones not yet in named.
+A shape the text rule cannot read (a `callPackage` it does not read as an entry, an overlay attr mentioned
+under `modules/homelab` in another form, a homelab module with `src = inputs.`, `build*Package` or
+`inputs.<x>.packages`) reads unknown.
+The weekly report runs on an origin/main checkout, so the reading describes main, not a branch.
 
 Prometheus keeps 15 days (`modules/homelab/monitoring/prometheus.nix`), so availability reads 14 days, not 30.
 

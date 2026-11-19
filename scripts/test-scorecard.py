@@ -6,8 +6,10 @@ a long-window average of good but old samples stale through its `fresh` guard, a
 with its reading. A backend that does not answer, or is not ready, exits 2 and leaves its metrics unknown while the
 other backend's are still read. A `checkout` metric (registry-apps) from a copy of the checkout: today's 1/3 with
 herman and llm-gateway named, one more registry entry or one more app a module runs moving the count, every app in a
-pass, an app source of another form or no app at all unknown. The real metrics/targets.json against backends that
-answer no query: every metric printed in its area, none but the checkout one a pass or a fail.
+pass, an app source of another form or no app at all unknown, and so each shape the text rule cannot read: a
+callPackage it does not read as an entry, an overlay attr mentioned under modules/homelab in another form, and a
+homelab module with `src = inputs.`, a `build*Package` or `inputs.<x>.packages`. The real metrics/targets.json against
+backends that answer no query: every metric printed in its area, none but the checkout one a pass or a fail.
 Run as `test-scorecard.py [the packaged scorecard]`."""
 from __future__ import annotations
 
@@ -231,7 +233,7 @@ def register(*names: str) -> Any:
     return edit_json("apps/registry.json", fn)
 
 
-def new_app(src: str) -> Any:
+def new_app(src: str, use: str = "pkgs.newApp") -> Any:
     def go(tree: pathlib.Path) -> None:
         overlays = tree / "flake-modules/overlays.nix"
         overlays.write_text(overlays.read_text().replace("        llmGateway = final.callPackage", f"""\
@@ -239,7 +241,7 @@ def new_app(src: str) -> Any:
           {src}
         }};
         llmGateway = final.callPackage""", 1))
-        module = "{ pkgs, ... }: { systemd.services.x.path = [ pkgs.newApp ]; }\n"
+        module = f"{{ pkgs, ... }}: {{ systemd.services.x.path = [ {use} ]; }}\n"
         (tree / "modules/homelab/new-app.nix").write_text(module)
     return go
 
@@ -261,6 +263,40 @@ check(grown == ("1/4; not in the registry: herman, llm-gateway, new-app", "fail"
 odd = registry_apps(new_app("src = fetchFromGitHub { owner = \"x\"; repo = \"y\"; };"))
 check(odd[1].startswith("unknown: flake-modules/overlays.nix: newApp runs under modules/homelab, its src neither"),
       f"an app source the rule cannot read is unknown, not skipped ({odd})")
+
+
+def homelab_module(body: str) -> Any:
+    return lambda t: (t / "modules/homelab/outside.nix").write_text(f"{{ inputs, pkgs, ... }}: {{ {body} }}\n")
+
+
+def one_line(tree: pathlib.Path) -> None:
+    overlays = tree / "flake-modules/overlays.nix"
+    overlays.write_text(overlays.read_text().replace("        llmGateway = final.callPackage", """\
+        newApp = final.callPackage ../pkgs/new-app/package.nix { src = inputs.new-app; };
+        llmGateway = final.callPackage""", 1))
+    (tree / "modules/homelab/new-app.nix").write_text("{ pkgs, ... }: { systemd.services.x.path = [ pkgs.newApp ]; }\n")
+    lock_input(tree)
+
+
+# shapes the text rule cannot read: each fails closed, never a count without the app
+H = "unknown: modules/homelab/outside.nix: "
+for name, edit, want in [
+        ("a callPackage the reader does not read as an entry (one line)", one_line,
+         "unknown: flake-modules/overlays.nix: 6 callPackage calls, 5 read as a package entry"),
+        ("an overlay attr used under modules/homelab other than pkgs.<attr> ((with pkgs; newApp))",
+         lambda t: (new_app("src = inputs.new-app;", "(with pkgs; newApp)")(t), lock_input(t)),
+         "unknown: modules/homelab/new-app.nix: newApp is mentioned in a form other than pkgs.newApp"),
+        ("src = inputs.<x> in a homelab module",
+         homelab_module("x = pkgs.stdenv.mkDerivation { name = \"x\"; src = inputs.new-app; };"),
+         H + r"\bsrc\s*=\s*inputs\. ('src = inputs.')"),
+        ("a buildRustPackage in a homelab module", homelab_module("x = pkgs.rustPlatform.buildRustPackage { };"),
+         H + r"\bbuild[A-Za-z]*Package\b ('buildRustPackage')"),
+        ("inputs.<x>.packages in a homelab module",
+         homelab_module("environment.systemPackages = [ inputs.new-app.packages.${pkgs.system}.default ];"),
+         H + r"\binputs\.[\w-]+\.packages\b ('inputs.new-app.packages')")]:
+    got = registry_apps(edit)
+    check(got[1].startswith(want), f"{name} reads unknown, naming the file and the pattern ({got})")
+
 gone = registry_apps(lambda t: shutil.rmtree(t / "modules/homelab"))
 check(gone[1].startswith("unknown: no app found"), f"no app at all is unknown, not a pass ({gone})")
 

@@ -38,6 +38,10 @@ OVERLAYS = "flake-modules/overlays.nix"
 PACKAGE = re.compile(r"^\s*([\w-]+) = final\.callPackage [^\n]*\{\n(.*?)\n\s*\};", re.MULTILINE | re.DOTALL)
 FROM_INPUT = re.compile(r"\bsrc = inputs\.([\w-]+);")
 FROM_REGISTRY = re.compile(r'\bsrc = [^\n]*pins\.nix[^\n]*\.src "([\w-]+)";')
+CALL_PACKAGE = re.compile(r"\bcallPackages?\b")
+# under modules/homelab, an app built or taken outside the overlay: the reading cannot see it, so it is unknown
+OUTSIDE_OVERLAY = [re.compile(p) for p in (r"\bsrc\s*=\s*inputs\.", r"\bbuild[A-Za-z]*Package\b",
+                                           r"\binputs\.[\w-]+\.packages\b")]
 Series = list[tuple[dict[str, str], float]]
 
 
@@ -131,16 +135,33 @@ def registry_coverage(root: pathlib.Path) -> tuple[float, str]:
     flake-modules/overlays.nix builds from a pinned source repository (a flake input or a registry pin) and a module
     under modules/homelab runs (`pkgs.<attr>` or `mkPackageOption pkgs "<attr>"`); a service nixpkgs packages is not
     one, the registry pins app repositories. Read as text and JSON, nothing evaluated. The value is the count not in
-    the registry; a run package whose source is neither form, or no app at all, is unknown, not a pass."""
+    the registry; a run package whose source is neither form, or no app at all, is unknown, not a pass. So is a shape
+    the text rule cannot read: a callPackage not read as an entry, an overlay attr mentioned under modules/homelab
+    other than as a use or `homelab.<attr>`, or a homelab module with `src = inputs.`, `build*Package` or
+    `inputs.<x>.packages`."""
     try:
         lock = json.loads((root / "flake.lock").read_text())
         apps = json.loads((root / "apps/registry.json").read_text())["apps"]
         pinned = {n: a["source"]["repo"] for n, a in apps.items()}
         overlays = (root / OVERLAYS).read_text()
-        modules = "\n".join(p.read_text() for p in sorted((root / "modules/homelab").rglob("*.nix")))
+        modules = {p.relative_to(root): p.read_text() for p in sorted((root / "modules/homelab").rglob("*.nix"))}
+        packages = PACKAGE.findall(overlays)
+        if len(packages) != len(calls := CALL_PACKAGE.findall(overlays)):
+            raise QueryFailed(f"{OVERLAYS}: {len(calls)} callPackage calls, {len(packages)} read as a package entry")
+        for path, text in modules.items():
+            if m := next((m for r in OUTSIDE_OVERLAY if (m := r.search(text))), None):
+                raise QueryFailed(f"{path}: {m.re.pattern} ({m.group(0)!r}), an app built or taken outside {OVERLAYS}")
         declared: set[str] = set()
-        for attr, body in PACKAGE.findall(overlays):
-            if not re.search(rf'pkgs(?:\.{attr}|\s+"{attr}")(?![\w-])', modules):
+        for attr, body in packages:
+            a = re.escape(attr)
+            # a use the reading counts, or a `homelab.<attr>` option path; any other mention of the attr is unknown
+            run = re.compile(rf'(?<![\w-])pkgs(?:\.{a}|\s+"{a}")(?![\w-])')
+            known = re.compile(rf'(?<![\w-])(?:pkgs(?:\.{a}|\s+"{a}")|homelab\.{a})(?![\w-])')
+            for path, text in modules.items():
+                if len(re.findall(rf"(?<![\w-]){a}(?![\w-])", text)) != len(known.findall(text)):
+                    raise QueryFailed(f"{path}: {attr} is mentioned in a form other than pkgs.{attr}, "
+                                      f'mkPackageOption pkgs "{attr}" or homelab.{attr}')
+            if not any(run.search(text) for text in modules.values()):
                 continue
             if m := FROM_INPUT.search(body):
                 declared.add(input_repo(lock, m.group(1)))
