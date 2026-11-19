@@ -1,0 +1,130 @@
+{
+  "about": "Every platform record kind and the fields it may carry (pkgs/platform-record, scripts/test-platform-records.py). writer: here = a caller in this repo; outside = written by a reviewer or research pane through platform-record. guest: a dev-environment guest may ship it (modules/workers/default.nix records.kinds). panel: false = not shown on modules/homelab/monitoring/dashboards/platform-health.json (scripts/test-platform-records.py requires a panel for every other kind).",
+  "kinds": {
+    "gate": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "gate",
+        "seconds",
+        "result",
+        "sha",
+        "mode",
+        "deferred",
+        "head",
+        "checkout",
+        "deferred_checks"
+      ]
+    },
+    "gate-step": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "gate",
+        "step",
+        "check",
+        "owner",
+        "seconds",
+        "eval_seconds",
+        "compiled",
+        "fetched",
+        "result",
+        "head",
+        "drv",
+        "sha"
+      ]
+    },
+    "deploy": {
+      "writer": "here",
+      "guest": false,
+      "fields": [
+        "node",
+        "result",
+        "seconds",
+        "rolled_back",
+        "units_restarted",
+        "failed_units",
+        "sha"
+      ]
+    },
+    "checks-run": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "node",
+        "check",
+        "status"
+      ]
+    },
+    "coverage": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "node",
+        "assertions",
+        "system_checks"
+      ]
+    },
+    "instructions": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "file",
+        "bytes"
+      ]
+    },
+    "delivery": {
+      "writer": "here",
+      "guest": false,
+      "fields": [
+        "day",
+        "result",
+        "verified_deliveries",
+        "prs_reviewed",
+        "review_passes",
+        "rework_rounds",
+        "repeated_reviews",
+        "parked",
+        "lead_time_hours"
+      ]
+    },
+    "trash-sweep": {
+      "writer": "here",
+      "guest": false,
+      "fields": [
+        "seen",
+        "deleted",
+        "bytes",
+        "result"
+      ]
+    },
+    "review": {
+      "writer": "outside",
+      "guest": true,
+      "fields": [
+        "repo",
+        "head",
+        "round",
+        "grade",
+        "reviewer",
+        "author",
+        "seconds",
+        "findings"
+      ]
+    },
+    "research": {
+      "writer": "outside",
+      "guest": false,
+      "fields": [
+        "issue",
+        "claims_checked",
+        "claims_corrected",
+        "hours",
+        "adopted",
+        "spiked",
+        "rejected"
+      ],
+      "panel": false
+    }
+  }
+}
