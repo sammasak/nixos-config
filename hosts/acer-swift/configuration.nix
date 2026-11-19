@@ -33,6 +33,8 @@
     # No prompt: its goal is sent through Herdr once it is up (docs/nspawn-workers.md).
     instances.herman = { };
   };
+  # the #494 usage spike: herman's cgroup counters every minute (scripts/guest-records.py --usage)
+  services.devEnvironments.records.usage = "1min";
   sam.herdr.trustedDirs = map (d: "/home/${config.sam.profile.username}/${d}") [
     "claude-code-skills"
     "knowledge"
