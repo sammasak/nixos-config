@@ -314,6 +314,12 @@ rc, out, err, got = usage_run("broken")
 os.chmod(broken / "memory.peak", 0o644)
 check(rc == 1 and got == [] and "broken: no usage (PermissionError" in err if os.geteuid() != 0 else True,
       f"seeded: an unreadable counter file in a present cgroup is a read error, rc 1 ({rc}, {err.strip()})")
+real_cg = cg
+cg = tmp / "no-such-slice"
+rc, out, err, got = usage_run("herman")
+check(rc == 1 and got == [] and "is not a directory" in err,
+      f"seeded: a --cgroup slice that is not there fails the run (rc 1), never reads as every instance stopped ({rc}, {err.strip()})")
+cg = real_cg
 write("forge", [rec(30, "usage", "cpu_usec=1")])
 rc, out, err, got = run("forge")
 check(got == [] and "unknown kind" in out, f"seeded: a guest's own kind=usage line is dropped as an unknown kind ({got}, {out.strip()})")

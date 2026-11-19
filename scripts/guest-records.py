@@ -261,6 +261,10 @@ def ship_usage(names, args):
     cgroup is stopped (paused, or between deploys): skipped and logged, not a failure. A cgroup that is there but
     cannot be read is one."""
     now, streams, ok, stopped = time.time(), [], True, []
+    # no slice at all is a wrong path or a host without the environments' slice: every instance would read as stopped
+    if not os.path.isdir(args.cgroup):
+        print(f"usage: {args.cgroup} is not a directory; nothing read", file=sys.stderr)
+        return False
     for name in names:
         if not os.path.isdir(os.path.join(args.cgroup, f"container@{name}.service")):
             stopped.append(name)
