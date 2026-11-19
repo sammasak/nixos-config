@@ -398,7 +398,7 @@ in
               loki_job_sources = [
                 "${../modules/homelab/journal-collector.nix}"
                 "${../modules/homelab/loki.nix}"
-                "${../scripts/platform-record.sh}"
+                "${../pkgs/platform-record/platform_record.py}"
                 "${../modules/homelab/monitoring/alloy-otlp.alloy}"
               ];
               inherit (prom) rule_files;

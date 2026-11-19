@@ -1,0 +1,141 @@
+{
+  "about": "scripts/platform-record.sh's output per kind, captured before it was deleted: the Loki stream labels and line, and the spool line after its date (scripts/test-platform-records.py holds pkgs/platform-record to it)",
+  "cases": [
+    {
+      "kind": "gate",
+      "args": [
+        "gate=nixos-qa",
+        "seconds=1241",
+        "result=pass",
+        "sha=e6fc277d",
+        "mode=manual",
+        "deferred=2",
+        "head=e6fc277d2953c3fcfdb19407a59506601fbc6d92",
+        "checkout=clean",
+        "deferred_checks=asus-b460m:checks.x86_64-linux.deploy-activate-asus-b460m,asus-b460m:x"
+      ],
+      "labels": {
+        "job": "platform",
+        "kind": "gate"
+      },
+      "line": "gate=nixos-qa seconds=1241 result=pass sha=e6fc277d mode=manual deferred=2 head=e6fc277d2953c3fcfdb19407a59506601fbc6d92 checkout=clean deferred_checks=asus-b460m:checks.x86_64-linux.deploy-activate-asus-b460m,asus-b460m:x",
+      "spool": "gate gate=nixos-qa seconds=1241 result=pass sha=e6fc277d mode=manual deferred=2 head=e6fc277d2953c3fcfdb19407a59506601fbc6d92 checkout=clean deferred_checks=asus-b460m:checks.x86_64-linux.deploy-activate-asus-b460m,asus-b460m:x\n"
+    },
+    {
+      "kind": "gate-step",
+      "args": [
+        "gate=nixos-qa",
+        "step=nixos-flake-check",
+        "check=checks.x86_64-linux.deploy-activate-msi-ms7758",
+        "owner=msi-ms7758",
+        "seconds=15",
+        "eval_seconds=15",
+        "compiled=78",
+        "fetched=5",
+        "result=built",
+        "head=000ce595",
+        "drv=/nix/store/x6wiazf2-deploy-rs-check-activate.drv"
+      ],
+      "labels": {
+        "job": "platform",
+        "kind": "gate-step"
+      },
+      "line": "gate=nixos-qa step=nixos-flake-check check=checks.x86_64-linux.deploy-activate-msi-ms7758 owner=msi-ms7758 seconds=15 eval_seconds=15 compiled=78 fetched=5 result=built head=000ce595 drv=/nix/store/x6wiazf2-deploy-rs-check-activate.drv",
+      "spool": "gate-step gate=nixos-qa step=nixos-flake-check check=checks.x86_64-linux.deploy-activate-msi-ms7758 owner=msi-ms7758 seconds=15 eval_seconds=15 compiled=78 fetched=5 result=built head=000ce595 drv=/nix/store/x6wiazf2-deploy-rs-check-activate.drv\n"
+    },
+    {
+      "kind": "deploy",
+      "args": [
+        "node=acer-swift",
+        "result=ok",
+        "seconds=12",
+        "rolled_back=0",
+        "units_restarted=3",
+        "failed_units=unknown",
+        "sha=1bc4727"
+      ],
+      "labels": {
+        "job": "platform",
+        "kind": "deploy"
+      },
+      "line": "node=acer-swift result=ok seconds=12 rolled_back=0 units_restarted=3 failed_units=unknown sha=1bc4727",
+      "spool": "deploy node=acer-swift result=ok seconds=12 rolled_back=0 units_restarted=3 failed_units=unknown sha=1bc4727\n"
+    },
+    {
+      "kind": "checks-run",
+      "args": [
+        "node=msi-ms7758",
+        "check=systemd-verify",
+        "status=already-valid"
+      ],
+      "labels": {
+        "job": "platform",
+        "kind": "checks-run"
+      },
+      "line": "node=msi-ms7758 check=systemd-verify status=already-valid",
+      "spool": "checks-run node=msi-ms7758 check=systemd-verify status=already-valid\n"
+    },
+    {
+      "kind": "coverage",
+      "args": [
+        "node=lenovo",
+        "assertions=412",
+        "system_checks=9"
+      ],
+      "labels": {
+        "job": "platform",
+        "kind": "coverage"
+      },
+      "line": "node=lenovo assertions=412 system_checks=9",
+      "spool": "coverage node=lenovo assertions=412 system_checks=9\n"
+    },
+    {
+      "kind": "instructions",
+      "args": [
+        "file=repo-CLAUDE.md",
+        "bytes=21345"
+      ],
+      "labels": {
+        "job": "platform",
+        "kind": "instructions"
+      },
+      "line": "file=repo-CLAUDE.md bytes=21345",
+      "spool": "instructions file=repo-CLAUDE.md bytes=21345\n"
+    },
+    {
+      "kind": "delivery",
+      "args": [
+        "day=2026-11-18",
+        "result=ok",
+        "verified_deliveries=18",
+        "prs_reviewed=unknown",
+        "review_passes=unknown",
+        "rework_rounds=unknown",
+        "repeated_reviews=unknown",
+        "parked=0",
+        "lead_time_hours=2.5"
+      ],
+      "labels": {
+        "job": "platform",
+        "kind": "delivery"
+      },
+      "line": "day=2026-11-18 result=ok verified_deliveries=18 prs_reviewed=unknown review_passes=unknown rework_rounds=unknown repeated_reviews=unknown parked=0 lead_time_hours=2.5",
+      "spool": "delivery day=2026-11-18 result=ok verified_deliveries=18 prs_reviewed=unknown review_passes=unknown rework_rounds=unknown repeated_reviews=unknown parked=0 lead_time_hours=2.5\n"
+    },
+    {
+      "kind": "trash-sweep",
+      "args": [
+        "seen=3",
+        "deleted=1",
+        "bytes=4096",
+        "result=ok"
+      ],
+      "labels": {
+        "job": "platform",
+        "kind": "trash-sweep"
+      },
+      "line": "seen=3 deleted=1 bytes=4096 result=ok",
+      "spool": "trash-sweep seen=3 deleted=1 bytes=4096 result=ok\n"
+    }
+  ]
+}

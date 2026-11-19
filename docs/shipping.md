@@ -12,7 +12,7 @@ node-exporter. Its calls are read-only:
 - **GitHub REST**, with the owner's `gh` login (the one the coordinator tasks use). Without a login it counts public
   repos only, `shipping_collector_authenticated` is 0, and PR lead time falls back to open-to-merge (one commits call
   per PR would exceed the 60 calls an hour GitHub allows without a token).
-- **Loki**: the platform records (`scripts/platform-record.sh`) of gates, gate steps and deploys.
+- **Loki**: the platform records (`pkgs/platform-record/platform_record.py`) of gates, gate steps and deploys.
 
 | Metric | What it is |
 |---|---|

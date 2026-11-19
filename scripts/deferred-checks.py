@@ -10,7 +10,7 @@ An owner record from Loki counts only if its stream's host label is that owner (
 claim; a record without the label does not count); a spool is one host's local copy and carries no label.
 The gate record must come from a fleet host's own stream: a gate run in a worker guest (stream host <host>-<guest>) is
 reported and not counted. The fleet's host names are the keys of the hosts table in modules/core/fleet.nix (sam.fleet.hosts,
-networking.hostName, which platform-record.sh labels its stream with), read from the file's text: no evaluation here;
+networking.hostName, which platform_record.py labels its stream with), read from the file's text: no evaluation here;
 scripts/test-fleet-contract.py holds the parse to the evaluated sam.fleet.hosts.
 Exit 0: a passing gate on a clean checkout of HEAD is recorded and every check its deferred_checks list names is
 covered (or it names none). 1: a check waits for its owner. 2: the records cannot say: no such gate record, a listed
@@ -26,16 +26,17 @@ import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+WRITER = "pkgs/platform-record/platform_record.py"
 
 
 def default_loki():
-    """PLATFORM_LOKI_URL, else scripts/platform-record.sh's own default: the one place outside fleet.nix that may
+    """PLATFORM_LOKI_URL, else pkgs/platform-record/platform_record.py's own default: the one place outside fleet.nix that may
     name Loki's address (scripts/test-fleet-contract.py holds it to the evaluated sam.fleet.loki.url)."""
     if os.environ.get("PLATFORM_LOKI_URL"):
         return os.environ["PLATFORM_LOKI_URL"]
-    m = re.search(r"\$\{PLATFORM_LOKI_URL:-(https?://[^}]+)\}", (ROOT / "scripts/platform-record.sh").read_text())
+    m = re.search(r'^LOKI_DEFAULT = "(https?://[^"]+)"$', (ROOT / WRITER).read_text(), re.M)
     if not m:
-        raise Unreadable("scripts/platform-record.sh has no ${PLATFORM_LOKI_URL:-…} default to read Loki's address from")
+        raise Unreadable(f"{WRITER} has no LOKI_DEFAULT to read Loki's address from")
     return m[1]
 PAIR = re.compile(r'(\w+)=("[^"]*"|\S*)')
 COVERING = re.compile(r"result=(built|present|fetched|expected-fail)( |$)")
@@ -59,7 +60,7 @@ def fleet_hosts(root=ROOT):
 
 
 def fields(line):
-    """A logfmt record as platform-record.sh writes it (key=value, values without spaces)."""
+    """A logfmt record as platform_record.py writes it (key=value, values without spaces)."""
     return {k: v.strip('"') for k, v in PAIR.findall(line)}
 
 
@@ -146,7 +147,7 @@ def main():
     ap.add_argument("head")
     ap.add_argument("--days", type=int, default=14)
     ap.add_argument("--limit", type=int, default=5000)
-    ap.add_argument("--loki", help="Loki's base URL (default: PLATFORM_LOKI_URL, else platform-record.sh's default)")
+    ap.add_argument("--loki", help="Loki's base URL (default: PLATFORM_LOKI_URL, else platform_record.py's default)")
     ap.add_argument("--spool", nargs="+")
     a = ap.parse_args()
     if not re.fullmatch(r"[0-9a-f]{40}", a.head):
@@ -157,7 +158,7 @@ def main():
             a.loki = default_loki()
         covered, waiting = verdict(Records(a), a.head)
     except (Unreadable, OSError) as e:
-        # a missing spool or platform-record.sh is "cannot say" (2), never "waiting" (1)
+        # a missing spool or platform_record.py is "cannot say" (2), never "waiting" (1)
         print(f"deferred-checks: cannot say: {e}", file=sys.stderr)
         sys.exit(2)
     for owner, check, how in covered:
