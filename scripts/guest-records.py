@@ -257,9 +257,14 @@ def usage_body(name, args):
 
 
 def ship_usage(names, args):
-    """One push of every running instance's usage line, each in its own host=<prefix>-<name> stream."""
-    now, streams, ok = time.time(), [], True
+    """One push of every running instance's usage line, each in its own host=<prefix>-<name> stream. An instance with no
+    cgroup is stopped (paused, or between deploys): skipped and logged, not a failure. A cgroup that is there but
+    cannot be read is one."""
+    now, streams, ok, stopped = time.time(), [], True, []
     for name in names:
+        if not os.path.isdir(os.path.join(args.cgroup, f"container@{name}.service")):
+            stopped.append(name)
+            continue
         try:
             body = usage_body(name, args)
         except (OSError, KeyError, ValueError) as e:
@@ -270,7 +275,7 @@ def ship_usage(names, args):
                         "values": [[str(int(now)) + "000000000", body]]})
     if streams and not push(args.url, streams):
         return False
-    print(f"usage: {len(streams)} instance(s) to Loki")
+    print(f"usage: {len(streams)} instance(s) to Loki" + (f"; not running, skipped: {', '.join(stopped)}" if stopped else ""))
     return ok
 
 

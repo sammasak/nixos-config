@@ -298,8 +298,22 @@ check(by.get(f"{PREFIX}-t2", (None, None, ""))[2].endswith(" toplevel=unknown"),
       f"seeded: a conf whose SYSTEM_PATH is not a store path gives toplevel=unknown, never its text ({by.get(f'{PREFIX}-t2')})")
 check(len(got) == 2 and not any("from=spool" in e[2] for e in got), f"usage mode ships no spool line ({got})")
 rc, out, err, got = usage_run("herman", "gone")
-check(rc == 1 and [e[0]["host"] for e in got] == [f"{PREFIX}-herman"] and "gone: no usage" in err,
-      f"seeded: an instance without a cgroup (not running) is reported and skipped, the others still go ({rc}, {err.strip()})")
+check(rc == 0 and [e[0]["host"] for e in got] == [f"{PREFIX}-herman"] and "not running, skipped: gone" in out and err == "",
+      f"an instance without a cgroup (stopped) is skipped and logged, rc 0, and the others still go ({rc}, {out.strip()}, {err.strip()})")
+broken = cg / "container@broken.service"
+broken.mkdir()
+(broken / "cpu.stat").write_text("system_usec 1\n")
+for f, v in (("memory.current", "1\n"), ("memory.peak", "1\n"), ("memory.stat", "anon 1\n")):
+    (broken / f).write_text(v)
+rc, out, err, got = usage_run("herman", "broken")
+check(rc == 1 and [e[0]["host"] for e in got] == [f"{PREFIX}-herman"] and "broken: no usage" in err,
+      f"seeded: a cgroup that is there but cannot be read (cpu.stat without usage_usec) fails the run, rc 1 ({rc}, {err.strip()})")
+(broken / "cpu.stat").write_text("usage_usec 1\nuser_usec 1\n")
+os.chmod(broken / "memory.peak", 0)
+rc, out, err, got = usage_run("broken")
+os.chmod(broken / "memory.peak", 0o644)
+check(rc == 1 and got == [] and "broken: no usage (PermissionError" in err if os.geteuid() != 0 else True,
+      f"seeded: an unreadable counter file in a present cgroup is a read error, rc 1 ({rc}, {err.strip()})")
 write("forge", [rec(30, "usage", "cpu_usec=1")])
 rc, out, err, got = run("forge")
 check(got == [] and "unknown kind" in out, f"seeded: a guest's own kind=usage line is dropped as an unknown kind ({got}, {out.strip()})")
