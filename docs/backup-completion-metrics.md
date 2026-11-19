@@ -67,3 +67,12 @@ collector receipt and rendered Edge panels. Record any skipped/failed run honest
 trials, external storage, secret changes and actual backup data movement remain separate #564
 owner gates. Rollback removes instrumentation; it does not delete backup data or retained
 metadata automatically.
+
+## Correctness tooling
+
+The `checks.x86_64-linux.backup-metrics` derivation runs Ruff correctness and
+bug-pattern rules (`E4,E7,E9,F,B`), strict mypy on the operational helper, nine
+behaviour tests against the real helper and evaluated unit wiring, and `promtool`
+on the generated exposition. The helper has typed IO/validation boundaries;
+untrusted JSON still requires explicit runtime validation. These checks do not
+replace the isolated systemd VM test, full QA or real backup/restore evidence.

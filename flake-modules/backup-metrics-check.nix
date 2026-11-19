@@ -27,13 +27,15 @@ in
             nativeBuildInputs = [
               pkgs.python3
               pkgs.ruff
+              pkgs.mypy
               pkgs.prometheus.cli
             ];
             unitSpec = builtins.unsafeDiscardStringContext (builtins.toJSON spec);
             passAsFile = [ "unitSpec" ];
           }
           ''
-            ruff check --isolated --no-cache --select F ${../scripts/backup-metrics.py} ${../scripts/test-backup-metrics.py}
+            ruff check --isolated --no-cache --select E4,E7,E9,F,B ${../scripts/backup-metrics.py} ${../scripts/test-backup-metrics.py}
+            mypy --strict --cache-dir "$TMPDIR/mypy" ${../scripts/backup-metrics.py}
             python3 -I ${../scripts/test-backup-metrics.py} ${../scripts/backup-metrics.py} "$out" "$unitSpecPath"
             promtool check metrics < "$out/backup.prom"
           '';

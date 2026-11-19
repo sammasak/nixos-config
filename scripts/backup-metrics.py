@@ -14,7 +14,7 @@ import time
 VALIDATIONS = {"archive_list", "scratch_restore"}
 
 
-def atomic_write(path, text, mode):
+def atomic_write(path: Path, text: str, mode: int) -> None:
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
@@ -29,13 +29,13 @@ def atomic_write(path, text, mode):
             os.unlink(temporary)
 
 
-def valid_unit(unit):
+def valid_unit(unit: str) -> str:
     if not re.fullmatch(r"[a-z][a-z0-9-]*", unit):
         raise ValueError("invalid backup unit")
     return unit
 
 
-def record(unit, directory):
+def record(unit: str, directory: Path) -> None:
     valid_unit(unit)
     result = subprocess.run(
         ["systemctl", "show", unit + ".service",
@@ -54,7 +54,7 @@ def record(unit, directory):
     atomic_write(directory / "success.json", json.dumps(metadata) + "\n", 0o600)
 
 
-def completion_values(metadata, unit, now):
+def completion_values(metadata: object, unit: str, now: float) -> tuple[float, float]:
     """Validate the versioned record independently of file IO and exposition."""
     if not isinstance(metadata, dict):
         raise ValueError("completion metadata must be an object")
@@ -64,10 +64,10 @@ def completion_values(metadata, unit, now):
             or not math.isfinite(timestamp) or not math.isfinite(duration)
             or not 0 < timestamp <= now + 60 or duration < 0):
         raise ValueError("invalid completion metadata")
-    return timestamp, duration
+    return float(timestamp), float(duration)
 
 
-def read_completion(path, unit, now):
+def read_completion(path: Path, unit: str, now: float) -> tuple[float, float] | None:
     """Unavailable evidence is local to this job; never follow or block on damaged state."""
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
@@ -80,7 +80,7 @@ def read_completion(path, unit, now):
         return None
 
 
-def collect(jobs, state_root, output):
+def collect(jobs: dict[str, str], state_root: Path, output: Path) -> None:
     now = time.time()
     lines = [
         "# HELP homelab_backup_metadata_available Valid successful-completion metadata exists (not backup health).",
@@ -111,7 +111,7 @@ def collect(jobs, state_root, output):
     atomic_write(output, "\n".join(lines) + "\n", 0o644)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     writer = commands.add_parser("record")
