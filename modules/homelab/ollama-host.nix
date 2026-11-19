@@ -52,6 +52,15 @@ in
     description = "Board power cap in watts that nvidia-smi -pl sets before every Ollama start; null leaves the driver default. The host asserts its card's range (nvidia-smi --query-gpu=power.min_limit,power.max_limit).";
   };
 
+  options.homelab.ollama.parallelRequests = lib.mkOption {
+    type = lib.types.enum [
+      1
+      2
+    ];
+    default = 1;
+    description = "Parallel requests for a single resident model. Two is an opt-in capacity experiment, not a fit or quality claim; verify actual context, VRAM headroom and latency before retaining it.";
+  };
+
   options.homelab.ollama.promptCacheMiB = lib.mkOption {
     type = lib.types.ints.positive;
     default = 1024;
@@ -68,9 +77,9 @@ in
     services.ollama = {
       host = config.sam.fleet.hosts.${config.sam.profile.hostname}.address;
       environmentVariables = {
-        # one model and one request at a time: the host's MemoryMax is sized for that
+        # One resident model; parallel requests default to one until an explicit capacity trial.
         OLLAMA_MAX_LOADED_MODELS = "1";
-        OLLAMA_NUM_PARALLEL = "1";
+        OLLAMA_NUM_PARALLEL = toString config.homelab.ollama.parallelRequests;
         OLLAMA_FLASH_ATTENTION = "1";
         OLLAMA_KV_CACHE_TYPE = "q8_0";
         OLLAMA_KEEP_ALIVE = "5m";
