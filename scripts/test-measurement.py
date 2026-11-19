@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The measurement doc and its targets (docs/measurement.md, metrics/targets.json): every metric in the doc is in the
-targets file and the reverse, with the same area, question, source, target, state and query; a live metric has a
-query, a target and a dashboard panel whose queries use the same kinds and series; an in-flight or new one has no
-query, and the scorecard's machine-readable backend and threshold, which an in-flight or new one has neither of;
-the area names are the doc's headings; at most six per area; every kind scripts/platform-record.sh
-writes has a maximum age. Seeded cases: each of those broken in a copy must be caught."""
+targets file and the reverse, with the same area, question, source, target, state and query; a live metric has a query,
+a target and a dashboard panel whose queries use the same kinds and series; an in-flight or new one has no query, and
+the scorecard's machine-readable backend, threshold and (Prometheus) fresh guard, which an in-flight or new one has none
+of; the area names are the doc's headings; at most six per area; every kind scripts/platform-record.sh writes has a
+maximum age. Seeded cases: each of those broken in a copy must be caught."""
 from __future__ import annotations
 
 import copy
@@ -99,11 +99,25 @@ def threshold_problems(m: Metric) -> list[str]:
     return out
 
 
+def fresh_problems(m: Metric, everywhere: str) -> list[str]:
+    """A Loki metric is kept fresh by its record kinds' max ages; a Prometheus one by its own `fresh` query, which
+    returns nothing once the source stops (a long-window average still holds old samples), and reads only series a
+    dashboard already shows."""
+    guard = m.get("fresh")
+    if m.get("backend") == "loki":
+        return [] if guard is None else ["a Loki metric with a fresh guard: its record kinds' max ages keep it fresh"]
+    if not isinstance(guard, str) or not guard.strip():
+        return ["a live Prometheus metric without a fresh query"]
+    unshown = sorted(n for n in names(guard) if not re.search(rf"(?<![\w:]){re.escape(n)}(?![\w:])", everywhere))
+    return [f"its fresh query reads series no dashboard shows {unshown}"] if unshown else []
+
+
 def problems(doc: dict[str, Metric], headings: list[str], targets: dict[str, Any], kinds: set[str],
              shown: dict[str, list[str]]) -> Problems:
-    keys = ["listed", "same", "live", "unknown", "threshold", "areas", "changed", "limit", "max_age", "kinds"]
+    keys = ["listed", "same", "live", "unknown", "threshold", "fresh", "areas", "changed", "limit", "max_age", "kinds"]
     out: Problems = {k: [] for k in keys}
     metrics = {m["id"]: m for m in targets["metrics"]}
+    everywhere = " ".join(e for exprs in shown.values() for e in exprs)
     out["listed"] += [f"{i} in the doc, not in the targets" for i in sorted(set(doc) - set(metrics))]
     out["listed"] += [f"{i} in the targets, not in the doc" for i in sorted(set(metrics) - set(doc))]
     out["listed"] += [f"{i}: a query line with no table row" for i, r in doc.items() if r.get("orphan")]
@@ -117,10 +131,11 @@ def problems(doc: dict[str, Metric], headings: list[str], targets: dict[str, Any
         elif m["state"] != "live":
             if m.get("query") is not None:
                 out["unknown"].append(f"{mid}: {m['state']} but has a query; only a live metric names a series")
-            if m.get("backend") is not None or m.get("threshold") is not None:
-                out["threshold"].append(f"{mid}: {m['state']} but has a backend or threshold")
+            if m.get("backend") is not None or m.get("threshold") is not None or m.get("fresh") is not None:
+                out["threshold"].append(f"{mid}: {m['state']} but has a backend, threshold or fresh guard")
             continue
         out["threshold"] += [f"{mid}: {e}" for e in threshold_problems(m)]
+        out["fresh"] += [f"{mid}: {e}" for e in fresh_problems(m, everywhere)]
         if not m.get("query") or not m.get("target") or not m.get("panels"):
             out["live"].append(f"{mid}: live without a query, a target or a panel")
             continue
@@ -169,6 +184,7 @@ DESCRIBED = {
     "unknown": "every metric has a known state, and only a live one has a query",
     "threshold": "a live metric's backend is its query's language and its threshold an operator with a number; "
                  "an in-flight or new one has neither",
+    "fresh": "a live Prometheus metric has a fresh query on series a dashboard shows; a Loki one has none",
     "areas": "every area has a name in the targets, and that name heads its section of the doc",
     "changed": "every target says when it last changed and why",
     "limit": f"at most {LIMIT} metrics per area",
@@ -218,6 +234,13 @@ seeded("a LogQL query sent to Prometheus", "threshold",
        with_metric(next(m["id"] for m in targets["metrics"] if m.get("backend") == "loki"), backend="prometheus"))
 seeded("an in-flight or new metric with a threshold", "threshold",
        with_metric(other["id"], threshold={"op": "<=", "value": 0}))
+prom = next(m["id"] for m in targets["metrics"] if m.get("backend") == "prometheus")
+loki = next(m["id"] for m in targets["metrics"] if m.get("backend") == "loki")
+seeded("a live Prometheus metric without a fresh query", "fresh", with_metric(prom, fresh=None))
+seeded("a fresh query on a series no dashboard shows", "fresh",
+       with_metric(prom, fresh="time() - max(timestamp(made_up)) < 900"))
+seeded("a Loki metric with a fresh guard", "fresh", with_metric(loki, fresh="up"))
+seeded("an in-flight or new metric with a fresh guard", "threshold", with_metric(other["id"], fresh="up"))
 seeded("an area renamed in the targets only", "areas", lambda t: t["areas"].update(A="Somewhere else"))
 seeded("a kind without a max age", "max_age", lambda t: t["max_age_hours"].pop(min(kinds)))
 seeded("a max age of zero", "max_age", lambda t: t["max_age_hours"].update({min(kinds): 0}))

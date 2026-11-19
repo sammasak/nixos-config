@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """The platform scorecard (docs/measurement.md): every metric in metrics/targets.json read from Prometheus or Loki and
-printed per area as metric, reading, target and verdict, then each record kind's freshness. A metric without a query,
-a failed or empty query, or a reading that is not a number is unknown, never a pass; a metric reading a record kind
-that has gone quiet past its maximum age is stale. Exits 2 when Prometheus or Loki cannot be reached."""
+printed per area as metric, reading, target and verdict, then each record kind's freshness. A metric without a query, a
+failed or empty query, or a reading that is not a number is unknown, never a pass; a metric reading a record kind that
+has gone quiet past its maximum age, or whose `fresh` query returns nothing, is stale. Exits 2 when Prometheus or Loki
+cannot be reached."""
 
 from __future__ import annotations
 
@@ -142,6 +143,15 @@ def evaluate(m: dict[str, Any], fresh: dict[str, tuple[str, str]], backends: Bac
         row.verdict = "stale" if stale else "unknown"
         row.reason = "; ".join(f"{k}: {fresh.get(k, ('unknown', 'no maximum age'))[1]}" for k in quiet)
         return row
+    if m.get("fresh"):
+        try:
+            recent = backends.read(m["backend"], m["fresh"])
+        except (Unreachable, QueryFailed) as e:
+            row.reason = f"freshness: {e}"
+            return row
+        if not recent:
+            row.verdict, row.reason = "stale", f"no fresh sample ({m['fresh']})"
+            return row
     try:
         got = backends.read(m["backend"], m["query"])
     except (Unreachable, QueryFailed) as e:

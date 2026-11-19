@@ -17,7 +17,8 @@ Dashboards are in `modules/homelab/monitoring/dashboards/`. No second stack.
 `devenv tasks run platform:scorecard` (`pkgs/scorecard/scorecard.py`) reads every metric from Prometheus and Loki
 and prints the four tables below as metric, reading, target and verdict, then each record kind's freshness. Verdicts:
 **pass** and **fail** against the metric's `threshold`; **stale** when a record kind its query reads has nothing
-newer than its maximum age; **unknown** for no query, a failed or empty query, a reading that is not a number, or a
+newer than its maximum age, or a Prometheus metric's `fresh` query returns nothing (a long-window average still holds
+old samples after its exporter stops); **unknown** for no query, a failed or empty query, a reading that is not a number, or a
 target judged by hand (`by-hand`, reading shown). It exits 2 when either backend is unreachable or not ready. Its
 addresses are `sam.fleet`'s (Prometheus answers lenovo and acer only); `SCORECARD_PROMETHEUS_URL` and
 `SCORECARD_LOKI_URL` override them.
@@ -52,10 +53,10 @@ new one reads as unknown until its source lands, and no metric name is written d
 | `eval-time-closure` | Is the config getting slower or bigger? | `metrics/history.jsonl` (bench), not in Prometheus or Loki yet | no step above 10 % without a stated reason | new |
 
 ```
-deploy-rollbacks: sum(sum_over_time({job="platform",kind="deploy"} | logfmt | unwrap rolled_back [30d])) or vector(0)
+deploy-rollbacks: sum(sum_over_time({job="platform",kind="deploy"} | logfmt | unwrap rolled_back [30d]))
 failed-units-after-deploy: max by (node) (max_over_time({job="platform",kind="deploy"} | logfmt | failed_units!="unknown" | unwrap failed_units [7d]))
 deploy-failures-caught-at-build: sum by (node, result) (count_over_time({job="platform",kind="deploy"} | logfmt | result!="ok" [30d]))
-morning-wake: sum(count_over_time((max by (node) (up{job="node-exporter"}) == 0 unless on (node) homelab:node:planned_off)[14d:5m])) or count(up{job="node-exporter"}) * 0
+morning-wake: count_over_time((max by (node) (up{job="node-exporter"}) == 0 unless on (node) homelab:node:planned_off)[14d:5m]) or on (node) (0 * max by (node) (up{job="node-exporter"}))
 ```
 
 `deploy-failures-caught-at-build` lists the failures; whether each got a check is read by hand from the PRs.
@@ -125,7 +126,8 @@ adopted, spiked and rejected. Backlog: fc-nixos (area B), clan and srvos (A), mi
 Add: name the question and the decision it changes; add its row here and its entry in `metrics/targets.json` in
 the same commit, with `target_changed` saying where the target came from. A live metric names the dashboard panel
 that shows it (`panels`), the `backend` its query runs on and a `threshold` (`op` of `<=`, `<`, `>=`, `>` with a
-`value`, or `by-hand`) that says the prose target as a number; a new record kind gets its `max_age_hours`. An area already at six retires one first.
+`value`, or `by-hand`) that says the prose target as a number, and a Prometheus one a `fresh` query that is empty
+once its source stops; a new record kind gets its `max_age_hours`. An area already at six retires one first.
 
 Retire: remove the row and the entry together; the commit says which decision no longer needs it.
 

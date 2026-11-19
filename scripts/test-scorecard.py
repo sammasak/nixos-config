@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """The platform scorecard (pkgs/scorecard) on a fake Prometheus and Loki: a pass and a fail against the threshold, the
-worst series named; no query, an empty result, an HTTP error, an error status, a NaN and a matrix each unknown with
-the reason, never a pass; a metric whose record kind has nothing within its maximum age stale, and the kind table
-saying so; by-hand unknown with its reading. A backend that does not answer, or is not ready, exits 2 and leaves its
-metrics unknown while the other backend's are still read. The real metrics/targets.json against backends that answer
-no query: every metric printed in its area, none a pass. Run as `test-scorecard.py [the packaged scorecard]`."""
+worst series named; no query, an empty result, an HTTP error, an error status, a NaN and a matrix each unknown with the
+reason, never a pass; a metric whose record kind has nothing within its maximum age stale, and the kind table saying so;
+a long-window average of good but old samples stale through its `fresh` guard, a refused guard unknown; by-hand unknown
+with its reading. A backend that does not answer, or is not ready, exits 2 and leaves its metrics unknown while the
+other backend's are still read. The real metrics/targets.json against backends that answer no query: every metric
+printed in its area, none a pass or a fail. Run as `test-scorecard.py [the packaged scorecard]`."""
 from __future__ import annotations
 
 import http.server
@@ -57,8 +58,15 @@ class Fake(http.server.BaseHTTPRequestHandler):
 
 
 PROM, LOKI = "/api/v1/query", "/loki/api/v1/query"
+AVAILABILITY = 'avg_over_time(probe_success{job="blackbox"}[14d])'
+PROBED = 'time() - max(timestamp(probe_success{job="blackbox"})) < 900'
 Fake.answers = {
     (PROM, "shipping_ok"): vector(({}, "0")),
+    # the exporter stopped: the 14-day average still holds good old samples, the freshness guard finds none recent
+    (PROM, AVAILABILITY): vector(({"instance": "a"}, "1")),
+    (PROM, PROBED): vector(),
+    (PROM, "shipping_guarded"): vector(({}, "0")),
+    (PROM, "shipping_guard_ok"): vector(({}, "1")),
     (PROM, 'probe_success{job="blackbox"}'): vector(({"instance": "a"}, "1"), ({"instance": "b"}, "0.5")),
     (PROM, "shipping_empty"): vector(),
     (PROM, "shipping_bad"): (400, {"status": "error", "error": "parse error at char 3"}),
@@ -73,10 +81,11 @@ Fake.answers = {
 
 
 def metric(mid: str, area: str, query: str | None, backend: str | None = None, op: str = "<=",
-           value: float | None = 0) -> dict[str, Any]:
+           value: float | None = 0, fresh: str | None = None) -> dict[str, Any]:
     threshold = None if query is None else ({"op": op} if value is None else {"op": op, "value": value})
     return {"id": mid, "area": area, "state": "live" if query else "new", "query": query, "backend": backend,
-            "threshold": threshold, "target": f"target of {mid}"}
+            "threshold": threshold, "fresh": fresh, "target": f"target of {mid}"}
+
 
 
 SEEDED = {
@@ -94,6 +103,9 @@ SEEDED = {
         metric("quiet-kind", "B", 'sum(count_over_time({job="platform",kind="gate"} [1d]))', "loki"),
         metric("loki-passes", "B", 'sum(count_over_time({job="platform",kind="deploy"} | logfmt [1d])) or vector(0)',
                "loki"),
+        metric("guarded", "B", "shipping_guarded", "prometheus", fresh="shipping_guard_ok"),
+        metric("old-samples", "B", AVAILABILITY, "prometheus", ">=", 0.99, fresh=PROBED),
+        metric("guard-error", "B", "shipping_guarded", "prometheus", fresh="shipping_guard_unanswered"),
         metric("by-hand", "B", 'sum(count_over_time({job="platform",kind="deploy"} | logfmt | result!="ok" [30d]))',
                "loki", "by-hand", None),
     ],
@@ -152,7 +164,13 @@ check(verdict.get("loki-passes") == "pass",
       f"a Loki metric on a fresh kind is read and passes ({verdict.get('loki-passes')})")
 check(verdict.get("by-hand") == "unknown: judged by hand" and rows["by-hand"][0] == "2",
       f"a by-hand target is unknown, its reading shown ({rows.get('by-hand')})")
-check("Metrics: pass 2, fail 1, stale 1, unknown 7" in out, "the summary counts each verdict")
+check(verdict.get("guarded") == "pass",
+      f"a metric whose freshness guard answers is read and passes ({verdict.get('guarded')})")
+check(verdict.get("old-samples") == f"stale: no fresh sample ({PROBED})",
+      f"a long-window average of good but old samples is stale, not a pass ({verdict.get('old-samples')})")
+check(verdict.get("guard-error") == "unknown: freshness: HTTP 400: no canned answer",
+      f"a freshness guard the backend refuses is unknown ({verdict.get('guard-error')})")
+check("Metrics: pass 3, fail 1, stale 2, unknown 8" in out, "the summary counts each verdict")
 
 down = f"http://127.0.0.1:{closed_port()}"
 rc, out, rows = run(SEEDED, down, url)
@@ -178,8 +196,9 @@ rc, out, rows = run(ROOT / "metrics/targets.json", url, url)
 verdicts = {m["id"]: rows.get(m["id"], [None])[-1] for m in real["metrics"]}
 check(rc == 0 and all(v for v in verdicts.values()), f"the real targets: every metric printed (rc {rc}, missing "
       f"{[k for k, v in verdicts.items() if not v]})")
-check(all(v.startswith("unknown") for v in verdicts.values() if v), f"no answer, no pass: every metric unknown "
-      f"({sorted({v.split(':')[0] for v in verdicts.values() if v})})")
+check(all(v.split(":")[0] in ("unknown", "stale") for v in verdicts.values() if v),
+      f"no answer, no pass: every metric unknown or stale ({sorted({v.split(':')[0] for v in verdicts.values() if v})})"
+      )
 check(all(f"## {a}. {t}" in out for a, t in real["areas"].items()) and all(k in rows for k in real["max_age_hours"]),
       "the real targets: all four areas and every record kind are printed")
 
