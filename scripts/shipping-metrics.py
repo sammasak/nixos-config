@@ -40,7 +40,7 @@ METRICS = {
     "shipping_gate_fail_ratio": "Share of the last push-mode nixos-qa gate runs that failed, by the host that ran them.",
     "shipping_gate_runs_counted": "Push-mode gate runs behind the fail ratio, by host.",
     "shipping_gate_seconds": "Duration of the last push-mode gate runs, by host and quantile.",
-    "shipping_gate_step_failures": "Failed gate steps in the last 7 d, by step.",
+    "shipping_gate_step_failures": "Distinct heads a push-gate step (or the flake check's inner check) failed on in the last 7 d, by step and check.",
     "shipping_deploys": "Recorded deploys in the last 7 d, by result.",
     "shipping_deploy_rollbacks": "Deploys deploy-rs rolled back, in the window.",
     "shipping_deploy_lag_commits": "Commits on main the host's last good deploy does not have.",
@@ -323,11 +323,30 @@ def gates(loki, out, want):
         for q in (0.5, 0.9):
             if secs:
                 out.add("shipping_gate_seconds", quantile(secs, q), host=host, quantile=str(q))
-    fails = {}
-    for _, r in loki_records(loki, '{job="platform",kind="gate-step"} |= "result=fail"', 7):
-        fails[r.get("step", "?")] = fails.get(r.get("step", "?"), 0) + 1
-    for step, n in sorted(fails.items()):
-        out.add("shipping_gate_step_failures", n, step=step, window="7d")
+    fails = step_failures(loki_records(loki, '{job="platform",kind="gate-step"} |= "result=fail"', 7))
+    for (step, check), n in sorted(fails.items()):
+        out.add("shipping_gate_step_failures", n, step=step, check=check, window="7d")
+
+
+def step_failures(records):
+    """{(step, check): heads} for the push gate's failed records (gate=nixos-qa; an on-demand check is not the gate).
+    A unit counts once per head, so a re-run on one head is not a repeat. The flake check is one step over every
+    check: its failure counts under the inner check that failed (that check's record, check=), and the step's own
+    record only when no inner record failed on the same head (an evaluation error). A record with no head counts on
+    its own. Heads compare on 7 hex digits: the step record says sha=<short>, a check record head=<full>. A head that
+    is not hex (`none`, NIXOS_QA_HEAD's fallback outside git) is no head: two such records are not one unit."""
+    fails = [r for _, r in records if r.get("gate") == "nixos-qa" and r.get("result") == "fail"]
+    def head(r):
+        h = r.get("head") or r.get("sha") or ""
+        return h[:7] if re.fullmatch(r"[0-9a-f]{7,64}", h) else ""
+    inner = {(r.get("step"), head(r)) for r in fails if r.get("check") and head(r)}
+    units = {}
+    for i, r in enumerate(fails):
+        step, h, check = r.get("step", "?"), head(r), r.get("check", "")
+        if not check and h and (step, h) in inner:
+            continue
+        units.setdefault((step, check), set()).add(h or f"no-head-{i}")
+    return {unit: len(heads) for unit, heads in units.items()}
 
 
 def node_of(host, hostnames):

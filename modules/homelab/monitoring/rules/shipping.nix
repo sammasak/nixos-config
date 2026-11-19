@@ -113,10 +113,11 @@ in
           "The median push gate on {{ $labels.host }} takes {{ $value | humanizeDuration }}, over ${toString a.RetroDueGateSlower.factor.value}x its own 7-d average, and its gates fail more than their 7-d average: a retro is due (Shipping dashboard: failed gate steps, where a PR's time goes)."
           { }
         )
-        # one step failing again and again over a full sample: one bad change on two hosts makes 2, so 3 is a pattern
+        # one step, or one check inside the flake check, failing on 3 heads over a full sample: one bad change on two hosts
+        # makes 2, so 3 is a pattern; the flake check's own count covers only failures no inner check explains
         (alert "RetroDueStepFailsRepeat"
-          ''max by (step) (shipping_gate_step_failures{window="7d"}) >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}''
-          "Gate step {{ $labels.step }} failed {{ $value }} times in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs)."
+          ''max by (step, check) (shipping_gate_step_failures{window="7d"}) >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}''
+          "Gate step {{ $labels.step }}{{ if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs)."
           { }
         )
         # min_over_time over 45 m spans two runs (every 30 min): one failed run that the next one fixes stays quiet
