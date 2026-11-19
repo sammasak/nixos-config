@@ -10,7 +10,7 @@ set -uo pipefail
 kind=${1:?usage: platform-record.sh KIND key=value...}
 shift
 case $kind in
-  gate | gate-step | deploy | checks-run | coverage | instructions | delivery | trash-sweep) ;;
+  gate | gate-step | deploy | checks-run | coverage | instructions | delivery | trash-sweep | offload) ;;
   *)
     echo "platform-record: unknown kind '$kind', nothing recorded" >&2
     exit 0

@@ -16,20 +16,27 @@ from gate_probe import check, finish
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HELPER = ROOT / "scripts/platform-record.sh"
 DASHBOARD = ROOT / "modules/homelab/monitoring/dashboards/platform-health.json"
+PI_DASHBOARD = ROOT / "modules/homelab/monitoring/dashboards/pi-agents.json"
 CALLERS = ["devenv.nix", "Justfile", "scripts/system-checks.sh", "modules/programs/cli/coordinator-wakeup.nix",
            "modules/workers/core.nix"]
+# written by devenv-platform's pi-offload, not by this repo, and shown on the Pi agents dashboard, not Platform health
+PI_KINDS = {"offload"}
 
 
 case = re.search(r"case \$kind in\n\s*([a-z| -]+)\)", HELPER.read_text())
 kinds = set(case.group(1).replace(" ", "").split("|")) if case else set()
-check(len(kinds) == 8, f"the helper's kind vocabulary is read ({sorted(kinds)})")
+check(len(kinds) == 9 and PI_KINDS < kinds, f"the helper's kind vocabulary is read ({sorted(kinds)})")
 
 # the helper's default Loki against the evaluated sam.fleet.loki.url: scripts/test-fleet-contract.py (it has the probe)
 
 exprs = [t["expr"] for p in json.loads(DASHBOARD.read_text())["panels"] for t in p.get("targets", [])]
 used = {k for e in exprs for k in re.findall(r'kind="([^"]+)"', e)}
 check(used <= kinds, f"the dashboard queries only kinds the helper writes (unknown: {sorted(used - kinds)})")
-check(kinds <= used, f"every kind the helper writes has a panel (none: {sorted(kinds - used)})")
+check(kinds - PI_KINDS <= used, f"every platform kind the helper writes has a panel (none: {sorted(kinds - PI_KINDS - used)})")
+check(not PI_KINDS & used, f"Platform health shows no Pi kind ({sorted(PI_KINDS & used)})")
+pi_exprs = [t["expr"] for p in json.loads(PI_DASHBOARD.read_text())["panels"] for t in p.get("targets", [])]
+pi_used = {k for e in pi_exprs if 'job="platform"' in e for k in re.findall(r'kind="([^"]+)"', e)}
+check(PI_KINDS <= pi_used, f"every Pi kind has a panel on Pi agents (none: {sorted(PI_KINDS - pi_used)})")
 check(all('job="platform"' in e for e in exprs if "kind=" in e), "every Loki panel selects the platform stream")
 
 written = {}
@@ -37,7 +44,7 @@ for c in CALLERS:
     for k in re.findall(r"(?:platform-record\.sh|getExe (?:record|platformRecord)\}|\$recorder)\"? ([a-z-]+)", (ROOT / c).read_text()):
         written.setdefault(k, set()).add(c)
 check(set(written) <= kinds, f"every caller writes a known kind (unknown: {sorted(set(written) - kinds)})")
-check(set(written) == kinds, f"every kind has a writer ({ {k: sorted(v) for k, v in written.items()} })")
+check(set(written) == kinds - PI_KINDS, f"every platform kind has a writer here ({ {k: sorted(v) for k, v in written.items()} })")
 
 
 class Loki(http.server.BaseHTTPRequestHandler):
