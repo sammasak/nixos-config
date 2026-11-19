@@ -55,19 +55,26 @@ let
       throw "${toString registry} refused:\n${lib.concatMapStrings (m: "  ${m}\n") refused}"
   );
 in
-{
+rec {
   inherit checked;
+  # the checked entry, with no fetcher involved: a registry or name error never depends on fetch-tree being there
+  pin =
+    n:
+    checked.${n}
+      or (throw "${toString registry}: no apps.${n}; registered: ${toString (lib.attrNames checked)}");
+  # seq: the entry is checked before builtins.fetchTree is looked up, which a nix without fetch-tree (a check's
+  # sandbox) refuses as a missing attribute ahead of any argument
   src =
     n:
     let
-      a =
-        checked.${n}
-          or (throw "${toString registry}: no apps.${n}; registered: ${toString (lib.attrNames checked)}");
+      a = pin n;
     in
-    builtins.fetchTree {
-      type = "git";
-      url = "ssh://git@github.com/${a.source.repo}";
-      ref = "refs/heads/main";
-      inherit (a.source) rev narHash;
-    };
+    builtins.seq a (
+      builtins.fetchTree {
+        type = "git";
+        url = "ssh://git@github.com/${a.source.repo}";
+        ref = "refs/heads/main";
+        inherit (a.source) rev narHash;
+      }
+    );
 }

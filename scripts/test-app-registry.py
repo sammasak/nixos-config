@@ -19,7 +19,9 @@ LIVE = json.loads((ROOT / "apps/registry.json").read_text())
 APP = "alert-bridge"
 EXPR = """{ lib, registry, app }:
 let p = import %s { lib = import lib; inherit registry; };
-in if app == "" then builtins.attrNames p.checked else p.src app""" % PINS
+in if app == "" then builtins.attrNames p.checked
+   else if builtins.substring 0 4 app == "pin:" then (p.pin (builtins.substring 4 (-1) app)).source.rev
+   else p.src app""" % PINS
 
 
 def bent(fn):
@@ -81,6 +83,10 @@ def evaluate(name, registry, app):
 run = evaluate("live", LIVE, "")
 check(run.returncode == 0 and json.loads(run.stdout) == sorted(LIVE["apps"]),
       f"apps/registry.json type-checks and registers {sorted(LIVE['apps'])}" + ("" if run.returncode == 0 else f": {run.stderr.strip()[-400:]}"))
+run = evaluate("live-pin", LIVE, f"pin:{APP}")
+check(run.returncode == 0 and json.loads(run.stdout) == LIVE["apps"][APP]["source"]["rev"],
+      f"pin {APP}: the checked entry's rev, with no fetch (a sandbox's nix has no fetch-tree)"
+      + ("" if run.returncode == 0 else f": {run.stderr.strip()[-400:]}"))
 for name, (registry, app, want) in CASES.items():
     run = evaluate(name, registry, app)
     message = " ".join(run.stderr.rsplit("error:", 1)[-1].split())
