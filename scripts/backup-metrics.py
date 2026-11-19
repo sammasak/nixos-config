@@ -54,6 +54,32 @@ def record(unit, directory):
     atomic_write(directory / "success.json", json.dumps(metadata) + "\n", 0o600)
 
 
+def completion_values(metadata, unit, now):
+    """Validate the versioned record independently of file IO and exposition."""
+    if not isinstance(metadata, dict):
+        raise ValueError("completion metadata must be an object")
+    timestamp, duration = metadata["completed_at"], metadata["duration_seconds"]
+    if (type(metadata["version"]) is not int or metadata["version"] != 1 or metadata["unit"] != unit
+            or type(timestamp) not in (int, float) or type(duration) not in (int, float)
+            or not math.isfinite(timestamp) or not math.isfinite(duration)
+            or not 0 < timestamp <= now + 60 or duration < 0):
+        raise ValueError("invalid completion metadata")
+    return timestamp, duration
+
+
+def read_completion(path, unit, now):
+    """Unavailable evidence is local to this job; never follow or block on damaged state."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(descriptor) as stream:
+            status = os.fstat(stream.fileno())
+            if not stat.S_ISREG(status.st_mode) or status.st_size > 4096:
+                raise ValueError("metadata must be a small regular file")
+            return completion_values(json.loads(stream.read(4097)), unit, now)
+    except (OSError, ValueError, TypeError, KeyError, OverflowError):
+        return None
+
+
 def collect(jobs, state_root, output):
     now = time.time()
     lines = [
@@ -71,24 +97,11 @@ def collect(jobs, state_root, output):
         if validation not in VALIDATIONS:
             raise ValueError("invalid validation class")
         labels = f'{{backup="{unit}",validation="{validation}"}}'
-        try:
-            path = state_root / unit / "success.json"
-            # Metadata is tiny; do not read an arbitrary-sized damaged file.
-            descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
-            with os.fdopen(descriptor) as stream:
-                status = os.fstat(stream.fileno())
-                if not stat.S_ISREG(status.st_mode) or status.st_size > 4096:
-                    raise ValueError("metadata must be a small regular file")
-                metadata = json.loads(stream.read(4097))
-            timestamp, duration = metadata["completed_at"], metadata["duration_seconds"]
-            if (metadata["version"] != 1 or metadata["unit"] != unit
-                    or type(timestamp) not in (int, float) or type(duration) not in (int, float)
-                    or not math.isfinite(timestamp) or not math.isfinite(duration)
-                    or not 0 < timestamp <= now + 60 or duration < 0):
-                raise ValueError("invalid completion metadata")
-        except (OSError, ValueError, TypeError, KeyError, OverflowError):
+        completion = read_completion(state_root / unit / "success.json", unit, now)
+        if completion is None:
             lines.append(f"homelab_backup_metadata_available{labels} 0")
             continue
+        timestamp, duration = completion
         lines.extend([
             f"homelab_backup_metadata_available{labels} 1",
             f"homelab_backup_last_success_timestamp_seconds{labels} {timestamp}",

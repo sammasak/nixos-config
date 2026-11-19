@@ -79,7 +79,8 @@ class BackupMetricsTests(unittest.TestCase):
 
     def test_corrupt_future_nonfinite_and_wrong_unit_are_unknown(self):
         good = {"version": 1, "unit": self.unit, "completed_at": 1690, "duration_seconds": 10}
-        for bad in ['broken', '[]', json.dumps(good | {"unit": "other"}),
+        for bad in ['broken', '[]', json.dumps(good | {"version": True}),
+                    json.dumps(good | {"unit": "other"}),
                     json.dumps(good | {"completed_at": 2000}), json.dumps(good | {"duration_seconds": -1}),
                     json.dumps(good | {"duration_seconds": float('nan')}),
                     json.dumps(good | {"completed_at": True}),
