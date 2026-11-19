@@ -1,5 +1,5 @@
 {
-  "about": "Every platform record kind and the fields it may carry (pkgs/platform-record, scripts/test-platform-records.py). writer: here = a caller in this repo; outside = another repo's tool through platform-record (reviewer panes, research, devenv-platform's pi-offload, the app release script); host = the host ships it to Loki itself, not through platform-record (scripts/guest-records.py). guest: a dev-environment guest may ship it (modules/workers/default.nix records.kinds). panel: the dashboard that shows it, platform-health (modules/homelab/monitoring/dashboards/platform-health.json) when absent, pi-agents (modules/homelab/monitoring/dashboards/pi-agents.json), or false for none yet. optional: fields a kind may also carry that no caller here writes yet (another branch or repo does); the writer accepts them, the test does not ask for a caller.",
+  "about": "Every platform record kind and the fields it may carry (pkgs/platform-record, scripts/test-platform-records.py). writer: here = a caller in this repo; outside = another repo's tool through platform-record (reviewer panes, research, devenv-platform's pi-offload, the app release script); host = the host ships it to Loki itself, not through platform-record (scripts/guest-records.py). guest: a dev-environment guest may ship it (modules/workers/default.nix records.kinds). panel: the dashboard that shows it, platform-health (modules/homelab/monitoring/dashboards/platform-health.json) when absent, pi-agents (modules/homelab/monitoring/dashboards/pi-agents.json), or false for none yet. optional: fields a kind may also carry that no caller here writes yet (another branch or repo does); the writer accepts them, the test does not ask for a caller. pending: a here kind whose caller is on a branch not merged yet (the test fails once a caller exists and pending is still set).",
   "kinds": {
     "gate": {
       "writer": "here",
@@ -138,10 +138,17 @@
       "panel": "pi-agents",
       "fields": [
         "class",
-        "first_pass",
+        "mode",
+        "model_req",
         "model",
-        "served",
-        "elapsed_s"
+        "status",
+        "first_pass",
+        "rounds",
+        "elapsed_s",
+        "pi_tokens",
+        "lines",
+        "run_id",
+        "repo"
       ]
     },
     "usage": {
@@ -158,7 +165,7 @@
       ]
     },
     "release": {
-      "writer": "outside",
+      "writer": "here",
       "guest": false,
       "panel": false,
       "fields": [
@@ -173,6 +180,34 @@
         "run",
         "ci",
         "ci_urls"
+      ],
+      "pending": "platform/561-release-contract (scripts/app-release.py)"
+    },
+    "bench": {
+      "writer": "here",
+      "guest": false,
+      "panel": false,
+      "pending": "platform/bench-port f2a53321 (the bench port)",
+      "fields": [
+        "node",
+        "status",
+        "reason",
+        "sha",
+        "dirty",
+        "metrics_tool",
+        "eval_seconds",
+        "values",
+        "value_bytes",
+        "gc_bytes",
+        "thunks",
+        "function_calls",
+        "drv",
+        "closure_bytes",
+        "closure_reason",
+        "files",
+        "nix_lines",
+        "comments",
+        "comment_ratio"
       ]
     }
   }

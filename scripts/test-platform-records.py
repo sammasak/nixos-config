@@ -28,7 +28,7 @@ STREAM = {"job", "kind", "host"}
 
 fields = {k: set(v["fields"]) | set(v.get("optional", [])) for k, v in SCHEMA.items()}
 required = {k: set(v["fields"]) for k, v in SCHEMA.items()}
-check({"review", "research", "offload", "usage", "release"} <= set(SCHEMA) and len(SCHEMA) == 13,
+check({"review", "research", "offload", "usage", "release", "bench"} <= set(SCHEMA) and len(SCHEMA) == 14,
       f"the schema lists every kind ({sorted(SCHEMA)})")
 check(fields["review"] == {"repo", "head", "round", "grade", "reviewer", "author", "seconds", "findings"}
       and fields["research"] == {"issue", "claims_checked", "claims_corrected", "hours", "adopted", "spiked", "rejected"},
@@ -78,11 +78,13 @@ check(len(delivery) == 7 and len(gate_defer_fields) == 8, f"platform-delivery.jq
 written["gate-step"] |= gate_defer_fields
 writers.setdefault("gate-step", set()).add("scripts/gate_defer.py")
 here = {k for k, v in SCHEMA.items() if v["writer"] == "here"}
-check(set(writers) <= set(SCHEMA), f"every caller writes a known kind (unknown: {sorted(set(writers) - set(SCHEMA))})")
-check(set(writers) == here, f"every kind the schema says is written here has a writer here ({ {k: sorted(v) for k, v in writers.items()} })")
+pending = {k for k, v in SCHEMA.items() if v.get("pending")}
+check(pending <= here and set(writers) <= set(SCHEMA), f"every caller writes a known kind (unknown: {sorted(set(writers) - set(SCHEMA))})")
+check(set(writers) == here - pending, f"every kind the schema says is written here, but not pending, has a writer here ({ {k: sorted(v) for k, v in writers.items()} })")
+check(not pending & set(writers), f"a kind marked pending has no caller here yet; drop pending once it has ({sorted(pending & set(writers))})")
 unknown = {k: sorted(n - fields.get(k, set())) for k, n in written.items() if n - fields.get(k, set())}
 check(not unknown, f"every field a caller writes is in its kind's schema (unknown: {unknown})")
-unwritten = {k: sorted(required[k] - n) for k, n in written.items() if k in here and required[k] - n}
+unwritten = {k: sorted(required[k] - n) for k, n in written.items() if k in here - pending and required[k] - n}
 check(not unwritten, f"every field of a kind written here is written by some caller (never: {unwritten})")
 
 
@@ -181,6 +183,27 @@ with tempfile.TemporaryDirectory() as tmp:
     rc, err = record(spool, url, "deploy", "node=msi-ms7758", "result=ok", "free_gib=41", "closure_gib=12", "floor_gib=20",
                      "headroom=ok", strict=True)
     check(rc == 0 and "free_gib=41" in text(spool), f"deploy's optional headroom fields pass strict mode ({rc}, {err.strip()})")
+    # pi-offload's record_run (devenv-platform feat/offload-record 2c7f210c, agents/pi/offload/pi-offload:318-322): its
+    # fields in its order; the fixture fails here the day the schema and pi-offload's call diverge
+    offload = (ROOT / "scripts/fixtures/pi-offload-record.txt").read_text().split()
+    keys = [a.split("=", 1)[0] for a in offload[1:]]
+    check(offload[0] == "offload" and keys == SCHEMA["offload"]["fields"],
+          f"offload's schema fields are pi-offload's, in its order ({keys} vs {SCHEMA['offload']['fields']})")
+    rc, err = record(spool, url, *offload, strict=True)
+    ok_offload = rc == 0 and " ".join(offload) in text(spool)
+    check(ok_offload, f"pi-offload's record passes the writer in strict mode ({rc}, {err.strip()})")
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    bench = [["node=lenovo", "status=ok", f"sha={sha}", "dirty=0", "metrics_tool=0123456789ab", "eval_seconds=14",
+              "values=1", "value_bytes=2", "gc_bytes=3", "thunks=4", "function_calls=5", "drv=/nix/store/x-nixos-system.drv",
+              "closure_bytes=6"],
+             ["node=static", "status=ok", f"sha={sha}", "dirty=0", "metrics_tool=0123456789ab", "files=7", "nix_lines=8",
+              "comments=9", "comment_ratio=0.1"],
+             ["node=all", "status=unknown", "reason=list-failed", f"sha={sha}", "dirty=0", "metrics_tool=0123456789ab",
+              "closure_reason=closure-not-local"]]
+    rcs = [record(spool, url, "bench", *b, strict=True)[0] for b in bench]
+    bad_rc, _ = record(spool, url, "bench", "node=lenovo", "eval_secs=14", strict=True)
+    check(rcs == [0, 0, 0] and bad_rc == 2, f"bench records (node, static, unknown) pass strict mode, a misnamed field does not ({rcs}, {bad_rc})")
+
 
 with tempfile.TemporaryDirectory() as tmp:
     spool = pathlib.Path(tmp) / "spool"
