@@ -15,7 +15,7 @@ curl --fail --silent --show-error --max-time 5 http://192.168.10.113:11434/api/p
 """
 
 
-def collect(now):
+def collect(now: datetime) -> subprocess.CompletedProcess[str]:
     if now < NOT_BEFORE:
         raise ValueError("No ASUS connection or wake before 2026-11-20 09:00 Europe/Stockholm")
     # The remote default shell is Fish; explicitly run Bash for the strict read-only script.
@@ -26,7 +26,7 @@ def collect(now):
     )
 
 
-def main():
+def main() -> int:
     try:
         collect(datetime.now(timezone.utc))
     except ValueError as error:

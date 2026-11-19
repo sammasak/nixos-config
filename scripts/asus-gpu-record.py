@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 import time
+from typing import TextIO
 
 FIELDS = (
     "index", "uuid", "power.draw", "power.limit", "enforced.power.limit",
@@ -16,7 +17,7 @@ FIELDS = (
 )
 
 
-def record(samples, output):
+def record(samples: int, output: TextIO) -> None:
     if not 1 <= samples <= 3600:
         raise ValueError("samples must be between 1 and 3600")
     for sequence in range(samples):
@@ -35,14 +36,14 @@ def record(samples, output):
         output.write(json.dumps({
             "sequence": sequence, "utc_started": utc,
             "monotonic_started_s": started, "monotonic_finished_s": finished,
-            "gpus": [dict(zip(FIELDS, row)) for row in rows],
+            "gpus": [dict(zip(FIELDS, row, strict=True)) for row in rows],
         }) + "\n")
         output.flush()
         if sequence + 1 < samples:
             time.sleep(max(0, 1 - (time.monotonic() - started)))
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--samples", type=int, default=60,
                         help="1 to 3600 samples, approximately one per second")

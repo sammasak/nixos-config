@@ -38,12 +38,15 @@ in
             nativeBuildInputs = [
               pkgs.python3
               pkgs.ruff
+              pkgs.mypy
             ];
           }
           ''
-            ruff check --isolated --no-cache --select F ${../scripts/asus-trial-preflight.py} ${../scripts/test-asus-trial-preflight.py}
+            ruff check --isolated --no-cache --select E4,E7,E9,F,B ${../scripts/asus-trial-preflight.py} ${../scripts/test-asus-trial-preflight.py}
+            mypy --strict --cache-dir "$TMPDIR/mypy-preflight" ${../scripts/asus-trial-preflight.py}
             python3 -I ${../scripts/test-asus-trial-preflight.py} ${../scripts/asus-trial-preflight.py}
-            ruff check --isolated --no-cache --select F ${../scripts/asus-gpu-record.py} ${../scripts/test-asus-gpu-record.py}
+            ruff check --isolated --no-cache --select E4,E7,E9,F,B ${../scripts/asus-gpu-record.py} ${../scripts/test-asus-gpu-record.py}
+            mypy --strict --cache-dir "$TMPDIR/mypy-recorder" ${../scripts/asus-gpu-record.py}
             python3 -I ${../scripts/test-asus-gpu-record.py} ${../scripts/asus-gpu-record.py}
             touch $out
           '';

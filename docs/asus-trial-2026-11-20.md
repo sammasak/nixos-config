@@ -25,6 +25,16 @@ shares one night boundary across the fleet. Other hosts' power schedules are unc
 - The existing benchmark package was built and copied to always-on Acer without waking
   ASUS: `/nix/store/8a8drm4847xh7k26a0bddy1f5mr4qimb-llm-bench`.
 
+## Offline correctness checks
+
+`nix build .#checks.x86_64-linux.asus-trial-preflight --no-link` runs Ruff
+correctness/bug-pattern rules (`E4,E7,E9,F,B`), strict mypy on both operational
+Python scripts, and seven mocked behaviour tests. The tests exercise the clock
+boundary, connection failure, sampling timestamps, unsupported values, bounds,
+malformed output and driver query failure. No GPU or host connection is needed.
+The separately evaluated `asus-capacity-policy` check covers the Nix option and
+preserved power/context policy. Neither check replaces full QA or hardware evidence.
+
 ## Clock and read-only preflight
 
 Run `python3 scripts/asus-trial-preflight.py` from this source. It refuses even an SSH
