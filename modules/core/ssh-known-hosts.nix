@@ -1,7 +1,8 @@
 # Verified SSH host public keys (nixos-config#86): the fleet and github.com pinned in /etc/ssh/ssh_known_hosts, so
 # no client trusts a server on first use. github.com comes from the publisher's API; each fleet key converts
 # (ssh-to-age) to that host's recipient in secrets/.sops.yaml, the key the host decrypts its secrets with, which is
-# evidence independent of any ssh connection. Fingerprints beside the keys; docs/ssh-host-keys.md has the rest.
+# evidence independent of any ssh connection. Each host's key, with its fingerprint, is in its own directory
+# (hosts/<dir>/ssh_known_hosts); docs/ssh-host-keys.md has the rest.
 { config, lib, ... }:
 let
   # a host reaches itself as localhost too (lenovo's deploy-rs node is a loopback self-push), under its own key only
@@ -11,76 +12,57 @@ let
     "::1"
   ];
   own = name: names: if config.networking.hostName == name then names ++ self else names;
-  address = name: config.sam.fleet.hosts.${name}.address;
+  addresses =
+    name:
+    let
+      h = config.sam.fleet.hosts.${name};
+    in
+    lib.optionals (config.sam.fleet.hosts ? ${name}) ([ h.address ] ++ h.extraAddresses);
   # every deploy node's hostName; a host's directory is named after it
   nodes = lib.mapAttrsToList (name: h: h.hostDir or name) deployNodes;
   deployNodes = (import ../../flake-modules/hosts.nix).configurations.nixos;
+  file = dir: ../../hosts + "/${dir}/ssh_known_hosts";
+  # the one known_hosts line of the file, "<names> ssh-ed25519 <key>"; its sam.fleet addresses are appended here
+  pin =
+    dir:
+    let
+      lines = lib.filter (l: l != "" && !lib.hasPrefix "#" l) (
+        lib.splitString "\n" (builtins.readFile (file dir))
+      );
+      line = if builtins.pathExists (file dir) && lib.length lines == 1 then lib.head lines else "";
+    in
+    builtins.match "([^ ]+) (ssh-ed25519 [A-Za-z0-9+/]+=*)( .*)?" line;
+  unpinned = lib.filter (dir: pin dir == null) nodes;
   hosts = {
     # api.github.com/meta; SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU
     github = {
       hostNames = [ "github.com" ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
     };
-    # read on the machine, sops recipient age13lj7p...; SHA256:7DLYFLKZ4wrcrO0Bk7MnZ8yYHrVeu5pFsSwYWjvpNGs
-    lenovo-21CB001PMX = {
-      hostNames = own "lenovo-21CB001PMX" [
-        "lenovo-21CB001PMX"
-        (address "lenovo-21CB001PMX")
-      ];
-      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ17UFIIh7VzaEykstxZC3QaPDrya+YSS0wMtTAggp4q";
-    };
-    # sops recipient age1uu9y3...; SHA256:5Ong1jvhk4Hgx82l2fYrKBjqlkVyG5rYvYfVPo7WdRY
-    acer-swift = {
-      hostNames = own "acer-swift" [
-        "acer-swift"
-        (address "acer-swift")
-      ];
-      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF9kicjYJJdW1tP6dG0I/PSh8kse7e6ueStLS9fsNJGT";
-    };
-    # sops recipient age1g0k9v...; SHA256:JebDBAzSWRc/WHY8wQG7jVcidYFp4eFKyjuTzXl5Jwc
-    msi-ms7758 = {
-      hostNames = own "msi-ms7758" [
-        "msi-ms7758"
-        "msi"
-        (address "msi-ms7758")
-      ];
-      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN3KB1qWY1sl8s3yJ18FMAFH5XU2UL9DJhnnHsgDryP1";
-    };
-    # read on the console, sops recipient age1ye0ma...; SHA256:SsemYL0zG8kEdMlejNVgNsVsI+DF/PVHs3olZqR8S84
-    asus-b460m = {
-      hostNames = own "asus-b460m" [
-        "asus-b460m"
-        (address "asus-b460m")
-      ];
-      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMFmct2Z+IG6s9io3bKmtYOSGAJJCQA6y23YlB4/NZSa";
-    };
-    # sops recipient age16l5rq...; SHA256:i78xzl+ImmEgGFp0QehlBaa3zuFgkpk2nU5ALIHZMjY
-    black-pi = {
-      hostNames = own "black-pi" [
-        "black-pi"
-        "192.168.10.137"
-        "192.168.10.136"
-      ];
-      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH88AIyzWh38c9+97gSFa87QA02OJL8KCRAATRtyQ7Vo";
-    };
-    # sops recipient age1kdjql... (the Wi-Fi PSK it joined with); SHA256:auOEtU3d4yfB4U6iB7WIt0gSCLwK7hCDPorJAwVs0sY
-    naked-pi = {
-      hostNames = own "naked-pi" [
-        "naked-pi"
-        "192.168.10.127"
-        "192.168.10.138"
-        "192.168.10.180"
-      ];
-      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMyeESlmIoNX5aWSaXmM/7fvWXN+2tMCI/5no21XXct7";
-    };
-  };
+  }
+  // lib.genAttrs (lib.subtractLists unpinned nodes) (
+    dir:
+    let
+      m = pin dir;
+    in
+    {
+      hostNames = own dir (lib.splitString "," (lib.elemAt m 0) ++ addresses dir);
+      publicKey = lib.elemAt m 1;
+    }
+  );
   pinned = lib.attrNames (removeAttrs config.programs.ssh.knownHosts [ "github" ]);
 in
 {
   assertions = [
     {
-      assertion = pinned == lib.sort lib.lessThan nodes;
-      message = "modules/core/ssh-known-hosts.nix pins ${toString pinned}, not the deploy nodes of flake-modules/hosts.nix (${toString nodes}): pin each host's key there.";
+      assertion = unpinned == [ ];
+      message = "modules/core/ssh-known-hosts.nix: no host key pinned at ${
+        lib.concatMapStringsSep ", " (d: "hosts/${d}/ssh_known_hosts") unpinned
+      }: each must exist and hold one `<names> ssh-ed25519 <key>` line (docs/ssh-host-keys.md).";
+    }
+    {
+      assertion = unpinned != [ ] || pinned == lib.sort lib.lessThan nodes;
+      message = "modules/core/ssh-known-hosts.nix pins ${toString pinned}, not the deploy nodes of flake-modules/hosts.nix (${toString nodes}): another module replaced programs.ssh.knownHosts.";
     }
   ];
   programs.ssh.knownHosts = hosts;

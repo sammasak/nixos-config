@@ -1,0 +1,2 @@
+# sops recipient age1kdjql... (the Wi-Fi PSK it joined with); SHA256:auOEtU3d4yfB4U6iB7WIt0gSCLwK7hCDPorJAwVs0sY
+naked-pi,192.168.10.127,192.168.10.138,192.168.10.180 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMyeESlmIoNX5aWSaXmM/7fvWXN+2tMCI/5no21XXct7

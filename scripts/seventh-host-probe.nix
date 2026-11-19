@@ -7,6 +7,7 @@
   seed,
   baseline ? null,
   full ? false,
+  asserts ? full,
 }:
 let
   flake = builtins.getFlake tree;
@@ -40,7 +41,7 @@ let
 in
 {
   inherit (c.networking) hostName;
-  failing = if full then failing c else null;
+  failing = if asserts then failing c else null;
   guestsFailing =
     if full then
       lib.concatMap (n: map (m: "containers.${n}: ${m}") (failing c.containers.${n}.config)) (
@@ -77,6 +78,11 @@ in
   dashboardsName =
     if c ? homelab.grafana.dashboards then
       lib.hasInfix ''"${seed}"'' (builtins.toJSON c.homelab.grafana.dashboards)
+    else
+      null;
+  knownHost =
+    if c.programs.ssh.knownHosts ? ${seed} then
+      { inherit (c.programs.ssh.knownHosts.${seed}) hostNames publicKey; }
     else
       null;
   storeCache = c.sam.storeCache.enable;
