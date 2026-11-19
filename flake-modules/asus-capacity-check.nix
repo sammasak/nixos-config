@@ -43,6 +43,8 @@ in
           ''
             ruff check --isolated --no-cache --select F ${../scripts/asus-trial-preflight.py} ${../scripts/test-asus-trial-preflight.py}
             python3 -I ${../scripts/test-asus-trial-preflight.py} ${../scripts/asus-trial-preflight.py}
+            ruff check --isolated --no-cache --select F ${../scripts/asus-gpu-record.py} ${../scripts/test-asus-gpu-record.py}
+            python3 -I ${../scripts/test-asus-gpu-record.py} ${../scripts/asus-gpu-record.py}
             touch $out
           '';
       checks.asus-capacity-policy =

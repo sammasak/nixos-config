@@ -57,6 +57,34 @@ only one or two slots. Building does not activate anything. Do not use `result..
 to bypass deployment gates. Review the exact closure/diff, complete required QA and preserve
 the existing generation before any separately approved candidate activation.
 
+## Local GPU recording after 09:00
+
+After preflight and before starting the trial, run this **locally on ASUS**, from the
+prepared checkout, in a separate terminal. It performs only local `nvidia-smi` queries;
+it does not connect to, wake or control any host. Do not run it there before the owner
+window. Use a private output directory and retain the exit status:
+
+```bash
+umask 077
+mkdir -p ~/.local/state/asus-trial-2026-11-20
+python3 scripts/asus-gpu-record.py --samples 1800 \
+  > ~/.local/state/asus-trial-2026-11-20/gpu-baseline.jsonl
+```
+
+Choose a new filename for every trial. Samples start approximately one second apart;
+each contains UTC alignment, monotonic start/end timestamps and the raw values for each
+GPU UUID. Queries have a three-second timeout; failed/empty/malformed responses stop with
+a nonzero exit and preserve earlier samples. A partial file is not a complete run.
+Unsupported fields remain strings such as `N/A`, never zero. Watts, degrees C, fan percent
+and MiB follow the `nvidia-smi` field units; fan percent is not sound level. The recorder
+is bounded to 3600 samples and neither enforces power limits nor starts a workload.
+
+For offline board-energy estimates, use the midpoint of each query's monotonic interval,
+actual intervals between samples and matched GPU UUIDs. Inspect query duration, gaps and
+unsupported values before integration; do not extrapolate unobserved start/end tails.
+The recorder produces raw evidence, not an automatic energy or capacity acceptance.
+Record workload start/end markers separately and include idle/cooldown within the file.
+
 ## Morning measurement order
 
 1. **Baseline first:** keep the current one-slot configuration. Record source revision,
