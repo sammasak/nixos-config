@@ -359,6 +359,7 @@ in
           "checks-run"
           "coverage"
           "instructions"
+          "offload"
         ];
         fleet = lib.attrNames config.sam.fleet.hosts;
       };
