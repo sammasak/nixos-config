@@ -10,8 +10,9 @@ https://github.com/sammasak/skills/blob/main/docs/measurement.md.
 
 `event -> platform record line -> Loki -> shipping-metrics exporter -> Prometheus -> dashboard + scorecard`
 
-Records are written by `scripts/platform-record.sh` (`{job="platform"}` on black-pi, kept 30 days); guests ship
-through `scripts/guest-records.py`; `scripts/shipping-metrics.py` adds GitHub data and exports `shipping_*`.
+Records are written by `platform-record` (`pkgs/platform-record`, kinds in `metrics/records.json`;
+`{job="platform"}` on black-pi, kept 30 days); guests ship through `scripts/guest-records.py`;
+`scripts/shipping-metrics.py` adds GitHub data and exports `shipping_*`.
 Dashboards are in `modules/homelab/monitoring/dashboards/`. No second stack.
 
 `devenv tasks run platform:scorecard` (`pkgs/scorecard/scorecard.py`) reads every metric from Prometheus and Loki

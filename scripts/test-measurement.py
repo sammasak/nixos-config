@@ -4,8 +4,8 @@ targets file and the reverse, with the same area, question, source, target, stat
 a target and a dashboard panel whose queries use the same kinds and series; an in-flight or new one has no query, and
 the scorecard's machine-readable backend, threshold and (Prometheus) fresh guard, which an in-flight or new one has none
 of; a `checkout` one names a computation the scorecard has, with no panel or fresh guard;
-the area names are the doc's headings; at most six per area; every kind scripts/platform-record.sh writes has a
-maximum age. Seeded cases: each of those broken in a copy must be caught."""
+the area names are the doc's headings; at most six per area; every kind a live Loki metric reads is a
+metrics/records.json kind with a maximum age. Seeded cases: each of those broken in a copy must be caught."""
 from __future__ import annotations
 
 import copy
@@ -21,7 +21,7 @@ from gate_probe import check, finish
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ARGS = sys.argv[1:3] if len(sys.argv) == 3 else ["docs/measurement.md", "metrics/targets.json"]
 DOC, TARGETS = (ROOT / a for a in ARGS)
-HELPER = ROOT / "scripts/platform-record.sh"
+RECORDS = ROOT / "metrics/records.json"
 DASHBOARDS = ROOT / "modules/homelab/monitoring/dashboards"
 STATES = {"live", "in flight", "new"}
 LIMIT = 6
@@ -177,16 +177,17 @@ def problems(doc: dict[str, Metric], headings: list[str], targets: dict[str, Any
         per_area[m.get("area", "?")] = per_area.get(m.get("area", "?"), 0) + 1
     out["limit"] += [f"area {a}: {n} metrics, at most {LIMIT}" for a, n in sorted(per_area.items()) if n > LIMIT]
     ages = targets.get("max_age_hours", {})
-    out["max_age"] += [f"{k}: no max_age_hours" for k in sorted(kinds - set(ages))]
-    out["max_age"] += [f"{k}: a max age for a kind the helper does not write" for k in sorted(set(ages) - kinds)]
+    read = {k for m in metrics.values() if m.get("state") == "live" and m.get("backend") == "loki"
+            for k in re.findall(r'kind="([^"]+)"', m.get("query") or "")}
+    out["max_age"] += [f"{k}: read by a live metric, no max_age_hours" for k in sorted(read - set(ages))]
+    out["max_age"] += [f"{k}: a max age for a kind metrics/records.json does not have" for k in sorted(set(ages) - kinds)]
     out["max_age"] += [f"{k}: {v!r} is not a positive number of hours" for k, v in sorted(ages.items())
                        if not isinstance(v, int) or isinstance(v, bool) or v <= 0]
     return out
 
 
-case = re.search(r"case \$kind in\n\s*([a-z| -]+)\)", HELPER.read_text())
-kinds = set(case.group(1).replace(" ", "").split("|")) if case else set()
-check(len(kinds) >= 8, f"the helper's kind vocabulary is read ({sorted(kinds)})")
+kinds = set(json.loads(RECORDS.read_text())["kinds"])
+check(len(kinds) >= 8, f"metrics/records.json's kinds are read ({sorted(kinds)})")
 doc = doc_metrics(DOC.read_text())
 targets = json.loads(TARGETS.read_text())
 shown = panels()
@@ -205,7 +206,7 @@ DESCRIBED = {
     "changed": "every target says when it last changed and why",
     "limit": f"at most {LIMIT} metrics per area",
     "max_age": "every kind the helper writes has a maximum age, and only those",
-    "kinds": "a live query reads only kinds the helper writes",
+    "kinds": "a live query reads only kinds metrics/records.json has",
 }
 headings = [h for h in DOC.read_text().splitlines() if h.startswith("## ")]
 found = problems(doc, headings, targets, kinds, shown)
@@ -264,9 +265,9 @@ seeded("a fresh query on a series no dashboard shows", "fresh",
 seeded("a Loki metric with a fresh guard", "fresh", with_metric(loki, fresh="up"))
 seeded("an in-flight or new metric with a fresh guard", "threshold", with_metric(other["id"], fresh="up"))
 seeded("an area renamed in the targets only", "areas", lambda t: t["areas"].update(A="Somewhere else"))
-seeded("a kind without a max age", "max_age", lambda t: t["max_age_hours"].pop(min(kinds)))
+seeded("a kind a live metric reads without a max age", "max_age", lambda t: t["max_age_hours"].pop("deploy"))
 seeded("a max age of zero", "max_age", lambda t: t["max_age_hours"].update({min(kinds): 0}))
-seeded("a live query on a kind the helper never writes", "kinds",
+seeded("a live query on a kind metrics/records.json does not have", "kinds",
        with_metric(live["id"], query='sum(count_over_time({job="platform",kind="deploys"} [1d]))'))
 
 finish()
