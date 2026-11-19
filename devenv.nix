@@ -509,6 +509,7 @@ let
   '';
   appBumpDryRunTest = gate "app-bump-dry-run-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-app-bump-dry-run.py
+    ${pkgs.python3}/bin/python scripts/test-app-bump.py
   '';
   triggerRollbackTest =
     gate "trigger-rollback-test"
@@ -1449,7 +1450,7 @@ in
     "nixos:nav-metrics-test" =
       task "Navigation collector on fixture transcripts: counts, misses and repeat reads by role, no prompt, command or path in the textfile, a thin role writes its sample size alone, a failed section is a series" navMetricsTest;
     "nixos:app-bump-dry-run-test" =
-      task "App pin bump dry run on a fake GitHub: a replay is an empty diff, red, pending and unchecked heads are skipped for an older green one, narHash pending, an unallowlisted repo and a non-40-hex rev refused naming the field" appBumpDryRunTest;
+      task "App pin bump dry run on a fake GitHub: a replay is an empty diff, red, pending and unchecked heads are skipped for an older green one, narHash pending, an unallowlisted repo and a non-40-hex rev refused naming the field; the bump on stubs: only the registry entry moves, on a branch from origin/main, then commit, push and PR, refused on lenovo" appBumpDryRunTest;
     "nixos:typed-interfaces-test" =
       task "no types.attrs option and no `or` fallback on a sam.* option read; seeded snippets of both are caught" typedInterfacesTest;
     "nixos:system-checks-test" =
