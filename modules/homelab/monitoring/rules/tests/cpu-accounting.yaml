@@ -12,9 +12,9 @@ tests:
       - series: 'node_cpu_seconds_total{job="node-exporter",node="normal",cpu="1",mode="user"}'
         values: '0+6x6'
       # Guest time is already included in user/nice; adding it again would falsely report an accounting anomaly.
-      - series: 'node_cpu_seconds_total{job="node-exporter",node="normal",cpu="0",mode="guest"}'
+      - series: 'node_cpu_guest_seconds_total{job="node-exporter",node="normal",cpu="0",mode="user"}'
         values: '0+600x6'
-      - series: 'node_cpu_seconds_total{job="node-exporter",node="normal",cpu="0",mode="guest_nice"}'
+      - series: 'node_cpu_guest_seconds_total{job="node-exporter",node="normal",cpu="0",mode="nice"}'
         values: '0+600x6'
       - series: 'node_cpu_seconds_total{job="node-exporter",node="impossible",cpu="0",mode="idle"}'
         values: '0+75x6'
