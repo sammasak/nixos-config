@@ -3,7 +3,7 @@
 a temp state dir against a fake Loki: each line once, also after the spool is rewritten; labels set by the host
 alone; a line naming a label key, an unknown kind, an oversize or too old line dropped; the per-run cap; a link or
 FIFO anywhere on the spool's path refused; progress kept outside the guest's home. Its allow-list is
-scripts/platform-record.sh's, and core.nix's trashOne ships before its rename, never failing it.
+pkgs/platform-record/platform_record.py's, and core.nix's trashOne ships before its rename, never failing it.
 Usage: test-guest-records.py [SHIPPER [CORE_NIX]] (a seeded copy of either must fail it)."""
 import hashlib
 import importlib.util
@@ -28,13 +28,13 @@ CORE = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "modules/worke
 PREFIX = "acer-swift"
 OWNER_HOST = "lenovo-21CB001PMX"
 
-case = re.search(r"case \$kind in\n\s*([a-z| -]+)\)", (ROOT / "scripts/platform-record.sh").read_text())
-helper_kinds = case.group(1).replace(" ", "").split("|") if case else []
+schema = json.loads((ROOT / "metrics/records.json").read_text())["kinds"]
+guest_kinds = sorted(k for k, v in schema.items() if v["guest"])
 block = re.search(r"records = \{.*?kinds = \[(.*?)\];", (ROOT / "modules/workers/default.nix").read_text(), re.S)
 kinds = re.findall(r'"([a-z-]+)"', block.group(1)) if block else []
-check(len(helper_kinds) == 8 and set(kinds) < set(helper_kinds) and not {"deploy", "delivery", "trash-sweep"} & set(kinds)
-      and sorted(set(helper_kinds) - set(kinds)) == ["delivery", "deploy", "trash-sweep"],
-      f"default.nix's records.kinds is platform-record.sh's list less deploy, delivery and trash-sweep, which a guest never makes ({kinds} vs {helper_kinds})")
+check(len(schema) >= 10 and sorted(kinds) == guest_kinds and not {"deploy", "delivery", "trash-sweep"} & set(kinds),
+      f"default.nix's records.kinds is metrics/records.json's guest kinds; a guest never deploys, records deliveries or "
+      f"sweeps the host's trash ({kinds} vs {guest_kinds})")
 FLEET = ["acer-swift", "asus-b460m", "black-pi", OWNER_HOST, "msi-ms7758", "naked-pi"]
 
 core = CORE.read_text()
@@ -90,7 +90,7 @@ def spool_of(home):
 
 
 def write(name, lines):
-    """As platform-record.sh does: a new file renamed over the spool, so a new inode each time."""
+    """As platform_record.py does: a new file renamed over the spool, so a new inode each time."""
     s = spool_of(state / name / "home")
     s.parent.mkdir(parents=True, exist_ok=True)
     new = s.with_name("platform-records.new")
@@ -188,6 +188,7 @@ spec = importlib.util.spec_from_file_location("guest_records", SHIPPER)
 gr = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gr)
 STAMP = "2026-11-18T12:00:00+01:00"
+AT = datetime.fromisoformat(STAMP).timestamp()  # judge()'s now: the fixed STAMP never ages out of Loki's window
 bad = {
     "a \\u escape": ('coverage x=1 node="acer\\u002dswift"', "a backslash or quote"),
     "a quote": ('coverage x=1 node="acer-swift"', "a backslash or quote"),
@@ -206,7 +207,10 @@ check(all(got_bad[n] == why for n, (_, why) in bad.items()), f"each form outside
 ok = gr.parse(f"{STAMP} gate gate=nixos-qa seconds=12 result=pass head= deferred_checks=a:checks.x86_64-linux.b,c drv=/nix/store/x-y.drv".encode())
 check(not isinstance(ok, str) and ok[2][3] == ("head", ""),
       f"a real record parses: empty value, comma list, store path, colons ({ok})")
-lone = gr.judge(f"{STAMP} gate gate=nixos-qa result=pass".encode(), {"gate"}, time.time(), frozenset())
+pi = gr.judge(f"{STAMP} offload class=lint first_pass=1 model=homelab/auto served=a,b elapsed_s=41".encode(), set(kinds), AT,
+              frozenset())
+check(not isinstance(pi, str) and pi[1] == "offload", f"a guest's offload record ships in the existing grammar ({pi})")
+lone = gr.judge(f"{STAMP} gate gate=nixos-qa result=pass".encode(), {"gate"}, AT, frozenset())
 check(not isinstance(lone, str) and lone[2] == "gate=nixos-qa result=pass", f"what ships is rebuilt from the parsed fields ({lone})")
 check(fields("big") not in bodies(got) and "1 oversize" in out, "a line over 4 KiB is dropped and counted")
 check(fields("old") not in bodies(got) and "1 older than Loki takes" in out, "a line older than Loki's window is skipped")

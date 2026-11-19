@@ -67,7 +67,7 @@ let
     walk [ "sam" ] (options.sam or { }) ++ walk [ "homelab" ] (options.homelab or { });
 
   sections = {
-    # counts for the Platform health dashboard, recorded by nixos:qa (scripts/platform-record.sh), not asserted on
+    # counts for the Platform health dashboard, recorded by nixos:qa (pkgs/platform-record/platform_record.py), not asserted on
     coverage = lib.mapAttrs (_: h: {
       assertions = builtins.length h.config.assertions;
       checks = builtins.length h.config.system.checks;
@@ -736,7 +736,7 @@ let
           ntfy = lenovo.sam.fleet.ntfy.port;
           loki = lenovo.sam.fleet.loki.port;
         };
-        # scripts/platform-record.sh's default Loki, run without Nix, is checked against this
+        # pkgs/platform-record/platform_record.py's default Loki, run without Nix, is checked against this
         lokiUrl = lenovo.sam.fleet.loki.url;
         listeners = lib.mapAttrs (_: l: {
           inherit (l)
