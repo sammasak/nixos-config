@@ -67,9 +67,12 @@ pkgs.testers.runNixOSTest {
     assert rc != 0 and "commits on no remote" in jl, "a commit on a detached HEAD did not stop the reset"
     machine.succeed(guest + "rm -rf /home/lukas/d")
 
-    # as an agent runs: started by the guest's systemd, so in the container unit's cgroup (nixos-container run is not)
-    machine.succeed("systemd-run -M t --uid=lukas --unit=fake-agent -- ${pkgs.bash}/bin/bash -c 'exec -a claude ${pkgs.bash}/bin/bash -c \"${pkgs.coreutils}/bin/sleep 600; true\"'")
+    # as an agent runs: started by the guest's systemd, so in the container unit's cgroup (nixos-container run is not).
+    # The unit is active before the process is named claude, as a real agent is mid-start: the 2 s keeps that window
+    # open on any machine, so only waiting for the claude process itself (not the unit) makes the refusal certain.
+    machine.succeed("systemd-run -M t --uid=lukas --unit=fake-agent -- ${pkgs.bash}/bin/bash -c '${pkgs.coreutils}/bin/sleep 2; exec -a claude ${pkgs.bash}/bin/bash -c \"${pkgs.coreutils}/bin/sleep 600; true\"'")
     machine.wait_until_succeeds("systemctl -M t is-active fake-agent.service")
+    machine.wait_until_succeeds("${pkgs.procps}/bin/pgrep -f '^claude -c '")
     rc, out = machine.execute("systemctl start dev-env-reset@t.service")
     jl = machine.succeed("journalctl -u dev-env-reset@t.service -o cat --no-pager")
     assert rc != 0 and "an agent is running" in jl, "a running agent did not stop the reset"
