@@ -16,7 +16,7 @@ python3 scripts/monitoring-baseline.py \
 
 The snapshot preserves query text, evaluation time, API warnings and empty results. A query error exits nonzero while preserving other results.
 An empty result is unknown until its cause is established: no events, missing instrumentation, disabled feature, sleeping host or failed collection.
-`failed_units` is an exception: an empty filtered result means none were observed only if node scrapes and systemd collection succeeded.
+`failed_units` is an exception: an empty filtered result means none were observed only for hosts whose current node scrape and systemd collection succeeded. The same snapshot includes `scrape_current`, `scrape_samples_24h` and `systemd_collector_success` for that decision. A sleeping/down host without current collector data remains unknown; a positive 24-hour scrape average does not establish current health. Sample counts include failed scrape attempts and are not successful-scrape counts.
 Journal keyword matches are search leads, not an error-rate metric. Prefer producer event/status classifications.
 `avg_over_time(up[24h])` includes planned poweroff; use the existing planned-off rules for sleeping hosts, and sample counts/known-on windows for availability claims.
 Textfile age is interpreted per producer: `nixos.prom` changes at activation, while DNS and edge files refresh periodically.

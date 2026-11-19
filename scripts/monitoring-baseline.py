@@ -9,6 +9,9 @@ import urllib.request
 
 
 PROMETHEUS_QUERIES = {
+    "scrape_current": "up",
+    "scrape_samples_24h": "count_over_time(up[24h])",
+    "systemd_collector_success": "node_scrape_collector_success{collector=\"systemd\"}",
     "scrape_24h": "avg_over_time(up[24h])",
     "probe_success": "probe_success{job=\"blackbox\"}",
     "cpu_busy_unvalidated_24h": "100 * (1 - avg by(node) (rate(node_cpu_seconds_total{mode=\"idle\"}[24h])))",
