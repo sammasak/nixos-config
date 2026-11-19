@@ -79,7 +79,9 @@ written["gate-step"] |= gate_defer_fields
 writers.setdefault("gate-step", set()).add("scripts/gate_defer.py")
 here = {k for k, v in SCHEMA.items() if v["writer"] == "here"}
 pending = {k for k, v in SCHEMA.items() if v.get("pending")}
-check(pending <= here and set(writers) <= set(SCHEMA), f"every caller writes a known kind (unknown: {sorted(set(writers) - set(SCHEMA))})")
+check(all(isinstance(SCHEMA[k]["pending"], str) and SCHEMA[k]["pending"].strip() for k in pending),
+      f"every pending kind names where its writer comes from ({sorted(pending)})")
+check(set(writers) <= set(SCHEMA), f"every caller writes a known kind (unknown: {sorted(set(writers) - set(SCHEMA))})")
 check(set(writers) == here - pending, f"every kind the schema says is written here, but not pending, has a writer here ({ {k: sorted(v) for k, v in writers.items()} })")
 check(not pending & set(writers), f"a kind marked pending has no caller here yet; drop pending once it has ({sorted(pending & set(writers))})")
 unknown = {k: sorted(n - fields.get(k, set())) for k, n in written.items() if n - fields.get(k, set())}
