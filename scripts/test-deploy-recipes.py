@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """`just deploy HOST` and `just dry-activate HOST` against stub git, nix, ssh, sudo, systemd-run, systemctl and readlink
-on PATH and stub system-checks.sh and platform-record.sh; ssh runs its command here, stdin included. deploy feeds the
+on PATH and stub system-checks.sh and platform_record.py; ssh runs its command here, stdin included. deploy feeds the
 real scripts/post-deploy-check.sh to the target, so a unit in a restart loop, which is-system-running reads as running,
 fails it with result=check-failed. deploy-rs's --dry-activate exits 0 whatever the dry activation did, so dry-activate
 reruns switch-to-configuration dry-activate over ssh and exits non-zero, with its output, when that or the closure diff
@@ -48,7 +48,7 @@ esac""",
     # the system profile's generation is the running one
     "bin/readlink": 'case "$*" in *override.conf) echo "$2" ;; -f*) echo /nix/store/sys/init ;; *) echo /nix/store/sys ;; esac',
     "scripts/system-checks.sh": 'echo "system-checks $*" >> "$LOG"',
-    "scripts/platform-record.sh": 'echo "record $*" >> "$LOG"',
+    "pkgs/platform-record/platform_record.py": 'echo "record $*" >> "$LOG"',
     "top/bin/switch-to-configuration": 'echo "would restart: x.service"; [ "$1" = dry-activate ]; exit "${DRY_RC:-0}"',
 }
 

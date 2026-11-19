@@ -70,7 +70,7 @@ deploy HOST:
         echo "deploy: refused, $ungated: no gate checked this tree; commit and merge (then git fetch), or DEPLOY_UNGATED=1 to break glass" >&2; exit 1; fi; \
       [ -z "$ungated" ] || echo "WARNING: DEPLOY_UNGATED: deploying a tree no gate checked ($ungated)" >&2
     start=$SECONDS; sha=$(git rev-parse --short HEAD); log=$(mktemp); recorded=0; \
-      rec() { recorded=1; scripts/platform-record.sh deploy node={{HOST}} result="$1" seconds=$((SECONDS - start)) \
+      rec() { recorded=1; pkgs/platform-record/platform_record.py deploy node={{HOST}} result="$1" seconds=$((SECONDS - start)) \
         rolled_back="${2:-0}" units_restarted="${3:-0}" failed_units="${4:-unknown}" sha="$sha"; }; \
       trap '[ "$recorded" = 1 ] || rec interrupted; rm -f "$log"' EXIT; \
       lock=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/deploy-{{HOST}}.lock; exec {held}<>"$lock"; \

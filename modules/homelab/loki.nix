@@ -135,7 +135,7 @@ in
         limits_config = {
           retention_period = cfg.retention;
           # pi-agent backs the 30-day "Pi agents" panels (devenv-platform#76), harness the 30-day agent usage review,
-          # platform the bi-weekly "Platform health" review (scripts/platform-record.sh)
+          # platform the bi-weekly "Platform health" review (pkgs/platform-record/platform_record.py)
           retention_stream = [
             {
               selector = ''{job="platform"}'';

@@ -41,7 +41,7 @@ merged PR against its base commit's policy, not today's main, which already hold
 | `docs` | `docs/**`, top-level `*.md` | No host and no gate reads them, except the tests that read a named doc (those still run). |
 
 `scripts/*` outside `test-*` is `config`: several are store paths in a unit (`shipping-metrics.py`,
-`platform-record.sh`), so treating `scripts/` as tooling would ship untested code.
+`guest-records.py`), so treating `scripts/` as tooling would ship untested code.
 
 ## Proposed policy file section
 
@@ -108,7 +108,7 @@ skips the flake check and the other tests for a PR that touches nothing a host o
    `tier="critical"` selector over an existing metric passes and its reading is just empty. Pasting the JSON in early
    stays green; the implementing PR extends the check to the label values the collector emits. Labels: `tier` on `shipping_review_first_pass_ratio`, `shipping_review_rounds`,
    `shipping_gate_fail_ratio`, `shipping_gate_seconds` and `shipping_escapes` (a revert takes the tier of the PR it
-   reverts). The gate record (`scripts/platform-record.sh`) gains a `tier=` field.
+   reverts). The gate record (`pkgs/platform-record`, its fields in `metrics/records.json`) gains a `tier=` field.
 3. **The pre-push hook reads `gateSteps`** for the pushed range's tier and prints which steps it skipped and why, as
    the docs-only path does now. A tier the classifier cannot decide is `config`.
 4. **Review requirements stay a checklist the coordinator applies**, read from the file; nothing enforces them

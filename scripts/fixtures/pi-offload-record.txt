@@ -1,0 +1,1 @@
+offload class=lint mode=patch model_req=homelab/auto model=qwen2.5-coder:7b-instruct-q4_K_M status=pass first_pass=1 rounds=1 elapsed_s=41 pi_tokens=5120 lines=12 run_id=20261119T120000Z-4f2a repo=sammasak/nixos-config

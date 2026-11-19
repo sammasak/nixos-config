@@ -66,8 +66,8 @@ with tempfile.TemporaryDirectory() as t:
     lone.write_text(SCRIPT.read_text())
     env = {k: v for k, v in __import__("os").environ.items() if k != "PLATFORM_LOKI_URL"}
     r = subprocess.run([sys.executable, str(lone), H2], capture_output=True, text=True, env=env)
-    check(r.returncode == 2 and "cannot say" in r.stderr and "platform-record.sh" in r.stderr,
-          f"seeded: with no platform-record.sh to read Loki's address from, cannot say, exit 2 ({r.returncode}: {r.stderr.strip()[-160:]})")
+    check(r.returncode == 2 and "cannot say" in r.stderr and "platform_record.py" in r.stderr,
+          f"seeded: with no platform_record.py to read Loki's address from, cannot say, exit 2 ({r.returncode}: {r.stderr.strip()[-160:]})")
 rc, out = run(BASE + [step("built", A, "msi-ms7758", H2, "/nix/store/a.drv"), step("built", B, "asus-b460m", H2, "/nix/store/b.drv")])
 check(rc == 1 and f"waiting  asus-b460m:{A}" in out, f"seeded: a record from another host does not count ({rc}: {out.strip()})")
 rc, out = run(BASE + [step("fail", A, "asus-b460m", H2, "/nix/store/a.drv"), step("built", B, "asus-b460m", H2, "/nix/store/dirty.drv")])
