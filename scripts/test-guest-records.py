@@ -188,6 +188,7 @@ spec = importlib.util.spec_from_file_location("guest_records", SHIPPER)
 gr = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gr)
 STAMP = "2026-11-18T12:00:00+01:00"
+AT = datetime.fromisoformat(STAMP).timestamp()  # judge()'s now: the fixed STAMP never ages out of Loki's window
 bad = {
     "a \\u escape": ('coverage x=1 node="acer\\u002dswift"', "a backslash or quote"),
     "a quote": ('coverage x=1 node="acer-swift"', "a backslash or quote"),
@@ -206,7 +207,10 @@ check(all(got_bad[n] == why for n, (_, why) in bad.items()), f"each form outside
 ok = gr.parse(f"{STAMP} gate gate=nixos-qa seconds=12 result=pass head= deferred_checks=a:checks.x86_64-linux.b,c drv=/nix/store/x-y.drv".encode())
 check(not isinstance(ok, str) and ok[2][3] == ("head", ""),
       f"a real record parses: empty value, comma list, store path, colons ({ok})")
-lone = gr.judge(f"{STAMP} gate gate=nixos-qa result=pass".encode(), {"gate"}, time.time(), frozenset())
+pi = gr.judge(f"{STAMP} offload class=lint first_pass=1 model=homelab/auto served=a,b elapsed_s=41".encode(), set(kinds), AT,
+              frozenset())
+check(not isinstance(pi, str) and pi[1] == "offload", f"a guest's offload record ships in the existing grammar ({pi})")
+lone = gr.judge(f"{STAMP} gate gate=nixos-qa result=pass".encode(), {"gate"}, AT, frozenset())
 check(not isinstance(lone, str) and lone[2] == "gate=nixos-qa result=pass", f"what ships is rebuilt from the parsed fields ({lone})")
 check(fields("big") not in bodies(got) and "1 oversize" in out, "a line over 4 KiB is dropped and counted")
 check(fields("old") not in bodies(got) and "1 older than Loki takes" in out, "a line older than Loki's window is skipped")

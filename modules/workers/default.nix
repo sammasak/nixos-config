@@ -359,6 +359,7 @@ in
           "checks-run"
           "coverage"
           "instructions"
+          "offload"
           "review"
         ];
         fleet = lib.attrNames config.sam.fleet.hosts;

@@ -20,36 +20,46 @@ from gate_probe import check, finish
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WRITER = ROOT / "pkgs/platform-record/platform_record.py"
 SCHEMA = json.loads((ROOT / "metrics/records.json").read_text())["kinds"]
-DASHBOARD = ROOT / "modules/homelab/monitoring/dashboards/platform-health.json"
+DASHBOARDS = {d: ROOT / f"modules/homelab/monitoring/dashboards/{d}.json" for d in ("platform-health", "pi-agents")}
 PARITY = json.loads((ROOT / "scripts/fixtures/platform-record-parity.json").read_text())["cases"]
 CALLERS = ["devenv.nix", "Justfile", "scripts/system-checks.sh", "modules/programs/cli/coordinator-wakeup.nix",
            "modules/workers/core.nix"]
 STREAM = {"job", "kind", "host"}
 
-fields = {k: set(v["fields"]) for k, v in SCHEMA.items()}
-check({"review", "research"} <= set(SCHEMA) and len(SCHEMA) == 10, f"the schema lists every kind ({sorted(SCHEMA)})")
+fields = {k: set(v["fields"]) | set(v.get("optional", [])) for k, v in SCHEMA.items()}
+required = {k: set(v["fields"]) for k, v in SCHEMA.items()}
+check({"review", "research", "offload", "usage", "release"} <= set(SCHEMA) and len(SCHEMA) == 13,
+      f"the schema lists every kind ({sorted(SCHEMA)})")
 check(fields["review"] == {"repo", "head", "round", "grade", "reviewer", "author", "seconds", "findings"}
       and fields["research"] == {"issue", "claims_checked", "claims_corrected", "hours", "adopted", "spiked", "rejected"},
       f"review and research carry the plan's fields ({sorted(fields['review'])}, {sorted(fields['research'])})")
-check(all(v["writer"] in ("here", "outside") and isinstance(v["guest"], bool) for v in SCHEMA.values()),
-      "every kind says who writes it and whether a guest may ship it")
+check(fields["release"] == {"app", "repo", "rev", "narHash", "outPath", "system", "checks", "target", "run", "ci", "ci_urls"}
+      and fields["usage"] == {"cpu_usec", "user_usec", "mem_current", "mem_anon", "mem_peak", "toplevel"},
+      f"release and usage carry their writers' fields ({sorted(fields['release'])}, {sorted(fields['usage'])})")
+check(all(v["writer"] in ("here", "outside", "host") and isinstance(v["guest"], bool)
+          and v.get("panel", "platform-health") in (*DASHBOARDS, False) for v in SCHEMA.values()),
+      "every kind says who writes it, whether a guest may ship it and which dashboard shows it")
 check(not (ROOT / "scripts/platform-record.sh").exists(), "the shell writer is gone")
 
-# the dashboard: kinds and the fields each query reads
-exprs = [t["expr"] for p in json.loads(DASHBOARD.read_text())["panels"] for t in p.get("targets", [])]
-used: dict[str, set[str]] = {}
-for e in exprs:
-    for k in re.findall(r'kind="([^"]+)"', e):
-        after = e.split("| logfmt", 1)[1] if "| logfmt" in e else ""
-        names = set(re.findall(r"unwrap (\w+)", after)) | set(re.findall(r"\|\s*(\w+)\s*(?:==|!=|=~|!~|>=|<=|=|>|<)", after))
-        names |= {n.strip() for g in re.findall(r"by \(([^)]*)\)", e) for n in g.split(",") if n.strip()}
-        used.setdefault(k, set()).update(names - STREAM - {"__error__"})
-check(set(used) <= set(SCHEMA), f"the dashboard queries only kinds the schema lists (unknown: {sorted(set(used) - set(SCHEMA))})")
-want_panel = {k for k, v in SCHEMA.items() if v.get("panel", True)}
-check(want_panel <= set(used), f"every kind but those marked panel false has a panel (none: {sorted(want_panel - set(used))})")
-check(all('job="platform"' in e for e in exprs if "kind=" in e), "every Loki panel selects the platform stream")
-unknown = {k: sorted(n - fields.get(k, set())) for k, n in used.items() if n - fields.get(k, set())}
-check(not unknown, f"every field a panel reads is in its kind's schema (unknown: {unknown})")
+# the dashboards: on each, the platform kinds and the fields each query reads
+for dash, path in DASHBOARDS.items():
+    exprs = [t["expr"] for p in json.loads(path.read_text())["panels"] for t in p.get("targets", [])]
+    used: dict[str, set[str]] = {}
+    for e in exprs:
+        if 'job="platform"' not in e.replace(" ", ""):
+            continue
+        for k in re.findall(r'kind="([^"]+)"', e):
+            after = e.split("| logfmt", 1)[1] if "| logfmt" in e else ""
+            names = set(re.findall(r"unwrap (\w+)", after)) | set(re.findall(r"\|\s*(\w+)\s*(?:==|!=|=~|!~|>=|<=|=|>|<)", after))
+            names |= {n.strip() for g in re.findall(r"by \(([^)]*)\)", e) for n in g.split(",") if n.strip()}
+            used.setdefault(k, set()).update(names - STREAM - {"__error__"})
+    shown = {k for k, v in SCHEMA.items() if v.get("panel", "platform-health") == dash}
+    check(set(used) <= shown, f"{dash} queries only platform kinds the schema places there (others: {sorted(set(used) - shown)})")
+    check(shown <= set(used), f"every kind the schema places on {dash} has a panel there (none: {sorted(shown - set(used))})")
+    unknown = {k: sorted(n - fields.get(k, set())) for k, n in used.items() if n - fields.get(k, set())}
+    check(not unknown, f"every field a {dash} panel reads is in its kind's schema (unknown: {unknown})")
+    if dash == "platform-health":
+        check(all('job="platform"' in e for e in exprs if "kind=" in e), "every Loki panel on platform-health selects the platform stream")
 
 # the callers: kind and fields per call, a shell line continued by backslashes read as one
 WRITE = re.compile(r"(?:platform_record\.py|getExe (?:record|platformRecord)\}|\$recorder)\"? ([a-z-]+)((?:\\\n|[^\n])*)")
@@ -72,7 +82,7 @@ check(set(writers) <= set(SCHEMA), f"every caller writes a known kind (unknown: 
 check(set(writers) == here, f"every kind the schema says is written here has a writer here ({ {k: sorted(v) for k, v in writers.items()} })")
 unknown = {k: sorted(n - fields.get(k, set())) for k, n in written.items() if n - fields.get(k, set())}
 check(not unknown, f"every field a caller writes is in its kind's schema (unknown: {unknown})")
-unwritten = {k: sorted(fields[k] - n) for k, n in written.items() if k in here and fields[k] - n}
+unwritten = {k: sorted(required[k] - n) for k, n in written.items() if k in here and required[k] - n}
 check(not unwritten, f"every field of a kind written here is written by some caller (never: {unwritten})")
 
 
@@ -164,6 +174,13 @@ with tempfile.TemporaryDirectory() as tmp:
                      "author=w18", "seconds=600", "findings=0", strict=True)
     check(rc == 0 and "review repo=nixos-config head=abc1234 round=1 grade=9" in text(spool),
           f"a review record passes strict mode ({rc}, {err.strip()})")
+    rc, err = record(spool, url, "release", "app=alert-bridge", "repo=sammasak/alert-bridge", "rev=0123abc", "narHash=sha256-x",
+                     "outPath=/nix/store/x-alert-bridge", "system=x86_64-linux", "checks=pass", "target=acer-swift", "run=1",
+                     "ci=pass", "ci_urls=https://x", strict=True)
+    check(rc == 0 and "release app=alert-bridge" in text(spool), f"a release record, narHash and outPath too, passes strict mode ({rc}, {err.strip()})")
+    rc, err = record(spool, url, "deploy", "node=msi-ms7758", "result=ok", "free_gib=41", "closure_gib=12", "floor_gib=20",
+                     "headroom=ok", strict=True)
+    check(rc == 0 and "free_gib=41" in text(spool), f"deploy's optional headroom fields pass strict mode ({rc}, {err.strip()})")
 
 with tempfile.TemporaryDirectory() as tmp:
     spool = pathlib.Path(tmp) / "spool"

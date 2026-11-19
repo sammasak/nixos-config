@@ -1,5 +1,5 @@
 {
-  "about": "Every platform record kind and the fields it may carry (pkgs/platform-record, scripts/test-platform-records.py). writer: here = a caller in this repo; outside = written by a reviewer or research pane through platform-record. guest: a dev-environment guest may ship it (modules/workers/default.nix records.kinds). panel: false = not shown on modules/homelab/monitoring/dashboards/platform-health.json (scripts/test-platform-records.py requires a panel for every other kind).",
+  "about": "Every platform record kind and the fields it may carry (pkgs/platform-record, scripts/test-platform-records.py). writer: here = a caller in this repo; outside = another repo's tool through platform-record (reviewer panes, research, devenv-platform's pi-offload, the app release script); host = the host ships it to Loki itself, not through platform-record (scripts/guest-records.py). guest: a dev-environment guest may ship it (modules/workers/default.nix records.kinds). panel: the dashboard that shows it, platform-health (modules/homelab/monitoring/dashboards/platform-health.json) when absent, pi-agents (modules/homelab/monitoring/dashboards/pi-agents.json), or false for none yet. optional: fields a kind may also carry that no caller here writes yet (another branch or repo does); the writer accepts them, the test does not ask for a caller.",
   "kinds": {
     "gate": {
       "writer": "here",
@@ -45,6 +45,12 @@
         "units_restarted",
         "failed_units",
         "sha"
+      ],
+      "optional": [
+        "free_gib",
+        "closure_gib",
+        "floor_gib",
+        "headroom"
       ]
     },
     "checks-run": {
@@ -125,6 +131,49 @@
         "rejected"
       ],
       "panel": false
+    },
+    "offload": {
+      "writer": "outside",
+      "guest": true,
+      "panel": "pi-agents",
+      "fields": [
+        "class",
+        "first_pass",
+        "model",
+        "served",
+        "elapsed_s"
+      ]
+    },
+    "usage": {
+      "writer": "host",
+      "guest": false,
+      "panel": false,
+      "fields": [
+        "cpu_usec",
+        "user_usec",
+        "mem_current",
+        "mem_anon",
+        "mem_peak",
+        "toplevel"
+      ]
+    },
+    "release": {
+      "writer": "outside",
+      "guest": false,
+      "panel": false,
+      "fields": [
+        "app",
+        "repo",
+        "rev",
+        "narHash",
+        "outPath",
+        "system",
+        "checks",
+        "target",
+        "run",
+        "ci",
+        "ci_urls"
+      ]
     }
   }
 }

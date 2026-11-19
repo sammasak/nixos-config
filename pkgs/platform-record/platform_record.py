@@ -30,7 +30,7 @@ LOKI_DEFAULT = "http://192.168.10.137:3100"
 SPOOL_LINES = 2000
 RETRY_ENTRIES = 2000
 DOWN_SECONDS = 300
-FIELD = re.compile(r"([a-z_][a-z0-9_]*)=(.*)", re.DOTALL)
+FIELD = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.DOTALL)
 
 Entry = dict[str, str]
 
@@ -55,7 +55,9 @@ def load_kinds() -> dict[str, set[str]] | None:
     p = schema_path()
     try:
         kinds = json.loads(p.read_text())["kinds"] if p else None
-        return {k: set(v["fields"]) for k, v in kinds.items()} if isinstance(kinds, dict) else None
+        if not isinstance(kinds, dict):
+            return None
+        return {k: set(v["fields"]) | set(v.get("optional", [])) for k, v in kinds.items()}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
 
