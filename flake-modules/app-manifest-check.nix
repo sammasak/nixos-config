@@ -27,7 +27,15 @@ let
       if m == null then [ ] else m
     ) (lib.splitString "\n" edge.services.caddy.extraConfig);
     secrets = lib.listToAttrs (
-      map (c: lib.nameValuePair c.networking.hostName (lib.attrNames (c.sops.secrets or { }))) systems
+      map (
+        c:
+        lib.nameValuePair c.networking.hostName (
+          lib.attrNames (
+            c.sops.secrets
+              or (throw "app-manifest-check: ${c.networking.hostName} has no sops.secrets (sops-nix, in every host's fleetModules)")
+          )
+        )
+      ) systems
     );
   };
   src = lib.fileset.toSource {

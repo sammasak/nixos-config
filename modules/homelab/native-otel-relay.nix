@@ -96,7 +96,7 @@ in
             null
             "root"
           ]
-          && (s.uid or 0) == 0
+          && s.uid == 0
           && s.mode == "0400";
         message = "sam.profile.nativeOtel: the sops secret native_otlp_auth must be owned by root with mode 0400; only the relay's LoadCredential reads it.";
       }

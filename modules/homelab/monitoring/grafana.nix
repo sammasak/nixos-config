@@ -20,7 +20,7 @@ let
   inherit (config.homelab.grafana) dashboards;
   dashboardDir = "grafana-dashboards";
   provisioned = config.services.grafana.provision.datasources.settings.datasources;
-  uids = map (d: d.uid or null) provisioned;
+  uids = map (d: d.uid) provisioned;
   # a legacy string datasource resolves by name too; the rest are Grafana's built-in sources
   known =
     uids
