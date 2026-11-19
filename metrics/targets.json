@@ -1,6 +1,6 @@
 {
   "areas": {"A": "Personal host", "B": "App platform", "C": "nspawn sandboxes and coding harnesses", "D": "Delivery and review loop"},
-  "max_age_hours": {"gate": 96, "gate-step": 96, "coverage": 96, "instructions": 96, "deploy": 336, "checks-run": 336, "delivery": 96, "trash-sweep": 96},
+  "max_age_hours": {"gate": 96, "gate-step": 96, "coverage": 96, "instructions": 96, "deploy": 336, "checks-run": 336, "delivery": 96, "trash-sweep": 96, "offload": 168, "usage": 168, "review": 96, "research": 336},
   "metrics": [
     {"id": "deploy-rollbacks", "area": "A", "state": "live",
      "question": "Do deploys hold without a rollback?",
