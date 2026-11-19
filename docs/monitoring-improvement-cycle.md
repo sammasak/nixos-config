@@ -15,6 +15,7 @@ python3 scripts/monitoring-baseline.py \
 ```
 
 The snapshot preserves query text, evaluation time, API warnings and empty results. A query error exits nonzero while preserving other results.
+The focused `checks.x86_64-linux.monitoring-baseline` gate runs Ruff, strict mypy and offline regression tests for malformed responses, error redaction and partial snapshots. A malformed success response fails its query; one query failure keeps the other results and makes the command exit nonzero.
 An empty result is unknown until its cause is established: no events, missing instrumentation, disabled feature, sleeping host or failed collection.
 `failed_units` is an exception: an empty filtered result means none were observed only for hosts whose current node scrape and systemd collection succeeded. The same snapshot includes `scrape_current`, `scrape_samples_24h` and `systemd_collector_success` for that decision. A sleeping/down host without current collector data remains unknown; a positive 24-hour scrape average does not establish current health. Sample counts include failed scrape attempts and are not successful-scrape counts.
 Journal keyword matches are search leads, not an error-rate metric. Prefer producer event/status classifications.

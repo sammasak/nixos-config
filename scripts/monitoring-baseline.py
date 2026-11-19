@@ -44,25 +44,36 @@ LOKI_QUERIES = {
 }
 
 
-def query(base_url, path, expression, observed_at):
+def query(base_url: str, path: str, expression: str, observed_at: str) -> dict[str, object]:
     params = urllib.parse.urlencode({"query": expression, "time": observed_at})
     try:
         with urllib.request.urlopen(base_url.rstrip("/") + path + "?" + params, timeout=45) as response:
-            result = json.load(response)
+            result: object = json.load(response)
+        if not isinstance(result, dict):
+            raise ValueError("API response must be an object")
         if result.get("status") != "success":
-            return {"query": expression, "status": "error", "error": result.get("errorType", "api_error")}
+            error_type = result.get("errorType")
+            # API error classes are bounded; never copy arbitrary response text.
+            known_errors = {"timeout", "canceled", "execution", "bad_data", "internal", "unavailable", "not_found"}
+            return {"query": expression, "status": "error", "error": error_type if isinstance(error_type, str) and error_type in known_errors else "api_error"}
+        data: object = result.get("data")
+        warnings: object = result.get("warnings", [])
+        if not isinstance(data, dict) or not isinstance(data.get("result"), list):
+            raise ValueError("API result must be an array")
+        if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
+            raise ValueError("API warnings must be strings")
         return {
             "query": expression,
             "status": "success",
-            "warnings": result.get("warnings", []),
-            "result": result["data"]["result"],
+            "warnings": warnings,
+            "result": data["result"],
         }
     except Exception as error:
         # Keep credentials/URLs and arbitrary server response bodies out of artifacts.
         return {"query": expression, "status": "error", "error": type(error).__name__}
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Read-only fleet snapshot; empty results remain unknown, never zero."
     )
@@ -70,15 +81,15 @@ def main():
     parser.add_argument("--loki-url", required=True)
     args = parser.parse_args()
     observed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    output = {"observed_at": observed_at, "queries": {}}
+    observations: dict[str, dict[str, object]] = {}
     for base_url, path, queries in [
         (args.prometheus_url, "/api/v1/query", PROMETHEUS_QUERIES),
         (args.loki_url, "/loki/api/v1/query", LOKI_QUERIES),
     ]:
         for name, expression in queries.items():
-            output["queries"][name] = query(base_url, path, expression, observed_at)
-    print(json.dumps(output, indent=2))
-    return int(any(result["status"] != "success" for result in output["queries"].values()))
+            observations[name] = query(base_url, path, expression, observed_at)
+    print(json.dumps({"observed_at": observed_at, "queries": observations}, indent=2))
+    return int(any(result["status"] != "success" for result in observations.values()))
 
 
 if __name__ == "__main__":
