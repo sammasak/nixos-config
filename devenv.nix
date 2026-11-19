@@ -754,12 +754,7 @@ let
     lintShell
     deployRsPins
   ];
-  heavyLock = gate "heavy-lock" (with pkgs; [
-    util-linux
-    procps
-    gawk
-    coreutils
-  ]) (builtins.readFile ./scripts/heavy-lock.sh);
+  heavyLock = pkgs.callPackage ./pkgs/heavy-lock/package.nix { };
   qaGreen = gate "qa-green" (with pkgs; [
     git
     coreutils
@@ -902,7 +897,7 @@ let
       ''
         # a gate built from other devenv files than this tree's would run a stale test list: refused, before the lock
         ${lib.getExe devenvFresh}
-        # one heavy job per host (scripts/heavy-lock.sh): the gate takes the heavy-work lane itself, once
+        # one heavy job per host (pkgs/heavy-lock): the gate takes the heavy-work lane itself, once
         if [ -z "''${NIXOS_QA_LOCKED:-}" ]; then NIXOS_QA_LOCKED=1 exec ${lib.getExe heavyLock} "$0" "$@"; fi
         sha=$(git rev-parse --short HEAD 2>/dev/null || echo none)
         NIXOS_QA_HEAD=$(git rev-parse HEAD 2>/dev/null || echo none)
