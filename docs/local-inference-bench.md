@@ -9,6 +9,9 @@ the measured asus baseline, its limits and the records behind it.
 All commands run from acer: asus's and msi's Ollama admit acer only. Use a nixos-config checkout on acer, since the
 bench reads its fixture from git at a pinned commit.
 
+For fan, power and useful Pi-task capacity constraints, follow the
+[ASUS quiet-capacity protocol](asus-quiet-agent-capacity.md) before changing concurrency.
+
 ## 1. G1: one row per model and context
 
 On asus, log VRAM at 1 Hz for the whole run (stop it with Ctrl-C afterwards):
