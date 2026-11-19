@@ -38,7 +38,7 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # Run from lenovo; logs in as `deploy` (key-only, passwordless sudo, so no
 # prompt; modules/homelab/deploy-target.nix). Rollback settings come from the node
 # (flake-modules/deploy.nix); the host list is the table in
-# flake-modules/hosts.nix, which the pattern repeats. --skip-checks:
+# flake-modules/hosts.nix, read by scripts/hosts-table.sh, whose check refuses any other name. --skip-checks:
 # otherwise deploy-rs runs the full flake check first, building every x86 host
 # on lenovo, which runs it out of memory. The pre-push gate runs that check on
 # pushed non-docs commits, but `.#HOST` is the working tree, so the recipe
@@ -60,9 +60,9 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # scripts/post-deploy-check.sh, tests/post-deploy-check-vm.nix, scripts/test-deploy-recipes.py). It also lists
 # condition-skipped units without failing. It rolls nothing back, and a host
 # degraded for an unrelated reason fails every deploy until fixed.
-[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|asus-b460m|black-pi|naked-pi")]
 [doc("Push HOST with deploy-rs (magic rollback), skipping the flake check, under the memory cap, then check the host is running it")]
 deploy HOST:
+    @{{quote(justfile_directory() / "scripts/hosts-table.sh")}} check {{quote(HOST)}}
     if [ -n "$(git status --porcelain --untracked-files=no)" ]; then ungated="uncommitted changes"; \
       elif ! git merge-base --is-ancestor HEAD origin/main; then ungated="HEAD is not on origin/main (local ref)"; \
       else ungated=""; fi; \
@@ -110,9 +110,9 @@ deploy HOST:
 # activation scripts twice, through the same deploy-user sudo as a deploy. Not a
 # guarantee: nothing is started, so a unit that would fail is not shown, and
 # units an activation script restarts are only partly predicted.
-[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|asus-b460m|black-pi|naked-pi")]
 [doc("Show the units a deploy of HOST would stop, restart, reload or start, and its closure diff")]
 dry-activate HOST:
+    @{{quote(justfile_directory() / "scripts/hosts-table.sh")}} check {{quote(HOST)}}
     scripts/system-checks.sh {{HOST}} {{memcap}}
     systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks --dry-activate
     top=$(systemd-run --user --scope -q {{memcap}} nix eval --raw .#nixosConfigurations.{{HOST}}.config.system.build.toplevel.outPath); \
@@ -124,9 +124,9 @@ dry-activate HOST:
 
 # deploy and dry-activate run this first: a toplevel fetched from a store cache skips its build inputs, so without it
 # no line shows that HOST's system.checks ran for this closure. Only the checks are realised, on the build host.
-[arg("HOST", pattern="lenovo|acer-swift|msi-ms7758|asus-b460m|black-pi|naked-pi")]
 [doc("Realise HOST's system.checks where its deploy builds, and print per check: built, or substituted and the signatures it carries")]
 checks HOST:
+    @{{quote(justfile_directory() / "scripts/hosts-table.sh")}} check {{quote(HOST)}}
     scripts/system-checks.sh {{HOST}} {{memcap}}
 
 # Boot the runtime-host role in QEMU (tests/runtime-host-role-vm.nix); BREAK=1
