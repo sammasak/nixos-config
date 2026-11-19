@@ -493,8 +493,6 @@ let
     gate "platform-records-test"
       (with pkgs; [
         python3
-        bash
-        curl
         jq
         coreutils
       ])
@@ -764,15 +762,10 @@ let
     git
     coreutils
   ]) (builtins.readFile ./scripts/qa-green.sh);
-  record = gate "platform-record" (with pkgs; [
-    curl
-    jq
-    coreutils
-    findutils
-  ]) (builtins.readFile ./scripts/platform-record.sh);
+  record = pkgs.callPackage ./pkgs/platform-record/package.nix { };
   # seconds per step, to see where a slow gate spends its time (#334); prek hides a passing hook's
   # output, so the push gate also appends them to NIXOS_QA_TIMES. Each step, failed ones included, also goes to the
-  # Platform health dashboard (scripts/platform-record.sh)
+  # Platform health dashboard (pkgs/platform-record)
   timed = lib.concatMapStringsSep "\n" (g: ''
     t=$SECONDS
     if ${lib.getExe g}; then r=pass; else r=fail; fi
@@ -906,7 +899,8 @@ let
         if [ -z "''${NIXOS_QA_LOCKED:-}" ]; then NIXOS_QA_LOCKED=1 exec ${lib.getExe heavyLock} "$0" "$@"; fi
         sha=$(git rev-parse --short HEAD 2>/dev/null || echo none)
         NIXOS_QA_HEAD=$(git rev-parse HEAD 2>/dev/null || echo none)
-        export NIXOS_QA_HEAD
+        # a record with a kind or field metrics/records.json does not list fails the gate, not just the dashboard
+        export NIXOS_QA_HEAD PLATFORM_RECORD_STRICT=1
         mode=manual
         [ -z "''${NIXOS_QA_TIMES:-}" ] || mode=push
         # a manual run's green counts for the pre-push hook when the checkout was clean throughout (scripts/qa-green.sh)
