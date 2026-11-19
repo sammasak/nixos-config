@@ -2,7 +2,7 @@
   "title": "LLM gateway",
   "uid": "llm-gateway",
   "schemaVersion": 36,
-  "version": 2,
+  "version": 3,
   "refresh": "30s",
   "time": {
     "from": "now-24h",
@@ -1592,6 +1592,120 @@
         {
           "expr": "{job=\"host-journal\"} |~ \"NVRM: (Xid|GPU has fallen off)\"",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "type": "timeseries",
+      "title": "GPU fan demand (proxy for noise, not measured sound)",
+      "description": "Intended fan speed relative to the product reference. Not RPM or dBA; verify quietness at the desk during sustained load. No data means unavailable, not silent.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 164
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "noValue": "not measured"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "nvidia_smi_fan_speed_ratio{job=\"nvidia-gpu\"}",
+          "refId": "A",
+          "legendFormat": "fan demand {{node}}"
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "GPU board power and requested software limit",
+      "description": "GPU board watts only; excludes CPU, chassis fans and PSU losses. The exported power.limit is the requested software limit; the effective enforced limit may be lower. Power-cap slowdown can be expected.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 164
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "min": 0,
+          "noValue": "not measured"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "nvidia_smi_power_draw_watts{job=\"nvidia-gpu\"}",
+          "refId": "A",
+          "legendFormat": "draw {{node}}"
+        },
+        {
+          "expr": "nvidia_smi_power_limit_watts{job=\"nvidia-gpu\"}",
+          "refId": "B",
+          "legendFormat": "requested software limit {{node}}"
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "GPU hardware thermal slowdown and software power-cap activity",
+      "description": "Separate driver reason flags: 1 active, 0 inactive. Hardware thermal slowdown invalidates a capacity candidate; software power capping can be normal. Software thermal slowdown is not exported here; sample it directly during trials. Absent is unknown.",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 172
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "noValue": "not measured"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job=\"nvidia-gpu\"}",
+          "refId": "A",
+          "legendFormat": "hardware thermal slowdown {{node}}"
+        },
+        {
+          "expr": "nvidia_smi_clocks_event_reasons_sw_power_cap{job=\"nvidia-gpu\"}",
+          "refId": "B",
+          "legendFormat": "power cap {{node}}"
         }
       ]
     }
