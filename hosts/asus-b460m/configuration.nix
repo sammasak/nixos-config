@@ -80,6 +80,18 @@ in
   systemd.services.nvidia-persistenced.serviceConfig.PIDFile =
     lib.mkForce "/run/nvidia-persistenced/nvidia-persistenced.pid";
 
+  # The B460 xHCI controller (00:14.0) boots the board again about 5 s after a poweroff unless xhci_hcd is unbound
+  # first: unbound, it stayed off 90 s until Wake-on-LAN woke it; ACPI/USB wakeups off or e1000e or snd_hda_intel
+  # unbound still bounced (BIOS 1601, kernel 7.2.10). Revisit if a BIOS or kernel update stops the bounce.
+  # systemd-shutdown runs this last, after the unmounts, with "poweroff", "reboot", "halt" or "kexec".
+  systemd.shutdown.asus-xhci-unbind = pkgs.writeShellScript "asus-xhci-unbind" ''
+    [ "$1" = poweroff ] || exit 0
+    if [ -e /sys/bus/pci/drivers/xhci_hcd/0000:00:14.0 ]; then
+      echo 0000:00:14.0 > /sys/bus/pci/drivers/xhci_hcd/unbind 2>/dev/null
+    fi
+    exit 0
+  '';
+
   services.ollama = {
     enable = true;
     inherit (config.sam.fleet.listeners.ollama-asus) port;

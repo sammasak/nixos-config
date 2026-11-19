@@ -326,6 +326,8 @@ let
       in
       {
         units = lib.mapAttrs (_: h: unitsOf h.config) hosts;
+        # each host's systemd-shutdown hooks: name -> the script's store path, which the probe realises
+        shutdownHooks = lib.mapAttrs (_: h: lib.mapAttrs (_: toString) h.config.systemd.shutdown) hosts;
         fleet = lib.mapAttrs (_: h: { inherit (h) sleeps power quiet; }) lenovo.sam.fleet.hosts;
         inherit (lenovo.sam.fleet) night;
         failing = {
