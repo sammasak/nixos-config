@@ -94,24 +94,29 @@ check(got == units, f"Authentik's, user units' and login sessions' lines never s
 ak = re.search(r'stage\.match \{ selector = "\{job = \\"([^"\\]+)\\"\} \|~ \\"([^"\\]+)\\"" action = "drop"', pc)
 check(ak is not None and ak[1] == "host-journal", f"a drop stage on any line naming ak's command {ak and ak.groups()}")
 # read from the raw config: norm() would put spaces around the regex's own "=" signs
-lq = re.search(r'stage\.match \{\s*selector\s*=\s*"\{unit=\\"loki\.service\\"\} \|~ \\"([^"\\]+)\\""\s*action\s*=\s*"drop"',
-               m.get("config") or "")
-check(lq is not None, "a drop stage on loki.service's query lines")
+selectors = re.findall(r'stage\.match \{\s*selector\s*=\s*("(?:[^"\\]|\\.)*")\s*action\s*=\s*"drop"',
+                       m.get("config") or "")
+loki_patterns = []
+for selector in selectors:
+    selector = json.loads(selector)
+    if selector.startswith('{unit="loki.service"} |~ '):
+        loki_patterns.append(json.loads(selector.split(" |~ ", 1)[1]))
+check(len(loki_patterns) == 2, "two narrow Loki drops: query lines and existing-table lookups")
 sel = re.search(r'stage\.match \{ selector = "\{unit = \\"([^"\\]+)\\"\}"', pc)
 src_f = re.search(r'stage\.drop \{ source = "([^"]+)"', pc)
 drop_rx = re.search(r'stage\.drop \{[^}]*expression = "((?:[^"\\]|\\.)*)"', pc)
 json_f = re.search(r'stage\.json \{ expressions = \{([^}]*)\}', pc)
 check(None not in (sel, src_f, drop_rx, json_f), "drop stage: a unit match, a JSON parse and a drop on its fields")
 stages = re.findall(r"stage\.[a-z_]+", pc)
-check(stages == ["stage.match"] * 4 + ["stage.json", "stage.drop"] and "separator" not in pc,
-      f"process block: the private-unit, ak and Loki query drops, then match, json, drop, default separator {stages}")
+check(stages == ["stage.match"] * 5 + ["stage.json", "stage.drop"] and "separator" not in pc,
+      f"process block: the private-unit, ak and two Loki drops, then match, json, drop, default separator {stages}")
 
 
 def shipped(unit, line):
     """The rendered match and drop stage applied to one line (Go regexp: unanchored search)."""
     if re.fullmatch(private_rx, unit) or (ak and re.search(ak[2], line)):
         return False
-    if unit == "loki.service" and lq and re.search(lq[1], line):
+    if unit == "loki.service" and any(re.search(pattern, line) for pattern in loki_patterns):
         return False
     if None in (sel, src_f, drop_rx, json_f) or unit != sel[1]:
         return True
@@ -171,7 +176,13 @@ lines = {
     ("loki.service", 'level=error ts=2026-11-17T21:15:09.4Z caller=metrics.go:285 component=querier org_id=fake '
      'query="{host=\\"black-pi\\"}" status=500 err="context deadline exceeded"'): True,
     ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=table_manager.go:195 index-store=tsdb-2024-01-01 '
-     'msg="get or create table" found=true table=loki_index_20774'): True,
+     'msg="get or create table" found=true table=loki_index_20774'): False,
+    ("loki.service", 'level=info caller=table_manager.go:195 msg="get or create table" found=false table=x'): True,
+    ("loki.service", 'level=warn caller=table_manager.go:195 msg="get or create table" found=true table=x'): True,
+    ("loki.service", 'level=error caller=table_manager.go:195 msg="get or create table" found=true table=x'): True,
+    ("sshd.service", 'level=info caller=table_manager.go:195 msg="get or create table" found=true table=x'): True,
+    ("loki.service", 'level=info caller=other.go:195 msg="get or create table" found=true table=x'): True,
+    ("loki.service", 'level=info caller=table_manager.go:195 msg="another message" found=true table=x'): True,
     ("loki.service", 'level=info ts=2026-11-17T21:00:00Z caller=roundtrip.go:96 msg="splitting by interval" interval=30m'): True,
     ("loki.service", 'level=info ts=2026-11-17T21:15:09.2Z caller=roundtrip.go:412 org_id=fake msg="executing query" type=range '
      'query="{host=\\"black-pi\\"}" length=10m0s step=2000'): False,
