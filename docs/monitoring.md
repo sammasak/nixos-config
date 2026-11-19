@@ -12,7 +12,7 @@ is the modules named here; this page only maps them.
 | black-pi | Grafana (`modules/homelab/monitoring/grafana.nix`), sign-in through Authentik only | fleet address :3000 | acer's Caddy (grafana.sammasak.dev) |
 | black-pi | Loki (`loki.nix`) | fleet address :3100 | every fleet host's journal collector |
 | black-pi | blackbox exporter (in `prometheus.nix`), probes of the public names | 127.0.0.1:9115 | Prometheus |
-| every fleet host | node-exporter (`modules/homelab/monitoring/node-exporter.nix`), systemd collector on | fleet address :9100, black-pi alone | Prometheus |
+| every fleet host | node-exporter (`modules/homelab/monitoring/node-exporter.nix`), systemd collector and automatic service-restart counters on | fleet address :9100, black-pi alone | Prometheus |
 | every fleet host | journal collector (`journal-collector.nix`), Alloy | 127.0.0.1:12345 | nothing (it pushes to Loki) |
 | a host with `sam.fleet` `gpu = "nvidia"` | nvidia-gpu exporter (`modules/homelab/monitoring/gpu-exporter.nix`) | fleet address, black-pi alone | Prometheus |
 | acer | alloy-otlp (`modules/homelab/monitoring/alloy-otlp.nix`), the harnesses' OTLP intake | 127.0.0.1:4318 behind otlp.sammasak.dev; metrics :12346 | Prometheus |
@@ -38,6 +38,8 @@ Two collectors keep their own textfile directory, which node-exporter also reads
 Bounded labels: Caddy runs `metrics` without `per_host` (it would label any HTTPS Host as sent), so its series split by
 server, not by name. Authentik gets the matched name without a client port as Host, and the Authentik jobs drop the
 `authentik_outpost_*` family (its method label is the client's) and carry a `sample_limit`.
+
+See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fleet coverage matrix, repeatable baseline, issue ownership and before/after acceptance.
 
 ## Dashboards
 
