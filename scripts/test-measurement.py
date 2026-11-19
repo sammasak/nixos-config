@@ -2,7 +2,8 @@
 """The measurement doc and its targets (docs/measurement.md, metrics/targets.json): every metric in the doc is in the
 targets file and the reverse, with the same area, question, source, target, state and query; a live metric has a
 query, a target and a dashboard panel whose queries use the same kinds and series; an in-flight or new one has no
-query; at most six per area; every kind scripts/platform-record.sh
+query, and the scorecard's machine-readable backend and threshold, which an in-flight or new one has neither of;
+the area names are the doc's headings; at most six per area; every kind scripts/platform-record.sh
 writes has a maximum age. Seeded cases: each of those broken in a copy must be caught."""
 from __future__ import annotations
 
@@ -23,6 +24,8 @@ DASHBOARDS = ROOT / "modules/homelab/monitoring/dashboards"
 STATES = {"live", "in flight", "new"}
 LIMIT = 6
 FIELDS = ["area", "question", "source", "target", "state"]
+OPS = {"<=", "<", ">=", ">"}
+BY_HAND = "by-hand"
 
 Metric = dict[str, Any]
 Problems = dict[str, list[str]]
@@ -81,8 +84,25 @@ def names(query: str) -> set[str]:
     return {n for n in re.findall(r"[A-Za-z_:][\w:]*(?![\w:]*\s*\()", bare) if n not in PROMQL_WORDS}
 
 
-def problems(doc: dict[str, Metric], targets: dict[str, Any], kinds: set[str], shown: dict[str, list[str]]) -> Problems:
-    out: Problems = {k: [] for k in ["listed", "same", "live", "unknown", "changed", "limit", "max_age", "kinds"]}
+def threshold_problems(m: Metric) -> list[str]:
+    """A live metric's backend is the language its query is written in, and its threshold an operator with a number
+    (or by-hand, which the scorecard reports as unknown with its reading)."""
+    out = []
+    logql = bool(re.search(r"\(\{|^\{", m.get("query") or ""))
+    if m.get("backend") != ("loki" if logql else "prometheus"):
+        out.append(f"backend {m.get('backend')!r}, but the query is {'LogQL' if logql else 'PromQL'}")
+    t = m.get("threshold")
+    if not isinstance(t, dict) or t.get("op") not in {*OPS, BY_HAND}:
+        out.append(f"threshold {t!r} needs an op of {sorted(OPS)} or {BY_HAND!r}")
+    elif t["op"] in OPS and (isinstance(t.get("value"), bool) or not isinstance(t.get("value"), int | float)):
+        out.append(f"threshold {t!r} needs a number")
+    return out
+
+
+def problems(doc: dict[str, Metric], headings: list[str], targets: dict[str, Any], kinds: set[str],
+             shown: dict[str, list[str]]) -> Problems:
+    keys = ["listed", "same", "live", "unknown", "threshold", "areas", "changed", "limit", "max_age", "kinds"]
+    out: Problems = {k: [] for k in keys}
     metrics = {m["id"]: m for m in targets["metrics"]}
     out["listed"] += [f"{i} in the doc, not in the targets" for i in sorted(set(doc) - set(metrics))]
     out["listed"] += [f"{i} in the targets, not in the doc" for i in sorted(set(metrics) - set(doc))]
@@ -97,7 +117,10 @@ def problems(doc: dict[str, Metric], targets: dict[str, Any], kinds: set[str], s
         elif m["state"] != "live":
             if m.get("query") is not None:
                 out["unknown"].append(f"{mid}: {m['state']} but has a query; only a live metric names a series")
+            if m.get("backend") is not None or m.get("threshold") is not None:
+                out["threshold"].append(f"{mid}: {m['state']} but has a backend or threshold")
             continue
+        out["threshold"] += [f"{mid}: {e}" for e in threshold_problems(m)]
         if not m.get("query") or not m.get("target") or not m.get("panels"):
             out["live"].append(f"{mid}: live without a query, a target or a panel")
             continue
@@ -113,6 +136,11 @@ def problems(doc: dict[str, Metric], targets: dict[str, Any], kinds: set[str], s
         tc = m.get("target_changed") or {}
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(tc.get("date"))) or not tc.get("reason"):
             out["changed"].append(f"{mid}: target_changed needs a date and a reason ({tc})")
+    titles = targets.get("areas", {})
+    unnamed = {m.get("area") for m in metrics.values()} - set(titles)
+    out["areas"] += [f"area {a}: no name in the targets' areas" for a in sorted(unnamed)]
+    out["areas"] += [f"area {a}: the doc has no heading '## {a}. {t}'" for a, t in sorted(titles.items())
+                     if not any(h.startswith(f"## {a}. {t}") for h in headings)]
     per_area: dict[str, int] = {}
     for m in metrics.values():
         per_area[m.get("area", "?")] = per_area.get(m.get("area", "?"), 0) + 1
@@ -139,12 +167,16 @@ DESCRIBED = {
     "same": "doc and targets agree on area, question, source, target, state and query",
     "live": "every live metric has a query, a target and a panel that reads the same kinds and series",
     "unknown": "every metric has a known state, and only a live one has a query",
+    "threshold": "a live metric's backend is its query's language and its threshold an operator with a number; "
+                 "an in-flight or new one has neither",
+    "areas": "every area has a name in the targets, and that name heads its section of the doc",
     "changed": "every target says when it last changed and why",
     "limit": f"at most {LIMIT} metrics per area",
     "max_age": "every kind the helper writes has a maximum age, and only those",
     "kinds": "a live query reads only kinds the helper writes",
 }
-found = problems(doc, targets, kinds, shown)
+headings = [h for h in DOC.read_text().splitlines() if h.startswith("## ")]
+found = problems(doc, headings, targets, kinds, shown)
 for key, what in DESCRIBED.items():
     check(not found[key], f"{what} ({found[key]})" if found[key] else what)
 
@@ -154,7 +186,7 @@ def seeded(name: str, key: str, edit_targets: Any = None, edit_doc: Any = None) 
         edit_targets(t)
     if edit_doc:
         edit_doc(d)
-    got = problems(d, t, kinds, shown)[key]
+    got = problems(d, headings, t, kinds, shown)[key]
     check(bool(got), f"seeded: {name} is caught by '{key}' ({got[:1]})")
 
 
@@ -179,6 +211,14 @@ seeded("an in-flight or new metric with a made-up query", "unknown", with_metric
 seeded("an unknown state", "unknown", with_metric(other["id"], state="planned"))
 seeded("a target with no reason", "changed", with_metric(live["id"], target_changed={"date": "2026-11-19"}))
 seeded("a seventh metric in an area", "limit", lambda t: t["metrics"].append(dict(live, id="extra")))
+seeded("a live metric without a threshold", "threshold", with_metric(live["id"], threshold=None))
+seeded("a threshold with an unknown operator", "threshold", with_metric(live["id"], threshold={"op": "~", "value": 1}))
+seeded("a threshold without a number", "threshold", with_metric(live["id"], threshold={"op": "<=", "value": "0"}))
+seeded("a LogQL query sent to Prometheus", "threshold",
+       with_metric(next(m["id"] for m in targets["metrics"] if m.get("backend") == "loki"), backend="prometheus"))
+seeded("an in-flight or new metric with a threshold", "threshold",
+       with_metric(other["id"], threshold={"op": "<=", "value": 0}))
+seeded("an area renamed in the targets only", "areas", lambda t: t["areas"].update(A="Somewhere else"))
 seeded("a kind without a max age", "max_age", lambda t: t["max_age_hours"].pop(min(kinds)))
 seeded("a max age of zero", "max_age", lambda t: t["max_age_hours"].update({min(kinds): 0}))
 seeded("a live query on a kind the helper never writes", "kinds",
