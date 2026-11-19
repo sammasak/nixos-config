@@ -3,7 +3,7 @@
 Read-only measurements from ASUS and black-pi Prometheus. This mixed-workload window is not
 an inference-capacity benchmark, a sound test or evidence for increasing concurrency.
 
-Direct `nvidia-smi` observation: RTX 3070, 8192 MiB, 14.80 W board draw, enforced 130 W limit,
+Direct `nvidia-smi` observation: RTX 3070, 8192 MiB, 14.80 W board draw, requested software 130 W limit,
 39°C, intended fan 0%, utilization 0%; supported board limit 100–270 W.
 Ollama was active with no resident models at the subsequent `/api/ps` observation.
 Driver 595.104.02; `/api/version` 0.40.3. Live service environment confirmed context 32768,
@@ -35,3 +35,10 @@ whole-host energy or dBA measurements were made; no agent capacity is inferred.
 
 Evaluation time: `2026-11-19T18:49:21.963048+00:00`. Raw query responses retained locally at
 `~/.cache/asus-quiet-baseline.json` (not needed to interpret the values above).
+
+Reviewer follow-up direct query (`power.limit,enforced.power.limit,clocks_throttle_reasons.sw_thermal_slowdown`)
+returned `130.00 W, 130.00 W, Not Active`. This separate point observation confirms requested and
+enforced limits agree at that instant, not throughout the earlier window. The exported
+`nvidia_smi_power_limit_watts` comes from requested `power.limit`; it is not enforced.power.limit.
+The two-hour reason query covers hardware thermal slowdown only. Software thermal slowdown
+is not exported and its absence over that interval is unknown.

@@ -61,13 +61,13 @@ verify each option against the installed 0.40.3 runtime before changing it.
 ## Measurements and ownership
 
 Use the existing GPU exporter and black-pi Prometheus/Grafana/Loki. The LLM gateway dashboard
-adds fan demand, board draw versus limit, and separate thermal/power reason panels. These read
+adds fan demand, board draw versus limit, and separate hardware-thermal/software-power reason panels. These read
 already exported metrics; they add no daemon, port or scrape load. No-data stays unknown.
 The [observation record](records/asus-quiet-gpu-baseline-2026-11-19.md) captures the initial live window.
 
 | Measurement | Existing source / remaining work |
 |---|---|
-| Fan, temperature, board draw/limit, VRAM, utilization, reason flags | `nvidia-gpu` job; new dashboard panels expose quietness inputs (#493) |
+| Fan, temperature, board draw/requested software limit, VRAM, utilization, HW thermal/SW power flags | `nvidia-gpu` job; new dashboard panels expose quietness inputs (#493) |
 | Queue wait, in-flight/queued/rejected, first content token, completion, cancellation | Existing gateway capacity work `sammasak/llm-gateway#101`; distinguish first byte from content token |
 | Prompt/decode tokens, loaded context, GPU residency, cold/warm timings | Existing `llm-bench` and G1 harness, #493 |
 | Correct edits and tests, actual tool execution, retries, task completion | Throwaway fixtures and Pi hooks, #494; process exit and emitted tool calls alone are insufficient |
@@ -77,7 +77,10 @@ The [observation record](records/asus-quiet-gpu-baseline-2026-11-19.md) captures
 
 For a controlled run capture fan/temperature/VRAM/board watts at 1 Hz on ASUS, with monotonic
 sample intervals and a UTC alignment marker. Prometheus's normal 10 s scrape is adequate for
-long trends but can miss peaks and short requests. Integrate board watts over the **whole trial**
+long trends but can miss peaks and short requests. Include direct `enforced.power.limit` and both
+`clocks_throttle_reasons.hw_thermal_slowdown` and `clocks_throttle_reasons.sw_thermal_slowdown`
+in the 1 Hz trial capture. The exporter covers requested `power.limit` and HW thermal slowdown;
+it cannot establish absence of software thermal limiting or verify the effective cap over time. Integrate board watts over the **whole trial**
 using actual elapsed intervals; report sampling gaps and GPU joules per verified successful task,
 including failed requests, retries and idle gaps within that interval. Report gross board energy;
 any idle-subtracted estimate must be separate. Do not divide unrelated historical power and token

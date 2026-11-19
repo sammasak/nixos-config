@@ -1639,8 +1639,8 @@
     {
       "id": 41,
       "type": "timeseries",
-      "title": "GPU board power and enforced limit",
-      "description": "GPU board watts only; excludes CPU, chassis fans and PSU losses. A power-cap slowdown may be expected at an intentional limit.",
+      "title": "GPU board power and requested software limit",
+      "description": "GPU board watts only; excludes CPU, chassis fans and PSU losses. The exported power.limit is the requested software limit; the effective enforced limit may be lower. Power-cap slowdown can be expected.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1668,15 +1668,15 @@
         {
           "expr": "nvidia_smi_power_limit_watts{job=\"nvidia-gpu\"}",
           "refId": "B",
-          "legendFormat": "limit {{node}}"
+          "legendFormat": "requested software limit {{node}}"
         }
       ]
     },
     {
       "id": 42,
       "type": "timeseries",
-      "title": "GPU thermal slowdown and intentional power-cap activity",
-      "description": "Separate driver reason flags: 1 active, 0 inactive. Thermal slowdown invalidates a capacity candidate; software power capping can be normal under the quiet power envelope. Absent is unknown.",
+      "title": "GPU hardware thermal slowdown and software power-cap activity",
+      "description": "Separate driver reason flags: 1 active, 0 inactive. Hardware thermal slowdown invalidates a capacity candidate; software power capping can be normal. Software thermal slowdown is not exported here; sample it directly during trials. Absent is unknown.",
       "gridPos": {
         "h": 6,
         "w": 24,
@@ -1700,7 +1700,7 @@
         {
           "expr": "nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job=\"nvidia-gpu\"}",
           "refId": "A",
-          "legendFormat": "thermal slowdown {{node}}"
+          "legendFormat": "hardware thermal slowdown {{node}}"
         },
         {
           "expr": "nvidia_smi_clocks_event_reasons_sw_power_cap{job=\"nvidia-gpu\"}",
