@@ -12,6 +12,7 @@ PROMETHEUS_QUERIES = {
     "scrape_24h": "avg_over_time(up[24h])",
     "probe_success": "probe_success{job=\"blackbox\"}",
     "cpu_busy_unvalidated_24h": "100 * (1 - avg by(node) (rate(node_cpu_seconds_total{mode=\"idle\"}[24h])))",
+    "cpu_accounting_rate_5m": "sum by(node) (rate(node_cpu_seconds_total{job=\"node-exporter\",mode!~\"guest.*\"}[5m])) / count by(node) (node_cpu_seconds_total{job=\"node-exporter\",mode=\"idle\"})",
     "memory_used_pct": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
     "root_free_bytes": "node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"rootfs\"}",
     "oom_kills_24h": "increase(node_vmstat_oom_kill[24h])",
