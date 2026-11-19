@@ -222,8 +222,10 @@ runbook above — never rotate the authkey while an auth URL is pending.
 
 ### Key Inputs
 
-See `flake.nix`. factum, nix-audit, alert-bridge, llm-gateway, rf-proto and herman are pinned by `?rev=` in their URL, so `nix flake update`
-does not move them: edit the rev.
+See `flake.nix`. factum, nix-audit, llm-gateway, rf-proto and herman are pinned by `?rev=` in their URL, so `nix flake update`
+does not move them: edit the rev. alert-bridge is no flake input: its rev and narHash are in `apps/registry.json`
+(checked and fetched by `lib/app-manifest/pins.nix`), which `scripts/app-bump.py APP` moves to the app's newest green
+main and opens the PR for (on acer, in `devenv shell`; it refuses lenovo).
 
 ## Comment Policy
 

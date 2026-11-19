@@ -34,9 +34,6 @@
     nix-audit.url = "git+ssh://git@github.com/sammasak/nix-audit?rev=38789c530998164335637c6b6982b5ddc9e0fda1";
     nix-audit.flake = false;
 
-    alert-bridge.url = "git+ssh://git@github.com/sammasak/alert-bridge?rev=e2d61abf8df857156740119df8ab7f0c59582e20";
-    alert-bridge.flake = false;
-
     llm-gateway.url = "git+ssh://git@github.com/sammasak/llm-gateway?rev=8ec12bf580f19e0e1f665093287ebd5ef9ddb84d";
     llm-gateway.flake = false;
 

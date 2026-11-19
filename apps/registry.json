@@ -1,0 +1,18 @@
+{
+  "grants": {
+    "alert-bridge": {
+      "owner": "sammasak",
+      "repo": "sammasak/alert-bridge",
+      "host": "lenovo-21CB001PMX"
+    }
+  },
+  "apps": {
+    "alert-bridge": {
+      "source": {
+        "repo": "sammasak/alert-bridge",
+        "rev": "e2d61abf8df857156740119df8ab7f0c59582e20",
+        "narHash": "sha256-9gYeUN9qxG6UF1RKt0yBAnzrqOAjEoMOD0ze6sjKZ/c="
+      }
+    }
+  }
+}

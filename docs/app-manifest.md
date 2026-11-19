@@ -161,9 +161,26 @@ its repository's green `main` would get. It is the first slice of #560 and decid
 
 `scripts/test-app-bump-dry-run.py` runs it on a fake GitHub, without network or Nix.
 
+## App registry and bump (lane 1)
+
+`apps/registry.json` holds, per app, its grant and `source` (`repo`, `rev`, `narHash`); `lib/app-manifest/pins.nix`
+type-checks the whole file on any use (names, the grant's repo allowlist and host, 40-hex rev, SRI `sha256-` narHash;
+an unknown field fails) and `src APP` fetches the tree with `builtins.fetchTree` by rev and narHash, so a bad entry
+or a hash that does not match the rev fails evaluation, never a deploy. The tree and its store path are the ones a
+flake input at that rev gives. One difference: `nix flake archive` and `nix copy` of the flake's inputs carry flake
+inputs but not a tree fetched during evaluation, so an offline machine needs the app repository (or that store path)
+to evaluate; nothing in the fleet archives inputs today. alert-bridge is on it (the overlay's `alertBridge` src); the
+other apps stay flake inputs. `scripts/test-app-registry.py` (in the `app-manifest` flake check) evaluates the live file and bent copies.
+
+`scripts/app-bump.py APP` runs the dry run's `green_after` on the registry entry, prefetches the new rev's narHash,
+rewrites only that entry on `app-bump/APP-<sha12>` cut from origin/main, commits, pushes (the pre-push gate runs) and
+opens the PR with the dry run's text. It refuses lenovo, a dirty checkout and a host without a `gh` login (checked before anything is written, so no
+branch is pushed without its PR); `--dry-run` stops after the prefetch.
+`scripts/test-app-bump.py` runs it on stubs.
+
 ## Out of scope
 
 No runtime: nothing renders a unit or a sops declaration from a manifest yet, the rendered sites and scrape are
-consumed by no host, and no host imports these files. No health probe or alert is rendered from `health.path` yet. No executor, no repository registration or bot (#560; only the dry run above), no build or provenance pipeline (#561), no
+consumed by no host, and no host imports these files but pins.nix. No health probe or alert is rendered from `health.path` yet. No executor, no bot or timer (#560: the bump above is run by hand), no build or provenance pipeline (#561), no
 TCP-only app bridge (above). herman keeps its
 `edge.nix` site; the example uses `herman-next` because admission refuses `herman` while that site serves it.
