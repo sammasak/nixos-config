@@ -309,8 +309,8 @@ with tempfile.TemporaryDirectory() as t:
 # devenvFresh on its own, with the hashes Nix would bake in (builtFrom) and sha256sum on a throwaway tree
 fm = re.search(r"\n  devenvFresh = gate \"nixos-devenv-fresh\" \[ pkgs.coreutils \] ''\n(.*?)\n *'';\n", src, re.S)
 bm = re.search(r"\n  builtFrom =.*?\[(.*?)\];", src, re.S)
-check(fm is not None and bm is not None and re.findall(r"\./(\S+)", bm.group(1)) == ["devenv.nix", "devenv.yaml", "devenv.lock"],
-      "devenvFresh and builtFrom found in devenv.nix; builtFrom hashes devenv.nix, devenv.yaml and devenv.lock")
+check(fm is not None and bm is not None and re.findall(r"\./(\S+)", bm.group(1)) == ["devenv.nix", "devenv.yaml", "devenv.lock", "devenv.local.nix", "devenv.local.yaml"],
+      "devenvFresh and builtFrom found in devenv.nix; builtFrom covers devenv.nix, devenv.yaml, devenv.lock and the local overrides devenv loads")
 if fm and bm:
     import hashlib
     fbody = textwrap.dedent(fm.group(1)).replace("''${", "${")
@@ -319,9 +319,13 @@ if fm and bm:
         files = {"devenv.nix": "{ }\n", "devenv.yaml": "inputs: {}\n", "devenv.lock": "{}\n"}
         for n, c in files.items():
             (t / n).write_text(c)
-        pairs = " ".join(f"{n}={hashlib.sha256(c.encode()).hexdigest()}" for n, c in files.items())
+        # built with no devenv.local.yaml and a devenv.local.nix, as builtFrom writes them (absent: not there at build)
+        (t / "devenv.local.nix").write_text("{ env.X = \"1\"; }\n")
+        built = {**{n: hashlib.sha256(c.encode()).hexdigest() for n, c in files.items()},
+                 "devenv.local.nix": hashlib.sha256((t / "devenv.local.nix").read_bytes()).hexdigest(), "devenv.local.yaml": "absent"}
+        pairs = " ".join(f"{n}={h}" for n, h in built.items())
         script = t / "fresh.sh"
-        left = re.findall(r"\$\{(?!pair|have)[^}]*\}", fbody.replace("${builtFrom}", ""))
+        left = re.findall(r"\$\{(?!pair|have|1:-)[^}]*\}", fbody.replace("${builtFrom}", ""))
         check(left == [], f"devenvFresh has no interpolation besides builtFrom ({left})")
         script.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + fbody.replace("${builtFrom}", pairs) + "\n")
 
@@ -338,6 +342,33 @@ if fm and bm:
         (t / "devenv.yaml").unlink()
         rc, err = fresh_run()
         check(rc == 1 and "devenv.yaml" in err, f"seeded: a missing devenv.yaml is refused, not passed ({rc}: {err.strip()})")
+        (t / "devenv.yaml").write_text(files["devenv.yaml"])
+        rc, err = fresh_run()
+        check(rc == 0, f"the local overrides as built (devenv.local.nix present, devenv.local.yaml absent) pass ({rc}: {err.strip()})")
+        (t / "devenv.local.nix").write_text("{ env.X = \"2\"; }\n")
+        rc, err = fresh_run()
+        check(rc == 1 and "devenv.local.nix" in err, f"seeded: an edited devenv.local.nix is refused ({rc}: {err.strip()})")
+        (t / "devenv.local.nix").unlink()
+        rc, err = fresh_run()
+        check(rc == 1 and "devenv.local.nix" in err, f"seeded: a devenv.local.nix removed since the build is refused ({rc}: {err.strip()})")
+        (t / "devenv.local.nix").write_text("{ env.X = \"1\"; }\n")
+        (t / "devenv.local.yaml").write_text("inputs: {}\n")
+        rc, err = fresh_run()
+        check(rc == 1 and "devenv.local.yaml" in err and "devenv.local.nix" not in err,
+              f"seeded: a devenv.local.yaml created after the build (absent then) is refused ({rc}: {err.strip()})")
+        (t / "devenv.local.yaml").unlink()
+        # the hook's case: the pushed commit's worktree has no local overrides (untracked), the entered checkout has them
+        pushed = t / "pushed"
+        pushed.mkdir()
+        for n, c in files.items():
+            (pushed / n).write_text(c)
+        r = subprocess.run(["bash", str(script), str(t)], cwd=pushed, capture_output=True, text=True)
+        check(r.returncode == 0, f"a pushed worktree without the untracked local overrides passes when the entered checkout has them as built ({r.returncode}: {r.stderr.strip()})")
+        r = subprocess.run(["bash", str(script)], cwd=pushed, capture_output=True, text=True)
+        check(r.returncode == 1 and "devenv.local.nix" in r.stderr,
+              f"seeded: without the entered checkout the same worktree is refused (its devenv.local.nix is not there) ({r.returncode})")
+    check(re.search(r'\$\{lib\.getExe devenvFresh\} "\$entered"', BODY.replace("\0d", "${")) is not None and "entered=$PWD" in BODY,
+          "qaPush hands devenvFresh the checkout it was entered from, before it moves into the pushed worktree")
 
 
 # The flake check (flakeCheck in devenv.nix) refuses to run on lenovo when a check is a VM test (it has a driver,

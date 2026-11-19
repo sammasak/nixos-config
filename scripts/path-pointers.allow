@@ -24,3 +24,6 @@ modules/homelab/authentik.nix ./lifecycle/gunicorn.conf.py
 modules/homelab/open-webui.nix backend/open_webui/__init__.py
 # the lint's own example of a pointer
 scripts/nix-comment-lint.sh docs/x.md
+# devenv's per-checkout local overrides: untracked by design (.gitignore), hashed when present (devenv.nix builtFrom)
+devenv.nix ./devenv.local.nix
+devenv.nix ./devenv.local.yaml

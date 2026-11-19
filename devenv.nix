@@ -855,18 +855,32 @@ let
   ];
   # the run's own record is written on every exit, so a failed or interrupted gate still shows
   # what this shell's gates were built from. The pre-push hook and a long-lived shell run the gates evaluated at
-  # devenv entry: after a merge that changed these files they would check the new tree with the old test list
+  # devenv entry: after a merge that changed these files they would check the new tree with the old test list. devenv
+  # also loads devenv.local.nix and devenv.local.yaml when present (its bootstrapLib.nix, config.rs), so whether each
+  # exists counts as well as its content
   builtFrom =
-    lib.concatMapStringsSep " " (p: "${baseNameOf (toString p)}=${builtins.hashFile "sha256" p}")
-      [
-        ./devenv.nix
-        ./devenv.yaml
-        ./devenv.lock
-      ];
+    let
+      hash = p: if builtins.pathExists p then builtins.hashFile "sha256" p else "absent";
+    in
+    lib.concatMapStringsSep " " (p: "${baseNameOf (toString p)}=${hash p}") [
+      ./devenv.nix
+      ./devenv.yaml
+      ./devenv.lock
+      ./devenv.local.nix
+      ./devenv.local.yaml
+    ];
+  # usage: devenv-fresh [ENTERED]: the tracked files in $PWD, the untracked local overrides in ENTERED, the checkout
+  # the devenv was entered in (default $PWD; the pre-push hook checks the pushed commit in a worktree that has none)
   devenvFresh = gate "nixos-devenv-fresh" [ pkgs.coreutils ] ''
+    entered=''${1:-$PWD}
     stale=""
     for pair in ${builtFrom}; do
       f=''${pair%%=*} want=''${pair#*=}
+      case $f in devenv.local.*) f=$entered/$f ;; esac
+      if [ "$want" = absent ]; then
+        [ ! -e "$f" ] || stale="$stale $f"
+        continue
+      fi
       have=$(sha256sum "$f" 2>/dev/null) || have=missing
       [ "''${have%% *}" = "$want" ] || stale="$stale $f"
     done
@@ -1019,6 +1033,8 @@ let
       ])
       ''
         rev=''${PRE_COMMIT_TO_REF:-HEAD}
+        # where the devenv was entered: its local overrides are untracked, so the pushed worktree has none
+        entered=$PWD
         case $rev in 0000000000000000000000000000000000000000) exit 0 ;; esac
         tree=$(mktemp -d)
         trap 'git worktree remove --force "$tree"' EXIT
@@ -1029,7 +1045,7 @@ let
         unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
         # the hook runs the gate evaluated at devenv entry: the pushed tree's devenv files must be what it was built from,
         # or even the lints-only and green paths below would judge it with an old list
-        ${lib.getExe devenvFresh}
+        ${lib.getExe devenvFresh} "$entered"
         # --no-renames: a file moved into docs/ still counts on its old side. The list is taken whole first:
         # grep -q quitting early would SIGPIPE git diff, and pipefail would turn that into "docs only".
         docs_only() {
