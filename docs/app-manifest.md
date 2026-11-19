@@ -2,7 +2,8 @@
 
 An app repository describes its deployment in a small typed manifest; nixos-config holds what the platform
 approves for it (the grant). Admission checks both against the fleet before anything is built or deployed. This is
-the contract of #559 (epic #557), written for the lane the #558 draft recommends: pinned GitOps composition first.
+the contract of #559 (epic #557), written for the lane #558 chose: pinned GitOps composition first
+([records/app-delivery-boundary.md](records/app-delivery-boundary.md)).
 
 It is a schema, a renderer and a check only. `lib/app-manifest/` is plain Nix over `lib`: no host, role or Home Manager module
 imports it (roles and home modules are auto-discovered from their own directories, not from `lib/`), so no host's
