@@ -16,6 +16,7 @@ from gate_probe import check, finish
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HELPER = ROOT / "scripts/platform-record.sh"
 DASHBOARD = ROOT / "modules/homelab/monitoring/dashboards/platform-health.json"
+PI_DASHBOARD = ROOT / "modules/homelab/monitoring/dashboards/pi-agents.json"
 CALLERS = ["devenv.nix", "Justfile", "scripts/system-checks.sh", "modules/programs/cli/coordinator-wakeup.nix",
            "modules/workers/core.nix"]
 # written by devenv-platform's pi-offload, not by this repo, and shown on the Pi agents dashboard, not Platform health
@@ -33,6 +34,9 @@ used = {k for e in exprs for k in re.findall(r'kind="([^"]+)"', e)}
 check(used <= kinds, f"the dashboard queries only kinds the helper writes (unknown: {sorted(used - kinds)})")
 check(kinds - PI_KINDS <= used, f"every platform kind the helper writes has a panel (none: {sorted(kinds - PI_KINDS - used)})")
 check(not PI_KINDS & used, f"Platform health shows no Pi kind ({sorted(PI_KINDS & used)})")
+pi_exprs = [t["expr"] for p in json.loads(PI_DASHBOARD.read_text())["panels"] for t in p.get("targets", [])]
+pi_used = {k for e in pi_exprs if 'job="platform"' in e for k in re.findall(r'kind="([^"]+)"', e)}
+check(PI_KINDS <= pi_used, f"every Pi kind has a panel on Pi agents (none: {sorted(PI_KINDS - pi_used)})")
 check(all('job="platform"' in e for e in exprs if "kind=" in e), "every Loki panel selects the platform stream")
 
 written = {}

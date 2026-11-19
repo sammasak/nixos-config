@@ -2,7 +2,7 @@
   "title": "Pi agents",
   "uid": "pi-agents",
   "schemaVersion": 36,
-  "version": 6,
+  "version": 7,
   "timezone": "utc",
   "refresh": "5m",
   "time": {"from": "now-24h", "to": "now"},
@@ -284,6 +284,21 @@
         {"id": "sortBy", "options": {"sort": [{"field": "Day"}]}},
         {"id": "groupingToMatrix", "options": {"columnField": "Metric", "rowField": "Day", "valueField": "Value (sum)", "emptyValue": "zero"}}],
       "targets": [{"refId": "A", "expr": "sum by (served_model) (sum_over_time({job=\"pi-agent\", source=\"pi-ticket\"} | json | event=\"issue_outcome\" | unwrap pi_tokens [1h]))", "step": "1h", "legendFormat": "{{served_model}}"}, {"refId": "Z", "expr": "vector(0)", "step": "1h", "legendFormat": "zero"}]
+    },
+    {
+      "id": 32, "title": "Offload records (pi-offload)", "type": "row", "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 81}, "panels": []
+    },
+    {
+      "id": 33, "title": "pi-offload runs and first-pass rate by class and model (time range)", "type": "table",
+      "description": "One platform record (kind=offload) per pi-offload run, on a host or a guest. First pass: the check went green on the first round.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 82},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "First-pass rate"}, "properties": [{"id": "unit", "value": "percentunit"}]}]},
+      "transformations": [{"id": "merge", "options": {}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"class": "Class", "model": "Model", "Value #A": "Runs", "Value #B": "First-pass rate"}}}],
+      "targets": [{"refId": "A", "expr": "sum by (class, model) (count_over_time({job=\"platform\", kind=\"offload\"} | logfmt [$__range]))", "queryType": "instant", "format": "table"},
+        {"refId": "B", "expr": "sum by (class, model) (count_over_time({job=\"platform\", kind=\"offload\"} | logfmt | first_pass=\"1\" [$__range])) / sum by (class, model) (count_over_time({job=\"platform\", kind=\"offload\"} | logfmt [$__range])) or 0 * sum by (class, model) (count_over_time({job=\"platform\", kind=\"offload\"} | logfmt [$__range]))", "queryType": "instant", "format": "table"}]
     }
   ]
 }
