@@ -210,10 +210,10 @@ let
       dashboard = seed "loki_name" "prometheus";
       reason = "unknown metric loki_name:";
     };
-    # behind --collector.systemd.enable-restarts-metrics, which no host sets
+    # behind --collector.systemd.enable-task-metrics, which no host sets
     systemd-flag-off = {
-      dashboard = seed "increase(node_systemd_service_restart_total[1h])" "prometheus";
-      reason = "unknown metric node_systemd_service_restart_total";
+      dashboard = seed "node_systemd_unit_tasks_current" "prometheus";
+      reason = "unknown metric node_systemd_unit_tasks_current";
     };
     # the logind collector is off on every host, so a panel on it would stay empty
     collector-off = {
@@ -445,6 +445,7 @@ in
               lib.replaceStrings [ "\\\n" "\n" ] [ " " " " ] exec
             } > systemd.prom
             grep -q '^node_systemd_units ' systemd.prom
+            grep -q '^node_systemd_service_restart_total ' systemd.prom
             # timex needs adjtimex, which the sandbox may refuse
             python3 -I ${../scripts/node-exporter-collector-names.py} $src timex >> systemd.prom
             # what the repo's own textfile writers print (open-webui's edge check, the generation file)

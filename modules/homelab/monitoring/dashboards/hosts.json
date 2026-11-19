@@ -763,6 +763,7 @@
       "options": {
         "orientation": "vertical"
       }
-    }
+    },
+    {"id": 19, "title": "Service restarts (time range)", "description": "systemd NRestarts counter: automatic restarts only, not manual starts. Requires a host generation with systemd restart metrics enabled; missing data is unknown.", "type": "table", "gridPos": {"h": 8, "w": 24, "x": 0, "y": 23}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"expr": "increase(node_systemd_service_restart_total{node=~\"$node\"}[$__range]) > 0", "instant": true, "format": "table", "refId": "A"}]}
   ]
 }
