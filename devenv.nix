@@ -742,7 +742,7 @@ let
         ${pkgs.python3}/bin/python scripts/test-qa-push.py
         ${pkgs.python3}/bin/python scripts/test-prepush-one-ref.py
         ${pkgs.python3}/bin/python scripts/test-gate-steps.py
-        ${pkgs.python3}/bin/python scripts/test-heavy-lock.py
+        ${pkgs.python3}/bin/python scripts/test-heavy-lock.py ${lib.getExe heavyLock}
         ${pkgs.python3}/bin/python scripts/test-deferred-checks.py
       '';
 
@@ -920,7 +920,7 @@ let
             # one line a coordinator reads: the head, then owner:check for each check its owning host must build
             echo "nixos-qa: deferred-checks head=$NIXOS_QA_HEAD checkout=$checkout $(tr '\n' ' ' <"$NIXOS_QA_DEFERRED")" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
           fi
-          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode deferred="$n" head="$NIXOS_QA_HEAD" checkout="$checkout" deferred_checks="$deferred"
+          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode deferred="$n" head="$NIXOS_QA_HEAD" checkout="$checkout" deferred_checks="$deferred" wait_seconds="''${HEAVY_LOCK_WAIT_SECONDS:-unknown}"
           if [ -n "$began" ]; then
             # shellcheck disable=SC2086 # the state is three words
             ${lib.getExe qaGreen} record "$0" "$result" "$mode" $began || true
