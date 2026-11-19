@@ -25,7 +25,7 @@ into firewall rules. The scrape jobs are in `prometheus.nix`. The node-exporter 
 added there is scraped, labelled `node=<hostName>` and, if it `sleeps`, `sleeps="true"`.
 
 What a host writes into node-exporter's textfile directory (`/run/node-exporter-textfile`):
-- every fleet host: `nixos.prom`, the activated generation, NixOS version and toplevel (`scripts/nixos-textfile.sh`, at
+- every fleet host: `nixos.prom`, the activated generation, NixOS version and toplevel (`pkgs/nixos-textfile`, at
   activation)
 - acer: `open-webui-edge.prom`, the chat upstream socket (`open-webui.nix`)
 - lenovo: `adguard.prom`, AdGuard's status and query counts, read from its loopback API every minute
