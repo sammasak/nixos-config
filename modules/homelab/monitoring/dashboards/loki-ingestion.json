@@ -216,7 +216,7 @@
     },
     {
       "id": 21,
-      "title": "Alloy entries sent/dropped (last 1h)",
+      "title": "OTLP log exporter sent/dropped (5m rate)",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -224,10 +224,10 @@
         "x": 12,
         "y": 24
       },
-      "description": "If dropped grows while sent is flat, the pipeline is failing upstream of Loki.",
+      "description": "Only the alloy-otlp job is scraped here. This does not cover the five host-journal writers: their Alloy metrics are loopback-only and not scraped. Missing host-journal writer counters are unknown, not zero losses. Sent and dropped are export outcomes; deliberate privacy/noise filtering is separate.",
       "targets": [
         {
-          "expr": "sum(rate(loki_write_sent_entries_total[5m]))",
+          "expr": "sum(rate(loki_write_sent_entries_total{job=\"alloy-otlp\"}[5m]))",
           "legendFormat": "sent entries/s",
           "datasource": {
             "type": "prometheus",
@@ -235,7 +235,7 @@
           }
         },
         {
-          "expr": "sum(rate(loki_write_dropped_entries_total[5m]))",
+          "expr": "sum(rate(loki_write_dropped_entries_total{job=\"alloy-otlp\"}[5m]))",
           "legendFormat": "dropped entries/s",
           "datasource": {
             "type": "prometheus",
