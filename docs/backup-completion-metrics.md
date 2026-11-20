@@ -49,6 +49,13 @@ textfile scrape-error metrics to detect that condition. No new paging policy is 
 
 ## Verification and rollout
 
+The collector reserves 64 MiB through `MemoryMax`. Lenovo's user-slice ceiling is
+8336 MiB (2084 MiB swap), allocating that reservation from its previous ceiling.
+The declared caps plus protected service floors total 15648 MiB against 15667 MiB
+RAM, preserving the existing 19 MiB budget margin. The measured 7.6 GiB user
+workload still fits. The memory-budget assertion and build-bounds regression
+remain required: adding the collector without this allocation exceeds the budget.
+
 The `checks.x86_64-linux.backup-metrics` check exercises the real Python writer/collector with
 synthetic systemd results, including failed/killed/unfinished executions, timeouts, corrupted or
 future metadata, persistent old success, bounded labels, permissions and emitted Prometheus
