@@ -109,7 +109,7 @@
     cores = 2;
   };
   # The whole memory budget (modules/core/memory-budget.nix): 15.3 GiB of MemTotal; every MemoryMax on the host
-  # (these two, and alert-bridge 64M, alloy 256M, node-exporter 64M, backup-metrics 64M, shipping-metrics 96M and nav-metrics 48M from
+  # (these two, and alert-bridge 64M, alloy 256M, node-exporter 64M, backup-metrics 64M, journal-metrics 16M, shipping-metrics 96M and nav-metrics 48M from
   # their modules) plus the floors fits in it, 19M left. The kernel, page tables and the zram store (about 1 GiB
   # measured) are outside: the caps meet only with the daemon pushed past its MemoryHigh while the user slice is at
   # its ceiling. Swap is a quarter of each cap, as the worker pools: zram is charged to no cgroup.
@@ -127,8 +127,8 @@
       # stalls every session instead of being killed. The idle sessions' 4.6 GiB that cannot be dropped plus the
       # largest measured unit (3.0 GiB) fit under it (scripts/test-lenovo-build-bounds.py).
       "user.slice" = {
-        max = "8336M";
-        swapMax = "2084M";
+        max = "8320M";
+        swapMax = "2080M";
       };
     };
     # the LAN's DNS and the way in keep answering while the user slice and a build are both at their caps
