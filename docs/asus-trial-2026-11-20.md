@@ -1,9 +1,9 @@
 # ASUS trial — 20 November, after 09:00 Stockholm time
 
-Owner constraints: ASUS stays off before 09:00 Europe/Stockholm; 130 W is the board-power
-limit; keep one heavy job at a time. Builds and static preparation do not authorize waking
-ASUS overnight. Inference and host activation wait until the morning. The live 08:30 wake
-timer was stopped. Keep it stopped tonight; do not blindly restore its old 08:30 schedule.
+Overnight preparation required ASUS to stay off until the owner explicitly authorized
+the morning wake. That authorization has arrived and the host is online; 130 W remains
+the board-power limit, with one heavy job at a time. The live 08:30 wake timer was stopped.
+Do not blindly restore its old schedule or treat this dated trial as future wake authorization.
 A permanent wake-time change requires a deliberate follow-up because the current source
 shares one night boundary across the fleet. Other hosts' power schedules are unchanged.
 
@@ -14,16 +14,18 @@ shares one night boundary across the fleet. Other hosts' power schedules are unc
 - #606: narrow Loki INFO lookup filter and real Alloy/negative harness checks; full QA/review pass.
 - #607 / #604: fan, requested board-power limit and hardware/software reason distinctions;
   full QA/review pass. No physical capacity improvement is inferred.
-- Backup completion slice #564: owning fixture/catalog checks and source review pass;
-  full QA **failed** at `2cfe9fbe` in `nixos-flake-check` (69 s). The complete gate lasted
-  214 s and failed before shutdown. Retrieve the actual log after 09:00; do not activate it
-  or count source checks as full acceptance. An unrelated local monolithic no-build flake
-  evaluation exited 137; that does not establish the ASUS failure's cause.
+- Backup completion slice #564: merged in #608 after full ASUS QA passed in 1394 s
+  at `ff42be78`, independent review and a clear deferred-check audit. The earlier gate
+  failed Lenovo's declared RAM-budget assertion; the collector's 64 MiB reservation is
+  now allocated explicitly. This is source acceptance; deployed backup evidence remains pending.
 - This candidate: an explicit `homelab.ollama.parallelRequests = 2` option, with default 1.
   Keep one resident model, pinned weights, 32K context, q8_0/Flash Attention, the existing
   host RAM limit and 130 W. Static policy checks are not VRAM-fit or task-quality evidence.
 - The existing benchmark package was built and copied to always-on Acer without waking
   ASUS: `/nix/store/8a8drm4847xh7k26a0bddy1f5mr4qimb-llm-bench`.
+- The short [one-slot baseline](records/asus-one-slot-baseline-2026-11-20.md) completed
+  after the authorized wake: zero request errors at one/two offered clients. It is
+  queueing evidence, not coding-task, sustained-noise or two-slot acceptance.
 
 ## Offline correctness checks
 
