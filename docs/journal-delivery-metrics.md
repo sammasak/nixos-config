@@ -4,8 +4,9 @@ Tracking: [#600](https://github.com/sammasak/nixos-config/issues/600) and
 [#602](https://github.com/sammasak/nixos-config/issues/602).
 
 The 20 November baseline found that Prometheus only scraped acer's OTLP Alloy
-writer. The five host-journal collectors had useful loopback counters but no
-delivery-counter scrape. Loki receiving logs does not establish lossless delivery.
+writer. Journal collectors on the five monitored machines had useful loopback
+counters but no delivery-counter scrape. The naked-pi RF-lab profile is outside
+this monitored set. Loki receiving logs does not establish lossless delivery.
 
 `journal-metrics.nix` collects a bounded allowlist from the existing loopback Alloy
 endpoint about once a minute. The existing node-exporter textfile collector reads
