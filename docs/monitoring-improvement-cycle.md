@@ -23,6 +23,7 @@ Journal keyword matches are search leads, not an error-rate metric. Prefer produ
 `avg_over_time(up[24h])` includes planned poweroff; use the existing planned-off rules for sleeping hosts, and sample counts/known-on windows for availability claims.
 Textfile age is interpreted per producer: `nixos.prom` changes at activation, while DNS and edge files refresh periodically.
 Pressure queries report five-minute percentages of wall time: CPU waiting means at least one runnable task waited; memory and I/O stalled mean all non-idle tasks stalled on that resource. Interpret them only with a current node scrape and successful pressure collection. They measure contention, not CPU utilization or per-unit attribution (#596); missing series remain unknown.
+I/O pressure can include idle `io_uring` event waits, as observed with Ghostty ([#615](https://github.com/sammasak/nixos-config/issues/615), [upstream explanation](https://github.com/ghostty-org/ghostty/discussions/9474)). Cross-check cgroup attribution and device activity before treating it as a storage bottleneck; the persistent Ghostty backend change needs a full application restart before comparison.
 
 ## Coverage and ownership
 
