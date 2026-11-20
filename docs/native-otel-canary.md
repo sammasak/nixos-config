@@ -20,6 +20,26 @@ SOPS credential through `LoadCredential`, and creates its configuration in a
 forwards only the OTLP content/encoding/accept headers plus its bearer
 credential over verified TLS, and does not log request bodies or headers.
 Neither client nor its tool subprocesses receive the receiver credential.
+
+Codex metrics use HTTP protobuf (`protocol = "binary"`), matching Claude's wire
+format. Both the relay and Alloy retain their 1 MiB request limits. Investigation
+[#611](https://github.com/sammasak/nixos-config/issues/611) found repeated 3.16 MB
+metric requests rejected by the running relay. A metadata-only trace strongly
+associated a rejection with the running Codex process. An isolated-network test of
+Codex 0.162.1 with a synthetic local provider emitted main metric batches of
+507,418 bytes as JSON and 110,432 bytes as protobuf; the subsequent batches were
+49,471 and 8,824 bytes. These short sessions establish supported compact encoding,
+not that a long-running session's batch fits or that cardinality growth is solved.
+After approved rollout, start a fresh client canary, confirm actual metric receipt
+and observe rejection counts over a matched window. Existing sessions keep their
+startup configuration and must not be restarted to manufacture acceptance.
+
+In that pinned-client test, setting `analytics.enabled=false` also suppressed the
+explicit OTLP metric exports. That observation is specific to the tested binary
+and fixture; recheck it before relying on independent analytics/OTLP controls in
+a newer version. No analytics setting is changed here. The documented wire-format
+options are in the [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
 The upstream certificate chain is verified to depth 3; Nginx's default depth
 of 1 rejects the receiver's valid certificate chain.
 
