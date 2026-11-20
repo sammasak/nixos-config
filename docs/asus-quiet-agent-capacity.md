@@ -79,8 +79,11 @@ For a controlled run capture fan/temperature/VRAM/board watts at 1 Hz on ASUS, w
 sample intervals and a UTC alignment marker. Prometheus's normal 10 s scrape is adequate for
 long trends but can miss peaks and short requests. Include direct `enforced.power.limit` and both
 `clocks_throttle_reasons.hw_thermal_slowdown` and `clocks_throttle_reasons.sw_thermal_slowdown`
-in the 1 Hz trial capture. The exporter covers requested `power.limit` and HW thermal slowdown;
-it cannot establish absence of software thermal limiting or verify the effective cap over time. Integrate board watts over the **whole trial**
+in the 1 Hz trial capture. The exporter source includes requested and enforced limits and
+both thermal reasons. Their history begins only after the corresponding exporter is
+activated and successfully scraped; earlier requested-limit/HW-only history cannot
+establish software thermal behavior or the effective cap. Missing series remain unknown.
+Integrate board watts over the **whole trial**
 using actual elapsed intervals; report sampling gaps and GPU joules per verified successful task,
 including failed requests, retries and idle gaps within that interval. Report gross board energy;
 any idle-subtracted estimate must be separate. Do not divide unrelated historical power and token
