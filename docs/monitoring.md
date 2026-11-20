@@ -24,6 +24,15 @@ Which host may reach which port is `sam.fleet.listeners` (`modules/core/fleet.ni
 into firewall rules. The scrape jobs are in `prometheus.nix`. The node-exporter and nvidia-gpu targets come from `sam.fleet.hosts`, so a host
 added there is scraped, labelled `node=<hostName>` and, if it `sleeps`, `sleeps="true"`.
 
+GPU power metrics distinguish the requested software limit
+(`nvidia_smi_power_limit_watts`) from the effective enforced limit
+(`nvidia_smi_enforced_power_limit_watts`). Hardware and software thermal slowdown
+also have separate `nvidia_smi_clocks_event_reasons_*_thermal_slowdown` gauges.
+The GPU and LLM gateway dashboards show both; missing series remain unknown,
+not proof of an inactive reason. The exporter fixture deliberately uses different
+power limits and thermal flags and checks their emitted values. Source checks
+do not replace driver/scrape acceptance after the exporter is activated.
+
 What a host writes into node-exporter's textfile directory (`/run/node-exporter-textfile`):
 - every fleet host: `nixos.prom`, the activated generation, NixOS version and toplevel (`scripts/nixos-textfile.sh`, at
   activation)
