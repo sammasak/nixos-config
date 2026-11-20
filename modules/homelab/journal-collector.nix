@@ -141,6 +141,7 @@ let
   '';
 in
 {
+  imports = [ ./journal-metrics.nix ];
   options.homelab.journalCollector = {
     enable = lib.mkEnableOption "shipping this host's journal to Loki with Alloy";
     lokiUrl = lib.mkOption {

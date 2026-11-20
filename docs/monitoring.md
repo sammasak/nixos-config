@@ -44,6 +44,9 @@ Two collectors keep their own textfile directory, which node-exporter also reads
 (`shipping-metrics.nix`) and `nav.prom` on acer, lenovo, asus and msi (`nav-metrics.nix`), plus one
 `nav-guest-<name>.prom` per guest on a host with dev environments (acer, `/var/lib/nav-metrics-guests`).
 
+Every journal-collector host also exposes bounded local reader/export/filter counters
+through `/run/journal-metrics/journal.prom`; see [delivery semantics and acceptance](journal-delivery-metrics.md).
+
 Bounded labels: Caddy runs `metrics` without `per_host` (it would label any HTTPS Host as sent), so its series split by
 server, not by name. Authentik gets the matched name without a client port as Host, and the Authentik jobs drop the
 `authentik_outpost_*` family (its method label is the client's) and carry a `sample_limit`.
