@@ -91,3 +91,6 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
 
 black-pi is aarch64 and only evaluated on x86 hosts. Its own config checks (promtool, amtool) run when the Pi builds
 its toplevel, which is why the checks above seed its modules onto msi.
+
+Backup freshness and validation semantics: [completion metrics](backup-completion-metrics.md)
+(#564/#600; source instrumentation and live receipts are separate).

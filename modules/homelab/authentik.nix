@@ -132,6 +132,9 @@ let
     '';
 in
 {
+  imports = [ ./backup-metrics.nix ];
+  homelab.backupMetrics.jobs.authentik-backup = "archive_list";
+
   users.users.authentik = {
     isSystemUser = true;
     group = "authentik";

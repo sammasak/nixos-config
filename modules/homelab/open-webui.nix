@@ -21,6 +21,9 @@ let
   gateway = "http://127.0.0.1:8081"; # the llm-gateway's API listener on this host (llm-gateway.nix)
 in
 {
+  imports = [ ./backup-metrics.nix ];
+  homelab.backupMetrics.jobs.open-webui-backup = "scratch_restore";
+
   sops.secrets = {
     open_webui_gateway_key.sopsFile = sopsFile;
     open_webui_secret_key.sopsFile = sopsFile;
@@ -165,7 +168,7 @@ in
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${lib.getExe backup} backup /var/lib/private/open-webui/data /var/lib/open-webui-backup";
-      StateDirectory = "open-webui-backup";
+      StateDirectory = [ "open-webui-backup" ];
       StateDirectoryMode = "0700";
       PrivateNetwork = true;
       ProtectSystem = "strict";

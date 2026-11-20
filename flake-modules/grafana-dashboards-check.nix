@@ -489,7 +489,8 @@ in
             static=(node-exporter=node.prom node-exporter=systemd.prom node-exporter=writers.prom
               node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom
               llm-gateway=llm-gateway.prom authentik-server=authentik.prom authentik-worker=authentik.prom
-              nvidia-gpu=${self'.checks.gpu-telemetry-exporter})
+              nvidia-gpu=${self'.checks.gpu-telemetry-exporter} \
+                node-exporter=${self'.checks.backup-metrics}/backup.prom)
             # what the stack run below must export before it is read: the panels' and rules' own names
             "$checker" -I ${../scripts/check-grafana-dashboards.py} --needs "$specPath" prometheus,alertmanager,alloy-otlp \
               "''${static[@]}" > needs.txt
