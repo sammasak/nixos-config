@@ -31,7 +31,7 @@ shares one night boundary across the fleet. Other hosts' power schedules are unc
 
 `nix build .#checks.x86_64-linux.asus-trial-preflight --no-link` runs Ruff
 correctness/bug-pattern rules (`E4,E7,E9,F,B`), strict mypy on both operational
-Python scripts, and seven mocked behaviour tests. The tests exercise the clock
+Python scripts, and mocked behaviour tests. The tests exercise the clock
 boundary, connection failure, sampling timestamps, unsupported values, bounds,
 malformed output and driver query failure. No GPU or host connection is needed.
 The separately evaluated `asus-capacity-policy` check covers the Nix option and
@@ -39,8 +39,12 @@ preserved power/context policy. Neither check replaces full QA or hardware evide
 
 ## Clock and read-only preflight
 
-Run `python3 scripts/asus-trial-preflight.py` from this source. It refuses even an SSH
-connection before **2026-11-20 08:00 UTC / 09:00 CET**. It never wakes, builds, activates,
+Run `python3 scripts/asus-trial-preflight.py --not-before 2026-11-20T09:00:00+01:00`
+to reproduce this trial's time boundary. Each subsequent trial must supply its own
+owner-approved date and timezone; the collector has no default or inherited window.
+Missing or naive timestamps fail before connecting. For example, the 21 November
+09:00 CET window uses `--not-before 2026-11-21T09:00:00+01:00`.
+It refuses even an SSH connection before the supplied boundary. It never wakes, builds, activates,
 restarts or sends an inference request. At/after the boundary it collects driver/memory,
 requested and enforced power, fan/thermal flags, failed units, Ollama version and resident
 model state. Read-only collection success is not trial acceptance. Stop if the enforced
