@@ -26,6 +26,12 @@ measurement setup separately. Do not infer dBA from a fan percentage or slow the
 while leaving heat output unchanged. The previous 130 W stress result around 70% fan is not proof
 of acceptable quietness.
 
+The persistent ASUS shutdown calendar covers every evening at the fleet night start,
+including weekends, so a manual Saturday wake still ends that night. Automatic wake
+keeps its weekday policy; an explicit experiment window still controls manual wakes.
+The timer has no persistent catch-up. Verify the installed timer after an approved
+activation: a source change does not update a running host's calendar.
+
 ## Research that changes the next experiment
 
 - [Ollama's concurrency and cache documentation](https://docs.ollama.com/faq) says parallel
