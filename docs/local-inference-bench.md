@@ -74,6 +74,34 @@ done
 - **Through the gateway**, once asus is in its catalog (llm-gateway#101): `--base http://127.0.0.1:8081/v1 --route
   gateway --key-file /run/secrets/llm_gateway_pi_key`, the Pi project key on acer.
 
+### Paddock metadata and comparison readiness
+
+After the separately approved native Paddock CUDA/API canary (#508), the existing capacity harness can collect
+streamed timings directly from its alternate endpoint:
+
+```
+nix run .#llm-bench -- capacity --backend paddock --route direct \
+  --base http://192.168.10.113:11660/v1 --host asus-b460m --model YOUR_SERVED_MODEL_ID \
+  --ctx 4096 --max-agents 1 --per-level 20 --out ~/capacity
+```
+
+Use the actual primary model ID from `/api/server`, not a guessed filename or alias. The harness checks the runner
+identity, `/v1/models` entry and their agreement on loaded context before sending inference traffic. It records actual
+context and batch limits, sends an optional `--key-file` bearer token to metadata and inference endpoints, and checks
+runtime metadata again afterward. Missing, contradictory or changed metadata cannot validate a capacity. Paddock
+artifacts have a `-paddock` suffix so they cannot overwrite an Ollama result for the same host/model/context.
+
+The current runner metadata API does not expose a verified GGUF digest or quantization. Those fields remain null,
+the aggregate explicitly warns that it is not a matched-model comparison, and its validated agent count remains
+null. Timing rows are retained for diagnosis. This support does not prove CUDA residency or tool correctness.
+
+Before claiming an engine improvement (#493), verify identical weight bytes/hash, tokenizer, rendered prompt,
+quantization, actual context, sampling and cache policy on both engines; record any KV dtype difference. A common
+model name or an Ollama manifest digest does not establish identical weight bytes. Use one resident engine at a
+time, retain the 130 W cap, and keep cold/warm and direct/gateway results separate. Actual Pi read/edit/bash task
+success remains #494; these synthetic streamed turns do not measure useful coding capacity. Gateway integration
+remains llm-gateway#102; `--backend paddock --route gateway` is refused rather than bypassing backend checks.
+
 ## 3. Commit
 
 Copy only the aggregates: `cp ~/capacity/*[0-9].json pkgs/llm-bench/scorecard/`. Never copy a `*.runs.jsonl`

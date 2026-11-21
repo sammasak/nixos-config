@@ -29,6 +29,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 SCHEMA = "llm-bench/1"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -90,8 +91,8 @@ def request(url, body=None, headers=None, timeout=600):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def get_json(url, timeout=30):
-    with request(url, timeout=timeout) as r:
+def get_json(url, timeout=30, headers=None):
+    with request(url, headers=headers, timeout=timeout) as r:
         return json.load(r)
 
 
@@ -111,6 +112,30 @@ def model_identity(base, model):
             "ollama_version": get_json(f"{base}/api/version").get("version")}
 
 
+def paddock_metadata(base, model, key=None):
+    """Runtime bounds, not weight identity: the runner API does not publish a GGUF digest or quant."""
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    server = get_json(f"{base}/api/server", headers=headers)
+    listing = get_json(f"{base}/v1/models", headers=headers)
+    if not isinstance(server, dict) or not isinstance(listing, dict):
+        raise TypeError("Paddock metadata must be JSON objects")
+    version = server.get("version")
+    if (server.get("role") != "runner" or not isinstance(version, str) or not 0 < len(version) <= 128
+            or not all(c.isascii() and (c.isalnum() or c in ".+-_") for c in version)):
+        raise ValueError("Paddock runner identity is missing or invalid")
+    ctx, batch = server.get("max_ctx"), server.get("max_batch")
+    if type(ctx) is not int or ctx <= 0 or type(batch) is not int or batch <= 0:
+        raise TypeError("Paddock loaded context and batch must be positive integers")
+    models = listing.get("data")
+    if not isinstance(models, list):
+        raise TypeError("Paddock model listing is missing")
+    matches = [m for m in models if isinstance(m, dict) and m.get("id") == model]
+    if (server.get("model") != model or len(matches) != 1 or matches[0].get("owned_by") != "paddock"
+            or type(matches[0].get("context_length")) is not int or matches[0]["context_length"] != ctx):
+        raise ValueError("Paddock served model or loaded context disagrees with the requested model")
+    return {"version": version, "context_length": ctx, "max_batch": batch}
+
+
 def median(xs):
     xs = sorted(x for x in xs if x is not None)
     return xs[len(xs) // 2] if xs else None
@@ -127,7 +152,7 @@ def vram_samples(d):
     for path in sorted(glob.glob(os.path.join(d, "vram-*.csv"))):
         with open(path, encoding="utf-8") as f:
             for row in csv.DictReader(f, skipinitialspace=True):
-                ts = datetime.datetime.strptime(row["timestamp"], "%Y/%m/%d %H:%M:%S.%f").timestamp()
+                ts = datetime.datetime.strptime(row["timestamp"], "%Y/%m/%d %H:%M:%S.%f").astimezone().timestamp()
                 out.append((ts, int(row["memory.used [MiB]"].split()[0]) * MIB, int(row["memory.total [MiB]"].split()[0]) * MIB))
     return out
 
@@ -158,7 +183,8 @@ def import_g1(d, out, limits=None):
     """One fit result per GPU host, model and context from a G1 results directory: g1-*.jsonl (one-client runs; the
     multi-client rows are queueing context, the agent capacity is `capacity`'s) and the vram-*.csv logged meanwhile."""
     limits = limits or thresholds()
-    runs = [json.loads(l) for p in sorted(glob.glob(os.path.join(d, "g1-*.jsonl"))) for l in open(p, encoding="utf-8") if l.strip()]
+    runs = [json.loads(l) for p in sorted(glob.glob(os.path.join(d, "g1-*.jsonl")))
+            for l in Path(p).read_text(encoding="utf-8").splitlines() if l.strip()]
     smi = vram_samples(d)
     groups = {}
     for r in runs:
@@ -292,19 +318,24 @@ def agent_capacity(levels, limits):
     return best
 
 
-def capacity(base, host, model, ctx, route, key=None, max_n=8, per_level=20, limits=None):
+def capacity(base, host, model, ctx, route, key=None, max_n=8, per_level=20, limits=None, backend="ollama"):
+    if backend not in ("ollama", "paddock") or (backend == "paddock" and route != "direct"):
+        raise ValueError("Paddock metadata requires --route direct; gateway backend identity is unknown")
     limits = limits or thresholds()
     _, tools, sha = agent_turn(ctx)
     started = time.time()
+    root = base.removesuffix("/v1")
+    # Refuse an unverified endpoint before sending any inference traffic.
+    paddock = paddock_metadata(root, model, key) if backend == "paddock" else None
     # unmeasured: a cold load or a context reload would otherwise land in N=1 and in the baseline
     warmup = chat_stream(base, model, agent_turn(ctx, "warmup")[0], tools, key)
-    resident = (loaded(base.removesuffix("/v1"), model) or {}) if route == "direct" else {}
+    resident = paddock if paddock is not None else ((loaded(root, model) or {}) if route == "direct" else {})
     levels, runs, baseline = [], [], None
     for n in range(1, max_n + 1):
         rows = []
         lock = threading.Lock()
 
-        def agent(a):
+        def agent(a, n=n, rows=rows, lock=lock):
             for i in range(math.ceil(per_level / n)):
                 r = chat_stream(base, model, agent_turn(ctx, f"{n}-{a}-{i}")[0], tools, key)
                 with lock:
@@ -324,7 +355,7 @@ def capacity(base, host, model, ctx, route, key=None, max_n=8, per_level=20, lim
             break
     agents = agent_capacity(levels, limits)
     # direct: the Ollama behind /v1 names the model; through the gateway the backend is the gateway's choice
-    ident = model_identity(base.removesuffix("/v1"), model) if route == "direct" else None
+    ident = model_identity(root, model) if route == "direct" and backend == "ollama" else None
     r = result("capacity", host, model, ctx, ident, started,
                fixture={"name": "agent-turn", "sha256": sha, "nonce": "Conversation <n>-<agent>-<i>. history prefix"},
                route=route, runs=runs, samples={"per_level": per_level, "levels": len(levels)})
@@ -337,6 +368,18 @@ def capacity(base, host, model, ctx, route, key=None, max_n=8, per_level=20, lim
     r["warnings"] = ([f"warm-up failed: {warmup['error']}"] if warmup["error"] else []) + (
         [f"the server loaded {loaded_ctx} tokens of context, under the {ctx} asked: history was dropped"]
         if loaded_ctx and loaded_ctx < ctx else [])
+    if paddock is not None:
+        r["backend"] = "paddock"
+        r["backend_version"] = paddock["version"]
+        r["settings"]["max_batch_loaded"] = paddock["max_batch"]
+        r["warnings"].append("Paddock weight digest and quantization unavailable: not a matched-model comparison")
+        try:
+            after = paddock_metadata(root, model, key)
+        except (OSError, ValueError, TypeError):
+            r["warnings"].append("Paddock runtime metadata could not be verified after measurement")
+        else:
+            if after != paddock:
+                r["warnings"].append("Paddock runtime metadata changed during measurement")
     r["capacity"] = {"agents": agents if not r["warnings"] else None, "levels": levels, "queue_wait_source": "estimated",
                      "prompt_tokens": prompt_tokens}
     return r
@@ -360,6 +403,8 @@ def result(kind, host, model, ctx, ident, started, metrics=None, fixture=None, s
 def write(r, out):
     os.makedirs(out, exist_ok=True)
     name = "-".join([r["kind"], r["evidence"], r["route"], r["host"], r["model"].replace(":", "_").replace("/", "_"), str(r["ctx"])])
+    if r.get("backend") == "paddock":
+        name += "-paddock"
     runs = r.pop("_runs", [])
     with open(os.path.join(out, name + ".json"), "w", encoding="utf-8") as f:
         json.dump(r, f, indent=1, sort_keys=True)
@@ -367,8 +412,7 @@ def write(r, out):
     # private: per-run timings, never committed with the aggregate or read by the rules; an import has none
     if runs:
         with open(os.path.join(out, name + ".runs.jsonl"), "w", encoding="utf-8") as f:
-            for run in runs:
-                f.write(json.dumps(run, sort_keys=True) + "\n")
+            f.writelines(json.dumps(run, sort_keys=True) + "\n" for run in runs)
     return os.path.join(out, name + ".json")
 
 
@@ -401,10 +445,11 @@ def import_msi(src, out, commit):
     so none is carried over. homelab-gitops is private, so this reads a checkout and only the aggregate is committed."""
     written = []
     for fname, model in (("ollama-qwen25c7.jsonl", "qwen2.5-coder:7b"), ("ollama-llama31.jsonl", "llama3.1:8b")):
-        rows = [json.loads(l) for l in open(os.path.join(src, fname), encoding="utf-8") if l.strip()]
+        data = Path(src, fname).read_bytes()
+        rows = [json.loads(l) for l in data.decode("utf-8").splitlines() if l.strip()]
         r = result("fit", "msi-ms7758", model, 16384, {"quant": "Q4_K_M"}, rows[0]["t"] if rows else 0, evidence="historical",
                    fixture={"name": f"homelab-gitops@{commit} docs/decisions/assets/colibri-msi/results/{fname}",
-                            "sha256": hashlib.sha256(open(os.path.join(src, fname), "rb").read()).hexdigest()},
+                            "sha256": hashlib.sha256(data).hexdigest()},
                    samples={"warm": len(rows), "cold": 0})
         r["metrics"] = {
             # the archived client's tokens over its own clock, not Ollama's eval timings
@@ -539,7 +584,9 @@ def main(argv=None):
     g.add_argument("--src", required=True, help="a G1 results directory: g1-*.jsonl and vram-*.csv")
     g.add_argument("--out", required=True)
     c = sub.add_parser("capacity")
-    c.add_argument("--base", required=True, help="OpenAI-compatible base: Ollama's /v1 or the gateway's /v1")
+    c.add_argument("--base", required=True, help="OpenAI-compatible base ending in /v1")
+    c.add_argument("--backend", choices=("ollama", "paddock"), default="ollama",
+                   help="direct backend metadata API; Paddock requires --route direct")
     c.add_argument("--host", required=True)
     c.add_argument("--model", required=True)
     # /v1 takes no num_ctx: the server's loaded context applies (asus: OLLAMA_CONTEXT_LENGTH 32768), so 8192 only
@@ -562,8 +609,9 @@ def main(argv=None):
     if a.cmd == "import-g1":
         print("\n".join(import_g1(a.src, a.out)))
     elif a.cmd == "capacity":
-        key = open(a.key_file, encoding="utf-8").read().strip() if a.key_file else None
-        print(write(capacity(a.base, a.host, a.model, a.ctx, a.route, key, a.max_agents, a.per_level), a.out))
+        key = Path(a.key_file).read_text(encoding="utf-8").strip() if a.key_file else None
+        print(write(capacity(a.base, a.host, a.model, a.ctx, a.route, key, a.max_agents, a.per_level,
+                             backend=a.backend), a.out))
     elif a.cmd == "import-msi":
         print("\n".join(import_msi(a.src, a.out, a.commit)))
     elif a.cmd == "mock":
