@@ -60,50 +60,77 @@ try:
         except OSError:
             pass
         time.sleep(2)
-    now = time.time_ns()
+    else:
+        raise SystemExit('Loki not ready after 180 s')
 
-    def compaction(at, **attributes):
-        return [str(now - at), json.dumps({'body': 'compaction', 'attributes': {'session.id': f's{at}', **attributes}})]
+    def push(streams):
+        urllib.request.urlopen(urllib.request.Request(
+            f'http://127.0.0.1:{LOKI}/loki/api/v1/push', data=json.dumps({'streams': streams}).encode(),
+            headers={'Content-Type': 'application/json'}), timeout=10)
 
-    # the stream labels and line shape scripts/test-alloy-otlp-log-loki.py holds alloy-otlp to
-    harness = {'event_name': 'compaction', 'exporter': 'OTLP', 'host_name': 'acer-swift', 'job': 'claude-code',
-               'level': 'INFO', 'observer': 'harness', 'service_name': 'claude-code'}
-    journal = {'job': 'host-journal', 'host': 'msi-ms7758', 'unit': 'init.scope'}
-    streams = [
-        {'stream': harness, 'values': [
-            compaction(5000, worker='herman', trigger='auto', pre_tokens='300000', post_tokens='20000'),
-            compaction(4000, worker='herman', trigger='auto'),
-            compaction(3000, worker='a1', trigger='auto'),
-            compaction(2000, worker='a1', trigger='manual'),
-            compaction(1000, trigger='auto'),
-        ]},
-        {'stream': journal, 'values': [
-            [str(now - 3000), 'nav-metrics.service: A process of this unit has been killed by the OOM killer.'],
-            [str(now - 2000), "nav-metrics.service: Failed with result 'oom-kill'."],
-            [str(now - 1000), 'run-u123.service: A process of this unit has been killed by the OOM killer.'],
-        ]},
-    ]
-    urllib.request.urlopen(urllib.request.Request(
-        f'http://127.0.0.1:{LOKI}/loki/api/v1/push', data=json.dumps({'streams': streams}).encode(),
-        headers={'Content-Type': 'application/json'}), timeout=10)
+    def compactions(host, events):
+        now = time.time_ns()
+        # the stream labels and line shape scripts/test-alloy-otlp-log-loki.py holds alloy-otlp to
+        stream = {'event_name': 'compaction', 'exporter': 'OTLP', 'host_name': host, 'job': 'claude-code',
+                  'level': 'INFO', 'observer': 'harness', 'service_name': 'claude-code'}
+        return {'stream': stream, 'values': [
+            [str(now - 1000 * (len(events) - i)),
+             json.dumps({'body': 'compaction', 'attributes': {'session.id': f's{i}', **a}})]
+            for i, a in enumerate(events)]}
 
-    query = urllib.parse.urlencode({'query': 'max_over_time(host_worker:claude_code_auto_compactions:count1m[10m])'})
-    want_recorded = {(('host', 'acer-swift'), ('worker', 'herman')): '2', (('host', 'acer-swift'), ('worker', 'a1')): '1',
-                     (('host', 'acer-swift'),): '1'}
-    want_alerts = {'nav-metrics.service', 'transient'}
-    recorded, fired = {}, set()
-    deadline = time.time() + 300
-    while time.time() < deadline and (recorded != want_recorded or fired != want_alerts):
-        time.sleep(10)
+    def journal(unit, lines):
+        now = time.time_ns()
+        return {'stream': {'job': 'host-journal', 'host': 'msi-ms7758', 'unit': unit},
+                'values': [[str(now - 1000 * (len(lines) - i)), line] for i, line in enumerate(lines)]}
+
+    oom = 'A process of this unit has been killed by the OOM killer.'
+    push([
+        compactions('acer-swift', [
+            dict(worker='herman', trigger='auto', pre_tokens='300000', post_tokens='20000'),
+            dict(worker='herman', trigger='auto'),
+            dict(worker='a1', trigger='auto'),
+            dict(worker='a1', trigger='manual'),
+            dict(worker='a1'),
+            dict(trigger='auto'),
+        ]),
+        compactions('lenovo-21cb001pmx', [dict(worker='w2', trigger='auto')]),
+        journal('init.scope', [f'nav-metrics.service: {oom}', "nav-metrics.service: Failed with result 'oom-kill'.",
+                               f'run-u123.service: {oom}', f'session-3.scope: {oom}']),
+        # a unit's own line quoting the text is no OOM kill
+        journal('quoting.service', [f'quoted.service: {oom}']),
+    ])
+    # a second batch a minute boundary later: counted once, in its own window
+    time.sleep(75)
+    push([compactions('acer-swift', [dict(worker='herman', trigger='auto')])])
+
+    query = urllib.parse.urlencode({'query': 'sum_over_time(host_worker:claude_code_auto_compactions:count1m[15m])'})
+    want_recorded = {(('host', 'acer-swift'), ('worker', 'herman')): '3', (('host', 'acer-swift'), ('worker', 'a1')): '1',
+                     (('host', 'acer-swift'),): '1', (('host', 'lenovo-21cb001pmx'), ('worker', 'w2')): '1'}
+    want_alerts = {'nav-metrics.service', 'transient', 'session'}
+
+    def read():
         result = json.loads(get(f'http://127.0.0.1:{PROM}/api/v1/query?{query}'))['data']['result']
-        recorded = {tuple(sorted(s['metric'].items())): s['value'][1] for s in result}
+        fired = set()
         for a in alerts:
             assert a['labels'] == {'alertname': 'UnitOOMKilled', 'node': 'msi-ms7758', 'oom_unit': a['labels'].get('oom_unit'),
                                    'severity': 'warning', 'team': 'homelab'}, a['labels']
+            assert 'OOM event(s) in' in a['annotations']['description'], a['annotations']
             fired.add(a['labels']['oom_unit'])
+        return {tuple(sorted(s['metric'].items())): s['value'][1] for s in result}, fired
+
+    recorded, fired = read()
+    deadline = time.time() + 300
+    while time.time() < deadline and (recorded != want_recorded or fired != want_alerts):
+        time.sleep(10)
+        recorded, fired = read()
     assert recorded == want_recorded, f'recorded {recorded}, want {want_recorded}'
     assert fired == want_alerts, f'fired {fired}, want {want_alerts}'
-    print('PASS: the ruler remote-writes auto compactions per host and worker and sends UnitOOMKilled per unit',
+    # past every window that could still hold the lines: an overlapping or repeated count shows here
+    time.sleep(150)
+    recorded, fired = read()
+    assert recorded == want_recorded, f'later recorded {recorded}, want {want_recorded}'
+    assert fired == want_alerts, f'later fired {fired}, want {want_alerts}'
+    print('PASS: the ruler remote-writes auto compactions once per host and worker and sends UnitOOMKilled per unit',
           flush=True)
 except BaseException:
     sys.stderr.write((root / 'loki.log').read_text()[-4000:])

@@ -188,13 +188,12 @@ in
         tracing.enabled = false;
         # https://grafana.com/docs/loki/latest/configure/#ruler
         ruler = lib.mkIf cfg.ruler.enable {
-          # a store path, <tenant>/<file>.yaml, read at start
+          # a store path, <tenant>/<file>.yaml: a rule change takes a deploy
           storage = {
             type = "local";
             local.directory = "${./monitoring/loki-rules}";
           };
           rule_path = "${dataDir}/ruler";
-          ring.kvstore.store = "inmemory";
           alertmanager_url = listeners.alertmanager.url;
           wal.dir = "${dataDir}/ruler-wal";
           remote_write = {

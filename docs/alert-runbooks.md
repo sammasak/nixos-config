@@ -4,18 +4,18 @@ One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modul
 and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
 each alert's `runbook_url` points at its heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
 
-Every homelab, Shunt and shipping alert carries the same annotations, held by the `monitoring-alert-annotations` check
+Every homelab, Shunt, shipping and Loki-ruler alert carries the same annotations, held by the `monitoring-alert-annotations` check
 (`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
 
 | annotation | holds |
 |---|---|
 | `summary` | one line: the symptom and the component |
 | `description` | the observed condition, its threshold and duration, the affected host or service, the first safe step |
-| `query` | the first diagnostic PromQL, runnable as is in Prometheus on black-pi (`{{ $labels.* }}` are filled in by Prometheus); the `grafana-dashboards` check parses it and holds its metric names and jobs |
+| `query` | the first diagnostic PromQL, runnable as is in Prometheus on black-pi (`{{ $labels.* }}` are filled in by Prometheus); the `grafana-dashboards` check parses it and holds its metric names and jobs. A Loki-ruler alert's is LogQL, for Grafana's Explore on the Loki data source, and that check does not read it |
 | `runbook_url` | a heading in a tracked doc of this repo, on `main` |
 
 The ntfy page (Alertmanager's webhook payload, `modules/homelab/monitoring/alertmanager.nix`) carries `summary`,
-`description` and `Query: <query>`, and a tap opens `runbook_url`; all four also show in Prometheus's alert view. Run the query at `http://192.168.10.137:9090/graph`.
+`description` and `Query: <query>`, and a tap opens `runbook_url`; all four also show in Prometheus's alert view. Run a PromQL query at `http://192.168.10.137:9090/graph`.
 
 ## HostExpectedOff
 
@@ -43,8 +43,9 @@ Do not: raise a `MemoryMax` before the journal shows which unit hit it.
 ## UnitOOMKilled
 
 Fires: systemd logged "A process of this unit has been killed by the OOM killer" for a system unit in the last 15
-minutes (Loki's ruler on black-pi; a `run-*` unit reads `transient`). It names the unit that NodeOOMKill only counts.
-Its `query` is LogQL: run it in Grafana's Explore on the Loki data source, not in Prometheus.
+minutes (Loki's ruler on black-pi; `run-*`, `session-*` and `systemd-coredump@*` fold as the journal collector folds them). It
+names the unit that NodeOOMKill only counts, so one kill pages both. Its `query` is LogQL, for Grafana's Explore.
+Not matched: kills by systemd-oomd, and user units (their journal is not shipped).
 First: on the host, `journalctl -u <unit> -b` and `systemctl show <unit> -p MemoryMax -p MemoryPeak`.
 Do not: raise the unit's `MemoryMax` before its journal shows what grew.
 
