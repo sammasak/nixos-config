@@ -128,6 +128,9 @@ in
     // {
       env = {
         DISABLE_ERROR_REPORTING = "1";
+        # A session resolves its Bash tool's shell once, at start; unset, it takes bash from the Home Manager
+        # profile, and a switch to a generation without it there fails every Bash call of every running session.
+        CLAUDE_CODE_SHELL = "/run/current-system/sw/bin/bash";
       }
       // lib.optionalAttrs hostOtel {
         # "1" forces every session to the default permission mode, ignoring

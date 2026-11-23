@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 COMMAND = "printenv OTEL_EXPORTER_OTLP_HEADERS"
+STABLE_SHELL = "/run/current-system/sw/bin/bash"
 
 
 class MockMessagesHandler(BaseHTTPRequestHandler):
@@ -24,16 +25,18 @@ class MockMessagesHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        self.server.request_count += 1
         request = json.loads(body)
-        if not self.server.tool_requested:
-            self.server.tool_requested = True
-            response = self.tool_response(request.get("model", "claude-opus-5-5"))
+        model = request.get("model", "claude-opus-5-5")
+        server = self.server
+        if server.issued:
+            server.results.append(self.find_tool_result(request.get("messages", [])))
+        if server.issued < len(server.commands):
+            if server.issued:
+                server.between_calls()
+            response = self.tool_response(model, server.issued, server.commands[server.issued])
+            server.issued += 1
         else:
-            self.server.tool_result = self.find_tool_result(request.get("messages", []))
-            result = self.server.tool_result
-            text = "CLEAN" if result == "CLEAN" else "LEAKED"
-            response = self.text_response(request.get("model", "claude-opus-5-5"), text)
+            response = self.text_response(model, "done")
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -51,15 +54,13 @@ class MockMessagesHandler(BaseHTTPRequestHandler):
                 if block.get("type") == "tool_result":
                     content = block.get("content", "")
                     if isinstance(content, str):
-                        text = content
-                    else:
-                        text = "".join(item.get("text", "") for item in content)
-                    return "LEAKED" if "NATIVE_OTLP_FAKE_TOKEN" in text else "CLEAN"
+                        return content
+                    return "".join(item.get("text", "") for item in content)
         return ""
 
-    def tool_response(self, model):
+    def tool_response(self, model, index, command):
         message = {
-            "id": "msg_test_tool",
+            "id": f"msg_test_tool_{index}",
             "type": "message",
             "role": "assistant",
             "model": model,
@@ -68,7 +69,7 @@ class MockMessagesHandler(BaseHTTPRequestHandler):
             "stop_sequence": None,
             "usage": {"input_tokens": 1, "output_tokens": 1},
         }
-        command = json.dumps({"command": COMMAND})
+        command = json.dumps({"command": command})
         return [
             ("message_start", {"type": "message_start", "message": message}),
             (
@@ -78,7 +79,7 @@ class MockMessagesHandler(BaseHTTPRequestHandler):
                     "index": 0,
                     "content_block": {
                         "type": "tool_use",
-                        "id": "toolu_test_env",
+                        "id": f"toolu_test_{index}",
                         "name": "Bash",
                         "input": {},
                     },
@@ -141,11 +142,12 @@ class MockMessagesHandler(BaseHTTPRequestHandler):
         return
 
 
-def run_case(claude, settings, extra_args):
+def run_case(claude, settings, extra_args, commands=(COMMAND,), between_calls=lambda: None, extra_env=None):
     server = ThreadingHTTPServer(("127.0.0.1", 0), MockMessagesHandler)
-    server.tool_requested = False
-    server.tool_result = None
-    server.request_count = 0
+    server.commands = list(commands)
+    server.between_calls = between_calls
+    server.issued = 0
+    server.results = []
     server.otlp_auth = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -180,6 +182,8 @@ def run_case(claude, settings, extra_args):
                 }
             )
             environment.pop("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", None)
+            environment.pop("CLAUDE_CODE_SHELL", None)
+            environment.update(extra_env or {})
             result = subprocess.run(
                 [
                     claude,
@@ -188,7 +192,7 @@ def run_case(claude, settings, extra_args):
                     "--tools",
                     "Bash",
                     "--allowedTools",
-                    "Bash(printenv OTEL_EXPORTER_OTLP_HEADERS)",
+                    *(f"Bash({command})" for command in commands),
                     "--output-format",
                     "stream-json",
                     "--verbose",
@@ -208,11 +212,24 @@ def run_case(claude, settings, extra_args):
         output = f"{result.stdout[-300:]}\n{result.stderr}"
         output = output.replace("NATIVE_OTLP_FAKE_TOKEN", "<fake-token>")
         output = output.replace("NATIVE_OTLP_FAKE_ANTHROPIC_KEY", "<fake-key>")
-        return mode, server.tool_result, authorized, output.strip()
+        return mode, server.results, authorized, output.strip()
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def shell_case(claude, settings):
+    """Two Bash calls; between them the shell the session would detect at start goes away, as a switch to a
+    generation whose Home Manager profile no longer carries it does."""
+    configured = json.loads(open(settings).read())["env"].get("CLAUDE_CODE_SHELL")
+    with tempfile.TemporaryDirectory(prefix="claude-shell-test-") as profile:
+        detected = os.path.join(profile, "bash")
+        os.symlink(os.path.realpath(shutil.which("bash")), detected)
+        _, results, _, output = run_case(
+            claude, settings, [], commands=("echo first-ok", "echo second-ok"),
+            between_calls=lambda: os.unlink(detected), extra_env={"SHELL": detected})
+    return configured, [r.strip() for r in results], output
 
 
 def main():
@@ -226,13 +243,21 @@ def main():
     for name, args, want in [("claude", [], "default"),
                              ("claude --dangerously-skip-permissions",
                               ["--dangerously-skip-permissions"], "bypassPermissions")]:
-        mode, result, authorized, output = run_case(claude, settings, args)
+        mode, results, authorized, output = run_case(claude, settings, args)
+        result = ("LEAKED" if "NATIVE_OTLP_FAKE_TOKEN" in results[0] else "CLEAN") if results else None
         ok = mode == want and result == "CLEAN" and authorized
         print(f"{'PASS' if ok else 'FAIL (scripts/test-native-otel-subprocess-env.py)'}: {name}: mode={mode} bash_otlp_header={result} "
               f"otlp_export_authorized={authorized}")
         if not ok:
             failures += 1
             print(output[-500:])
+    configured, results, output = shell_case(claude, settings)
+    ok = configured == STABLE_SHELL and results == ["first-ok", "second-ok"]
+    print(f"{'PASS' if ok else 'FAIL (scripts/test-native-otel-subprocess-env.py)'}: Bash after the session's "
+          f"startup shell path is gone: CLAUDE_CODE_SHELL={configured} results={results}")
+    if not ok:
+        failures += 1
+        print(output[-500:])
     if failures:
         raise SystemExit(f"{failures} case(s) failed")
 
