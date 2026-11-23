@@ -1,4 +1,4 @@
-# The execution pool's contract and queue, a library: the build is its tests (each against a throwaway PostgreSQL on a Unix
+# The execution pool's contract and queue CLI: the build is its tests (each against a throwaway PostgreSQL on a Unix
 # socket in the build directory), clippy with warnings denied and rustfmt.
 {
   lib,
@@ -34,19 +34,13 @@ rustPlatform.buildRustPackage {
     cargo fmt --check
     cargo clippy --offline --all-targets -- -D warnings
   '';
-  # cargo install refuses a crate with no binary
-  installPhase = ''
-    runHook preInstall
-    mkdir -p $out
-    cp Cargo.toml $out/
-    runHook postInstall
-  '';
   meta = {
     inherit (manifest) description;
     license = with lib.licenses; [
       mit
       asl20
     ];
+    mainProgram = "exec-pool-queue";
     platforms = lib.platforms.linux;
   };
 }

@@ -4,6 +4,7 @@
 //! transaction that also appends the event; a claim takes rows with `FOR UPDATE SKIP LOCKED`, so two claimers never
 //! get the same attempt.
 
+use std::fmt::Write as _;
 use std::str::FromStr;
 
 use postgres::config::Host;
@@ -23,6 +24,21 @@ const VERSION: i32 = 1;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
+/// The whole rendering while the database is unreachable: absent, not zero.
+pub const METRICS_UNAVAILABLE: &str = "# HELP exec_pool_queue_up Whether the queue database answered; \
+    without it the series below are absent.\n# TYPE exec_pool_queue_up gauge\nexec_pool_queue_up 0\n";
+
+const STATUSES: [Status; 8] = [
+    Status::Queued,
+    Status::Leased,
+    Status::Running,
+    Status::Checkpointing,
+    Status::Waiting,
+    Status::Succeeded,
+    Status::Failed,
+    Status::NeedsReview,
+];
+
 #[derive(Debug, thiserror::Error)]
 pub enum QueueError {
     #[error(transparent)]
@@ -634,6 +650,59 @@ impl Store {
                     write(tx, row, &event, None, 0).map(|(_, c)| c)
                 })
                 .collect()
+        })
+    }
+
+    /// The queue's counters in the Prometheus text format, for a textfile collector. Labels are states and reason
+    /// codes only. With the database unreachable, render [`METRICS_UNAVAILABLE`] instead.
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn metrics(&mut self) -> Result<String, QueueError> {
+        self.tx(|tx| {
+            let mut out = String::from(
+                "# HELP exec_pool_queue_up Whether the queue database answered; without it the series below are absent.\n\
+                 # TYPE exec_pool_queue_up gauge\nexec_pool_queue_up 1\n\
+                 # HELP exec_pool_attempts Attempts by state.\n# TYPE exec_pool_attempts gauge\n",
+            );
+            let counts = tx.query("SELECT status, count(*) FROM attempts GROUP BY status", &[])?;
+            for s in STATUSES {
+                let name = status_str(s);
+                let mut n = 0_i64;
+                for r in &counts {
+                    if r.try_get::<_, &str>(0)? == name {
+                        n = r.try_get(1)?;
+                    }
+                }
+                let _ = writeln!(out, "exec_pool_attempts{{state=\"{name}\"}} {n}");
+            }
+            let oldest: f64 = tx
+                .query_one(
+                    "SELECT coalesce(extract(epoch FROM now() - min(changed_at)), 0)::float8 \
+                     FROM attempts WHERE status = 'queued'",
+                    &[],
+                )?
+                .try_get(0)?;
+            let _ = write!(
+                out,
+                "# HELP exec_pool_queued_oldest_seconds Age of the oldest queued attempt (0 with none).\n\
+                 # TYPE exec_pool_queued_oldest_seconds gauge\nexec_pool_queued_oldest_seconds {oldest}\n\
+                 # HELP exec_pool_transitions_total State changes by from, to and reason.\n\
+                 # TYPE exec_pool_transitions_total counter\n"
+            );
+            for r in tx.query(
+                "SELECT coalesce(from_status, 'none'), to_status, reason, count(*) FROM events \
+                 GROUP BY 1, 2, 3 ORDER BY 1, 2, 3",
+                &[],
+            )? {
+                let (from, to, why, n): (&str, &str, &str, i64) =
+                    (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
+                let _ = writeln!(
+                    out,
+                    "exec_pool_transitions_total{{from=\"{from}\",to=\"{to}\",reason=\"{why}\"}} {n}"
+                );
+            }
+            Ok(out)
         })
     }
 }
