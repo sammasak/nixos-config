@@ -169,6 +169,22 @@ let
       ];
       reason = "rules rules-rule-unknown-job SeedTargetDown: job 'kube-state-metrics': no scrape job";
     };
+    # an alert's first diagnostic query on a metric nothing exports
+    rule-query-unknown-metric = {
+      rules.groups = [
+        {
+          name = "seed";
+          rules = [
+            {
+              alert = "SeedQuery";
+              expr = ''up{job="node-exporter"} == 0'';
+              annotations.query = ''node_no_such_metric{node="{{ $labels.node }}"}'';
+            }
+          ];
+        }
+      ];
+      reason = "rules rules-rule-query-unknown-metric SeedQuery query: unknown metric node_no_such_metric";
+    };
     # a name the running Prometheus does not export
     prometheus-typo = {
       dashboard = seed "prometheus_tsdb_head_seriez" "prometheus";

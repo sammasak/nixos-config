@@ -82,6 +82,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
     "Alerts firing" count, and on the Hosts dashboard's hottest sensor.
   - GpuThermalThrottling (warning, 10 m): the GPU reports hardware thermal slowdown
     (`nvidia_smi_clocks_event_reasons_hw_thermal_slowdown`).
+- Each homelab and shipping alert's `runbook_url` and first diagnostic `query`: [alert-runbooks.md](alert-runbooks.md).
 - The upstream Prometheus and Alertmanager rules leave out what this deployment cannot fire: the cluster-consistency
   and remote-write/service-discovery alerts. Assertions in `alertmanager.nix` and `prometheus.nix` keep it unclustered
   and static, and name the rules to restore if that changes.
@@ -94,6 +95,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
 | `grafana-dashboard-removal` | Grafana itself, with black-pi's provider settings, deletes a removed file's dashboard and keeps ids across a restart |
 | `gpu-telemetry-exporter` | the GPU exporter's fields against a fake nvidia-smi that heads the throttle fields `clocks_event_reasons`, as asus's driver does |
 | `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` and `severity="info"` reach no one, NodeTemperatureHigh and a warning reach the bridge, and the same alert without the label would notify |
+| `monitoring-alert-annotations` | every homelab and shipping alert carries `summary`, `description`, `query` and a `runbook_url` naming a heading in a tracked doc ([alert-runbooks.md](alert-runbooks.md)); a seed without a query and one with a dangling anchor fail it. The `grafana-dashboards` check holds each `query`'s PromQL and names |
 | `monitoring-rules-tests` | `promtool test rules` on every file in `modules/homelab/monitoring/rules/tests`, against `homelab.yaml` as rendered |
 | `monitoring-config-msi-ms7758`, `monitoring-rules-sleeping-hosts` | black-pi's Prometheus, Alertmanager and blackbox configs checked on an x86 seed; the sleeping-host rules per host |
 | `loki-config-msi-ms7758`, `journal-collector-config-black-pi` | Loki's config and the Pi's journal collector, on x86 |
