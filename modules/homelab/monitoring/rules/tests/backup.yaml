@@ -1,0 +1,28 @@
+# promtool test rules for homelab.yaml's backup freshness alert (flake-modules/monitoring-check.nix runs it).
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  - interval: 5m
+    input_series:
+      # succeeded at the epoch, then never again
+      - series: 'homelab_backup_last_success_timestamp_seconds{job="node-exporter",node="acer-swift",backup="authentik-backup",validation="archive_list"}'
+        values: '0x500'
+      # daily, as its timer runs it
+      - series: 'homelab_backup_last_success_timestamp_seconds{job="node-exporter",node="acer-swift",backup="open-webui-backup",validation="scratch_restore"}'
+        values: '0x287 86400x287 172800x100'
+      # a host that powers off: its series end with its scrape, and an old success does not page
+      - series: 'homelab_backup_last_success_timestamp_seconds{job="node-exporter",node="msi-ms7758",sleeps="true",backup="seed-backup",validation="archive_list"}'
+        values: '0x96'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: BackupStale
+        exp_alerts: []
+      - eval_time: 37h
+        alertname: BackupStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: acer-swift, backup: authentik-backup, validation: archive_list}
+            exp_annotations:
+              summary: "Backup authentik-backup on acer-swift has not succeeded for 1d 13h 0m 0s"
+              description: "The last recorded success of authentik-backup (archive_list) on acer-swift is 1d 13h 0m 0s old, over 36 hours for a daily job. Run systemctl list-timers authentik-backup and journalctl -u authentik-backup -n 50 there."
+              query: 'time() - homelab_backup_last_success_timestamp_seconds{job="node-exporter",node="acer-swift"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupstale"

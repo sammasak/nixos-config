@@ -1,0 +1,72 @@
+# promtool test rules for homelab.yaml's journal delivery alerts (flake-modules/monitoring-check.nix runs it).
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",instance="lenovo-21CB001PMX",node="lenovo-21CB001PMX"}'
+        values: '1x60'
+      - series: 'homelab_journal_writer_dropped_entries_total{job="node-exporter",instance="lenovo-21CB001PMX",node="lenovo-21CB001PMX",reason="rate_limited"}'
+        values: '0x10 5x50'
+      # msi drops entries as it powers off at minute 12: the samples stay in the range, the host is down
+      - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '1x12 0x48'
+      - series: 'homelab_journal_writer_dropped_entries_total{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true",reason="queue_is_full"}'
+        values: '0x10 7x2'
+    alert_rule_test:
+      - eval_time: 13m
+        alertname: JournalEntriesDropped
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: JournalEntriesDropped
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, instance: lenovo-21CB001PMX, node: lenovo-21CB001PMX, reason: rate_limited}
+            exp_annotations:
+              summary: "Alloy on lenovo-21CB001PMX dropped journal entries (rate_limited)"
+              description: "Alloy's Loki writer on lenovo-21CB001PMX discarded 5 journal entries in the last 15 minutes with reason rate_limited: those lines never reach Loki. Run journalctl -u alloy --since -30m there."
+              query: 'increase(homelab_journal_writer_dropped_entries_total{job="node-exporter",node="lenovo-21CB001PMX"}[1h])'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#journalentriesdropped"
+      - eval_time: 40m
+        alertname: JournalEntriesDropped
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      # collector runs each minute, then its timer dies at minute 10 and the last file stays
+      - series: 'homelab_journal_metrics_collection_success{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '1x40'
+      - series: 'homelab_journal_metrics_collection_timestamp_seconds{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '0+60x10 600x30'
+      # Alloy unreachable from minute 10: each attempt is fresh but fails
+      - series: 'homelab_journal_metrics_collection_success{job="node-exporter",instance="lenovo-21CB001PMX",node="lenovo-21CB001PMX"}'
+        values: '1x10 0x30'
+      - series: 'homelab_journal_metrics_collection_timestamp_seconds{job="node-exporter",instance="lenovo-21CB001PMX",node="lenovo-21CB001PMX"}'
+        values: '0+60x40'
+      # healthy, and msi just woken: its first collection lands 2 minutes after boot
+      - series: 'homelab_journal_metrics_collection_success{job="node-exporter",instance="black-pi",node="black-pi"}'
+        values: '1x40'
+      - series: 'homelab_journal_metrics_collection_timestamp_seconds{job="node-exporter",instance="black-pi",node="black-pi"}'
+        values: '0+60x40'
+      - series: 'homelab_journal_metrics_collection_success{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '_x20 0x2 1x18'
+      - series: 'homelab_journal_metrics_collection_timestamp_seconds{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '_x20 1200+60x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: JournalMetricsStale
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: JournalMetricsStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "Journal delivery counters on acer-swift are failing or stale"
+              description: "journal-metrics on acer-swift has had no successful collection from Alloy within 3 minutes, for 10 minutes, so JournalEntriesDropped cannot see that host's journal loss. Run systemctl status journal-metrics alloy there."
+              query: '{__name__=~"homelab_journal_metrics_collection_.+",job="node-exporter",node="acer-swift"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#journalmetricsstale"
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "Journal delivery counters on lenovo-21CB001PMX are failing or stale"
+              description: "journal-metrics on lenovo-21CB001PMX has had no successful collection from Alloy within 3 minutes, for 10 minutes, so JournalEntriesDropped cannot see that host's journal loss. Run systemctl status journal-metrics alloy there."
+              query: '{__name__=~"homelab_journal_metrics_collection_.+",job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#journalmetricsstale"

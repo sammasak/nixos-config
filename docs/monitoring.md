@@ -76,6 +76,9 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   - NodeSystemdUnitFailed (warning, 15 m): any failed service, socket, timer, target or path unit.
   - DnsDown (critical, 5 m): lenovo's AdGuard does not answer its status API.
   - DnsStatsStale (warning): `adguard.prom` has not been rewritten for over 5 min.
+  - JournalEntriesDropped (warning, 5 m): Alloy's Loki writer dropped journal entries in the last 15 min on a host that is up.
+  - JournalMetricsStale (warning, 10 m): the journal-metrics collection failed or is over 180 s old.
+  - BackupStale (warning, 10 m): a daily backup's last recorded success is over 36 h old.
   - NodeTemperatureHigh (warning, 15 m): the Pi's `cpu-thermal` zone at 85 °C or more. x86 zones page no one.
   - NodeSensorNearCritical (warning, 15 m, `notify="none"`): an hwmon sensor within 5 °C of its own critical mark.
     msi and lenovo reach it through every gate, so it notifies no one. It shows in the alert list, in Fleet's
