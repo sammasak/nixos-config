@@ -3,21 +3,27 @@
 delegation they redirect to decided in the last 24 h, from the owner's Claude Code hook log
 ($XDG_STATE_HOME/claude-hooks/<UTC date>.jsonl, which the skills repo's hooks/lib/log.sh appends), as one
 Prometheus textfile. Counts and sums only: no session id, path, command or excerpt leaves the process; the only labels
-are hook and result from fixed sets (a result outside its hook's set is "other"), kind, quantile and status.
+are hook and result from fixed sets (a result outside its hook's set is "other"), kind, quantile and status, and on
+every series shunt (on or off, the declared sam.claude.bulkReader.enable from the host's argv) and, for a guest, worker.
 
 The sizes are the hooks' own: shunt-read and shunt-bash estimate the tokens a read would put in context (0 for a
 decision made before it measured, such as mode or source), shunt-spill counts the output's chars and the excerpt's.
 "Returned" is what the session got: a redirected read returns nothing, a spilled output its excerpt. That is a
 context-volume proxy, not billed tokens, and a bypass (the same file read again after its redirect) undoes the
-saving its redirect showed, so it is reported apart.
+saving its redirect showed, so it is reported apart. bulk-read's child tokens and cost are what its records report.
+validate-bash logs every Bash call, Shunt on or off: its count and newest timestamp are the activity both compare by.
 
-A day with no Shunt record writes no event series, only the collector's line and file counts: idle is a known
-count of lines, not a fabricated zero. The newest record's timestamp per hook carries over from the previous file
+A day with no Shunt record writes no event series, only the sums (0) and the collector's line and file counts: idle
+is a known count of lines, not a fabricated zero per result. The newest record's timestamp per hook carries over from the previous file
 when the window holds none, so a hook that stopped logging shows its age. A run that fails writes
 shunt_collector_failed 1 and keeps the previous success and last-record timestamps. Exits 0 whenever it could write
 the file. Identical lines are not merged: two decisions in the same second can log the same line.
 
-Usage: shunt-metrics.py --out FILE [--log-dir DIR] [--hours 24]
+With --worker, a dev-environment guest's log instead, `<state-dir>/<name>/home/.local/state/claude-hooks`, which the
+guest controls: no directory on that path and no day file is opened through a link.
+
+Usage: shunt-metrics.py --out FILE --shunt on|off [--log-dir DIR] [--hours 24]
+       shunt-metrics.py --out FILE --shunt on|off --state-dir DIR --worker NAME [--hours 24]
        shunt-metrics.py --list   (the metric names it can emit, one per line)"""
 import argparse
 import json
@@ -34,6 +40,10 @@ METRICS = {
     "shunt_events": "Shunt hook decisions, by hook and result. A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.",
     "shunt_read_tokens": "Tokens the read hooks estimated: seen (every decision), returned (all but redirects) and bypassed (re-reads let through after a redirect, a saving undone; absent until one happens). A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.",
     "shunt_spill_chars": "Bash output chars: seen (every spill decision) and returned (the excerpt of a spilled output, the whole of any other). A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.",
+    "shunt_bulk_read_tokens": "Tokens bulk-read's child model reported (input, output, cache_read, cache_creation), summed over the window's delegations; a record without usage adds none. A 24 h rolling sum, refreshed every 15 min.",
+    "shunt_bulk_read_cost_usd": "The cost bulk-read's child model reported, summed over the window's delegations. A 24 h rolling sum, refreshed every 15 min.",
+    "shunt_bash_calls": "validate-bash records in the window: the agent's Bash calls, logged with Shunt on or off. A 24 h rolling sum, refreshed every 15 min.",
+    "shunt_bash_last_call_timestamp_seconds": "Unix time of the newest validate-bash record (the agent's last Bash call), carried over while the window holds none.",
     "shunt_hook_duration_ms": "A Shunt hook's own run time in the window, by quantile.",
     "shunt_last_record_timestamp_seconds": "Unix time of the hook's newest record, carried over while the window holds none.",
     "shunt_collector_lines": "Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line) or over_cap.",
@@ -53,6 +63,10 @@ RESULTS = {
                             "output_limit", "private", "rate_limited", "secret", "sensitive", "timeout"}),
 }
 READ_HOOKS = ("shunt-read", "shunt-bash")
+# bulk-read.sh's usage fields, by kind
+CHILD_TOKENS = {"input": "input_tokens", "output": "output_tokens", "cache_read": "cache_read_input_tokens",
+                "cache_creation": "cache_creation_input_tokens"}
+BASH_HOOK = "validate-bash"
 LINE_STATUS = ("shunt", "other", "malformed", "overlong", "partial", "over_cap")
 FILE_STATUS = ("read", "missing", "refused", "too_large")
 QUANTILES = (0.5, 0.95)
@@ -62,14 +76,18 @@ FILE_MAX = 64 * 1024 * 1024
 RECORDS_MAX = 200_000
 DEADLINE_SECONDS = 60  # the unit's TimeoutStartSec is above this
 TS_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+WORKER_RE = re.compile(r"[a-z][a-z0-9-]{0,10}")
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 class Out:
-    def __init__(self) -> None:
+    def __init__(self, **labels: str) -> None:
         self.lines: dict[str, list[str]] = {}
+        self.labels = labels
 
     def add(self, name: str, value: float, **labels: str) -> None:
         assert name in METRICS, f"{name} is not in METRICS"
+        labels = {**self.labels, **labels}
         lab = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
         self.lines.setdefault(name, []).append(f"{name}{{{lab}}} {value:.15g}" if lab else f"{name} {value:.15g}")
 
@@ -85,6 +103,9 @@ class Tally:
     events: dict[tuple[str, str], int] = field(default_factory=dict)
     tokens: dict[tuple[str, str], int] = field(default_factory=dict)
     chars: dict[str, int] = field(default_factory=lambda: {"seen": 0, "returned": 0})
+    child_tokens: dict[str, int] = field(default_factory=lambda: dict.fromkeys(CHILD_TOKENS, 0))
+    cost: float = 0.0
+    bash_calls: int = 0
     durations: dict[str, list[int]] = field(default_factory=dict)
     last: dict[str, float] = field(default_factory=dict)
     lines: dict[str, int] = field(default_factory=lambda: dict.fromkeys(LINE_STATUS, 0))
@@ -121,7 +142,13 @@ def add_record(t: Tally, rec: object, since: float, now: float) -> str:
     hook, ts = rec.get("hook"), stamp(rec.get("ts"))
     if not isinstance(hook, str) or ts is None:
         return "malformed"
-    if hook not in RESULTS or not since <= ts <= now:
+    if not since <= ts <= now:
+        return "other"
+    if hook == BASH_HOOK:
+        t.bash_calls += 1
+        t.last[hook] = max(t.last.get(hook, ts), ts)
+        return "other"
+    if hook not in RESULTS:
         return "other"
     if t.kept >= RECORDS_MAX:
         return "over_cap"
@@ -142,23 +169,50 @@ def add_record(t: Tally, rec: object, since: float, now: float) -> str:
         chars = count(rec, "chars")
         t.chars["seen"] += chars
         t.chars["returned"] += count(rec, "excerpt_chars") if result == "spilled" else chars
+    elif hook == "bulk-read":
+        for kind, key in CHILD_TOKENS.items():
+            t.child_tokens[kind] += count(rec, key)
+        cost = rec.get("cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and 0 <= cost < 1e6:
+            t.cost += cost
     return "shunt"
 
 
-def day_files(log_dir: str, since: float, now: float) -> list[str]:
+def day_files(since: float, now: float) -> list[str]:
     """The day files the window spans, oldest first: the hooks name each by its UTC date."""
     days, day = [], int(since // 86400)
     while day <= now // 86400:
-        days.append(os.path.join(log_dir, time.strftime("%Y-%m-%d.jsonl", time.gmtime(day * 86400))))
+        days.append(time.strftime("%Y-%m-%d.jsonl", time.gmtime(day * 86400)))
         day += 1
     return days
 
 
-def lines_of(path: str, t: Tally, deadline: float) -> Iterator[bytes]:
+def open_log_dir(parts: list[str]) -> int | None:
+    """The log directory's fd, each component opened from its parent's with O_NOFOLLOW; None when it is missing.
+    A link or non-directory on the path raises OSError."""
+    fd = os.open(parts[0], DIR_FLAGS)
+    try:
+        for part in parts[1:]:
+            nxt = os.open(part, DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+    except FileNotFoundError:
+        os.close(fd)
+        return None
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def lines_of(name: str, dir_fd: int | None, t: Tally, deadline: float) -> Iterator[bytes]:
     """The file's whole lines, never through a link or from anything but a regular file (O_NONBLOCK: a FIFO cannot
     hold the open); a line over LINE_MAX and an unterminated last line are counted, not returned."""
+    if dir_fd is None:
+        t.files["missing"] += 1
+        return
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
     except FileNotFoundError:
         t.files["missing"] += 1
         return
@@ -195,16 +249,29 @@ def lines_of(path: str, t: Tally, deadline: float) -> Iterator[bytes]:
             t.lines["overlong"] += 1
 
 
-def scan(log_dir: str, since: float, now: float, deadline: float) -> Tally:
+def scan(log_dir: list[str], since: float, now: float, deadline: float) -> Tally:
+    """The window's records under the directory `log_dir` names (its path components, the first absolute)."""
     t = Tally()
-    for path in day_files(log_dir, since, now):
-        for raw in lines_of(path, t, deadline):
-            try:
-                rec = json.loads(raw)
-            except (ValueError, RecursionError):
-                t.lines["malformed"] += 1
-                continue
-            t.lines[add_record(t, rec, since, now)] += 1
+    try:
+        dir_fd = open_log_dir(log_dir)
+    except FileNotFoundError:
+        dir_fd = None
+    except OSError:
+        # a link or non-directory on the path: every day file refused unread
+        t.files["refused"] += len(day_files(since, now))
+        return t
+    try:
+        for name in day_files(since, now):
+            for raw in lines_of(name, dir_fd, t, deadline):
+                try:
+                    rec = json.loads(raw)
+                except (ValueError, RecursionError):
+                    t.lines["malformed"] += 1
+                    continue
+                t.lines[add_record(t, rec, since, now)] += 1
+    finally:
+        if dir_fd is not None:
+            os.close(dir_fd)
     return t
 
 
@@ -215,33 +282,45 @@ def previous(path: str) -> tuple[float | None, dict[str, float]]:
             text = f.read()
     except OSError:
         return None, {}
-    ok = re.search(r"^shunt_collector_success_timestamp_seconds (\S+)$", text, re.MULTILINE)
+    ok = re.search(r"^shunt_collector_success_timestamp_seconds(?:\{[^}]*\})? (\S+)$", text, re.MULTILINE)
+    bash = re.search(r"^shunt_bash_last_call_timestamp_seconds(?:\{[^}]*\})? (\S+)$", text, re.MULTILINE)
     # a corrupt file is no previous one: raising here would fail every later run
     try:
         last = {m[1]: float(m[2]) for m in re.finditer(
-            r'^shunt_last_record_timestamp_seconds\{hook="([a-z-]+)"\} (\S+)$', text, re.MULTILINE) if m[1] in RESULTS}
+            r'^shunt_last_record_timestamp_seconds\{hook="([a-z-]+)"[^}]*\} (\S+)$', text, re.MULTILINE)
+            if m[1] in RESULTS}
+        if bash:
+            last[BASH_HOOK] = float(bash[1])
         return (float(ok[1]) if ok else None), last
     except ValueError:
         return None, {}
 
 
-def render(t: Tally | None, success: float | None, last: dict[str, float]) -> Out:
-    """The textfile for a run's tally, or for a failed run (None) the previous timestamps alone."""
-    out = Out()
+def render(t: Tally | None, success: float | None, last: dict[str, float], **labels: str) -> Out:
+    """The textfile for a run's tally, or for a failed run (None) the previous timestamps alone; `labels` on every
+    series."""
+    out = Out(**labels)
     if t is not None:
         for (hook, result), n in sorted(t.events.items()):
             out.add("shunt_events", n, hook=hook, result=result)
-        for (hook, kind), n in sorted(t.tokens.items()):
+        tokens = {**{(h, k): 0 for h in READ_HOOKS for k in ("seen", "returned")}, **t.tokens}
+        for (hook, kind), n in sorted(tokens.items()):
             out.add("shunt_read_tokens", n, hook=hook, kind=kind)
-        if any(hook == "shunt-spill" for hook, _ in t.events):
-            for kind, n in t.chars.items():
-                out.add("shunt_spill_chars", n, kind=kind)
+        for kind, n in t.chars.items():
+            out.add("shunt_spill_chars", n, kind=kind)
+        for kind, n in t.child_tokens.items():
+            out.add("shunt_bulk_read_tokens", n, kind=kind)
+        out.add("shunt_bulk_read_cost_usd", round(t.cost, 6))
+        out.add("shunt_bash_calls", t.bash_calls)
         for hook, ds in sorted(t.durations.items()):
             for q in QUANTILES:
                 out.add("shunt_hook_duration_ms", quantile(ds, q), hook=hook, quantile=str(q))
         last = {**last, **{h: max(ts, last.get(h, ts)) for h, ts in t.last.items()}}
     for hook, ts in sorted(last.items()):
-        out.add("shunt_last_record_timestamp_seconds", ts, hook=hook)
+        if hook == BASH_HOOK:
+            out.add("shunt_bash_last_call_timestamp_seconds", ts)
+        else:
+            out.add("shunt_last_record_timestamp_seconds", ts, hook=hook)
     if t is not None:
         for status, n in t.lines.items():
             out.add("shunt_collector_lines", n, status=status)
@@ -258,23 +337,37 @@ def default_log_dir() -> str:
     return os.path.join(state, "claude-hooks")
 
 
+def worker_name(s: str) -> str:
+    if not WORKER_RE.fullmatch(s):
+        raise argparse.ArgumentTypeError(f"{s!r} is not an instance name ([a-z][a-z0-9-]{{0,10}})")
+    return s
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--list", action="store_true")
     p.add_argument("--out")
+    p.add_argument("--shunt", choices=("on", "off"), help="the declared sam.claude.bulkReader.enable of the log's agent")
     p.add_argument("--log-dir", default=default_log_dir())
+    p.add_argument("--state-dir", help="the dev environments' state dir: <state-dir>/<worker>/home is a guest's home")
+    p.add_argument("--worker", type=worker_name, help="a declared instance")
     p.add_argument("--hours", type=float, default=24)
     a = p.parse_args(argv)
     if a.list:
         print("\n".join(METRICS))
         return 0
-    if not a.out:
-        p.error("--out is required")
+    if not (a.out and a.shunt):
+        p.error("--out and --shunt are required")
+    if bool(a.worker) != bool(a.state_dir) or (a.state_dir and not os.path.isabs(a.state_dir)):
+        p.error("--worker needs an absolute --state-dir, and --state-dir a --worker")
+    log_dir = ([a.state_dir, a.worker, "home", ".local", "state", "claude-hooks"] if a.worker
+               else [os.path.abspath(a.log_dir)])
+    labels = {"shunt": a.shunt, **({"worker": a.worker} if a.worker else {})}
     now = time.time()
     success, last = previous(a.out)
     t: Tally | None
     try:
-        t = scan(a.log_dir, now - a.hours * 3600, now, time.monotonic() + DEADLINE_SECONDS)
+        t = scan(log_dir, now - a.hours * 3600, now, time.monotonic() + DEADLINE_SECONDS)
         success = now
     # any error, an unexpected log shape included, costs this run its update and nothing else
     except Exception as e:  # noqa: BLE001
@@ -283,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         t = None
     tmp = f"{a.out}.tmp"
     with open(tmp, "w") as f:
-        f.write(render(t, success, last).text())
+        f.write(render(t, success, last, **labels).text())
     os.replace(tmp, a.out)
     return 0
 

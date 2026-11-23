@@ -18,6 +18,11 @@
   ];
 
   homelab.journalCollector.enable = true;
+  homelab.shuntMetrics.enable = true;
+  # Shunt on for worker a1 alone; herman and the host stay off, so the collector compares on and off (#625)
+  services.devEnvironments.guestModules = [
+    ({ devEnvironment, ... }: { sam.claude.bulkReader.enable = devEnvironment.name == "a1"; })
+  ];
 
   sam.profile = {
     username = "lukas";
