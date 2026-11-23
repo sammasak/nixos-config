@@ -29,6 +29,7 @@ let
   unit = config.systemd.services.loki;
   # the firewall admits sam.fleet.loki's callers here (modules/core/network.nix)
   served = config.sam.fleet.loki.host == config.networking.hostName;
+  inherit (config.sam.fleet) listeners;
 in
 {
   options.homelab.loki = {
@@ -58,6 +59,10 @@ in
       defaultText = lib.literalExpression "config.sam.fleet.pageUrl";
       description = "ntfy topic URL paged when Loki fails.";
     };
+    ruler.enable = lib.mkEnableOption ''
+      Loki's ruler on the rules in modules/homelab/monitoring/loki-rules: alerts to sam.fleet.listeners.alertmanager,
+      recordings by remote write to sam.fleet.listeners.prometheus, both served on this host
+    '';
   };
 
   config = lib.mkIf cfg.enable {
@@ -92,6 +97,16 @@ in
             + unit.serviceConfig.TimeoutStopSec
           ) <= unit.startLimitIntervalSec;
         message = "homelab.loki: startLimitBurst starts of TimeoutStartSec + RestartSec + TimeoutStopSec each must fit in startLimitIntervalSec, or a start loop never fails the unit and never pages.";
+      }
+      {
+        # to this host's own address the kernel delivers on lo, so neither listener needs this host in `from`
+        assertion =
+          cfg.ruler.enable
+          -> lib.all (l: l.host == config.networking.hostName) [
+            listeners.alertmanager
+            listeners.prometheus
+          ];
+        message = "homelab.loki.ruler: Alertmanager and Prometheus are not served on ${config.networking.hostName}; add it to their sam.fleet.listeners `from` before moving the ruler.";
       }
     ];
 
@@ -171,6 +186,22 @@ in
         ingester.wal.replay_memory_ceiling = "512MB";
         query_range.align_queries_with_step = true;
         tracing.enabled = false;
+        # https://grafana.com/docs/loki/latest/configure/#ruler
+        ruler = lib.mkIf cfg.ruler.enable {
+          # a store path, <tenant>/<file>.yaml, read at start
+          storage = {
+            type = "local";
+            local.directory = "${./monitoring/loki-rules}";
+          };
+          rule_path = "${dataDir}/ruler";
+          ring.kvstore.store = "inmemory";
+          alertmanager_url = listeners.alertmanager.url;
+          wal.dir = "${dataDir}/ruler-wal";
+          remote_write = {
+            enabled = true;
+            clients.prometheus.url = "${listeners.prometheus.url}/api/v1/write";
+          };
+        };
       };
     };
 

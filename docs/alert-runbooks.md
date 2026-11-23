@@ -1,6 +1,7 @@
 # Alert runbooks
 
-One section per alert in `modules/homelab/monitoring/rules/homelab.yaml` and `modules/homelab/monitoring/rules/shunt.yaml`;
+One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modules/homelab/monitoring/rules/shunt.yaml`
+and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
 each alert's `runbook_url` points at its heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
 
 Every homelab, Shunt and shipping alert carries the same annotations, held by the `monitoring-alert-annotations` check
@@ -38,6 +39,14 @@ First: on the host, `systemctl status prometheus-nvidia-gpu-exporter` and `nvidi
 Fires: `node_vmstat_oom_kill` increased in the last 15 minutes.
 First: on the host, `journalctl -k --since -1h | grep -i 'killed process'` names the process and its cgroup.
 Do not: raise a `MemoryMax` before the journal shows which unit hit it.
+
+## UnitOOMKilled
+
+Fires: systemd logged "A process of this unit has been killed by the OOM killer" for a system unit in the last 15
+minutes (Loki's ruler on black-pi; a `run-*` unit reads `transient`). It names the unit that NodeOOMKill only counts.
+Its `query` is LogQL: run it in Grafana's Explore on the Loki data source, not in Prometheus.
+First: on the host, `journalctl -u <unit> -b` and `systemctl show <unit> -p MemoryMax -p MemoryPeak`.
+Do not: raise the unit's `MemoryMax` before its journal shows what grew.
 
 ## NodeSystemdUnitFailed
 

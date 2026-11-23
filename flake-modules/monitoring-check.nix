@@ -267,13 +267,13 @@ in
               fi
               touch $out
             '';
-        # docs/alert-runbooks.md's contract on the homelab, shipping and Shunt alerts, and each seed failing it
+        # docs/alert-runbooks.md's contract on the homelab, shipping, Shunt and Loki-ruler alerts, and each seed failing it
         monitoring-alert-annotations =
           pkgs.runCommand "monitoring-alert-annotations"
             { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.pyyaml ])) ]; }
             ''
               check() { python3 -I ${../scripts/check-alert-annotations.py} ${../docs} "$@"; }
-              check ${homelabRules.file} ${shippingRules} ${../modules/homelab/monitoring/rules/shunt.yaml}
+              check ${homelabRules.file} ${shippingRules} ${../modules/homelab/monitoring/rules/shunt.yaml} ${../modules/homelab/monitoring/loki-rules/fake/homelab.yaml}
               ${lib.concatStrings (
                 lib.mapAttrsToList (name: s: ''
                   if check ${
