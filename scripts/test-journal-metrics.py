@@ -127,6 +127,8 @@ class CollectorTests(unittest.TestCase):
                 self.assertIn('--server.http.listen-addr=127.0.0.1:12345', facts['flags'])
                 self.assertIn('--collector.textfile.directory=/run/journal-metrics', facts['nodeFlags'])
                 self.assertIn('http://127.0.0.1:12345/metrics', unit['ExecStart'])
+                self.assertIn('alloy.service', facts['after'])
+                self.assertIn('alloy.service', facts['wants'])
                 self.assertEqual(unit['MemoryMax'], '16M')
                 self.assertEqual(unit['MemorySwapMax'], 0)
                 self.assertFalse(unit['DynamicUser'])
