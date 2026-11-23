@@ -176,7 +176,8 @@ log successfully for over 45 minutes, its runs kept failing for 20 minutes, or i
 `/var/lib/shunt-metrics/shunt.prom`; with a worker label, the same for that guest's
 `shunt-metrics-guest-<worker>.service`. A sleeping or disabled host never fires: the alert reads the collector's own
 series and unit. The Shunt panels on Agent harnesses and ShuntDelegationFailing are blind while it fires.
-First: on the host, `systemctl status shunt-metrics.timer shunt-metrics.service` and `journalctl -u shunt-metrics.service`;
+First: on the host, `systemctl status shunt-metrics.timer shunt-metrics.service` and `journalctl -u shunt-metrics.service`
+(for a worker, `shunt-metrics-guest-<worker>`);
 the script names a failed scan's exception type there. `ls -l ~/.local/state/claude-hooks/` shows whether the hook log exists.
 Do not: delete the textfile to silence it; a missing file fires as well.
 Rollback: `homelab.shuntMetrics.enable = false` in the host's configuration and deploy; Shunt itself keeps working.
@@ -205,5 +206,6 @@ First: in the home it reads (the owner's on the host; a worker's is `/var/lib/wo
 as root), `jq -r '.hooks.PreToolUse[].hooks[].command' .claude/settings.json | grep shunt` (no line: the hooks are
 not registered, e.g. a skills pin without them), then the results without any content:
 `jq -c 'select(.hook | startswith("shunt-")) | {ts, hook, result}' .local/state/claude-hooks/$(date -u +%F).jsonl | tail`.
-`SHUNT_DISABLE=1` in the session's environment also silences them.
+`SHUNT_DISABLE=1` in the session's environment also silences them, and a session started before the switch keeps
+the hooks it started with: restart it.
 Rollback: `sam.claude.bulkReader.enable = false` for that host or worker (acer: the guest module in its configuration).

@@ -74,6 +74,8 @@ QUANTILES = (0.5, 0.95)
 LINE_MAX = 64 * 1024
 FILE_MAX = 64 * 1024 * 1024
 RECORDS_MAX = 200_000
+# a guest writes its own log: a larger int would overflow the float the textfile prints and fail every run for 24 h
+INT_MAX = 2**53
 DEADLINE_SECONDS = 60  # the unit's TimeoutStartSec is above this
 TS_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 WORKER_RE = re.compile(r"[a-z][a-z0-9-]{0,10}")
@@ -121,9 +123,9 @@ def quantile(xs: list[int], q: float) -> float:
 
 
 def count(rec: dict[str, object], key: str) -> int:
-    """A size field as the hooks write it, a non-negative int; anything else counts 0."""
+    """A size field as the hooks write it, a non-negative int up to INT_MAX; anything else counts 0."""
     v = rec.get(key)
-    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= INT_MAX else 0
 
 
 def stamp(v: object) -> float | None:
@@ -157,7 +159,7 @@ def add_record(t: Tally, rec: object, since: float, now: float) -> str:
     result = raw if isinstance(raw, str) and raw in RESULTS[hook] else "other"
     t.events[hook, result] = t.events.get((hook, result), 0) + 1
     d = rec.get("duration_ms")
-    if isinstance(d, int) and not isinstance(d, bool) and d >= 0:
+    if isinstance(d, int) and not isinstance(d, bool) and 0 <= d <= INT_MAX:
         t.durations.setdefault(hook, []).append(d)
     t.last[hook] = max(t.last.get(hook, ts), ts)
     if hook in READ_HOOKS:
