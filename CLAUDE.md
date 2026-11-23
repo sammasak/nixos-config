@@ -21,6 +21,9 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               plus the tests whose scripts/test-* names a changed file; also lints only for a tree
 #               already green here under the same gate and system generation, or it plus such docs;
 #               deleting nixos-qa-green in the common git dir forces the full gate.
+#               From 21:00 to 08:30 host local time (night_from/night_until in qaPush) a push that would run the
+#               full gate runs the lints and secrets-verify only, prints `night mode: full QA not run for <sha>,
+#               owed` and records `gate … result=owed mode=night`: never a pass, no green tree; `just qa-owed` lists them.
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
 #               A manual nixos:qa that passes on a clean checkout, unchanged through the run, records its tree the
 #               same way (scripts/qa-green.sh), so pushing that commit afterwards runs the lints only; with any
@@ -185,6 +188,8 @@ the session gets the path with a head and tail excerpt; failed commands are unto
 - Environments: a guest does not inherit its host's value; the host adds a guest module, e.g. for one instance
   `services.devEnvironments.guestModules = [ ({ devEnvironment, ... }: { sam.claude.bulkReader.enable = devEnvironment.name == "canary"; }) ];`
 - Rollback: set it false and switch, or `SHUNT_DISABLE=1` in the environment Claude starts from (no rebuild).
+- On now: lenovo and acer's worker a1; acer's host and herman are the off side. `homelab.shuntMetrics` labels every
+  series `shunt="on|off"` (and `worker` for a guest) from this option, so on and off compare; ShuntSilent guards the on side.
 - Running sessions keep the hooks they started with: settings are read at session start, so restart a session to
   pick up a change. `notifyHookGeneration` pings ntfy only when the skills store path changes (a pin bump), not
   when this option flips.

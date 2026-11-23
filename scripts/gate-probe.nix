@@ -539,7 +539,7 @@ let
       envKeys = builtins.attrNames acer.systemd.services.authentik.environment;
     };
 
-    # scripts/test-shunt-metrics.py: lenovo runs it, msi imports it off; context discarded
+    # scripts/test-shunt-metrics.py: lenovo and acer (with its guests) run it, msi imports it off; context discarded
     shunt-metrics =
       let
         facts =
@@ -553,6 +553,17 @@ let
                 environment = c.systemd.services.shunt-metrics.environment or null;
                 timer = c.systemd.timers.shunt-metrics.timerConfig or null;
                 failing = failing c;
+                stateDir = c.services.devEnvironments.stateDir;
+                # per declared guest: its unit's command and timer, its declared switch and whether its Claude
+                # settings register the shunt Read hook
+                guests = lib.mapAttrs (n: _: {
+                  exec = c.systemd.services."shunt-metrics-guest-${n}".serviceConfig.ExecStart or null;
+                  timer = c.systemd.timers."shunt-metrics-guest-${n}".timerConfig or null;
+                  declared = c.containers.${n}.config.sam.claude.bulkReader.enable;
+                  readHook = lib.any (e: e.matcher or "" == "Read") (
+                    (hm c.containers.${n}.config).programs.claude-code.settings.hooks.PreToolUse or [ ]
+                  );
+                }) c.services.devEnvironments.instances;
               }
             )
           );
@@ -562,6 +573,7 @@ let
         imported = lib.mapAttrs (_: h: h.options ? homelab.shuntMetrics) hosts;
         username = lenovo.sam.profile.username;
         on = facts lenovo;
+        acer = facts acer;
         off = facts msi;
         offDevTools = failing (
           # the flake's copy: black-pi imports node-exporter.nix from it, and a second path declares its options twice

@@ -171,11 +171,13 @@ First: the query lists each `homelab:health:*` KPI; follow the one that fails it
 
 ## ShuntCollectorStale
 
-Fires: on a host that enables `homelab.shuntMetrics` (lenovo), `shunt-metrics.service` has not read the hook log
-successfully for over 45 minutes, its runs kept failing for 20 minutes, or its unit exists but has never written
-`/var/lib/shunt-metrics/shunt.prom`. A sleeping or disabled host never fires: the alert reads the collector's own
+Fires: on a host that enables `homelab.shuntMetrics` (lenovo, acer), `shunt-metrics.service` has not read the hook
+log successfully for over 45 minutes, its runs kept failing for 20 minutes, or its unit exists but has never written
+`/var/lib/shunt-metrics/shunt.prom`; with a worker label, the same for that guest's
+`shunt-metrics-guest-<worker>.service`. A sleeping or disabled host never fires: the alert reads the collector's own
 series and unit. The Shunt panels on Agent harnesses and ShuntDelegationFailing are blind while it fires.
-First: on the host, `systemctl status shunt-metrics.timer shunt-metrics.service` and `journalctl -u shunt-metrics.service`;
+First: on the host, `systemctl status shunt-metrics.timer shunt-metrics.service` and `journalctl -u shunt-metrics.service`
+(for a worker, `shunt-metrics-guest-<worker>`);
 the script names a failed scan's exception type there. `ls -l ~/.local/state/claude-hooks/` shows whether the hook log exists.
 Do not: delete the textfile to silence it; a missing file fires as well.
 Rollback: `homelab.shuntMetrics.enable = false` in the host's configuration and deploy; Shunt itself keeps working.
@@ -192,3 +194,18 @@ First: on the host, the outcomes without any content:
 auth: the OAuth token (`/run/secrets/claude_oauth_token`); rate_limited or model_unavailable: the model's quota or
 availability; timeout: the `files` and `bytes` the timed-out calls delegated.
 Rollback: `SHUNT_DISABLE=1` in the environment the sessions start from, or `sam.claude.bulkReader.enable = false`.
+
+## ShuntSilent
+
+Fires: on a host or worker whose series say `shunt="on"` (its declared `sam.claude.bulkReader.enable`: lenovo, acer's
+a1), the agent made a Bash call in the last hour (validate-bash logged it) but no Shunt hook has logged for 2 h, for an
+hour; or a Shunt hook logged `error` (shunt-spill could not save an output) or `nostate` (shunt-read/shunt-bash could
+not keep its state) in the collector's 24 h window. An off worker never fires, so the on/off comparison it guards is
+the one between `shunt="on"` and `shunt="off"` series.
+First: in the home it reads (the owner's on the host; a worker's is `/var/lib/workers/<worker>/home` on the host,
+as root), `jq -r '.hooks.PreToolUse[].hooks[].command' .claude/settings.json | grep shunt` (no line: the hooks are
+not registered, e.g. a skills pin without them), then the results without any content:
+`jq -c 'select(.hook | startswith("shunt-")) | {ts, hook, result}' .local/state/claude-hooks/$(date -u +%F).jsonl | tail`.
+`SHUNT_DISABLE=1` in the session's environment also silences them, and a session started before the switch keeps
+the hooks it started with: restart it.
+Rollback: `sam.claude.bulkReader.enable = false` for that host or worker (acer: the guest module in its configuration).

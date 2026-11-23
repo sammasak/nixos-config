@@ -767,6 +767,8 @@ let
     lintShell
     deployRsPins
   ];
+  # the pre-push hook's night mode: no nix fmt (it evaluates the flake and may build the formatter)
+  nightLints = lints ++ [ secretsVerify ];
   heavyLock = pkgs.callPackage ./pkgs/heavy-lock/package.nix { };
   qaGreen = gate "qa-green" (with pkgs; [
     git
@@ -1094,6 +1096,18 @@ let
             exit
           fi
         done < <(tail -n 50 "$green" 2>/dev/null || true)
+        # The owner's night, host local time (23 Nov): the lints and secrets-verify only, the full gate owed. TZ is
+        # dropped so the caller's environment cannot move the window; the record's result=owed is never a pass to
+        # deferred-checks.py, and no green tree is recorded, so the next push of this tree by day runs the full gate.
+        night_from=2100 night_until=0830
+        now=$(env -u TZ date +%H%M)
+        if ((10#$now >= 10#$night_from || 10#$now < 10#$night_until)); then
+          t=$SECONDS
+          ${run nightLints}
+          echo "nixos-qa: night mode: full QA not run for $(git rev-parse HEAD), owed" | tee -a "$gitdir/nixos-qa-times"
+          PLATFORM_RECORD_STRICT=1 ${lib.getExe record} gate gate=nixos-qa-push seconds=$((SECONDS - t)) result=owed sha="$(git rev-parse --short HEAD)" mode=night head="$(git rev-parse HEAD)" checkout=clean
+          exit
+        fi
         NIXOS_QA_TIMES=$gitdir/nixos-qa-times
         export NIXOS_QA_TIMES
         trim "$NIXOS_QA_TIMES" 2000
@@ -1437,7 +1451,7 @@ in
     "nixos:fleet-contract-test" =
       task "No file but fleet.nix names the ntfy or Loki port; every host's firewall admits each sam.fleet listener from its callers alone and opens nothing else, no service the probe reads binds off its listener's port; lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: an open port, an upstream openFirewall, a stray rule, a trusted interface, a host removed)" fleetContractTest;
     "nixos:exec-pool-test" =
-      task "pkgs/exec-pool, the execution pool contract (#649) and queue (#651): versioned records reject an unknown schema, capability, path or field; the state machine rejects a stale epoch and an illegal transition, reconciles an expired lease and bounds retries; against throwaway PostgreSQL clusters, two claimers get one lease, the database refuses a stale write (seeded: the fence dropped), an expired running attempt waits for an operator, and an outage is reported; clippy and rustfmt clean" execPoolTest;
+      task "pkgs/exec-pool, the execution pool contract (#649) and queue (#651): versioned records reject an unknown schema, capability, path or field; the state machine rejects a stale epoch and an illegal transition, reconciles an expired lease and bounds retries; against throwaway PostgreSQL clusters, two claimers get one lease, the database refuses a stale write (seeded: the fence dropped), an expired running attempt waits for an operator, and an outage is reported; the exec-pool-queue CLI logs one JSON line per state change and its metrics carry no id and read absent, not zero, without the database; clippy and rustfmt clean" execPoolTest;
     "nixos:seventh-host-test" =
       task "Also on demand (then it records its own gate-step): a seventh host seeded from fixture data (its hosts.nix and fleet.nix entries, hosts/seventh) into a temporary tree: it evaluates, every list derived from the fleet names it, only the hosts rendering one move; the places it still needs edited by hand are listed exactly (seeded: each derived list hard-coded without it)" seventhHostTest;
     "nixos:alloy-otlp-test" =

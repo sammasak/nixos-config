@@ -13,6 +13,10 @@ PRs merge.
 - No dedicated benchmarks. Ship behind a switch scoped to one host or worker and compare on the running system.
   Every feature that claims an improvement needs a switch, a metric that can tell on from off, and a regression alert.
 - Deploy as we go; the execution pool's slots become the rollout unit.
+- Night is reduced capacity, not a pause. msi and asus are off 21:00 to 08:30 and are never woken; acer (heavy work,
+  one job at a time) and lenovo (edits only) keep working the queue with about two active workers. Only work that
+  needs msi or asus waits for the morning.
+- Prefer upstream nixpkgs modules and built-in features over home-made services.
 
 ## Queue
 
