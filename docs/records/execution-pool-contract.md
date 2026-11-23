@@ -1,0 +1,71 @@
+# ADR: Execution pool contract (v0.1, #649)
+
+Status: proposed with #649's PR, for the owner to accept by merging. Epic: #646. This record freezes the data contract
+and the owners; it adds no daemon, database, socket, port, Nix option or host change.
+
+## Owners
+
+| Concern | Owner | Where |
+|---|---|---|
+| Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix` |
+| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | a separate queue process (#651, PostgreSQL first) | not built; its records are `pkgs/exec-pool/src/lib.rs` |
+| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local dispatcher (#652) | not built |
+| The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
+| Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
+| Power windows and placement facts | `sam.fleet.hosts.*` | `modules/core/fleet.nix` |
+
+A task is not a container, a deploy, a Herdr pane or a CLI session. Workers hold no queue credential and no host
+privilege.
+
+## Contract
+
+`pkgs/exec-pool` (a library, built and tested by `nixos:exec-pool-test`) defines `TaskSpec`, `Attempt`, `Slot`,
+`CheckpointRef` and `Receipt`. Each carries `schema_version` (1). Another version, or a workdir that is empty,
+absolute, holds `..` or NUL, does not deserialise. `validate()` then rejects, per record, the identifiers it names as
+empty (for a task also an empty `argv`), a task capability outside the granted set, and an attempt whose placement
+disagrees with its status (required while leased, running or checkpointing, absent while queued or waiting). Every
+record rejects unknown fields, so no token, secret or credential can ride along: a task names a `credential_class`
+the host resolves. `TaskSpec::fits` admits a slot only when it is idle, offers the task's agent and capabilities and equals
+every pin the task sets (`runner_version`, `nix_closure_digest`, `agent_version`, `skill_revision`, reserved for #657).
+`CheckpointRef` is an opaque versioned pointer (uri, digest) until #656 defines the manifest.
+
+States (`pkgs/exec-pool/src/state.rs`, snake_case on the wire):
+
+```text
+queued -> leased -> running -> checkpointing -> waiting | queued | succeeded | failed | needs_review
+waiting -> queued            (explicit wake)
+leased  -> queued            (lease expired before its start was accepted)
+running | checkpointing -> needs_review   (lease expired: effects unknown, never replayed blindly)
+```
+
+One `Attempt` id spans every lease of that attempt, told apart by the epoch, which is why a `Receipt` is keyed by
+attempt and epoch. A lease and an expiry bump the monotonic lease epoch. Every event names the epoch it was decided on
+and one that is not current is rejected, so a holder whose lease expired cannot complete and a re-delivered lease
+cannot land twice; an expired lease is reconciled rather than handed to a duplicate attempt. That needs one rule of
+the runner (#652): it begins no work before its `start` is accepted, so `leased -> queued` is only ever a lease that
+ran nothing. An attempt's placement (host, slot) is cleared on `queued` and `waiting` and kept on `needs_review` for
+review. Delivery is **at-least-once**: a resubmission under the same idempotency key returns the task already queued,
+a different task under that key is refused, and no external effect (a GitHub mutation included) is claimed
+exactly-once. A `Receipt` lists the effects an attempt reports, for reconciliation; it counts only with the `settle`
+accepted at its lease epoch.
+
+## Not `sam.agentRuntime`
+
+The historical `sam.agentRuntime` (#133, #138) made one ephemeral nspawn instance per task with no scheduler; it is
+absent on main, its module directory was deleted in #210 (`git show 5a40362 --stat`). The current `modules/workers`
+declares long-lived, named instances (`sam.workers.instances`, a `worker-herdr-<name>` unit per agent), each a Nix
+deploy. The pool keeps those untouched and adds dynamic work on top of declared slots. `scripts/test-workers-eval.py`
+pins it: msi declares no `executionPool` or `agentRuntime` option, and its instances (`m1`, `m2`, `t1`) and their
+Herdr units are pinned by name.
+
+## Phase gates (detail in #646)
+
+- **v0.1 local reuse:** one opt-in host, N declared slots (#650), a durable queue (#651), a runner (#652) and
+  task-scoped isolation (#653): two safe tasks reuse one slot without a redeploy, a second concurrent claim is
+  denied, named workers unaffected.
+- **v0.2 fleet dispatch:** two hosts, capability-aware placement, fencing, drain and host loss (#654), native CLI
+  adapter (#655); no automatic replay of an ambiguous mutation.
+- **v0.3 portability:** checkpoint at a turn boundary, wake and resume on a compatible host or `needs_review` (#656),
+  pinned upgrades and rollback (#657).
+
+Each gate needs dated VM or live evidence (#658); a merge is not an activation.

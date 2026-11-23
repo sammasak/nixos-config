@@ -803,6 +803,34 @@ def check_bounded():
           f"container@ stops restarting after {got.get('burst')} starts of {start} s (stop {stop} s) each within {got.get('interval')} s ({got or out.stderr.strip()[-300:]})")
 
 
+# docs/records/execution-pool-contract.md: the pool adds no option to msi's worker modules, and its named workers and
+# their Herdr units are pinned by name; a change to msi's instances edits this list in the same PR.
+POOL_COMPAT = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  lib = flake.inputs.nixpkgs.lib;
+  sys = flake.nixosConfigurations.msi-ms7758;
+  c = sys.config;
+in {
+  options = builtins.filter (p: lib.hasAttrByPath p sys.options) (lib.concatMap (n: [ [ "sam" n ] [ "sam" "workers" n ] [ "services" "devEnvironments" n ] ]) [ "executionPool" "agentRuntime" ]);
+  instances = builtins.attrNames c.sam.workers.instances;
+  declared = builtins.attrNames c.services.devEnvironments.instances;
+  agents = builtins.attrNames (lib.filterAttrs (_: i: i.agent != "none") c.services.devEnvironments.instances);
+  herdr = builtins.filter (lib.hasPrefix "worker-herdr-") (builtins.attrNames c.systemd.services);
+}
+"""
+
+
+def check_pool_compat():
+    out = run_eval(POOL_COMPAT % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("options") == [], f"msi declares no executionPool or agentRuntime option ({got.get('options', out.stderr.strip()[-600:])})")
+    named = ["m1", "m2", "t1"]
+    check(got.get("instances") == got.get("declared") == got.get("agents") == named
+          and got.get("herdr") == [f"worker-herdr-{n}" for n in named],
+          f"msi's sam.workers.instances are still {named}, each one worker-herdr-<name> unit ({got})")
+
+
 def check_slot():
     """msi's t1 is sized by the msi row of docs/nspawn-workers.md (10G pool, 2G and 2 cores reserved each) and gets no
     GitHub credential: no SSH key, no gh login, no proxy site. Its assertions are the "as committed" check's."""
@@ -976,7 +1004,8 @@ def main():
         *[(BLOCKED_CASE % v6, BLOCKED_WHAT) for v6, _ in BLOCKED], *[(case, OWN) for _, case, _ in ASSERTED]]])
     prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(case) for _, case, _ in FLEET_CASES], fleet(USER_SECRET[1]),
               NO_OTEL % {"root": json.dumps(ROOT)}, GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)},
-              SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr(), SLOT % {"root": json.dumps(ROOT)}])
+              SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr(), SLOT % {"root": json.dumps(ROOT)},
+              POOL_COMPAT % {"root": json.dumps(ROOT)}])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
@@ -1063,6 +1092,7 @@ def main():
     out = run_eval(fleet("{ }"))
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     check_slot()
+    check_pool_compat()
     out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
     facts = json.loads(out.stdout) if out.returncode == 0 else {}
     check(facts.get("assertions") == [], f"msi-ms7758 with a claude instance fails no assertion ({facts.get('assertions', out.stderr.strip()[-600:])})")
