@@ -1,5 +1,6 @@
 """The alert annotation contract (docs/alert-runbooks.md): every alert in the given rule files carries a summary, a
-description other than its summary, a first diagnostic query and a runbook_url naming a heading in a tracked doc.
+description other than its summary, a first diagnostic query and a runbook_url naming a heading in a tracked doc;
+a rule file with no alert fails (an empty render would pass unseen).
 Usage: check-alert-annotations.py DOCS RULES... (DOCS: the repo's docs directory; YAML or JSON rule files)."""
 import pathlib
 import re
@@ -22,6 +23,7 @@ def slugs(doc):
 
 alerts = 0
 for f in sys.argv[2:]:
+    before = alerts
     for group in yaml.safe_load(open(f))["groups"]:
         for r in group["rules"]:
             if "alert" not in r:
@@ -43,10 +45,14 @@ for f in sys.argv[2:]:
             doc = docs / path
             if not doc.is_file():
                 failed.append(f"{where}: runbook_url names docs/{path}, no tracked doc")
-            elif anchor and anchor not in slugs(doc):
+            elif not anchor:
+                failed.append(f"{where}: runbook_url names no #heading in docs/{path}")
+            elif anchor not in slugs(doc):
                 failed.append(f"{where}: runbook_url anchor #{anchor} is no heading in docs/{path}")
+    if alerts == before:
+        failed.append(f"{pathlib.Path(f).name}: no alert")
 
 for line in failed:
     print("FAIL: " + line)
 print(f"{alerts} alerts, {len(failed)} failures")
-sys.exit(1 if failed or not alerts else 0)
+sys.exit(1 if failed else 0)
