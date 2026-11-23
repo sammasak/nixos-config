@@ -57,6 +57,7 @@ let
     wrong-port = edit ":11434/" ":11435/";
     above-tier-3 = edit "tier = 3" "tier = 2";
     no-health-probe = edit "health_url" "# health_url";
+    tool-capable-unverified = edit "tool_capable = false" "tool_capable = true";
     start-requires-asus = unitWith {
       systemd.services.llm-gateway.requires = [ "ollama-asus-reachable.service" ];
     };
@@ -73,6 +74,7 @@ let
     wrong-port = "base_url and health_url";
     above-tier-3 = "tier 3, beside msi";
     no-health-probe = "base_url and health_url";
+    tool-capable-unverified = "tool use is unverified";
     start-requires-asus = "must not require";
     start-probes-asus = "must not require";
   };

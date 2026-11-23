@@ -66,6 +66,11 @@ in
     message = "${where}: its models are asus's and tier 3, beside msi: the local floor, below every free cloud tier.";
   }
   {
+    assertion =
+      !lib.any (m: m.tool_capable or false && lib.hasInfix "unverified" (m.notes or "")) models;
+    message = "${where}: a model is tool_capable while its notes say tool use is unverified (#494); verify a Pi tool loop on asus with the replay, then change the note with the flag.";
+  }
+  {
     assertion = !lib.any namesAsus links && !namesAsus hooks;
     message = "modules/homelab/llm-gateway.nix: llm-gateway.service must not require, wait for or probe asus at start; asus may be off, and the gateway must start and route without it.";
   }

@@ -28,5 +28,6 @@ tier = 3
 cost_class = "free"
 enabled = true
 context_window = 32768
-tool_capable = true
+# false until the replay shows gemma4 completing a Pi tool loop on asus (#494): then true, and the note changes with it
+tool_capable = false
 notes = "tool use unverified: verify a Pi tool loop on asus (#494) before enabling"
