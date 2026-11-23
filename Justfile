@@ -179,6 +179,11 @@ bench-diff:
 deferred-checks HEAD:
     python3 scripts/deferred-checks.py {{quote(HEAD)}}
 
+# This host's record spool only; a later full gate on the same commit does not clear a line.
+[doc("List commits pushed from this host at night without the full gate (result=owed records)")]
+qa-owed:
+    grep ' gate .*result=owed' "${XDG_STATE_HOME:-$HOME/.local/state}/platform-records" || echo "no owed gate in this host's spool"
+
 # Run this after a refactor that is meant to change nothing. Deliberately NOT part
 # of `check` or `verify`: a change that legitimately moves the derivation should
 # not fail the build gates. Runs under `capped`: needs a user systemd manager and
