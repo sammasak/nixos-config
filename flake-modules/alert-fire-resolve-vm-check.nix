@@ -117,7 +117,7 @@ in
                         body = self.rfile.read(n).decode()
                         h = self.headers
                         line = {"path": self.path, "body": body}
-                        for k in ("Title", "Tags", "Priority", "Content-Type"):
+                        for k in ("Title", "Tags", "Priority", "Click", "Content-Type"):
                             line[k] = h[k]
                         with open("/var/lib/ntfy-stub/messages.jsonl", "a") as f:
                             f.write(json.dumps(line) + "\n")
@@ -142,10 +142,12 @@ in
           bridge.wait_for_unit("alert-bridge.service")
           bridge.wait_for_unit("ntfy-stub.service")
 
-          body = "Synthetic alert fired\nThe fire and resolve test's textfile series is 1.\n  • 127.0.0.1:9100"
+          # the page carries the rule's query and, as the tap target, its runbook
+          body = "${annotations.summary}\n${annotations.description}\n  • 127.0.0.1:9100\nQuery: ${annotations.query}"
           sent = {
               "path": "/homelab-alerts",
               "body": body,
+              "Click": "${annotations.runbook_url}",
               "Content-Type": "text/plain; charset=utf-8",
           }
 
