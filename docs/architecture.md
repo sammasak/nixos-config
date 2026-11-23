@@ -58,7 +58,7 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 | `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the DNS, ntfy and deploy host) | none |
 | `acer-swift` | **headless** (the always-on service host: Caddy edge, Authentik, chat, llm-gateway) | `desktop` (Niri GUI) |
 | `msi-ms7758` | **headless** (intermittent worker host, dual-boot Windows) | none |
-| `asus-b460m` | **headless** (worker host, dual-boot Windows) | none |
+| `asus-b460m` | **headless** (worker host, dual-boot Windows) | `gaming` (Niri GUI, Sunshine; no inference) |
 | `black-pi` | **headless** (aarch64 observability host, Raspberry Pi 4 on SD card, builds its own closure) | none |
 | `naked-pi` | **headless** (aarch64 Wi-Fi learning node, Raspberry Pi 3, role `rf-lab`) | none |
 
@@ -70,6 +70,14 @@ The Acer headless configuration is the default and its `desktop` specialisation
 adds the Niri GUI boot entry. MSI is an intermittent worker host: powered
 on only in its work-hours window (woken via Wake-on-LAN). Its root/shared-Windows-ESP UUIDs are verified; boot stays GRUB
 with a manual Windows Boot Manager entry (dual-boot preserved).
+
+The ASUS `gaming` specialisation (`modules/specialisations/gaming.nix`) is the desktop entry plus Sunshine, for
+Moonlight clients on the LAN: the session logs in by itself, Ollama, its model loader and the GPU power limit are
+not started, and Sunshine's stream ports are admitted from the LAN (`sam.fleet.public`). Pick it in the GRUB menu
+under the NixOS entry's specialisations; the next plain boot is the headless inference host again. Sunshine's web
+UI, which sets its password and pairs a client by PIN, is not opened: reach it with
+`ssh -L 47990:localhost:47990 asus-b460m` and `https://localhost:47990`. The evening power-off applies in this
+entry too.
 
 **One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
 `modules/specialisations/desktop.nix`; the default is `false`, so a host that
