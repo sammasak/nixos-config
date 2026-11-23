@@ -73,12 +73,11 @@ in
 
       programs.steam.enable = true;
       programs.gamemode.enable = true;
-      hardware.graphics.enable32Bit = true;
 
-      # An evening's game outlasts the power window's poweroff. Only the timer goes: sam.powerSchedule.poweroff
+      # An evening's game outlasts the power window's poweroff. Only the timer is masked: sam.powerSchedule.poweroff
       # also arms Wake-on-LAN, which the next scheduled wake needs after a manual poweroff.
       systemd.timers = lib.mkIf config.sam.powerSchedule.poweroff.enable {
-        "${lib.head (lib.splitString "-" host)}-scheduled-shutdown".wantedBy = lib.mkForce [ ];
+        "${lib.head (lib.splitString "-" host)}-scheduled-shutdown".enable = lib.mkForce false;
       };
       # it would announce that poweroff
       sam.workers.shutdownNotice = lib.mkForce null;
@@ -108,7 +107,9 @@ in
           { name = "Desktop"; }
           {
             name = "Steam Big Picture";
-            detached = [ "${lib.getExe config.programs.steam.package} steam://open/bigpicture" ];
+            detached = [
+              "${lib.getExe' pkgs.util-linux "setsid"} ${lib.getExe config.programs.steam.package} steam://open/bigpicture"
+            ];
           }
         ];
       };
