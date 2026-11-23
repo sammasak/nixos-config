@@ -155,6 +155,12 @@ after a server restart. Before treating a restart or reboot as a conversation
 recovery test, confirm each pane was started or resumed after the integration
 was installed, then check that the same agent conversations appear afterward.
 
+A switch or deploy of the host, whether it succeeds, fails or rolls back, leaves running Claude Code sessions
+with a working Bash tool: `CLAUDE_CODE_SHELL` in the generated settings pins the tool's shell to
+`/run/current-system/sw/bin/bash`, which every generation has (`nixos:claude-settings-test`). To verify live,
+run `tr '\0' ' ' </proc/$$/cmdline` through a session's Bash tool before and after the deploy: both must start
+with that path. A session started before the pin still spawns the Home Manager profile's bash until it restarts.
+
 Claude and Codex integration scripts use Python's standard library to report
 session references; Home Manager installs `python3Minimal` for those hooks.
 Starting an agent with its native resume command can contact the provider even

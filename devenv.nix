@@ -1382,7 +1382,7 @@ in
     "nixos:flake-check" =
       task "The flake check over all systems, one output per nix process: builds every x86 host, evaluates the Pis" flakeCheck;
     "nixos:claude-settings-test" =
-      task "Generated Claude settings: default mode, bypass on request, no OTLP leak" claudeSettingsTest;
+      task "Generated Claude settings: default mode, bypass on request, no OTLP leak, Bash outlives its startup shell path" claudeSettingsTest;
     "nixos:ollama-portforward-test" =
       task "lenovo ollama-portforward: a wedged forward is restarted, an HTTP error is not" ollamaPortforwardTest;
     "nixos:ollama-pull-pinned-test" =
