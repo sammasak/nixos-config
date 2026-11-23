@@ -777,6 +777,8 @@ let
     lintShell
     deployRsPins
   ];
+  # the pre-push hook's night mode: no nix fmt (it evaluates the flake and may build the formatter)
+  nightLints = lints ++ [ secretsVerify ];
   heavyLock = pkgs.callPackage ./pkgs/heavy-lock/package.nix { };
   qaGreen = gate "qa-green" (with pkgs; [
     git
@@ -1105,6 +1107,18 @@ let
             exit
           fi
         done < <(tail -n 50 "$green" 2>/dev/null || true)
+        # The owner's night, host local time (23 Nov): the lints and secrets-verify only, the full gate owed. TZ is
+        # dropped so the caller's environment cannot move the window; the record's result=owed is never a pass to
+        # deferred-checks.py, and no green tree is recorded, so the next push of this tree by day runs the full gate.
+        night_from=2100 night_until=0830
+        now=$(env -u TZ date +%H%M)
+        if ((10#$now >= 10#$night_from || 10#$now < 10#$night_until)); then
+          t=$SECONDS
+          ${run nightLints}
+          echo "nixos-qa: night mode: full QA not run for $(git rev-parse HEAD), owed" | tee -a "$gitdir/nixos-qa-times"
+          PLATFORM_RECORD_STRICT=1 ${lib.getExe record} gate gate=nixos-qa-push seconds=$((SECONDS - t)) result=owed sha="$(git rev-parse --short HEAD)" mode=night head="$(git rev-parse HEAD)" checkout=clean
+          exit
+        fi
         NIXOS_QA_TIMES=$gitdir/nixos-qa-times
         export NIXOS_QA_TIMES
         trim "$NIXOS_QA_TIMES" 2000
