@@ -16,8 +16,9 @@ PRs merge.
 
 ## Queue
 
-In flight (23 Nov, 20:00): notification carries query and runbook link (`m1`, in gate); pool queue core and first
-metrics (`a1`, in gate); pool slot declaration (`m2`).
+In flight (23 Nov, 21:00): first pool metrics slice (`a1`); pool slot declaration (`m2`, built and tested locally,
+push and PR on 24 Nov). Merged this round: notification carries runbook link and query (#672, live on lenovo), pool
+queue with leases and fencing (#673). Alerts and Pool therefore drop behind the topics below.
 
 Waiting, in pick-up order:
 
@@ -26,7 +27,7 @@ Waiting, in pick-up order:
 | 1 | Roles | roles exist, none has done real work | one live spawn of a named role on a real ticket (skills#136) |
 | 2 | Live comparison | metrics cannot tell feature on from off | variant label; Shunt on for one host, off elsewhere (owner approves the host change) |
 | 3 | Workers | msi sessions die when the pool runs out of memory (#647) | cap or slot limit |
-| 4 | Monitoring | unknown whether backups record; no real delivered alert on file | read 24 Nov backup metrics; one deliberate real alert as a receipt (624-g); first slice of #600 |
+| 4 | Monitoring | unknown whether backups record; no real delivered alert on file | read 24 Nov backup metrics; one deliberate real alert as a receipt (624-g); test-only trial of an Alertmanager payload template posting straight to ntfy, to retire the home-made bridge if it passes; first slice of #600 |
 | 5 | Gates | a full gate takes 20 to 60 minutes | shorten the slowest step |
 | 6 | Pool | no task has run through it | runner in a VM (#652), after the in-flight items |
 | 7 | Compaction (#626) | unmeasured | one worker on a different setting, compared from normal work |
@@ -110,7 +111,7 @@ msi and asus have no `gh` login: workers push branches over SSH and the lenovo s
 Every host deployed main on 23 Nov: acer-swift, msi-ms7758, asus-b460m, black-pi, lenovo. The first black-pi deploy
 rolled back on a journal-metrics start race, fixed by #634. asus deployed again after #639 (workers retired).
 msi, asus and acer deployed main again on the evening of 23 Nov (gaming entries, skills pin #661; acer also has the
-pin from #670). Owed: the #670 pin on msi, asus, lenovo and black-pi. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
+pin from #670). lenovo and black-pi deployed #672 at 20:42. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
 ## Gaming entries (owner request, 23 Nov)
 
@@ -130,7 +131,8 @@ Steam Remote Play can still stream from msi through Valve's relay: the switch is
   #640 backup and journal alerts, #643 and #661 skills pins, #644 Shunt dashboard and alerts, #659 OTLP rejection alert,
   #662 and #665 asus gaming entry with Sunshine, #668 msi gaming entry without streaming,
   #669 Steam in both entries and no scheduled power-off while gaming, #666 synthetic fire and resolve test,
-  #667 execution pool contract, #670 skills pin
+  #667 execution pool contract, #670 skills pin, #671 priority queue, #672 runbook link and query in the
+  notification, #673 pool queue
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
   #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132),
