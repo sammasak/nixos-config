@@ -20,21 +20,23 @@ PRs merge.
 
 ## Queue
 
-In flight (23 Nov, 21:00): first pool metrics slice (`a1`); pool slot declaration (`m2`, built and tested locally,
-push and PR on 24 Nov). Merged this round: notification carries runbook link and query (#672, live on lenovo), pool
-queue with leases and fencing (#673). Alerts and Pool therefore drop behind the topics below.
+In flight (23 Nov, 23:00): shorten the slowest gate step (`a1`, branch `gate/faster-1`). Parked until msi is on
+(08:30): pool slot declaration (`m2`, built and tested locally, unpushed). Merged and deployed this round: Alertmanager
+posts straight to ntfy and the home-made bridge is removed (#680, live on black-pi and lenovo, a deliberate alert
+arrived in the topic); Shunt on for worker `a1` with on/off labels and a regression alert (#678, #679, live on acer);
+pool CLI and metrics (#675); night mode in the push hook (#676).
 
 Waiting, in pick-up order:
 
 | # | Topic | Pain now | Next small change |
 |---|-------|----------|-------------------|
 | 1 | Roles | roles exist, none has done real work | one live spawn of a named role on a real ticket (skills#136) |
-| 2 | Live comparison | metrics cannot tell feature on from off | variant label; Shunt on for one host, off elsewhere (owner approves the host change) |
-| 3 | Workers | msi sessions die when the pool runs out of memory (#647) | cap or slot limit |
-| 4 | Monitoring | unknown whether backups record; no real delivered alert on file | read 24 Nov backup metrics; one deliberate real alert as a receipt (624-g); test-only trial of an Alertmanager payload template posting straight to ntfy, to retire the home-made bridge if it passes; first slice of #600 |
-| 5 | Gates | a full gate takes 20 to 60 minutes | shorten the slowest step |
-| 6 | Pool | no task has run through it | runner in a VM (#652), after the in-flight items |
-| 7 | Compaction (#626) | unmeasured | one worker on a different setting, compared from normal work |
+| 2 | Workers | msi sessions die when the pool runs out of memory (#647) | cap or slot limit |
+| 3 | Pool | no task has run through it | push slots (#650), then the runner (#652); PostgreSQL and the pool enabled on acer |
+| 4 | Compaction (#626) | unmeasured | one worker on a different setting, compared from normal work |
+| 5 | Monitoring | unknown whether backups record; no log alerts | read 24 Nov backup metrics; first slice of #600; Loki ruler for log alerts; Alertmanager 0.34 |
+| 6 | Live comparison | Shunt on/off has no panel yet | dashboard panel; read the first day of on/off numbers |
+| 7 | Gates | a full gate takes 20 to 60 minutes | next slowest step after `gate/faster-1` |
 
 ## Priorities
 
@@ -115,7 +117,7 @@ msi and asus have no `gh` login: workers push branches over SSH and the lenovo s
 Every host deployed main on 23 Nov: acer-swift, msi-ms7758, asus-b460m, black-pi, lenovo. The first black-pi deploy
 rolled back on a journal-metrics start race, fixed by #634. asus deployed again after #639 (workers retired).
 msi, asus and acer deployed main again on the evening of 23 Nov (gaming entries, skills pin #661; acer also has the
-pin from #670). lenovo and black-pi deployed #672 at 20:42. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
+pin from #670). lenovo and black-pi deployed #680 at 22:36, acer at 22:50 on 23 Nov. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
 ## Gaming entries (owner request, 23 Nov)
 
@@ -123,10 +125,10 @@ asus: desktop, Steam, Sunshine streaming. msi: desktop and Steam, no Sunshine an
 21:00 power-off does not run and inference is not started. Booted on neither host yet; the owner accepted it untested.
 Steam Remote Play can still stream from msi through Valve's relay: the switch is in the Steam client.
 
-## Open owner gates
+## Owner gates
 
-- Switching Shunt (#625) on for one host; a compaction setting change on one worker (#626). No benchmark runs.
-- Execution pool: PostgreSQL on a real host, any new credential, enabling `executionPool` on a host, a live agent canary.
+None, except physical access and spending money (owner, 23 Nov). The coordinator decides and ships everything else.
+Owed after 08:30 on 24 Nov: one full gate on main (covers the night's pushes, `just qa-owed`), deploy msi and asus.
 
 ## Merged this week
 
@@ -136,7 +138,8 @@ Steam Remote Play can still stream from msi through Valve's relay: the switch is
   #662 and #665 asus gaming entry with Sunshine, #668 msi gaming entry without streaming,
   #669 Steam in both entries and no scheduled power-off while gaming, #666 synthetic fire and resolve test,
   #667 execution pool contract, #670 skills pin, #671 priority queue, #672 runbook link and query in the
-  notification, #673 pool queue
+  notification, #673 pool queue, #675 pool CLI and metrics, #676 night mode, #678 and #679 Shunt on for a1 with
+  on/off labels, #680 Alertmanager posts to ntfy and alert-bridge removed
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
   #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132),
