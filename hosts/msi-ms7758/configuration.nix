@@ -28,6 +28,9 @@
       memory.reserved = "2G";
       cpu.reserved = 2;
     };
+    # Task slots that push over the SSH key: reset with dev-env-reset@<name> between tasks, no deploy.
+    instances.m1 = { };
+    instances.m2 = { };
     # Kept for a rollback that drops t1: with no instance declared, the `.trash` sweep runs only while this list is
     # non-empty, so these two, the newest in .trash, stay until it is empty.
     retired = [
