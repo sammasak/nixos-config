@@ -51,6 +51,14 @@ let
   node = msi-ms7758.config.services.prometheus.exporters.node;
   exec = discard msi-ms7758.config.systemd.services.prometheus-node-exporter.serviceConfig.ExecStart;
   acer = acer-swift.config;
+  # the static claude_auto_compact_window_info file modules/homelab/shunt-metrics.nix links in, with acer's guests
+  compactionInfo = lib.last (
+    lib.splitString " " (
+      lib.findFirst (lib.hasInfix "/claude-compaction.prom ")
+        (throw "grafana-dashboards: acer links no claude-compaction.prom")
+        acer.systemd.tmpfiles.rules
+    )
+  );
   # the longest prefix first: Alloy's loki.write names sit inside Loki's
   sources = [
     {
@@ -223,6 +231,11 @@ let
     nav-typo = {
       dashboard = seed "agent_nav_repo_mis_ratio" "prometheus";
       reason = "unknown metric agent_nav_repo_mis_ratio:";
+    };
+    # claude_auto_compact_window_info, from shunt-metrics.nix's static file
+    compaction-info-typo = {
+      dashboard = seed "claude_auto_compact_windw_info" "prometheus";
+      reason = "unknown metric claude_auto_compact_windw_info:";
     };
     # the pre-595 name: nvidia-smi now heads these fields clocks_event_reasons, and the exporter names from the header
     gpu-throttle-name = {
@@ -433,7 +446,8 @@ in
                 "${../pkgs/platform-record/platform_record.py}"
                 "${../modules/homelab/monitoring/alloy-otlp.alloy}"
               ];
-              inherit (prom) rule_files;
+              # and the Loki ruler's records, which it remote-writes to Prometheus (their LogQL is loki-check's)
+              rule_files = prom.rule_files ++ [ "${../modules/homelab/monitoring/loki-rules/fake/homelab.yaml}" ];
               # black-pi's alert and recording rules, held to the same names and jobs as the panels
               alert_rules = prom.rule_files;
               record_sources = [ "${../pkgs/llm-bench/rules.nix}" ];
@@ -522,6 +536,7 @@ in
             checker=${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3
             static=(node-exporter=node.prom node-exporter=systemd.prom node-exporter=writers.prom
               node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom node-exporter=shunt.prom
+              node-exporter=${compactionInfo}
               llm-gateway=llm-gateway.prom authentik-server=authentik.prom authentik-worker=authentik.prom
               nvidia-gpu=${self'.checks.gpu-telemetry-exporter} \
                 node-exporter=${self'.checks.backup-metrics}/backup.prom
