@@ -329,12 +329,6 @@ in
         # the cluster-watchdog reads /-/ready and the Watchdog alert; Prometheus there arrives on loopback
         from = [ "lenovo-21CB001PMX" ];
       };
-      alert-bridge = {
-        host = "lenovo-21CB001PMX";
-        port = 9099;
-        # Alertmanager has no outgoing-source setting: with end0 down it sends from wlan0 (extraAddresses)
-        from = [ "black-pi" ];
-      };
       prometheus = {
         host = "black-pi";
         port = 9090;
@@ -450,6 +444,33 @@ in
         proto = "udp";
         why = "Caddy, the edge: HTTP/3.";
       }
-    ];
+    ]
+    # Moonlight runs on the TV and on laptops, which are no fleet hosts: the LAN, with Sunshine's pairing PIN
+    ++ lib.concatLists (
+      lib.mapAttrsToList
+        (
+          proto:
+          map (port: {
+            host = "asus-b460m";
+            inherit port proto;
+            lan = true;
+            why = "Sunshine's stream ports, served in the gaming boot entry only (specialisations/gaming.nix).";
+          })
+        )
+        {
+          tcp = [
+            47984
+            47989
+            48010
+          ];
+          udp = [
+            47998
+            47999
+            48000
+            48002
+            48010
+          ];
+        }
+    );
   };
 }

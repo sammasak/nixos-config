@@ -1,0 +1,100 @@
+# promtool test rules for homelab.yaml's backup freshness alert (flake-modules/monitoring-check.nix runs it).
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  - interval: 5m
+    input_series:
+      # succeeded at the epoch, then never again
+      - series: 'homelab_backup_last_success_timestamp_seconds{job="node-exporter",node="acer-swift",backup="authentik-backup",validation="archive_list"}'
+        values: '0x500'
+      # daily, as its timer runs it
+      - series: 'homelab_backup_last_success_timestamp_seconds{job="node-exporter",node="acer-swift",backup="open-webui-backup",validation="scratch_restore"}'
+        values: '0x287 86400x287 172800x100'
+      # a host that powers off: its series end with its scrape, and an old success does not page
+      - series: 'homelab_backup_last_success_timestamp_seconds{job="node-exporter",node="msi-ms7758",sleeps="true",backup="seed-backup",validation="archive_list"}'
+        values: '0x96'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: BackupStale
+        exp_alerts: []
+      - eval_time: 37h
+        alertname: BackupStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: acer-swift, backup: authentik-backup, validation: archive_list}
+            exp_annotations:
+              summary: "Backup authentik-backup on acer-swift has not succeeded for 1d 13h 0m 0s"
+              description: "The last recorded success of authentik-backup (archive_list) on acer-swift is 1d 13h 0m 0s old, over 36 hours for a daily job. Run systemctl list-timers authentik-backup and journalctl -u authentik-backup -n 50 there."
+              query: 'time() - homelab_backup_last_success_timestamp_seconds{job="node-exporter",node="acer-swift"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupstale"
+      - eval_time: 37h
+        alertname: BackupNeverRecorded
+        exp_alerts: []
+
+  - interval: 5m
+    input_series:
+      # metadata never valid: no timestamp series at all
+      - series: 'homelab_backup_metadata_available{job="node-exporter",node="lenovo-21CB001PMX",backup="authentik-offhost",validation="archive_list"}'
+        values: '0x500'
+      # the first instrumented run lands within a day
+      - series: 'homelab_backup_metadata_available{job="node-exporter",node="acer-swift",backup="llm-gateway-backup",validation="scratch_restore"}'
+        values: '0x250 1x250'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: BackupNeverRecorded
+        exp_alerts: []
+      - eval_time: 37h
+        alertname: BackupNeverRecorded
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, job: node-exporter, node: lenovo-21CB001PMX, backup: authentik-offhost, validation: archive_list}
+            exp_annotations:
+              summary: "Backup authentik-offhost on lenovo-21CB001PMX has no recorded success"
+              description: "backup-metrics on lenovo-21CB001PMX has found no valid success record for authentik-offhost (archive_list) for 36 hours: the daily job has not completed, or its post-success record step failed. Run journalctl -u authentik-offhost -n 50 there."
+              query: 'homelab_backup_metadata_available{job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupneverrecorded"
+      - eval_time: 37h
+        alertname: BackupStale
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      # acer's collector scans every 5 minutes, then stops at minute 20 and its file stays
+      - series: 'up{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '1x60'
+      - series: 'homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",instance="acer-swift",node="acer-swift"}'
+        values: '0x4 300x4 600x4 900x4 1200x40'
+      # lenovo rebooted: up, and no backup.prom on the fresh tmpfs
+      - series: 'up{job="node-exporter",instance="lenovo-21CB001PMX",node="lenovo-21CB001PMX"}'
+        values: '1x60'
+      # black-pi runs no backup and msi is off: neither has the series, neither fires
+      - series: 'up{job="node-exporter",instance="black-pi",node="black-pi"}'
+        values: '1x60'
+      - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BackupCollectorStale
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: BackupCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "The backup-metrics collector on lenovo-21CB001PMX is stale or missing"
+              description: "backup-metrics on lenovo-21CB001PMX has not completed a scan in 15 minutes, or has written no backup.prom since boot, for 15 minutes: BackupStale and BackupNeverRecorded cannot see that host's backups. Run systemctl status backup-metrics.timer backup-metrics there."
+              query: 'time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupcollectorstale"
+      - eval_time: 51m
+        alertname: BackupCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "The backup-metrics collector on acer-swift is stale or missing"
+              description: "backup-metrics on acer-swift has not completed a scan in 15 minutes, or has written no backup.prom since boot, for 15 minutes: BackupStale and BackupNeverRecorded cannot see that host's backups. Run systemctl status backup-metrics.timer backup-metrics there."
+              query: 'time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",node="acer-swift"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupcollectorstale"
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "The backup-metrics collector on lenovo-21CB001PMX is stale or missing"
+              description: "backup-metrics on lenovo-21CB001PMX has not completed a scan in 15 minutes, or has written no backup.prom since boot, for 15 minutes: BackupStale and BackupNeverRecorded cannot see that host's backups. Run systemctl status backup-metrics.timer backup-metrics there."
+              query: 'time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupcollectorstale"

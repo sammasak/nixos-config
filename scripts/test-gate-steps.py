@@ -63,6 +63,12 @@ for what, args, want in cases:
     got = decide(*args)
     check(got == want, f"decide: {what}: {want} (got {got})")
 
+# the flake check leaves host <name>'s toplevel to deploy-activate-<name>: that node is built from that configuration
+deploy = (ROOT / "flake-modules/deploy.nix").read_text()
+check("host = config.flake.nixosConfigurations.${name};" in deploy and "activateFor.${host.pkgs.stdenv.hostPlatform.system}.nixos host;" in deploy
+      and "lib.mapAttrs mkNode config.configurations.nixos" in deploy,
+      "deploy.nix builds node <name> from nixosConfigurations.<name>, whose toplevel the flake check evaluates only inside it")
+
 SIDE = function("side_by_side")
 with tempfile.TemporaryDirectory() as t:
     t = pathlib.Path(t)
@@ -105,6 +111,11 @@ fc = re.search(r"\n  flakeCheck =\s+gate\s+\"nixos-flake-check\".*?''\n(.*?)\n *
 check(fc is not None, "flakeCheck found in devenv.nix")
 names = {"nixosConfigurations": [], "formatter": [], "packages": [], "checks": ["x86_64-linux"],
          "checks.x86_64-linux": ["deploy-schema-asus-b460m", "plain"]}
+# a node's two deploy checks are evaluated in one process, and its host's toplevel only inside them: "lone" has no node
+pair_names = {"nixosConfigurations": ["acer-swift", "pi", "lone"], "formatter": [], "packages": [],
+              "checks": ["x86_64-linux", "aarch64-linux"],
+              "checks.x86_64-linux": ["deploy-activate-acer-swift", "deploy-schema-acer-swift", "plain"],
+              "checks.aarch64-linux": ["deploy-activate-pi", "deploy-schema-pi"]}
 # the dry-run text is Nix 2.34's own: "these N derivations" or "this derivation will be built:", and "don't know how to
 # build these paths:" for a missing drv, with exit status 0
 dryruns = {
@@ -116,24 +127,30 @@ dryruns = {
     # NIXOS_FLAKE_CHECK_DRY nothing is built, so it is recorded as dry
     "owner": "these 2 derivations will be built:\\n  /nix/store/a-ollama-0.40.3.drv\\n  /nix/store/b-etc.drv",
     "ownerdry": "these 2 derivations will be built:\\n  /nix/store/a-ollama-0.40.3.drv\\n  /nix/store/b-etc.drv",
+    "pair": "",
+    "pairfail": "",
 }
 for mode, dryrun in dryruns.items():
     with tempfile.TemporaryDirectory() as t:
         t = pathlib.Path(t)
         calls, rec, deferred = t / "calls", t / "records", t / "deferred"
-        (t / "nix").write_text("#!/usr/bin/env python3\nimport json, sys\na = sys.argv[1:]\n"
+        (t / "nix").write_text("#!/usr/bin/env python3\nimport json, re, sys\na = sys.argv[1:]\n"
                                f"open({str(calls)!r}, 'a').write(' '.join(a) + '\\n')\n"
-                               f"names = {names!r}\n"
+                               f"names = {pair_names if mode.startswith('pair') else names!r}\n"
                                "attr = next((x[2:] for x in a if x.startswith('.#')), '')\n"
                                "if a[:2] == ['flake', 'show']: print(json.dumps({k: 0 for k in ['checks','deploy','formatter','nixosConfigurations','overlays','packages','templates']}))\n"
                                "elif '--expr' in a: print('x86_64-linux', end='')\n"
                                "elif any('? driver' in x for x in a): print(json.dumps([]))\n"
                                "elif 'builtins.attrNames' in a: print(json.dumps(names.get(attr, [])))\n"
+                               + ("elif '--apply' in a and 'drvPath' in a[a.index('--apply') + 1]: print('error: seeded', file=sys.stderr); sys.exit(1)\n" if mode == "pairfail" else "") +
+                               "elif '--apply' in a and 'drvPath' in a[a.index('--apply') + 1]: print(json.dumps(['/nix/store/x-' + attr + '.' + n + '.drv' for n in re.findall(r'\"([^\"]+)\"', a[a.index('--apply') + 1])]))\n"
                                "elif a[:2] == ['eval', '--raw'] and attr.endswith('.drvPath'): print('/nix/store/x-' + attr[:-8] + '.drv', end='')\n"
                                + ("elif '--dry-run' in a and 'asus' in a[-1]: print('error: path is not valid', file=sys.stderr); sys.exit(1)\n" if dryrun is None else
                                   f"elif '--dry-run' in a and 'asus' in a[-1]: print({dryrun!r}.replace('\\\\n', '\\n'), file=sys.stderr)\n"))
         # this guest's own system has no CUDA (-qR /run/current-system); the to-build derivations' inputs do
-        (t / "nix-store").write_text('#!/usr/bin/env bash\n[ "$2" = -qR ] && exit 0\necho /nix/store/c-cuda13.4-cuda_cudart-13.4.drv\n')
+        (t / "nix-store").write_text('#!/usr/bin/env bash\ncase "$1 $2" in "-qR "*deploy-activate-pi*) exit 0 ;; "-qR "*deploy-activate*)\n'
+                                     '  echo /nix/store/y-nixos-system-acer-swift-26.11.drv; exit 0 ;; esac\n'
+                                     '[ "$2" = -qR ] && exit 0\necho /nix/store/c-cuda13.4-cuda_cudart-13.4.drv\n')
         (t / "uname").write_text(f"#!/usr/bin/env bash\necho {'asus-b460m' if mode.startswith('owner') else 'acer-swift'}\n")
         (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
         for f in ("nix", "nix-store", "uname", "record"):
@@ -165,6 +182,34 @@ for mode, dryrun in dryruns.items():
             check("result=built" in rec.read_text() and "owner=asus-b460m" in rec.read_text() and "head=0123abc" in rec.read_text()
                   and "check=checks.x86_64-linux.deploy-schema-asus-b460m" in rec.read_text() and "drv=/nix/store/x-" in rec.read_text(),
                   f"the owning host records its own deploy check as built for the head and drv ({rec.read_text()!r})")
+        elif mode == "pair":
+            lines = calls.read_text().splitlines()
+            applied = [l for l in lines if "drvPath) [" in l]
+            alone = [l for l in lines if l.startswith("eval --raw") and l.endswith(".drvPath")]
+            check(r.returncode == 0 and len(applied) == 2
+                  and any("checks.x86_64-linux " in l and '"deploy-activate-acer-swift" "deploy-schema-acer-swift"' in l for l in applied)
+                  and any("checks.aarch64-linux " in l and "deploy-schema-pi" in l for l in applied) and not any("deploy-" in l for l in alone),
+                  f"each node's deploy-activate and deploy-schema checks are evaluated in one process, on either system ({r.returncode}, {applied}, {r.stderr[-300:]!r})")
+            check(not any("nixosConfigurations.acer-swift." in l for l in alone)
+                  and any("nixosConfigurations.lone.config.system.build.toplevel" in l for l in alone),
+                  f"a host whose deploy-activate check holds a NixOS system is not evaluated alone again; one without a node is ({alone})")
+            check("nixosConfigurations.acer-swift.config.system.build.toplevel: inside checks.x86_64-linux.deploy-activate-acer-swift, whose derivation holds a NixOS system" in r.stderr,
+                  f"the toplevel left to its deploy check says so ({r.stderr[-600:]!r})")
+            check(any("nixosConfigurations.pi.config.system.build.toplevel" in l for l in alone)
+                  and "checks.aarch64-linux.deploy-activate-pi holds no NixOS system: nixosConfigurations.pi evaluated on its own" in r.stderr,
+                  f"seeded: a deploy-activate check whose closure holds no NixOS system leaves its host evaluated on its own ({alone})")
+            recs = rec.read_text().splitlines()
+            check(all(any(f"check=checks.x86_64-linux.{c}-acer-swift " in l and f"drv=/nix/store/x-checks.x86_64-linux.{c}-acer-swift.drv" in l for l in recs)
+                      for c in ("deploy-activate", "deploy-schema")),
+                  f"both checks of the pair are recorded, each with its own drv ({recs})")
+            check(any("check=checks.x86_64-linux.deploy-activate-acer-swift " in l and "eval_with=checks.x86_64-linux.deploy-schema-acer-swift " in l for l in recs)
+                  and any("check=checks.x86_64-linux.deploy-schema-acer-swift " in l and "eval_seconds=0 eval_with=checks.x86_64-linux.deploy-activate-acer-swift " in l for l in recs)
+                  and any("check=checks.x86_64-linux.plain " in l and "eval_with= " in l for l in recs),
+                  f"each record of the pair names the other in eval_with, the second's eval_seconds 0; a lone check names none ({recs})")
+        elif mode == "pairfail":
+            built = [c for c in built if "deploy-" in c]
+            check(r.returncode != 0 and not built and "error: seeded" in r.stderr,
+                  f"seeded: a failed pair evaluation fails the step before any deploy check is built ({r.returncode}, {built}, {r.stderr[-300:]!r})")
         elif mode == "ownerdry":
             check(r.returncode == 0 and "result=dry" in rec.read_text() and "result=built" not in rec.read_text(),
                   f"seeded: under NIXOS_FLAKE_CHECK_DRY the owner records dry, never built ({rec.read_text()!r})")

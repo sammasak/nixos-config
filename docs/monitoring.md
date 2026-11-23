@@ -7,10 +7,10 @@ is the modules named here; this page only maps them.
 
 | host | service | listens on | read by |
 |---|---|---|---|
-| black-pi | Prometheus (`modules/homelab/monitoring/prometheus.nix`), 15 d or 1500 MB, OTLP receiver on | fleet address :9090 | Grafana; acer's alloy-otlp writes; lenovo's watchdog |
-| black-pi | Alertmanager (`modules/homelab/monitoring/alertmanager.nix`), one unclustered instance | fleet address :9093 | Prometheus |
+| black-pi | Prometheus (`modules/homelab/monitoring/prometheus.nix`), 15 d or 1500 MB, OTLP and remote-write receivers on (either lets a `from` host write any series) | fleet address :9090 | Grafana; acer's alloy-otlp writes; Loki's ruler writes; lenovo's watchdog |
+| black-pi | Alertmanager (`modules/homelab/monitoring/alertmanager.nix`), one unclustered instance | fleet address :9093 | Prometheus; Loki's ruler |
 | black-pi | Grafana (`modules/homelab/monitoring/grafana.nix`), sign-in through Authentik only | fleet address :3000 | acer's Caddy (grafana.sammasak.dev) |
-| black-pi | Loki (`loki.nix`) | fleet address :3100 | every fleet host's journal collector |
+| black-pi | Loki (`loki.nix`), ruler on | fleet address :3100 | every fleet host's journal collector |
 | black-pi | blackbox exporter (in `prometheus.nix`), probes of the public names | 127.0.0.1:9115 | Prometheus |
 | every fleet host | node-exporter (`modules/homelab/monitoring/node-exporter.nix`), systemd collector and automatic service-restart counters on | fleet address :9100, black-pi alone | Prometheus |
 | every fleet host | journal collector (`journal-collector.nix`), Alloy | 127.0.0.1:12345 | nothing (it pushes to Loki) |
@@ -18,7 +18,6 @@ is the modules named here; this page only maps them.
 | acer | alloy-otlp (`modules/homelab/monitoring/alloy-otlp.nix`), the harnesses' OTLP intake | 127.0.0.1:4318 behind otlp.sammasak.dev; metrics :12346 | Prometheus |
 | acer | llm-gateway's admin listener | :9091 | Prometheus |
 | acer | Caddy's metrics site (`modules/homelab/edge.nix`), plain HTTP: Caddy's `/metrics` and Authentik's two loopback metrics listeners at `/authentik/{server,worker}/metrics` | :9180, black-pi alone | Prometheus (jobs `caddy`, `authentik-server`, `authentik-worker`) |
-| lenovo | alert-bridge (`alert-bridge.nix`): Alertmanager's webhook to ntfy | :9099, black-pi alone | Alertmanager |
 
 Which host may reach which port is `sam.fleet.listeners` (`modules/core/fleet.nix`); `modules/core/network.nix` turns it
 into firewall rules. The scrape jobs are in `prometheus.nix`. The node-exporter and nvidia-gpu targets come from `sam.fleet.hosts`, so a host
@@ -61,12 +60,23 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   lists a host by hand.
 - Deleting a file deletes its dashboard at the next switch (`disableDeletion = false`). A dashboard edited in the UI
   cannot be saved: change the JSON.
+- Agent harnesses, "On versus off": the table gives each host/worker's Shunt and window; compare per Bash call or
+  main-thread request, never raw totals. "Shunt helps": on workers spill and redirect and send fewer context tokens
+  per request than off ones, compactions per request not rising. "The 300K window helps": herman compacts less per
+  request than a default worker with the same Shunt. Today a1 (on, default) and herman (off, 300K) differ in both and
+  acer's host sends no Claude events, so neither claim isolates until two workers differ in one setting.
 
 ## Rules and paging
 
 - Prometheus loads `modules/homelab/monitoring/rules/*.yaml` (`homelab.yaml` rendered by `modules/homelab/monitoring/rules/homelab.nix` from the fleet's power windows), the
   llm-bench scorecard and the shipping rules from `modules/homelab/monitoring/rules/shipping.nix` (the list is in `prometheus.nix`).
-- Alertmanager sends every alert to the alert bridge except Watchdog, InfoInhibitor, HostExpectedOff, any alert
+- Loki's ruler (`homelab.loki.ruler`) evaluates the LogQL rules in `modules/homelab/monitoring/loki-rules/fake/`: it
+  remote-writes recordings to Prometheus and sends alerts to Alertmanager, both on black-pi over lo. Prometheus's
+  rule view does not list them; Loki's `/prometheus/api/v1/rules` does. The `loki-ruler-black-pi` check runs them.
+  - `host_worker:claude_code_auto_compactions:count1m{host,worker}`: Claude Code's auto compactions per minute (#626),
+    each minute counted once: a sum over a day is a lower bound (late lines, minutes Loki was down).
+  - UnitOOMKilled (warning): systemd logged an OOM kill in a system unit, named in `oom_unit`.
+- Alertmanager publishes every alert to lenovo's ntfy except Watchdog, InfoInhibitor, HostExpectedOff, any alert
   labelled `notify="none"` and any `severity="info"` alert (NodeCPUHighUsage): those go to a null receiver. The shipping team's alerts are muted at night.
 - HostExpectedOff marks a sleeping host that is off as planned. Inhibit rules keyed on it silence what the power-off
   causes (`alertmanager.nix`).
@@ -76,6 +86,12 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   - NodeSystemdUnitFailed (warning, 15 m): any failed service, socket, timer, target or path unit.
   - DnsDown (critical, 5 m): lenovo's AdGuard does not answer its status API.
   - DnsStatsStale (warning): `adguard.prom` has not been rewritten for over 5 min.
+  - JournalEntriesDropped (warning, 5 m): Alloy's Loki writer dropped journal entries in the last 15 min on a host that is up.
+  - JournalMetricsStale (warning, 10 m): the journal-metrics collection failed, is over 180 s old, or is missing on an up host.
+  - BackupStale (warning, 10 m): a daily backup's last recorded success is over 36 h old.
+  - BackupNeverRecorded (warning, 36 h): a backup has no valid success record.
+  - BackupCollectorStale (warning, 15 m): the backup-metrics scan is over 900 s old, or acer or lenovo has no `backup.prom`.
+  - OtlpWritesRejected (warning, 10 m): acer's alloy-otlp answered OTLP POSTs with 4xx/5xx in every 5 min window.
   - NodeTemperatureHigh (warning, 15 m): the Pi's `cpu-thermal` zone at 85 °C or more. x86 zones page no one.
   - NodeSensorNearCritical (warning, 15 m, `notify="none"`): an hwmon sensor within 5 °C of its own critical mark.
     msi and lenovo reach it through every gate, so it notifies no one. It shows in the alert list, in Fleet's
@@ -94,12 +110,12 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
 | `grafana-dashboards` | every query on every dashboard: metric names against what the exporters really emit (node-exporter on its own fixtures with the deployed flags; the GPU check's output; Loki's, Alloy's, Caddy's and blackbox's name literals; llm-gateway's and Authentik's registrations; black-pi's Prometheus and Alertmanager and acer's alloy-otlp run on loopback (`scripts/monitoring-exposition.sh`); the writers' textfiles, AdGuard's from lenovo's sandboxed AdGuard; the OTLP allow-list; the rule files' records); PromQL through promtool, LogQL through logcli; jobs scraped or written; no host named by hand; every rule file Prometheus loads held to the same names and jobs; seeded failures, rule files included |
 | `grafana-dashboard-removal` | Grafana itself, with black-pi's provider settings, deletes a removed file's dashboard and keeps ids across a restart |
 | `gpu-telemetry-exporter` | the GPU exporter's fields against a fake nvidia-smi that heads the throttle fields `clocks_event_reasons`, as asus's driver does |
-| `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` and `severity="info"` reach no one, NodeTemperatureHigh and a warning reach the bridge, and the same alert without the label would notify |
+| `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` and `severity="info"` reach no one, NodeTemperatureHigh and a warning reach ntfy, and the same alert without the label would notify |
 | `monitoring-alert-annotations` | every homelab and shipping alert carries `summary`, `description`, `query` and a `runbook_url` naming a heading in a tracked doc ([alert-runbooks.md](alert-runbooks.md)); a rule file with no alert fails; seeds without a query, without an anchor, with a dangling anchor and with an empty file beside a good one fail it. The `grafana-dashboards` check holds each `query`'s PromQL and names |
 | `monitoring-rules-tests` | `promtool test rules` on every file in `modules/homelab/monitoring/rules/tests`, against `homelab.yaml` as rendered |
 | `monitoring-config-msi-ms7758`, `monitoring-rules-sleeping-hosts` | black-pi's Prometheus, Alertmanager and blackbox configs checked on an x86 seed; the sleeping-host rules per host |
-| `loki-config-msi-ms7758`, `journal-collector-config-black-pi` | Loki's config and the Pi's journal collector, on x86 |
-| `alert-bridge-sources` | the bridge admits Alertmanager's host alone |
+| `loki-config-msi-ms7758`, `loki-ruler-black-pi`, `journal-collector-config-black-pi` | Loki's config, black-pi's ruler and rules end to end (synthetic lines to Prometheus and a stub Alertmanager) and the Pi's journal collector, on x86 |
+| `alert-fire-resolve` (VM) | synthetic rules travel Prometheus and black-pi's Alertmanager configuration, its ntfy payload template included, to ntfy with lenovo's settings, read back through its poll API: one page per group with the exact title, tags, priority, click and body, firing then resolved; a page with no runbook or query, an oversized summary cut to 1000 characters, and a summary ending in a colon still arrive; the same colon body without the template's YAML guard is refused; the info twin reaches Alertmanager and no page. About 6 min: the resolved page waits for the 5m group_interval |
 | `shipping-*` (`shipping-check.nix`) | the Shipping rules and dashboard |
 | `caddy-edge-test` (gate, `scripts/test-caddy-edge.py`) | acer's Caddyfile through acer's Caddy; the deployed config run on loopback, where a stray name or Host port adds no series and Authentik sees only the served names |
 

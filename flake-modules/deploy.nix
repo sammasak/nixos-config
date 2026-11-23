@@ -45,6 +45,8 @@ let
     name:
     { deploy, ... }:
     let
+      # nixos-flake-check (devenv.nix) evaluates host <name>'s toplevel only inside deploy-activate-<name>: a node built
+      # from another configuration would leave it unevaluated (scripts/test-gate-steps.py pins this line)
       host = config.flake.nixosConfigurations.${name};
     in
     {

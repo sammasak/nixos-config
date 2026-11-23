@@ -2,7 +2,8 @@
 devenv.nix as written, with the full gate, the lints and the system generation stubbed. A green full gate is recorded
 under its tree, gate executable and generation; that tree, or it plus documentation, gets the lints; anything else,
 a damaged, missing or unwritable record included, runs the full gate. Through a real git push, a linked worktree is
-judged on the pushed commit, not on its own HEAD."""
+judged on the pushed commit, not on its own HEAD. At night (host local time, the clock stubbed) the full gate is
+owed: the night lints run, a result=owed mode=night gate record is written and no green tree is recorded."""
 import os
 import pathlib
 import re
@@ -29,11 +30,17 @@ if not m:
 BODY = textwrap.dedent(m.group(1)).replace("'''", "\0q").replace("''${", "\0d")
 
 
-def render(qa, lints, gen, docs, fresh):
-    """The hook as writeShellApplication would build it, with qa, the lints, the doc readers' tests, the devenv-fresh
-    guard and /run/current-system replaced."""
+CLOCK = "env -u TZ date +%H%M"
+
+
+def render(qa, lints, gen, docs, fresh, night, record):
+    """The hook as writeShellApplication would build it, with qa, the lints, the night lints, the record helper, the doc
+    readers' tests, the devenv-fresh guard, the clock (read from $NOW) and /run/current-system replaced."""
+    if BODY.count(CLOCK) != 1:
+        sys.exit(f"FAIL (scripts/test-qa-push.py): expected the clock `{CLOCK}` once in qaPush")
     text = (BODY.replace("${lib.getExe qa}", str(qa)).replace("${run lints}", str(lints)).replace("${lib.getExe docTests}", str(docs))
-            .replace("${lib.getExe devenvFresh}", str(fresh)))
+            .replace("${lib.getExe devenvFresh}", str(fresh)).replace("${run nightLints}", str(night))
+            .replace("${lib.getExe record}", str(record)).replace(CLOCK, 'echo "$NOW"'))
     left = re.findall(r"\$\{[^}]*\}", text)
     if left:
         sys.exit(f"FAIL (scripts/test-qa-push.py): Nix interpolations the test does not stub: {left}")
@@ -53,6 +60,11 @@ with tempfile.TemporaryDirectory() as t:
     docs = t / "doc-tests"
     docs.write_text(f'#!/usr/bin/env bash\necho "DOCTESTS $*" >> "{log}"\nexit "${{DOC_RC:-0}}"\n')
     # the devenv-fresh guard (devenvFresh, tested on its own below): refuses when DEVENV_STALE is set
+    night = t / "night-lints"
+    night.write_text(f'#!/usr/bin/env bash\necho NIGHT >> "{log}"\nexit "${{NIGHT_RC:-0}}"\n')
+    records = t / "records"
+    record = t / "record"
+    record.write_text(f'#!/usr/bin/env bash\necho "$PLATFORM_RECORD_STRICT $*" >> "{records}"\n')
     fresh = t / "devenv-fresh"
     fresh.write_text('#!/usr/bin/env bash\n[ -z "${DEVENV_STALE:-}" ] || { echo "nixos-qa: refused: stub stale devenv" >&2; exit 1; }\n')
     gates = {}
@@ -61,13 +73,14 @@ with tempfile.TemporaryDirectory() as t:
         qa.write_text(f'#!/usr/bin/env bash\necho FULL >> "{log}"\necho "nixos-qa: stub took 0 s" >> "${{NIXOS_QA_TIMES:-/dev/null}}"\n'
                       f'[ -z "${{QA_SWITCH:-}}" ] || ln -sfn "$QA_SWITCH" "{gen}"\nexit "${{QA_RC:-0}}"\n')
         gates[name] = t / f"gate-{name}.sh"
-        gates[name].write_text(render(qa, lints, gen, docs, fresh))
-    for f in (lints, docs, fresh, t / "qa", t / "qa-other", *gates.values()):
+        gates[name].write_text(render(qa, lints, gen, docs, fresh, night, record))
+    for f in (lints, docs, fresh, night, record, t / "qa", t / "qa-other", *gates.values()):
         f.chmod(0o755)
 
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("GIT_", "PRE_COMMIT_")) and k not in ("NIXOS_QA_TIMES", "GATE_PROBE")}
-    env.update(HOME=str(t), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
+    # the hook's clock (render): midday unless a case sets NOW
+    env.update(NOW="1200", HOME=str(t), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t",
                GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
     repo, bare = t / "repo", t / "bare.git"
 
@@ -87,7 +100,7 @@ with tempfile.TemporaryDirectory() as t:
         r = subprocess.run([str(gates[which])], cwd=repo, env={**env, "PRE_COMMIT_TO_REF": rev, **extra},
                            stdin=subprocess.DEVNULL, capture_output=True, text=True)
         seen = log.read_text().split()
-        verdict = ("FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"]
+        verdict = ("FULL" if "FULL" in seen else "LINTS" if seen == ["LINTS"] else "NIGHT" if seen == ["NIGHT"]
                    else "LINTS+" + " ".join(seen[2:]) if seen[:2] == ["LINTS", "DOCTESTS"] else f"?{seen}")
         return verdict if r.returncode == 0 else f"{verdict}(rc={r.returncode})", r.stderr
 
@@ -296,6 +309,29 @@ with tempfile.TemporaryDirectory() as t:
         check(rc == 0 and "green not recorded" in out, f"seeded: {what}: nothing is recorded ({out.strip()})")
         case(f"{what}: the push of that tree runs the full gate", rev, "FULL")
 
+
+    # night mode: from 21:00 up to 08:30 a commit without a green tree gets the night lints and an owed record
+    for now, want in (("2059", "FULL"), ("2100", "NIGHT"), ("0000", "NIGHT"), ("0829", "NIGHT"), ("0830", "FULL")):
+        n = commit({"flake.nix": f"night {now}\n"}, f"night {now}")
+        records.write_text("")
+        case(f"W{now} a new code commit pushed at {now}", n, want, NOW=now)
+        rec = records.read_text()
+        if want == "NIGHT":
+            check(rec == f"1 gate gate=nixos-qa-push seconds={rec.split('seconds=')[-1].split()[0]} result=owed sha={n[:7]} mode=night "
+                  f"head={n} checkout=clean\n" and f"night mode: full QA not run for {n}, owed" in (repo / ".git/nixos-qa-times").read_text(),
+                  f"W{now} one strict owed gate record and the night line in nixos-qa-times ({rec.strip()!r})")
+            tree = git("rev-parse", "HEAD^{tree}")
+            check(all(l.split()[:1] != [tree] for l in (green.read_text() if green.exists() else "").splitlines()), f"W{now} no green tree recorded")
+            case(f"W{now} the same commit by day runs the full gate", n, "FULL")
+        else:
+            check(rec == "", f"W{now} by day no owed record ({rec.strip()!r})")
+    n = commit({"flake.nix": "night lint\n"}, "night lint")
+    records.write_text("")
+    case("WF a failing night lint fails the push", n, "NIGHT(rc=1)", NOW="2300", NIGHT_RC="1")
+    check(records.read_text() == "", "WF a failed night push writes no owed record")
+    case("WF2 that commit by day runs the full gate", n, "FULL")
+    case("WG that green tree at night gets the lints only, no owed record", n, "LINTS", NOW="2300")
+    check(records.read_text() == "", "WG a green tree pushed at night owes nothing")
 
     # a hook built before the pushed tree's devenv files changed (a shell entered before a merge) is refused before
     # any gate, lints-only and green paths included; it records nothing

@@ -30,6 +30,7 @@
   };
 
   homelab.journalCollector.enable = true;
+  homelab.shuntMetrics.enable = true;
 
   sam.profile = {
     username = "lukas";
@@ -110,8 +111,8 @@
     cores = 2;
   };
   # The whole memory budget (modules/core/memory-budget.nix): 15.3 GiB of MemTotal; every MemoryMax on the host
-  # (these two, and alert-bridge 64M, alloy 256M, node-exporter 64M, backup-metrics 64M, journal-metrics 16M, shipping-metrics 96M and nav-metrics 48M from
-  # their modules) plus the floors fits in it, 19M left. The kernel, page tables and the zram store (about 1 GiB
+  # (these two, and alloy 256M, node-exporter 64M, backup-metrics 64M, journal-metrics 16M, shipping-metrics 96M, nav-metrics 48M and
+  # shunt-metrics 48M from their modules) plus the floors fits in it, 67M left. The kernel, page tables and the zram store (about 1 GiB
   # measured) are outside: the caps meet only with the daemon pushed past its MemoryHigh while the user slice is at
   # its ceiling. Swap is a quarter of each cap, as the worker pools: zram is charged to no cgroup.
   sam.memory = {
@@ -128,8 +129,8 @@
       # stalls every session instead of being killed. The idle sessions' 4.6 GiB that cannot be dropped plus the
       # largest measured unit (3.0 GiB) fit under it (scripts/test-lenovo-build-bounds.py).
       "user.slice" = {
-        max = "8320M";
-        swapMax = "2080M";
+        max = "8288M";
+        swapMax = "2072M";
       };
     };
     # the LAN's DNS and the way in keep answering while the user slice and a build are both at their caps
@@ -189,13 +190,6 @@
   # Runs on lenovo, not the acer worker, so paging survives a worker outage. Mobile subscribes to
   # sam.fleet.ntfy.port on the LAN or Tailscale IP; the web UI is the name below, through Caddy on acer.
   homelab.ntfy.baseUrl = "https://ntfy.sammasak.dev";
-
-  # Alertmanager on black-pi posts to lenovo's LAN address (sam.fleet.listeners.alert-bridge), so loopback is not
-  # enough. Pages go to the module's default topic, homelab-alerts.
-  homelab.alertBridge = {
-    enable = true;
-    listenAddress = "0.0.0.0";
-  };
 
   # secrets/ is edited here, where the personal age key lives (nixos-config's devenv has them too)
   environment.systemPackages = with pkgs; [

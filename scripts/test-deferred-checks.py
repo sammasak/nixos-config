@@ -86,6 +86,13 @@ check(rc == 0 and "deferred nothing" in out, f"a passing gate that deferred noth
 rc, out = run([gate(H2, [], checkout="dirty")])
 check(rc == 2 and "dirty checkout" in out,
       f"seeded: only a manual gate on a dirty checkout, deferring nothing: cannot say, exit 2 ({rc}: {out.strip()})")
+# the pre-push hook's night mode (qaPush in devenv.nix) records the full gate as owed on a clean checkout of the head
+night = re.search(r"\$\{lib\.getExe record\} gate gate=nixos-qa-push [^\n]*result=owed[^\n]*mode=night[^\n]*checkout=clean\n",
+                  (ROOT / "devenv.nix").read_text())
+check(night is not None, "qaPush's night mode writes a gate record with result=owed, mode=night and checkout=clean")
+rc, out = run([("gate", f"gate=nixos-qa-push seconds=3 result=owed sha={H2[:7]} mode=night head={H2} checkout=clean")])
+check(rc == 2 and "no passing gate record on a clean checkout" in out,
+      f"seeded: only a night push's owed record on the head: not a passing gate, cannot say, exit 2 ({rc}: {out.strip()})")
 rc, out = run(BASE, "abc123")
 check(rc == 2 and "full 40-character sha" in out, f"a short sha is refused, exit 2 ({rc})")
 

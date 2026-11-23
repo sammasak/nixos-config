@@ -2,7 +2,8 @@
 # dashboard queries must come from one of these sources, each read from what its host runs (from none is a finding):
 # - node-exporter: the deployed command on node_exporter's own sysfs/procfs fixtures (node.prom); the systemd and
 #   timex collectors' names from their source and flags (systemd.prom); the repo's textfile writers (writers.prom),
-#   and the names scripts/shipping-metrics.py and scripts/nav-metrics.py print with --list (shipping.prom, nav.prom);
+#   and the names scripts/shipping-metrics.py, scripts/nav-metrics.py and scripts/shunt-metrics.py print with --list
+#   (shipping.prom, nav.prom, shunt.prom);
 # - the monitoring stack's own /metrics, run here (scripts/monitoring-exposition.sh: Prometheus, Alertmanager, Alloy);
 # - name literals and registrations in the source each host runs: Loki, Alloy, Caddy and blackbox (`sources` below),
 #   llm-gateway, Authentik; AdGuard's (dns.prom); the GPU exporter's (the gpu-telemetry-exporter check's output);
@@ -39,8 +40,8 @@ let
   exporterHosts = lib.filterAttrs (
     _: h: h.config.services.prometheus.exporters.node.enable
   ) config.flake.nixosConfigurations;
-  # a textfile directory adds only the metrics of its own files (shipping_* and agent_nav_* come from their collectors'
-  # --list below), so those flags are left out of the comparison
+  # a textfile directory adds only the metrics of its own files (shipping_*, agent_nav_* and shunt_* come from their
+  # collectors' --list below), so those flags are left out of the comparison
   flagsOf =
     c: with c.services.prometheus.exporters.node; [
       (lib.filter (f: !lib.hasPrefix "--collector.textfile.directory=" f) extraFlags)
@@ -50,6 +51,14 @@ let
   node = msi-ms7758.config.services.prometheus.exporters.node;
   exec = discard msi-ms7758.config.systemd.services.prometheus-node-exporter.serviceConfig.ExecStart;
   acer = acer-swift.config;
+  # the static claude_auto_compact_window_info file modules/homelab/shunt-metrics.nix links in, with acer's guests
+  compactionInfo = lib.last (
+    lib.splitString " " (
+      lib.findFirst (lib.hasInfix "/claude-compaction.prom ")
+        (throw "grafana-dashboards: acer links no claude-compaction.prom")
+        acer.systemd.tmpfiles.rules
+    )
+  );
   # the longest prefix first: Alloy's loki.write names sit inside Loki's
   sources = [
     {
@@ -185,6 +194,21 @@ let
       ];
       reason = "rules rules-rule-query-unknown-metric SeedQuery query: unknown metric node_no_such_metric";
     };
+    # a quoted UTF-8 name, read in its underscore form
+    rule-utf8-unknown-metric = {
+      rules.groups = [
+        {
+          name = "seed";
+          rules = [
+            {
+              alert = "SeedUtf8";
+              expr = ''{__name__="http.server.no_such_count",job="alloy-otlp"} > 0'';
+            }
+          ];
+        }
+      ];
+      reason = "rules rules-rule-utf8-unknown-metric SeedUtf8: unknown metric http_server_no_such_count";
+    };
     # a name the running Prometheus does not export
     prometheus-typo = {
       dashboard = seed "prometheus_tsdb_head_seriez" "prometheus";
@@ -207,6 +231,11 @@ let
     nav-typo = {
       dashboard = seed "agent_nav_repo_mis_ratio" "prometheus";
       reason = "unknown metric agent_nav_repo_mis_ratio:";
+    };
+    # claude_auto_compact_window_info, from shunt-metrics.nix's static file
+    compaction-info-typo = {
+      dashboard = seed "claude_auto_compact_windw_info" "prometheus";
+      reason = "unknown metric claude_auto_compact_windw_info:";
     };
     # the pre-595 name: nvidia-smi now heads these fields clocks_event_reasons, and the exporter names from the header
     gpu-throttle-name = {
@@ -418,7 +447,8 @@ in
                 "${../pkgs/platform-record/platform_record.py}"
                 "${../modules/homelab/monitoring/alloy-otlp.alloy}"
               ];
-              inherit (prom) rule_files;
+              # and the Loki ruler's records, which it remote-writes to Prometheus (their LogQL is loki-check's)
+              rule_files = prom.rule_files ++ [ "${../modules/homelab/monitoring/loki-rules/fake/homelab.yaml}" ];
               # black-pi's alert and recording rules, held to the same names and jobs as the panels
               alert_rules = prom.rule_files;
               record_sources = [ "${../pkgs/llm-bench/rules.nix}" ];
@@ -499,12 +529,15 @@ in
             python3 -I ${../scripts/shipping-metrics.py} --list > shipping.prom
             # the devTools hosts' navigation textfile (modules/homelab/nav-metrics.nix)
             python3 -I ${../scripts/nav-metrics.py} --list > nav.prom
+            # lenovo's Shunt textfile (modules/homelab/shunt-metrics.nix)
+            python3 -I ${../scripts/shunt-metrics.py} --list > shunt.prom
             # Authentik's names from the Python package and the Go server acer runs
             python3 -I ${../scripts/authentik-metric-names.py} ${acer.systemd.services.authentik-worker.environment.PYTHONPATH} \
               ${lib.head (lib.splitString " " acer.systemd.services.authentik.serviceConfig.ExecStart)} > authentik.prom
             checker=${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3
             static=(node-exporter=node.prom node-exporter=systemd.prom node-exporter=writers.prom
-              node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom
+              node-exporter=${adguardCheck}/dns.prom node-exporter=shipping.prom node-exporter=nav.prom node-exporter=shunt.prom
+              node-exporter=${compactionInfo}
               llm-gateway=llm-gateway.prom authentik-server=authentik.prom authentik-worker=authentik.prom
               nvidia-gpu=${self'.checks.gpu-telemetry-exporter} \
                 node-exporter=${self'.checks.backup-metrics}/backup.prom

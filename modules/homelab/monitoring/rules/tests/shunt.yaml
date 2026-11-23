@@ -1,0 +1,236 @@
+# promtool test rules for shunt.yaml (flake-modules/monitoring-check.nix runs it). lenovo runs the collector, msi has
+# the unit but never wrote its textfile, acer runs no collector (in the cases before ShuntSilent's).
+rule_files: [../shunt.yaml]
+evaluation_interval: 1m
+tests:
+  # fresh, then frozen at 600 s: older than 2700 s from 55m, firing 20m later
+  - interval: 1m
+    input_series:
+      - series: 'shunt_collector_success_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '0+60x10 600x80'
+      - series: 'shunt_collector_failed{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '0x90'
+      - series: 'node_systemd_unit_state{job="node-exporter",node="lenovo-21CB001PMX",name="shunt-metrics.service",state="failed"}'
+        values: '0x90'
+      - series: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",name="nav-metrics.service",state="failed"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: ShuntCollectorStale
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: ShuntCollectorStale
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: ShuntCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "The Shunt collector on lenovo-21CB001PMX is stale"
+              description: "shunt-metrics on lenovo-21CB001PMX has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics.service and journalctl -u shunt-metrics.service there."
+              query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX",worker=""}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntcollectorstale"
+
+  # fresh but failing from 10m: firing after 20m of failed runs; one failed run alone (lenovo's blip) does not
+  - interval: 1m
+    input_series:
+      - series: 'shunt_collector_success_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '0+60x60'
+      - series: 'shunt_collector_failed{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '0x10 1x15 0x35'
+      - series: 'shunt_collector_success_timestamp_seconds{job="node-exporter",node="msi-ms7758"}'
+        values: '0+60x10 600x50'
+      - series: 'shunt_collector_failed{job="node-exporter",node="msi-ms7758"}'
+        values: '0x10 1x50'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ShuntCollectorStale
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: ShuntCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "The Shunt collector on msi-ms7758 is stale"
+              description: "shunt-metrics on msi-ms7758 has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics.service and journalctl -u shunt-metrics.service there."
+              query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="msi-ms7758",worker=""}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntcollectorstale"
+
+  # the unit exists but its textfile never appeared: firing after 20m; a host with no unit never does
+  - interval: 1m
+    input_series:
+      - series: 'node_systemd_unit_state{job="node-exporter",node="msi-ms7758",name="shunt-metrics.service",state="failed"}'
+        values: '0x40'
+      - series: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",name="nav-metrics.service",state="failed"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ShuntCollectorStale
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ShuntCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "The Shunt collector on msi-ms7758 is stale"
+              description: "shunt-metrics on msi-ms7758 has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics.service and journalctl -u shunt-metrics.service there."
+              query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="msi-ms7758",worker=""}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntcollectorstale"
+
+  # lenovo: 6 timeouts in 20 attempts (30 %), firing after 30m. msi: 4 in 20 (20 %). acer-swift: 8 failures in 8
+  # attempts, under the minimum of 10. Only lenovo fires.
+  - interval: 1m
+    input_series:
+      - series: 'shunt_events{job="node-exporter",node="lenovo-21CB001PMX",hook="bulk-read",result="ok"}'
+        values: '14x60'
+      - series: 'shunt_events{job="node-exporter",node="lenovo-21CB001PMX",hook="bulk-read",result="timeout"}'
+        values: '6x60'
+      - series: 'shunt_events{job="node-exporter",node="lenovo-21CB001PMX",hook="shunt-read",result="redirect"}'
+        values: '50x60'
+      - series: 'shunt_events{job="node-exporter",node="msi-ms7758",hook="bulk-read",result="ok"}'
+        values: '14x60'
+      - series: 'shunt_events{job="node-exporter",node="msi-ms7758",hook="bulk-read",result="private"}'
+        values: '2x60'
+      - series: 'shunt_events{job="node-exporter",node="msi-ms7758",hook="bulk-read",result="rate_limited"}'
+        values: '4x60'
+      - series: 'shunt_events{job="node-exporter",node="acer-swift",hook="bulk-read",result="auth"}'
+        values: '8x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ShuntDelegationFailing
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: ShuntDelegationFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "Bulk-read delegations on lenovo-21CB001PMX are failing"
+              description: "30% of the bulk-read delegations on lenovo-21CB001PMX in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. The count is a 24 h window, so it can stay firing up to 24 h after a fix. Read the outcomes in the hook log there."
+              query: 'sum by (result) (shunt_events{job="node-exporter",node="lenovo-21CB001PMX",worker="",hook="bulk-read"})'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntdelegationfailing"
+
+  # acer's a1 (on) keeps running Bash, its last Shunt record frozen at 0: silent past 2 h from 120m, firing 1 h later.
+  # herman (off) runs Bash with no Shunt record and never fires; msi's m1 (on) went idle at 0 and never fires; lenovo's
+  # owner (on, no worker) logs Shunt records throughout.
+  - interval: 1m
+    input_series:
+      - series: 'shunt_bash_last_call_timestamp_seconds{job="node-exporter",node="acer-swift",worker="a1",shunt="on"}'
+        values: '0+60x240'
+      - series: 'shunt_last_record_timestamp_seconds{job="node-exporter",node="acer-swift",worker="a1",shunt="on",hook="shunt-spill"}'
+        values: '0x240'
+      - series: 'shunt_bash_last_call_timestamp_seconds{job="node-exporter",node="acer-swift",worker="herman",shunt="off"}'
+        values: '0+60x240'
+      - series: 'shunt_bash_last_call_timestamp_seconds{job="node-exporter",node="msi-ms7758",worker="m1",shunt="on"}'
+        values: '0x240'
+      - series: 'shunt_bash_last_call_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX",shunt="on"}'
+        values: '0+60x240'
+      - series: 'shunt_last_record_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX",shunt="on",hook="shunt-spill"}'
+        values: '0+60x240'
+    alert_rule_test:
+      - eval_time: 170m
+        alertname: ShuntSilent
+        exp_alerts: []
+      - eval_time: 190m
+        alertname: ShuntSilent
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift, worker: a1}
+            exp_annotations:
+              summary: "Shunt on acer-swift for worker a1 is silent or failing"
+              description: "Shunt is declared on for acer-swift worker a1, yet its agent ran Bash in the last hour with no Shunt hook record for 2 h, or a Shunt hook logged error or nostate in the last 24 h; the on/off comparison is then not measuring Shunt. A session started before Shunt was switched on keeps its old hooks until restarted. An error stays in the 24 h window, so it can stay firing up to 24 h after a fix."
+              query: 'shunt_events{job="node-exporter",node="acer-swift",worker="a1",hook=~"shunt-.*"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntsilent"
+
+  # a Shunt hook's own error on a1 from 10m fires 1 h later; spill results that are decisions (small) never do
+  - interval: 1m
+    input_series:
+      - series: 'shunt_bash_last_call_timestamp_seconds{job="node-exporter",node="acer-swift",worker="a1",shunt="on"}'
+        values: '0+60x90'
+      - series: 'shunt_last_record_timestamp_seconds{job="node-exporter",node="acer-swift",worker="a1",shunt="on",hook="shunt-spill"}'
+        values: '0+60x90'
+      - series: 'shunt_events{job="node-exporter",node="acer-swift",worker="a1",shunt="on",hook="shunt-spill",result="small"}'
+        values: '40x90'
+      - series: 'shunt_events{job="node-exporter",node="acer-swift",worker="a1",shunt="on",hook="shunt-spill",result="error"}'
+        values: '_x10 1x80'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: ShuntSilent
+        exp_alerts: []
+      - eval_time: 75m
+        alertname: ShuntSilent
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift, worker: a1}
+            exp_annotations:
+              summary: "Shunt on acer-swift for worker a1 is silent or failing"
+              description: "Shunt is declared on for acer-swift worker a1, yet its agent ran Bash in the last hour with no Shunt hook record for 2 h, or a Shunt hook logged error or nostate in the last 24 h; the on/off comparison is then not measuring Shunt. A session started before Shunt was switched on keeps its old hooks until restarted. An error stays in the 24 h window, so it can stay firing up to 24 h after a fix."
+              query: 'shunt_events{job="node-exporter",node="acer-swift",worker="a1",hook=~"shunt-.*"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntsilent"
+
+  # acer: the host unit never wrote its textfile while a1's guest unit did, and herman's guest unit never wrote
+  # either; each fires on its own worker, a1 never
+  - interval: 1m
+    input_series:
+      - series: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",name="shunt-metrics.service",state="failed"}'
+        values: '0x40'
+      - series: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",name="shunt-metrics-guest-a1.service",state="failed"}'
+        values: '0x40'
+      - series: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",name="shunt-metrics-guest-herman.service",state="failed"}'
+        values: '0x40'
+      - series: 'shunt_collector_success_timestamp_seconds{job="node-exporter",node="acer-swift",worker="a1",shunt="on"}'
+        values: '0+60x40'
+      - series: 'shunt_collector_failed{job="node-exporter",node="acer-swift",worker="a1",shunt="on"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ShuntCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "The Shunt collector on acer-swift is stale"
+              description: "shunt-metrics on acer-swift has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics.service and journalctl -u shunt-metrics.service there."
+              query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="acer-swift",worker=""}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntcollectorstale"
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift, worker: herman}
+            exp_annotations:
+              summary: "The Shunt collector on acer-swift for worker herman is stale"
+              description: "shunt-metrics-guest-herman on acer-swift has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics-guest-herman.service and journalctl -u shunt-metrics-guest-herman.service there."
+              query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="acer-swift",worker="herman"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntcollectorstale"
+
+  # acer: a1's delegations fail 6 in 20, the host's succeed 20 in 20; summed by node it would be 15 % and silent
+  - interval: 1m
+    input_series:
+      - series: 'shunt_events{job="node-exporter",node="acer-swift",worker="a1",shunt="on",hook="bulk-read",result="ok"}'
+        values: '14x60'
+      - series: 'shunt_events{job="node-exporter",node="acer-swift",worker="a1",shunt="on",hook="bulk-read",result="timeout"}'
+        values: '6x60'
+      - series: 'shunt_events{job="node-exporter",node="acer-swift",shunt="off",hook="bulk-read",result="ok"}'
+        values: '20x60'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ShuntDelegationFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift, worker: a1}
+            exp_annotations:
+              summary: "Bulk-read delegations on acer-swift for worker a1 are failing"
+              description: "30% of the bulk-read delegations on acer-swift in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. The count is a 24 h window, so it can stay firing up to 24 h after a fix. Read the outcomes in the hook log there."
+              query: 'sum by (result) (shunt_events{job="node-exporter",node="acer-swift",worker="a1",hook="bulk-read"})'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntdelegationfailing"
+
+  # a1 on and running Bash with no Shunt record ever (hooks never registered): firing after 1 h
+  - interval: 1m
+    input_series:
+      - series: 'shunt_bash_last_call_timestamp_seconds{job="node-exporter",node="acer-swift",worker="a1",shunt="on"}'
+        values: '0+60x90'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: ShuntSilent
+        exp_alerts: []
+      - eval_time: 65m
+        alertname: ShuntSilent
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift, worker: a1}
+            exp_annotations:
+              summary: "Shunt on acer-swift for worker a1 is silent or failing"
+              description: "Shunt is declared on for acer-swift worker a1, yet its agent ran Bash in the last hour with no Shunt hook record for 2 h, or a Shunt hook logged error or nostate in the last 24 h; the on/off comparison is then not measuring Shunt. A session started before Shunt was switched on keeps its old hooks until restarted. An error stays in the 24 h window, so it can stay firing up to 24 h after a fix."
+              query: 'shunt_events{job="node-exporter",node="acer-swift",worker="a1",hook=~"shunt-.*"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntsilent"
