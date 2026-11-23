@@ -51,7 +51,10 @@ pub enum QueueError {
     NotFound(String),
     #[error("attempt {0} holds no live lease")]
     NotLive(String),
-    #[error("a settle to {0:?} needs a receipt; no other event takes one")]
+    /// The event, a settle to the named state, came without a receipt it needs or with one it may not carry.
+    #[error(
+        "a receipt goes with a settle to succeeded, failed or needs_review, and only there (this one: {0:?})"
+    )]
     Receipt(Status),
     #[error("{0} is out of range")]
     Range(&'static str),
@@ -68,7 +71,12 @@ impl From<postgres::Error> for QueueError {
             Some(db) if db.code() == &SqlState::from_code(FENCED) => {
                 Self::Fenced(db.message().to_owned())
             }
-            Some(db) if unavailable(db.code().code()) => Self::Unavailable(db.message().to_owned()),
+            // a FATAL or PANIC ends the session whatever its code
+            Some(db)
+                if unavailable(db.code().code()) || matches!(db.severity(), "FATAL" | "PANIC") =>
+            {
+                Self::Unavailable(db.message().to_owned())
+            }
             Some(db) => Self::Db {
                 code: db.code().code().to_owned(),
                 message: db.message().to_owned(),
@@ -178,7 +186,7 @@ const fn reason(kind: &Kind, to: Status) -> &'static str {
 
 /// The columns an attempt row is read with, under `a` (attempts) and `t` (tasks).
 const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a.host, a.slot, a.pins, \
-    t.max_attempts, (a.lease_deadline <= now()) AS expired, \
+    t.max_attempts, (a.lease_deadline <= clock_timestamp()) AS expired, \
     (extract(epoch FROM now() - a.changed_at) * 1000)::bigint AS in_state_ms, \
     (extract(epoch FROM now() - t.submitted_at) * 1000)::bigint AS since_submit_ms";
 
@@ -375,7 +383,7 @@ impl Store {
         })();
         if matches!(
             result,
-            Err(QueueError::Unavailable(_) | QueueError::OutcomeUnknown(_))
+            Err(QueueError::Unavailable(_) | QueueError::OutcomeUnknown(_) | QueueError::Client(_))
         ) {
             self.client = None;
         }
@@ -398,10 +406,14 @@ impl Store {
     /// # Errors
     /// [`QueueError::SchemaAhead`], or what the database reports.
     pub fn migrate(&mut self) -> Result<(), QueueError> {
-        self.tx(|tx| match Self::version(tx)? {
-            None => Ok(tx.batch_execute(UP)?),
-            Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
-            Some(_) => Ok(()),
+        self.tx(|tx| {
+            // two first migrations at once would both see no schema
+            tx.execute("SELECT pg_advisory_xact_lock(651)", &[])?;
+            match Self::version(tx)? {
+                None => Ok(tx.batch_execute(UP)?),
+                Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
+                Some(_) => Ok(()),
+            }
         })
     }
 
@@ -519,6 +531,26 @@ impl Store {
         })
     }
 
+    /// The attempt holding a live lease on `slot`, if any: how a claimer that got [`QueueError::OutcomeUnknown`]
+    /// learns whether its claim landed, and at which epoch.
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn live_on(&mut self, slot: &Slot) -> Result<Option<Attempt>, QueueError> {
+        self.tx(|tx| {
+            let rows = tx.query(
+                &format!(
+                    "SELECT {ATTEMPT_COLS} FROM attempts a JOIN tasks t ON t.id = a.task_id \
+                     WHERE a.host = $1 AND a.slot = $2 AND a.status IN {LIVE}"
+                ),
+                &[&slot.host, &slot.id],
+            )?;
+            rows.first()
+                .map(|r| locked(r).map(|l| l.attempt))
+                .transpose()
+        })
+    }
+
     /// Applies one event from the holder (start, checkpoint, settle) or the operator (wake, resolve); a lease is
     /// [`Store::claim`]'s and an expiry [`Store::reconcile`]'s. A holder's event after its lease deadline is refused:
     /// the lease is the reconciler's to expire.
@@ -566,7 +598,7 @@ impl Store {
             let n = tx.execute(
                 &format!(
                     "UPDATE attempts SET lease_deadline = now() + make_interval(secs => $3), fence = $2 \
-                     WHERE id = $1 AND status IN {LIVE} AND lease_deadline > now()"
+                     WHERE id = $1 AND status IN {LIVE} AND lease_deadline > clock_timestamp()"
                 ),
                 &[&attempt, &i64_of("epoch", epoch)?, &f64::from(lease_secs)],
             )?;

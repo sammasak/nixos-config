@@ -64,7 +64,7 @@ a write that names any epoch but the current one (or none), moves the epoch by m
 but queued, or touches a succeeded or failed attempt. One live attempt per slot is a unique index. A holder's event
 after its lease deadline is refused; `reconcile` (at startup and on a timer) expires overdue leases. A database that
 does not answer is `QueueError::Unavailable`, never an empty result, and a connection lost during COMMIT is
-`QueueError::OutcomeUnknown`: read the state, never replay. The queue holds no GitHub or agent
+`QueueError::OutcomeUnknown`: read the state (`Store::live_on` for a claim), never replay. The queue holds no GitHub or agent
 token: the task's `credential_class` is resolved by the host. Prompt, argv and workdir stay in `tasks`; `events`
 holds ids, states and reason codes.
 

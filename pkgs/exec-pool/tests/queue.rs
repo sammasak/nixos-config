@@ -398,7 +398,7 @@ fn a_stale_epoch_is_refused_by_the_database() {
 
 #[test]
 fn an_expired_running_attempt_needs_review_and_is_never_released() {
-    let pg = Pg::new();
+    let mut pg = Pg::new();
     let mut s = pg.migrated();
     let a = submit(&mut s, &task("t-1", 3));
     s.claim(&slot("s0"), 60).unwrap().unwrap();
@@ -421,8 +421,10 @@ fn an_expired_running_attempt_needs_review_and_is_never_released() {
     );
     assert_eq!(status(&pg, &a), ("needs_review".to_owned(), 2));
     assert!(s.claim(&slot("s1"), 60).unwrap().is_none());
-    // a fresh server start reconciles again and still leaves the review alone
+    // a server restart and a fresh start reconcile again and still leave the review alone
     drop(s);
+    pg.stop();
+    pg.start();
     let mut s = pg.migrated();
     assert!(s.reconcile().unwrap().is_empty());
     assert!(s.claim(&slot("s1"), 60).unwrap().is_none());
@@ -694,4 +696,25 @@ fn a_paused_task_wakes_without_spending_an_attempt() {
     assert_eq!(status(&pg, &a), ("queued".to_owned(), 1));
     let again = s.claim(&slot("s1"), 60).unwrap().unwrap();
     assert_eq!((again.attempt.lease_epoch, again.attempt.tries), (2, 1));
+}
+
+#[test]
+fn a_claim_takes_only_what_fits_its_slot() {
+    let pg = Pg::new();
+    let mut s = pg.migrated();
+    let mut claude = task("t-claude", 1);
+    claude.command.agent = Agent::Claude;
+    let old = submit(&mut s, &claude);
+    let new = submit(&mut s, &task("t-none", 1));
+    // the oldest queued task needs claude, which s0 does not run: s0 gets the newer one
+    let none_slot = slot("s0");
+    assert_eq!(s.claim(&none_slot, 60).unwrap().unwrap().attempt.id, new);
+    assert!(s.live_on(&none_slot).unwrap().is_some_and(|a| a.id == new));
+    let mut claude_slot = slot("s1");
+    claude_slot.agents = BTreeSet::from([Agent::Claude]);
+    assert_eq!(s.live_on(&claude_slot).unwrap(), None);
+    assert_eq!(s.claim(&claude_slot, 60).unwrap().unwrap().attempt.id, old);
+    let mut idle = slot("s2");
+    idle.agents = BTreeSet::from([Agent::Claude]);
+    assert!(s.claim(&idle, 60).unwrap().is_none());
 }
