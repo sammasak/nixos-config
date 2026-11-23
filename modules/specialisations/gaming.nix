@@ -1,5 +1,10 @@
 # Boot entry for game streaming: the desktop session with Sunshine for Moonlight clients, and no inference on the GPU.
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   inherit (config.sam.fleet) lanCidr public;
@@ -33,10 +38,17 @@ in
 {
   imports = [ ./desktop.nix ];
 
+  # the boot menu title `grub-reboot` takes: "NixOS - gaming", not one that carries a date and version
+  boot.loader.grub.configurationName = "gaming";
+
   services.sunshine = {
     enable = true;
-    # KMS capture: niri offers no wlroots screencopy
+    # nixpkgs' cached build has no CUDA, which Sunshine's NVENC path needs with KMS capture
+    package = pkgs.sunshine.override { cudaSupport = true; };
+    # KMS capture: niri has no wlr-export-dmabuf, which Sunshine's wlroots capture needs
     capSysAdmin = true;
+    # without a list Sunshine also offers Low Res Desktop (xrandr) and Steam Big Picture, neither of which works here
+    applications.apps = [ { name = "Desktop"; } ];
   };
   # mDNS would open 5353/udp to any source; Moonlight takes the host's address instead
   services.avahi.enable = false;
@@ -46,6 +58,9 @@ in
     enable = true;
     user = config.sam.profile.username;
   };
+
+  # mkForce: the desktop's idle lock would end a stream at a password prompt nobody can type into
+  home-manager.users.${config.sam.profile.username}.services.hypridle.enable = lib.mkForce false;
 
   # mkForce: games get the whole card. The units stay startable by hand, and the default boot runs them as before.
   systemd.services = lib.genAttrs [ "ollama" "ollama-model-loader" "nvidia-power-limit" ] (_: {

@@ -50,6 +50,8 @@ in
   specialisation.gaming.configuration = {
     imports = [ ../../modules/specialisations/gaming.nix ];
   };
+  # grub-reboot: the only way into that entry on a host with no keyboard
+  environment.systemPackages = [ pkgs.grub2_efi ];
 
   # 32 GB RAM, the host's own use not yet measured (msi's 2.8G assumed): a 20G pool reserves 2G each for at most 10,
   # 4 recommended (docs/nspawn-workers.md, Sizing). No ghHostsFile until lukas has a gh login here.
