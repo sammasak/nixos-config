@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use exec_pool::{
-    Agent, Attempt, CheckpointRef, Error, Event, Kind, Outcome, Pins, Placement, Receipt, Settle,
-    Slot, SlotState, Status, Submission, TaskSpec, submit, transition,
+    Agent, Attempt, CheckpointRef, Error, Event, Kind, Pins, Placement, Receipt, RelPath,
+    SchemaVersion, Settle, Slot, SlotState, Status, Submission, TaskSpec, submit, transition,
 };
 use serde_json::{Value, json};
 
@@ -39,7 +39,7 @@ fn task() -> TaskSpec {
 
 fn slot() -> Slot {
     Slot {
-        schema_version: 1,
+        schema_version: SchemaVersion::CURRENT,
         host: "msi-ms7758".to_owned(),
         id: "s0".to_owned(),
         state: SlotState::Idle,
@@ -54,7 +54,7 @@ fn slot() -> Slot {
 
 fn queued() -> Attempt {
     Attempt {
-        schema_version: 1,
+        schema_version: SchemaVersion::CURRENT,
         id: "a-1".to_owned(),
         task_id: "t-1".to_owned(),
         lease_epoch: 0,
@@ -101,32 +101,137 @@ fn valid_task_parses_fits_and_round_trips() {
     assert_eq!(serde_json::to_value(&t).unwrap(), task_json());
 }
 
+fn attempt_json() -> Value {
+    json!({ "schema_version": 1, "id": "a-1", "task_id": "t-1", "lease_epoch": 0, "status": "queued", "placement": null })
+}
+
+fn json_error<T: serde::de::DeserializeOwned + std::fmt::Debug>(v: Value) -> String {
+    // empty when it deserialised, which no expected message is contained in
+    serde_json::from_value::<T>(v)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default()
+}
+
 #[test]
-fn incompatible_schema_version_is_rejected_on_every_record() {
+fn incompatible_schema_version_does_not_deserialise_on_any_record() {
     let mut v = task_json();
     v["schema_version"] = json!(2);
     assert_eq!(parse(&v), Err(Error::SchemaVersion(2)));
+    let want = |v: u32| Error::SchemaVersion(v).to_string();
+    assert!(json_error::<TaskSpec>(v).contains(&want(2)));
+
+    let mut a = attempt_json();
+    a["schema_version"] = json!(0);
+    assert!(json_error::<Attempt>(a).contains(&want(0)));
+    let mut s = serde_json::to_value(slot()).unwrap();
+    s["schema_version"] = json!(2);
+    assert!(json_error::<Slot>(s).contains(&want(2)));
+    let receipt = json!({
+        "schema_version": 1, "task_id": "t-1", "attempt_id": "a-1", "lease_epoch": 1, "outcome": "succeeded",
+        "effects": [], "checkpoint": { "schema_version": 9, "uri": "checkpoint://t-1/1", "digest": "sha256-x" }
+    });
+    assert!(json_error::<Receipt>(receipt).contains(&want(9)));
+    assert_eq!(SchemaVersion::try_from(1), Ok(SchemaVersion::CURRENT));
+}
+
+#[test]
+fn empty_fields_are_rejected() {
+    for (path, field) in [
+        (&["id"][..], "id"),
+        (&["idempotency_key"], "idempotency_key"),
+        (&["source", "repo"], "source.repo"),
+        (&["source", "rev"], "source.rev"),
+    ] {
+        let mut v = task_json();
+        match path {
+            [k] => v[*k] = json!(""),
+            [k, l] => v[*k][*l] = json!(""),
+            _ => unreachable!(),
+        }
+        assert_eq!(parse(&v), Err(Error::Empty(field)), "{field}");
+    }
+    let mut v = task_json();
+    v["command"]["argv"] = json!([]);
+    assert_eq!(parse(&v), Err(Error::Empty("command.argv")));
 
     let mut a = queued();
-    a.schema_version = 0;
-    assert_eq!(a.validate(), Err(Error::SchemaVersion(0)));
+    a.id = String::new();
+    assert_eq!(a.validate(), Err(Error::Empty("id")));
+    let mut a = queued();
+    a.task_id = String::new();
+    assert_eq!(a.validate(), Err(Error::Empty("task_id")));
+    let mut a = run(&[placed()]).unwrap();
+    a.placement = Some(Placement {
+        host: "msi-ms7758".to_owned(),
+        slot: String::new(),
+    });
+    assert_eq!(a.validate(), Err(Error::Empty("placement.slot")));
     let mut s = slot();
-    s.schema_version = 2;
-    assert_eq!(s.validate(), Err(Error::SchemaVersion(2)));
-    let receipt = Receipt {
-        schema_version: 1,
-        task_id: "t-1".to_owned(),
-        attempt_id: "a-1".to_owned(),
-        lease_epoch: 1,
-        outcome: Outcome::Succeeded,
-        effects: vec![],
-        checkpoint: Some(CheckpointRef {
-            schema_version: 9,
-            uri: "checkpoint://t-1/1".to_owned(),
-            digest: "sha256-x".to_owned(),
-        }),
+    s.host = String::new();
+    assert_eq!(s.validate(), Err(Error::Empty("host")));
+    let mut s = slot();
+    s.id = String::new();
+    assert_eq!(s.validate(), Err(Error::Empty("id")));
+    let cp = |uri: &str, digest: &str| CheckpointRef {
+        schema_version: SchemaVersion::CURRENT,
+        uri: uri.to_owned(),
+        digest: digest.to_owned(),
     };
-    assert_eq!(receipt.validate(), Err(Error::SchemaVersion(9)));
+    assert_eq!(cp("", "d").validate(), Err(Error::Empty("uri")));
+    assert_eq!(cp("u", "").validate(), Err(Error::Empty("digest")));
+    let receipt: Receipt = serde_json::from_value(json!({
+        "schema_version": 1, "task_id": "t-1", "attempt_id": "", "lease_epoch": 1, "outcome": "succeeded",
+        "effects": [], "checkpoint": null
+    }))
+    .unwrap();
+    assert_eq!(receipt.validate(), Err(Error::Empty("attempt_id")));
+    let receipt = Receipt {
+        attempt_id: "a-1".to_owned(),
+        checkpoint: Some(cp("u", "")),
+        ..receipt
+    };
+    assert_eq!(receipt.validate(), Err(Error::Empty("digest")));
+}
+
+#[test]
+fn placement_must_agree_with_status() {
+    // running without a placement: deserialises, but neither validates nor moves
+    let mut a = attempt_json();
+    a["status"] = json!("running");
+    a["lease_epoch"] = json!(1);
+    let running: Attempt = serde_json::from_value(a).unwrap();
+    let missing = Err(Error::Placement {
+        status: Status::Running,
+        placed: true,
+    });
+    assert_eq!(running.validate(), missing);
+    assert_eq!(step(&running, Kind::Checkpoint).map(|_| ()), missing);
+    for status in [Status::Leased, Status::Checkpointing] {
+        let a = Attempt {
+            status,
+            ..running.clone()
+        };
+        assert!(matches!(
+            a.validate(),
+            Err(Error::Placement { placed: true, .. })
+        ));
+    }
+
+    // queued or waiting with one
+    let leased = run(&[placed()]).unwrap();
+    for status in [Status::Queued, Status::Waiting] {
+        let a = Attempt {
+            status,
+            ..leased.clone()
+        };
+        let stray = Err(Error::Placement {
+            status,
+            placed: false,
+        });
+        assert_eq!(a.validate(), stray);
+        assert_eq!(step(&a, placed()).map(|_| ()), stray);
+    }
 }
 
 #[test]
@@ -149,9 +254,18 @@ fn unauthorised_capability_is_rejected() {
 #[test]
 fn invalid_paths_are_rejected() {
     for bad in ["", "/etc", "../x", "a/../../b", "a\0b"] {
+        assert_eq!(
+            RelPath::try_from(bad.to_owned()),
+            Err(Error::Path(bad.to_owned()))
+        );
         let mut v = task_json();
         v["command"]["workdir"] = json!(bad);
-        assert_eq!(parse(&v), Err(Error::Path(bad.to_owned())), "{bad:?}");
+        let want = Error::Path(bad.to_owned()).to_string();
+        assert!(
+            matches!(parse(&v), Err(Error::Json(m)) if m.contains(&want)),
+            "{bad:?}"
+        );
+        assert!(json_error::<TaskSpec>(v).contains(&want), "{bad:?}");
     }
     for good in [".", "a/b", "./a"] {
         let mut v = task_json();
@@ -254,6 +368,10 @@ fn happy_path_and_every_settle() {
     }
     let waiting = step(&at, Kind::Settle(Settle::Waiting)).unwrap();
     assert_eq!(waiting.placement, None);
+    assert_eq!(
+        step(&at, Kind::Settle(Settle::Queued)).unwrap().placement,
+        None
+    );
     let woken = step(&waiting, Kind::Wake).unwrap();
     assert_eq!(woken.status, Status::Queued);
     assert_eq!(step(&woken, placed()).unwrap().lease_epoch, 2);

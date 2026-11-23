@@ -50,8 +50,10 @@ impl Kind {
 /// unknown. That is only safe while a runner begins no work before its `start` is accepted.
 ///
 /// # Errors
-/// [`Error::StaleEpoch`], [`Error::IllegalTransition`], or [`Error::EpochOverflow`].
+/// What [`Attempt::validate`] rejects, [`Error::StaleEpoch`], [`Error::IllegalTransition`], or
+/// [`Error::EpochOverflow`].
 pub fn transition(attempt: &Attempt, event: &Event) -> Result<Attempt, Error> {
+    attempt.validate()?;
     if event.epoch != attempt.lease_epoch {
         return Err(Error::StaleEpoch {
             got: event.epoch,

@@ -1,7 +1,7 @@
 //! The execution pool's data contract (docs/records/execution-pool-contract.md): what a queue stores about a task and
 //! its attempts, what a host declares about a slot, and the one function that moves an attempt between states.
 //! Every record carries `schema_version`, rejects unknown fields (so a token or secret field cannot ride along) and is
-//! checked by `validate()` before anything acts on it.
+//! checked by `validate()` before anything acts on it. A version or path that is wrong does not deserialise at all.
 
 mod state;
 
@@ -15,6 +15,76 @@ pub use state::{Event, Kind, Settle, transition};
 /// The only schema version this crate reads or writes.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// The record format: only [`SCHEMA_VERSION`] deserialises, so a record of another version cannot exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub struct SchemaVersion(u32);
+
+impl SchemaVersion {
+    pub const CURRENT: Self = Self(SCHEMA_VERSION);
+}
+
+impl Default for SchemaVersion {
+    fn default() -> Self {
+        Self::CURRENT
+    }
+}
+
+impl TryFrom<u32> for SchemaVersion {
+    type Error = Error;
+
+    fn try_from(v: u32) -> Result<Self, Error> {
+        if v == SCHEMA_VERSION {
+            Ok(Self(v))
+        } else {
+            Err(Error::SchemaVersion(v))
+        }
+    }
+}
+
+impl From<SchemaVersion> for u32 {
+    fn from(v: SchemaVersion) -> Self {
+        v.0
+    }
+}
+
+/// A non-empty relative path with no `..` or NUL; nothing else deserialises.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct RelPath(String);
+
+impl RelPath {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for RelPath {
+    type Error = Error;
+
+    fn try_from(p: String) -> Result<Self, Error> {
+        let path = Path::new(&p);
+        let bad = p.is_empty()
+            || p.contains('\0')
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir));
+        if bad {
+            Err(Error::Path(p))
+        } else {
+            Ok(Self(p))
+        }
+    }
+}
+
+impl From<RelPath> for String {
+    fn from(p: RelPath) -> Self {
+        p.0
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     #[error("schema_version {0} is not {SCHEMA_VERSION}")]
@@ -25,6 +95,8 @@ pub enum Error {
     Path(String),
     #[error("{0} must not be empty")]
     Empty(&'static str),
+    #[error("a {status:?} attempt must {} a placement", if *placed { "have" } else { "not have" })]
+    Placement { status: Status, placed: bool },
     #[error("idempotency key {0:?} already names a different task")]
     IdempotencyConflict(String),
     #[error("slot {slot} does not offer capability {capability:?}")]
@@ -136,7 +208,7 @@ pub struct Command {
     pub agent: Agent,
     pub argv: Vec<String>,
     /// Relative to the task's checkout.
-    pub workdir: String,
+    pub workdir: RelPath,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,7 +221,7 @@ pub struct RetryPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskSpec {
-    pub schema_version: u32,
+    pub schema_version: SchemaVersion,
     pub id: String,
     pub idempotency_key: String,
     pub source: Source,
@@ -165,7 +237,7 @@ pub struct TaskSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Attempt {
-    pub schema_version: u32,
+    pub schema_version: SchemaVersion,
     pub id: String,
     pub task_id: String,
     pub lease_epoch: u64,
@@ -186,7 +258,7 @@ pub struct Placement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Slot {
-    pub schema_version: u32,
+    pub schema_version: SchemaVersion,
     pub host: String,
     pub id: String,
     pub state: SlotState,
@@ -200,7 +272,7 @@ pub struct Slot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckpointRef {
-    pub schema_version: u32,
+    pub schema_version: SchemaVersion,
     pub uri: String,
     pub digest: String,
 }
@@ -217,7 +289,7 @@ pub struct Effect {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Receipt {
-    pub schema_version: u32,
+    pub schema_version: SchemaVersion,
     pub task_id: String,
     pub attempt_id: String,
     pub lease_epoch: u64,
@@ -226,32 +298,9 @@ pub struct Receipt {
     pub checkpoint: Option<CheckpointRef>,
 }
 
-const fn version(v: u32) -> Result<(), Error> {
-    if v == SCHEMA_VERSION {
-        Ok(())
-    } else {
-        Err(Error::SchemaVersion(v))
-    }
-}
-
 const fn non_empty(field: &'static str, value: &str) -> Result<(), Error> {
     if value.is_empty() {
         Err(Error::Empty(field))
-    } else {
-        Ok(())
-    }
-}
-
-fn relative_path(p: &str) -> Result<(), Error> {
-    let path = Path::new(p);
-    let bad = p.is_empty()
-        || p.contains('\0')
-        || path.is_absolute()
-        || path
-            .components()
-            .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir));
-    if bad {
-        Err(Error::Path(p.to_owned()))
     } else {
         Ok(())
     }
@@ -269,24 +318,27 @@ impl TaskSpec {
         struct Versioned {
             schema_version: u32,
         }
-        version(serde_json::from_str::<Versioned>(json)?.schema_version)?;
+        SchemaVersion::try_from(serde_json::from_str::<Versioned>(json)?.schema_version)?;
         let task: Self = serde_json::from_str(json)?;
         task.validate(granted)?;
         Ok(task)
     }
 
     /// # Errors
-    /// An unknown schema version, an empty identifier, a capability outside `granted`, or an invalid workdir.
+    /// An empty `id`, `idempotency_key`, `source.repo`, `source.rev` or `command.argv`, or a capability outside
+    /// `granted`.
     pub fn validate(&self, granted: &BTreeSet<String>) -> Result<(), Error> {
-        version(self.schema_version)?;
         non_empty("id", &self.id)?;
         non_empty("idempotency_key", &self.idempotency_key)?;
         non_empty("source.repo", &self.source.repo)?;
         non_empty("source.rev", &self.source.rev)?;
-        if let Some(c) = self.capabilities.difference(granted).next() {
-            return Err(Error::Capability(c.clone()));
+        if self.command.argv.is_empty() {
+            return Err(Error::Empty("command.argv"));
         }
-        relative_path(&self.command.workdir)
+        self.capabilities
+            .difference(granted)
+            .next()
+            .map_or(Ok(()), |c| Err(Error::Capability(c.clone())))
     }
 
     /// Whether `slot` may run this task now: idle, offering the agent, every capability and every pin the task sets.
@@ -350,19 +402,35 @@ pub fn submit<'a>(known: &'a [TaskSpec], task: &TaskSpec) -> Result<Submission<'
 
 impl Attempt {
     /// # Errors
-    /// An unknown schema version or an empty identifier.
+    /// An empty `id`, `task_id` or placement field, or a placement that disagrees with the status: required while
+    /// leased, running or checkpointing, absent while queued or waiting.
     pub fn validate(&self) -> Result<(), Error> {
-        version(self.schema_version)?;
         non_empty("id", &self.id)?;
-        non_empty("task_id", &self.task_id)
+        non_empty("task_id", &self.task_id)?;
+        if let Some(p) = &self.placement {
+            non_empty("placement.host", &p.host)?;
+            non_empty("placement.slot", &p.slot)?;
+        }
+        let placed = match self.status {
+            Status::Leased | Status::Running | Status::Checkpointing => true,
+            Status::Queued | Status::Waiting => false,
+            Status::Succeeded | Status::Failed | Status::NeedsReview => return Ok(()),
+        };
+        if placed == self.placement.is_some() {
+            Ok(())
+        } else {
+            Err(Error::Placement {
+                status: self.status,
+                placed,
+            })
+        }
     }
 }
 
 impl Slot {
     /// # Errors
-    /// An unknown schema version or an empty host or identifier.
+    /// An empty `host` or `id`.
     pub fn validate(&self) -> Result<(), Error> {
-        version(self.schema_version)?;
         non_empty("host", &self.host)?;
         non_empty("id", &self.id)
     }
@@ -370,9 +438,8 @@ impl Slot {
 
 impl CheckpointRef {
     /// # Errors
-    /// An unknown schema version or an empty uri or digest.
+    /// An empty `uri` or `digest`.
     pub fn validate(&self) -> Result<(), Error> {
-        version(self.schema_version)?;
         non_empty("uri", &self.uri)?;
         non_empty("digest", &self.digest)
     }
@@ -380,9 +447,8 @@ impl CheckpointRef {
 
 impl Receipt {
     /// # Errors
-    /// An unknown schema version, of the receipt or its checkpoint, or an empty identifier.
+    /// An empty `task_id` or `attempt_id`, or what [`CheckpointRef::validate`] rejects.
     pub fn validate(&self) -> Result<(), Error> {
-        version(self.schema_version)?;
         non_empty("task_id", &self.task_id)?;
         non_empty("attempt_id", &self.attempt_id)?;
         self.checkpoint

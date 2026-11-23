@@ -34,11 +34,6 @@ let
           rustPlatform = factumRustPlatform;
           src = inputs.factum;
         };
-        exec-pool = final.callPackage ../pkgs/exec-pool/package.nix {
-          clippy = factumToolchain;
-          rustfmt = factumToolchain;
-          rustPlatform = factumRustPlatform;
-        };
         alertBridge = final.callPackage ../pkgs/alert-bridge/package.nix {
           rustPlatform = factumRustPlatform;
           src = (import ../lib/app-manifest/pins.nix { inherit lib; }).src "alert-bridge";
@@ -67,7 +62,6 @@ in
       inherit system;
       overlays = [ overlay ];
     };
-    packages.exec-pool = pkgs.exec-pool;
     # hosts.nix stays one row per host, a table nixfmt would unfold.
     formatter = pkgs.nixfmt-tree.override {
       settings.formatter.nixfmt.excludes = [ "flake-modules/hosts.nix" ];

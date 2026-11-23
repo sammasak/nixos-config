@@ -20,10 +20,12 @@ privilege.
 ## Contract
 
 `pkgs/exec-pool` (a library, built and tested by `nixos:exec-pool-test`) defines `TaskSpec`, `Attempt`, `Slot`,
-`CheckpointRef` and `Receipt`. Each carries `schema_version` (1); `validate()` rejects any other version, an empty
-identifier, a capability outside the granted set and a workdir that is absolute, empty or holds `..`. Every record
-rejects unknown fields, so no token, secret or credential can ride along: a task names a `credential_class` the host
-resolves. `TaskSpec::fits` admits a slot only when it is idle, offers the task's agent and capabilities and equals
+`CheckpointRef` and `Receipt`. Each carries `schema_version` (1). Another version, or a workdir that is empty,
+absolute, holds `..` or NUL, does not deserialise. `validate()` then rejects, per record, the identifiers it names as
+empty (for a task also an empty `argv`), a task capability outside the granted set, and an attempt whose placement
+disagrees with its status (required while leased, running or checkpointing, absent while queued or waiting). Every
+record rejects unknown fields, so no token, secret or credential can ride along: a task names a `credential_class`
+the host resolves. `TaskSpec::fits` admits a slot only when it is idle, offers the task's agent and capabilities and equals
 every pin the task sets (`runner_version`, `nix_closure_digest`, `agent_version`, `skill_revision`, reserved for #657).
 `CheckpointRef` is an opaque versioned pointer (uri, digest) until #656 defines the manifest.
 
@@ -36,15 +38,16 @@ leased  -> queued            (lease expired before its start was accepted)
 running | checkpointing -> needs_review   (lease expired: effects unknown, never replayed blindly)
 ```
 
-A lease and an expiry bump the monotonic lease epoch. Every event names the epoch it was decided on and one that is
-not current is rejected, so a holder whose lease expired cannot complete and a re-delivered lease cannot land twice;
-an expired lease is reconciled rather than handed to a duplicate attempt. That needs one rule of the runner (#652): it
-begins no work before its `start` is accepted, so `leased -> queued` is only ever a lease that ran nothing. An
-attempt's placement (host, slot) is cleared on `queued` and `waiting` and kept on `needs_review` for review. Delivery
-is **at-least-once**: a resubmission under the same idempotency key returns the task already queued, a different task
-under that key is refused, and no external effect (a GitHub mutation included) is claimed exactly-once. A `Receipt`
-lists the effects an attempt reports, for reconciliation; it counts only with the `settle` accepted at its lease
-epoch.
+One `Attempt` id spans every lease of that attempt, told apart by the epoch, which is why a `Receipt` is keyed by
+attempt and epoch. A lease and an expiry bump the monotonic lease epoch. Every event names the epoch it was decided on
+and one that is not current is rejected, so a holder whose lease expired cannot complete and a re-delivered lease
+cannot land twice; an expired lease is reconciled rather than handed to a duplicate attempt. That needs one rule of
+the runner (#652): it begins no work before its `start` is accepted, so `leased -> queued` is only ever a lease that
+ran nothing. An attempt's placement (host, slot) is cleared on `queued` and `waiting` and kept on `needs_review` for
+review. Delivery is **at-least-once**: a resubmission under the same idempotency key returns the task already queued,
+a different task under that key is refused, and no external effect (a GitHub mutation included) is claimed
+exactly-once. A `Receipt` lists the effects an attempt reports, for reconciliation; it counts only with the `settle`
+accepted at its lease epoch.
 
 ## Not `sam.agentRuntime`
 
