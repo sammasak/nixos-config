@@ -80,9 +80,9 @@ pkgs.testers.runNixOSTest {
 
     # no host secret, credential or user socket inside a slot: it holds none of the host's credentials
     mounts = machine.succeed("nixos-container run pool1 -- cat /proc/self/mountinfo")
-    for path in ("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials", "herdr"):
+    for path in ("/run/secrets", "/run/credentials", "/var/lib/host-credentials/id_ed25519", "/var/lib/host-credentials/gh-hosts.yml", "/run/egress", "herdr"):
         assert path not in mounts, f"pool1 mounts {path}:\n{mounts}"
-    machine.succeed("nixos-container run pool1 -- sh -c 'test ! -e /run/secrets && test ! -e /run/user/1000 && test -z \"$(ls -A /var/lib/host-credentials 2>/dev/null)\"'")
+    machine.succeed("nixos-container run pool1 -- sh -c 'test ! -e /run/secrets && test -z \"$(ls -A /var/lib/host-credentials 2>/dev/null | grep -vx -e ssh_host_ed25519_key -e [^/]*[.]pub)\"'")
 
     # a task, its release and the next task on the same slot, with no switch in between
     machine.succeed(guest + "bash -c 'echo one > ~/task'")
@@ -90,6 +90,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed(f"test ! -e {home}/task && test -d {home}")
     machine.succeed("systemctl is-active container@pool1.service")
     machine.wait_until_succeeds(guest + "true")
+    assert inventory()["pool1"]["closure"] == slots["pool1"]["closure"], "the reset slot runs another closure"
     machine.succeed(guest + "bash -c 'echo two > ~/task'")
     assert machine.succeed(guest + "cat /home/lukas/task").strip() == "two", "the slot did not take a second task"
 

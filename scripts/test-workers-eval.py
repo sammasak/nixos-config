@@ -821,15 +821,22 @@ in {
   declared = builtins.attrNames dev.instances;
   agents = builtins.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
   herdr = builtins.filter (lib.hasPrefix "worker-herdr-") (builtins.attrNames c.systemd.services);
-  slots = lib.mapAttrs (_: i: { inherit (i) agent prompt model credentials; reserved = i.memory.reserved; }) (lib.filterAttrs (n: _: lib.hasPrefix "pool" n) dev.instances);
+  slots = lib.mapAttrs (n: i: {
+    inherit (i) agent prompt model credentials telemetry;
+    reserved = i.memory.reserved;
+    sockets = builtins.attrNames c.containers.${n}.config.systemd.sockets;
+    binds = builtins.attrNames c.containers.${n}.bindMounts;
+  }) (lib.filterAttrs (n: _: lib.hasPrefix "pool" n) dev.instances);
+  shutdown = c.systemd.services.worker-shutdown-notice.script;
   inventory = builtins.any (p: (p.name or "") == "worker-pool-inventory") c.environment.systemPackages;
 }
 """
 POOL_ON = "{ sam.workers.executionPool = { enable = true; slots = %d; }; }"
 # (name, module, expected message substring) on msi with the pool on; each must fail an assertion
 POOL_CASES = [
-    ("slots above the pool", "{ sam.workers.executionPool = { enable = true; slots = 3; }; }", "3 slots of 2G (6144M) and the named instances' 6144M exceed sam.workers.pool.memory 10240M"),
+    ("slots above the pool", "{ sam.workers.executionPool = { enable = true; slots = 3; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
     ("a slot's name declared by hand", "{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
+    ("a slot's name declared in the core", "{ sam.workers.executionPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name retired", '{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
     ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
 ]
@@ -861,9 +868,16 @@ def check_pool_compat():
     for n in range(3):
         on = pool_eval(POOL_ON % n)
         names = [f"pool{i}" for i in range(1, n + 1)]
-        slot = {"agent": "none", "prompt": None, "model": None, "credentials": [], "reserved": 2 << 30}
-        check(on.get("failing") == [] and on.get("declared") == sorted(named + names) and on.get("agents") == named and on.get("slots") == {s: slot for s in names},
-              f"slots = {n}: {names or 'no slot'} beside {named}, each agent none, no prompt, no credential, 2G reserved, no assertion failing ({on.get('error') or {k: on.get(k) for k in ('failing', 'declared', 'slots')} })")
+        slot = {"agent": "none", "prompt": None, "model": None, "credentials": [], "telemetry": False, "reserved": 2 << 30}
+        got = {s: {k: v for k, v in d.items() if k in slot} for s, d in on.get("slots", {}).items()}
+        check(on.get("failing") == [] and on.get("declared") == sorted(named + names) and on.get("agents") == named and got == {s: slot for s in names},
+              f"slots = {n}: {names or 'no slot'} beside {named}, each agent none, no prompt, no credential, no telemetry, 2G reserved, no assertion failing ({on.get('error') or {k: on.get(k) for k in ('failing', 'declared')} | {'slots': got} })")
+        # a slot holds no egress socket and no bind of a host secret, credential or user runtime directory; the sshd
+        # host key every environment shares and public keys are the binds allowed under host-credentials
+        leaks = {s: [x for x in d["sockets"] if x.endswith("-egress")] + [b for b in d["binds"] if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+                 for s, d in on.get("slots", {}).items()}
+        check(len(leaks) == n and not any(leaks.values()) and on.get("shutdown") == absent.get("shutdown"),
+              f"slots = {n}: no slot has an egress socket or a host secret bind, and the shutdown notice still prompts only {named} ({leaks})")
         units = on.get("units", {})
         mine = {u for u in units if any(u.startswith(p + s) for s in names for p in ("container@", "worker-", "worker-herdr-"))}
         # the host's shared units list every instance, so a slot moves them; each named worker's own units stay
@@ -872,10 +886,10 @@ def check_pool_compat():
         check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 3 * n
               and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),
               f"slots = {n}: a container@, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
-    with ThreadPoolExecutor(2) as pool:
-        outs = list(pool.map(lambda c: run_eval(fleet(c[1])), POOL_CASES))
-        typed = list(pool.map(lambda c: subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}],
-                                                      capture_output=True, text=True), POOL_TYPED))
+    # POOL_CASES were prefetched; a whole msi per type error, one at a time
+    outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
+    typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
+             for c in POOL_TYPED]
     for (name, _, want), out in zip(POOL_CASES, outs):
         failing = json.loads(out.stdout) if out.returncode == 0 else []
         check(any(want in m for m in failing), f"executionPool, {name}: fails \"{want}\" ({failing or out.stderr.strip()[-300:]})")
@@ -1057,7 +1071,7 @@ def main():
     prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(case) for _, case, _ in FLEET_CASES], fleet(USER_SECRET[1]),
               NO_OTEL % {"root": json.dumps(ROOT)}, GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)},
               SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr(), SLOT % {"root": json.dumps(ROOT)},
-              POOL_COMPAT % {"root": json.dumps(ROOT)}])
+              *[fleet(case) for _, case, _ in POOL_CASES]])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)
