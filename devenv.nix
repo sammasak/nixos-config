@@ -499,6 +499,14 @@ let
       ''
         ${pkgs.python3}/bin/python scripts/test-platform-records.py
       '';
+  scorecard = pkgs.callPackage ./pkgs/scorecard/package.nix { };
+  # the packaged scorecard, so the gate builds it (its ruff and mypy check phase) and tests what platform:scorecard runs
+  scorecardTest = gate "scorecard-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python scripts/test-scorecard.py ${lib.getExe scorecard}
+  '';
+  measurementTest = gate "measurement-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python scripts/test-measurement.py docs/measurement.md metrics/targets.json
+  '';
   shippingMetricsTest = gate "shipping-metrics-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-shipping-metrics.py
   '';
@@ -800,6 +808,8 @@ let
     systemdCalendarTest
     systemdVerifyTest
     platformRecordsTest
+    measurementTest
+    scorecardTest
     trashSweepTest
     guestRecordsTest
     shippingMetricsTest
@@ -1431,6 +1441,10 @@ in
       task "The host ships guest platform records on a fake Loki: each line once, also after a rewrite; host labels only; label keys, unknown kinds, oversize and too-old lines dropped; 500 per run; a link or FIFO on the spool's path refused; trashOne ships before its rename" guestRecordsTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
+    "nixos:measurement-test" =
+      task "Measurement doc and targets: every metric in both with the same fields, a live one with a query, target and a panel reading the same kinds and series, at most six per area or a named exception, a max age per record kind" measurementTest;
+    "nixos:scorecard-test" =
+      task "The packaged platform scorecard on a fake Prometheus and Loki: pass and fail against the threshold, no query, a failed, empty or non-number reading unknown, a quiet record kind stale, an unreachable or unready backend exits 2; the real targets with no answers: nothing passes" scorecardTest;
     "nixos:shipping-metrics-test" =
       task "Shipping collector on a fake GitHub and Loki: issues split actionable/parked/archived, a failed source leaves no series and keeps its stale timestamp, an undeclared name is refused" shippingMetricsTest;
     "nixos:trigger-rollback-test" =
@@ -1453,6 +1467,10 @@ in
       task "acer's ak: lifecycle/ak as authentik in the server unit's sandbox and environment, the env file by path" authentikAkTest;
     "nixos:switch-safety-test" = task "A switch survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
+    "platform:scorecard" = {
+      description = "Every metric in metrics/targets.json read from Prometheus and Loki: reading, target and pass, fail, stale or unknown per area; exits 2 when a backend is unreachable (SCORECARD_PROMETHEUS_URL, SCORECARD_LOKI_URL override sam.fleet's)";
+      exec = "${lib.getExe scorecard} \"$DEVENV_ROOT/metrics/targets.json\"";
+    };
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;
     "rf:capture" =
