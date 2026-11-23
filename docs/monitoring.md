@@ -106,6 +106,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
 | `monitoring-config-msi-ms7758`, `monitoring-rules-sleeping-hosts` | black-pi's Prometheus, Alertmanager and blackbox configs checked on an x86 seed; the sleeping-host rules per host |
 | `loki-config-msi-ms7758`, `journal-collector-config-black-pi` | Loki's config and the Pi's journal collector, on x86 |
 | `alert-bridge-sources` | the bridge admits Alertmanager's host alone |
+| `alert-fire-resolve` (VM) | one synthetic warning travels Prometheus, black-pi's Alertmanager configuration and lenovo's alert-bridge unit to a loopback ntfy stub, firing then resolved, with the exact title, tags, priority and body; its info twin reaches Alertmanager and no page. About 6 min: the resolved page waits for the 5m group_interval |
 | `shipping-*` (`shipping-check.nix`) | the Shipping rules and dashboard |
 | `caddy-edge-test` (gate, `scripts/test-caddy-edge.py`) | acer's Caddyfile through acer's Caddy; the deployed config run on loopback, where a stray name or Host port adds no series and Authentik sees only the served names |
 
