@@ -61,12 +61,33 @@ tests:
           - exp_labels: {severity: warning, team: homelab, node: acer-swift}
             exp_annotations:
               summary: "Journal delivery counters on acer-swift are failing or stale"
-              description: "journal-metrics on acer-swift has had no successful collection from Alloy within 3 minutes, for 10 minutes, so JournalEntriesDropped cannot see that host's journal loss. Run systemctl status journal-metrics alloy there."
+              description: "journal-metrics on acer-swift has had no successful collection from Alloy within 3 minutes, or no journal.prom at all, for 10 minutes, so JournalEntriesDropped cannot see that host's journal loss. Run systemctl status journal-metrics alloy there."
               query: '{__name__=~"homelab_journal_metrics_collection_.+",job="node-exporter",node="acer-swift"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#journalmetricsstale"
           - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
             exp_annotations:
               summary: "Journal delivery counters on lenovo-21CB001PMX are failing or stale"
-              description: "journal-metrics on lenovo-21CB001PMX has had no successful collection from Alloy within 3 minutes, for 10 minutes, so JournalEntriesDropped cannot see that host's journal loss. Run systemctl status journal-metrics alloy there."
+              description: "journal-metrics on lenovo-21CB001PMX has had no successful collection from Alloy within 3 minutes, or no journal.prom at all, for 10 minutes, so JournalEntriesDropped cannot see that host's journal loss. Run systemctl status journal-metrics alloy there."
+              query: '{__name__=~"homelab_journal_metrics_collection_.+",job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#journalmetricsstale"
+
+  - interval: 1m
+    input_series:
+      # lenovo is up and its collector has never written journal.prom; msi is off with none either
+      - series: 'up{job="node-exporter",instance="lenovo-21CB001PMX",node="lenovo-21CB001PMX"}'
+        values: '1x30'
+      - series: 'up{job="node-exporter",instance="msi-ms7758",node="msi-ms7758",sleeps="true"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: JournalMetricsStale
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: JournalMetricsStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "Journal delivery counters on lenovo-21CB001PMX are failing or stale"
+              description: "journal-metrics on lenovo-21CB001PMX has had no successful collection from Alloy within 3 minutes, or no journal.prom at all, for 10 minutes, so JournalEntriesDropped cannot see that host's journal loss. Run systemctl status journal-metrics alloy there."
               query: '{__name__=~"homelab_journal_metrics_collection_.+",job="node-exporter",node="lenovo-21CB001PMX"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#journalmetricsstale"
