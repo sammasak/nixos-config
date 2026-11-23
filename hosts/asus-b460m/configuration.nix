@@ -51,12 +51,12 @@ in
   sam.workers = {
     labelPrefix = "asus";
     pool.memory = "20G";
-    # One per issue, briefed through Herdr; they push over the SSH key, and lenovo opens the PRs (no gh here).
-    instances = {
-      a624 = { };
-      s138 = { };
-      s130 = { };
-    };
+    # Agent work goes to acer and msi first: this host carries ollama and the heavier loads.
+    retired = [
+      "a624"
+      "s138"
+      "s130"
+    ];
   };
 
   sam.profile = {
