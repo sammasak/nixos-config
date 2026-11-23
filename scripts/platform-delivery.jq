@@ -1,4 +1,4 @@
-# coord:report:daily's metrics as one logfmt record (scripts/platform-record.sh delivery); a metric the report leaves
+# coord:report:daily's metrics as one logfmt record (pkgs/platform-record/platform_record.py delivery); a metric the report leaves
 # null (its unknown_reason says why) is "unknown", never 0. Lead time is authorization_to_merge's median, in hours.
 .metrics as $m
 | [

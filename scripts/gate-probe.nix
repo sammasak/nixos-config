@@ -67,7 +67,7 @@ let
     walk [ "sam" ] (options.sam or { }) ++ walk [ "homelab" ] (options.homelab or { });
 
   sections = {
-    # counts for the Platform health dashboard, recorded by nixos:qa (scripts/platform-record.sh), not asserted on
+    # counts for the Platform health dashboard, recorded by nixos:qa (pkgs/platform-record/platform_record.py), not asserted on
     coverage = lib.mapAttrs (_: h: {
       assertions = builtins.length h.config.assertions;
       checks = builtins.length h.config.system.checks;
@@ -570,6 +570,40 @@ let
       envKeys = builtins.attrNames acer.systemd.services.authentik.environment;
     };
 
+    # scripts/test-shunt-metrics.py: on no host yet, so the unit is read from msi with it enabled; context discarded
+    shunt-metrics =
+      let
+        on = extend "msi-ms7758" [ { homelab.shuntMetrics.enable = true; } ];
+        facts =
+          c:
+          builtins.fromJSON (
+            builtins.unsafeDiscardStringContext (
+              builtins.toJSON {
+                flags = c.services.prometheus.exporters.node.extraFlags;
+                tmpfiles = c.systemd.tmpfiles.rules;
+                service = c.systemd.services.shunt-metrics.serviceConfig or null;
+                environment = c.systemd.services.shunt-metrics.environment or null;
+                timer = c.systemd.timers.shunt-metrics.timerConfig or null;
+                failing = failing c;
+              }
+            )
+          );
+      in
+      {
+        enabled = lib.mapAttrs (_: h: h.config.homelab.shuntMetrics.enable or false) hosts;
+        imported = lib.mapAttrs (_: h: h.options ? homelab.shuntMetrics) hosts;
+        username = msi.sam.profile.username;
+        on = facts on;
+        off = facts msi;
+        offDevTools = failing (
+          # the flake's copy: black-pi imports node-exporter.nix from it, and a second path declares its options twice
+          extend "black-pi" [
+            "${flake}/modules/homelab/shunt-metrics.nix"
+            { homelab.shuntMetrics.enable = true; }
+          ]
+        );
+      };
+
     # every host, so a collector enabled anywhere else is seen; context discarded: nothing here needs a build
     journal-collector =
       let
@@ -736,7 +770,7 @@ let
           ntfy = lenovo.sam.fleet.ntfy.port;
           loki = lenovo.sam.fleet.loki.port;
         };
-        # scripts/platform-record.sh's default Loki, run without Nix, is checked against this
+        # pkgs/platform-record/platform_record.py's default Loki, run without Nix, is checked against this
         lokiUrl = lenovo.sam.fleet.loki.url;
         listeners = lib.mapAttrs (_: l: {
           inherit (l)

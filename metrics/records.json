@@ -1,0 +1,219 @@
+{
+  "about": "Every platform record kind and the fields it may carry (pkgs/platform-record, scripts/test-platform-records.py). writer: here = a caller in this repo; outside = another repo's tool through platform-record (reviewer panes, research, devenv-platform's pi-offload, the app release script); host = the host ships it to Loki itself, not through platform-record (scripts/guest-records.py). guest: a dev-environment guest may ship it (modules/workers/default.nix records.kinds). panel: the dashboard that shows it, platform-health (modules/homelab/monitoring/dashboards/platform-health.json) when absent, pi-agents (modules/homelab/monitoring/dashboards/pi-agents.json), or false for none yet. optional: fields a kind may also carry that no caller here writes yet (another branch or repo does); the writer accepts them, the test does not ask for a caller. pending: a here kind whose caller is on a branch not merged yet (the test fails once a caller exists and pending is still set).",
+  "kinds": {
+    "gate": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "gate",
+        "seconds",
+        "result",
+        "sha",
+        "mode",
+        "deferred",
+        "head",
+        "checkout",
+        "deferred_checks",
+        "wait_seconds"
+      ]
+    },
+    "gate-step": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "gate",
+        "step",
+        "check",
+        "owner",
+        "seconds",
+        "eval_seconds",
+        "compiled",
+        "fetched",
+        "result",
+        "head",
+        "drv",
+        "sha"
+      ]
+    },
+    "deploy": {
+      "writer": "here",
+      "guest": false,
+      "fields": [
+        "node",
+        "result",
+        "seconds",
+        "rolled_back",
+        "units_restarted",
+        "failed_units",
+        "sha"
+      ],
+      "optional": [
+        "free_gib",
+        "closure_gib",
+        "floor_gib",
+        "headroom"
+      ]
+    },
+    "checks-run": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "node",
+        "check",
+        "status"
+      ]
+    },
+    "coverage": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "node",
+        "assertions",
+        "system_checks"
+      ]
+    },
+    "instructions": {
+      "writer": "here",
+      "guest": true,
+      "fields": [
+        "file",
+        "bytes"
+      ]
+    },
+    "delivery": {
+      "writer": "here",
+      "guest": false,
+      "fields": [
+        "day",
+        "result",
+        "verified_deliveries",
+        "prs_reviewed",
+        "review_passes",
+        "rework_rounds",
+        "repeated_reviews",
+        "parked",
+        "lead_time_hours"
+      ]
+    },
+    "trash-sweep": {
+      "writer": "here",
+      "guest": false,
+      "fields": [
+        "seen",
+        "deleted",
+        "bytes",
+        "result"
+      ]
+    },
+    "review": {
+      "writer": "outside",
+      "guest": true,
+      "fields": [
+        "repo",
+        "head",
+        "round",
+        "grade",
+        "reviewer",
+        "author",
+        "seconds",
+        "findings"
+      ],
+      "pending": "the skills review-record (not rolled out): the age comes with it"
+    },
+    "research": {
+      "writer": "outside",
+      "guest": false,
+      "fields": [
+        "issue",
+        "claims_checked",
+        "claims_corrected",
+        "hours",
+        "adopted",
+        "spiked",
+        "rejected"
+      ],
+      "panel": false,
+      "pending": "no writer yet: the age comes with one"
+    },
+    "offload": {
+      "writer": "outside",
+      "guest": true,
+      "panel": "pi-agents",
+      "fields": [
+        "class",
+        "mode",
+        "model_req",
+        "model",
+        "status",
+        "first_pass",
+        "rounds",
+        "elapsed_s",
+        "pi_tokens",
+        "lines",
+        "run_id",
+        "repo"
+      ],
+      "pending": "offload-record (not merged): the age comes with it"
+    },
+    "usage": {
+      "writer": "host",
+      "guest": false,
+      "panel": false,
+      "fields": [
+        "cpu_usec",
+        "user_usec",
+        "mem_current",
+        "mem_anon",
+        "mem_peak",
+        "toplevel"
+      ],
+      "pending": "usage-records (#494, not deployed): the age comes with it"
+    },
+    "release": {
+      "writer": "here",
+      "guest": false,
+      "panel": false,
+      "fields": [
+        "app",
+        "repo",
+        "rev",
+        "narHash",
+        "outPath",
+        "system",
+        "checks",
+        "target",
+        "run",
+        "ci",
+        "ci_urls"
+      ],
+      "pending": "platform/561-release-contract (scripts/app-release.py)"
+    },
+    "bench": {
+      "writer": "here",
+      "guest": false,
+      "panel": false,
+      "pending": "platform/bench-port f2a53321 (the bench port)",
+      "fields": [
+        "node",
+        "status",
+        "reason",
+        "sha",
+        "dirty",
+        "metrics_tool",
+        "eval_seconds",
+        "values",
+        "value_bytes",
+        "gc_bytes",
+        "thunks",
+        "function_calls",
+        "drv",
+        "closure_bytes",
+        "closure_reason",
+        "files",
+        "nix_lines",
+        "comments",
+        "comment_ratio"
+      ]
+    }
+  }
+}

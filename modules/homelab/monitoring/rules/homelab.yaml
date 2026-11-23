@@ -38,7 +38,9 @@ groups:
           team: homelab
         annotations:
           summary: "{{ $labels.node }} is off, as planned"
-          description: "Source for the Alertmanager inhibit rules that silence alerts caused by a sleeping host's planned power-off. Not a notification."
+          description: "node-exporter on {{ $labels.node }} has not answered black-pi's scrape for 2 minutes, inside the host's planned power-off (homelab:node:planned_off). Source for the Alertmanager inhibit rules that silence what the power-off causes; not a notification."
+          query: 'up{job="node-exporter",node="{{ $labels.node }}"} and on (node) homelab:node:planned_off{node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#hostexpectedoff"
 
       - alert: NodeChronicNotReady
         # a host off inside its plan (homelab:node:planned_off) is left out
@@ -50,6 +52,8 @@ groups:
         annotations:
           summary: "Host {{ $labels.node }} has been unreachable for 15+ minutes"
           description: "Prometheus on black-pi has not scraped node-exporter on {{ $labels.node }} for 15 minutes: the host is down, off the LAN, or its exporter stopped."
+          query: 'up{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodechronicnotready"
 
       - alert: GpuTelemetryDown
         # A GPU host that is up (its node-exporter answers) while its GPU
@@ -65,6 +69,8 @@ groups:
         annotations:
           summary: "GPU telemetry on {{ $labels.node }} is down while the host is up"
           description: "black-pi has not scraped nvidia-gpu-exporter on {{ $labels.node }} for 5 minutes although its node-exporter answers. Check systemctl status prometheus-nvidia-gpu-exporter and nvidia-smi on the host, and its kernel journal for NVRM Xid lines."
+          query: 'up{job=~"nvidia-gpu|node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#gputelemetrydown"
 
       - alert: NodeOOMKill
         expr: increase(node_vmstat_oom_kill{job="node-exporter"}[15m]) > 0
@@ -74,6 +80,8 @@ groups:
         annotations:
           summary: "The kernel OOM-killed a process on {{ $labels.node }}"
           description: "{{ $value | humanize }} OOM kill(s) on {{ $labels.node }} in the last 15 minutes. A unit at its MemoryMax or the host out of memory: read that host's kernel journal before raising any limit."
+          query: 'increase(node_vmstat_oom_kill{job="node-exporter",node="{{ $labels.node }}"}[1h])'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodeoomkill"
 
       # The systemd collector reports services, sockets, timers, targets and paths; mounts and devices it leaves out.
       - alert: NodeSystemdUnitFailed
@@ -85,6 +93,8 @@ groups:
         annotations:
           summary: "{{ $labels.name }} failed on {{ $labels.node }}"
           description: "{{ $labels.name }} has been in the failed state on {{ $labels.node }} for 15 minutes. Run systemctl status {{ $labels.name }} and journalctl -u {{ $labels.name }} there; systemctl reset-failed clears it once fixed."
+          query: 'node_systemd_unit_state{job="node-exporter",node="{{ $labels.node }}",state="failed"} == 1'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesystemdunitfailed"
 
       # the Pi's zone against 85 °C, where its firmware throttles hardest. x86 zones are not paged: acer's package zone
       # sits near 89 °C through a build.
@@ -97,6 +107,8 @@ groups:
         annotations:
           summary: "{{ $labels.node }} runs hot"
           description: "{{ $labels.node }}'s {{ $labels.type }} zone has read {{ $value }} °C for 15 minutes, at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+          query: 'node_thermal_zone_temp{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodetemperaturehigh"
 
       # each hwmon sensor against its own critical mark (a desktop board's unwired sensors read nonsense, but have
       # none; max by keeps the join single across a target's label change). msi and lenovo sit there through every
@@ -114,6 +126,8 @@ groups:
         annotations:
           summary: "A sensor on {{ $labels.node }} is near its critical mark"
           description: "{{ $labels.chip }} {{ $labels.sensor }} on {{ $labels.node }} has read {{ $value }} °C for 15 minutes, within 5 °C of its own critical mark. Expected during long builds on msi and lenovo; outside them, check the fan and airflow."
+          query: 'node_hwmon_temp_celsius{job="node-exporter",node="{{ $labels.node }}",chip="{{ $labels.chip }}",sensor="{{ $labels.sensor }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesensornearcritical"
 
       - alert: GpuThermalThrottling
         expr: nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job="nvidia-gpu"} == 1
@@ -124,6 +138,8 @@ groups:
         annotations:
           summary: "The GPU on {{ $labels.node }} slows itself for heat"
           description: "The board on {{ $labels.node }} has reported hardware thermal slowdown for 10 minutes: model runs are slower than measured. The GPU dashboard shows its temperature, fan and power."
+          query: 'nvidia_smi_temperature_gpu{job="nvidia-gpu",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#gputhermalthrottling"
 
       # The fleet's resolver (adguardhome.nix), through adguard-textfile's minutely file on the DNS host.
       - alert: DnsDown
@@ -135,6 +151,8 @@ groups:
         annotations:
           summary: "AdGuard on {{ $labels.node }} is not answering its control API"
           description: "adguard-textfile on {{ $labels.node }} has found AdGuard down for 5 minutes: the LAN's DNS (and dns.sammasak.dev over TLS) is out. Run systemctl status adguardhome there."
+          query: 'homelab_dns_up{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#dnsdown"
 
       - alert: DnsStatsStale
         # the writer stopped (a failed run is NodeSystemdUnitFailed): DnsDown could not fire
@@ -146,6 +164,8 @@ groups:
         annotations:
           summary: "AdGuard's statistics on {{ $labels.node }} are stale"
           description: "adguard-textfile has not rewritten its file on {{ $labels.node }} for {{ $value | humanizeDuration }}, so DnsDown cannot see AdGuard. Check systemctl list-timers adguard-textfile there."
+          query: 'time() - node_textfile_mtime_seconds{job="node-exporter",node="{{ $labels.node }}",file=~".*/adguard[.]prom"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#dnsstatsstale"
 
       - alert: RootFilesystemLow
         # The 3 GB root floor (nixos-config#302): black-pi's SD card holds Prometheus and Loki.
@@ -157,6 +177,8 @@ groups:
         annotations:
           summary: "{{ $labels.node }} has under 3 GiB free on /"
           description: "{{ $value | humanize1024 }}B free on / of {{ $labels.node }}. On black-pi, Prometheus is capped at 1500MB; check Loki's /var/lib/loki and the Nix store."
+          query: 'node_filesystem_avail_bytes{job="node-exporter",node="{{ $labels.node }}",mountpoint="/"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#rootfilesystemlow"
 
       - alert: LokiIngesterDown
         expr: |
@@ -170,6 +192,8 @@ groups:
         annotations:
           summary: "Loki ingester is not reporting metrics"
           description: "Loki on black-pi has stopped exporting ingester metrics or its scrape target is down. New logs cannot be persisted. Run: systemctl status loki on black-pi."
+          query: 'up{job="loki"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#lokiingesterdown"
 
       # Caddy's unix upstreams on acer (open-webui.nix's edge check): the probe above sees only forward auth's 302
       - alert: EdgeSocketDown
@@ -183,6 +207,8 @@ groups:
         annotations:
           summary: "Caddy's upstream socket on acer-swift is not listening"
           description: "Nothing listens on the edge socket, or the check stopped writing (stale for 5 min), so signed-in users get a 502. Run on acer: systemctl restart open-webui-proxy-rebind (it stops the proxy first, or the socket refuses to start); then check systemctl status open-webui-edge-check.timer."
+          query: 'homelab_edge_socket_listening or time() - node_textfile_mtime_seconds{file=~".*/open-webui-edge[.]prom"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#edgesocketdown"
 
       # The two below come from black-pi's probes of the public names through Caddy (../prometheus.nix).
       - alert: AppDown
@@ -193,8 +219,9 @@ groups:
           team: homelab
         annotations:
           summary: "{{ $labels.instance }} is down"
-          runbook_url: "https://github.com/sammasak/homelab-gitops/blob/main/docs/runbooks/service-unreachable.md"
           description: "The HTTPS probe from black-pi to {{ $labels.instance }} has failed for 5 minutes: a refused connection, a bad certificate, or a status outside the module's list. Check http://192.168.10.137:9090/targets?search=blackbox."
+          query: 'probe_http_status_code{job="blackbox",instance="{{ $labels.instance }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#appdown"
 
       - alert: CertificateExpiringSoon
         expr: probe_ssl_earliest_cert_expiry{job="blackbox"} - time() < 14 * 86400
@@ -204,7 +231,9 @@ groups:
           team: homelab
         annotations:
           summary: "TLS certificate of {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"
-          description: "The certificate {{ $labels.instance }} serves expires in under 14 days: its renewal is failing."
+          description: "black-pi's HTTPS probe of {{ $labels.instance }} has seen a certificate expiring in under 14 days for an hour: no renewed certificate is being served. Check Caddy's journal on acer for ACME errors."
+          query: '(probe_ssl_earliest_cert_expiry{job="blackbox",instance="{{ $labels.instance }}"} - time()) / 86400'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#certificateexpiringsoon"
 
       - alert: PrometheusTargetsMostlyDown
         # Self-blind guard: if a large fraction of scrape targets go down, the whole
@@ -217,6 +246,8 @@ groups:
         annotations:
           summary: "Over 30% of Prometheus scrape targets are down"
           description: "up ratio is {{ $value | humanizePercentage }}: Prometheus may be starved or scraping is broken. Check http://192.168.10.137:9090/targets."
+          query: 'up == 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#prometheustargetsmostlydown"
 
       - alert: HomelabHealthScoreLow
         expr: homelab:health:score < 70
@@ -226,7 +257,9 @@ groups:
           team: homelab
         annotations:
           summary: "Homelab health score is {{ $value }}/100"
-          description: "The composite homelab:health:score dropped below 70. Inspect the homelab:health:* KPI series to see which dimension regressed."
+          description: "The composite homelab:health:score on black-pi has been below 70 for 15 minutes: at least two of its five KPIs (node ready, targets up, no critical alert, disk free, Watchdog alive) are failing. The query lists each KPI."
+          query: '{__name__=~"homelab:health:.+"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#homelabhealthscorelow"
 
   # A fixed, queryable definition of "healthy" (avg_over_time(...[30d]) gives a scorecard). The host-scope subset of
   # the in-cluster KPIs; rules evaluate in order, so the score sees this cycle's values.
@@ -265,3 +298,10 @@ groups:
             + (homelab:health:min_disk_free_ratio >= bool 0.15)
             + (homelab:health:deadman_alive       >= bool 1)
           )
+
+  - name: host-health.recordings
+    rules:
+      - record: homelab:node:cpu_accounting_rate
+        expr: |
+          sum by (node) (rate(node_cpu_seconds_total{job="node-exporter",mode!~"guest.*"}[5m]))
+          / count by (node) (node_cpu_seconds_total{job="node-exporter",mode="idle"})

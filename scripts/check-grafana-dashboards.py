@@ -239,7 +239,14 @@ for f in spec.get("alert_rules", []):
     for group in yaml.safe_load(open(f))["groups"]:
         for r in group["rules"]:
             rules += 1
-            check_rule(f"rules {pathlib.Path(f).stem} {r.get('alert') or r.get('record')}", r["expr"])
+            where = f"rules {pathlib.Path(f).stem} {r.get('alert') or r.get('record')}"
+            check_rule(where, r["expr"])
+            # the first diagnostic query (docs/alert-runbooks.md), its {{ $labels.* }} as Prometheus fills them in
+            query = (r.get("annotations") or {}).get("query")
+            if query:
+                query = re.sub(r"\{\{[^}]*\}\}", "x", query)
+                check_rule(where + " query", query)
+                promql.append((where + " query", query))
 
 if needs is not None:
     for job, names in sorted(needs.items()):

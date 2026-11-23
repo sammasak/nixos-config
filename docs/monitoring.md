@@ -12,7 +12,7 @@ is the modules named here; this page only maps them.
 | black-pi | Grafana (`modules/homelab/monitoring/grafana.nix`), sign-in through Authentik only | fleet address :3000 | acer's Caddy (grafana.sammasak.dev) |
 | black-pi | Loki (`loki.nix`) | fleet address :3100 | every fleet host's journal collector |
 | black-pi | blackbox exporter (in `prometheus.nix`), probes of the public names | 127.0.0.1:9115 | Prometheus |
-| every fleet host | node-exporter (`modules/homelab/monitoring/node-exporter.nix`), systemd collector on | fleet address :9100, black-pi alone | Prometheus |
+| every fleet host | node-exporter (`modules/homelab/monitoring/node-exporter.nix`), systemd collector and automatic service-restart counters on | fleet address :9100, black-pi alone | Prometheus |
 | every fleet host | journal collector (`journal-collector.nix`), Alloy | 127.0.0.1:12345 | nothing (it pushes to Loki) |
 | a host with `sam.fleet` `gpu = "nvidia"` | nvidia-gpu exporter (`modules/homelab/monitoring/gpu-exporter.nix`) | fleet address, black-pi alone | Prometheus |
 | acer | alloy-otlp (`modules/homelab/monitoring/alloy-otlp.nix`), the harnesses' OTLP intake | 127.0.0.1:4318 behind otlp.sammasak.dev; metrics :12346 | Prometheus |
@@ -23,6 +23,15 @@ is the modules named here; this page only maps them.
 Which host may reach which port is `sam.fleet.listeners` (`modules/core/fleet.nix`); `modules/core/network.nix` turns it
 into firewall rules. The scrape jobs are in `prometheus.nix`. The node-exporter and nvidia-gpu targets come from `sam.fleet.hosts`, so a host
 added there is scraped, labelled `node=<hostName>` and, if it `sleeps`, `sleeps="true"`.
+
+GPU power metrics distinguish the requested software limit
+(`nvidia_smi_power_limit_watts`) from the effective enforced limit
+(`nvidia_smi_enforced_power_limit_watts`). Hardware and software thermal slowdown
+also have separate `nvidia_smi_clocks_event_reasons_*_thermal_slowdown` gauges.
+The GPU and LLM gateway dashboards show both; missing series remain unknown,
+not proof of an inactive reason. The exporter fixture deliberately uses different
+power limits and thermal flags and checks their emitted values. Source checks
+do not replace driver/scrape acceptance after the exporter is activated.
 
 What a host writes into node-exporter's textfile directory (`/run/node-exporter-textfile`):
 - every fleet host: `nixos.prom`, the activated generation, NixOS version and toplevel (`pkgs/nixos-textfile`, at
@@ -35,9 +44,14 @@ Two collectors keep their own textfile directory, which node-exporter also reads
 (`shipping-metrics.nix`) and `nav.prom` on acer, lenovo, asus and msi (`nav-metrics.nix`), plus one
 `nav-guest-<name>.prom` per guest on a host with dev environments (acer, `/var/lib/nav-metrics-guests`).
 
+Every journal-collector host also exposes bounded local reader/export/filter counters
+through `/run/journal-metrics/journal.prom`; see [delivery semantics and acceptance](journal-delivery-metrics.md).
+
 Bounded labels: Caddy runs `metrics` without `per_host` (it would label any HTTPS Host as sent), so its series split by
 server, not by name. Authentik gets the matched name without a client port as Host, and the Authentik jobs drop the
 `authentik_outpost_*` family (its method label is the client's) and carry a `sample_limit`.
+
+See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fleet coverage matrix, repeatable baseline, issue ownership and before/after acceptance.
 
 ## Dashboards
 
@@ -68,6 +82,7 @@ server, not by name. Authentik gets the matched name without a client port as Ho
     "Alerts firing" count, and on the Hosts dashboard's hottest sensor.
   - GpuThermalThrottling (warning, 10 m): the GPU reports hardware thermal slowdown
     (`nvidia_smi_clocks_event_reasons_hw_thermal_slowdown`).
+- Each homelab and shipping alert's `runbook_url` and first diagnostic `query`: [alert-runbooks.md](alert-runbooks.md).
 - The upstream Prometheus and Alertmanager rules leave out what this deployment cannot fire: the cluster-consistency
   and remote-write/service-discovery alerts. Assertions in `alertmanager.nix` and `prometheus.nix` keep it unclustered
   and static, and name the rules to restore if that changes.
@@ -80,6 +95,7 @@ server, not by name. Authentik gets the matched name without a client port as Ho
 | `grafana-dashboard-removal` | Grafana itself, with black-pi's provider settings, deletes a removed file's dashboard and keeps ids across a restart |
 | `gpu-telemetry-exporter` | the GPU exporter's fields against a fake nvidia-smi that heads the throttle fields `clocks_event_reasons`, as asus's driver does |
 | `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` and `severity="info"` reach no one, NodeTemperatureHigh and a warning reach the bridge, and the same alert without the label would notify |
+| `monitoring-alert-annotations` | every homelab and shipping alert carries `summary`, `description`, `query` and a `runbook_url` naming a heading in a tracked doc ([alert-runbooks.md](alert-runbooks.md)); a rule file with no alert fails; seeds without a query, without an anchor, with a dangling anchor and with an empty file beside a good one fail it. The `grafana-dashboards` check holds each `query`'s PromQL and names |
 | `monitoring-rules-tests` | `promtool test rules` on every file in `modules/homelab/monitoring/rules/tests`, against `homelab.yaml` as rendered |
 | `monitoring-config-msi-ms7758`, `monitoring-rules-sleeping-hosts` | black-pi's Prometheus, Alertmanager and blackbox configs checked on an x86 seed; the sleeping-host rules per host |
 | `loki-config-msi-ms7758`, `journal-collector-config-black-pi` | Loki's config and the Pi's journal collector, on x86 |
@@ -89,3 +105,6 @@ server, not by name. Authentik gets the matched name without a client port as Ho
 
 black-pi is aarch64 and only evaluated on x86 hosts. Its own config checks (promtool, amtool) run when the Pi builds
 its toplevel, which is why the checks above seed its modules onto msi.
+
+Backup freshness and validation semantics: [completion metrics](backup-completion-metrics.md)
+(#564/#600; source instrumentation and live receipts are separate).

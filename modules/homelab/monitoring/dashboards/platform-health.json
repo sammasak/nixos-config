@@ -772,6 +772,135 @@
           "options": {}
         }
       ]
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "Review (review records, written by the reviewer at each verdict; a pass is grade 9 or more of 10)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "panels": []
+    },
+    {
+      "id": 26,
+      "type": "stat",
+      "title": "First-pass rate (passes on round 1)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 72
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"platform\",kind=\"review\"} | logfmt | grade >= 9 | round == 1 [$__range])) / sum(count_over_time({job=\"platform\",kind=\"review\"} | logfmt | grade >= 9 [$__range]))",
+          "queryType": "instant",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 27,
+      "type": "table",
+      "title": "Rounds to a pass by repo (median and 90th percentile)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 6,
+        "y": 72
+      },
+      "targets": [
+        {
+          "expr": "quantile_over_time(0.5, {job=\"platform\",kind=\"review\"} | logfmt | grade >= 9 | unwrap round | __error__=\"\" [$__range]) by (repo)",
+          "queryType": "instant",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "instant": true
+        },
+        {
+          "expr": "quantile_over_time(0.9, {job=\"platform\",kind=\"review\"} | logfmt | grade >= 9 | unwrap round | __error__=\"\" [$__range]) by (repo)",
+          "queryType": "instant",
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Review turnaround (median seconds per round, by repo)",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 15,
+        "y": 72
+      },
+      "targets": [
+        {
+          "expr": "quantile_over_time(0.5, {job=\"platform\",kind=\"review\"} | logfmt | unwrap seconds | __error__=\"\" [1d]) by (repo)",
+          "queryType": "range",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "legendFormat": "{{repo}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
     }
   ]
 }

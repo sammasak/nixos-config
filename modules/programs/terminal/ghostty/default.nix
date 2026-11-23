@@ -3,6 +3,9 @@
   programs.ghostty = {
     enable = true;
     settings = {
+      # Idle io_uring event waits inflate host I/O pressure: https://github.com/ghostty-org/ghostty/discussions/9474
+      async-backend = "epoll";
+
       # Font and colours come from Stylix (stylix.targets.ghostty); setting them
       # here only duplicates font-family and fights the themed size.
       cursor-style = "block";

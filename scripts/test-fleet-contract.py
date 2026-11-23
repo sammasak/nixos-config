@@ -27,8 +27,10 @@ check(sorted(ports) == ["loki", "ntfy"] and all(isinstance(p, int) for p in port
 
 # (path, port name, text the line must contain) -> why that one line may keep the literal
 ALLOWED = {
-    ("scripts/platform-record.sh", "loki", "${PLATFORM_LOKI_URL:-http://"):
+    ("pkgs/platform-record/platform_record.py", "loki", 'LOKI_DEFAULT = "http://'):
         "run from the Justfile without Nix; its default is held to the evaluated sam.fleet.loki.url below",
+    ("pkgs/scorecard/scorecard.py", "loki", 'DEFAULT_LOKI = "http://'):
+        "devenv's nixpkgs has no evaluated fleet; its default is held to sam.fleet.loki.url below",
 }
 
 
@@ -59,12 +61,12 @@ check(hits == [], "no tracked file but fleet.nix names the ntfy or Loki port: " 
 for (path, name, marker), why in ALLOWED.items():
     lines = [l for l in dict(files).get(path, "").splitlines() if re.search(rf"(?<![0-9]){ports[name]}(?![0-9])", l)]
     check(len(lines) == 1 and marker in lines[0], f"allowlisted {path} names the {name} port on its one marked line only ({why})")
-helper = (ROOT / "scripts/platform-record.sh").read_text()
-check("${PLATFORM_LOKI_URL:-" + P["lokiUrl"] + "}" in helper,
-      f"platform-record.sh's default Loki is the evaluated sam.fleet.loki.url ({P['lokiUrl']})")
+helper = (ROOT / "pkgs/platform-record/platform_record.py").read_text()
+check(f'LOKI_DEFAULT = "{P["lokiUrl"]}"' in helper,
+      f"platform-record's default Loki is the evaluated sam.fleet.loki.url ({P['lokiUrl']})")
 seeded = literals(files + [("modules/homelab/x.nix", f'  listen = ":{ports["ntfy"]}";'),
-                           ("scripts/platform-record.sh", f'curl http://loki:{ports["loki"]}/ready')])
-check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy"), ("scripts/platform-record.sh", "loki")],
+                           ("pkgs/platform-record/platform_record.py", f'READY = "http://loki:{ports["loki"]}/ready"')])
+check([(p, k) for p, _, k, _ in seeded] == [("modules/homelab/x.nix", "ntfy"), ("pkgs/platform-record/platform_record.py", "loki")],
       f"seeded: a module naming the ntfy port, and a second Loki literal in the allowlisted script, are found ({seeded})")
 
 F = P["failing"]
@@ -78,6 +80,11 @@ check(any("homelab.loki.port 3101 is not sam.fleet.loki.port" in m for m in F["l
 # accepted sources are its callers' addresses, once each; every other accepting line is loopback or a lan public entry.
 # A cross-read of accept lines only: unhooking, flushing and policy rules are the Nix check's alone.
 L, PUB, FW, ADDR = P["listeners"], P["public"], P["firewall"], P["addresses"]
+scorecard = (ROOT / "pkgs/scorecard/scorecard.py").read_text()
+prometheus = f"http://{ADDR[L['prometheus']['host']][0]}:{L['prometheus']['port']}"
+check(f'DEFAULT_LOKI = "{P["lokiUrl"]}"' in scorecard and f'DEFAULT_PROMETHEUS = "{prometheus}"' in scorecard,
+      f"the scorecard's defaults are the evaluated sam.fleet.loki.url and Prometheus listener "
+      f"({P['lokiUrl']}, {prometheus})")
 RULE = re.compile(r"^iptables -w -A nixos-fw -s (\S+) -p (tcp|udp) --dport ([0-9]+) -j nixos-fw-accept$")
 INPUT_ACCEPT = re.compile(r"(-j|-g|--jump|--goto)(\s+|=)?(nixos-fw-accept|ACCEPT|\$)|(^|\s)(-g|--goto)(\s|=)|-[AI] +(nixos-fw|INPUT) .*-j +RETURN")
 LOOPBACK = re.compile(r"(^|\s)(-i|--in-interface)\s+lo(\s|$)")

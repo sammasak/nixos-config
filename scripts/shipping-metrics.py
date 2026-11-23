@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Shipping metrics (docs/shipping.md) as one Prometheus textfile: issue flow and PR speed from GitHub's REST API,
-gate, deploy and rollback numbers from the platform records in Loki (scripts/platform-record.sh), merge-to-deploy lag
+gate, deploy and rollback numbers from the platform records in Loki (pkgs/platform-record/platform_record.py), merge-to-deploy lag
 from each host's last good deploy, and where a deploy-repo PR's time went (phases). Read-only calls only. A source that fails leaves its series out (never a 0 in their
 place) and keeps the previous success timestamp of its section, so a stale section is visible, not invented. Exits 0
 whenever it could write the file: a timer must not turn a GitHub outage into a restart loop.

@@ -48,6 +48,67 @@ let
     inherit (seeded.sam.fleet) hosts;
   };
   plannedByDay = h: !(homelabRules.windowed ? ${h});
+  # the shipping rules as prometheus.nix renders them: its store path carries no context
+  shippingRules = builtins.toFile "shipping.yaml" (
+    builtins.toJSON (
+      import ../modules/homelab/monitoring/rules/shipping.nix {
+        inherit lib;
+        policy = lib.importJSON ../modules/homelab/monitoring/shipping-policy.json;
+        collectorNode = black-pi.config.sam.fleet.deployer;
+      }
+    )
+  );
+  # each seed must fail scripts/check-alert-annotations.py with its reason
+  annotationSeed = annotations: {
+    groups = [
+      {
+        name = "seed";
+        rules = [
+          {
+            alert = "SeedAlert";
+            expr = "vector(1)";
+            annotations = {
+              summary = "seed";
+              description = "seed fires";
+              query = "vector(1)";
+              runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#appdown";
+            }
+            // annotations;
+          }
+        ];
+      }
+    ];
+  };
+  annotationSeeds = {
+    no-query = {
+      files = [ (annotationSeed { query = ""; }) ];
+      reason = "SeedAlert: no query";
+    };
+    dangling-runbook = {
+      files = [
+        (annotationSeed {
+          runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nosuchalert";
+        })
+      ];
+      reason = "anchor #nosuchalert is no heading";
+    };
+    no-anchor = {
+      files = [
+        (annotationSeed {
+          runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md";
+        })
+      ];
+      reason = "runbook_url names no #heading";
+    };
+    # beside a good file, as the shipping rules sit beside homelab.yaml: the alerts of one do not cover the other
+    empty-file = {
+      files = [
+        (annotationSeed { })
+        { groups = [ ]; }
+      ];
+      reason = "seed-empty-file-1.json: no alert";
+    };
+  };
   # a case at an instant (since the epoch, a Thursday 00:00 UTC) for one host, stated literally so the fleet facts and
   # the rule cannot drift together: the window's edges are 19:00 and 08:30 UTC, read after the alerts' for (2m planned, 15m outage)
   windowCase =
@@ -204,6 +265,32 @@ in
                 echo "monitoring-alert-routes: the seed without notify=none reached no one" >&2
                 exit 1
               fi
+              touch $out
+            '';
+        # docs/alert-runbooks.md's contract on the homelab and shipping alerts, and each seed failing it
+        monitoring-alert-annotations =
+          pkgs.runCommand "monitoring-alert-annotations"
+            { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.pyyaml ])) ]; }
+            ''
+              check() { python3 -I ${../scripts/check-alert-annotations.py} ${../docs} "$@"; }
+              check ${homelabRules.file} ${shippingRules}
+              ${lib.concatStrings (
+                lib.mapAttrsToList (name: s: ''
+                  if check ${
+                    toString (
+                      lib.imap0 (i: f: builtins.toFile "seed-${name}-${toString i}.json" (builtins.toJSON f)) s.files
+                    )
+                  } > out.txt; then
+                    echo "monitoring-alert-annotations: seed ${name} passed" >&2
+                    exit 1
+                  fi
+                  grep -qF ${lib.escapeShellArg s.reason} out.txt || {
+                    echo "monitoring-alert-annotations: seed ${name} failed without '${s.reason}':" >&2
+                    cat out.txt >&2
+                    exit 1
+                  }
+                '') annotationSeeds
+              )}
               touch $out
             '';
         # the alerts' own cases, beside the rule files they read (their rule_files path is relative); homelab.yaml as
