@@ -81,14 +81,32 @@ let
   };
   annotationSeeds = {
     no-query = {
-      rules = annotationSeed { query = ""; };
+      files = [ (annotationSeed { query = ""; }) ];
       reason = "SeedAlert: no query";
     };
     dangling-runbook = {
-      rules = annotationSeed {
-        runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nosuchalert";
-      };
+      files = [
+        (annotationSeed {
+          runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nosuchalert";
+        })
+      ];
       reason = "anchor #nosuchalert is no heading";
+    };
+    no-anchor = {
+      files = [
+        (annotationSeed {
+          runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md";
+        })
+      ];
+      reason = "runbook_url names no #heading";
+    };
+    # beside a good file, as the shipping rules sit beside homelab.yaml: the alerts of one do not cover the other
+    empty-file = {
+      files = [
+        (annotationSeed { })
+        { groups = [ ]; }
+      ];
+      reason = "seed-empty-file-1.json: no alert";
     };
   };
   # a case at an instant (since the epoch, a Thursday 00:00 UTC) for one host, stated literally so the fleet facts and
@@ -258,7 +276,11 @@ in
               check ${homelabRules.file} ${shippingRules}
               ${lib.concatStrings (
                 lib.mapAttrsToList (name: s: ''
-                  if check ${builtins.toFile "seed-${name}.json" (builtins.toJSON s.rules)} > out.txt; then
+                  if check ${
+                    toString (
+                      lib.imap0 (i: f: builtins.toFile "seed-${name}-${toString i}.json" (builtins.toJSON f)) s.files
+                    )
+                  } > out.txt; then
                     echo "monitoring-alert-annotations: seed ${name} passed" >&2
                     exit 1
                   fi
