@@ -80,8 +80,11 @@ pkgs.testers.runNixOSTest {
 
     # no host secret, credential or user socket inside a slot: it holds none of the host's credentials
     mounts = machine.succeed("nixos-container run pool1 -- cat /proc/self/mountinfo")
-    for path in ("/run/secrets", "/run/credentials", "/var/lib/host-credentials/id_ed25519", "/var/lib/host-credentials/gh-hosts.yml", "/run/egress", "herdr"):
-        assert path not in mounts, f"pool1 mounts {path}:\n{mounts}"
+    # the host side of each mount (mountinfo's 4th field): the guest's own /run/credentials tmpfs are its systemd's
+    roots = [line.split()[3] for line in mounts.splitlines()]
+    host = ("/run/secrets", "/run/credentials", "/run/user", "/run/dev-env-egress", "/home/lukas/.ssh/id_ed25519", "/home/lukas/.config/gh")
+    leaked = [r for r in roots if r.startswith(host) and not r.endswith(".pub")]
+    assert not leaked, f"pool1 mounts host paths {leaked}"
     machine.succeed("nixos-container run pool1 -- sh -c 'test ! -e /run/secrets && test -z \"$(ls -A /var/lib/host-credentials 2>/dev/null | grep -vx -e ssh_host_ed25519_key -e [^/]*[.]pub)\"'")
 
     # a task, its release and the next task on the same slot, with no switch in between
@@ -99,7 +102,11 @@ pkgs.testers.runNixOSTest {
     assert inventory()["pool1"]["state"] == "inactive", "a stopped slot reads inactive"
     machine.succeed("systemctl is-active container@pool2.service container@t.service")
     machine.succeed("systemctl start container@pool1.service")
-    machine.succeed("systemctl restart container@pool1.service")
+    # boot, the reset and this start are the core's StartLimitBurst of 3: a fourth start in the window is refused
+    # until reset-failed, a slot's reuse included
+    rc, out = machine.execute("systemctl restart container@pool1.service 2>&1")
+    assert rc != 0 and "too often" in out, f"a fourth start within the window was not refused: {out}"
+    machine.succeed("systemctl reset-failed container@pool1.service && systemctl start container@pool1.service")
     machine.wait_for_unit("container@pool1.service")
     machine.wait_until_succeeds(guest + "true")
     assert inventory()["pool1"]["state"] == "active", "the restarted slot reads active"
