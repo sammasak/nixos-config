@@ -2,7 +2,7 @@
 # webhook whose `payload` renders ntfy's JSON publish format, posting to a loopback stub of ntfy's root URL.
 # Alertmanager 0.33 reparses every rendered string as YAML and keeps it only when that yields a string: `[a, b]`
 # becomes tags' list and `3` priority's int, but a body such as "Disk full:\nQuery: q" becomes an object. A leading
-# tab makes that parse fail, so the body stays text; `ntfy-raw` sends the same body without it, to record the bug.
+# tab makes that parse fail, so title and body stay text; `ntfy-raw` sends the body without it, to record the bug.
 { config, lib, ... }:
 let
   blackPi = config.flake.nixosConfigurations.black-pi.config;
@@ -46,7 +46,9 @@ let
         send_resolved = true;
         payload = {
           topic = if guard == "" then "${topic}-raw" else topic;
+          # "[WARNING] X" parses as the list [WARNING], the rest dropped: the title needs the guard too
           title = lib.concatStrings [
+            "\t"
             ''{{ if eq .Status "resolved" }}[RESOLVED]''
             ''{{ else }}[{{ or .CommonLabels.severity "warning" | toUpper }}]{{ end }}''
             " {{ .CommonLabels.alertname }}"
@@ -195,7 +197,7 @@ in
               return [m for m in map(json.loads, out.splitlines()) if m["topic"] == topic]
 
           def only(title, topic=${py topic}):
-              found = [m for m in published(topic) if m["title"] == title]
+              found = [m for m in published(topic) if m["title"] == "\t" + title]
               assert len(found) == 1, (title, published(topic))
               return found[0]
 
@@ -219,11 +221,11 @@ in
 
           with subtest("firing: title, tags and priority by severity, runbook as click, summary and query"):
               got = only("[WARNING] SyntheticPayload")
-              assert got == page | {"title": "[WARNING] SyntheticPayload", "tags": ["warning", "orange_circle"], "priority": 3}, got
+              assert got == page | {"title": "\t[WARNING] SyntheticPayload", "tags": ["warning", "orange_circle"], "priority": 3}, got
 
           with subtest("no runbook and no query still delivers"):
               got = only("[CRITICAL] SyntheticNoLinks")
-              want = sent | {"title": "[CRITICAL] SyntheticNoLinks", "tags": ["rotating_light", "red_circle"], "priority": 4, "click": None, "message": ${py "\tNo runbook, no query${bullet}"}}
+              want = sent | {"title": "\t[CRITICAL] SyntheticNoLinks", "tags": ["rotating_light", "red_circle"], "priority": 4, "click": None, "message": ${py "\tNo runbook, no query${bullet}"}}
               assert got == want, got
 
           with subtest("an oversized summary is cut to 1000 characters"):
@@ -245,7 +247,7 @@ in
 
           with subtest("resolved: its own title, tags and priority, the same body and click"):
               got = only("[RESOLVED] SyntheticPayload")
-              assert got == page | {"title": "[RESOLVED] SyntheticPayload", "tags": ["white_check_mark", "green_circle"], "priority": 1}, got
+              assert got == page | {"title": "\t[RESOLVED] SyntheticPayload", "tags": ["white_check_mark", "green_circle"], "priority": 1}, got
         '';
       };
     };
