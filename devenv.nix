@@ -513,6 +513,17 @@ let
   navMetricsTest = gate "nav-metrics-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-nav-metrics.py
   '';
+  shuntMetricsTest =
+    gate "shunt-metrics-test"
+      (with pkgs; [
+        nix
+        python3
+      ])
+      ''
+        ${lib.getExe pkgs.ruff} check --isolated --no-cache --select E4,E7,E9,F,B scripts/shunt-metrics.py scripts/test-shunt-metrics.py
+        ${lib.getExe pkgs.mypy} --strict --cache-dir=/dev/null scripts/shunt-metrics.py
+        ${pkgs.python3}/bin/python scripts/test-shunt-metrics.py
+      '';
   appBumpDryRunTest = gate "app-bump-dry-run-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-app-bump-dry-run.py
     ${pkgs.python3}/bin/python scripts/test-app-bump.py
@@ -814,6 +825,7 @@ let
     guestRecordsTest
     shippingMetricsTest
     navMetricsTest
+    shuntMetricsTest
     appBumpDryRunTest
     triggerRollbackTest
     waitMetricsTest
@@ -1453,6 +1465,8 @@ in
       task "The dashboards check's exporter wait: a late exporter is waited for; none listening, no expected series or an exited exporter fails as 'exporter did not start' within its bound" waitMetricsTest;
     "nixos:nav-metrics-test" =
       task "Navigation collector on fixture transcripts: counts, misses and repeat reads by role, no prompt, command or path in the textfile, a thin role writes its sample size alone, a failed section is a series" navMetricsTest;
+    "nixos:shunt-metrics-test" =
+      task "Shunt collector on fixture hook logs: decisions by hook and result, tokens and chars seen versus returned, hook p50/p95, last-record and success timestamps; no session id, path or excerpt in the textfile; a missing log is idle, a failed run keeps its timestamps; ruff and mypy --strict; enabled on no host" shuntMetricsTest;
     "nixos:app-bump-dry-run-test" =
       task "App pin bump dry run on a fake GitHub: a replay is an empty diff, red, pending and unchecked heads are skipped for an older green one, narHash pending, an unallowlisted repo and a non-40-hex rev refused naming the field; the bump on stubs: only the registry entry moves, on a branch from origin/main, then commit, push and PR, refused on lenovo" appBumpDryRunTest;
     "nixos:typed-interfaces-test" =
