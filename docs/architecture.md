@@ -73,14 +73,16 @@ with a manual Windows Boot Manager entry (dual-boot preserved).
 
 The ASUS `gaming` specialisation (`modules/specialisations/gaming.nix`) is the desktop entry plus Sunshine, for
 Moonlight clients on the LAN: the session logs in by itself, Ollama, its model loader and the GPU power limit are
-not started, and Sunshine's stream ports are admitted from the LAN (`sam.fleet.public`). Pick it in the GRUB menu
-under the NixOS entry's specialisations; the next plain boot is the headless inference host again. Sunshine's web
+not started, and Sunshine's stream ports are admitted from the LAN (`sam.fleet.public`). The host has no keyboard, so
+enter it from the running system with `sudo grub-reboot --boot-directory=/boot-nix "NixOS - gaming" && sudo reboot`
+(a one-time choice: the next plain boot is the headless inference host again). Only a reboot frees the card: a live
+switch into the entry leaves Ollama running. The worker pool keeps running in the entry and shares the CPU with a game. Sunshine's web
 UI, which sets its password and pairs a client by PIN, is not opened: reach it with
 `ssh -L 47990:localhost:47990 asus-b460m` and `https://localhost:47990`. The evening power-off applies in this
 entry too.
 
 MSI has the same `gaming` entry without streaming (`sam.gaming.streaming = false`): the Niri session behind the
-SDDM greeter, played at the machine, with Ollama and its model loader not started. No Sunshine unit, wrapper or
+SDDM greeter, played at the machine, with Ollama and its model loader not started and no idle lock. No Sunshine unit, wrapper or
 uinput rule exists there, no port is opened for it, and `sam.fleet.public` lists none for msi: the entry's assertion
 fails evaluation if a host with streaming off has lan public entries, or one with streaming on lacks Sunshine's.
 The nspawn workers and the Mon-Fri power window run in this entry as in the default boot.

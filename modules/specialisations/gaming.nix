@@ -1,5 +1,10 @@
 # Boot entry for gaming: the desktop session with no inference, and Sunshine for Moonlight clients where the host streams.
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   inherit (config.sam.fleet) lanCidr public;
@@ -45,6 +50,12 @@ in
 
   config = lib.mkMerge [
     {
+      # the boot menu title `grub-reboot` takes: "NixOS - gaming", not one that carries a date and version
+      boot.loader.grub.configurationName = "gaming";
+
+      # mkForce: the desktop's idle lock would interrupt a game, or end a stream at a password prompt nobody can type into
+      home-manager.users.${config.sam.profile.username}.services.hypridle.enable = lib.mkForce false;
+
       # mkForce: games get the GPU, CPU and RAM Ollama holds. The units stay startable by hand, and the default
       # boot runs them as before.
       systemd.services =
@@ -76,8 +87,12 @@ in
     (lib.mkIf streaming {
       services.sunshine = {
         enable = true;
-        # KMS capture: niri offers no wlroots screencopy
+        # nixpkgs' cached build has no CUDA, which Sunshine's NVENC path needs with KMS capture
+        package = pkgs.sunshine.override { cudaSupport = true; };
+        # KMS capture: niri has no wlr-export-dmabuf, which Sunshine's wlroots capture needs
         capSysAdmin = true;
+        # without a list Sunshine also offers Low Res Desktop (xrandr) and Steam Big Picture, neither of which works here
+        applications.apps = [ { name = "Desktop"; } ];
       };
       # mDNS would open 5353/udp to any source; Moonlight takes the host's address instead
       services.avahi.enable = false;
