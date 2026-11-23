@@ -106,7 +106,7 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Power draw / limit",
+      "title": "Power draw, requested and enforced limits",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -126,9 +126,15 @@
         },
         {
           "expr": "max by (node) (nvidia_smi_power_limit_watts{job=\"nvidia-gpu\"})",
-          "legendFormat": "{{node}} limit",
+          "legendFormat": "requested {{node}}",
           "instant": true,
           "refId": "B"
+        },
+        {
+          "expr": "max by (node) (nvidia_smi_enforced_power_limit_watts{job=\"nvidia-gpu\"})",
+          "legendFormat": "enforced {{node}}",
+          "refId": "C",
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -136,7 +142,8 @@
           "unit": "watt"
         },
         "overrides": []
-      }
+      },
+      "description": "power.limit is the requested software limit; enforced.power.limit is the effective driver limit. Board draw can briefly exceed the limit in telemetry."
     },
     {
       "id": 4,
@@ -155,7 +162,7 @@
       "targets": [
         {
           "expr": "max by (node) (nvidia_smi_temperature_gpu{job=\"nvidia-gpu\"})",
-          "legendFormat": "{{node}} °C",
+          "legendFormat": "{{node}} \u00b0C",
           "instant": true,
           "refId": "A"
         },
@@ -267,7 +274,7 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Power: draw against the limit",
+      "title": "Power draw, requested and enforced limits",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -286,8 +293,13 @@
         },
         {
           "expr": "nvidia_smi_power_limit_watts{job=\"nvidia-gpu\"}",
-          "legendFormat": "limit {{node}}",
+          "legendFormat": "requested {{node}}",
           "refId": "B"
+        },
+        {
+          "expr": "nvidia_smi_enforced_power_limit_watts{job=\"nvidia-gpu\"}",
+          "legendFormat": "enforced {{node}}",
+          "refId": "C"
         }
       ],
       "fieldConfig": {
@@ -296,7 +308,7 @@
         },
         "overrides": []
       },
-      "description": "power.limit is the enforced cap (nvidia-smi -pl); the board throttles at it (power-cap throttle below)."
+      "description": "power.limit is the requested software limit; enforced.power.limit is the effective driver limit. Board draw can briefly exceed the limit in telemetry."
     },
     {
       "id": 8,
@@ -315,25 +327,30 @@
       "targets": [
         {
           "expr": "nvidia_smi_temperature_gpu{job=\"nvidia-gpu\"}",
-          "legendFormat": "°C {{node}}",
+          "legendFormat": "\u00b0C {{node}}",
           "refId": "A"
         },
         {
           "expr": "nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{job=\"nvidia-gpu\"} * 100",
-          "legendFormat": "thermal throttle {{node}}",
+          "legendFormat": "HW thermal throttle {{node}}",
           "refId": "B"
         },
         {
           "expr": "nvidia_smi_clocks_event_reasons_sw_power_cap{job=\"nvidia-gpu\"} * 100",
           "legendFormat": "power-cap throttle {{node}}",
           "refId": "C"
+        },
+        {
+          "expr": "nvidia_smi_clocks_event_reasons_sw_thermal_slowdown{job=\"nvidia-gpu\"} * 100",
+          "legendFormat": "SW thermal throttle {{node}}",
+          "refId": "D"
         }
       ],
       "fieldConfig": {
         "defaults": {},
         "overrides": []
       },
-      "description": "A throttle series at 100 means the reason was active at that scrape."
+      "description": "Hardware and software thermal reasons are separate. A reason at 100 means active at that scrape; absent data is unknown."
     },
     {
       "id": 9,

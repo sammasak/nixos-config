@@ -14,8 +14,11 @@ let
   # migrate reports, and the cut-over notes, name this version; a nixpkgs bump that moves it fails the build here
   version = "2026.5.6";
   py = builtins.head pkg.worker.buildInputs;
-  django = py.pkgs.authentik-django;
-  pyEnv = py.withPackages (ps: [ ps.authentik-django ]);
+  # Blueprint cleanup must not delete consumed task parents before their first log insert.
+  django = py.pkgs.authentik-django.overridePythonAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ./authentik/retain-blueprint-task-history.patch ];
+  });
+  pyEnv = py.withPackages (_: [ django ]);
   postgres = config.services.postgresql.package;
   fw = config.networking.firewall;
   state = "/var/lib/authentik";
@@ -69,7 +72,10 @@ let
     after = [ "postgresql.target" ];
     requires = [ "postgresql.target" ];
     path = [ pyEnv ];
-    environment.TZ = "UTC";
+    environment = {
+      TZ = "UTC";
+      PYTHONPATH = "${pyEnv}/${py.sitePackages}";
+    };
     serviceConfig = {
       User = "authentik";
       Group = "authentik";
@@ -132,6 +138,9 @@ let
     '';
 in
 {
+  imports = [ ./backup-metrics.nix ];
+  homelab.backupMetrics.jobs.authentik-backup = "archive_list";
+
   users.users.authentik = {
     isSystemUser = true;
     group = "authentik";
@@ -208,7 +217,6 @@ in
         environment = {
           AUTHENTIK_LISTEN__HTTP = "127.0.0.1:9001";
           AUTHENTIK_LISTEN__METRICS = "127.0.0.1:9301";
-          PYTHONPATH = "${pyEnv}/${py.sitePackages}";
         };
         serviceConfig.ExecStart = "${pkg.worker}/bin/authentik worker";
       };

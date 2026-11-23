@@ -29,9 +29,11 @@ in
       "temperature.gpu"
       "power.draw"
       "power.limit"
+      "enforced.power.limit"
       "fan.speed"
       "clocks_throttle_reasons.active"
       "clocks_throttle_reasons.hw_thermal_slowdown"
+      "clocks_throttle_reasons.sw_thermal_slowdown"
       "clocks_throttle_reasons.sw_power_cap"
     ];
   };

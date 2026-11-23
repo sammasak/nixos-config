@@ -95,7 +95,7 @@ let
         mac = "f0:2f:74:32:6b:7f";
         interface = "eno1";
         wake = "Mon-Fri ${night.end}";
-        off = "Mon-Fri ${night.start}";
+        off = "*-*-* ${night.start}";
         manualOff = true;
       };
     };

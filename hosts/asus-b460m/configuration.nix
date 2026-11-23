@@ -137,8 +137,9 @@ in
     {
       assertion =
         ollama.environmentVariables.OLLAMA_MAX_LOADED_MODELS == "1"
-        && ollama.environmentVariables.OLLAMA_NUM_PARALLEL == "1";
-      message = "hosts/asus-b460m: PoC A serves one model and one request at a time (OLLAMA_MAX_LOADED_MODELS and OLLAMA_NUM_PARALLEL = 1); VRAM is not shared by any cgroup.";
+        &&
+          ollama.environmentVariables.OLLAMA_NUM_PARALLEL == toString config.homelab.ollama.parallelRequests;
+      message = "hosts/asus-b460m: keep one resident model and set request slots through homelab.ollama.parallelRequests (default 1; opt-in trial 2). VRAM is not reserved or limited by cgroups.";
     }
     {
       # qwen2.5-coder's trained context: above it Ollama clamps to 32768 and silently drops the prompt's head; below

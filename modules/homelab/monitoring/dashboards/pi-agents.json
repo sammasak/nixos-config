@@ -2,7 +2,7 @@
   "title": "Pi agents",
   "uid": "pi-agents",
   "schemaVersion": 36,
-  "version": 7,
+  "version": 8,
   "timezone": "utc",
   "refresh": "5m",
   "time": {"from": "now-24h", "to": "now"},
@@ -65,7 +65,7 @@
       "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\"} | json | event=\"run_end\" [24h]))", "queryType": "instant"}]
     },
     {
-      "id": 2, "title": "Passed (24h)", "type": "stat",
+      "id": 2, "title": "Process passed (24h)", "description": "Worker process status only. Independent checks and review are separate evidence; a pass does not prove a correct patch.", "type": "stat",
       "gridPos": {"h": 4, "w": 4, "x": 4, "y": 12},
       "datasource": {"type": "loki", "uid": "loki"},
       "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "green"}}},
@@ -111,15 +111,15 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
       "datasource": {"type": "loki", "uid": "loki"},
       "fieldConfig": {"defaults": {"custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}},
-      "targets": [{"expr": "sum by (provider, model) (count_over_time({job=\"pi-agent\"} | json | event=\"assistant\" [$__interval]))", "legendFormat": "{{provider}}/{{model}}"}]
+      "targets": [{"expr": "sum by (physical_model) (count_over_time({job=\"pi-agent\"} | json | event=\"assistant\" | label_format physical_model=`{{ or .served_model .model \"unknown\" }}` [$__interval]))", "legendFormat": "{{physical_model}}"}]
     },
     {
       "id": 9, "title": "Tokens per model", "type": "timeseries",
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
       "datasource": {"type": "loki", "uid": "loki"},
       "targets": [
-        {"expr": "sum by (model) (sum_over_time({job=\"pi-agent\"} | json | event=\"assistant\" | unwrap tokens_in [$__interval]))", "legendFormat": "in {{model}}"},
-        {"expr": "sum by (model) (sum_over_time({job=\"pi-agent\"} | json | event=\"assistant\" | unwrap tokens_out [$__interval]))", "legendFormat": "out {{model}}"}
+        {"expr": "sum by (physical_model) (sum_over_time({job=\"pi-agent\"} | json | event=\"assistant\" | label_format physical_model=`{{ or .served_model .model \"unknown\" }}` | unwrap tokens_in | __error__=\"\" [$__interval]))", "legendFormat": "in {{physical_model}}"},
+        {"expr": "sum by (physical_model) (sum_over_time({job=\"pi-agent\"} | json | event=\"assistant\" | label_format physical_model=`{{ or .served_model .model \"unknown\" }}` | unwrap tokens_out | __error__=\"\" [$__interval]))", "legendFormat": "out {{physical_model}}"}
       ]
     },
     {
@@ -299,7 +299,10 @@
         {"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"class": "Class", "model": "Model", "Value #A": "Runs", "Value #B": "First-pass rate"}}}],
       "targets": [{"refId": "A", "expr": "sum by (class, model) (count_over_time({job=\"platform\", kind=\"offload\"} | logfmt [$__range]))", "queryType": "instant", "format": "table"},
         {"refId": "B", "expr": "sum by (class, model) (count_over_time({job=\"platform\", kind=\"offload\"} | logfmt | first_pass=\"1\" [$__range])) / sum by (class, model) (count_over_time({job=\"platform\", kind=\"offload\"} | logfmt [$__range])) or 0 * sum by (class, model) (count_over_time({job=\"platform\", kind=\"offload\"} | logfmt [$__range]))", "queryType": "instant", "format": "table"}]
-    }
+    },
+    {"id": 34, "title": "Tool calls and errors by tool (time range)", "type": "table", "description": "Counts include command exits and unsuccessful edits; error count alone does not establish model correctness. Zero errors is shown only for tools with observed calls.", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 90}, "targets": [{"expr": "sum by (tool) (count_over_time({job=\"pi-agent\"} | json | event=\"tool\" [$__range]))", "queryType": "instant", "format": "table", "refId": "A"}, {"expr": "sum by (tool) (count_over_time({job=\"pi-agent\"} | json | event=\"tool\" | is_error=\"true\" [$__range])) or 0 * sum by (tool) (count_over_time({job=\"pi-agent\"} | json | event=\"tool\" [$__range]))", "queryType": "instant", "format": "table", "refId": "B"}], "datasource": {"type": "loki", "uid": "loki"}},
+    {"id": 35, "title": "Tool error ratio by tool (time range)", "type": "table", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 90}, "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}}, "targets": [{"expr": "(sum by (tool) (count_over_time({job=\"pi-agent\"} | json | event=\"tool\" | is_error=\"true\" [$__range])) or 0 * sum by (tool) (count_over_time({job=\"pi-agent\"} | json | event=\"tool\" [$__range]))) / sum by (tool) (count_over_time({job=\"pi-agent\"} | json | event=\"tool\" [$__range]))", "queryType": "instant", "format": "table"}], "datasource": {"type": "loki", "uid": "loki"}},
+    {"id": 36, "title": "Starts older than 3h without observed end (24h)", "type": "table", "description": "Candidate orphan runs: starts observed 3\u201324 hours ago with no end in 24 hours. A genuinely long run, lost logs, or collector outage can also appear. This is not proof that the process is running.", "gridPos": {"h": 8, "w": 16, "x": 0, "y": 98}, "targets": [{"expr": "(sum by (run_id, repo, host) (count_over_time({job=\"pi-agent\"} | json | event=\"run_start\" [24h])) unless on (run_id) sum by (run_id) (count_over_time({job=\"pi-agent\"} | json | event=\"run_start\" [3h]))) unless on (run_id) sum by (run_id) (count_over_time({job=\"pi-agent\"} | json | event=\"run_end\" [24h]))", "queryType": "instant", "format": "table"}], "datasource": {"type": "loki", "uid": "loki"}},
+    {"id": 37, "title": "Responses missing served model (time range)", "type": "stat", "description": "Assistant events without served_model. Model charts fall back to the requested alias, then unknown; these events cannot prove physical-model attribution.", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 98}, "targets": [{"expr": "sum(count_over_time({job=\"pi-agent\"} | json | event=\"assistant\" | served_model=\"\" [$__range]))", "queryType": "instant"}], "datasource": {"type": "loki", "uid": "loki"}}
   ]
 }
-
