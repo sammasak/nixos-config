@@ -49,6 +49,7 @@ in
   # Picked in the boot menu for an evening of game streaming; the default boot stays the headless inference host.
   specialisation.gaming.configuration = {
     imports = [ ../../modules/specialisations/gaming.nix ];
+    sam.gaming.streaming = true;
   };
 
   # 32 GB RAM, the host's own use not yet measured (msi's 2.8G assumed): a 20G pool reserves 2G each for at most 10,

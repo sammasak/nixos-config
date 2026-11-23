@@ -1,8 +1,9 @@
-# Boot entry for game streaming: the desktop session with Sunshine for Moonlight clients, and no inference on the GPU.
+# Boot entry for gaming: the desktop session with no inference, and Sunshine for Moonlight clients where the host streams.
 { config, lib, ... }:
 let
   inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
   inherit (config.sam.fleet) lanCidr public;
+  inherit (config.sam.gaming) streaming;
   host = config.networking.hostName;
   # this host's LAN-scoped public entries (modules/core/fleet.nix), rendered as network.nix expects them
   stream = lib.filter (p: p.host == host && p.lan && p.port != null) public;
@@ -16,60 +17,90 @@ let
       port = base + o;
     });
   expected =
-    offsets "tcp" [
-      (-5)
-      0
-      21
-    ]
-    ++ offsets "udp" [
-      9
-      10
-      11
-      13
-      21
-    ];
+    if streaming then
+      offsets "tcp" [
+        (-5)
+        0
+        21
+      ]
+      ++ offsets "udp" [
+        9
+        10
+        11
+        13
+        21
+      ]
+    else
+      [ ];
   listed = map (p: { inherit (p) proto port; }) stream;
 in
 {
   imports = [ ./desktop.nix ];
 
-  services.sunshine = {
-    enable = true;
-    # KMS capture: niri offers no wlroots screencopy
-    capSysAdmin = true;
-  };
-  # mDNS would open 5353/udp to any source; Moonlight takes the host's address instead
-  services.avahi.enable = false;
-
-  # No screen, keyboard or greeter to log in at: the session Sunshine captures has to start by itself.
-  services.displayManager.autoLogin = {
-    enable = true;
-    user = config.sam.profile.username;
+  # No default: a host importing the entry without choosing fails evaluation.
+  options.sam.gaming.streaming = lib.mkOption {
+    type = lib.types.bool;
+    description = "Run Sunshine for Moonlight clients on the LAN; its stream ports must then be this host's lan public entries in sam.fleet, and without it the host may have none.";
   };
 
-  # mkForce: games get the whole card. The units stay startable by hand, and the default boot runs them as before.
-  systemd.services = lib.genAttrs [ "ollama" "ollama-model-loader" "nvidia-power-limit" ] (_: {
-    wantedBy = lib.mkForce [ ];
-  });
-
-  networking.firewall = lib.mkMerge (
-    map (
-      p:
-      lib.getAttrs [ "extraInputRules" "extraCommands" ] (mkDualBackendFirewall {
-        nftComment = "public ${toString p.port}";
-        sources = [ lanCidr ];
-        ports = [ p.port ];
-        inherit (p) proto;
-        interfaces = [ ];
-        inherit (config.networking.firewall) backend;
-      })
-    ) stream
-  );
-
-  assertions = [
+  config = lib.mkMerge [
     {
-      assertion = lib.all (e: lib.elem e listed) expected && lib.all (l: lib.elem l expected) listed;
-      message = "modules/specialisations/gaming.nix: ${host}'s lan public entries in modules/core/fleet.nix (${builtins.toJSON listed}) are not Sunshine's stream ports for base port ${toString base} (${builtins.toJSON expected}).";
+      # mkForce: games get the GPU, CPU and RAM Ollama holds. The units stay startable by hand, and the default
+      # boot runs them as before.
+      systemd.services =
+        lib.genAttrs
+          (
+            [
+              "ollama"
+              "ollama-model-loader"
+            ]
+            ++ lib.optional (config.homelab.ollama.gpuPowerLimit != null) "nvidia-power-limit"
+          )
+          (_: {
+            wantedBy = lib.mkForce [ ];
+          });
+
+      assertions = [
+        {
+          assertion = lib.all (e: lib.elem e listed) expected && lib.all (l: lib.elem l expected) listed;
+          message = "modules/specialisations/gaming.nix: ${host}'s lan public entries in modules/core/fleet.nix (${builtins.toJSON listed}) are not ${
+            if streaming then
+              "Sunshine's stream ports for base port ${toString base}"
+            else
+              "empty, as sam.gaming.streaming = false needs"
+          } (${builtins.toJSON expected}).";
+        }
+      ];
     }
+
+    (lib.mkIf streaming {
+      services.sunshine = {
+        enable = true;
+        # KMS capture: niri offers no wlroots screencopy
+        capSysAdmin = true;
+      };
+      # mDNS would open 5353/udp to any source; Moonlight takes the host's address instead
+      services.avahi.enable = false;
+
+      # No screen, keyboard or greeter to log in at: the session Sunshine captures has to start by itself.
+      services.displayManager.autoLogin = {
+        enable = true;
+        user = config.sam.profile.username;
+      };
+
+      networking.firewall = lib.mkMerge (
+        map (
+          p:
+          lib.getAttrs [ "extraInputRules" "extraCommands" ] (mkDualBackendFirewall {
+            nftComment = "public ${toString p.port}";
+            sources = [ lanCidr ];
+            ports = [ p.port ];
+            inherit (p) proto;
+            interfaces = [ ];
+            inherit (config.networking.firewall) backend;
+          })
+        ) stream
+      );
+    })
   ];
 }
