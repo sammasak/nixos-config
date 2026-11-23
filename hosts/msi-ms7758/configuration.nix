@@ -18,6 +18,12 @@
 
   homelab.journalCollector.enable = true;
 
+  # Picked in the boot menu to play at the machine; the default boot stays the headless worker and inference host.
+  specialisation.gaming.configuration = {
+    imports = [ ../../modules/specialisations/gaming.nix ];
+    sam.gaming.streaming = false;
+  };
+
   # 15.9 GiB RAM, ~2.8G of it the host's own: a 10G pool reserves 2G each for at most 5, 3 recommended
   # (docs/nspawn-workers.md, Sizing). No ghHostsFile: msi's lukas has no gh login (git push works over the SSH key).
   sam.workers = {

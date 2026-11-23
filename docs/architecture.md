@@ -57,7 +57,7 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 |------|------|-----------------|
 | `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the DNS, ntfy and deploy host) | none |
 | `acer-swift` | **headless** (the always-on service host: Caddy edge, Authentik, chat, llm-gateway) | `desktop` (Niri GUI) |
-| `msi-ms7758` | **headless** (intermittent worker host, dual-boot Windows) | none |
+| `msi-ms7758` | **headless** (intermittent worker host, dual-boot Windows) | `gaming` (Niri GUI; no inference, no streaming) |
 | `asus-b460m` | **headless** (worker host, dual-boot Windows) | `gaming` (Niri GUI, Sunshine; no inference) |
 | `black-pi` | **headless** (aarch64 observability host, Raspberry Pi 4 on SD card, builds its own closure) | none |
 | `naked-pi` | **headless** (aarch64 Wi-Fi learning node, Raspberry Pi 3, role `rf-lab`) | none |
@@ -80,6 +80,12 @@ switch into the entry leaves Ollama running. The worker pool keeps running in th
 UI, which sets its password and pairs a client by PIN, is not opened: reach it with
 `ssh -L 47990:localhost:47990 asus-b460m` and `https://localhost:47990`. The evening power-off applies in this
 entry too.
+
+MSI has the same `gaming` entry without streaming (`sam.gaming.streaming = false`): the Niri session behind the
+SDDM greeter, played at the machine, with Ollama and its model loader not started and no idle lock. No Sunshine unit, wrapper or
+uinput rule exists there, no port is opened for it, and `sam.fleet.public` lists none for msi: the entry's assertion
+fails evaluation if a host with streaming off has lan public entries, or one with streaming on lacks Sunshine's.
+The nspawn workers and the Mon-Fri power window run in this entry as in the default boot.
 
 **One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
 `modules/specialisations/desktop.nix`; the default is `false`, so a host that

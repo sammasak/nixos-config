@@ -49,6 +49,7 @@ in
   # Picked in the boot menu for an evening of game streaming; the default boot stays the headless inference host.
   specialisation.gaming.configuration = {
     imports = [ ../../modules/specialisations/gaming.nix ];
+    sam.gaming.streaming = true;
   };
   # grub-reboot: the only way into that entry on a host with no keyboard
   environment.systemPackages = [ pkgs.grub2_efi ];
