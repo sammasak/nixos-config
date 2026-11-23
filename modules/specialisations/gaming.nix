@@ -71,6 +71,17 @@ in
             wantedBy = lib.mkForce [ ];
           });
 
+      programs.steam.enable = true;
+      programs.gamemode.enable = true;
+
+      # An evening's game outlasts the power window's poweroff. Only the timer is masked: sam.powerSchedule.poweroff
+      # also arms Wake-on-LAN, which the next scheduled wake needs after a manual poweroff.
+      systemd.timers = lib.mkIf config.sam.powerSchedule.poweroff.enable {
+        "${lib.head (lib.splitString "-" host)}-scheduled-shutdown".enable = lib.mkForce false;
+      };
+      # it would announce that poweroff
+      sam.workers.shutdownNotice = lib.mkForce null;
+
       assertions = [
         {
           assertion = lib.all (e: lib.elem e listed) expected && lib.all (l: lib.elem l expected) listed;
@@ -91,8 +102,16 @@ in
         package = pkgs.sunshine.override { cudaSupport = true; };
         # KMS capture: niri has no wlr-export-dmabuf, which Sunshine's wlroots capture needs
         capSysAdmin = true;
-        # without a list Sunshine also offers Low Res Desktop (xrandr) and Steam Big Picture, neither of which works here
-        applications.apps = [ { name = "Desktop"; } ];
+        # without a list Sunshine also offers Low Res Desktop, which needs xrandr and does not work here
+        applications.apps = [
+          { name = "Desktop"; }
+          {
+            name = "Steam Big Picture";
+            detached = [
+              "${lib.getExe' pkgs.util-linux "setsid"} ${lib.getExe config.programs.steam.package} steam://open/bigpicture"
+            ];
+          }
+        ];
       };
       # mDNS would open 5353/udp to any source; Moonlight takes the host's address instead
       services.avahi.enable = false;
