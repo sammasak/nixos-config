@@ -1,0 +1,81 @@
+# promtool test rules for homelab.yaml's OTLP rejection alert (flake-modules/monitoring-check.nix runs it).
+# The series as Prometheus stores them from Alloy's allow-utf-8 exposition: OTel names and labels keep their dots.
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  # a relay's token no longer matches, a 401 per minute; accepted posts carry on beside it
+  - interval: 1m
+    input_series:
+      - series: '{__name__="http.server.request.duration_seconds_count",job="alloy-otlp",instance="192.168.10.110:12346",component_id="otelcol.receiver.otlp.native","http.request.method"="POST","http.response.status_code"="200"}'
+        values: '0+10x40'
+      - series: '{__name__="http.server.request.duration_seconds_count",job="alloy-otlp",instance="192.168.10.110:12346",component_id="otelcol.receiver.otlp.native","http.request.method"="POST","http.response.status_code"="401"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: OtlpWritesRejected
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: OtlpWritesRejected
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, "http.response.status_code": "401"}
+            exp_annotations:
+              summary: "alloy-otlp on acer-swift is answering OTLP posts with 401"
+              description: "The OTLP receiver on acer answered 5 POSTs (metrics and logs from the host relays) with HTTP 401 in the last 5 minutes, and has kept doing so for 10 minutes: those writes are lost while every scrape stays green. Run journalctl -u alloy-otlp --since -30m on acer."
+              query: 'sum by ("http.response.status_code") (increase({__name__="http.server.request.duration_seconds_count",job="alloy-otlp",component_id="otelcol.receiver.otlp.native","http.request.method"="POST"}[1h]))'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#otlpwritesrejected"
+
+  # absent: no error series exists until Alloy first answers one (a fresh start answers only 200s); a 400 class that
+  # appears at minute 20 and keeps growing is caught once it has two samples
+  - interval: 1m
+    input_series:
+      - series: '{__name__="http.server.request.duration_seconds_count",job="alloy-otlp",instance="192.168.10.110:12346",component_id="otelcol.receiver.otlp.native","http.request.method"="POST","http.response.status_code"="200"}'
+        values: '0+10x60'
+      - series: '{__name__="http.server.request.duration_seconds_count",job="alloy-otlp",instance="192.168.10.110:12346",component_id="otelcol.receiver.otlp.native","http.request.method"="POST","http.response.status_code"="400"}'
+        values: '_x20 1+2x40'
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: OtlpWritesRejected
+        exp_alerts: []
+      - eval_time: 33m
+        alertname: OtlpWritesRejected
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, "http.response.status_code": "400"}
+            exp_annotations:
+              summary: "alloy-otlp on acer-swift is answering OTLP posts with 400"
+              description: "The OTLP receiver on acer answered 10 POSTs (metrics and logs from the host relays) with HTTP 400 in the last 5 minutes, and has kept doing so for 10 minutes: those writes are lost while every scrape stays green. Run journalctl -u alloy-otlp --since -30m on acer."
+              query: 'sum by ("http.response.status_code") (increase({__name__="http.server.request.duration_seconds_count",job="alloy-otlp",component_id="otelcol.receiver.otlp.native","http.request.method"="POST"}[1h]))'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#otlpwritesrejected"
+
+  # the blackbox probe's GET of /v1/logs carries no token: 401, about twice a minute, all day, and no page
+  - interval: 1m
+    input_series:
+      - series: '{__name__="http.server.request.duration_seconds_count",job="alloy-otlp",instance="192.168.10.110:12346",component_id="otelcol.receiver.otlp.native","http.request.method"="POST","http.response.status_code"="200"}'
+        values: '0+10x60'
+      - series: '{__name__="http.server.request.duration_seconds_count",job="alloy-otlp",instance="192.168.10.110:12346",component_id="otelcol.receiver.otlp.native","http.request.method"="GET","http.response.status_code"="401"}'
+        values: '0+2x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: OtlpWritesRejected
+        exp_alerts: []
+      - eval_time: 59m
+        alertname: OtlpWritesRejected
+        exp_alerts: []
+
+  # msi powers off at 19:00 UTC (21:00 local) and asus with it: their relays' last posts are cut off, a burst of 400s,
+  # then neither sends anything all night; the series stays flat and nothing fires
+  - interval: 1m
+    input_series:
+      - series: '{__name__="http.server.request.duration_seconds_count",job="alloy-otlp",instance="192.168.10.110:12346",component_id="otelcol.receiver.otlp.native","http.request.method"="POST","http.response.status_code"="200"}'
+        values: '0+10x1200'
+      - series: '{__name__="http.server.request.duration_seconds_count",job="alloy-otlp",instance="192.168.10.110:12346",component_id="otelcol.receiver.otlp.native","http.request.method"="POST","http.response.status_code"="400"}'
+        values: '0x1140 6x60'
+    alert_rule_test:
+      - eval_time: 19h4m
+        alertname: OtlpWritesRejected
+        exp_alerts: []
+      - eval_time: 19h12m
+        alertname: OtlpWritesRejected
+        exp_alerts: []
+      - eval_time: 19h30m
+        alertname: OtlpWritesRejected
+        exp_alerts: []

@@ -81,6 +81,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   - BackupStale (warning, 10 m): a daily backup's last recorded success is over 36 h old.
   - BackupNeverRecorded (warning, 36 h): a backup has no valid success record.
   - BackupCollectorStale (warning, 15 m): the backup-metrics scan is over 900 s old, or acer or lenovo has no `backup.prom`.
+  - OtlpWritesRejected (warning, 10 m): acer's alloy-otlp answered OTLP POSTs with 4xx/5xx in every 5 min window.
   - NodeTemperatureHigh (warning, 15 m): the Pi's `cpu-thermal` zone at 85 °C or more. x86 zones page no one.
   - NodeSensorNearCritical (warning, 15 m, `notify="none"`): an hwmon sensor within 5 °C of its own critical mark.
     msi and lenovo reach it through every gate, so it notifies no one. It shows in the alert list, in Fleet's
