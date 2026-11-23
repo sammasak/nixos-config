@@ -201,6 +201,9 @@ check(sm.step_failures([rec("gate=nixos-qa step=lint result=fail sha=none"), rec
       "seeded: head none (NIXOS_QA_HEAD's fallback outside git) is no head: three such records count 3, not 1")
 check(sm.step_failures([check_rec(DASH, "none"), step_rec("nixos-flake-check", "none")]) == {("nixos-flake-check", DASH): 1, ("nixos-flake-check", ""): 1},
       "seeded: an umbrella record with head none is not matched to a check record with head none")
+check(sm.step_last_failures([(30, check_rec(DASH, H1)[1]), (20, step_rec("nixos-flake-check", H2)[1]), (10, check_rec(DASH, H2)[1])])
+      == {("nixos-flake-check", DASH): 30},
+      "seeded: a unit's newest failure is its latest record's time; an umbrella record its inner check explains is not one")
 
 with tempfile.TemporaryDirectory() as tmp:
     out = f"{tmp}/shipping.prom"
@@ -234,6 +237,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check(m.get('shipping_gate_step_failures{check="",step="lint",window="7d"}') == 1
           and not any(k.startswith("shipping_gate_step_failures") and 'step="lint"' not in k for k in m),
           "a failed push-gate step from Loki is written with an empty check label")
+    check(abs(m.get('shipping_gate_step_last_failure_timestamp_seconds{check="",step="lint"}', 0) - NOW) < 1
+          and sum(k.startswith("shipping_gate_step_last_failure") for k in m) == 1,
+          "the step's newest failure is written beside its count, with the same labels")
     check(m.get('shipping_gate_runs_counted{host="unknown"}') == 1
           and not any('host=""' in k for k in m),
           "a stream without a host label counts as host=\"unknown\", never as an empty host")
