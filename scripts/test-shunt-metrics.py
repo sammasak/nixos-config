@@ -251,11 +251,23 @@ with tempfile.TemporaryDirectory() as tmp:
         json.dumps({"ts": iso(NOW - 60), "hook": "shunt-bash", "result": "compound", "duration_ms": "12"}),
         json.dumps({"ts": iso(NOW - 60), "hook": "shunt-bash", "result": "compound"}),
         rec("shunt-read", "allow", NOW - 60, 7, tokens=1),
+        rec("shunt-read", "allow", NOW - 60, 10**400, tokens=10**400),
+        rec("shunt-read", "allow", NOW - 60, False),
     ]) + "\n")
     t = sm.scan([str(bad)], SINCE, NOW, time.monotonic() + 60)
     check(t.events.get(("shunt-bash", "compound")) == 4 and "shunt-bash" not in t.durations
-          and t.durations.get("shunt-read") == [7],
-          f"negative, boolean, string and missing durations add no sample, their decisions still count {t.durations}")
+          and t.durations.get("shunt-read") == [7] and t.tokens.get(("shunt-read", "seen")) == 1,
+          f"negative, boolean, string, missing and oversized durations and sizes add nothing, their decisions still count"
+          f" {t.durations} {t.tokens}")
+    huge = pathlib.Path(tmp, "huge")
+    huge.mkdir()
+    (huge / time.strftime("%Y-%m-%d.jsonl", time.gmtime())).write_text(
+        rec("bulk-read", "ok", time.time() - 60, 10**400, input_tokens=10**400) + "\n")
+    r = run("--out", str(pathlib.Path(tmp, "huge.prom")), "--log-dir", str(huge))
+    got = pathlib.Path(tmp, "huge.prom").read_text() if r.returncode == 0 else ""
+    check('shunt_events{hook="bulk-read",result="ok",shunt="on"} 1\n' in got
+          and 'shunt_bulk_read_tokens{kind="input",shunt="on"} 0\n' in got,
+          f"a 400-digit int in a record counts its decision and adds nothing (exit {r.returncode}, {r.stderr[-200:]!r})")
 
     # day files that are a link, a FIFO or too large are not read; records past RECORDS_MAX are over_cap
     odd = pathlib.Path(tmp, "odd")

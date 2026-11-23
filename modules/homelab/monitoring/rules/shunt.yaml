@@ -10,18 +10,21 @@ groups:
         expr: |
           max by (node, worker) (time() - shunt_collector_success_timestamp_seconds{job="node-exporter"} > 2700)
           or max by (node, worker) (shunt_collector_failed{job="node-exporter"} == 1)
-          or (
-            max by (node) (node_systemd_unit_state{job="node-exporter",name="shunt-metrics.service",state="failed"})
-            unless on (node) shunt_collector_success_timestamp_seconds{job="node-exporter"}
+          or max by (node, worker) (
+            label_replace(
+              node_systemd_unit_state{job="node-exporter",name=~"shunt-metrics(-guest-.+)?[.]service",state="failed"},
+              "worker", "$1", "name", "shunt-metrics-guest-(.+)[.]service"
+            )
+            unless on (node, worker) shunt_collector_success_timestamp_seconds{job="node-exporter"}
           )
         for: 20m
         labels:
           severity: warning
           team: homelab
         annotations:
-          summary: "The Shunt collector on {{ $labels.node }} is stale"
-          description: "shunt-metrics on {{ $labels.node }} has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics.service and journalctl -u shunt-metrics.service there."
-          query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="{{ $labels.node }}"}'
+          summary: "The Shunt collector on {{ $labels.node }}{{ with $labels.worker }} for worker {{ . }}{{ end }} is stale"
+          description: "shunt-metrics{{ with $labels.worker }}-guest-{{ . }}{{ end }} on {{ $labels.node }} has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics{{ with $labels.worker }}-guest-{{ . }}{{ end }}.service and journalctl -u shunt-metrics{{ with $labels.worker }}-guest-{{ . }}{{ end }}.service there."
+          query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="{{ $labels.node }}",worker="{{ $labels.worker }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntcollectorstale"
 
       - alert: ShuntDelegationFailing
@@ -38,9 +41,9 @@ groups:
           severity: warning
           team: homelab
         annotations:
-          summary: "Bulk-read delegations on {{ $labels.node }} are failing"
+          summary: "Bulk-read delegations on {{ $labels.node }}{{ with $labels.worker }} for worker {{ . }}{{ end }} are failing"
           description: "{{ $value | humanizePercentage }} of the bulk-read delegations on {{ $labels.node }} in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. The count is a 24 h window, so it can stay firing up to 24 h after a fix. Read the outcomes in the hook log there."
-          query: 'sum by (result) (shunt_events{job="node-exporter",node="{{ $labels.node }}",hook="bulk-read"})'
+          query: 'sum by (result) (shunt_events{job="node-exporter",node="{{ $labels.node }}",worker="{{ $labels.worker }}",hook="bulk-read"})'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntdelegationfailing"
 
       - alert: ShuntSilent
@@ -59,7 +62,7 @@ groups:
           severity: warning
           team: homelab
         annotations:
-          summary: "Shunt on {{ $labels.node }} {{ $labels.worker }} is silent or failing"
-          description: "Shunt is declared on for {{ $labels.node }} {{ $labels.worker }} (no worker: the host's owner), yet its agent ran Bash in the last hour with no Shunt hook record for 2 h, or a Shunt hook logged error or nostate in the last 24 h; the on/off comparison is then not measuring Shunt. An error stays in the 24 h window, so it can stay firing up to 24 h after a fix."
+          summary: "Shunt on {{ $labels.node }}{{ with $labels.worker }} for worker {{ . }}{{ end }} is silent or failing"
+          description: "Shunt is declared on for {{ $labels.node }}{{ with $labels.worker }} worker {{ . }}{{ end }}, yet its agent ran Bash in the last hour with no Shunt hook record for 2 h, or a Shunt hook logged error or nostate in the last 24 h; the on/off comparison is then not measuring Shunt. A session started before Shunt was switched on keeps its old hooks until restarted. An error stays in the 24 h window, so it can stay firing up to 24 h after a fix."
           query: 'shunt_events{job="node-exporter",node="{{ $labels.node }}",worker="{{ $labels.worker }}",hook=~"shunt-.*"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntsilent"
