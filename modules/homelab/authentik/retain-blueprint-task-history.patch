@@ -1,0 +1,34 @@
+--- a/authentik/blueprints/models.py
++++ b/authentik/blueprints/models.py
+@@ -5,7 +5,7 @@
+ 
+ from django.contrib.contenttypes.fields import GenericRelation
+ from django.contrib.postgres.fields import ArrayField
+-from django.db import models
++from django.db import DEFAULT_DB_ALIAS, models
+ from django.utils.translation import gettext_lazy as _
+ from rest_framework.serializers import Serializer
+ from structlog import get_logger
+@@ -53,6 +53,13 @@
+     UNKNOWN = "unknown"
+ 
+ 
++class TaskHistoryRelation(GenericRelation):
++    """Keep task parents and logs until the broker's task retention removes them."""
++
++    def bulk_related_objects(self, objs, using=DEFAULT_DB_ALIAS):
++        return self.remote_field.model._base_manager.db_manager(using).none()
++
++
+ class BlueprintInstance(SerializerModel, ManagedModel, CreatedUpdatedModel):
+     """Instance of a single blueprint. Can be parameterized via context attribute when
+     blueprint in `path` has inputs."""
+@@ -73,7 +80,7 @@
+     managed_models = ArrayField(models.TextField(), default=list)
+ 
+     # Manual link to tasks instead of using TasksModel because of loop imports
+-    tasks = GenericRelation(
++    tasks = TaskHistoryRelation(
+         "authentik_tasks.Task",
+         content_type_field="rel_obj_content_type",
+         object_id_field="rel_obj_id",

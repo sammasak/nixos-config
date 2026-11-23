@@ -7,6 +7,9 @@ let
   acer = config.sam.fleet.hosts.acer-swift.address;
 in
 {
+  imports = [ ./backup-metrics.nix ];
+  homelab.backupMetrics.jobs.authentik-offhost = "archive_list";
+
   systemd.tmpfiles.rules = [ "d ${dir} 0700 root root -" ];
   systemd.services.authentik-offhost = {
     description = "Copy Authentik's latest dump from acer";

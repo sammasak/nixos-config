@@ -216,7 +216,7 @@
     },
     {
       "id": 21,
-      "title": "Alloy entries sent/dropped (last 1h)",
+      "title": "OTLP log exporter sent/dropped (5m rate)",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -224,10 +224,10 @@
         "x": 12,
         "y": 24
       },
-      "description": "If dropped grows while sent is flat, the pipeline is failing upstream of Loki.",
+      "description": "Only the alloy-otlp job is scraped here. This does not cover the five host-journal writers: their Alloy metrics are loopback-only and not scraped. Missing host-journal writer counters are unknown, not zero losses. Sent and dropped are export outcomes; deliberate privacy/noise filtering is separate.",
       "targets": [
         {
-          "expr": "sum(rate(loki_write_sent_entries_total[5m]))",
+          "expr": "sum(rate(loki_write_sent_entries_total{job=\"alloy-otlp\"}[5m]))",
           "legendFormat": "sent entries/s",
           "datasource": {
             "type": "prometheus",
@@ -235,7 +235,7 @@
           }
         },
         {
-          "expr": "sum(rate(loki_write_dropped_entries_total[5m]))",
+          "expr": "sum(rate(loki_write_dropped_entries_total{job=\"alloy-otlp\"}[5m]))",
           "legendFormat": "dropped entries/s",
           "datasource": {
             "type": "prometheus",
@@ -283,6 +283,172 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "custom": {
+            "lineWidth": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 40,
+      "title": "Host-journal counter collection success",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "description": "1 means the last loopback collection parsed the required counters; 0 means collection failed. Check age too: a stopped collector leaves old samples. Missing/sleeping hosts remain unknown. This does not prove journal completeness.",
+      "targets": [
+        {
+          "expr": "homelab_journal_metrics_collection_success{job=\"node-exporter\"}",
+          "legendFormat": "{{node}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 41,
+      "title": "Host-journal counter collection age",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "description": "Age of the last attempt, whether successful or failed. Normal cadence is about one minute; investigate over 180 seconds while the host is known on. A fresh timestamp alone does not establish success.",
+      "targets": [
+        {
+          "expr": "time() - homelab_journal_metrics_collection_timestamp_seconds{job=\"node-exporter\"}",
+          "legendFormat": "{{node}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 42,
+      "title": "Host-journal reader and delivered entries (5m rate)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "description": "Read counts include deliberate filtering; sent counts describe successful writer batches. Their difference is not an error or loss counter. Rates cross Alloy restarts using counter-reset handling; gaps remain unknown.",
+      "targets": [
+        {
+          "expr": "sum by(node) (rate(homelab_journal_reader_lines_total{job=\"node-exporter\"}[5m]))",
+          "legendFormat": "{{node}} read",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "sum by(node) (rate(homelab_journal_writer_sent_entries_total{job=\"node-exporter\"}[5m]))",
+          "legendFormat": "{{node}} sent",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "logs/s",
+          "custom": {
+            "lineWidth": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 43,
+      "title": "Host-journal export retries and lost entries (5m rate)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "description": "Writer drops are export losses; retries are batches and may later succeed. These counters do not measure privacy/noise filtering, persisted backlog or all possible crash losses. Missing counters are unknown.",
+      "targets": [
+        {
+          "expr": "sum by(node) (rate(homelab_journal_writer_retries_total{job=\"node-exporter\"}[5m]))",
+          "legendFormat": "{{node}} batch retries/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "sum by(node,reason) (rate(homelab_journal_writer_dropped_entries_total{job=\"node-exporter\"}[5m]))",
+          "legendFormat": "{{node}} {{reason}} lost entries/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 44,
+      "title": "Intentional host-journal filtering (5m rate)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "description": "Deliberate privacy/noise filter counts, separate from delivery losses. Reasons are bounded; newly introduced reasons aggregate as other. A reason may be absent until its first event; absence is not fabricated as zero.",
+      "targets": [
+        {
+          "expr": "sum by(node,reason) (rate(homelab_journal_filtered_lines_total{job=\"node-exporter\"}[5m]))",
+          "legendFormat": "{{node}} {{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "logs/s",
           "custom": {
             "lineWidth": 2
           }

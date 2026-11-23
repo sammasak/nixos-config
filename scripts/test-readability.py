@@ -14,7 +14,7 @@ from gate_probe import check, finish
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORDS = ["two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
 # "one host" is a scope ("one host at a time"), not a fleet size
-COUNT = re.compile(r"(?<![\w-])(" + "|".join(WORDS) + r"|[2-9]|1[0-9])[- ]hosts?\b", re.IGNORECASE)
+COUNT = re.compile(r"(?<![\w-])(" + "|".join(WORDS) + r"|[2-9]|1[0-9])[- ]hosts?\b(?!-)", re.IGNORECASE)
 PLACEHOLDERS = {"todo", "fixme", "tbd", "xxx", "description", "none", "n/a"}
 
 
@@ -58,6 +58,8 @@ check(wrong_counts("One flake, a five-host homelab", 6) == ["five-host"], "seede
 check(wrong_counts("**Scale.** 5 hosts, with one host at a time", 6) == ["5 hosts"],
       "seeded: a stale numeric count is caught and `one host` is not a count")
 check(wrong_counts("- 2026-11-12 Host reboot", 6) == [], "seeded: a date before `Host` is not a count")
+check(wrong_counts("five host-journal collectors; 2 host-local tests", 6) == [],
+      "seeded: host-journal and host-local qualify subsystem counts, not the fleet size")
 docs = [ROOT / "README.md", ROOT / "CLAUDE.md", ROOT / "flake.nix"] + sorted((ROOT / "docs").glob("*.md"))
 stale = [f"{p.relative_to(ROOT)}: {c}" for p in docs for c in wrong_counts(p.read_text(), n)]
 check(not stale, f"every fleet size stated in {len(docs)} current docs is {n} ({stale})")

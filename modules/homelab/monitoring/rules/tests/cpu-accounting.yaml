@@ -1,0 +1,30 @@
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'node_cpu_seconds_total{job="node-exporter",node="normal",cpu="0",mode="idle"}'
+        values: '0+54x6'
+      - series: 'node_cpu_seconds_total{job="node-exporter",node="normal",cpu="0",mode="user"}'
+        values: '0+6x6'
+      - series: 'node_cpu_seconds_total{job="node-exporter",node="normal",cpu="1",mode="idle"}'
+        values: '0+54x6'
+      - series: 'node_cpu_seconds_total{job="node-exporter",node="normal",cpu="1",mode="user"}'
+        values: '0+6x6'
+      # Guest time is already included in user/nice; adding it again would falsely report an accounting anomaly.
+      - series: 'node_cpu_guest_seconds_total{job="node-exporter",node="normal",cpu="0",mode="user"}'
+        values: '0+600x6'
+      - series: 'node_cpu_guest_seconds_total{job="node-exporter",node="normal",cpu="0",mode="nice"}'
+        values: '0+600x6'
+      - series: 'node_cpu_seconds_total{job="node-exporter",node="impossible",cpu="0",mode="idle"}'
+        values: '0+75x6'
+      - series: 'node_cpu_seconds_total{job="node-exporter",node="missing-idle",cpu="0",mode="user"}'
+        values: '0+60x6'
+    promql_expr_test:
+      - expr: homelab:node:cpu_accounting_rate
+        eval_time: 5m
+        exp_samples:
+          - labels: '{__name__="homelab:node:cpu_accounting_rate",node="normal"}'
+            value: 1
+          - labels: '{__name__="homelab:node:cpu_accounting_rate",node="impossible"}'
+            value: 1.25

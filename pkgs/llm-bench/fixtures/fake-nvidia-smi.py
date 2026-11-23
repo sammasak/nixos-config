@@ -10,6 +10,8 @@ VALUES = {
     "index": "0", "memory.total": ("MiB", "8192 MiB"), "memory.used": ("MiB", "6656 MiB"),
     "memory.free": ("MiB", "1536 MiB"), "utilization.gpu": ("%", "42 %"), "temperature.gpu": "65",
     "power.draw": ("W", "150.00 W"), "power.limit": ("W", "220.00 W"), "fan.speed": ("%", "45 %"),
+    "enforced.power.limit": ("W", "130.00 W"),
+    "clocks_throttle_reasons.sw_thermal_slowdown": "Active",
 }
 args = dict(a.split("=", 1) for a in sys.argv[1:] if "=" in a)
 fields = args["--query-gpu"].split(",")
@@ -17,8 +19,8 @@ head, row = [], []
 for f in fields:
     v = VALUES.get(f, "Not Active" if f.startswith("clocks_throttle_reasons.") else None)
     if f == "clocks_throttle_reasons.active":
-        # bit 0x1 is "GPU idle", not a throttle
-        v = "0x0000000000000001"
+        # Match the active software thermal reason above (bit 0x20).
+        v = "0x0000000000000020"
     if v is None:
         sys.exit(f"fake nvidia-smi: Field \"{f}\" is not a valid field to query.")
     unit, val = v if isinstance(v, tuple) else (None, v)

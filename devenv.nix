@@ -685,6 +685,7 @@ let
         python3
         bash
         coreutils
+        systemd
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-power-schedule.py

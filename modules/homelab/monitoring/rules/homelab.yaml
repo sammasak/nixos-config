@@ -265,3 +265,10 @@ groups:
             + (homelab:health:min_disk_free_ratio >= bool 0.15)
             + (homelab:health:deadman_alive       >= bool 1)
           )
+
+  - name: host-health.recordings
+    rules:
+      - record: homelab:node:cpu_accounting_rate
+        expr: |
+          sum by (node) (rate(node_cpu_seconds_total{job="node-exporter",mode!~"guest.*"}[5m]))
+          / count by (node) (node_cpu_seconds_total{job="node-exporter",mode="idle"})

@@ -23,7 +23,10 @@ in
     listenAddress = lib.mkIf served hosts.${host}.address;
     port = lib.mkIf served config.sam.fleet.listeners.${listener}.port;
     # a host's own checks drop *.prom files here (open-webui.nix's edge-socket check, the generation below)
-    extraFlags = [ "--collector.textfile.directory=${textfiles}" ];
+    extraFlags = [
+      "--collector.textfile.directory=${textfiles}"
+      "--collector.systemd.enable-restarts-metrics"
+    ];
     # needs AF_UNIX for D-Bus (upstream adds it); black-pi keeps only the failed unit_state series (prometheus.nix)
     enabledCollectors = [ "systemd" ];
   };

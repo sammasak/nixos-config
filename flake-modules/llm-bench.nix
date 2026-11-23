@@ -36,9 +36,11 @@ let
     "nvidia_smi_temperature_gpu"
     "nvidia_smi_power_draw_watts"
     "nvidia_smi_power_limit_watts"
+    "nvidia_smi_enforced_power_limit_watts"
     "nvidia_smi_fan_speed_ratio"
     "nvidia_smi_clocks_event_reasons_active"
     "nvidia_smi_clocks_event_reasons_hw_thermal_slowdown"
+    "nvidia_smi_clocks_event_reasons_sw_thermal_slowdown"
     "nvidia_smi_clocks_event_reasons_sw_power_cap"
     "nvidia_smi_gpu_info"
   ];
@@ -251,6 +253,21 @@ in
               for m in ${lib.concatStringsSep " " needed}; do
                 grep -q "^$m{" metrics || { echo "gpu-telemetry-exporter: no $m in the exporter's output" >&2; exit 1; }
               done
+              python3 - <<'PY'
+              from pathlib import Path
+
+              lines = Path("metrics").read_text().splitlines()
+              expected = {
+                  "nvidia_smi_power_limit_watts": 220.0,
+                  "nvidia_smi_enforced_power_limit_watts": 130.0,
+                  "nvidia_smi_clocks_event_reasons_active": 32.0,
+                  "nvidia_smi_clocks_event_reasons_hw_thermal_slowdown": 0.0,
+                  "nvidia_smi_clocks_event_reasons_sw_thermal_slowdown": 1.0,
+              }
+              for name, value in expected.items():
+                  actual = [float(line.rsplit(" ", 1)[1]) for line in lines if line.startswith(name + "{")]
+                  assert actual == [value], (name, actual, value)
+              PY
               kill "$exporter"
               grep '^nvidia_smi_' metrics > $out
             '';
