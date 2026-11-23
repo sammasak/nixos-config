@@ -17,3 +17,5 @@ tests:
             exp_annotations:
               summary: "caddy.service failed on acer-swift"
               description: "caddy.service has been in the failed state on acer-swift for 15 minutes. Run systemctl status caddy.service and journalctl -u caddy.service there; systemctl reset-failed clears it once fixed."
+              query: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",state="failed"} == 1'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesystemdunitfailed"

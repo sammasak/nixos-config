@@ -31,6 +31,8 @@ tests:
             exp_annotations:
               summary: "black-pi runs hot"
               description: "black-pi's cpu-thermal zone has read 86 °C for 15 minutes, at the Pi's throttle point. Check the fan and airflow; Hosts shows the hottest sensor."
+              query: 'node_thermal_zone_temp{job="node-exporter",node="black-pi"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodetemperaturehigh"
       - eval_time: 30m
         alertname: NodeSensorNearCritical
         exp_alerts:
@@ -38,6 +40,8 @@ tests:
             exp_annotations:
               summary: "A sensor on msi-ms7758 is near its critical mark"
               description: "platform_coretemp_0 temp1 on msi-ms7758 has read 96 °C for 15 minutes, within 5 °C of its own critical mark. Expected during long builds on msi and lenovo; outside them, check the fan and airflow."
+              query: 'node_hwmon_temp_celsius{job="node-exporter",node="msi-ms7758",chip="platform_coretemp_0",sensor="temp1"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesensornearcritical"
       - eval_time: 18m
         alertname: GpuThermalThrottling
         exp_alerts: []
@@ -48,6 +52,8 @@ tests:
             exp_annotations:
               summary: "The GPU on asus-b460m slows itself for heat"
               description: "The board on asus-b460m has reported hardware thermal slowdown for 10 minutes: model runs are slower than measured. The GPU dashboard shows its temperature, fan and power."
+              query: 'nvidia_smi_temperature_gpu{job="nvidia-gpu",node="asus-b460m"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#gputhermalthrottling"
   # msi through a gate: 102 °C against a 105 °C mark for 20 minutes. NodeTemperatureHigh stays silent; the near-critical
   # warning fires with notify="none", which the monitoring-alert-routes check holds to the null receiver
   - interval: 1m
@@ -67,3 +73,5 @@ tests:
             exp_annotations:
               summary: "A sensor on msi-ms7758 is near its critical mark"
               description: "platform_coretemp_0 temp1 on msi-ms7758 has read 102 °C for 15 minutes, within 5 °C of its own critical mark. Expected during long builds on msi and lenovo; outside them, check the fan and airflow."
+              query: 'node_hwmon_temp_celsius{job="node-exporter",node="msi-ms7758",chip="platform_coretemp_0",sensor="temp1"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#nodesensornearcritical"
