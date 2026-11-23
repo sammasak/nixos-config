@@ -280,9 +280,11 @@ def one_line(tree: pathlib.Path) -> None:
 
 # shapes the text rule cannot read: each fails closed, never a count without the app
 H = "unknown: modules/homelab/outside.nix: "
+# one_line adds one call to the overlay's own, which its entries read
+CALLS = (ROOT / "flake-modules/overlays.nix").read_text().count("callPackage") + 1
 for name, edit, want in [
         ("a callPackage the reader does not read as an entry (one line)", one_line,
-         "unknown: flake-modules/overlays.nix: 6 callPackage calls, 5 read as a package entry"),
+         f"unknown: flake-modules/overlays.nix: {CALLS} callPackage calls, {CALLS - 1} read as a package entry"),
         ("an overlay attr used under modules/homelab other than pkgs.<attr> ((with pkgs; newApp))",
          lambda t: (new_app("src = inputs.new-app;", "(with pkgs; newApp)")(t), lock_input(t)),
          "unknown: modules/homelab/new-app.nix: newApp is mentioned in a form other than pkgs.newApp"),
