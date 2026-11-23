@@ -1,0 +1,29 @@
+[package]
+name = "exec-pool"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Versioned task, attempt and slot contract of the execution pool, and its attempt state machine"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+panic = "deny"
+as_conversions = "deny"
+string_slice = "deny"
+allow_attributes_without_reason = "deny"
