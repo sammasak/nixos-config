@@ -19,7 +19,7 @@ PRs merge.
 | P1 | [skills#137](https://github.com/sammasak/skills/issues/137) | Observability engineer | merged, skills#147; follow-up with `m2` |
 | P1 | [skills#133](https://github.com/sammasak/skills/issues/133) | Nix platform engineer | merged, skills#149 |
 | P1 | [skills#136](https://github.com/sammasak/skills/issues/136) | Dynamic handoffs pilot | offline pilot merged, skills#151; open for one live named-role spawn |
-| P2 | skills [#132](https://github.com/sammasak/skills/issues/132), [#134](https://github.com/sammasak/skills/issues/134), [#135](https://github.com/sammasak/skills/issues/135) | Remaining specialists | #132 merged, skills#153; #134 (skills#154) and #135 (skills#155) in review fixes with `m2` |
+| P2 | skills [#132](https://github.com/sammasak/skills/issues/132), [#134](https://github.com/sammasak/skills/issues/134), [#135](https://github.com/sammasak/skills/issues/135) | Remaining specialists | all merged: skills#153, #154, #155 |
 | P1 | [#646](https://github.com/sammasak/nixos-config/issues/646) | Execution pool, v0.1 | split below; never ahead of a P0 item |
 | P2 | [#626](https://github.com/sammasak/nixos-config/issues/626) | Auto-compaction benchmarks | matrix doc when idle; benchmark is token spend |
 
@@ -34,9 +34,9 @@ PRs merge.
 | 624-c | OTLP relay rejection alert (the monitoring-blindness example) | merged, live on black-pi; no rejected write seen live yet | #659 |
 | 624-d | Journal-delivery stale alert | merged, live on black-pi | #640 |
 | 624-e | Backup stale, never recorded, collector stale | merged, live on black-pi; first recorded runs due 24 Nov 03:00 | #640 |
-| 624-f | Synthetic fire and resolve test through Alertmanager and alert-bridge | `m1`, in gate | |
+| 624-f | Synthetic fire and resolve test through Alertmanager and alert-bridge | review 9/10; host gate on acer running | #666 |
 | 624-g | Live delivery receipts | queued: black-pi and lenovo are on main | |
-| 624-h | alert-bridge renders query and runbook in the ntfy page (alert-bridge repo, then an app bump) | queued | |
+| 624-h | alert-bridge renders query and runbook in the ntfy page (alert-bridge repo, then an app bump) | next for `m1`: the bridge never reads query or runbook_url (found by 624-f) | |
 
 ### #625 Shunt metrics
 
@@ -54,7 +54,7 @@ are. v0.2 and v0.3 stay locked until the v0.1 offline gate has evidence. Deferre
 
 | Item | What | Needs | State | PR |
 |------|------|-------|-------|----|
-| [#649](https://github.com/sammasak/nixos-config/issues/649) | Contract: ADR, `pkgs/exec-pool` types and state machine, compatibility fixture | | `a1`, second push gate running | |
+| [#649](https://github.com/sammasak/nixos-config/issues/649) | Contract: ADR, `pkgs/exec-pool` types and state machine, compatibility fixture | | review 7/10, two type fixes pushed; fix check and host gate running | #667 |
 | [#650](https://github.com/sammasak/nixos-config/issues/650) | `sam.workers.executionPool` slot count | #649 | queued | |
 | [#651](https://github.com/sammasak/nixos-config/issues/651) | PostgreSQL queue, leases, fencing | #649 | queued | |
 | [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | queued | |
@@ -70,10 +70,10 @@ Placement order: acer, then msi, asus last (it carries ollama and the heavier lo
 
 | Host | Worker | Item |
 |------|--------|------|
-| acer-swift | `a1` | #649 |
+| acer-swift | `a1` | #649 review fixes done; #651 and #658 next |
 | acer-swift | `herman` | dashboards lane (#525, #523), not this week's list |
-| msi-ms7758 | `m1` | 624-f |
-| msi-ms7758 | `m2` | skills#134, #135 review fixes; killed twice by the pool OOM (#647) |
+| msi-ms7758 | `m1` | 624-f done; 624-h next |
+| msi-ms7758 | `m2` | skills roles done; #650 after #649 merges |
 | asus-b460m | none | `a624`, `s138`, `s130` retired |
 
 msi and asus have no `gh` login: workers push branches over SSH and the lenovo session opens and merges the PRs.
@@ -85,6 +85,12 @@ rolled back on a journal-metrics start race, fixed by #634. asus deployed again 
 The skills pin (#661) is on lenovo and asus; black-pi is on #659. Owed: acer and msi, when their workers are between
 gates. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
+## Gaming entries (owner request, 23 Nov)
+
+asus: desktop, Steam, Sunshine streaming. msi: desktop and Steam, no Sunshine and no inbound ports. In the entry the
+21:00 power-off does not run and inference is not started. Booted on neither host yet; the owner accepted it untested.
+Steam Remote Play can still stream from msi through Valve's relay: the switch is in the Steam client.
+
 ## Open owner gates
 
 - Token-spend benchmarks: #625 on/off, #626.
@@ -94,7 +100,10 @@ gates. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills
 
 - nixos-config: #629 alert inventory, #630 asus workers, #632 and #636 annotation contract, #633 acer and msi slots,
   #634 journal-metrics wants alloy, #635 Claude sessions keep a working shell across a deploy, #638 Shunt collector, #639 asus workers retired,
-  #640 backup and journal alerts, #643 and #661 skills pins, #644 Shunt dashboard and alerts, #659 OTLP rejection alert
+  #640 backup and journal alerts, #643 and #661 skills pins, #644 Shunt dashboard and alerts, #659 OTLP rejection alert,
+  #662 and #665 asus gaming entry with Sunshine, #668 msi gaming entry without streaming,
+  #669 Steam in both entries and no scheduled power-off while gaming
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
-  #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132)
+  #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132),
+  #154 regression engineer (#134), #155 Rust maintainer (#135)
