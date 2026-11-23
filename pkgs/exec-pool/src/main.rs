@@ -22,7 +22,8 @@ const USAGE: &str = "usage: exec-pool-queue COMMAND [--flag value]...
   settle --attempt ID --epoch N --to waiting|queued|succeeded|failed|needs_review [< receipt.json, terminal only]
   resolve --attempt ID --epoch N --to succeeded|failed|queued   (an operator closing a needs_review attempt)
   reconcile                                                     (expire overdue leases; run at startup)
-  metrics                                                       (Prometheus text for a textfile collector)";
+  metrics       (Prometheus text for a textfile collector; install stdout whatever the exit code: on a failure it is
+                exec_pool_queue_up 0, so the queue reads absent instead of keeping the last good counts)";
 
 enum Fail {
     Usage(String),
@@ -54,7 +55,9 @@ impl Args {
             let value = it
                 .next()
                 .ok_or_else(|| Fail::Usage(format!("--{key} needs a value")))?;
-            map.insert(key.to_owned(), value.clone());
+            if map.insert(key.to_owned(), value.clone()).is_some() {
+                return Err(Fail::Usage(format!("--{key} given twice")));
+            }
         }
         Ok(Self(map))
     }
@@ -171,9 +174,7 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
         "metrics" => match store.metrics() {
             Ok(text) => print!("{text}"),
             Err(e) => {
-                if matches!(e, QueueError::Unavailable(_)) {
-                    print!("{METRICS_UNAVAILABLE}");
-                }
+                print!("{METRICS_UNAVAILABLE}");
                 return Err(e.into());
             }
         },

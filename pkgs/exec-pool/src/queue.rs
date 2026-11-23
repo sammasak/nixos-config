@@ -24,9 +24,16 @@ const VERSION: i32 = 1;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
+/// The HELP and TYPE lines both renderings of `exec_pool_queue_up` start with.
+macro_rules! up_help {
+    () => {
+        "# HELP exec_pool_queue_up Whether the queue database answered; without it the series below are absent.\n\
+         # TYPE exec_pool_queue_up gauge\n"
+    };
+}
+
 /// The whole rendering while the database is unreachable: absent, not zero.
-pub const METRICS_UNAVAILABLE: &str = "# HELP exec_pool_queue_up Whether the queue database answered; \
-    without it the series below are absent.\n# TYPE exec_pool_queue_up gauge\nexec_pool_queue_up 0\n";
+pub const METRICS_UNAVAILABLE: &str = concat!(up_help!(), "exec_pool_queue_up 0\n");
 
 const STATUSES: [Status; 8] = [
     Status::Queued,
@@ -87,9 +94,13 @@ impl From<postgres::Error> for QueueError {
             Some(db) if db.code() == &SqlState::from_code(FENCED) => {
                 Self::Fenced(db.message().to_owned())
             }
-            // a FATAL or PANIC ends the session whatever its code
+            // a FATAL or PANIC ends the session whatever its code, but a refused login or a missing database is
+            // a misconfiguration, not an outage to wait out
             Some(db)
-                if unavailable(db.code().code()) || matches!(db.severity(), "FATAL" | "PANIC") =>
+                if unavailable(db.code().code())
+                    || (matches!(db.severity(), "FATAL" | "PANIC")
+                        && !db.code().code().starts_with("28")
+                        && db.code().code() != "3D000") =>
             {
                 Self::Unavailable(db.message().to_owned())
             }
@@ -654,16 +665,18 @@ impl Store {
     }
 
     /// The queue's counters in the Prometheus text format, for a textfile collector. Labels are states and reason
-    /// codes only. With the database unreachable, render [`METRICS_UNAVAILABLE`] instead.
+    /// codes only. When it fails for any reason, render [`METRICS_UNAVAILABLE`] instead.
     ///
     /// # Errors
     /// What the database reports.
     pub fn metrics(&mut self) -> Result<String, QueueError> {
         self.tx(|tx| {
             let mut out = String::from(
-                "# HELP exec_pool_queue_up Whether the queue database answered; without it the series below are absent.\n\
-                 # TYPE exec_pool_queue_up gauge\nexec_pool_queue_up 1\n\
-                 # HELP exec_pool_attempts Attempts by state.\n# TYPE exec_pool_attempts gauge\n",
+                concat!(
+                    up_help!(),
+                    "exec_pool_queue_up 1\n\
+                     # HELP exec_pool_attempts Attempts by state.\n# TYPE exec_pool_attempts gauge\n",
+                ),
             );
             let counts = tx.query("SELECT status, count(*) FROM attempts GROUP BY status", &[])?;
             for s in STATUSES {

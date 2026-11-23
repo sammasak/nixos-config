@@ -72,8 +72,9 @@ Instrumentation (#658's first slice): every change is one JSON line on stdout, `
 task_id, attempt, lease_epoch, host, slot, from, to, reason, durations: {in_state_ms, since_submit_ms}}}`, and
 `exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{state}`,
 `exec_pool_queued_oldest_seconds` and `exec_pool_transitions_total{from,to,reason}` for a textfile collector. Ids
-stay in the log line, never in a label; with the database down only `exec_pool_queue_up 0` is rendered, so a missing
-source reads as absent, not as zero traffic.
+stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
+and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
+zero traffic or as the last good counts.
 
 ## Not `sam.agentRuntime`
 
