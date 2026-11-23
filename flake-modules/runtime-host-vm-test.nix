@@ -19,6 +19,14 @@
             role-runtime-host
           ];
         };
+        execution-pool-vm = import ../tests/execution-pool-vm.nix {
+          inherit pkgs fleetModules;
+          inherit (config.configurations.nixos.msi-ms7758) roles;
+          roleModules = with config.flake.modules.nixos; [
+            role-base
+            role-runtime-host
+          ];
+        };
         socket-rebind-vm = import ../tests/socket-rebind-vm.nix { inherit pkgs; };
         post-deploy-check-vm = import ../tests/post-deploy-check-vm.nix { inherit pkgs; };
         rebuild-trigger-vm = import ../tests/rebuild-trigger-vm.nix { inherit pkgs; };

@@ -278,6 +278,7 @@ in
 {
   imports = [
     ./core.nix
+    ./execution-pool.nix
     (lib.mkAliasOptionModule
       [ "sam" "workers" "instances" ]
       [ "services" "devEnvironments" "instances" ]

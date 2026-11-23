@@ -58,6 +58,26 @@ fails before the host's services do. msi powers off at 21:00
 (Mon-Fri window); its environments come back at its next boot.
 Inside, the cgroup files read `max`: `/etc/dev-environment` holds these limits as shell `key=value` (bytes: `memory_reserved`, `pool_memory`, `pool_swap`; `cpu_weight`, `nix_max_jobs`, `nix_cores`).
 
+## Execution pool
+
+`sam.workers.executionPool` (`modules/workers/execution-pool.nix`, off on every host) declares reusable slots for the
+pool's tasks (`docs/records/execution-pool-contract.md`): `pool1` .. `pool<slots>`, each an instance with
+`agent = "none"` and no prompt, so a slot has the named instances' pool ceiling, reserves, `rootInGuest`, reset and
+retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-reset@<slot>`, which switches nothing.
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `enable` | `false` | off, nothing moves (pinned by `scripts/test-workers-eval.py`) |
+| `slots` | `0` | how many slots (unsigned) |
+| `memory.reserved`, `cpu.reserved` | `"2G"`, `2` | each slot's, as an instance's |
+| `credentials` | `[ ]` | which host credentials a slot may hold (as msi's `t1`) |
+| `rootInGuest` | `false` | each slot's |
+
+Evaluation fails when a slot's name is also declared in `sam.workers.instances` or `retired`, or when the slots and
+the named instances reserve more than `pool.memory`. `worker-pool-inventory` prints one JSON line per slot from its
+units: `slot`, `state`, `sub`, `closure`, `memory.min`/`.low`, `cpu.weight`, `slice`. `nix build .#execution-pool-vm`
+(msi) boots two slots beside a named instance, reuses one across a reset and restarts it alone.
+
 ## Sizing
 
 Reserved per environment, spiking allowed. Measured on both hosts (8 cores,
