@@ -117,7 +117,8 @@
         "author",
         "seconds",
         "findings"
-      ]
+      ],
+      "pending": "the skills review-record (not rolled out): the age comes with it"
     },
     "research": {
       "writer": "outside",
@@ -131,7 +132,8 @@
         "spiked",
         "rejected"
       ],
-      "panel": false
+      "panel": false,
+      "pending": "no writer yet: the age comes with one"
     },
     "offload": {
       "writer": "outside",
@@ -150,7 +152,8 @@
         "lines",
         "run_id",
         "repo"
-      ]
+      ],
+      "pending": "offload-record (not merged): the age comes with it"
     },
     "usage": {
       "writer": "host",
@@ -163,7 +166,8 @@
         "mem_anon",
         "mem_peak",
         "toplevel"
-      ]
+      ],
+      "pending": "usage-records (#494, not deployed): the age comes with it"
     },
     "release": {
       "writer": "here",
