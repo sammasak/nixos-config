@@ -59,5 +59,5 @@ for i in "${!outs[@]}"; do
   if grep -qxF "${outs[$i]}" <<<"$before"; then how="$how now"; else how="already valid ($how earlier)"; fi
   printf '  %-36s %s on %s\n' "${names[$i]}" "$how" "$where"
   case $how in already*) status=already-valid ;; built*) status=built ;; *) status=substituted ;; esac
-  "$(dirname "$0")/platform-record.sh" checks-run node="$host" check="${names[$i]}" status="$status"
+  "$(dirname "$0")/../pkgs/platform-record/platform_record.py" checks-run node="$host" check="${names[$i]}" status="$status"
 done

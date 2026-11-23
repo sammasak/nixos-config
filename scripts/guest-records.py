@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Ships each developer environment's platform records to Loki from the host (modules/workers/core.nix's
-dev-env-records units). The guest writes them to a spool in its home (scripts/platform-record.sh) and cannot reach
+dev-env-records units). The guest writes them to a spool in its home (pkgs/platform-record/platform_record.py) and cannot reach
 Loki itself; the host sets every label: job=platform, kind from the allow-list, host=<prefix>-<name>.
 
 The guest owns everything under its home: no path component is followed through a link, the spool must be a regular
@@ -8,7 +8,7 @@ file and only its last MAX_READ bytes are read. Dropped and counted: a line nami
 its own fields, a kind off the list, a line over MAX_LINE bytes, a time that is not ISO 8601 with an offset or is
 ahead of now. Skipped: older than Loki takes. At most PER_RUN lines go per instance and run.
 
-platform-record.sh rewrites the spool (a new inode) on every record, so progress is by content: the hash and time of
+platform_record.py rewrites the spool (a new inode) on every record, so progress is by content: the hash and time of
 the last line handled, kept under --progress (the unit's StateDirectory). Lines after that line go; when it is gone,
 lines no older than it.
 
@@ -34,7 +34,7 @@ SPOOL = (".local", "state", "platform-records")
 NAME = re.compile(r"[a-z][a-z0-9-]{0,10}")
 # A guest line ships only if the whole of it parses, and what ships is rebuilt from the parse, never the guest's
 # bytes: Loki's logfmt splits at any byte <= 0x20, unquotes and decodes \uXXXX, so a filter over the raw text missed
-# forms Loki reads as another field. The grammar is what platform-record.sh writes, `<date -Is> <kind>` then
+# forms Loki reads as another field. The grammar is what platform_record.py writes, `<date -Is> <kind>` then
 # single-space key=value tokens, values in the characters real records use (paths, shas, drv names, comma lists)
 STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:[+-]\d\d:\d\d|Z)"
 # a key may not start with __: Loki keeps those names for its own (__error__, __line__)

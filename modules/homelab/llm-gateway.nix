@@ -80,6 +80,9 @@ let
   );
 in
 {
+  imports = [ ./backup-metrics.nix ];
+  homelab.backupMetrics.jobs.llm-gateway-backup = "scratch_restore";
+
   # a static user: the sops secrets need an owner at activation, before the unit runs
   users.users.llm-gateway = {
     isSystemUser = true;
@@ -139,7 +142,7 @@ in
       ExecStart = "${lib.getExe backup} backup ${state}/state.sqlite3 /var/lib/llm-gateway-backup";
       User = "llm-gateway";
       Group = "llm-gateway";
-      StateDirectory = "llm-gateway-backup";
+      StateDirectory = [ "llm-gateway-backup" ];
       StateDirectoryMode = "0700";
       PrivateNetwork = true;
       ProtectSystem = "strict";

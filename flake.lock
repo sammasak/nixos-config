@@ -1,22 +1,5 @@
 {
   "nodes": {
-    "alert-bridge": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1794581286,
-        "narHash": "sha256-9gYeUN9qxG6UF1RKt0yBAnzrqOAjEoMOD0ze6sjKZ/c=",
-        "ref": "refs/heads/main",
-        "rev": "e2d61abf8df857156740119df8ab7f0c59582e20",
-        "revCount": 14,
-        "type": "git",
-        "url": "ssh://git@github.com/sammasak/alert-bridge"
-      },
-      "original": {
-        "rev": "e2d61abf8df857156740119df8ab7f0c59582e20",
-        "type": "git",
-        "url": "ssh://git@github.com/sammasak/alert-bridge"
-      }
-    },
     "base16": {
       "inputs": {
         "fromYaml": "fromYaml"
@@ -470,7 +453,6 @@
     },
     "root": {
       "inputs": {
-        "alert-bridge": "alert-bridge",
         "deploy-rs": "deploy-rs",
         "devenv-platform": "devenv-platform",
         "disko": "disko",

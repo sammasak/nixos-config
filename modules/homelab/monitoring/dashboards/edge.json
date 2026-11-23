@@ -870,6 +870,195 @@
         "overrides": []
       },
       "description": "open-webui-edge-check's minutely look at Caddy's unix upstream for chat (EdgeSocketDown pages on it): the probe of chat sees only forward auth's 302, so a dead socket shows here alone."
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Successful-backup metadata available (not health)",
+      "description": "1 = valid completion metadata, 0 = missing/invalid. Does not prove freshness or recovery. First success is unknown until an instrumented backup completes.",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 75
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "homelab_backup_metadata_available{job=\"node-exporter\"}",
+          "legendFormat": "{{node}} {{backup}} {{validation}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "not measured",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Age of last successful backup completion",
+      "description": "Actual successful main-process completion; failures and skipped runs preserve the previous timestamp. archive_list is readability only; scratch_restore is the existing local restore check, not disaster recovery.",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 75
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - homelab_backup_last_success_timestamp_seconds{job=\"node-exporter\"}",
+          "legendFormat": "{{node}} {{backup}} {{validation}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "not measured",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Duration of last successful backup",
+      "description": "Main-process monotonic duration, including the existing validation. An old successful duration does not describe the most recent failed attempt.",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 81
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "homelab_backup_last_success_duration_seconds{job=\"node-exporter\"}",
+          "legendFormat": "{{node}} {{backup}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "not measured",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Backup metadata collector age",
+      "description": "Collector runs every five minutes after a one-minute boot delay. A successful metadata scan is not backup success; check per-backup availability and completion age.",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 81
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - homelab_backup_collector_last_success_timestamp_seconds{job=\"node-exporter\"}",
+          "legendFormat": "{{node}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "not measured",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
     }
-  ]
+  ],
+  "version": 2
 }

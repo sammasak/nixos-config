@@ -493,14 +493,20 @@ let
     gate "platform-records-test"
       (with pkgs; [
         python3
-        bash
-        curl
         jq
         coreutils
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-platform-records.py
       '';
+  scorecard = pkgs.callPackage ./pkgs/scorecard/package.nix { };
+  # the packaged scorecard, so the gate builds it (its ruff and mypy check phase) and tests what platform:scorecard runs
+  scorecardTest = gate "scorecard-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python scripts/test-scorecard.py ${lib.getExe scorecard}
+  '';
+  measurementTest = gate "measurement-test" [ pkgs.python3 ] ''
+    ${pkgs.python3}/bin/python scripts/test-measurement.py docs/measurement.md metrics/targets.json
+  '';
   shippingMetricsTest = gate "shipping-metrics-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-shipping-metrics.py
   '';
@@ -509,6 +515,7 @@ let
   '';
   appBumpDryRunTest = gate "app-bump-dry-run-test" [ pkgs.python3 ] ''
     ${pkgs.python3}/bin/python scripts/test-app-bump-dry-run.py
+    ${pkgs.python3}/bin/python scripts/test-app-bump.py
   '';
   triggerRollbackTest =
     gate "trigger-rollback-test"
@@ -678,6 +685,7 @@ let
         python3
         bash
         coreutils
+        systemd
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-power-schedule.py
@@ -743,7 +751,7 @@ let
         ${pkgs.python3}/bin/python scripts/test-qa-push.py
         ${pkgs.python3}/bin/python scripts/test-prepush-one-ref.py
         ${pkgs.python3}/bin/python scripts/test-gate-steps.py
-        ${pkgs.python3}/bin/python scripts/test-heavy-lock.py
+        ${pkgs.python3}/bin/python scripts/test-heavy-lock.py ${lib.getExe heavyLock}
         ${pkgs.python3}/bin/python scripts/test-deferred-checks.py
       '';
 
@@ -753,25 +761,15 @@ let
     lintShell
     deployRsPins
   ];
-  heavyLock = gate "heavy-lock" (with pkgs; [
-    util-linux
-    procps
-    gawk
-    coreutils
-  ]) (builtins.readFile ./scripts/heavy-lock.sh);
+  heavyLock = pkgs.callPackage ./pkgs/heavy-lock/package.nix { };
   qaGreen = gate "qa-green" (with pkgs; [
     git
     coreutils
   ]) (builtins.readFile ./scripts/qa-green.sh);
-  record = gate "platform-record" (with pkgs; [
-    curl
-    jq
-    coreutils
-    findutils
-  ]) (builtins.readFile ./scripts/platform-record.sh);
+  record = pkgs.callPackage ./pkgs/platform-record/package.nix { };
   # seconds per step, to see where a slow gate spends its time (#334); prek hides a passing hook's
   # output, so the push gate also appends them to NIXOS_QA_TIMES. Each step, failed ones included, also goes to the
-  # Platform health dashboard (scripts/platform-record.sh)
+  # Platform health dashboard (pkgs/platform-record)
   timed = lib.concatMapStringsSep "\n" (g: ''
     t=$SECONDS
     if ${lib.getExe g}; then r=pass; else r=fail; fi
@@ -810,6 +808,8 @@ let
     systemdCalendarTest
     systemdVerifyTest
     platformRecordsTest
+    measurementTest
+    scorecardTest
     trashSweepTest
     guestRecordsTest
     shippingMetricsTest
@@ -901,11 +901,12 @@ let
       ''
         # a gate built from other devenv files than this tree's would run a stale test list: refused, before the lock
         ${lib.getExe devenvFresh}
-        # one heavy job per host (scripts/heavy-lock.sh): the gate takes the heavy-work lane itself, once
+        # one heavy job per host (pkgs/heavy-lock): the gate takes the heavy-work lane itself, once
         if [ -z "''${NIXOS_QA_LOCKED:-}" ]; then NIXOS_QA_LOCKED=1 exec ${lib.getExe heavyLock} "$0" "$@"; fi
         sha=$(git rev-parse --short HEAD 2>/dev/null || echo none)
         NIXOS_QA_HEAD=$(git rev-parse HEAD 2>/dev/null || echo none)
-        export NIXOS_QA_HEAD
+        # a record with a kind or field metrics/records.json does not list fails the gate, not just the dashboard
+        export NIXOS_QA_HEAD PLATFORM_RECORD_STRICT=1
         mode=manual
         [ -z "''${NIXOS_QA_TIMES:-}" ] || mode=push
         # a manual run's green counts for the pre-push hook when the checkout was clean throughout (scripts/qa-green.sh)
@@ -930,7 +931,7 @@ let
             # one line a coordinator reads: the head, then owner:check for each check its owning host must build
             echo "nixos-qa: deferred-checks head=$NIXOS_QA_HEAD checkout=$checkout $(tr '\n' ' ' <"$NIXOS_QA_DEFERRED")" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}"
           fi
-          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode deferred="$n" head="$NIXOS_QA_HEAD" checkout="$checkout" deferred_checks="$deferred"
+          ${lib.getExe record} gate gate=nixos-qa seconds=$((SECONDS - start)) result=$result sha="$sha" mode=$mode deferred="$n" head="$NIXOS_QA_HEAD" checkout="$checkout" deferred_checks="$deferred" wait_seconds="''${HEAVY_LOCK_WAIT_SECONDS:-unknown}"
           if [ -n "$began" ]; then
             # shellcheck disable=SC2086 # the state is three words
             ${lib.getExe qaGreen} record "$0" "$result" "$mode" $began || true
@@ -1440,6 +1441,10 @@ in
       task "The host ships guest platform records on a fake Loki: each line once, also after a rewrite; host labels only; label keys, unknown kinds, oversize and too-old lines dropped; 500 per run; a link or FIFO on the spool's path refused; trashOne ships before its rename" guestRecordsTest;
     "nixos:platform-records-test" =
       task "Platform health records: dashboard kinds match the helper and its callers, labels job/kind/host only, a down Loki or unknown kind never fails the caller" platformRecordsTest;
+    "nixos:measurement-test" =
+      task "Measurement doc and targets: every metric in both with the same fields, a live one with a query, target and a panel reading the same kinds and series, at most six per area or a named exception, a max age per record kind" measurementTest;
+    "nixos:scorecard-test" =
+      task "The packaged platform scorecard on a fake Prometheus and Loki: pass and fail against the threshold, no query, a failed, empty or non-number reading unknown, a quiet record kind stale, an unreachable or unready backend exits 2; the real targets with no answers: nothing passes" scorecardTest;
     "nixos:shipping-metrics-test" =
       task "Shipping collector on a fake GitHub and Loki: issues split actionable/parked/archived, a failed source leaves no series and keeps its stale timestamp, an undeclared name is refused" shippingMetricsTest;
     "nixos:trigger-rollback-test" =
@@ -1449,7 +1454,7 @@ in
     "nixos:nav-metrics-test" =
       task "Navigation collector on fixture transcripts: counts, misses and repeat reads by role, no prompt, command or path in the textfile, a thin role writes its sample size alone, a failed section is a series" navMetricsTest;
     "nixos:app-bump-dry-run-test" =
-      task "App pin bump dry run on a fake GitHub: a replay is an empty diff, red, pending and unchecked heads are skipped for an older green one, narHash pending, an unallowlisted repo and a non-40-hex rev refused naming the field" appBumpDryRunTest;
+      task "App pin bump dry run on a fake GitHub: a replay is an empty diff, red, pending and unchecked heads are skipped for an older green one, narHash pending, an unallowlisted repo and a non-40-hex rev refused naming the field; the bump on stubs: only the registry entry moves, on a branch from origin/main, then commit, push and PR, refused on lenovo" appBumpDryRunTest;
     "nixos:typed-interfaces-test" =
       task "no types.attrs option and no `or` fallback on a sam.* option read; seeded snippets of both are caught" typedInterfacesTest;
     "nixos:system-checks-test" =
@@ -1462,6 +1467,10 @@ in
       task "acer's ak: lifecycle/ak as authentik in the server unit's sandbox and environment, the env file by path" authentikAkTest;
     "nixos:switch-safety-test" = task "A switch survives a bad ~/.claude.json" switchSafetyTest;
     "nixos:qa" = task "Every gate above, in order" qa;
+    "platform:scorecard" = {
+      description = "Every metric in metrics/targets.json read from Prometheus and Loki: reading, target and pass, fail, stale or unknown per area; exits 2 when a backend is unreachable (SCORECARD_PROMETHEUS_URL, SCORECARD_LOKI_URL override sam.fleet's)";
+      exec = "${lib.getExe scorecard} \"$DEVENV_ROOT/metrics/targets.json\"";
+    };
 
     "rf:beacons" = task "naked-pi: passive 2.4 GHz beacon sweep -> AP table" rfBeacons;
     "rf:capture" =

@@ -7,6 +7,10 @@ hosts' night-quiet units every night (scripts/test-night-quiet.py tests their de
 on a host that is not marked sleeps, a waker on a sleeping host, a window host whose NIC's Wake-on-LAN is turned off,
 a host both windowed and quiet, a quiet Pi, and a quiet host that disables intel_pstate."""
 
+import os
+import re
+import subprocess
+
 import gate_probe
 from gate_probe import check, finish
 
@@ -44,6 +48,34 @@ for host, us in units.items():
               f"{host} powers itself off at {windowed[host]['off']} ({mine})")
     else:
         check(mine == [], f"{host} has no scheduled poweroff ({mine})")
+
+def next_occurrences(calendar):
+    result = subprocess.run(
+        ["systemd-analyze", "calendar", "--base-time=2026-11-21 10:00:00 UTC",
+         "--iterations=2", calendar],
+        capture_output=True, text=True, check=True, timeout=10,
+        env={**os.environ, "TZ": "UTC0", "LC_ALL": "C"},
+    )
+    return re.findall(
+        r"(?:Next elapse|Iteration #\d+): \w{3} (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) UTC",
+        result.stdout,
+    )
+
+
+night_start = P["night"]["start"] + ":00"
+weekend = [("2026-11-21", night_start), ("2026-11-22", night_start)]
+weekdays = [("2026-11-23", night_start), ("2026-11-24", night_start)]
+check(next_occurrences(windowed["asus-b460m"]["off"]) == weekend,
+      "a manual ASUS weekend wake still shuts down Saturday and Sunday nights")
+check(next_occurrences("Mon-Fri " + P["night"]["start"]) == weekdays,
+      "seeded: weekday-only shutdown misses both weekend nights")
+check(next_occurrences(windowed["msi-ms7758"]["off"]) == weekdays,
+      "MSI retains its weekday-only shutdown policy")
+for name, window in windowed.items():
+    wake_time = P["night"]["end"] + ":00"
+    check(next_occurrences(window["wake"]) == [("2026-11-23", wake_time), ("2026-11-24", wake_time)],
+          f"{name} still has no automatic weekend wake")
+
 
 # Wake-on-LAN armed by each window host on its fleet interface, by the module; no other host has a wol unit
 for host, us in units.items():

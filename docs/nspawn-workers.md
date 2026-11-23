@@ -351,14 +351,15 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   declared instance, and `dev-env-records@<name>` before a retire or reset
   renames the home (`timeout 30 … || true`: Loki down never holds either).
   It reads `<stateDir>/<name>/home/.local/state/platform-records`
-  (`scripts/platform-record.sh`'s spool), opening each path component
+  (`pkgs/platform-record/platform_record.py`'s spool), opening each path component
   without following a link, and the spool only as a regular file, its last
   2 MiB; a link or FIFO anywhere there skips that instance and fails the
   unit. The host sets every label: `job=platform`, `kind` from
-  `services.devEnvironments.records.kinds` (`platform-record.sh`'s list less
-  `deploy`, `delivery` and `trash-sweep`: a guest never makes those),
+  `services.devEnvironments.records.kinds` (the kinds `metrics/records.json`
+  marks `guest`, `review` included; never `deploy`, `delivery` or
+  `trash-sweep`, which a guest does not make),
   `host=<prefix>-<name>`. A line ships only if the whole of it parses as
-  what `platform-record.sh` writes: printable ASCII, no backslash or quote,
+  what `platform_record.py` writes: printable ASCII, no backslash or quote,
   `<date -Is> <kind>` then single-space `key=value` tokens, keys
   `[a-z_][a-z0-9_]*` not starting with `__` (Loki's own), values `[A-Za-z0-9_.,:/-]*` (paths, shas, drv names,
   comma lists), no key twice; what ships is rebuilt from the parsed fields,

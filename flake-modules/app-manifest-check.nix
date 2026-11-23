@@ -1,7 +1,7 @@
 # App manifest admission and rendering (lib/app-manifest) over its fixtures, against the facts only host evaluations
 # give: the names the edge serves, the snippets it defines and each host's sops secret names; sam.fleet itself it reads
-# lib-only. The rendered sites are validated by caddy beside the edge's own snippet text, the scrape by promtool. No
-# host imports lib/app-manifest, so no toplevel depends on it, and its source here is those files alone.
+# lib-only. The rendered sites are validated by caddy beside the edge's own snippet text, the scrape by promtool.
+# It also type-checks apps/registry.json and its bent cases through pins.nix, without fetching a source.
 { config, lib, ... }:
 let
   systems = map (c: c.config) (lib.attrValues config.flake.nixosConfigurations);
@@ -42,8 +42,10 @@ let
     root = ../.;
     fileset = lib.fileset.unions [
       ../lib/app-manifest
+      ../apps/registry.json
       ../modules/core/fleet.nix
       ../scripts/test-app-manifest.py
+      ../scripts/test-app-registry.py
     ];
   };
 in
@@ -73,6 +75,7 @@ in
               export HOME=$TMPDIR NIX_STATE_DIR=$TMPDIR/state NIX_LOG_DIR=$TMPDIR/log NIX_CONF_DIR=$TMPDIR/etc
               python3 ${src}/scripts/test-app-manifest.py --store dummy:// --lib ${pkgs.path}/lib --host-facts "$hostFactsPath" \
                 --caddy ${lib.getExe pkgs.caddy} --promtool ${pkgs.prometheus.cli}/bin/promtool --edge-snippets "$edgeSnippetsPath"
+              python3 ${src}/scripts/test-app-registry.py --store dummy:// --lib ${pkgs.path}/lib
               touch $out
             '';
       };

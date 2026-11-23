@@ -32,6 +32,8 @@
     ghHostsFile = "/home/${config.sam.profile.username}/.config/gh/hosts.yml";
     # No prompt: its goal is sent through Herdr once it is up (docs/nspawn-workers.md).
     instances.herman = { };
+    # A task slot: reset with dev-env-reset@a1 between tasks, no deploy.
+    instances.a1 = { };
   };
   # the #494 usage spike: herman's cgroup counters every minute (scripts/guest-records.py --usage)
   services.devEnvironments.records.usage = "1min";

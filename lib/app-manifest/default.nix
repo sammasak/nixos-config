@@ -1,4 +1,5 @@
-# App manifest admission, lib-only: no host imports any file here, so no host's toplevel depends on it.
+# App manifest admission, lib-only: no host imports it, so no host's toplevel depends on it. pins.nix (apps/registry.json)
+# is the one file here hosts read, through the overlay; it shares names.nix and grant.nix.
 { lib }:
 {
   facts = import ./facts.nix lib;

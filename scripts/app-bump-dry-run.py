@@ -176,26 +176,42 @@ def pin_diff(pin, green, nar_hash=None):
         lock.append(["locked.revCount", old["revCount"], old["revCount"] + green.ahead_by])
     if "rev" in pin.lock.get("original", {}):
         lock.append(["original.rev", pin.lock["original"]["rev"], green.sha])
+    return {
+        "flake.nix": [pin.line, pin.line.replace(f"?rev={pin.rev}", f"?rev={green.sha}")],
+        "flake.lock": {"node": pin.node, "fields": lock},
+        "pr": pr(pin, green, f"flake input `{pin.app}`", f"flake.lock narHash: {lock[2][2]}"),
+    }
+
+
+def pr(pin, green, what, nar_line):
+    """The pin PR's title and body, for the flake-input pin above and for scripts/app-bump.py's registry entry."""
     skipped = "".join(f"\n  - {s} ({v})" for s, v in green.skipped) or " none"
     body = (
-        f"Pins flake input `{pin.app}` to the newest green commit on {pin.repo}'s {BRANCH}.\n\n"
+        f"Pins {what} to the newest green commit on {pin.repo}'s {BRANCH}.\n\n"
         f"- App commit: {green.sha} ({green.date}), checks: {', '.join(green.checks)}\n"
         f"- Old rev: {pin.rev}\n- New rev: {green.sha}\n"
         f"- Compare: {green.compare_url} ({green.ahead_by} commits)\n"
         f"- Newer {BRANCH} commits skipped, not green:{skipped}\n"
-        f"- flake.lock narHash: {lock[2][2]}\n"
+        f"- {nar_line}\n"
         f"- Checked against grants.{pin.app}: {json.dumps(pin.grant, sort_keys=True)}\n\n"
         "Refs #560"
     )
-    return {
-        "flake.nix": [pin.line, pin.line.replace(f"?rev={pin.rev}", f"?rev={green.sha}")],
-        "flake.lock": {"node": pin.node, "fields": lock},
-        "pr": {"title": f"{pin.app}: pin {pin.repo} to {green.sha[:12]}", "body": body},
-    }
+    return {"title": f"{pin.app}: pin {pin.repo} to {green.sha[:12]}", "body": body}
+
+
+def green_after(api, pin):
+    """green_main from the pin, refusing a green commit off the pin's history: a pin never moves sideways or back."""
+    green = green_main(api, pin.repo, pin.rev)
+    if green.sha is not None and green.compare_status != "ahead":
+        raise Refused(
+            f"apps.{pin.app}.source.rev: {pin.rev} is not an ancestor of {pin.repo}'s green {BRANCH} {green.sha}"
+            f" (compare: {green.compare_status})."
+        )
+    return green
 
 
 def result(api, pin, nar_hash):
-    green = green_main(api, pin.repo, pin.rev)
+    green = green_after(api, pin)
     out = {"app": pin.app, "repo": pin.repo, "old_rev": pin.rev, "skipped": [list(s) for s in green.skipped]}
     if green.sha is None:
         if green.reached_pin:
@@ -203,11 +219,6 @@ def result(api, pin, nar_hash):
             return out | {"result": "nothing-to-bump", "new_rev": pin.rev, "why": why}
         why = f"no green commit in main's last {WINDOW}, and the pin is not among them"
         return out | {"result": "no-green", "new_rev": None, "why": why}
-    if green.compare_status != "ahead":
-        raise Refused(
-            f"apps.{pin.app}.source.rev: {pin.rev} is not an ancestor of {pin.repo}'s green {BRANCH} {green.sha}"
-            f" (compare: {green.compare_status})."
-        )
     return out | {"result": "bump", "new_rev": green.sha} | pin_diff(pin, green, nar_hash)
 
 
