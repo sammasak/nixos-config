@@ -5,6 +5,8 @@ let
   );
   spec = lib.mapAttrs (_: h: {
     service = h.config.systemd.services.journal-metrics.serviceConfig;
+    after = h.config.systemd.services.journal-metrics.after;
+    wants = h.config.systemd.services.journal-metrics.wants;
     flags = h.config.services.alloy.extraFlags;
     nodeFlags = h.config.services.prometheus.exporters.node.extraFlags;
     timer = h.config.systemd.timers.journal-metrics.timerConfig;

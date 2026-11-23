@@ -29,6 +29,7 @@ in
     systemd.services.journal-metrics = {
       description = "Collect bounded local journal delivery counters";
       after = [ "alloy.service" ];
+      wants = [ "alloy.service" ];
       serviceConfig = {
         Type = "oneshot";
         ExecStart = "${lib.getExe helper} ${directory} http://127.0.0.1:12345/metrics";
