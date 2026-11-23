@@ -7,7 +7,7 @@ event series, its files counted missing. A link or FIFO day file is refused, an 
 RECORDS_MAX counted over_cap. A failed run writes collector_failed 1 and keeps its previous success and last-record
 timestamps; a run with no record carries the last-record ones over. `--list` is METRICS; seeded: a name outside it is
 refused. A 64 MiB day file stays under 3/4 of the unit's MemoryMax. The wiring, from the probe: imported on the devTools
-hosts with node-exporter, enabled on none; enabled, the unit reads the hook log read-only and node-exporter the dir;
+hosts with node-exporter, enabled on lenovo alone; there the unit reads the hook log read-only and node-exporter the dir;
 enabled off devTools, it fails evaluation.
 
 Usage: test-shunt-metrics.py [SCRIPT] (a mutated copy for a seed)."""
@@ -36,7 +36,7 @@ NOW = 1795413600.0  # 2026-11-23T06:00:00Z
 SINCE = NOW - 86400
 SECRETS = ("SESSION-SECRET", "/home/u/SECRET-PATH", "EXCERPT-SECRET", "weird-RESULT")
 GOLDEN = """\
-# HELP shunt_events Shunt hook decisions in the window, by hook and result.
+# HELP shunt_events Shunt hook decisions, by hook and result. A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.
 # TYPE shunt_events gauge
 shunt_events{hook="bulk-read",result="ok"} 1
 shunt_events{hook="bulk-read",result="timeout"} 1
@@ -50,14 +50,14 @@ shunt_events{hook="shunt-read",result="redirect"} 2
 shunt_events{hook="shunt-spill",result="background"} 1
 shunt_events{hook="shunt-spill",result="small"} 2
 shunt_events{hook="shunt-spill",result="spilled"} 1
-# HELP shunt_read_tokens Tokens the read hooks estimated in the window: seen (every decision), returned (all but redirects) and bypassed (re-reads let through after a redirect, a saving undone).
+# HELP shunt_read_tokens Tokens the read hooks estimated: seen (every decision), returned (all but redirects) and bypassed (re-reads let through after a redirect, a saving undone; absent until one happens). A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.
 # TYPE shunt_read_tokens gauge
 shunt_read_tokens{hook="shunt-bash",kind="returned"} 300
 shunt_read_tokens{hook="shunt-bash",kind="seen"} 300
 shunt_read_tokens{hook="shunt-read",kind="bypassed"} 9000
 shunt_read_tokens{hook="shunt-read",kind="returned"} 9500
 shunt_read_tokens{hook="shunt-read",kind="seen"} 27500
-# HELP shunt_spill_chars Bash output chars in the window: seen (every spill decision) and returned (the excerpt of a spilled output, the whole of any other).
+# HELP shunt_spill_chars Bash output chars: seen (every spill decision) and returned (the excerpt of a spilled output, the whole of any other). A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.
 # TYPE shunt_spill_chars gauge
 shunt_spill_chars{kind="seen"} 20200
 shunt_spill_chars{kind="returned"} 4200
@@ -208,6 +208,31 @@ with tempfile.TemporaryDirectory() as tmp:
           and "shunt_collector_lines" not in got,
           "a failed run writes failed 1, keeps the previous success and last-record timestamps, and no counts")
 
+    # a corrupt previous textfile is no previous one: the run succeeds and writes fresh timestamps
+    out.write_text("shunt_collector_success_timestamp_seconds 12x\n"
+                   'shunt_last_record_timestamp_seconds{hook="shunt-read"} not-a-number\n')
+    check(sm.previous(str(out)) == (None, {}), "previous() reads a corrupt textfile as no previous one")
+    r = run("--out", str(out), "--log-dir", str(live))
+    got = out.read_text()
+    check(r.returncode == 0 and "shunt_collector_failed 0\n" in got and "not-a-number" not in got
+          and re.search(r"^shunt_collector_success_timestamp_seconds \d", got, re.MULTILINE) is not None,
+          f"a run after a corrupt textfile succeeds and rewrites it (exit {r.returncode}, stderr {r.stderr[-200:]!r})")
+
+    # a duration that is not a non-negative int counts the decision but adds no duration sample
+    bad = pathlib.Path(tmp, "bad-durations")
+    bad.mkdir()
+    (bad / "2026-11-23.jsonl").write_text("\n".join([
+        rec("shunt-bash", "compound", NOW - 60, -5),
+        rec("shunt-bash", "compound", NOW - 60, True),
+        json.dumps({"ts": iso(NOW - 60), "hook": "shunt-bash", "result": "compound", "duration_ms": "12"}),
+        json.dumps({"ts": iso(NOW - 60), "hook": "shunt-bash", "result": "compound"}),
+        rec("shunt-read", "allow", NOW - 60, 7, tokens=1),
+    ]) + "\n")
+    t = sm.scan(str(bad), SINCE, NOW, time.monotonic() + 60)
+    check(t.events.get(("shunt-bash", "compound")) == 4 and "shunt-bash" not in t.durations
+          and t.durations.get("shunt-read") == [7],
+          f"negative, boolean, string and missing durations add no sample, their decisions still count {t.durations}")
+
     # day files that are a link, a FIFO or too large are not read; records past RECORDS_MAX are over_cap
     odd = pathlib.Path(tmp, "odd")
     odd.mkdir()
@@ -261,11 +286,11 @@ p = gate_probe.section("shunt-metrics")
 imported = sorted(h for h, i in p["imported"].items() if i)
 check(imported == ["acer-swift", "asus-b460m", "lenovo", "msi-ms7758"], f"imported on the devTools hosts {imported}")
 on_hosts = sorted(h for h, e in p["enabled"].items() if e)
-check(on_hosts == [], f"enabled on no host yet {on_hosts}")
+check(on_hosts == ["lenovo"], f"enabled on lenovo alone {on_hosts}")
 on, off, user = p["on"], p["off"], p["username"]
 d = "--collector.textfile.directory=/var/lib/shunt-metrics"
 check(d in on["flags"] and d not in off["flags"] and off["service"] is None and off["timer"] is None,
-      "enabled, node-exporter reads the dir; off, no unit, timer or flag")
+      "on lenovo node-exporter reads the dir; off (msi), no unit, timer or flag")
 svc = on["service"] or {}
 logdir = f"/home/{user}/.local/state/claude-hooks"
 check(svc.get("User") == user and svc.get("ProtectHome") == "tmpfs" and svc.get("BindReadOnlyPaths") == [f"-{logdir}"]
@@ -273,7 +298,7 @@ check(svc.get("User") == user and svc.get("ProtectHome") == "tmpfs" and svc.get(
       and "-shunt-metrics.py --out /var/lib/shunt-metrics/shunt.prom" in svc.get("ExecStart", ""),
       f"the unit runs as {user}, offline, with the hook log alone bound in read-only {svc.get('ExecStart')}")
 check(f"d /var/lib/shunt-metrics 0755 {user} - -" in on["tmpfiles"] and on["failing"] == [],
-      f"the dir exists before the first run, and enabled it evaluates clean {on['failing']}")
+      f"the dir exists before the first run, and lenovo evaluates clean (its memory budget included) {on['failing']}")
 check((on["timer"] or {}).get("OnCalendar") == "*:07/15", f"every 15 minutes {on['timer']}")
 check(any("homelab.shuntMetrics" in m for m in p["offDevTools"]), "enabled off devTools, it fails evaluation")
 finish()

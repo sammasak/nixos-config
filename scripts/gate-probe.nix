@@ -570,10 +570,9 @@ let
       envKeys = builtins.attrNames acer.systemd.services.authentik.environment;
     };
 
-    # scripts/test-shunt-metrics.py: on no host yet, so the unit is read from msi with it enabled; context discarded
+    # scripts/test-shunt-metrics.py: lenovo runs it, msi imports it off; context discarded
     shunt-metrics =
       let
-        on = extend "msi-ms7758" [ { homelab.shuntMetrics.enable = true; } ];
         facts =
           c:
           builtins.fromJSON (
@@ -592,8 +591,8 @@ let
       {
         enabled = lib.mapAttrs (_: h: h.config.homelab.shuntMetrics.enable or false) hosts;
         imported = lib.mapAttrs (_: h: h.options ? homelab.shuntMetrics) hosts;
-        username = msi.sam.profile.username;
-        on = facts on;
+        username = lenovo.sam.profile.username;
+        on = facts lenovo;
         off = facts msi;
         offDevTools = failing (
           # the flake's copy: black-pi imports node-exporter.nix from it, and a second path declares its options twice

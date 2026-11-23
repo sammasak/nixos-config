@@ -141,6 +141,7 @@ in
         ./rules/alertmanager.yaml
         ./rules/prometheus.yaml
         ./rules/llm-gateway.yaml
+        ./rules/shunt.yaml
         (import ./rules/homelab.nix { inherit lib hosts; }).file
         llmBench
         shipping

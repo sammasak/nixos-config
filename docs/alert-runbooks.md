@@ -1,9 +1,9 @@
 # Alert runbooks
 
-One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`; each alert's `runbook_url` points at its
-heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
+One section per alert in `modules/homelab/monitoring/rules/homelab.yaml` and `modules/homelab/monitoring/rules/shunt.yaml`;
+each alert's `runbook_url` points at its heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
 
-Every homelab and shipping alert carries the same annotations, held by the `monitoring-alert-annotations` check
+Every homelab, Shunt and shipping alert carries the same annotations, held by the `monitoring-alert-annotations` check
 (`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
 
 | annotation | holds |
@@ -150,3 +150,27 @@ First: `http://192.168.10.137:9090/targets`; whether the down targets share a ho
 
 Fires: `homelab:health:score` is below 70 for 15 minutes.
 First: the query lists each `homelab:health:*` KPI; follow the one that fails its threshold in the score's rule.
+
+## ShuntCollectorStale
+
+Fires: on a host that enables `homelab.shuntMetrics` (lenovo), `shunt-metrics.service` has not read the hook log
+successfully for over 45 minutes, its runs kept failing for 20 minutes, or its unit exists but has never written
+`/var/lib/shunt-metrics/shunt.prom`. A sleeping or disabled host never fires: the alert reads the collector's own
+series and unit. The Shunt panels on Agent harnesses and ShuntDelegationFailing are blind while it fires.
+First: on the host, `systemctl status shunt-metrics.timer shunt-metrics.service` and `journalctl -u shunt-metrics.service`;
+the script names a failed scan's exception type there. `ls -l ~/.local/state/claude-hooks/` shows whether the hook log exists.
+Do not: delete the textfile to silence it; a missing file fires as well.
+Rollback: `homelab.shuntMetrics.enable = false` in the host's configuration and deploy; Shunt itself keeps working.
+
+## ShuntDelegationFailing
+
+Fires: over a quarter of the bulk-read delegations in the collector's 24 h window failed with auth, rate_limited,
+model_unavailable, timeout or error, with at least 10 attempts, for 30 minutes. Refusals by policy (private, secret,
+sensitive, invalid) count as attempts, not failures. Sessions still get the fallback: they read the file themselves,
+so the cost is context, not correctness. The window is 24 h, so it resolves only once the failures age out of it or
+the share drops.
+First: on the host, the outcomes without any content:
+`jq -c 'select(.hook == "bulk-read") | {ts, result, files, bytes, exit_status, claude_exit, model}' ~/.local/state/claude-hooks/$(date -u +%F).jsonl`.
+auth: the OAuth token (`/run/secrets/claude_oauth_token`); rate_limited or model_unavailable: the model's quota or
+availability; timeout: the `files` and `bytes` the timed-out calls delegated.
+Rollback: `SHUNT_DISABLE=1` in the environment the sessions start from, or `sam.claude.bulkReader.enable = false`.
