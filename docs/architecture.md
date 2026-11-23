@@ -57,8 +57,8 @@ imports `modules/specialisations/desktop.nix` in its default boot:
 |------|------|-----------------|
 | `lenovo-21CB001PMX` | **desktop** (daily-driver laptop, also the DNS, ntfy and deploy host) | none |
 | `acer-swift` | **headless** (the always-on service host: Caddy edge, Authentik, chat, llm-gateway) | `desktop` (Niri GUI) |
-| `msi-ms7758` | **headless** (intermittent worker host, dual-boot Windows) | `gaming` (Niri GUI; no inference, no streaming) |
-| `asus-b460m` | **headless** (worker host, dual-boot Windows) | `gaming` (Niri GUI, Sunshine; no inference) |
+| `msi-ms7758` | **headless** (intermittent worker host, dual-boot Windows) | `gaming` (Niri GUI, Steam; no inference, no streaming, no evening power-off) |
+| `asus-b460m` | **headless** (worker host, dual-boot Windows) | `gaming` (Niri GUI, Steam, Sunshine; no inference, no evening power-off) |
 | `black-pi` | **headless** (aarch64 observability host, Raspberry Pi 4 on SD card, builds its own closure) | none |
 | `naked-pi` | **headless** (aarch64 Wi-Fi learning node, Raspberry Pi 3, role `rf-lab`) | none |
 
@@ -71,21 +71,25 @@ adds the Niri GUI boot entry. MSI is an intermittent worker host: powered
 on only in its work-hours window (woken via Wake-on-LAN). Its root/shared-Windows-ESP UUIDs are verified; boot stays GRUB
 with a manual Windows Boot Manager entry (dual-boot preserved).
 
-The ASUS `gaming` specialisation (`modules/specialisations/gaming.nix`) is the desktop entry plus Sunshine, for
-Moonlight clients on the LAN: the session logs in by itself, Ollama, its model loader and the GPU power limit are
-not started, and Sunshine's stream ports are admitted from the LAN (`sam.fleet.public`). The host has no keyboard, so
+The `gaming` specialisation (`modules/specialisations/gaming.nix`) is the desktop entry plus Steam and GameMode
+with 32-bit graphics, on both towers. Steam opens no port (no Remote Play or dedicated-server firewall rules). The
+scheduled power-off and the workers' shutdown notice do not run in it, so a game outlasts the Mon-Fri window: power the
+host off by hand afterwards. Wake-on-LAN stays armed and the morning wake still applies.
+
+On ASUS the entry adds Sunshine, for Moonlight clients on the LAN, with two apps, Desktop and Steam Big Picture: the
+session logs in by itself, Ollama, its model loader and the GPU power limit are not started, and Sunshine's stream ports are admitted from the LAN (`sam.fleet.public`). The host has no keyboard, so
 enter it from the running system with `sudo grub-reboot --boot-directory=/boot-nix "NixOS - gaming" && sudo reboot`
 (a one-time choice: the next plain boot is the headless inference host again). Only a reboot frees the card: a live
 switch into the entry leaves Ollama running. The worker pool keeps running in the entry and shares the CPU with a game. Sunshine's web
 UI, which sets its password and pairs a client by PIN, is not opened: reach it with
-`ssh -L 47990:localhost:47990 asus-b460m` and `https://localhost:47990`. The evening power-off applies in this
-entry too.
+`ssh -L 47990:localhost:47990 asus-b460m` and `https://localhost:47990`.
 
 MSI has the same `gaming` entry without streaming (`sam.gaming.streaming = false`): the Niri session behind the
-SDDM greeter, played at the machine, with Ollama and its model loader not started and no idle lock. No Sunshine unit, wrapper or
+SDDM greeter, played at the machine, with Ollama and its model loader not started and no idle lock. Enter it at the
+keyboard by picking "NixOS - gaming" in the GRUB menu at boot. No Sunshine unit, wrapper or
 uinput rule exists there, no port is opened for it, and `sam.fleet.public` lists none for msi: the entry's assertion
 fails evaluation if a host with streaming off has lan public entries, or one with streaming on lacks Sunshine's.
-The nspawn workers and the Mon-Fri power window run in this entry as in the default boot.
+The nspawn workers run in this entry as in the default boot.
 
 **One signal decides GUI-ness:** `sam.desktop.enable`. It is set by
 `modules/specialisations/desktop.nix`; the default is `false`, so a host that

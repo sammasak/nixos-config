@@ -209,6 +209,9 @@ in
         "cuda_nvrtc"
         "libcublas"
         "libnvvm"
+        # unfreeRedistributable, the gaming entry on msi and asus: modules/specialisations/gaming.nix
+        "steam"
+        "steam-unwrapped"
       ];
 
     environment.variables = {
