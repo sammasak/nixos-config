@@ -3,14 +3,16 @@
 //! Every record carries `schema_version`, rejects unknown fields (so a token or secret field cannot ride along) and is
 //! checked by `validate()` before anything acts on it. A version or path that is wrong does not deserialise at all.
 
+pub mod queue;
 mod state;
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-pub use state::{Event, Kind, Settle, transition};
+pub use state::{Event, Kind, Resolution, Settle, transition};
 
 /// The only schema version this crate reads or writes.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -117,6 +119,12 @@ pub enum Error {
     IllegalTransition { from: Status, event: &'static str },
     #[error("lease epoch overflow")]
     EpochOverflow,
+    #[error("retry.max_attempts must be at least 1")]
+    NoAttempts,
+    #[error("all {0} attempts are used")]
+    AttemptsExhausted(u32),
+    #[error("the receipt's {0} does not match the settled attempt")]
+    Receipt(&'static str),
     /// The parser's message: `serde_json::Error` is not `Eq`.
     #[error("{0}")]
     Json(String),
@@ -241,6 +249,10 @@ pub struct Attempt {
     pub id: String,
     pub task_id: String,
     pub lease_epoch: u64,
+    /// Leases charged against `retry.max_attempts`: every lease, less those that ended in a planned pause (a settle
+    /// to `waiting`), so a resume after a wake is not a retry.
+    #[serde(default)]
+    pub tries: u32,
     pub status: Status,
     /// Set while leased, running or checkpointing, and kept on `needs_review` for whoever reconciles it.
     pub placement: Option<Placement>,
@@ -306,6 +318,17 @@ const fn non_empty(field: &'static str, value: &str) -> Result<(), Error> {
     }
 }
 
+/// Reads `schema_version` first: a newer record with fields this one lacks is a version mismatch, not a malformed
+/// record.
+fn parse_versioned<T: DeserializeOwned>(json: &str) -> Result<T, Error> {
+    #[derive(Deserialize)]
+    struct Versioned {
+        schema_version: u32,
+    }
+    SchemaVersion::try_from(serde_json::from_str::<Versioned>(json)?.schema_version)?;
+    Ok(serde_json::from_str(json)?)
+}
+
 impl TaskSpec {
     /// Parses and validates one task as submitted.
     ///
@@ -313,20 +336,14 @@ impl TaskSpec {
     /// Malformed JSON, an unknown schema version (before any other field is read), an unknown field, or anything
     /// [`TaskSpec::validate`] rejects.
     pub fn parse(json: &str, granted: &BTreeSet<String>) -> Result<Self, Error> {
-        // the version first: a newer record with fields this one lacks is a version mismatch, not a malformed record
-        #[derive(Deserialize)]
-        struct Versioned {
-            schema_version: u32,
-        }
-        SchemaVersion::try_from(serde_json::from_str::<Versioned>(json)?.schema_version)?;
-        let task: Self = serde_json::from_str(json)?;
+        let task: Self = parse_versioned(json)?;
         task.validate(granted)?;
         Ok(task)
     }
 
     /// # Errors
-    /// An empty `id`, `idempotency_key`, `source.repo`, `source.rev` or `command.argv`, or a capability outside
-    /// `granted`.
+    /// An empty `id`, `idempotency_key`, `source.repo`, `source.rev` or `command.argv`, a zero
+    /// `retry.max_attempts`, or a capability outside `granted`.
     pub fn validate(&self, granted: &BTreeSet<String>) -> Result<(), Error> {
         non_empty("id", &self.id)?;
         non_empty("idempotency_key", &self.idempotency_key)?;
@@ -334,6 +351,9 @@ impl TaskSpec {
         non_empty("source.rev", &self.source.rev)?;
         if self.command.argv.is_empty() {
             return Err(Error::Empty("command.argv"));
+        }
+        if self.retry.max_attempts == 0 {
+            return Err(Error::NoAttempts);
         }
         self.capabilities
             .difference(granted)
@@ -402,6 +422,14 @@ pub fn submit<'a>(known: &'a [TaskSpec], task: &TaskSpec) -> Result<Submission<'
 
 impl Attempt {
     /// # Errors
+    /// What [`parse_versioned`] or [`Attempt::validate`] rejects.
+    pub fn parse(json: &str) -> Result<Self, Error> {
+        let a: Self = parse_versioned(json)?;
+        a.validate()?;
+        Ok(a)
+    }
+
+    /// # Errors
     /// An empty `id`, `task_id` or placement field, or a placement that disagrees with the status: required while
     /// leased, running or checkpointing, absent while queued or waiting.
     pub fn validate(&self) -> Result<(), Error> {
@@ -429,6 +457,14 @@ impl Attempt {
 
 impl Slot {
     /// # Errors
+    /// What [`parse_versioned`] or [`Slot::validate`] rejects.
+    pub fn parse(json: &str) -> Result<Self, Error> {
+        let s: Self = parse_versioned(json)?;
+        s.validate()?;
+        Ok(s)
+    }
+
+    /// # Errors
     /// An empty `host` or `id`.
     pub fn validate(&self) -> Result<(), Error> {
         non_empty("host", &self.host)?;
@@ -446,6 +482,37 @@ impl CheckpointRef {
 }
 
 impl Receipt {
+    /// # Errors
+    /// What [`parse_versioned`] or [`Receipt::validate`] rejects.
+    pub fn parse(json: &str) -> Result<Self, Error> {
+        let r: Self = parse_versioned(json)?;
+        r.validate()?;
+        Ok(r)
+    }
+
+    /// Whether this receipt belongs to `settled`, the attempt as a terminal settle left it: the same task, attempt
+    /// and lease epoch, and the outcome it settled to. A receipt goes with no other event.
+    ///
+    /// # Errors
+    /// [`Error::Receipt`] naming the first field that disagrees.
+    pub fn settles(&self, settled: &Attempt) -> Result<(), Error> {
+        let outcome = match settled.status {
+            Status::Succeeded => Outcome::Succeeded,
+            Status::Failed => Outcome::Failed,
+            Status::NeedsReview => Outcome::NeedsReview,
+            _ => return Err(Error::Receipt("outcome")),
+        };
+        [
+            ("task_id", self.task_id == settled.task_id),
+            ("attempt_id", self.attempt_id == settled.id),
+            ("lease_epoch", self.lease_epoch == settled.lease_epoch),
+            ("outcome", self.outcome == outcome),
+        ]
+        .into_iter()
+        .find(|(_, ok)| !ok)
+        .map_or(Ok(()), |(field, _)| Err(Error::Receipt(field)))
+    }
+
     /// # Errors
     /// An empty `task_id` or `attempt_id`, or what [`CheckpointRef::validate`] rejects.
     pub fn validate(&self) -> Result<(), Error> {

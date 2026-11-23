@@ -8,7 +8,7 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 | Concern | Owner | Where |
 |---|---|---|
 | Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix` |
-| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | a separate queue process (#651, PostgreSQL first) | not built; its records are `pkgs/exec-pool/src/lib.rs` |
+| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, a library on no host yet |
 | Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local dispatcher (#652) | not built |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
 | Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
@@ -36,6 +36,8 @@ queued -> leased -> running -> checkpointing -> waiting | queued | succeeded | f
 waiting -> queued            (explicit wake)
 leased  -> queued            (lease expired before its start was accepted)
 running | checkpointing -> needs_review   (lease expired: effects unknown, never replayed blindly)
+needs_review -> succeeded | failed | queued   (resolve: an operator's explicit decision, never automatic)
+any return to queued with no attempt left -> failed
 ```
 
 One `Attempt` id spans every lease of that attempt, told apart by the epoch, which is why a `Receipt` is keyed by
@@ -47,7 +49,24 @@ ran nothing. An attempt's placement (host, slot) is cleared on `queued` and `wai
 review. Delivery is **at-least-once**: a resubmission under the same idempotency key returns the task already queued,
 a different task under that key is refused, and no external effect (a GitHub mutation included) is claimed
 exactly-once. A `Receipt` lists the effects an attempt reports, for reconciliation; it counts only with the `settle`
-accepted at its lease epoch.
+accepted at its lease epoch: `Receipt::settles` checks the task, attempt, epoch and outcome against the attempt the
+settle left, and only a settle to succeeded, failed or needs_review takes one (and must). Every lease but one that settles to
+`waiting` (a planned pause) counts against `retry.max_attempts` (at least 1), so an expiring lease cannot loop. `TaskSpec`, `Attempt`, `Slot` and `Receipt` each
+have a `parse()` that reads the version before any other field.
+
+## Queue (#651)
+
+PostgreSQL over a Unix socket only (`Store::open` refuses a TCP host), so the database's peer authentication is the
+caller's. Schema `pkgs/exec-pool/migrations/0001_queue.up.sql`; forward-only in production, with
+`Store::migrate_down` dropping everything after the operator has exported what they keep. A claim locks only the queued
+row it takes, `FOR UPDATE SKIP LOCKED`; every change runs `transition` and then the `attempts_fence` trigger, which refuses
+a write that names any epoch but the current one (or none), moves the epoch by more than one, leases from anything
+but queued, or touches a succeeded or failed attempt. One live attempt per slot is a unique index. A holder's event
+after its lease deadline is refused; `reconcile` (at startup and on a timer) expires overdue leases. A database that
+does not answer is `QueueError::Unavailable`, never an empty result, and a connection lost during COMMIT is
+`QueueError::OutcomeUnknown`: read the state (`Store::live_on` for a claim), never replay. The queue holds no GitHub or agent
+token: the task's `credential_class` is resolved by the host. Prompt, argv and workdir stay in `tasks`; `events`
+holds ids, states and reason codes.
 
 ## Not `sam.agentRuntime`
 
