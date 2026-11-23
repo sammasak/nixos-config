@@ -123,6 +123,20 @@ Fires: the backup-metrics collector's last completed scan is over 900 seconds ol
 `backup.prom` at all (it is on tmpfs, so a collector that never ran since boot leaves nothing), for 15 minutes.
 First: on the host, `systemctl status backup-metrics.timer backup-metrics` and `journalctl -u backup-metrics -n 20`.
 
+## OtlpWritesRejected
+
+Fires: acer's alloy-otlp receiver (`otelcol.receiver.otlp.native`, behind `otlp.sammasak.dev`) answered OTLP posts
+with a 4xx or 5xx in each 5-minute window for 10 minutes, per status. The writes are lost though every scrape is green.
+Read the status: 401 is a bearer token that does not match acer's (a relay's `native_otlp_auth`), 400 an oversized
+(over 1 MiB) or malformed body, 429 or 503 Alloy's memory limiter or full sending queue. The counter is otelhttp's
+`http_server_request_duration_seconds_count`: the receiver's own `otelcol_receiver_refused_*`/`_failed_*` counters
+stay 0 on a 401 or an oversized 400. The sender is not in the series.
+Blind spot: a host relay (`native-otel-relay`) refusing a post itself (413 over `client_max_body_size 1m`, 429 from
+`limit_req`) never reaches acer and has no metric; only that host's nginx line in its journal shows it.
+First: on acer, `journalctl -u alloy-otlp --since -30m`; for a 401 or 413, on the sending hosts,
+`journalctl -u native-otel-relay --since -30m`.
+Do not: raise `max_request_body_size` or the relay's body limit before the journal names the sender.
+
 ## EdgeSocketDown
 
 Fires: nothing listens on Caddy's upstream socket on acer, or the edge check stopped writing, for 2 minutes. Signed-in
