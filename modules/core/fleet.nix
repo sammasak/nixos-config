@@ -329,12 +329,6 @@ in
         # the cluster-watchdog reads /-/ready and the Watchdog alert; Prometheus there arrives on loopback
         from = [ "lenovo-21CB001PMX" ];
       };
-      alert-bridge = {
-        host = "lenovo-21CB001PMX";
-        port = 9099;
-        # Alertmanager has no outgoing-source setting: with end0 down it sends from wlan0 (extraAddresses)
-        from = [ "black-pi" ];
-      };
       prometheus = {
         host = "black-pi";
         port = 9090;

@@ -1,9 +1,38 @@
 # Alertmanager on black-pi through upstream services.prometheus.alertmanager: one route and its inhibitions,
-# one webhook to lenovo's alert-bridge, which pages homelab-alerts. Upstream passes the file through envsubst, so a literal `$` must be written `$$`.
+# one webhook publishing to lenovo's ntfy as JSON. Upstream passes the file through envsubst, so a literal `$` must be written `$$`.
 { config, lib, ... }:
 let
-  inherit (config.sam.fleet) hosts;
+  inherit (config.sam.fleet) hosts ntfy pageUrl;
   hostOff = [ "alertname = HostExpectedOff" ];
+  # https://prometheus.io/docs/alerting/latest/configuration/#webhook_config and
+  # https://docs.ntfy.sh/publish/#publish-as-json. Alertmanager (0.33.1, template.DeepCopyWithTemplate) parses each
+  # rendered string as YAML and sends what that yields unless it is a string: "[a, b]" goes out as tags' list and "3"
+  # as priority's int, but "[WARNING] X" as the list [WARNING] and "Disk full:\nQuery: q" as an object, which ntfy
+  # refuses. A leading tab fails that parse and ntfy trims it, so title and message carry one.
+  bySeverity =
+    resolved: critical: warning: info: other:
+    lib.concatStrings [
+      ''{{ if eq .Status "resolved" }}${resolved}''
+      ''{{ else if eq .CommonLabels.severity "critical" }}${critical}''
+      ''{{ else if eq (or .CommonLabels.severity "warning") "warning" }}${warning}''
+      ''{{ else if eq .CommonLabels.severity "info" }}${info}''
+      "{{ else }}${other}{{ end }}"
+    ];
+  # No template function subtracts, so the overflow line counts all alerts. printf cuts runes, not bytes: ntfy's
+  # 4096-byte message limit holds only for mostly ASCII text, a longer message becomes a refused attachment.
+  message = lib.concatStrings [
+    "\t"
+    ''{{ printf "%.1000s" .CommonAnnotations.summary }}''
+    "{{ with .CommonAnnotations.description }}{{ if ne . $$.CommonAnnotations.summary }}"
+    "\n"
+    ''{{ printf "%.400s" . }}{{ end }}{{ end }}''
+    "{{ range $$i, $$a := .Alerts }}{{ if lt $$i 4 }}"
+    "{{ with or $$a.Labels.pod $$a.Labels.instance $$a.Labels.job $$a.Labels.namespace }}"
+    "\n  • {{ . }}{{ end }}{{ end }}{{ end }}"
+    "{{ if gt (len .Alerts) 4 }}\n  … {{ len .Alerts }} in all{{ end }}"
+    "{{ with .CommonAnnotations.query }}\nQuery: "
+    ''{{ printf "%.600s" . }}{{ end }}''
+  ];
   # the shipping policy's quiet hours, in UTC: a location would need tzdata where amtool checks the file. 19:00 to
   # 07:30 covers 21:00 to 08:30 Stockholm in both seasons, and mutes one more hour: 20:00 to 21:00 in winter (CET),
   # 08:30 to 09:30 in summer (CEST)
@@ -57,14 +86,14 @@ in
         group_wait = "30s";
         group_interval = "5m";
         repeat_interval = "12h";
-        receiver = "alert-bridge";
+        receiver = "ntfy";
         # Watchdog pages no one: lenovo's cluster-watchdog reads it from /api/v2/alerts
         routes = [
           {
             receiver = "null";
             matchers = [ ''alertname =~ "Watchdog|InfoInhibitor|HostExpectedOff"'' ];
           }
-          # a rule's notify="none" keeps it in the alert list and off the bridge (NodeSensorNearCritical); so does
+          # a rule's notify="none" keeps it in the alert list and off the phone (NodeSensorNearCritical); so does
           # severity="info" (NodeCPUHighUsage: every gate holds a builder above 90 % for longer than its 15 m)
           {
             receiver = "null";
@@ -76,7 +105,7 @@ in
           }
           # shipping alerts (rules/shipping.nix) wait for the morning; one firing then is sent when the night ends
           {
-            receiver = "alert-bridge";
+            receiver = "ntfy";
             matchers = [ ''team = "shipping"'' ];
             mute_time_intervals = [ "night" ];
           }
@@ -91,11 +120,31 @@ in
       receivers = [
         { name = "null"; }
         {
-          name = "alert-bridge";
+          name = "ntfy";
           webhook_configs = [
             {
-              url = "http://${hosts.lenovo-21CB001PMX.address}:9099/notify";
+              # the root URL takes a JSON publish; ntfy admits any LAN source without credentials (fleet.nix public)
+              url = "${ntfy.url}/";
               send_resolved = true;
+              payload = {
+                topic = lib.removePrefix "${ntfy.url}/" pageUrl;
+                title = lib.concatStrings [
+                  "\t"
+                  ''{{ if eq .Status "resolved" }}[RESOLVED]''
+                  ''{{ else }}[{{ or .CommonLabels.severity "warning" | toUpper }}]{{ end }}''
+                  " {{ .CommonLabels.alertname }}"
+                  ''{{ if and (ne .Status "resolved") (gt (len .Alerts) 1) }} ×{{ len .Alerts }}{{ end }}''
+                ];
+                tags =
+                  bySeverity "[white_check_mark, green_circle]" "[rotating_light, red_circle]"
+                    "[warning, orange_circle]"
+                    "[information_source]"
+                    "[warning]";
+                priority = bySeverity "1" "4" "3" "1" "3";
+                # an empty render goes out as null, no link
+                click = ''{{ if match "^https?://[[:graph:]]+$" .CommonAnnotations.runbook_url }}{{ .CommonAnnotations.runbook_url }}{{ end }}'';
+                inherit message;
+              };
             }
           ];
         }

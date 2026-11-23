@@ -18,7 +18,6 @@ is the modules named here; this page only maps them.
 | acer | alloy-otlp (`modules/homelab/monitoring/alloy-otlp.nix`), the harnesses' OTLP intake | 127.0.0.1:4318 behind otlp.sammasak.dev; metrics :12346 | Prometheus |
 | acer | llm-gateway's admin listener | :9091 | Prometheus |
 | acer | Caddy's metrics site (`modules/homelab/edge.nix`), plain HTTP: Caddy's `/metrics` and Authentik's two loopback metrics listeners at `/authentik/{server,worker}/metrics` | :9180, black-pi alone | Prometheus (jobs `caddy`, `authentik-server`, `authentik-worker`) |
-| lenovo | alert-bridge (`alert-bridge.nix`): Alertmanager's webhook to ntfy | :9099, black-pi alone | Alertmanager |
 
 Which host may reach which port is `sam.fleet.listeners` (`modules/core/fleet.nix`); `modules/core/network.nix` turns it
 into firewall rules. The scrape jobs are in `prometheus.nix`. The node-exporter and nvidia-gpu targets come from `sam.fleet.hosts`, so a host
@@ -66,7 +65,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
 
 - Prometheus loads `modules/homelab/monitoring/rules/*.yaml` (`homelab.yaml` rendered by `modules/homelab/monitoring/rules/homelab.nix` from the fleet's power windows), the
   llm-bench scorecard and the shipping rules from `modules/homelab/monitoring/rules/shipping.nix` (the list is in `prometheus.nix`).
-- Alertmanager sends every alert to the alert bridge except Watchdog, InfoInhibitor, HostExpectedOff, any alert
+- Alertmanager publishes every alert to lenovo's ntfy except Watchdog, InfoInhibitor, HostExpectedOff, any alert
   labelled `notify="none"` and any `severity="info"` alert (NodeCPUHighUsage): those go to a null receiver. The shipping team's alerts are muted at night.
 - HostExpectedOff marks a sleeping host that is off as planned. Inhibit rules keyed on it silence what the power-off
   causes (`alertmanager.nix`).
@@ -100,13 +99,12 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
 | `grafana-dashboards` | every query on every dashboard: metric names against what the exporters really emit (node-exporter on its own fixtures with the deployed flags; the GPU check's output; Loki's, Alloy's, Caddy's and blackbox's name literals; llm-gateway's and Authentik's registrations; black-pi's Prometheus and Alertmanager and acer's alloy-otlp run on loopback (`scripts/monitoring-exposition.sh`); the writers' textfiles, AdGuard's from lenovo's sandboxed AdGuard; the OTLP allow-list; the rule files' records); PromQL through promtool, LogQL through logcli; jobs scraped or written; no host named by hand; every rule file Prometheus loads held to the same names and jobs; seeded failures, rule files included |
 | `grafana-dashboard-removal` | Grafana itself, with black-pi's provider settings, deletes a removed file's dashboard and keeps ids across a restart |
 | `gpu-telemetry-exporter` | the GPU exporter's fields against a fake nvidia-smi that heads the throttle fields `clocks_event_reasons`, as asus's driver does |
-| `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` and `severity="info"` reach no one, NodeTemperatureHigh and a warning reach the bridge, and the same alert without the label would notify |
+| `monitoring-alert-routes` | Alertmanager's routing (amtool) on black-pi's configuration: `notify="none"` and `severity="info"` reach no one, NodeTemperatureHigh and a warning reach ntfy, and the same alert without the label would notify |
 | `monitoring-alert-annotations` | every homelab and shipping alert carries `summary`, `description`, `query` and a `runbook_url` naming a heading in a tracked doc ([alert-runbooks.md](alert-runbooks.md)); a rule file with no alert fails; seeds without a query, without an anchor, with a dangling anchor and with an empty file beside a good one fail it. The `grafana-dashboards` check holds each `query`'s PromQL and names |
 | `monitoring-rules-tests` | `promtool test rules` on every file in `modules/homelab/monitoring/rules/tests`, against `homelab.yaml` as rendered |
 | `monitoring-config-msi-ms7758`, `monitoring-rules-sleeping-hosts` | black-pi's Prometheus, Alertmanager and blackbox configs checked on an x86 seed; the sleeping-host rules per host |
 | `loki-config-msi-ms7758`, `journal-collector-config-black-pi` | Loki's config and the Pi's journal collector, on x86 |
-| `alert-bridge-sources` | the bridge admits Alertmanager's host alone |
-| `alert-fire-resolve` (VM) | one synthetic warning travels Prometheus, black-pi's Alertmanager configuration and lenovo's alert-bridge unit to a loopback ntfy stub, firing then resolved, with the exact title, tags, priority and body; its info twin reaches Alertmanager and no page. About 6 min: the resolved page waits for the 5m group_interval |
+| `alert-fire-resolve` (VM) | synthetic rules travel Prometheus and black-pi's Alertmanager configuration, its ntfy payload template included, to ntfy with lenovo's settings, read back through its poll API: one page per group with the exact title, tags, priority, click and body, firing then resolved; a page with no runbook or query, an oversized summary cut to 1000 characters, and a summary ending in a colon still arrive; the same colon body without the template's YAML guard is refused; the info twin reaches Alertmanager and no page. About 6 min: the resolved page waits for the 5m group_interval |
 | `shipping-*` (`shipping-check.nix`) | the Shipping rules and dashboard |
 | `caddy-edge-test` (gate, `scripts/test-caddy-edge.py`) | acer's Caddyfile through acer's Caddy; the deployed config run on loopback, where a stray name or Host port adds no series and Authentik sees only the served names |
 
