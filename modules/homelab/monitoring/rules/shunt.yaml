@@ -39,6 +39,6 @@ groups:
           team: homelab
         annotations:
           summary: "Bulk-read delegations on {{ $labels.node }} are failing"
-          description: "{{ $value | humanizePercentage }} of the bulk-read delegations on {{ $labels.node }} in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. Read the outcomes in the hook log there."
+          description: "{{ $value | humanizePercentage }} of the bulk-read delegations on {{ $labels.node }} in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. The count is a 24 h window, so it can stay firing up to 24 h after a fix. Read the outcomes in the hook log there."
           query: 'sum by (result) (shunt_events{job="node-exporter",node="{{ $labels.node }}",hook="bulk-read"})'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntdelegationfailing"

@@ -1,5 +1,6 @@
 # The Shunt collector (scripts/shunt-metrics.py): every 15 minutes it reads the owner's Claude Code hook log on this
-# host, read-only and offline, and leaves the last 24 h of Shunt decisions for this host's node-exporter.
+# host, read-only and offline, and leaves the last 24 h of Shunt decisions for this host's node-exporter. Only that
+# one log is read: sessions in dev-environment guests log in their own homes and are not counted.
 {
   config,
   lib,

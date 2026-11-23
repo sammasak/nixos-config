@@ -36,7 +36,7 @@ NOW = 1795413600.0  # 2026-11-23T06:00:00Z
 SINCE = NOW - 86400
 SECRETS = ("SESSION-SECRET", "/home/u/SECRET-PATH", "EXCERPT-SECRET", "weird-RESULT")
 GOLDEN = """\
-# HELP shunt_events Shunt hook decisions in the window, by hook and result.
+# HELP shunt_events Shunt hook decisions, by hook and result. A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.
 # TYPE shunt_events gauge
 shunt_events{hook="bulk-read",result="ok"} 1
 shunt_events{hook="bulk-read",result="timeout"} 1
@@ -50,14 +50,14 @@ shunt_events{hook="shunt-read",result="redirect"} 2
 shunt_events{hook="shunt-spill",result="background"} 1
 shunt_events{hook="shunt-spill",result="small"} 2
 shunt_events{hook="shunt-spill",result="spilled"} 1
-# HELP shunt_read_tokens Tokens the read hooks estimated in the window: seen (every decision), returned (all but redirects) and bypassed (re-reads let through after a redirect, a saving undone).
+# HELP shunt_read_tokens Tokens the read hooks estimated: seen (every decision), returned (all but redirects) and bypassed (re-reads let through after a redirect, a saving undone; absent until one happens). A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.
 # TYPE shunt_read_tokens gauge
 shunt_read_tokens{hook="shunt-bash",kind="returned"} 300
 shunt_read_tokens{hook="shunt-bash",kind="seen"} 300
 shunt_read_tokens{hook="shunt-read",kind="bypassed"} 9000
 shunt_read_tokens{hook="shunt-read",kind="returned"} 9500
 shunt_read_tokens{hook="shunt-read",kind="seen"} 27500
-# HELP shunt_spill_chars Bash output chars in the window: seen (every spill decision) and returned (the excerpt of a spilled output, the whole of any other).
+# HELP shunt_spill_chars Bash output chars: seen (every spill decision) and returned (the excerpt of a spilled output, the whole of any other). A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.
 # TYPE shunt_spill_chars gauge
 shunt_spill_chars{kind="seen"} 20200
 shunt_spill_chars{kind="returned"} 4200
@@ -207,6 +207,31 @@ with tempfile.TemporaryDirectory() as tmp:
           and f'shunt_last_record_timestamp_seconds{{hook="shunt-read"}} {ts:.15g}\n' in got
           and "shunt_collector_lines" not in got,
           "a failed run writes failed 1, keeps the previous success and last-record timestamps, and no counts")
+
+    # a corrupt previous textfile is no previous one: the run succeeds and writes fresh timestamps
+    out.write_text("shunt_collector_success_timestamp_seconds 12x\n"
+                   'shunt_last_record_timestamp_seconds{hook="shunt-read"} not-a-number\n')
+    check(sm.previous(str(out)) == (None, {}), "previous() reads a corrupt textfile as no previous one")
+    r = run("--out", str(out), "--log-dir", str(live))
+    got = out.read_text()
+    check(r.returncode == 0 and "shunt_collector_failed 0\n" in got and "not-a-number" not in got
+          and re.search(r"^shunt_collector_success_timestamp_seconds \d", got, re.MULTILINE) is not None,
+          f"a run after a corrupt textfile succeeds and rewrites it (exit {r.returncode}, stderr {r.stderr[-200:]!r})")
+
+    # a duration that is not a non-negative int counts the decision but adds no duration sample
+    bad = pathlib.Path(tmp, "bad-durations")
+    bad.mkdir()
+    (bad / "2026-11-23.jsonl").write_text("\n".join([
+        rec("shunt-bash", "compound", NOW - 60, -5),
+        rec("shunt-bash", "compound", NOW - 60, True),
+        json.dumps({"ts": iso(NOW - 60), "hook": "shunt-bash", "result": "compound", "duration_ms": "12"}),
+        json.dumps({"ts": iso(NOW - 60), "hook": "shunt-bash", "result": "compound"}),
+        rec("shunt-read", "allow", NOW - 60, 7, tokens=1),
+    ]) + "\n")
+    t = sm.scan(str(bad), SINCE, NOW, time.monotonic() + 60)
+    check(t.events.get(("shunt-bash", "compound")) == 4 and "shunt-bash" not in t.durations
+          and t.durations.get("shunt-read") == [7],
+          f"negative, boolean, string and missing durations add no sample, their decisions still count {t.durations}")
 
     # day files that are a link, a FIFO or too large are not read; records past RECORDS_MAX are over_cap
     odd = pathlib.Path(tmp, "odd")

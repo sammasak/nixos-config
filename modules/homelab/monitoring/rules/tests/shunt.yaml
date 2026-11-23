@@ -105,6 +105,6 @@ tests:
           - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
             exp_annotations:
               summary: "Bulk-read delegations on lenovo-21CB001PMX are failing"
-              description: "30% of the bulk-read delegations on lenovo-21CB001PMX in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. Read the outcomes in the hook log there."
+              description: "30% of the bulk-read delegations on lenovo-21CB001PMX in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. The count is a 24 h window, so it can stay firing up to 24 h after a fix. Read the outcomes in the hook log there."
               query: 'sum by (result) (shunt_events{job="node-exporter",node="lenovo-21CB001PMX",hook="bulk-read"})'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntdelegationfailing"

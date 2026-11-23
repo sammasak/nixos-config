@@ -31,9 +31,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 METRICS = {
-    "shunt_events": "Shunt hook decisions in the window, by hook and result.",
-    "shunt_read_tokens": "Tokens the read hooks estimated in the window: seen (every decision), returned (all but redirects) and bypassed (re-reads let through after a redirect, a saving undone).",
-    "shunt_spill_chars": "Bash output chars in the window: seen (every spill decision) and returned (the excerpt of a spilled output, the whole of any other).",
+    "shunt_events": "Shunt hook decisions, by hook and result. A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.",
+    "shunt_read_tokens": "Tokens the read hooks estimated: seen (every decision), returned (all but redirects) and bypassed (re-reads let through after a redirect, a saving undone; absent until one happens). A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.",
+    "shunt_spill_chars": "Bash output chars: seen (every spill decision) and returned (the excerpt of a spilled output, the whole of any other). A 24 h rolling sum, refreshed every 15 min; for a longer period read it at 24 h steps, do not sum_over_time.",
     "shunt_hook_duration_ms": "A Shunt hook's own run time in the window, by quantile.",
     "shunt_last_record_timestamp_seconds": "Unix time of the hook's newest record, carried over while the window holds none.",
     "shunt_collector_lines": "Hook log lines in the window's files: shunt (a counted record), other (another hook or outside the window), malformed, overlong, partial (an unterminated last line) or over_cap.",
@@ -129,7 +129,9 @@ def add_record(t: Tally, rec: object, since: float, now: float) -> str:
     raw = rec.get("result")
     result = raw if isinstance(raw, str) and raw in RESULTS[hook] else "other"
     t.events[hook, result] = t.events.get((hook, result), 0) + 1
-    t.durations.setdefault(hook, []).append(count(rec, "duration_ms"))
+    d = rec.get("duration_ms")
+    if isinstance(d, int) and not isinstance(d, bool) and d >= 0:
+        t.durations.setdefault(hook, []).append(d)
     t.last[hook] = max(t.last.get(hook, ts), ts)
     if hook in READ_HOOKS:
         tok = count(rec, "tokens")
@@ -214,9 +216,13 @@ def previous(path: str) -> tuple[float | None, dict[str, float]]:
     except OSError:
         return None, {}
     ok = re.search(r"^shunt_collector_success_timestamp_seconds (\S+)$", text, re.MULTILINE)
-    last = {m[1]: float(m[2]) for m in re.finditer(
-        r'^shunt_last_record_timestamp_seconds\{hook="([a-z-]+)"\} (\S+)$', text, re.MULTILINE) if m[1] in RESULTS}
-    return (float(ok[1]) if ok else None), last
+    # a corrupt file is no previous one: raising here would fail every later run
+    try:
+        last = {m[1]: float(m[2]) for m in re.finditer(
+            r'^shunt_last_record_timestamp_seconds\{hook="([a-z-]+)"\} (\S+)$', text, re.MULTILINE) if m[1] in RESULTS}
+        return (float(ok[1]) if ok else None), last
+    except ValueError:
+        return None, {}
 
 
 def render(t: Tally | None, success: float | None, last: dict[str, float]) -> Out:
@@ -227,7 +233,7 @@ def render(t: Tally | None, success: float | None, last: dict[str, float]) -> Ou
             out.add("shunt_events", n, hook=hook, result=result)
         for (hook, kind), n in sorted(t.tokens.items()):
             out.add("shunt_read_tokens", n, hook=hook, kind=kind)
-        if "shunt-spill" in t.durations:
+        if any(hook == "shunt-spill" for hook, _ in t.events):
             for kind, n in t.chars.items():
                 out.add("shunt_spill_chars", n, kind=kind)
         for hook, ds in sorted(t.durations.items()):
