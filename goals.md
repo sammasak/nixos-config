@@ -27,7 +27,7 @@ that run it. Small PRs, shipped by per-issue nspawn workers. Updated when a PR o
 
 | Item | What | State | PR |
 |------|------|-------|----|
-| 624-a | Inventory: signal → rule → route → last receipt → gap | in progress (lenovo) | |
+| 624-a | Inventory: signal → rule → route → last receipt → gap | merged | #629 |
 | 624-b | Annotation contract (summary, description, query, runbook) on the homelab rules, asserted by the check | assigned `a624` | |
 | 624-c | OTLP relay rejection alert (the monitoring-blindness example) | queued | |
 | 624-d | Journal-delivery stale alert | queued | |
@@ -39,7 +39,7 @@ that run it. Small PRs, shipped by per-issue nspawn workers. Updated when a PR o
 
 | Item | What | State | PR |
 |------|------|-------|----|
-| 625-a | Read-only check of the hook JSONL on lenovo, schema decision | in progress (lenovo) | |
+| 625-a | Read-only check of the hook JSONL on lenovo, schema decision | done: observed, comment on #625 | |
 | 625-1 | Collector, fixture tests, NixOS wiring (nav-metrics pattern) | queued | |
 | 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts | queued | |
 | 625-pilot | Lenovo pilot, on/off benchmark | owner gate: lenovo activation, token spend | |
@@ -48,9 +48,9 @@ that run it. Small PRs, shipped by per-issue nspawn workers. Updated when a PR o
 
 | Host | Worker | Item | State |
 |------|--------|------|-------|
-| asus-b460m | `a624` | 624-b | to declare |
-| asus-b460m | `s138` | skills#138 | to declare |
-| asus-b460m | `s130` | skills#130 | to declare |
+| asus-b460m | `a624` | 624-b | working since 23 Nov |
+| asus-b460m | `s138` | skills#138 | working since 23 Nov |
+| asus-b460m | `s130` | skills#130 | working since 23 Nov |
 | acer-swift | `herman` | dashboards lane (#525, #523), not this week's list | busy |
 | msi-ms7758 | `t1` | none: it holds no push credential | idle |
 
@@ -65,4 +65,5 @@ asus has no `gh` login: its workers push branches over SSH and the lenovo sessio
 
 ## Merged this week
 
-None yet.
+- #629 alert inventory (624-a)
+- #630 three asus workers
