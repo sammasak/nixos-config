@@ -30,7 +30,9 @@ let
       ]
       ++ map (
         n:
-        ''claude_auto_compact_window_info{worker="${n}",variant="${variant config.containers.${n}.config.sam.claude.autoCompactWindow}"} 1''
+        ''claude_auto_compact_window_info{worker="${n}",variant="${
+          variant config.containers.${n}.config.sam.claude.autoCompactWindow
+        }"} 1''
       ) guests
     )
   );
