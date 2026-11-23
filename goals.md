@@ -19,7 +19,7 @@ PRs merge.
 | P1 | [skills#137](https://github.com/sammasak/skills/issues/137) | Observability engineer | merged, skills#147; follow-up with `m2` |
 | P1 | [skills#133](https://github.com/sammasak/skills/issues/133) | Nix platform engineer | merged, skills#149 |
 | P1 | [skills#136](https://github.com/sammasak/skills/issues/136) | Dynamic handoffs pilot | offline pilot merged, skills#151; open for one live named-role spawn |
-| P2 | skills [#132](https://github.com/sammasak/skills/issues/132), [#134](https://github.com/sammasak/skills/issues/134), [#135](https://github.com/sammasak/skills/issues/135) | Remaining specialists | #132 with `m2` |
+| P2 | skills [#132](https://github.com/sammasak/skills/issues/132), [#134](https://github.com/sammasak/skills/issues/134), [#135](https://github.com/sammasak/skills/issues/135) | Remaining specialists | #132 merged, skills#153; #134 (skills#154) and #135 (skills#155) in review fixes with `m2` |
 | P1 | [#646](https://github.com/sammasak/nixos-config/issues/646) | Execution pool, v0.1 | split below; never ahead of a P0 item |
 | P2 | [#626](https://github.com/sammasak/nixos-config/issues/626) | Auto-compaction benchmarks | matrix doc when idle; benchmark is token spend |
 
@@ -31,10 +31,10 @@ PRs merge.
 |------|------|-------|----|
 | 624-a | Inventory: signal → rule → route → last receipt → gap | merged | #629 |
 | 624-b | Annotation contract (summary, description, query, runbook), asserted by a check | merged, deployed | #632, #636 |
-| 624-c | OTLP relay rejection alert (the monitoring-blindness example) | review: wrong metric name, fix with `m1` | #659 |
+| 624-c | OTLP relay rejection alert (the monitoring-blindness example) | merged, live on black-pi; no rejected write seen live yet | #659 |
 | 624-d | Journal-delivery stale alert | merged, live on black-pi | #640 |
 | 624-e | Backup stale, never recorded, collector stale | merged, live on black-pi; first recorded runs due 24 Nov 03:00 | #640 |
-| 624-f | Synthetic fire and resolve test through Alertmanager and alert-bridge | queued | |
+| 624-f | Synthetic fire and resolve test through Alertmanager and alert-bridge | `m1`, in gate | |
 | 624-g | Live delivery receipts | queued: black-pi and lenovo are on main | |
 | 624-h | alert-bridge renders query and runbook in the ntfy page (alert-bridge repo, then an app bump) | queued | |
 
@@ -44,7 +44,7 @@ PRs merge.
 |------|------|-------|----|
 | 625-a | Read-only check of the hook JSONL on lenovo, schema decision | done: comment on #625 | |
 | 625-1 | Collector, fixture tests, NixOS wiring (nav-metrics pattern) | merged, enabled on no host yet | #638 |
-| 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts, collector on lenovo | review fixes with `a1` | #644 |
+| 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts, collector on lenovo | merged, live: collector on lenovo, rules on black-pi | #644 |
 | 625-pilot | Lenovo pilot, on/off benchmark | owner gate: token spend | |
 
 ### #646 execution pool (v0.1)
@@ -54,7 +54,7 @@ are. v0.2 and v0.3 stay locked until the v0.1 offline gate has evidence. Deferre
 
 | Item | What | Needs | State | PR |
 |------|------|-------|-------|----|
-| [#649](https://github.com/sammasak/nixos-config/issues/649) | Contract: ADR, `pkgs/exec-pool` types and state machine, compatibility fixture | | `a1`, after #644 | |
+| [#649](https://github.com/sammasak/nixos-config/issues/649) | Contract: ADR, `pkgs/exec-pool` types and state machine, compatibility fixture | | `a1`, second push gate running | |
 | [#650](https://github.com/sammasak/nixos-config/issues/650) | `sam.workers.executionPool` slot count | #649 | queued | |
 | [#651](https://github.com/sammasak/nixos-config/issues/651) | PostgreSQL queue, leases, fencing | #649 | queued | |
 | [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | queued | |
@@ -70,10 +70,10 @@ Placement order: acer, then msi, asus last (it carries ollama and the heavier lo
 
 | Host | Worker | Item |
 |------|--------|------|
-| acer-swift | `a1` | 625-2, then #649 |
+| acer-swift | `a1` | #649 |
 | acer-swift | `herman` | dashboards lane (#525, #523), not this week's list |
-| msi-ms7758 | `m1` | 624-c |
-| msi-ms7758 | `m2` | skills#132; killed twice by the pool OOM (#647) |
+| msi-ms7758 | `m1` | 624-f |
+| msi-ms7758 | `m2` | skills#134, #135 review fixes; killed twice by the pool OOM (#647) |
 | asus-b460m | none | `a624`, `s138`, `s130` retired |
 
 msi and asus have no `gh` login: workers push branches over SSH and the lenovo session opens and merges the PRs.
@@ -82,7 +82,8 @@ msi and asus have no `gh` login: workers push branches over SSH and the lenovo s
 
 Every host deployed main on 23 Nov: acer-swift, msi-ms7758, asus-b460m, black-pi, lenovo. The first black-pi deploy
 rolled back on a journal-metrics start race, fixed by #634. asus deployed again after #639 (workers retired).
-The skills pin (#643) is on lenovo, asus and acer; black-pi is on #640. Owed: msi, when its workers are between gates.
+The skills pin (#661) is on lenovo and asus; black-pi is on #659. Owed: acer and msi, when their workers are between
+gates. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
 ## Open owner gates
 
@@ -93,7 +94,7 @@ The skills pin (#643) is on lenovo, asus and acer; black-pi is on #640. Owed: ms
 
 - nixos-config: #629 alert inventory, #630 asus workers, #632 and #636 annotation contract, #633 acer and msi slots,
   #634 journal-metrics wants alloy, #635 Claude sessions keep a working shell across a deploy, #638 Shunt collector, #639 asus workers retired,
-  #640 backup and journal alerts, #643 skills pin
+  #640 backup and journal alerts, #643 and #661 skills pins, #644 Shunt dashboard and alerts, #659 OTLP rejection alert
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
-  #149 nix platform engineer (#133), #151 handoffs pilot (#136)
+  #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132)
