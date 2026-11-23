@@ -60,11 +60,11 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   lists a host by hand.
 - Deleting a file deletes its dashboard at the next switch (`disableDeletion = false`). A dashboard edited in the UI
   cannot be saved: change the JSON.
-- Agent harnesses, row "On versus off": the table names each host/worker's Shunt and compaction window. Compare a
-  worker with its opposite over the same days, per Bash call or per API request, never in raw totals.
-  - "Shunt helps": on workers spill and redirect, show fewer context tokens per API request than off workers, with no
-    rise in compactions.
-  - "The 300K window helps": herman's auto compactions per day fall below the default workers' at a similar request count.
+- Agent harnesses, "On versus off": the table gives each host/worker's Shunt and window; compare per Bash call or
+  main-thread request, never raw totals. "Shunt helps": on workers spill and redirect and send fewer context tokens
+  per request than off ones, compactions per request not rising. "The 300K window helps": herman compacts less per
+  request than a default worker with the same Shunt. Today a1 (on, default) and herman (off, 300K) differ in both and
+  acer's host sends no Claude events, so neither claim isolates until two workers differ in one setting.
 
 ## Rules and paging
 
