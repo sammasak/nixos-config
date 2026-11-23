@@ -3,32 +3,34 @@
 groups:
   - name: harness.compactions
     interval: 1m
-    # a line pushed up to a minute late still lands in its one-minute window
-    query_offset: 1m
     rules:
-      # Claude Code's automatic compactions per host and worker (#626), from the sanitized OTLP events (alloy-otlp).
-      # worker is the host relay's stamp, empty for a session on the host itself. One minute per evaluation, so
-      # sum_over_time(...[1d]) is a day's count; a minute with none writes no sample.
+      # Claude Code's automatic compactions per host and worker, from the sanitized OTLP events (alloy-otlp).
+      # worker is the host relay's stamp, empty for a session on the host itself. Each minute is counted once, so
+      # sum_over_time(...[1d]) is a lower bound: a line later than the offset (alloy-otlp's queue replaying after an
+      # outage) or a minute Loki was down is never counted; for an exact total query Loki. No events, no sample.
       - record: host_worker:claude_code_auto_compactions:count1m
         expr: |
           sum by (host, worker) (
             count_over_time(
-              {observer="harness", event_name="compaction"}
+              {observer="harness", service_name="claude-code", event_name="compaction"}
                 | json worker="attributes.worker", trigger="attributes.trigger"
                 | trigger="auto"
                 | label_format host="{{ .host_name }}"
-              [1m]
+              # the minute before last, so a line pushed up to a minute late is counted (Loki drops a group's
+              # query_offset)
+              [1m] offset 1m
             )
           )
 
   - name: journal.alerts
     rules:
-      # systemd's line for every process the kernel kills in a unit's cgroup, at its own MemoryMax or for the whole
-      # host; NodeOOMKill counts the same kills without naming the unit. PID 1's lines ship as unit="init.scope".
+      # systemd's line when a unit's cgroup sees OOM kills, at its own MemoryMax or for the whole host (several kills
+      # between its reads are one line); NodeOOMKill counts the kills without naming the unit. PID 1's lines ship as
+      # unit="init.scope"; oom_unit is folded as the journal collector folds unit, so the query matches its stream.
       - alert: UnitOOMKilled
         expr: |
           sum by (node, oom_unit) (
-            label_replace(
+            label_replace(label_replace(label_replace(
               count_over_time(
                 {job="host-journal", unit="init.scope"}
                   |= "of this unit has been killed by the OOM killer"
@@ -36,7 +38,9 @@ groups:
                   | label_format node="{{ .host }}"
                 [15m]
               ),
-              "oom_unit", "transient", "oom_unit", "run-.+"
+              "oom_unit", "transient", "oom_unit", "run-.+[.](scope|service)"),
+              "oom_unit", "session", "oom_unit", "session-.+[.]scope"),
+              "oom_unit", "systemd-coredump", "oom_unit", "systemd-coredump@.+[.]service"
             )
           ) > 0
         labels:
@@ -44,6 +48,6 @@ groups:
           team: homelab
         annotations:
           summary: "The OOM killer hit {{ $labels.oom_unit }} on {{ $labels.node }}"
-          description: "systemd logged {{ $value }} OOM kill(s) in {{ $labels.oom_unit }} on {{ $labels.node }} in the last 15 minutes: the unit at its MemoryMax or the host out of memory. Read that unit's journal before raising any limit."
+          description: "systemd logged {{ $value }} OOM event(s) in {{ $labels.oom_unit }} on {{ $labels.node }} in the last 15 minutes: the unit at its MemoryMax or the host out of memory. Read that unit's journal before raising any limit."
           query: '{job="host-journal", host="{{ $labels.node }}", unit=~"init.scope|{{ $labels.oom_unit }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#unitoomkilled"

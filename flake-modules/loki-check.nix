@@ -38,6 +38,8 @@ let
   lan = seed { homelab.loki.listenAddress = "192.0.2.10"; };
   # a retention under 24h; loopback on the host sam.fleet.loki names is seeded in the probe (scripts/gate-probe.nix)
   local = seed { homelab.loki.retention = "12h"; };
+  # msi serves neither Alertmanager nor Prometheus
+  offHost = seed { homelab.loki.ruler.enable = true; };
   anyAddress = seed {
     homelab.loki.listenAddress = "0.0.0.0";
     networking.firewall.enable = lib.mkForce false;
@@ -54,6 +56,7 @@ in
           ) "loki-check: the seeded msi fails ${toString (failing lan)}";
           assert expectFailure "retention 12h" local "homelab.loki.retention 12h";
           assert expectFailure "0.0.0.0 without the firewall" anyAddress "homelab.loki.listenAddress 0.0.0.0";
+          assert expectFailure "the ruler off its listeners' host" offHost "homelab.loki.ruler:";
           assert lib.assertMsg (lib.head periods == firstPeriod)
             "loki-check: black-pi's first schema_config period is ${builtins.toJSON (lib.head periods)}; the stored chunks need ${builtins.toJSON firstPeriod}: append a new period instead";
           # upstream validates only without configFile and extraFlags; otherwise this check would pass unvalidated

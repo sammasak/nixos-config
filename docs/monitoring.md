@@ -7,7 +7,7 @@ is the modules named here; this page only maps them.
 
 | host | service | listens on | read by |
 |---|---|---|---|
-| black-pi | Prometheus (`modules/homelab/monitoring/prometheus.nix`), 15 d or 1500 MB, OTLP and remote-write receivers on | fleet address :9090 | Grafana; acer's alloy-otlp writes; Loki's ruler writes; lenovo's watchdog |
+| black-pi | Prometheus (`modules/homelab/monitoring/prometheus.nix`), 15 d or 1500 MB, OTLP and remote-write receivers on (either lets a `from` host write any series) | fleet address :9090 | Grafana; acer's alloy-otlp writes; Loki's ruler writes; lenovo's watchdog |
 | black-pi | Alertmanager (`modules/homelab/monitoring/alertmanager.nix`), one unclustered instance | fleet address :9093 | Prometheus; Loki's ruler |
 | black-pi | Grafana (`modules/homelab/monitoring/grafana.nix`), sign-in through Authentik only | fleet address :3000 | acer's Caddy (grafana.sammasak.dev) |
 | black-pi | Loki (`loki.nix`), ruler on | fleet address :3100 | every fleet host's journal collector |
@@ -68,7 +68,8 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
 - Loki's ruler (`homelab.loki.ruler`) evaluates the LogQL rules in `modules/homelab/monitoring/loki-rules/fake/`: it
   remote-writes recordings to Prometheus and sends alerts to Alertmanager, both on black-pi over lo. Prometheus's
   rule view does not list them; Loki's `/prometheus/api/v1/rules` does. The `loki-ruler-black-pi` check runs them.
-  - `host_worker:claude_code_auto_compactions:count1m{host,worker}`: Claude Code's auto compactions per minute (#626).
+  - `host_worker:claude_code_auto_compactions:count1m{host,worker}`: Claude Code's auto compactions per minute (#626),
+    each minute counted once: a sum over a day is a lower bound (late lines, minutes Loki was down).
   - UnitOOMKilled (warning): systemd logged an OOM kill in a system unit, named in `oom_unit`.
 - Alertmanager publishes every alert to lenovo's ntfy except Watchdog, InfoInhibitor, HostExpectedOff, any alert
   labelled `notify="none"` and any `severity="info"` alert (NodeCPUHighUsage): those go to a null receiver. The shipping team's alerts are muted at night.
