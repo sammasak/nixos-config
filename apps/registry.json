@@ -10,8 +10,8 @@
     "alert-bridge": {
       "source": {
         "repo": "sammasak/alert-bridge",
-        "rev": "e2d61abf8df857156740119df8ab7f0c59582e20",
-        "narHash": "sha256-9gYeUN9qxG6UF1RKt0yBAnzrqOAjEoMOD0ze6sjKZ/c="
+        "rev": "6c704c797f1f05637ad03d36bd31f34ab8f20600",
+        "narHash": "sha256-vjD7Xr2YsEyHP+wf3YuO4UTzX/gktV0wsbUX2c7+YN8="
       }
     }
   }
