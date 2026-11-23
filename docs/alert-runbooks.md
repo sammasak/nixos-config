@@ -83,6 +83,46 @@ Fires: Loki on black-pi exports no ingester metric, or its scrape target is down
 persisted.
 First: on black-pi, `systemctl status loki` and `journalctl -u loki -b`.
 
+## JournalEntriesDropped
+
+Fires: `homelab_journal_writer_dropped_entries_total` rose in the last 15 minutes on a host whose node-exporter
+answers, for 5 minutes. Those journal lines are not in Loki. `reason` is Alloy's own (`rate_limited`,
+`queue_is_full`, `ingester_error`, `line_too_long`, `stream_limited`, else `other`).
+First: on the host, `journalctl -u alloy --since -30m`; on black-pi, `journalctl -u loki --since -30m` for the
+rejection's side of a `rate_limited` or `ingester_error`.
+Do not: raise Loki's limits before the journal shows which stream hit them.
+
+## JournalMetricsStale
+
+Fires: the host's last journal-metrics collection failed (`homelab_journal_metrics_collection_success` 0), is over
+180 seconds old, or the host is up with no `journal.prom` at all, for 10 minutes, so JournalEntriesDropped is blind
+there. A host that is off has no series and does not fire.
+First: on the host, `systemctl status journal-metrics.timer journal-metrics alloy` and `journalctl -u journal-metrics -n 20`.
+
+## BackupStale
+
+Fires: `time() - homelab_backup_last_success_timestamp_seconds` is over 36 hours for 10 minutes. Every job is a daily
+timer, so one run has failed, been skipped or not run. The timestamp exists only after a recorded success, and
+`backup.prom` is on tmpfs: a backup with no record is BackupNeverRecorded, a stale or missing collector
+BackupCollectorStale.
+First: on the host, `systemctl list-timers <backup>`, `systemctl status <backup>` and `journalctl -u <backup> -n 50`.
+Do not: start a production backup by hand only to clear the alert; let the timer run once the cause is fixed.
+
+## BackupNeverRecorded
+
+Fires: `homelab_backup_metadata_available` is 0 for 36 hours: the collector finds no valid `success.json` for that
+backup. The job has not completed since it was instrumented, or its post-success record step (an `ExecStartPost` whose
+failure systemd ignores) did not write.
+First: on the host, `journalctl -u <backup> -n 50` for the run and the `backup-metrics record` line after it;
+`ls -l /var/lib/backup-metrics/<backup>/`.
+Do not: write `success.json` by hand.
+
+## BackupCollectorStale
+
+Fires: the backup-metrics collector's last completed scan is over 900 seconds old, or acer or lenovo is up with no
+`backup.prom` at all (it is on tmpfs, so a collector that never ran since boot leaves nothing), for 15 minutes.
+First: on the host, `systemctl status backup-metrics.timer backup-metrics` and `journalctl -u backup-metrics -n 20`.
+
 ## EdgeSocketDown
 
 Fires: nothing listens on Caddy's upstream socket on acer, or the edge check stopped writing, for 2 minutes. Signed-in
