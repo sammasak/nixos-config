@@ -18,7 +18,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use exec_pool::queue::{QueueError, Store, Submitted};
+use exec_pool::queue::{METRICS_UNAVAILABLE, QueueError, Store, Submitted};
 use exec_pool::{
     Agent, Error, Event, Kind, Pins, Receipt, Resolution, SchemaVersion, Settle, Slot, SlotState,
     Status, TaskSpec,
@@ -588,6 +588,7 @@ fn the_queue_survives_a_restart_and_says_when_the_database_is_down() {
         s.claim(&slot("s1"), 60).map(|_| ()),
         s.apply(&a, &ev(1, Kind::Start), None).map(|_| ()),
         s.reconcile().map(|_| ()),
+        s.metrics().map(|_| ()),
     ] {
         assert!(
             matches!(result, Err(QueueError::Unavailable(_))),
@@ -608,9 +609,43 @@ fn the_queue_survives_a_restart_and_says_when_the_database_is_down() {
 }
 
 #[test]
-fn a_state_change_carries_ids_and_the_history_no_prompt() {
+fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
     let pg = Pg::new();
     let mut s = pg.migrated();
+    // no traffic: every state is present at zero, unlike the unavailable rendering
+    let has = |text: &str, line: &str| text.lines().any(|l| l == line);
+    let idle = s.metrics().unwrap();
+    assert!(has(&idle, "exec_pool_queue_up 1"));
+    let states = [
+        "queued",
+        "leased",
+        "running",
+        "checkpointing",
+        "waiting",
+        "succeeded",
+        "failed",
+        "needs_review",
+    ];
+    for state in states {
+        assert!(
+            has(&idle, &format!("exec_pool_attempts{{state=\"{state}\"}} 0")),
+            "{state}"
+        );
+    }
+    let series = |text: &str| {
+        text.lines()
+            .filter(|l| l.starts_with("exec_pool_attempts{"))
+            .count()
+    };
+    assert_eq!(series(&idle), states.len());
+    assert!(has(&idle, "exec_pool_queued_oldest_seconds 0"));
+    assert_eq!(
+        idle.strip_suffix("exec_pool_queue_up 1\n").map(|_| ()),
+        None,
+        "the up-1 rendering carries the series"
+    );
+    assert!(idle.starts_with(METRICS_UNAVAILABLE.trim_end_matches("exec_pool_queue_up 0\n")));
+
     let Submitted::New { attempt: a, change } = s.submit(&task("t-1", 1)).unwrap() else {
         panic!("not new");
     };
@@ -631,6 +666,21 @@ fn a_state_change_carries_ids_and_the_history_no_prompt() {
     assert!(line["durations"]["in_state_ms"].as_i64().unwrap() >= 0);
     assert!(line["durations"]["since_submit_ms"].as_i64().unwrap() >= 0);
 
+    let text = s.metrics().unwrap();
+    assert!(has(&text, "exec_pool_attempts{state=\"leased\"} 1"));
+    assert!(has(&text, "exec_pool_attempts{state=\"queued\"} 0"));
+    assert_eq!(series(&text), states.len());
+    assert!(has(
+        &text,
+        "exec_pool_transitions_total{from=\"queued\",to=\"leased\",reason=\"lease\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_transitions_total{from=\"none\",to=\"queued\",reason=\"submit\"} 1"
+    ));
+    for id in ["t-1", a.as_str(), "s0", "msi-ms7758", ARGV_MARKER] {
+        assert!(!text.contains(id), "{id} in the metrics");
+    }
     // the history holds ids and states, never the prompt or the workdir
     let rows = pg
         .sql()
@@ -717,4 +767,107 @@ fn a_claim_takes_only_what_fits_its_slot() {
     let mut idle = slot("s2");
     idle.agents = BTreeSet::from([Agent::Claude]);
     assert!(s.claim(&idle, 60).unwrap().is_none());
+}
+
+fn cli(pg: &Pg, args: &[&str], stdin: &str) -> (Option<i32>, String) {
+    use std::io::Write as _;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_exec-pool-queue"))
+        .args(args)
+        .env("EXEC_POOL_DB", pg.conninfo())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    (out.status.code(), String::from_utf8(out.stdout).unwrap())
+}
+
+#[test]
+fn the_cli_logs_one_line_per_change_and_exits_75_without_a_database() {
+    let mut pg = Pg::new();
+    assert_eq!(cli(&pg, &["migrate"], "").0, Some(0));
+    let spec = serde_json::to_string(&task("t-1", 1)).unwrap();
+    let (code, out) = cli(&pg, &["submit", "--granted", "read_only"], &spec);
+    assert_eq!(code, Some(0));
+    let lines: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["msg"], "state_change");
+    assert_eq!(lines[0]["change"]["to"], "queued");
+    assert_eq!(lines[1]["result"]["attempt"], "t-1.a");
+    // a capability the submitter was not granted is refused
+    assert_eq!(cli(&pg, &["submit", "--granted", ""], &spec).0, Some(1));
+    let (code, out) = cli(
+        &pg,
+        &["claim", "--lease-secs", "60"],
+        &serde_json::to_string(&slot("s0")).unwrap(),
+    );
+    assert_eq!(code, Some(0));
+    assert!(out.lines().count() == 2 && out.contains("\"to\":\"leased\""));
+    assert_eq!(
+        cli(&pg, &["start", "--attempt", "t-1.a", "--epoch", "0"], "").0,
+        Some(1),
+        "stale epoch"
+    );
+    assert_eq!(cli(&pg, &["start", "--attempt", "t-1.a"], "").0, Some(2));
+    assert_eq!(
+        cli(
+            &pg,
+            &[
+                "start",
+                "--attempt",
+                "t-1.a",
+                "--epoch",
+                "1",
+                "--epoch",
+                "1"
+            ],
+            ""
+        )
+        .0,
+        Some(2),
+        "a repeated flag"
+    );
+    assert_eq!(
+        cli(&pg, &["submit", "--granted", "read_only"], "").0,
+        Some(1),
+        "empty stdin"
+    );
+    let (code, out) = cli(&pg, &["start", "--attempt", "t-1.a", "--epoch", "1"], "");
+    assert_eq!(code, Some(0));
+    let lines: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        (&lines[0]["change"]["to"], &lines[1]["result"]["status"]),
+        (&json!("running"), &json!("running"))
+    );
+    let (code, out) = cli(&pg, &["live"], &serde_json::to_string(&slot("s0")).unwrap());
+    assert_eq!(code, Some(0));
+    assert!(out.contains("\"id\":\"t-1.a\""), "{out}");
+
+    // a schema-less database is a failure too, rendered absent rather than empty
+    let mut c = pg.sql();
+    c.batch_execute("ALTER TABLE attempts RENAME TO attempts_moved")
+        .unwrap();
+    let (code, out) = cli(&pg, &["metrics"], "");
+    assert_eq!((code, out.as_str()), (Some(1), METRICS_UNAVAILABLE));
+    c.batch_execute("ALTER TABLE attempts_moved RENAME TO attempts")
+        .unwrap();
+
+    pg.stop();
+    let (code, out) = cli(&pg, &["metrics"], "");
+    assert_eq!((code, out.as_str()), (Some(75), METRICS_UNAVAILABLE));
+    assert_eq!(cli(&pg, &["reconcile"], "").0, Some(75));
 }
