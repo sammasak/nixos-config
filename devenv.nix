@@ -186,9 +186,11 @@ let
             for o in $(names "$kind.$s"); do all+=("$kind.$s.$o"); done
           done
         done
-        # A host's deploy-activate check wraps its toplevel, so evaluating that check evaluates the host: a process for
-        # the toplevel alone evaluated acer and msi a second time (75 s each). A host without one is evaluated here.
-        # args: the host, then every output; prints the check that holds the host's toplevel
+        # A host's deploy-activate check wraps its toplevel (flake-modules/deploy.nix), so evaluating that check
+        # evaluates the host: a process for the toplevel alone evaluated acer and msi a second time (75 s each). After
+        # the checks, its derivation must hold a NixOS system, or the toplevel is evaluated on its own after all; that
+        # it is this host's rests on mkNode, which scripts/test-gate-steps.py pins.
+        # args: the host, then every output; prints the deploy-activate check of that name
         covered() {
           local h=$1 c
           shift
@@ -197,13 +199,15 @@ let
           done
         }
         # deploy-activate-<node> and deploy-schema-<node> hold the same host: one process evaluates the pair (acer: 86 s
-        # and +40 MiB for both, 86 s for either alone). Sets d to the check's drvPath.
-        declare -A pre=()
+        # and +40 MiB for both, 86 s for either alone). Sets d to the check's drvPath and with to its pair: the pair's
+        # eval seconds are on the check evaluated first, 0 on the other, and each record names the other in eval_with=.
+        declare -A pre=() partner=()
         drvpath() {
           local s=''${1#checks.} o node="" out
           o=''${s#*.}
           s=''${s%%.*}
           d=''${pre[$1]:-}
+          with=''${partner[$1]:-}
           [ -z "$d" ] || return 0
           case $o in deploy-activate-* | deploy-schema-*) node=''${o#deploy-*-} ;; esac
           if [ -n "$node" ] && [[ " ''${all[*]} " == *" checks.$s.deploy-activate-$node "* ]] \
@@ -213,20 +217,21 @@ let
               --apply "cs: map (n: cs.\''${n}.drvPath) [ \"deploy-activate-$node\" \"deploy-schema-$node\" ]")
             pre[checks.$s.deploy-activate-$node]=$(jq -er '.[0]' <<<"$out") || return 1
             pre[checks.$s.deploy-schema-$node]=$(jq -er '.[1]' <<<"$out") || return 1
+            partner[checks.$s.deploy-activate-$node]=checks.$s.deploy-schema-$node
+            partner[checks.$s.deploy-schema-$node]=checks.$s.deploy-activate-$node
             d=''${pre[$1]}
+            with=''${partner[$1]}
           else
+            echo "nixos-flake-check: $1" >&2
             d=$(nix eval --raw --no-write-lock-file ".#$1.drvPath")
+            pre[$1]=$d
           fi
         }
         hosts=$(names nixosConfigurations)
+        held=()
         for h in $hosts; do
           c=$(covered "$h" "''${all[@]}")
-          if [ -n "$c" ]; then
-            echo "nixos-flake-check: eval nixosConfigurations.$h.config.system.build.toplevel: inside $c, not a process of its own" \
-              | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
-          else
-            drv "nixosConfigurations.$h.config.system.build.toplevel"
-          fi
+          if [ -n "$c" ]; then held+=("$h:$c"); else drv "nixosConfigurations.$h.config.system.build.toplevel"; fi
         done
         for s in $(names formatter); do drv "formatter.$s"; done
         for p in "''${all[@]}"; do
@@ -261,7 +266,7 @@ let
                 if [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ]; then
                   r=dry
                 elif ! nix build --no-link "$d^*"; then
-                  ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev compiled="$n" fetched="$m" result=fail head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                  ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev eval_with="$with" compiled="$n" fetched="$m" result=fail head="''${NIXOS_QA_HEAD:-}" drv="$d"
                   exit 1
                 elif [ "$n" -gt 0 ]; then
                   r=built
@@ -271,7 +276,7 @@ let
                   r=present
                 fi
                 took "build $c" "$t"
-                ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev compiled="$n" fetched="$m" result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev eval_with="$with" compiled="$n" fetched="$m" result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
                 ;;
               foreign)
                 owner=''${o#deploy-*-}
@@ -290,6 +295,18 @@ let
             took "eval $p" "$t"
           else
             drv "$p"
+          fi
+        done
+        for hc in "''${held[@]}"; do
+          h=''${hc%%:*}
+          c=''${hc#*:}
+          k=$(nix-store -qR "''${pre[$c]}" | grep -cE -e '-nixos-system-[^/]*[.]drv$') || k=0
+          if [ "$k" -gt 0 ]; then
+            echo "nixos-flake-check: eval nixosConfigurations.$h.config.system.build.toplevel: inside $c, whose derivation holds a NixOS system" \
+              | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
+          else
+            echo "nixos-flake-check: $c holds no NixOS system: nixosConfigurations.$h evaluated on its own" >&2
+            drv "nixosConfigurations.$h.config.system.build.toplevel"
           fi
         done
         if [ ''${#deferred[@]} -gt 0 ]; then
