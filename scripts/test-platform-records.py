@@ -89,6 +89,13 @@ check(not unknown, f"every field a caller writes is in its kind's schema (unknow
 unwritten = {k: sorted(required[k] - n) for k, n in written.items() if k in here - pending and required[k] - n}
 check(not unwritten, f"every field of a kind written here is written by some caller (never: {unwritten})")
 
+# the gate record carries its wait for the heavy-work lock apart from its run time (pkgs/heavy-lock exports it); unknown,
+# never 0, when no heavy-lock of ours measured it (a flock -o launcher, NIXOS_QA_LOCKED set by another)
+qa_gate = [line for line in (ROOT / "devenv.nix").read_text().splitlines()
+           if "${lib.getExe record} gate gate=nixos-qa " in line]
+check(len(qa_gate) == 1 and 'wait_seconds="\'\'${HEAVY_LOCK_WAIT_SECONDS:-unknown}"' in qa_gate[0],
+      f"the nixos:qa gate record has wait_seconds from HEAVY_LOCK_WAIT_SECONDS, unknown by default ({qa_gate})")
+
 
 class Loki(http.server.BaseHTTPRequestHandler):
     bodies: list = []

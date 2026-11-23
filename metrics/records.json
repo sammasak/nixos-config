@@ -13,7 +13,8 @@
         "deferred",
         "head",
         "checkout",
-        "deferred_checks"
+        "deferred_checks",
+        "wait_seconds"
       ]
     },
     "gate-step": {
