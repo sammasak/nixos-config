@@ -125,6 +125,9 @@ in
       # #157: "Switch automatically" when safeguards flag a message; unset, every session stops at a dialog asking
       switchModelsOnFlag = true;
     }
+    // lib.optionalAttrs (osConfig.sam.claude.autoCompactWindow != null) {
+      inherit (osConfig.sam.claude) autoCompactWindow;
+    }
     // {
       env = {
         DISABLE_ERROR_REPORTING = "1";

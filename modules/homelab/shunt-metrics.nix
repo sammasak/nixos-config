@@ -2,6 +2,8 @@
 # host, read-only and offline, and leaves the last 24 h of Shunt decisions for this host's node-exporter; on a host
 # with dev environments a unit per declared instance does the same for its home, labelled worker. Every series
 # carries shunt="on|off", the declared sam.claude.bulkReader.enable of the host or that guest, so the two compare.
+# A static claude_auto_compact_window_info series per host and guest names its declared sam.claude.autoCompactWindow
+# (variant, "default" when null), for joining the compaction comparison (#626).
 {
   config,
   lib,
@@ -18,6 +20,20 @@ let
   guests = lib.attrNames envs.instances;
   guestDir = "/var/lib/shunt-metrics-guests";
   guestUnit = n: "shunt-metrics-guest-${n}";
+  variant = w: if w == null then "default" else toString w;
+  compactionInfo = pkgs.writeText "claude-compaction.prom" (
+    lib.concatLines (
+      [
+        "# HELP claude_auto_compact_window_info The declared Claude Code autoCompactWindow in tokens, or default."
+        "# TYPE claude_auto_compact_window_info gauge"
+        ''claude_auto_compact_window_info{variant="${variant config.sam.claude.autoCompactWindow}"} 1''
+      ]
+      ++ map (
+        n:
+        ''claude_auto_compact_window_info{worker="${n}",variant="${variant config.containers.${n}.config.sam.claude.autoCompactWindow}"} 1''
+      ) guests
+    )
+  );
   timer = {
     wantedBy = [ "timers.target" ];
     timerConfig = {
@@ -42,6 +58,8 @@ in
         # instance's file ages out by its mtime
         systemd.tmpfiles.rules = [
           "d ${dir} 0755 ${user} - -"
+          # its mtime is the store's epoch: no textfile freshness rule may match it
+          "L+ ${dir}/claude-compaction.prom - - - - ${compactionInfo}"
         ]
         ++ lib.optional (guests != [ ]) "d ${guestDir} 0755 root root m:2d";
 

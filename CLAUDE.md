@@ -194,6 +194,10 @@ the session gets the path with a head and tail excerpt; failed commands are unto
   pick up a change. `notifyHookGeneration` pings ntfy only when the skills store path changes (a pin bump), not
   when this option flips.
 
+**Auto-compaction** (`sam.claude.autoCompactWindow`, null by default): sets Claude Code's `autoCompactWindow`; a guest
+sets it through a guest module like the bulk reader. On now: acer's worker herman at 300000; `homelab.shuntMetrics`
+writes `claude_auto_compact_window_info{worker,variant}` so it compares with the default side (#626).
+
 ### Codex
 
 Configuration lives in `modules/programs/cli/codex/`:
