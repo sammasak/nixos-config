@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use exec_pool::{
     Agent, Attempt, CheckpointRef, Error, Event, Kind, Pins, Placement, Receipt, RelPath,
-    SchemaVersion, Settle, Slot, SlotState, Status, Submission, TaskSpec, submit, transition,
+    Resolution, RetryPolicy, SchemaVersion, Settle, Slot, SlotState, Status, Submission, TaskSpec,
+    submit, transition,
 };
 use serde_json::{Value, json};
 
@@ -58,11 +59,15 @@ fn queued() -> Attempt {
         id: "a-1".to_owned(),
         task_id: "t-1".to_owned(),
         lease_epoch: 0,
+        tries: 0,
         status: Status::Queued,
         placement: None,
         pins: Pins::default(),
     }
 }
+
+/// Enough attempts for every path below; `max_attempts_stop_retries` tests the limit.
+const RETRY: RetryPolicy = RetryPolicy { max_attempts: 3 };
 
 const fn ev(epoch: u64, kind: Kind) -> Event {
     Event { epoch, kind }
@@ -79,7 +84,7 @@ fn lease(epoch: u64) -> Event {
 }
 
 fn step(a: &Attempt, kind: Kind) -> Result<Attempt, Error> {
-    transition(a, &ev(a.lease_epoch, kind))
+    transition(a, &RETRY, &ev(a.lease_epoch, kind))
 }
 
 /// Each event at the attempt's epoch of the moment, as the one current holder sends it.
@@ -383,7 +388,7 @@ fn stale_epoch_is_rejected() {
     let expired = run(&[placed(), Kind::Expire]).unwrap();
     assert_eq!((expired.status, expired.lease_epoch), (Status::Queued, 2));
     assert_eq!(
-        transition(&expired, &ev(1, Kind::Start)),
+        transition(&expired, &RETRY, &ev(1, Kind::Start)),
         Err(Error::StaleEpoch { got: 1, current: 2 })
     );
     let second = run(&[
@@ -401,19 +406,19 @@ fn stale_epoch_is_rejected() {
         Kind::Expire,
     ] {
         assert_eq!(
-            transition(&second, &ev(1, kind)),
+            transition(&second, &RETRY, &ev(1, kind)),
             Err(Error::StaleEpoch { got: 1, current: 3 })
         );
     }
     assert_eq!(
-        transition(&second, &ev(3, Kind::Settle(Settle::Succeeded)))
+        transition(&second, &RETRY, &ev(3, Kind::Settle(Settle::Succeeded)))
             .unwrap()
             .status,
         Status::Succeeded
     );
     // a lease re-delivered after the expiry it raced with
     assert_eq!(
-        transition(&expired, &lease(0)),
+        transition(&expired, &RETRY, &lease(0)),
         Err(Error::StaleEpoch { got: 0, current: 2 })
     );
 }
@@ -499,4 +504,191 @@ fn status_spelling_is_snake_case() {
     .unwrap();
     a.validate().unwrap();
     assert_eq!(a.pins.agent_version.as_deref(), Some("2.1.311"));
+}
+
+#[test]
+fn max_attempts_stop_retries() {
+    let once = RetryPolicy { max_attempts: 1 };
+    let leased = transition(&queued(), &once, &lease(0)).unwrap();
+    assert_eq!(leased.tries, 1);
+    // an expired lease with no attempt left fails instead of looping back to queued
+    let expired = transition(&leased, &once, &ev(1, Kind::Expire)).unwrap();
+    assert_eq!((expired.status, expired.lease_epoch), (Status::Failed, 2));
+    // so does a retry the runner asks for
+    let at = [Kind::Start, Kind::Checkpoint]
+        .into_iter()
+        .try_fold(leased, |a, k| transition(&a, &once, &ev(1, k)))
+        .unwrap();
+    let retried = transition(&at, &once, &ev(1, Kind::Settle(Settle::Queued))).unwrap();
+    assert_eq!(retried.status, Status::Failed);
+    // and a record claiming a lease left is still refused one past the limit
+    let mut spent = queued();
+    spent.tries = 1;
+    assert_eq!(
+        transition(&spent, &once, &lease(0)),
+        Err(Error::AttemptsExhausted(1))
+    );
+    // with two, the first expiry requeues
+    let two = RetryPolicy { max_attempts: 2 };
+    let a = transition(&queued(), &two, &lease(0)).unwrap();
+    assert_eq!(
+        transition(&a, &two, &ev(1, Kind::Expire)).unwrap().status,
+        Status::Queued
+    );
+
+    let mut v = task_json();
+    v["retry"]["max_attempts"] = json!(0);
+    assert_eq!(parse(&v), Err(Error::NoAttempts));
+}
+
+#[test]
+fn needs_review_is_resolved_only_explicitly() {
+    let review = run(&[placed(), Kind::Start, Kind::Expire]).unwrap();
+    assert_eq!(review.status, Status::NeedsReview);
+    for (to, want) in [
+        (Resolution::Succeeded, Status::Succeeded),
+        (Resolution::Failed, Status::Failed),
+        (Resolution::Queued, Status::Queued),
+    ] {
+        assert_eq!(step(&review, Kind::Resolve(to)).unwrap().status, want);
+    }
+    let requeued = step(&review, Kind::Resolve(Resolution::Queued)).unwrap();
+    assert_eq!(requeued.placement, None);
+    // a resolve decided before the expiry it raced with is stale
+    assert_eq!(
+        transition(
+            &review,
+            &RETRY,
+            &ev(1, Kind::Resolve(Resolution::Succeeded))
+        ),
+        Err(Error::StaleEpoch { got: 1, current: 2 })
+    );
+    // nothing else resolves it, and nothing but needs_review takes a resolve
+    let running = run(&[placed(), Kind::Start]).unwrap();
+    assert!(matches!(
+        step(&running, Kind::Resolve(Resolution::Succeeded)),
+        Err(Error::IllegalTransition {
+            from: Status::Running,
+            event: "resolve"
+        })
+    ));
+}
+
+#[test]
+fn lease_with_an_empty_placement_is_refused() {
+    for (host, slot, field) in [
+        ("", "s0", "placement.host"),
+        ("msi-ms7758", "", "placement.slot"),
+    ] {
+        let lease = Kind::Lease(Placement {
+            host: host.to_owned(),
+            slot: slot.to_owned(),
+        });
+        assert_eq!(step(&queued(), lease), Err(Error::Empty(field)));
+    }
+}
+
+#[test]
+fn every_record_parses_version_first() {
+    let a = attempt_json();
+    assert_eq!(Attempt::parse(&a.to_string()).unwrap(), queued());
+    let mut newer = a.clone();
+    newer["schema_version"] = json!(2);
+    newer["deadline"] = json!("x");
+    assert_eq!(
+        Attempt::parse(&newer.to_string()),
+        Err(Error::SchemaVersion(2))
+    );
+    let mut bad = a;
+    bad["id"] = json!("");
+    assert_eq!(Attempt::parse(&bad.to_string()), Err(Error::Empty("id")));
+
+    let s = serde_json::to_value(slot()).unwrap();
+    assert_eq!(Slot::parse(&s.to_string()).unwrap(), slot());
+    let mut newer = s;
+    newer["schema_version"] = json!(3);
+    newer["drain_at"] = json!(1);
+    assert_eq!(
+        Slot::parse(&newer.to_string()),
+        Err(Error::SchemaVersion(3))
+    );
+
+    let r = receipt_json();
+    Receipt::parse(&r.to_string()).unwrap();
+    let mut newer = r;
+    newer["schema_version"] = json!(2);
+    newer["cost"] = json!(1);
+    assert_eq!(
+        Receipt::parse(&newer.to_string()),
+        Err(Error::SchemaVersion(2))
+    );
+}
+
+fn receipt_json() -> Value {
+    json!({
+        "schema_version": 1, "task_id": "t-1", "attempt_id": "a-1", "lease_epoch": 1, "outcome": "succeeded",
+        "effects": [{ "kind": "github_pr", "id": "sammasak/nixos-config#651" }], "checkpoint": null
+    })
+}
+
+#[test]
+fn receipt_belongs_to_its_settle() {
+    let at = run(&[placed(), Kind::Start, Kind::Checkpoint]).unwrap();
+    let done = step(&at, Kind::Settle(Settle::Succeeded)).unwrap();
+    let r = Receipt::parse(&receipt_json().to_string()).unwrap();
+    r.settles(&done).unwrap();
+    for (field, value) in [
+        ("task_id", json!("t-2")),
+        ("attempt_id", json!("a-2")),
+        ("lease_epoch", json!(3)),
+        ("outcome", json!("failed")),
+    ] {
+        let mut v = receipt_json();
+        v[field] = value;
+        let other = Receipt::parse(&v.to_string()).unwrap();
+        assert_eq!(other.settles(&done), Err(Error::Receipt(field)), "{field}");
+    }
+    // a receipt goes with a terminal settle only
+    let waiting = step(&at, Kind::Settle(Settle::Waiting)).unwrap();
+    assert_eq!(r.settles(&waiting), Err(Error::Receipt("outcome")));
+}
+
+#[test]
+fn a_planned_pause_is_not_a_retry() {
+    let once = RetryPolicy { max_attempts: 1 };
+    let at = [placed(), Kind::Start, Kind::Checkpoint]
+        .into_iter()
+        .try_fold(queued(), |a, k| {
+            let e = a.lease_epoch;
+            transition(&a, &once, &ev(e, k))
+        })
+        .unwrap();
+    let waiting = transition(&at, &once, &ev(1, Kind::Settle(Settle::Waiting))).unwrap();
+    assert_eq!(waiting.tries, 0);
+    let woken = transition(&waiting, &once, &ev(1, Kind::Wake)).unwrap();
+    assert_eq!(woken.status, Status::Queued);
+    assert_eq!(transition(&woken, &once, &lease(1)).unwrap().tries, 1);
+
+    // an operator cannot requeue a review with no attempt left
+    let review = transition(
+        &transition(
+            &transition(&queued(), &once, &lease(0)).unwrap(),
+            &once,
+            &ev(1, Kind::Start),
+        )
+        .unwrap(),
+        &once,
+        &ev(1, Kind::Expire),
+    )
+    .unwrap();
+    assert_eq!(
+        transition(&review, &once, &ev(2, Kind::Resolve(Resolution::Queued))),
+        Err(Error::AttemptsExhausted(1))
+    );
+    assert_eq!(
+        transition(&review, &once, &ev(2, Kind::Resolve(Resolution::Failed)))
+            .unwrap()
+            .status,
+        Status::Failed
+    );
 }

@@ -417,7 +417,7 @@ let
         ${pkgs.python3}/bin/python scripts/test-fleet-contract.py
       '';
 
-  # pkgs/exec-pool's derivation is its test: cargo test, clippy and rustfmt run in the build
+  # pkgs/exec-pool's derivation is its test: cargo test (PostgreSQL fixtures included), clippy and rustfmt run in the build
   execPoolTest = gate "exec-pool-test" [ pkgs.nix ] ''
     nix build --no-link -L .#exec-pool
   '';
@@ -1450,7 +1450,7 @@ in
     "nixos:fleet-contract-test" =
       task "No file but fleet.nix names the ntfy or Loki port; every host's firewall admits each sam.fleet listener from its callers alone and opens nothing else, no service the probe reads binds off its listener's port; lenovo's machines and jump hosts are hosts.nix's runtime hosts (seeded: an open port, an upstream openFirewall, a stray rule, a trusted interface, a host removed)" fleetContractTest;
     "nixos:exec-pool-test" =
-      task "pkgs/exec-pool, the execution pool contract (#649): versioned task, attempt and slot records reject an unknown schema, capability, path or field; the attempt state machine rejects a stale lease epoch and an illegal transition, and reconciles an expired lease; clippy and rustfmt clean" execPoolTest;
+      task "pkgs/exec-pool, the execution pool contract (#649) and queue (#651): versioned records reject an unknown schema, capability, path or field; the state machine rejects a stale epoch and an illegal transition, reconciles an expired lease and bounds retries; against throwaway PostgreSQL clusters, two claimers get one lease, the database refuses a stale write (seeded: the fence dropped), an expired running attempt waits for an operator, and an outage is reported; clippy and rustfmt clean" execPoolTest;
     "nixos:seventh-host-test" =
       task "Also on demand (then it records its own gate-step): a seventh host seeded from fixture data (its hosts.nix and fleet.nix entries, hosts/seventh) into a temporary tree: it evaluates, every list derived from the fleet names it, only the hosts rendering one move; the places it still needs edited by hand are listed exactly (seeded: each derived list hard-coded without it)" seventhHostTest;
     "nixos:alloy-otlp-test" =
