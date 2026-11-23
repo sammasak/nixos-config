@@ -184,6 +184,19 @@ deferred-checks HEAD:
 qa-owed:
     grep ' gate .*result=owed' "${XDG_STATE_HOME:-$HOME/.local/state}/platform-records" || echo "no owed gate in this host's spool"
 
+# The lock decides, not a process name: the gate runs as nixos-qa (`pgrep 'nixos:qa'` misses it), a `flock -o` job
+# under any name. The lock is per physical host, so a guest sees its host's jobs; a holder in another PID namespace
+# is busy without a pid. The probe takes the lock non-blocking and drops it at once. Exit 0 busy, 1 free.
+[doc("Is a heavy job running on this host? Reads the heavy-work lock: exit 0 busy (and its holder), 1 free")]
+heavy-busy:
+    @lock=/run/work-locks/heavy-work.lock; \
+      [ -e "$lock" ] || { echo "heavy-busy: no $lock on this host" >&2; exit 2; }; \
+      if flock -n -o "$lock" true; then echo "free: nothing holds $lock"; exit 1; fi; \
+      id=$(printf '%02x:%02x:%s' $(stat -c '%Hd %Ld %i' "$lock")); \
+      pids=$(awk -v id="$id" '$2 == "FLOCK" && $6 == id && $5 != 0 { print $5 }' /proc/locks | sort -u | paste -sd,); \
+      if [ -z "$pids" ]; then echo "busy: $lock is held, by a process outside this PID namespace"; \
+      else echo "busy: $lock is held by pid $pids:"; ps -o pid=,etime=,args= -p "$pids"; fi
+
 # Run this after a refactor that is meant to change nothing. Deliberately NOT part
 # of `check` or `verify`: a change that legitimately moves the derivation should
 # not fail the build gates. Runs under `capped`: needs a user systemd manager and
