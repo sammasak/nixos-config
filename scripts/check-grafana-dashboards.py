@@ -87,7 +87,8 @@ def substitute(expr):
 
 def metric_names(expr):
     e = substitute(expr)
-    names = {next(g for g in m.groups()[1:] if g is not None)
+    # a UTF-8 name (Prometheus scrapes with allow-utf-8) as the catalogs hold it: each other character an underscore
+    names = {re.sub(r"[^\w:]", "_", next(g for g in m.groups() if g is not None))
              for m in re.finditer(r"__name__\s*=\s*(?:" + QUOTED + ")", e)}
     e = re.sub(QUOTED, '""', e)
     e = re.sub(r"#[^\n]*", " ", e)

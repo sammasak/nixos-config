@@ -278,20 +278,22 @@ groups:
 
       # alloy-otlp's otelhttp request counter, by the status it answered: the receiver's refused and failed counters
       # stay 0 on a 401 or an oversized 400. A host relay's own 413 or 429 never reaches acer and has no metric.
+      # Prometheus scrapes Alloy with allow-utf-8, so the OTel names keep their dots. POST only: the blackbox probe's
+      # GET of /v1/logs is answered 401 all day.
       # 5m window under a 10m for: a single burst (a sender cut off mid-post at its power-off) cannot fire it
       - alert: OtlpWritesRejected
         expr: |
-          sum by (http_response_status_code) (
-            increase(http_server_request_duration_seconds_count{job="alloy-otlp",component_id="otelcol.receiver.otlp.native",http_response_status_code=~"[45].."}[5m])
+          sum by ("http.response.status_code") (
+            increase({__name__="http.server.request.duration_seconds_count",job="alloy-otlp",component_id="otelcol.receiver.otlp.native","http.request.method"="POST","http.response.status_code"=~"[45].."}[5m])
           ) > 0
         for: 10m
         labels:
           severity: warning
           team: homelab
         annotations:
-          summary: "alloy-otlp on acer-swift is answering OTLP posts with {{ $labels.http_response_status_code }}"
-          description: "acer's OTLP receiver answered {{ $value | humanize }} posts (metrics and logs from the host relays) with HTTP {{ $labels.http_response_status_code }} in the last 5 minutes, and has kept doing so for 10 minutes: those writes are lost while every scrape stays green. Run journalctl -u alloy-otlp --since -30m on acer."
-          query: 'sum by (http_response_status_code) (increase(http_server_request_duration_seconds_count{job="alloy-otlp",component_id="otelcol.receiver.otlp.native"}[1h]))'
+          summary: 'alloy-otlp on acer-swift is answering OTLP posts with {{ index $labels "http.response.status_code" }}'
+          description: 'The OTLP receiver on acer answered {{ $value | humanize }} POSTs (metrics and logs from the host relays) with HTTP {{ index $labels "http.response.status_code" }} in the last 5 minutes, and has kept doing so for 10 minutes: those writes are lost while every scrape stays green. Run journalctl -u alloy-otlp --since -30m on acer.'
+          query: 'sum by ("http.response.status_code") (increase({__name__="http.server.request.duration_seconds_count",job="alloy-otlp",component_id="otelcol.receiver.otlp.native","http.request.method"="POST"}[1h]))'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#otlpwritesrejected"
 
       # Caddy's unix upstreams on acer (open-webui.nix's edge check): the probe above sees only forward auth's 302

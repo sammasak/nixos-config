@@ -185,6 +185,21 @@ let
       ];
       reason = "rules rules-rule-query-unknown-metric SeedQuery query: unknown metric node_no_such_metric";
     };
+    # a quoted UTF-8 name, read in its underscore form
+    rule-utf8-unknown-metric = {
+      rules.groups = [
+        {
+          name = "seed";
+          rules = [
+            {
+              alert = "SeedUtf8";
+              expr = ''{__name__="http.server.no_such_count",job="alloy-otlp"} > 0'';
+            }
+          ];
+        }
+      ];
+      reason = "rules rules-rule-utf8-unknown-metric SeedUtf8: unknown metric http_server_no_such_count";
+    };
     # a name the running Prometheus does not export
     prometheus-typo = {
       dashboard = seed "prometheus_tsdb_head_seriez" "prometheus";

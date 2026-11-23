@@ -125,12 +125,16 @@ First: on the host, `systemctl status backup-metrics.timer backup-metrics` and `
 
 ## OtlpWritesRejected
 
-Fires: acer's alloy-otlp receiver (`otelcol.receiver.otlp.native`, behind `otlp.sammasak.dev`) answered OTLP posts
+Fires: acer's alloy-otlp receiver (`otelcol.receiver.otlp.native`, behind `otlp.sammasak.dev`) answered OTLP POSTs
 with a 4xx or 5xx in each 5-minute window for 10 minutes, per status. The writes are lost though every scrape is green.
-Read the status: 401 is a bearer token that does not match acer's (a relay's `native_otlp_auth`), 400 an oversized
-(over 1 MiB) or malformed body, 429 or 503 Alloy's memory limiter or full sending queue. The counter is otelhttp's
-`http_server_request_duration_seconds_count`: the receiver's own `otelcol_receiver_refused_*`/`_failed_*` counters
-stay 0 on a 401 or an oversized 400. The sender is not in the series.
+The counter is otelhttp's `http.server.request.duration_seconds_count`, as Prometheus stores it (Alloy is scraped with
+`allow-utf-8`, so names and labels keep their dots: `"http.response.status_code"`, `"http.request.method"`). The
+receiver's own `otelcol_receiver_refused_*`/`_failed_*` counters stay 0 on a 401 or an oversized 400. The sender is not
+in the series.
+Read the status of a POST: 401 is a bearer token that does not match acer's (a relay's `native_otlp_auth`), 400 an
+oversized (over 1 MiB) or malformed body, 429 or 503 Alloy's memory limiter or full sending queue. The blackbox probe's
+GET of `/v1/logs` carries no token and is answered 401 about twice a minute all day: expected, and excluded by the
+`"http.request.method"="POST"` matcher; the token reading applies to POSTs only.
 Blind spot: a host relay (`native-otel-relay`) refusing a post itself (413 over `client_max_body_size 1m`, 429 from
 `limit_req`) never reaches acer and has no metric; only that host's nginx line in its journal shows it.
 First: on acer, `journalctl -u alloy-otlp --since -30m`; for a 401 or 413, on the sending hosts,
