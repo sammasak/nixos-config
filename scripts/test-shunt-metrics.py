@@ -7,7 +7,7 @@ event series, its files counted missing. A link or FIFO day file is refused, an 
 RECORDS_MAX counted over_cap. A failed run writes collector_failed 1 and keeps its previous success and last-record
 timestamps; a run with no record carries the last-record ones over. `--list` is METRICS; seeded: a name outside it is
 refused. A 64 MiB day file stays under 3/4 of the unit's MemoryMax. The wiring, from the probe: imported on the devTools
-hosts with node-exporter, enabled on none; enabled, the unit reads the hook log read-only and node-exporter the dir;
+hosts with node-exporter, enabled on lenovo alone; there the unit reads the hook log read-only and node-exporter the dir;
 enabled off devTools, it fails evaluation.
 
 Usage: test-shunt-metrics.py [SCRIPT] (a mutated copy for a seed)."""
@@ -261,11 +261,11 @@ p = gate_probe.section("shunt-metrics")
 imported = sorted(h for h, i in p["imported"].items() if i)
 check(imported == ["acer-swift", "asus-b460m", "lenovo", "msi-ms7758"], f"imported on the devTools hosts {imported}")
 on_hosts = sorted(h for h, e in p["enabled"].items() if e)
-check(on_hosts == [], f"enabled on no host yet {on_hosts}")
+check(on_hosts == ["lenovo"], f"enabled on lenovo alone {on_hosts}")
 on, off, user = p["on"], p["off"], p["username"]
 d = "--collector.textfile.directory=/var/lib/shunt-metrics"
 check(d in on["flags"] and d not in off["flags"] and off["service"] is None and off["timer"] is None,
-      "enabled, node-exporter reads the dir; off, no unit, timer or flag")
+      "on lenovo node-exporter reads the dir; off (msi), no unit, timer or flag")
 svc = on["service"] or {}
 logdir = f"/home/{user}/.local/state/claude-hooks"
 check(svc.get("User") == user and svc.get("ProtectHome") == "tmpfs" and svc.get("BindReadOnlyPaths") == [f"-{logdir}"]
@@ -273,7 +273,7 @@ check(svc.get("User") == user and svc.get("ProtectHome") == "tmpfs" and svc.get(
       and "-shunt-metrics.py --out /var/lib/shunt-metrics/shunt.prom" in svc.get("ExecStart", ""),
       f"the unit runs as {user}, offline, with the hook log alone bound in read-only {svc.get('ExecStart')}")
 check(f"d /var/lib/shunt-metrics 0755 {user} - -" in on["tmpfiles"] and on["failing"] == [],
-      f"the dir exists before the first run, and enabled it evaluates clean {on['failing']}")
+      f"the dir exists before the first run, and lenovo evaluates clean (its memory budget included) {on['failing']}")
 check((on["timer"] or {}).get("OnCalendar") == "*:07/15", f"every 15 minutes {on['timer']}")
 check(any("homelab.shuntMetrics" in m for m in p["offDevTools"]), "enabled off devTools, it fails evaluation")
 finish()

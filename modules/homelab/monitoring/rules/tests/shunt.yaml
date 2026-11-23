@@ -1,0 +1,110 @@
+# promtool test rules for shunt.yaml (flake-modules/monitoring-check.nix runs it). lenovo runs the collector, msi has
+# the unit but never wrote its textfile, acer runs no collector.
+rule_files: [../shunt.yaml]
+evaluation_interval: 1m
+tests:
+  # fresh, then frozen at 600 s: older than 2700 s from 55m, firing 20m later
+  - interval: 1m
+    input_series:
+      - series: 'shunt_collector_success_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '0+60x10 600x80'
+      - series: 'shunt_collector_failed{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '0x90'
+      - series: 'node_systemd_unit_state{job="node-exporter",node="lenovo-21CB001PMX",name="shunt-metrics.service",state="failed"}'
+        values: '0x90'
+      - series: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",name="nav-metrics.service",state="failed"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: ShuntCollectorStale
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: ShuntCollectorStale
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: ShuntCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "The Shunt collector on lenovo-21CB001PMX is stale"
+              description: "shunt-metrics on lenovo-21CB001PMX has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics.service and journalctl -u shunt-metrics.service there."
+              query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntcollectorstale"
+
+  # fresh but failing from 10m: firing after 20m of failed runs; one failed run alone (lenovo's blip) does not
+  - interval: 1m
+    input_series:
+      - series: 'shunt_collector_success_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '0+60x60'
+      - series: 'shunt_collector_failed{job="node-exporter",node="lenovo-21CB001PMX"}'
+        values: '0x10 1x15 0x35'
+      - series: 'shunt_collector_success_timestamp_seconds{job="node-exporter",node="msi-ms7758"}'
+        values: '0+60x10 600x50'
+      - series: 'shunt_collector_failed{job="node-exporter",node="msi-ms7758"}'
+        values: '0x10 1x50'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ShuntCollectorStale
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: ShuntCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "The Shunt collector on msi-ms7758 is stale"
+              description: "shunt-metrics on msi-ms7758 has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics.service and journalctl -u shunt-metrics.service there."
+              query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="msi-ms7758"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntcollectorstale"
+
+  # the unit exists but its textfile never appeared: firing after 20m; a host with no unit never does
+  - interval: 1m
+    input_series:
+      - series: 'node_systemd_unit_state{job="node-exporter",node="msi-ms7758",name="shunt-metrics.service",state="failed"}'
+        values: '0x40'
+      - series: 'node_systemd_unit_state{job="node-exporter",node="acer-swift",name="nav-metrics.service",state="failed"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ShuntCollectorStale
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ShuntCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "The Shunt collector on msi-ms7758 is stale"
+              description: "shunt-metrics on msi-ms7758 has not read the hook log successfully for over 45 minutes, its runs keep failing, or it has never written its textfile, so the Shunt panels and ShuntDelegationFailing are blind there. Run systemctl status shunt-metrics.service and journalctl -u shunt-metrics.service there."
+              query: 'time() - shunt_collector_success_timestamp_seconds{job="node-exporter",node="msi-ms7758"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntcollectorstale"
+
+  # lenovo: 6 timeouts in 20 attempts (30 %), firing after 30m. msi: 4 in 20 (20 %). acer-swift: 8 failures in 8
+  # attempts, under the minimum of 10. Only lenovo fires.
+  - interval: 1m
+    input_series:
+      - series: 'shunt_events{job="node-exporter",node="lenovo-21CB001PMX",hook="bulk-read",result="ok"}'
+        values: '14x60'
+      - series: 'shunt_events{job="node-exporter",node="lenovo-21CB001PMX",hook="bulk-read",result="timeout"}'
+        values: '6x60'
+      - series: 'shunt_events{job="node-exporter",node="lenovo-21CB001PMX",hook="shunt-read",result="redirect"}'
+        values: '50x60'
+      - series: 'shunt_events{job="node-exporter",node="msi-ms7758",hook="bulk-read",result="ok"}'
+        values: '14x60'
+      - series: 'shunt_events{job="node-exporter",node="msi-ms7758",hook="bulk-read",result="private"}'
+        values: '2x60'
+      - series: 'shunt_events{job="node-exporter",node="msi-ms7758",hook="bulk-read",result="rate_limited"}'
+        values: '4x60'
+      - series: 'shunt_events{job="node-exporter",node="acer-swift",hook="bulk-read",result="auth"}'
+        values: '8x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ShuntDelegationFailing
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: ShuntDelegationFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: lenovo-21CB001PMX}
+            exp_annotations:
+              summary: "Bulk-read delegations on lenovo-21CB001PMX are failing"
+              description: "30% of the bulk-read delegations on lenovo-21CB001PMX in the last 24 h failed (auth, rate_limited, model_unavailable, timeout or error), over at least 10 attempts; sessions fall back to reading the files themselves. Read the outcomes in the hook log there."
+              query: 'sum by (result) (shunt_events{job="node-exporter",node="lenovo-21CB001PMX",hook="bulk-read"})'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#shuntdelegationfailing"
