@@ -169,8 +169,8 @@ an unknown field fails) and `src APP` fetches the tree with `builtins.fetchTree`
 or a hash that does not match the rev fails evaluation, never a deploy. The tree and its store path are the ones a
 flake input at that rev gives. One difference: `nix flake archive` and `nix copy` of the flake's inputs carry flake
 inputs but not a tree fetched during evaluation, so an offline machine needs the app repository (or that store path)
-to evaluate; nothing in the fleet archives inputs today. alert-bridge is on it (the overlay's `alertBridge` src); the
-other apps stay flake inputs. `scripts/test-app-registry.py` (in the `app-manifest` flake check) evaluates the live file and bent copies.
+to evaluate; nothing in the fleet archives inputs today. No app is on it today; the apps stay flake
+inputs. `scripts/test-app-registry.py` (in the `app-manifest` flake check) evaluates the live file and bent copies.
 
 `scripts/app-bump.py APP` runs the dry run's `green_after` on the registry entry, prefetches the new rev's narHash,
 rewrites only that entry on `app-bump/APP-<sha12>` cut from origin/main, commits, pushes (the pre-push gate runs) and

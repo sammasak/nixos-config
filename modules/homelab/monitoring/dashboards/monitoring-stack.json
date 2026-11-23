@@ -456,7 +456,7 @@
     {
       "id": 14,
       "type": "timeseries",
-      "title": "Webhook notifications to the alert bridge",
+      "title": "Webhook notifications to ntfy",
       "gridPos": {
         "h": 7,
         "w": 12,
@@ -495,7 +495,7 @@
         },
         "overrides": []
       },
-      "description": "The only integration configured: the alert bridge on lenovo, which pages through ntfy. A notification counts once however many requests it takes; failed after retries is a page that did not leave, a failed request alone one that is still retrying."
+      "description": "The only integration configured: the webhook publishing to ntfy on lenovo. A notification counts once however many requests it takes; failed after retries is a page that did not leave, a failed request alone one that is still retrying."
     },
     {
       "id": 15,

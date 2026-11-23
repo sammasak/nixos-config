@@ -179,37 +179,6 @@ let
       unit = lenovo.systemd.user.services.ollama-portforward.serviceConfig;
     };
 
-    alert-bridge = {
-      units = builtins.mapAttrs (_: h: h.config.systemd.services ? alert-bridge) hosts;
-      inherit (lenovo.systemd.services.alert-bridge) environment serviceConfig;
-      ntfyListen = lenovo.services.ntfy-sh.settings.listen-http;
-      ntfyUnit = {
-        inherit (lenovo.systemd.services.ntfy-sh) startLimitIntervalSec;
-        inherit (lenovo.systemd.services.ntfy-sh.serviceConfig) Restart;
-      };
-      firewall = {
-        open = lenovo.networking.firewall.allowedTCPPorts;
-        rules = lenovo.networking.firewall.extraCommands;
-      };
-      alertmanager = [
-        lenovo.sam.fleet.hosts.black-pi.address
-      ]
-      ++ lenovo.sam.fleet.hosts.black-pi.extraAddresses;
-      failing = {
-        lenovo = failing lenovo;
-        loopbackFirewall = failing (
-          extend "lenovo" [ ({ lib, ... }: { homelab.alertBridge.listenAddress = lib.mkForce "127.0.0.1"; }) ]
-        );
-        noNtfy = failing (extend "lenovo" [ ({ lib, ... }: { homelab.ntfy.enable = lib.mkForce false; }) ]);
-      };
-      httpsUrl =
-        (builtins.tryEval
-          (extend "lenovo" [
-            ({ lib, ... }: { homelab.alertBridge.ntfyUrl = lib.mkForce "https://ntfy.example/x"; })
-          ]).systemd.services.alert-bridge.environment.ALERT_BRIDGE_NTFY_URL
-        ).success;
-    };
-
     known-hosts = {
       pinned = {
         lenovo = lenovo.programs.ssh.knownHosts;
@@ -811,7 +780,6 @@ let
               )
             )
           );
-          alert-bridge = lenovo.homelab.alertBridge.port;
           prometheus = blackPi.services.prometheus.port;
           grafana = blackPi.services.grafana.settings.server.http_port;
           loki = blackPi.homelab.loki.port;

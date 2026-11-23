@@ -34,10 +34,6 @@ let
           rustPlatform = factumRustPlatform;
           src = inputs.factum;
         };
-        alertBridge = final.callPackage ../pkgs/alert-bridge/package.nix {
-          rustPlatform = factumRustPlatform;
-          src = (import ../lib/app-manifest/pins.nix { inherit lib; }).src "alert-bridge";
-        };
         llmGateway = final.callPackage ../pkgs/llm-gateway/package.nix {
           rustPlatform = factumRustPlatform;
           src = inputs.llm-gateway;

@@ -13,8 +13,8 @@ Every homelab, Shunt and shipping alert carries the same annotations, held by th
 | `query` | the first diagnostic PromQL, runnable as is in Prometheus on black-pi (`{{ $labels.* }}` are filled in by Prometheus); the `grafana-dashboards` check parses it and holds its metric names and jobs |
 | `runbook_url` | a heading in a tracked doc of this repo, on `main` |
 
-alert-bridge puts `summary` and `description` in the ntfy page; `query` and `runbook_url` show in Alertmanager and
-Prometheus's alert view. Run the query at `http://192.168.10.137:9090/graph`.
+The ntfy page (Alertmanager's webhook payload, `modules/homelab/monitoring/alertmanager.nix`) carries `summary`,
+`description` and `Query: <query>`, and a tap opens `runbook_url`; all four also show in Prometheus's alert view. Run the query at `http://192.168.10.137:9090/graph`.
 
 ## HostExpectedOff
 
