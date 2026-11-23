@@ -62,6 +62,20 @@ in
             "loki-check: ExecStart skips upstream's loki -verify-config";
           lan.config.systemd.services.loki.serviceConfig.ExecStart
         );
+        # black-pi's rendered ruler and rules, run on x86 Loki and Prometheus of the same nixpkgs on loopback
+        loki-ruler-black-pi =
+          pkgs.runCommand "loki-ruler-black-pi"
+            {
+              nativeBuildInputs = [ pkgs.python3 ];
+              config = builtins.toJSON config.flake.nixosConfigurations.black-pi.config.services.loki.configuration;
+              passAsFile = [ "config" ];
+            }
+            ''
+              ${lib.getExe' pkgs.grafana-loki "loki"} -verify-config -config.file="$configPath"
+              mkdir work
+              python3 -I ${../scripts/test-loki-ruler.py} ${lib.getExe' pkgs.grafana-loki "loki"} ${lib.getExe pkgs.prometheus} "$configPath" "$PWD/work"
+              touch $out
+            '';
       };
     };
 }
