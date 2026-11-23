@@ -108,8 +108,8 @@ let
         fi
       '';
 
-  # What `nix flake check --all-systems` checks, one output per nix process: in one process it holds every
-  # host and is killed under a 4G cap. Builds every x86 host (its deploy-activate check holds the toplevel)
+  # What `nix flake check --all-systems` checks, one output (or one node's deploy pair) per nix process: in one
+  # process it holds every host and is killed under a 4G cap. Builds every x86 host (its deploy-activate check holds the toplevel)
   # and evaluates the aarch64 Pis: the one place a host build is checked. An output kind not listed here
   # fails the step, so a new kind cannot go unchecked.
   # GC_FREE_SPACE_DIVISOR=16 (Boehm default 3) collects more often: acer-swift deploy check 2809 MiB, not
@@ -180,72 +180,134 @@ let
         nix eval --no-write-lock-file .#overlays --apply 'builtins.mapAttrs (_: o: assert builtins.isFunction o; true)' >/dev/null
         nix eval --no-write-lock-file .#templates \
           --apply 'builtins.mapAttrs (_: t: assert builtins.pathExists t.path && builtins.isString t.description; true)' >/dev/null
-        hosts=$(names nixosConfigurations)
-        for h in $hosts; do drv "nixosConfigurations.$h.config.system.build.toplevel"; done
-        for s in $(names formatter); do drv "formatter.$s"; done
+        all=()
         for kind in packages checks; do
-          systems=$(names "$kind")
-          for s in $systems; do
-            outputs=$(names "$kind.$s")
-            for o in $outputs; do
-              if [ "$kind.$s" = "checks.$here" ]; then
-                c=checks.$s.$o
-                t=$SECONDS
-                d=$(nix eval --raw --no-write-lock-file ".#$c.drvPath")
-                took "eval $c" "$t"
-                ev=$((SECONDS - t))
-                # a failed dry-run fails the step: read as "nothing to build" it would hide the check (nix 2.34 also
-                # exits 0 on "don't know how to build")
-                if ! dry=$(nix build --dry-run --no-link "$d^*" 2>&1) || grep -q "know how to build" <<<"$dry"; then
-                  printf '%s\n' "$dry" >&2
-                  echo "nixos-flake-check: the dry-run of $c failed" >&2
-                  exit 1
-                fi
-                todo=$(awk '/will be built:/ { f = 1; next } /will be fetched|^[^ ]/ { f = 0 } f { print $1 }' <<<"$dry")
-                inputs=""
-                # shellcheck disable=SC2086 # one store path per word
-                if [ -n "$todo" ]; then inputs=$(nix-store -q --references $todo); fi
-                n=$(grep -c . <<<"$todo" || true)
-                m=$(awk '/will be fetched/ { f = 1; next } /^[^ ]/ { f = 0 } f && $1 ~ /^[/]nix[/]store[/]/ { c++ } END { print c + 0 }' <<<"$dry")
-                t=$SECONDS
-                case $(decide "$me" "$o" "$todo" "$inputs" "$cudahost") in
-                  build)
-                    echo "nixos-flake-check: build $c (compiles $n) $d" >&2
-                    # one record per check built here, for "where a gate's time goes" (Shipping): build and eval seconds,
-                    # the derivations it compiled and fetched, and its result: compiled here (built), only substituted
-                    # (fetched), already in the store (present), a failed build (fail), or nothing built at all (dry).
-                    # owner is this host, so an owning host's own deploy check is the other half of a deferral
-                    if [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ]; then
-                      r=dry
-                    elif ! nix build --no-link "$d^*"; then
-                      ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev compiled="$n" fetched="$m" result=fail head="''${NIXOS_QA_HEAD:-}" drv="$d"
-                      exit 1
-                    elif [ "$n" -gt 0 ]; then
-                      r=built
-                    elif [ "$m" -gt 0 ]; then
-                      r=fetched
-                    else
-                      r=present
-                    fi
-                    took "build $c" "$t"
-                    ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev compiled="$n" fetched="$m" result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
-                    ;;
-                  foreign)
-                    owner=''${o#deploy-*-}
-                    deferred+=("$owner:$c")
-                    echo "nixos-flake-check: deferred $c to $owner (compiles $n) $d: it would compile against $(grep -E -e "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
-                    ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" seconds=0 result=deferred head="''${NIXOS_QA_HEAD:-}" drv="$d"
-                    ;;
-                  nodeless)
-                    echo "nixos-flake-check: $c would compile against CUDA on $me, whose system has none, and names no deploy node to defer to: name it deploy-*-<node> or run this gate on a CUDA host" >&2
-                    exit 1
-                    ;;
-                esac
-              else
-                drv "$kind.$s.$o"
-              fi
-            done
+          for s in $(names "$kind"); do
+            for o in $(names "$kind.$s"); do all+=("$kind.$s.$o"); done
           done
+        done
+        # A host's deploy-activate check wraps its toplevel (flake-modules/deploy.nix), so evaluating that check
+        # evaluates the host: a process for the toplevel alone evaluated acer and msi a second time (75 s each). After
+        # the checks, its derivation must hold a NixOS system, or the toplevel is evaluated on its own after all; that
+        # it is this host's rests on mkNode, which scripts/test-gate-steps.py pins.
+        # args: the host, then every output; prints the deploy-activate check of that name
+        covered() {
+          local h=$1 c
+          shift
+          for c in "$@"; do
+            case $c in checks.*.deploy-activate-"$h") echo "$c" && return ;; esac
+          done
+        }
+        # deploy-activate-<node> and deploy-schema-<node> hold the same host: one process evaluates the pair (acer: 86 s
+        # and +40 MiB for both, 86 s for either alone). Sets d to the check's drvPath and with to its pair: the pair's
+        # eval seconds are on the check evaluated first, 0 on the other, and each record names the other in eval_with=.
+        declare -A pre=() partner=()
+        drvpath() {
+          local s=''${1#checks.} o node="" out
+          o=''${s#*.}
+          s=''${s%%.*}
+          d=''${pre[$1]:-}
+          with=''${partner[$1]:-}
+          [ -z "$d" ] || return 0
+          case $o in deploy-activate-* | deploy-schema-*) node=''${o#deploy-*-} ;; esac
+          if [ -n "$node" ] && [[ " ''${all[*]} " == *" checks.$s.deploy-activate-$node "* ]] \
+            && [[ " ''${all[*]} " == *" checks.$s.deploy-schema-$node "* ]]; then
+            echo "nixos-flake-check: eval checks.$s.deploy-activate-$node and deploy-schema-$node in one process" >&2
+            out=$(nix eval --json --no-write-lock-file ".#checks.$s" \
+              --apply "cs: map (n: cs.\''${n}.drvPath) [ \"deploy-activate-$node\" \"deploy-schema-$node\" ]")
+            pre[checks.$s.deploy-activate-$node]=$(jq -er '.[0]' <<<"$out") || return 1
+            pre[checks.$s.deploy-schema-$node]=$(jq -er '.[1]' <<<"$out") || return 1
+            partner[checks.$s.deploy-activate-$node]=checks.$s.deploy-schema-$node
+            partner[checks.$s.deploy-schema-$node]=checks.$s.deploy-activate-$node
+            d=''${pre[$1]}
+            with=''${partner[$1]}
+          else
+            echo "nixos-flake-check: $1" >&2
+            d=$(nix eval --raw --no-write-lock-file ".#$1.drvPath")
+            pre[$1]=$d
+          fi
+        }
+        hosts=$(names nixosConfigurations)
+        held=()
+        for h in $hosts; do
+          c=$(covered "$h" "''${all[@]}")
+          if [ -n "$c" ]; then held+=("$h:$c"); else drv "nixosConfigurations.$h.config.system.build.toplevel"; fi
+        done
+        for s in $(names formatter); do drv "formatter.$s"; done
+        for p in "''${all[@]}"; do
+          IFS=. read -r kind s o <<<"$p"
+          if [ "$kind.$s" = "checks.$here" ]; then
+            c=checks.$s.$o
+            t=$SECONDS
+            drvpath "$c"
+            took "eval $c" "$t"
+            ev=$((SECONDS - t))
+            # a failed dry-run fails the step: read as "nothing to build" it would hide the check (nix 2.34 also
+            # exits 0 on "don't know how to build")
+            if ! dry=$(nix build --dry-run --no-link "$d^*" 2>&1) || grep -q "know how to build" <<<"$dry"; then
+              printf '%s\n' "$dry" >&2
+              echo "nixos-flake-check: the dry-run of $c failed" >&2
+              exit 1
+            fi
+            todo=$(awk '/will be built:/ { f = 1; next } /will be fetched|^[^ ]/ { f = 0 } f { print $1 }' <<<"$dry")
+            inputs=""
+            # shellcheck disable=SC2086 # one store path per word
+            if [ -n "$todo" ]; then inputs=$(nix-store -q --references $todo); fi
+            n=$(grep -c . <<<"$todo" || true)
+            m=$(awk '/will be fetched/ { f = 1; next } /^[^ ]/ { f = 0 } f && $1 ~ /^[/]nix[/]store[/]/ { c++ } END { print c + 0 }' <<<"$dry")
+            t=$SECONDS
+            case $(decide "$me" "$o" "$todo" "$inputs" "$cudahost") in
+              build)
+                echo "nixos-flake-check: build $c (compiles $n) $d" >&2
+                # one record per check built here, for "where a gate's time goes" (Shipping): build and eval seconds,
+                # the derivations it compiled and fetched, and its result: compiled here (built), only substituted
+                # (fetched), already in the store (present), a failed build (fail), or nothing built at all (dry).
+                # owner is this host, so an owning host's own deploy check is the other half of a deferral
+                if [ -n "''${NIXOS_FLAKE_CHECK_DRY:-}" ]; then
+                  r=dry
+                elif ! nix build --no-link "$d^*"; then
+                  ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev eval_with="$with" compiled="$n" fetched="$m" result=fail head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                  exit 1
+                elif [ "$n" -gt 0 ]; then
+                  r=built
+                elif [ "$m" -gt 0 ]; then
+                  r=fetched
+                else
+                  r=present
+                fi
+                took "build $c" "$t"
+                ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$me" seconds=$((SECONDS - t)) eval_seconds=$ev eval_with="$with" compiled="$n" fetched="$m" result=$r head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                ;;
+              foreign)
+                owner=''${o#deploy-*-}
+                deferred+=("$owner:$c")
+                echo "nixos-flake-check: deferred $c to $owner (compiles $n) $d: it would compile against $(grep -E -e "$heavy" <<<"$inputs" | sed 's|^/nix/store/[a-z0-9]*-||' | tr '\n' ' ')" | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
+                ${lib.getExe record} gate-step gate=nixos-qa step=nixos-flake-check check="$c" owner="$owner" seconds=0 result=deferred head="''${NIXOS_QA_HEAD:-}" drv="$d"
+                ;;
+              nodeless)
+                echo "nixos-flake-check: $c would compile against CUDA on $me, whose system has none, and names no deploy node to defer to: name it deploy-*-<node> or run this gate on a CUDA host" >&2
+                exit 1
+                ;;
+            esac
+          elif [ "$kind" = checks ]; then
+            t=$SECONDS
+            drvpath "$p"
+            took "eval $p" "$t"
+          else
+            drv "$p"
+          fi
+        done
+        for hc in "''${held[@]}"; do
+          h=''${hc%%:*}
+          c=''${hc#*:}
+          k=$(nix-store -qR "''${pre[$c]}" | grep -cE -e '-nixos-system-[^/]*[.]drv$') || k=0
+          if [ "$k" -gt 0 ]; then
+            echo "nixos-flake-check: eval nixosConfigurations.$h.config.system.build.toplevel: inside $c, whose derivation holds a NixOS system" \
+              | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
+          else
+            echo "nixos-flake-check: $c holds no NixOS system: nixosConfigurations.$h evaluated on its own" >&2
+            drv "nixosConfigurations.$h.config.system.build.toplevel"
+          fi
         done
         if [ ''${#deferred[@]} -gt 0 ]; then
           echo "nixos-flake-check: not built here, deferred to their own host's gate: ''${deferred[*]}" >&2

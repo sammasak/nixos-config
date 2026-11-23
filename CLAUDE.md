@@ -12,7 +12,7 @@ A NixOS + Home Manager configuration repository using **flake-parts**. Manages L
 # ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
 #    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
 devenv tasks run nixos:qa           # every gate (= just check): lints, secrets-verify, the probe, flake check, then the tests; on asus the flake check and the four slowest tests run side by side
-devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: evaluates every output and builds every x86 check (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them) except one that would compile against CUDA off its own node, which is deferred to that node's gate and listed; evaluates the Pis (= just verify)
+devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process (a node's two deploy checks share one; a host's toplevel is evaluated inside its deploy-activate check): evaluates every output and builds every x86 check (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them) except one that would compile against CUDA off its own node, which is deferred to that node's gate and listed; evaluates the Pis (= just verify)
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
@@ -31,6 +31,8 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               Tracked files only: what .gitignore hides is not compared.
 #               nixos:qa takes /run/work-locks/heavy-work.lock itself (pkgs/heavy-lock); an ancestor that
 #               holds it (`flock -o`) counts, and a launcher holding it across systemd-run sets NIXOS_QA_LOCKED=1.
+#               "Is a heavy job running on this host?" is `just heavy-busy` (the lock, and its holder; exit 0 busy,
+#               1 free), not pgrep: the gate's process is nixos-qa, and a `flock -o` job has any name.
 #               A check deferred to its own host is printed as `nixos-qa: deferred-checks head=<sha>
 #               checkout=clean|dirty <owner>:<check>…` and in the gate record (head=, checkout=, deferred_checks=);
 #               the flake check records every check it builds, an owner's own deploy checks included, as

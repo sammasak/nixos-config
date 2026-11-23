@@ -27,6 +27,7 @@
         "owner",
         "seconds",
         "eval_seconds",
+        "eval_with",
         "compiled",
         "fetched",
         "result",
