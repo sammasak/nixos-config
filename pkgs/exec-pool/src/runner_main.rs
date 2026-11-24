@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use exec_pool::queue::{Change, Claim, QueueError, Store};
 use exec_pool::runner::{
-    CAPTURE_BYTES, ExecResult, Manifest, Stage, decide, read_regular, receipt, tail,
+    CAPTURE_BYTES, ExecResult, Manifest, Stage, decide, guest_exit, read_regular, receipt, tail,
 };
 use exec_pool::{Event, Kind, Receipt, SchemaVersion, Slot};
 use serde_json::{Value, json};
@@ -204,7 +204,14 @@ impl Runner {
             .and_then(|s| ExecResult::parse(&s).map_err(|e| e.to_string()))
             .inspect_err(|e| self.error("result", e))
             .ok();
-        let to = decide(id, epoch, result.as_ref());
+        let stdout = String::from_utf8_lossy(&read_capture(&dir.join("stdout"))).into_owned();
+        let to = decide(
+            id,
+            epoch,
+            claim.task.command.agent,
+            result.as_ref(),
+            &stdout,
+        );
         let settled = Self::event(store, id, epoch, Kind::Checkpoint, None).and_then(|()| {
             let r = receipt(&claim.task.id, id, epoch, to);
             Self::event(store, id, epoch, Kind::Settle(to), r.as_ref())
@@ -275,6 +282,7 @@ impl Guest {
                 "--pipe",
                 "--quiet",
                 "--collect",
+                "--service-type=oneshot",
             ])
             .args([
                 &format!("--unit={unit}"),
@@ -320,16 +328,17 @@ impl Guest {
                 .map_err(|_| io::Error::other("a capture thread panicked"))??;
         }
         Ok(StepEnd {
-            exit_code: status.code(),
+            exit_code: guest_exit(status.code()),
             timed_out,
         })
     }
 }
 
-fn read_tail(path: &Path) -> String {
+/// What a stream's capture holds, empty if it cannot be read.
+fn read_capture(path: &Path) -> Vec<u8> {
     let mut buf = Vec::new();
     let _ = File::open(path).and_then(|f| f.take(CAPTURE_BYTES).read_to_end(&mut buf));
-    tail(&buf)
+    buf
 }
 
 fn exec(slot: &str) -> Result<(), String> {
@@ -348,7 +357,12 @@ fn exec(slot: &str) -> Result<(), String> {
     let dir = PathBuf::from(var("EXEC_POOL_EXEC_DIR")?)
         .join(slot)
         .join(manifest.run_dir());
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // create_dir, not _all: a directory already there is this attempt run once already (a restarted helper), not
+    // to be run again
+    dir.parent()
+        .map_or(Ok(()), fs::create_dir_all)
+        .and_then(|()| fs::create_dir(&dir))
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
     let open = |name: &str| File::create(dir.join(name)).map_err(|e| format!("{name}: {e}"));
     let (out, err) = (open("stdout")?, open("stderr")?);
     let guest = Guest {
@@ -369,14 +383,21 @@ fn exec(slot: &str) -> Result<(), String> {
         run_ms: 0,
     };
     let t = Instant::now();
-    for (stage, argv) in manifest.steps(&var("EXEC_POOL_GIT")?, &var("EXEC_POOL_ENV")?) {
+    let steps = manifest
+        .steps(&var("EXEC_POOL_GIT")?, &var("EXEC_POOL_ENV")?)
+        .map_err(|e| format!("manifest: {e}"))?;
+    for ((stage, argv), unit) in
+        steps
+            .into_iter()
+            .zip(["exec-pool-clone", "exec-pool-checkout", "exec-pool-task"])
+    {
         if stage == Stage::Run {
             result.prepare_ms = ms(t);
         }
         result.stage = stage;
-        let (unit, limit) = match stage {
-            Stage::Prepare => ("exec-pool-prepare", PREPARE_TIMEOUT),
-            Stage::Run => ("exec-pool-task", timeout),
+        let limit = match stage {
+            Stage::Prepare => PREPARE_TIMEOUT,
+            Stage::Run => timeout,
         };
         let started = Instant::now();
         let end = guest
@@ -405,8 +426,8 @@ fn exec(slot: &str) -> Result<(), String> {
         .args(["is-active", "--quiet", &format!("container@{slot}.service")])
         .status()
         .is_ok_and(|s| s.success());
-    result.stdout_tail = read_tail(&dir.join("stdout"));
-    result.stderr_tail = read_tail(&dir.join("stderr"));
+    result.stdout_tail = tail(&read_capture(&dir.join("stdout")));
+    result.stderr_tail = tail(&read_capture(&dir.join("stderr")));
     let json = serde_json::to_string(&result).map_err(|e| e.to_string())?;
     let tmp = dir.join(format!("{RESULT}.tmp"));
     fs::write(&tmp, json)

@@ -1,5 +1,5 @@
 # The execution pool's queue (pkgs/exec-pool, docs/records/execution-pool-contract.md) on this host: its own database
-# and role in the host's PostgreSQL, reached by peer over the socket alone; the schema is the CLI's `migrate` at start,
+# and role in the host's PostgreSQL (postgresql.nix), reached by peer over the socket alone; the schema is the CLI's `migrate` at start,
 # its metrics a minutely textfile and its backup a nightly dump; the runner, off by default, is exec-pool-runner.nix.
 {
   config,
@@ -43,6 +43,7 @@ let
 in
 {
   imports = [
+    ./postgresql.nix
     ./monitoring/node-exporter.nix
     ./backup-metrics.nix
     ./exec-pool-runner.nix
@@ -56,9 +57,6 @@ in
   environment.systemPackages = [ pkg ];
 
   services.postgresql = {
-    enable = true;
-    enableTCPIP = false;
-    settings.listen_addresses = lib.mkForce "";
     ensureDatabases = [ "exec_pool" ];
     ensureUsers = [
       {
@@ -66,11 +64,6 @@ in
         ensureDBOwnership = true;
       }
     ];
-    # mkForce like authentik.nix's: lines at one priority concatenate, and the postgres line keeps setup working alone
-    authentication = lib.mkForce ''
-      local all postgres peer
-      local exec_pool exec_pool peer
-    '';
   };
 
   systemd.services.exec-pool-migrate = lib.recursiveUpdate unit {
@@ -144,20 +137,5 @@ in
       shellcheck --severity=warning ${config.systemd.services.exec-pool-backup.serviceConfig.ExecStart}
       touch $out
     '')
-  ];
-
-  assertions = [
-    {
-      assertion = lib.elem "local exec_pool exec_pool peer" (
-        lib.splitString "\n" config.services.postgresql.authentication
-      );
-      message = "modules/homelab/exec-pool.nix: the exec_pool role must reach its database by peer over the socket.";
-    }
-    {
-      assertion =
-        !config.services.postgresql.enableTCPIP
-        && config.services.postgresql.settings.listen_addresses == "";
-      message = "modules/homelab/exec-pool.nix: the queue's PostgreSQL has no TCP listener; Store::open refuses one anyway.";
-    }
   ];
 }

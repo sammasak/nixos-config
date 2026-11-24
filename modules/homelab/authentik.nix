@@ -1,6 +1,6 @@
-# Authentik and its Postgres on this host, from nixpkgs' package (unit layout after nix-community/authentik-nix's
-# module.nix): Caddy (edge.nix) reaches the server and its embedded outpost on loopback; Postgres has no TCP listener
-# and admits only its own superuser and each database's own role (authentik's, exec-pool.nix's), by peer. The units start only on a restored database: an empty one
+# Authentik on this host, from nixpkgs' package (unit layout after nix-community/authentik-nix's module.nix): Caddy
+# (edge.nix) reaches the server and its embedded outpost on loopback; its database and role are in the host's
+# PostgreSQL (postgresql.nix), by peer over the socket. The units start only on a restored database: an empty one
 # would come up as a fresh install with an open akadmin setup flow. Restore: pg_restore of a latest.dump (here or
 # lenovo's authentik-offhost copy) into an empty authentik database, as the authentik role.
 {
@@ -20,7 +20,6 @@ let
   });
   pyEnv = py.withPackages (_: [ django ]);
   postgres = config.services.postgresql.package;
-  hba = lib.filter (l: l != "") (lib.splitString "\n" config.services.postgresql.authentication);
   fw = config.networking.firewall;
   state = "/var/lib/authentik";
   backups = "/var/lib/authentik-backup";
@@ -139,7 +138,10 @@ let
     '';
 in
 {
-  imports = [ ./backup-metrics.nix ];
+  imports = [
+    ./postgresql.nix
+    ./backup-metrics.nix
+  ];
   homelab.backupMetrics.jobs.authentik-backup = "archive_list";
 
   users.users.authentik = {
@@ -163,11 +165,6 @@ in
   };
 
   services.postgresql = {
-    enable = true;
-    # the major the data was dumped from: an upgrade is its own change
-    package = pkgs.postgresql_16;
-    enableTCPIP = false;
-    settings.listen_addresses = lib.mkForce "";
     ensureDatabases = [ "authentik" ];
     ensureUsers = [
       {
@@ -175,15 +172,6 @@ in
         ensureDBOwnership = true;
       }
     ];
-    authentication = lib.mkForce ''
-      local all postgres peer
-      local authentik authentik peer
-    '';
-  };
-  systemd.services.postgresql.serviceConfig = {
-    MemoryMax = "512M";
-    MemorySwapMax = 0;
-    OOMScoreAdjust = -300;
   };
 
   systemd.services.authentik-migrate =
@@ -314,24 +302,6 @@ in
       message = "modules/homelab/authentik.nix: nixpkgs moved authentik to ${pkg.version}; the module and the cut-over notes are for ${version}. Bump `version` on purpose, after reading the release notes.";
     }
     {
-      assertion = lib.versions.major config.services.postgresql.package.version == "16";
-      message = "modules/homelab/authentik.nix: Postgres is ${config.services.postgresql.package.version}, but Authentik's data directory is major 16. Upgrade the data (dump and restore, or pg_upgrade) as its own change, then move this pin.";
-    }
-    {
-      assertion =
-        !config.services.postgresql.enableTCPIP
-        && config.services.postgresql.settings.listen_addresses == ""
-        && lib.elem "local authentik authentik peer" hba
-        && lib.all (
-          l:
-          lib.elem l (
-            [ "local all postgres peer" ]
-            ++ map (db: "local ${db} ${db} peer") config.services.postgresql.ensureDatabases
-          )
-        ) hba;
-      message = "modules/homelab/authentik.nix: Postgres must have no TCP listener and admit only postgres and each database's own role, by peer.";
-    }
-    {
       assertion = lib.all (l: lib.hasPrefix "127.0.0.1:" l) (
         settings.listen.http
         ++ settings.listen.https
@@ -352,9 +322,8 @@ in
         "authentik"
         "authentik-worker"
         "authentik-migrate"
-        "postgresql"
       ];
-      message = "modules/homelab/authentik.nix: every Authentik unit and Postgres carry a MemoryMax.";
+      message = "modules/homelab/authentik.nix: every Authentik unit carries a MemoryMax.";
     }
   ];
 }

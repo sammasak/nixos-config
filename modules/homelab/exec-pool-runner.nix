@@ -53,6 +53,8 @@ in
     systemd.services = {
       "exec-pool-exec@" = {
         description = "Run the execution pool attempt handed to slot %i";
+        # a restart mid-run would run the attempt again; the run directory refuses that too
+        restartIfChanged = false;
         path = [ config.systemd.package ];
         environment = {
           EXEC_POOL_RUNTIME = "/run/exec-pool-runner/%i";

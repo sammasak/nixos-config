@@ -76,12 +76,21 @@ stay in the log line, never in a label. When the render fails for any reason it 
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
 zero traffic or as the last good counts.
 
-On acer (`modules/homelab/exec-pool.nix`): database and role `exec_pool` in the host's PostgreSQL (Authentik's
-cluster), peer over `/run/postgresql` alone; `exec-pool-migrate.service` runs `migrate` at start, and the minutely
+On acer (`modules/homelab/exec-pool.nix`): database and role `exec_pool` in the host's one PostgreSQL server
+(`modules/homelab/postgresql.nix`, which Authentik's database shares), peer over `/run/postgresql` alone; `exec-pool-migrate.service` runs `migrate` at start, and the minutely
 `exec-pool-metrics` writes `/var/lib/exec-pool-metrics/exec-pool.prom`, alert ExecPoolQueueDown. The nightly
 `exec-pool-backup` dumps the database beside it, on the same disk, like open-webui's backup; nothing copies it off the
 host (lenovo pulls Authentik's dump alone, `modules/homelab/authentik-offhost.nix`), which a queue holding real tasks
 needs before a runner lands.
+
+## Agent adapter (#655)
+
+`exec_pool::agent::argv(&task)` is what a runner executes in the task's workdir: a `none` task's own argv, or for an
+agent task, whose argv is `[prompt]` or `[prompt, model]`, the agent's non-interactive call (`claude -p
+--output-format json`, `codex exec`, `pi -p`, unattended as the workers run them, the prompt after `--`) under the
+slot's own credentials and egress. `agent::outcome(agent, exit, stdout)` maps the exit to the settle: Claude's final
+JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a Claude run with no result, is
+`needs_review`. Neither `failed` nor `needs_review` requeues, so no ambiguous external effect is replayed.
 
 ## Runner (#652, first slice)
 
@@ -92,12 +101,14 @@ and `settle`, then `dev-env-reset@<slot>`. A polkit rule lets `exec_pool` start 
 nothing else. The helper `exec-pool-exec@<slot>` runs as root and has no queue access. It reads the versioned manifest
 (`runner::Manifest`: slot, attempt, epoch, task) from `/run/exec-pool-runner/<slot>/`, refusing a symlink. In the guest,
 as its user and through `systemd-run -M`, it clones `source.repo` into `~/task`, checks out `source.rev` and runs
-`command.argv` in `command.workdir`. All three are argv, never a shell string, and the task is stopped at `timeoutSecs`.
+`agent::argv(&task)` in `command.workdir`. All three are argv, never a shell string, and the task is stopped at `timeoutSecs`.
 Up to 1 MiB of each stream and the result go to `/var/lib/exec-pool-exec/<slot>/<hex attempt>-<epoch>/`, kept 30 days.
 
 Settling (`runner::decide`): a clone or checkout that fails never started the task's argv, so the attempt goes back to
-`queued`. Exit 0 is `succeeded` and another exit code is `failed`. A timeout, a signal, a guest that went away, or a
-missing result (or one for another attempt or epoch) goes to `needs_review`. The receipt reports no effect. An event
+`queued`. A timeout, a guest that went away, or a missing result (or one for another attempt or epoch) goes to
+`needs_review`. Otherwise `agent::outcome` decides from the exit code and the captured stdout. The command runs as a
+oneshot unit, so only exit 0 is clean, and systemd-run's 255 (killed by a signal) counts as no exit code. A helper
+that finds its attempt's run directory already there refuses to run it again. The receipt reports no effect. An event
 the queue refuses, or one whose commit is unknown, is never re-sent: the lease (`timeoutSecs` + 1200 s) expires and
 `reconcile` decides. Work never begins before `start` is accepted. The runner resets the slot at startup (its state
 then is unknown) and after every run. A reset that fails three times writes `/var/lib/exec-pool-runner/<slot>.quarantined`,

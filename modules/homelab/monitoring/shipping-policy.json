@@ -71,7 +71,7 @@
     "ScheduledGateOverdue": {
       "hours": {
         "value": 14,
-        "tunedBy": "(time() - max(homelab_scheduled_gate_finished_timestamp_seconds)) / 3600"
+        "tunedBy": "(time() - max(homelab_scheduled_gate_behind_since_timestamp_seconds > 0)) / 3600"
       },
       "forMinutes": {
         "value": 30,

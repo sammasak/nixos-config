@@ -13,7 +13,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Outcome, Receipt, SchemaVersion, Settle, TaskSpec, parse_versioned};
+use crate::{
+    Agent, Error, Outcome, Receipt, SchemaVersion, Settle, TaskSpec, agent, parse_versioned,
+};
 
 /// The task's checkout under the guest user's home; the reset that releases the slot removes it with the home.
 pub const CHECKOUT: &str = "task";
@@ -37,10 +39,11 @@ pub struct Manifest {
 impl Manifest {
     /// # Errors
     /// What [`parse_versioned`] or [`TaskSpec::validate`] (against the task's own capabilities: the queue checked
-    /// the grant at submit) rejects, and a `rev` that would read as an option.
+    /// the grant at submit) or [`agent::argv`] rejects, and a `rev` that would read as an option.
     pub fn parse(json: &str) -> Result<Self, Error> {
         let m: Self = parse_versioned(json)?;
         m.task.validate(&m.task.capabilities)?;
+        agent::argv(&m.task).map_err(|e| Error::Json(e.to_string()))?;
         if m.task.source.rev.starts_with('-') {
             return Err(Error::Json(format!(
                 "source.rev {:?} starts with '-'",
@@ -62,10 +65,12 @@ impl Manifest {
         s
     }
 
-    /// The guest commands in order: clone, check out, then the task's argv in its workdir. Each is an argv, never a
-    /// shell string; `git` and `env` are store paths the guest shares.
-    #[must_use]
-    pub fn steps(&self, git: &str, env: &str) -> [(Stage, Vec<String>); 3] {
+    /// The guest commands in order: clone, check out, then [`agent::argv`] in the task's workdir. Each is an argv,
+    /// never a shell string; `git` and `env` are store paths the guest shares.
+    ///
+    /// # Errors
+    /// What [`agent::argv`] rejects.
+    pub fn steps(&self, git: &str, env: &str) -> Result<[(Stage, Vec<String>); 3], agent::Error> {
         let s = |v: &[&str]| v.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
         let t = &self.task;
         let mut run = s(&[
@@ -74,19 +79,11 @@ impl Manifest {
             &format!("{CHECKOUT}/{}", t.command.workdir.as_str()),
             "--",
         ]);
-        run.extend(t.command.argv.iter().cloned());
-        [
+        run.extend(agent::argv(t)?);
+        Ok([
             (
                 Stage::Prepare,
-                s(&[
-                    git,
-                    "clone",
-                    "--quiet",
-                    "--no-checkout",
-                    "--",
-                    &t.source.repo,
-                    CHECKOUT,
-                ]),
+                s(&[git, "clone", "--quiet", "--", &t.source.repo, CHECKOUT]),
             ),
             (
                 Stage::Prepare,
@@ -101,8 +98,17 @@ impl Manifest {
                 ]),
             ),
             (Stage::Run, run),
-        ]
+        ])
     }
+}
+
+/// The exit code `systemd-run --wait --service-type=oneshot` reports for its unit, `None` for none.
+///
+/// 255 is `EXIT_EXCEPTION`, killed by a signal, so also `None`. Only exit 0 is a clean exit for a oneshot unit, so a
+/// command a stopping guest killed with SIGTERM does not read as a success; a command's own 255 reads as unknown.
+#[must_use]
+pub fn guest_exit(code: Option<i32>) -> Option<i32> {
+    code.filter(|&c| c != 255)
 }
 
 /// Where a run stopped. `Prepare`: the task's own argv never started, so nothing of it can have had an effect.
@@ -144,20 +150,30 @@ impl ExecResult {
 
 /// Where the attempt `attempt` at `epoch` settles after its run.
 ///
-/// Only a run that never started the task's argv goes
-/// back to `queued`; a run whose end is not a plain exit (no result, someone else's, a timeout, a signal, a guest
-/// that went away) goes to `needs_review`, never replayed.
+/// Only a run that never started the task's argv goes back to `queued`. No result (or someone else's), a timeout or
+/// a guest that went away is `needs_review`, never replayed; otherwise [`agent::outcome`] of the exit and `stdout`
+/// (the task's whole captured stdout: Claude's verdict is its last line) decides.
 #[must_use]
-pub fn decide(attempt: &str, epoch: u64, result: Option<&ExecResult>) -> Settle {
+pub fn decide(
+    attempt: &str,
+    epoch: u64,
+    agent: Agent,
+    result: Option<&ExecResult>,
+    stdout: &str,
+) -> Settle {
     let Some(r) = result.filter(|r| r.attempt_id == attempt && r.lease_epoch == epoch) else {
         return Settle::NeedsReview;
     };
-    match (r.stage, r.exit_code) {
-        (Stage::Prepare, _) => Settle::Queued,
-        _ if r.timed_out || !r.container_active => Settle::NeedsReview,
-        (Stage::Run, Some(0)) => Settle::Succeeded,
-        (Stage::Run, Some(_)) => Settle::Failed,
-        (Stage::Run, None) => Settle::NeedsReview,
+    if r.stage == Stage::Prepare {
+        return Settle::Queued;
+    }
+    if r.timed_out || !r.container_active {
+        return Settle::NeedsReview;
+    }
+    match agent::outcome(agent, r.exit_code, stdout) {
+        Outcome::Succeeded => Settle::Succeeded,
+        Outcome::Failed => Settle::Failed,
+        Outcome::NeedsReview => Settle::NeedsReview,
     }
 }
 
@@ -244,6 +260,10 @@ mod tests {
         )
     }
 
+    fn d(attempt: &str, epoch: u64, r: Option<&ExecResult>) -> Settle {
+        decide(attempt, epoch, Agent::None, r, "")
+    }
+
     fn result(stage: Stage, exit_code: Option<i32>) -> ExecResult {
         ExecResult {
             schema_version: SchemaVersion::CURRENT,
@@ -293,7 +313,7 @@ mod tests {
     #[test]
     fn steps_are_argv_with_the_repo_and_argv_after_a_separator() {
         let m = manifest(&task()).unwrap();
-        let [(s1, clone), (s2, checkout), (s3, run)] = m.steps("/git", "/env");
+        let [(s1, clone), (s2, checkout), (s3, run)] = m.steps("/git", "/env").unwrap();
         assert_eq!((s1, s2, s3), (Stage::Prepare, Stage::Prepare, Stage::Run));
         assert_eq!(
             clone,
@@ -301,7 +321,6 @@ mod tests {
                 "/git",
                 "clone",
                 "--quiet",
-                "--no-checkout",
                 "--",
                 "https://example.org/r.git",
                 "task"
@@ -330,17 +349,17 @@ mod tests {
     #[test]
     fn only_a_run_that_never_started_the_task_is_queued_again() {
         let ok = result(Stage::Run, Some(0));
-        assert_eq!(decide("t1.a", 3, Some(&ok)), Settle::Succeeded);
+        assert_eq!(d("t1.a", 3, Some(&ok)), Settle::Succeeded);
         assert_eq!(
-            decide("t1.a", 3, Some(&result(Stage::Run, Some(1)))),
+            d("t1.a", 3, Some(&result(Stage::Run, Some(1)))),
             Settle::Failed
         );
         assert_eq!(
-            decide("t1.a", 3, Some(&result(Stage::Prepare, Some(128)))),
+            d("t1.a", 3, Some(&result(Stage::Prepare, Some(128)))),
             Settle::Queued
         );
         assert_eq!(
-            decide("t1.a", 3, Some(&result(Stage::Prepare, None))),
+            d("t1.a", 3, Some(&result(Stage::Prepare, None))),
             Settle::Queued
         );
     }
@@ -348,32 +367,55 @@ mod tests {
     #[test]
     fn an_unknown_end_goes_to_review() {
         let ok = result(Stage::Run, Some(0));
-        assert_eq!(decide("t1.a", 3, None), Settle::NeedsReview);
+        assert_eq!(d("t1.a", 3, None), Settle::NeedsReview);
         assert_eq!(
-            decide("t1.a", 2, Some(&ok)),
+            d("t1.a", 2, Some(&ok)),
             Settle::NeedsReview,
             "another epoch's result"
         );
         assert_eq!(
-            decide("t2.a", 3, Some(&ok)),
+            d("t2.a", 3, Some(&ok)),
             Settle::NeedsReview,
             "another attempt's result"
         );
         assert_eq!(
-            decide("t1.a", 3, Some(&result(Stage::Run, None))),
+            d("t1.a", 3, Some(&result(Stage::Run, None))),
             Settle::NeedsReview
         );
         let timed_out = ExecResult {
             timed_out: true,
             ..ok.clone()
         };
-        assert_eq!(decide("t1.a", 3, Some(&timed_out)), Settle::NeedsReview);
+        assert_eq!(d("t1.a", 3, Some(&timed_out)), Settle::NeedsReview);
         let gone = ExecResult {
             container_active: false,
             exit_code: Some(1),
             ..ok
         };
-        assert_eq!(decide("t1.a", 3, Some(&gone)), Settle::NeedsReview);
+        assert_eq!(d("t1.a", 3, Some(&gone)), Settle::NeedsReview);
+    }
+
+    #[test]
+    fn an_agent_run_settles_by_the_adapter() {
+        let ok = result(Stage::Run, Some(0));
+        let claude = |stdout| decide("t1.a", 3, Agent::Claude, Some(&ok), stdout);
+        assert_eq!(claude("{\"is_error\":false}\n"), Settle::Succeeded);
+        assert_eq!(claude("{\"is_error\":true}\n"), Settle::Failed);
+        assert_eq!(
+            claude(""),
+            Settle::NeedsReview,
+            "a Claude run with no result"
+        );
+        let mut t = task();
+        t["command"] = json!({ "agent": "claude", "argv": ["fix it"], "workdir": "." });
+        let [_, _, (_, run)] = manifest(&t).unwrap().steps("/git", "/env").unwrap();
+        assert_eq!(run[..4], ["/env", "-C", "task/.", "--"]);
+        assert_eq!(
+            run[4..],
+            agent::argv(&manifest(&t).unwrap().task).unwrap()[..]
+        );
+        t["command"]["argv"] = json!(["a", "b", "c"]);
+        assert!(manifest(&t).is_err(), "an agent argv the adapter refuses");
     }
 
     #[test]
@@ -385,6 +427,14 @@ mod tests {
             (Outcome::Failed, 0, 3)
         );
         assert!(Receipt::parse(&serde_json::to_string(&r).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn a_signal_from_the_guest_is_no_exit() {
+        assert_eq!(guest_exit(Some(0)), Some(0));
+        assert_eq!(guest_exit(Some(3)), Some(3));
+        assert_eq!(guest_exit(Some(255)), None);
+        assert_eq!(guest_exit(None), None);
     }
 
     #[test]

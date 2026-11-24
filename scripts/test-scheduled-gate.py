@@ -130,7 +130,7 @@ esac
     listed = subprocess.run([sys.executable, "-I", str(GATE), "--list"], capture_output=True, text=True,
                             check=True).stdout.split()
     typed = re.findall(r"^# TYPE (\S+) gauge$", prom.read_text(), re.M)
-    check(listed == typed and len(listed) == 5, f"--list names exactly the series the textfile types ({listed})")
+    check(listed == typed and len(listed) == 6, f"--list names exactly the series the textfile types ({listed})")
     commit("5\n")
     run("fail-check")
     exposed = {re.split(r"[{ ]", line)[0] for line in prom.read_text().splitlines() if not line.startswith("#")}

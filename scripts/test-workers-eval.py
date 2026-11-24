@@ -224,6 +224,7 @@ in {
   hook = builtins.readFile (builtins.appendContext (builtins.head (builtins.match "(.*) start" (d ex))) (builtins.getContext ex));
   evalCache = builtins.filter (n: builtins.match ".*/eval-cache.*" n != null) (builtins.attrNames c.containers.t.bindMounts);
   nixDrv = g.nix.package.drvPath;
+  oomAdj = { daemon = g.systemd.services.nix-daemon.serviceConfig.OOMScoreAdjust or null; sshd = g.systemd.services.sshd.serviceConfig.OOMScoreAdjust or null; };
   gcroots = d c.systemd.services.dev-environments-gcroots.script;
   stateDir = c.services.devEnvironments.stateDir;
   gcTimer = c.systemd.timers.dev-environments-gcroots.timerConfig;
@@ -778,6 +779,9 @@ def check_hygiene(facts):
         run = subprocess.run([str(exe), "wait"], capture_output=True, text=True, env={**os.environ, "HM_STATE": state, "WORKER_WAIT_TICK": "0"})
         check(run.returncode == code and (code != 2 or "home-manager-" in run.stderr) and (("still activating" in run.stderr) == still),
               f"wait with the home setup {state.splitlines()[-1]} exits {code}{', saying it is still activating' if still else ''} ({run.returncode}, {run.stderr.strip()[-100:]})")
+    adj = facts.get("oomAdj", {})
+    check(adj.get("daemon") == 500 and adj.get("sshd") is None,
+          f"at the pool limit a guest's builds (the nix-daemon's children) are killed before its agent sessions ({adj})")
     gc = facts.get("gcTimer", {})
     check(gc.get("OnBootSec") and gc.get("OnUnitActiveSec") == "15min" and facts.get("gcUnit") == {"before": ["nix-gc.service"], "requiredBy": ["nix-gc.service"]},
           f"the gc-roots unit runs at boot and every 15 min and still runs before nix-gc ({gc}, {facts.get('gcUnit')})")
