@@ -25,15 +25,15 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use exec_pool::agent;
-use exec_pool::queue::{Change, Claim, QueueError, Store};
+use exec_pool::queue::{Change, Claim, Park, QueueError, Store};
 use exec_pool::runner::{
-    CAPTURE_BYTES, ExecResult, Listed, Manifest, QUICK_SECS, Session, Stage, Step, TurnEnd,
-    TurnSettle, claim_fits, decide, decide_turn, guest_exit, handed_back, read_regular, receipt,
-    relink, remote_head, tail,
+    CAPTURE_BYTES, ExecResult, Listed, Manifest, QUICK_SECS, Session, Stage, Step, TurnSettle,
+    claim_fits, decide, decide_turn, guest_exit, handed_back, read_regular, receipt, relink,
+    remote_head, session_checkpoint, tail,
 };
 use exec_pool::task_result::TaskResult;
 use exec_pool::workspace::{self, HomeId, SESSION_HOME, Sessions, Workspace, admit};
-use exec_pool::{Agent, Event, Kind, Receipt, SchemaVersion, Settle, Slot};
+use exec_pool::{Agent, Event, Kind, ParkReason, Receipt, SchemaVersion, Slot};
 use serde_json::{Value, json};
 
 const USAGE: &str =
@@ -400,9 +400,13 @@ impl Runner {
                     Self::event(store, id, epoch, Kind::Settle(to), r.as_ref())
                 })
                 .map(|()| true),
-            TurnSettle::Park(end) => {
-                park(store, (id, epoch, &self.slot.host), end, &task_result).map(|()| false)
-            }
+            TurnSettle::Park(reason) => park(
+                store,
+                (id, epoch, &claim.task.id, &self.slot.host),
+                (reason, manifest.session.as_ref().map_or(0, |s| s.upto)),
+                &task_result,
+            )
+            .map(|()| false),
         };
         match &settled {
             Err(e) => self.error("settle", e),
@@ -499,30 +503,36 @@ impl Runner {
     }
 }
 
-/// A session task's turn, from its claim.
-///
-/// FIXME: the claim carries the session (`session_uuid`, the turn's input, `upto`) once brief 1a's queue side
-/// (`pool/session-queue`) is on main; until then no claim is a session and every task runs one-shot.
-const fn session_of(_claim: &Claim) -> Option<Session> {
-    None
+/// A session task's turn, as its claim hands it over.
+fn session_of(claim: &Claim) -> Option<Session> {
+    claim.turn.as_ref().map(|t| Session {
+        uuid: t.session_uuid.clone(),
+        input: t.input.clone(),
+        upto: t.upto,
+    })
 }
 
-/// Parks the session turn `attempt` at `epoch` to wait for its next message, its tree on `host`.
-///
-/// FIXME: `Store::park` (brief 1a) records the reason, the checkpoint (`generation` the epoch, `hosts` this one) and
-/// `upto` with the result; until then a park is a settle to `waiting` and the result recorded after it.
+/// Parks the session turn `attempt` at `epoch` with its result, the inbox read up to `upto`, and the checkpoint that
+/// names the session's tree on `host`, so a message wakes it there.
 fn park(
     store: &mut Store,
-    (attempt, epoch, _host): (&str, u64, &str),
-    end: TurnEnd,
+    (attempt, epoch, task, host): (&str, u64, &str, &str),
+    (reason, upto): (ParkReason, i64),
     result: &TaskResult,
 ) -> Result<(), QueueError> {
-    Runner::event(store, attempt, epoch, Kind::Checkpoint, None)?;
-    Runner::event(store, attempt, epoch, Kind::Settle(Settle::Waiting), None)?;
-    line(
-        &json!({ "msg": "parked", "attempt": attempt, "lease_epoch": epoch, "reason": end.reason() }),
-    );
-    store.record_result(attempt, epoch, result).map(|_| ())
+    let checkpoint = session_checkpoint(task, host, epoch);
+    let (_, changes) = store.park(
+        attempt,
+        epoch,
+        &Park {
+            reason,
+            checkpoint: Some(checkpoint),
+            result: result.clone(),
+            upto,
+        },
+    )?;
+    changes.iter().for_each(log_change);
+    Ok(())
 }
 
 fn run() -> Result<(), String> {

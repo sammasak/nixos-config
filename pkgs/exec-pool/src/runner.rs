@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::workspace::{self, SESSION_HOME, SESSION_WORK, Workspace};
 use crate::{
-    Agent, Error, Outcome, Receipt, SchemaVersion, Settle, TaskSpec, agent, parse_versioned,
+    Agent, CheckpointRef, Error, Outcome, ParkReason, Receipt, SchemaVersion, Settle, TaskSpec,
+    agent, parse_versioned,
 };
 
 /// How much of each output stream the result carries; the host keeps up to [`CAPTURE_BYTES`] of it.
@@ -287,29 +288,23 @@ pub fn relink(cp: &str, guest_home: &str) -> Vec<String> {
     .to_vec()
 }
 
-/// Why a session turn parked, as the queue records it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TurnEnd {
-    /// The agent finished its turn.
-    End,
-    /// The agent's call failed, left no verdict or ran out of time; the session waits for the next message.
-    Error,
-}
-
-impl TurnEnd {
-    #[must_use]
-    pub const fn reason(self) -> &'static str {
-        match self {
-            Self::End => "turn_end",
-            Self::Error => "turn_error",
-        }
+/// The checkpoint a parked turn leaves: the session's tree on `host`, as its turn at `epoch` left it. A live tree has
+/// no content hash, so the generation and the host say which it is.
+#[must_use]
+pub fn session_checkpoint(task_id: &str, host: &str, epoch: u64) -> CheckpointRef {
+    CheckpointRef {
+        schema_version: SchemaVersion::CURRENT,
+        uri: format!("session-tree://{host}/{task_id}"),
+        digest: "unhashed".to_owned(),
+        generation: epoch,
+        hosts: vec![host.to_owned()],
     }
 }
 
 /// Where a session turn goes: parked to wait for its next message, or settled as a one-shot run would be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnSettle {
-    Park(TurnEnd),
+    Park(ParkReason),
     Settle(Settle),
 }
 
@@ -341,8 +336,8 @@ pub fn decide_turn(
         return TurnSettle::Settle(Settle::NeedsReview);
     }
     match agent::outcome(Agent::Claude, r.exit_code, stdout) {
-        Outcome::Succeeded if !r.timed_out => TurnSettle::Park(TurnEnd::End),
-        _ => TurnSettle::Park(TurnEnd::Error),
+        Outcome::Succeeded if !r.timed_out => TurnSettle::Park(ParkReason::TurnEnd),
+        _ => TurnSettle::Park(ParkReason::TurnError),
     }
 }
 
@@ -829,12 +824,26 @@ mod tests {
     }
 
     #[test]
+    fn a_parked_turn_names_its_tree_on_this_host() {
+        let c = session_checkpoint("t1", "msi-ms7758", 4);
+        assert_eq!(c.validate(), Ok(()), "what Store::park validates");
+        assert_eq!(
+            (c.uri.as_str(), c.generation, c.hosts.as_slice()),
+            (
+                "session-tree://msi-ms7758/t1",
+                4,
+                &["msi-ms7758".to_owned()][..]
+            )
+        );
+    }
+
+    #[test]
     fn every_end_of_a_turn_parks_the_session_and_an_unknown_one_goes_to_review() {
         let turn = |r: Option<&ExecResult>, stdout: &str| decide_turn("t1.a", 3, r, stdout);
         let ok = result(Stage::Run, Some(0));
         assert_eq!(
             turn(Some(&ok), "{\"is_error\":false}"),
-            TurnSettle::Park(TurnEnd::End)
+            TurnSettle::Park(ParkReason::TurnEnd)
         );
         for (r, stdout) in [
             (result(Stage::Run, Some(0)), "{\"is_error\":true}"),
@@ -850,7 +859,7 @@ mod tests {
         ] {
             assert_eq!(
                 turn(Some(&r), stdout),
-                TurnSettle::Park(TurnEnd::Error),
+                TurnSettle::Park(ParkReason::TurnError),
                 "{r:?}"
             );
         }
@@ -889,8 +898,6 @@ mod tests {
             turn(Some(&cancelled), ""),
             TurnSettle::Settle(Settle::Cancelled)
         );
-        assert_eq!(TurnEnd::End.reason(), "turn_end");
-        assert_eq!(TurnEnd::Error.reason(), "turn_error");
     }
 
     #[test]

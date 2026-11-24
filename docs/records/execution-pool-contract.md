@@ -57,7 +57,8 @@ parks in `waiting` counts against `retry.max_attempts` (at least 1), so an expir
 
 ### Sessions, turns, park and wake (#656)
 
-A task with `tasks.session` is a session: one agent session (its id the queue's `session_uuid`) that lives across
+A task with `tasks.session` (queued by `exec-pool start`; the queue's side is under Sessions below) is a session: one
+agent session (its id the queue's `session_uuid`) that lives across
 leases. Each lease is one **turn**, and a turn ends in a **park** to `waiting`, never in a settle: `turn_end` when the
 agent finished its turn, `turn_error` when its call failed, left no verdict or timed out (later also `host_draining`,
 `preempted`, `waiting_until`). A failed turn never fails the session. A **wake** is a message in the task's inbox
