@@ -100,6 +100,17 @@ impl Runner {
         line(&json!({ "msg": "error", "slot": self.slot.id, "at": at, "error": e.to_string() }));
     }
 
+    fn guest_up(&self) -> bool {
+        Command::new("systemctl")
+            .args([
+                "is-active",
+                "--quiet",
+                &format!("container@{}.service", self.slot.id),
+            ])
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
     /// The slot back to a fresh home, or quarantined: a reset refuses a running agent or unpushed work, and a slot
     /// it could not reset is not offered again.
     fn release(&self) -> bool {
@@ -130,7 +141,8 @@ impl Runner {
         // the slot's state at startup is unknown: a runner that died mid-run left it as it was
         let mut dirty = true;
         loop {
-            if self.quarantine.exists() || (dirty && !self.release()) {
+            // a guest down or restarting (a switch restarts it) is waited for, not a reset that fails
+            if self.quarantine.exists() || (dirty && (!self.guest_up() || !self.release())) {
                 thread::sleep(BACKOFF);
                 continue;
             }
@@ -284,6 +296,8 @@ impl Guest {
                 "-M",
                 &self.slot,
                 &format!("--uid={}", self.user),
+                // systemd would otherwise substitute `$X` and `${X}` in the task's argv
+                "--expand-environment=no",
                 "--wait",
                 "--pipe",
                 "--quiet",
