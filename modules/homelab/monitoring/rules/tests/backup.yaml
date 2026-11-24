@@ -98,3 +98,34 @@ tests:
               description: "backup-metrics on lenovo-21CB001PMX has not completed a scan in 15 minutes, or has written no backup.prom since boot, for 15 minutes: BackupStale and BackupNeverRecorded cannot see that host's backups. Run systemctl status backup-metrics.timer backup-metrics there."
               query: 'time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",node="lenovo-21CB001PMX"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupcollectorstale"
+
+  # the live fire-and-resolve drill (docs/alert-runbooks.md, Drill: a blind collector): a synthetic.prom on black-pi,
+  # which runs no backup, written an hour stale for 30 minutes and then removed
+  - interval: 1m
+    input_series:
+      - series: 'up{job="node-exporter",instance="black-pi",node="black-pi"}'
+        values: '1x45'
+      - series: 'homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",instance="black-pi",node="black-pi"}'
+        values: '-3600x30 stale'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: BackupCollectorStale
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: BackupCollectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: black-pi}
+            exp_annotations:
+              summary: "The backup-metrics collector on black-pi is stale or missing"
+              description: "backup-metrics on black-pi has not completed a scan in 15 minutes, or has written no backup.prom since boot, for 15 minutes: BackupStale and BackupNeverRecorded cannot see that host's backups. Run systemctl status backup-metrics.timer backup-metrics there."
+              query: 'time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",node="black-pi"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupcollectorstale"
+      - eval_time: 32m
+        alertname: BackupCollectorStale
+        exp_alerts: []
+      - eval_time: 32m
+        alertname: BackupStale
+        exp_alerts: []
+      - eval_time: 32m
+        alertname: BackupNeverRecorded
+        exp_alerts: []
