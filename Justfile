@@ -60,6 +60,10 @@ audit-candidate HOST=host TARGET=(if HOST == host { "local" } else { HOST }):
 # scripts/post-deploy-check.sh, tests/post-deploy-check-vm.nix, scripts/test-deploy-recipes.py). It also lists
 # condition-skipped units without failing. It rolls nothing back, and a host
 # degraded for an unrelated reason fails every deploy until fixed.
+# A pool host (one with exec-pool-drain, modules/homelab/exec-pool-runner.nix) is drained first: its runners stop
+# claiming and park their running session turns, which continue on another host at once or here after the deploy;
+# the recipe waits up to 15 minutes for its helpers to end, then deploys anyway, and clears the drain once deploy-rs
+# returns, whatever it returned (an exit or Ctrl-C too).
 [doc("Push HOST with deploy-rs (magic rollback), skipping the flake check, under the memory cap, then check the host is running it")]
 deploy HOST:
     @{{quote(justfile_directory() / "scripts/hosts-table.sh")}} check {{quote(HOST)}}
@@ -72,15 +76,24 @@ deploy HOST:
     start=$SECONDS; sha=$(git rev-parse --short HEAD); log=$(mktemp); recorded=0; \
       rec() { recorded=1; pkgs/platform-record/platform_record.py deploy node={{HOST}} result="$1" seconds=$((SECONDS - start)) \
         rolled_back="${2:-0}" units_restarted="${3:-0}" failed_units="${4:-unknown}" sha="$sha"; }; \
-      trap '[ "$recorded" = 1 ] || rec interrupted; rm -f "$log"' EXIT; \
+      target=""; drained=0; undrain() { [ "$drained" = 1 ] || return 0; drained=0; \
+        timeout 60 ssh -o StrictHostKeyChecking=yes "deploy@$target" sudo exec-pool-drain off \
+          || echo "deploy: the execution pool drain on {{HOST}} is not cleared: it lapses in 2 h, or run sudo exec-pool-drain off there" >&2; }; \
+      trap 'undrain; [ "$recorded" = 1 ] || rec interrupted; rm -f "$log"' EXIT; \
       lock=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/deploy-{{HOST}}.lock; exec {held}<>"$lock"; \
       flock -n "$held" || { holder=$(cat "$lock"); echo "deploy: refused, {{HOST}} is being deployed already (${holder:-holder unknown}); not queued, rerun when it ends" >&2; rec locked; exit 1; }; \
       echo "pid $$, $sha, since $(date +%T)" >"$lock"; \
       scripts/system-checks.sh {{HOST}} {{memcap}} || { c=$?; rec checks-failed; exit "$c"; }; \
+      target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname) || target=""; \
+      if [ -n "$target" ] && timeout 60 ssh -o StrictHostKeyChecking=yes "deploy@$target" command -v exec-pool-drain >/dev/null 2>&1; then \
+        drained=1; echo "deploy: draining the execution pool on {{HOST}}: no claims, running session turns park" >&2; \
+        timeout --foreground 1200 ssh -o StrictHostKeyChecking=yes "deploy@$target" 'sudo exec-pool-drain on && exec-pool-drain wait 900' \
+          || echo "deploy: {{HOST}} still runs a pool attempt after the drain's wait; deploying anyway, its restarted runner adopts it" >&2; fi; \
       rc=0; systemd-run --user --scope -q {{memcap}} {{deploy-rs}} .#{{HOST}} --skip-checks 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}; \
+      undrain; \
       rolled=0; if grep -q 'rolled back to previous generation' "$log"; then rolled=1; fi; \
       units=$(sed -n 's/.*restarting the following units: //p' "$log" | tr ',' '\n' | grep -c . || true); \
-      check=255; target=$(nix eval --raw .#deploy.nodes.{{HOST}}.hostname) || target=""; \
+      check=255; \
       if [ -n "$target" ]; then check=0; timeout --foreground 300 ssh -o StrictHostKeyChecking=yes "deploy@$target" \
         'bash -s && [ "$(readlink /run/current-system)" = "$(dirname "$(readlink -f /nix/var/nix/profiles/system/init)")" ]' \
         < scripts/post-deploy-check.sh || check=$?; fi; \

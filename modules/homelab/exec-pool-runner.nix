@@ -93,6 +93,46 @@ let
     "dev-env-reset@${n}.service"
   ]) slotNames;
   resets = map (n: "dev-env-reset@${n}.service") slotNames;
+  # the deploy's drain (the Justfile's deploy recipe): `on [SECS]` (root) writes the request every runner reads beside
+  # its runtime directory (pkgs/exec-pool/src/runner.rs, DRAIN_REQUEST), held until `off` or SECS pass; `wait SECS`
+  # returns once no slot's helper runs, 1 at the bound. Its first wait covers a claim taken just before the request,
+  # whose helper starts and sees it within one heartbeat.
+  drain = pkgs.writeShellApplication {
+    name = "exec-pool-drain";
+    runtimeInputs = [
+      pkgs.coreutils
+      config.systemd.package
+    ];
+    text = ''
+      marker=/run/exec-pool-runner/drain
+      busy() { systemctl list-units --no-legend --plain --state=active,activating,deactivating 'exec-pool-exec@*'; }
+      case "''${1:-}" in
+        on)
+          umask 022
+          mkdir -p "''${marker%/*}"
+          echo "$(($(date +%s) + ''${2:-7200}))" >"$marker.tmp"
+          mv "$marker.tmp" "$marker"
+          ;;
+        off) rm -f "$marker" ;;
+        wait)
+          end=$((SECONDS + ''${2:-900}))
+          sleep 15
+          while [ -n "$(busy)" ]; do
+            if [ "$SECONDS" -ge "$end" ]; then
+              echo "exec-pool-drain: still running:" >&2
+              busy >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          ;;
+        *)
+          echo "usage: exec-pool-drain on [SECS] | off | wait [SECS]" >&2
+          exit 2
+          ;;
+      esac
+    '';
+  };
 in
 {
   # the removal of this runner's session trees, by its queue's list
@@ -132,6 +172,8 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    environment.systemPackages = [ drain ];
+
     systemd.services = {
       "exec-pool-exec@" = {
         description = "Run the execution pool attempt handed to slot %i";

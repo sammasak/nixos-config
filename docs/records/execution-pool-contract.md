@@ -179,6 +179,13 @@ marker. Every state change is one JSON line with its ids, and the `run` line car
 `claim_to_exec_ms`, `exec_ms`, `prepare_ms` and `run_ms`. `slot_reset` carries `sanitize_ms`. There are no metric
 labels but states, agents, reasons and hosts.
 
+A deploy never needs an idle pool: `just deploy` drains a pool host first (`exec-pool-drain on`, the request every
+runner reads at `/run/exec-pool-runner/drain`, held until cleared or 2 h pass), so its runners stop claiming and park
+a running session turn as `host_draining` with a `continue` row, which wakes it at once on another host with the store
+or on this one after the deploy; a one-shot run is not stopped, and a runner restarted under it adopts it. The recipe
+waits up to 15 minutes for the host's helpers, deploys, and clears the request whatever deploy-rs returned. A settle
+or park the queue cannot take because it is restarting (its own host deployed) is retried while the lease lasts.
+
 ## Not `sam.agentRuntime`
 
 The historical `sam.agentRuntime` (#133, #138) made one ephemeral nspawn instance per task with no scheduler; it is

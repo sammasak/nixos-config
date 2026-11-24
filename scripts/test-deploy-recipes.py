@@ -25,7 +25,7 @@ STUBS = {
     "bin/nix": """echo "nix $*" >> "$LOG"
 case "$*" in
   run*--dry-activate*) echo "Completed dry-activate!" ;;
-  run*) echo "Success activating, done!" ;;
+  run*) echo "Success activating, done!"; exit "${DEPLOY_RC:-0}" ;;
   *toplevel*) printf '%s' "$FIX/top" ;;
   *hostname*) printf target ;;
   *diff-closures*) exit "${DIFF_RC:-0}" ;;
@@ -53,9 +53,11 @@ esac""",
 }
 
 
-def run(recipe, shadow="", check_script=None, host="acer-swift", runtime=None, justfile=ROOT / "Justfile", **env):
+def run(recipe, shadow="", check_script=None, host="acer-swift", runtime=None, justfile=ROOT / "Justfile", pool=False,
+        **env):
     """shadow: the activation's report on the target (None: there is none); check_script: the post-deploy check's text;
-    runtime: XDG_RUNTIME_DIR, where the deploy locks are (default: a fresh one)."""
+    runtime: XDG_RUNTIME_DIR, where the deploy locks are (default: a fresh one); pool: the target has exec-pool-drain,
+    whose `wait` exits DRAIN_WAIT_RC."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = pathlib.Path(tmp)
         for rel, body in STUBS.items():
@@ -65,6 +67,10 @@ def run(recipe, shadow="", check_script=None, host="acer-swift", runtime=None, j
         (tmp / "scripts/post-deploy-check.sh").write_text(check_script or (ROOT / "scripts/post-deploy-check.sh").read_text())
         if shadow is not None:
             (tmp / "shadowed-user-units").write_text(shadow)
+        if pool:
+            drain = tmp / "bin/exec-pool-drain"
+            drain.write_text('#!/usr/bin/env bash\necho "drain $*" >> "$LOG"\n[ "$1" != wait ] || exit "${DRAIN_WAIT_RC:-0}"\n')
+            drain.chmod(0o755)
         (tmp / "log").touch()
         out = subprocess.run([shutil.which("just"), "--justfile", str(justfile), "--working-directory", str(tmp),
                               recipe, host], capture_output=True, text=True,
@@ -102,6 +108,20 @@ if old.returncode == 0 and "shadowed-user-units" not in old.stdout:
     rc, out, log = run("deploy", shadow=SHADOWED + "\n", check_script=old.stdout)
     check(rc == 0 and "result=ok" in log,
           f"seeded: main's post-deploy check passes a host whose activation found a shadowed unit, so the check above is new (rc {rc})")
+
+check("exec-pool-drain on" not in run("deploy")[2], "deploy: a host without exec-pool-drain is deployed without a drain")
+rc, out, log = run("deploy", pool=True)
+steps = [l.split()[0] + " " + l.split()[1] for l in log.splitlines() if l.startswith(("drain", "nix run"))]
+check(rc == 0 and "result=ok" in log and steps == ["drain on", "drain wait", "nix run", "drain off"]
+      and "sudo exec-pool-drain off" in log,
+      f"deploy: a pool host is drained and waited for before deploy-rs, and its drain cleared after (rc {rc}: {steps})")
+rc, out, log = run("deploy", pool=True, DEPLOY_RC="1")
+check(rc == 1 and "result=deploy-failed" in log and log.splitlines().count("drain off") == 1,
+      f"deploy: a failed or rolled back deploy clears the drain too, once (rc {rc}: {out.strip()[-200:]})")
+rc, out, log = run("deploy", pool=True, DRAIN_WAIT_RC="1")
+check(rc == 0 and "still runs a pool attempt after the drain's wait; deploying anyway" in out and "nix run" in log
+      and "drain off" in log,
+      f"deploy: a pool attempt outlasting the drain's wait is said, and the deploy goes on (rc {rc}: {out.strip()[-200:]})")
 
 with tempfile.TemporaryDirectory() as runtime:
     lock = pathlib.Path(runtime) / "deploy-acer-swift.lock"
