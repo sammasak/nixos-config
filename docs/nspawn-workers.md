@@ -78,6 +78,10 @@ the named instances reserve more than `pool.memory`. `worker-pool-inventory` pri
 units: `slot`, `state`, `sub`, `closure`, `memory.min`/`.low`, `cpu.weight`, `slice`. `nix build .#execution-pool-vm`
 (msi) boots two slots beside a named instance, reuses one across a reset and restarts it alone.
 
+Every slot has `sessionDock` (an instance option, off for named workers): `/session` is bound read-write from
+`<stateDir>/.sessions/dock/<slot>`, root's 0755 under `.sessions/dock` (0755) and `.sessions` (0711), so a session's home and work tree, kept
+outside every slot home, are renamed in for one turn; reset, retire, the trash sweep, gcroots and records never touch `.sessions`. Not with `rootInGuest`.
+
 ## Sizing
 
 Reserved per environment, spiking allowed. Measured on both hosts (8 cores,
