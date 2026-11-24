@@ -6,6 +6,7 @@
 pub mod agent;
 pub mod queue;
 mod state;
+pub mod workspace;
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path};
