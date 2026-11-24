@@ -20,28 +20,26 @@ PRs merge.
 
 ## Queue
 
-Owner, 24 Nov morning: full gates need not run for every change; run them on a schedule to catch regressions. And the
-pool database sitting in the Authentik module's PostgreSQL server is confusing and bad practice.
+Owner, 24 Nov: ship the real work with a narrow test per change; no long gate per change. Merges and deploys are
+collected into a batch, and the scheduled full gate on main (acer, four times a day, first run 15:20) covers the batch.
 
-In flight (24 Nov, 09:00): fast checks on every push plus a scheduled full gate on main with a red-gate alert (`a1`);
-PostgreSQL server into its own module, Authentik and the pool as plain tenants (`m2`); msi builds die before agent
-sessions when the worker pool fills (#647, `m1`, built, waiting to push); two #624 items (`m1`).
-Merged and live since 07:00: `OpenIssuesUntouched` replaces `OpenIssuesGrowing` (#701); worker label on token metrics
-and `ClaudeCompactionLoop` (#702); all ten role adapters take the checkout from the handoff (skills#159, pin #703);
-record-shipper backlog figure and `GuestRecordsNotShipping` (#705); pool slot declaration, off by default (#704, merged
-on its own tests, not deployed to msi yet). asus deployed #703 at 08:25; msi owes a deploy (a gate runs on it).
+Current batch, then one acer deploy and the first real pool task: runner (#652, PR #713, `m2`), submit, status and list
+commands (`m1`), pool metrics, dashboard row and two alerts (#658, `a1`).
+Merged since 09:00: scheduled full gate and fast push checks (#707, #712); PostgreSQL in its own module (#708);
+guest nix-daemon dies before agent sessions (#709, closes #647); annotation check reads black-pi's rule files (#710);
+agent adapter (#711); msi guests resolve through the fleet's DNS host (#714); slot agents, `pool1` on acer (#716);
+per-attempt workspace (#717). Live: acer up to #710, msi up to #714, black-pi #710.
 
 Waiting, in pick-up order:
 
 | # | Topic | Pain now | Next small change |
 |---|-------|----------|-------------------|
-| 1 | Pool | no task has run through it | runner (#652); enqueue smoke test on acer |
-| 2 | Workers | msi guests have no working DNS; `m1`'s SSH host key changed over the power-off | find the cause after the msi deploy |
-| 3 | Live comparison | first numbers only; labels are fresh from 07:40 on 24 Nov | read a day of Shunt on/off and of herman against default on 25 Nov; widen or switch off |
-| 4 | Records | 37 gate-step and 45 coverage records from `a1` are in its retry file but not in Loki | find why before deleting the retry files |
-| 5 | Gates | flake check took 1263 s after #683 | read the per-step times of the first scheduled gate; find what grew |
-| 6 | Monitoring | no new alert has been seen arriving on the phone | fire one "blind" alert live with the #624 steps; Alertmanager 0.34 |
-| 7 | Leftovers | two drafts open; skills operator runbook names the old checkout | #616, skills#106, the runbook line |
+| 1 | Pool | no task has run through it | deploy the batch on acer, submit one Claude task |
+| 2 | Pool | the runner does not use the per-attempt workspace yet | wire `workspace` into the runner (#653) |
+| 3 | Pool | one host only | fleet dispatch (#654); Codex and Pi need an egress route for slots |
+| 4 | Gates | flake check took 1263 s after #683 | read the per-step times of the 15:20 scheduled gate |
+| 5 | Live comparison | first numbers only | read a day of Shunt on/off and herman against default on 25 Nov |
+| 6 | Leftovers | two drafts open; skills operator runbook names the old checkout | #616, skills#106, the runbook line |
 
 ## Priorities
 
@@ -94,11 +92,11 @@ are. v0.2 and v0.3 stay locked until the v0.1 offline gate has evidence. Deferre
 | Item | What | Needs | State | PR |
 |------|------|-------|-------|----|
 | [#649](https://github.com/sammasak/nixos-config/issues/649) | Contract: ADR, `pkgs/exec-pool` types and state machine, compatibility fixture | | merged; acer gate 23 min, one review round plus a fix round, about 4 h from dispatch to merge | #667 |
-| [#650](https://github.com/sammasak/nixos-config/issues/650) | `sam.workers.executionPool` slot count | #649 | `m2` | |
+| [#650](https://github.com/sammasak/nixos-config/issues/650) | `sam.workers.executionPool` slot count | #649 | merged; `pool1` declared on acer | #704, #716 |
 | [#651](https://github.com/sammasak/nixos-config/issues/651) | PostgreSQL queue, leases, fencing | #649 | closed; live on acer | #673, #693 |
-| [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | `a1`, first slice staged | |
-| [#652](https://github.com/sammasak/nixos-config/issues/652) | Runner: dispatcher, slot control, guest executor | #650, #651 | queued | |
-| [#653](https://github.com/sammasak/nixos-config/issues/653) | Per-attempt isolation and egress | #652 | queued | |
+| [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | `a1` | |
+| [#652](https://github.com/sammasak/nixos-config/issues/652) | Runner: dispatcher, slot control, guest executor | #650, #651 | `m2`; agent adapter merged | #711, #713 |
+| [#653](https://github.com/sammasak/nixos-config/issues/653) | Per-attempt isolation and egress | #652 | workspace merged; runner wiring next | #717 |
 | v0.1 gate | Acceptance script in a VM: PASS, FAIL or UNTESTED per criterion | #653, #658 | | |
 
 Per merged pool PR, record here: gate minutes, review rounds, hours from dispatch to merge.
@@ -109,10 +107,10 @@ Placement order: acer, then msi, asus last (it carries ollama and the heavier lo
 
 | Host | Worker | Item |
 |------|--------|------|
-| acer-swift | `a1` | #651, #658 |
+| acer-swift | `a1` | #658 |
 | acer-swift | `herman` | dashboards lane (#525, #523), not this week's list |
-| msi-ms7758 | `m1` | 624-h |
-| msi-ms7758 | `m2` | #650 |
+| msi-ms7758 | `m1` | pool submit command |
+| msi-ms7758 | `m2` | #652 |
 | asus-b460m | none | `a624`, `s138`, `s130` retired |
 
 msi and asus have no `gh` login: workers push branches over SSH and the lenovo session opens and merges the PRs.
@@ -122,7 +120,7 @@ msi and asus have no `gh` login: workers push branches over SSH and the lenovo s
 Every host deployed main on 23 Nov: acer-swift, msi-ms7758, asus-b460m, black-pi, lenovo. The first black-pi deploy
 rolled back on a journal-metrics start race, fixed by #634. asus deployed again after #639 (workers retired).
 msi, asus and acer deployed main again on the evening of 23 Nov (gaming entries, skills pin #661; acer also has the
-pin from #670). lenovo and acer deployed #699 at 06:40 on 24 Nov, black-pi #694 at 05:00. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
+pin from #670). lenovo and acer deployed #699 at 06:40 on 24 Nov, black-pi #694 at 05:00. On 24 Nov: asus #703 at 08:25, msi #714 at 10:00, acer #710 at 09:50. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
 ## Gaming entries (owner request, 23 Nov)
 
@@ -133,7 +131,7 @@ Steam Remote Play can still stream from msi through Valve's relay: the switch is
 ## Owner gates
 
 None, except physical access and spending money (owner, 23 Nov). The coordinator decides and ships everything else.
-Owed after 08:30 on 24 Nov: one full gate on main (covers the night's pushes, `just qa-owed`), deploy msi and asus.
+The scheduled gate on acer runs the full gate on main; nothing is owed by hand.
 
 ## Merged this week
 
@@ -149,9 +147,11 @@ Owed after 08:30 on 24 Nov: one full gate on main (covers the night's pushes, `j
   alert clears, #642 typed textfile port, #637 usage records, #631 asus model capability, #689 late-failure guard,
   #690 seventh-host reuses evaluations, #691 role adapters pinned to the skills input, #693 pool queue on acer,
   #694 and #695 flake check green again, #697 guest records shipped by the host only, #698 night eval step,
-  #699 skills pin
+  #699 skills pin, #701 untouched issues alert, #702 compaction loop alert, #703 skills pin, #704 pool slots,
+  #705 record backlog alert, #707 and #712 scheduled gate, #708 PostgreSQL module, #709 guest daemon OOM order,
+  #710 annotation check on vendor rules, #711 agent adapter, #714 guest DNS, #716 slot agents, #717 attempt workspace
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
   #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132),
   #154 regression engineer (#134), #155 Rust maintainer (#135), #156 dangling pointer check,
-  #157 and #158 adapters name one place
+  #157, #158 and #159 adapters name one place
