@@ -109,6 +109,20 @@ Fires: the host's last journal-metrics collection failed (`homelab_journal_metri
 there. A host that is off has no series and does not fire.
 First: on the host, `systemctl status journal-metrics.timer journal-metrics alloy` and `journalctl -u journal-metrics -n 20`.
 
+## GuestRecordsNotShipping
+
+Fires: a worker's guest has platform record lines waiting (`homelab_guest_records_waiting_lines` above 0) and
+`dev-env-records` has not got through that worker for over 30 minutes
+(`homelab_guest_records_shipped_timestamp_seconds`, 0 if it never has), for 10 minutes. The timer runs every 5
+minutes and a run that ships its 500 lines counts, so a large backlog draining does not fire. Those lines are in the
+guest's spool, not in Loki, so that worker's gate and coverage records are missing there. The textfile
+is `/run/dev-env-records-metrics/guest-records.prom` on the host; a worker refused for a link or FIFO on its spool
+has no series and fails the unit instead (NodeSystemdUnitFailed).
+First: on the host, `journalctl -u dev-env-records -n 20`: `Loki unreachable` or `Loki answered 5xx` is Loki's
+side (black-pi, `systemctl status loki`); a timeout is a slow run.
+Do not: delete the worker's spool or its progress under `/var/lib/private/dev-env-records`; the next run that
+reaches Loki ships what waits.
+
 ## BackupStale
 
 Fires: `time() - homelab_backup_last_success_timestamp_seconds` is over 36 hours for 10 minutes. Every job is a daily

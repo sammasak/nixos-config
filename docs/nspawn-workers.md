@@ -376,7 +376,10 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   per instance and run. Progress is the last handled line's hash and time
   in the unit's StateDirectory, out of every guest's reach. It runs as a
   dynamic user with `CAP_DAC_READ_SEARCH` alone (read any home, write
-  nothing but its state), `IPAddressAllow` Loki's address only.
+  nothing but its state), `IPAddressAllow` Loki's address only. The timer's run also writes
+  `/run/dev-env-records-metrics/guest-records.prom` (through the group `dev-env-records-metrics`) for node-exporter:
+  per `worker`, the lines still waiting and when it last got through; GuestRecordsNotShipping
+  (`docs/alert-runbooks.md`) fires when lines wait and nothing shipped for 30 minutes.
   With `records.usage` set (acer: `1min`, the #494 spike) `dev-env-usage` pushes, in the same sandbox, one
   host-made `kind=usage` line per running instance: its container cgroup's `cpu_usec`, `user_usec`,
   `mem_current`, `mem_anon` (`memory.stat` anon, no page cache), `mem_peak` (lifetime, never reset) and

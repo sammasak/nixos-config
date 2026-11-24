@@ -1,0 +1,35 @@
+# promtool test rules for homelab.yaml's guest record shipping alert (flake-modules/monitoring-check.nix runs it). The
+# textfile as dev-env-records writes it every 5 minutes, scraped each minute.
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  # herman: Loki stops taking pushes after minute 10, its lines pile up and the timestamp stays at 600; it fires once
+  # 30 minutes have passed and 10 more held (minute 40 + 10). a1: a capped backlog draining, each run getting through.
+  # t2: nothing shipped for an hour, but nothing waiting.
+  - interval: 1m
+    input_series:
+      - series: 'homelab_guest_records_waiting_lines{job="node-exporter",instance="acer-swift",node="acer-swift",worker="herman"}'
+        values: '0x10 3x60'
+      - series: 'homelab_guest_records_shipped_timestamp_seconds{job="node-exporter",instance="acer-swift",node="acer-swift",worker="herman"}'
+        values: '0+60x10 600x60'
+      - series: 'homelab_guest_records_waiting_lines{job="node-exporter",instance="acer-swift",node="acer-swift",worker="a1"}'
+        values: '1500x5 1000x5 500x5 0x55'
+      - series: 'homelab_guest_records_shipped_timestamp_seconds{job="node-exporter",instance="acer-swift",node="acer-swift",worker="a1"}'
+        values: '0+60x70'
+      - series: 'homelab_guest_records_waiting_lines{job="node-exporter",instance="acer-swift",node="acer-swift",worker="t2"}'
+        values: '0x70'
+      - series: 'homelab_guest_records_shipped_timestamp_seconds{job="node-exporter",instance="acer-swift",node="acer-swift",worker="t2"}'
+        values: '0x70'
+    alert_rule_test:
+      - eval_time: 49m
+        alertname: GuestRecordsNotShipping
+        exp_alerts: []
+      - eval_time: 52m
+        alertname: GuestRecordsNotShipping
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift, worker: herman}
+            exp_annotations:
+              summary: "Platform records of worker herman on acer-swift are not shipping"
+              description: "3 platform record lines of worker herman on acer-swift are waiting and dev-env-records has not shipped any for over 30 minutes, so its gate and coverage records are missing from Loki. Run journalctl -u dev-env-records -n 20 on acer-swift."
+              query: '{__name__=~"homelab_guest_records_.+",job="node-exporter",node="acer-swift",worker="herman"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#guestrecordsnotshipping"

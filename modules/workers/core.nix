@@ -19,6 +19,8 @@ let
   creds = "/var/lib/host-credentials";
   clientKey = "${home}/.ssh/id_ed25519";
   slice = "environments";
+  # the dynamic shipper's textfile: node-exporter cannot traverse /run/private, so a fixed group writes here
+  recordsMetrics = "/run/dev-env-records-metrics";
   workLocks = "/run/work-locks";
 
   multipliers = {
@@ -978,8 +980,29 @@ in
     (lib.mkIf (cfg.instances != { } && cfg.records != null) {
       systemd.services.dev-env-records = {
         description = "Ship the developer environments' platform records to Loki";
-        serviceConfig = recordsUnit (map (w: w.name) instances) "2min";
+        serviceConfig =
+          let
+            u = recordsUnit (map (w: w.name) instances) "2min";
+          in
+          u
+          // {
+            ExecStart =
+              u.ExecStart
+              + " "
+              + lib.escapeShellArgs [
+                "--metrics"
+                "${recordsMetrics}/guest-records.prom"
+              ];
+            SupplementaryGroups = [ "dev-env-records-metrics" ];
+            ReadWritePaths = [ recordsMetrics ];
+          };
       };
+      users.groups.dev-env-records-metrics = { };
+      services.prometheus.exporters.node.extraFlags = [
+        "--collector.textfile.directory=${recordsMetrics}"
+      ];
+      # before the first run: node-exporter counts a missing directory as a textfile scrape error
+      systemd.tmpfiles.rules = [ "d ${recordsMetrics} 0775 root dev-env-records-metrics -" ];
       systemd.timers.dev-env-records = {
         wantedBy = [ "timers.target" ];
         timerConfig = {

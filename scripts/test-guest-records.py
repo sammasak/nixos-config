@@ -103,11 +103,12 @@ def write(name, lines):
     return s.stat().st_ino
 
 
-def run(*names):
+def run(*names, extra=()):
     Loki.pushes.clear()
     try:
         p = subprocess.run([sys.executable, "-I", str(SHIPPER), "--state-dir", str(state), "--progress", str(progress),
-                            "--prefix", PREFIX, "--url", URL, "--kinds", ",".join(kinds), "--fleet", ",".join(FLEET), *names],
+                            "--prefix", PREFIX, "--url", URL, "--kinds", ",".join(kinds), "--fleet", ",".join(FLEET),
+                            *extra, *names],
                            capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired:
         return 124, "", "timed out", []
@@ -267,6 +268,47 @@ for i in range(4):
     first = first or out
 check(counts == [500, 500, 200, 0], f"at most 500 lines per instance and run ({counts})")
 check("50 older than Loki takes" in first, f"the backlog's too-old lines are skipped and counted ({first.strip()})")
+
+# --metrics: what is left after each run, and when an instance last got through, for the backlog alert
+prom = tmp / "guest-records.prom"
+
+
+def metrics():
+    rows = [l.split(" ") for l in prom.read_text().splitlines() if not l.startswith("#")]
+    return {m: float(v) for m, v in rows}
+
+
+write("backlog", [rec(3000 - i, "gate", f"b={i}") for i in range(700)])
+Loki.status = 500
+rc, _, _, _ = run("backlog", "linka", extra=("--metrics", str(prom)))
+down = metrics()
+Loki.status = 204
+run("backlog", extra=("--metrics", str(prom)))
+part = metrics()
+rc2, _, _, _ = run("backlog", extra=("--metrics", str(prom)))
+done = metrics()
+W, T = "homelab_guest_records_waiting_lines", "homelab_guest_records_shipped_timestamp_seconds"
+check(rc == 1 and down == {f'{W}{{worker="backlog"}}': 700, f'{T}{{worker="backlog"}}': 0},
+      f"with Loki down every line waits, nothing ever shipped; a refused instance has no series ({down})")
+check(part[f'{W}{{worker="backlog"}}'] == 200 and part[f'{T}{{worker="backlog"}}'] >= NOW,
+      f"a capped run leaves the rest waiting and counts as shipped ({part})")
+write("backlog", [rec(3000 - i, "gate", f"b={i}") for i in range(700)] + [rec(10, "gate", "b=late")])
+Loki.status = 500
+run("backlog", extra=("--metrics", str(prom)))
+Loki.status = 204
+again = metrics()
+check(rc2 == 0 and done[f'{W}{{worker="backlog"}}'] == 0 and again[f'{W}{{worker="backlog"}}'] == 1
+      and again[f'{T}{{worker="backlog"}}'] == done[f'{T}{{worker="backlog"}}'] >= part[f'{T}{{worker="backlog"}}'],
+      f"a drained instance waits for nothing; a failed run leaves its new line waiting and keeps the last shipped time "
+      f"({done}, {again})")
+units = re.search(r"systemd\.services\.dev-env-records = \{(.*?)\n      \};\n", core, re.S)
+units = units.group(1) if units else ""
+check('"--metrics"' in units and 'SupplementaryGroups = [ "dev-env-records-metrics" ];' in units
+      and "--collector.textfile.directory=${recordsMetrics}" in core
+      and '"d ${recordsMetrics} 0775 root dev-env-records-metrics -"' in core,
+      "the timer's run writes the textfile into node-exporter's directory for it, through its fixed group alone")
+check(sorted(subprocess.run([sys.executable, "-I", str(SHIPPER), "--list"], capture_output=True, text=True).stdout.split())
+      == sorted([W, T]), "--list names every series the textfile holds (the grafana-dashboards check reads it)")
 
 # --usage (#494): host-made kind=usage lines from the container cgroups and confs, never from a guest file
 check("usage" not in kinds, f"usage is not a guest kind: a guest cannot write one ({kinds})")
