@@ -20,13 +20,13 @@ PRs merge.
 
 ## Queue
 
-In flight (24 Nov, 05:20): gate records made in worker guests do not reach Loki, 924 queued (`a1`). Parked until msi
-is on (08:30): pool slot declaration (`m2`, built and tested locally, unpushed); one full gate on main for the night's
-pushes (`just qa-owed`); msi and asus deploys.
-Merged and live since 03:00: the pool queue runs on acer in PostgreSQL with migration, metrics, a nightly dump and a
-queue-down alert (#693). Two night merges broke the flake check (#691 by an import from a derivation, #693 by a
-metric the dashboards check had no source for); fixed by #694 and #695, and the flake-check step passed on acer in
-1263 s. All four existing backups recorded a success on 24 Nov.
+In flight (24 Nov, 07:00): second alert slice of #600 (`a1`); live evidence written onto #624, #625 and #626 (lenovo
+subagent). Parked until msi is on (08:30): pool slot declaration (`m2`, built and tested locally, unpushed); one full
+gate on main for the night's pushes (`just qa-owed`); msi and asus deploys.
+Merged and live since 05:00: flake check green again (#695, step passed in 1263 s); worker guests leave record
+shipping to the host, no more false "Loki unreachable" (#697; 789 gate-step records from `a1` are in Loki); night
+pushes run a 90 s evaluation step that refuses a break like #691's (#698); role adapters name one place and take the
+task checkout from the handoff (skills#157, #158; pin #699, #158 not pinned yet).
 
 Waiting, in pick-up order:
 
@@ -34,12 +34,11 @@ Waiting, in pick-up order:
 |---|-------|----------|-------------------|
 | 1 | Workers | msi sessions die when the pool runs out of memory (#647) | cap or slot limit (needs msi on) |
 | 2 | Pool | no task has run through it | push slots (#650), then the runner (#652); enqueue smoke test on acer |
-| 3 | Issues | `OpenIssuesGrowing` fires; 43 open, live evidence missing on #624, #625; #626 asks for a benchmark | write tonight's receipts on #624 and #625; reword #626 to a live comparison |
-| 4 | Live comparison | first numbers only | read a day of Shunt on/off and of herman against default; decide to widen or switch off |
-| 5 | Gates | flake check took 1263 s after #683, not less than the 13.1 min median | read the morning gate per step; find what grew |
-| 6 | Roles | six adapters still run tasks from `~/claude-code-skills`; sandbox test cannot run in a guest | drop the checkout wording in the skills repo; a handoff through Herdr |
-| 7 | Monitoring | night mode lets a flake-check break through | a cheap eval-only step in the night hook; Alertmanager 0.34; next slice of #600 |
-| 8 | Leftovers | two drafts open | #616 black-pi kernel (needs a build path that is not the Pi), skills#106 (fixes named on the PR) |
+| 3 | Live comparison | first numbers only | read a day of Shunt on/off and of herman against default; decide to widen or switch off |
+| 4 | Gates | flake check took 1263 s after #683, not less than the 13.1 min median; a build-only break (#693's kind) still passes at night | read the morning gate per step; find what grew |
+| 5 | Roles | four write roles still say `devenv tasks run` with no directory; sandbox test cannot run in a guest | same wording fix for the four; pin skills#158; a handoff through Herdr |
+| 6 | Monitoring | no backlog figure for the guest record shipper | whichever of the two candidates slice 2 did not take; Alertmanager 0.34 |
+| 7 | Leftovers | two drafts open | #616 black-pi kernel (needs a build path that is not the Pi), skills#106 (fixes named on the PR) |
 
 ## Priorities
 
@@ -120,7 +119,7 @@ msi and asus have no `gh` login: workers push branches over SSH and the lenovo s
 Every host deployed main on 23 Nov: acer-swift, msi-ms7758, asus-b460m, black-pi, lenovo. The first black-pi deploy
 rolled back on a journal-metrics start race, fixed by #634. asus deployed again after #639 (workers retired).
 msi, asus and acer deployed main again on the evening of 23 Nov (gaming entries, skills pin #661; acer also has the
-pin from #670). lenovo deployed #691 at 03:00 on 24 Nov, acer #693 at 03:51, black-pi #694 at 05:00. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
+pin from #670). lenovo and acer deployed #699 at 06:40 on 24 Nov, black-pi #694 at 05:00. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
 ## Gaming entries (owner request, 23 Nov)
 
@@ -146,8 +145,10 @@ Owed after 08:30 on 24 Nov: one full gate on main (covers the night's pushes, `j
   #683 one eval per host in the flake check, #684 and #685 Loki ruler, #686 on versus off row, #687 repeat-failure
   alert clears, #642 typed textfile port, #637 usage records, #631 asus model capability, #689 late-failure guard,
   #690 seventh-host reuses evaluations, #691 role adapters pinned to the skills input, #693 pool queue on acer,
-  #694 and #695 flake check green again
+  #694 and #695 flake check green again, #697 guest records shipped by the host only, #698 night eval step,
+  #699 skills pin
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
   #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132),
-  #154 regression engineer (#134), #155 Rust maintainer (#135)
+  #154 regression engineer (#134), #155 Rust maintainer (#135), #156 dangling pointer check,
+  #157 and #158 adapters name one place
