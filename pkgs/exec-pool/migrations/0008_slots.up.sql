@@ -1,6 +1,8 @@
 -- Each slot a runner claims for, with the agents it offers, as of its last claim. submit_task refuses a task whose
 -- agent no slot seen in the last day offers, which would otherwise wait queued with no signal. A day outlasts the
--- longest claim and msi's nightly poweroff; a slot dropped from its host's configuration ages out.
+-- longest claim and a weeknight poweroff, not a weekend one: an agent only a power-window host offers is refused then.
+-- A slot dropped from its host's configuration ages out. From here the shape check is submit_task_shaped: a later
+-- migration that replaces submit_task drops this check, and may apply after this one on a live database.
 CREATE TABLE slots (
   host text NOT NULL,
   id text NOT NULL,

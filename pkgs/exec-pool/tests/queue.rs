@@ -405,6 +405,8 @@ fn the_runner_claims_and_settles_and_writes_nothing_else() {
     assert!(runner.record_result(&a, 1, &out(0, "done")).unwrap());
     assert!(!runner.record_result(&a, 1, &out(0, "again")).unwrap());
     runner.claim(&slot("s1"), 60).unwrap().unwrap();
+    // a slot's next claim updates its row as this role
+    assert!(runner.claim(&slot("s0"), 60).unwrap().is_none());
     overdue(&pg, &b);
     assert_eq!(runner.reconcile().unwrap().len(), 1);
     assert_eq!(status(&pg, &b).0, "queued");
