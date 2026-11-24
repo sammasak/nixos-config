@@ -677,6 +677,11 @@ let
         default = false;
         description = "Stopped, its container undeclared: its home, profiles and roots stay, its reserve is not counted, and flipping it back resumes the agent's session.";
       };
+      scratch = mkOption {
+        type = types.listOf (types.strMatching "[A-Za-z0-9_.-]+");
+        default = [ ];
+        description = "Directories directly under the home whose clones dev-env-reset@ trashes with the home without checking them for unpushed work.";
+      };
       memory.reserved = mkOption {
         type = size;
         default = "2G";
@@ -1074,14 +1079,22 @@ in
             done
           done) || true
           [[ -z $busy ]] || { echo "$n: an agent is running (pids ''${busy//$'\n'/ }); not reset" >&2; exit 1; }
+          scratch=()
+          case $n in
+            ${lib.concatMapStrings (w: "${w.name}) scratch=(${lib.escapeShellArgs w.scratch}) ;;
+") (
+              lib.filter (w: w.scratch != [ ]) running
+            )}
+          esac
           # Run by the guest's own systemd as its user, inside the container's limits: git acts on the clones' config
           # (hooks, fsmonitor, filters), which must not run on the host.
           # shellcheck disable=SC2016 # the script expands inside the guest
           held=$(systemd-run -M "$n" --uid=${user} --wait --pipe --quiet -- ${pkgs.bash}/bin/bash -c '
             cd "$HOME" || { echo "the home cannot be entered"; exit 0; }
-            errs=$(${pkgs.findutils}/bin/find . -maxdepth 5 -name .git -prune -print 2>&1 >/dev/null)
+            skip=(); for s in "$@"; do skip+=(-path "./$s" -prune -o); done
+            errs=$(${pkgs.findutils}/bin/find . -maxdepth 5 "''${skip[@]}" -name .git -prune -print 2>&1 >/dev/null)
             [[ -z $errs ]] || echo "paths under the home cannot be read"
-            ${pkgs.findutils}/bin/find . -maxdepth 5 -name .git -prune -print 2>/dev/null | while read -r g; do
+            ${pkgs.findutils}/bin/find . -maxdepth 5 "''${skip[@]}" -name .git -prune -print 2>/dev/null | while read -r g; do
               r=''${g%/.git}
               st=$(${pkgs.git}/bin/git -C "$r" status --porcelain 2>&1) || st="unreadable: $st"
               [[ -z $st ]] || echo "$r: uncommitted changes or an unreadable repository"
@@ -1090,7 +1103,7 @@ in
               [[ -z $(${pkgs.git}/bin/git -C "$r" stash list 2>&1) ]] || echo "$r: a stash"
             done
             exit 0
-          ') || { echo "$n: could not check the guest for unpushed work; not reset" >&2; exit 1; }
+          ' bash "''${scratch[@]}") || { echo "$n: could not check the guest for unpushed work; not reset" >&2; exit 1; }
           [[ -z $held ]] || { printf '%s: not reset, the guest holds work that is not pushed:\n%s\n' "$n" "$held" >&2; exit 1; }
           systemctl stop "container@$n.service"
           install -d -m 0700 ${lib.escapeShellArg cfg.stateDir}/.trash

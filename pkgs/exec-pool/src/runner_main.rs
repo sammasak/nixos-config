@@ -6,10 +6,11 @@
 //! re-sends an event whose outcome is unknown: the lease expires and `reconcile` decides. A reset that fails
 //! quarantines the slot until an operator removes the marker. Each state change is one JSON line on stdout.
 //!
-//! `exec SLOT` (root, from `exec-pool-exec@<slot>.service`) reads the manifest, runs the task's steps in the guest as
-//! its user with `systemd-run -M`, keeps the output under its state directory and writes the result there. It holds
-//! no queue access.
+//! `exec SLOT` (root, from `exec-pool-exec@<slot>.service`) reads the manifest, admits the attempt only to a slot home
+//! reset since the last one ran, runs the task's steps in the guest as its user with `systemd-run -M` in the attempt's
+//! workspace, keeps the output under its state directory and writes the result there. It holds no queue access.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
@@ -21,6 +22,7 @@ use exec_pool::queue::{Change, Claim, QueueError, Store};
 use exec_pool::runner::{
     CAPTURE_BYTES, ExecResult, Manifest, Stage, decide, guest_exit, read_regular, receipt, tail,
 };
+use exec_pool::workspace::{HomeId, admit};
 use exec_pool::{Event, Kind, Receipt, SchemaVersion, Slot};
 use serde_json::{Value, json};
 
@@ -28,6 +30,8 @@ const USAGE: &str =
     "usage: exec-pool-runner run | exec SLOT   (configured by the environment its unit sets)";
 const MANIFEST: &str = "manifest.json";
 const RESULT: &str = "result.json";
+/// The slot home the last admitted attempt ran in, beside the slot's run directories.
+const LAST_HOME: &str = "home.json";
 const POLL: Duration = Duration::from_secs(10);
 const BACKOFF: Duration = Duration::from_secs(30);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(300);
@@ -242,6 +246,8 @@ fn run() -> Result<(), String> {
 struct Guest {
     slot: String,
     user: String,
+    /// `K=V` for each step: the slot's agent route and a PATH that finds the agent.
+    env: Vec<String>,
 }
 
 struct StepEnd {
@@ -290,8 +296,9 @@ impl Guest {
                 "WorkingDirectory=~",
                 "-E",
                 "GIT_TERMINAL_PROMPT=0",
-                "--",
             ])
+            .args(self.env.iter().flat_map(|e| ["-E", e]))
+            .arg("--")
             .args(argv)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -332,6 +339,54 @@ impl Guest {
             timed_out,
         })
     }
+
+    /// Runs `steps` in order until one fails or times out, recording in `result` where it stopped.
+    fn steps(
+        &self,
+        steps: [(Stage, Vec<String>); 5],
+        timeout: Duration,
+        (out, err): (&File, &File),
+        result: &mut ExecResult,
+    ) {
+        let t = Instant::now();
+        let units = [
+            "exec-pool-root",
+            "exec-pool-workspace",
+            "exec-pool-clone",
+            "exec-pool-checkout",
+            "exec-pool-task",
+        ];
+        for ((stage, argv), unit) in steps.into_iter().zip(units) {
+            if stage == Stage::Run {
+                result.prepare_ms = ms(t);
+            }
+            result.stage = stage;
+            let limit = match stage {
+                Stage::Prepare => PREPARE_TIMEOUT,
+                Stage::Run => timeout,
+            };
+            let started = Instant::now();
+            let end = self
+                .step(unit, &argv, limit, out, err)
+                .map_err(|e| format!("{unit}: {e}"));
+            let end = end.unwrap_or_else(|e| {
+                let _ =
+                    io::Write::write_all(&mut &*err, format!("exec-pool-exec: {e}\n").as_bytes());
+                StepEnd {
+                    exit_code: None,
+                    timed_out: false,
+                }
+            });
+            if stage == Stage::Run {
+                result.run_ms = ms(started);
+            }
+            result.exit_code = end.exit_code;
+            result.timed_out = end.timed_out;
+            if end.exit_code != Some(0) || end.timed_out {
+                break;
+            }
+        }
+    }
 }
 
 /// What a stream's capture holds, empty if it cannot be read.
@@ -339,6 +394,23 @@ fn read_capture(path: &Path) -> Vec<u8> {
     let mut buf = Vec::new();
     let _ = File::open(path).and_then(|f| f.take(CAPTURE_BYTES).read_to_end(&mut buf));
     buf
+}
+
+/// Admits an attempt to the slot home at `home` if it is not the one recorded in `seen`, and records it there.
+fn admit_home(home: &Path, seen: &Path) -> Result<(), String> {
+    let now = HomeId::of(home).map_err(|e| format!("{}: {e}", home.display()))?;
+    let last = match read_regular(seen) {
+        Ok(s) => Some(serde_json::from_str::<HomeId>(&s).map_err(|e| format!("{LAST_HOME}: {e}"))?),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("{LAST_HOME}: {e}")),
+    };
+    admit(last, now).map_err(|e| e.to_string())?;
+    let tmp = seen.with_extension("tmp");
+    serde_json::to_string(&now)
+        .map_err(io::Error::other)
+        .and_then(|json| fs::write(&tmp, json))
+        .and_then(|()| fs::rename(&tmp, seen))
+        .map_err(|e| format!("{LAST_HOME}: {e}"))
 }
 
 fn exec(slot: &str) -> Result<(), String> {
@@ -354,9 +426,8 @@ fn exec(slot: &str) -> Result<(), String> {
             .parse()
             .map_err(|_| "EXEC_POOL_TIMEOUT_SECS must be a number".to_owned())?,
     );
-    let dir = PathBuf::from(var("EXEC_POOL_EXEC_DIR")?)
-        .join(slot)
-        .join(manifest.run_dir());
+    let slot_dir = PathBuf::from(var("EXEC_POOL_EXEC_DIR")?).join(slot);
+    let dir = slot_dir.join(manifest.run_dir());
     // create_dir, not _all: a directory already there is this attempt run once already (a restarted helper), not
     // to be run again
     dir.parent()
@@ -365,9 +436,12 @@ fn exec(slot: &str) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", dir.display()))?;
     let open = |name: &str| File::create(dir.join(name)).map_err(|e| format!("{name}: {e}"));
     let (out, err) = (open("stdout")?, open("stderr")?);
+    let env: BTreeMap<String, String> = serde_json::from_str(&var("EXEC_POOL_AGENT_ENV")?)
+        .map_err(|e| format!("EXEC_POOL_AGENT_ENV: {e}"))?;
     let guest = Guest {
         slot: slot.to_owned(),
         user: var("EXEC_POOL_GUEST_USER")?,
+        env: env.iter().map(|(k, v)| format!("{k}={v}")).collect(),
     };
     let mut result = ExecResult {
         schema_version: SchemaVersion::CURRENT,
@@ -383,41 +457,31 @@ fn exec(slot: &str) -> Result<(), String> {
         run_ms: 0,
     };
     let t = Instant::now();
-    let steps = manifest
-        .steps(&var("EXEC_POOL_GIT")?, &var("EXEC_POOL_ENV")?)
+    let ws = manifest
+        .workspace(&var("EXEC_POOL_GUEST_HOME")?)
         .map_err(|e| format!("manifest: {e}"))?;
-    for ((stage, argv), unit) in
-        steps
-            .into_iter()
-            .zip(["exec-pool-clone", "exec-pool-checkout", "exec-pool-task"])
-    {
-        if stage == Stage::Run {
-            result.prepare_ms = ms(t);
-        }
-        result.stage = stage;
-        let limit = match stage {
-            Stage::Prepare => PREPARE_TIMEOUT,
-            Stage::Run => timeout,
-        };
-        let started = Instant::now();
-        let end = guest
-            .step(unit, &argv, limit, &out, &err)
-            .map_err(|e| format!("{unit}: {e}"));
-        let end = end.unwrap_or_else(|e| {
-            let _ = io::Write::write_all(&mut &err, format!("exec-pool-exec: {e}\n").as_bytes());
-            StepEnd {
-                exit_code: None,
-                timed_out: false,
-            }
-        });
-        if stage == Stage::Run {
-            result.run_ms = ms(started);
-        }
-        result.exit_code = end.exit_code;
-        result.timed_out = end.timed_out;
-        if end.exit_code != Some(0) || end.timed_out {
-            break;
-        }
+    let steps = manifest
+        .steps(
+            &ws,
+            &var("EXEC_POOL_GIT")?,
+            &var("EXEC_POOL_ENV")?,
+            &var("EXEC_POOL_MKDIR")?,
+        )
+        .map_err(|e| format!("manifest: {e}"))?;
+    // a home an earlier attempt ran in is refused before anything runs in it: the attempt goes back to the queue
+    let admitted = admit_home(
+        &PathBuf::from(var("EXEC_POOL_SLOT_HOME")?),
+        &slot_dir.join(LAST_HOME),
+    )
+    .inspect_err(|e| {
+        let _ = io::Write::write_all(
+            &mut &err,
+            format!("exec-pool-exec: not admitted: {e}\n").as_bytes(),
+        );
+    })
+    .is_ok();
+    if admitted {
+        guest.steps(steps, timeout, (&out, &err), &mut result);
     }
     if result.stage == Stage::Prepare {
         result.prepare_ms = ms(t);
