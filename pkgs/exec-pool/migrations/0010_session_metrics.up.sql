@@ -15,12 +15,13 @@ CREATE TABLE turns (
   parked_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (attempt_id, lease_epoch)
 );
-GRANT SELECT, INSERT ON turns TO exec_pool_runner;
+GRANT INSERT ON turns TO exec_pool_runner;
 
 -- Which sessions' trees may be removed, decided here and never by a file's age, as a parked tree can hold unpushed
 -- work. Eligible: final for 7 days; or waiting, with no unread inbox row, unchanged for 14 days, and its last turn's
 -- branch known to hold its tree. Stale: waiting that long without that knowledge, kept and counted. needs_review is
--- never either. hosts: every host a turn ran on or its checkpoint names.
+-- never either. Only the current epoch's turns row counts: a session left waiting another way (a settle, a runner
+-- from before 10) has none, so it is not known. hosts: every host a turn ran on or its checkpoint names.
 CREATE VIEW session_gc AS
   SELECT task, state, changed_at, hosts, handed_back,
     (state IN ('succeeded', 'failed', 'cancelled') AND changed_at < now() - interval '7 days')
@@ -33,12 +34,12 @@ CREATE VIEW session_gc AS
         UNION SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(a.checkpoint->'hosts') = 'array'
           THEN a.checkpoint->'hosts' END)
       ) x (h)), '[]') AS hosts,
-      (SELECT u.handed_back FROM turns u WHERE u.attempt_id = a.id ORDER BY u.lease_epoch DESC LIMIT 1) AS handed_back,
+      (SELECT u.handed_back FROM turns u WHERE u.attempt_id = a.id AND u.lease_epoch = a.lease_epoch) AS handed_back,
       a.changed_at < now() - interval '14 days'
         AND NOT EXISTS (SELECT FROM inbox i WHERE i.task_id = t.id AND i.consumed_epoch IS NULL) AS idle
     FROM tasks t JOIN attempts a ON a.task_id = t.id WHERE t.session
   ) s;
-GRANT SELECT ON session_gc TO exec_pool_submit, exec_pool_runner;
+GRANT SELECT ON session_gc TO exec_pool_submit;
 
 -- additive: a binary at 9 neither reads nor needs these
 INSERT INTO schema_migrations (version, floor) VALUES (10, 9);

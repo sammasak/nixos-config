@@ -170,6 +170,10 @@ which session trees may be removed, never a file's age: final for 7 days, or wai
 row and its last turn `handed_back`; one waiting that long without that is stale and kept, and `needs_review` is
 never eligible. `exec-pool sessions --gc` prints the eligible ones, one JSON object per line (task, state,
 changed_at, hosts), for the remover; ExecPoolSessionStuck fires on a session in review or stale for a day.
+No producer sets `handed_back` yet (the runner reports only the branch's name), so until one does no waiting session
+is eligible and every one parked 14 days is stale and alerts. A park's own time (the agent's exit to the settle) is not
+measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
+`due_at`.
 
 ## Phase gates (detail in #646)
 

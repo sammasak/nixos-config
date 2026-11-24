@@ -37,7 +37,8 @@ pub struct Usage {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
-    pub cost_usd: f64,
+    /// `None`: not reported, which is not free.
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -50,7 +51,7 @@ struct ClaudeText {
 }
 
 #[derive(Deserialize)]
-#[allow(clippy::struct_field_names, reason = "Claude's result JSON names them")]
+#[expect(clippy::struct_field_names, reason = "Claude's result JSON names them")]
 struct ClaudeUsage {
     #[serde(default)]
     input_tokens: u64,
@@ -97,7 +98,7 @@ impl TaskResult {
                 output_tokens: u.output_tokens,
                 cache_read_tokens: u.cache_read_input_tokens,
                 cache_creation_tokens: u.cache_creation_input_tokens,
-                cost_usd: c.total_cost_usd.unwrap_or_default(),
+                cost_usd: c.total_cost_usd,
             })
         });
         Self {
@@ -170,7 +171,7 @@ mod tests {
                 output_tokens: 40,
                 cache_read_tokens: 9000,
                 cache_creation_tokens: 500,
-                cost_usd: 0.25
+                cost_usd: Some(0.25)
             })
         );
         let none = TaskResult::of(Agent::Claude, Some(&exec(Stage::Run, Some(1))), "crash\n");

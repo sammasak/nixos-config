@@ -2053,6 +2053,7 @@ fn the_runner_runs_a_turn_and_neither_role_writes_or_reads_what_it_may_not() {
             "SELECT * FROM inbox".to_owned(),
             format!("INSERT INTO inbox (task_id, kind) VALUES ('{id}', 'continue')"),
             "UPDATE tasks SET session = true".to_owned(),
+            "SELECT * FROM turns".to_owned(),
         ],
     );
 }
@@ -2136,7 +2137,7 @@ fn session_metrics_count_turns_wakes_and_tokens() {
         output_tokens: 200,
         cache_read_tokens: 3000,
         cache_creation_tokens: 400,
-        cost_usd: 0.5,
+        cost_usd: Some(0.5),
     });
     owner.park(&a, epoch, &reported).unwrap();
     s.send(&id, "next").unwrap();
@@ -2179,6 +2180,26 @@ fn session_metrics_count_turns_wakes_and_tokens() {
     assert!(!m.contains(&id), "no id in a label");
 }
 
+/// `exec-pool sessions --gc` as the submitter: one JSON object per line.
+fn gc_cli(pg: &Pg) -> Vec<serde_json::Value> {
+    let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
+        .args(["sessions", "--gc"])
+        .env(
+            "EXEC_POOL_DB",
+            pg.conninfo()
+                .replace("user=exec_pool ", "user=exec_pool_submit "),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let lines: Vec<serde_json::Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    lines
+}
+
 #[test]
 fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     let pg = Pg::new();
@@ -2209,6 +2230,27 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     // its last turn's branch held its tree: eligible
     pg.sql()
         .execute("UPDATE turns SET handed_back = true", &[])
+        .unwrap();
+    assert_eq!(s.sessions(true).unwrap()[0]["task"], json!(id));
+    // a later turn that left it waiting without its own row (a settle, an older runner) is not known: kept
+    let row_epoch: i64 = pg
+        .sql()
+        .query_one("SELECT lease_epoch FROM attempts WHERE id = $1", &[&a])
+        .unwrap()
+        .get(0);
+    pg.sql()
+        .execute(
+            "UPDATE turns SET lease_epoch = lease_epoch - 1 WHERE attempt_id = $1",
+            &[&a],
+        )
+        .unwrap();
+    assert!(s.sessions(true).unwrap().is_empty());
+    assert_eq!(s.sessions(false).unwrap()[0]["stale"], json!(true));
+    pg.sql()
+        .execute(
+            "UPDATE turns SET lease_epoch = $2 WHERE attempt_id = $1",
+            &[&a, &row_epoch],
+        )
         .unwrap();
     assert_eq!(s.sessions(true).unwrap()[0]["task"], json!(id));
     // an unread message keeps it
@@ -2254,21 +2296,7 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
             .any(|l| l == "exec_pool_session_turns_bucket{agent=\"claude\",le=\"1\"} 1")
     );
 
-    let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
-        .args(["sessions", "--gc"])
-        .env(
-            "EXEC_POOL_DB",
-            pg.conninfo()
-                .replace("user=exec_pool ", "user=exec_pool_submit "),
-        )
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(0));
-    let lines: Vec<serde_json::Value> = String::from_utf8(out.stdout)
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect();
+    let lines = gc_cli(&pg);
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0]["task"], json!(gone));
     assert_eq!(lines[0]["state"], "cancelled");

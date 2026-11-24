@@ -164,12 +164,11 @@ tests:
               description: "1 session(s) in the queue on acer-swift have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
               query: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="acer-swift"} > 0'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"
+  # one in review alone, with no stale series rendered: fires the same way, clears when it leaves review
   - interval: 1m
     input_series:
       - series: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"}'
         values: '1x1800 0x400'
-      - series: 'exec_pool_sessions_stale{job="node-exporter",node="acer-swift"}'
-        values: '0x2200'
     alert_rule_test:
       - eval_time: 26h
         alertname: ExecPoolSessionStuck

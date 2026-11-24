@@ -856,8 +856,7 @@ impl Store {
             };
             tx.execute(
                 "INSERT INTO turns (attempt_id, lease_epoch, input_tokens, output_tokens, cache_read_tokens, \
-                 cache_creation_tokens, cost_usd, handed_back) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-                 ON CONFLICT DO NOTHING",
+                 cache_creation_tokens, cost_usd, handed_back) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 &[
                     &attempt,
                     &epoch,
@@ -865,7 +864,7 @@ impl Store {
                     &tokens(|u| u.output_tokens)?,
                     &tokens(|u| u.cache_read_tokens)?,
                     &tokens(|u| u.cache_creation_tokens)?,
-                    &usage.map(|u| u.cost_usd),
+                    &usage.and_then(|u| u.cost_usd),
                     &park.result.handed_back,
                 ],
             )?;
@@ -1459,8 +1458,9 @@ const AGES: [u64; 7] = [3600, 21600, 86400, 259_200, 604_800, 1_209_600, 2_592_0
 const IDLE: [u64; 4] = [86400, 259_200, 604_800, 1_209_600];
 /// What an inbox row is, as a wake's source.
 const SOURCES: [&str; 3] = ["message", "timer", "continue"];
-/// A session's turn: started, then parked to waiting.
-const PARKED: &str = "e.to_status = 'waiting' AND e.from_status IN ('running', 'checkpointing')";
+/// A session's turn: started, then parked to waiting for one of the park reasons (not a settle).
+const PARKED: &str = "e.to_status = 'waiting' AND e.from_status IN ('running', 'checkpointing') \
+    AND e.reason IN ('turn_end', 'waiting_until', 'preempted', 'host_draining', 'turn_error')";
 
 /// The sessions' series: by state, turns by park reason and their durations, wake latency by source, closed sessions'
 /// turns and age, how long parked ones sit idle, host changes between turns, the tokens and cost turns report, and
@@ -1534,7 +1534,7 @@ fn session_durations(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), Q
         out,
         (
             "exec_pool_session_wake_seconds",
-            "# HELP exec_pool_session_wake_seconds From an inbox row due to the start of the turn it was handed to, by source.\n\
+            "# HELP exec_pool_session_wake_seconds From an inbox row due (sent, or a timer's due_at) to the start of the turn it was handed to, by source.\n\
              # TYPE exec_pool_session_wake_seconds histogram\n",
         ),
         ("source", &SOURCES),
@@ -1601,7 +1601,7 @@ fn session_totals(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), Queu
         &format!(
             "SELECT coalesce(max(extract(epoch FROM now() - a.changed_at)), 0)::float8, \
              (SELECT count(*) FROM (SELECT e.host, lag(e.host) OVER (PARTITION BY e.attempt_id ORDER BY e.id) \
-             FROM events e JOIN tasks t ON t.id = e.task_id WHERE t.session AND e.to_status = 'leased') l (host, prev) \
+             FROM events e JOIN tasks t ON t.id = e.task_id WHERE t.session AND e.to_status = 'running') l (host, prev) \
              WHERE l.prev IS NOT NULL AND l.host IS DISTINCT FROM l.prev), \
              (SELECT count(*) FILTER (WHERE eligible) FROM session_gc), \
              (SELECT count(*) FILTER (WHERE stale) FROM session_gc) {waiting}"
@@ -1618,7 +1618,7 @@ fn session_totals(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), Queu
         out,
         "# HELP exec_pool_sessions_parked_oldest_seconds How long the longest-unchanged waiting session has sat (0 with none).\n\
          # TYPE exec_pool_sessions_parked_oldest_seconds gauge\nexec_pool_sessions_parked_oldest_seconds {oldest}\n\
-         # HELP exec_pool_session_host_changes_total Session turns leased on another host than the turn before.\n\
+         # HELP exec_pool_session_host_changes_total Session turns started on another host than the turn before.\n\
          # TYPE exec_pool_session_host_changes_total counter\nexec_pool_session_host_changes_total {moved}\n\
          # HELP exec_pool_sessions_gc_eligible Sessions session_gc lets the remover delete.\n\
          # TYPE exec_pool_sessions_gc_eligible gauge\nexec_pool_sessions_gc_eligible {eligible}\n\

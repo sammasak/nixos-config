@@ -65,8 +65,8 @@ groups:
         # a session nobody will move on its own: in review (only its owner's send or a resolve), or parked 14 days with
         # a tree the queue cannot prove was handed back, so session_gc keeps it and its disk
         expr: |
-          (sum by (node) (exec_pool_sessions{job="node-exporter",state="needs_review"})
-            + sum by (node) (exec_pool_sessions_stale{job="node-exporter"})) > 0
+          sum by (node) (exec_pool_sessions{job="node-exporter",state="needs_review"}) > 0
+          or sum by (node) (exec_pool_sessions_stale{job="node-exporter"}) > 0
         for: 1d
         labels:
           severity: warning
