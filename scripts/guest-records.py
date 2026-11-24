@@ -12,6 +12,9 @@ platform_record.py rewrites the spool (a new inode) on every record, so progress
 the last line handled, kept under --progress (the unit's StateDirectory). Lines after that line go; when it is gone,
 lines no older than it.
 
+--metrics (the timer's run) writes, for node-exporter, each instance's lines still waiting after the run and when its
+last run got through (Loki took the push, or nothing was waiting), labelled worker alone; --list prints their names.
+
 --usage (nixos-config#494) pushes instead one host-made kind=usage line per instance: its container's cgroup counters
 (cpu.stat usage_usec and user_usec, memory.current, memory.stat anon, memory.peak, the container's lifetime
 high-water mark, never reset) and the system it runs (SYSTEM_PATH in its nixos-containers conf). No guest file is read,
@@ -55,6 +58,10 @@ PER_RUN = 500
 # from the future, and one such line would fail the whole push every run
 TOO_OLD = 167 * 3600
 TOO_NEW = 300
+METRICS = {
+    "homelab_guest_records_waiting_lines": "Spool lines of a worker's guest past the shipper's progress after its last run",
+    "homelab_guest_records_shipped_timestamp_seconds": "When the shipper last got through a worker's waiting lines, 0 never",
+}
 
 
 class Refused(Exception):
@@ -186,6 +193,7 @@ def push(url, streams):
 
 
 def ship(base, name, args, kinds, fleet=frozenset()):
+    """(shipped, lines still waiting)."""
     host = f"{args.prefix}-{name}"
     with open(os.path.join(args.progress, f"{name}.lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -198,11 +206,13 @@ def ship(base, name, args, kinds, fleet=frozenset()):
         lines = read_spool(base, name)
         now = time.time()
         streams, dropped, sent, last, last_time = {}, {}, 0, None, progress["time"] if progress else 0
-        for raw in pending(lines, progress):
+        todo, handled = pending(lines, progress), 0
+        for raw in todo:
             if sent == PER_RUN:
                 break
             v = judge(raw, kinds, now, fleet)
             last = raw
+            handled += 1
             if isinstance(v, str):
                 dropped[v] = dropped.get(v, 0) + 1
                 t = time_of(raw)
@@ -213,18 +223,41 @@ def ship(base, name, args, kinds, fleet=frozenset()):
             last_time = max(last_time, t)
             streams.setdefault(kind, []).append([str(int(t)) + "000000000", body])
             sent += 1
-        if last is None:
-            return True
-        labels = [{"stream": {"job": "platform", "kind": k, "host": host}, "values": v} for k, v in streams.items()]
-        if labels and not push(args.url, labels):
-            return False
-        tmp = f"{state}.new"
-        with open(tmp, "w") as f:
-            json.dump({"hash": digest(last), "time": last_time}, f)
-        os.replace(tmp, state)
-        drops = ", ".join(f"{n} {why}" for why, n in sorted(dropped.items()))
-        print(f"{name}: {sent} line(s) to Loki as host={host}" + (f"; not sent: {drops}" if drops else ""))
-        return True
+        if last is not None:
+            labels = [{"stream": {"job": "platform", "kind": k, "host": host}, "values": v} for k, v in streams.items()]
+            if labels and not push(args.url, labels):
+                return False, len(todo)
+            replace_text(state, json.dumps({"hash": digest(last), "time": last_time}))
+            drops = ", ".join(f"{n} {why}" for why, n in sorted(dropped.items()))
+            print(f"{name}: {sent} line(s) to Loki as host={host}" + (f"; not sent: {drops}" if drops else ""))
+        replace_text(os.path.join(args.progress, f"{name}.shipped"), f"{now}\n")
+        return True, len(todo) - handled
+
+
+def replace_text(path, text):
+    tmp = f"{path}.new"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def shipped_at(name, args):
+    try:
+        with open(os.path.join(args.progress, f"{name}.shipped")) as f:
+            return float(f.read())
+    except (OSError, ValueError):
+        return 0
+
+
+def write_metrics(path, waiting, args):
+    """Every instance shipped or tried this run; one refused (a link, a FIFO) or failing has no series and fails the unit."""
+    values = {"homelab_guest_records_waiting_lines": waiting,
+              "homelab_guest_records_shipped_timestamp_seconds": {n: shipped_at(n, args) for n in waiting}}
+    body = []
+    for name, help_ in METRICS.items():
+        body += [f"# HELP {name} {help_}", f"# TYPE {name} gauge"]
+        body += [f'{name}{{worker="{w}"}} {v}' for w, v in sorted(values[name].items())]
+    replace_text(path, "\n".join(body) + "\n")
 
 
 STORE_PATH = re.compile(r"/nix/store/[0-9a-z]{32}-[A-Za-z0-9+._?=-]+")
@@ -294,7 +327,11 @@ def main():
     p.add_argument("--usage", action="store_true", help="push each instance's cgroup usage, not its spool")
     p.add_argument("--cgroup", default="/sys/fs/cgroup/environments.slice", help="the slice holding container@<name>.service")
     p.add_argument("--containers", default="/etc/nixos-containers", help="where <name>.conf names SYSTEM_PATH")
+    p.add_argument("--metrics", help="the node-exporter textfile to write")
     p.add_argument("names", nargs="*")
+    if sys.argv[1:] == ["--list"]:
+        print("\n".join(METRICS))
+        return 0
     args = p.parse_args()
     if not args.progress:
         p.error("--progress or STATE_DIRECTORY is required")
@@ -306,17 +343,23 @@ def main():
     kinds = set(args.kinds.split(","))
     fleet = frozenset(h.lower() for h in args.fleet.split(",") if h)
     base = os.open(args.state_dir, DIR)
-    ok = True
-    for name in args.names:
-        if not NAME.fullmatch(name):
-            print(f"{name!r}: not an environment name", file=sys.stderr)
-            ok = False
-            continue
-        try:
-            ok = ship(base, name, args, kinds, fleet) and ok
-        except Refused as e:
-            print(f"{name}: not shipped, {e}", file=sys.stderr)
-            ok = False
+    ok, waiting = True, {}
+    # finally: a run that dies on one instance still replaces the last run's file, so no stale 0 hides a backlog
+    try:
+        for name in args.names:
+            if not NAME.fullmatch(name):
+                print(f"{name!r}: not an environment name", file=sys.stderr)
+                ok = False
+                continue
+            try:
+                shipped, waiting[name] = ship(base, name, args, kinds, fleet)
+                ok = shipped and ok
+            except Refused as e:
+                print(f"{name}: not shipped, {e}", file=sys.stderr)
+                ok = False
+    finally:
+        if args.metrics:
+            write_metrics(args.metrics, waiting, args)
     return 0 if ok else 1
 
 
