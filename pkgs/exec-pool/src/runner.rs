@@ -12,9 +12,12 @@ use std::fs::File;
 use std::io::{self, Read as _};
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::queue::QueueError;
 use crate::wake::Wake;
 use crate::workspace::{self, SESSION_HOME, SESSION_WORK, Workspace};
 use crate::{
@@ -652,6 +655,46 @@ pub fn claim_fits(now: u64, hold_secs: u32, show: &str) -> Result<bool, String> 
         .ok_or_else(|| format!("off timer's next elapse unread: {next:?}"))
 }
 
+/// The host's drain request, beside each slot's runtime directory: root writes it (`exec-pool-drain on`,
+/// `modules/homelab/exec-pool-runner.nix`) with the unix second it holds until, and removes it.
+pub const DRAIN_REQUEST: &str = "drain";
+
+/// Whether a drain request reading `marker` still holds at `now` (unix seconds): until the second it names.
+///
+/// One that names none holds, so a torn write stops claims rather than lets a deploy cut a turn; the deadline bounds a
+/// request whose deploy died before it cleared it.
+#[must_use]
+pub fn drain_holds(marker: &str, now: u64) -> bool {
+    marker
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .is_none_or(|until| now < until)
+}
+
+/// `f`, again every `wait` while the queue is [`QueueError::Unavailable`] and `patience` lasts.
+///
+/// Nothing was committed then, so a retry cannot land twice, and a turn that ends while the queue restarts still
+/// settles or parks. Any other outcome, [`QueueError::OutcomeUnknown`] included, is returned as it is.
+///
+/// # Errors
+/// What `f` last returned.
+pub fn while_unavailable<T>(
+    patience: Duration,
+    wait: Duration,
+    mut f: impl FnMut() -> Result<T, QueueError>,
+) -> Result<T, QueueError> {
+    let t = Instant::now();
+    loop {
+        match f() {
+            Err(QueueError::Unavailable(_)) if t.elapsed().saturating_add(wait) < patience => {
+                thread::sleep(wait);
+            }
+            r => return r,
+        }
+    }
+}
+
 /// The last [`TAIL_BYTES`] of `bytes`, lossy UTF-8.
 #[must_use]
 pub fn tail(bytes: &[u8]) -> String {
@@ -712,6 +755,40 @@ mod tests {
             &json!({ "schema_version": 1, "slot": "pool1", "attempt_id": "t1.a", "lease_epoch": 3, "task": task })
                 .to_string(),
         )
+    }
+
+    #[test]
+    fn a_drain_request_holds_until_its_deadline_and_a_torn_one_holds() {
+        assert!(drain_holds("1000\n", 999));
+        assert!(!drain_holds("1000\n", 1000));
+        assert!(drain_holds("", 5));
+        assert!(drain_holds("soon", 5));
+    }
+
+    #[test]
+    fn the_queue_away_is_waited_out_and_nothing_else_is_retried() {
+        let mut calls = 0_u32;
+        let r = while_unavailable(Duration::from_secs(5), Duration::from_millis(1), || {
+            calls = calls.saturating_add(1);
+            if calls < 3 {
+                Err(QueueError::Unavailable("restarting".to_owned()))
+            } else {
+                Ok(calls)
+            }
+        });
+        assert!(matches!(r, Ok(3)));
+        let mut calls = 0_u32;
+        let r: Result<(), _> =
+            while_unavailable(Duration::from_secs(5), Duration::from_millis(1), || {
+                calls = calls.saturating_add(1);
+                Err(QueueError::OutcomeUnknown("commit".to_owned()))
+            });
+        assert!(matches!(r, Err(QueueError::OutcomeUnknown(_))) && calls == 1);
+        // past its patience the outage is the caller's: the lease is the reconciler's to expire
+        let r: Result<(), _> = while_unavailable(Duration::ZERO, Duration::from_millis(1), || {
+            Err(QueueError::Unavailable("down".to_owned()))
+        });
+        assert!(matches!(r, Err(QueueError::Unavailable(_))));
     }
 
     #[test]
