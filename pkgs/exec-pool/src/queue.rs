@@ -13,6 +13,7 @@ use postgres::{Client, Config, GenericClient, NoTls, Row, Transaction};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::task_result::TaskResult;
 use crate::{
     Attempt, Error, Event, Kind, Placement, Receipt, Resolution, RetryPolicy, SchemaVersion,
     Settle, Slot, Status, TaskSpec, transition,
@@ -21,9 +22,14 @@ use crate::{
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// Migration `n` is `STEPS[n - 1]`; each records its own version.
-const STEPS: [&str; 2] = [UP, include_str!("../migrations/0002_submitter.up.sql")];
+const STEPS: [&str; 3] = [
+    UP,
+    include_str!("../migrations/0002_submitter.up.sql"),
+    include_str!("../migrations/0003_result.up.sql"),
+];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
-const VERSION: i32 = 2;
+const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
+const VERSION: i32 = 3;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -468,7 +474,7 @@ impl Store {
         self.tx(|tx| match Self::version(tx)? {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
-            Some(_) => Ok(tx.batch_execute(&format!("{DOWN_SUBMITTER}{DOWN}"))?),
+            Some(_) => Ok(tx.batch_execute(&format!("{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"))?),
         })
     }
 
@@ -710,6 +716,68 @@ impl Store {
                      'lease_epoch', e.lease_epoch, 'host', e.host, 'slot', e.slot) ORDER BY e.id), '[]') \
                      FROM events e WHERE e.attempt_id = a.id)) \
                      FROM task_summaries t JOIN attempts a ON a.task_id = t.id WHERE t.id = $1 OR a.id = $1"
+                ),
+                &[&id],
+            )?;
+            rows.first().map(|r| r.try_get(0)).transpose().map_err(Into::into)
+        })
+    }
+
+    /// Records what attempt `attempt` produced at `epoch`, once a settle took it off its slot: a later epoch's result
+    /// replaces an earlier one, and the same epoch's again changes nothing. Whether it was recorded.
+    ///
+    /// # Errors
+    /// [`QueueError::Fenced`] while the attempt is live or at another epoch, or what the database reports.
+    pub fn record_result(
+        &mut self,
+        attempt: &str,
+        epoch: u64,
+        result: &TaskResult,
+    ) -> Result<bool, QueueError> {
+        let outcome = result
+            .outcome
+            .map(serde_json::to_value)
+            .transpose()?
+            .and_then(|v| v.as_str().map(str::to_owned));
+        self.tx(|tx| {
+            let epoch = i64_of("epoch", epoch)?;
+            let settled = tx.query(
+                &format!(
+                    "SELECT 1 FROM attempts WHERE id = $1 AND lease_epoch = $2 AND status NOT IN {LIVE} FOR SHARE"
+                ),
+                &[&attempt, &epoch],
+            )?;
+            if settled.is_empty() {
+                return Err(QueueError::Fenced(format!(
+                    "attempt {attempt} is not settled at epoch {epoch}"
+                )));
+            }
+            let n = tx.execute(
+                "INSERT INTO results (attempt_id, lease_epoch, outcome, exit_code, output) VALUES ($1, $2, $3, $4, $5) \
+                 ON CONFLICT (attempt_id) DO UPDATE SET lease_epoch = EXCLUDED.lease_epoch, outcome = EXCLUDED.outcome, \
+                 exit_code = EXCLUDED.exit_code, output = EXCLUDED.output, recorded_at = now() \
+                 WHERE results.lease_epoch < EXCLUDED.lease_epoch",
+                &[&attempt, &epoch, &outcome, &result.exit_code, &result.output()],
+            )?;
+            Ok(n == 1)
+        })
+    }
+
+    /// The task `id` names, as [`Store::tasks`] shows it, with the `result` recorded at its attempt's current epoch
+    /// (`null` before one);
+    /// no prompt. `None` when no task has that id.
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn result(&mut self, id: &str) -> Result<Option<Value>, QueueError> {
+        self.tx(|tx| {
+            let rows = tx.query(
+                &format!(
+                    "SELECT {SUMMARY} || jsonb_build_object('result', CASE WHEN r.attempt_id IS NOT NULL THEN \
+                     jsonb_build_object('lease_epoch', r.lease_epoch, 'outcome', r.outcome, \
+                     'exit_code', r.exit_code, 'output', r.output, 'recorded_at', r.recorded_at) END) \
+                     FROM task_summaries t JOIN attempts a ON a.task_id = t.id \
+                     LEFT JOIN results r ON r.attempt_id = a.id AND r.lease_epoch = a.lease_epoch WHERE t.id = $1 OR a.id = $1"
                 ),
                 &[&id],
             )?;
