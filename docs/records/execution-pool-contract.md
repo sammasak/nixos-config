@@ -99,7 +99,7 @@ histograms `exec_pool_queue_wait_seconds{host,agent}` and `exec_pool_run_seconds
 rows (an attempt's or session's last lease, a turn's own lease; `none` before any), not the scrape's `node`. Ids, slots
 and prompts stay in the log line, never in a label. Each slot's exec helper counts, in its own host's textfile,
 `exec_pool_store_transfers_total{op,result}` and `exec_pool_prepare_failures_total{step}` (a run that failed before
-its agent: the step's unit, or `admit`, `attach`, `manifest`, `turn`), split by `node`; such a run's result output is
+its agent: the step's unit, or `admit`, `attach`, `manifest`, `turn`, `herdr`, `prompt`), split by `node`; such a run's result output is
 `prepare failed at <step> (exit N):` and its stderr tail, so `exec-pool result` shows why. When the render fails for any reason it prints only `exec_pool_queue_up 0`
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
 zero traffic or as the last good counts.
@@ -158,10 +158,17 @@ turn`, which attaches to that terminal over the slot's ssh as `claude`, so Herdr
 (`pane::agent_name`: the task id) as it did a named worker, and the owner watches and types into it there. Once
 Claude draws its prompt the helper prompts the turn's input with `herdr agent prompt` (the hand-back rules before it
 on a session's first turn; over 3000 bytes it is written to `/session/cur/home/.exec-pool-input.md` and the prompt
-names the file). The turn ends when Herdr reports the agent idle or done at a state after the prompt for 5 s
-(`pane::TurnWatch`), a message typed in the pane just making the turn longer; the helper then closes Claude with
-ctrl+c twice and its verdict is its transcript's last assistant message (`pane::verdict`, as the Claude result line
-the settle reads; an error unless the agent settled with one). A prompt that never reached the agent (no new
+names the file). The agent is idle when Herdr reports it idle or done at a state after the prompt for 5 s
+(`pane::TurnWatch`). Idle is the session's **pause**, whatever it waits for (a review, a gate, the owner): the agent
+stays in its pane for `homelab.execPool.runner.idleGraceSecs` (600 s; `idleGraceBusySecs`, 60 s, while a task is
+queued and no slot is idle on any host), and whatever the owner types in the pane, or a message `exec-pool send`
+puts in the session's inbox meanwhile (the runner hands it over in its turn hint `turn.json` beside the manifest,
+`runner::TurnHint`, every heartbeat; the helper prompts it, and the park marks it read), works on in the same turn.
+Once the grace runs out (at once when the agent called `pool-wait`) the helper closes Claude with ctrl+c twice and
+parks the session as `turn_end` (`waiting_until` with a timer); its verdict is its transcript's last assistant
+message (`pane::verdict`, as the Claude result line the settle reads; an error unless the agent was idle with
+one). The time limit counts the agent's work since it was last idle, so a pause never times a turn out, and the
+helper's unit has no start timeout of its own; a drain in the pause parks the turn as ended. A prompt that never reached the agent (no new
 transcript line), or no Herdr, leaves the turn in preparing. Before the agent starts the helper writes the startup
 dialogs a named worker's home has accepted into the session's `~/.claude.json`. The helper marks the dock busy (`/var/lib/exec-pool-exec/<slot>/dock-busy`) before the attach and clears
 the mark only after the detach, so whatever stops it in between (an error, its timeout, a kill) leaves the runner to
@@ -226,7 +233,14 @@ session is queued for it, one in `needs_review` is queued with its try given bac
 operator's resolve the only way out of review), a queued or live one reads it at its next turn. There is no pause or
 resume verb. A claim hands the turn the session's uuid, the prompt on its first turn or else the unread rows as one
 text, and the highest row id it holds; rows are marked read at the park, so a turn that never ran is handed them
-again. `exec-pool send ID --at HH:MM|RFC3339 --prompt TEXT` puts a timer row instead (`send_timer`, migration 0014),
+again. A **resume** is any wake (a message, a timer, a `continue` row): the next claim puts the session into a free slot's
+pane on any host that reaches its tree, `--resume <uuid>`, so the pane shows the same conversation, with the unread
+inbox as its input. `exec-pool attach ID` wakes a session with no message of the owner's (it is told the owner opened
+it) and prints the host, slot and Herdr agent once its turn runs. What survives a pause: the transcript, the session
+home and the work tree with uncommitted changes. What does not: running processes in the slot (dev servers,
+background shells, a build in flight); a session's first turn is told so, to commit and not rely on a background
+process across a wait.
+`exec-pool send ID --at HH:MM|RFC3339 --prompt TEXT` puts a timer row instead (`send_timer`, migration 0014),
 due at that time (HH:MM the next one, local time); it changes no state, and `Store::reconcile`, which every runner runs
 each loop, queues a waiting session once a row is due (one in `needs_review` stays there). In a slot,
 `pool-wait --until HH:MM|RFC3339 [--note TEXT]` (no queue credential) writes one line

@@ -515,7 +515,7 @@ pub struct ExecResult {
     /// this slot may not take): its session is not lost to a retry, it goes to review.
     #[serde(default)]
     pub tree_lost: Option<String>,
-    /// Where a run that never reached its agent failed: a prepare step's unit, or `admit`, `attach`, `manifest` or
+    /// Where a run that never reached its agent failed: a prepare step's unit, or `admit`, `attach`, `manifest`, `herdr`, `prompt` or
     /// `turn` outside one; `None` once its agent started, or for a run stopped by a cancel or a drain.
     #[serde(default)]
     pub failed_step: Option<String>,
