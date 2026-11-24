@@ -229,9 +229,10 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
     })
 }
 
-/// Whether a lease taken at `now` (unix seconds) for `lease_secs` ends before the host's scheduled poweroff, from
-/// `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer: a claim the poweroff
-/// would cut short sends its attempt to review. A timer with no next elapse powers nothing off.
+/// Whether a lease taken at `now` (unix seconds) for `lease_secs` ends before the host's scheduled poweroff.
+///
+/// `show` is `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer: a claim the
+/// poweroff would cut short sends its attempt to review. A timer with no next elapse powers nothing off.
 ///
 /// # Errors
 /// A timer that is not loaded, or output this does not read: the runner claims nothing then.
