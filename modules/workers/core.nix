@@ -187,8 +187,12 @@ let
           "/etc/nixos-containers"
         ];
     };
+  # The activation and every slot's reset each prepare all instances: two at once both write a trashed home's
+  # .id-base.new and one mv finds it gone, failing that reset and with it a deploy. Bounded, never failing.
   prepareDirs = ''
     install -d -m 0711 "$d"
+    exec {prepareLock}>"$d/.prepare.lock"
+    ${pkgs.util-linux}/bin/flock -w 120 "$prepareLock" || echo "dev-env: another prepare held its lock for 120 s; going on" >&2
     install -d -m 0700 -o ${user} -g ${group} "$d/.nix-cache"
     [[ -e $d/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/ssh_host_ed25519_key"
     echo "${keyAlias} $(cut -d' ' -f1,2 "$d/ssh_host_ed25519_key.pub")" > "$d/known_hosts"
@@ -222,6 +226,7 @@ let
         echo "${aliasOf w} $(cut -d' ' -f1,2 "$d/${w.name}/ssh_host_ed25519_key.pub")" >> "$d/known_hosts"
       ''
     ) instances}
+    exec {prepareLock}>&-
   '';
   # its own process, so the ERR trap marks any failed step: inside an if condition bash would ignore it
   resetSteps = pkgs.writeShellScript "dev-env-reset-steps" ''
