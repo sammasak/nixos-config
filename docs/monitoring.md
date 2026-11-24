@@ -42,6 +42,8 @@ What a host writes into node-exporter's textfile directory (`/run/node-exporter-
 Two collectors keep their own textfile directory, which node-exporter also reads: `shipping.prom` on lenovo
 (`shipping-metrics.nix`) and `nav.prom` on acer, lenovo, asus and msi (`nav-metrics.nix`), plus one
 `nav-guest-<name>.prom` per guest on a host with dev environments (acer, `/var/lib/nav-metrics-guests`).
+The scheduled full gate on acer writes `scheduled-gate.prom` in its own, `/var/lib/scheduled-gate/metrics`
+(`scheduled-gate.nix`, docs/shipping.md).
 
 Every journal-collector host also exposes bounded local reader/export/filter counters
 through `/run/journal-metrics/journal.prom`; see [delivery semantics and acceptance](journal-delivery-metrics.md).
