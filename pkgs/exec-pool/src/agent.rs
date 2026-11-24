@@ -1,7 +1,8 @@
 //! Turns a task into the command a runner executes in a slot, and that command's exit into the attempt's outcome.
 //!
 //! An agent task's `command.argv` is `[prompt]` or `[prompt, model]`; a brief is a prompt naming a file in the
-//! checkout. The agent runs with the slot's own credentials and egress; nothing here adds any.
+//! checkout. The agent gets the prompt behind [`PREFIX`]'s rules for handing code back on its [`branch`]. It runs with
+//! the slot's own credentials and egress; nothing here adds any.
 
 use serde::Deserialize;
 
@@ -13,6 +14,37 @@ pub enum Error {
     Argv(Agent),
     #[error("model {0:?} must be non-empty and not start with `-`")]
     Model(String),
+    #[error(
+        "task id {0:?} does not make a branch name: up to 100 of [A-Za-z0-9_-], not starting with `-`"
+    )]
+    Branch(String),
+}
+
+/// What every agent is told before its prompt; `{branch}` is the task's [`branch`].
+pub const PREFIX: &str = "You run as an execution pool task in a throwaway checkout, on branch {branch}. To hand back \
+code, commit on {branch} with a message whose body has a `Why:` line and push that branch alone: \
+`git push origin {branch}`, or `devenv shell -- git push origin {branch}` where the repository has a devenv.nix, so \
+its pre-push hooks run. Never push main or any other branch, never force-push, never skip a hook (no --no-verify, no \
+SKIP=); if a hook refuses the push, say why in your answer. The task:\n\n";
+
+/// The branch an attempt of `task` works and pushes on: `pool/<task id>`.
+///
+/// # Errors
+/// [`Error::Branch`] for an id that is empty, longer than 100 bytes, starts with `-` or holds anything but ASCII
+/// letters, digits, `_` and `-`, so the name is a valid ref and no option.
+pub fn branch(task: &TaskSpec) -> Result<String, Error> {
+    let id = &task.id;
+    let ok = !id.is_empty()
+        && id.len() <= 100
+        && !id.starts_with('-')
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    if ok {
+        Ok(format!("pool/{id}"))
+    } else {
+        Err(Error::Branch(id.clone()))
+    }
 }
 
 /// The argv to execute in the task's workdir: a `none` task's own argv, or the agent's non-interactive call.
@@ -53,8 +85,9 @@ pub fn argv(task: &TaskSpec) -> Result<Vec<String>, Error> {
         }
         out.extend(["--model".to_owned(), m.clone()]);
     }
+    let prefix = PREFIX.replace("{branch}", &branch(task)?);
     // `--` so a prompt starting with `-` is not read as a flag
-    out.extend(["--".to_owned(), prompt.clone()]);
+    out.extend(["--".to_owned(), format!("{prefix}{prompt}")]);
     Ok(out)
 }
 

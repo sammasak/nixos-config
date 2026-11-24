@@ -150,7 +150,7 @@ fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
     );
     let task = TaskSpec {
         schema_version: SchemaVersion::CURRENT,
-        id: key.clone(),
+        id: "cli".to_owned(),
         idempotency_key: key,
         source: Source {
             repo: repo.to_owned(),
