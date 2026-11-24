@@ -38,7 +38,9 @@ SOPS_RECIPIENTS = {
     "naked-pi": "age1kdjqlt6s6fklcdjm2y9dggyvc9nmpcglsu3gduzudcl85ur8jdwqz26wer",
 }
 # files encrypted ahead of the module that will declare them: the host that will, and what lands it
-AWAITING: dict[str, tuple[str, str]] = {}
+AWAITING: dict[str, tuple[str, str]] = {
+    "secrets/homelab/exec-pool-runner.yaml": ("msi-ms7758", "its exec-pool runner logs in to acer (#654)"),
+}
 LOOPBACK = ["localhost", "127.0.0.1", "::1"]
 
 

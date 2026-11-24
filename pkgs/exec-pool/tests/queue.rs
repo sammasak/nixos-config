@@ -58,9 +58,9 @@ impl Pg {
         assert!(ok, "initdb failed");
         let mut pg = Self { root, server: None };
         pg.start();
-        // what homelab.postgresql.clients creates before migrate grants to it
+        // what homelab.postgresql.clients and remoteClients create before migrate grants to them
         pg.sql()
-            .batch_execute("CREATE ROLE exec_pool_submit LOGIN")
+            .batch_execute("CREATE ROLE exec_pool_submit LOGIN; CREATE ROLE exec_pool_runner LOGIN")
             .unwrap();
         pg
     }
@@ -234,13 +234,13 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
     submit(&mut s, &task("t-1", 1));
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (3)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (4)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(3))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(3))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(4))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(4))));
 }
 
 /// The one shape `submit_task` takes: what `exec-pool submit` builds.
@@ -317,6 +317,52 @@ fn the_submitter_queues_through_submit_task_and_reads_no_prompt() {
     extra["command"]["env"] = json!({});
     refused(&mut c, &format!("SELECT submit_task('{extra}')"), "22023");
     refused(&mut c, "SELECT submit_task('[]')", "22023");
+}
+
+#[test]
+fn the_runner_claims_and_settles_and_writes_nothing_else() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_runner ");
+    let mut runner = Store::open(&conninfo).unwrap();
+    let a = submit(&mut owner, &task("t-1", 1));
+    let b = submit(&mut owner, &task("t-2", 3));
+    let claim = runner.claim(&slot("s0"), 60).unwrap().unwrap();
+    assert!(!claim.task.command.argv.is_empty());
+    runner.apply(&a, &ev(1, Kind::Start), None).unwrap();
+    runner.heartbeat(&a, 1, 60).unwrap();
+    runner.apply(&a, &ev(1, Kind::Checkpoint), None).unwrap();
+    let done = ev(1, Kind::Settle(Settle::Succeeded));
+    runner
+        .apply(&a, &done, Some(&receipt(&a, "t-1", 1, "succeeded")))
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "succeeded");
+    runner.claim(&slot("s1"), 60).unwrap().unwrap();
+    overdue(&pg, &b);
+    assert_eq!(runner.reconcile().unwrap().len(), 1);
+    assert_eq!(status(&pg, &b).0, "queued");
+
+    let mut raw = Client::connect(&conninfo, NoTls).unwrap();
+    for sql in [
+        "INSERT INTO tasks (id, idempotency_key, spec, max_attempts) VALUES ('x', 'x', '{}', 9)",
+        "INSERT INTO attempts (id, task_id) VALUES ('x', 't-1')",
+        "UPDATE tasks SET max_attempts = 9",
+        "UPDATE attempts SET task_id = 't-2', fence = lease_epoch",
+        "UPDATE attempts SET pins = '{}', fence = lease_epoch",
+        "UPDATE events SET reason = 'x'",
+        "DELETE FROM attempts",
+        "DELETE FROM events",
+        "SELECT submit_task('{}')",
+    ] {
+        let e = raw.batch_execute(sql).unwrap_err();
+        assert_eq!(
+            e.code().map(postgres::error::SqlState::code),
+            Some("42501"),
+            "{sql}: {e}"
+        );
+    }
 }
 
 #[test]
