@@ -20,23 +20,24 @@ PRs merge.
 
 ## Queue
 
-In flight (23 Nov, 23:00): shorten the slowest gate step (`a1`, branch `gate/faster-1`). Parked until msi is on
-(08:30): pool slot declaration (`m2`, built and tested locally, unpushed). Merged and deployed this round: Alertmanager
-posts straight to ntfy and the home-made bridge is removed (#680, live on black-pi and lenovo, a deliberate alert
-arrived in the topic); Shunt on for worker `a1` with on/off labels and a regression alert (#678, #679, live on acer);
-pool CLI and metrics (#675); night mode in the push hook (#676).
+In flight (24 Nov, 01:10): next monitoring item (`a1`). Parked until msi is on (08:30): pool slot declaration (`m2`,
+built and tested locally, unpushed); one full gate on main for the night's pushes (`just qa-owed`); msi and asus deploys.
+Merged and live since 23:00: flake check evaluates each host once (#683); 300K compaction window on herman (#682);
+Loki ruler with compactions per worker and an out-of-memory log alert (#684, #685); "On versus off" dashboard row
+(#686); the repeat-failure alert clears 24 h after the last failure (#687); old PRs landed: typed textfile port
+(#642), usage records (#637), asus model capability (#631).
 
 Waiting, in pick-up order:
 
 | # | Topic | Pain now | Next small change |
 |---|-------|----------|-------------------|
-| 1 | Roles | roles exist, none has done real work | one live spawn of a named role on a real ticket (skills#136) |
-| 2 | Workers | msi sessions die when the pool runs out of memory (#647) | cap or slot limit |
-| 3 | Pool | no task has run through it | push slots (#650), then the runner (#652); PostgreSQL and the pool enabled on acer |
-| 4 | Compaction (#626) | unmeasured | one worker on a different setting, compared from normal work |
-| 5 | Monitoring | unknown whether backups record; no log alerts | read 24 Nov backup metrics; first slice of #600; Loki ruler for log alerts; Alertmanager 0.34 |
-| 6 | Live comparison | Shunt on/off has no panel yet | dashboard panel; read the first day of on/off numbers |
-| 7 | Gates | a full gate takes 20 to 60 minutes | next slowest step after `gate/faster-1` |
+| 1 | Workers | msi sessions die when the pool runs out of memory (#647) | cap or slot limit (needs msi on) |
+| 2 | Pool | no task has run through it | push slots (#650), then the runner (#652); PostgreSQL and the pool enabled on acer |
+| 3 | Roles | spawns so far ran without reading their contract (stale checkout, fixed) | one named-role spawn in a scratch checkout with the skills tests green (skills#136) |
+| 4 | Gates | a full gate takes 20 to 60 minutes | read the morning gate against 13.1 min for the flake check; then the gate probe (3.6 min) |
+| 5 | Live comparison | first numbers only | read a day of Shunt on/off and of herman against default; decide to widen or switch off |
+| 6 | Monitoring | unknown whether backups record | read 24 Nov backup metrics; LogQL parse check for Loki rule queries; Alertmanager 0.34; next slice of #600 |
+| 7 | Leftovers | two drafts open | #616 black-pi kernel (needs a build path that is not the Pi), skills#106 (fixes named on the PR) |
 
 ## Priorities
 
@@ -117,7 +118,7 @@ msi and asus have no `gh` login: workers push branches over SSH and the lenovo s
 Every host deployed main on 23 Nov: acer-swift, msi-ms7758, asus-b460m, black-pi, lenovo. The first black-pi deploy
 rolled back on a journal-metrics start race, fixed by #634. asus deployed again after #639 (workers retired).
 msi, asus and acer deployed main again on the evening of 23 Nov (gaming entries, skills pin #661; acer also has the
-pin from #670). lenovo and black-pi deployed #680 at 22:36, acer at 22:50 on 23 Nov. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
+pin from #670). lenovo and black-pi deployed #687 at 01:05 on 24 Nov; acer follows when its worker is idle. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
 ## Gaming entries (owner request, 23 Nov)
 
@@ -139,7 +140,9 @@ Owed after 08:30 on 24 Nov: one full gate on main (covers the night's pushes, `j
   #669 Steam in both entries and no scheduled power-off while gaming, #666 synthetic fire and resolve test,
   #667 execution pool contract, #670 skills pin, #671 priority queue, #672 runbook link and query in the
   notification, #673 pool queue, #675 pool CLI and metrics, #676 night mode, #678 and #679 Shunt on for a1 with
-  on/off labels, #680 Alertmanager posts to ntfy and alert-bridge removed
+  on/off labels, #680 Alertmanager posts to ntfy and alert-bridge removed, #682 compaction window per worker,
+  #683 one eval per host in the flake check, #684 and #685 Loki ruler, #686 on versus off row, #687 repeat-failure
+  alert clears, #642 typed textfile port, #637 usage records, #631 asus model capability
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
   #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132),
