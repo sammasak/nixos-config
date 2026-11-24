@@ -826,7 +826,8 @@ in {
   agents = builtins.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
   herdr = builtins.filter (lib.hasPrefix "worker-herdr-") (builtins.attrNames c.systemd.services);
   slots = lib.mapAttrs (n: i: {
-    inherit (i) agent prompt model credentials telemetry;
+    inherit (i) agent prompt model credentials telemetry headlessAgents;
+    baseUrl = c.containers.${n}.config.environment.variables.ANTHROPIC_BASE_URL or null;
     reserved = i.memory.reserved;
     sockets = builtins.attrNames c.containers.${n}.config.systemd.sockets;
     binds = builtins.attrNames c.containers.${n}.bindMounts;
@@ -890,6 +891,14 @@ def check_pool_compat():
         check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 3 * n
               and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),
               f"slots = {n}: a container@, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
+    # agents = [ "claude" ]: the slot gets a named Claude worker's route, the anthropic proxy, and nothing more
+    on = pool_eval('{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "claude" ]; }; }')
+    s = on.get("slots", {}).get("pool1", {})
+    extra = [x for x in s.get("sockets", []) if x.endswith("-egress")] + [b for b in s.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+    check(on.get("failing") == [] and s.get("agent") == "none" and s.get("credentials") == [] and s.get("headlessAgents") == ["claude"]
+          and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "/run/egress"]
+          and on.get("agents") == named and on.get("shutdown") == absent.get("shutdown"),
+          f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)

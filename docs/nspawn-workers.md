@@ -59,7 +59,7 @@ Inside, the cgroup files read `max`: `/etc/dev-environment` holds these limits a
 
 ## Execution pool
 
-`sam.workers.executionPool` (`modules/workers/execution-pool.nix`, off on every host) declares reusable slots for the
+`sam.workers.executionPool` (`modules/workers/execution-pool.nix`; on acer-swift, one slot) declares reusable slots for the
 pool's tasks (`docs/records/execution-pool-contract.md`): `pool1` .. `pool<slots>`, each an instance with
 `agent = "none"` and no prompt, so a slot has the named instances' pool ceiling, reserves, `rootInGuest`, reset and
 retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-reset@<slot>`, which switches nothing.
@@ -70,6 +70,7 @@ retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-
 | `slots` | `0` | how many slots (unsigned) |
 | `memory.reserved`, `cpu.reserved` | `"2G"`, `2` | each slot's, as an instance's |
 | `credentials` | `[ ]` | which host credentials a slot may hold (as msi's `t1`) |
+| `agents` | `[ ]` | agents a task may run in a slot (`claude`): each slot's `headlessAgents`, the egress route a named worker of that agent has (the anthropic proxy, no credential in the guest), while its `agent` stays `none` and no session starts |
 | `rootInGuest` | `false` | each slot's |
 
 Evaluation fails when a slot's name is also declared in `sam.workers.instances` or `retired`, or when the slots and

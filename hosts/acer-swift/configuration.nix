@@ -42,7 +42,7 @@
     pi = true;
     nativeOtel = true;
   };
-  # A 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
+  # A 7G pool reserves 2G each for at most 3: herman, a1 and pool1 (docs/nspawn-workers.md, Sizing).
   sam.workers = {
     labelPrefix = "acer";
     pool.memory = "7G";
@@ -51,6 +51,11 @@
     instances.herman = { };
     # A task slot: reset with dev-env-reset@a1 between tasks, no deploy.
     instances.a1 = { };
+    executionPool = {
+      enable = true;
+      slots = 1;
+      agents = [ "claude" ];
+    };
   };
   # the #494 usage spike: herman's cgroup counters every minute (scripts/guest-records.py --usage)
   services.devEnvironments.records.usage = "1min";
