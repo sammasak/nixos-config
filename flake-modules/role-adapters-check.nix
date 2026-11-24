@@ -9,15 +9,22 @@
   ...
 }:
 let
-  homesOf =
-    os:
-    lib.attrValues os.home-manager.users
-    ++ lib.concatMap (c: lib.attrValues c.config.home-manager.users) (lib.attrValues os.containers);
+  # The adapters as modules/programs/cli/claude-code/skills.nix writes them for a system, read from that module
+  # without Home Manager: even home.file's names pull in stylix, which imports from a derivation the flake check
+  # refuses. An adapter another module writes is not seen. Its homes are the ones fleetHome
+  # (flake-modules/nixos-configurations.nix) gives skills.nix to, on devTools: keep the two in step.
   adaptersOf =
-    home:
-    lib.mapAttrsToList (_: f: f.source) (
-      lib.filterAttrs (_: f: lib.hasPrefix ".claude/agents/" f.target) home.home.file
+    os:
+    lib.optionals os.sam.profile.devTools (
+      lib.mapAttrsToList (n: f: builtins.toFile (baseNameOf n) f.text) (
+        lib.filterAttrs (n: _: lib.hasPrefix ".claude/agents/" n)
+          (import ../modules/programs/cli/claude-code/skills.nix inputs.skills {
+            inherit lib;
+            osConfig = os;
+          }).home.file
+      )
     );
+  guestsOf = os: map (c: c.config) (lib.attrValues os.containers);
 in
 {
   perSystem =
@@ -26,7 +33,7 @@ in
       systems = lib.filter (os: os.nixpkgs.hostPlatform.system == system) (
         map (c: c.config) (lib.attrValues config.flake.nixosConfigurations)
       );
-      installed = lib.unique (lib.concatMap adaptersOf (lib.concatMap homesOf systems));
+      installed = lib.unique (lib.concatMap adaptersOf (systems ++ lib.concatMap guestsOf systems));
       unpinned = lib.mapAttrsToList (n: _: "${inputs.skills}/agents/${n}") (
         lib.filterAttrs (n: t: t == "regular" && lib.hasSuffix ".md" n) (
           builtins.readDir "${inputs.skills}/agents"
