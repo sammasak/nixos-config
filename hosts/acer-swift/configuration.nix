@@ -11,6 +11,7 @@
     ../../modules/homelab/llm-gateway.nix
     ../../modules/homelab/authentik.nix
     ../../modules/homelab/exec-pool.nix
+    ../../modules/homelab/exec-pool-store.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/shunt-metrics.nix
