@@ -925,13 +925,13 @@ def check_pool_compat():
         check(len(leaks) == n and not any(leaks.values()) and on.get("shutdown") == absent.get("shutdown"),
               f"slots = {n}: no slot has an egress socket or a host secret bind, and the shutdown notice still prompts only {named} ({leaks})")
         units = on.get("units", {})
-        mine = {u for u in units if any(u.startswith(p + s) for s in names for p in ("container@", "worker-", "worker-herdr-"))}
+        mine = {u for u in units if any(u.startswith(p + s) for s in names for p in ("container@", "dev-env-reset@", "worker-", "worker-herdr-"))}
         # the host's shared units list every instance, so a slot moves them; each named worker's own units stay
         shared = {"dev-env-egress.service", "dev-env-records.service", "dev-env-reset@.service", "dev-env-usage.service"}
         moved = {u for u in units.keys() - mine if units[u] != absent.get("units", {}).get(u)}
-        check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 3 * n
+        check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 4 * n
               and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),
-              f"slots = {n}: a container@, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
+              f"slots = {n}: a container@, dev-env-reset@ drop-in, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
     # agents = [ "claude" ]: the slot gets a named Claude worker's route, the anthropic proxy, and nothing more
     on = pool_eval('{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "claude" ]; }; }')
     s = on.get("slots", {}).get("pool1", {})
@@ -1013,6 +1013,14 @@ let
     links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) c.containers.${n}.config.systemd.tmpfiles.rules;
     git = c.systemd.services."exec-pool-exec@".environment;
   };
+  # what each start-limit setting a slot's per-turn units and a named worker's container evaluate to
+  limits = c: named: let s = c.systemd.services; in {
+    slots = map (n: s."container@${n}".unitConfig.StartLimitIntervalSec or null) [ "pool1" "pool2" ];
+    resets = map (n: { inherit (c.systemd.units."dev-env-reset@${n}.service") overrideStrategy text; }) [ "pool1" "pool2" ];
+    exec = s."exec-pool-exec@".unitConfig.StartLimitIntervalSec or null;
+    reset = s."dev-env-reset@".unitConfig.StartLimitIntervalSec or null;
+    named = { inherit (s."container@${named}".unitConfig) StartLimitIntervalSec StartLimitBurst; };
+  };
 in {
   acer = units acer;
   msi = units flake.nixosConfigurations.msi-ms7758.config;
@@ -1027,6 +1035,7 @@ in {
   polkit = acer.security.polkit.extraConfig;
   slot2 = builtins.fromJSON acer.systemd.services.exec-pool-runner-pool2.environment.EXEC_POOL_SLOT;
   msiSlots = map (n: (builtins.fromJSON msi.systemd.services."exec-pool-runner-${n}".environment.EXEC_POOL_SLOT).agents) [ "pool1" "pool2" ];
+  limits = { acer = limits acer "a1"; msi = limits msi "m1"; };
   push = { acer-pool1 = push acer "pool1"; acer-pool2 = push acer "pool2"; msi-pool1 = push msi "pool1"; msi-pool2 = push msi "pool2"; };
 }
 """
@@ -1053,6 +1062,13 @@ def check_runner():
           and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
           and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
           f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
+    # a slot's container restarts and its reset and helper start once per task turn, seconds apart in a session: three
+    # container starts in ten minutes failed acer's pool1 with start-limit-hit
+    for host, lim in got.get("limits", {"acer": {}, "msi": {}}).items():
+        check(lim.get("slots") == ["0", "0"] and lim.get("exec") == "0" and lim.get("reset") is None
+              and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * 2
+              and lim.get("named") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"},
+              f"{host}: container@pool1 and @pool2, exec-pool-exec@ and each slot's dev-env-reset@ have no start limit; the shared reset template and a named worker's container keep theirs ({lim or out.stderr.strip()[-300:]})")
     for host, p in got.get("push", {"acer-pool1": {}, "acer-pool2": {}, "msi-pool1": {}, "msi-pool2": {}}).items():
         links, git = p.get("links", []), p.get("git", {})
         check(p.get("credentials") == ["id_ed25519"] and p.get("binds") == ["/var/lib/host-credentials/id_ed25519"]

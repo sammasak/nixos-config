@@ -111,6 +111,20 @@ in
       cpu.reserved = cfg.cpu.reserved;
     });
 
+    # A slot restarts its container and runs its reset once per task turn, a few seconds apart in a session: a start
+    # limit fails the slot on the fourth turn in ten minutes (container@pool1 on acer). Named workers keep theirs.
+    systemd.services = lib.genAttrs (map (n: "container@${n}") slotNames) (_: {
+      startLimitIntervalSec = lib.mkForce 0;
+    });
+    # a drop-in of the shared template's own instance: a systemd.services one would also set its PATH
+    systemd.units = lib.genAttrs (map (n: "dev-env-reset@${n}.service") slotNames) (_: {
+      overrideStrategy = "asDropin";
+      text = ''
+        [Unit]
+        StartLimitIntervalSec=0
+      '';
+    });
+
     environment.systemPackages = lib.optional (cfg.slots > 0) inventory;
 
     # over-reservation is the core's assertion (pool.memory), slots included
