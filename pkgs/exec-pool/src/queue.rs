@@ -22,17 +22,19 @@ use crate::{
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// Each migration, ascending, by the version it records; `migrate` applies every one the database has not recorded.
-const STEPS: [(i32, &str); 5] = [
+const STEPS: [(i32, &str); 6] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
     (4, include_str!("../migrations/0004_runner.up.sql")),
     (5, include_str!("../migrations/0005_cancel.up.sql")),
+    (8, include_str!("../migrations/0008_slots.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
 const DOWN_CANCEL: &str = include_str!("../migrations/0005_cancel.down.sql");
-const VERSION: i32 = 5;
+const DOWN_SLOTS: &str = include_str!("../migrations/0008_slots.down.sql");
+const VERSION: i32 = 8;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -530,9 +532,9 @@ impl Store {
         self.tx(|tx| match Self::version(tx)? {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
-            Some(_) => {
-                Ok(tx.batch_execute(&format!("{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"))?)
-            }
+            Some(_) => Ok(tx.batch_execute(&format!(
+                "{DOWN_SLOTS}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+            ))?),
         })
     }
 
@@ -614,7 +616,14 @@ impl Store {
         if lease_secs == 0 {
             return Err(QueueError::Range("lease_secs"));
         }
+        let agents = serde_json::to_value(&slot.agents)?;
         self.tx(|tx| {
+            // the agents submit_task checks a task against (0008_slots.up.sql)
+            tx.execute(
+                "INSERT INTO slots (host, id, agents) VALUES ($1, $2, $3) \
+                 ON CONFLICT (host, id) DO UPDATE SET agents = excluded.agents, seen_at = now()",
+                &[&slot.host, &slot.id, &agents],
+            )?;
             // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips
             let candidates = tx.query(
                 "SELECT a.id, t.spec FROM attempts a JOIN tasks t ON t.id = a.task_id \

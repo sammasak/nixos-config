@@ -235,13 +235,13 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 5);
+    assert_eq!(version, 8);
     submit(&mut s, &task("t-1", 1));
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (6)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (9)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(6))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(6))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(9))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(9))));
 }
 
 /// The one shape `submit_task` takes: what `exec-pool submit` builds.
@@ -259,6 +259,7 @@ fn agent_task() -> serde_json::Value {
 fn the_submitter_queues_through_submit_task_and_reads_no_prompt() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
+    assert!(owner.claim(&claude_slot(), 60).unwrap().is_none());
     let conninfo = pg
         .conninfo()
         .replace("user=exec_pool ", "user=exec_pool_submit ");
@@ -275,9 +276,7 @@ fn the_submitter_queues_through_submit_task_and_reads_no_prompt() {
     assert!(!shown.to_string().contains(ARGV_MARKER), "{shown}");
     assert_eq!(s.tasks(5).unwrap().len(), 1);
     // what it queued is a task the owner's claim decodes
-    let mut claude = slot("pool1");
-    claude.agents = BTreeSet::from([Agent::Claude]);
-    let claim = owner.claim(&claude, 60).unwrap().unwrap();
+    let claim = owner.claim(&claude_slot(), 60).unwrap().unwrap();
     assert_eq!(claim.task.id, id);
 
     let mut c = Client::connect(&conninfo, NoTls).unwrap();
@@ -318,6 +317,62 @@ fn the_submitter_queues_through_submit_task_and_reads_no_prompt() {
     extra["command"]["env"] = json!({});
     refused(&mut c, &format!("SELECT submit_task('{extra}')"), "22023");
     refused(&mut c, "SELECT submit_task('[]')", "22023");
+}
+
+#[test]
+fn submit_task_refuses_an_agent_no_slot_seen_in_the_last_day_offers() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_submit ");
+    let mut s = Store::open(&conninfo).unwrap();
+    let pi = |key: &str| {
+        let mut t = agent_task();
+        t["idempotency_key"] = json!(key);
+        t["command"]["agent"] = json!("pi");
+        serde_json::from_value::<TaskSpec>(t).unwrap()
+    };
+    let refusal = |s: &mut Store, t: &TaskSpec| match s.submit_task(t) {
+        Err(QueueError::Db { code, message }) => (code, message),
+        other => panic!("{other:?}"),
+    };
+    let (code, message) = refusal(&mut s, &pi("cli:no-slot"));
+    assert_eq!(code, "22023");
+    assert!(
+        message.contains("offers agent pi") && message.contains("offered: nothing"),
+        "{message}"
+    );
+    assert!(owner.claim(&claude_slot(), 60).unwrap().is_none());
+    let (_, message) = refusal(&mut s, &pi("cli:claude-only"));
+    assert!(message.contains("offered: claude"), "{message}");
+    assert!(
+        s.tasks(5).unwrap().is_empty(),
+        "a refused task leaves no row"
+    );
+    // a slot's next claim records the agents it offers now
+    let mut both = claude_slot();
+    both.agents.insert(Agent::Pi);
+    assert!(owner.claim(&both, 60).unwrap().is_none());
+    s.submit_task(&pi("cli:pi")).unwrap();
+    // a slot not seen for a day offers nothing
+    pg.sql()
+        .batch_execute("UPDATE slots SET seen_at = now() - interval '25 hours'")
+        .unwrap();
+    let (_, message) = refusal(&mut s, &pi("cli:stale"));
+    assert!(message.contains("offered: nothing"), "{message}");
+    let mut raw = Client::connect(&conninfo, NoTls).unwrap();
+    for sql in [
+        "SELECT submit_task_shaped('{}')",
+        "INSERT INTO slots (host, id, agents) VALUES ('x', 'x', '[\"pi\"]')",
+    ] {
+        let e = raw.batch_execute(sql).unwrap_err();
+        assert_eq!(
+            e.code().map(postgres::error::SqlState::code),
+            Some("42501"),
+            "{sql}: {e}"
+        );
+    }
 }
 
 #[test]
@@ -369,6 +424,7 @@ fn the_runner_claims_and_settles_and_writes_nothing_else() {
         "SELECT submit_task('{}')",
         "UPDATE attempts SET cancel_requested = true, fence = lease_epoch",
         "SELECT cancel_task('t-1')",
+        "DELETE FROM slots",
     ] {
         let e = raw.batch_execute(sql).unwrap_err();
         assert_eq!(
@@ -1114,6 +1170,7 @@ fn submitter(pg: &Pg) -> (Store, String) {
         .conninfo()
         .replace("user=exec_pool ", "user=exec_pool_submit ");
     let mut s = Store::open(&conninfo).unwrap();
+    assert!(pg.store().claim(&claude_slot(), 60).unwrap().is_none());
     let task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
     let (id, _) = s.submit_task(&task).unwrap();
     (s, id)
@@ -1326,19 +1383,41 @@ fn the_submitter_cli_cancels_its_task_and_wait_returns_on_it() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
     let theirs = submit(&mut owner, &task("t-1", 1));
-    let submitter = |args: &[&str]| {
-        let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_exec-pool"))
             .args(args)
             .env(
                 "EXEC_POOL_DB",
                 pg.conninfo()
                     .replace("user=exec_pool ", "user=exec_pool_submit "),
             )
-            .stderr(Stdio::null())
             .output()
-            .unwrap();
+            .unwrap()
+    };
+    let submitter = |args: &[&str]| {
+        let out = run(args);
         (out.status.code(), String::from_utf8(out.stdout).unwrap())
     };
+    assert!(owner.claim(&claude_slot(), 60).unwrap().is_none());
+    let refused = run(&[
+        "submit",
+        "--agent",
+        "pi",
+        "--repo",
+        "https://example.org/r.git",
+        "--rev",
+        "abc",
+        "--workdir",
+        "w",
+        "--prompt",
+        "p",
+    ]);
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    assert_eq!(refused.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("offers agent pi") && stderr.contains("offered: claude"),
+        "{stderr}"
+    );
     let (code, id) = submitter(&[
         "submit",
         "--agent",
