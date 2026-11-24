@@ -2,10 +2,12 @@
 //! as `exec_pool_submit`, whose grants (migration 0002) allow queueing a task through `submit_task` and reading the
 //! queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`]. Exit codes are
 //! `exec-pool-queue`'s: 0 done, 1 refused, 2 usage, 3 outcome unknown (run `status` before submitting again), 75
-//! database unavailable.
+//! database unavailable; `wait` adds 124, not settled by its timeout.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use exec_pool::queue::{QueueError, Store};
 use exec_pool::{Agent, Command, Pins, RelPath, RetryPolicy, SchemaVersion, Source, TaskSpec};
@@ -18,11 +20,20 @@ const USAGE: &str = "usage: exec-pool COMMAND
         to it. K is the idempotency key, by default derived from the rest: the same submission again is the same
         task, so give a new --key to run it once more.
   status [ID]       the task (or attempt) ID with its events, or the number of attempts in each status
-  list [--limit N]  the newest N tasks (20), newest first";
+  list [--limit N]  the newest N tasks (20), newest first
+  result ID         the task's state and, once the runner recorded it, its result: the agent's outcome, the exit
+                    code and up to 16 KiB of output (Claude's result text, or the end of stdout)
+  wait ID [--timeout SECS]
+                    blocks until the task settles (succeeded, failed or needs_review), then prints its result";
+/// How often `wait` reads the queue, and how long it waits after the settle for the runner to record the result.
+const POLL: Duration = Duration::from_secs(5);
+const RECORD_GRACE: Duration = Duration::from_secs(30);
+const SETTLED: [&str; 3] = ["succeeded", "failed", "needs_review"];
 
 enum Fail {
     Usage(String),
     Queue(QueueError),
+    TimedOut(Value),
 }
 
 impl From<QueueError> for Fail {
@@ -181,9 +192,74 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
             })?;
             store.tasks(limit)?.iter().for_each(|t| println!("{t}"));
         }
+        "result" => {
+            args.only("result", &[], 1)?;
+            println!("{}", shown(store, id(args)?)?);
+        }
+        "wait" => {
+            args.only("wait", &["timeout"], 1)?;
+            let timeout = args
+                .opt("timeout")
+                .map(|n| {
+                    n.parse().map(Duration::from_secs).map_err(|_| {
+                        Fail::Usage("--timeout must be a number of seconds".to_owned())
+                    })
+                })
+                .transpose()?;
+            println!("{}", wait(store, id(args)?, timeout)?);
+        }
         other => return Err(Fail::Usage(format!("unknown command {other:?}"))),
     }
     Ok(())
+}
+
+fn id(args: &Args) -> Result<&str, Fail> {
+    args.positional
+        .first()
+        .map(String::as_str)
+        .ok_or_else(|| Fail::Usage("an ID is required".to_owned()))
+}
+
+fn shown(store: &mut Store, id: &str) -> Result<Value, Fail> {
+    Ok(store
+        .result(id)?
+        .ok_or_else(|| QueueError::NotFound(id.to_owned()))?)
+}
+
+/// Polls until the task is settled and its result recorded, or [`RECORD_GRACE`] after the settle; an unavailable
+/// database is waited out like the task.
+fn wait(store: &mut Store, id: &str, timeout: Option<Duration>) -> Result<Value, Fail> {
+    let start = Instant::now();
+    let mut settled_at = None;
+    let mut last = Value::Null;
+    loop {
+        match shown(store, id) {
+            Ok(v) => {
+                let settled = v
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| SETTLED.contains(&s));
+                if settled && settled_at.is_none() {
+                    settled_at = Some(Instant::now());
+                }
+                if settled_at.is_some_and(|t| {
+                    v.get("result").is_some_and(|r| !r.is_null()) || t.elapsed() >= RECORD_GRACE
+                }) {
+                    return Ok(v);
+                }
+                if !settled {
+                    settled_at = None;
+                }
+                last = v;
+            }
+            Err(Fail::Queue(QueueError::Unavailable(e))) => eprintln!("exec-pool: {e}; waiting"),
+            Err(e) => return Err(e),
+        }
+        if timeout.is_some_and(|t| start.elapsed() >= t) {
+            return Err(Fail::TimedOut(last));
+        }
+        thread::sleep(POLL);
+    }
 }
 
 fn main() -> ExitCode {
@@ -201,6 +277,11 @@ fn main() -> ExitCode {
         Err(Fail::Usage(m)) => {
             eprintln!("exec-pool: {m}\n{USAGE}");
             ExitCode::from(2)
+        }
+        Err(Fail::TimedOut(last)) => {
+            println!("{last}");
+            eprintln!("exec-pool: not settled by --timeout");
+            ExitCode::from(124)
         }
         Err(Fail::Queue(e)) => {
             eprintln!("exec-pool: {e}");
@@ -232,6 +313,7 @@ mod tests {
         task_spec(&args(a)).map_err(|e| match e {
             Fail::Usage(m) => m,
             Fail::Queue(e) => e.to_string(),
+            Fail::TimedOut(v) => v.to_string(),
         })
     }
 

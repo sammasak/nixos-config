@@ -7,6 +7,7 @@ pub mod agent;
 pub mod queue;
 pub mod runner;
 mod state;
+pub mod task_result;
 pub mod workspace;
 
 use std::collections::BTreeSet;

@@ -19,6 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exec_pool::queue::{METRICS_UNAVAILABLE, QueueError, Store, Submitted};
+use exec_pool::task_result::TaskResult;
 use exec_pool::{
     Agent, Error, Event, Kind, Pins, Receipt, Resolution, SchemaVersion, Settle, Slot, SlotState,
     Status, TaskSpec,
@@ -234,13 +235,13 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
     submit(&mut s, &task("t-1", 1));
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (3)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (4)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(3))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(3))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(4))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(4))));
 }
 
 /// The one shape `submit_task` takes: what `exec-pool submit` builds.
@@ -661,6 +662,79 @@ fn a_terminal_settle_needs_its_own_receipt() {
         )
         .unwrap_err();
     assert_eq!(e.as_db_error().map(|d| d.code().code()), Some("XP409"));
+}
+
+#[test]
+fn a_settled_attempt_records_its_result_for_the_submitter() {
+    let pg = Pg::new();
+    let mut s = pg.migrated();
+    let a = submit(&mut s, &task("t-1", 2));
+    let out = |exit: i32, output: &str| TaskResult {
+        outcome: None,
+        exit_code: Some(exit),
+        output: output.to_owned(),
+    };
+    s.claim(&slot("s0"), 60).unwrap().unwrap();
+    s.apply(&a, &ev(1, Kind::Start), None).unwrap();
+    assert!(
+        matches!(
+            s.record_result(&a, 1, &out(1, "x")),
+            Err(QueueError::Fenced(_))
+        ),
+        "not while it runs"
+    );
+    for kind in [Kind::Checkpoint, Kind::Settle(Settle::Queued)] {
+        s.apply(&a, &ev(1, kind), None).unwrap();
+    }
+    assert!(s.record_result(&a, 1, &out(128, "clone failed")).unwrap());
+    assert!(
+        !s.record_result(&a, 1, &out(0, "again")).unwrap(),
+        "once per epoch"
+    );
+    s.claim(&slot("s0"), 60).unwrap().unwrap();
+    for kind in [Kind::Start, Kind::Checkpoint] {
+        s.apply(&a, &ev(2, kind), None).unwrap();
+    }
+    s.apply(
+        &a,
+        &ev(2, Kind::Settle(Settle::Succeeded)),
+        Some(&receipt(&a, "t-1", 2, "succeeded")),
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            s.record_result(&a, 1, &out(1, "stale")),
+            Err(QueueError::Fenced(_))
+        ),
+        "another epoch's"
+    );
+    let done = TaskResult {
+        outcome: Some(exec_pool::Outcome::Succeeded),
+        ..out(0, "opened PR #9")
+    };
+    assert!(s.record_result(&a, 2, &done).unwrap());
+
+    let submitter = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_submit ");
+    let shown = Store::open(&submitter)
+        .unwrap()
+        .result(&a)
+        .unwrap()
+        .unwrap();
+    assert_eq!(shown["status"], "succeeded");
+    assert_eq!(shown["result"]["lease_epoch"], 2);
+    assert_eq!(shown["result"]["outcome"], "succeeded");
+    assert_eq!(shown["result"]["exit_code"], 0);
+    assert_eq!(shown["result"]["output"], "opened PR #9");
+    assert!(!shown.to_string().contains(ARGV_MARKER), "{shown}");
+    let e = Client::connect(&submitter, NoTls)
+        .unwrap()
+        .batch_execute("UPDATE results SET output = 'forged'")
+        .unwrap_err();
+    assert_eq!(e.code().map(postgres::error::SqlState::code), Some("42501"));
+    let fresh = submit(&mut s, &task("t-2", 1));
+    assert!(s.result(&fresh).unwrap().unwrap()["result"].is_null());
 }
 
 #[test]
