@@ -152,9 +152,13 @@ def status(spool: pathlib.Path) -> int:
         counts = json.loads(p.read_text()) if p.exists() else {}
     except ValueError:
         counts = {"unreadable": 1}
-    shipper = "host" if os.environ.get("PLATFORM_RECORD_SHIPPER") == "host" else "direct"
-    print(json.dumps({"spool": str(spool), "shipper": shipper, "retry_pending": len(read_retry(spool)),
-                      "counts": counts}, sort_keys=True))
+    retry = len(read_retry(spool))
+    # a host-shipped spool never drains its retry queue: what one holds from before is stale, its lines in the spool
+    if os.environ.get("PLATFORM_RECORD_SHIPPER") == "host":
+        state = {"shipper": "host", "retry_pending": 0, "retry_stale": retry}
+    else:
+        state = {"shipper": "direct", "retry_pending": retry}
+    print(json.dumps({"spool": str(spool), **state, "counts": counts}, sort_keys=True))
     return 0
 
 

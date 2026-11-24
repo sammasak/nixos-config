@@ -54,7 +54,7 @@ want = ['"-I"', "DynamicUser = true;", 'CapabilityBoundingSet = [ "CAP_DAC_READ_
 check(all(w in u for w in want) and "guest-records.py" in u and "User = \"root\"" not in u,
       f"the units run python -I as a dynamic user with CAP_DAC_READ_SEARCH alone, reaching Loki's address only "
       f"(missing: {[w for w in want if w not in u]})")
-check(re.search(r'lib\.optional \(cfg\.records != null\) \{ PLATFORM_RECORD_SHIPPER = "host"; \}', core) is not None
+check(re.search(r'environment\.sessionVariables = lib\.mkIf \(cfg\.records != null\) \{ PLATFORM_RECORD_SHIPPER = "host"; \}', core) is not None
       and 'os.environ.get("PLATFORM_RECORD_SHIPPER") == "host"' in (ROOT / "pkgs/platform-record/platform_record.py").read_text(),
       "with records shipped, a guest's platform-record writes the spool alone (PLATFORM_RECORD_SHIPPER=host), never "
       "a push or a retry queue the guest could not drain")
