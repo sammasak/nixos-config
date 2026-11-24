@@ -24,6 +24,77 @@ let
     "ssh://git@github.com/"
   ];
   gateway = config.sam.fleet.listeners.gateway-api;
+  # msi's slots reach GitHub through acer's sidecar (sam.fleet.listeners.github-egress): this host holds no token
+  ghFleet = config.sam.fleet.listeners.github-egress;
+  hostName = config.networking.hostName;
+  ghForward = ghFleet.host != hostName && lib.elem hostName ghFleet.from;
+  ghServes = ghFleet.host == hostName;
+  forwardSite = ''
+    reverse_proxy ${ghFleet.url} {
+      header_up Host {upstream_hostport}
+      flush_interval -1
+    }
+  '';
+  # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
+  githubSite =
+    i:
+    let
+      repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})";
+    in
+    ''
+      # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
+      @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|(^|/)\.\.?(/|\?|$)|//|\\
+      # the owner's token administers the repository: none of that, on any listed repo
+      @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
+      @adminRepo {
+        path_regexp ^/repos/[^/]+/[^/]+/?$
+        method PATCH PUT DELETE
+      }
+      handle @odd {
+        respond 403
+      }
+      handle @admin {
+        respond 403
+      }
+      handle @adminRepo {
+        respond 403
+      }
+      @git {
+        path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
+        method GET POST
+      }
+      @read {
+        path_regexp ^/repos/${repos}(/.*)?$
+        method GET HEAD
+      }
+      # what an agent does to a repository: issues, comments, labels and pull requests. Merges, refs, contents,
+      # workflows, releases and the rest stay off, and reviews too (an approval would be the owner's).
+      @write {
+        path_regexp ^/repos/${repos}/(issues(/[0-9]+(/(comments|labels|assignees))?|/comments/[0-9]+)?|pulls(/[0-9]+(/(comments|requested_reviewers))?|/comments/[0-9]+)?|labels(/[^/]+)?)/?$
+        method POST PATCH
+      }
+      handle @git {
+        ${upstream "https://github.com" "Basic {file.${githubToken}.basic}"}
+      }
+      handle @read {
+        ${upstream "https://api.github.com" "token {file.${githubToken}}"}
+      }
+      handle @write {
+        ${upstream "https://api.github.com" "token {file.${githubToken}}"}
+      }
+      ${lib.optionalString i.egress.github.graphql ''
+        @graphql {
+          path /graphql
+          method POST
+        }
+        handle @graphql {
+          ${upstream "https://api.github.com" "bearer {file.${githubToken}}"}
+        }
+      ''}
+      handle {
+        respond 403
+      }
+    '';
   headless = a: i: lib.elem a i.headlessAgents;
   # the hosts.nix entries with the runtime-host role, by hostName (as ssh-known-hosts.nix reads the table)
   runtimeHosts = lib.sort lib.lessThan (
@@ -411,6 +482,29 @@ in
         fleet = lib.attrNames config.sam.fleet.hosts;
       };
       egressInaccessible = [ "/run/secrets.d" ]; # sops-nix: every host secret; the proxy gets its own as a credential
+      # every address, so an early start is no bind failure: the firewall admits only `from` (modules/core/network.nix),
+      # and remote_ip holds the site to it too
+      egressSites = lib.optionalString ghServes ''
+        http://:${toString ghFleet.port} {
+          log github-fleet
+          @outside not remote_ip ${
+            toString (
+              lib.concatMap (
+                h: [ config.sam.fleet.hosts.${h}.address ] ++ config.sam.fleet.hosts.${h}.extraAddresses
+              ) ghFleet.from
+            )
+          }
+          handle @outside {
+            respond 403
+          }
+          ${githubSite {
+            egress.github = {
+              inherit (config.sam.workers.executionPool.github) repos;
+              graphql = false;
+            };
+          }}
+        }
+      '';
       egress = {
         anthropic = {
           for = i: i.agent == "claude" || headless "claude" i;
@@ -441,70 +535,11 @@ in
         };
         github = {
           for = onGithub;
-          # GraphQL names no repository in its path, so it cannot be held to the list: off unless asked for.
-          site =
-            i:
-            let
-              repos = "(?i:${lib.concatMapStringsSep "|" (lib.escapeRegex) i.egress.github.repos})";
-            in
-            ''
-              # what Caddy matches is the decoded path, what GitHub gets is the raw one: refuse anything they could read apart
-              @odd vars_regexp {http.request.orig_uri} (?i)%(2f|5c|2e|25)|(^|/)\.\.?(/|\?|$)|//|\\
-              # the owner's token administers the repository: none of that, on any listed repo
-              @admin path_regexp (?i)^/repos/[^/]+/[^/]+/(rulesets|branches/.+/protection|collaborators|keys|hooks|transfer|actions/(secrets|variables|runners|permissions)|dependabot/secrets|codespaces/secrets|environments|invitations)(/.*)?$
-              @adminRepo {
-                path_regexp ^/repos/[^/]+/[^/]+/?$
-                method PATCH PUT DELETE
-              }
-              handle @odd {
-                respond 403
-              }
-              handle @admin {
-                respond 403
-              }
-              handle @adminRepo {
-                respond 403
-              }
-              @git {
-                path_regexp ^/${repos}(\.git)?/(info/refs|git-upload-pack|git-receive-pack)$
-                method GET POST
-              }
-              @read {
-                path_regexp ^/repos/${repos}(/.*)?$
-                method GET HEAD
-              }
-              # what an agent does to a repository: issues, comments, labels and pull requests. Merges, refs, contents,
-              # workflows, releases and the rest stay off, and reviews too (an approval would be the owner's).
-              @write {
-                path_regexp ^/repos/${repos}/(issues(/[0-9]+(/(comments|labels|assignees))?|/comments/[0-9]+)?|pulls(/[0-9]+(/(comments|requested_reviewers))?|/comments/[0-9]+)?|labels(/[^/]+)?)/?$
-                method POST PATCH
-              }
-              handle @git {
-                ${upstream "https://github.com" "Basic {file.${githubToken}.basic}"}
-              }
-              handle @read {
-                ${upstream "https://api.github.com" "token {file.${githubToken}}"}
-              }
-              handle @write {
-                ${upstream "https://api.github.com" "token {file.${githubToken}}"}
-              }
-              ${lib.optionalString i.egress.github.graphql ''
-                @graphql {
-                  path /graphql
-                  method POST
-                }
-                handle @graphql {
-                  ${upstream "https://api.github.com" "bearer {file.${githubToken}}"}
-                }
-              ''}
-              handle {
-                respond 403
-              }
-            '';
+          site = if ghForward then _: forwardSite else githubSite;
           port = 4102;
-          secrets."gh-hosts.yml" = cfg.ghHostsFile;
+          secrets = lib.optionalAttrs (!ghForward) { "gh-hosts.yml" = cfg.ghHostsFile; };
           missing = "sam.workers: an instance with egress.github.repos is signed with the token in sam.workers.ghHostsFile, which this host does not set.";
-          prepare = [ (lib.getExe githubTokenFromHosts) ];
+          prepare = lib.optional (!ghForward) (lib.getExe githubTokenFromHosts);
           guest.env.GH_TOKEN = "held-by-the-host";
           guest.config = {
             # also the system's: a pool attempt's HOME holds no Home Manager files, and its push URL is ssh
@@ -636,7 +671,7 @@ in
           ) agentNames;
         };
       })
-      (lib.mkIf (lib.any onGithub (lib.attrValues dev.instances)) {
+      (lib.mkIf (!ghForward && lib.any onGithub (lib.attrValues dev.instances)) {
         # gh rewrites hosts.yml on a login or refresh; the token is read at start
         services.dev-env-egress-gh = {
           serviceConfig.Type = "oneshot";
@@ -679,6 +714,10 @@ in
           i: !onGithub i || !lib.elem "id_ed25519" i.credentials && !lib.elem "gh-hosts.yml" i.credentials
         ) (lib.attrValues dev.instances);
         message = "sam.workers: an instance with egress.github.repos gets neither id_ed25519 nor gh-hosts.yml.";
+      }
+      {
+        assertion = ghServes -> lib.any onGithub (lib.attrValues dev.instances);
+        message = "sam.workers: this host serves sam.fleet.listeners.github-egress, whose token its proxy loads only for an instance of its own with egress.github.repos (sam.workers.executionPool.github.repos).";
       }
       {
         assertion = profile.nativeOtel || !lib.any (i: i.telemetry) (lib.attrValues dev.instances);

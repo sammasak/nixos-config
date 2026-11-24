@@ -137,9 +137,9 @@ impl Manifest {
     /// The guest commands in order: create the workspace, clone into it, check out the rev (an agent task on its
     /// [`agent::branch`]), then
     /// [`agent::argv`] in the task's workdir with the workspace's HOME. Each is an argv, never a shell string; `git`,
-    /// `env` and `mkdir` are store paths the guest shares. Git reads no global or system config, so the clone is
-    /// anonymous https; the checkout's own config holds `identity` (name, email) for the agent's commits and, for a
-    /// GitHub repository, an ssh push URL, which the slot's key (if it holds one) pushes with.
+    /// `env` and `mkdir` are store paths the guest shares. Git reads the guest's system config alone, whose rewrite
+    /// sends GitHub to the slot's proxy; the checkout's own config holds `identity` (name, email) for the agent's
+    /// commits and, for a GitHub repository, an ssh push URL, which that rewrite sends to the proxy too.
     ///
     /// # Errors
     /// What [`agent::argv`] or [`Workspace::run`] rejects.
@@ -212,7 +212,8 @@ impl Manifest {
         ))
     }
 
-    /// The clone into `checkout` and the checkout of the rev there, by `git` with no global or system config.
+    /// The clone into `checkout` and the checkout of the rev there, by `git` with no global config: the guest's
+    /// system config alone, which sends GitHub to the slot's proxy (a private repository clones too).
     fn clone(
         &self,
         checkout: &str,
@@ -221,12 +222,7 @@ impl Manifest {
     ) -> Result<[Vec<String>; 2], StepsError> {
         let s = |v: &[&str]| v.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
         let git = |args: &[&str]| {
-            let mut v = s(&[
-                env,
-                "GIT_CONFIG_GLOBAL=/dev/null",
-                "GIT_CONFIG_NOSYSTEM=1",
-                git,
-            ]);
+            let mut v = s(&[env, "GIT_CONFIG_GLOBAL=/dev/null", git]);
             v.extend(s(args));
             v
         };
@@ -256,8 +252,8 @@ impl Manifest {
         Ok([git(&clone), git(&checkout_args)])
     }
 
-    /// The guest command that lists the task's branch on its repository once the run is over, anonymously like the
-    /// clone; [`pushed`] reads its output.
+    /// The guest command that lists the task's branch on its repository once the run is over, through the same config
+    /// as the clone; [`pushed`] reads its output.
     ///
     /// # Errors
     /// What [`agent::branch`] rejects.
@@ -266,7 +262,6 @@ impl Manifest {
         Ok([
             env,
             "GIT_CONFIG_GLOBAL=/dev/null",
-            "GIT_CONFIG_NOSYSTEM=1",
             "GIT_TERMINAL_PROMPT=0",
             git,
             "ls-remote",
@@ -1049,16 +1044,11 @@ mod tests {
         );
         assert_eq!(root, ["/mkdir", "-m", "0700", "--", "/home/u/attempts"]);
         let dir = "/home/u/attempts/74312e61-3";
-        let git = [
-            "/env",
-            "GIT_CONFIG_GLOBAL=/dev/null",
-            "GIT_CONFIG_NOSYSTEM=1",
-            "/git",
-        ];
-        assert_eq!(clone[..4], git, "no rewrite to ssh from the guest's config");
-        assert_eq!(checkout[..4], git);
+        let git = ["/env", "GIT_CONFIG_GLOBAL=/dev/null", "/git"];
+        assert_eq!(clone[..3], git, "no rewrite to ssh from the user's config");
+        assert_eq!(checkout[..3], git);
         assert_eq!(
-            clone[4..],
+            clone[3..],
             [
                 "clone",
                 "--quiet",
@@ -1072,7 +1062,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            checkout[4..],
+            checkout[3..],
             [
                 "-C",
                 &format!("{dir}/work"),
@@ -1105,7 +1095,7 @@ mod tests {
         t["command"] = json!({ "agent": "claude", "argv": ["go"], "workdir": "." });
         let m = manifest(&t).unwrap();
         let [_, _, (_, clone), (_, checkout), _] = steps(&m);
-        assert_eq!(checkout[8..], ["-b", "pool/t1", "abc123"]);
+        assert_eq!(checkout[7..], ["-b", "pool/t1", "abc123"]);
         let at = clone.iter().position(|a| a == "--").unwrap();
         assert_eq!(
             clone[at - 2..at],
@@ -1129,7 +1119,7 @@ mod tests {
             assert_eq!(github_push_url(repo).as_deref(), want, "{repo}");
         }
         assert_eq!(
-            m.pushed_check("/git", "/env").unwrap()[5..],
+            m.pushed_check("/git", "/env").unwrap()[4..],
             [
                 "ls-remote",
                 "--heads",

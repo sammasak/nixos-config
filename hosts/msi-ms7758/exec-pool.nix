@@ -7,8 +7,6 @@
     enable = true;
     slots = 4;
     agents = [ "claude" ];
-    # the host's push key: a task hands its code back on its own branch, pool/<task id>
-    credentials = [ "id_ed25519" ];
   };
   homelab.execPool.runner = {
     enable = true;

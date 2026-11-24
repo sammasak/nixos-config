@@ -28,6 +28,21 @@ const IO_SECS: u32 = 120;
 /// The longest one transfer may take, in minutes: a drain has ten before the poweroff.
 const STOP_AFTER_MINS: u32 = 5;
 
+/// What a push leaves on its host: where a key or a tool's login lands in a session home.
+///
+/// A slot holds no credential (its sidecars sign for it), so these are a net for a login run in a session, not the
+/// model; the slot's own key is a link outside the tree.
+pub const HELD_BACK: [&str; 8] = [
+    "/home/.ssh/",
+    "/home/.config/gh/hosts.yml",
+    "/home/.claude/.credentials.json",
+    "/home/.codex/auth.json",
+    "/home/.netrc",
+    "/home/.git-credentials",
+    "/home/.config/git/credentials",
+    "/home/.config/nix/nix.conf",
+];
+
 impl Depot {
     /// `<hex>/<rel>` in the store, as rsync names it.
     fn at(&self, hex: &str, rel: &str) -> String {
@@ -60,8 +75,8 @@ impl Depot {
     #[must_use]
     pub fn push_argv(&self, rsync: &str, from: &Path, hex: &str, rel: &str) -> Vec<String> {
         let mut argv = self.rsync(rsync);
-        // a key the agent copied in stays on its host; the slot's own is a link outside the tree
-        argv.extend(["-M--fake-super", "--exclude=/home/.ssh/"].map(str::to_owned));
+        argv.push("-M--fake-super".to_owned());
+        argv.extend(HELD_BACK.map(|p| format!("--exclude={p}")));
         argv.extend([from.display().to_string(), self.at(hex, rel)]);
         argv
     }
@@ -346,6 +361,13 @@ mod tests {
                 "--stop-after=5",
                 "-M--fake-super",
                 "--exclude=/home/.ssh/",
+                "--exclude=/home/.config/gh/hosts.yml",
+                "--exclude=/home/.claude/.credentials.json",
+                "--exclude=/home/.codex/auth.json",
+                "--exclude=/home/.netrc",
+                "--exclude=/home/.git-credentials",
+                "--exclude=/home/.config/git/credentials",
+                "--exclude=/home/.config/nix/nix.conf",
                 "/s/74/tree/",
                 "/var/lib/de/.sessions-store/74/tree/"
             ]
@@ -358,6 +380,13 @@ mod tests {
                 "/bin/ssh -i /etc/ssh/ssh_host_ed25519_key",
                 "-M--fake-super",
                 "--exclude=/home/.ssh/",
+                "--exclude=/home/.config/gh/hosts.yml",
+                "--exclude=/home/.claude/.credentials.json",
+                "--exclude=/home/.codex/auth.json",
+                "--exclude=/home/.netrc",
+                "--exclude=/home/.git-credentials",
+                "--exclude=/home/.config/git/credentials",
+                "--exclude=/home/.config/nix/nix.conf",
                 "/s/74/generation",
                 "exec-pool-sync@192.168.10.2:74/generation"
             ]
