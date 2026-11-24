@@ -91,6 +91,7 @@ in
         "rf-proto"
         "herman"
         "devenv-platform"
+        "paddock"
       ];
       description = "Each slot's egress.github.repos: its git push and fetch and its gh calls to these repositories are signed by the host's proxy, or on a host in sam.fleet.listeners.github-egress's `from` by that listener's host with its own list, so the slot holds no GitHub credential; a repository whose flake or devenv has a private input needs that input listed too.";
     };
