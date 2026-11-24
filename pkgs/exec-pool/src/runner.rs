@@ -15,6 +15,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::wake::Wake;
 use crate::workspace::{self, SESSION_HOME, SESSION_WORK, Workspace};
 use crate::{
     Agent, CheckpointRef, Error, Outcome, ParkReason, Receipt, STORE, SchemaVersion, Settle,
@@ -279,6 +280,41 @@ impl Manifest {
     }
 }
 
+/// The guest command whose output [`holds_tree`] reads: the checkout's HEAD and every change not committed.
+///
+/// Untracked files count; `git` reads no global or system config and writes no index refresh.
+#[must_use]
+pub fn tree_check(git: &str, env: &str, checkout: &str) -> Vec<String> {
+    [
+        env,
+        "GIT_CONFIG_GLOBAL=/dev/null",
+        "GIT_CONFIG_NOSYSTEM=1",
+        "GIT_OPTIONAL_LOCKS=0",
+        git,
+        "-C",
+        checkout,
+        "status",
+        "--porcelain=v2",
+        "--branch",
+        "--untracked-files=all",
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
+/// Whether the task's branch as listed after the run (`after`) holds the whole tree.
+///
+/// That is: its commit is the checkout's HEAD and [`tree_check`]'s `status` (`None`: it failed) shows no change.
+/// Anything else is unknown, so not.
+#[must_use]
+pub fn holds_tree(after: &Listed, status: Option<&str>) -> bool {
+    let (Listed::At(pushed), Some(status)) = (after, status) else {
+        return false;
+    };
+    let head = status.lines().find_map(|l| l.strip_prefix("# branch.oid "));
+    head == Some(pushed.as_str()) && status.lines().all(|l| l.starts_with("# "))
+}
+
 /// The guest command that links the guest user's current Home Manager files into the session's HOME.
 ///
 /// Every file of the generation under `guest_home` is linked, replacing what is there, and directories are made
@@ -472,6 +508,12 @@ pub struct ExecResult {
     /// The turn's tree reached the store after its detach, at this turn's generation.
     #[serde(default)]
     pub stored: bool,
+    /// [`holds_tree`] once the run's agent ran: the branch's head is the checkout's HEAD and nothing is uncommitted.
+    #[serde(default)]
+    pub handed_back: Option<bool>,
+    /// What the session turn's agent asked with `pool-wait`, taken from its tree after the detach.
+    #[serde(default)]
+    pub wake: Option<Wake>,
     /// `container@<slot>` was active when the command ended; a guest that went away leaves the outcome unknown.
     pub container_active: bool,
     pub stdout_tail: String,
@@ -495,6 +537,8 @@ impl ExecResult {
             branch: None,
             tree_lost: None,
             stored: false,
+            handed_back: None,
+            wake: None,
             drained: false,
             container_active: true,
             stdout_tail: String::new(),
@@ -702,6 +746,8 @@ mod tests {
             branch: None,
             tree_lost: None,
             stored: false,
+            handed_back: None,
+            wake: None,
             drained: false,
             container_active: true,
             stdout_tail: String::new(),
@@ -1121,6 +1167,36 @@ mod tests {
             "unknown before"
         );
         assert_eq!(handed_back(&absent, &unknown, b), None, "unknown after");
+    }
+
+    #[test]
+    fn the_tree_is_handed_back_only_when_its_head_is_pushed_and_nothing_is_uncommitted() {
+        assert_eq!(
+            tree_check("/git", "/env", "/session/cur/work")[4..8],
+            ["/git", "-C", "/session/cur/work", "status"]
+        );
+        let at = |sha: &str| Listed::At(sha.to_owned());
+        let clean = "# branch.oid 1f2e\n# branch.head pool/t1\n";
+        assert!(holds_tree(&at("1f2e"), Some(clean)));
+        for (after, status, why) in [
+            (at("0a0a"), Some(clean), "HEAD is not the pushed commit"),
+            (
+                at("1f2e"),
+                Some("# branch.oid 1f2e\n1 .M N... 100644 100644 100644 a b src/lib.rs\n"),
+                "a change not committed",
+            ),
+            (
+                at("1f2e"),
+                Some("# branch.oid 1f2e\n? notes.md\n"),
+                "an untracked file",
+            ),
+            (at("1f2e"), None, "the status failed"),
+            (Listed::Absent, Some(clean), "nothing pushed"),
+            (Listed::Unknown, Some(clean), "the listing failed"),
+            (at("1f2e"), Some(""), "no HEAD"),
+        ] {
+            assert!(!holds_tree(&after, status), "{why}");
+        }
     }
 
     #[test]

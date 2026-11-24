@@ -9,6 +9,7 @@ pub mod runner;
 mod state;
 pub mod sync;
 pub mod task_result;
+pub mod wake;
 pub mod workspace;
 
 use std::collections::BTreeSet;
@@ -135,6 +136,8 @@ pub enum Error {
     /// The parser's message: `serde_json::Error` is not `Eq`.
     #[error("{0}")]
     Json(String),
+    #[error("wake: {0}")]
+    Wake(String),
 }
 
 impl From<serde_json::Error> for Error {

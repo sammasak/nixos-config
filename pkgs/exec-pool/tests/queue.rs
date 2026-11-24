@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use exec_pool::queue::{METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, Turn};
 use exec_pool::task_result::{TaskResult, Usage};
+use exec_pool::wake::Wake;
 use exec_pool::{
     Agent, CheckpointRef, Error, Event, Kind, Outcome, ParkReason, Pins, Receipt, Resolution,
     SchemaVersion, Settle, Slot, SlotState, Status, TaskSpec,
@@ -236,12 +237,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (14, 13)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (15, 14)",
             &[],
         )
         .unwrap();
@@ -249,17 +250,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (15)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (16)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(15))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(16))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 15 WHERE version = 15",
+            "UPDATE schema_migrations SET floor = 16 WHERE version = 16",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(15))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(15))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(16))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(16))));
 }
 
 #[test]
@@ -1708,6 +1709,7 @@ fn park(reason: ParkReason, upto: i64) -> Park {
         }),
         result: TaskResult::new(Some(Outcome::Succeeded), Some(0), "the turn's answer"),
         upto,
+        wake: None,
     }
 }
 
@@ -2216,7 +2218,27 @@ fn the_submitter_cli_starts_a_session_messages_it_and_waits_for_its_park() {
     let (code, out) = submitter(&["send", id, "--prompt", "next"]);
     assert_eq!(code, Some(0));
     assert!(out.contains(r#""status":"queued""#), "{out}");
-    assert_eq!(started(&mut owner).2.input, "next");
+    let (a, epoch, turn) = started(&mut owner);
+    assert_eq!(turn.input, "next");
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    let (code, out) = submitter(&["send", id, "--at", "23:59", "--prompt", "later"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains(r#""status":"waiting""#), "{out}");
+    let due: bool = pg
+        .sql()
+        .query_one(
+            "SELECT due_at > now() FROM inbox WHERE kind = 'timer' AND body = 'later'",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert!(due, "HH:MM is the next such time");
+    assert_eq!(
+        submitter(&["send", id, "--at", "soon", "--prompt", "x"]).0,
+        Some(2)
+    );
 }
 
 #[test]
@@ -2260,6 +2282,7 @@ fn the_runner_runs_a_turn_and_neither_role_writes_or_reads_what_it_may_not() {
             "DELETE FROM inbox".to_owned(),
             "UPDATE inbox SET body = 'x'".to_owned(),
             format!("INSERT INTO inbox (task_id, kind, body) VALUES ('{id}', 'message', 'x')"),
+            format!("SELECT send_timer('{id}', 'x', now())"),
         ],
     );
     refused(
@@ -2271,6 +2294,7 @@ fn the_runner_runs_a_turn_and_neither_role_writes_or_reads_what_it_may_not() {
             format!("INSERT INTO inbox (task_id, kind) VALUES ('{id}', 'continue')"),
             "UPDATE tasks SET session = true".to_owned(),
             "SELECT * FROM turns".to_owned(),
+            format!("SELECT wake_at('{id}', now(), NULL)"),
         ],
     );
 }
@@ -2327,6 +2351,115 @@ fn a_park_marks_read_only_what_was_due_at_its_claim() {
         .unwrap()
         .get(0);
     assert_eq!(unread, 1, "the row not handed over stays unread");
+}
+
+fn unread_timers(pg: &Pg) -> i64 {
+    pg.sql()
+        .query_one(
+            "SELECT count(*) FROM inbox WHERE kind = 'timer' AND consumed_epoch IS NULL",
+            &[],
+        )
+        .unwrap()
+        .get(0)
+}
+
+fn waking_at(due_at: &str, note: Option<&str>) -> Park {
+    Park {
+        wake: Some(Wake::new(due_at, note.map(str::to_owned)).unwrap()),
+        ..park(ParkReason::TurnEnd, 0)
+    }
+}
+
+#[test]
+fn a_timer_wakes_its_session_once_due_and_a_message_before_it_does_not_spend_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    let (_, changes) = owner
+        .park(
+            &a,
+            epoch,
+            &waking_at("2099-01-01T09:00:00+01:00", Some("check CI")),
+        )
+        .unwrap();
+    assert_eq!(moves(&changes), [(Status::Waiting, "waiting_until")]);
+    assert!(
+        owner.reconcile().unwrap().is_empty(),
+        "a future timer wakes nothing"
+    );
+    assert_eq!(status(&pg, &a).0, "waiting");
+    assert_eq!(s.task(&id).unwrap().unwrap()["parked"], "waiting_until");
+
+    assert_eq!(s.send(&id, "now").unwrap(), (a.clone(), Status::Queued));
+    let (_, epoch, turn) = started(&mut owner);
+    assert_eq!(
+        turn.input, "now",
+        "the timer is not due, so not handed over"
+    );
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "waiting");
+    assert_eq!(unread_timers(&pg), 1, "the message did not spend the timer");
+
+    pg.sql()
+        .execute(
+            "UPDATE inbox SET due_at = now() - interval '1 second' WHERE kind = 'timer'",
+            &[],
+        )
+        .unwrap();
+    let changes = owner.reconcile().unwrap();
+    assert_eq!(moves(&changes), [(Status::Queued, "wake")]);
+    let (_, epoch, turn) = started(&mut owner);
+    assert_eq!(turn.input, "check CI");
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert!(owner.reconcile().unwrap().is_empty(), "delivered once");
+    assert_eq!(
+        (status(&pg, &a).0.as_str(), unread_timers(&pg)),
+        ("waiting", 0)
+    );
+    let metrics = owner.metrics(None).unwrap();
+    assert!(
+        metrics.contains("exec_pool_session_wake_seconds_count{source=\"timer\"} 1"),
+        "{metrics}"
+    );
+}
+
+#[test]
+fn a_timer_already_due_wakes_at_the_park_or_the_next_reconcile() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    let (_, changes) = owner
+        .park(&a, epoch, &waking_at("2000-01-01T00:00:00Z", None))
+        .unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "waiting_until"), (Status::Queued, "wake")]
+    );
+    let (_, epoch, turn) = started(&mut owner);
+    assert_eq!(turn.input, "The time you asked to be woken at has come.");
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
+        .unwrap();
+    assert_eq!(
+        s.send_timer(&id, "go on", "2000-01-01T00:00:00Z").unwrap(),
+        (a.clone(), Status::Waiting),
+        "a timer only inserts its row"
+    );
+    assert_eq!(
+        moves(&owner.reconcile().unwrap()),
+        [(Status::Queued, "wake")]
+    );
+    assert_eq!(started(&mut owner).2.input, "go on");
+    assert!(matches!(
+        s.send_timer(&id, "x", "not a time"),
+        Err(QueueError::Db { .. })
+    ));
 }
 
 /// Moves a session's last change `days` into the past, as the clock would: past the fence, which refuses any write to a
