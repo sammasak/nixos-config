@@ -20,23 +20,24 @@ PRs merge.
 
 ## Queue
 
-In flight (24 Nov, 01:10): next monitoring item (`a1`). Parked until msi is on (08:30): pool slot declaration (`m2`,
-built and tested locally, unpushed); one full gate on main for the night's pushes (`just qa-owed`); msi and asus deploys.
-Merged and live since 23:00: flake check evaluates each host once (#683); 300K compaction window on herman (#682);
-Loki ruler with compactions per worker and an out-of-memory log alert (#684, #685); "On versus off" dashboard row
-(#686); the repeat-failure alert clears 24 h after the last failure (#687); old PRs landed: typed textfile port
-(#642), usage records (#637), asus model capability (#631).
+In flight (24 Nov, 03:00): pool queue on acer for real, PostgreSQL and the metrics collector (`a1`). Parked until msi
+is on (08:30): pool slot declaration (`m2`, built and tested locally, unpushed); one full gate on main for the night's
+pushes (`just qa-owed`); msi and asus deploys.
+Merged and live since 01:00: the repeat-failure alert clears 24 h after the last failure (#687, #689); a gate step
+reuses the flake check's host evaluations (#690); role adapters point at the pinned skills revision in the store,
+on hosts and in worker guests (#691); skills#136 closed after a live named-role spawn and green tests; old PRs
+landed (#642, #637, #631).
 
 Waiting, in pick-up order:
 
 | # | Topic | Pain now | Next small change |
 |---|-------|----------|-------------------|
 | 1 | Workers | msi sessions die when the pool runs out of memory (#647) | cap or slot limit (needs msi on) |
-| 2 | Pool | no task has run through it | push slots (#650), then the runner (#652); PostgreSQL and the pool enabled on acer |
-| 3 | Roles | spawns so far ran without reading their contract (stale checkout, fixed) | one named-role spawn in a scratch checkout with the skills tests green (skills#136) |
-| 4 | Gates | a full gate takes 20 to 60 minutes | read the morning gate against 13.1 min for the flake check; then the gate probe (3.6 min) |
-| 5 | Live comparison | first numbers only | read a day of Shunt on/off and of herman against default; decide to widen or switch off |
-| 6 | Monitoring | unknown whether backups record | read 24 Nov backup metrics; LogQL parse check for Loki rule queries; Alertmanager 0.34; next slice of #600 |
+| 2 | Pool | no task has run through it | after the queue on acer: push slots (#650), then the runner (#652) |
+| 3 | Monitoring | unknown whether backups record; `OpenIssuesGrowing` not looked at | read 24 Nov backup metrics; next slice of #600; Alertmanager 0.34 |
+| 4 | Live comparison | first numbers only | read a day of Shunt on/off and of herman against default; decide to widen or switch off |
+| 5 | Gates | a full gate takes 20 to 60 minutes | read the morning gate: flake check against 13.1 min, seventh-host against 158 to 247 s |
+| 6 | Roles | six adapters still run tasks from `~/claude-code-skills`; sandbox test cannot run in a guest | drop the checkout wording in the skills repo; a handoff through Herdr |
 | 7 | Leftovers | two drafts open | #616 black-pi kernel (needs a build path that is not the Pi), skills#106 (fixes named on the PR) |
 
 ## Priorities
@@ -53,7 +54,7 @@ Waiting, in pick-up order:
 | P1 | [skills#140](https://github.com/sammasak/skills/issues/140) | Improvement verifier | merged, skills#146, #148 |
 | P1 | [skills#137](https://github.com/sammasak/skills/issues/137) | Observability engineer | merged, skills#147; follow-up with `m2` |
 | P1 | [skills#133](https://github.com/sammasak/skills/issues/133) | Nix platform engineer | merged, skills#149 |
-| P1 | [skills#136](https://github.com/sammasak/skills/issues/136) | Dynamic handoffs pilot | offline pilot merged, skills#151; open for one live named-role spawn |
+| P1 | [skills#136](https://github.com/sammasak/skills/issues/136) | Dynamic handoffs pilot | closed 24 Nov: live named-role spawn and tests green |
 | P2 | skills [#132](https://github.com/sammasak/skills/issues/132), [#134](https://github.com/sammasak/skills/issues/134), [#135](https://github.com/sammasak/skills/issues/135) | Remaining specialists | all merged: skills#153, #154, #155 |
 | P1 | [#646](https://github.com/sammasak/nixos-config/issues/646) | Execution pool, v0.1 | split below; never ahead of a P0 item |
 | P2 | [#626](https://github.com/sammasak/nixos-config/issues/626) | Auto-compaction benchmarks | matrix doc when idle; benchmark is token spend |
@@ -118,7 +119,7 @@ msi and asus have no `gh` login: workers push branches over SSH and the lenovo s
 Every host deployed main on 23 Nov: acer-swift, msi-ms7758, asus-b460m, black-pi, lenovo. The first black-pi deploy
 rolled back on a journal-metrics start race, fixed by #634. asus deployed again after #639 (workers retired).
 msi, asus and acer deployed main again on the evening of 23 Nov (gaming entries, skills pin #661; acer also has the
-pin from #670). lenovo and black-pi deployed #687 at 01:05 on 24 Nov; acer follows when its worker is idle. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
+pin from #670). lenovo and acer deployed #691 at 03:00 on 24 Nov, black-pi #689 at 01:15. Owed: msi and asus, after 08:30 on 24 Nov. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
 ## Gaming entries (owner request, 23 Nov)
 
@@ -142,7 +143,8 @@ Owed after 08:30 on 24 Nov: one full gate on main (covers the night's pushes, `j
   notification, #673 pool queue, #675 pool CLI and metrics, #676 night mode, #678 and #679 Shunt on for a1 with
   on/off labels, #680 Alertmanager posts to ntfy and alert-bridge removed, #682 compaction window per worker,
   #683 one eval per host in the flake check, #684 and #685 Loki ruler, #686 on versus off row, #687 repeat-failure
-  alert clears, #642 typed textfile port, #637 usage records, #631 asus model capability
+  alert clears, #642 typed textfile port, #637 usage records, #631 asus model capability, #689 late-failure guard,
+  #690 seventh-host reuses evaluations, #691 role adapters pinned to the skills input
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
   #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132),
