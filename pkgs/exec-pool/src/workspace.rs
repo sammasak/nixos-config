@@ -74,14 +74,27 @@ impl Sessions {
         Self { root }
     }
 
-    /// The task's tree while detached.
+    /// The task's id as its directory is named, here and in the store: two lowercase hex digits per byte. The
+    /// remover reads it from `exec-pool sessions` (`dir`), never derives it.
     #[must_use]
-    pub fn tree(&self, task_id: &str) -> PathBuf {
+    pub fn hex(task_id: &str) -> String {
         let mut dir = String::new();
         for b in task_id.bytes() {
             let _ = write!(dir, "{b:02x}");
         }
-        self.root.join(dir).join("tree")
+        dir
+    }
+
+    /// The task's directory: its tree and the marks beside it.
+    #[must_use]
+    pub fn dir(&self, task_id: &str) -> PathBuf {
+        self.root.join(Self::hex(task_id))
+    }
+
+    /// The task's tree while detached.
+    #[must_use]
+    pub fn tree(&self, task_id: &str) -> PathBuf {
+        self.dir(task_id).join("tree")
     }
 
     /// Beside the tree, the helper's mark that its first turn's clone and checkout finished: until it exists, a turn
@@ -373,6 +386,17 @@ mod tests {
 
     fn ws() -> Result<Workspace, Error> {
         Workspace::new("/home/lukas", "a/../b", 3)
+    }
+
+    #[test]
+    fn a_session_tree_is_named_by_its_task_ids_hex() {
+        let s = Sessions::new(PathBuf::from("/var/lib/workers/.sessions"));
+        let hex = "636c692d63383636323932373131393964356237";
+        assert_eq!(Sessions::hex("cli-c86629271199d5b7"), hex);
+        assert_eq!(
+            s.tree("cli-c86629271199d5b7"),
+            PathBuf::from(format!("/var/lib/workers/.sessions/{hex}/tree"))
+        );
     }
 
     #[test]

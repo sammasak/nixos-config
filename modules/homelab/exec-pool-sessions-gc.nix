@@ -39,8 +39,9 @@ let
     text = ''
       d=${lib.escapeShellArg config.services.devEnvironments.stateDir}
       state=${state}
-      # an id becomes a path under .sessions: anything but a plain name is refused, and dock is the slots' own dir
-      valid() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ && $1 != dock ]]; }
+      # a session's directory under .sessions and .sessions-store is its list line's dir, the runner's hex of its id
+      # (workspace.rs Sessions::hex), never derived here; anything but that shape is refused, and so is dock
+      valid() { [[ $1 =~ ^([0-9a-f]{2}){1,128}$ ]]; }
       [[ -d $d/.trash && ! -L $d/.trash ]] || { echo "exec-pool-sessions-gc: no $d/.trash; nothing removed" >&2; exit 1; }
       # exec_pool's file: a plain one, read at most 16 MiB, then gone, so a failed lister leaves no old list
       [[ -f ${list} && ! -L ${list} ]] || { echo "exec-pool-sessions-gc: no list; nothing removed" >&2; exit 1; }
@@ -48,7 +49,7 @@ let
       rm -f ${list}
       # the queue's eligible, and only with its branch known to hold the tree: a line short of either is not removed
       eligible=$(jq -c 'select(.eligible == true and .handed_back == true)' <<<"$all")
-      known=$(jq -r .task_id <<<"$all")
+      known=$(jq -r .dir <<<"$all")
       rc=0 stamp=$(date +%Y%m%d-%H%M%S)
       # a counter file that does not read as a number restarts at 0, which Prometheus reads as a reset
       count() {
@@ -61,21 +62,22 @@ let
       while IFS= read -r line; do
         [[ -n $line ]] || continue
         id=$(jq -r .task_id <<<"$line" 2>/dev/null) || id=
-        if ! valid "$id"; then
-          jq -cn --arg id "$id" '{event: "refused", reason: "not a plain task id", task_id: $id}'
+        n=$(jq -r .dir <<<"$line" 2>/dev/null) || n=
+        if ! valid "$n"; then
+          jq -cn --arg id "$id" --arg n "$n" '{event: "refused", reason: "not a session dir name", task_id: $id, dir: $n}'
           rc=1
           continue
         fi
         # a session dir without its tree is docked in a slot, or between dock and park: neither it nor its copy goes
-        if [[ -d $d/.sessions/$id && ! -L $d/.sessions/$id && ! -d $d/.sessions/$id/tree ]]; then
+        if [[ -d $d/.sessions/$n && ! -L $d/.sessions/$n && ! -d $d/.sessions/$n/tree ]]; then
           jq -cn --arg id "$id" '{event: "skipped", reason: "docked", task_id: $id}'
           continue
         fi
         # both places are checked before either moves: one that is a link or a file leaves the id whole
         kinds=() bad=
         for k in session store; do
-          src=$d/.sessions/$id
-          [[ $k == store ]] && src=$d/.sessions-store/$id
+          src=$d/.sessions/$n
+          [[ $k == store ]] && src=$d/.sessions-store/$n
           [[ -e $src || -L $src ]] || continue
           if [[ -L $src || ! -d $src ]]; then bad=$k; fi
           kinds+=("$k")
@@ -86,13 +88,13 @@ let
           continue
         fi
         for k in "''${kinds[@]}"; do
-          src=$d/.sessions/$id
-          [[ $k == store ]] && src=$d/.sessions-store/$id
-          to=$d/.trash/$k-$id-$stamp
+          src=$d/.sessions/$n
+          [[ $k == store ]] && src=$d/.sessions-store/$n
+          to=$d/.trash/$k-$n-$stamp
           if mv -T --no-copy -- "$src" "$to"; then
             removed[$k]=$((removed[$k] + 1))
             jq -cn --argjson s "$line" --arg k "$k" --arg to "$to" \
-              '{event: "removed", kind: $k, task_id: $s.task_id, state: $s.state, last_change: $s.last_change, hosts: $s.hosts, trash: $to}'
+              '{event: "removed", kind: $k, task_id: $s.task_id, dir: $s.dir, state: $s.state, last_change: $s.last_change, hosts: $s.hosts, trash: $to}'
           else
             rc=1
           fi

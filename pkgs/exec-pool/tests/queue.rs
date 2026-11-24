@@ -2422,6 +2422,9 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0]["task_id"], json!(gone));
     assert_eq!(lines[0]["state"], "cancelled");
+    // the remover's path, the runner's name for it
+    let dir = exec_pool::workspace::Sessions::hex(&gone);
+    assert_eq!(lines[0]["dir"], json!(dir));
     assert_eq!(
         (&lines[0]["eligible"], &lines[0]["handed_back"]),
         (&json!(true), &json!(true))
