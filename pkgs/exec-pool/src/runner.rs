@@ -34,6 +34,11 @@ pub const PREPARE_FAILURES: (&str, &str) = (
     "exec_pool_prepare_failures_total",
     "Runs that failed before their agent started, by the step they failed at.",
 );
+/// The counter of a session park's failed pushes, each try, and its help text.
+pub const PARK_PUSH_FAILURES: (&str, &str) = (
+    "exec_pool_park_push_failures_total",
+    "Tries to push a parked session turn's work to its remote that failed.",
+);
 pub const CAPTURE_BYTES: u64 = 1 << 20;
 /// The largest manifest or result read: both are a few KiB.
 const READ_LIMIT: u64 = 1 << 20;

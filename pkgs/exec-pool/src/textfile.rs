@@ -51,8 +51,10 @@ mod tests {
         assert!(text.contains("exec_pool_prepare_failures_total{step=\"admit\"} 1\n"));
         assert!(text.contains("# TYPE exec_pool_prepare_failures_total counter\n"));
         let bare = dir.join("b.prom");
-        bump(&bare, ("exec_pool_x_total", "x."), "")?;
-        assert!(fs::read_to_string(&bare)?.contains("\nexec_pool_x_total 1\n"));
+        bump(&bare, crate::runner::PARK_PUSH_FAILURES, "")?;
+        bump(&bare, crate::runner::PARK_PUSH_FAILURES, "")?;
+        let text = fs::read_to_string(&bare)?;
+        assert!(text.contains("# TYPE exec_pool_park_push_failures_total counter\nexec_pool_park_push_failures_total 2\n"));
         fs::remove_dir_all(&dir)
     }
 }

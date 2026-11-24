@@ -31,10 +31,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use exec_pool::agent;
 use exec_pool::queue::{Change, Claim, Park, QueueError, Store, TRANSCRIPT_BYTES, Transcript};
 use exec_pool::runner::{
-    CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, Manifest, PREPARE_FAILURES, ParkedAt,
-    QUICK_SECS, Session, Stage, Step, TurnSettle, claim_fits, decide, decide_turn, drain_holds,
-    guest_exit, handed_back, holds_tree, read_bytes, read_regular, receipt, relink, remote_head,
-    session_checkpoint, tail, tree_check, while_unavailable,
+    CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, Manifest, PARK_PUSH_FAILURES,
+    PREPARE_FAILURES, ParkedAt, QUICK_SECS, Session, Stage, Step, TurnSettle, claim_fits, decide,
+    decide_turn, drain_holds, guest_exit, handed_back, holds_tree, read_bytes, read_regular,
+    receipt, relink, remote_head, session_checkpoint, tail, tree_check, while_unavailable,
 };
 use exec_pool::snapshot::{self, Git, Plan, Resume, listed, plan};
 use exec_pool::task_result::TaskResult;
@@ -70,11 +70,6 @@ const TRANSCRIPT_OUT: &str = "transcript-out.jsonl";
 const PARK_PUSH_WAIT: Duration = Duration::from_secs(1800);
 const PARK_PUSH_PAUSE: Duration = Duration::from_secs(30);
 const PARK_PUSH_PAUSE_MAX: Duration = Duration::from_secs(300);
-/// The counter of a park's failed pushes, and its help text.
-const PARK_PUSH_FAILURES: (&str, &str) = (
-    "exec_pool_park_push_failures_total",
-    "Tries to push a parked session turn's work to its remote that failed.",
-);
 /// How long a turn's steps may take to leave the guest after the last one returned, before its dock is removed.
 const DETACH_WAIT: Duration = Duration::from_secs(15);
 /// How long a stopped step's command has after its SIGTERM before everything of it is killed.
