@@ -175,7 +175,11 @@ parks the session as `turn_end` (`waiting_until` with a timer); its verdict is i
 message (`pane::verdict`, as the Claude result line the settle reads; an error unless the agent was idle with
 one). The time limit counts the agent's work since it was last idle, so a pause never times a turn out, and the
 helper's unit has no start timeout of its own; a drain in the pause parks the turn as ended. A prompt that never reached the agent (no new
-transcript line), or no Herdr, leaves the turn in preparing. Before the agent starts the helper writes the startup
+transcript line), a pane that did not open or Herdr not running parks the session as `turn_error` (failed step `prompt`,
+`turn` or `herdr`), its tree kept, and its next message wakes it: a retry would fail the same way until the session's
+attempts ran out and it ended `failed`. Every workspace the turn opened is closed by id after it, whatever happened.
+A runner with `sessionSurface = "headless"` (no `EXEC_POOL_HERDR`) runs the turn in Claude's print mode instead, with
+no pane and no pause, as before the pane. Before the agent starts the helper writes the startup
 dialogs a named worker's home has accepted into the session's `~/.claude.json`. The helper marks the dock busy (`/var/lib/exec-pool-exec/<slot>/dock-busy`) before the attach and clears
 the mark only after the detach, so whatever stops it in between (an error, its timeout, a kill) leaves the runner to
 quarantine the slot rather than reset and reuse it. Once the turn's units are gone from the guest (or the guest is

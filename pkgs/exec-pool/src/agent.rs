@@ -153,6 +153,33 @@ pub fn session_argv(
     Ok(out)
 }
 
+/// A headless session turn's agent call, on a host whose runner has no pane for it: Claude's print mode with
+/// `--session-id` or `--resume` of `session` and [`turn_input`] as its prompt, the task's model kept.
+///
+/// # Errors
+/// What [`session_argv`] and [`turn_input`] reject.
+pub fn headless_argv(
+    task: &TaskSpec,
+    session: &str,
+    input: &str,
+    turn: Turn,
+) -> Result<Vec<String>, Error> {
+    if task.command.agent != Agent::Claude {
+        return Err(Error::NoSession(task.command.agent));
+    }
+    if !is_uuid(session) {
+        return Err(Error::SessionId(session.to_owned()));
+    }
+    let prompt = turn_input(task, input, turn)?;
+    let (mut out, _) = call(task)?;
+    let flag = match turn {
+        Turn::Start => "--session-id",
+        Turn::Resume => "--resume",
+    };
+    out.extend([flag.to_owned(), session.to_owned(), "--".to_owned(), prompt]);
+    Ok(out)
+}
+
 /// What a session turn tells its agent: [`PREFIX`] (with [`SESSION_WAIT`]) before `input` when it starts the
 /// session, `input` alone when it resumes it.
 ///

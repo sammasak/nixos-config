@@ -145,6 +145,14 @@ in
       default = 1800;
       description = "How long a task's command, or a session's agent since it was last idle, may run in its slot before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
     };
+    sessionSurface = lib.mkOption {
+      type = lib.types.enum [
+        "pane"
+        "headless"
+      ];
+      default = "pane";
+      description = "Where a session turn's agent runs: interactive Claude in the slot's pane in the host user's Herdr, or headless, Claude's print mode with no pane and no idle pause, its turn ending when the call does.";
+    };
     idleGraceSecs = lib.mkOption {
       type = lib.types.ints.unsigned;
       default = 600;
@@ -205,18 +213,21 @@ in
           # a session turn's agent runs in this terminal in the guest, and its pane is in the host user's Herdr,
           # attached to it by the slot's entry point (modules/workers/core.nix, `turn`)
           EXEC_POOL_DTACH = "${pkgs.dtach}/bin/dtach";
-          EXEC_POOL_HERDR = builtins.toJSON [
-            "${pkgs.util-linux}/bin/setpriv"
-            "--reuid=${dev.user}"
-            "--regid=${config.users.users.${dev.user}.group}"
-            "--init-groups"
-            "--"
-            "${pkgs.coreutils}/bin/env"
-            "-i"
-            "HOME=${guestHome}"
-            "XDG_RUNTIME_DIR=/run/user/${toString dev.uid}"
-            (lib.getExe pkgs.herdr)
-          ];
+          # a session turn's pane in the host user's Herdr; without it the helper runs the turn headless
+          EXEC_POOL_HERDR = lib.mkIf (cfg.sessionSurface == "pane") (
+            builtins.toJSON [
+              "${pkgs.util-linux}/bin/setpriv"
+              "--reuid=${dev.user}"
+              "--regid=${config.users.users.${dev.user}.group}"
+              "--init-groups"
+              "--"
+              "${pkgs.coreutils}/bin/env"
+              "-i"
+              "HOME=${guestHome}"
+              "XDG_RUNTIME_DIR=/run/user/${toString dev.uid}"
+              (lib.getExe pkgs.herdr)
+            ]
+          );
           EXEC_POOL_ATTACH = "/run/current-system/sw/bin/${dev.unitPrefix}-%i turn";
           # a session task's trees and each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
           EXEC_POOL_SESSIONS = "${dev.stateDir}/.sessions";

@@ -1095,7 +1095,7 @@ impl Guest {
         &self,
         m: &Manifest,
         ws: &Workspace,
-        (dtach, env, find): (&str, &str, &str),
+        (dtach, env, find): (Option<&str>, &str, &str),
         (dir, err): (&Path, &File),
     ) -> Result<(Step, agent::Turn), String> {
         let session = m
@@ -1696,7 +1696,8 @@ struct Dock<'a> {
     cp: String,
     find: String,
     dtach: String,
-    /// The host user's Herdr the turn's pane is opened in; `None`: no session turn can run here.
+    /// The host user's Herdr the turn's pane is opened in; `None` (the runner's `sessionSurface = "headless"`): the
+    /// turn runs in Claude's print mode, with no pane.
     herdr: Option<Herdr>,
     /// The store a parked tree goes to and comes from, with `rsync` and `chown`; `None` keeps trees on this host.
     depot: Option<(Depot, String, String)>,
@@ -1899,9 +1900,21 @@ impl<'a> Dock<'a> {
         if created && let Err(e) = fs::write(self.sessions.prepared(&m.task.id), "") {
             note("prepared mark", &e);
         }
-        let (Some(session), Some(herdr)) = (&m.session, &self.herdr) else {
-            result.failed_step = Some("herdr".to_owned());
-            note("herdr", &"no Herdr for the slot's pane (EXEC_POOL_HERDR)");
+        let Some(session) = &m.session else {
+            result.failed_step = Some("turn".to_owned());
+            note("no turn", &"a one-shot manifest has no turn");
+            return;
+        };
+        let Some(herdr) = &self.herdr else {
+            match guest.turn(m, ws, (None, env, &self.find), (dir, err)) {
+                Ok((run, _)) => {
+                    guest.steps(vec![run], bounds, (out, err), result, &mut never);
+                }
+                Err(e) => {
+                    result.failed_step = Some("turn".to_owned());
+                    note("no turn", &e);
+                }
+            }
             return;
         };
         if let Err(e) = herdr.running() {
@@ -1911,7 +1924,7 @@ impl<'a> Dock<'a> {
         }
         let home = self.sessions.docked(self.slot).join("home");
         let input = agent::turn_input(&m.task, &session.input, agent::Turn::Start);
-        let run = guest.turn(m, ws, (&self.dtach, env, &self.find), (dir, err));
+        let run = guest.turn(m, ws, (Some(&self.dtach), env, &self.find), (dir, err));
         let prepared = run.and_then(|(run, turn)| {
             let input = match turn {
                 agent::Turn::Start => input.map_err(|e| e.to_string())?,

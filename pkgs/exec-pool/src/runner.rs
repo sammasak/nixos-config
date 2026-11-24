@@ -203,23 +203,26 @@ impl Manifest {
         Ok(steps)
     }
 
-    /// The session turn's agent step, in its tree: [`agent::session_argv`], `dtach` and `env` store paths; its input
-    /// is prompted in the pane.
+    /// The session turn's agent step, in its tree: [`agent::session_argv`], `dtach` and `env` store paths, its input
+    /// prompted in the pane; with no `dtach`, [`agent::headless_argv`] of the turn's input.
     ///
     /// # Errors
-    /// [`agent::Error::NoSession`] for a one-shot manifest, what [`agent::session_argv`] or
-    /// [`Workspace::run_session`] rejects.
+    /// [`agent::Error::NoSession`] for a one-shot manifest, what [`agent::session_argv`],
+    /// [`agent::headless_argv`] or [`Workspace::run_session`] rejects.
     pub fn turn(
         &self,
         ws: &Workspace,
-        (dtach, env): (&str, &str),
+        (dtach, env): (Option<&str>, &str),
         turn: agent::Turn,
     ) -> Result<Step, StepsError> {
         let s = self
             .session
             .as_ref()
             .ok_or(agent::Error::NoSession(self.task.command.agent))?;
-        let argv = agent::session_argv(&self.task, &s.uuid, turn, (dtach, env))?;
+        let argv = match dtach {
+            Some(dtach) => agent::session_argv(&self.task, &s.uuid, turn, (dtach, env))?,
+            None => agent::headless_argv(&self.task, &s.uuid, &s.input, turn)?,
+        };
         Ok(step(
             Stage::Run,
             "exec-pool-task",
@@ -1025,7 +1028,7 @@ mod tests {
     fn a_turn_starts_its_session_until_a_transcript_exists_then_resumes_it() {
         let m = session("now add a test");
         let ws = m.workspace("/home/u").unwrap();
-        let tools = ("/dtach", "/env");
+        let tools = (Some("/dtach"), "/env");
         let start = m.turn(&ws, tools, agent::Turn::Start).unwrap();
         assert_eq!(start.stage, Stage::Run);
         assert_eq!(
@@ -1070,6 +1073,32 @@ mod tests {
         );
         let one_shot = manifest(&task()).unwrap();
         assert!(one_shot.turn(&ws, tools, agent::Turn::Start).is_err());
+        // a runner with no pane (sessionSurface = "headless") runs the turn in print mode, its input the prompt
+        let headless = m.turn(&ws, (None, "/env"), agent::Turn::Start).unwrap();
+        assert_eq!(
+            headless.argv[6..15],
+            [
+                "claude",
+                "-p",
+                "--output-format",
+                "json",
+                "--dangerously-skip-permissions",
+                "--model",
+                "opus",
+                "--session-id",
+                UUID
+            ]
+        );
+        assert!(
+            headless.argv[15] == "--"
+                && headless.argv[16].starts_with("You run as an execution pool task")
+                && headless.argv[16].ends_with("now add a test")
+        );
+        let resumed = m.turn(&ws, (None, "/env"), agent::Turn::Resume).unwrap();
+        assert_eq!(
+            resumed.argv[resumed.argv.len() - 4..],
+            ["--resume", UUID, "--", "now add a test"]
+        );
     }
 
     #[test]
