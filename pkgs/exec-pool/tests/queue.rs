@@ -1870,9 +1870,12 @@ fn a_session_is_claimed_by_any_host_parked_or_not() {
         .expect("its work is on its remote: any host");
     let turn = claim.turn.unwrap();
     assert_eq!(turn.checkpoint.map(|c| c.generation), Some(epoch));
-    // a turn whose lease was lost before its park: nothing of it is on msi either
+    // a turn whose lease was lost while it ran, before its park: nothing of it is on acer either
+    let epoch = claim.attempt.lease_epoch;
+    owner.apply(&a, &ev(epoch, Kind::Start), None).unwrap();
     overdue(&pg, &a);
     assert_eq!(owner.reconcile().unwrap().len(), 1);
+    assert_eq!(status(&pg, &a).0, "needs_review");
     s.send(&id, "go on").unwrap();
     let mut asus = claude_slot();
     asus.host = "asus-b460m".to_owned();
