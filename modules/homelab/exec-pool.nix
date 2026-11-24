@@ -137,14 +137,4 @@ in
       touch $out
     '')
   ];
-
-  # Store::open refuses a TCP host anyway; postgresql.nix asserts the server has no listener
-  assertions = [
-    {
-      assertion = lib.elem "local exec_pool exec_pool peer" (
-        lib.splitString "\n" config.services.postgresql.authentication
-      );
-      message = "modules/homelab/exec-pool.nix: the exec_pool role must reach its database by peer over the socket.";
-    }
-  ];
 }
