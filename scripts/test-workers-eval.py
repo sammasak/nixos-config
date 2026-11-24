@@ -870,6 +870,7 @@ POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
     ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
     ("codex without a codex login", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
     ("pi on a host without the Pi key", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
+    ("a session dock with rootInGuest", "{ sam.workers.executionPool = { enable = true; slots = 1; rootInGuest = true; }; }", "sessionDock with rootInGuest"),
 ]]
 # acer (a pi host, the gateway's own) with every agent: one proxy route each, placeholders in the guest, no credential bound
 POOL_ALL = r"""
@@ -962,6 +963,39 @@ def check_pool_compat():
         check(any(want in m for m in failing), f"executionPool, {name}: fails \"{want}\" ({failing or out.stderr.strip()[-300:]})")
     for (name, _, want), out in zip(POOL_TYPED, typed):
         check(out.returncode != 0 and want in out.stderr, f"executionPool, {name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
+
+
+# the session dock (modules/workers/core.nix sessionDock): each pool slot binds its own .sessions/dock/<name> read-write
+# at /session, made root's by the activation; a named worker binds none
+DOCK = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  of = c: n: {
+    dock = c.services.devEnvironments.instances.${n}.sessionDock;
+    bind = let b = c.containers.${n}.bindMounts."/session" or null; in
+      if b == null then null else { inherit (b) hostPath isReadOnly; };
+  };
+  host = h: named: let c = flake.nixosConfigurations.${h}.config; in {
+    pool1 = of c "pool1";
+    named = of c named;
+    stateDir = c.services.devEnvironments.stateDir;
+    activation = c.system.activationScripts.devEnvironments.text;
+  };
+in { acer = host "acer-swift" "herman"; msi = host "msi-ms7758" "m1"; }
+"""
+
+
+def check_session_dock():
+    out = run_eval(DOCK % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
+    for h in ("acer", "msi"):
+        d = got.get(h, {})
+        dock = f"{d.get('stateDir')}/.sessions/dock/pool1"
+        check(d.get("pool1") == {"dock": True, "bind": {"hostPath": dock, "isReadOnly": False}}
+              and d.get("named") == {"dock": False, "bind": None}
+              and 'install -d -m 0711 "$d/.sessions"' in d.get("activation", "")
+              and 'install -d -m 0755 "$d/.sessions/dock" "$d/.sessions/dock/pool1"' in d.get("activation", ""),
+              f"{h}: pool1 binds {dock} read-write at /session, made 0711/0755 root's by the activation; its named worker binds no /session ({got.get('error') or {k: v for k, v in d.items() if k != 'activation'} })")
 
 
 # modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a
@@ -1337,6 +1371,7 @@ def main():
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     check_slot()
     check_pool_compat()
+    check_session_dock()
     check_runner()
     out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
     facts = json.loads(out.stdout) if out.returncode == 0 else {}

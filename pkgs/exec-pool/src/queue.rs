@@ -10,13 +10,13 @@ use std::str::FromStr;
 use postgres::config::Host;
 use postgres::error::SqlState;
 use postgres::{Client, Config, GenericClient, NoTls, Row, Transaction};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::task_result::TaskResult;
 use crate::{
-    Attempt, Error, Event, Kind, Placement, Receipt, Resolution, RetryPolicy, SchemaVersion,
-    Settle, Slot, Status, TaskSpec, transition,
+    Attempt, CheckpointRef, Error, Event, Kind, ParkReason, Placement, Receipt, Resolution,
+    RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, transition,
 };
 
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
@@ -25,7 +25,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 8] = [
+const STEPS: [(i32, &str); 9] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -34,13 +34,15 @@ const STEPS: [(i32, &str); 8] = [
     (6, include_str!("../migrations/0006_branch.up.sql")),
     (7, include_str!("../migrations/0007_quarantine.up.sql")),
     (8, include_str!("../migrations/0008_slots.up.sql")),
+    (9, include_str!("../migrations/0009_session.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
 const DOWN_CANCEL: &str = include_str!("../migrations/0005_cancel.down.sql");
 const DOWN_QUARANTINE: &str = include_str!("../migrations/0007_quarantine.down.sql");
 const DOWN_SLOTS: &str = include_str!("../migrations/0008_slots.down.sql");
-const VERSION: i32 = 8;
+const DOWN_SESSION: &str = include_str!("../migrations/0009_session.down.sql");
+const VERSION: i32 = 9;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -103,6 +105,9 @@ pub enum QueueError {
     NotFound(String),
     #[error("attempt {0} holds no live lease")]
     NotLive(String),
+    /// A park of a one-shot task's attempt, which has no inbox to wake it.
+    #[error("attempt {0} is not a session's")]
+    NotSession(String),
     /// The event, a settle to the named state, came without a receipt it needs or with one it may not carry.
     #[error(
         "a receipt goes with a settle to succeeded, failed or needs_review, and only there (this one: {0:?})"
@@ -192,7 +197,39 @@ pub struct Claim {
     pub task: TaskSpec,
     pub attempt: Attempt,
     pub change: Change,
+    /// What a session's turn runs on; `None` for a one-shot task.
+    pub turn: Option<Turn>,
 }
+
+/// One turn of a session, as its claim hands it over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Turn {
+    pub session_uuid: String,
+    /// The task's prompt on the first turn; after it, the unread inbox rows oldest first, each a paragraph.
+    pub input: String,
+    /// The highest inbox id in `input`, 0 for none: the rows the turn's [`Park`] marks read. A turn that never parks
+    /// marks none, so the next is handed them again.
+    pub upto: i64,
+    /// No turn of the session has started before this one: the agent's session does not exist yet.
+    pub first: bool,
+}
+
+/// How a session's turn ends, for [`Store::park`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Park {
+    pub reason: ParkReason,
+    /// Recorded on the attempt with `generation` set to the turn's epoch; `None` keeps the one it has.
+    pub checkpoint: Option<CheckpointRef>,
+    /// The turn's result, recorded with the park so a re-lease cannot fence it out.
+    pub result: TaskResult,
+    /// [`Turn::upto`] of the claim the turn ran.
+    pub upto: i64,
+}
+
+/// What a `continue` row reads as in a turn's input: a turn stopped before it ended.
+const CONTINUE: &str =
+    "Your previous turn was stopped before it ended. Continue where you left off.";
 
 /// A connection that reconnects on the next call after the database went away.
 pub struct Store {
@@ -236,6 +273,7 @@ const fn reason(kind: &Kind, to: Status) -> &'static str {
         (Kind::Start, _) => "start",
         (Kind::Checkpoint, _) => "checkpoint",
         (Kind::Settle(_), _) => "settle",
+        (Kind::Park(why), _) => why.as_str(),
         (Kind::Wake, _) => "wake",
         (Kind::Expire, _) => "lease_expired",
         (Kind::Resolve(_), _) => "operator",
@@ -250,7 +288,9 @@ const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a
 
 /// One task and its attempt as `status` and `list` show them, under `a` (attempts) and `t` (`task_summaries`).
 const SUMMARY: &str = "jsonb_build_object('task', t.id, 'attempt', a.id, 'status', a.status, \
-    'agent', t.agent, 'repo', t.repo, 'rev', t.rev, \
+    'agent', t.agent, 'repo', t.repo, 'rev', t.rev, 'session', t.session, \
+    'parked', CASE WHEN a.status = 'waiting' THEN (SELECT e.reason FROM events e \
+    WHERE e.attempt_id = a.id AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1) END, \
     'workdir', t.workdir, 'lease_epoch', a.lease_epoch, 'tries', a.tries, 'host', a.host, \
     'slot', a.slot, 'submitted_at', t.submitted_at, 'changed_at', a.changed_at)";
 
@@ -298,6 +338,7 @@ fn write(
     row: Locked,
     event: &Event,
     receipt: Option<&Receipt>,
+    checkpoint: Option<&CheckpointRef>,
     lease_secs: u32,
 ) -> Result<(Attempt, Change), QueueError> {
     let mut next = transition(&row.attempt, &row.retry, event)?;
@@ -333,8 +374,8 @@ fn write(
         Status::Leased | Status::Running | Status::Checkpointing => "keep",
         _ => "none",
     };
-    let checkpoint = receipt
-        .and_then(|r| r.checkpoint.as_ref())
+    let checkpoint = checkpoint
+        .or_else(|| receipt.and_then(|r| r.checkpoint.as_ref()))
         .map(serde_json::to_value)
         .transpose()?;
     tx.execute(
@@ -400,6 +441,14 @@ fn append(tx: &mut Transaction<'_>, c: &Change) -> Result<i64, QueueError> {
         ],
     )?;
     Ok(row.try_get(0)?)
+}
+
+/// A definer function's "no task of yours" as [`QueueError::NotFound`].
+fn not_found(e: postgres::Error, id: &str) -> QueueError {
+    match e.as_db_error() {
+        Some(db) if db.code() == &SqlState::NO_DATA_FOUND => QueueError::NotFound(id.to_owned()),
+        _ => e.into(),
+    }
 }
 
 fn lock(tx: &mut Transaction<'_>, attempt: &str) -> Result<Locked, QueueError> {
@@ -550,7 +599,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -561,12 +610,32 @@ impl Store {
     /// # Errors
     /// What `submit_task` or the database reports, an idempotency conflict included.
     pub fn submit_task(&mut self, task: &TaskSpec) -> Result<(String, bool), QueueError> {
+        self.queue_through("submit_task", task)
+    }
+
+    /// Starts `task`, a claude task in the shape [`Store::submit_task`] takes, as a session through `start_session`:
+    /// its first turn runs the prompt, and each later one what [`Store::send`] put in its inbox.
+    ///
+    /// # Errors
+    /// What `start_session` or the database reports: an agent other than claude, or a key that names a one-shot task.
+    pub fn start_session(&mut self, task: &TaskSpec) -> Result<(String, bool), QueueError> {
+        self.queue_through("start_session", task)
+    }
+
+    fn queue_through(
+        &mut self,
+        function: &'static str,
+        task: &TaskSpec,
+    ) -> Result<(String, bool), QueueError> {
         let mut spec = serde_json::to_value(task)?;
         if let Value::Object(m) = &mut spec {
             m.remove("id");
         }
         self.tx(|tx| {
-            let row = tx.query_one("SELECT o_task, o_duplicate FROM submit_task($1)", &[&spec])?;
+            let row = tx.query_one(
+                &format!("SELECT o_task, o_duplicate FROM {function}($1)"),
+                &[&spec],
+            )?;
             Ok((row.try_get(0)?, row.try_get(1)?))
         })
     }
@@ -669,11 +738,13 @@ impl Store {
                         slot: slot.id.clone(),
                     }),
                 };
-                let (attempt, change) = write(tx, row, &event, None, lease_secs)?;
+                let (attempt, change) = write(tx, row, &event, None, None, lease_secs)?;
+                let turn = turn(tx, &task, &attempt.id)?;
                 return Ok(Some(Claim {
                     task,
                     attempt,
                     change,
+                    turn,
                 }));
             }
             Ok(None)
@@ -701,7 +772,7 @@ impl Store {
     }
 
     /// Applies one event from the holder (start, checkpoint, settle) or the operator (wake, resolve); a lease is
-    /// [`Store::claim`]'s and an expiry [`Store::reconcile`]'s. A holder's event after its lease deadline is refused:
+    /// [`Store::claim`]'s, an expiry [`Store::reconcile`]'s and a park [`Store::park`]'s. A holder's event after its lease deadline is refused:
     /// the lease is the reconciler's to expire.
     ///
     /// # Errors
@@ -715,10 +786,10 @@ impl Store {
     ) -> Result<(Attempt, Change), QueueError> {
         self.tx(|tx| {
             let row = lock(tx, attempt)?;
-            if matches!(event.kind, Kind::Lease(_) | Kind::Expire) {
+            if matches!(event.kind, Kind::Lease(_) | Kind::Expire | Kind::Park(_)) {
                 return Err(Error::IllegalTransition {
                     from: row.attempt.status,
-                    event: "lease or expire outside claim and reconcile",
+                    event: "lease, expire or park outside claim, reconcile and park",
                 }
                 .into());
             }
@@ -726,7 +797,88 @@ impl Store {
             if holder && row.expired && event.epoch == row.attempt.lease_epoch {
                 return Err(QueueError::NotLive(attempt.to_owned()));
             }
-            write(tx, row, event, receipt, 0)
+            write(tx, row, event, receipt, None, 0)
+        })
+    }
+
+    /// Ends a session's turn at `epoch`, in one transaction: running or checkpointing to `waiting` with the try given
+    /// back and the slot freed, `park.checkpoint` and `park.result` recorded, the inbox rows up to `park.upto` marked
+    /// read at `epoch`; a turn preempted or stopped for a draining host leaves a `continue` row. Then, if an unread
+    /// row is due, the session is queued for its next turn. Every change, in order.
+    ///
+    /// # Errors
+    /// [`QueueError::NotSession`] for a one-shot task, [`QueueError::NotLive`] past the lease deadline, what
+    /// [`transition`] rejects (a stale epoch included), or what the database reports.
+    pub fn park(
+        &mut self,
+        attempt: &str,
+        epoch: u64,
+        park: &Park,
+    ) -> Result<(Attempt, Vec<Change>), QueueError> {
+        let checkpoint = park
+            .checkpoint
+            .as_ref()
+            .map(|c| {
+                c.validate().map(|()| CheckpointRef {
+                    generation: epoch,
+                    ..c.clone()
+                })
+            })
+            .transpose()?;
+        self.tx(|tx| {
+            let row = lock(tx, attempt)?;
+            if row.expired && epoch == row.attempt.lease_epoch {
+                return Err(QueueError::NotLive(attempt.to_owned()));
+            }
+            let task = row.attempt.task_id.clone();
+            let session: bool = tx
+                .query_one("SELECT session FROM tasks WHERE id = $1", &[&task])?
+                .try_get(0)?;
+            if !session {
+                return Err(QueueError::NotSession(attempt.to_owned()));
+            }
+            let event = Event {
+                epoch,
+                kind: Kind::Park(park.reason),
+            };
+            let (mut parked, change) = write(tx, row, &event, None, checkpoint.as_ref(), 0)?;
+            let mut changes = vec![change];
+            let epoch = i64_of("epoch", epoch)?;
+            insert_result(tx, attempt, epoch, &park.result)?;
+            tx.execute(
+                // what the claim handed over: up to upto, and due when it leased (its event's `at` is the claim's now())
+                "UPDATE inbox SET consumed_epoch = $3 WHERE task_id = $1 AND id <= $2 AND consumed_epoch IS NULL \
+                 AND (due_at IS NULL OR due_at <= (SELECT max(e.at) FROM events e \
+                 WHERE e.attempt_id = $4 AND e.lease_epoch = $3 AND e.to_status = 'leased'))",
+                &[&task, &park.upto, &epoch, &attempt],
+            )?;
+            if matches!(
+                park.reason,
+                ParkReason::Preempted | ParkReason::HostDraining
+            ) {
+                tx.execute(
+                    "INSERT INTO inbox (task_id, kind) VALUES ($1, 'continue')",
+                    &[&task],
+                )?;
+            }
+            let due: bool = tx
+                .query_one(
+                    "SELECT EXISTS (SELECT FROM inbox WHERE task_id = $1 AND consumed_epoch IS NULL \
+                     AND (due_at IS NULL OR due_at <= now()))",
+                    &[&task],
+                )?
+                .try_get(0)?;
+            if due && parked.status == Status::Waiting {
+                let row = lock(tx, attempt)?;
+                let wake = Event {
+                    epoch: parked.lease_epoch,
+                    kind: Kind::Wake,
+                };
+                let (woken, change) = write(tx, row, &wake, None, None, 0)?;
+                parked = woken;
+                changes.push(change);
+            }
+            Ok((parked, changes))
         })
     }
 
@@ -769,12 +921,26 @@ impl Store {
         self.tx(|tx| {
             let row = tx
                 .query_one("SELECT o_attempt, o_status FROM cancel_task($1)", &[&id])
-                .map_err(|e| match e.as_db_error() {
-                    Some(db) if db.code() == &SqlState::NO_DATA_FOUND => {
-                        QueueError::NotFound(id.to_owned())
-                    }
-                    _ => e.into(),
-                })?;
+                .map_err(|e| not_found(e, id))?;
+            Ok((row.try_get(0)?, parse_status(row.try_get(1)?)?))
+        })
+    }
+
+    /// Puts `body` in the inbox of the session `id` names (its own id or its attempt's) through `send_message`, which
+    /// `exec_pool_submit` may call for the sessions it started: a waiting or `needs_review` session is queued for its
+    /// next turn, a queued or live one takes it at the turn after its current one. The attempt and its status after.
+    ///
+    /// # Errors
+    /// [`QueueError::NotFound`] when the caller started no task `id` names; what the database reports for a one-shot
+    /// task, a settled session or an empty `body`.
+    pub fn send(&mut self, id: &str, body: &str) -> Result<(String, Status), QueueError> {
+        self.tx(|tx| {
+            let row = tx
+                .query_one(
+                    "SELECT o_attempt, o_status FROM send_message($1, $2)",
+                    &[&id, &body],
+                )
+                .map_err(|e| not_found(e, id))?;
             Ok((row.try_get(0)?, parse_status(row.try_get(1)?)?))
         })
     }
@@ -800,7 +966,7 @@ impl Store {
                         epoch: row.attempt.lease_epoch,
                         kind: Kind::Expire,
                     };
-                    write(tx, row, &event, None, 0).map(|(_, c)| c)
+                    write(tx, row, &event, None, None, 0).map(|(_, c)| c)
                 })
                 .collect()
         })
@@ -838,42 +1004,7 @@ impl Store {
         epoch: u64,
         result: &TaskResult,
     ) -> Result<bool, QueueError> {
-        let outcome = result
-            .outcome
-            .map(serde_json::to_value)
-            .transpose()?
-            .and_then(|v| v.as_str().map(str::to_owned));
-        self.tx(|tx| {
-            let epoch = i64_of("epoch", epoch)?;
-            let settled = tx.query(
-                &format!(
-                    "SELECT 1 FROM attempts WHERE id = $1 AND lease_epoch = $2 AND status NOT IN {LIVE} FOR SHARE"
-                ),
-                &[&attempt, &epoch],
-            )?;
-            if settled.is_empty() {
-                return Err(QueueError::Fenced(format!(
-                    "attempt {attempt} is not settled at epoch {epoch}"
-                )));
-            }
-            let n = tx.execute(
-                "INSERT INTO results (attempt_id, lease_epoch, outcome, exit_code, output, branch) \
-                 VALUES ($1, $2, $3, $4, $5, $6) \
-                 ON CONFLICT (attempt_id) DO UPDATE SET lease_epoch = EXCLUDED.lease_epoch, outcome = EXCLUDED.outcome, \
-                 exit_code = EXCLUDED.exit_code, output = EXCLUDED.output, branch = EXCLUDED.branch, \
-                 recorded_at = now() \
-                 WHERE results.lease_epoch < EXCLUDED.lease_epoch",
-                &[
-                    &attempt,
-                    &epoch,
-                    &outcome,
-                    &result.exit_code,
-                    &result.output(),
-                    &result.branch,
-                ],
-            )?;
-            Ok(n == 1)
-        })
+        self.tx(|tx| insert_result(tx, attempt, i64_of("epoch", epoch)?, result))
     }
 
     /// Records `slot` as quarantined for `reason` (its first 1024 characters), or updates the reason it already has.
@@ -905,8 +1036,8 @@ impl Store {
         })
     }
 
-    /// The task `id` names, as [`Store::tasks`] shows it, with the `result` recorded at its attempt's current epoch
-    /// (`null` before one);
+    /// The task `id` names, as [`Store::tasks`] shows it, with the `result` recorded at its attempt's current epoch,
+    /// or for a session at its last parked turn (`null` before one);
     /// no prompt. `None` when no task has that id.
     ///
     /// # Errors
@@ -919,7 +1050,7 @@ impl Store {
                      jsonb_build_object('lease_epoch', r.lease_epoch, 'outcome', r.outcome, \
                      'exit_code', r.exit_code, 'output', r.output, 'branch', r.branch, 'recorded_at', r.recorded_at) END) \
                      FROM task_summaries t JOIN attempts a ON a.task_id = t.id \
-                     LEFT JOIN results r ON r.attempt_id = a.id AND r.lease_epoch = a.lease_epoch WHERE t.id = $1 OR a.id = $1"
+                     LEFT JOIN results r ON r.attempt_id = a.id AND (r.lease_epoch = a.lease_epoch OR t.session) WHERE t.id = $1 OR a.id = $1"
                 ),
                 &[&id],
             )?;
@@ -1014,6 +1145,7 @@ impl Store {
                 "# HELP exec_pool_queued_oldest_seconds Age of the oldest queued attempt (0 with none).\n\
                  # TYPE exec_pool_queued_oldest_seconds gauge\nexec_pool_queued_oldest_seconds {oldest}\n"
             );
+            waiting(tx, &mut out)?;
             leases(tx, &mut out, declared_slots)?;
             histogram(
                 tx,
@@ -1050,6 +1182,99 @@ impl Store {
             Ok(out)
         })
     }
+}
+
+/// Records `result` at `epoch` once the attempt is off its slot at that epoch; whether it replaced what was there.
+fn insert_result(
+    tx: &mut Transaction<'_>,
+    attempt: &str,
+    epoch: i64,
+    result: &TaskResult,
+) -> Result<bool, QueueError> {
+    let outcome = result
+        .outcome
+        .map(serde_json::to_value)
+        .transpose()?
+        .and_then(|v| v.as_str().map(str::to_owned));
+    let settled = tx.query(
+        &format!(
+            "SELECT 1 FROM attempts WHERE id = $1 AND lease_epoch = $2 AND status NOT IN {LIVE} FOR SHARE"
+        ),
+        &[&attempt, &epoch],
+    )?;
+    if settled.is_empty() {
+        return Err(QueueError::Fenced(format!(
+            "attempt {attempt} is not settled at epoch {epoch}"
+        )));
+    }
+    let n = tx.execute(
+        "INSERT INTO results (attempt_id, lease_epoch, outcome, exit_code, output, branch) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         ON CONFLICT (attempt_id) DO UPDATE SET lease_epoch = EXCLUDED.lease_epoch, outcome = EXCLUDED.outcome, \
+         exit_code = EXCLUDED.exit_code, output = EXCLUDED.output, branch = EXCLUDED.branch, \
+         recorded_at = now() \
+         WHERE results.lease_epoch < EXCLUDED.lease_epoch",
+        &[
+            &attempt,
+            &epoch,
+            &outcome,
+            &result.exit_code,
+            &result.output(),
+            &result.branch,
+        ],
+    )?;
+    Ok(n == 1)
+}
+
+/// The turn a claim of `task` at `attempt` hands over, if `task` is a session: its prompt the first time, after that
+/// its unread inbox rows that are due.
+fn turn(
+    tx: &mut Transaction<'_>,
+    task: &TaskSpec,
+    attempt: &str,
+) -> Result<Option<Turn>, QueueError> {
+    let row = tx.query_one(
+        "SELECT session, session_uuid::text, NOT EXISTS (SELECT FROM events e \
+         WHERE e.attempt_id = $2 AND e.to_status = 'running') FROM tasks WHERE id = $1",
+        &[&task.id, &attempt],
+    )?;
+    if !row.try_get::<_, bool>(0)? {
+        return Ok(None);
+    }
+    let session_uuid = row.try_get(1)?;
+    let first: bool = row.try_get(2)?;
+    if first {
+        return Ok(Some(Turn {
+            session_uuid,
+            input: task.command.argv.first().cloned().unwrap_or_default(),
+            upto: 0,
+            first,
+        }));
+    }
+    let mut input = String::new();
+    let mut upto = 0;
+    for r in tx.query(
+        "SELECT id, kind, body FROM inbox WHERE task_id = $1 AND consumed_epoch IS NULL \
+         AND (due_at IS NULL OR due_at <= now()) ORDER BY id",
+        &[&task.id],
+    )? {
+        let (id, kind, body): (i64, &str, Option<&str>) =
+            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+        if !input.is_empty() {
+            input.push_str("\n\n");
+        }
+        input.push_str(match (kind, body) {
+            ("continue", None) => CONTINUE,
+            (_, b) => b.unwrap_or_default(),
+        });
+        upto = id;
+    }
+    Ok(Some(Turn {
+        session_uuid,
+        input,
+        upto,
+        first,
+    }))
 }
 
 /// Upper bounds of the duration histograms, in seconds: ten seconds to four hours.
@@ -1094,6 +1319,31 @@ fn histogram(
             "{name}_bucket{{agent=\"{agent}\",le=\"+Inf\"}} {count}\n\
              {name}_sum{{agent=\"{agent}\"}} {sum}\n{name}_count{{agent=\"{agent}\"}} {count}\n"
         );
+    }
+    Ok(())
+}
+
+/// Waiting attempts by the reason they last went there: each park reason, at zero with none, and any other.
+fn waiting(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), QueueError> {
+    out.push_str(
+        "# HELP exec_pool_waiting Waiting attempts by why they wait: a session's park reason, or settle.\n\
+         # TYPE exec_pool_waiting gauge\n",
+    );
+    let rows = tx.query(
+        "SELECT coalesce((SELECT e.reason FROM events e WHERE e.attempt_id = a.id AND e.to_status = 'waiting' \
+         ORDER BY e.id DESC LIMIT 1), 'none'), count(*) FROM attempts a WHERE a.status = 'waiting' GROUP BY 1 ORDER BY 1",
+        &[],
+    )?;
+    let mut reasons: Vec<(&str, i64)> = ParkReason::ALL.map(|r| (r.as_str(), 0)).to_vec();
+    for r in &rows {
+        let (why, n): (&str, i64) = (r.try_get(0)?, r.try_get(1)?);
+        match reasons.iter_mut().find(|(known, _)| *known == why) {
+            Some(slot) => slot.1 = n,
+            None => reasons.push((why, n)),
+        }
+    }
+    for (why, n) in reasons {
+        let _ = writeln!(out, "exec_pool_waiting{{reason=\"{why}\"}} {n}");
     }
     Ok(())
 }

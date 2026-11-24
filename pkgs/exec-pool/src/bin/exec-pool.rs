@@ -1,6 +1,7 @@
 //! `exec-pool`: submit an agent task to the queue and watch it, for a user `homelab.postgresql.clients` lets log in
 //! as `exec_pool_submit`, whose grants (migrations 0002 and 0005) allow queueing a task through `submit_task`,
-//! cancelling one it queued through `cancel_task` and reading the queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`]. Exit codes are
+//! cancelling one it queued through `cancel_task`, starting a session through `start_session` and messaging it through
+//! `send_message` (migration 0009), and reading the queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`]. Exit codes are
 //! `exec-pool-queue`'s: 0 done, 1 refused, 2 usage, 3 outcome unknown (run `status` before submitting again), 75
 //! database unavailable; `wait` adds 124, not settled by its timeout.
 
@@ -20,19 +21,32 @@ const USAGE: &str = "usage: exec-pool COMMAND
         prints the task id. The checkout of REV at URL is cloned into the slot and the agent runs in PATH, relative
         to it. FILE - reads the prompt from stdin, which no shell re-splits (an ssh command line). K is the idempotency key, by default derived from the rest: the same submission again is the same
         task, so give a new --key to run it once more.
+  start             submit's flags, claude only: starts a session, whose first turn runs the prompt and parks it
+                    waiting; prints its id
+  send ID --prompt TEXT|--prompt-file FILE
+                    the session's next turn runs TEXT: a waiting session (or one in needs_review, which this resumes)
+                    is queued for it, a running one takes it once its turn ends. Prints the attempt and its status
   status [ID]       the task (or attempt) ID with its events, or the number of attempts in each status
-  list [--limit N]  the newest N tasks (20), newest first
-  result ID         the task's state and, once the runner recorded it, its result: the agent's outcome, the exit
-                    code and up to 16 KiB of output (Claude's result text, or the end of stdout)
+  list [--limit N]  the newest N tasks (20), newest first; a session's shows why it waits (parked)
+  result ID         the task's state and, once the runner recorded it, its result (a session's last turn): the
+                    agent's outcome, the exit code and up to 16 KiB of output (Claude's result text, or the end of
+                    stdout)
   wait ID [--timeout SECS]
-                    blocks until the task settles (succeeded, failed, needs_review or cancelled), then prints its
-                    result
+                    blocks until the task settles (succeeded, failed, needs_review or cancelled) or, a session,
+                    parks waiting, then prints its result
   cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
                     seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
 /// How often `wait` reads the queue, and how long it waits after the settle for the runner to record the result.
 const POLL: Duration = Duration::from_secs(5);
 const RECORD_GRACE: Duration = Duration::from_secs(30);
-const SETTLED: [&str; 4] = ["succeeded", "failed", "needs_review", "cancelled"];
+/// What `wait` returns on: a settle, or a session's park.
+const SETTLED: [&str; 5] = [
+    "succeeded",
+    "failed",
+    "needs_review",
+    "cancelled",
+    "waiting",
+];
 
 enum Fail {
     Usage(String),
@@ -104,11 +118,13 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     })
 }
 
-/// The task `submit`'s flags describe, in the one shape `submit_task` (migration 0002) takes. Its id is a placeholder:
-/// the queue assigns the real one from the key, so a resubmission under the key returns the task already queued.
-fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
+/// The task `cmd`'s flags describe (`submit`, or `start` for a session), in the one shape `submit_task` (migration
+/// 0002) takes. Its id is a placeholder: the queue assigns the real one from the key, so a resubmission under the key
+/// returns the task already queued.
+fn task_spec(cmd: &str, args: &Args) -> Result<TaskSpec, Fail> {
+    let session = cmd == "start";
     args.only(
-        "submit",
+        cmd,
         &[
             "agent",
             "repo",
@@ -128,23 +144,26 @@ fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
                 "--agent {agent_name:?} is not claude, codex or pi"
             )));
         }
+        Ok(Agent::Codex | Agent::Pi) if session => {
+            return Err(Fail::Usage(format!(
+                "--agent {agent_name:?}: a session is claude only"
+            )));
+        }
         Ok(a) => a,
     };
     let (repo, rev, workdir) = (args.get("repo")?, args.get("rev")?, args.get("workdir")?);
-    let prompt = &match (args.opt("prompt"), args.opt("prompt-file")) {
-        (Some(p), None) => p.to_owned(),
-        (None, Some(f)) => read_prompt(f)?,
-        _ => {
-            return Err(Fail::Usage(
-                "one of --prompt or --prompt-file is required".to_owned(),
-            ));
-        }
-    };
+    let prompt = &prompt(args)?;
     let model = args.opt("model");
     let key = args.opt("key").map_or_else(
         || {
-            let what = json!([agent, repo, rev, workdir, prompt, model]).to_string();
-            format!("cli:{:016x}", fnv1a(what.as_bytes()))
+            let what = json!([agent, repo, rev, workdir, prompt, model]);
+            // a session and a one-shot task of the same flags are two tasks
+            let what = if session {
+                json!(["session", what])
+            } else {
+                what
+            };
+            format!("cli:{:016x}", fnv1a(what.to_string().as_bytes()))
         },
         str::to_owned,
     );
@@ -178,6 +197,16 @@ fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
     Ok(task)
 }
 
+fn prompt(args: &Args) -> Result<String, Fail> {
+    match (args.opt("prompt"), args.opt("prompt-file")) {
+        (Some(p), None) => Ok(p.to_owned()),
+        (None, Some(f)) => read_prompt(f),
+        _ => Err(Fail::Usage(
+            "one of --prompt or --prompt-file is required".to_owned(),
+        )),
+    }
+}
+
 fn read_prompt(file: &str) -> Result<String, Fail> {
     let read = if file == "-" {
         std::io::read_to_string(std::io::stdin())
@@ -189,8 +218,13 @@ fn read_prompt(file: &str) -> Result<String, Fail> {
 
 fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
     match cmd {
-        "submit" => {
-            let (id, duplicate) = store.submit_task(&task_spec(args)?)?;
+        "submit" | "start" => {
+            let task = task_spec(cmd, args)?;
+            let (id, duplicate) = if cmd == "start" {
+                store.start_session(&task)?
+            } else {
+                store.submit_task(&task)?
+            };
             if duplicate {
                 eprintln!("exec-pool: already submitted under its key; see exec-pool status {id}");
             }
@@ -233,6 +267,11 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
                 })
                 .transpose()?;
             println!("{}", wait(store, id(args)?, timeout)?);
+        }
+        "send" => {
+            args.only("send", &["prompt", "prompt-file"], 1)?;
+            let (attempt, status) = store.send(id(args)?, &prompt(args)?)?;
+            println!("{}", json!({ "attempt": attempt, "status": status }));
         }
         "cancel" => {
             args.only("cancel", &[], 1)?;
@@ -348,7 +387,7 @@ mod tests {
     }
 
     fn spec(a: &[&str]) -> Result<TaskSpec, String> {
-        task_spec(&args(a)).map_err(|e| match e {
+        task_spec("submit", &args(a)).map_err(|e| match e {
             Fail::Usage(m) => m,
             Fail::Queue(e) => e.to_string(),
             Fail::TimedOut(v) => v.to_string(),
@@ -402,12 +441,31 @@ mod tests {
     }
 
     #[test]
+    fn a_session_is_claude_only_and_keyed_apart_from_its_one_shot() {
+        let start = |a: &[&str]| task_spec("start", &args(a)).map_err(|_| ());
+        let session = start(&BASE).unwrap();
+        assert_eq!(session.command, spec(&BASE).unwrap().command);
+        assert_ne!(
+            session.idempotency_key,
+            spec(&BASE).unwrap().idempotency_key
+        );
+        let mut codex = BASE.to_vec();
+        codex[1] = "codex";
+        assert!(start(&codex).is_err());
+        assert!(spec(&codex).is_ok());
+    }
+
+    #[test]
     fn the_prompt_file_is_the_prompt_flag() {
         let file = std::env::temp_dir().join(format!("exec-pool-prompt-{}", std::process::id()));
         std::fs::write(&file, "fix the test").unwrap();
         let mut a: Vec<String> = BASE[..8].iter().map(|s| (*s).to_owned()).collect();
         a.extend(["--prompt-file".to_owned(), file.display().to_string()]);
-        let got = task_spec(&Args::parse(&a).unwrap_or_else(|_| panic!("parse"))).ok();
+        let got = task_spec(
+            "submit",
+            &Args::parse(&a).unwrap_or_else(|_| panic!("parse")),
+        )
+        .ok();
         std::fs::remove_file(&file).unwrap();
         assert_eq!(got, Some(spec(&BASE).unwrap()));
         for (a, want) in [
