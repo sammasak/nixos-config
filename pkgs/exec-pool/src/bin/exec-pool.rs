@@ -6,6 +6,7 @@
 //! database unavailable; `wait` adds 124, not settled by its timeout.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io;
 use std::process::ExitCode;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -35,6 +36,10 @@ const USAGE: &str = "usage: exec-pool COMMAND
   result ID         the task's state and, once the runner recorded it, its result (a session's last turn): the
                     agent's outcome, the exit code and up to 16 KiB of output (Claude's result text, or the end of
                     stdout)
+  logs ID [-f|--follow] [--turn N]
+                    the agent's output (stdout and stderr as they came) of the task's last turn, or its Nth (from 1,
+                    of the turns that logged): the last 256 KiB, as the runner read it at most 10 s ago, whichever host
+                    ran it. -f follows it, and a session's next turns, until the task is neither queued nor running
   wait ID [--timeout SECS]
                     blocks until the task settles (succeeded, failed, needs_review or cancelled) or, a session,
                     parks waiting, then prints its result
@@ -46,7 +51,9 @@ const USAGE: &str = "usage: exec-pool COMMAND
   cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
                     seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
 /// Flags that take no value.
-const SWITCHES: [&str; 1] = ["gc"];
+const SWITCHES: [&str; 2] = ["gc", "follow"];
+/// How often `logs -f` reads the queue.
+const FOLLOW_POLL: Duration = Duration::from_secs(2);
 /// How often `wait` reads the queue, and how long it waits after the settle for the runner to record the result.
 const POLL: Duration = Duration::from_secs(5);
 const RECORD_GRACE: Duration = Duration::from_secs(30);
@@ -84,8 +91,9 @@ impl Args {
         };
         let mut it = rest.iter();
         while let Some(arg) = it.next() {
+            let arg = if arg == "-f" { "--follow" } else { arg };
             let Some(key) = arg.strip_prefix("--") else {
-                args.positional.push(arg.clone());
+                args.positional.push(arg.to_owned());
                 continue;
             };
             let value = if SWITCHES.contains(&key) {
@@ -270,6 +278,18 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
             args.only("result", &[], 1)?;
             println!("{}", shown(store, id(args)?)?);
         }
+        "logs" => {
+            args.only("logs", &["follow", "turn"], 1)?;
+            let turn =
+                args.opt("turn")
+                    .map(|n| {
+                        n.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| {
+                            Fail::Usage("--turn must be a positive number".to_owned())
+                        })
+                    })
+                    .transpose()?;
+            logs(store, id(args)?, turn, args.opt("follow").is_some())?;
+        }
         "wait" => {
             args.only("wait", &["timeout"], 1)?;
             let timeout = args
@@ -322,6 +342,66 @@ fn shown(store: &mut Store, id: &str) -> Result<Value, Fail> {
     Ok(store
         .result(id)?
         .ok_or_else(|| QueueError::NotFound(id.to_owned()))?)
+}
+
+/// Prints turn `turn`'s log (the last one's: `None`), what is new of it at each read when `follow`, and the turns
+/// after it while following the last, until the task is neither queued nor running; notes on stderr what the queue
+/// no longer holds.
+fn logs(store: &mut Store, id: &str, turn: Option<u32>, follow: bool) -> Result<(), Fail> {
+    // the turn shown, by its lease epoch, and the offset printed up to
+    let mut shown: Option<(u64, u64)> = None;
+    loop {
+        let found = match store.logs(id, turn) {
+            Ok(l) => l,
+            Err(QueueError::Unavailable(e) | QueueError::OutcomeUnknown(e)) if follow => {
+                eprintln!("exec-pool: {e}; waiting");
+                thread::sleep(FOLLOW_POLL);
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if let Some(t) = &found.turn {
+            let from = match shown {
+                Some((epoch, at)) if epoch == t.lease_epoch => at,
+                _ => {
+                    eprintln!(
+                        "exec-pool: turn {} of {} (lease epoch {}){}",
+                        t.turn,
+                        t.turns,
+                        t.lease_epoch,
+                        if t.live { ", running" } else { "" }
+                    );
+                    0
+                }
+            };
+            if t.start > from {
+                eprintln!(
+                    "exec-pool: [{} bytes before this are not kept]",
+                    t.start.saturating_sub(from)
+                );
+            }
+            let skip = usize::try_from(from.saturating_sub(t.start)).unwrap_or(usize::MAX);
+            let new = t.log.get(skip..).unwrap_or_default();
+            io::Write::write_all(&mut io::stdout(), new)
+                .and_then(|()| io::Write::flush(&mut io::stdout()))
+                .map_err(|e| Fail::Usage(format!("stdout: {e}")))?;
+            let end = t
+                .start
+                .saturating_add(u64::try_from(t.log.len()).unwrap_or(u64::MAX));
+            shown = Some((t.lease_epoch, end.max(from)));
+        }
+        let more = match (&found.turn, turn) {
+            (Some(t), Some(_)) => t.live,
+            _ => found.pending,
+        };
+        if !follow || !more {
+            if found.turn.is_none() {
+                eprintln!("exec-pool: no turn of {id} has logged yet");
+            }
+            return Ok(());
+        }
+        thread::sleep(FOLLOW_POLL);
+    }
 }
 
 /// Polls until the task is settled and its result recorded, or [`RECORD_GRACE`] after the settle (or at the

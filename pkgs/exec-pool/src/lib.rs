@@ -9,6 +9,7 @@ pub mod runner;
 mod state;
 pub mod sync;
 pub mod task_result;
+pub mod turn_log;
 pub mod wake;
 pub mod workspace;
 

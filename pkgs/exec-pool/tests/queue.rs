@@ -18,7 +18,9 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use exec_pool::queue::{METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, Turn};
+use exec_pool::queue::{
+    Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, Turn, TurnLog,
+};
 use exec_pool::task_result::{TaskResult, Usage};
 use exec_pool::wake::Wake;
 use exec_pool::{
@@ -237,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (15, 14)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (16, 15)",
             &[],
         )
         .unwrap();
@@ -250,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (16)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (17)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(16))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(17))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 16 WHERE version = 16",
+            "UPDATE schema_migrations SET floor = 17 WHERE version = 17",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(16))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(16))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(17))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(17))));
 }
 
 #[test]
@@ -2805,4 +2807,69 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
         (&lines[0]["eligible"], &lines[0]["handed_back"]),
         (&json!(true), &json!(true))
     );
+}
+
+#[test]
+fn a_turns_log_is_read_by_the_submitter_while_it_runs_and_after() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let mut runner = Store::open(
+        &pg.conninfo()
+            .replace("user=exec_pool ", "user=exec_pool_runner "),
+    )
+    .unwrap();
+    let (mut s, id) = session(&pg);
+    assert_eq!(
+        s.logs(&id, None).unwrap(),
+        Logs {
+            pending: true,
+            turn: None
+        }
+    );
+    assert!(matches!(s.logs("nope", None), Err(QueueError::NotFound(_))));
+    let (a, e1, _) = started(&mut owner);
+    runner.put_log(&a, e1, 0, b"first").unwrap();
+    runner.put_log(&a, e1, 100, b"later tail").unwrap();
+    // a read the runner took before the last is not put back
+    runner.put_log(&a, e1, 0, b"first").unwrap();
+    let live = s.logs(&id, None).unwrap().turn.unwrap();
+    assert_eq!(
+        (
+            live.turn,
+            live.turns,
+            live.start,
+            live.log.as_slice(),
+            live.live
+        ),
+        (1, 1, 100, b"later tail".as_slice(), true)
+    );
+    assert!(matches!(
+        runner.put_log(&a, e1 + 1, 0, b"x"),
+        Err(QueueError::Fenced(_))
+    ));
+    let over = vec![b'x'; usize::try_from(exec_pool::turn_log::LOG_BYTES).unwrap() + 1];
+    assert!(runner.put_log(&a, e1, 200, &over).is_err());
+    owner.park(&a, e1, &park(ParkReason::TurnEnd, 0)).unwrap();
+    assert_eq!(
+        s.logs(&id, None).unwrap(),
+        Logs {
+            pending: false,
+            turn: Some(TurnLog {
+                live: false,
+                ..live
+            })
+        }
+    );
+    s.send(&id, "next").unwrap();
+    let (a2, e2, _) = started(&mut owner);
+    assert_eq!(a2, a);
+    runner.put_log(&a, e2, 0, b"second").unwrap();
+    let last = s.logs(&a, None).unwrap().turn.unwrap();
+    assert_eq!(
+        (last.turn, last.turns, last.log.as_slice()),
+        (2, 2, b"second".as_slice())
+    );
+    let first = s.logs(&id, Some(1)).unwrap().turn.unwrap();
+    assert_eq!((first.lease_epoch, first.live), (e1, false));
+    assert_eq!(s.logs(&id, Some(3)).unwrap().turn, None);
 }
