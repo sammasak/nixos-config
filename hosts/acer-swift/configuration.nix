@@ -55,7 +55,11 @@
     executionPool = {
       enable = true;
       slots = 1;
-      agents = [ "claude" ];
+      # no codex: this host sets no sam.workers.codexAuthFile
+      agents = [
+        "claude"
+        "pi"
+      ];
     };
   };
   homelab.execPool.runner.enable = true;
