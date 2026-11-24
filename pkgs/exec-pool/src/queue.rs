@@ -757,13 +757,14 @@ impl Store {
                  ON CONFLICT (attempt_id) DO UPDATE SET lease_epoch = EXCLUDED.lease_epoch, outcome = EXCLUDED.outcome, \
                  exit_code = EXCLUDED.exit_code, output = EXCLUDED.output, recorded_at = now() \
                  WHERE results.lease_epoch < EXCLUDED.lease_epoch",
-                &[&attempt, &epoch, &outcome, &result.exit_code, &result.output],
+                &[&attempt, &epoch, &outcome, &result.exit_code, &result.output()],
             )?;
             Ok(n == 1)
         })
     }
 
-    /// The task `id` names, as [`Store::tasks`] shows it, with its attempt's recorded `result` (`null` before one);
+    /// The task `id` names, as [`Store::tasks`] shows it, with the `result` recorded at its attempt's current epoch
+    /// (`null` before one);
     /// no prompt. `None` when no task has that id.
     ///
     /// # Errors
@@ -776,7 +777,7 @@ impl Store {
                      jsonb_build_object('lease_epoch', r.lease_epoch, 'outcome', r.outcome, \
                      'exit_code', r.exit_code, 'output', r.output, 'recorded_at', r.recorded_at) END) \
                      FROM task_summaries t JOIN attempts a ON a.task_id = t.id \
-                     LEFT JOIN results r ON r.attempt_id = a.id WHERE t.id = $1 OR a.id = $1"
+                     LEFT JOIN results r ON r.attempt_id = a.id AND r.lease_epoch = a.lease_epoch WHERE t.id = $1 OR a.id = $1"
                 ),
                 &[&id],
             )?;

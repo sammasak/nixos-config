@@ -226,8 +226,8 @@ fn shown(store: &mut Store, id: &str) -> Result<Value, Fail> {
         .ok_or_else(|| QueueError::NotFound(id.to_owned()))?)
 }
 
-/// Polls until the task is settled and its result recorded, or [`RECORD_GRACE`] after the settle; an unavailable
-/// database is waited out like the task.
+/// Polls until the task is settled and its result recorded, or [`RECORD_GRACE`] after the settle (or at the
+/// timeout, once settled); an unavailable database is waited out like the task.
 fn wait(store: &mut Store, id: &str, timeout: Option<Duration>) -> Result<Value, Fail> {
     let start = Instant::now();
     let mut settled_at = None;
@@ -242,8 +242,11 @@ fn wait(store: &mut Store, id: &str, timeout: Option<Duration>) -> Result<Value,
                 if settled && settled_at.is_none() {
                     settled_at = Some(Instant::now());
                 }
+                let out_of_time = timeout.is_some_and(|t| start.elapsed() >= t);
                 if settled_at.is_some_and(|t| {
-                    v.get("result").is_some_and(|r| !r.is_null()) || t.elapsed() >= RECORD_GRACE
+                    v.get("result").is_some_and(|r| !r.is_null())
+                        || t.elapsed() >= RECORD_GRACE
+                        || out_of_time
                 }) {
                     return Ok(v);
                 }
@@ -252,13 +255,17 @@ fn wait(store: &mut Store, id: &str, timeout: Option<Duration>) -> Result<Value,
                 }
                 last = v;
             }
-            Err(Fail::Queue(QueueError::Unavailable(e))) => eprintln!("exec-pool: {e}; waiting"),
+            // a read: an unknown commit changed nothing
+            Err(Fail::Queue(QueueError::Unavailable(e) | QueueError::OutcomeUnknown(e))) => {
+                eprintln!("exec-pool: {e}; waiting");
+            }
             Err(e) => return Err(e),
         }
-        if timeout.is_some_and(|t| start.elapsed() >= t) {
+        let left = timeout.map_or(POLL, |t| t.saturating_sub(start.elapsed()));
+        if left.is_zero() {
             return Err(Fail::TimedOut(last));
         }
-        thread::sleep(POLL);
+        thread::sleep(left.min(POLL));
     }
 }
 

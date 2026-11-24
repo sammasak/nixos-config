@@ -218,13 +218,13 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     s.migrate().unwrap();
     let tables = |c: &mut Client| -> i64 {
         c.query_one(
-            "SELECT count(*) FROM pg_tables WHERE tablename IN ('tasks', 'attempts', 'events', 'receipts')",
+            "SELECT count(*) FROM pg_tables WHERE tablename IN ('tasks', 'attempts', 'events', 'receipts', 'results')",
             &[],
         )
         .unwrap()
         .get(0)
     };
-    assert_eq!(tables(&mut pg.sql()), 4);
+    assert_eq!(tables(&mut pg.sql()), 5);
     s.migrate_down().unwrap();
     assert_eq!(tables(&mut pg.sql()), 0);
     // a database at migration 1 takes the rest
@@ -669,11 +669,7 @@ fn a_settled_attempt_records_its_result_for_the_submitter() {
     let pg = Pg::new();
     let mut s = pg.migrated();
     let a = submit(&mut s, &task("t-1", 2));
-    let out = |exit: i32, output: &str| TaskResult {
-        outcome: None,
-        exit_code: Some(exit),
-        output: output.to_owned(),
-    };
+    let out = |exit: i32, output: &str| TaskResult::new(None, Some(exit), output);
     s.claim(&slot("s0"), 60).unwrap().unwrap();
     s.apply(&a, &ev(1, Kind::Start), None).unwrap();
     assert!(
@@ -708,10 +704,9 @@ fn a_settled_attempt_records_its_result_for_the_submitter() {
         ),
         "another epoch's"
     );
-    let done = TaskResult {
-        outcome: Some(exec_pool::Outcome::Succeeded),
-        ..out(0, "opened PR #9")
-    };
+    // a re-leased attempt shows no earlier epoch's result
+    assert!(s.result(&a).unwrap().unwrap()["result"].is_null());
+    let done = TaskResult::new(Some(exec_pool::Outcome::Succeeded), Some(0), "opened PR #9");
     assert!(s.record_result(&a, 2, &done).unwrap());
 
     let submitter = pg
@@ -733,6 +728,21 @@ fn a_settled_attempt_records_its_result_for_the_submitter() {
         .batch_execute("UPDATE results SET output = 'forged'")
         .unwrap_err();
     assert_eq!(e.code().map(postgres::error::SqlState::code), Some("42501"));
+    let full = "é".repeat(exec_pool::task_result::OUTPUT_BYTES);
+    let fresh = submit(&mut s, &task("t-3", 1));
+    s.claim(&slot("s0"), 60).unwrap().unwrap();
+    for kind in [Kind::Start, Kind::Checkpoint, Kind::Settle(Settle::Queued)] {
+        s.apply(&fresh, &ev(1, kind), None).unwrap();
+    }
+    assert!(
+        s.record_result(
+            &fresh,
+            1,
+            &TaskResult::new(None, None, &format!("\0{full}"))
+        )
+        .unwrap(),
+        "the bound and the CHECK agree"
+    );
     let fresh = submit(&mut s, &task("t-2", 1));
     assert!(s.result(&fresh).unwrap().unwrap()["result"].is_null());
 }

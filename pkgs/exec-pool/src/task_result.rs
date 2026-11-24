@@ -16,8 +16,9 @@ pub struct TaskResult {
     /// [`agent::outcome`] of the run; `None` when the task's argv never started or the helper left no result.
     pub outcome: Option<Outcome>,
     pub exit_code: Option<i32>,
-    /// Claude's `result` text, from its start; for any other agent, or a Claude run with none, the end of stdout.
-    pub output: String,
+    /// Claude's `result` text, from its start; for any other agent, or a Claude run with none, the end of stdout
+    /// (of its first `CAPTURE_BYTES`: the runner keeps the head of the capture). No NUL, which `text` cannot hold.
+    output: String,
 }
 
 #[derive(Deserialize)]
@@ -26,6 +27,21 @@ struct ClaudeText {
 }
 
 impl TaskResult {
+    /// A result whose output is the end of `output`, bounded and with any NUL dropped.
+    #[must_use]
+    pub fn new(outcome: Option<Outcome>, exit_code: Option<i32>, output: &str) -> Self {
+        Self {
+            outcome,
+            exit_code,
+            output: end(&output.replace('\0', "")),
+        }
+    }
+
+    #[must_use]
+    pub fn output(&self) -> &str {
+        &self.output
+    }
+
     /// The result of a run from the helper's `result` and the attempt's captured `stdout`.
     #[must_use]
     pub fn of(agent: Agent, result: Option<&ExecResult>, stdout: &str) -> Self {
@@ -38,7 +54,10 @@ impl TaskResult {
         Self {
             outcome: ran.map(|r| agent::outcome(agent, r.exit_code, stdout)),
             exit_code,
-            output: claude.map_or_else(|| end(stdout), |c| start(&c.result)),
+            output: claude.map_or_else(
+                || end(&stdout.replace('\0', "")),
+                |c| start(&c.result.replace('\0', "")),
+            ),
         }
     }
 }
@@ -109,6 +128,9 @@ mod tests {
         );
         assert_eq!(c.output.len(), OUTPUT_BYTES - 1, "a split 'é' is left out");
         assert!(c.output.starts_with("aé"));
+        let nul = TaskResult::new(None, Some(0), &format!("a\0b{long}"));
+        assert_eq!(nul.output(), r.output, "bounded");
+        assert_eq!(TaskResult::new(None, None, "a\0b").output(), "ab");
     }
 
     #[test]
