@@ -803,32 +803,98 @@ def check_bounded():
           f"container@ stops restarting after {got.get('burst')} starts of {start} s (stop {stop} s) each within {got.get('interval')} s ({got or out.stderr.strip()[-300:]})")
 
 
-# docs/records/execution-pool-contract.md: the pool adds no option to msi's worker modules, and its named workers and
-# their Herdr units are pinned by name; a change to msi's instances edits this list in the same PR.
+# modules/workers/execution-pool.nix on msi: off (unset, or enable = false with a count) it moves no worker unit, no
+# container and no toplevel, and msi's named workers and their Herdr units stay pinned by name (a change to msi's
+# instances edits this list in the same PR); on, its 0/1/2 slots are shells beside them that leave their units alone.
 POOL_COMPAT = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
   lib = flake.inputs.nixpkgs.lib;
-  sys = flake.nixosConfigurations.msi-ms7758;
-  c = sys.config;
+  c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ (%(case)s) ]; }).config;
+  dev = c.services.devEnvironments;
 in {
-  options = builtins.filter (p: lib.hasAttrByPath p sys.options) (lib.concatMap (n: [ [ "sam" n ] [ "sam" "workers" n ] [ "services" "devEnvironments" n ] ]) [ "executionPool" "agentRuntime" ]);
+  failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
+  toplevel = %(toplevel)s;
+  units = lib.mapAttrs (_: u: u.unit.drvPath) (lib.filterAttrs (n: _: builtins.match "(container@|worker|dev-env).*" n != null) c.systemd.units);
+  containers = lib.mapAttrs (_: x: x.path.drvPath or x.path) c.containers;
   instances = builtins.attrNames c.sam.workers.instances;
-  declared = builtins.attrNames c.services.devEnvironments.instances;
-  agents = builtins.attrNames (lib.filterAttrs (_: i: i.agent != "none") c.services.devEnvironments.instances);
+  declared = builtins.attrNames dev.instances;
+  agents = builtins.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
   herdr = builtins.filter (lib.hasPrefix "worker-herdr-") (builtins.attrNames c.systemd.services);
+  slots = lib.mapAttrs (n: i: {
+    inherit (i) agent prompt model credentials telemetry;
+    reserved = i.memory.reserved;
+    sockets = builtins.attrNames c.containers.${n}.config.systemd.sockets;
+    binds = builtins.attrNames c.containers.${n}.bindMounts;
+  }) (lib.filterAttrs (n: _: lib.hasPrefix "pool" n) dev.instances);
+  shutdown = c.systemd.services.worker-shutdown-notice.script;
+  inventory = builtins.any (p: (p.name or "") == "worker-pool-inventory") c.environment.systemPackages;
 }
+"""
+POOL_ON = "{ sam.workers.executionPool = { enable = true; slots = %d; }; }"
+# (name, module, expected message substring) on msi with the pool on; each must fail an assertion
+POOL_CASES = [
+    ("slots above the pool", "{ sam.workers.executionPool = { enable = true; slots = 3; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
+    ("a slot's name declared by hand", "{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
+    ("a slot's name declared in the core", "{ sam.workers.executionPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
+    ("a slot's name retired", '{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
+    ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
+]
+POOL_TYPED = [
+    ("negative slots", "{ sam.workers.executionPool = { enable = true; slots = -1; }; }", "is not of type `unsigned integer"),
+    ("a slot reserve that is no size", '{ sam.workers.executionPool = { enable = true; slots = 1; memory.reserved = "2 GB"; }; }', "is not of type `string matching the pattern"),
+]
+POOL_THROW = r"""
+let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: %(case)s) ]; }).config;
+in c.system.build.toplevel.drvPath
 """
 
 
+def pool_eval(case, toplevel=False):
+    out = run_eval(POOL_COMPAT % {"root": json.dumps(ROOT), "case": case, "toplevel": "c.system.build.toplevel.drvPath" if toplevel else "null"})
+    return json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
+
+
 def check_pool_compat():
-    out = run_eval(POOL_COMPAT % {"root": json.dumps(ROOT)})
-    got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got.get("options") == [], f"msi declares no executionPool or agentRuntime option ({got.get('options', out.stderr.strip()[-600:])})")
+    # a whole msi each, one at a time: five in one process ran a 16G host out of memory
+    absent = pool_eval("{ }", True)
+    off = pool_eval("{ sam.workers.executionPool = { enable = false; slots = 2; }; }", True)
+    check(absent.get("units") and absent.get("toplevel") and absent == off,
+          f"executionPool off (unset, or enable = false with slots = 2) moves no worker unit, container or toplevel on msi ({absent.get('error') or [k for k in absent if absent[k] != off.get(k)]})")
     named = ["m1", "m2", "t1"]
-    check(got.get("instances") == got.get("declared") == got.get("agents") == named
-          and got.get("herdr") == [f"worker-herdr-{n}" for n in named],
-          f"msi's sam.workers.instances are still {named}, each one worker-herdr-<name> unit ({got})")
+    check(absent.get("instances") == absent.get("declared") == absent.get("agents") == named
+          and absent.get("herdr") == [f"worker-herdr-{n}" for n in named] and not absent.get("inventory"),
+          f"msi's sam.workers.instances are still {named}, each one worker-herdr-<name> unit, and no pool inventory ({ {k: absent.get(k) for k in ('instances', 'declared', 'agents', 'herdr', 'inventory')} })")
+    for n in range(3):
+        on = pool_eval(POOL_ON % n)
+        names = [f"pool{i}" for i in range(1, n + 1)]
+        slot = {"agent": "none", "prompt": None, "model": None, "credentials": [], "telemetry": False, "reserved": 2 << 30}
+        got = {s: {k: v for k, v in d.items() if k in slot} for s, d in on.get("slots", {}).items()}
+        check(on.get("failing") == [] and on.get("declared") == sorted(named + names) and on.get("agents") == named and got == {s: slot for s in names},
+              f"slots = {n}: {names or 'no slot'} beside {named}, each agent none, no prompt, no credential, no telemetry, 2G reserved, no assertion failing ({on.get('error') or {k: on.get(k) for k in ('failing', 'declared')} | {'slots': got} })")
+        # a slot holds no egress socket and no bind of a host secret, credential or user runtime directory; the sshd
+        # host key every environment shares and public keys are the binds allowed under host-credentials
+        leaks = {s: [x for x in d["sockets"] if x.endswith("-egress")] + [b for b in d["binds"] if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+                 for s, d in on.get("slots", {}).items()}
+        check(len(leaks) == n and not any(leaks.values()) and on.get("shutdown") == absent.get("shutdown"),
+              f"slots = {n}: no slot has an egress socket or a host secret bind, and the shutdown notice still prompts only {named} ({leaks})")
+        units = on.get("units", {})
+        mine = {u for u in units if any(u.startswith(p + s) for s in names for p in ("container@", "worker-", "worker-herdr-"))}
+        # the host's shared units list every instance, so a slot moves them; each named worker's own units stay
+        shared = {"dev-env-egress.service", "dev-env-records.service", "dev-env-reset@.service", "dev-env-usage.service"}
+        moved = {u for u in units.keys() - mine if units[u] != absent.get("units", {}).get(u)}
+        check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 3 * n
+              and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),
+              f"slots = {n}: a container@, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
+    # POOL_CASES were prefetched; a whole msi per type error, one at a time
+    outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
+    typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
+             for c in POOL_TYPED]
+    for (name, _, want), out in zip(POOL_CASES, outs):
+        failing = json.loads(out.stdout) if out.returncode == 0 else []
+        check(any(want in m for m in failing), f"executionPool, {name}: fails \"{want}\" ({failing or out.stderr.strip()[-300:]})")
+    for (name, _, want), out in zip(POOL_TYPED, typed):
+        check(out.returncode != 0 and want in out.stderr, f"executionPool, {name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
 
 
 def check_slot():
@@ -1005,7 +1071,7 @@ def main():
     prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(case) for _, case, _ in FLEET_CASES], fleet(USER_SECRET[1]),
               NO_OTEL % {"root": json.dumps(ROOT)}, GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)},
               SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr(), SLOT % {"root": json.dumps(ROOT)},
-              POOL_COMPAT % {"root": json.dumps(ROOT)}])
+              *[fleet(case) for _, case, _ in POOL_CASES]])
     out = nix_eval("{ }")
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"a valid host fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     out = nix_eval("{ }", GUEST)

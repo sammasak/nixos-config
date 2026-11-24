@@ -7,7 +7,7 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 
 | Concern | Owner | Where |
 |---|---|---|
-| Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix` |
+| Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
 | Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`), nothing claims yet |
 | Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local dispatcher (#652) | not built |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
@@ -89,8 +89,8 @@ The historical `sam.agentRuntime` (#133, #138) made one ephemeral nspawn instanc
 absent on main, its module directory was deleted in #210 (`git show 5a40362 --stat`). The current `modules/workers`
 declares long-lived, named instances (`sam.workers.instances`, a `worker-herdr-<name>` unit per agent), each a Nix
 deploy. The pool keeps those untouched and adds dynamic work on top of declared slots. `scripts/test-workers-eval.py`
-pins it: msi declares no `executionPool` or `agentRuntime` option, and its instances (`m1`, `m2`, `t1`) and their
-Herdr units are pinned by name.
+pins it: `sam.workers.executionPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
+worker unit, container or toplevel on msi, and its instances (`m1`, `m2`, `t1`) and their Herdr units are pinned by name.
 
 ## Phase gates (detail in #646)
 
