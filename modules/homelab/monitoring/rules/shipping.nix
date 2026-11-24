@@ -51,8 +51,9 @@ let
       h = a.RetroDueStepFailsRepeat.newFailureHours.value;
     in
     # muted shipping alerts are sent when the night ends only if still firing: a shorter window drops a night's failure
-    assert lib.assertMsg (h > quietHours + a.RetroDueStepFailsRepeat.forMinutes.value / 60.0)
-      "shipping-policy.json: RetroDueStepFailsRepeat.newFailureHours ${toString h} does not outlast the ${toString quietHours} h quiet hours";
+    assert lib.assertMsg
+      (builtins.isInt h && h > quietHours + a.RetroDueStepFailsRepeat.forMinutes.value / 60.0)
+      "shipping-policy.json: RetroDueStepFailsRepeat.newFailureHours ${toString h} is not a whole number of hours over the ${toString quietHours} h quiet hours";
     h;
 in
 {
@@ -131,12 +132,21 @@ in
         )
         # one step, or one check inside the flake check, failing on 3 heads over a full sample: one bad change on two hosts
         # makes 2, so 3 is a pattern; the flake check's own count covers only failures no inner check explains. It
-        # clears newFailureHours after the unit's last failure, and fires again on the next; with no timestamp (an
-        # older collector) it fires on the count alone
+        # clears newFailureHours after the unit's last failure unless its count rose since (a failure Loki received
+        # late, under its old time), and fires again on the next; with no timestamp (an older collector) the count
+        # alone decides
         (alert "RetroDueStepFailsRepeat"
-          ''max by (step, check) (shipping_gate_step_failures{window="7d"}) >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (time() - max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) > ${
-            toString (newFailureHours * 3600)
-          }) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}''
+          (
+            let
+              fails = ''max by (step, check) (shipping_gate_step_failures{window="7d"})'';
+              before = ''max by (step, check) (shipping_gate_step_failures{window="7d"} offset ${toString newFailureHours}h)'';
+              stale = "time() - max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) > ${
+                toString (newFailureHours * 3600)
+              }";
+              rose = "${fails} > ${before} or ${fails} unless on (step, check) ${before}";
+            in
+            "${fails} >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (${stale} unless on (step, check) (${rose})) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}"
+          )
           "Gate step {{ $labels.step }}{{ if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs)."
           { }
         )

@@ -392,7 +392,7 @@ let
           };
         in
         {
-          name = "a pattern clears newFailureHours after its last failure, the count still at the threshold, and fires again on the next";
+          name = "a pattern clears newFailureHours after its last failure, the count still at the threshold, and fires again on the next, or on a late one";
           interval = "1m";
           input_series = [
             {
@@ -402,6 +402,15 @@ let
             {
               series = ''shipping_gate_step_last_failure_timestamp_seconds{check="",step="nixos-flake-check"}'';
               values = "0x${n (repeatAt - 1)} ${n (repeatAt * 60)}x${n (stepFor + 20)}";
+            }
+            # a third failure Loki receives late, under a time past the window: the count's rise fires it
+            {
+              series = ''shipping_gate_step_failures{check="",step="lint",window="7d"}'';
+              values = "${n (minFails - 1)}x${n (repeatAt - 1)} ${n minFails}x${n (stepFor + 20)}";
+            }
+            {
+              series = ''shipping_gate_step_last_failure_timestamp_seconds{check="",step="lint"}'';
+              values = "0x${n (repeatAt + stepFor + 20)}";
             }
             {
               series = ''shipping_gate_runs_counted{host="lenovo"}'';
@@ -413,7 +422,18 @@ let
             (at (newFailFor * 60 - 5) firing)
             (at (newFailFor * 60 + 5) [ ])
             (at (repeatAt + stepFor - 5) [ ])
-            (at (repeatAt + stepFor + 5) firing)
+            (at (repeatAt + stepFor + 5) (
+              firing
+              ++ [
+                {
+                  exp_labels = {
+                    step = "lint";
+                    severity = "warning";
+                    team = "shipping";
+                  };
+                }
+              ]
+            ))
           ];
         }
       )
