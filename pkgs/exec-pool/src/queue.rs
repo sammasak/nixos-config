@@ -22,14 +22,15 @@ use crate::{
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// Migration `n` is `STEPS[n - 1]`; each records its own version.
-const STEPS: [&str; 3] = [
+const STEPS: [&str; 4] = [
     UP,
     include_str!("../migrations/0002_submitter.up.sql"),
     include_str!("../migrations/0003_result.up.sql"),
+    include_str!("../migrations/0004_runner.up.sql"),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
-const VERSION: i32 = 3;
+const VERSION: i32 = 4;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";

@@ -80,6 +80,42 @@ in
     };
   };
 
+  homelab.secrets.enable = lib.mkIf config.homelab.execPool.remoteRunners true;
+  sops.secrets.exec_pool_runner_password = lib.mkIf config.homelab.execPool.remoteRunners {
+    sopsFile = ../../secrets/homelab/exec-pool-runner.yaml;
+    mode = "0400";
+    restartUnits = [ "exec-pool-runner-password.service" ];
+  };
+  # The role's scram verifier from the sops password. psql reads the value from the credential, so it is on no
+  # command line, and the session logs no statement: a failed ALTER would otherwise print it in the server log.
+  systemd.services.exec-pool-runner-password = lib.mkIf config.homelab.execPool.remoteRunners {
+    description = "Set the exec_pool_runner role's password";
+    after = [ "postgresql-setup.service" ];
+    requires = [ "postgresql-setup.service" ];
+    wantedBy = [ "multi-user.target" ];
+    path = [ postgres ];
+    environment.PGPORT = toString config.services.postgresql.settings.port;
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      User = "postgres";
+      Group = "postgres";
+      LoadCredential = [ "password:${config.sops.secrets.exec_pool_runner_password.path}" ];
+      PrivateNetwork = true;
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+      NoNewPrivileges = true;
+      TimeoutStartSec = 60;
+    };
+    script = ''
+      psql -h /run/postgresql -d postgres -v ON_ERROR_STOP=1 -q <<'EOF'
+      SET log_statement = 'none';
+      SET log_min_error_statement = 'panic';
+      \set pw `cat "$CREDENTIALS_DIRECTORY/password"`
+      ALTER ROLE exec_pool_runner WITH LOGIN PASSWORD :'pw';
+      EOF
+    '';
+  };
+
   systemd.services.exec-pool-migrate = lib.recursiveUpdate unit {
     description = "Apply the execution pool queue's schema";
     # the target: postgresql.service is up before its ensureUsers setup has run. postgresql-setup too: a switch
