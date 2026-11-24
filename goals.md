@@ -23,23 +23,26 @@ PRs merge.
 Owner, 24 Nov: ship the real work with a narrow test per change; no long gate per change. Merges and deploys are
 collected into a batch, and the scheduled full gate on main (acer, four times a day, first run 15:20) covers the batch.
 
-Current batch, then one acer deploy and the first real pool task: runner (#652, PR #713, `m2`), submit, status and list
-commands (`m1`), pool metrics, dashboard row and two alerts (#658, `a1`).
-Merged since 09:00: scheduled full gate and fast push checks (#707, #712); PostgreSQL in its own module (#708);
-guest nix-daemon dies before agent sessions (#709, closes #647); annotation check reads black-pi's rule files (#710);
-agent adapter (#711); msi guests resolve through the fleet's DNS host (#714); slot agents, `pool1` on acer (#716);
-per-attempt workspace (#717). Live: acer up to #710, msi up to #714, black-pi #710.
+First real task ran through the pool on 24 Nov at 11:53: a Claude task submitted with `exec-pool submit` on acer,
+claimed by `pool1`, cloned, run and settled as succeeded in 12 s, slot reset.
+Merged since 10:00: pool metrics, dashboard row and two alerts (#719, #721); submit, status and list (#720); runner
+runs slot agents in the attempt workspace (#725); fleet dispatch listener and credential, off by default (#726, #730);
+Codex and Pi in slots (#727); systemd-run no longer expands task text (#728); result and wait (#729);
+`typed-interfaces-test` green again (#731). Live: acer up to #728, msi up to #714, black-pi #710.
+
+Current batch, then one deploy of acer and msi: lease heartbeats, cancel and result recording (`m2`); a slot and a
+runner on msi (#654, `a1`); the coordinator's pool-submit command (skills#150, `m1`).
 
 Waiting, in pick-up order:
 
 | # | Topic | Pain now | Next small change |
 |---|-------|----------|-------------------|
-| 1 | Pool | no task has run through it | deploy the batch on acer, submit one Claude task |
-| 2 | Pool | the runner does not use the per-attempt workspace yet | wire `workspace` into the runner (#653) |
-| 3 | Pool | one host only | fleet dispatch (#654); Codex and Pi need an egress route for slots |
-| 4 | Gates | flake check took 1263 s after #683 | read the per-step times of the 15:20 scheduled gate |
+| 1 | Pool | a deploy that rolls back across a migration leaves the runner down | old binary tolerates a newer schema, or migrations run only after the switch holds |
+| 2 | Pool | a reset refusal at runner start leaves the unit failed | runner marks the slot quarantined and keeps serving the others |
+| 3 | Pool | any submitter reads every task's output | restrict to own tasks when a second submitter appears |
+| 4 | Gates | flake check took 1263 s after #683; msi checkouts still carried the old full push hook | read the per-step times of the 15:20 scheduled gate |
 | 5 | Live comparison | first numbers only | read a day of Shunt on/off and herman against default on 25 Nov |
-| 6 | Leftovers | two drafts open; skills operator runbook names the old checkout | #616, skills#106, the runbook line |
+| 6 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
 
 ## Priorities
 
@@ -94,9 +97,10 @@ are. v0.2 and v0.3 stay locked until the v0.1 offline gate has evidence. Deferre
 | [#649](https://github.com/sammasak/nixos-config/issues/649) | Contract: ADR, `pkgs/exec-pool` types and state machine, compatibility fixture | | merged; acer gate 23 min, one review round plus a fix round, about 4 h from dispatch to merge | #667 |
 | [#650](https://github.com/sammasak/nixos-config/issues/650) | `sam.workers.executionPool` slot count | #649 | closed; `pool1` declared on acer | #704, #716 |
 | [#651](https://github.com/sammasak/nixos-config/issues/651) | PostgreSQL queue, leases, fencing | #649 | closed; live on acer | #673, #693 |
-| [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | first slice merged, live on acer: metrics, dashboard row, two alerts; canary and rollback evidence open | #719, #721 |
-| [#652](https://github.com/sammasak/nixos-config/issues/652) | Runner: dispatcher, slot control, guest executor | #650, #651 | runner, agent adapter and submit/status/list CLI merged; first real task next | #711, #713, #720 |
-| [#653](https://github.com/sammasak/nixos-config/issues/653) | Per-attempt isolation and egress | #652 | workspace merged; runner wiring next | #717 |
+| [#658](https://github.com/sammasak/nixos-config/issues/658) | Events to the journal, textfile metrics, dashboard row, two alerts | starts with #651 | first slice merged, live on acer: metrics, dashboard row, two alerts | #719, #721 |
+| [#652](https://github.com/sammasak/nixos-config/issues/652) | Runner: dispatcher, slot control, guest executor | #650, #651 | live on acer: first Claude task succeeded 24 Nov; heartbeats and cancel in flight | #711, #713, #720, #725, #728, #729 |
+| [#653](https://github.com/sammasak/nixos-config/issues/653) | Per-attempt isolation and egress | #652 | merged, live: each attempt runs in its own workspace; Codex and Pi routes in slots | #717, #725, #727 |
+| [#654](https://github.com/sammasak/nixos-config/issues/654) | Fleet dispatch: msi runner against acer's queue | #652 | listener and credential merged, off; msi slot and runner in flight | #726, #730 |
 | v0.1 gate | Acceptance script in a VM: PASS, FAIL or UNTESTED per criterion | #653, #658 | | |
 
 Per merged pool PR, record here: gate minutes, review rounds, hours from dispatch to merge.
@@ -107,10 +111,10 @@ Placement order: acer, then msi, asus last (it carries ollama and the heavier lo
 
 | Host | Worker | Item |
 |------|--------|------|
-| acer-swift | `a1` | #658 |
+| acer-swift | `a1` | #654 msi slot and runner |
 | acer-swift | `herman` | dashboards lane (#525, #523), not this week's list |
-| msi-ms7758 | `m1` | pool submit command |
-| msi-ms7758 | `m2` | #652 |
+| msi-ms7758 | `m1` | skills#150 pool submit for the coordinator |
+| msi-ms7758 | `m2` | #652 heartbeats, cancel, result recording |
 | asus-b460m | none | `a624`, `s138`, `s130` retired |
 
 msi and asus have no `gh` login: workers push branches over SSH and the lenovo session opens and merges the PRs.
@@ -120,7 +124,7 @@ msi and asus have no `gh` login: workers push branches over SSH and the lenovo s
 Every host deployed main on 23 Nov: acer-swift, msi-ms7758, asus-b460m, black-pi, lenovo. The first black-pi deploy
 rolled back on a journal-metrics start race, fixed by #634. asus deployed again after #639 (workers retired).
 msi, asus and acer deployed main again on the evening of 23 Nov (gaming entries, skills pin #661; acer also has the
-pin from #670). lenovo and acer deployed #699 at 06:40 on 24 Nov, black-pi #694 at 05:00. On 24 Nov: asus #703 at 08:25, msi #714 at 10:00, acer #710 at 09:50. Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
+pin from #670). lenovo and acer deployed #699 at 06:40 on 24 Nov, black-pi #694 at 05:00. On 24 Nov: asus #703 at 08:25, msi #714 at 10:00, acer #710 at 09:50 and #728 at 11:50 (the #725 deploy rolled back first: fixed by #728). Lenovo's user slice (8.1G) hit its memory cap while two agents ran skills gates there: one at a time.
 
 ## Gaming entries (owner request, 23 Nov)
 
@@ -149,9 +153,12 @@ The scheduled gate on acer runs the full gate on main; nothing is owed by hand.
   #694 and #695 flake check green again, #697 guest records shipped by the host only, #698 night eval step,
   #699 skills pin, #701 untouched issues alert, #702 compaction loop alert, #703 skills pin, #704 pool slots,
   #705 record backlog alert, #707 and #712 scheduled gate, #708 PostgreSQL module, #709 guest daemon OOM order,
-  #710 annotation check on vendor rules, #711 agent adapter, #714 guest DNS, #716 slot agents, #717 attempt workspace
+  #710 annotation check on vendor rules, #711 agent adapter, #714 guest DNS, #716 slot agents, #717 attempt workspace,
+  #719 and #721 pool metrics and alerts, #720 submit CLI, #722 inventory with one slot, #724 skills pin,
+  #725 runner in the attempt workspace, #726 and #730 fleet dispatch listener and credential, #727 Codex and Pi in slots,
+  #728 no expansion of task text, #729 result and wait, #731 typed interfaces green
 - skills: #141 role context (#138), #142 execution field (#130), #143 and #144 metrics analyst (#139),
   #145 incident investigator (#131), #146 improvement verifier (#140), #147 observability engineer (#137), #148 verifier follow-up,
   #149 nix platform engineer (#133), #151 and #152 handoffs pilot (#136), #153 nix exposure auditor (#132),
   #154 regression engineer (#134), #155 Rust maintainer (#135), #156 dangling pointer check,
-  #157, #158 and #159 adapters name one place
+  #157, #158 and #159 adapters name one place, #160 operator runbook line, #106 NUL in the bash hook
