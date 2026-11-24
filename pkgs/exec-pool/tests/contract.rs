@@ -182,6 +182,8 @@ fn empty_fields_are_rejected() {
         schema_version: SchemaVersion::CURRENT,
         uri: uri.to_owned(),
         digest: digest.to_owned(),
+        generation: 0,
+        hosts: Vec::new(),
     };
     assert_eq!(cp("", "d").validate(), Err(Error::Empty("uri")));
     assert_eq!(cp("u", "").validate(), Err(Error::Empty("digest")));

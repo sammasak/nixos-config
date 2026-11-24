@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
 use std::process::ExitCode;
 
-use exec_pool::queue::{Change, METRICS_UNAVAILABLE, QueueError, Store, Submitted};
+use exec_pool::queue::{Change, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted};
 use exec_pool::{Event, Kind, Receipt, Resolution, Settle, Slot, TaskSpec};
 use serde_json::json;
 
@@ -20,6 +20,7 @@ const USAGE: &str = "usage: exec-pool-queue COMMAND [--flag value]...
   start | checkpoint | wake --attempt ID --epoch N
   heartbeat --attempt ID --epoch N --lease-secs N
   settle --attempt ID --epoch N --to waiting|queued|succeeded|failed|needs_review|cancelled [< receipt.json, terminal only]
+  park --attempt ID --epoch N < park.json                       (a session's turn ends: {reason, checkpoint, result, upto})
   resolve --attempt ID --epoch N --to succeeded|failed|queued   (an operator closing a needs_review attempt)
   reconcile                                                     (expire overdue leases; run at startup)
   metrics       (Prometheus text for a textfile collector; install stdout whatever the exit code: on a failure it is
@@ -130,7 +131,10 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
         "claim" => match store.claim(&Slot::parse(&stdin()?)?, args.num("lease-secs")?)? {
             Some(claim) => {
                 log(&claim.change);
-                result(&json!({ "task": claim.task, "attempt": claim.attempt }));
+                let turn = claim.turn.map(|t| {
+                    json!({ "session_uuid": t.session_uuid, "input": t.input, "upto": t.upto, "first": t.first })
+                });
+                result(&json!({ "task": claim.task, "attempt": claim.attempt, "turn": turn }));
             }
             None => result(&json!(null)),
         },
@@ -161,6 +165,12 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
                 _ => Some(Receipt::parse(&stdin()?)?),
             };
             apply(store, Kind::Settle(to), receipt.as_ref())?;
+        }
+        "park" => {
+            let park: Park = serde_json::from_str(&stdin()?).map_err(exec_pool::Error::from)?;
+            let (attempt, changes) = store.park(args.get("attempt")?, args.num("epoch")?, &park)?;
+            changes.iter().for_each(log);
+            result(&json!({ "status": attempt.status, "lease_epoch": attempt.lease_epoch }));
         }
         "resolve" => {
             let to = match args.get("to")? {

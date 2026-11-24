@@ -16,7 +16,7 @@ use std::path::{Component, Path};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-pub use state::{Event, Kind, Resolution, Settle, transition};
+pub use state::{Event, Kind, ParkReason, Resolution, Settle, transition};
 
 /// The only schema version this crate reads or writes.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -295,6 +295,12 @@ pub struct CheckpointRef {
     pub schema_version: SchemaVersion,
     pub uri: String,
     pub digest: String,
+    /// The lease epoch of the turn that wrote it; 0 in a checkpoint from before sessions.
+    #[serde(default)]
+    pub generation: u64,
+    /// The hosts that hold it.
+    #[serde(default)]
+    pub hosts: Vec<String>,
 }
 
 /// One external effect an attempt reports, e.g. `kind = "github_pr"`, `id = "sammasak/nixos-config#649"`.
