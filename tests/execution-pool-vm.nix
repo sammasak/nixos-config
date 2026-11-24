@@ -102,10 +102,11 @@ pkgs.testers.runNixOSTest {
     assert inventory()["pool1"]["state"] == "inactive", "a stopped slot reads inactive"
     machine.succeed("systemctl is-active container@pool2.service container@t.service")
     machine.succeed("systemctl start container@pool1.service")
-    # boot, the reset and this start are the core's StartLimitBurst of 3: a fourth start in the window is refused
-    # until reset-failed, a slot's reuse included
+    # boot, the reset, this start and the next restart are four starts in the core's 10 minutes, but the reset cleared the
+    # count: only the fourth after it, a hand restart, is refused until reset-failed
+    machine.succeed("systemctl restart container@pool1.service")
     rc, out = machine.execute("systemctl restart container@pool1.service 2>&1")
-    assert rc != 0 and "too often" in out, f"a fourth start within the window was not refused: {out}"
+    assert rc != 0 and "too often" in out, f"a fourth start since the reset was not refused: {out}"
     machine.succeed("systemctl reset-failed container@pool1.service && systemctl start container@pool1.service")
     machine.wait_for_unit("container@pool1.service")
     machine.wait_until_succeeds(guest + "true")

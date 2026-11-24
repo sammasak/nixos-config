@@ -137,7 +137,7 @@ in
         description = "Run the execution pool attempt handed to slot %i";
         # a restart mid-run would run the attempt again; the run directory refuses that too
         restartIfChanged = false;
-        # once per task turn, like the slot's reset (modules/workers/execution-pool.nix)
+        # once per task turn: under systemd's default limit a burst of fast-failing attempts would fail the unit
         startLimitIntervalSec = 0;
         path = [ config.systemd.package ];
         environment = {

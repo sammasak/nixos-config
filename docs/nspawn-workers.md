@@ -171,7 +171,8 @@ the package signed `msi-ms7758-store-1`. Evaluation is not shared: a first
 A container that never gets ready is retried 3 times in 10 minutes and then stays `failed` (start limit). Each switch
 calls `reset-failed` (clearing the limit) and restarts the active targets, `machines.target` among them, which starts
 it again with a fresh allowance; by hand, `systemctl reset-failed container@<n>` first, because a 4th start inside the
-10 minutes is refused ("repeated too quickly").
+10 minutes is refused ("repeated too quickly"). `dev-env-reset@<n>` clears it too, so a pool slot, reset every task
+turn, never reaches it.
 
 ## Alerts
 

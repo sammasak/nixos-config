@@ -1062,13 +1062,16 @@ def check_runner():
           and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
           and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
           f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
-    # a slot's container restarts and its reset and helper start once per task turn, seconds apart in a session: three
-    # container starts in ten minutes failed acer's pool1 with start-limit-hit
+    # a slot's reset restarts its container once per task turn, seconds apart in a session: the reset clears the
+    # container's start limit, which still ends a guest that never gets ready
+    script = got.get("reset", "")
+    cleared = script.find('systemctl reset-failed "container@$n.service"')
     for host, lim in got.get("limits", {"acer": {}, "msi": {}}).items():
-        check(lim.get("slots") == ["0", "0"] and lim.get("exec") == "0" and lim.get("reset") is None
-              and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * 2
-              and lim.get("named") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"},
-              f"{host}: container@pool1 and @pool2, exec-pool-exec@ and each slot's dev-env-reset@ have no start limit; the shared reset template and a named worker's container keep theirs ({lim or out.stderr.strip()[-300:]})")
+        check(lim.get("slots") == ["600", "600"] and lim.get("named") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"}
+              and 0 <= cleared < script.find('systemctl start "container@$n.service"')
+              and lim.get("exec") == "0" and lim.get("reset") is None
+              and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * 2,
+              f"{host}: container@pool1, @pool2 and a named worker's container keep the core's 600 s / 3 starts, which dev-env-reset@ clears before it starts the container; exec-pool-exec@ and each slot's dev-env-reset@ have no start limit, the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
     for host, p in got.get("push", {"acer-pool1": {}, "acer-pool2": {}, "msi-pool1": {}, "msi-pool2": {}}).items():
         links, git = p.get("links", []), p.get("git", {})
         check(p.get("credentials") == ["id_ed25519"] and p.get("binds") == ["/var/lib/host-credentials/id_ed25519"]
