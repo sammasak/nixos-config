@@ -251,7 +251,7 @@ pane on any host that reaches its tree, `--resume <uuid>`, so the pane shows the
 inbox as its input. `exec-pool attach ID` wakes a session with no message of the owner's (it is told the owner opened
 it) and prints the host, slot and Herdr agent once its turn runs. What survives a pause: the transcript, the session
 home and the work tree with uncommitted changes. What does not: running processes in the slot (dev servers,
-background shells, a build in flight); a session's first turn is told so, to commit and not rely on a background
+background shells, a build in flight); a session's first turn is told so, to commit and push before it stops or waits and not rely on a background
 process across a wait.
 `exec-pool send ID --at HH:MM|RFC3339 --prompt TEXT` puts a timer row instead (`send_timer`, migration 0014),
 due at that time (HH:MM the next one, local time); it changes no state, and `Store::reconcile`, which every runner runs

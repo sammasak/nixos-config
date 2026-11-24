@@ -45,7 +45,8 @@ the session is woken then, told the note. End your turn right after calling it. 
 review, a gate, the owner), this session pauses: after a while it parks and resumes on its next message, perhaps in \
 another slot on another host. What survives a pause: the transcript, the session home and the work tree with \
 uncommitted changes. What does not: running processes in the slot (dev servers, background shells, a build in \
-flight), so commit and push your work and do not rely on a background process across a wait. ";
+flight). Before you stop or wait, commit and push your work to your branch; do not rely on a background process \
+across a wait. ";
 
 /// The prefix of a session's first turn: [`PREFIX`] with [`SESSION_WAIT`] before its last sentence.
 fn session_prefix(task: &TaskSpec) -> Result<String, Error> {

@@ -220,6 +220,7 @@ fn a_session_turn_is_told_the_prefix_when_it_starts_and_its_input_alone_after() 
     assert!(
         SESSION_WAIT.contains("pool-wait")
             && SESSION_WAIT.contains("What does not: running processes")
+            && SESSION_WAIT.contains("Before you stop or wait, commit and push")
     );
     assert!(
         !argv(&t).unwrap().concat().contains("pool-wait"),
