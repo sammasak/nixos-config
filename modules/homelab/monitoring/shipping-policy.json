@@ -1,13 +1,17 @@
 {
   "alerts": {
-    "OpenIssuesGrowing": {
+    "OpenIssuesUntouched": {
       "days": {
-        "value": 3,
-        "tunedBy": "sum(shipping_issues_open{class=\"actionable\"})"
+        "value": 14,
+        "tunedBy": "sum(shipping_issues_untouched)"
+      },
+      "max": {
+        "value": 0,
+        "tunedBy": "sum(shipping_issues_untouched)"
       },
       "forMinutes": {
         "value": 30,
-        "tunedBy": "count_over_time(ALERTS{alertname=\"OpenIssuesGrowing\"}[1d])"
+        "tunedBy": "count_over_time(ALERTS{alertname=\"OpenIssuesUntouched\"}[1d])"
       }
     },
     "PrLeadTimeHigh": {

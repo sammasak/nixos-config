@@ -28,6 +28,7 @@ METRICS = {
     "shipping_issues_opened": "Issues opened in the window, all owner repos.",
     "shipping_issues_closed": "Issues closed in the window, all owner repos.",
     "shipping_issue_age_days": "Age of open actionable issues, by quantile.",
+    "shipping_issues_untouched": "Open actionable issues per repo with no update for the policy's days.",
     "shipping_prs_merged": "PRs merged in the window.",
     "shipping_pr_lead_time_hours": "Earliest author date of a PR's own commits (its open time without a token) to merge, PRs merged in the last 7 d, by quantile.",
     "shipping_pr_lead_time_fallbacks": "PRs merged in the last 7 d whose lead time fell back to their open time, by reason.",
@@ -140,7 +141,7 @@ def repo_of(item):
     return item["repository_url"].rsplit("/", 1)[1]
 
 
-def issues(gh, out, owner, parked, now):
+def issues(gh, out, owner, parked, untouched_days, now):
     repos, page = [], 1
     while page == 1 or len(repos) == 100 * (page - 1):
         path, extra = ("/user/repos", {"affiliation": "owner"}) if gh.token else (f"/users/{owner}/repos", {"type": "owner"})
@@ -158,6 +159,9 @@ def issues(gh, out, owner, parked, now):
             actionable.append(it)
     for (repo, cls), n in sorted(by.items()):
         out.add("shipping_issues_open", n, repo=repo, **{"class": cls})
+    idle = timedelta(days=untouched_days)
+    for repo in sorted({repo_of(it) for it in actionable}):
+        out.add("shipping_issues_untouched", sum(repo_of(it) == repo and now - ts(it["updated_at"]) > idle for it in actionable), repo=repo)
     for label in LABELS:
         out.add("shipping_issues_open_labelled", sum(label in {x["name"] for x in it["labels"]} for it in actionable), label=label)
     ages = [(now - ts(it["created_at"])).total_seconds() / 86400 for it in actionable]
@@ -534,7 +538,8 @@ def main(argv=None):
             return None
 
     alerts = policy["alerts"]
-    section("issues", lambda o: issues(gh, o, a.owner, set(policy["issues"]["parkedRepos"]["value"]), now))
+    section("issues", lambda o: issues(gh, o, a.owner, set(policy["issues"]["parkedRepos"]["value"]),
+                                       alerts["OpenIssuesUntouched"]["days"]["value"], now))
     state = os.path.dirname(a.out)
     merged = section("prs", lambda o: prs(gh, o, a.owner, a.deploy_repo, now, os.path.join(state, "lead-cache.json")))
     if merged is not None:
