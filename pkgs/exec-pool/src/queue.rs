@@ -1015,9 +1015,7 @@ impl Store {
             let mut changes = vec![change];
             let epoch = i64_of("epoch", epoch)?;
             insert_result(tx, attempt, epoch, &park.result)?;
-            if let Some(t) = &park.transcript {
-                put_transcript(tx, &task, epoch, t)?;
-            }
+            put_transcript(tx, &task, epoch, park.transcript.as_ref())?;
             let usage = park.result.usage;
             let tokens = |f: fn(&crate::task_result::Usage) -> u64| {
                 usage.as_ref().map(|u| i64_of("tokens", f(u))).transpose()
@@ -1646,13 +1644,16 @@ fn turn(
     }))
 }
 
-/// Replaces `task`'s transcript with `t`, the one its turn at `epoch` left.
+/// Replaces `task`'s transcript with `t`, the one its turn at `epoch` left; `None` keeps the one it has.
 fn put_transcript(
     tx: &mut Transaction<'_>,
     task: &str,
     epoch: i64,
-    t: &Transcript,
+    t: Option<&Transcript>,
 ) -> Result<(), QueueError> {
+    let Some(t) = t else {
+        return Ok(());
+    };
     if t.body.len() > TRANSCRIPT_BYTES {
         return Err(QueueError::Range("transcript"));
     }

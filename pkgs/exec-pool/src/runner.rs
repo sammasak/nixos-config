@@ -1015,7 +1015,7 @@ mod tests {
                 SESSION_HOME
             ]
         );
-        let mut later = m.clone();
+        let mut later = m;
         if let Some(s) = later.session.as_mut() {
             s.transcript = Some("-session-cur-work-crates-x".to_owned());
         }
