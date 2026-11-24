@@ -140,7 +140,10 @@ credential class `slot`) and assigns the task's id from its key, and it reads at
 which leaves out the prompt. So a submitter chooses no policy, forges no event and queues nothing a claim cannot
 decode. `submit` prints the task id; the idempotency key is `--key`, or else derived from the flags, so the same
 submission again returns the same task. `exec-pool-migrate` is ordered after `postgresql-setup.service`, which
-creates the role.
+creates the role. From lenovo, the coordinator's host, `exec-pool` is a wrapper
+(`sam.herdr.coordinatorWakeup.poolHost`, `modules/programs/cli/coordinator-wakeup.nix`) that runs acer's over ssh as
+the same user, each argument single-quoted and the prompt on stdin (`--prompt-file -`), so the database stays
+socket-only and lenovo holds no credential for it; skills `coordinator.poolCommand` names the wrapper.
 
 ## Phase gates (detail in #646)
 

@@ -84,6 +84,8 @@
     panes = [ "lenovo-21CB001PMX/wM:p1" ];
     # No wake session while the interactive Coordinator worked in the last 10 minutes (skills#66).
     interactiveQuietSeconds = 600;
+    # the queue and its CLI are on acer; this host's exec-pool runs it there over ssh
+    poolHost = "acer-swift";
   };
 
   # As the always-on control plane, lenovo sends every host with a fleet power window its wake.

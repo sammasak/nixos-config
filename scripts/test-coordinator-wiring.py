@@ -4,6 +4,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 import gate_probe
@@ -23,6 +24,34 @@ def check(condition, message):
     print(f"PASS: {message}")
 
 
+def pool_check(pool):
+    """lenovo's exec-pool runs acer's over ssh: a fake ssh records the command line, which acer's login shell (fish) and
+    bash must both split back into the caller's arguments, the prompt on stdin as --prompt-file -."""
+    fake = pathlib.Path(tempfile.mkdtemp())
+    (fake / "ssh").write_text("#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps({'argv': sys.argv[1:], 'stdin': sys.stdin.read()}))\nsys.exit(75)\n")
+    (fake / "ssh").chmod(0o755)
+    env = dict(os.environ, PATH=f"{fake}:{os.environ['PATH']}")
+    run = lambda *a: subprocess.run([pool, *a], env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    prompt = "it's a \"test\"\n$HOME `id` \\ ; (x) # y"
+    args = ["submit", "--agent", "claude", "--repo", "https://github.com/a/b", "--rev", "0" * 40, "--workdir", "a b/$c",
+            "--key", "coord:a/b#1@" + "0" * 40, "--prompt", prompt, "--model", "opus"]
+    r = run(*args)
+    seen = json.loads(r.stdout)
+    want = ["/run/current-system/sw/bin/exec-pool", *args[:11], "--prompt-file", "-", "--model", "opus"]
+    check(r.returncode == 75 and seen["argv"][:4] == ["-T", "-o", "BatchMode=yes", "acer-swift"] and seen["stdin"] == prompt,
+          f"exec-pool submit runs over ssh to acer in batch mode, exits as the remote did, the prompt byte for byte on stdin (got {r.returncode}, {seen})")
+    line = " ".join(seen["argv"][4:])
+    for shell in ("fish", "bash"):
+        split = subprocess.run([shell, "-c", "printf '%s\\0' " + line], capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
+        check(split == want, f"{shell} splits the remote command back into the arguments, --prompt as --prompt-file - (got {split})")
+    r = run("status", "cli-0123456789abcdef")
+    check(json.loads(r.stdout)["argv"][4:] == ["/run/current-system/sw/bin/exec-pool", "'status'", "'cli-0123456789abcdef'"],
+          "a read passes its id quoted")
+    for bad in ("a'b", "a\\b"):
+        r = run("status", bad)
+        check(r.returncode == 2 and r.stdout == "", f"an argument holding ' or \\ ({bad!r}) is refused before ssh")
+
+
 def main():
     P = gate_probe.section("coordinator-wiring")
     skills = pathlib.Path(P["skills"])
@@ -39,13 +68,21 @@ def main():
     check("options.coordinator.interactiveQuietSeconds = lib.mkOption {" in changed and "type = lib.types.ints.unsigned;" in changed.split("interactiveQuietSeconds", 1)[1][:200],
           "the pinned skills input declares coordinator.interactiveQuietSeconds (unsigned int, skills#66), the type lenovo's flag uses")
 
+    pool_module = (skills / "task-modules/pool.nix").read_text()
+    check("options.coordinator.poolCommand = lib.mkOption {" in pool_module and "type = lib.types.nullOr lib.types.str;" in pool_module,
+          "the pinned skills input declares coordinator.poolCommand (nullable string, skills#150), the type lenovo's flag uses")
+    pools = set(re.findall(r"--option coordinator\.poolCommand:string (/nix/store/[a-z0-9]+-exec-pool/bin/exec-pool)", P["script"] or ""))
+    check(len(pools) == 1, f"lenovo passes one exec-pool wrapper as coordinator.poolCommand (got {pools})")
+    pool = pools.pop()
+    pool_check(pool)
+
     lenovo, acer = set(P["files"]["lenovo"]), set(P["files"]["acer-swift"])
     check(COORDINATOR_FILES <= lenovo, "lenovo links the Claude and Codex coordinator adapters")
     # the same options for an interactive session: devenv.local.nix in the checkout, evaluated as Nix so a malformed value
     # fails here, not at the Coordinator's next act; nothing else is written into the checkout
     local_cfg = P["local"]
     check(local_cfg == {"coordinator": {"mayApprove": True, "approvalDecision": "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996",
-                                        "panes": "lenovo-21CB001PMX/wM:p1"}},
+                                        "panes": "lenovo-21CB001PMX/wM:p1", "poolCommand": pool}},
           f"lenovo's devenv.local.nix carries exactly the delegation, the decision comment and the Coordinator pane the wrappers pass (got {local_cfg})")
     check([f for f in lenovo if f.startswith("claude-code-skills/")] == ["claude-code-skills/devenv.local.nix"]
           and not any(f.startswith("claude-code-skills/") for f in acer),
@@ -97,7 +134,7 @@ def main():
     # the exact flags are the contract: the delegation, the decision it cites, the Coordinator's pane
     OPTS = ("--option coordinator.mayApprove:bool true --option coordinator.approvalDecision:string "
             "'https://github.com/sammasak/skills/issues/28#issuecomment-6629911996' --option coordinator.panes:string lenovo-21CB001PMX/wM:p1"
-            " --option coordinator.interactiveQuietSeconds:int 600")
+            " --option coordinator.interactiveQuietSeconds:int 600 --option coordinator.poolCommand:string " + pool)
     check('devenv tasks run coord:changed --input-json \'{"consume":true}\' ' + OPTS + " >" in script,
           "the timer's coord:changed carries the host's fixed skills options: delegated approval citing the owner's decision comment, the Coordinator's pane")
     check(commands(script).count("--option coordinator.interactiveQuietSeconds:int 600") == commands(script).count("--option coordinator.mayApprove:bool true"),
@@ -216,10 +253,10 @@ def main():
     check("coordinator-read coord:brief prints the Markdown brief" in script and "/.local/state/coordinator/brief/latest.json, readable with Read" in script,
           "the wake prompt tells the session that coordinator-read coord:brief prints the Markdown and where the JSON record is")
     behaviour_checks(pathlib.Path(wakeup, "bin/coordinator-wakeup"), pathlib.Path(wrapper_dirs[0], "coordinator-read"),
-                     pathlib.Path(act_dirs[0], "coordinator-act"), pathlib.Path(prompt_dirs[0], "coordinator-prompt"))
+                     pathlib.Path(act_dirs[0], "coordinator-act"), pathlib.Path(prompt_dirs[0], "coordinator-prompt"), pool)
 
 
-def behaviour_checks(script_path, read_path, act_path, prompt_path):
+def behaviour_checks(script_path, read_path, act_path, prompt_path, pool):
     """Run the built script against fakes: the lock fd must not reach children, a held lock must fail loudly,
     an empty change set must end before any session, and an unreadable credential must not start one;
     coordinator-read coord:brief must hand the session the Markdown brief alone; coordinator-act reaches devenv
@@ -322,7 +359,7 @@ def behaviour_checks(script_path, read_path, act_path, prompt_path):
         r = act("herdr:message", '{"handoff_id":"0123456789ab","confirm":"h/w:p1","authorized_by":{"issue_url":"https://github.com/o/r/issues/1","label":"approved"}}')
         opts_log = ("--option coordinator.mayApprove:bool true --option coordinator.approvalDecision:string "
                     "https://github.com/sammasak/skills/issues/28#issuecomment-6629911996 --option coordinator.panes:string lenovo-21CB001PMX/wM:p1"
-                    " --option coordinator.interactiveQuietSeconds:int 600")
+                    " --option coordinator.interactiveQuietSeconds:int 600 --option coordinator.poolCommand:string " + pool)
         check(r.returncode == 0 and "FD9_CLOSED" in r.stdout and devenv_log.read_text().endswith(
                   'devenv tasks run herdr:message --input-json {"handoff_id":"0123456789ab","confirm":"h/w:p1",'
                   '"authorized_by":{"issue_url":"https://github.com/o/r/issues/1","label":"approved"}} --show-output ' + opts_log + "\n"),
