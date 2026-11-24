@@ -76,9 +76,19 @@ in
     };
     github.repos = mkOption {
       type = types.listOf types.str;
-      default = [ ];
-      example = [ "sammasak/nixos-config" ];
-      description = "Each slot's egress.github.repos: its git push and fetch and its gh calls to these repositories are signed by the host's proxy, so the slot holds no GitHub credential; a repository whose flake or devenv has a private input needs that input listed too.";
+      # what tasks hand back to, and nixos-config's private flake and devenv inputs for its fetch
+      default = map (r: "sammasak/${r}") [
+        "nixos-config"
+        "skills"
+        "alert-bridge"
+        "factum"
+        "nix-audit"
+        "llm-gateway"
+        "rf-proto"
+        "herman"
+        "devenv-platform"
+      ];
+      description = "Each slot's egress.github.repos: its git push and fetch and its gh calls to these repositories are signed by the host's proxy, or on a host in sam.fleet.listeners.github-egress's `from` by that listener's host with its own list, so the slot holds no GitHub credential; a repository whose flake or devenv has a private input needs that input listed too.";
     };
     agents = mkOption {
       type = types.listOf (
@@ -133,6 +143,14 @@ in
 
     # over-reservation is the core's assertion (pool.memory), slots included
     assertions = [
+      {
+        assertion = lib.all (
+          n:
+          !lib.elem "id_ed25519" dev.instances.${n}.credentials
+          && dev.instances.${n}.egress.github.repos != [ ]
+        ) slotNames;
+        message = "sam.workers.executionPool: a slot reaches GitHub through the host's proxy (github.repos), never with the host user's SSH key (credentials).";
+      }
       {
         assertion = collisions == [ ];
         message = "sam.workers.executionPool: ${lib.concatStringsSep ", " collisions} is a pool slot's name, also declared in sam.workers.instances or retired.";

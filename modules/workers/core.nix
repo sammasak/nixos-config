@@ -300,6 +300,7 @@ let
         }
       '') (egressOf w)
     ) egressed
+    + cfg.egressSites
   );
 
   argv =
@@ -825,6 +826,11 @@ in
       type = types.listOf types.str;
       default = [ ];
       description = "Host paths the proxy may not read, besides stateDir.";
+    };
+    egressSites = mkOption {
+      type = types.lines;
+      default = "";
+      description = "Caddy sites the proxy also serves beside the instances' sockets, with their credentials; it runs only while an instance has an egress service.";
     };
     guestModules = mkOption {
       type = types.listOf types.deferredModule;

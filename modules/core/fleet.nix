@@ -370,6 +370,12 @@ in
         port = 5432;
         from = [ "msi-ms7758" ];
       };
+      # acer's GitHub sidecar (modules/workers/default.nix) for msi's pool slots, which hold no GitHub credential
+      github-egress = {
+        host = "acer-swift";
+        port = 4190;
+        from = [ "msi-ms7758" ];
+      };
       # Pi on lenovo and acer, and acer's gateway, call it directly
       ollama-msi = {
         host = "msi-ms7758";

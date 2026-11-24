@@ -124,13 +124,16 @@ fn xattrs(rsync: &str, root: &Path) -> bool {
 }
 
 /// A session tree as a turn leaves it on acer: a transcript, uncommitted work, a hard link, a Home Manager link (it
-/// dangles on the other host until the next attach relinks it), a key the agent copied in, a read-only git object.
+/// dangles on the other host until the next attach relinks it), a key the agent copied in, a gh and a Claude login, a
+/// read-only git object.
 fn parked(acer: &Sessions, (uid, gid): (u32, u32)) -> std::path::PathBuf {
     acer.create("t-1", (uid, gid)).unwrap();
     let tree = acer.tree("t-1");
     write(&tree.join("home/.claude/projects/w/u.jsonl"), b"transcript");
     write(&tree.join("work/repo/dirty.txt"), b"uncommitted");
     write(&tree.join("home/.ssh/id_ed25519"), b"a key");
+    write(&tree.join("home/.config/gh/hosts.yml"), b"a login");
+    write(&tree.join("home/.claude/.credentials.json"), b"a login");
     write(&tree.join("work/repo/.git/objects/ab/cd"), b"object");
     fs::hard_link(
         tree.join("work/repo/dirty.txt"),
@@ -216,8 +219,10 @@ fn a_parked_tree_goes_to_the_store_and_comes_back_on_another_host_as_it_was() {
     assert_eq!(mode(&got.join("work/repo/.git/objects/ab")), 0o555);
     assert_eq!(fs::metadata(got.join("work")).unwrap().uid(), uid);
     assert!(
-        !got.join("home/.ssh").exists(),
-        "a key never leaves its host"
+        !got.join("home/.ssh").exists()
+            && !got.join("home/.config/gh/hosts.yml").exists()
+            && !got.join("home/.claude/.credentials.json").exists(),
+        "a key or a login never leaves its host"
     );
 
     // parked on msi at a later turn: its tree replaces the store's copy, nothing of the old one left behind, a file

@@ -1,6 +1,6 @@
 # Execution pool credentials: sidecars, not binds
 
-Status: slice 1 proposed with this PR, for the owner to accept by merging. Issue 754, item 1: a session's home is
+Status: slice 1 merged (PR 757); slice 2 and the login net proposed with the next PR. Issue 754, item 1: a session's home is
 copied to the store on another host at every park, and only `home/.ssh/` is excluded, so any credential that is in a
 slot guest can end up in the store. The fix is structural: a slot guest holds no credential, and every call out goes
 through a host-side sidecar that holds the credential and adds it to the request. Background and the longer plan:
@@ -9,7 +9,7 @@ through a host-side sidecar that holds the credential and adds it to the request
 ## What a slot can read or use today
 
 From `modules/workers/{core,default,execution-pool}.nix`, `modules/homelab/exec-pool*.nix` and the hosts, before
-this PR. "Home" is the session home, `/session/cur/home`, which a park copies to the store.
+slice 1. "Home" is the session home, `/session/cur/home`, which a park copies to the store.
 
 | Credential | Where it lives | How a slot uses it | Can it reach the home | Kind |
 |---|---|---|---|---|
@@ -25,6 +25,11 @@ this PR. "Home" is the session home, `/session/cur/home`, which a park copies to
 | Environment sshd key (`/var/lib/workers/ssh_host_ed25519_key`) | bound read-only, root 0600 in the guest; slots are not `rootInGuest` | proves the guest to Herdr's ssh; no outward login | no (the slot user cannot read it) | bind, root only |
 | Home Manager files relinked into the home (`exec-pool-relink`, `cp -rsTH`) | store links | config only: base URLs and `held-by-the-host` placeholders | links only, no secret | file in home, no secret |
 | Agent state the agent writes (`.claude.json`, `.claude/`, `.pi/`, `.codex/`) | home | no login today: every agent is signed in through a placeholder | only if an agent runs a login (`claude login`, `gh auth login`), which writes a real token into the home | file in home, empty of secrets |
+
+`CLAUDE_CODE_MESSAGING_TOKEN`, seen in a slot's tool shells, is Claude Code's own: the `claude` process sets it for
+its child shells (it is not in its own environment, and no unit of ours sets it), beside `CLAUDE_CODE_MESSAGING_SOCKET`,
+to authenticate messages injected into that running session's local socket. It is no outward login and is written to
+no file.
 
 So the one credential a slot really holds is the owner's GitHub SSH key, on every acer and msi slot, and it is the
 widest: the whole account, every branch.
@@ -46,19 +51,31 @@ widest: the whole account, every branch.
    Home Manager files and its push URL is ssh. The proxy signs git smart HTTP for listed repositories with acer's gh
    token, refuses repository administration and any repository not listed. Chosen first: it removes the widest
    credential from two slots with no new code or tool (the GitHub site, its tests and its doc exist; no instance used it).
-2. **msi: the same.** msi has no GitHub token on the host, so it keeps the key until it has one: an owner decision, a
-   gh login for `lukas` on msi (then `sam.workers.ghHostsFile`) or a sops token. Then no slot gets `id_ed25519`, and
-   an assertion keeps it so.
-3. **Push only `pool/<task id>`.** Caddy cannot read the ref updates in a receive-pack body. GitHub-native first: a
-   ruleset on each listed repository's default branch (no deletion, no non-fast-forward, changes through a PR) is an
-   owner action. Per-task refs need a ref-aware hop, for example a host-side bare repository per slot whose
-   `pre-receive` hook admits `refs/heads/pool/*` and whose `post-receive` pushes upstream with the host's credential.
+2. **msi through acer's sidecar.** msi gets no GitHub token. Each msi slot's `github.sock` is a Caddy
+   `reverse_proxy` to `sam.fleet.listeners.github-egress` (acer, admitted from msi's address alone by the firewall and
+   by `remote_ip`), where acer's proxy serves the same GitHub site with its own slots' list, refusals and token
+   (`services.devEnvironments.egressSites`, one site). The repository list is `executionPool.github.repos`'s default,
+   so both hosts list the same. No slot on any host gets `id_ed25519`, and an assertion keeps it so. msi's slots then
+   depend on acer for GitHub, as they already do for the queue and the session store.
+3. **Push only `pool/<task id>`.** Caddy cannot read the ref updates in a receive-pack body. A ref-aware hop: a
+   host-side bare repository per slot whose `pre-receive` hook admits `refs/heads/pool/*` and whose `post-receive`
+   pushes upstream with the host's credential (stock git hooks). Rulesets on GitHub are later and not part of this
+   plan, as they change the GitHub account.
 4. **Short-lived tokens.** A GitHub App installation token minted on the host per task (one hour, listed repositories,
    contents write) in place of the owner's gh token in the sidecar (credentials-and-tenancy.md, phase 4).
 
-## Verification of slice 1, after the owner deploys acer
+## The login net
+
+A login run in a session (`gh auth login`, `claude login`, `codex login`, a `.netrc`) would write a real credential
+into the home. A park's push to the store leaves the known files on their host (`HELD_BACK` in
+`pkgs/exec-pool/src/sync.rs`, beside `home/.ssh/`): gh's `hosts.yml`, `.claude/.credentials.json`,
+`.codex/auth.json`, `.netrc`, `.git-credentials` and `.config/git/credentials`, `.config/nix/nix.conf`. This is a net,
+not the model: the model is that no slot needs a login, and a file the list does not name still travels.
+
+## Verification after a deploy
 
 In an acer slot: `test ! -e /var/lib/host-credentials/id_ed25519`; a pool task pushes `pool/<task id>` and the runner
 records it handed back; `nix flake metadata` in nixos-config fetches factum through the proxy;
-`journalctl -u dev-env-egress` on acer shows the `github-pool1` requests. A task on a repository not listed fails its
-push with 403: add the repository to the list.
+`journalctl -u dev-env-egress` on acer shows the `github-pool1` requests. On msi, the same from a slot, the requests in
+acer's log as `github-fleet`, and `curl -s -o /dev/null -w '%{http_code}' http://<acer>:<listener port>/` from any
+other host times out (firewall). A task on a repository not listed fails its push with 403: add it to the list.

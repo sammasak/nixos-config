@@ -110,7 +110,8 @@ in { failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertion
 """
 FLEET_CASES = [
     ("claude without the token secret", "{ sam.hostSecrets.enable = lib.mkForce false; sam.workers.instances.t = { }; }", "claude instance's calls are signed with the host's sops secret"),
-    ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile"),
+    # asus signs its own GitHub calls; msi forwards them to acer's sidecar (FORWARD)
+    ("github without a gh login", '{ sam.workers.instances.t.egress.github.repos = [ "o/r" ]; }', "signed with the token in sam.workers.ghHostsFile", "asus-b460m"),
     ("github keeping the ssh key", '{ sam.workers = { ghHostsFile = "/home/lukas/hosts.yml"; instances.t = { egress.github.repos = [ "o/r" ]; credentials = [ "id_ed25519" ]; }; }; }',
      "gets neither id_ed25519 nor gh-hosts.yml"),
     ("telemetry without nativeOtel", "{ sam.profile.nativeOtel = lib.mkForce false; sam.workers.instances.t.telemetry = true; }", "runs only with sam.profile.nativeOtel"),
@@ -119,12 +120,17 @@ FLEET_CASES = [
     ("a record stream named as a fleet host", '{ services.devEnvironments.prefix = lib.mkForce "black"; sam.workers.instances.pi = { }; }',
      "the record stream of black-pi would equal a fleet host's name"),
 ]
+def fleet_host(case):
+    return case[3] if len(case) > 3 else "msi-ms7758"
+
+
 USER_SECRET = ("the relay's secret readable by a user", '{ sops.secrets.native_otlp_auth.owner = "lukas"; }', "native_otlp_auth must be owned by root with mode 0400")
-# msi with two instances behind the GitHub proxy and one without: the proxy's Caddyfile is in the store every guest reads
+# asus (a host that signs its own GitHub calls) with two instances behind the GitHub proxy and one without: the proxy's
+# Caddyfile is in the store every guest reads
 GITHUB = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
-  c = (flake.nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: {
+  c = (flake.nixosConfigurations.asus-b460m.extendModules { modules = [ ({ lib, ... }: {
     sam.workers = {
       ghHostsFile = "/home/lukas/hosts.yml";
       instances = lib.mkForce { gh.egress.github.repos = [ "o/r.s" ]; gh2.egress.github.repos = [ "x/y" ]; plain = { }; };
@@ -402,6 +408,44 @@ def site_wrong(site, upstream, cases, to="http://127.0.0.1:1"):
         finally:
             proc.terminate()
             proc.wait(5)
+
+
+# msi's slots reach GitHub through acer's sidecar (sam.fleet.listeners.github-egress): msi's proxy forwards and holds no
+# token, acer's serves the listener with its own slots' list and refusals, to msi's address alone
+FORWARD = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  caddy = c: builtins.readFile (flake.inputs.nixpkgs.lib.last (flake.inputs.nixpkgs.lib.splitString " " c.systemd.services.dev-env-egress.serviceConfig.ExecStart));
+  msi = flake.nixosConfigurations.msi-ms7758.config;
+  acer = flake.nixosConfigurations.acer-swift.config;
+in {
+  listener = { inherit (msi.sam.fleet.listeners.github-egress) host port from url; };
+  msi = { caddy = caddy msi; creds = msi.systemd.services.dev-env-egress.serviceConfig.LoadCredential; paths = builtins.attrNames msi.systemd.paths; };
+  acer = { caddy = caddy acer; repos = acer.sam.workers.executionPool.github.repos; msiAddress = acer.sam.fleet.hosts.msi-ms7758.address; };
+}
+"""
+
+
+def check_github_forward():
+    out = run_eval(FORWARD % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    l, msi, acer = got.get("listener", {}), got.get("msi", {}), got.get("acer", {})
+    sites = {b.split("\n", 2)[1].strip(): b for b in msi.get("caddy", "").split("http:// {")[1:]}
+    slots = [sites.get(f"bind unix//run/dev-env-egress/pool{n}/github.sock", "") for n in (1, 2)]
+    check(l.get("host") == "acer-swift" and l.get("from") == ["msi-ms7758"]
+          and all(f"reverse_proxy {l.get('url')} {{" in s and "Authorization" not in s for s in slots)
+          and not any("gh-hosts" in c for c in msi.get("creds", [])) and "dev-env-egress-gh" not in msi.get("paths", []),
+          f"msi's slots forward GitHub to acer's {l.get('url')}, and msi's proxy loads no GitHub token ({slots}, {msi.get('creds')})")
+    site = next((b for b in acer.get("caddy", "").split("\nhttp://:")[1:] if b.startswith(f"{l.get('port')} {{")), "")
+    repos = "(?i:" + "|".join(r.replace(".", "\\.") for r in acer.get("repos", [])) + ")"
+    check(f"@outside not remote_ip {acer.get('msiAddress')}\n" in site and f"path_regexp ^/{repos}(\\.git)?/" in site and "/graphql" not in site,
+          f"acer serves :{l.get('port')} to msi's address alone, for its own slots' repositories, no GraphQL ({site[:300]!r})")
+    # the site as a socket's would be: its first two lines a site header and a bind, as site_wrong drops them
+    body = "http:// {\n  bind x\n" + site.split("\n", 1)[1] if site else ""
+    shut = site_wrong(body, r"https://(api\.)?github\.com", [("GET", "/sammasak/nixos-config/info/refs?service=git-receive-pack", False)])
+    opened = site_wrong(body.replace(f"remote_ip {acer.get('msiAddress')}", "remote_ip 127.0.0.1").replace(repos, "(?i:o/r\\.s)"),
+                        r"https://(api\.)?github\.com", GITHUB_CASES)
+    check(shut == [] and opened == [], f"acer's listener refuses any other address, and from msi's lets through what a slot's own site does ({'no caddy on PATH' if shut is None else shut + (opened or [])})")
 
 
 def check_github_proxy(site):
@@ -862,6 +906,7 @@ POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
     ("a slot's name declared by hand", "{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name declared in the core", "{ sam.workers.executionPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name retired", '{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
+    ("a slot with the push key", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "id_ed25519" ]; }; }', "never with the host user's SSH key"),
     ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
     ("codex without a codex login", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
     ("pi on a host without the Pi key", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
@@ -918,12 +963,12 @@ def check_pool_compat():
         got = {s: {k: v for k, v in d.items() if k in slot} for s, d in on.get("slots", {}).items()}
         check(on.get("failing") == [] and on.get("declared") == sorted(named + names) and on.get("agents") == named and got == {s: slot for s in names},
               f"slots = {n}: {names or 'no slot'} beside {named}, each agent none, no prompt, no credential, no telemetry, 2G reserved, no assertion failing ({on.get('error') or {k: on.get(k) for k in ('failing', 'declared')} | {'slots': got} })")
-        # a slot holds no egress socket and no bind of a host secret, credential or user runtime directory; the sshd
-        # host key every environment shares and public keys are the binds allowed under host-credentials
-        leaks = {s: [x for x in d["sockets"] if x.endswith("-egress")] + [b for b in d["binds"] if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+        # a slot holds the GitHub route alone and no bind of a host secret, credential or user runtime directory; the
+        # sshd host key every environment shares and public keys are the binds allowed under host-credentials
+        leaks = {s: [x for x in d["sockets"] if x.endswith("-egress") and x != "github-egress"] + [b for b in d["binds"] if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
                  for s, d in on.get("slots", {}).items()}
         check(len(leaks) == n and not any(leaks.values()) and on.get("shutdown") == absent.get("shutdown"),
-              f"slots = {n}: no slot has an egress socket or a host secret bind, and the shutdown notice still prompts only {named} ({leaks})")
+              f"slots = {n}: no slot has an egress socket but GitHub's or a host secret bind, and the shutdown notice still prompts only {named} ({leaks})")
         units = on.get("units", {})
         mine = {u for u in units if any(u.startswith(p + s) for s in names for p in ("container@", "dev-env-reset@", "worker-", "worker-herdr-"))}
         # the host's shared units list every instance, so a slot moves them; each named worker's own units stay
@@ -937,9 +982,9 @@ def check_pool_compat():
     s = on.get("slots", {}).get("pool1", {})
     extra = [x for x in s.get("sockets", []) if x.endswith("-egress")] + [b for b in s.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
     check(on.get("failing") == [] and s.get("agent") == "none" and s.get("credentials") == [] and s.get("headlessAgents") == ["claude"]
-          and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "/run/egress"]
+          and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "github-egress", "/run/egress"]
           and on.get("agents") == named and on.get("shutdown") == absent.get("shutdown"),
-          f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
+          f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic and github egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
     a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
     # acer's pool1 pushes through the GitHub proxy (check_runner) and holds nothing of the host's
@@ -1076,15 +1121,10 @@ def check_runner():
               f"{host}: container@pool1, @pool2 and a named worker's container keep the core's 600 s / 3 starts, which dev-env-reset@ clears before it starts the container; exec-pool-exec@ and each slot's dev-env-reset@ have no start limit, the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
     for host, p in got.get("push", {"acer-pool1": {}, "acer-pool2": {}, "msi-pool1": {}, "msi-pool2": {}}).items():
         links, git = p.get("links", []), p.get("git", {})
-        if host.startswith("acer"):
-            # an attempt's HOME has no Home Manager files: the system's git config sends its ssh push URL to the proxy
-            held = (p.get("credentials") == [] and p.get("binds") == [] and links == [] and "sammasak/nixos-config" in p.get("repos", [])
-                    and all(f'insteadOf = "{u}"' in (p.get("rewrite") or "") for u in ("https://github.com/", "git@github.com:", "ssh://git@github.com/")))
-            what = "holds no GitHub credential, pushes through the host's GitHub proxy for its listed repos, rewritten in the system's git config"
-        else:
-            held = (p.get("credentials") == ["id_ed25519"] and p.get("binds") == ["/var/lib/host-credentials/id_ed25519"] and p.get("repos") == []
-                    and len(links) == 1 and "/.ssh/id_ed25519 " in links[0])
-            what = "holds the host's push key alone, linked as ~/.ssh/id_ed25519, no gh login"
+        # an attempt's HOME has no Home Manager files: the system's git config sends its ssh push URL to the proxy
+        held = (p.get("credentials") == [] and p.get("binds") == [] and links == [] and "sammasak/nixos-config" in p.get("repos", [])
+                and all(f'insteadOf = "{u}"' in (p.get("rewrite") or "") for u in ("https://github.com/", "git@github.com:", "ssh://git@github.com/")))
+        what = "holds no GitHub credential, pushes through the GitHub proxy for its listed repos, rewritten in the system's git config"
         check(held and git.get("EXEC_POOL_GIT_NAME") == "sammasak" and git.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
               f"{host} {what}, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
 
@@ -1384,7 +1424,7 @@ def main():
         ("{ }", ACT), (RETIRED, ACT), (PAUSED_ONE, ACT), ("{ }", ALERTS), (ALERT_ON, ALERTS), (PAUSED, OWN), (PAUSED, PAUSED_FACTS),
         ("{ }", BOUNDED), (STUB_SSH, CTL), ("{ }", DECLARATION),
         *[(BLOCKED_CASE % v6, BLOCKED_WHAT) for v6, _ in BLOCKED], *[(case, OWN) for _, case, _ in ASSERTED]]])
-    prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(case) for _, case, _ in FLEET_CASES], fleet(USER_SECRET[1]),
+    prefetch([fleet("{ }"), fleet(FLEET_INSTANCE, FLEET_FACTS), *[fleet(c[1], host=fleet_host(c)) for c in FLEET_CASES], fleet(USER_SECRET[1]),
               NO_OTEL % {"root": json.dumps(ROOT)}, GITHUB % {"root": json.dumps(ROOT)}, TELEMETRY % {"root": json.dumps(ROOT)},
               SCRIPTS % {"root": json.dumps(ROOT)}, host_network_expr(),
               *[fleet(case) for _, case, _ in POOL_CASES]])
@@ -1509,7 +1549,7 @@ def main():
     check(host.get("env") is None and any(r.startswith("Bash(git push") for r in host.get("deny", [])),
           f"the host keeps its Bash deny rules and its own claude without the variable ({host})")
     check_no_verify()
-    for name, case, want, host in [(*c, "msi-ms7758") for c in FLEET_CASES] + [(*USER_SECRET, "msi-ms7758")]:
+    for name, case, want, host in [(*c[:3], fleet_host(c)) for c in FLEET_CASES] + [(*USER_SECRET, "msi-ms7758")]:
         out = run_eval(fleet(case, host=host))
         check(want in out.stdout + out.stderr, f"fleet {name}: rejected with \"{want}\" ({(out.stdout + out.stderr).strip()[-300:]})")
     out = run_eval(NO_OTEL % {"root": json.dumps(ROOT)})
@@ -1518,7 +1558,7 @@ def main():
           f"without nativeOtel an instance that sets nothing sends no telemetry and the host fails no assertion ({got or out.stderr.strip()[-600:]})")
     out = run_eval(GITHUB % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
-    check(got.get("failing") == [], f"msi-ms7758 with an egress.github instance and a gh login fails no assertion ({got.get('failing', out.stderr.strip()[-600:])})")
+    check(got.get("failing") == [], f"asus-b460m with an egress.github instance and a gh login fails no assertion ({got.get('failing', out.stderr.strip()[-600:])})")
     binds = got.get("binds", {})
     creds = {"/var/lib/host-credentials/id_ed25519", "/var/lib/host-credentials/gh-hosts.yml"}
     check(not creds & set(binds.get("gh", creds)) and "/run/egress" in binds.get("gh", []) and creds <= set(binds.get("plain", [])),
@@ -1540,6 +1580,7 @@ def main():
     check("bind unix//run/dev-env-egress/plain/github.sock" not in sites and "/graphql" not in caddy and "bind unix//run/dev-env-egress/gh2/github.sock" in sites,
           f"no GitHub site for an instance without repos, no GraphQL unless asked for ({sorted(sites)})")
     check_github_proxy(gh)
+    check_github_forward()
     check(got.get("config", "").startswith("/nix/store/") and "/run/secrets" not in caddy,
           f"the proxy's Caddyfile ({got.get('config')}) names no path under /run/secrets")
     out = run_eval(TELEMETRY % {"root": json.dumps(ROOT)})
