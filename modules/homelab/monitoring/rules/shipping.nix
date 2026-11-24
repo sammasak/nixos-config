@@ -41,6 +41,19 @@ let
     ) policy
   );
   setting = v: if builtins.isList v then toString (builtins.length v) else toString v;
+  quietHours =
+    let
+      d = policy.notify.quietUntilUtcHour.value - policy.notify.quietFromUtcHour.value;
+    in
+    if d < 0 then d + 24 else d;
+  newFailureHours =
+    let
+      h = a.RetroDueStepFailsRepeat.newFailureHours.value;
+    in
+    # muted shipping alerts are sent when the night ends only if still firing: a shorter window drops a night's failure
+    assert lib.assertMsg (h > quietHours + a.RetroDueStepFailsRepeat.forMinutes.value / 60.0)
+      "shipping-policy.json: RetroDueStepFailsRepeat.newFailureHours ${toString h} does not outlast the ${toString quietHours} h quiet hours";
+    h;
 in
 {
   groups = [
@@ -117,9 +130,13 @@ in
           { }
         )
         # one step, or one check inside the flake check, failing on 3 heads over a full sample: one bad change on two hosts
-        # makes 2, so 3 is a pattern; the flake check's own count covers only failures no inner check explains
+        # makes 2, so 3 is a pattern; the flake check's own count covers only failures no inner check explains. It
+        # clears newFailureHours after the unit's last failure, and fires again on the next; with no timestamp (an
+        # older collector) it fires on the count alone
         (alert "RetroDueStepFailsRepeat"
-          ''max by (step, check) (shipping_gate_step_failures{window="7d"}) >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}''
+          ''max by (step, check) (shipping_gate_step_failures{window="7d"}) >= ${toString a.RetroDueStepFailsRepeat.minFailures.value} unless on (step, check) (time() - max by (step, check) (shipping_gate_step_last_failure_timestamp_seconds) > ${
+            toString (newFailureHours * 3600)
+          }) and on () ${gateRuns} >= ${toString a.RetroDueStepFailsRepeat.lastRuns.value}''
           "Gate step {{ $labels.step }}{{ if $labels.check }}, check {{ $labels.check }},{{ end }} failed on {{ $value }} heads in 7 d: a retro is due (Shipping dashboard: failed gate steps; Platform health for the runs)."
           { }
         )

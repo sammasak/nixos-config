@@ -107,6 +107,10 @@
         "value": 20,
         "tunedBy": "sum(shipping_gate_runs_counted)"
       },
+      "newFailureHours": {
+        "value": 24,
+        "tunedBy": "(time() - max(shipping_gate_step_last_failure_timestamp_seconds)) / 3600"
+      },
       "forMinutes": {
         "value": 30,
         "tunedBy": "count_over_time(ALERTS{alertname=\"RetroDueStepFailsRepeat\"}[1d])"

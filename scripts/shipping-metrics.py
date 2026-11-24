@@ -41,6 +41,7 @@ METRICS = {
     "shipping_gate_runs_counted": "Push-mode gate runs behind the fail ratio, by host.",
     "shipping_gate_seconds": "Duration of the last push-mode gate runs, by host and quantile.",
     "shipping_gate_step_failures": "Distinct heads a push-gate step (or the flake check's inner check) failed on in the last 7 d, by step and check.",
+    "shipping_gate_step_last_failure_timestamp_seconds": "Unix time of the newest of those failures, by step and check.",
     "shipping_deploys": "Recorded deploys in the last 7 d, by result.",
     "shipping_deploy_rollbacks": "Deploys deploy-rs rolled back, in the window.",
     "shipping_deploy_lag_commits": "Commits on main the host's last good deploy does not have.",
@@ -323,9 +324,11 @@ def gates(loki, out, want):
         for q in (0.5, 0.9):
             if secs:
                 out.add("shipping_gate_seconds", quantile(secs, q), host=host, quantile=str(q))
-    fails = step_failures(loki_records(loki, '{job="platform",kind="gate-step"} |= "result=fail"', 7))
-    for (step, check), n in sorted(fails.items()):
+    records = loki_records(loki, '{job="platform",kind="gate-step"} |= "result=fail"', 7)
+    newest = step_last_failures(records)
+    for (step, check), n in sorted(step_failures(records).items()):
         out.add("shipping_gate_step_failures", n, step=step, check=check, window="7d")
+        out.add("shipping_gate_step_last_failure_timestamp_seconds", newest[step, check], step=step, check=check)
 
 
 def step_failures(records):
@@ -335,18 +338,33 @@ def step_failures(records):
     record only when no inner record failed on the same head (an evaluation error). A record with no head counts on
     its own. Heads compare on 7 hex digits: the step record says sha=<short>, a check record head=<full>. A head that
     is not hex (`none`, NIXOS_QA_HEAD's fallback outside git) is no head: two such records are not one unit."""
-    fails = [r for _, r in records if r.get("gate") == "nixos-qa" and r.get("result") == "fail"]
+    units = {}
+    for _, unit, h in step_failure_units(records):
+        units.setdefault(unit, set()).add(h)
+    return {unit: len(heads) for unit, heads in units.items()}
+
+
+def step_last_failures(records):
+    """{(step, check): unix time} of each unit's newest counted failure, so RetroDueStepFailsRepeat clears a day after
+    the last one instead of when the 7-d count drops."""
+    newest = {}
+    for t, unit, _ in step_failure_units(records):
+        newest[unit] = max(t, newest.get(unit, t))
+    return newest
+
+
+def step_failure_units(records):
+    """(time, (step, check), head) per failure step_failures counts."""
+    fails = [(t, r) for t, r in records if r.get("gate") == "nixos-qa" and r.get("result") == "fail"]
     def head(r):
         h = r.get("head") or r.get("sha") or ""
         return h[:7] if re.fullmatch(r"[0-9a-f]{7,64}", h) else ""
-    inner = {(r.get("step"), head(r)) for r in fails if r.get("check") and head(r)}
-    units = {}
-    for i, r in enumerate(fails):
+    inner = {(r.get("step"), head(r)) for _, r in fails if r.get("check") and head(r)}
+    for i, (t, r) in enumerate(fails):
         step, h, check = r.get("step", "?"), head(r), r.get("check", "")
         if not check and h and (step, h) in inner:
             continue
-        units.setdefault((step, check), set()).add(h or f"no-head-{i}")
-    return {unit: len(heads) for unit, heads in units.items()}
+        yield t, (step, check), h or f"no-head-{i}"
 
 
 def node_of(host, hostnames):
