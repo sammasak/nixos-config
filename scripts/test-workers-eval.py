@@ -849,7 +849,7 @@ POOL_ON = "{ sam.workers.executionPool = { enable = true; slots = %d; }; }"
 
 
 def without_msi_pool(case):
-    """`case` on msi without its own pool slot and runner (hosts/msi-ms7758/exec-pool.nix): the host these cases
+    """`case` on msi without its own pool slots and runners (hosts/msi-ms7758/exec-pool.nix): the host these cases
     were written against, so each states its whole pool."""
     return ('{ disabledModules = [ "${(builtins.getFlake (toString %s)).outPath}/hosts/msi-ms7758/exec-pool.nix" ]; '
             'imports = [ (%s) ]; }' % (json.dumps(ROOT), case))
@@ -1026,6 +1026,7 @@ in {
   reset = acer.systemd.services."dev-env-reset@".script;
   polkit = acer.security.polkit.extraConfig;
   slot2 = builtins.fromJSON acer.systemd.services.exec-pool-runner-pool2.environment.EXEC_POOL_SLOT;
+  msiSlots = map (n: (builtins.fromJSON msi.systemd.services."exec-pool-runner-${n}".environment.EXEC_POOL_SLOT).agents) [ "pool1" "pool2" ];
   push = { acer-pool1 = push acer "pool1"; acer-pool2 = push acer "pool2"; msi-pool1 = push msi "pool1"; msi-pool2 = push msi "pool2"; };
 }
 """
@@ -1039,8 +1040,9 @@ def check_runner():
           and got.get("msi") == ["exec-pool-exec@", "exec-pool-runner-pool1", "exec-pool-runner-pool2"] and got.get("user") == "exec_pool"
           and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude", "pi"]
           and got.get("slot2", {}).get("id") == "pool2" and got.get("slot2", {}).get("agents") == ["none", "claude", "pi"]
+          and got.get("msiSlots") == [["none", "claude"], ["none", "claude"]]
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
-          f"acer runs exec-pool-runner-pool1 and -pool2 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same two ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'exec')} or out.stderr.strip()[-300:]})")
+          f"acer runs exec-pool-runner-pool1 and -pool2 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same for its two slots, each claiming for none and claude ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'slot2', 'msiSlots', 'exec')} or out.stderr.strip()[-300:]})")
     polkit = got.get("polkit", "")
     check('var resets = ["dev-env-reset@pool1.service","dev-env-reset@pool2.service"];' in polkit
           and '(action.lookup("verb") == "reset-failed" && resets.indexOf(action.lookup("unit")) >= 0)' in polkit,

@@ -9,7 +9,7 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 |---|---|---|
 | Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
 | Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`) |
-| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer for `pool1` |
+| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer and msi, one per slot |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
 | Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
 | Power windows and placement facts | `sam.fleet.hosts.*` | `modules/core/fleet.nix` |

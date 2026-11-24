@@ -49,7 +49,6 @@
     # A task slot: reset with dev-env-reset@a1 between tasks, no deploy.
     instances.a1 = { };
     retired = [ "herman" ];
-    # the pool's slots, each run by the queue's runner (modules/homelab/exec-pool-runner.nix)
     executionPool = {
       enable = true;
       slots = 2;

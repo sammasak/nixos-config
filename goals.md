@@ -38,7 +38,7 @@ Decided by the owner, 24 Nov: the pool is re-architected around sessions that pa
 pause or resume command. A task is a session, a lease is a turn, and every turn ends in a park to waiting. A wake is a
 row in the session's inbox (`exec-pool send`, or a due timer). State lives outside the slot under the workers state
 dir, is docked into a slot at `/session` for one turn, and is pushed to acer at every park so any host can continue
-it. The named workers (a1, m1, m2, herman) become pool slots. Brief 656 (explicit pause and resume) is replaced by 1c.
+it. The named workers (a1, m1, m2; herman and t1 already retired for pool2) become pool slots. Brief 656 (explicit pause and resume) is replaced by 1c.
 
 Current batch: slices 1a, 1b and 1c, then one deploy of acer and msi; lenovo, asus and black-pi follow.
 
@@ -52,7 +52,7 @@ Waiting, in pick-up order:
 | 4 | Sessions | msi powers off with sessions on it | drain before msi power-off |
 | 5 | Sessions | the coordinator cannot drive a session | skill `pool:start`, `send`, `wait` |
 | 6 | Sessions | no logs, priority or cleanup per session | logs, priority, housekeeping |
-| 7 | Sessions | named workers sit outside the pool | a1, m1, m2 and herman become slots |
+| 7 | Sessions | named workers sit outside the pool | a1, m1, m2 become slots (herman and t1 retired for pool2) |
 | 8 | Sessions | a running turn cannot be displaced or watched | preemption and attach |
 | 9 | Pool | any submitter reads every task's output | restrict to own tasks when a second submitter appears |
 | 10 | Gates | flake check took 1263 s after #683; msi checkouts still carried the old full push hook | read the per-step times of the 15:20 scheduled gate |

@@ -64,8 +64,8 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   cannot be saved: change the JSON.
 - Agent harnesses, "On versus off": the table gives each host/worker's Shunt and window; compare per Bash call or
   main-thread request, never raw totals. "Shunt helps": on workers spill and redirect and send fewer context tokens
-  per request than off ones, compactions per request not rising. "The 300K window helps": herman compacts less per
-  request than a default worker with the same Shunt. Today no worker sets the window and acer's host sends no Claude
+  per request than off ones, compactions per request not rising. "The 300K window helps": a worker with a 300K window
+  compacts less per request than a default one with the same Shunt. Today no worker sets the window and acer's host sends no Claude
   events, so neither claim isolates until two workers differ in one setting.
   A guest's token and cost series carry `worker` (the relay's stamp), so tokens per session split by worker too.
 
