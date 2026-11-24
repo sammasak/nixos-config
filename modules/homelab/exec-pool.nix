@@ -47,6 +47,9 @@ in
     ./monitoring/node-exporter.nix
     ./backup-metrics.nix
     ./exec-pool-runner.nix
+    {
+      options.homelab.execPool.remoteRunners = lib.mkEnableOption "the exec_pool_runner role for the sam.fleet exec-pool-db listener's hosts, over TCP by scram (postgresql.nix); off, Postgres keeps no TCP listener";
+    }
   ];
 
   users.users.exec_pool = {
@@ -69,6 +72,12 @@ in
   homelab.postgresql.clients.exec_pool_submit = {
     database = "exec_pool";
     users = [ "lukas" ];
+  };
+  homelab.postgresql.remoteClients = lib.mkIf config.homelab.execPool.remoteRunners {
+    exec_pool_runner = {
+      database = "exec_pool";
+      listener = "exec-pool-db";
+    };
   };
 
   systemd.services.exec-pool-migrate = lib.recursiveUpdate unit {

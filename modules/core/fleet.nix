@@ -363,6 +363,13 @@ in
         port = 12346;
         from = [ "black-pi" ];
       };
+      # the execution pool queue's PostgreSQL, for msi's runner (homelab.execPool.remoteRunners); nothing listens
+      # until that is enabled, and its role logs in only by scram
+      exec-pool-db = {
+        host = "acer-swift";
+        port = 5432;
+        from = [ "msi-ms7758" ];
+      };
       # Pi on lenovo and acer, and acer's gateway, call it directly
       ollama-msi = {
         host = "msi-ms7758";
