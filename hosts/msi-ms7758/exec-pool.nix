@@ -7,6 +7,8 @@
     enable = true;
     slots = 1;
     agents = [ "claude" ];
+    # the key m1 and m2 push with: a task hands its code back on its own branch, pool/<task id>
+    credentials = [ "id_ed25519" ];
   };
   homelab.execPool.runner = {
     enable = true;

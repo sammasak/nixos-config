@@ -235,12 +235,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (7, 6)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (8, 7)",
             &[],
         )
         .unwrap();
@@ -248,17 +248,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (8)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (9)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(8))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(9))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 8 WHERE version = 8",
+            "UPDATE schema_migrations SET floor = 9 WHERE version = 9",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(8))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(8))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(9))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(9))));
 }
 
 #[test]
@@ -409,7 +409,9 @@ fn the_runner_claims_and_settles_and_writes_nothing_else() {
         .unwrap();
     assert_eq!(status(&pg, &a).0, "succeeded");
     let out = |exit: i32, output: &str| TaskResult::new(None, Some(exit), output);
-    assert!(runner.record_result(&a, 1, &out(0, "done")).unwrap());
+    let mut pushed = out(0, "done");
+    pushed.branch = Some("pool/t-1".to_owned());
+    assert!(runner.record_result(&a, 1, &pushed).unwrap());
     assert!(!runner.record_result(&a, 1, &out(0, "again")).unwrap());
     runner.claim(&slot("s1"), 60).unwrap().unwrap();
     overdue(&pg, &b);
@@ -854,7 +856,8 @@ fn a_settled_attempt_records_its_result_for_the_submitter() {
     );
     // a re-leased attempt shows no earlier epoch's result
     assert!(s.result(&a).unwrap().unwrap()["result"].is_null());
-    let done = TaskResult::new(Some(exec_pool::Outcome::Succeeded), Some(0), "opened PR #9");
+    let mut done = TaskResult::new(Some(exec_pool::Outcome::Succeeded), Some(0), "opened PR #9");
+    done.branch = Some("pool/t-1".to_owned());
     assert!(s.record_result(&a, 2, &done).unwrap());
 
     let submitter = pg
@@ -870,6 +873,7 @@ fn a_settled_attempt_records_its_result_for_the_submitter() {
     assert_eq!(shown["result"]["outcome"], "succeeded");
     assert_eq!(shown["result"]["exit_code"], 0);
     assert_eq!(shown["result"]["output"], "opened PR #9");
+    assert_eq!(shown["result"]["branch"], "pool/t-1");
     assert!(!shown.to_string().contains(ARGV_MARKER), "{shown}");
     let e = Client::connect(&submitter, NoTls)
         .unwrap()

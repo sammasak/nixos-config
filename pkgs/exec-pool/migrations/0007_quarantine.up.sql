@@ -17,4 +17,4 @@ CREATE TABLE quarantined_slots (
 GRANT SELECT, INSERT, UPDATE, DELETE ON quarantined_slots TO exec_pool_runner;
 
 -- additive: the previous binary neither reads the floor nor touches the table
-INSERT INTO schema_migrations (version, floor) VALUES (6, 5);
+INSERT INTO schema_migrations (version, floor) VALUES (7, 6);

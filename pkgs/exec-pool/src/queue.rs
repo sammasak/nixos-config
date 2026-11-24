@@ -22,22 +22,23 @@ use crate::{
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// Each migration, ascending, by the version it records; `migrate` applies every one the database has not recorded.
-/// From 6 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
+/// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 6] = [
+const STEPS: [(i32, &str); 7] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
     (4, include_str!("../migrations/0004_runner.up.sql")),
     (5, include_str!("../migrations/0005_cancel.up.sql")),
-    (6, include_str!("../migrations/0006_quarantine.up.sql")),
+    (6, include_str!("../migrations/0006_branch.up.sql")),
+    (7, include_str!("../migrations/0007_quarantine.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
 const DOWN_CANCEL: &str = include_str!("../migrations/0005_cancel.down.sql");
-const DOWN_QUARANTINE: &str = include_str!("../migrations/0006_quarantine.down.sql");
-const VERSION: i32 = 6;
+const DOWN_QUARANTINE: &str = include_str!("../migrations/0007_quarantine.down.sql");
+const VERSION: i32 = 7;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -511,7 +512,7 @@ impl Store {
             // two first migrations at once would both see no schema
             tx.execute("SELECT pg_advisory_xact_lock(651)", &[])?;
             let done = Self::version(tx)?.unwrap_or(0);
-            // ahead of VERSION, the database has 0006's floor column
+            // ahead of VERSION, the database has 0007's floor column
             if done > VERSION
                 && tx
                     .query_one(
@@ -847,11 +848,20 @@ impl Store {
                 )));
             }
             let n = tx.execute(
-                "INSERT INTO results (attempt_id, lease_epoch, outcome, exit_code, output) VALUES ($1, $2, $3, $4, $5) \
+                "INSERT INTO results (attempt_id, lease_epoch, outcome, exit_code, output, branch) \
+                 VALUES ($1, $2, $3, $4, $5, $6) \
                  ON CONFLICT (attempt_id) DO UPDATE SET lease_epoch = EXCLUDED.lease_epoch, outcome = EXCLUDED.outcome, \
-                 exit_code = EXCLUDED.exit_code, output = EXCLUDED.output, recorded_at = now() \
+                 exit_code = EXCLUDED.exit_code, output = EXCLUDED.output, branch = EXCLUDED.branch, \
+                 recorded_at = now() \
                  WHERE results.lease_epoch < EXCLUDED.lease_epoch",
-                &[&attempt, &epoch, &outcome, &result.exit_code, &result.output()],
+                &[
+                    &attempt,
+                    &epoch,
+                    &outcome,
+                    &result.exit_code,
+                    &result.output(),
+                    &result.branch,
+                ],
             )?;
             Ok(n == 1)
         })
@@ -898,7 +908,7 @@ impl Store {
                 &format!(
                     "SELECT {SUMMARY} || jsonb_build_object('result', CASE WHEN r.attempt_id IS NOT NULL THEN \
                      jsonb_build_object('lease_epoch', r.lease_epoch, 'outcome', r.outcome, \
-                     'exit_code', r.exit_code, 'output', r.output, 'recorded_at', r.recorded_at) END) \
+                     'exit_code', r.exit_code, 'output', r.output, 'branch', r.branch, 'recorded_at', r.recorded_at) END) \
                      FROM task_summaries t JOIN attempts a ON a.task_id = t.id \
                      LEFT JOIN results r ON r.attempt_id = a.id AND r.lease_epoch = a.lease_epoch WHERE t.id = $1 OR a.id = $1"
                 ),
