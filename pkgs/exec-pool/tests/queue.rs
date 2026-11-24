@@ -1295,6 +1295,53 @@ fn cli(pg: &Pg, args: &[&str], stdin: &str) -> (Option<i32>, String) {
 }
 
 #[test]
+fn the_submitter_cli_cancels_its_task_and_wait_returns_on_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let theirs = submit(&mut owner, &task("t-1", 1));
+    let submitter = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
+            .args(args)
+            .env(
+                "EXEC_POOL_DB",
+                pg.conninfo()
+                    .replace("user=exec_pool ", "user=exec_pool_submit "),
+            )
+            .stderr(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8(out.stdout).unwrap())
+    };
+    let (code, id) = submitter(&[
+        "submit",
+        "--agent",
+        "claude",
+        "--repo",
+        "https://example.org/r.git",
+        "--rev",
+        "abc",
+        "--workdir",
+        "w",
+        "--prompt",
+        "p",
+    ]);
+    assert_eq!(code, Some(0));
+    let id = id.trim();
+    let (code, out) = submitter(&["cancel", id]);
+    assert_eq!(code, Some(0));
+    let shown: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        shown,
+        json!({ "attempt": format!("{id}.a"), "status": "cancelled" })
+    );
+    let (code, out) = submitter(&["wait", id, "--timeout", "5"]);
+    assert_eq!(code, Some(0), "wait returns on a cancelled task");
+    assert!(out.contains(r#""status":"cancelled""#), "{out}");
+    assert_eq!(submitter(&["cancel", &theirs]).0, Some(1), "not its own");
+    assert_eq!(submitter(&["cancel"]).0, Some(2));
+}
+
+#[test]
 fn the_cli_logs_one_line_per_change_and_exits_75_without_a_database() {
     let mut pg = Pg::new();
     assert_eq!(cli(&pg, &["migrate"], "").0, Some(0));
