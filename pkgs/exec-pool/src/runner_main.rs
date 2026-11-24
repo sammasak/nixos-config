@@ -1210,7 +1210,8 @@ impl Herdr {
         }))
     }
 
-    /// One call's JSON answer; one that does not end within `wait` and [`HERDR_CALL`] is killed.
+    /// One call's JSON answer, `Null` for a command that prints nothing on success (`pane run`, `pane send-keys`);
+    /// one that does not end within `wait` and [`HERDR_CALL`] is killed.
     fn call(&self, args: &[&str], wait: Duration) -> Result<Value, String> {
         let what = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
         let (cmd, rest) = self.argv.split_first().ok_or("no herdr")?;
@@ -1250,6 +1251,9 @@ impl Herdr {
         if !status?.success() {
             return Err(format!("herdr {what}: {}", tail(&err).trim()));
         }
+        if out.trim_ascii().is_empty() {
+            return Ok(Value::Null);
+        }
         serde_json::from_slice(&out).map_err(|e| format!("herdr {what}: {e}"))
     }
 
@@ -1280,24 +1284,41 @@ impl Herdr {
             })
             .filter_map(|w| w.get("workspace_id").and_then(Value::as_str));
         for id in ids {
-            let _ = self.call(&["workspace", "close", id], Duration::ZERO);
+            self.close(id);
         }
     }
 
-    /// A new workspace labelled `label` whose pane attaches to the turn's agent; its pane id.
-    fn open(&self, label: &str) -> Result<String, String> {
+    /// A new workspace labelled `label` whose pane attaches to the turn's agent: its id and its pane's. One whose pane
+    /// could not attach is closed again.
+    fn open(&self, label: &str) -> Result<(String, String), String> {
         self.close_slots();
         let created = self.call(
             &["workspace", "create", "--label", label, "--no-focus"],
             Duration::ZERO,
         )?;
-        let pane = created
-            .pointer("/result/root_pane/pane_id")
-            .and_then(Value::as_str)
-            .ok_or("herdr workspace create named no pane")?
-            .to_owned();
-        self.call(&["pane", "run", &pane, &self.attach], Duration::ZERO)?;
-        Ok(pane)
+        let id = |at: &str| {
+            created
+                .pointer(at)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        let (Some(workspace), Some(pane)) = (
+            id("/result/workspace/workspace_id"),
+            id("/result/root_pane/pane_id"),
+        ) else {
+            return Err(format!(
+                "herdr workspace create named no workspace and pane: {created}"
+            ));
+        };
+        if let Err(e) = self.call(&["pane", "run", &pane, &self.attach], Duration::ZERO) {
+            self.close(&workspace);
+            return Err(e);
+        }
+        Ok((workspace, pane))
+    }
+
+    fn close(&self, workspace: &str) {
+        let _ = self.call(&["workspace", "close", workspace], Duration::ZERO);
     }
 
     /// What Herdr sees of the agent in `pane`; `None`: no agent there.
@@ -1371,6 +1392,8 @@ struct PaneTurn<'a> {
     idle: bool,
     /// The agent was closed idle, its turn ended.
     ended: bool,
+    /// Every workspace the turn opened, closed by id once it ends whatever its label shows by then.
+    opened: Vec<String>,
 }
 
 impl<'a> PaneTurn<'a> {
@@ -1400,6 +1423,7 @@ impl<'a> PaneTurn<'a> {
             upto: m.session.as_ref().map_or(0, |s| s.upto),
             idle: false,
             ended: false,
+            opened: Vec::new(),
         }
     }
 
@@ -1425,7 +1449,10 @@ impl<'a> PaneTurn<'a> {
                     .is_ok()
                 {
                     match self.herdr.open(&self.label) {
-                        Ok(p) => self.phase = Phase::Detect(p, Instant::now()),
+                        Ok((w, p)) => {
+                            self.opened.push(w);
+                            self.phase = Phase::Detect(p, Instant::now());
+                        }
                         Err(e) => return fail(&e),
                     }
                 } else if self.started.elapsed() > AGENT_START {
@@ -1906,6 +1933,9 @@ impl<'a> Dock<'a> {
         guest.steps(vec![run], bounds, (out, err), result, &mut || {
             pane.poll(&note)
         });
+        for w in &pane.opened {
+            herdr.close(w);
+        }
         herdr.close_slots();
         if pane.idle && result.drained && !result.timed_out {
             // drained in its pause, the agent had ended its turn: nothing of it to continue
@@ -2279,5 +2309,81 @@ fn main() -> ExitCode {
             eprintln!("exec-pool-runner: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A herdr that answers as Herdr 0.9.5 does: one JSON object for `workspace` and `agent list`, nothing at all
+    /// for `pane run` and `pane send-keys`, an error as JSON on stderr with exit 1; each call's argv logged.
+    fn fake(name: &str, pane_run_fails: bool) -> (Herdr, PathBuf) {
+        let log =
+            std::env::temp_dir().join(format!("exec-pool-herdr-{name}-{}", std::process::id()));
+        let _ = fs::remove_file(&log);
+        let fail = if pane_run_fails {
+            r#"printf '%s' '{"error":{"code":"pane_not_found","message":"pane w1:p1 not found"},"id":"cli:pane:run"}' >&2; exit 1"#
+        } else {
+            ":"
+        };
+        let script = format!(
+            r#"printf '%s\n' "$*" >> '{}'
+case "$1 $2" in
+"workspace create") printf '%s' '{{"id":"cli:workspace:create","result":{{"root_pane":{{"pane_id":"w1:p1","workspace_id":"w1"}},"type":"workspace_created","workspace":{{"label":"pool9 k","workspace_id":"w1"}}}}}}' ;;
+"workspace list") printf '%s' '{{"id":"cli:workspace:list","result":{{"type":"workspace_list","workspaces":[{{"label":"pool9 k","workspace_id":"w7"}},{{"label":"pool10 k","workspace_id":"w8"}}]}}}}' ;;
+"workspace close") printf '%s' '{{"id":"cli:workspace:close","result":{{"type":"ok"}}}}' ;;
+"agent list") printf '%s' '{{"id":"cli:agent:list","result":{{"agents":[],"type":"agent_list"}}}}' ;;
+"pane run") {fail} ;;
+esac"#,
+            log.display()
+        );
+        let herdr = Herdr {
+            argv: vec!["/bin/sh".into(), "-c".into(), script, "herdr".into()],
+            attach: "/run/current-system/sw/bin/pool-pool9 turn".to_owned(),
+            slot: "pool9".to_owned(),
+        };
+        (herdr, log)
+    }
+
+    fn calls(log: &Path) -> Vec<String> {
+        fs::read_to_string(log)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn a_pane_run_that_prints_nothing_opens_the_pane() {
+        let (herdr, log) = fake("open", false);
+        assert_eq!(
+            herdr.open("pool9 k").unwrap(),
+            ("w1".to_owned(), "w1:p1".to_owned())
+        );
+        assert_eq!(
+            herdr.call(&["pane", "send-keys", "w1:p1", "ctrl+c"], Duration::ZERO),
+            Ok(Value::Null)
+        );
+        assert_eq!(herdr.seen("w1:p1"), Ok(None));
+        assert_eq!(
+            calls(&log),
+            [
+                "workspace list",
+                "workspace close w7",
+                "workspace create --label pool9 k --no-focus",
+                "pane run w1:p1 /run/current-system/sw/bin/pool-pool9 turn",
+                "pane send-keys w1:p1 ctrl+c",
+                "agent list",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_workspace_whose_pane_could_not_attach_is_closed_again() {
+        let (herdr, log) = fake("fail", true);
+        let e = herdr.open("pool9 k").unwrap_err();
+        assert!(e.contains("pane_not_found"), "{e}");
+        assert_eq!(calls(&log).last().unwrap(), "workspace close w1");
     }
 }

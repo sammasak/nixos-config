@@ -3059,3 +3059,38 @@ fn the_submitter_sets_a_priority_once_and_within_its_bound() {
     let (session, _) = s.start_session(&other, -100).unwrap();
     assert_eq!(priority(&session), -100);
 }
+
+#[test]
+fn a_session_whose_pane_or_prompt_keeps_failing_parks_and_a_send_wakes_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    // max_attempts is 1: a failed turn that went back to the queue would end the session `failed` at once
+    for (n, step) in exec_pool::runner::PANE_STEPS
+        .iter()
+        .cycle()
+        .take(4)
+        .enumerate()
+    {
+        let (a, epoch, turn) = started(&mut owner);
+        let result: exec_pool::runner::ExecResult = serde_json::from_value(json!({
+            "schema_version": 1, "attempt_id": a, "lease_epoch": epoch, "stage": "prepare",
+            "exit_code": 1, "timed_out": false, "cancelled": false, "failed_step": step,
+            "container_active": true, "stdout_tail": "", "stderr_tail": "", "prepare_ms": 5000, "run_ms": 0
+        }))
+        .unwrap();
+        let to = exec_pool::runner::decide_turn(&a, epoch, Some(&result), "");
+        assert_eq!(
+            to,
+            exec_pool::runner::TurnSettle::Park(ParkReason::TurnError)
+        );
+        owner
+            .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
+            .unwrap();
+        assert_eq!(status(&pg, &a).0, "waiting", "turn {n}, failed at {step}");
+        assert_eq!(
+            s.send(&id, &format!("try {n}")).unwrap(),
+            (a.clone(), Status::Queued)
+        );
+    }
+}

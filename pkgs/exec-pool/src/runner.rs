@@ -363,6 +363,10 @@ pub fn session_checkpoint(task_id: &str, host: &str, epoch: u64, stored: bool) -
     }
 }
 
+/// The failed steps of a session turn's pane in the runner's result: no Herdr, no turn to run, or a pane or prompt
+/// that never reached the agent.
+pub const PANE_STEPS: [&str; 3] = ["herdr", "turn", "prompt"];
+
 /// Where a session turn goes: parked to wait for its next message, or settled as a one-shot run would be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnSettle {
@@ -373,7 +377,9 @@ pub enum TurnSettle {
 /// Where the session turn `attempt` at `epoch` goes after its run.
 ///
 /// No result (or someone else's), a guest that went away, or a tree it could not find, is `needs_review`, its tree
-/// left where it is; a cancel is `cancelled`; a turn that never reached the agent goes back to `queued`. Every end of the agent's
+/// left where it is; a cancel is `cancelled`; a turn that never reached the agent goes back to `queued`, except one
+/// whose pane or prompt failed ([`PANE_STEPS`]), which parks as `turn_error`: retried, it fails the same way until the
+/// session's attempts run out and it ends `failed` with its tree's uncommitted work. Every end of the agent's
 /// call parks the session: `turn_timeout` for a call stopped at the time limit, `turn_end` for Claude's verdict of
 /// success, `turn_error` otherwise. A failed turn never fails the session.
 #[must_use]
@@ -393,11 +399,16 @@ pub fn decide_turn(
     }
     if r.stage == Stage::Prepare {
         // before its agent ran, a drained turn's tree was neither changed nor pushed: it runs again where it may
-        return TurnSettle::Settle(if r.drained {
-            Settle::Drained
-        } else {
-            Settle::Queued
-        });
+        if r.drained {
+            return TurnSettle::Settle(Settle::Drained);
+        }
+        if r.failed_step
+            .as_deref()
+            .is_some_and(|s| PANE_STEPS.contains(&s))
+        {
+            return TurnSettle::Park(ParkReason::TurnError);
+        }
+        return TurnSettle::Settle(Settle::Queued);
     }
     if !r.container_active {
         return TurnSettle::Settle(Settle::NeedsReview);
@@ -1183,6 +1194,17 @@ mod tests {
             turn(Some(&result(Stage::Prepare, Some(1))), ""),
             TurnSettle::Settle(Settle::Queued)
         );
+        for step in PANE_STEPS {
+            let failed = ExecResult {
+                failed_step: Some(step.to_owned()),
+                ..result(Stage::Prepare, Some(1))
+            };
+            assert_eq!(
+                turn(Some(&failed), ""),
+                TurnSettle::Park(ParkReason::TurnError),
+                "a failed {step} step parks the session, never spends its attempts"
+            );
+        }
         let cancelled = ExecResult {
             cancelled: true,
             ..ok
