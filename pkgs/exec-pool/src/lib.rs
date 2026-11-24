@@ -160,6 +160,8 @@ pub enum Status {
     Succeeded,
     Failed,
     NeedsReview,
+    /// Its submitter called it off: at once while queued or waiting, by its runner's settle once running.
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -446,7 +448,9 @@ impl Attempt {
         let placed = match self.status {
             Status::Leased | Status::Running | Status::Checkpointing => true,
             Status::Queued | Status::Waiting => false,
-            Status::Succeeded | Status::Failed | Status::NeedsReview => return Ok(()),
+            Status::Succeeded | Status::Failed | Status::NeedsReview | Status::Cancelled => {
+                return Ok(());
+            }
         };
         if placed == self.placement.is_some() {
             Ok(())

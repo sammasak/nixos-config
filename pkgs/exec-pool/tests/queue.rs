@@ -235,13 +235,13 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     submit(&mut s, &task("t-1", 1));
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (5)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (6)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(5))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(5))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(6))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(6))));
 }
 
 /// The one shape `submit_task` takes: what `exec-pool submit` builds.
@@ -367,6 +367,8 @@ fn the_runner_claims_and_settles_and_writes_nothing_else() {
         "DELETE FROM results",
         "UPDATE results SET attempt_id = 't-2.a'",
         "SELECT submit_task('{}')",
+        "UPDATE attempts SET cancel_requested = true, fence = lease_epoch",
+        "SELECT cancel_task('t-1')",
     ] {
         let e = raw.batch_execute(sql).unwrap_err();
         assert_eq!(
@@ -855,6 +857,7 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
         "succeeded",
         "failed",
         "needs_review",
+        "cancelled",
     ];
     for state in states {
         for agent in agents {
@@ -1066,7 +1069,7 @@ fn a_heartbeat_keeps_the_lease_alive() {
             .get(0)
     };
     assert!(remaining(&pg) <= 1.0);
-    s.heartbeat(&a, 1, 3600).unwrap();
+    assert!(!s.heartbeat(&a, 1, 3600).unwrap());
     assert!(remaining(&pg) > 3000.0);
     thread::sleep(Duration::from_millis(1100));
     assert!(s.reconcile().unwrap().is_empty());
@@ -1076,6 +1079,159 @@ fn a_heartbeat_keeps_the_lease_alive() {
         Err(QueueError::Contract(Error::IllegalTransition { .. }))
     ));
     assert_eq!(status(&pg, &a), ("running".to_owned(), 1));
+}
+
+/// A store as `exec_pool_submit`, and the task it queued through `submit_task`.
+fn submitter(pg: &Pg) -> (Store, String) {
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_submit ");
+    let mut s = Store::open(&conninfo).unwrap();
+    let task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    let (id, _) = s.submit_task(&task).unwrap();
+    (s, id)
+}
+
+fn claude_slot() -> Slot {
+    let mut claude = slot("pool1");
+    claude.agents = BTreeSet::from([Agent::Claude]);
+    claude
+}
+
+#[test]
+fn the_submitter_cancels_its_own_queued_task_at_once_and_no_other() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = submitter(&pg);
+    let theirs = submit(&mut owner, &task("t-1", 1));
+    let attempt = format!("{id}.a");
+    assert_eq!(s.cancel(&id).unwrap(), (attempt.clone(), Status::Cancelled));
+    assert_eq!(status(&pg, &attempt), ("cancelled".to_owned(), 0));
+    assert_eq!(
+        s.cancel(&attempt).unwrap(),
+        (attempt.clone(), Status::Cancelled),
+        "a second cancel changes nothing"
+    );
+    let reasons: Vec<String> = pg
+        .sql()
+        .query(
+            "SELECT reason FROM events WHERE attempt_id = $1 ORDER BY id",
+            &[&attempt],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(reasons, ["submit", "cancelled"]);
+    assert!(
+        matches!(s.cancel(&theirs), Err(QueueError::NotFound(_))),
+        "a task another role queued"
+    );
+    assert!(matches!(s.cancel("nope"), Err(QueueError::NotFound(_))));
+    assert_eq!(status(&pg, &theirs), ("queued".to_owned(), 0));
+    // cancelled is settled: nothing claims, wakes or rewrites it
+    let claim = owner.claim(&claude_slot(), 60).unwrap();
+    assert!(claim.is_none(), "{claim:?}");
+    assert!(owner.apply(&attempt, &ev(0, Kind::Wake), None).is_err());
+    let e = pg
+        .sql()
+        .execute(
+            "UPDATE attempts SET status = 'queued', fence = lease_epoch WHERE id = $1",
+            &[&attempt],
+        )
+        .unwrap_err();
+    assert_eq!(e.code().map(postgres::error::SqlState::code), Some("XP409"));
+}
+
+#[test]
+fn a_running_task_is_cancelled_by_its_runner_at_the_next_heartbeat() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = submitter(&pg);
+    let claim = owner.claim(&claude_slot(), 60).unwrap().unwrap();
+    let a = claim.attempt.id;
+    owner.apply(&a, &ev(1, Kind::Start), None).unwrap();
+    assert!(!owner.heartbeat(&a, 1, 60).unwrap());
+    assert_eq!(s.cancel(&id).unwrap(), (a.clone(), Status::Running));
+    assert!(
+        owner.heartbeat(&a, 1, 60).unwrap(),
+        "the runner reads the mark"
+    );
+    assert!(
+        matches!(owner.heartbeat(&a, 0, 60), Err(QueueError::Fenced(_))),
+        "a stale holder renews nothing"
+    );
+    assert_eq!(status(&pg, &a), ("running".to_owned(), 1));
+    owner.apply(&a, &ev(1, Kind::Checkpoint), None).unwrap();
+    let r = receipt(&a, &id, 1, "succeeded");
+    assert!(matches!(
+        owner.apply(&a, &ev(1, Kind::Settle(Settle::Cancelled)), Some(&r)),
+        Err(QueueError::Receipt(Status::Cancelled))
+    ));
+    let (settled, change) = owner
+        .apply(&a, &ev(1, Kind::Settle(Settle::Cancelled)), None)
+        .unwrap();
+    assert_eq!(
+        (settled.status, change.reason),
+        (Status::Cancelled, "cancelled")
+    );
+    assert!(matches!(
+        owner.heartbeat(&a, 1, 60),
+        Err(QueueError::NotLive(_))
+    ));
+    assert_eq!(s.cancel(&id).unwrap(), (a.clone(), Status::Cancelled));
+    let shown = s.task(&id).unwrap().unwrap();
+    assert_eq!(shown["status"], "cancelled");
+}
+
+#[test]
+fn a_marked_attempt_that_goes_back_to_the_queue_is_cancelled_there() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = submitter(&pg);
+    // leased, never started: the expiry that would queue it again cancels it
+    let a = owner.claim(&claude_slot(), 60).unwrap().unwrap().attempt.id;
+    assert_eq!(s.cancel(&id).unwrap(), (a.clone(), Status::Leased));
+    overdue(&pg, &a);
+    let changes = owner.reconcile().unwrap();
+    assert_eq!(
+        changes.iter().map(|c| (c.to, c.reason)).collect::<Vec<_>>(),
+        [(Status::Cancelled, "cancelled")]
+    );
+    assert_eq!(status(&pg, &a), ("cancelled".to_owned(), 2));
+    // a prepare that failed settles to queued: cancelled instead
+    let b = submit(&mut owner, &task("t-2", 2));
+    owner.claim(&slot("s0"), 60).unwrap().unwrap();
+    owner.apply(&b, &ev(1, Kind::Start), None).unwrap();
+    pg.sql()
+        .execute(
+            "UPDATE attempts SET cancel_requested = true, fence = lease_epoch WHERE id = $1",
+            &[&b],
+        )
+        .unwrap();
+    owner.apply(&b, &ev(1, Kind::Checkpoint), None).unwrap();
+    let (settled, _) = owner
+        .apply(&b, &ev(1, Kind::Settle(Settle::Queued)), None)
+        .unwrap();
+    assert_eq!(settled.status, Status::Cancelled);
+}
+
+#[test]
+fn a_cancel_asked_of_a_dead_runner_still_expires_to_review() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = submitter(&pg);
+    let a = owner.claim(&claude_slot(), 60).unwrap().unwrap().attempt.id;
+    owner.apply(&a, &ev(1, Kind::Start), None).unwrap();
+    assert_eq!(s.cancel(&id).unwrap(), (a.clone(), Status::Running));
+    overdue(&pg, &a);
+    assert!(matches!(
+        owner.heartbeat(&a, 1, 60),
+        Err(QueueError::NotLive(_))
+    ));
+    assert_eq!(owner.reconcile().unwrap().len(), 1);
+    assert_eq!(status(&pg, &a), ("needs_review".to_owned(), 2));
+    assert_eq!(s.cancel(&id).unwrap(), (a, Status::NeedsReview));
 }
 
 #[test]

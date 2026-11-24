@@ -28,8 +28,9 @@ let
   execDir = "/var/lib/exec-pool-exec";
   # the helper stops the task at timeoutSecs; above it, the two prepare steps and the stop's own wait
   execTimeout = cfg.timeoutSecs + 900;
-  # a lease that outlives the helper: one that expires mid-run would send a running attempt to review
-  leaseSecs = execTimeout + 300;
+  # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
+  # running attempt to review this long after its last renewal
+  leaseSecs = 300;
   slot =
     n:
     builtins.toJSON {
