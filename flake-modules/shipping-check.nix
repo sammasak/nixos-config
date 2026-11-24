@@ -24,6 +24,8 @@ let
   n = toString;
   gateFor = a.GateFailRateHigh.forMinutes.value;
   staleFor = a.ShippingCollectorStale.forMinutes.value;
+  untouchedFor = a.OpenIssuesUntouched.forMinutes.value;
+  untouchedMax = a.OpenIssuesUntouched.max.value;
   fallbackFor = a.LeadTimeFallbacksHigh.forMinutes.value;
   merged = 40;
   retroFor = a.RetroDueGateSlower.forMinutes.value;
@@ -160,6 +162,44 @@ let
           {
             alertname = "GateFailRateHigh";
             eval_time = "${n (gateFor + 25)}m";
+            exp_alerts = [ ];
+          }
+        ];
+      }
+      {
+        name = "untouched issues: over the max summed over repos fires after its for and not before, back at the max clears";
+        interval = "1m";
+        input_series = [
+          {
+            series = ''shipping_issues_untouched{repo="nixos-config"}'';
+            values = "${n untouchedMax}x${n (2 * untouchedFor + 30)}";
+          }
+          {
+            series = ''shipping_issues_untouched{repo="skills"}'';
+            values = "1x${n (untouchedFor + 10)} 0x${n (untouchedFor + 20)}";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "OpenIssuesUntouched";
+            eval_time = "${n (untouchedFor - 5)}m";
+            exp_alerts = [ ];
+          }
+          {
+            alertname = "OpenIssuesUntouched";
+            eval_time = "${n (untouchedFor + 5)}m";
+            exp_alerts = [
+              {
+                exp_labels = {
+                  severity = "warning";
+                  team = "shipping";
+                };
+              }
+            ];
+          }
+          {
+            alertname = "OpenIssuesUntouched";
+            eval_time = "${n (untouchedFor + 25)}m";
             exp_alerts = [ ];
           }
         ];
