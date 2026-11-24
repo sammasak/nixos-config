@@ -1049,6 +1049,39 @@ impl Store {
         })
     }
 
+    /// What a live session turn's runner tells its helper: the session's unread messages after `upto` (what the claim
+    /// handed over), by id, and whether work waits for a slot (a queued attempt, and no idle slot on any host).
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn during_turn(
+        &mut self,
+        task_id: &str,
+        upto: i64,
+    ) -> Result<(Vec<(i64, String)>, bool), QueueError> {
+        self.tx(|tx| {
+            let mail = tx
+                .query(
+                    "SELECT id, body FROM inbox WHERE task_id = $1 AND id > $2 AND kind = 'message' \
+                     AND consumed_epoch IS NULL ORDER BY id",
+                    &[&task_id, &upto],
+                )?
+                .iter()
+                .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+                .collect::<Result<Vec<_>, postgres::Error>>()?;
+            let busy: bool = tx
+                .query_one(
+                    &format!(
+                        "SELECT EXISTS (SELECT FROM attempts WHERE status = 'queued') \
+                         AND NOT EXISTS ({IDLE_SLOTS})"
+                    ),
+                    &[],
+                )?
+                .try_get(0)?;
+            Ok((mail, busy))
+        })
+    }
+
     /// Extends a live lease to `lease_secs` from now; whether its submitter asked to cancel it.
     ///
     /// # Errors
