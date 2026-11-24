@@ -1,10 +1,10 @@
 # Alert runbooks
 
-One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modules/homelab/monitoring/rules/shunt.yaml`
-and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
+One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modules/homelab/monitoring/rules/shunt.yaml`,
+`modules/homelab/monitoring/rules/exec-pool.yaml` and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
 each alert's `runbook_url` points at its heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
 
-Every homelab, Shunt, shipping and Loki-ruler alert carries the same annotations, held by the `monitoring-alert-annotations` check
+Every homelab, Shunt, execution pool, shipping and Loki-ruler alert carries the same annotations, held by the `monitoring-alert-annotations` check
 (`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
 
 | annotation | holds |
@@ -191,6 +191,20 @@ First: on the host, `systemctl status shunt-metrics.timer shunt-metrics.service`
 the script names a failed scan's exception type there. `ls -l ~/.local/state/claude-hooks/` shows whether the hook log exists.
 Do not: delete the textfile to silence it; a missing file fires as well.
 Rollback: `homelab.shuntMetrics.enable = false` in the host's configuration and deploy; Shunt itself keeps working.
+
+## ExecPoolQueueDown
+
+Fires: on a host that runs the execution pool queue (`modules/homelab/exec-pool.nix`, acer), `exec-pool-metrics` has
+written `exec_pool_queue_up 0` for 10 minutes (PostgreSQL or the `exec_pool` database did not answer), or has not
+rewritten `/var/lib/exec-pool-metrics/exec-pool.prom` for over 10 minutes. An empty queue is up 1 with zero counts and
+never fires; a sleeping host never does. A failing collector unit also fires SystemdUnitFailed.
+First: on the host, `systemctl status postgresql.service exec-pool-migrate.service exec-pool-metrics.timer
+exec-pool-metrics.service` and `journalctl -u exec-pool-metrics.service -u exec-pool-migrate.service`; the CLI names the
+error there (exit 75: the database is unavailable). Authentik shares the PostgreSQL cluster, so its health is the same check.
+Do not: delete the textfile or write `exec_pool_queue_up 1` by hand; nothing dispatches from the queue yet, so there
+is no task to rescue.
+Rollback: drop the `exec-pool.nix` import from acer's configuration and deploy; the `exec_pool` database stays until
+dropped by hand.
 
 ## ShuntDelegationFailing
 

@@ -1,0 +1,20 @@
+# The execution pool queue's alerts (modules/homelab/exec-pool.nix). They key on the collector's own textfile, which
+# exists only on a host that runs the queue and only while that host is scraped: an empty queue is up 1 with zero
+# counts and never fires, and a sleeping host never does. A failed collector unit is SystemdUnitFailed's.
+groups:
+  - name: exec-pool.alerts
+    rules:
+      - alert: ExecPoolQueueDown
+        # 600 s is ten missed minutely runs
+        expr: |
+          max by (node) (exec_pool_queue_up{job="node-exporter"} == 0)
+          or max by (node) (time() - node_textfile_mtime_seconds{job="node-exporter",file=~".*/exec-pool[.]prom"} > 600)
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "The execution pool queue on {{ $labels.node }} is unreachable"
+          description: "exec-pool-metrics on {{ $labels.node }} has not reached the queue's database for 10 minutes, or has not rewritten its textfile for over 10 minutes, so the queue's counts read absent. Run systemctl status postgresql.service exec-pool-migrate.service exec-pool-metrics.service there."
+          query: 'exec_pool_queue_up{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolqueuedown"

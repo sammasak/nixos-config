@@ -1,4 +1,4 @@
-# A package, not an overlay entry: no host uses the crate, so no host's pkgs carries it.
+# A package, not an overlay entry: only acer runs it (modules/homelab/exec-pool.nix calls the same file).
 {
   perSystem =
     { pkgs, ... }:

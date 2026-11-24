@@ -1,0 +1,143 @@
+# The execution pool's queue (pkgs/exec-pool, docs/records/execution-pool-contract.md) on this host: its own database
+# and role in the host's PostgreSQL, reached by peer over the socket alone; the schema is the CLI's `migrate` at start
+# its metrics a minutely textfile and its backup a nightly dump. No runner and no slot: nothing claims a task yet.
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+let
+  pkg = pkgs.callPackage ../../pkgs/exec-pool/package.nix { };
+  queue = lib.getExe pkg;
+  postgres = config.services.postgresql.package;
+  # peer: the role is the unit's user
+  conninfo = "host=/run/postgresql dbname=exec_pool user=exec_pool";
+  dir = "/var/lib/exec-pool-metrics";
+  # stdout whatever the exit code (exec_pool_queue_up 0 on a failure), and the unit fails with the CLI
+  metrics = pkgs.writeShellApplication {
+    name = "exec-pool-metrics";
+    text = ''
+      rc=0
+      ${queue} metrics > ${dir}/exec-pool.prom.tmp || rc=$?
+      mv ${dir}/exec-pool.prom.tmp ${dir}/exec-pool.prom
+      exit "$rc"
+    '';
+  };
+  unit = {
+    after = [ "postgresql.target" ];
+    environment.EXEC_POOL_DB = conninfo;
+    serviceConfig = {
+      Type = "oneshot";
+      User = "exec_pool";
+      Group = "exec_pool";
+      MemoryMax = "32M";
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      PrivateNetwork = true;
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+      NoNewPrivileges = true;
+    };
+  };
+in
+{
+  imports = [
+    ./monitoring/node-exporter.nix
+    ./backup-metrics.nix
+  ];
+
+  users.users.exec_pool = {
+    isSystemUser = true;
+    group = "exec_pool";
+  };
+  users.groups.exec_pool = { };
+  environment.systemPackages = [ pkg ];
+
+  services.postgresql = {
+    enable = true;
+    enableTCPIP = false;
+    settings.listen_addresses = lib.mkForce "";
+    ensureDatabases = [ "exec_pool" ];
+    ensureUsers = [
+      {
+        name = "exec_pool";
+        ensureDBOwnership = true;
+      }
+    ];
+    # mkForce like authentik.nix's: lines at one priority concatenate, and the postgres line keeps setup working alone
+    authentication = lib.mkForce ''
+      local all postgres peer
+      local exec_pool exec_pool peer
+    '';
+  };
+
+  systemd.services.exec-pool-migrate = lib.recursiveUpdate unit {
+    description = "Apply the execution pool queue's schema";
+    # the target: postgresql.service is up before its ensureUsers setup has run
+    requires = [ "postgresql.target" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      RemainAfterExit = true;
+      ExecStart = "${queue} migrate";
+    };
+  };
+
+  services.prometheus.exporters.node.extraFlags = [ "--collector.textfile.directory=${dir}" ];
+  systemd.services.exec-pool-metrics = lib.recursiveUpdate unit {
+    description = "Execution pool queue metrics, for node-exporter";
+    after = [
+      "postgresql.target"
+      "exec-pool-migrate.service"
+    ];
+    serviceConfig = {
+      ExecStart = lib.getExe metrics;
+      StateDirectory = "exec-pool-metrics";
+      StateDirectoryMode = "0755";
+      TimeoutStartSec = 30;
+    };
+  };
+  systemd.timers.exec-pool-metrics = {
+    wantedBy = [ "timers.target" ];
+    timerConfig.OnCalendar = "minutely";
+  };
+
+  # On-host only, like open-webui's: it guards against a bad write or migration, not a dead disk; lenovo pulls
+  # Authentik's dump alone (authentik-offhost.nix).
+  homelab.backupMetrics.jobs.exec-pool-backup = "archive_list";
+  systemd.services.exec-pool-backup = lib.recursiveUpdate unit {
+    description = "Dump the execution pool queue's database";
+    requires = [ "postgresql.target" ];
+    serviceConfig = {
+      StateDirectory = [ "exec-pool-backup" ];
+      StateDirectoryMode = "0700";
+      UMask = "0077";
+      MemoryMax = "64M";
+    };
+    script = ''
+      set -euo pipefail
+      dir=/var/lib/exec-pool-backup
+      out=$dir/exec-pool-$(date +%Y%m%d-%H%M%S).dump
+      ${postgres}/bin/pg_dump -h /run/postgresql -Fc -f "$out.partial" exec_pool
+      ${postgres}/bin/pg_restore --list "$out.partial" >/dev/null
+      mv "$out.partial" "$out"
+      ls -1t "$dir"/exec-pool-*.dump | tail -n +8 | xargs -r rm -f
+    '';
+  };
+  systemd.timers.exec-pool-backup = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "*-*-* 03:10:00";
+      Persistent = true;
+    };
+  };
+
+  assertions = [
+    {
+      assertion =
+        !config.services.postgresql.enableTCPIP
+        && config.services.postgresql.settings.listen_addresses == "";
+      message = "modules/homelab/exec-pool.nix: the queue's PostgreSQL has no TCP listener; Store::open refuses one anyway.";
+    }
+  ];
+}

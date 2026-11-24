@@ -144,6 +144,7 @@ in
         ./rules/prometheus.yaml
         ./rules/llm-gateway.yaml
         ./rules/shunt.yaml
+        ./rules/exec-pool.yaml
         (import ./rules/homelab.nix { inherit lib hosts; }).file
         llmBench
         shipping

@@ -20,6 +20,7 @@ let
   });
   pyEnv = py.withPackages (_: [ django ]);
   postgres = config.services.postgresql.package;
+  hba = lib.filter (l: l != "") (lib.splitString "\n" config.services.postgresql.authentication);
   fw = config.networking.firewall;
   state = "/var/lib/authentik";
   backups = "/var/lib/authentik-backup";
@@ -320,12 +321,16 @@ in
       assertion =
         !config.services.postgresql.enableTCPIP
         && config.services.postgresql.settings.listen_addresses == ""
-        &&
-          lib.splitString "\n" (lib.trim config.services.postgresql.authentication) == [
-            "local all postgres peer"
-            "local authentik authentik peer"
-          ];
-      message = "modules/homelab/authentik.nix: Postgres must have no TCP listener and admit only postgres and authentik, by peer.";
+        && lib.elem "local authentik authentik peer" hba
+        # another database on this cluster (exec-pool.nix) admits only its own role, by peer
+        && lib.all (
+          l:
+          let
+            m = lib.match "local ([a-z_]+) ([a-z_]+) peer" l;
+          in
+          l == "local all postgres peer" || m != null && lib.head m == lib.last m
+        ) hba;
+      message = "modules/homelab/authentik.nix: Postgres must have no TCP listener and admit only postgres and each database's own role, by peer.";
     }
     {
       assertion = lib.all (l: lib.hasPrefix "127.0.0.1:" l) (

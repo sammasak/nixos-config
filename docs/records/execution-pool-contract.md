@@ -8,7 +8,7 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 | Concern | Owner | Where |
 |---|---|---|
 | Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix` |
-| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; packaged, on no host yet |
+| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`), nothing claims yet |
 | Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local dispatcher (#652) | not built |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
 | Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
@@ -75,6 +75,13 @@ task_id, attempt, lease_epoch, host, slot, from, to, reason, durations: {in_stat
 stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
 zero traffic or as the last good counts.
+
+On acer (`modules/homelab/exec-pool.nix`): database and role `exec_pool` in the host's PostgreSQL (Authentik's
+cluster), peer over `/run/postgresql` alone; `exec-pool-migrate.service` runs `migrate` at start, and the minutely
+`exec-pool-metrics` writes `/var/lib/exec-pool-metrics/exec-pool.prom`, alert ExecPoolQueueDown. The nightly
+`exec-pool-backup` dumps the database beside it, on the same disk, like open-webui's backup; nothing copies it off the
+host (lenovo pulls Authentik's dump alone, `modules/homelab/authentik-offhost.nix`), which a queue holding real tasks
+needs before a runner lands.
 
 ## Not `sam.agentRuntime`
 
