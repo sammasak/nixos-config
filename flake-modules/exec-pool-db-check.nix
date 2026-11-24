@@ -128,13 +128,16 @@ in
               && !msi.services.postgresql.enable
             )
             "exec-pool-db-check: msi's runner does not reach acer's queue as exec_pool_runner with the sops password";
-          # a claim after 19:55 could outlive the 21:00 poweroff (timeoutSecs 1800, its helper's 1800 s more with the store's
-          # pull and push, the reset's 300)
-          assert lib.assertMsg (
-            msiRunner.environment.EXEC_POOL_OFF_TIMER == "msi-scheduled-shutdown.timer"
-            && msi.systemd.timers.msi-scheduled-shutdown.timerConfig.OnCalendar == "Mon-Fri 21:00"
-            && msiRunner.environment.EXEC_POOL_CLAIM_SECS == toString (65 * 60)
-          ) "exec-pool-db-check: msi's runner does not stop claiming 65 minutes before its 21:00 poweroff";
+          # the drain stops msi's running attempt 10 minutes before the 21:00 poweroff (its turn parks to the store, a
+          # one-shot run goes back to the queue), so a claim only has to start its run ahead of it
+          assert lib.assertMsg
+            (
+              msiRunner.environment.EXEC_POOL_OFF_TIMER == "msi-scheduled-shutdown.timer"
+              && msi.systemd.timers.msi-scheduled-shutdown.timerConfig.OnCalendar == "Mon-Fri 21:00"
+              && msiRunner.environment.EXEC_POOL_DRAIN_SECS == toString (10 * 60)
+              && msiRunner.environment.EXEC_POOL_CLAIM_SECS == toString (15 * 60)
+            )
+            "exec-pool-db-check: msi's runner does not drain 10 minutes and stop claiming 15 minutes before its 21:00 poweroff";
           assert lib.assertMsg (
             acerRunner.environment.EXEC_POOL_DB == "host=/run/postgresql dbname=exec_pool user=exec_pool"
             && !(acerRunner.environment ? EXEC_POOL_OFF_TIMER || acerRunner.environment ? EXEC_POOL_CLAIM_SECS)

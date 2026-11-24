@@ -216,7 +216,8 @@ pub struct Claim {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Turn {
     pub session_uuid: String,
-    /// The task's prompt on the first turn; after it, the unread inbox rows oldest first, each a paragraph.
+    /// The task's prompt on the first turn; after it, the unread inbox rows, a `continue` first, then oldest first,
+    /// each a paragraph.
     pub input: String,
     /// The highest inbox id in `input`, 0 for none: the rows the turn's [`Park`] marks read. A turn that never parks
     /// marks none, so the next is handed them again.
@@ -243,6 +244,9 @@ pub struct Park {
 /// What a `continue` row reads as in a turn's input: a turn stopped before it ended.
 const CONTINUE: &str =
     "Your previous turn was stopped before it ended. Continue where you left off.";
+/// A `continue` row's text after a park for a host powering off: the turn was stopped mid-action.
+const DRAINED: &str = "You were paused mid-turn by the pool (its host was powering off). Check the state of your \
+    last action before continuing.";
 
 /// A connection that reconnects on the next call after the database went away.
 pub struct Store {
@@ -1328,11 +1332,20 @@ fn turn(
             checkpoint,
         }));
     }
+    let drained = tx
+        .query_opt(
+            "SELECT reason = 'host_draining' FROM events WHERE attempt_id = $1 AND to_status = 'waiting' \
+             ORDER BY id DESC LIMIT 1",
+            &[&attempt],
+        )?
+        .map(|r| r.try_get::<_, bool>(0))
+        .transpose()?
+        .unwrap_or(false);
     let mut input = String::new();
     let mut upto = 0;
     for r in tx.query(
         "SELECT id, kind, body FROM inbox WHERE task_id = $1 AND consumed_epoch IS NULL \
-         AND (due_at IS NULL OR due_at <= now()) ORDER BY id",
+         AND (due_at IS NULL OR due_at <= now()) ORDER BY kind <> 'continue', id",
         &[&task.id],
     )? {
         let (id, kind, body): (i64, &str, Option<&str>) =
@@ -1341,10 +1354,12 @@ fn turn(
             input.push_str("\n\n");
         }
         input.push_str(match (kind, body) {
+            ("continue", None) if drained => DRAINED,
             ("continue", None) => CONTINUE,
             (_, b) => b.unwrap_or_default(),
         });
-        upto = id;
+        // a stopped turn's continue goes first, as what the turn was told before is older than it
+        upto = upto.max(id);
     }
     Ok(Some(Turn {
         session_uuid,

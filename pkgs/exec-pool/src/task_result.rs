@@ -149,6 +149,7 @@ mod tests {
             branch: None,
             tree_lost: None,
             stored: false,
+            drained: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),

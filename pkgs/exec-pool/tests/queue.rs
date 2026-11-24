@@ -1942,6 +1942,30 @@ fn a_turn_that_never_parks_is_handed_its_messages_again() {
 }
 
 #[test]
+fn a_turn_stopped_for_a_poweroff_continues_and_is_told_to_check_its_last_action() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    s.send(&id, "and then this").unwrap();
+    let (_, changes) = owner
+        .park(&a, epoch, &park(ParkReason::HostDraining, 0))
+        .unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "host_draining"), (Status::Queued, "wake")]
+    );
+    let (_, _, turn) = started(&mut owner);
+    assert!(
+        turn.input
+            .starts_with("You were paused mid-turn by the pool (its host was powering off)."),
+        "{}",
+        turn.input
+    );
+    assert!(turn.input.ends_with("\n\nand then this"), "{}", turn.input);
+}
+
+#[test]
 fn a_preempted_turn_continues_at_once() {
     let pg = Pg::new();
     let mut owner = pg.migrated();

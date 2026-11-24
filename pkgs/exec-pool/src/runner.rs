@@ -118,6 +118,13 @@ impl Manifest {
         format!("{} {}\n", self.attempt_id, self.lease_epoch)
     }
 
+    /// What the runner writes to the same marker to have the helper stop this attempt because the host powers off:
+    /// a session's turn parks to continue elsewhere, a one-shot run goes back to the queue.
+    #[must_use]
+    pub fn drain_token(&self) -> String {
+        format!("{} {} host_draining\n", self.attempt_id, self.lease_epoch)
+    }
+
     /// The attempt's workspace under the guest user's home.
     ///
     /// # Errors
@@ -344,6 +351,9 @@ pub fn decide_turn(
     if !r.container_active {
         return TurnSettle::Settle(Settle::NeedsReview);
     }
+    if r.drained {
+        return TurnSettle::Park(ParkReason::HostDraining);
+    }
     match agent::outcome(Agent::Claude, r.exit_code, stdout) {
         Outcome::Succeeded if !r.timed_out => TurnSettle::Park(ParkReason::TurnEnd),
         _ => TurnSettle::Park(ParkReason::TurnError),
@@ -444,6 +454,9 @@ pub struct ExecResult {
     /// The helper stopped the attempt, before or during a step, for the runner's cancel marker.
     #[serde(default)]
     pub cancelled: bool,
+    /// The helper stopped the attempt, before or during a step, for the runner's drain marker: the host powers off.
+    #[serde(default)]
+    pub drained: bool,
     /// The task's branch, `pool/<task id>`, when the repository shows it after the run.
     #[serde(default)]
     pub branch: Option<String>,
@@ -477,6 +490,7 @@ impl ExecResult {
             branch: None,
             tree_lost: None,
             stored: false,
+            drained: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -512,7 +526,8 @@ pub fn decide(
     if r.cancelled {
         return Settle::Cancelled;
     }
-    if r.stage == Stage::Prepare {
+    // a drained run starts again elsewhere
+    if r.stage == Stage::Prepare || r.drained {
         return Settle::Queued;
     }
     if r.timed_out || !r.container_active {
@@ -672,6 +687,7 @@ mod tests {
             branch: None,
             tree_lost: None,
             stored: false,
+            drained: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -855,6 +871,27 @@ mod tests {
         );
         let stored = session_checkpoint("t1", "msi-ms7758", 4, true);
         assert_eq!(stored.hosts, ["msi-ms7758", STORE]);
+    }
+
+    #[test]
+    fn a_run_stopped_for_a_poweroff_parks_its_turn_or_goes_back_to_the_queue() {
+        let drained = ExecResult {
+            drained: true,
+            exit_code: None,
+            ..result(Stage::Run, Some(0))
+        };
+        assert_eq!(
+            decide_turn("t1.a", 3, Some(&drained), ""),
+            TurnSettle::Park(ParkReason::HostDraining)
+        );
+        assert_eq!(
+            decide("t1.a", 3, Agent::Claude, Some(&drained), ""),
+            Settle::Queued,
+            "a one-shot run starts again elsewhere"
+        );
+        let m = manifest(&task()).unwrap();
+        assert_ne!(m.drain_token(), m.cancel_token());
+        assert!(m.drain_token().starts_with(m.cancel_token().trim_end()));
     }
 
     #[test]

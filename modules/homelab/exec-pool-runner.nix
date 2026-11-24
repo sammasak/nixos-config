@@ -1,10 +1,10 @@
 # The pool runner (#652, pkgs/exec-pool/src/runner_main.rs): one exec-pool-runner-<slot> per sam.workers.executionPool
 # slot, claiming tasks for no agent or one of the slot's sam.workers.executionPool agents. It runs as the queue's peer
 # role, or with `queue` as exec_pool_runner on another host's, and holds no host privilege; on a host with a power
-# window it claims only what can finish before the poweroff. The polkit rule below lets it start only its
-# slot's exec-pool-exec@ (root, which runs the task in the guest as its user and holds no queue access) and
-# dev-env-reset@, which releases the slot with every one of its refusals intact, and clear a refused reset's failed
-# state: the slot is quarantined in the queue instead, and the host not left degraded.
+# window it claims only ahead of its drain, which stops the running attempt before the poweroff. The polkit rule
+# below lets it start only its slot's exec-pool-exec@ (root, which runs the task in the guest as its user and holds no
+# queue access) and dev-env-reset@, which releases the slot with every one of its refusals intact, and clear a refused
+# reset's failed state: the slot is quarantined in the queue instead, and the host not left degraded.
 {
   config,
   lib,
@@ -35,8 +35,11 @@ let
   # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
   # running attempt to review this long after its last renewal
   leaseSecs = 300;
-  # the longest a claim holds the slot: the helper's bound, then the settle and the reset; none may outlast a poweroff
-  claimSecs = execTimeout + 300;
+  # this long before a poweroff the runner stops the running attempt (a session's turn parks and is pushed to the
+  # store, a one-shot run goes back to the queue): the step's 60 s stop, the detach, the push, the park and the reset
+  drainSecs = 600;
+  # a claim no longer has to finish before the poweroff, only to start its run ahead of the drain
+  claimSecs = drainSecs + 300;
   slot =
     n:
     builtins.toJSON {
@@ -82,7 +85,7 @@ let
       } port=${toString listener.port} dbname=exec_pool user=exec_pool_runner"
     else
       "host=/run/postgresql dbname=exec_pool user=exec_pool";
-  # power-schedule.nix's poweroff: a claim's lease must end before it fires
+  # power-schedule.nix's poweroff: the drain stops a run before it fires
   offTimer = "${lib.head (lib.splitString "-" config.networking.hostName)}-scheduled-shutdown.timer";
   powersOff = config.systemd.timers ? ${lib.removeSuffix ".timer" offTimer};
   units = lib.concatMap (n: [
@@ -201,6 +204,7 @@ in
           // lib.optionalAttrs powersOff {
             EXEC_POOL_OFF_TIMER = offTimer;
             EXEC_POOL_CLAIM_SECS = toString claimSecs;
+            EXEC_POOL_DRAIN_SECS = toString drainSecs;
           };
           serviceConfig = {
             ExecStart = "${exe} run";
@@ -209,6 +213,8 @@ in
             Restart = "always";
             RestartSec = 30;
             RuntimeDirectory = "exec-pool-runner/${n}";
+            # the manifest and the cancel marker of a run its helper still runs: a restarted runner takes it over
+            RuntimeDirectoryPreserve = "yes";
             StateDirectory = "exec-pool-runner";
             MemoryMax = "64M";
             ProtectSystem = "strict";
