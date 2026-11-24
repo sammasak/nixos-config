@@ -1,12 +1,14 @@
 # kube-prometheus-stack 85.0.3's general.rules; TargetDown's description names only the job
 # (no namespace or service label off Kubernetes). Watchdog is what the lenovo watchdog
 # reads from Alertmanager (modules/homelab/cluster-watchdog.nix).
+# Each alert's query (docs/alert-runbooks.md) is a copy of its expr, TargetDown's aside: change both.
 groups:
   - name: general.rules
     rules:
       - alert: TargetDown
         annotations:
           description: '{{ printf "%.4g" $value }}% of the {{ $labels.job }} targets are down.'
+          query: up == 0
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/general/targetdown
           summary: One or more targets are unreachable.
         expr: 100 * (count(up == 0) BY (cluster, job, namespace, service) / count(up) BY (cluster, job, namespace, service)) > 10
@@ -26,6 +28,7 @@ groups:
             "DeadMansSnitch" integration in PagerDuty.
 
 '
+          query: vector(1)
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/general/watchdog
           summary: An alert that should always be firing to certify that Alertmanager is working properly.
         expr: vector(1)
@@ -46,6 +49,7 @@ groups:
             This alert should be routed to a null receiver and configured to inhibit alerts with severity="info".
 
 '
+          query: group by (namespace) (ALERTS{severity = "info"} == 1) unless on (namespace) group by (namespace) (ALERTS{alertname != "InfoInhibitor", alertstate = "firing", severity =~ "warning|critical"} == 1)
           runbook_url: https://runbooks.prometheus-operator.dev/runbooks/general/infoinhibitor
           summary: Info-level alert inhibition.
         expr: group by (namespace) (ALERTS{severity = "info"} == 1) unless on (namespace) group by (namespace) (ALERTS{alertname != "InfoInhibitor", alertstate = "firing", severity =~ "warning|critical"} == 1)

@@ -1,18 +1,21 @@
 # Alert runbooks
 
 One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modules/homelab/monitoring/rules/shunt.yaml`,
-`modules/homelab/monitoring/rules/exec-pool.yaml` and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
-each alert's `runbook_url` points at its heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
+`modules/homelab/monitoring/rules/exec-pool.yaml`, `modules/homelab/monitoring/rules/llm-gateway.yaml` and Loki's ruler
+rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`; each alert's `runbook_url` points at its heading here.
+The shipping alerts point at [shipping.md](shipping.md#alerts). The kube-prometheus-stack rules (`general.yaml`,
+`node-exporter.yaml`, `alertmanager.yaml`, `prometheus.yaml` there) keep upstream's runbook,
+`https://runbooks.prometheus-operator.dev/runbooks/<area>/<alert in lower case>`, and their `query` is their `expr`.
 
-Every homelab, Shunt, execution pool, shipping and Loki-ruler alert carries the same annotations, held by the `monitoring-alert-annotations` check
-(`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
+Every alert in a rule file black-pi's Prometheus loads, and every Loki-ruler alert, carries the same annotations, held
+by the `monitoring-alert-annotations` check (`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
 
 | annotation | holds |
 |---|---|
 | `summary` | one line: the symptom and the component |
 | `description` | the observed condition, its threshold and duration, the affected host or service, the first safe step |
 | `query` | the first diagnostic PromQL, runnable as is in Prometheus on black-pi (`{{ $labels.* }}` are filled in by Prometheus); the `grafana-dashboards` check parses it and holds its metric names and jobs. A Loki-ruler alert's is LogQL, for Grafana's Explore on the Loki data source, and that check does not read it |
-| `runbook_url` | a heading in a tracked doc of this repo, on `main` |
+| `runbook_url` | a heading in a tracked doc of this repo, on `main`; for a kube-prometheus-stack rule, upstream's page for that alert |
 
 The ntfy page (Alertmanager's webhook payload, `modules/homelab/monitoring/alertmanager.nix`) carries `summary`,
 `description` and `Query: <query>`, and a tap opens `runbook_url`; all four also show in Prometheus's alert view. Run a PromQL query at `http://192.168.10.137:9090/graph`.
@@ -148,6 +151,30 @@ Fires: the backup-metrics collector's last completed scan is over 900 seconds ol
 `backup.prom` at all (it is on tmpfs, so a collector that never ran since boot leaves nothing), for 15 minutes.
 First: on the host, `systemctl status backup-metrics.timer backup-metrics` and `journalctl -u backup-metrics -n 20`.
 
+### Drill: a blind collector
+
+A live fire and resolve of a monitoring-blindness alert through the real rule, Alertmanager and ntfy, with nothing
+real made blind: black-pi runs no backup, so a synthetic collector series there fires BackupCollectorStale for
+`node="black-pi"` alone, and no other rule reads that metric. The `backup.yaml` rule test runs these steps in promtool;
+the `alert-fire-resolve` VM check proves the page's format. Run it in the daytime and say so first: it pages once.
+
+1. As root on black-pi, write the series an hour stale (node-exporter reads only `*.prom`):
+   `ssh -t black-pi 'printf "homelab_backup_collector_last_success_timestamp_seconds %d\n" $(( $(date +%s) - 3600 )) | sudo tee /run/node-exporter-textfile/synthetic.tmp >/dev/null && sudo mv /run/node-exporter-textfile/synthetic.tmp /run/node-exporter-textfile/synthetic.prom'`
+2. Within a minute, `time() - homelab_backup_collector_last_success_timestamp_seconds{node="black-pi"}` reads about
+   3600 at `http://192.168.10.137:9090/graph`, and `http://192.168.10.137:9090/alerts` shows BackupCollectorStale
+   pending for black-pi.
+3. After 15 minutes it fires: `http://192.168.10.137:9093` lists one BackupCollectorStale, `node="black-pi"`,
+   `severity="warning"`, `team="homelab"`, and within the 30 s group wait ntfy's `homelab-alerts` gets one
+   `[WARNING]` page at priority 3: the summary "The backup-metrics collector on black-pi is stale or missing", its
+   description, `Query: time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",node="black-pi"}`
+   and a tap to this runbook. Note both times.
+4. Remove it: `ssh -t black-pi sudo rm /run/node-exporter-textfile/synthetic.prom`. At the next scrape the series is
+   stale, the alert resolves and ntfy gets its resolved message at priority 1 within one group interval (5 minutes).
+   Note the time; no second firing page may arrive.
+
+If step 4 is missed the page repeats every 12 hours until black-pi reboots (`/run` is tmpfs). The edge dashboard's
+collector-age panel shows a black-pi line for the drill.
+
 ## OtlpWritesRejected
 
 Fires: acer's alloy-otlp receiver (`otelcol.receiver.otlp.native`, behind `otlp.sammasak.dev`) answered OTLP POSTs
@@ -263,3 +290,23 @@ not registered, e.g. a skills pin without them), then the results without any co
 `SHUNT_DISABLE=1` in the session's environment also silences them, and a session started before the switch keeps
 the hooks it started with: restart it.
 Rollback: `sam.claude.bulkReader.enable = false` for that host or worker (acer: the guest module in its configuration).
+
+## LLMGatewayDown
+
+Fires: black-pi's Prometheus cannot scrape llm-gateway's admin port on acer (9091) for 5 minutes, or has no such
+target. Pi, Open WebUI and factum have no LLM path.
+First: on acer, `systemctl status llm-gateway` and `journalctl -u llm-gateway --since -15m`. A unit skipped, not
+failed, has no `state.sqlite3` (the header of `modules/homelab/llm-gateway.nix`).
+
+## LLMGatewayFreeFloorLow
+
+Fires: every tier-2 (free floor) quota group has under 10 % of its daily allowance left, for 10 minutes. Requests fall
+to msi or get a 429 until 00:00 UTC.
+First: from lenovo, `curl -s http://acer-swift:9091/status | jq .quota_groups` for which group is spent.
+
+## LLMGatewayBatchHittingReserve
+
+Fires: llm-gateway refused a batch project's request in the last 15 minutes because only the interactive reserve of
+the free quota is left (`interactive_reserve`).
+First: from lenovo, `curl -s http://acer-swift:9091/status | jq '.projects, .quota_groups'`; the batch work waits for
+00:00 UTC or moves to a paid tier.
