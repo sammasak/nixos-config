@@ -395,6 +395,33 @@ fn a_tcp_address_is_refused() {
 }
 
 #[test]
+fn a_remote_queue_is_tcp_with_the_password_apart() {
+    let tcp = "host=192.168.10.110 port=5432 dbname=exec_pool user=exec_pool_runner";
+    assert!(Store::open_remote(tcp, b"pw").is_ok());
+    for (conninfo, password) in [
+        (tcp, &b""[..]),
+        ("host=/run/postgresql dbname=exec_pool", b"pw"),
+        (
+            "host=/run/postgresql,192.168.10.110 dbname=exec_pool",
+            b"pw",
+        ),
+        (
+            "host=192.168.10.110 password=inline dbname=exec_pool",
+            b"pw",
+        ),
+        ("dbname=exec_pool", b"pw"),
+    ] {
+        assert!(
+            matches!(
+                Store::open_remote(conninfo, password),
+                Err(QueueError::NotRemote)
+            ),
+            "{conninfo}"
+        );
+    }
+}
+
+#[test]
 fn a_claimer_skips_the_row_another_holds() {
     let pg = Pg::new();
     let mut s = pg.migrated();

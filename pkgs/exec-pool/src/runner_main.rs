@@ -1,12 +1,15 @@
 //! `exec-pool-runner`: the pool runner (#652) for one slot, and its slot-control helper.
 //!
-//! `run` (the queue's peer role, from `exec-pool-runner@<slot>.service`) loops: reconcile, claim an attempt for the
-//! slot, accept `start`, write the manifest, start `exec-pool-exec@<slot>`, then checkpoint and settle from its
-//! result, record the result, and release the slot with `dev-env-reset@<slot>`. It begins no work before `start` is
-//! accepted, and never re-sends an event whose outcome is unknown: the lease expires and `reconcile` decides. While
-//! the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat reports, or a lease it finds lost,
-//! writes the cancel marker the helper stops at. A runner that dies renews nothing, and the lease expires. A reset
-//! that fails quarantines the slot until an operator removes the marker. Each state change is one JSON line on stdout.
+//! `run` (the queue's peer role, or `exec_pool_runner` on another host's, from `exec-pool-runner-<slot>.service`)
+//! loops: reconcile, claim an attempt for the slot, accept `start`, write the manifest, start `exec-pool-exec@<slot>`,
+//! then checkpoint and settle from its result, record the result, and release the slot with `dev-env-reset@<slot>`. It
+//! begins no work before `start` is accepted, and never re-sends an event whose outcome is unknown: the lease expires
+//! and `reconcile` decides. While the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat
+//! reports, or a lease it finds lost, writes the cancel marker the helper stops at. A runner that dies renews nothing,
+//! and the lease expires. A reset that fails quarantines the slot until an operator removes the marker. With
+//! `EXEC_POOL_OFF_TIMER` it claims only while a claim, held up to `EXEC_POOL_CLAIM_SECS`, ends before that timer powers
+//! the host off; with a credentials directory it is a remote slot's runner, reaching the queue over TCP with the
+//! `db-password` credential. Each state change is one JSON line on stdout.
 //!
 //! `exec SLOT` (root, from `exec-pool-exec@<slot>.service`) reads the manifest, admits the attempt only to a slot home
 //! reset since the last one ran, runs the task's steps in the guest as its user with `systemd-run -M` in the attempt's
@@ -19,11 +22,12 @@ use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use exec_pool::queue::{Change, Claim, QueueError, Store};
 use exec_pool::runner::{
-    CAPTURE_BYTES, ExecResult, Manifest, Stage, decide, guest_exit, read_regular, receipt, tail,
+    CAPTURE_BYTES, ExecResult, Manifest, Stage, claim_fits, decide, guest_exit, read_regular,
+    receipt, tail,
 };
 use exec_pool::task_result::TaskResult;
 use exec_pool::workspace::{HomeId, admit};
@@ -96,6 +100,9 @@ struct Runner {
     runtime: PathBuf,
     exec_dir: PathBuf,
     quarantine: PathBuf,
+    /// The host's scheduled poweroff timer: a lease must end before it fires.
+    /// and the longest a claim holds the slot: its run's bound, then the settle and reset
+    off_timer: Option<(String, u32)>,
 }
 
 impl Runner {
@@ -111,6 +118,15 @@ impl Runner {
             runtime: PathBuf::from(var("EXEC_POOL_RUNTIME")?),
             exec_dir: PathBuf::from(var("EXEC_POOL_EXEC_DIR")?).join(&slot.id),
             quarantine,
+            off_timer: match std::env::var("EXEC_POOL_OFF_TIMER") {
+                Ok(timer) => Some((
+                    timer,
+                    var("EXEC_POOL_CLAIM_SECS")?
+                        .parse()
+                        .map_err(|_| "EXEC_POOL_CLAIM_SECS must be a number".to_owned())?,
+                )),
+                Err(_) => None,
+            },
             slot,
         })
     }
@@ -168,9 +184,44 @@ impl Runner {
         false
     }
 
+    /// Whether to claim now: always without an off timer, else only for a lease that ends before it fires. Logs a
+    /// change, not every poll.
+    fn claims_open(&self, paused: &mut bool) -> bool {
+        let Some((timer, hold)) = &self.off_timer else {
+            return true;
+        };
+        let fits = Command::new("systemctl")
+            .args(["show", "-p", "LoadState", "-p", "NextElapseUSecRealtime"])
+            .args(["--timestamp=unix", timer])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("systemctl: {e}"))
+            .and_then(|o| String::from_utf8(o.stdout).map_err(|e| e.to_string()))
+            .and_then(|show| {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| e.to_string())?;
+                claim_fits(now.as_secs(), *hold, &show)
+            });
+        let open = fits.as_ref().is_ok_and(|f| *f);
+        if open == *paused {
+            *paused = !open;
+            let msg = if open {
+                "claims_resumed"
+            } else {
+                "claims_paused"
+            };
+            line(
+                &json!({ "msg": msg, "slot": self.slot.id, "off_timer": timer, "error": fits.err() }),
+            );
+        }
+        open
+    }
+
     fn loop_forever(&self, store: &mut Store) -> ! {
         // the slot's state at startup is unknown: a runner that died mid-run left it as it was
         let mut dirty = true;
+        let mut paused = false;
         loop {
             // a guest down or restarting (a switch restarts it) is waited for, not a reset that fails
             // a helper a dead runner started runs on with no one renewing its lease: expire it, reset nothing under it
@@ -193,6 +244,10 @@ impl Runner {
                     thread::sleep(BACKOFF);
                     continue;
                 }
+            }
+            if !self.claims_open(&mut paused) {
+                thread::sleep(POLL);
+                continue;
             }
             match store.claim(&self.slot, self.lease_secs) {
                 Ok(Some(claim)) => {
@@ -365,7 +420,17 @@ impl Runner {
 
 fn run() -> Result<(), String> {
     let runner = Runner::from_env()?;
-    let mut store = Store::open(&var("EXEC_POOL_DB")?).map_err(|e| e.to_string())?;
+    let conninfo = var("EXEC_POOL_DB")?;
+    // a remote runner's password is its unit's credential (LoadCredential), never in the environment
+    let mut store = match std::env::var_os("CREDENTIALS_DIRECTORY") {
+        Some(dir) => {
+            let password = fs::read(Path::new(&dir).join("db-password"))
+                .map_err(|e| format!("db-password credential: {e}"))?;
+            Store::open_remote(&conninfo, password.strip_suffix(b"\n").unwrap_or(&password))
+        }
+        None => Store::open(&conninfo),
+    }
+    .map_err(|e| e.to_string())?;
     runner.loop_forever(&mut store)
 }
 

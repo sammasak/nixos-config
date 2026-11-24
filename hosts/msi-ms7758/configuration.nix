@@ -14,6 +14,7 @@
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/shunt-metrics.nix
+    ./exec-pool.nix
   ];
 
   homelab.journalCollector.enable = true;

@@ -1,6 +1,7 @@
 # The pool runner (#652, pkgs/exec-pool/src/runner_main.rs): one exec-pool-runner-<slot> per sam.workers.executionPool
 # slot, claiming tasks for no agent or one of the slot's sam.workers.executionPool agents. It runs as the queue's peer
-# role and holds no host privilege. The polkit rule below lets it start only its
+# role, or with `queue` as exec_pool_runner on another host's, and holds no host privilege; on a host with a power
+# window it claims only what can finish before the poweroff. The polkit rule below lets it start only its
 # slot's exec-pool-exec@ (root, which runs the task in the guest as its user and holds no queue access) and
 # dev-env-reset@, which releases the slot with every one of its refusals intact.
 {
@@ -31,6 +32,8 @@ let
   # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
   # running attempt to review this long after its last renewal
   leaseSecs = 300;
+  # the longest a claim holds the slot: the helper's bound, then the settle and the reset; none may outlast a poweroff
+  claimSecs = execTimeout + 300;
   slot =
     n:
     builtins.toJSON {
@@ -41,6 +44,19 @@ let
       inherit (cfg) capabilities;
       agents = [ "none" ] ++ pool.agents;
     };
+  # a queue on another host, by scram over its sam.fleet listener; null: this host's own, by peer
+  remote = cfg.queue != null;
+  listener = config.sam.fleet.listeners.${cfg.queue};
+  db =
+    if remote then
+      "host=${
+        config.sam.fleet.hosts.${listener.host}.address
+      } port=${toString listener.port} dbname=exec_pool user=exec_pool_runner"
+    else
+      "host=/run/postgresql dbname=exec_pool user=exec_pool";
+  # power-schedule.nix's poweroff: a claim's lease must end before it fires
+  offTimer = "${lib.head (lib.splitString "-" config.networking.hostName)}-scheduled-shutdown.timer";
+  powersOff = config.systemd.timers ? ${lib.removeSuffix ".timer" offTimer};
   units = lib.concatMap (n: [
     "exec-pool-exec@${n}.service"
     "dev-env-reset@${n}.service"
@@ -53,6 +69,12 @@ in
       type = lib.types.ints.positive;
       default = 1800;
       description = "How long a task's command may run in its slot before it is stopped and its attempt goes to needs_review.";
+    };
+    queue = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "exec-pool-db";
+      description = "The sam.fleet listener of the queue's PostgreSQL on another host, reached as exec_pool_runner with the sops password; null: this host's own queue (exec-pool.nix), by peer.";
     };
     capabilities = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -96,21 +118,32 @@ in
         lib.nameValuePair "exec-pool-runner-${n}" {
           description = "Execution pool runner for slot ${n}";
           wantedBy = [ "multi-user.target" ];
-          wants = [ "container@${n}.service" ];
-          requires = [ "exec-pool-migrate.service" ];
+          wants = [ "container@${n}.service" ] ++ lib.optional remote "network-online.target";
+          requires = lib.optional (!remote) "exec-pool-migrate.service";
           after = [
-            "postgresql.target"
-            "exec-pool-migrate.service"
             "container@${n}.service"
-          ];
+          ]
+          ++ (
+            if remote then
+              [ "network-online.target" ]
+            else
+              [
+                "postgresql.target"
+                "exec-pool-migrate.service"
+              ]
+          );
           path = [ config.systemd.package ];
           environment = {
-            EXEC_POOL_DB = "host=/run/postgresql dbname=exec_pool user=exec_pool";
+            EXEC_POOL_DB = db;
             EXEC_POOL_SLOT = slot n;
             EXEC_POOL_LEASE_SECS = toString leaseSecs;
             EXEC_POOL_RUNTIME = "/run/exec-pool-runner/${n}";
             EXEC_POOL_EXEC_DIR = execDir;
             EXEC_POOL_STATE = "/var/lib/exec-pool-runner";
+          }
+          // lib.optionalAttrs powersOff {
+            EXEC_POOL_OFF_TIMER = offTimer;
+            EXEC_POOL_CLAIM_SECS = toString claimSecs;
           };
           serviceConfig = {
             ExecStart = "${exe} run";
@@ -124,13 +157,27 @@ in
             ProtectSystem = "strict";
             ProtectHome = true;
             PrivateTmp = true;
-            PrivateNetwork = true;
-            RestrictAddressFamilies = [ "AF_UNIX" ];
+            PrivateNetwork = !remote;
+            RestrictAddressFamilies = [ "AF_UNIX" ] ++ lib.optional remote "AF_INET";
             NoNewPrivileges = true;
+          }
+          // lib.optionalAttrs remote {
+            LoadCredential = [ "db-password:${config.sops.secrets.exec_pool_runner_password.path}" ];
           };
         }
       ) slotNames
     );
+
+    users.users.exec_pool = lib.mkIf remote {
+      isSystemUser = true;
+      group = "exec_pool";
+    };
+    users.groups.exec_pool = lib.mkIf remote { };
+    sops.secrets.exec_pool_runner_password = lib.mkIf remote {
+      sopsFile = ../../secrets/homelab/exec-pool-runner.yaml;
+      # no restartUnits: a runner restarted mid-run sends its attempt to review; a rotation waits for an idle restart
+      mode = "0400";
+    };
 
     # a run's output stays on the host for review; nothing else reads it once its attempt is settled
     systemd.tmpfiles.rules = [ "e ${execDir} - - - 30d" ];
@@ -149,6 +196,16 @@ in
       {
         assertion = pool.enable && pool.slots > 0;
         message = "homelab.execPool.runner: a runner needs sam.workers.executionPool enabled with a slot.";
+      }
+      {
+        assertion =
+          !remote
+          || (
+            config.sam.fleet.listeners ? ${cfg.queue}
+            && listener.host != config.networking.hostName
+            && lib.elem config.networking.hostName listener.from
+          );
+        message = "homelab.execPool.runner.queue: ${toString cfg.queue} must be a sam.fleet listener on another host whose `from` names ${config.networking.hostName}.";
       }
     ];
   };
