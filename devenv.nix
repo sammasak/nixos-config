@@ -380,6 +380,8 @@ let
         nix
         python3
         yq-go
+        fish
+        bash
       ])
       ''
         ${pkgs.python3}/bin/python scripts/test-coordinator-wiring.py
