@@ -4,17 +4,12 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-/// Adds one to the counter `name{labels}` (bare `name` with no labels) in the textfile `file`, which holds that
-/// counter alone, rewritten whole.
+/// Adds one to the counter `name{labels}` in the textfile `file`, which holds that counter alone, rewritten whole.
 ///
 /// # Errors
 /// What writing it reports.
 pub fn bump(file: &Path, (name, help): (&str, &str), labels: &str) -> std::io::Result<()> {
-    let key = if labels.is_empty() {
-        name.to_owned()
-    } else {
-        format!("{name}{{{labels}}}")
-    };
+    let key = format!("{name}{{{labels}}}");
     let mut counts: std::collections::BTreeMap<String, u64> = fs::read_to_string(file)
         .unwrap_or_default()
         .lines()
@@ -38,7 +33,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn counters_are_counted_by_label_or_bare() -> std::io::Result<()> {
+    fn counters_are_counted_by_label() -> std::io::Result<()> {
         let dir = std::env::temp_dir().join(format!("exec-pool-bump-{}", std::process::id()));
         fs::create_dir_all(&dir)?;
         let file = dir.join("p.prom");
@@ -51,10 +46,11 @@ mod tests {
         assert!(text.contains("exec_pool_prepare_failures_total{step=\"admit\"} 1\n"));
         assert!(text.contains("# TYPE exec_pool_prepare_failures_total counter\n"));
         let bare = dir.join("b.prom");
-        bump(&bare, crate::runner::PARK_PUSH_FAILURES, "")?;
-        bump(&bare, crate::runner::PARK_PUSH_FAILURES, "")?;
+        bump(&bare, crate::runner::PARK_PUSH_FAILURES, "slot=\"pool1\"")?;
+        bump(&bare, crate::runner::PARK_PUSH_FAILURES, "slot=\"pool1\"")?;
         let text = fs::read_to_string(&bare)?;
-        assert!(text.contains("# TYPE exec_pool_park_push_failures_total counter\nexec_pool_park_push_failures_total 2\n"));
+        assert!(text.contains("# TYPE exec_pool_park_push_failures_total counter\n"));
+        assert!(text.contains("exec_pool_park_push_failures_total{slot=\"pool1\"} 2\n"));
         fs::remove_dir_all(&dir)
     }
 }

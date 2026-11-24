@@ -40,17 +40,6 @@ in
         default = 2;
         description = "Each slot's cores, as an instance's cpu.reserved.";
       };
-      credentials = mkOption {
-        type = types.listOf types.str;
-        default = [ ];
-        example = [ "netrc" ];
-        description = "Which of services.devEnvironments.credentials a slot may hold; none by default, never the host user's SSH key.";
-      };
-      rootInGuest = mkOption {
-        type = types.bool;
-        default = false;
-        description = "Each slot's rootInGuest; a slot's session dock refuses it.";
-      };
     };
     repos = mkOption {
       type = types.listOf types.str;
@@ -115,7 +104,13 @@ in
     };
   };
 
-  config.assertions = lib.mkIf cfg.enable [
+  config.assertions = [
+    {
+      assertion = cfg.enable || cfg.roles == [ ];
+      message = "homelab.execPool.roles: set, but the pool is not enabled.";
+    }
+  ]
+  ++ lib.optionals cfg.enable [
     {
       assertion = has "queue" == cfg.queueModule;
       message = "homelab.execPool.roles: `queue` needs modules/homelab/exec-pool.nix imported, and that module needs it in roles.";

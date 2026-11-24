@@ -14,7 +14,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use exec_pool::snapshot::{Git, Plan, Resume, listed, plan};
+use exec_pool::snapshot::{Git, Plan, Resume, landed, listed, plan};
 
 const BRANCH: &str = "pool/t-1";
 const WIP: &str = "refs/pool-wip/t-1";
@@ -108,10 +108,16 @@ fn park(g: &Git<'_>, remote: &str, index: &Path) -> Plan {
     match p {
         Plan::Snapshot => {
             let commit = run(&g.commit(&tree, "pool: snapshot of t-1"));
-            run(&g.push(Some(&commit), WIP));
+            run(&g.push(remote, Some(&commit), WIP));
+            assert!(landed(
+                &run(&g.list(remote, BRANCH, WIP)),
+                WIP,
+                Some(&commit)
+            ));
         }
         Plan::Clear => {
-            run(&g.push(None, WIP));
+            run(&g.push(remote, None, WIP));
+            assert!(landed(&run(&g.list(remote, BRANCH, WIP)), WIP, None));
         }
         Plan::Clean => {}
     }
@@ -241,5 +247,62 @@ fn a_dirty_tree_comes_back_identical_in_a_fresh_clone_and_a_clean_park_drops_the
     assert!(matches!(resume(&remote, &c), Resume::Branch(_)));
     assert_eq!(files(&c), files(&b));
     assert!(git(&c, &["status", "--porcelain"]).is_empty());
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_push_the_checkouts_config_sends_elsewhere_is_not_taken_for_a_park() {
+    let root = std::env::temp_dir().join(format!("exec-pool-redirect-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let (bare, decoy) = (root.join("remote.git"), root.join("decoy.git"));
+    let remote = bare.display().to_string();
+    for r in [&bare, &decoy] {
+        run(&[
+            "git",
+            "init",
+            "--quiet",
+            "--bare",
+            "-b",
+            "main",
+            &r.display().to_string(),
+        ]
+        .map(str::to_owned));
+    }
+    let seed = root.join("seed");
+    clone(&remote, &seed);
+    git(&seed, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    write(&seed.join("a"), "a\n");
+    git(&seed, &["add", "--all"]);
+    git(&seed, &["commit", "--quiet", "-m", "seed"]);
+    git(&seed, &["push", "--quiet", "origin", "main"]);
+    let a = root.join("a");
+    resume(&remote, &a);
+    write(&a.join("a"), "changed\n");
+    // the agent points the real remote at another repository in its checkout's own config
+    git(
+        &a,
+        &[
+            "config",
+            &format!("url.{}.insteadOf", decoy.display()),
+            &remote,
+        ],
+    );
+    let checkout = a.display().to_string();
+    let g = Git {
+        env: "env",
+        git: "git",
+        checkout: &checkout,
+    };
+    let [read, add, write_tree] = g.tree(&root.join("i").display().to_string());
+    run(&read);
+    run(&add);
+    let tree = run(&write_tree);
+    let commit = run(&g.commit(&tree, "snapshot"));
+    run(&g.push(&remote, Some(&commit), WIP));
+    assert!(
+        !landed(&run(&g.list(&remote, BRANCH, WIP)), WIP, Some(&commit)),
+        "the real remote has no snapshot: the park must fail"
+    );
     fs::remove_dir_all(&root).unwrap();
 }

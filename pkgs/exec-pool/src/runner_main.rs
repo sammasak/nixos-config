@@ -36,7 +36,7 @@ use exec_pool::runner::{
     decide_turn, drain_holds, guest_exit, handed_back, holds_tree, read_bytes, read_regular,
     receipt, relink, remote_head, session_checkpoint, tail, tree_check, while_unavailable,
 };
-use exec_pool::snapshot::{self, Git, Plan, Resume, listed, plan};
+use exec_pool::snapshot::{self, Git, Plan, Resume, landed, listed, plan};
 use exec_pool::task_result::TaskResult;
 use exec_pool::textfile;
 use exec_pool::turn_log::{self, LOG_BYTES};
@@ -1426,7 +1426,11 @@ impl<'a> Dock<'a> {
             );
             if let Some(d) = &self.counts {
                 let file = d.join(format!("exec-pool-park-{}.prom", self.slot));
-                if let Err(e) = textfile::bump(&file, PARK_PUSH_FAILURES, "") {
+                if let Err(e) = textfile::bump(
+                    &file,
+                    PARK_PUSH_FAILURES,
+                    &format!("slot=\"{}\"", self.slot),
+                ) {
                     eprintln!("exec-pool-exec: {}: {e}", file.display());
                 }
             }
@@ -1466,6 +1470,21 @@ impl<'a> Dock<'a> {
         run("exec-pool-add", add)?;
         let tree = run("exec-pool-write-tree", write)?;
         let on = listed(&listing, &format!("refs/heads/{branch}"));
+        // what the remote shows after the push, listed as before: a push the checkout's config sent elsewhere fails
+        let check = |want: Option<&str>| {
+            let after = run(
+                "exec-pool-landed",
+                g.list(&m.task.source.repo, &branch, &wip),
+            )?;
+            if landed(&after, &wip, want) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "the remote shows {wip} at {:?}, not {want:?}",
+                    listed(&after, &wip)
+                ))
+            }
+        };
         let at_branch = ParkedAt {
             name: format!("refs/heads/{branch}"),
             commit: on.clone(),
@@ -1476,7 +1495,10 @@ impl<'a> Dock<'a> {
             &tree,
         ) {
             Plan::Clean => Ok(at_branch),
-            Plan::Clear => run("exec-pool-push", g.push(None, &wip)).map(|_| at_branch),
+            Plan::Clear => {
+                run("exec-pool-push", g.push(&m.task.source.repo, None, &wip))?;
+                check(None).map(|()| at_branch)
+            }
             Plan::Snapshot => {
                 let message = format!(
                     "pool: what task {} left uncommitted at its park (lease epoch {})\n\nA system checkpoint for \
@@ -1484,7 +1506,11 @@ impl<'a> Dock<'a> {
                     m.task.id, m.lease_epoch
                 );
                 let commit = run("exec-pool-snapshot", g.commit(&tree, &message))?;
-                run("exec-pool-push", g.push(Some(&commit), &wip))?;
+                run(
+                    "exec-pool-push",
+                    g.push(&m.task.source.repo, Some(&commit), &wip),
+                )?;
+                check(Some(&commit))?;
                 Ok(ParkedAt {
                     name: wip,
                     commit: Some(commit),

@@ -907,11 +907,8 @@ POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
     ("a slot's name declared by hand", "{ homelab.execPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name declared in the core", "{ homelab.execPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name retired", '{ homelab.execPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
-    ("a slot with the push key", '{ homelab.execPool = { enable = true; slots = 1; slot.credentials = [ "id_ed25519" ]; }; }', "never with the host user's SSH key"),
-    ("a credential the host has not", '{ homelab.execPool = { enable = true; slots = 1; slot.credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
     ("codex without a codex login", '{ homelab.execPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
     ("pi on a host without the Pi key", '{ homelab.execPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
-    ("a session dock with rootInGuest", "{ homelab.execPool = { enable = true; slots = 1; slot.rootInGuest = true; }; }", "sessionDock with rootInGuest"),
 ]]
 # acer (a pi host, the gateway's own) with every agent: one proxy route each, placeholders in the guest, no credential bound
 POOL_ALL = r"""
@@ -953,7 +950,7 @@ def check_pool_compat():
     absent = pool_eval("{ }", True)
     off = pool_eval("{ homelab.execPool = { enable = false; slots = 2; }; }", True)
     check(absent.get("units") and absent.get("toplevel") and absent == off,
-          f"executionPool off (unset, or enable = false with slots = 2) moves no worker unit, container or toplevel on msi ({absent.get('error') or [k for k in absent if absent[k] != off.get(k)]})")
+          f"homelab.execPool off (unset, or enable = false with slots = 2) moves no worker unit, container or toplevel on msi ({absent.get('error') or [k for k in absent if absent[k] != off.get(k)]})")
     named = ["t"]
     check(absent.get("instances") == absent.get("declared") == absent.get("agents") == named
           and absent.get("herdr") == [f"worker-herdr-{n}" for n in named] and not absent.get("inventory"),
@@ -986,7 +983,7 @@ def check_pool_compat():
     check(on.get("failing") == [] and s.get("agent") == "none" and s.get("credentials") == [] and s.get("headlessAgents") == ["claude"]
           and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "github-egress", "/run/egress"]
           and on.get("agents") == named and on.get("shutdown") == absent.get("shutdown"),
-          f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic and github egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
+          f"homelab.execPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic and github egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
     a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
     # acer's pool1 pushes through the GitHub proxy (check_runner) and holds nothing of the host's
@@ -995,16 +992,16 @@ def check_pool_compat():
     check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
-          f"executionPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
+          f"homelab.execPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
              for c in POOL_TYPED]
     for (name, _, want), out in zip(POOL_CASES, outs):
         failing = json.loads(out.stdout) if out.returncode == 0 else []
-        check(any(want in m for m in failing), f"executionPool, {name}: fails \"{want}\" ({failing or out.stderr.strip()[-300:]})")
+        check(any(want in m for m in failing), f"homelab.execPool, {name}: fails \"{want}\" ({failing or out.stderr.strip()[-300:]})")
     for (name, _, want), out in zip(POOL_TYPED, typed):
-        check(out.returncode != 0 and want in out.stderr, f"executionPool, {name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
+        check(out.returncode != 0 and want in out.stderr, f"homelab.execPool, {name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
 
 
 # the session dock (modules/workers/core.nix sessionDock): each pool slot binds its own .sessions/dock/<name> read-write

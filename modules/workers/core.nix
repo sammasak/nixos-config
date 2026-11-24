@@ -1232,7 +1232,7 @@ in
         };
       };
       systemd.services.dev-env-sessions-metrics = {
-        description = "Size the developer environments' session trees and session store, for node-exporter";
+        description = "Size the developer environments' session docks, for node-exporter";
         path = [ pkgs.coreutils ];
         enableStrictShellChecks = true;
         # root that only reads past the guests' modes and writes its own textfile
@@ -1436,7 +1436,7 @@ in
             }
             {
               assertion = !(w.sessionDock && w.rootInGuest);
-              message = "${i}: sessionDock with rootInGuest: its writable binds are not id-mapped, so a session's tree could not move between slots.";
+              message = "${i}: sessionDock with rootInGuest: its writable binds are not id-mapped, so a session turn's home and checkout would not be the guest user's.";
             }
             {
               assertion = !w.rootInGuest || gid != null;

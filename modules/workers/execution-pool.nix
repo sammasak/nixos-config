@@ -62,7 +62,6 @@ in
       # nativeOtel's default would bind the OTLP proxy socket into a slot with no agent to send
       telemetry = false;
       headlessAgents = cfg.agents;
-      inherit (cfg.slot) credentials rootInGuest;
       egress.github.repos = cfg.repos;
       sessionDock = true;
       # each attempt's workspace (pkgs/exec-pool/src/workspace.rs): throwaway, so its checkout never holds the reset

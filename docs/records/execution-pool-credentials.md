@@ -1,15 +1,17 @@
 # Execution pool credentials: sidecars, not binds
 
-Status: slice 1 merged (PR 757); slice 2 and the login net proposed with the next PR. Issue 754, item 1: a session's home is
-copied to the store on another host at every park, and only `home/.ssh/` is excluded, so any credential that is in a
-slot guest can end up in the store. The fix is structural: a slot guest holds no credential, and every call out goes
+Status: slice 1 merged (PR 757); slice 2 and the login net proposed with the next PR. Issue 754, item 1: a session's home was
+copied to a store on another host at every park, so any credential in a slot guest could end up there. Sessions no
+longer copy a home (execution-pool-contract.md, Session state: the home is made afresh each turn and only the
+checkout's uncommitted work leaves, as a snapshot commit on the task's remote); a credential written into the checkout
+would travel in that snapshot. The fix is structural: a slot guest holds no credential, and every call out goes
 through a host-side sidecar that holds the credential and adds it to the request. Background and the longer plan:
 [credentials-and-tenancy.md](credentials-and-tenancy.md).
 
 ## What a slot can read or use today
 
 From `modules/workers/{core,default,execution-pool}.nix`, `modules/homelab/exec-pool*.nix` and the hosts, before
-slice 1. "Home" is the session home, `/session/cur/home`, which a park copies to the store.
+slice 1. "Home" is the session home, `/session/cur/home`, which a park then copied to the store.
 
 | Credential | Where it lives | How a slot uses it | Can it reach the home | Kind |
 |---|---|---|---|---|
@@ -56,9 +58,9 @@ widest: the whole account, every branch.
    by `remote_ip`), where acer's proxy serves the same GitHub site with its own slots' list, refusals and token
    (`services.devEnvironments.egressSites`, one site). The repository list is `homelab.execPool.repos`'s default,
    so both hosts list the same. No slot on any host gets `id_ed25519`, and an assertion keeps it so. msi's slots then
-   depend on acer for GitHub, as they already do for the queue and the session store.
-3. **Push only `pool/<task id>`.** Caddy cannot read the ref updates in a receive-pack body. A ref-aware hop: a
-   host-side bare repository per slot whose `pre-receive` hook admits `refs/heads/pool/*` and whose `post-receive`
+   depend on acer for GitHub, as they already do for the queue.
+3. **Push only `pool/<task id>` and `refs/pool-wip/<task id>`.** Caddy cannot read the ref updates in a receive-pack
+   body. A ref-aware hop: a host-side bare repository per slot whose `pre-receive` hook admits those two and whose `post-receive`
    pushes upstream with the host's credential (stock git hooks). Rulesets on GitHub are later and not part of this
    plan, as they change the GitHub account.
 4. **Short-lived tokens.** A GitHub App installation token minted on the host per task (one hour, listed repositories,
@@ -66,11 +68,10 @@ widest: the whole account, every branch.
 
 ## The login net
 
-A login run in a session (`gh auth login`, `claude login`, `codex login`, a `.netrc`) would write a real credential
-into the home. A park's push to the store leaves the known files on their host (`HELD_BACK` in
-`pkgs/exec-pool/src/sync.rs`, beside `home/.ssh/`): gh's `hosts.yml`, `.claude/.credentials.json`,
-`.codex/auth.json`, `.netrc`, `.git-credentials` and `.config/git/credentials`, `.config/nix/nix.conf`. This is a net,
-not the model: the model is that no slot needs a login, and a file the list does not name still travels.
+A login run in a session (`gh auth login`, `claude login`, `codex login`, a `.netrc`) writes into the turn's home,
+which the park removes with the dock and never pushes. Only the checkout leaves a host, as the agent's own commits or
+the park's snapshot, so a credential the agent writes inside the checkout (and not in an ignored file) would reach the
+remote. The model stays that no slot needs a login.
 
 ## Verification after a deploy
 

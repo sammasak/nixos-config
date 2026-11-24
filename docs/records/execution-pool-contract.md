@@ -100,7 +100,7 @@ histograms `exec_pool_queue_wait_seconds{host,agent}` and `exec_pool_run_seconds
 `reason="lease_expired"`. The queue renders every host's series on acer, so `host` is the slot's host from the queue's
 rows (an attempt's or session's last lease, a turn's own lease; `none` before any), not the scrape's `node`. Ids, slots
 and prompts stay in the log line, never in a label. Each slot's exec helper counts, in its own host's textfile,
-`exec_pool_park_push_failures_total` (a park's push that failed, each try) and `exec_pool_prepare_failures_total{step}`
+`exec_pool_park_push_failures_total{slot}` (a park's push that failed, each try) and `exec_pool_prepare_failures_total{step}`
 (a run that failed before its agent: the step's unit, or `admit`, `dock`, `list`, `manifest`, `turn`), split by `node`; such a run's result output is
 `prepare failed at <step> (exit N):` and its stderr tail, so `exec-pool result` shows why. When the render fails for any reason it prints only `exec_pool_queue_up 0`
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
@@ -177,7 +177,9 @@ first turn and after every later turn's input to commit and push before it stops
    `refs/pool-wip/<task id>`, replacing the last park's (`+<commit>:refs/pool-wip/<task id>`). An unpushed commit
    is in the snapshot's history, so it comes back too;
 4. the push is tried again with a growing pause for up to 30 minutes (each failure counted,
-   `exec_pool_park_push_failures_total`), stopped early by a cancel, not by a drain;
+   `exec_pool_park_push_failures_total`), stopped early by a cancel, not by a drain. A push counts only once a listing
+   from outside the checkout (so its config, which the agent may have changed, does not apply) shows the ref at the
+   pushed commit, or gone after a delete;
 5. the runner parks with the result, the `CheckpointRef` of where the work is, and the transcript (`transcripts`,
    migration 0017: one row per session, lz4 compressed, at most 32 MiB, never older than the stored epoch, removed when
    the session is final). It is never pushed to GitHub: it can hold tool output.
@@ -195,7 +197,10 @@ receive-pack for a listed repository whole, so it limits no ref. The helper mark
 whatever stops it before the close leaves the runner to quarantine the slot rather than reset and reuse it. Known
 limits: a guest process outside the step units would keep running in the dock past the turn (none is started);
 Codex and Pi run no sessions yet; a needs_review session sent a message before its kept dock was pushed resumes
-without that work.
+without that work, and nothing retries a kept dock's push after the park's 30 minutes (an operator pushes it); a
+session whose transcript outgrows 32 MiB goes to review at every park; a branch pushed by someone else after the park
+is not merged in at the resume (the checkout is the park's, so the agent's next push is refused until it merges); an
+untracked nested repository is kept as a gitlink, its files lost, and a file over GitHub's 100 MB limit fails the push.
 
 Settling a one-shot run (`runner::decide`): a cancel is `cancelled`; a clone or checkout that fails never started the
 task's argv, so the attempt goes back to `queued`. A timeout, a guest that went away, or a missing result (or one for
@@ -230,7 +235,6 @@ PostgreSQL, so it is imported only where the queue runs; it imports the other tw
 | `roles` | `[ ]` | `queue` and/or `runner`; neither: slots alone |
 | `slots` | 0 | slots `pool1..poolN` |
 | `slot.memory`, `slot.cpu` | `"2G"`, 2 | each slot's reserve |
-| `slot.credentials`, `slot.rootInGuest` | `[ ]`, false | what a slot may hold; never the host user's SSH key |
 | `repos` | the owner's repositories | what the GitHub sidecar signs for a slot: fetch, push (branch and snapshot ref), gh |
 | `agents` | `[ ]` | `claude`, `codex`, `pi`; sessions run claude |
 | `capabilities` | `[ ]` | what each slot offers a task |
@@ -241,7 +245,7 @@ PostgreSQL, so it is imported only where the queue runs; it imports the other tw
 
 Refused at evaluation: `queue` in `roles` without `exec-pool.nix` imported, or that module without it; a runner with
 no slots or no agents; a runner with the local queue and a `queueListener`, or without both; `remoteRunners` without
-the queue; a slot holding the SSH key, `rootInGuest` with a session dock, a slot name another instance uses. The
+the queue; `roles` without `enable`; a slot name another instance uses. A slot holds no credential and no root. The
 agent CLIs are the workers' guest packages (`modules/workers/default.nix`), not pool options. A host with the queue and
 three slots, and one with four slots claiming from it:
 

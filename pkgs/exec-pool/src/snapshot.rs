@@ -45,7 +45,8 @@ impl Git<'_> {
         v
     }
 
-    /// The remote's commits for the task's branch and its snapshot, for [`listed`]; it needs no checkout.
+    /// The remote's commits for the task's branch and its snapshot, for [`listed`]. It runs from `/`, so no
+    /// checkout's config (which the agent may have changed, a `url.*.insteadOf` included) decides where it asks.
     #[must_use]
     pub fn list(&self, repo: &str, branch: &str, wip: &str) -> Vec<String> {
         [
@@ -53,6 +54,8 @@ impl Git<'_> {
             "GIT_CONFIG_GLOBAL=/dev/null",
             "GIT_TERMINAL_PROMPT=0",
             self.git,
+            "-C",
+            "/",
             "ls-remote",
             "--",
             repo,
@@ -88,10 +91,11 @@ impl Git<'_> {
         self.argv(&[], &["commit-tree", tree, "-p", "HEAD", "-m", message])
     }
 
-    /// Replaces the snapshot with `commit`, or removes it with `None`. The checkout's hooks are not run: they gate
-    /// code bound for a branch, and this ref is none (see the module doc).
+    /// Replaces the snapshot on `repo` with `commit`, or removes it with `None`. The checkout's hooks are not run:
+    /// they gate code bound for a branch, and this ref is none (see the module doc). Its config still applies, so the
+    /// park checks the result with [`Git::list`] and [`landed`], never trusting the push's exit alone.
     #[must_use]
-    pub fn push(&self, commit: Option<&str>, wip: &str) -> Vec<String> {
+    pub fn push(&self, repo: &str, commit: Option<&str>, wip: &str) -> Vec<String> {
         let spec = commit.map_or_else(|| format!(":{wip}"), |c| format!("+{c}:{wip}"));
         self.argv(
             &[],
@@ -100,11 +104,19 @@ impl Git<'_> {
                 "core.hooksPath=/dev/null",
                 "push",
                 "--quiet",
-                "origin",
+                "--",
+                repo,
                 &spec,
             ],
         )
     }
+}
+
+/// Whether the remote's listing `ls_remote` shows the snapshot ref `wip` as a push of `commit` (`None`: removed) left
+/// it.
+#[must_use]
+pub fn landed(ls_remote: &str, wip: &str, commit: Option<&str>) -> bool {
+    listed(ls_remote, wip).as_deref() == commit
 }
 
 /// The commit `ls_remote`, the output of [`Git::list`], shows for the full ref name `name`.
@@ -230,7 +242,7 @@ mod tests {
 
     #[test]
     fn the_snapshot_push_overwrites_its_own_ref_alone_without_the_hooks() {
-        let push = g().push(Some("abc"), "refs/pool-wip/t-1");
+        let push = g().push("https://github.com/o/r", Some("abc"), "refs/pool-wip/t-1");
         assert_eq!(
             push.get(3..).unwrap_or_default(),
             [
@@ -241,12 +253,13 @@ mod tests {
                 "core.hooksPath=/dev/null",
                 "push",
                 "--quiet",
-                "origin",
+                "--",
+                "https://github.com/o/r",
                 "+abc:refs/pool-wip/t-1"
             ]
         );
         assert_eq!(
-            g().push(None, "refs/pool-wip/t-1")
+            g().push("https://github.com/o/r", None, "refs/pool-wip/t-1")
                 .last()
                 .map(String::as_str),
             Some(":refs/pool-wip/t-1")
@@ -263,6 +276,8 @@ mod tests {
                 "GIT_CONFIG_GLOBAL=/dev/null",
                 "GIT_TERMINAL_PROMPT=0",
                 "git",
+                "-C",
+                "/",
                 "ls-remote",
                 "--",
                 "https://github.com/o/r",
@@ -274,6 +289,13 @@ mod tests {
         assert_eq!(listed(out, "refs/heads/pool/t-1").as_deref(), Some("c1"));
         assert_eq!(listed(out, "refs/pool-wip/t-1").as_deref(), Some("s1"));
         assert_eq!(listed("", "refs/pool-wip/t-1"), None);
+        assert!(landed(out, "refs/pool-wip/t-1", Some("s1")));
+        assert!(
+            !landed(out, "refs/pool-wip/t-1", Some("s2")),
+            "pushed elsewhere"
+        );
+        assert!(!landed(out, "refs/pool-wip/t-1", None), "not removed");
+        assert!(landed("", "refs/pool-wip/t-1", None));
         assert_eq!(
             Resume::of(Some("c1".into()), Some("s1".into())),
             Resume::Snapshot("s1".into())
