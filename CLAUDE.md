@@ -159,7 +159,7 @@ Configuration lives in `modules/programs/cli/claude-code/`:
 |------|-------|---------|
 | `mcp.nix` | All `devTools` hosts (shared HM module) | Settings, plugins, MCP servers, shebang fixes, SOPS token sourcing |
 | `default.nix` | All `devTools` hosts (shared HM module) | Tool-permissions block, `programs.fish.enable` |
-| `skills.nix` | All `devTools` hosts (shared HM module) | Symlinks skills and agents from the `skills` flake input |
+| `skills.nix` | All `devTools` hosts (shared HM module) | Symlinks skills and agents from the `skills` flake input; an agent's `agents/...` paths point at that input in the store (`role-adapters` check) |
 
 **Plugin configuration** (`mcp.nix`): Declares `enabledPlugins` (superpowers, rust-analyzer-lsp, frontend-design, ralph-loop) and MCP servers (playwright/chromium) in `programs.claude-code.settings`.
 
