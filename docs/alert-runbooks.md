@@ -230,7 +230,7 @@ rewritten `/var/lib/exec-pool-metrics/exec-pool.prom` for over 10 minutes. An em
 never fires; a sleeping host never does. A failing collector unit also fires SystemdUnitFailed.
 First: on the host, `systemctl status postgresql.service exec-pool-migrate.service exec-pool-metrics.timer
 exec-pool-metrics.service` and `journalctl -u exec-pool-metrics.service -u exec-pool-migrate.service`; the CLI names the
-error there (exit 75: the database is unavailable). Authentik shares the PostgreSQL cluster, so its health is the same check.
+error there (exit 75: the database is unavailable). Authentik's database is on the same server (`modules/homelab/postgresql.nix`), so its health is the same check.
 Do not: delete the textfile or write `exec_pool_queue_up 1` by hand; nothing dispatches from the queue yet, so there
 is no task to rescue.
 Rollback: drop the `exec-pool.nix` import from acer's configuration and deploy; the `exec_pool` database stays until
