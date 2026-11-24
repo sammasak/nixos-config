@@ -127,6 +127,8 @@ pub enum Error {
     NoAttempts,
     #[error("all {0} attempts are used")]
     AttemptsExhausted(u32),
+    #[error("an agent task's id {0:?} makes no branch name (agent::branch)")]
+    BranchId(String),
     #[error("the receipt's {0} does not match the settled attempt")]
     Receipt(&'static str),
     /// The parser's message: `serde_json::Error` is not `Eq`.
@@ -348,10 +350,13 @@ impl TaskSpec {
     }
 
     /// # Errors
-    /// An empty `id`, `idempotency_key`, `source.repo`, `source.rev` or `command.argv`, a zero
-    /// `retry.max_attempts`, or a capability outside `granted`.
+    /// An empty `id`, `idempotency_key`, `source.repo`, `source.rev` or `command.argv`, an agent task whose id
+    /// [`agent::branch`] refuses, a zero `retry.max_attempts`, or a capability outside `granted`.
     pub fn validate(&self, granted: &BTreeSet<String>) -> Result<(), Error> {
         non_empty("id", &self.id)?;
+        if self.command.agent != Agent::None && agent::branch(self).is_err() {
+            return Err(Error::BranchId(self.id.clone()));
+        }
         non_empty("idempotency_key", &self.idempotency_key)?;
         non_empty("source.repo", &self.source.repo)?;
         non_empty("source.rev", &self.source.rev)?;

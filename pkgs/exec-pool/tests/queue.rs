@@ -402,7 +402,9 @@ fn the_runner_claims_and_settles_and_writes_nothing_else() {
         .unwrap();
     assert_eq!(status(&pg, &a).0, "succeeded");
     let out = |exit: i32, output: &str| TaskResult::new(None, Some(exit), output);
-    assert!(runner.record_result(&a, 1, &out(0, "done")).unwrap());
+    let mut pushed = out(0, "done");
+    pushed.branch = Some("pool/t-1".to_owned());
+    assert!(runner.record_result(&a, 1, &pushed).unwrap());
     assert!(!runner.record_result(&a, 1, &out(0, "again")).unwrap());
     runner.claim(&slot("s1"), 60).unwrap().unwrap();
     // a slot's next claim updates its row as this role
@@ -850,7 +852,8 @@ fn a_settled_attempt_records_its_result_for_the_submitter() {
     );
     // a re-leased attempt shows no earlier epoch's result
     assert!(s.result(&a).unwrap().unwrap()["result"].is_null());
-    let done = TaskResult::new(Some(exec_pool::Outcome::Succeeded), Some(0), "opened PR #9");
+    let mut done = TaskResult::new(Some(exec_pool::Outcome::Succeeded), Some(0), "opened PR #9");
+    done.branch = Some("pool/t-1".to_owned());
     assert!(s.record_result(&a, 2, &done).unwrap());
 
     let submitter = pg
@@ -866,6 +869,7 @@ fn a_settled_attempt_records_its_result_for_the_submitter() {
     assert_eq!(shown["result"]["outcome"], "succeeded");
     assert_eq!(shown["result"]["exit_code"], 0);
     assert_eq!(shown["result"]["output"], "opened PR #9");
+    assert_eq!(shown["result"]["branch"], "pool/t-1");
     assert!(!shown.to_string().contains(ARGV_MARKER), "{shown}");
     let e = Client::connect(&submitter, NoTls)
         .unwrap()

@@ -946,7 +946,9 @@ def check_pool_compat():
           f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
     a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
-    leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+    # acer's pool1 holds the push key (check_runner); nothing else of the host's
+    leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/"))
+              and not b.endswith(("/ssh_host_ed25519_key", ".pub")) and b != "/var/lib/host-credentials/id_ed25519"]
     check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "llm-gateway-egress", "openai-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
@@ -972,7 +974,16 @@ let
   flake = builtins.getFlake (toString %(root)s);
   units = c: builtins.filter (n: builtins.match "exec-pool-(runner|exec).*" n != null) (builtins.attrNames c.systemd.services);
   acer = flake.nixosConfigurations.acer-swift.config;
+  msi = flake.nixosConfigurations.msi-ms7758.config;
   r = acer.systemd.services.exec-pool-runner-pool1;
+  # a slot's push key: its credentials, host-credential binds beside the sshd host key and public keys every
+  # environment binds, its ~/.ssh links, and the helper's git identity
+  push = c: {
+    inherit (c.services.devEnvironments.instances.pool1) credentials;
+    binds = builtins.filter (b: builtins.match "/var/lib/host-credentials/.*" b != null && builtins.match ".*(/ssh_host_ed25519_key|[.]pub)" b == null) (builtins.attrNames c.containers.pool1.bindMounts);
+    links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) c.containers.pool1.config.systemd.tmpfiles.rules;
+    git = c.systemd.services."exec-pool-exec@".environment;
+  };
 in {
   acer = units acer;
   msi = units flake.nixosConfigurations.msi-ms7758.config;
@@ -985,6 +996,7 @@ in {
   scratch = acer.services.devEnvironments.instances.pool1.scratch;
   reset = acer.systemd.services."dev-env-reset@".script;
   polkit = acer.security.polkit.extraConfig;
+  push = { acer = push acer; msi = push msi; };
 }
 """
 
@@ -1004,6 +1016,12 @@ def check_runner():
           and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
           and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
           f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
+    for host, p in got.get("push", {"acer": {}, "msi": {}}).items():
+        links, git = p.get("links", []), p.get("git", {})
+        check(p.get("credentials") == ["id_ed25519"] and p.get("binds") == ["/var/lib/host-credentials/id_ed25519"]
+              and len(links) == 1 and "/.ssh/id_ed25519 " in links[0]
+              and git.get("EXEC_POOL_GIT_NAME") == "sammasak" and git.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
+              f"{host}'s pool1 holds the host's push key alone, linked as ~/.ssh/id_ed25519, no gh login, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
 
 
 def check_slot():

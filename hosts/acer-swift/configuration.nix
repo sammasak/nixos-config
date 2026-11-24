@@ -60,6 +60,8 @@
         "claude"
         "pi"
       ];
+      # the key herman and a1 push with: a task hands its code back on its own branch, pool/<task id>
+      credentials = [ "id_ed25519" ];
     };
   };
   homelab.execPool.runner.enable = true;

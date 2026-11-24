@@ -22,12 +22,13 @@ use crate::{
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// Each migration, ascending, by the version it records; `migrate` applies every one the database has not recorded.
-const STEPS: [(i32, &str); 6] = [
+const STEPS: [(i32, &str); 7] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
     (4, include_str!("../migrations/0004_runner.up.sql")),
     (5, include_str!("../migrations/0005_cancel.up.sql")),
+    (6, include_str!("../migrations/0006_branch.up.sql")),
     (8, include_str!("../migrations/0008_slots.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
@@ -840,11 +841,20 @@ impl Store {
                 )));
             }
             let n = tx.execute(
-                "INSERT INTO results (attempt_id, lease_epoch, outcome, exit_code, output) VALUES ($1, $2, $3, $4, $5) \
+                "INSERT INTO results (attempt_id, lease_epoch, outcome, exit_code, output, branch) \
+                 VALUES ($1, $2, $3, $4, $5, $6) \
                  ON CONFLICT (attempt_id) DO UPDATE SET lease_epoch = EXCLUDED.lease_epoch, outcome = EXCLUDED.outcome, \
-                 exit_code = EXCLUDED.exit_code, output = EXCLUDED.output, recorded_at = now() \
+                 exit_code = EXCLUDED.exit_code, output = EXCLUDED.output, branch = EXCLUDED.branch, \
+                 recorded_at = now() \
                  WHERE results.lease_epoch < EXCLUDED.lease_epoch",
-                &[&attempt, &epoch, &outcome, &result.exit_code, &result.output()],
+                &[
+                    &attempt,
+                    &epoch,
+                    &outcome,
+                    &result.exit_code,
+                    &result.output(),
+                    &result.branch,
+                ],
             )?;
             Ok(n == 1)
         })
@@ -862,7 +872,7 @@ impl Store {
                 &format!(
                     "SELECT {SUMMARY} || jsonb_build_object('result', CASE WHEN r.attempt_id IS NOT NULL THEN \
                      jsonb_build_object('lease_epoch', r.lease_epoch, 'outcome', r.outcome, \
-                     'exit_code', r.exit_code, 'output', r.output, 'recorded_at', r.recorded_at) END) \
+                     'exit_code', r.exit_code, 'output', r.output, 'branch', r.branch, 'recorded_at', r.recorded_at) END) \
                      FROM task_summaries t JOIN attempts a ON a.task_id = t.id \
                      LEFT JOIN results r ON r.attempt_id = a.id AND r.lease_epoch = a.lease_epoch WHERE t.id = $1 OR a.id = $1"
                 ),
