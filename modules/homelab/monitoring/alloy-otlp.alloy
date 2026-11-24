@@ -14,13 +14,14 @@ otelcol.receiver.otlp "native" {
   }
 
   output {
-    metrics = [otelcol.processor.memory_limiter.native.input]
+    metrics = [otelcol.processor.attributes.native_worker_stamp.input]
     logs    = [otelcol.processor.attributes.native_worker_stamp.input]
   }
 }
 
 // A host relay stamps X-Otel-Worker on a guest's requests; the stamp,
-// never the guest's own worker.name, names the worker on its lines.
+// never the guest's own worker.name, names the worker on its lines
+// and its metric points.
 otelcol.processor.attributes "native_worker_stamp" {
   action {
     key    = "stamped.worker"
@@ -33,7 +34,8 @@ otelcol.processor.attributes "native_worker_stamp" {
   }
 
   output {
-    logs = [otelcol.processor.memory_limiter.native.input]
+    metrics = [otelcol.processor.memory_limiter.native.input]
+    logs    = [otelcol.processor.memory_limiter.native.input]
   }
 }
 
@@ -100,7 +102,8 @@ otelcol.processor.transform "native_sanitize" {
   metric_statements {
     context = "resource"
     statements = [
-      `keep_keys(resource.attributes, ["service.name", "host.name"])`,
+      `keep_keys(resource.attributes, ["service.name", "host.name", "worker.name"])`,
+      `delete_key(resource.attributes, "worker.name") where resource.attributes["worker.name"] != nil and not IsMatch(resource.attributes["worker.name"], "^[a-z][a-z0-9-]{0,31}$")`,
       `set(resource.attributes["service.name"], "unknown") where resource.attributes["service.name"] == nil`,
       `set(resource.attributes["service.name"], "codex") where IsMatch(resource.attributes["service.name"], "^codex.*$")`,
       `set(resource.attributes["service.name"], "claude-code") where IsMatch(resource.attributes["service.name"], "^claude-code.*$")`,
@@ -114,7 +117,11 @@ otelcol.processor.transform "native_sanitize" {
   metric_statements {
     context = "datapoint"
     statements = [
-      `keep_keys(attributes, ["model", "tool", "tool_name", "success", "type", "token_type", "query_source", "effort", "vcs.owner.name", "vcs.repository.name"])`,
+      `keep_keys(attributes, ["model", "tool", "tool_name", "success", "type", "token_type", "query_source", "effort", "vcs.owner.name", "vcs.repository.name", "stamped.worker"])`,
+      `set(attributes["worker"], resource.attributes["worker.name"]) where resource.attributes["worker.name"] != nil`,
+      `set(attributes["worker"], "other") where attributes["stamped.worker"] != nil`,
+      `set(attributes["worker"], attributes["stamped.worker"]) where attributes["stamped.worker"] != nil and IsMatch(attributes["stamped.worker"], "^[a-z][a-z0-9-]{0,31}$")`,
+      `delete_key(attributes, "stamped.worker")`,
       `set(attributes["success"], "unknown") where attributes["success"] != "true" and attributes["success"] != "false"`,
       `set(attributes["harness"], resource.attributes["service.name"])`,
       `set(attributes["host"], resource.attributes["host.name"])`,
@@ -172,7 +179,7 @@ otelcol.processor.transform "native_sanitize" {
     ]
   }
 
-  // Runs after the datapoint context copied host/harness/observer
+  // Runs after the datapoint context copied host/harness/observer/worker
   // onto each point; any other resource attribute would become a
   // Prometheus target_info series.
   metric_statements {

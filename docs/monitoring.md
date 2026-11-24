@@ -65,6 +65,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   per request than off ones, compactions per request not rising. "The 300K window helps": herman compacts less per
   request than a default worker with the same Shunt. Today a1 (on, default) and herman (off, 300K) differ in both and
   acer's host sends no Claude events, so neither claim isolates until two workers differ in one setting.
+  A guest's token and cost series carry `worker` (the relay's stamp), so tokens per session split by worker too.
 
 ## Rules and paging
 
@@ -75,6 +76,7 @@ See [the measured improvement cycle](monitoring-improvement-cycle.md) for the fl
   rule view does not list them; Loki's `/prometheus/api/v1/rules` does. The `loki-ruler-black-pi` check runs them.
   - `host_worker:claude_code_auto_compactions:count1m{host,worker}`: Claude Code's auto compactions per minute (#626),
     each minute counted once: a sum over a day is a lower bound (late lines, minutes Loki was down).
+    ClaudeCompactionLoop (`homelab.yaml`) fires when one host or worker sums over 5 in an hour.
   - UnitOOMKilled (warning): systemd logged an OOM kill in a system unit, named in `oom_unit`.
 - Alertmanager publishes every alert to lenovo's ntfy except Watchdog, InfoInhibitor, HostExpectedOff, any alert
   labelled `notify="none"` and any `severity="info"` alert (NodeCPUHighUsage): those go to a null receiver. The shipping team's alerts are muted at night.
