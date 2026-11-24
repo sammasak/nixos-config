@@ -73,6 +73,12 @@ in
       example = [ "id_ed25519" ];
       description = "Which of services.devEnvironments.credentials a slot may hold; none by default, as msi's t1.";
     };
+    agents = mkOption {
+      type = types.listOf (types.enum [ "claude" ]);
+      default = [ ];
+      example = [ "claude" ];
+      description = "Agents a task may run in a slot, each with the route a named worker's has (its egress proxy, no credential in the guest); the slot's own agent stays none, so no session starts.";
+    };
     rootInGuest = mkOption {
       type = types.bool;
       default = false;
@@ -85,6 +91,7 @@ in
       agent = "none";
       # nativeOtel's default would bind the OTLP proxy socket into a slot with no agent to send
       telemetry = false;
+      headlessAgents = cfg.agents;
       inherit (cfg) credentials rootInGuest;
       memory.reserved = cfg.memory.reserved;
       cpu.reserved = cfg.cpu.reserved;
