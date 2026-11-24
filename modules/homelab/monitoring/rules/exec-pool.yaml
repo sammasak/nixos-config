@@ -46,3 +46,17 @@ groups:
           description: "{{ $value }} attempt(s) in the queue on {{ $labels.node }} have been in needs_review for an hour: a started attempt lost its lease or settled as such, and its effects are unknown. List it with psql as the exec_pool user, check its effects, then resolve it (runbook)."
           query: 'exec_pool_attempts{job="node-exporter",node="{{ $labels.node }}",state="needs_review"} > 0'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolneedsreview"
+
+      - alert: ExecPoolSlotQuarantined
+        # a refused reset (an agent running, or unpushed work): the runner stays up but claims nothing for that slot
+        expr: |
+          max by (node) (exec_pool_slots{job="node-exporter",state="quarantined"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "An execution pool slot in the queue on {{ $labels.node }} is quarantined"
+          description: "{{ $value }} slot(s) in the queue on {{ $labels.node }} failed their reset for 5 minutes, so their runner claims nothing for them. List them with psql as the exec_pool user, clear the cause on the slot's host, then remove the runner's marker and restart it (runbook)."
+          query: 'exec_pool_slots{job="node-exporter",node="{{ $labels.node }}",state="quarantined"} > 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolslotquarantined"

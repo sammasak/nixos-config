@@ -870,6 +870,7 @@ POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
     ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
     ("codex without a codex login", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
     ("pi on a host without the Pi key", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
+    ("a session dock with rootInGuest", "{ sam.workers.executionPool = { enable = true; slots = 1; rootInGuest = true; }; }", "sessionDock with rootInGuest"),
 ]]
 # acer (a pi host, the gateway's own) with every agent: one proxy route each, placeholders in the guest, no credential bound
 POOL_ALL = r"""
@@ -964,9 +965,42 @@ def check_pool_compat():
         check(out.returncode != 0 and want in out.stderr, f"executionPool, {name}: a type error naming \"{want}\" ({out.stderr.strip()[-300:]})")
 
 
+# the session dock (modules/workers/core.nix sessionDock): each pool slot binds its own .sessions/dock/<name> read-write
+# at /session, made root's by the activation; a named worker binds none
+DOCK = r"""
+let
+  flake = builtins.getFlake (toString %(root)s);
+  of = c: n: {
+    dock = c.services.devEnvironments.instances.${n}.sessionDock;
+    bind = let b = c.containers.${n}.bindMounts."/session" or null; in
+      if b == null then null else { inherit (b) hostPath isReadOnly; };
+  };
+  host = h: named: let c = flake.nixosConfigurations.${h}.config; in {
+    pool1 = of c "pool1";
+    named = of c named;
+    stateDir = c.services.devEnvironments.stateDir;
+    activation = c.system.activationScripts.devEnvironments.text;
+  };
+in { acer = host "acer-swift" "herman"; msi = host "msi-ms7758" "m1"; }
+"""
+
+
+def check_session_dock():
+    out = run_eval(DOCK % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
+    for h in ("acer", "msi"):
+        d = got.get(h, {})
+        dock = f"{d.get('stateDir')}/.sessions/dock/pool1"
+        check(d.get("pool1") == {"dock": True, "bind": {"hostPath": dock, "isReadOnly": False}}
+              and d.get("named") == {"dock": False, "bind": None}
+              and 'install -d -m 0711 "$d/.sessions"' in d.get("activation", "")
+              and 'install -d -m 0755 "$d/.sessions/dock" "$d/.sessions/dock/pool1"' in d.get("activation", ""),
+              f"{h}: pool1 binds {dock} read-write at /session, made 0711/0755 root's by the activation; its named worker binds no /session ({got.get('error') or {k: v for k, v in d.items() if k != 'activation'} })")
+
+
 # modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a
-# polkit rule that lets that role start exactly the helper and the reset of its own slot; msi's one slot alike, its
-# runner on acer's queue (exec-pool-db-acer-swift checks how it connects).
+# polkit rule that lets that role start exactly the helper and the reset of its own slot, and clear that reset's failed
+# state; msi's one slot alike, its runner on acer's queue (exec-pool-db-acer-swift checks how it connects).
 # The slot claims for its pool agents, the helper hands a step the agent's route, and the reset never waits on an
 # attempt's workspace.
 RUNNER = r"""
@@ -1007,9 +1041,13 @@ def check_runner():
     rule = '["exec-pool-exec@pool1.service","dev-env-reset@pool1.service"]'
     check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", "exec-pool-runner-pool1"]
           and got.get("msi") == ["exec-pool-exec@", "exec-pool-runner-pool1"] and got.get("user") == "exec_pool"
-          and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude"]
+          and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude", "pi"]
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
           f"acer runs exec-pool-runner-pool1 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same two ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'exec')} or out.stderr.strip()[-300:]})")
+    polkit = got.get("polkit", "")
+    check('var resets = ["dev-env-reset@pool1.service"];' in polkit
+          and '(action.lookup("verb") == "reset-failed" && resets.indexOf(action.lookup("unit")) >= 0)' in polkit,
+          f"polkit lets exec_pool clear the failed state of its slot's reset only, so a refused reset quarantines the slot without leaving the host degraded ({polkit[-400:]!r})")
     env, agent = got.get("env", {}), got.get("agentEnv", {})
     check(agent.get("ANTHROPIC_BASE_URL") == "http://127.0.0.1:4100" and agent.get("CLAUDE_CODE_OAUTH_TOKEN") == "held-by-the-host"
           and "/etc/profiles/per-user/" in agent.get("PATH", "") and not {"EDITOR", "XDG_CONFIG_HOME"} & set(agent)
@@ -1333,6 +1371,7 @@ def main():
     check(out.returncode == 0 and json.loads(out.stdout) == [], f"msi-ms7758 as committed fails no assertion ({out.stdout.strip() or out.stderr.strip()[-600:]})")
     check_slot()
     check_pool_compat()
+    check_session_dock()
     check_runner()
     out = run_eval(fleet(FLEET_INSTANCE, FLEET_FACTS))
     facts = json.loads(out.stdout) if out.returncode == 0 else {}

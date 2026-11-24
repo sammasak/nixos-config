@@ -207,6 +207,11 @@ let
         mkdir -m 0755 "$d/${w.name}/home/.cache" 2>/dev/null && chown -h ${o.u}:${o.g} "$d/${w.name}/home/.cache" || true
         [[ -d $d/${w.name}/eval-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/eval-cache"
       ''
+      # root's at every level, so the guest cannot swap the dir its tree is renamed into
+      + lib.optionalString w.sessionDock ''
+        install -d -m 0711 "$d/.sessions"
+        install -d -m 0755 "$d/.sessions/dock" "$d/.sessions/dock/${w.name}"
+      ''
       + lib.optionalString w.rootInGuest ''
         [[ -d $d/${w.name}/nix-cache ]] || install -d -m 0700 -o ${o.u} -g ${o.g} "$d/${w.name}/nix-cache"
         [[ -e $d/${w.name}/ssh_host_ed25519_key ]] || ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "" -f "$d/${w.name}/ssh_host_ed25519_key"
@@ -435,6 +440,12 @@ let
       "/run/egress" = {
         hostPath = "${egressDir}/${w.name}";
         isReadOnly = true;
+      };
+    }
+    // lib.optionalAttrs w.sessionDock {
+      "/session" = {
+        hostPath = "${cfg.stateDir}/.sessions/dock/${w.name}";
+        isReadOnly = false;
       };
     };
 
@@ -691,6 +702,11 @@ let
         type = types.ints.positive;
         default = 2;
         description = "Cores: CPUWeight 100 per core, a share under contention, all idle cores otherwise.";
+      };
+      sessionDock = mkOption {
+        type = types.bool;
+        default = false;
+        description = "A read-write /session from the host's .sessions/dock/<name>, root's, where a session's home and work tree are moved in for one turn; adding it restarts the container once.";
       };
       rootInGuest = mkOption {
         type = types.bool;
@@ -1313,6 +1329,10 @@ in
             {
               assertion = lib.stringLength w.hostName <= 63;
               message = "${i}: hostname ${w.hostName} is longer than 63.";
+            }
+            {
+              assertion = !(w.sessionDock && w.rootInGuest);
+              message = "${i}: sessionDock with rootInGuest: its writable binds are not id-mapped, so a session's tree could not move between slots.";
             }
             {
               assertion = !w.rootInGuest || gid != null;

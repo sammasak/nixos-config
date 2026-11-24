@@ -3,7 +3,8 @@
 # role, or with `queue` as exec_pool_runner on another host's, and holds no host privilege; on a host with a power
 # window it claims only what can finish before the poweroff. The polkit rule below lets it start only its
 # slot's exec-pool-exec@ (root, which runs the task in the guest as its user and holds no queue access) and
-# dev-env-reset@, which releases the slot with every one of its refusals intact.
+# dev-env-reset@, which releases the slot with every one of its refusals intact, and clear a refused reset's failed
+# state: the slot is quarantined in the queue instead, and the host not left degraded.
 {
   config,
   lib,
@@ -62,6 +63,7 @@ let
     "exec-pool-exec@${n}.service"
     "dev-env-reset@${n}.service"
   ]) slotNames;
+  resets = map (n: "dev-env-reset@${n}.service") slotNames;
 in
 {
   options.homelab.execPool.runner = {
@@ -189,8 +191,10 @@ in
     security.polkit.extraConfig = ''
       polkit.addRule(function (action, subject) {
         var units = ${builtins.toJSON units};
+        var resets = ${builtins.toJSON resets};
         if (action.id == "org.freedesktop.systemd1.manage-units" && subject.user == "exec_pool" &&
-            action.lookup("verb") == "start" && units.indexOf(action.lookup("unit")) >= 0) {
+            ((action.lookup("verb") == "start" && units.indexOf(action.lookup("unit")) >= 0) ||
+             (action.lookup("verb") == "reset-failed" && resets.indexOf(action.lookup("unit")) >= 0))) {
           return polkit.Result.YES;
         }
       });

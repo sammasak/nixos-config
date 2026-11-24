@@ -11,6 +11,7 @@
     ../../modules/homelab/llm-gateway.nix
     ../../modules/homelab/authentik.nix
     ../../modules/homelab/exec-pool.nix
+    ../../modules/homelab/exec-pool-store.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/shunt-metrics.nix
@@ -55,7 +56,11 @@
     executionPool = {
       enable = true;
       slots = 1;
-      agents = [ "claude" ];
+      # no codex: this host sets no sam.workers.codexAuthFile
+      agents = [
+        "claude"
+        "pi"
+      ];
       # the key herman and a1 push with: a task hands its code back on its own branch, pool/<task id>
       credentials = [ "id_ed25519" ];
     };

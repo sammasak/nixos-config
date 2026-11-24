@@ -1,8 +1,6 @@
 -- Sessions. A session task's every lease is one turn, and every turn ends parked in waiting (Store::park); a row in
 -- its inbox wakes it. The inbox holds what its owner sent, prompts as much as tasks.spec: the runner reads it, the
 -- submitter only writes it, through send_message. A one-shot task (session false) is queued and run as before.
--- floor: pool/rollback-safe's schema_migrations.floor is not on main yet; once it is, this records floor 9, as a
--- binary without sessions would run a session as a one-shot.
 ALTER TABLE tasks ADD COLUMN session boolean NOT NULL DEFAULT false,
   ADD COLUMN session_uuid uuid NOT NULL DEFAULT gen_random_uuid();
 
@@ -97,4 +95,5 @@ GRANT UPDATE (consumed_epoch) ON inbox TO exec_pool_runner;
 GRANT USAGE ON SEQUENCE inbox_id_seq TO exec_pool_runner;
 GRANT SELECT (attempt_id, lease_epoch, to_status, at) ON events TO exec_pool_runner;
 
-INSERT INTO schema_migrations (version) VALUES (9);
+-- floor 9: a binary without sessions would run a session as a one-shot and never park it
+INSERT INTO schema_migrations (version, floor) VALUES (9, 9);

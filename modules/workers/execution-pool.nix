@@ -104,6 +104,7 @@ in
       telemetry = false;
       headlessAgents = cfg.agents;
       inherit (cfg) credentials rootInGuest;
+      sessionDock = true;
       # each attempt's workspace (pkgs/exec-pool/src/workspace.rs): throwaway, so its checkout never holds the reset
       scratch = [ "attempts" ];
       memory.reserved = cfg.memory.reserved;
