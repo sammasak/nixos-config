@@ -519,6 +519,9 @@ let
 
     # the guest holds placeholders, not the tokens: the proxy adds the login to each call
     environment.variables = lib.mkMerge (map (s: s.guest.env) (egressOf w));
+    # platform-record keeps its records in the spool the host ships: a push of its own could never reach Loki.
+    # sessionVariables: also the user manager's, so a guest user unit that records gets it too
+    environment.sessionVariables = lib.mkIf (cfg.records != null) { PLATFORM_RECORD_SHIPPER = "host"; };
     systemd.sockets = lib.listToAttrs (
       map (
         s:

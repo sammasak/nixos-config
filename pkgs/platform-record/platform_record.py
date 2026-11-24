@@ -8,7 +8,9 @@ Usage: platform-record KIND key=value...    record one line
 An unknown kind, an unknown field or a token that is not key=value exits 2 when PLATFORM_RECORD_STRICT=1 (tests and
 gates). Otherwise it is reported on stderr and counted: the record is kept for a bad field or an unreadable schema and
 dropped for an unknown kind, and the caller still exits 0, since a record is evidence and never breaks a deploy. A push
-Loki did not take is kept in the retry spool and shipped on the next run. Labels are job, kind and this host only;
+Loki did not take is kept in the retry spool and shipped on the next run. With PLATFORM_RECORD_SHIPPER=host (a
+developer environment's guest, which cannot reach Loki: modules/workers/core.nix) the record goes to the spool alone,
+which the host ships (scripts/guest-records.py), and Loki is never tried. Labels are job, kind and this host only;
 callers put no path or secret in a value. The line is the arguments joined by one space, as given
 (scripts/test-platform-records.py)."""
 
@@ -150,7 +152,13 @@ def status(spool: pathlib.Path) -> int:
         counts = json.loads(p.read_text()) if p.exists() else {}
     except ValueError:
         counts = {"unreadable": 1}
-    print(json.dumps({"spool": str(spool), "retry_pending": len(read_retry(spool)), "counts": counts}, sort_keys=True))
+    retry = len(read_retry(spool))
+    # a host-shipped spool never drains its retry queue: what one holds from before is stale, its lines in the spool
+    if os.environ.get("PLATFORM_RECORD_SHIPPER") == "host":
+        state = {"shipper": "host", "retry_pending": 0, "retry_stale": retry}
+    else:
+        state = {"shipper": "direct", "retry_pending": retry}
+    print(json.dumps({"spool": str(spool), **state, "counts": counts}, sort_keys=True))
     return 0
 
 
@@ -183,6 +191,8 @@ def main(argv: list[str]) -> int:
             old = spool.read_text().splitlines(keepends=True) if spool.exists() else []
             stamp = datetime.now().astimezone().isoformat(timespec="seconds")
             replace(spool, "".join((old + [f"{stamp} {kind} {line}\n"])[-SPOOL_LINES:]))
+            if os.environ.get("PLATFORM_RECORD_SHIPPER") == "host":
+                return 0
             entries = read_retry(spool) + [{"ts": str(time.time_ns()), "kind": kind, "host": os.uname().nodename,
                                             "line": line}]
             # a Loki that did not answer in the last 5 min is not tried again: a gate writes dozens of records, and a

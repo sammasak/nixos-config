@@ -254,6 +254,19 @@ with tempfile.TemporaryDirectory() as tmp:
     check(rc == 0 and len(Loki.bodies) == 1 and lines == ["result=fail", "result=fail", "result=pass", "result=pass"]
           and st["retry_pending"] == 0 and st["counts"].get("retried") == 3 and not down.exists(),
           f"once Loki answers, the retry spool ships with the new record, oldest first, and is emptied ({lines}, {st})")
+    Loki.bodies.clear()
+    spool.with_name("spool.retry").write_text(json.dumps({"ts": "1", "kind": "gate", "host": "g", "line": "x"}) + "\n")
+    down.touch()
+    env = env_for(spool, url) | {"PLATFORM_RECORD_SHIPPER": "host"}
+    out = subprocess.run([sys.executable, str(WRITER), "gate-step", "result=pass"], env=env, capture_output=True, text=True)
+    st = json.loads(subprocess.run([sys.executable, str(WRITER), "--status"], env=env, capture_output=True,
+                                   text=True).stdout)
+    check(out.returncode == 0 and out.stderr == "" and not Loki.bodies and text(spool).endswith("gate-step result=pass\n")
+          and st["retry_pending"] == 0 and st["retry_stale"] == 1 and st["shipper"] == "host" and down.exists()
+          and text(spool.with_name("spool.retry")).count("\n") == 1,
+          f"a guest's record (PLATFORM_RECORD_SHIPPER=host) goes to the spool alone, a fresh down marker or not: no "
+          f"push, no retry, no warning; a queue from before is reported stale, never pending "
+          f"({out.returncode}, {out.stderr.strip()}, {Loki.bodies}, {st})")
     server.shutdown()
     server.server_close()
 

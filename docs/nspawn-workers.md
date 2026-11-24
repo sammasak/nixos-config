@@ -351,7 +351,10 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   declared instance, and `dev-env-records@<name>` before a retire or reset
   renames the home (`timeout 30 … || true`: Loki down never holds either).
   It reads `<stateDir>/<name>/home/.local/state/platform-records`
-  (`pkgs/platform-record/platform_record.py`'s spool), opening each path component
+  (`pkgs/platform-record/platform_record.py`'s spool; the guest's `PLATFORM_RECORD_SHIPPER=host` makes the writer
+  keep a record there alone, never trying Loki or keeping a retry queue the guest could not drain; a guest's
+  `platform-record --status` says `"shipper": "host"`, and a `.retry` left from before that is inert, its lines
+  in the spool), opening each path component
   without following a link, and the spool only as a regular file, its last
   2 MiB; a link or FIFO anywhere there skips that instance and fails the
   unit. The host sets every label: `job=platform`, `kind` from
