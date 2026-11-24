@@ -67,6 +67,21 @@ in
           assert expectFailure "a listener fleet.nix lacks" (seed (remote "exec_pool_runner" "nope"));
           assert expectFailure "the owner role remote" (seed (remote "exec_pool" "exec-pool-db"));
           assert expectFailure "a peer client remote" (seed (remote "exec_pool_submit" "exec-pool-db"));
+          assert expectFailure "a database acer lacks" (seed {
+            homelab.postgresql.remoteClients.exec_pool_runner = {
+              database = "nope";
+              listener = "exec-pool-db";
+            };
+          });
+          assert expectFailure "two listeners" (
+            seed (
+              lib.recursiveUpdate (remote "exec_pool_runner" "exec-pool-db") (remote "other_runner" "gateway-api")
+            )
+          );
+          assert lib.assertMsg (
+            on.boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" == 1
+            && !(off.boot.kernel.sysctl ? "net.ipv4.ip_nonlocal_bind")
+          ) "exec-pool-db-check: Postgres's fleet-address bind does not survive a boot before the address";
           "${toString (hostRules on)}"
         );
       };

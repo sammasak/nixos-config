@@ -97,6 +97,8 @@ in
     identMap = lib.mkForce (lib.concatMapStrings (l: l + "\n") ident);
     ensureUsers = lib.mapAttrsToList (name: _: { inherit name; }) (clients // remote);
   };
+  # acer's fleet address is Wi-Fi: without it a boot that binds before NetworkManager has it stops Postgres, socket too
+  config.boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" = lib.mkIf tcp 1;
   config.systemd.services.postgresql.serviceConfig = {
     MemoryMax = "512M";
     MemorySwapMax = 0;
