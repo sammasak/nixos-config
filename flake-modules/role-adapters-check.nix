@@ -1,6 +1,7 @@
-# Every installed Claude agent adapter, on each x86 host and each of its worker guests, may name only skills files that
-# are in its own store closure: a `~/` checkout or a relative `agents/...` path is absent in a guest or at another
-# revision on a host. The unpinned adapters from the skills input itself are the seeded failure.
+# Every installed Claude agent adapter, on each host of the system and each of its worker guests, may name its contract
+# and jq files only in its own store closure: a `~/` checkout or a relative `agents/...` path is absent in a guest or at
+# another revision on a host. The unpinned adapters and one naming a store path without its context are the seeded
+# failures. Its `cd ~/claude-code-skills && devenv tasks run` command form is not checked: devenv needs a checkout.
 {
   config,
   lib,
@@ -15,7 +16,7 @@ let
   adaptersOf =
     home:
     lib.mapAttrsToList (_: f: f.source) (
-      lib.filterAttrs (n: _: lib.hasPrefix ".claude/agents/" n) home.home.file
+      lib.filterAttrs (_: f: lib.hasPrefix ".claude/agents/" f.target) home.home.file
     );
 in
 {
@@ -31,6 +32,12 @@ in
           builtins.readDir "${inputs.skills}/agents"
         )
       );
+      seeds = [
+        unpinned
+        [
+          (pkgs.writeText "stray-adapter.md" "`${builtins.unsafeDiscardStringContext "${inputs.skills}"}/global-context.md`")
+        ]
+      ];
       # exit 1 when any adapter names a path outside its closure, a checkout, or a relative skills path
       verify = adapters: ''
         bad=0
@@ -52,9 +59,11 @@ in
       checks = lib.optionalAttrs (installed != [ ]) {
         role-adapters = pkgs.runCommand "role-adapters" { } ''
           ${verify installed}
-          if (${verify unpinned}) >/dev/null 2>&1; then
-            echo "the seeded unpinned adapters passed: the check finds nothing" >&2; exit 1
-          fi
+          ${lib.concatMapStrings (seed: ''
+            if (${verify seed}) >/dev/null 2>&1; then
+              echo "the seeded adapters ${toString seed} passed: the check finds nothing" >&2; exit 1
+            fi
+          '') seeds}
           touch $out
         '';
       };
