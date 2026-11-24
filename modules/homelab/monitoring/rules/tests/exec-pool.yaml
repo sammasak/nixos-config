@@ -90,7 +90,7 @@ tests:
           - exp_labels: {severity: warning, team: homelab, node: acer-swift}
             exp_annotations:
               summary: "An execution pool task on acer-swift is stuck past its lease deadline"
-              description: "1 attempt(s) in the queue on acer-swift have been leased, running or checkpointing past their lease deadline for 10 minutes without a reconcile expiring them, so nothing runs or requeues them. Run exec-pool-queue reconcile there once the runner is known to be stopped."
+              description: "1 attempt(s) in the queue on acer-swift have been leased, running or checkpointing past their lease deadline for 10 minutes without a reconcile expiring them, so nothing runs or requeues them. Once no runner holds it, run exec-pool-queue reconcile there as the exec_pool user (runbook)."
               query: 'exec_pool_lease_overdue{job="node-exporter",node="acer-swift"} > 0'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolleaseoverdue"
       - eval_time: 45m
@@ -116,6 +116,6 @@ tests:
           - exp_labels: {severity: warning, team: homelab, node: acer-swift}
             exp_annotations:
               summary: "Execution pool tasks on acer-swift wait for an operator's review"
-              description: "1 attempt(s) in the queue on acer-swift have been in needs_review for an hour: a started attempt lost its lease or settled as such, and its effects are unknown. Read its state_change lines in the runner's journal, check its effects, then resolve it."
+              description: "1 attempt(s) in the queue on acer-swift have been in needs_review for an hour: a started attempt lost its lease or settled as such, and its effects are unknown. List it with psql as the exec_pool user, check its effects, then resolve it (runbook)."
               query: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="needs_review"} > 0'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolneedsreview"

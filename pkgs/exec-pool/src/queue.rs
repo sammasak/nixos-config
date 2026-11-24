@@ -675,6 +675,8 @@ impl Store {
     /// What the database reports.
     pub fn metrics(&mut self, declared_slots: Option<u32>) -> Result<String, QueueError> {
         self.tx(|tx| {
+            // one snapshot, so busy slots, counts and histograms agree within a scrape
+            tx.batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")?;
             let mut out = String::from(
                 concat!(
                     up_help!(),
@@ -724,15 +726,15 @@ impl Store {
                 "exec_pool_queue_wait_seconds",
                 "# HELP exec_pool_queue_wait_seconds Time from queued to leased, by agent kind.\n\
                  # TYPE exec_pool_queue_wait_seconds histogram\n",
-                "queued",
+                ("queued", "leased"),
             )?;
             histogram(
                 tx,
                 &mut out,
                 "exec_pool_run_seconds",
-                "# HELP exec_pool_run_seconds Time running, until a checkpoint or a lease expiry, by agent kind.\n\
+                "# HELP exec_pool_run_seconds Time running until a checkpoint, by agent kind; an expiry is not a run.\n\
                  # TYPE exec_pool_run_seconds histogram\n",
-                "running",
+                ("running", "checkpointing"),
             )?;
             out.push_str(
                 "# HELP exec_pool_transitions_total State changes by from, to and reason.\n\
@@ -758,14 +760,14 @@ impl Store {
 /// Upper bounds of the duration histograms, in seconds: ten seconds to four hours.
 const BUCKETS: [u32; 8] = [10, 60, 300, 900, 1800, 3600, 7200, 14400];
 
-/// A histogram, per agent kind and every kind present at zero, of the time attempts spent in `from` before leaving it.
+/// A histogram, per agent kind and every kind present at zero, of the time attempts spent in `from` before moving to `to`.
 /// `head` is its HELP and TYPE lines, literal so the dashboard check finds the name.
 fn histogram(
     tx: &mut Transaction<'_>,
     out: &mut String,
     name: &str,
     head: &str,
-    from: &str,
+    (from, to): (&str, &str),
 ) -> Result<(), QueueError> {
     let filters: Vec<String> = BUCKETS
         .iter()
@@ -775,10 +777,10 @@ fn histogram(
         &format!(
             "SELECT t.spec->'command'->>'agent', count(*), \
              (coalesce(sum(e.in_state_ms), 0) / 1000.0)::float8, ARRAY[{}] \
-             FROM events e JOIN tasks t ON t.id = e.task_id WHERE e.from_status = $1 GROUP BY 1",
+             FROM events e JOIN tasks t ON t.id = e.task_id WHERE e.from_status = $1 AND e.to_status = $2 GROUP BY 1",
             filters.join(", ")
         ),
-        &[&from],
+        &[&from, &to],
     )?;
     out.push_str(head);
     for agent in AGENTS {

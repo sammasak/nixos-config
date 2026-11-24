@@ -762,6 +762,21 @@ fn a_wait_a_run_and_an_overdue_lease_show_in_the_metrics() {
         "exec_pool_queue_wait_seconds_count{agent=\"claude\"} 0"
     ));
     assert!(has(&text, "exec_pool_lease_overdue{state=\"leased\"} 0"));
+    // a two-minute wait: above le=60, inside le=300
+    pg.sql()
+        .execute(
+            "UPDATE events SET in_state_ms = 120000 WHERE from_status = 'queued'",
+            &[],
+        )
+        .unwrap();
+    let text = s.metrics(None).unwrap();
+    for line in [
+        "exec_pool_queue_wait_seconds_bucket{agent=\"none\",le=\"60\"} 0",
+        "exec_pool_queue_wait_seconds_bucket{agent=\"none\",le=\"300\"} 1",
+        "exec_pool_queue_wait_seconds_sum{agent=\"none\"} 120",
+    ] {
+        assert!(has(&text, line), "{line}");
+    }
     s.apply(&a, &ev(1, Kind::Start), None).unwrap();
     s.apply(&a, &ev(1, Kind::Checkpoint), None).unwrap();
     let text = s.metrics(None).unwrap();
@@ -975,4 +990,19 @@ fn the_cli_logs_one_line_per_change_and_exits_75_without_a_database() {
     let (code, out) = cli(&pg, &["metrics"], "");
     assert_eq!((code, out.as_str()), (Some(75), METRICS_UNAVAILABLE));
     assert_eq!(cli(&pg, &["reconcile"], "").0, Some(75));
+
+    // a failure before any query (here no EXEC_POOL_DB) still reads absent, never an empty textfile
+    let out = Command::new(env!("CARGO_BIN_EXE_exec-pool-queue"))
+        .arg("metrics")
+        .env_remove("EXEC_POOL_DB")
+        .stderr(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(
+        (
+            out.status.code(),
+            String::from_utf8(out.stdout).unwrap().as_str()
+        ),
+        (Some(2), METRICS_UNAVAILABLE)
+    );
 }
