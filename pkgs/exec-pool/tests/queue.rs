@@ -1823,6 +1823,41 @@ fn a_parked_session_is_claimed_only_on_a_host_that_holds_its_tree() {
 }
 
 #[test]
+fn a_first_turn_that_never_parked_is_claimed_only_where_it_ran() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut acer = claude_slot();
+    acer.host = "acer-swift".to_owned();
+    let (a, _, _) = started(&mut owner);
+    overdue(&pg, &a);
+    assert_eq!(owner.reconcile().unwrap().len(), 1);
+    s.send(&id, "go on").unwrap();
+    assert!(
+        owner.claim(&acer, 60).unwrap().is_none(),
+        "its tree and transcript, if any, are on msi"
+    );
+    let (_, _, turn) = started(&mut owner);
+    assert_eq!((turn.first, turn.checkpoint), (false, None));
+}
+
+#[test]
+fn a_checkpoint_the_runner_cannot_read_is_skipped_not_fatal() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let first = submit(&mut owner, &task("t-1", 1));
+    let second = submit(&mut owner, &task("t-2", 1));
+    pg.sql()
+        .execute(
+            "UPDATE attempts SET checkpoint = '{\"schema_version\": 2}' WHERE id = $1",
+            &[&first],
+        )
+        .unwrap();
+    let claim = owner.claim(&slot("s0"), 60).unwrap().unwrap();
+    assert_eq!(claim.attempt.id, second);
+}
+
+#[test]
 fn a_first_turn_is_claimed_on_any_host() {
     let pg = Pg::new();
     let mut owner = pg.migrated();

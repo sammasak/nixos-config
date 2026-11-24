@@ -282,6 +282,10 @@ const fn reason(kind: &Kind, to: Status) -> &'static str {
     }
 }
 
+/// For a session task, the host its attempt last ran on (`running`), under `a` and `t`; null for a one-shot task.
+const RAN_ON: &str = "CASE WHEN t.session THEN (SELECT e.host FROM events e WHERE e.attempt_id = a.id \
+    AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1) END";
+
 /// The columns an attempt row is read with, under `a` (attempts) and `t` (tasks).
 const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a.host, a.slot, a.pins, \
     a.cancel_requested, t.max_attempts, (a.lease_deadline <= clock_timestamp()) AS expired, \
@@ -696,7 +700,7 @@ impl Store {
     }
 
     /// Leases the oldest queued attempt that fits `slot` for `lease_secs` and whose checkpoint is [`reachable`] from its
-    /// host, skipping rows another claimer holds.
+    /// host (a session that ran but never parked: only where it ran), skipping rows another claimer holds.
     ///
     /// # Errors
     /// What [`Slot::validate`] rejects, or what the database reports (a slot with a live lease already included).
@@ -713,29 +717,43 @@ impl Store {
                  ON CONFLICT (host, id) DO UPDATE SET agents = excluded.agents, seen_at = now()",
                 &[&slot.host, &slot.id, &agents],
             )?;
-            // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips
+            // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips; a
+            // session's checkpoint, and the host its last try ran on, as they were read
             let candidates = tx.query(
-                "SELECT a.id, t.spec, a.checkpoint FROM attempts a JOIN tasks t ON t.id = a.task_id \
-                 WHERE a.status = 'queued' ORDER BY a.changed_at, a.id",
+                &format!(
+                    "SELECT a.id, t.spec, a.checkpoint, {RAN_ON} FROM attempts a JOIN tasks t ON t.id = a.task_id \
+                     WHERE a.status = 'queued' ORDER BY a.changed_at, a.id"
+                ),
                 &[],
             )?;
             for candidate in &candidates {
                 let task: TaskSpec = serde_json::from_value(candidate.try_get(1)?)?;
                 let raw: Option<Value> = candidate.try_get(2)?;
-                let checkpoint: Option<CheckpointRef> =
-                    raw.clone().map(serde_json::from_value).transpose()?;
-                if task.fits(slot).is_err() || !reachable(checkpoint.as_ref(), &slot.host, false) {
+                let ran_on: Option<&str> = candidate.try_get(3)?;
+                // one this runner cannot read is not its to take, and does not stop it taking another
+                let Ok(checkpoint) = raw
+                    .clone()
+                    .map(serde_json::from_value::<CheckpointRef>)
+                    .transpose()
+                else {
+                    continue;
+                };
+                // a session that ran but never parked has its tree, if any, where it ran
+                let placed = match (&checkpoint, ran_on) {
+                    (None, Some(h)) => h == slot.host,
+                    (c, _) => reachable(c.as_ref(), &slot.host, false),
+                };
+                if task.fits(slot).is_err() || !placed {
                     continue;
                 }
                 let id: &str = candidate.try_get(0)?;
-                // the checkpoint as read: one parked again since, maybe elsewhere, is skipped unlocked
                 let rows = tx.query(
                     &format!(
                         "SELECT {ATTEMPT_COLS} FROM attempts a JOIN tasks t ON t.id = a.task_id \
                          WHERE a.id = $1 AND a.status = 'queued' AND a.checkpoint IS NOT DISTINCT FROM $2 \
-                         FOR UPDATE OF a SKIP LOCKED"
+                         AND {RAN_ON} IS NOT DISTINCT FROM $3 FOR UPDATE OF a SKIP LOCKED"
                     ),
-                    &[&id, &raw],
+                    &[&id, &raw, &ran_on],
                 )?;
                 let Some(row) = rows.first() else { continue };
                 let row = locked(row)?;
