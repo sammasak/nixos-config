@@ -103,7 +103,7 @@ in
     timeoutSecs = lib.mkOption {
       type = lib.types.ints.positive;
       default = 1800;
-      description = "How long a task's command may run in its slot before it is stopped and its attempt goes to needs_review.";
+      description = "How long a task's command, or one turn of a session, may run in its slot before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
     };
     queue = lib.mkOption {
       type = lib.types.nullOr lib.types.str;

@@ -359,8 +359,8 @@ pub enum TurnSettle {
 ///
 /// No result (or someone else's), a guest that went away, or a tree it could not find, is `needs_review`, its tree
 /// left where it is; a cancel is `cancelled`; a turn that never reached the agent goes back to `queued`. Every end of the agent's
-/// call, a timeout included, parks the session: `turn_end` for Claude's verdict of success, `turn_error` otherwise. A
-/// failed turn never fails the session.
+/// call parks the session: `turn_timeout` for a call stopped at the time limit, `turn_end` for Claude's verdict of
+/// success, `turn_error` otherwise. A failed turn never fails the session.
 #[must_use]
 pub fn decide_turn(
     attempt: &str,
@@ -390,8 +390,11 @@ pub fn decide_turn(
     if r.drained {
         return TurnSettle::Park(ParkReason::HostDraining);
     }
+    if r.timed_out {
+        return TurnSettle::Park(ParkReason::TurnTimeout);
+    }
     match agent::outcome(Agent::Claude, r.exit_code, stdout) {
-        Outcome::Succeeded if !r.timed_out => TurnSettle::Park(ParkReason::TurnEnd),
+        Outcome::Succeeded => TurnSettle::Park(ParkReason::TurnEnd),
         _ => TurnSettle::Park(ParkReason::TurnError),
     }
 }
@@ -977,13 +980,6 @@ mod tests {
             (result(Stage::Run, Some(0)), "{\"is_error\":true}"),
             (result(Stage::Run, Some(1)), ""),
             (result(Stage::Run, None), ""),
-            (
-                ExecResult {
-                    timed_out: true,
-                    ..result(Stage::Run, None)
-                },
-                "{\"is_error\":false}",
-            ),
         ] {
             assert_eq!(
                 turn(Some(&r), stdout),
@@ -991,6 +987,14 @@ mod tests {
                 "{r:?}"
             );
         }
+        let timed_out = ExecResult {
+            timed_out: true,
+            ..result(Stage::Run, Some(143))
+        };
+        assert_eq!(
+            turn(Some(&timed_out), "{\"is_error\":false}"),
+            TurnSettle::Park(ParkReason::TurnTimeout)
+        );
         assert_eq!(turn(None, ""), TurnSettle::Settle(Settle::NeedsReview));
         let lost = ExecResult {
             tree_lost: Some("no session tree at /x".to_owned()),
