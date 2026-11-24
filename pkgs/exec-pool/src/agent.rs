@@ -38,9 +38,14 @@ code, commit on {branch} with a message whose body has a `Why:` line and push th
 its pre-push hooks run. Never push main or any other branch, never force-push, never skip a hook (no --no-verify, no \
 SKIP=); if a hook refuses the push, say why in your answer. The task:\n\n";
 
-/// What a session's first turn is also told, before "The task:" of [`PREFIX`]: how to wait for an outside event.
+/// What a session's first turn is also told, before "The task:" of [`PREFIX`]: how to wait for an outside event, and
+/// what a pause keeps.
 pub const SESSION_WAIT: &str = "To wait for an outside event, run `pool-wait --until HH:MM|RFC3339 [--note TEXT]`: \
-the session is woken then, told the note. End your turn right after calling it. ";
+the session is woken then, told the note. End your turn right after calling it. When you stop and wait for input (a \
+review, a gate, the owner), this session pauses: after a while it parks and resumes on its next message, perhaps in \
+another slot on another host. What survives a pause: the transcript, the session home and the work tree with \
+uncommitted changes. What does not: running processes in the slot (dev servers, background shells, a build in \
+flight), so commit and push your work and do not rely on a background process across a wait. ";
 
 /// The prefix of a session's first turn: [`PREFIX`] with [`SESSION_WAIT`] before its last sentence.
 fn session_prefix(task: &TaskSpec) -> Result<String, Error> {

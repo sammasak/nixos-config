@@ -1814,6 +1814,40 @@ fn a_message_sent_while_a_turn_runs_is_delivered_after_its_park() {
 }
 
 #[test]
+fn a_message_sent_while_a_turn_runs_reaches_its_pane_and_is_read_at_its_park() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, first) = started(&mut owner);
+    let mut runner = runner(&pg);
+    assert_eq!(
+        runner.during_turn(&id, first.upto).unwrap(),
+        (vec![], false)
+    );
+    s.send(&id, "review: fix the test").unwrap();
+    s.send(&id, "and rebase").unwrap();
+    let (mail, busy) = runner.during_turn(&id, first.upto).unwrap();
+    assert_eq!(
+        mail.iter().map(|(_, b)| b.as_str()).collect::<Vec<_>>(),
+        ["review: fix the test", "and rebase"]
+    );
+    assert!(!busy, "nothing waits for a slot");
+    let upto = mail.iter().map(|(i, _)| *i).max().unwrap();
+    assert_eq!(runner.during_turn(&id, upto).unwrap().0, vec![]);
+    // queued work and the one slot busy: an idle agent's grace is the short one
+    submit(&mut owner, &task("queued-behind", 1));
+    assert!(runner.during_turn(&id, upto).unwrap().1);
+    let (_, changes) = owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, upto))
+        .unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "turn_end")],
+        "what the pane was given is read: no turn for it again"
+    );
+}
+
+#[test]
 fn a_send_queues_a_waiting_session_and_two_sends_arrive_once_in_order() {
     let pg = Pg::new();
     let mut owner = pg.migrated();

@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use exec_pool::agent::{
-    AGENT_SOCKET, Error, PREFIX, Turn, argv, branch, outcome, session_argv, transcript_probe,
-    turn_input,
+    AGENT_SOCKET, Error, PREFIX, SESSION_WAIT, Turn, argv, branch, outcome, session_argv,
+    transcript_probe, turn_input,
 };
 use exec_pool::{Agent, Outcome, TaskSpec};
 use serde_json::json;
@@ -212,12 +212,14 @@ fn a_session_turn_is_told_the_prefix_when_it_starts_and_its_input_alone_after() 
         turn_input(&t, "fix the lint", Turn::Start).unwrap(),
         format!(
             "{}fix the lint",
-            PREFIX.replace("{branch}", "pool/t-655").replace(
-                "The task:",
-                "To wait for an outside event, run `pool-wait --until HH:MM|RFC3339 [--note TEXT]`: the session is \
-                 woken then, told the note. End your turn right after calling it. The task:"
-            )
+            PREFIX
+                .replace("{branch}", "pool/t-655")
+                .replace("The task:", &format!("{SESSION_WAIT}The task:"))
         )
+    );
+    assert!(
+        SESSION_WAIT.contains("pool-wait")
+            && SESSION_WAIT.contains("What does not: running processes")
     );
     assert!(
         !argv(&t).unwrap().concat().contains("pool-wait"),

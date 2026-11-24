@@ -2,8 +2,10 @@
 //!
 //! The helper starts the turn's agent ([`crate::agent::session_argv`]) and opens a workspace in the host user's Herdr
 //! whose pane attaches to it, as a named worker's pane did, named by [`agent_name`] and [`label`]. It prompts the
-//! turn's input ([`prompt`]), and the turn ends when Herdr reports the agent settled after that prompt
-//! ([`TurnWatch`]), as the coordinator waited on a named worker. The turn's verdict and result text are the agent's
+//! turn's input ([`prompt`]), and the agent is idle when Herdr reports it settled after that prompt ([`TurnWatch`]),
+//! as the coordinator waited on a named worker. An idle agent is the session's pause: it stays in its pane for a
+//! grace in which the owner or a message ([`mail`]) answers it in place, and only then is closed and parked
+//! ([`parks`]). The turn's verdict and result text are the agent's
 //! last message in its transcript ([`verdict`]).
 
 use std::collections::BTreeMap;
@@ -18,7 +20,7 @@ pub const PROMPT_MAX: usize = 3000;
 pub const INPUT_FILE: &str = "/session/cur/home/.exec-pool-input.md";
 /// What Claude draws once it takes input, as the named workers waited for it.
 pub const READY_TEXT: &str = "bypass permissions on";
-/// How long the agent must stay settled after the prompt before its turn counts as ended.
+/// How long the agent must stay settled after the prompt before it counts as idle.
 pub const SETTLE_MS: u64 = 5000;
 
 /// The agent's name in Herdr: the task id as Herdr takes a name (`[a-z][a-z0-9_-]{0,31}`), so `agent list` names
@@ -92,10 +94,11 @@ pub fn seen(list: &Value, pane: &str) -> Option<Seen> {
     })
 }
 
-/// When a turn has ended: the agent settled after the prompt.
+/// When the agent is idle: settled after the prompt, waiting for input.
 ///
-/// That is a state Herdr reached after the prompt, held for [`SETTLE_MS`]. A blocked or working agent, one Herdr does not see, or a message the owner types in the pane keeps
-/// the turn going; only the time limit ends a turn that never settles.
+/// That is a state Herdr reached after the prompt, held for [`SETTLE_MS`]. A blocked or working agent, one Herdr does
+/// not see, or a message the owner types in the pane makes it busy again; only the time limit ends a turn that never
+/// settles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnWatch {
     /// The agent's `state_change_seq` just before the prompt.
@@ -113,8 +116,9 @@ impl TurnWatch {
         }
     }
 
-    /// Whether the turn has ended once Herdr shows `seen` at `now_ms`.
-    pub const fn ended(&mut self, seen: Option<Seen>, now_ms: u64) -> bool {
+    /// How long the agent has been idle once Herdr shows `seen` at `now_ms`, counted from when it settled; `None`
+    /// while it is not.
+    pub const fn idle_ms(&mut self, seen: Option<Seen>, now_ms: u64) -> Option<u64> {
         match seen {
             Some(s) if s.settled && s.seq > self.before => {
                 let since = match self.settled {
@@ -122,14 +126,41 @@ impl TurnWatch {
                     _ => now_ms,
                 };
                 self.settled = Some((s.seq, since));
-                now_ms.saturating_sub(since) >= SETTLE_MS
+                let idle = now_ms.saturating_sub(since);
+                if idle >= SETTLE_MS { Some(idle) } else { None }
             }
             _ => {
                 self.settled = None;
-                false
+                None
             }
         }
     }
+}
+
+/// Whether an agent idle for `idle_ms` is closed and its session parked.
+///
+/// That is once idle for the pause's grace `grace_secs`, in which the owner or a message may still answer it in place, or at once when it asked for a timer
+/// (`waiting`, its `pool-wait`).
+#[must_use]
+pub const fn parks(idle_ms: Option<u64>, grace_secs: u64, waiting: bool) -> bool {
+    match idle_ms {
+        Some(ms) => waiting || ms >= grace_secs.saturating_mul(1000),
+        None => false,
+    }
+}
+
+/// The messages sent to the session during its turn that the agent was not given yet (`delivered` the last one
+/// given), as one input and the highest id; `None` if none.
+#[must_use]
+pub fn mail(messages: &[(i64, String)], delivered: i64) -> Option<(String, i64)> {
+    let new: Vec<&(i64, String)> = messages.iter().filter(|(id, _)| *id > delivered).collect();
+    let upto = new.iter().map(|(id, _)| *id).max()?;
+    let text = new
+        .iter()
+        .map(|(_, b)| b.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Some((text, upto))
 }
 
 /// How many lines of `transcript` [`verdict`] counts: those that are JSON.
@@ -326,37 +357,63 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_ends_once_the_agent_stays_settled_at_a_state_after_the_prompt() {
+    fn the_agent_is_idle_once_it_stays_settled_at_a_state_after_the_prompt() {
         let s = |settled, seq| Some(Seen { settled, seq });
         let mut w = TurnWatch::new(1);
         // idle before the prompt took: the state it was prompted in
-        assert!(!w.ended(s(true, 1), 0));
-        assert!(!w.ended(s(true, 1), 60_000));
-        assert!(!w.ended(s(false, 2), 61_000));
-        assert!(!w.ended(s(true, 3), 62_000));
-        assert!(!w.ended(s(true, 3), 62_000 + SETTLE_MS - 1));
-        assert!(w.ended(s(true, 3), 62_000 + SETTLE_MS));
+        assert_eq!(w.idle_ms(s(true, 1), 0), None);
+        assert_eq!(w.idle_ms(s(true, 1), 60_000), None);
+        assert_eq!(w.idle_ms(s(false, 2), 61_000), None);
+        assert_eq!(w.idle_ms(s(true, 3), 62_000), None);
+        assert_eq!(w.idle_ms(s(true, 3), 62_000 + SETTLE_MS - 1), None);
+        assert_eq!(w.idle_ms(s(true, 3), 62_000 + SETTLE_MS), Some(SETTLE_MS));
+        assert_eq!(w.idle_ms(s(true, 3), 662_000), Some(600_000));
 
-        // working again within the settle (a tool's gap, or the owner typed into the pane): it starts over
+        // working again (a tool's gap, the owner typed into the pane, a message was prompted): it starts over
         let mut w = TurnWatch::new(1);
-        assert!(!w.ended(s(true, 3), 0));
-        assert!(!w.ended(s(false, 4), 1000));
-        assert!(!w.ended(s(true, 5), 2000));
-        assert!(!w.ended(s(true, 5), 2000 + SETTLE_MS - 1));
-        assert!(w.ended(s(true, 5), 2000 + SETTLE_MS));
+        assert_eq!(w.idle_ms(s(true, 3), 0), None);
+        assert_eq!(w.idle_ms(s(true, 3), 100_000), Some(100_000));
+        assert_eq!(w.idle_ms(s(false, 4), 101_000), None);
+        assert_eq!(w.idle_ms(s(true, 5), 102_000), None);
+        assert_eq!(w.idle_ms(s(true, 5), 102_000 + SETTLE_MS), Some(SETTLE_MS));
 
         // a turn quicker than a poll: settled at a later state, never seen working
         let mut w = TurnWatch::new(1);
-        assert!(!w.ended(s(true, 3), 0));
-        assert!(w.ended(s(true, 3), SETTLE_MS));
+        assert_eq!(w.idle_ms(s(true, 3), 0), None);
+        assert_eq!(w.idle_ms(s(true, 3), SETTLE_MS), Some(SETTLE_MS));
 
-        // no agent in the pane, or one at a dialog, never ends it
+        // no agent in the pane, or one at a dialog, is not idle
         let mut w = TurnWatch::new(1);
-        assert!(!w.ended(s(true, 3), 0));
-        assert!(!w.ended(None, 1000));
-        assert!(!w.ended(s(true, 3), 2000));
-        assert!(!w.ended(s(true, 3), 2000 + SETTLE_MS - 1));
-        assert!(!w.ended(s(false, 9), 100_000));
+        assert_eq!(w.idle_ms(s(true, 3), 0), None);
+        assert_eq!(w.idle_ms(None, 1000), None);
+        assert_eq!(w.idle_ms(s(true, 3), 2000), None);
+        assert_eq!(w.idle_ms(s(false, 9), 100_000), None);
+    }
+
+    #[test]
+    fn an_idle_agent_parks_after_its_grace_or_at_once_for_a_timer() {
+        assert!(!parks(None, 600, false));
+        assert!(!parks(None, 0, true));
+        assert!(!parks(Some(SETTLE_MS), 600, false));
+        assert!(!parks(Some(599_999), 600, false));
+        assert!(parks(Some(600_000), 600, false));
+        assert!(parks(Some(60_000), 60, false));
+        assert!(parks(Some(SETTLE_MS), 600, true));
+    }
+
+    #[test]
+    fn mail_during_the_turn_is_handed_over_once() {
+        let m = [
+            (4, "review: fix the test".to_owned()),
+            (6, "and rebase".to_owned()),
+        ];
+        assert_eq!(
+            mail(&m, 3),
+            Some(("review: fix the test\n\nand rebase".to_owned(), 6))
+        );
+        assert_eq!(mail(&m, 4), Some(("and rebase".to_owned(), 6)));
+        assert_eq!(mail(&m, 6), None);
+        assert_eq!(mail(&[], 0), None);
     }
 
     const OLD: &str = r#"{"type":"user","message":{"role":"user","content":"first"}}

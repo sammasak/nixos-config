@@ -528,6 +528,10 @@ pub struct ExecResult {
     /// What the session turn's agent asked with `pool-wait`, taken from its tree after the detach.
     #[serde(default)]
     pub wake: Option<Wake>,
+    /// The last inbox message prompted into the session turn's pane while it ran ([`TurnHint::mail`]), which the
+    /// park marks read with what the claim handed over.
+    #[serde(default)]
+    pub upto: Option<i64>,
     /// `container@<slot>` was active when the command ended; a guest that went away leaves the outcome unknown.
     pub container_active: bool,
     pub stdout_tail: String,
@@ -554,6 +558,7 @@ impl ExecResult {
             stored: false,
             handed_back: None,
             wake: None,
+            upto: None,
             drained: false,
             container_active: true,
             stdout_tail: String::new(),
@@ -563,6 +568,25 @@ impl ExecResult {
         }
     }
 
+    /// # Errors
+    /// What [`parse_versioned`] rejects.
+    pub fn parse(json: &str) -> Result<Self, Error> {
+        parse_versioned(json)
+    }
+}
+
+/// What the runner tells the helper of a live session turn, on every heartbeat, beside the manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TurnHint {
+    pub schema_version: SchemaVersion,
+    /// How long an idle agent stays in its pane before its session parks: shorter while work waits for a slot.
+    pub grace_secs: u64,
+    /// The session's unread messages sent since its claim, by inbox id: the helper prompts each once.
+    pub mail: Vec<(i64, String)>,
+}
+
+impl TurnHint {
     /// # Errors
     /// What [`parse_versioned`] rejects.
     pub fn parse(json: &str) -> Result<Self, Error> {
@@ -771,6 +795,7 @@ mod tests {
             stored: false,
             handed_back: None,
             wake: None,
+            upto: None,
             drained: false,
             container_active: true,
             stdout_tail: String::new(),

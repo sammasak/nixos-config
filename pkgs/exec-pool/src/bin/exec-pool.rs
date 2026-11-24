@@ -11,8 +11,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exec_pool::queue::{QueueError, Store};
-use exec_pool::wake;
 use exec_pool::{Agent, Command, Pins, RelPath, RetryPolicy, SchemaVersion, Source, TaskSpec};
+use exec_pool::{pane, wake};
 use jiff::ZonedDateTime;
 use serde_json::{Value, json};
 
@@ -30,6 +30,9 @@ const USAGE: &str = "usage: exec-pool COMMAND
                     is queued for it, a running one takes it once its turn ends. With --at, a timer: TEXT is delivered
                     from that time (HH:MM: the next one, local time), when it queues a waiting session; it resumes
                     none in needs_review. Prints the attempt and its status
+  attach ID [--timeout SECS]
+                    wakes the session into a slot's Herdr pane with no message of yours (it is told the owner opened
+                    it) and prints the host, slot and Herdr agent to open, once its turn runs (600 s by default)
   status [ID]       the task (or attempt) ID with its events, or the number of attempts in each status
   list [--limit N]  the newest N tasks (20), newest first; a session's shows why it waits (parked)
   result ID         the task's state and, once the runner recorded it, its result (a session's last turn): the
@@ -45,6 +48,10 @@ const USAGE: &str = "usage: exec-pool COMMAND
                     kept: its tree may hold unpushed work)
   cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
                     seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
+/// What `attach` tells the session it wakes.
+const ATTACH_PROMPT: &str = "The owner opened this session in its pane to work with you: say in one line where you \
+are, then wait for their input.";
+const ATTACH_TIMEOUT: Duration = Duration::from_secs(600);
 /// Flags that take no value.
 const SWITCHES: [&str; 1] = ["gc"];
 /// How often `wait` reads the queue, and how long it waits after the settle for the runner to record the result.
@@ -294,6 +301,16 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
             };
             println!("{}", json!({ "attempt": attempt, "status": status }));
         }
+        "attach" => {
+            args.only("attach", &["timeout"], 1)?;
+            let timeout = args.opt("timeout").map_or(Ok(ATTACH_TIMEOUT), |n| {
+                n.parse()
+                    .map(Duration::from_secs)
+                    .map_err(|_| Fail::Usage("--timeout must be a number of seconds".to_owned()))
+            })?;
+            store.send(id(args)?, ATTACH_PROMPT)?;
+            println!("{}", attached(store, id(args)?, timeout)?);
+        }
         "sessions" => {
             args.only("sessions", &["gc"], 0)?;
             store
@@ -322,6 +339,30 @@ fn shown(store: &mut Store, id: &str) -> Result<Value, Fail> {
     Ok(store
         .result(id)?
         .ok_or_else(|| QueueError::NotFound(id.to_owned()))?)
+}
+
+/// The session's turn once it runs, where its pane is: host, slot and the agent's name in that host's Herdr.
+fn attached(store: &mut Store, id: &str, timeout: Duration) -> Result<Value, Fail> {
+    let start = Instant::now();
+    loop {
+        let v = store
+            .task(id)?
+            .ok_or_else(|| QueueError::NotFound(id.to_owned()))?;
+        let at = |k: &str| v.get(k).and_then(Value::as_str);
+        if let (Some("running"), Some(host), Some(slot), Some(task)) =
+            (at("status"), at("host"), at("slot"), at("task"))
+        {
+            let agent = pane::agent_name(task);
+            return Ok(json!({
+                "task": task, "host": host, "slot": slot, "agent": agent,
+                "open": format!("herdr --machine {host} agent get {agent}"),
+            }));
+        }
+        if start.elapsed() >= timeout {
+            return Err(Fail::TimedOut(v));
+        }
+        thread::sleep(POLL);
+    }
 }
 
 /// Polls until the task is settled and its result recorded, or [`RECORD_GRACE`] after the settle (or at the
