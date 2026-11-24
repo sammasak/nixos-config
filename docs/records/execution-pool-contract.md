@@ -77,8 +77,10 @@ where its tree is. One-shot tasks keep the lifecycle above unchanged.
 
 PostgreSQL over a Unix socket only (`Store::open` refuses a TCP host), so the database's peer authentication is the
 caller's. Schema `pkgs/exec-pool/migrations/0001_queue.up.sql`; forward-only in production, with
-`exec-pool-queue migrate-down` dropping everything after the operator has exported what they keep. A claim locks only the queued
-row it takes, `FOR UPDATE SKIP LOCKED`; every change runs `transition` and then the `attempts_fence` trigger, which refuses
+`exec-pool-queue migrate-down` dropping everything after the operator has exported what they keep. A claim takes the fitting queued
+attempt of the highest priority (`tasks.priority`, -100 to 100, set by `submit` and `start --priority N` through
+migration 0016, default 0) plus one for every 10 minutes it has waited queued, the oldest among equals, so a low one is
+not starved; nothing is preempted. It locks only the queued row it takes, `FOR UPDATE SKIP LOCKED`; every change runs `transition` and then the `attempts_fence` trigger, which refuses
 a write that names any epoch but the current one (or none), moves the epoch by more than one, leases from anything
 but queued, or touches a succeeded or failed attempt. One live attempt per slot is a unique index. A holder's event
 after its lease deadline is refused; `reconcile` (at startup and on a timer) expires overdue leases. A database that

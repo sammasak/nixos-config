@@ -20,10 +20,12 @@ use serde_json::{Value, json};
 const DB: &str = "host=/run/postgresql dbname=exec_pool user=exec_pool_submit";
 const USAGE: &str = "usage: exec-pool COMMAND
   submit --agent claude|codex|pi --repo URL --rev REV --workdir PATH --prompt TEXT|--prompt-file FILE [--model M]
-        [--key K]
+        [--key K] [--priority N]
         prints the task id. The checkout of REV at URL is cloned into the slot and the agent runs in PATH, relative
         to it. FILE - reads the prompt from stdin, which no shell re-splits (an ssh command line). K is the idempotency key, by default derived from the rest: the same submission again is the same
-        task, so give a new --key to run it once more.
+        task, so give a new --key to run it once more. N, -100 to 100 (0), orders the claim: higher first, and a
+        queued task gains one for every 10 minutes it waits, so a low one still runs; a running task is never stopped
+        for another. The same key again keeps the priority it was first given.
   start             submit's flags, claude only: starts a session, whose first turn runs the prompt and parks it
                     waiting; prints its id
   send ID [--at HH:MM|RFC3339] --prompt TEXT|--prompt-file FILE
@@ -156,6 +158,7 @@ fn task_spec(cmd: &str, args: &Args) -> Result<TaskSpec, Fail> {
             "prompt-file",
             "model",
             "key",
+            "priority",
         ],
         0,
     )?;
@@ -242,10 +245,16 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
     match cmd {
         "submit" | "start" => {
             let task = task_spec(cmd, args)?;
+            let priority = args.opt("priority").map_or(Ok(0), |n| {
+                n.parse::<i32>()
+                    .ok()
+                    .filter(|n| (-100..=100).contains(n))
+                    .ok_or_else(|| Fail::Usage("--priority must be -100 to 100".to_owned()))
+            })?;
             let (id, duplicate) = if cmd == "start" {
-                store.start_session(&task)?
+                store.start_session(&task, priority)?
             } else {
-                store.submit_task(&task)?
+                store.submit_task(&task, priority)?
             };
             if duplicate {
                 eprintln!("exec-pool: already submitted under its key; see exec-pool status {id}");

@@ -239,12 +239,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 15);
+    assert_eq!(version, 16);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (16, 15)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (17, 16)",
             &[],
         )
         .unwrap();
@@ -252,17 +252,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (17)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (18)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(17))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(18))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 17 WHERE version = 17",
+            "UPDATE schema_migrations SET floor = 18 WHERE version = 18",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(17))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(17))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(18))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(18))));
 }
 
 #[test]
@@ -364,12 +364,12 @@ fn the_submitter_queues_through_submit_task_and_reads_no_prompt() {
         .replace("user=exec_pool ", "user=exec_pool_submit ");
     let mut s = Store::open(&conninfo).unwrap();
     let task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
-    let (id, duplicate) = s.submit_task(&task).unwrap();
+    let (id, duplicate) = s.submit_task(&task, 0).unwrap();
     assert!(id.starts_with("cli-") && !duplicate, "{id}");
-    assert_eq!(s.submit_task(&task).unwrap(), (id.clone(), true));
+    assert_eq!(s.submit_task(&task, 0).unwrap(), (id.clone(), true));
     let mut other = task.clone();
     other.command.argv.pop();
-    assert!(s.submit_task(&other).is_err(), "a key names one task");
+    assert!(s.submit_task(&other, 0).is_err(), "a key names one task");
     let shown = s.task(&id).unwrap().unwrap();
     assert_eq!(shown["status"], "queued");
     assert!(!shown.to_string().contains(ARGV_MARKER), "{shown}");
@@ -432,7 +432,7 @@ fn submit_task_refuses_an_agent_no_slot_seen_in_the_last_day_offers() {
         t["command"]["agent"] = json!("pi");
         serde_json::from_value::<TaskSpec>(t).unwrap()
     };
-    let refusal = |s: &mut Store, t: &TaskSpec| match s.submit_task(t) {
+    let refusal = |s: &mut Store, t: &TaskSpec| match s.submit_task(t, 0) {
         Err(QueueError::Db { code, message }) => (code, message),
         other => panic!("{other:?}"),
     };
@@ -453,7 +453,7 @@ fn submit_task_refuses_an_agent_no_slot_seen_in_the_last_day_offers() {
     let mut both = claude_slot();
     both.agents.insert(Agent::Pi);
     assert!(owner.claim(&both, 60).unwrap().is_none());
-    s.submit_task(&pi("cli:pi")).unwrap();
+    s.submit_task(&pi("cli:pi"), 0).unwrap();
     // a slot not seen for a day offers nothing
     pg.sql()
         .batch_execute("UPDATE slots SET seen_at = now() - interval '25 hours'")
@@ -525,6 +525,7 @@ fn the_runner_claims_and_settles_and_writes_nothing_else() {
         "DELETE FROM results",
         "UPDATE results SET attempt_id = 't-2.a'",
         "SELECT submit_task('{}')",
+        "SELECT submit_task('{}', 0)",
         "UPDATE attempts SET cancel_requested = true, fence = lease_epoch",
         "SELECT cancel_task('t-1')",
         "DELETE FROM slots",
@@ -1325,7 +1326,7 @@ fn submitter(pg: &Pg) -> (Store, String) {
     let mut s = Store::open(&conninfo).unwrap();
     assert!(pg.store().claim(&claude_slot(), 60).unwrap().is_none());
     let task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
-    let (id, _) = s.submit_task(&task).unwrap();
+    let (id, _) = s.submit_task(&task, 0).unwrap();
     (s, id)
 }
 
@@ -1706,11 +1707,11 @@ fn session(pg: &Pg) -> (Store, String) {
     let mut s = Store::open(&conninfo).unwrap();
     let task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
     assert!(
-        matches!(s.start_session(&task), Err(QueueError::Db { code, .. }) if code == "22023"),
+        matches!(s.start_session(&task, 0), Err(QueueError::Db { code, .. }) if code == "22023"),
         "0008's check: no slot seen offers claude"
     );
     assert!(pg.store().claim(&claude_slot(), 60).unwrap().is_none());
-    let (id, duplicate) = s.start_session(&task).unwrap();
+    let (id, duplicate) = s.start_session(&task, 0).unwrap();
     assert!(!duplicate);
     (s, id)
 }
@@ -2258,16 +2259,19 @@ fn a_one_shot_or_settled_task_takes_no_message() {
     let mut codex: TaskSpec = serde_json::from_value(agent_task()).unwrap();
     codex.command.agent = Agent::Codex;
     codex.idempotency_key = "cli:codex".to_owned();
-    assert!(s.start_session(&codex).is_err(), "a session is claude only");
+    assert!(
+        s.start_session(&codex, 0).is_err(),
+        "a session is claude only"
+    );
     let one_shot: TaskSpec = serde_json::from_value(agent_task()).unwrap();
     assert!(
-        matches!(s.start_session(&one_shot), Err(QueueError::Db { code, .. }) if code == "23505"),
+        matches!(s.start_session(&one_shot, 0), Err(QueueError::Db { code, .. }) if code == "23505"),
         "its key names the one-shot task"
     );
     let mut later: TaskSpec = serde_json::from_value(agent_task()).unwrap();
     later.idempotency_key = "cli:2".to_owned();
-    let (sid, _) = s.start_session(&later).unwrap();
-    assert_eq!(s.start_session(&later).unwrap(), (sid.clone(), true));
+    let (sid, _) = s.start_session(&later, 0).unwrap();
+    assert_eq!(s.start_session(&later, 0).unwrap(), (sid.clone(), true));
     s.cancel(&sid).unwrap();
     assert!(matches!(
         s.send(&sid, "hello"),
@@ -2684,7 +2688,7 @@ fn finished(
 ) -> String {
     let mut spec: TaskSpec = serde_json::from_value(agent_task()).unwrap();
     key.clone_into(&mut spec.idempotency_key);
-    let (id, _) = s.start_session(&spec).unwrap();
+    let (id, _) = s.start_session(&spec, 0).unwrap();
     let (attempt, epoch, _) = started(owner);
     let mut parked = park(ParkReason::TurnEnd, 0);
     parked.result.handed_back = handed_back;
@@ -2759,7 +2763,7 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     // needs_review is never eligible, however old; a final session is after 7 days, only if its branch held its tree
     let mut other: TaskSpec = serde_json::from_value(agent_task()).unwrap();
     other.idempotency_key = "cli:2".to_owned();
-    let (review, _) = s.start_session(&other).unwrap();
+    let (review, _) = s.start_session(&other, 0).unwrap();
     let (b, _, _) = started(&mut owner);
     overdue(&pg, &b);
     owner.reconcile().unwrap();
@@ -2769,7 +2773,7 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     let unknown = finished(&pg, (&mut s, &mut owner), "cli:5", None);
     // never ran a turn: no tree, and nothing known of one
     other.idempotency_key = "cli:6".to_owned();
-    let (unrun, _) = s.start_session(&other).unwrap();
+    let (unrun, _) = s.start_session(&other, 0).unwrap();
     s.cancel(&unrun).unwrap();
     aged(&pg, &format!("{unrun}.a"), 8);
     let eligible: Vec<_> = s
@@ -2872,4 +2876,87 @@ fn a_turns_log_is_read_by_the_submitter_while_it_runs_and_after() {
     let first = s.logs(&id, Some(1)).unwrap().turn.unwrap();
     assert_eq!((first.lease_epoch, first.live), (e1, false));
     assert_eq!(s.logs(&id, Some(3)).unwrap().turn, None);
+}
+
+/// Sets the priority of task `id` and how long its attempt has waited queued, as a submission and the clock would.
+fn queued_for(pg: &Pg, id: &str, priority: i32, minutes: i32) {
+    let mut c = pg.sql();
+    c.execute(
+        "UPDATE tasks SET priority = $2 WHERE id = $1",
+        &[&id, &priority],
+    )
+    .unwrap();
+    c.execute(
+        "UPDATE attempts SET changed_at = now() - make_interval(mins => $2), fence = lease_epoch WHERE task_id = $1",
+        &[&id, &minutes],
+    )
+    .unwrap();
+}
+
+fn claimed(s: &mut Store, slot_id: &str) -> String {
+    s.claim(&slot(slot_id), 60).unwrap().unwrap().task.id
+}
+
+#[test]
+fn a_claim_takes_the_highest_priority_first_then_the_oldest() {
+    let pg = Pg::new();
+    let mut s = pg.migrated();
+    for (id, priority, minutes) in [("low", 0, 3), ("high", 5, 2), ("high-later", 5, 1)] {
+        submit(&mut s, &task(id, 1));
+        queued_for(&pg, id, priority, minutes);
+    }
+    assert_eq!(claimed(&mut s, "s0"), "high");
+    assert_eq!(claimed(&mut s, "s1"), "high-later");
+    assert_eq!(claimed(&mut s, "s2"), "low");
+}
+
+#[test]
+fn a_waiting_task_gains_one_priority_step_per_ten_minutes() {
+    let pg = Pg::new();
+    let mut s = pg.migrated();
+    // 49 minutes: 4 steps, still behind a fresh 5
+    for (id, priority, minutes) in [("waited-49", 0, 49), ("fresh-5", 5, 0)] {
+        submit(&mut s, &task(id, 1));
+        queued_for(&pg, id, priority, minutes);
+    }
+    assert_eq!(claimed(&mut s, "s0"), "fresh-5");
+    // 61 minutes: 6 steps, ahead of it
+    for (id, priority, minutes) in [("waited-61", 0, 61), ("fresh-5b", 5, 0)] {
+        submit(&mut s, &task(id, 1));
+        queued_for(&pg, id, priority, minutes);
+    }
+    assert_eq!(claimed(&mut s, "s1"), "waited-61");
+    assert_eq!(claimed(&mut s, "s2"), "fresh-5b");
+    assert_eq!(claimed(&mut s, "s3"), "waited-49");
+}
+
+#[test]
+fn the_submitter_sets_a_priority_once_and_within_its_bound() {
+    let pg = Pg::new();
+    pg.migrated();
+    let (mut s, id) = submitter(&pg);
+    let priority = |id: &str| -> i32 {
+        pg.sql()
+            .query_one("SELECT priority FROM tasks WHERE id = $1", &[&id])
+            .unwrap()
+            .get(0)
+    };
+    assert_eq!(priority(&id), 0);
+    let mut other: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    other.idempotency_key = "cli:urgent".to_owned();
+    let (urgent, _) = s.submit_task(&other, 7).unwrap();
+    assert_eq!(priority(&urgent), 7);
+    assert_eq!(s.submit_task(&other, -3).unwrap(), (urgent.clone(), true));
+    assert_eq!(
+        priority(&urgent),
+        7,
+        "the same key keeps its first priority"
+    );
+    other.idempotency_key = "cli:too-high".to_owned();
+    assert!(
+        matches!(s.submit_task(&other, 101), Err(QueueError::Db { code, .. }) if code == "22023")
+    );
+    other.idempotency_key = "cli:session".to_owned();
+    let (session, _) = s.start_session(&other, -100).unwrap();
+    assert_eq!(priority(&session), -100);
 }

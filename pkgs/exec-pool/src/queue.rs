@@ -27,7 +27,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 15] = [
+const STEPS: [(i32, &str); 16] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -49,6 +49,7 @@ const STEPS: [(i32, &str); 15] = [
     (13, include_str!("../migrations/0013_drain_reason.up.sql")),
     (14, include_str!("../migrations/0014_timer.up.sql")),
     (15, include_str!("../migrations/0015_turn_log.up.sql")),
+    (16, include_str!("../migrations/0016_priority.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -61,7 +62,8 @@ const DOWN_CLAIM_HOST: &str = include_str!("../migrations/0011_claim_host.down.s
 const DOWN_DRAIN_REASON: &str = include_str!("../migrations/0013_drain_reason.down.sql");
 const DOWN_TIMER: &str = include_str!("../migrations/0014_timer.down.sql");
 const DOWN_TURN_LOG: &str = include_str!("../migrations/0015_turn_log.down.sql");
-const VERSION: i32 = 15;
+const DOWN_PRIORITY: &str = include_str!("../migrations/0016_priority.down.sql");
+const VERSION: i32 = 16;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -366,6 +368,10 @@ const fn reason(kind: &Kind, to: Status) -> &'static str {
 }
 
 /// For a session task, the host its attempt last ran on (`running`), under `a` and `t`; null for a one-shot task.
+/// The order a claim takes queued attempts in: the task's priority, higher first, plus one for every 10 minutes the
+/// attempt has waited queued, so a low priority is not starved; then the oldest.
+const CLAIM_ORDER: &str =
+    "t.priority + floor(extract(epoch FROM now() - a.changed_at) / 600) DESC, a.changed_at, a.id";
 const RAN_ON: &str = "CASE WHEN t.session THEN (SELECT e.host FROM events e WHERE e.attempt_id = a.id \
     AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1) END";
 
@@ -690,33 +696,44 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
 
     /// Queues `task` through `submit_task`, as `exec_pool_submit` may: the queue assigns its id from its key and refuses
-    /// any task but the shape `exec-pool submit` builds. The queued task's id and whether it was already queued.
+    /// any task but the shape `exec-pool submit` builds; `priority` (-100 to 100, higher claimed first) is kept from
+    /// its first submission. The queued task's id and whether it was already queued.
     ///
     /// # Errors
     /// What `submit_task` or the database reports, an idempotency conflict included.
-    pub fn submit_task(&mut self, task: &TaskSpec) -> Result<(String, bool), QueueError> {
-        self.queue_through("submit_task", task)
+    pub fn submit_task(
+        &mut self,
+        task: &TaskSpec,
+        priority: i32,
+    ) -> Result<(String, bool), QueueError> {
+        self.queue_through("submit_task", task, priority)
     }
 
     /// Starts `task`, a claude task in the shape [`Store::submit_task`] takes, as a session through `start_session`:
-    /// its first turn runs the prompt, and each later one what [`Store::send`] put in its inbox.
+    /// its first turn runs the prompt, and each later one what [`Store::send`] put in its inbox. Every turn is claimed at
+    /// `priority`, as there.
     ///
     /// # Errors
     /// What `start_session` or the database reports: an agent other than claude, or a key that names a one-shot task.
-    pub fn start_session(&mut self, task: &TaskSpec) -> Result<(String, bool), QueueError> {
-        self.queue_through("start_session", task)
+    pub fn start_session(
+        &mut self,
+        task: &TaskSpec,
+        priority: i32,
+    ) -> Result<(String, bool), QueueError> {
+        self.queue_through("start_session", task, priority)
     }
 
     fn queue_through(
         &mut self,
         function: &'static str,
         task: &TaskSpec,
+        priority: i32,
     ) -> Result<(String, bool), QueueError> {
         let mut spec = serde_json::to_value(task)?;
         if let Value::Object(m) = &mut spec {
@@ -724,8 +741,8 @@ impl Store {
         }
         self.tx(|tx| {
             let row = tx.query_one(
-                &format!("SELECT o_task, o_duplicate FROM {function}($1)"),
-                &[&spec],
+                &format!("SELECT o_task, o_duplicate FROM {function}($1, $2)"),
+                &[&spec, &priority],
             )?;
             Ok((row.try_get(0)?, row.try_get(1)?))
         })
@@ -784,8 +801,10 @@ impl Store {
         })
     }
 
-    /// Leases the oldest queued attempt that fits `slot` for `lease_secs` and whose checkpoint is [`reachable`] from its
-    /// host (a session that ran but never parked: only where it ran), skipping rows another claimer holds.
+    /// Leases the queued attempt that fits `slot` for `lease_secs` and whose checkpoint is [`reachable`] from its host (a
+    /// session that ran but never parked: only where it ran) with the highest priority, its task's plus one for every
+    /// 10 minutes it has waited, the oldest among equals, skipping rows another claimer holds. A live one is never
+    /// stopped for it.
     ///
     /// # Errors
     /// What [`Slot::validate`] rejects, or what the database reports (a slot with a live lease already included).
@@ -807,7 +826,7 @@ impl Store {
             let candidates = tx.query(
                 &format!(
                     "SELECT a.id, t.spec, a.checkpoint, {RAN_ON} FROM attempts a JOIN tasks t ON t.id = a.task_id \
-                     WHERE a.status = 'queued' ORDER BY a.changed_at, a.id"
+                     WHERE a.status = 'queued' ORDER BY {CLAIM_ORDER}"
                 ),
                 &[],
             )?;
