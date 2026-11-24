@@ -209,6 +209,27 @@ full-gate REF="HEAD":
       git worktree add --quiet --detach "$tree" "$rev"; \
       cd "$tree" && devenv tasks run nixos:qa
 
+# The exec-pool build is its tests, clippy and rustfmt, so building it from BRANCH merged with current origin/main
+# catches two PRs that pass alone and break main together. The merge is made by git merge-tree (a conflict exits 1)
+# into a throwaway worktree; nothing is pushed. Heavy: under the heavy-work lock, and refused on lenovo.
+[doc("Build the exec-pool package from BRANCH merged with current origin/main, under the heavy lock; not on lenovo")]
+pool-merge-check BRANCH:
+    @[ "$(uname -n)" != lenovo-21CB001PMX ] || { echo "pool-merge-check: run it on acer, not lenovo" >&2; exit 1; }; \
+      branch={{quote(BRANCH)}}; \
+      git fetch --quiet origin "$branch"; head=$(git rev-parse FETCH_HEAD); \
+      git fetch --quiet origin main; main=$(git rev-parse FETCH_HEAD); \
+      merged=$(git merge-tree --write-tree "$main" "$head") \
+        || { printf '%s\n' "$merged" >&2; echo "pool-merge-check: $branch does not merge cleanly with origin/main" >&2; exit 1; }; \
+      commit=$(git -c user.name=pool-merge-check -c user.email=pool-merge-check@localhost \
+        commit-tree -p "$main" -p "$head" -m "pool-merge-check $branch" "$merged"); \
+      tree=$(mktemp -d); \
+      trap 'git worktree remove --force "$tree"' EXIT; \
+      git worktree add --quiet --detach "$tree" "$commit"; \
+      lock=/run/work-locks/heavy-work.lock; \
+      [ -e "$lock" ] || { echo "pool-merge-check: no $lock on this host" >&2; exit 1; }; \
+      flock -o "$lock" nix build --no-link -L "$tree#exec-pool"; \
+      echo "pool-merge-check: exec-pool builds from $branch ($head) merged with origin/main ($main)"
+
 # The lock decides, not a process name: the gate runs as nixos-qa (`pgrep 'nixos:qa'` misses it), a `flock -o` job
 # under any name. The lock is per physical host, so a guest sees its host's jobs; a holder in another PID namespace
 # is busy without a pid. The probe takes the lock non-blocking and drops it at once. Exit 0 busy, 1 free, 2 unknown.

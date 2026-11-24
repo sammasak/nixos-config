@@ -91,7 +91,7 @@ lost when the queue restarts (#773), no claim priority (#772).
 1. Session turns are headless; the owner wants the same interactive Herdr panes the named workers had, with an idle
    grace period, park, resume into a pane and `attach` (session in flight).
 2. Two PRs that each built alone broke main together (#765 with #768). Build the merge result of a pool crate PR
-   before merging it.
+   before merging it: `just pool-merge-check BRANCH` on acer, before each pool crate merge.
 3. Three sessions lost a turn to the 30 minute limit today. Re-check the limit once turns are interactive and park on
    idle.
 4. Not yet seen live: a drain started by `just deploy`, claim order by priority, the prepare failure counter,
