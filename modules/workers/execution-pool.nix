@@ -144,11 +144,12 @@ in
     # over-reservation is the core's assertion (pool.memory), slots included
     assertions = [
       {
-        assertion = lib.all (
-          n:
-          !lib.elem "id_ed25519" dev.instances.${n}.credentials
-          && dev.instances.${n}.egress.github.repos != [ ]
-        ) slotNames;
+        # a host's own forced instances may drop the slots
+        assertion = lib.all (i: !lib.elem "id_ed25519" i.credentials && i.egress.github.repos != [ ]) (
+          lib.attrValues (
+            lib.getAttrs (lib.intersectLists slotNames (lib.attrNames dev.instances)) dev.instances
+          )
+        );
         message = "sam.workers.executionPool: a slot reaches GitHub through the host's proxy (github.repos), never with the host user's SSH key (credentials).";
       }
       {

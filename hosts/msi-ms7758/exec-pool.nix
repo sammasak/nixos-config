@@ -5,7 +5,7 @@
 
   sam.workers.executionPool = {
     enable = true;
-    slots = 2;
+    slots = 4;
     agents = [ "claude" ];
   };
   homelab.execPool.runner = {

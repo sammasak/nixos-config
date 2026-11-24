@@ -18,7 +18,7 @@ slice 1. "Home" is the session home, `/session/cur/home`, which a park copies to
 | OpenAI key (`sam.workers.codexAuthFile`) | host, proxy credential | `openai.sock`; no pool host sets it, so no slot has the route | no | sidecar (unused) |
 | OTLP token (sops `native_otlp_auth`) | host relay | none: slots have `telemetry = false` | no | sidecar (unused) |
 | Owner's GitHub SSH key (host user's `~/.ssh/id_ed25519`, a key of the GitHub account) | bound read-only at `/var/lib/host-credentials/id_ed25519`, mode 0600 owned by the guest user, linked as the guest home's `~/.ssh/id_ed25519` | `git push` to the clone's ssh `pushurl`, and nix's fetch of the `git+ssh` inputs (factum, nix-audit, llm-gateway, rf-proto, herman, devenv-platform). It pushes to any branch of any repository of the account | **yes**: any process in the slot reads it and can write a copy into the home or the work tree | bind into guest (acer and msi slots) |
-| gh token (acer user's `~/.config/gh/hosts.yml`) | host; pool slots do not get it (`credentials = [ "id_ed25519" ]`); the named worker a1 does | none in a slot | no | not in slots |
+| gh token (acer user's `~/.config/gh/hosts.yml`) | host; pool slots do not get it (`credentials = [ "id_ed25519" ]`); no named worker remains (a1 retired) | none in a slot | no | not in slots |
 | Nix access token (sops `nix_access_token`) | host `nix.conf` `!include`, root 0400; a guest imports no `core/sops.nix` | none: the guest's nix client fetches with its own config | no | host only |
 | Queue login (`exec_pool_runner` password, peer role) | host runner unit, LoadCredential | none: the runner claims, the guest never talks to the queue | no | host only |
 | Store sync login (host's `ssh_host_ed25519_key` to `exec-pool-sync`) | host helper `exec-pool-exec@` | none: the host moves the tree | no | host only |
@@ -78,4 +78,6 @@ In an acer slot: `test ! -e /var/lib/host-credentials/id_ed25519`; a pool task p
 records it handed back; `nix flake metadata` in nixos-config fetches factum through the proxy;
 `journalctl -u dev-env-egress` on acer shows the `github-pool1` requests. On msi, the same from a slot, the requests in
 acer's log as `github-fleet`, and `curl -s -o /dev/null -w '%{http_code}' http://<acer>:<listener port>/` from any
-other host times out (firewall). A task on a repository not listed fails its push with 403: add it to the list.
+other host times out (firewall). The runner's clone and its pushed check read the guest's system git config, so they
+go through the proxy too: a private repository (skills) clones, and a task on a repository not listed fails in
+prepare with 403, public or not: add it to the list.

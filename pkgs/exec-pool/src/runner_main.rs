@@ -7,8 +7,9 @@
 //! and `reconcile` decides. While the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat
 //! reports, or a lease it finds lost, writes the cancel marker the helper stops at. A runner that dies renews nothing,
 //! and the lease expires. A reset that fails quarantines the slot, in the queue too, until an operator removes the
-//! marker. With `EXEC_POOL_OFF_TIMER` it claims only while a claim, held up to `EXEC_POOL_CLAIM_SECS`, ends before that
-//! timer powers the host off; with a credentials directory it is a remote slot's runner, reaching the queue over TCP with the
+//! marker. With `EXEC_POOL_OFF_TIMER` it claims only while `EXEC_POOL_CLAIM_SECS` from now ends before that timer
+//! powers the host off, and `EXEC_POOL_DRAIN_SECS` before it stops the running attempt (the drain); with a credentials
+//! directory it is a remote slot's runner, reaching the queue over TCP with the
 //! `db-password` credential. Each state change is one JSON line on stdout.
 //!
 //! `exec SLOT` (root, from `exec-pool-exec@<slot>.service`) reads the manifest, admits the attempt only to a slot home
@@ -43,6 +44,8 @@ const MANIFEST: &str = "manifest.json";
 const RESULT: &str = "result.json";
 /// Beside the manifest: the attempt the helper is to stop, as [`Manifest::cancel_token`].
 const CANCEL: &str = "cancel";
+/// Why the runner stops a run whose host powers off before it could end; it writes [`Manifest::drain_token`].
+const HOST_DRAINING: &str = "host_draining";
 /// The slot home the last admitted attempt ran in, beside the slot's run directories.
 const LAST_HOME: &str = "home.json";
 const POLL: Duration = Duration::from_secs(10);
@@ -55,7 +58,26 @@ const PUSHED_TIMEOUT: Duration = Duration::from_secs(60);
 const DOCK_BUSY: &str = "dock-busy";
 /// How long a turn's steps may take to leave the guest after the last one returned, before its tree is detached.
 const DETACH_WAIT: Duration = Duration::from_secs(15);
+/// How long a stopped step's command has after its SIGTERM before everything of it is killed.
+const STOP_WAIT: Duration = Duration::from_secs(60);
 const RESET_TRIES: u32 = 3;
+
+/// Whether `hold_secs` from now ends before `timer` fires, as [`claim_fits`] reads its `systemctl show`.
+fn fits(timer: &str, hold_secs: u32) -> Result<bool, String> {
+    Command::new("systemctl")
+        .args(["show", "-p", "LoadState", "-p", "NextElapseUSecRealtime"])
+        .args(["--timestamp=unix", timer])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("systemctl: {e}"))
+        .and_then(|o| String::from_utf8(o.stdout).map_err(|e| e.to_string()))
+        .and_then(|show| {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| e.to_string())?;
+            claim_fits(now.as_secs(), hold_secs, &show)
+        })
+}
 
 fn var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is not set"))
@@ -119,9 +141,9 @@ struct Runner {
     runtime: PathBuf,
     exec_dir: PathBuf,
     quarantine: PathBuf,
-    /// The host's scheduled poweroff timer: a lease must end before it fires.
-    /// and the longest a claim holds the slot: its run's bound, then the settle and reset
-    off_timer: Option<(String, u32)>,
+    /// The host's scheduled poweroff timer, how long before it claims stop, and how long before it a running attempt
+    /// is drained.
+    off_timer: Option<(String, u32, u32)>,
 }
 
 impl Runner {
@@ -138,12 +160,18 @@ impl Runner {
             exec_dir: PathBuf::from(var("EXEC_POOL_EXEC_DIR")?).join(&slot.id),
             quarantine,
             off_timer: match std::env::var("EXEC_POOL_OFF_TIMER") {
-                Ok(timer) => Some((
-                    timer,
-                    var("EXEC_POOL_CLAIM_SECS")?
-                        .parse()
-                        .map_err(|_| "EXEC_POOL_CLAIM_SECS must be a number".to_owned())?,
-                )),
+                Ok(timer) => {
+                    let secs = |name: &str| {
+                        var(name)?
+                            .parse()
+                            .map_err(|_| format!("{name} must be a number"))
+                    };
+                    Some((
+                        timer,
+                        secs("EXEC_POOL_CLAIM_SECS")?,
+                        secs("EXEC_POOL_DRAIN_SECS")?,
+                    ))
+                }
                 Err(_) => None,
             },
             slot,
@@ -156,14 +184,33 @@ impl Runner {
 
     /// Whether the slot's helper is still running, as after a runner restarted mid-run: the slot is not reset under it.
     fn helper_running(&self) -> bool {
+        // a oneshot is `activating` while it runs, which is-active does not count; a state systemd did not give (a
+        // switch, a timeout) counts as running, so the slot is not reset nor a followed run settled under it
         Command::new("systemctl")
-            .args([
-                "is-active",
-                "--quiet",
-                &format!("exec-pool-exec@{}.service", self.slot.id),
-            ])
-            .status()
-            .is_ok_and(|s| s.success())
+            .args(["show", "-p", "ActiveState", "--value"])
+            .arg(format!("exec-pool-exec@{}.service", self.slot.id))
+            .stdin(Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .is_none_or(|o| {
+                !matches!(
+                    String::from_utf8_lossy(&o.stdout).trim(),
+                    "inactive" | "failed"
+                )
+            })
+    }
+
+    /// The manifest of the run a helper still runs for this slot, when the queue still holds its lease live: a
+    /// restarted runner takes it over rather than let it expire. A lease already past its deadline is adopted too: its
+    /// first beat finds it lost and stops the helper, and the reconcile sends it to review.
+    fn adoptable(&self, store: &mut Store) -> Option<Manifest> {
+        let m = read_regular(&self.runtime.join(MANIFEST))
+            .ok()
+            .and_then(|s| Manifest::parse(&s).ok())?;
+        let live = store.live_on(&self.slot).ok().flatten()?;
+        let same = (live.id.as_str(), live.lease_epoch) == (m.attempt_id.as_str(), m.lease_epoch);
+        same.then_some(m)
     }
 
     fn guest_up(&self) -> bool {
@@ -229,22 +276,10 @@ impl Runner {
     /// Whether to claim now: always without an off timer, else only for a lease that ends before it fires. Logs a
     /// change, not every poll.
     fn claims_open(&self, paused: &mut bool) -> bool {
-        let Some((timer, hold)) = &self.off_timer else {
+        let Some((timer, hold, _)) = &self.off_timer else {
             return true;
         };
-        let fits = Command::new("systemctl")
-            .args(["show", "-p", "LoadState", "-p", "NextElapseUSecRealtime"])
-            .args(["--timestamp=unix", timer])
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("systemctl: {e}"))
-            .and_then(|o| String::from_utf8(o.stdout).map_err(|e| e.to_string()))
-            .and_then(|show| {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|e| e.to_string())?;
-                claim_fits(now.as_secs(), *hold, &show)
-            });
+        let fits = fits(timer, *hold);
         let open = fits.as_ref().is_ok_and(|f| *f);
         if open == *paused {
             *paused = !open;
@@ -260,6 +295,13 @@ impl Runner {
         open
     }
 
+    /// Whether the host powers off within the drain lead; a timer it cannot read is no reason to stop a run.
+    fn draining(&self) -> bool {
+        self.off_timer
+            .as_ref()
+            .is_some_and(|(timer, _, lead)| fits(timer, *lead) == Ok(false))
+    }
+
     fn loop_forever(&self, store: &mut Store) -> ! {
         // the slot's state at startup is unknown: a runner that died mid-run left it as it was
         let mut dirty = true;
@@ -270,6 +312,14 @@ impl Runner {
             // a guest down or restarting (a switch restarts it) is waited for, not a reset that fails
             // a helper a dead runner started runs on with no one renewing its lease: expire it, reset nothing under it
             if dirty && self.helper_running() {
+                if let Some(m) = self.adoptable(store) {
+                    line(
+                        &json!({ "msg": "adopted", "slot": self.slot.id, "attempt": m.attempt_id,
+                                  "lease_epoch": m.lease_epoch }),
+                    );
+                    self.follow(store, &m, true, 0);
+                    continue;
+                }
                 if let Ok(changes) = store.reconcile() {
                     changes.iter().for_each(log_change);
                 }
@@ -325,8 +375,8 @@ impl Runner {
         }
     }
 
-    /// Renews the attempt's lease; once a cancel is asked for or the lease is lost, writes the marker that stops the
-    /// helper, and returns why. `stopping` is why it already did, if it did.
+    /// Renews the attempt's lease; once a cancel is asked for, the lease is lost or the host's poweroff is within the
+    /// drain lead, writes the marker that stops the helper (the drain's own token for the last), and returns why. `stopping` is why it already did, if it did.
     fn beat(
         &self,
         store: &mut Store,
@@ -334,6 +384,7 @@ impl Runner {
         stopping: Option<&'static str>,
     ) -> Option<&'static str> {
         let why = match store.heartbeat(&m.attempt_id, m.lease_epoch, self.lease_secs) {
+            Ok(false) if self.draining() => Some(HOST_DRAINING),
             Ok(false) => None,
             Ok(true) => Some("cancel_requested"),
             Err(e @ (QueueError::NotLive(_) | QueueError::Fenced(_))) => {
@@ -350,8 +401,13 @@ impl Runner {
             return stopping;
         }
         let tmp = self.runtime.join(format!("{CANCEL}.tmp"));
-        let marked = fs::write(&tmp, m.cancel_token())
-            .and_then(|()| fs::rename(&tmp, self.runtime.join(CANCEL)));
+        let token = if why == Some(HOST_DRAINING) {
+            m.drain_token()
+        } else {
+            m.cancel_token()
+        };
+        let marked =
+            fs::write(&tmp, token).and_then(|()| fs::rename(&tmp, self.runtime.join(CANCEL)));
         match marked {
             Ok(()) => {
                 line(
@@ -383,27 +439,30 @@ impl Runner {
     fn finish(
         &self,
         store: &mut Store,
-        claim: &Claim,
         manifest: &Manifest,
         result: Option<&ExecResult>,
         stdout: &str,
     ) -> (TurnSettle, bool) {
-        let (id, epoch) = (claim.attempt.id.as_str(), claim.attempt.lease_epoch);
-        let task_result = TaskResult::of(claim.task.command.agent, result, stdout);
+        let (id, epoch, task) = (
+            manifest.attempt_id.as_str(),
+            manifest.lease_epoch,
+            &manifest.task,
+        );
+        let task_result = TaskResult::of(task.command.agent, result, stdout);
         let to = match &manifest.session {
-            None => TurnSettle::Settle(decide(id, epoch, claim.task.command.agent, result, stdout)),
+            None => TurnSettle::Settle(decide(id, epoch, task.command.agent, result, stdout)),
             Some(_) => decide_turn(id, epoch, result, stdout),
         };
         let settled = match to {
             TurnSettle::Settle(to) => Self::event(store, id, epoch, Kind::Checkpoint, None)
                 .and_then(|()| {
-                    let r = receipt(&claim.task.id, id, epoch, to);
+                    let r = receipt(&task.id, id, epoch, to);
                     Self::event(store, id, epoch, Kind::Settle(to), r.as_ref())
                 })
                 .map(|()| true),
             TurnSettle::Park(reason) => park(
                 store,
-                (id, epoch, &claim.task.id, &self.slot.host),
+                (id, epoch, &task.id, &self.slot.host),
                 (reason, manifest.session.as_ref().map_or(0, |s| s.upto)),
                 result.is_some_and(|r| r.stored),
                 &task_result,
@@ -453,29 +512,49 @@ impl Runner {
             self.error("start", &e);
             return false;
         }
-        let claim_to_exec_ms = ms(claimed);
+        self.follow(store, &manifest, false, ms(claimed))
+    }
+
+    /// Follows the helper's run of `manifest` to its end, renewing the lease, then settles or parks the attempt from
+    /// its result; `adopted`: an earlier runner of this slot started the helper, which runs on. Whether the slot ran
+    /// anything and needs a reset.
+    fn follow(
+        &self,
+        store: &mut Store,
+        manifest: &Manifest,
+        adopted: bool,
+        claim_to_exec_ms: u64,
+    ) -> bool {
         let exec = Instant::now();
         // a cancel asked for while leased: the helper sees the marker before its first step
-        let mut stopping = self.beat(store, &manifest, None);
+        let mut stopping = self.beat(store, manifest, None);
         let unit = format!("exec-pool-exec@{}.service", self.slot.id);
-        match spawn_start(&unit) {
+        let started = if adopted {
+            Ok(None)
+        } else {
+            spawn_start(&unit).map(Some)
+        };
+        match started {
             Ok(mut child) => {
                 let mut beat = Instant::now();
                 let done = loop {
-                    match child.try_wait() {
-                        Ok(Some(status)) => break Ok(status),
-                        Ok(None) => {}
-                        Err(e) => break Err(e.to_string()),
+                    match child.as_mut().map(Child::try_wait) {
+                        Some(Ok(Some(status))) => break Ok(Some(status)),
+                        Some(Err(e)) => break Err(e.to_string()),
+                        None if !self.helper_running() => break Ok(None),
+                        Some(Ok(None)) | None => {}
                     }
                     if beat.elapsed() >= HEARTBEAT {
                         beat = Instant::now();
-                        stopping = self.beat(store, &manifest, stopping);
+                        stopping = self.beat(store, manifest, stopping);
                     }
                     thread::sleep(Duration::from_secs(1));
                 };
                 match done {
-                    Ok(status) if status.success() => {}
-                    Ok(status) => self.error("exec", &format!("systemctl start {unit}: {status}")),
+                    Ok(Some(status)) if !status.success() => {
+                        self.error("exec", &format!("systemctl start {unit}: {status}"));
+                    }
+                    Ok(_) => {}
                     Err(e) => self.error("exec", &e),
                 }
             }
@@ -489,9 +568,9 @@ impl Runner {
             .inspect_err(|e| self.error("result", e))
             .ok();
         let stdout = String::from_utf8_lossy(&read_capture(&dir.join("stdout"))).into_owned();
-        let (to, settled) = self.finish(store, claim, &manifest, result.as_ref(), &stdout);
+        let (to, settled) = self.finish(store, manifest, result.as_ref(), &stdout);
         line(&json!({
-            "msg": "run", "task_id": claim.task.id, "attempt": id, "lease_epoch": epoch, "slot": self.slot.id,
+            "msg": "run", "task_id": manifest.task.id, "attempt": manifest.attempt_id, "lease_epoch": manifest.lease_epoch, "slot": self.slot.id,
             "settle": format!("{to:?}"), "settled": settled, "output": dir,
             "stopped_for": stopping,
             "exit_code": result.as_ref().and_then(|r| r.exit_code),
@@ -558,8 +637,8 @@ fn run() -> Result<(), String> {
 struct Guest {
     slot: String,
     user: String,
-    /// The runner's cancel marker, and what it holds when it names this attempt.
-    cancel: (PathBuf, String),
+    /// The runner's cancel marker, and what it holds when it names this attempt: for a cancel, and for a drain.
+    cancel: (PathBuf, String, String),
     /// `K=V` for each step: the slot's agent route and a PATH that finds the agent.
     env: Vec<String>,
 }
@@ -568,11 +647,28 @@ struct StepEnd {
     exit_code: Option<i32>,
     timed_out: bool,
     cancelled: bool,
+    /// The helper stopped it for the runner's marker, whatever its exit.
+    stopped: bool,
 }
 
 impl Guest {
+    /// The marker names this attempt, for a cancel or a drain.
     fn cancelled(&self) -> bool {
-        read_regular(&self.cancel.0).is_ok_and(|s| s == self.cancel.1)
+        read_regular(&self.cancel.0).is_ok_and(|s| s == self.cancel.1 || s == self.cancel.2)
+    }
+
+    /// The marker names this attempt for a drain.
+    fn draining(&self) -> bool {
+        read_regular(&self.cancel.0).is_ok_and(|s| s == self.cancel.2)
+    }
+
+    /// Records in `result` why the marker stopped the attempt.
+    fn stopped(&self, result: &mut ExecResult) {
+        if self.draining() {
+            result.drained = true;
+        } else {
+            result.cancelled = true;
+        }
     }
 
     /// Copies at most [`CAPTURE_BYTES`] of `from` into `to` and drains the rest, so a chatty task cannot fill the host.
@@ -616,6 +712,11 @@ impl Guest {
                 &format!("--unit={unit}"),
                 "-p",
                 "WorkingDirectory=~",
+                // a stop is the command's SIGTERM alone, so the agent ends its turn before its children are killed
+                "-p",
+                "KillMode=mixed",
+                "-p",
+                &format!("TimeoutStopSec={}", STOP_WAIT.as_secs()),
                 "-E",
                 "GIT_TERMINAL_PROMPT=0",
             ])
@@ -667,6 +768,7 @@ impl Guest {
             timed_out,
             // a command that exited 0 before the stop reached it finished: its run is not cancelled
             cancelled: cancelled && exit_code != Some(0),
+            stopped: cancelled,
         })
     }
 
@@ -728,14 +830,15 @@ impl Guest {
             limit_secs,
         } in steps
         {
+            // a stop before a step leaves the stage as it was: a turn stopped before its agent ran is still preparing
+            if self.cancelled() {
+                self.stopped(result);
+                break;
+            }
             if stage == Stage::Run {
                 result.prepare_ms = ms(t);
             }
             result.stage = stage;
-            if self.cancelled() {
-                result.cancelled = true;
-                break;
-            }
             let limit = match (stage, limit_secs) {
                 (_, Some(secs)) => Duration::from_secs(secs),
                 (Stage::Prepare, None) => PREPARE_TIMEOUT,
@@ -752,6 +855,7 @@ impl Guest {
                     exit_code: None,
                     timed_out: false,
                     cancelled: false,
+                    stopped: false,
                 }
             });
             if stage == Stage::Run {
@@ -759,12 +863,16 @@ impl Guest {
             }
             result.exit_code = end.exit_code;
             result.timed_out = end.timed_out;
-            result.cancelled = end.cancelled;
-            if end.exit_code != Some(0) || end.timed_out || end.cancelled {
+            // a drained agent that ends its turn on the SIGTERM and exits 0 was still stopped mid-turn
+            if end.cancelled || (end.stopped && self.draining()) {
+                self.stopped(result);
+                return false;
+            }
+            if end.exit_code != Some(0) || end.timed_out {
                 return false;
             }
         }
-        !result.cancelled
+        !(result.cancelled || result.drained)
     }
 
     /// The session turn's agent step: a resume once the transcript probe finds the session, its start before.
@@ -1155,7 +1263,11 @@ fn begin(slot: &str) -> Result<Begun, String> {
     let guest = Guest {
         slot: slot.to_owned(),
         user: var("EXEC_POOL_GUEST_USER")?,
-        cancel: (runtime.join(CANCEL), manifest.cancel_token()),
+        cancel: (
+            runtime.join(CANCEL),
+            manifest.cancel_token(),
+            manifest.drain_token(),
+        ),
         env: env.iter().map(|(k, v)| format!("{k}={v}")).collect(),
     };
     Ok(Begun {

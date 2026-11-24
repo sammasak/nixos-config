@@ -59,7 +59,7 @@ Inside, the cgroup files read `max`: `/etc/dev-environment` holds these limits a
 
 ## Execution pool
 
-`sam.workers.executionPool` (`modules/workers/execution-pool.nix`; on acer-swift and msi-ms7758, two slots each) declares reusable slots for the
+`sam.workers.executionPool` (`modules/workers/execution-pool.nix`; on acer-swift three slots, on msi-ms7758 four, no named worker beside them) declares reusable slots for the
 pool's tasks (`docs/records/execution-pool-contract.md`): `pool1` .. `pool<slots>`, each an instance with
 `agent = "none"` and no prompt, so a slot has the named instances' pool ceiling, reserves, `rootInGuest`, reset and
 retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-reset@<slot>`, which switches nothing.
@@ -123,7 +123,7 @@ neighbour was reclaimed to 59M.
 | Create | add `instances.<name>` on the host, deploy | 37 s deploy, guest boots in 1.9 s (6.8 s before the unused guest services went) |
 | First use of a repo | clone, `devenv shell` | closure already in the host store: 20 s (herman), 26 s (factum), of which 12 to 15 s fetching input tarballs, 5 s evaluation, 2 s small builds, no substitution; closure not yet in the host store: 88 to 92 s (about 63 downloads, 3.9 GB, plus local assembly of the Rust toolchain); fresh clone of a lock the environment has seen: 6.5 s (factum), 17.6 s (herman, msi); 0.2 to 0.6 s after that |
 | Work | brief the agent through Herdr, or `ssh <name>.<prefix>` | hours to days; the home persists |
-| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so, once per start of the container, and re-checks its work. msi tells its agents at 20:40 (`sam.workers.shutdownNotice`) to push before the 21:00 poweroff |
+| Host reboot or redeploy | nothing | container autostarts 6 to 7 s into userspace, the agent is back in Herdr at 14 to 15 s and resumes its conversation; home and the shared `~/.cache/nix` are intact (`devenv shell` 7 to 10 s). Whatever ran in the environment is killed and not restarted: the resumed agent is told so, once per start of the container, and re-checks its work. A host with `sam.workers.shutdownNotice` tells its named agents at that time to push before a scheduled poweroff; msi has no named agent left, its pool runner claims only work whose hold ends before the poweroff |
 | Resize (`memory`, `cpu`) or edit `prompt` | edit the declaration, deploy | live, no restart (checked on msi: 6G to 5G and back, same container start time) |
 | Change `agent`, `model`, credentials | edit the declaration, deploy | restarts that one environment, home kept |
 | Stop | remove the declaration, deploy | units stop, home kept |

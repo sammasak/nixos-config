@@ -24,32 +24,32 @@ service inactivity the service runs `devenv tasks run coord:changed --input-json
 `~/claude-code-skills`; the task diffs Herdr agent state, GitHub counts and the audit log's open handoffs against a
 snapshot under `~/.local/state/coordinator/changed/` and prints nothing when nothing is actionable. Only then does
 the service start one headless `claude -p --agent coordinator --max-budget-usd <maxBudgetUsd>` session (default
-1.00), write its report to `changed/wake-<ts>.md` and raise a Herdr toast. `herdr:message`'s label gate stays the
-authority for every send.
+1.00), write its report to `changed/wake-<ts>.md` and raise a Herdr toast. The session dispatches only as execution
+pool sessions (`pool:start`, `pool:send`, `pool:submit`), never to a Herdr pane; the pool acts' label gate stays the
+authority for every dispatch (docs/records/execution-pool-contract.md#how-work-is-dispatched).
 
 The session runs `--permission-mode dontAsk`: anything outside its allow list is refused, not asked. The allow list is
 pinned word for word by `scripts/test-coordinator-wiring.py`:
 
 | Allowed | Form | What it reaches |
 |---|---|---|
-| `coordinator-read` | `coordinator-read <task> ['<input-json>']` | `coord:brief` (prints `brief/latest.md`), `coord:changed` (never consuming), `coord:capacity`, `work:status`, `herdr:inventory`, `herdr:inspect`, `herdr:await`, `gh:work`, `gh:repos`, `git:recent`, `harness:session-summary` |
-| `coordinator-act` | `coordinator-act <task> '<input-json>'` | `coord:handoff`, `herdr:message`, `gh:label`, `gh:comment`; one non-empty object, no other argument; `gh:comment` and `gh:label` only with `repo` under the owner's account (`sam.userConfig.git.userName/<repo>`); `coord:spawn` is not reachable |
-| `coordinator-prompt` | `coordinator-prompt [--machine <label>] <agent_id> /clear\|/compact` | `herdr agent prompt` with exactly that literal text; each call is logged in `~/.local/state/coordinator/prompts.log` |
-| Herdr reads | `herdr machine list\|status`, `herdr agent list\|get\|read\|wait` | as typed; the `herdr --machine` deny is textual, so the trailing `--machine <label>` form of these read commands still reaches a saved machine (read-only) |
+| `coordinator-read` | `coordinator-read <task> ['<input-json>']` | `coord:brief` (prints `brief/latest.md`), `coord:changed` (never consuming), `gh:work`, `gh:repos`, `git:recent`, `harness:session-summary`, `pool:status`, `pool:result`, `pool:wait` |
+| `coordinator-act` | `coordinator-act <task> '<input-json>'` | `pool:start`, `pool:send`, `pool:submit`, `gh:label`, `gh:comment`; one non-empty object, no other argument; `gh:comment` and `gh:label` only with `repo` under the owner's account (`sam.userConfig.git.userName/<repo>`); `coord:spawn`, `coord:handoff` and `herdr:message` are not reachable |
 | `cd` | into `~/claude-code-skills` | |
 | `Read` | the checkout and `~/.local/state/coordinator/` | |
 
-The unattended session acts under ROLE.md's Autonomy rule: no confirmation per handoff, and merges are not asked
-of the owner (owner decision, sammasak/skills#28; the wake prompt in `coordinator-wakeup.nix` says so).
+The unattended session acts under ROLE.md's Autonomy rule: no confirmation per dispatch (owner decision,
+sammasak/skills#28). A pool task cannot merge (the slots' GitHub proxy has no merge route), so a head graded 9 or
+more goes in the report for the owner.
 
 ## Owner skills config
 
 The owner's skills config for the host is `sam.herdr.coordinatorWakeup` (`mayApprove`, `approvalDecision`, `panes`,
-`interactiveQuietSeconds`). `mayApprove` requires `approvalDecision`, the URL of a comment on one of the owner's own
+`interactiveQuietSeconds`, `poolHost`, required). `mayApprove` requires `approvalDecision`, the URL of a comment on one of the owner's own
 issues quoting the decision. The timer and the devenv wrappers append the config to every devenv call as fixed
-`--option` flags (`coordinator.mayApprove`, `.approvalDecision`, `.panes`, `.interactiveQuietSeconds`); the caller
+`--option` flags (`coordinator.mayApprove`, `.approvalDecision`, `.panes`, `.interactiveQuietSeconds`, `.poolCommand`); the caller
 passes none, so a session can neither widen the delegation nor drop the pane rule. Home Manager also renders
-`mayApprove`, `approvalDecision` and `panes` as `~/claude-code-skills/devenv.local.nix` (a store symlink, untracked:
+`mayApprove`, `approvalDecision`, `panes` and `poolCommand` as `~/claude-code-skills/devenv.local.nix` (a store symlink, untracked:
 do not `git add` it), which devenv reads next to `devenv.nix`, so an interactive Coordinator running devenv in the
 checkout sees the same delegation and pane list. Consequences:
 
@@ -70,8 +70,8 @@ with the decision on both audit lines, and refused as `not_delegated` when the f
 
 ## Denied, audit, auth, lock, pending
 
-Denied, and refused rather than asked: `devenv` itself (a free `--option` would swap `herdrCommand` or `ghCommand`),
-`herdr agent prompt|send-keys|start`, `herdr --machine`, `herdr pane`, `gh`, `git`, `ssh`, `sudo`, `Edit`, `Write`,
+Denied, and refused rather than asked: `devenv` itself (a free `--option` would swap `poolCommand` or `ghCommand`),
+every `herdr` command, `gh`, `git`, `ssh`, `sudo`, `Edit`, `Write`,
 `NotebookEdit`, and every shell write primitive and interpreter, since none is on the allow list. Each act lands in
 `~/.local/state/coordinator/audit.jsonl` through its task (an attempt line before, an outcome line after).
 

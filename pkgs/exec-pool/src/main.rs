@@ -158,10 +158,12 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
                 "failed" => Settle::Failed,
                 "needs_review" => Settle::NeedsReview,
                 "cancelled" => Settle::Cancelled,
+                "drained" => Settle::Drained,
+                "interrupted" => Settle::Interrupted,
                 other => return Err(Fail::Usage(format!("--to {other:?}"))),
             };
             let receipt = match to {
-                Settle::Waiting | Settle::Queued | Settle::Cancelled => None,
+                Settle::Waiting | Settle::Queued | Settle::Cancelled | Settle::Drained => None,
                 _ => Some(Receipt::parse(&stdin()?)?),
             };
             apply(store, Kind::Settle(to), receipt.as_ref())?;

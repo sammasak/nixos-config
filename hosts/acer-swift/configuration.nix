@@ -24,12 +24,12 @@
   homelab.shuntMetrics.enable = true;
   # the always-on heavy host: msi and asus are off at night
   homelab.scheduledGate.enable = true;
-  # Shunt on for worker a1 alone; the host stays off, so the collector compares on and off (#625).
+  # Shunt on for slot pool1 alone; the host and the other slots stay off, so the collector compares on and off (#625).
   services.devEnvironments.guestModules = [
     (
       { devEnvironment, ... }:
       {
-        sam.claude.bulkReader.enable = devEnvironment.name == "a1";
+        sam.claude.bulkReader.enable = devEnvironment.name == "pool1";
       }
     )
   ];
@@ -41,17 +41,18 @@
     pi = true;
     nativeOtel = true;
   };
-  # A 7G pool reserves 2G each for at most 3: a1, pool1 and pool2 (docs/nspawn-workers.md, Sizing).
+  # A 7G pool reserves 2G each for at most 3: pool1 to pool3 (docs/nspawn-workers.md, Sizing).
   sam.workers = {
     labelPrefix = "acer";
     pool.memory = "7G";
     ghHostsFile = "/home/${config.sam.profile.username}/.config/gh/hosts.yml";
-    # A task slot: reset with dev-env-reset@a1 between tasks, no deploy.
-    instances.a1 = { };
-    retired = [ "herman" ];
+    retired = [
+      "herman"
+      "a1"
+    ];
     executionPool = {
       enable = true;
-      slots = 2;
+      slots = 3;
       # no codex: this host sets no sam.workers.codexAuthFile
       agents = [
         "claude"

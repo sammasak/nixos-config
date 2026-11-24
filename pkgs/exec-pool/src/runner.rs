@@ -118,6 +118,13 @@ impl Manifest {
         format!("{} {}\n", self.attempt_id, self.lease_epoch)
     }
 
+    /// What the runner writes to the same marker to have the helper stop this attempt because the host powers off:
+    /// a session's turn parks to continue elsewhere, a one-shot run goes back to the queue.
+    #[must_use]
+    pub fn drain_token(&self) -> String {
+        format!("{} {} host_draining\n", self.attempt_id, self.lease_epoch)
+    }
+
     /// The attempt's workspace under the guest user's home.
     ///
     /// # Errors
@@ -129,9 +136,9 @@ impl Manifest {
     /// The guest commands in order: create the workspace, clone into it, check out the rev (an agent task on its
     /// [`agent::branch`]), then
     /// [`agent::argv`] in the task's workdir with the workspace's HOME. Each is an argv, never a shell string; `git`,
-    /// `env` and `mkdir` are store paths the guest shares. Git reads no global or system config, so the clone is
-    /// anonymous https; the checkout's own config holds `identity` (name, email) for the agent's commits and, for a
-    /// GitHub repository, an ssh push URL, which the slot's key (if it holds one) pushes with.
+    /// `env` and `mkdir` are store paths the guest shares. Git reads the guest's system config alone, whose rewrite
+    /// sends GitHub to the slot's proxy; the checkout's own config holds `identity` (name, email) for the agent's
+    /// commits and, for a GitHub repository, an ssh push URL, which that rewrite sends to the proxy too.
     ///
     /// # Errors
     /// What [`agent::argv`] or [`Workspace::run`] rejects.
@@ -204,7 +211,8 @@ impl Manifest {
         ))
     }
 
-    /// The clone into `checkout` and the checkout of the rev there, by `git` with no global or system config.
+    /// The clone into `checkout` and the checkout of the rev there, by `git` with no global config: the guest's
+    /// system config alone, which sends GitHub to the slot's proxy (a private repository clones too).
     fn clone(
         &self,
         checkout: &str,
@@ -213,12 +221,7 @@ impl Manifest {
     ) -> Result<[Vec<String>; 2], StepsError> {
         let s = |v: &[&str]| v.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
         let git = |args: &[&str]| {
-            let mut v = s(&[
-                env,
-                "GIT_CONFIG_GLOBAL=/dev/null",
-                "GIT_CONFIG_NOSYSTEM=1",
-                git,
-            ]);
+            let mut v = s(&[env, "GIT_CONFIG_GLOBAL=/dev/null", git]);
             v.extend(s(args));
             v
         };
@@ -248,8 +251,8 @@ impl Manifest {
         Ok([git(&clone), git(&checkout_args)])
     }
 
-    /// The guest command that lists the task's branch on its repository once the run is over, anonymously like the
-    /// clone; [`pushed`] reads its output.
+    /// The guest command that lists the task's branch on its repository once the run is over, through the same config
+    /// as the clone; [`pushed`] reads its output.
     ///
     /// # Errors
     /// What [`agent::branch`] rejects.
@@ -258,7 +261,6 @@ impl Manifest {
         Ok([
             env,
             "GIT_CONFIG_GLOBAL=/dev/null",
-            "GIT_CONFIG_NOSYSTEM=1",
             "GIT_TERMINAL_PROMPT=0",
             git,
             "ls-remote",
@@ -339,10 +341,18 @@ pub fn decide_turn(
         return TurnSettle::Settle(Settle::Cancelled);
     }
     if r.stage == Stage::Prepare {
-        return TurnSettle::Settle(Settle::Queued);
+        // before its agent ran, a drained turn's tree was neither changed nor pushed: it runs again where it may
+        return TurnSettle::Settle(if r.drained {
+            Settle::Drained
+        } else {
+            Settle::Queued
+        });
     }
     if !r.container_active {
         return TurnSettle::Settle(Settle::NeedsReview);
+    }
+    if r.drained {
+        return TurnSettle::Park(ParkReason::HostDraining);
     }
     match agent::outcome(Agent::Claude, r.exit_code, stdout) {
         Outcome::Succeeded if !r.timed_out => TurnSettle::Park(ParkReason::TurnEnd),
@@ -444,6 +454,9 @@ pub struct ExecResult {
     /// The helper stopped the attempt, before or during a step, for the runner's cancel marker.
     #[serde(default)]
     pub cancelled: bool,
+    /// The helper stopped the attempt, before or during a step, for the runner's drain marker: the host powers off.
+    #[serde(default)]
+    pub drained: bool,
     /// The task's branch, `pool/<task id>`, when the repository shows it after the run.
     #[serde(default)]
     pub branch: Option<String>,
@@ -477,6 +490,7 @@ impl ExecResult {
             branch: None,
             tree_lost: None,
             stored: false,
+            drained: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -494,8 +508,10 @@ impl ExecResult {
 
 /// Where the attempt `attempt` at `epoch` settles after its run.
 ///
-/// A run the helper stopped for a cancel is `cancelled`, whatever stage it reached. Otherwise only a run that never
-/// started the task's argv goes back to `queued`. No result (or someone else's), a timeout or
+/// A run the helper stopped for a cancel is `cancelled`, whatever stage it reached. One it stopped because the host
+/// powers off is `drained` (run again elsewhere, its try given back) while it was preparing, and `interrupted` (to
+/// review, as an ambiguous external mutation is never replayed) once its agent started. Otherwise only a run that never started the task's argv goes back to
+/// `queued`. No result (or someone else's), a timeout or
 /// a guest that went away is `needs_review`, never replayed; otherwise [`agent::outcome`] of the exit and `stdout`
 /// (the task's whole captured stdout: Claude's verdict is its last line) decides.
 #[must_use]
@@ -511,6 +527,15 @@ pub fn decide(
     };
     if r.cancelled {
         return Settle::Cancelled;
+    }
+    // drained before its agent started, a run starts again elsewhere, its try given back; after, what it did is
+    // unknown, and it is not replayed
+    if r.drained {
+        return if r.stage == Stage::Prepare {
+            Settle::Drained
+        } else {
+            Settle::Interrupted
+        };
     }
     if r.stage == Stage::Prepare {
         return Settle::Queued;
@@ -532,8 +557,8 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
     let outcome = match to {
         Settle::Succeeded => Outcome::Succeeded,
         Settle::Failed => Outcome::Failed,
-        Settle::NeedsReview => Outcome::NeedsReview,
-        Settle::Waiting | Settle::Queued | Settle::Cancelled => return None,
+        Settle::NeedsReview | Settle::Interrupted => Outcome::NeedsReview,
+        Settle::Waiting | Settle::Queued | Settle::Cancelled | Settle::Drained => return None,
     };
     Some(Receipt {
         schema_version: SchemaVersion::CURRENT,
@@ -546,10 +571,10 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
     })
 }
 
-/// Whether a claim at `now` (unix seconds) that holds the slot up to `hold_secs` ends before the host's poweroff.
+/// Whether `hold_secs` from `now` (unix seconds) ends before the host's poweroff: for a claim, that its run starts
+/// well ahead of the drain; for a running attempt, that the drain has not begun.
 ///
-/// `show` is `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer: a claim the
-/// poweroff would cut short sends its attempt to review. A timer with no next elapse is stopped, as a switch restarting
+/// `show` is `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer. A timer with no next elapse is stopped, as a switch restarting
 /// it leaves it for a moment: that claims nothing either.
 ///
 /// # Errors
@@ -672,6 +697,7 @@ mod tests {
             branch: None,
             tree_lost: None,
             stored: false,
+            drained: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -858,6 +884,42 @@ mod tests {
     }
 
     #[test]
+    fn a_run_stopped_for_a_poweroff_parks_its_turn_or_goes_back_to_the_queue() {
+        let drained = ExecResult {
+            drained: true,
+            exit_code: None,
+            ..result(Stage::Run, Some(0))
+        };
+        assert_eq!(
+            decide_turn("t1.a", 3, Some(&drained), ""),
+            TurnSettle::Park(ParkReason::HostDraining)
+        );
+        assert_eq!(
+            decide("t1.a", 3, Agent::Claude, Some(&drained), ""),
+            Settle::Interrupted,
+            "a one-shot run its agent began may have pushed: review, never a replay"
+        );
+        assert!(receipt("t1", "t1.a", 3, Settle::Interrupted).is_some());
+        let preparing = ExecResult {
+            stage: Stage::Prepare,
+            ..drained
+        };
+        assert_eq!(
+            decide("t1.a", 3, Agent::Claude, Some(&preparing), ""),
+            Settle::Drained,
+            "one its agent never reached starts again elsewhere"
+        );
+        assert_eq!(
+            decide_turn("t1.a", 3, Some(&preparing), ""),
+            TurnSettle::Settle(Settle::Drained),
+            "a turn its agent never reached runs again, its tree as it was"
+        );
+        let m = manifest(&task()).unwrap();
+        assert_ne!(m.drain_token(), m.cancel_token());
+        assert!(m.drain_token().starts_with(m.cancel_token().trim_end()));
+    }
+
+    #[test]
     fn every_end_of_a_turn_parks_the_session_and_an_unknown_one_goes_to_review() {
         let turn = |r: Option<&ExecResult>, stdout: &str| decide_turn("t1.a", 3, r, stdout);
         let ok = result(Stage::Run, Some(0));
@@ -936,16 +998,11 @@ mod tests {
         );
         assert_eq!(root, ["/mkdir", "-m", "0700", "--", "/home/u/attempts"]);
         let dir = "/home/u/attempts/74312e61-3";
-        let git = [
-            "/env",
-            "GIT_CONFIG_GLOBAL=/dev/null",
-            "GIT_CONFIG_NOSYSTEM=1",
-            "/git",
-        ];
-        assert_eq!(clone[..4], git, "no rewrite to ssh from the guest's config");
-        assert_eq!(checkout[..4], git);
+        let git = ["/env", "GIT_CONFIG_GLOBAL=/dev/null", "/git"];
+        assert_eq!(clone[..3], git, "no rewrite to ssh from the user's config");
+        assert_eq!(checkout[..3], git);
         assert_eq!(
-            clone[4..],
+            clone[3..],
             [
                 "clone",
                 "--quiet",
@@ -959,7 +1016,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            checkout[4..],
+            checkout[3..],
             [
                 "-C",
                 &format!("{dir}/work"),
@@ -992,7 +1049,7 @@ mod tests {
         t["command"] = json!({ "agent": "claude", "argv": ["go"], "workdir": "." });
         let m = manifest(&t).unwrap();
         let [_, _, (_, clone), (_, checkout), _] = steps(&m);
-        assert_eq!(checkout[8..], ["-b", "pool/t1", "abc123"]);
+        assert_eq!(checkout[7..], ["-b", "pool/t1", "abc123"]);
         let at = clone.iter().position(|a| a == "--").unwrap();
         assert_eq!(
             clone[at - 2..at],
@@ -1016,7 +1073,7 @@ mod tests {
             assert_eq!(github_push_url(repo).as_deref(), want, "{repo}");
         }
         assert_eq!(
-            m.pushed_check("/git", "/env").unwrap()[5..],
+            m.pushed_check("/git", "/env").unwrap()[4..],
             [
                 "ls-remote",
                 "--heads",

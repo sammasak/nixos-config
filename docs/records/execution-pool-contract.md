@@ -110,7 +110,7 @@ JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a C
 
 ## Runner (#652)
 
-`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1` and `pool2`, and
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1` to `pool3`, and
 on msi for its slots against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
 (its agents and capabilities; with a poweroff timer only while the claim's hold ends before it), `start`, then
 `systemctl start exec-pool-exec@<slot>`, then `checkpoint` and the settle or park, the result recorded
@@ -168,7 +168,8 @@ absent on main, its module directory was deleted in #210 (`git show 5a40362 --st
 declares long-lived, named instances (`sam.workers.instances`, a `worker-herdr-<name>` unit per agent), each a Nix
 deploy. The pool keeps those untouched and adds dynamic work on top of declared slots. `scripts/test-workers-eval.py`
 pins it: `sam.workers.executionPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
-worker unit, container or toplevel on msi, and its instances (`m1`, `m2`) and their Herdr units are pinned by name.
+worker unit, container or toplevel on msi, and a named instance beside the slots keeps its units and its Herdr unit (msi itself declares none since its
+named workers were retired).
 
 ## Submitting
 
@@ -220,6 +221,23 @@ No producer sets `handed_back` yet (the runner reports only the branch's name), 
 eligible, the remover moves nothing, and every one parked 14 days is stale and alerts. A park's own time (the agent's exit to the settle) is not
 measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
 `due_at`.
+
+## How work is dispatched
+
+The Coordinator hands out work only as pool sessions; there are no Herdr worker panes to hand to. On lenovo the
+wake-up session's `coordinator-act` and `coordinator-read` reach the skills `pool:*` tasks, which call the `exec-pool`
+wrapper above (`start`, `send`, `submit`, `wait`, `status`, `result`).
+
+- An issue gets one session: `pool:start` under the key `coord:OWNER/REPO#N`, the issue text and rules as the first
+  prompt. Its branch is `pool/<task id>`.
+- Follow-up work on it (review findings, a merge conflict, "merge main and push") is `pool:send` to that same session,
+  never a new one: the turn resumes the same transcript and tree.
+- `waiting` means the turn ended and the slot is free for other work; it needs nothing until there is a message to
+  send. No session has to stay up for it.
+- `needs_review` is the one state that wants a look: read `pool:result`, then `pool:send` the next step (that resumes
+  it) or ask the owner on the issue.
+- A review of an unreviewed PR head is a one-shot `pool:submit` at that head. A pool task cannot merge; a head graded
+  9 or more waits for the owner.
 
 ## Phase gates (detail in #646)
 

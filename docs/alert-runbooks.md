@@ -353,7 +353,7 @@ Rollback: `SHUNT_DISABLE=1` in the environment the sessions start from, or `sam.
 ## ShuntSilent
 
 Fires: on a host or worker whose series say `shunt="on"` (its declared `sam.claude.bulkReader.enable`: lenovo, acer's
-a1), the agent made a Bash call in the last hour (validate-bash logged it) but no Shunt hook has logged for 2 h, for an
+slot pool1), the agent made a Bash call in the last hour (validate-bash logged it) but no Shunt hook has logged for 2 h, for an
 hour; or a Shunt hook logged `error` (shunt-spill could not save an output) or `nostate` (shunt-read/shunt-bash could
 not keep its state) in the collector's 24 h window. An off worker never fires, so the on/off comparison it guards is
 the one between `shunt="on"` and `shunt="off"` series.
