@@ -13,5 +13,6 @@
   homelab.execPool.runner = {
     enable = true;
     queue = "exec-pool-db";
+    store = "acer-swift";
   };
 }

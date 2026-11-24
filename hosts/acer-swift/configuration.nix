@@ -65,7 +65,10 @@
       credentials = [ "id_ed25519" ];
     };
   };
-  homelab.execPool.runner.enable = true;
+  homelab.execPool.runner = {
+    enable = true;
+    store = "acer-swift";
+  };
   # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
   homelab.execPool.remoteRunners = true;
   # the #494 usage spike: herman's cgroup counters every minute (scripts/guest-records.py --usage)
