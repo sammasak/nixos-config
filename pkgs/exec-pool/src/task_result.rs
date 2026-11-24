@@ -162,7 +162,6 @@ mod tests {
             stored: false,
             handed_back: None,
             wake: None,
-            upto: None,
             drained: false,
             container_active: true,
             stdout_tail: String::new(),

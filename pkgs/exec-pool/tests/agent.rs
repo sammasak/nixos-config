@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 
 use exec_pool::agent::{
-    AGENT_SOCKET, Error, PREFIX, SESSION_WAIT, Turn, argv, branch, outcome, session_argv,
-    transcript_probe, turn_input,
+    Error, PREFIX, Turn, argv, branch, outcome, session_argv, transcript_probe,
 };
 use exec_pool::{Agent, Outcome, TaskSpec};
 use serde_json::json;
@@ -169,66 +168,40 @@ fn other_agents_follow_the_exit_code() {
 
 const UUID: &str = "a3a7c578-9125-8a32-a933-73a095d4a27b";
 
-const TOOLS: (&str, &str) = ("/dtach", "/env");
-
 #[test]
-fn a_session_turn_runs_interactive_claude_as_a_named_worker_did_and_resumes_it() {
+fn a_session_turn_starts_its_session_with_the_prefix_then_resumes_it() {
     let t = task("claude", &["fix the lint", "opus"]);
-    let start = session_argv(&t, UUID, Turn::Start, TOOLS).unwrap();
+    let start = session_argv(&t, UUID, "fix the lint", Turn::Start).unwrap();
+    assert_eq!(start.get(..5), argv(&t).unwrap().get(..5));
+    let tail = &start[start.len() - 6..];
+    assert_eq!(tail[..5], ["--model", "opus", "--session-id", UUID, "--"]);
     assert_eq!(
-        start,
-        [
-            "/dtach",
-            "-N",
-            AGENT_SOCKET,
-            "/env",
-            "TERM=xterm-256color",
-            "HERDR_AUTOATTACH_DISABLED=1",
-            "fish",
-            "-c",
-            "claude $argv",
-            "--",
-            "--dangerously-skip-permissions",
-            "--model",
-            "opus",
-            "--session-id",
-            UUID
-        ]
-    );
-    assert!(
-        !start.iter().any(|a| a == "-p" || a == "--output-format"),
-        "no print mode"
-    );
-    let resume = session_argv(&t, UUID, Turn::Resume, TOOLS).unwrap();
-    assert_eq!(resume[resume.len() - 2..], ["--resume", UUID]);
-    let plain = session_argv(&task("claude", &["go"]), UUID, Turn::Start, TOOLS).unwrap();
-    assert!(!plain.iter().any(|a| a == "--model"));
-}
-
-#[test]
-fn a_session_turn_is_told_the_prefix_when_it_starts_and_its_input_alone_after() {
-    let t = task("claude", &["fix the lint", "opus"]);
-    assert_eq!(
-        turn_input(&t, "fix the lint", Turn::Start).unwrap(),
+        tail[5],
         format!(
             "{}fix the lint",
-            PREFIX
-                .replace("{branch}", "pool/t-655")
-                .replace("The task:", &format!("{SESSION_WAIT}The task:"))
+            PREFIX.replace("{branch}", "pool/t-655").replace(
+                "The task:",
+                "To wait for an outside event, run `pool-wait --until HH:MM|RFC3339 [--note TEXT]`: the session is \
+                 woken then, told the note. End your turn right after calling it. The task:"
+            )
         )
-    );
-    assert!(
-        SESSION_WAIT.contains("pool-wait")
-            && SESSION_WAIT.contains("What does not: running processes")
-            && SESSION_WAIT.contains("Before you stop or wait, commit and push")
     );
     assert!(
         !argv(&t).unwrap().concat().contains("pool-wait"),
         "a one-shot run is not told of pool-wait"
     );
-    assert_eq!(
-        turn_input(&t, "and the test", Turn::Resume).unwrap(),
-        "and the test"
+    let resume = session_argv(&t, UUID, "and the test", Turn::Resume).unwrap();
+    assert!(resume.ends_with(&[
+        "--model".into(),
+        "opus".into(),
+        "--resume".into(),
+        UUID.into(),
+        "--".into(),
+        "and the test".into()
+    ]));
+    assert!(
+        resume.contains(&"json".to_owned()),
+        "output stays --output-format json"
     );
 }
 
@@ -238,7 +211,7 @@ fn a_session_is_claude_only_with_a_uuid_and_some_input() {
     for agent in ["codex", "pi", "none"] {
         let other = task(agent, if agent == "none" { &["true"] } else { &["go"] });
         assert!(matches!(
-            session_argv(&other, UUID, Turn::Start, TOOLS),
+            session_argv(&other, UUID, "go", Turn::Start),
             Err(Error::NoSession(_))
         ));
     }
@@ -249,11 +222,11 @@ fn a_session_is_claude_only_with_a_uuid_and_some_input() {
         "--resume",
     ] {
         assert_eq!(
-            session_argv(&t, bad, Turn::Start, TOOLS),
+            session_argv(&t, bad, "go", Turn::Start),
             Err(Error::SessionId(bad.to_owned()))
         );
     }
-    assert_eq!(turn_input(&t, "", Turn::Resume), Err(Error::Input));
+    assert_eq!(session_argv(&t, UUID, "", Turn::Resume), Err(Error::Input));
 }
 
 #[test]

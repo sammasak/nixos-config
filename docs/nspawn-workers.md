@@ -259,8 +259,7 @@ layer to Herdr.
 - **Herdr, from lenovo**: `herdr --machine msi-ms7758 agent list` shows agent
   `<name>` in workspace `<name>`; drive it with
   `herdr --machine msi-ms7758 agent prompt <name> "<task>"`, or attach to the
-  host's Herdr and use the pane directly. A pool session's turn is there the
-  same way while it runs: agent `<task id>` in workspace `<slot> <task key>`.
+  host's Herdr and use the pane directly.
 - **ssh from lenovo**: `ssh <name>.msi` or `ssh <name>.acer` (a wildcard
   `Host *.<prefix>` with `ProxyJump` to the host, from `sam.workers.jumpHosts`;
   lenovo needs no per-instance config).
@@ -361,9 +360,7 @@ The hook's log: `journalctl -u worker-herdr-<name>`.
   resolves to the store's.
 - Herdr's pane runs `worker-<name> attach [fresh|continue]` (the instance's
   entry point, also on the host's PATH): ssh, argv[0] named after the agent,
-  into `fish -il -c 'source <store file>'`. A pool slot's pane exists only while
-  a session turn runs: `worker-<slot> turn`, ssh named `claude` into
-  `dtach -a` on the turn's agent terminal (`docs/records/execution-pool-contract.md`).
+  into `fish -il -c 'source <store file>'`.
 - The logins stay on the host. `dev-env-egress` (Caddy) listens per instance
   in `/run/dev-env-egress/<name>/`, bound read-only at `/run/egress`: the
   socket is the instance's identity. `anthropic.sock` adds the Claude login
