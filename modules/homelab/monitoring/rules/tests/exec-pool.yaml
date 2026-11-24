@@ -143,3 +143,43 @@ tests:
       - eval_time: 35m
         alertname: ExecPoolSlotQuarantined
         exp_alerts: []
+
+  # a session goes stale at 1h and stays: quiet for a day, firing after; one in review alone fires the same way
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"}'
+        values: '0x2200'
+      - series: 'exec_pool_sessions_stale{job="node-exporter",node="acer-swift"}'
+        values: '0x60 1x2140'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: ExecPoolSessionStuck
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: ExecPoolSessionStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "Execution pool sessions on acer-swift are stuck in review or stale"
+              description: "1 session(s) in the queue on acer-swift have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
+              query: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="acer-swift"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"}'
+        values: '1x1800 0x400'
+      - series: 'exec_pool_sessions_stale{job="node-exporter",node="acer-swift"}'
+        values: '0x2200'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: ExecPoolSessionStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "Execution pool sessions on acer-swift are stuck in review or stale"
+              description: "1 session(s) in the queue on acer-swift have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
+              query: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="acer-swift"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"
+      - eval_time: 36h
+        alertname: ExecPoolSessionStuck
+        exp_alerts: []

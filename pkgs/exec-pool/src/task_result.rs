@@ -11,7 +11,7 @@ use crate::{Agent, Outcome, agent};
 /// The `results.output` bound in migration 0003.
 pub const OUTPUT_BYTES: usize = 16 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TaskResult {
     /// [`agent::outcome`] of the run; `None` when the task's argv never started or the helper left no result.
     pub outcome: Option<Outcome>,
@@ -21,11 +21,45 @@ pub struct TaskResult {
     output: String,
     /// The task's branch, `pool/<task id>`, when its repository showed it after the run: the code it handed back.
     pub branch: Option<String>,
+    /// What the agent reported the run cost, from Claude's result JSON; `None` for any other agent or none reported.
+    #[serde(default)]
+    pub usage: Option<Usage>,
+    /// `branch` holds everything the run's tree had, so the tree may be removed: `None` when the runner cannot tell,
+    /// which keeps a parked session from ever being garbage-collected (queue `session_gc`).
+    #[serde(default)]
+    pub handed_back: Option<bool>,
+}
+
+/// A run's tokens and cost as Claude reports them; no content.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cost_usd: f64,
 }
 
 #[derive(Deserialize)]
 struct ClaudeText {
     result: String,
+    #[serde(default)]
+    usage: Option<ClaudeUsage>,
+    #[serde(default)]
+    total_cost_usd: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[allow(clippy::struct_field_names, reason = "Claude's result JSON names them")]
+struct ClaudeUsage {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+    #[serde(default)]
+    cache_read_input_tokens: u64,
+    #[serde(default)]
+    cache_creation_input_tokens: u64,
 }
 
 impl TaskResult {
@@ -37,6 +71,8 @@ impl TaskResult {
             exit_code,
             output: end(&output.replace('\0', "")),
             branch: None,
+            usage: None,
+            handed_back: None,
         }
     }
 
@@ -55,6 +91,15 @@ impl TaskResult {
             .then(|| stdout.lines().rev().find(|l| !l.trim().is_empty()))
             .flatten()
             .and_then(|l| serde_json::from_str::<ClaudeText>(l).ok());
+        let usage = claude.as_ref().and_then(|c| {
+            c.usage.as_ref().map(|u| Usage {
+                input_tokens: u.input_tokens,
+                output_tokens: u.output_tokens,
+                cache_read_tokens: u.cache_read_input_tokens,
+                cache_creation_tokens: u.cache_creation_input_tokens,
+                cost_usd: c.total_cost_usd.unwrap_or_default(),
+            })
+        });
         Self {
             outcome: ran.map(|r| agent::outcome(agent, r.exit_code, stdout)),
             exit_code,
@@ -63,6 +108,8 @@ impl TaskResult {
                 |c| start(&c.result.replace('\0', "")),
             ),
             branch: result.and_then(|r| r.branch.clone()),
+            usage,
+            handed_back: None,
         }
     }
 }
@@ -113,6 +160,19 @@ mod tests {
         let r = TaskResult::of(Agent::Claude, Some(&exec(Stage::Run, Some(0))), stdout);
         assert_eq!(r.outcome, Some(Outcome::Succeeded));
         assert_eq!((r.exit_code, r.output.as_str()), (Some(0), "opened PR #9"));
+        assert_eq!(r.usage, None, "no usage reported");
+        let reported = r#"{"result":"ok","total_cost_usd":0.25,"usage":{"input_tokens":3,"output_tokens":40,"cache_read_input_tokens":9000,"cache_creation_input_tokens":500}}"#;
+        let u = TaskResult::of(Agent::Claude, Some(&exec(Stage::Run, Some(0))), reported);
+        assert_eq!(
+            u.usage,
+            Some(Usage {
+                input_tokens: 3,
+                output_tokens: 40,
+                cache_read_tokens: 9000,
+                cache_creation_tokens: 500,
+                cost_usd: 0.25
+            })
+        );
         let none = TaskResult::of(Agent::Claude, Some(&exec(Stage::Run, Some(1))), "crash\n");
         assert_eq!(
             (none.outcome, none.output.as_str()),

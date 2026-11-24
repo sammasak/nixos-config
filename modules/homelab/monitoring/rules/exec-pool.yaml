@@ -60,3 +60,19 @@ groups:
           description: "{{ $value }} slot(s) in the queue on {{ $labels.node }} failed their reset for 5 minutes, so their runner claims nothing for them. List them with psql as the exec_pool user, clear the cause on the slot's host, then remove the runner's marker and restart it (runbook)."
           query: 'exec_pool_slots{job="node-exporter",node="{{ $labels.node }}",state="quarantined"} > 0'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolslotquarantined"
+
+      - alert: ExecPoolSessionStuck
+        # a session nobody will move on its own: in review (only its owner's send or a resolve), or parked 14 days with
+        # a tree the queue cannot prove was handed back, so session_gc keeps it and its disk
+        expr: |
+          (sum by (node) (exec_pool_sessions{job="node-exporter",state="needs_review"})
+            + sum by (node) (exec_pool_sessions_stale{job="node-exporter"})) > 0
+        for: 1d
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Execution pool sessions on {{ $labels.node }} are stuck in review or stale"
+          description: "{{ $value }} session(s) in the queue on {{ $labels.node }} have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
+          query: 'exec_pool_sessions{job="node-exporter",node="{{ $labels.node }}",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="{{ $labels.node }}"} > 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"

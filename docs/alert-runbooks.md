@@ -306,6 +306,18 @@ declared (fewer slots, a renamed host) has no runner to clear it: delete its row
 `DELETE FROM quarantined_slots WHERE host = '<host>' AND slot = '<slot>'` as `exec_pool`.
 Rollback: none; a slot that resets clears itself.
 
+## ExecPoolSessionStuck
+
+Fires: for a day, a session in the pool host's queue has been in `needs_review` (a turn lost its lease; only its
+owner's `send` or an operator's resolve moves it), or stale: waiting 14 days untouched with no unread message, and its
+last turn's branch not known to hold its tree, so `session_gc` keeps it and the tree stays on disk.
+First: `exec-pool sessions` (one JSON line each: state, last change, hosts, eligible, stale) and `exec-pool status ID`
+for its events. In review: check the last turn's effects, then `exec-pool send ID --prompt TEXT` to go on, or resolve
+it as in ExecPoolNeedsReview. Stale: on each of its hosts, look at the tree for unpushed work; push it and send the
+session a message, or `exec-pool cancel ID`, which makes it eligible 7 days later.
+Do not: delete a stale session's tree by its age; it is kept because the queue cannot tell it holds nothing unpushed.
+Rollback: none; the alert clears when no session is left in review or stale.
+
 ## ShuntDelegationFailing
 
 Fires: over a quarter of the bulk-read delegations in the collector's 24 h window failed with auth, rate_limited,
