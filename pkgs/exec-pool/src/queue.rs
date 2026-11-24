@@ -286,7 +286,8 @@ fn u64_of(field: &'static str, v: i64) -> Result<u64, QueueError> {
 const fn reason(kind: &Kind, to: Status) -> &'static str {
     match (kind, to) {
         (Kind::Settle(Settle::Failed) | Kind::Resolve(Resolution::Failed), _) => "failed",
-        (Kind::Settle(Settle::Drained), Status::Queued) => "host_draining",
+        (Kind::Settle(Settle::Drained), Status::Queued)
+        | (Kind::Settle(Settle::Interrupted), Status::NeedsReview) => "host_draining",
         (_, Status::Cancelled) => "cancelled",
         (_, Status::Failed) => "attempts_exhausted",
         (Kind::Lease(_), _) => "lease",
@@ -382,7 +383,9 @@ fn write(
     // the settle the holder asked for: a retry that exhaustion turns into a failure has no receipt
     let terminal = matches!(
         event.kind,
-        Kind::Settle(Settle::Succeeded | Settle::Failed | Settle::NeedsReview)
+        Kind::Settle(
+            Settle::Succeeded | Settle::Failed | Settle::NeedsReview | Settle::Interrupted
+        )
     );
     if terminal != receipt.is_some() {
         return Err(QueueError::Receipt(next.status));

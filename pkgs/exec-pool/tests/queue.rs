@@ -1974,22 +1974,62 @@ fn a_turn_stopped_for_a_poweroff_continues_and_is_told_to_check_its_last_action(
 }
 
 #[test]
-fn a_one_shot_run_drained_for_a_poweroff_runs_again_with_its_one_try() {
+fn a_one_shot_run_drained_while_preparing_runs_again_one_drained_mid_run_goes_to_review() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
+    let tries = |a: &str| -> i32 {
+        pg.sql()
+            .query_one("SELECT tries FROM attempts WHERE id = $1", &[&a])
+            .unwrap()
+            .get(0)
+    };
+    let last_reason = |a: &str| -> String {
+        pg.sql()
+            .query_one(
+                "SELECT reason FROM events WHERE attempt_id = $1 ORDER BY id DESC LIMIT 1",
+                &[&a],
+            )
+            .unwrap()
+            .get(0)
+    };
+    // drained before its agent started: back to the queue with its one try
     let a = submit(&mut owner, &task("t-1", 1));
-    let claim = owner.claim(&slot("s0"), 60).unwrap().unwrap();
-    let epoch = claim.attempt.lease_epoch;
+    let epoch = owner
+        .claim(&slot("s0"), 60)
+        .unwrap()
+        .unwrap()
+        .attempt
+        .lease_epoch;
     for kind in [Kind::Start, Kind::Checkpoint, Kind::Settle(Settle::Drained)] {
         owner.apply(&a, &ev(epoch, kind), None).unwrap();
     }
-    let tries: i32 = pg
-        .sql()
-        .query_one("SELECT tries FROM attempts WHERE id = $1", &[&a])
+    assert_eq!((status(&pg, &a).0.as_str(), tries(&a)), ("queued", 0));
+    assert_eq!(last_reason(&a), "host_draining");
+    let epoch = owner
+        .claim(&slot("s1"), 60)
         .unwrap()
-        .get(0);
-    assert_eq!((status(&pg, &a).0.as_str(), tries), ("queued", 0));
-    assert!(owner.claim(&slot("s1"), 60).unwrap().is_some());
+        .unwrap()
+        .attempt
+        .lease_epoch;
+    // drained after it: what it pushed is unknown, so it goes to review with its receipt, never queued again
+    for kind in [Kind::Start, Kind::Checkpoint] {
+        owner.apply(&a, &ev(epoch, kind), None).unwrap();
+    }
+    let interrupted = ev(epoch, Kind::Settle(Settle::Interrupted));
+    assert!(
+        owner.apply(&a, &interrupted, None).is_err(),
+        "a review takes a receipt"
+    );
+    owner
+        .apply(
+            &a,
+            &interrupted,
+            Some(&receipt(&a, "t-1", epoch, "needs_review")),
+        )
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "needs_review");
+    assert_eq!(last_reason(&a), "host_draining");
+    assert!(owner.claim(&slot("s2"), 60).unwrap().is_none());
 }
 
 #[test]

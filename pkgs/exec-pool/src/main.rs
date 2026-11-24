@@ -158,6 +158,8 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
                 "failed" => Settle::Failed,
                 "needs_review" => Settle::NeedsReview,
                 "cancelled" => Settle::Cancelled,
+                "drained" => Settle::Drained,
+                "interrupted" => Settle::Interrupted,
                 other => return Err(Fail::Usage(format!("--to {other:?}"))),
             };
             let receipt = match to {

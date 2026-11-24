@@ -12,9 +12,12 @@ pub enum Settle {
     NeedsReview,
     /// The runner stopped the run for a cancel its submitter asked for; it carries no receipt.
     Cancelled,
-    /// The runner stopped the run because its host powers off: it goes back to the queue with its try given back, as
-    /// the host, not the task, ended it. It carries no receipt.
+    /// The runner stopped the run before its agent started because its host powers off: it goes back to the queue
+    /// with its try given back, as the host, not the task, ended it. It carries no receipt.
     Drained,
+    /// The runner stopped the run after its agent started because its host powers off: what it did by then (a push,
+    /// a pull request) is unknown, so it goes to review, never replayed, as a lost lease does. Its receipt says so.
+    Interrupted,
 }
 
 /// How an operator closes a `needs_review` attempt once they know what its effects were. Only an explicit
@@ -154,7 +157,7 @@ pub fn transition(attempt: &Attempt, retry: &RetryPolicy, event: &Event) -> Resu
                 }
                 Settle::Succeeded => Status::Succeeded,
                 Settle::Failed => Status::Failed,
-                Settle::NeedsReview => Status::NeedsReview,
+                Settle::NeedsReview | Settle::Interrupted => Status::NeedsReview,
                 Settle::Cancelled => Status::Cancelled,
             };
         }

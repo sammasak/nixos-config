@@ -513,9 +513,9 @@ impl ExecResult {
 
 /// Where the attempt `attempt` at `epoch` settles after its run.
 ///
-/// A run the helper stopped for a cancel is `cancelled`, whatever stage it reached; one it stopped because the host
-/// powers off is `drained`, run again elsewhere with its try given back, though what it did before the stop (a push,
-/// a pull request) is then done twice. Otherwise only a run that never started the task's argv goes back to
+/// A run the helper stopped for a cancel is `cancelled`, whatever stage it reached. One it stopped because the host
+/// powers off is `drained` (run again elsewhere, its try given back) while it was preparing, and `interrupted` (to
+/// review, as an ambiguous external mutation is never replayed) once its agent started. Otherwise only a run that never started the task's argv goes back to
 /// `queued`. No result (or someone else's), a timeout or
 /// a guest that went away is `needs_review`, never replayed; otherwise [`agent::outcome`] of the exit and `stdout`
 /// (the task's whole captured stdout: Claude's verdict is its last line) decides.
@@ -533,9 +533,14 @@ pub fn decide(
     if r.cancelled {
         return Settle::Cancelled;
     }
-    // a drained run starts again elsewhere, its try given back: the host, not the task, ended it
+    // drained before its agent started, a run starts again elsewhere, its try given back; after, what it did is
+    // unknown, and it is not replayed
     if r.drained {
-        return Settle::Drained;
+        return if r.stage == Stage::Prepare {
+            Settle::Drained
+        } else {
+            Settle::Interrupted
+        };
     }
     if r.stage == Stage::Prepare {
         return Settle::Queued;
@@ -557,7 +562,7 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
     let outcome = match to {
         Settle::Succeeded => Outcome::Succeeded,
         Settle::Failed => Outcome::Failed,
-        Settle::NeedsReview => Outcome::NeedsReview,
+        Settle::NeedsReview | Settle::Interrupted => Outcome::NeedsReview,
         Settle::Waiting | Settle::Queued | Settle::Cancelled | Settle::Drained => return None,
     };
     Some(Receipt {
@@ -896,13 +901,19 @@ mod tests {
         );
         assert_eq!(
             decide("t1.a", 3, Agent::Claude, Some(&drained), ""),
-            Settle::Drained,
-            "a one-shot run starts again elsewhere"
+            Settle::Interrupted,
+            "a one-shot run its agent began may have pushed: review, never a replay"
         );
+        assert!(receipt("t1", "t1.a", 3, Settle::Interrupted).is_some());
         let preparing = ExecResult {
             stage: Stage::Prepare,
             ..drained
         };
+        assert_eq!(
+            decide("t1.a", 3, Agent::Claude, Some(&preparing), ""),
+            Settle::Drained,
+            "one its agent never reached starts again elsewhere"
+        );
         assert_eq!(
             decide_turn("t1.a", 3, Some(&preparing), ""),
             TurnSettle::Settle(Settle::Drained),
