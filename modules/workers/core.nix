@@ -468,6 +468,8 @@ let
     };
     security.sudo.wheelNeedsPassword = lib.mkIf w.rootInGuest false;
     networking.hostName = w.hostName;
+    networking.useHostResolvConf = lib.mkIf (cfg.nameservers != [ ]) false;
+    networking.nameservers = cfg.nameservers;
     programs.fish.enable = lib.mkIf (cfg.shell == "fish") true;
 
     services.openssh = {
@@ -838,6 +840,11 @@ in
       type = types.strMatching "/var/lib/[a-z0-9-]+";
       default = "/var/lib/dev-environments";
       description = "Homes and the guests' host key.";
+    };
+    nameservers = mkOption {
+      type = types.listOf (types.strMatching "[0-9]{1,3}(\\.[0-9]{1,3}){3}");
+      default = [ ];
+      description = "IPv4 resolvers every guest uses instead of the stock copy of the host's resolv.conf, which can list only an IPv6 router-advertised server an IPv4-only guest cannot reach; empty keeps the copy.";
     };
     blockedNetworks = mkOption {
       type = types.listOf cidr;
@@ -1403,14 +1410,15 @@ in
                 # MemoryLow alone is given up once a neighbour has nothing left to reclaim: it took an idle instance to 59M
                 MemoryMin = w.memory.reserved;
                 CPUWeight = lib.min 10000 (100 * w.cpu.reserved);
-                # The stock pre-start copies the host's resolv.conf, the guest's only DNS: at boot or while a switch
-                # restarts NetworkManager it can have no nameserver yet, and the guest would boot without DNS.
-                ExecStartPre = lib.mkBefore [
-                  "-${pkgs.writeShellScript "worker-wait-resolv-conf" ''
-                    for _ in {1..30}; do ${pkgs.gnugrep}/bin/grep -q ^nameserver /etc/resolv.conf && exit; ${pkgs.coreutils}/bin/sleep 1; done
-                  ''}"
-                  "${idCheck} ${cfg.stateDir}/${w.name} ${toString (if w.rootInGuest then baseOf w else 0)}"
-                ];
+                # Without nameservers the stock pre-start's copy of the host's resolv.conf is the guest's only DNS: at
+                # boot or while a switch restarts NetworkManager it can have no nameserver yet.
+                ExecStartPre = lib.mkBefore (
+                  lib.optional (cfg.nameservers == [ ])
+                    "-${pkgs.writeShellScript "worker-wait-resolv-conf" ''
+                      for _ in {1..30}; do ${pkgs.gnugrep}/bin/grep -q ^nameserver /etc/resolv.conf && exit; ${pkgs.coreutils}/bin/sleep 1; done
+                    ''}"
+                  ++ [ "${idCheck} ${cfg.stateDir}/${w.name} ${toString (if w.rootInGuest then baseOf w else 0)}" ]
+                );
               };
             })
             # A change of this unit file restarts it and so (PartOf) the container and its agent: it holds only what a

@@ -336,6 +336,19 @@ ROOT_IN_GUEST = ('{ allowed = sys.config.nix.settings.allowed-users; trusted = s
                  'binds = map (b: { src = b.hostPath; dst = b.mountPoint; ro = b.isReadOnly; }) (builtins.attrValues c.bindMounts); '
                  'sudoPassword = c.config.security.sudo.wheelNeedsPassword; sub = c.config.users.users.alice.subUidRanges; }; in { r = f "r"; s = f "s"; ok = f "ok"; })')
 NONE_DECLARED = "{ services.devEnvironments.instances = lib.mkForce { }; }"
+# the guest's resolver: by default the stock copy of the host's resolv.conf, waited for; with nameservers, its own static
+RESOLVER = ('{ ns = sys.config.containers.ok.config.networking.nameservers; '
+            'host = sys.config.containers.ok.config.networking.useHostResolvConf; '
+            'local = sys.config.containers.ok.config.networking.localCommands; '
+            'pre = map toString sys.config.systemd.services."container@ok".serviceConfig.ExecStartPre; }')
+RESOLVER_SET = '{ services.devEnvironments.nameservers = [ "192.0.2.53" ]; }'
+# msi's guests as committed: the fleet's DNS host from fleet.nix, never the host's resolv.conf (an IPv6 RA server)
+FLEET_RESOLVER = r"""
+let
+  c = (builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.config;
+  dns = (builtins.head (builtins.filter (p: p.port == 53 && p.host != null) c.sam.fleet.public)).host;
+in { want = c.sam.fleet.hosts.${dns}.address; got = builtins.mapAttrs (_: g: { ns = g.config.networking.nameservers; host = g.config.networking.useHostResolvConf; }) c.containers; }
+"""
 NO_ROOT = ('{ allowed = sys.config.nix.settings.allowed-users; '
            'mounts = builtins.mapAttrs (_: f: f.options) (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); '
            'nosuid = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); }')
@@ -1130,6 +1143,20 @@ def main():
     out = nix_eval(NONE_DECLARED, NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("nosuid") == [], f"a host that declares no instance and no retired name gets no mount ({got or out.stderr.strip()[-300:]})")
+    for case, custom in (("{ }", False), (RESOLVER_SET, True)):
+        out = nix_eval(case, RESOLVER)
+        got = json.loads(out.stdout) if out.returncode == 0 else {}
+        waits = any("worker-wait-resolv-conf" in x for x in got.get("pre", []))
+        if custom:
+            check(got.get("ns") == ["192.0.2.53"] and got.get("host") is False and "nameserver 192.0.2.53" in got.get("local", "") and not waits,
+                  f"with nameservers the guest writes its own resolv.conf from them, not the host's copy ({got or out.stderr.strip()[-300:]})")
+        else:
+            check(got.get("ns") == [] and got.get("host") is True and waits,
+                  f"without nameservers the guest keeps the host's resolv.conf copy and waits for it ({got or out.stderr.strip()[-300:]})")
+    out = run_eval(FLEET_RESOLVER % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("got") and all(g == {"ns": [got["want"]], "host": False} for g in got["got"].values()),
+          f"msi's guests resolve through the fleet's DNS host, not the host's resolv.conf ({got or out.stderr.strip()[-300:]})")
     out = nix_eval("{ }", LIMITS)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     want = {"memory_reserved": str(2 << 30), "pool_memory": str(8 << 30), "pool_swap": str(got.get("swap")), "cpu_weight": "200",
