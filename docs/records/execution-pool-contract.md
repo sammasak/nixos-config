@@ -7,7 +7,7 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 
 | Concern | Owner | Where |
 |---|---|---|
-| Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
+| Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `homelab.execPool` into `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
 | Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`) |
 | Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer and msi, one per slot |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
@@ -63,7 +63,7 @@ agent session (its id the queue's `session_uuid`) that lives across
 leases. Each lease is one **turn**, and a turn ends in a **park** to `waiting`, never in a settle: `turn_end` when the
 agent finished its turn, `turn_error` when its call failed or left no verdict, `turn_timeout` when it was stopped at
 the turn's time limit, `waiting_until` when it finished and asked for a timer (later also `host_draining`,
-`preempted`). A failed turn never fails the session. The time limit is `homelab.execPool.runner.timeoutSecs`
+`preempted`). A failed turn never fails the session. The time limit is `homelab.execPool.timeoutSecs`
 (default 1800 s, the same bound as a one-shot run). A timed-out turn leaves a `continue` row, so the session resumes
 its own transcript in a new turn told to check its last action; the third timeout in a row with no message read
 since the first parks with no `continue` row and stays in `waiting` until a message. A
@@ -124,7 +124,7 @@ JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a C
 
 ## Runner (#652)
 
-`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1` to `pool3`, and
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool`'s `runner` role; on acer for `pool1` to `pool3`, and
 on msi for its slots against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
 (its agents and capabilities; with a poweroff timer only while the claim's hold ends before it), `start`, then
 `systemctl start exec-pool-exec@<slot>`, then `checkpoint` and the settle or park, the result recorded
@@ -217,13 +217,66 @@ a running session turn as `host_draining` with a `continue` row, which wakes it 
 waits up to 15 minutes for the host's helpers, deploys, and clears the request whatever deploy-rs returned. A settle
 or park the queue cannot take because it is restarting (its own host deployed) is retried while the lease lasts.
 
+## Turning it on
+
+One option set, `homelab.execPool` (`modules/homelab/exec-pool-options.nix`), read by three parts: the slots
+(`modules/workers/execution-pool.nix`, on every host through `modules/workers`), the runner
+(`modules/homelab/exec-pool-runner.nix`) and the queue (`modules/homelab/exec-pool.nix`, which turns on this host's
+PostgreSQL, so it is imported only where the queue runs; it imports the other two).
+
+| Option | Default | What |
+|---|---|---|
+| `enable` | false | the pool on this host |
+| `roles` | `[ ]` | `queue` and/or `runner`; neither: slots alone |
+| `slots` | 0 | slots `pool1..poolN` |
+| `slot.memory`, `slot.cpu` | `"2G"`, 2 | each slot's reserve |
+| `slot.credentials`, `slot.rootInGuest` | `[ ]`, false | what a slot may hold; never the host user's SSH key |
+| `repos` | the owner's repositories | what the GitHub sidecar signs for a slot: fetch, push (branch and snapshot ref), gh |
+| `agents` | `[ ]` | `claude`, `codex`, `pi`; sessions run claude |
+| `capabilities` | `[ ]` | what each slot offers a task |
+| `timeoutSecs` | 1800 | a one-shot run's or a session turn's time limit |
+| `queueListener` | null | a runner's remote queue (a `sam.fleet` listener); null: this host's |
+| `remoteRunners` | false | the queue admits `exec_pool_runner` over TCP |
+| `drainSecs` | 600 | how long before a power window's poweroff (`sam.fleet.hosts.<host>.power`) the runner stops a run |
+
+Refused at evaluation: `queue` in `roles` without `exec-pool.nix` imported, or that module without it; a runner with
+no slots or no agents; a runner with the local queue and a `queueListener`, or without both; `remoteRunners` without
+the queue; a slot holding the SSH key, `rootInGuest` with a session dock, a slot name another instance uses. The
+agent CLIs are the workers' guest packages (`modules/workers/default.nix`), not pool options. A host with the queue and
+three slots, and one with four slots claiming from it:
+
+```nix
+# the queue host
+{
+  imports = [ ../../modules/homelab/exec-pool.nix ];
+  homelab.execPool = {
+    enable = true;
+    roles = [ "queue" "runner" ];
+    slots = 3;
+    agents = [ "claude" ];
+    remoteRunners = true;
+  };
+}
+# a runner host
+{
+  imports = [ ../../modules/homelab/exec-pool-runner.nix ];
+  homelab.execPool = {
+    enable = true;
+    roles = [ "runner" ];
+    slots = 4;
+    agents = [ "claude" ];
+    queueListener = "exec-pool-db";
+  };
+}
+```
+
 ## Not `sam.agentRuntime`
 
 The historical `sam.agentRuntime` (#133, #138) made one ephemeral nspawn instance per task with no scheduler; it is
 absent on main, its module directory was deleted in #210 (`git show 5a40362 --stat`). The current `modules/workers`
 declares long-lived, named instances (`sam.workers.instances`, a `worker-herdr-<name>` unit per agent), each a Nix
 deploy. The pool keeps those untouched and adds dynamic work on top of declared slots. `scripts/test-workers-eval.py`
-pins it: `sam.workers.executionPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
+pins it: `homelab.execPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
 worker unit, container or toplevel on msi, and a named instance beside the slots keeps its units and its Herdr unit (msi itself declares none since its
 named workers were retired).
 

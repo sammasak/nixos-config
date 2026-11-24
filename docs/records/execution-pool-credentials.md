@@ -45,7 +45,7 @@ widest: the whole account, every branch.
 
 ## Slices, smallest first
 
-1. **acer: GitHub through the existing sidecar (this PR).** `sam.workers.executionPool.github.repos` sets each slot's
+1. **acer: GitHub through the existing sidecar (this PR).** `homelab.execPool.repos` sets each slot's
    `egress.github.repos`; acer lists nixos-config, skills, alert-bridge and the private inputs, and binds no key. Git
    reaches `github.sock` by `insteadOf` in the guest's system git config too, since a one-shot attempt's HOME has no
    Home Manager files and its push URL is ssh. The proxy signs git smart HTTP for listed repositories with acer's gh
@@ -54,7 +54,7 @@ widest: the whole account, every branch.
 2. **msi through acer's sidecar.** msi gets no GitHub token. Each msi slot's `github.sock` is a Caddy
    `reverse_proxy` to `sam.fleet.listeners.github-egress` (acer, admitted from msi's address alone by the firewall and
    by `remote_ip`), where acer's proxy serves the same GitHub site with its own slots' list, refusals and token
-   (`services.devEnvironments.egressSites`, one site). The repository list is `executionPool.github.repos`'s default,
+   (`services.devEnvironments.egressSites`, one site). The repository list is `homelab.execPool.repos`'s default,
    so both hosts list the same. No slot on any host gets `id_ed25519`, and an assertion keeps it so. msi's slots then
    depend on acer for GitHub, as they already do for the queue and the session store.
 3. **Push only `pool/<task id>`.** Caddy cannot read the ref updates in a receive-pack body. A ref-aware hop: a

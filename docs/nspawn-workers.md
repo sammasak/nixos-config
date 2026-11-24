@@ -59,7 +59,7 @@ Inside, the cgroup files read `max`: `/etc/dev-environment` holds these limits a
 
 ## Execution pool
 
-`sam.workers.executionPool` (`modules/workers/execution-pool.nix`; on acer-swift three slots, on msi-ms7758 four, no named worker beside them) declares reusable slots for the
+`homelab.execPool` (`modules/homelab/exec-pool-options.nix`, slots in `modules/workers/execution-pool.nix`; on acer-swift three slots, on msi-ms7758 four, no named worker beside them) declares reusable slots for the
 pool's tasks (`docs/records/execution-pool-contract.md`): `pool1` .. `pool<slots>`, each an instance with
 `agent = "none"` and no prompt, so a slot has the named instances' pool ceiling, reserves, `rootInGuest`, reset and
 retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-reset@<slot>`, which switches nothing.
