@@ -51,7 +51,7 @@ Decided by the owner, 24 Nov: the pool is re-architected around sessions that pa
 pause or resume command. A task is a session, a lease is a turn, and every turn ends in a park to waiting. A wake is a
 row in the session's inbox (`exec-pool send`, or a due timer). State lives outside the slot under the workers state
 dir, is docked into a slot at `/session` for one turn, and is pushed to acer at every park so any host can continue
-it. The named workers (a1, m1, m2; herman and t1 retired for pool2 by #748) become pool slots. Brief 656 (explicit pause and resume) is replaced by 1c.
+it. The named workers become pool slots: herman and t1 retired for pool2 by #748; a1, m1 and m2 retired for acer's pool3 and msi's pool3 and pool4, deployed once the three are idle. Brief 656 (explicit pause and resume) is replaced by 1c.
 
 Current batch: the two bug fixes above, #752 (store on acer) and timers, then one deploy of acer and msi; lenovo,
 asus and black-pi follow.
@@ -64,7 +64,7 @@ Waiting, in pick-up order:
 | 2 | Sessions | state is local to one slot | `a1` #752: push to the acer store at park, pull at claim |
 | 3 | Sessions | msi powers off with sessions on it | drain before the msi 21:00 power-off, after #752 |
 | 4 | Sessions | nothing wakes a parked session by itself | timers, `send --at` (`m2`) |
-| 5 | Sessions | named workers sit outside the pool | a1, m1, m2 become slots, after the items above |
+| 5 | Sessions | named workers sit outside the pool | a1, m1, m2 retired for slots in the config; deploy once the three are idle |
 | 6 | Sessions | the coordinator dispatches through panes | dispatch through sessions (skills#162 gives `pool:start`, `send`, `wait`) |
 | 7 | Sessions | no logs or priority per session | logs, priority |
 | 8 | Sessions | a running turn cannot be displaced or watched | preemption and attach |
@@ -114,7 +114,7 @@ Waiting, in pick-up order:
 | 625-a | Read-only check of the hook JSONL on lenovo, schema decision | done: comment on #625 | |
 | 625-1 | Collector, fixture tests, NixOS wiring (nav-metrics pattern) | merged, enabled on no host yet | #638 |
 | 625-2 | Shunt section in the agent-harness dashboard, stale and failing alerts, collector on lenovo | merged, live: collector on lenovo, rules on black-pi | #644 |
-| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and `a1`, off for herman; read a day on 25 Nov | #678, #679 |
+| 625-pilot | On/off on the running system (no benchmark, owner 23 Nov) | merged, live: on for lenovo and `a1`, off for herman; read a day on 25 Nov; the on side moves to acer's `pool1` when a1's retirement deploys | #678, #679 |
 
 ### #646 execution pool (v0.1)
 
@@ -141,11 +141,8 @@ Placement order: acer, then msi, asus last (it carries ollama and the heavier lo
 
 | Host | Worker | Item |
 |------|--------|------|
-| acer-swift | `a1` | #752 session store on acer, then drain before msi power-off |
-| acer-swift | `pool1`, `pool2` | pool slots; `herman` retired, branches in `/var/lib/worker-archive` |
-| msi-ms7758 | `m1` | slot reset clears the start limit, `shunt-metrics-test` fix |
-| msi-ms7758 | `m2` | remover dir names, then timers |
-| msi-ms7758 | `pool1`, `pool2` | pool slots; `t1` retired, branches in `/var/lib/worker-archive` |
+| acer-swift | `pool1` to `pool3` | pool slots, Shunt on for `pool1`; `herman` retired, branches in `/var/lib/worker-archive`; `a1` retired, bundled there before its deploy |
+| msi-ms7758 | `pool1` to `pool4` | pool slots; `t1` retired, branches in `/var/lib/worker-archive`; `m1`, `m2` retired, bundled there before the deploy |
 | asus-b460m | none | `a624`, `s138`, `s130` retired |
 
 msi and asus have no `gh` login: workers push branches over SSH and the lenovo session opens and merges the PRs.

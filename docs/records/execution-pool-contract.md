@@ -168,7 +168,8 @@ absent on main, its module directory was deleted in #210 (`git show 5a40362 --st
 declares long-lived, named instances (`sam.workers.instances`, a `worker-herdr-<name>` unit per agent), each a Nix
 deploy. The pool keeps those untouched and adds dynamic work on top of declared slots. `scripts/test-workers-eval.py`
 pins it: `sam.workers.executionPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
-worker unit, container or toplevel on msi, and its instances (`m1`, `m2`) and their Herdr units are pinned by name.
+worker unit, container or toplevel on msi, and a named instance beside the slots keeps its units and its Herdr unit (msi itself declares none since its
+named workers were retired).
 
 ## Submitting
 

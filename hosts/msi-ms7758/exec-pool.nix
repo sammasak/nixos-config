@@ -5,9 +5,9 @@
 
   sam.workers.executionPool = {
     enable = true;
-    slots = 2;
+    slots = 4;
     agents = [ "claude" ];
-    # the key m1 and m2 push with: a task hands its code back on its own branch, pool/<task id>
+    # the host's push key: a task hands its code back on its own branch, pool/<task id>
     credentials = [ "id_ed25519" ];
   };
   homelab.execPool.runner = {
