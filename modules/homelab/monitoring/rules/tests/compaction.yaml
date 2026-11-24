@@ -1,0 +1,47 @@
+# promtool test rules for homelab.yaml's compaction loop alert (flake-modules/monitoring-check.nix runs it). The series
+# as the Loki ruler remote-writes them: a sample only in a minute with an auto compaction, worker empty on the host.
+rule_files: [../homelab.yaml]
+evaluation_interval: 1m
+tests:
+  # herman compacts every 5 minutes from minute 10: the sixth in an hour (minute 35) fires; a1 compacts 5 times in
+  # an hour and the host session once, neither fires. herman stops at minute 40; the hour holds 5 from 75m and the alert resolves 30m later.
+  - interval: 1m
+    input_series:
+      - series: 'host_worker:claude_code_auto_compactions:count1m{host="acer-swift",worker="herman"}'
+        values: '_x10 1 _x4 1 _x4 1 _x4 1 _x4 1 _x4 1 _x4 1 _x60'
+      - series: 'host_worker:claude_code_auto_compactions:count1m{host="acer-swift",worker="a1"}'
+        values: '_x5 1 _x10 1 _x10 1 _x10 1 _x10 1 _x60'
+      - series: 'host_worker:claude_code_auto_compactions:count1m{host="lenovo-21cb001pmx"}'
+        values: '_x20 1 _x80'
+    alert_rule_test:
+      - eval_time: 34m
+        alertname: ClaudeCompactionLoop
+        exp_alerts: []
+      - eval_time: 36m
+        alertname: ClaudeCompactionLoop
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, host: acer-swift, worker: herman}
+            exp_annotations:
+              summary: "Claude Code on acer-swift worker herman is auto-compacting in a loop"
+              description: "Claude Code on acer-swift worker herman auto-compacted 6 times in the last hour, over 5: a session keeps refilling its context and compacting, losing its goal and spending cache tokens. Find the session in Loki's compaction events before changing its autoCompactWindow."
+              query: 'sum_over_time(host_worker:claude_code_auto_compactions:count1m{host="acer-swift",worker="herman"}[1h])'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#claudecompactionloop"
+      - eval_time: 110m
+        alertname: ClaudeCompactionLoop
+        exp_alerts: []
+
+  # a loop on the host itself: no worker label, and the summary names none
+  - interval: 1m
+    input_series:
+      - series: 'host_worker:claude_code_auto_compactions:count1m{host="lenovo-21cb001pmx"}'
+        values: '_x5 2 _x2 2 _x2 2 _x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ClaudeCompactionLoop
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, host: lenovo-21cb001pmx}
+            exp_annotations:
+              summary: "Claude Code on lenovo-21cb001pmx is auto-compacting in a loop"
+              description: "Claude Code on lenovo-21cb001pmx auto-compacted 6 times in the last hour, over 5: a session keeps refilling its context and compacting, losing its goal and spending cache tokens. Find the session in Loki's compaction events before changing its autoCompactWindow."
+              query: 'sum_over_time(host_worker:claude_code_auto_compactions:count1m{host="lenovo-21cb001pmx",worker=""}[1h])'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#claudecompactionloop"

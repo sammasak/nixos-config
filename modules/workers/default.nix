@@ -268,7 +268,7 @@ let
       type = types.bool;
       default = profile.nativeOtel;
       defaultText = lib.literalExpression "config.sam.profile.nativeOtel";
-      description = "The guest's Claude Code (sam.claude.telemetry) and Codex export OTLP metrics, and Claude its events, through the proxy to this host's native-otel-relay, which needs sam.profile.nativeOtel here; the guest holds no token. The proxy's X-Otel-Worker stamp names the worker on logs only; metrics carry no worker and count under host.name.";
+      description = "The guest's Claude Code (sam.claude.telemetry) and Codex export OTLP metrics, and Claude its events, through the proxy to this host's native-otel-relay, which needs sam.profile.nativeOtel here; the guest holds no token. The proxy's X-Otel-Worker stamp names the worker on logs and metric points.";
     };
     config.credentials = lib.mkIf (onGithub config) (
       lib.subtractLists [ "id_ed25519" "gh-hosts.yml" ] (lib.attrNames dev.credentials)
@@ -476,7 +476,7 @@ in
         otlp = {
           for = i: i.telemetry;
           # The exact path: Caddy's path matcher ignores case and merges slashes. The relay keys its rate limit, and
-          # the gateway the logs' worker.name, on the stamped header, never the guest's; metrics carry no worker.
+          # the gateway the worker of logs and metric points, on the stamped header, never the guest's.
           site = i: ''
             @other not {
               method POST

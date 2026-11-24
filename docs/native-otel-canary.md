@@ -84,7 +84,7 @@ sends through its host's relay with
 ([nspawn-workers.md](nspawn-workers.md)), on by default on a
 `nativeOtel` host; it also turns on the guest's Codex metrics exporter and
 `codex` wrapper. Codex sends metrics only, which the gateway counts under
-`host.name` (no worker). Codex has no credential path into a guest yet, so
+`host.name` and the stamped `worker`. Codex has no credential path into a guest yet, so
 that half is evaluated, not run.
 A guest's Claude also has `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. With it
 set, OTel events and metrics are still exported; only `DISABLE_TELEMETRY`-style

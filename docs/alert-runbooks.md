@@ -151,6 +151,21 @@ First: on acer, `journalctl -u alloy-otlp --since -30m`; for a 401 or 413, on th
 `journalctl -u native-otel-relay --since -30m`.
 Do not: raise `max_request_body_size` or the relay's body limit before the journal names the sender.
 
+## ClaudeCompactionLoop
+
+Fires: Claude Code on one host or worker auto-compacted more than 5 times in the last hour, read from
+`host_worker:claude_code_auto_compactions:count1m`, which Loki's ruler records from the sanitized compaction events
+(`modules/homelab/monitoring/loki-rules/fake/homelab.yaml`). An empty `worker` is a session on the host itself. One session compacting again and
+again is a loop: its context refills right after each compaction and the goal it started with gets lost. It resolves
+once the hour holds 5 or fewer. The count is a lower bound, so a real loop may fire a few minutes late.
+First: in Grafana's Explore on Loki, the events of that worker by session (ids are line fields, never labels):
+`sum by (attributes_session_id) (count_over_time({observer="harness", service_name="claude-code", event_name="compaction", host_name="<host>"} | json | attributes_trigger="auto" | attributes_worker="<worker>" [1h]))`.
+For an empty worker, filter `attributes_worker=""`. One session with most of them is the loop: stop it there. Many sessions each compacting a few times is load, not a
+loop.
+Rollback: for herman on acer, remove `sam.claude.autoCompactWindow` from `hosts/acer-swift/configuration.nix` (an
+approved deploy); a session keeps the window it started with until restarted.
+Do not: raise the threshold before the events show which session it was.
+
 ## EdgeSocketDown
 
 Fires: nothing listens on Caddy's upstream socket on acer, or the edge check stopped writing, for 2 minutes. Signed-in
