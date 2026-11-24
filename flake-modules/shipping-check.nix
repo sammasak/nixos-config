@@ -118,11 +118,138 @@ let
       }
     ];
   };
+  redFor = a.ScheduledGateRed.forMinutes.value;
+  overdueFor = a.ScheduledGateOverdue.forMinutes.value;
+  # the limit in minutes; samples every 4 m, under the 5 m lookback. The last finished gate is at the epoch, promtool's 0
+  overdueAt = a.ScheduledGateOverdue.hours.value * 60;
+  gateNode = ''job="node-exporter",instance="acer-swift",node="acer-swift"'';
+  redSeries = ''homelab_scheduled_gate_red{${gateNode},head="aaaaaaaaaaaa",step="nixos-flake-check (checks.x86_64-linux.foo)",green="bbbbbbbbbbbb"}'';
+  redLabels = {
+    node = "acer-swift";
+    head = "aaaaaaaaaaaa";
+    step = "nixos-flake-check (checks.x86_64-linux.foo)";
+    green = "bbbbbbbbbbbb";
+    severity = "warning";
+    team = "shipping";
+  };
+  # behind: main moved since the last finished gate; checked: the scheduler still reads main (else frozen at 0)
+  overdueCase = name: behind: checked: fires: {
+    inherit name;
+    interval = "4m";
+    input_series = [
+      {
+        series = "homelab_scheduled_gate_finished_timestamp_seconds{${gateNode}}";
+        values = "0x${n ((overdueAt + overdueFor + 10) / 4)}";
+      }
+      {
+        series = "homelab_scheduled_gate_main_behind{${gateNode}}";
+        values = "${n behind}x${n ((overdueAt + overdueFor + 10) / 4)}";
+      }
+      {
+        series = "homelab_scheduled_gate_checked_timestamp_seconds{${gateNode}}";
+        values =
+          if checked then
+            "0+240x${n ((overdueAt + overdueFor + 10) / 4)}"
+          else
+            "0x${n ((overdueAt + overdueFor + 10) / 4)}";
+      }
+    ];
+    alert_rule_test = [
+      {
+        alertname = "ScheduledGateOverdue";
+        eval_time = "${n (overdueAt + overdueFor - 5)}m";
+        exp_alerts = [ ];
+      }
+      {
+        alertname = "ScheduledGateOverdue";
+        eval_time = "${n (overdueAt + overdueFor + 5)}m";
+        exp_alerts = lib.optional fires {
+          exp_labels = {
+            node = "acer-swift";
+            severity = "warning";
+            team = "shipping";
+          };
+        };
+      }
+    ];
+  };
+  # the full rules, annotations included: the red alert's summary names the step and the range from its labels
+  redAnnotated = green: range: {
+    name = "a red scheduled gate's annotations name its first failed step and ${range}";
+    interval = "1m";
+    input_series = [
+      {
+        series = ''homelab_scheduled_gate_red{${gateNode},head="aaaaaaaaaaaa",step="nixos-flake-check (checks.x86_64-linux.foo)",green="${green}"}'';
+        values = "1x${n (redFor + 10)}";
+      }
+    ];
+    alert_rule_test = [
+      {
+        alertname = "ScheduledGateRed";
+        eval_time = "${n (redFor + 5)}m";
+        exp_alerts = [
+          {
+            exp_labels = redLabels // {
+              inherit green;
+            };
+            exp_annotations =
+              let
+                summary = "The scheduled full gate failed on main at aaaaaaaaaaaa, first failed step nixos-flake-check (checks.x86_64-linux.foo); ${range}.";
+              in
+              {
+                inherit summary;
+                description = "${summary} The threshold is in modules/homelab/monitoring/shipping-policy.json (alerts.ScheduledGateRed); change it by a PR that quotes the Shipping dashboard (docs/shipping.md).";
+                query = ''max by (node, head, step, green) (homelab_scheduled_gate_red{job="node-exporter"}) == 1'';
+                runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/shipping.md#scheduledgatered";
+              };
+          }
+        ];
+      }
+    ];
+  };
+  annotated = {
+    rule_files = [ "rules.json" ];
+    evaluation_interval = "1m";
+    tests = [
+      (redAnnotated "bbbbbbbbbbbb" "the commits since the last green run are bbbbbbbbbbbb..aaaaaaaaaaaa")
+      (redAnnotated "none" "no scheduled run has passed yet, so the range starts at the first scheduled run")
+    ];
+  };
   tests = {
     # the copy without annotations, which promtool would otherwise compare word for word
     rule_files = [ "rules-test.json" ];
     evaluation_interval = "1m";
     tests = [
+      {
+        name = "a red scheduled gate fires after its for, and clears when a green run drops the series";
+        interval = "1m";
+        input_series = [
+          {
+            series = redSeries;
+            values = "1x${n (redFor + 10)} _x30";
+          }
+        ];
+        alert_rule_test = [
+          {
+            alertname = "ScheduledGateRed";
+            eval_time = "${n (redFor - 1)}m";
+            exp_alerts = [ ];
+          }
+          {
+            alertname = "ScheduledGateRed";
+            eval_time = "${n (redFor + 5)}m";
+            exp_alerts = [ { exp_labels = redLabels; } ];
+          }
+          {
+            alertname = "ScheduledGateRed";
+            eval_time = "${n (redFor + 30)}m";
+            exp_alerts = [ ];
+          }
+        ];
+      }
+      (overdueCase "main moved and no scheduled gate finished for the limit: overdue" 1 true true)
+      (overdueCase "main not moved since the last finished gate: not overdue, however old" 0 true false)
+      (overdueCase "the scheduler stopped reading main: overdue, behind or not" 0 false true)
       {
         name = "gate fail rate: over the threshold on a full sample of two hosts' runs fires, on a short sample not";
         interval = "1m";
@@ -573,13 +700,19 @@ in
                 pkgs.jq
               ];
               tests = builtins.toJSON tests;
-              passAsFile = [ "tests" ];
+              annotated = builtins.toJSON annotated;
+              passAsFile = [
+                "tests"
+                "annotated"
+              ];
             }
             ''
               names=${../scripts/shipping-names.py}
               dash=${../modules/homelab/monitoring/dashboards/shipping.json}
               pol=${../modules/homelab/monitoring/shipping-policy.json}
               python3 -I ${../scripts/shipping-metrics.py} --list > emitted
+              # the scheduled gate's textfile on acer (modules/homelab/scheduled-gate.nix)
+              python3 -I ${../pkgs/scheduled-gate/scheduled_gate.py} --list >> emitted
               python3 -I $names emitted ${rules} $dash $pol
               jq '.groups[0].rules += [{record: "seeded", expr: "shipping_seeded_unknown > 1"}]' ${rules} > seeded-rule.json
               if python3 -I $names emitted seeded-rule.json $dash $pol; then echo "a rule naming an unknown metric passed" >&2; exit 1; fi
@@ -588,6 +721,9 @@ in
               jq '.groups[].rules[] |= del(.annotations)' ${rules} > rules-test.json
               cp "$testsPath" tests.yaml
               promtool test rules tests.yaml
+              cp ${rules} rules.json
+              cp "$annotatedPath" annotated.yaml
+              promtool test rules annotated.yaml
               touch $out
             '';
       };
