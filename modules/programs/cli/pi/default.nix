@@ -86,44 +86,12 @@ let
   # The default (`homelab/auto`, pinned above): the llm-gateway on acer picks a free model
   # by tier and fails over. `!cat` reads the sops key per request, so it never
   # enters the store or the environment.
-  homelabProvider = builtins.toJSON {
-    baseUrl = "${gatewayUrl}/v1";
-    api = "openai-completions";
-    apiKey = "!cat /run/secrets/llm_gateway_pi_key";
-    models = [
-      {
-        id = "auto";
-        name = "homelab auto";
-        reasoning = true;
-        contextWindow = 1048576;
-        maxTokens = 32768;
-      }
-      {
-        id = "best";
-        name = "homelab best";
-        reasoning = true;
-        contextWindow = 1048576;
-        maxTokens = 32768;
-      }
-      {
-        id = "local";
-        name = "homelab local";
-        contextWindow = 131072;
-        maxTokens = 8192;
-      }
-    ];
-    # One request shape every tier accepts: msi Ollama 400s on `reasoning_effort`
-    # (rejected by both models, so `auto`/`local` lose the local floor) and Gemini
-    # on `store`; `system`, not `developer`. x-session-id pins tool loops to a model.
-    compat = {
-      supportsStore = false;
-      supportsReasoningEffort = false;
-      supportsDeveloperRole = false;
-      maxTokensField = "max_tokens";
-      sendSessionAffinityHeaders = true;
-      sessionAffinityFormat = "openrouter";
-    };
-  };
+  homelabProvider = builtins.toJSON (
+    import ./homelab-provider.nix {
+      baseUrl = "${gatewayUrl}/v1";
+      apiKey = "!cat /run/secrets/llm_gateway_pi_key";
+    }
+  );
 
   # Same rules as seedPiSettings: a malformed user file is left alone.
   mergePiModels = pkgs.writeShellScript "merge-pi-models" ''

@@ -75,10 +75,20 @@ in
       description = "Which of services.devEnvironments.credentials a slot may hold; none by default, as msi's t1.";
     };
     agents = mkOption {
-      type = types.listOf (types.enum [ "claude" ]);
+      type = types.listOf (
+        types.enum [
+          "claude"
+          "codex"
+          "pi"
+        ]
+      );
       default = [ ];
-      example = [ "claude" ];
-      description = "Agents a task may run in a slot, each with the route a named worker's has (its egress proxy, no credential in the guest); the slot's own agent stays none, so no session starts.";
+      example = [
+        "claude"
+        "codex"
+        "pi"
+      ];
+      description = "Agents a task may run in a slot, each with its egress proxy and no credential in the guest (anthropic, openai with sam.workers.codexAuthFile, llm-gateway with the host's Pi key); the slot's own agent stays none, so no session starts.";
     };
     rootInGuest = mkOption {
       type = types.bool;
