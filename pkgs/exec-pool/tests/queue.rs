@@ -1975,6 +1975,88 @@ fn a_turn_stopped_for_a_poweroff_continues_and_is_told_to_check_its_last_action(
     assert_eq!(turn.input, "later", "after a turn that ended, no note");
 }
 
+/// The runner's store: a park as the runner role reads only what it is granted.
+fn runner(pg: &Pg) -> Store {
+    Store::open(
+        &pg.conninfo()
+            .replace("user=exec_pool ", "user=exec_pool_runner "),
+    )
+    .unwrap()
+}
+
+/// Runs the next turn to its time limit: its input and the changes its park made.
+fn time_out(runner: &mut Store) -> (String, Vec<(Status, &'static str)>) {
+    let (a, epoch, turn) = started(runner);
+    let (_, changes) = runner
+        .park(&a, epoch, &park(ParkReason::TurnTimeout, turn.upto))
+        .unwrap();
+    (turn.input, moves(&changes))
+}
+
+const CONTINUED: [(Status, &str); 2] =
+    [(Status::Waiting, "turn_timeout"), (Status::Queued, "wake")];
+
+#[test]
+fn a_timed_out_turn_continues_and_the_third_in_a_row_waits() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = runner(&pg);
+    let (first, changes) = time_out(&mut runner);
+    assert_eq!(first, ARGV_MARKER);
+    assert_eq!(changes, CONTINUED, "its continue row wakes it");
+    let (second, changes) = time_out(&mut runner);
+    assert_eq!(
+        second,
+        "Your last turn hit the time limit. Check your last action, then continue."
+    );
+    assert_eq!(changes, CONTINUED);
+    let (_, changes) = time_out(&mut runner);
+    assert_eq!(
+        changes,
+        [(Status::Waiting, "turn_timeout")],
+        "no continue row: a stuck loop stops"
+    );
+    let shown = s.task(&id).unwrap().unwrap();
+    assert_eq!(
+        (&shown["status"], &shown["parked"]),
+        (&json!("waiting"), &json!("turn_timeout"))
+    );
+    assert!(runner.claim(&claude_slot(), 60).unwrap().is_none());
+    let metrics = owner.metrics(None).unwrap();
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l == "exec_pool_waiting{reason=\"turn_timeout\"} 1"),
+        "{metrics}"
+    );
+    assert!(
+        metrics.contains("reason=\"turn_timeout\"} 3"),
+        "every timed-out park counts in exec_pool_transitions_total"
+    );
+}
+
+#[test]
+fn a_message_starts_the_count_of_timeouts_in_a_row_again() {
+    let pg = Pg::new();
+    let _owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = runner(&pg);
+    for _ in 0..2 {
+        assert_eq!(time_out(&mut runner).1, CONTINUED);
+    }
+    assert_eq!(time_out(&mut runner).1, [(Status::Waiting, "turn_timeout")]);
+    s.send(&id, "try it another way").unwrap();
+    let (input, changes) = time_out(&mut runner);
+    assert_eq!(input, "try it another way");
+    assert_eq!(
+        changes, CONTINUED,
+        "the message's turn is the first of a new run"
+    );
+    assert_eq!(time_out(&mut runner).1, CONTINUED);
+    assert_eq!(time_out(&mut runner).1, [(Status::Waiting, "turn_timeout")]);
+}
+
 #[test]
 fn a_one_shot_run_drained_while_preparing_runs_again_one_drained_mid_run_goes_to_review() {
     let pg = Pg::new();

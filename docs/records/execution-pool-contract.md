@@ -60,8 +60,12 @@ parks in `waiting` counts against `retry.max_attempts` (at least 1), so an expir
 A task with `tasks.session` (queued by `exec-pool start`; the queue's side is under Sessions below) is a session: one
 agent session (its id the queue's `session_uuid`) that lives across
 leases. Each lease is one **turn**, and a turn ends in a **park** to `waiting`, never in a settle: `turn_end` when the
-agent finished its turn, `turn_error` when its call failed, left no verdict or timed out, `waiting_until` when it
-finished and asked for a timer (later also `host_draining`, `preempted`). A failed turn never fails the session. A
+agent finished its turn, `turn_error` when its call failed or left no verdict, `turn_timeout` when it was stopped at
+the turn's time limit, `waiting_until` when it finished and asked for a timer (later also `host_draining`,
+`preempted`). A failed turn never fails the session. The time limit is `homelab.execPool.runner.timeoutSecs`
+(default 1800 s, the same bound as a one-shot run). A timed-out turn leaves a `continue` row, so the session resumes
+its own transcript in a new turn told to check its last action; the third timeout in a row with no message read
+since the first parks with no `continue` row and stays in `waiting` until a message. A
 **wake** is a row in the task's inbox due: a message (`exec-pool send`) at once, a timer (`exec-pool send --at`, or the
 agent's own `pool-wait`) at its `due_at`. It queues the session again, and the next claim carries the turn's input (the task's prompt on the
 first turn, the messages since on a later one) and `upto`, the last message it holds, which the park hands back. A

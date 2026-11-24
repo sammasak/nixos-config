@@ -42,15 +42,18 @@ pub enum ParkReason {
     Preempted,
     HostDraining,
     TurnError,
+    /// The agent's call was stopped at the turn's time limit.
+    TurnTimeout,
 }
 
 impl ParkReason {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::TurnEnd,
         Self::WaitingUntil,
         Self::Preempted,
         Self::HostDraining,
         Self::TurnError,
+        Self::TurnTimeout,
     ];
 
     #[must_use]
@@ -61,6 +64,7 @@ impl ParkReason {
             Self::Preempted => "preempted",
             Self::HostDraining => "host_draining",
             Self::TurnError => "turn_error",
+            Self::TurnTimeout => "turn_timeout",
         }
     }
 }

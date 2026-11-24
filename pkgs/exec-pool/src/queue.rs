@@ -259,6 +259,39 @@ const TIMER: &str = "The time you asked to be woken at has come.";
 const DRAINED: &str = "You were paused mid-turn by the pool (its host was powering off). Check the state of your \
     last action before continuing.";
 
+/// A `continue` row's text after a park for a turn stopped at its time limit.
+const TIMED_OUT: &str = "Your last turn hit the time limit. Check your last action, then continue.";
+/// Turns in a row that end in a timeout, no message in between, after which a session waits instead of continuing.
+pub const TIMEOUTS_IN_A_ROW: usize = 3;
+
+/// How many of `attempt`'s last turns, the one just parked included, ended in a timeout with no message read since the
+/// first of them; a turn that read a message is the first of a run.
+fn timeouts_in_a_row(
+    tx: &mut Transaction<'_>,
+    task: &str,
+    attempt: &str,
+) -> Result<usize, QueueError> {
+    let mut n: usize = 0;
+    for r in tx.query(
+        &format!(
+            "SELECT e.reason, EXISTS (SELECT FROM inbox i WHERE i.task_id = $1 AND i.kind = 'message' \
+             AND i.consumed_epoch = e.lease_epoch) FROM events e WHERE e.attempt_id = $2 \
+             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT {TIMEOUTS_IN_A_ROW}"
+        ),
+        &[&task, &attempt],
+    )? {
+        let (reason, told): (&str, bool) = (r.try_get(0)?, r.try_get(1)?);
+        if reason != ParkReason::TurnTimeout.as_str() {
+            break;
+        }
+        n = n.saturating_add(1);
+        if told {
+            break;
+        }
+    }
+    Ok(n)
+}
+
 /// A connection that reconnects on the next call after the database went away.
 pub struct Store {
     config: Config,
@@ -859,7 +892,8 @@ impl Store {
 
     /// Ends a session's turn at `epoch`, in one transaction: running or checkpointing to `waiting` with the try given
     /// back and the slot freed, `park.checkpoint` and `park.result` recorded, the inbox rows up to `park.upto` marked
-    /// read at `epoch`; a turn preempted or stopped for a draining host leaves a `continue` row, and `park.wake` a
+    /// read at `epoch`; a turn preempted, stopped for a draining host or timed out (up to [`TIMEOUTS_IN_A_ROW`]) leaves a
+    /// `continue` row, and `park.wake` a
     /// timer row (a `turn_end` with one parks as `waiting_until`). Then, if an unread row is due, the session is queued
     /// for its next turn. Every change, in order.
     ///
@@ -936,10 +970,12 @@ impl Store {
                  WHERE e.attempt_id = $4 AND e.lease_epoch = $3 AND e.to_status = 'leased'))",
                 &[&task, &park.upto, &epoch, &attempt],
             )?;
-            if matches!(
-                park.reason,
-                ParkReason::Preempted | ParkReason::HostDraining
-            ) {
+            let resume = match park.reason {
+                ParkReason::Preempted | ParkReason::HostDraining => true,
+                ParkReason::TurnTimeout => timeouts_in_a_row(tx, &task, attempt)? < TIMEOUTS_IN_A_ROW,
+                _ => false,
+            };
+            if resume {
                 tx.execute(
                     "INSERT INTO inbox (task_id, kind) VALUES ($1, 'continue')",
                     &[&task],
@@ -1409,15 +1445,19 @@ fn turn(
             checkpoint,
         }));
     }
-    let drained = tx
+    let parked: Option<String> = tx
         .query_opt(
-            "SELECT reason = 'host_draining' FROM events WHERE attempt_id = $1 AND to_status = 'waiting' \
+            "SELECT reason FROM events WHERE attempt_id = $1 AND to_status = 'waiting' \
              ORDER BY id DESC LIMIT 1",
             &[&attempt],
         )?
-        .map(|r| r.try_get::<_, bool>(0))
-        .transpose()?
-        .unwrap_or(false);
+        .map(|r| r.try_get(0))
+        .transpose()?;
+    let stopped = match parked.as_deref() {
+        Some("host_draining") => DRAINED,
+        Some("turn_timeout") => TIMED_OUT,
+        _ => CONTINUE,
+    };
     let mut input = String::new();
     let mut upto = 0;
     // a stopped turn's continue goes first, though what that turn was told is older than it
@@ -1432,8 +1472,7 @@ fn turn(
             input.push_str("\n\n");
         }
         input.push_str(match (kind, body) {
-            ("continue", None) if drained => DRAINED,
-            ("continue", None) => CONTINUE,
+            ("continue", None) => stopped,
             ("timer", None) => TIMER,
             (_, b) => b.unwrap_or_default(),
         });
@@ -1588,7 +1627,7 @@ const IDLE: [u64; 4] = [86400, 259_200, 604_800, 1_209_600];
 const SOURCES: [&str; 3] = ["message", "timer", "continue"];
 /// A session's turn: started, then parked to waiting for one of the park reasons (not a settle).
 const PARKED: &str = "e.to_status = 'waiting' AND e.from_status IN ('running', 'checkpointing') \
-    AND e.reason IN ('turn_end', 'waiting_until', 'preempted', 'host_draining', 'turn_error')";
+    AND e.reason IN ('turn_end', 'waiting_until', 'preempted', 'host_draining', 'turn_error', 'turn_timeout')";
 
 /// The sessions' series: by state, turns by park reason and their durations, wake latency by source, closed sessions'
 /// turns and age, how long parked ones sit idle, host changes between turns, the tokens and cost turns report, and
