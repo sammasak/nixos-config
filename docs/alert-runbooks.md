@@ -204,7 +204,7 @@ First: in Grafana's Explore on Loki, the events of that worker by session (ids a
 `sum by (attributes_session_id) (count_over_time({observer="harness", service_name="claude-code", event_name="compaction", host_name="<host>"} | json | attributes_trigger="auto" | attributes_worker="<worker>" [1h]))`.
 For an empty worker, filter `attributes_worker=""`. One session with most of them is the loop: stop it there. Many sessions each compacting a few times is load, not a
 loop.
-Rollback: for herman on acer, remove `sam.claude.autoCompactWindow` from `hosts/acer-swift/configuration.nix` (an
+Rollback: for a worker with `sam.claude.autoCompactWindow` set, remove it from its host's guest module (an
 approved deploy); a session keeps the window it started with until restarted.
 Do not: raise the threshold before the events show which session it was.
 
@@ -315,8 +315,8 @@ Fires: on a pool host (acer, msi), the session trees, parked (`/var/lib/workers/
 slot (`.sessions/dock/<slot>/cur`) and, on acer, the pushed copies (`.sessions-store/<id>`), have held over 70% of the
 workers' state filesystem for 30 minutes. `dev-env-sessions-metrics` (`modules/workers/core.nix`) writes the bytes and
 counts every 15 minutes, by kind and with no ids, and `.trash`'s share as `homelab_dev_env_trash_bytes`. Removal is the
-queue's call: `exec-pool-sessions-gc` (`modules/homelab/exec-pool-sessions-gc.nix`, acer, off until the CLI has
-`sessions --gc`) moves what the queue lists as eligible into `.trash`, which frees it a week later.
+queue's call: `exec-pool-sessions-gc` (`modules/homelab/exec-pool-sessions-gc.nix`, acer and msi, daily) moves what
+the queue lists as eligible into `.trash`, which frees it a week later.
 First: `homelab_dev_env_sessions_bytes` and `homelab_dev_env_session_trees` on the node say which kind grew,
 `homelab_exec_pool_sessions_orphaned` how many trees the queue does not know; on the host,
 `sudo du -sh /var/lib/workers/.sessions/*/tree /var/lib/workers/.sessions-store/* | sort -h | tail` names the largest.

@@ -59,7 +59,7 @@ Inside, the cgroup files read `max`: `/etc/dev-environment` holds these limits a
 
 ## Execution pool
 
-`sam.workers.executionPool` (`modules/workers/execution-pool.nix`; on acer-swift, one slot) declares reusable slots for the
+`sam.workers.executionPool` (`modules/workers/execution-pool.nix`; on acer-swift and msi-ms7758, two slots each) declares reusable slots for the
 pool's tasks (`docs/records/execution-pool-contract.md`): `pool1` .. `pool<slots>`, each an instance with
 `agent = "none"` and no prompt, so a slot has the named instances' pool ceiling, reserves, `rootInGuest`, reset and
 retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-reset@<slot>`, which switches nothing.
@@ -69,7 +69,7 @@ retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-
 | `enable` | `false` | off, nothing moves (pinned by `scripts/test-workers-eval.py`) |
 | `slots` | `0` | how many slots (unsigned) |
 | `memory.reserved`, `cpu.reserved` | `"2G"`, `2` | each slot's, as an instance's |
-| `credentials` | `[ ]` | which host credentials a slot may hold (as msi's `t1`) |
+| `credentials` | `[ ]` | which host credentials a slot may hold (acer's and msi's: `id_ed25519`) |
 | `agents` | `[ ]` | agents a task may run in a slot (`claude`): each slot's `headlessAgents`, the egress route a named worker of that agent has (the anthropic proxy, no credential in the guest), while its `agent` stays `none` and no session starts |
 | `rootInGuest` | `false` | each slot's |
 
@@ -81,11 +81,11 @@ units: `slot`, `state`, `sub`, `closure`, `memory.min`/`.low`, `cpu.weight`, `sl
 Every slot has `sessionDock` (an instance option, off for named workers): `/session` is bound read-write from
 `<stateDir>/.sessions/dock/<slot>`, root's 0755 under `.sessions/dock` (0755) and `.sessions` (0711), so a session's home and work tree, kept
 outside every slot home, are renamed in for one turn; reset, retire, the trash sweep and records never touch `.sessions`, and gcroots
-only reads it. Not with `rootInGuest`. On acer, with `homelab.execPool.sessionGc.enable` (off until the CLI has
-`exec-pool sessions` and `sessions --gc`), `exec-pool-sessions-gc` moves the parked trees and store copies the queue
-lists as eligible into `.trash` daily, one JSON line each in its journal, never a session whose tree is docked; a tree
-the queue does not know is counted (`homelab_exec_pool_sessions_orphaned`), not removed. msi's parked trees have no
-remover yet. No lock is shared with the runner yet: it must take one before a dock or a push, or a removal can race them.
+only reads it. Not with `rootInGuest`. On acer and msi, with `homelab.execPool.sessionGc.enable`,
+`exec-pool-sessions-gc` moves the parked trees and store copies the queue lists (`exec-pool sessions`, read as
+exec_pool from the runner's queue) as eligible and `handed_back` into `.trash` daily, one JSON line each in its journal,
+never a session whose tree is docked; a tree the queue does not know is counted (`homelab_exec_pool_sessions_orphaned`),
+not removed. No lock is shared with the runner yet: it must take one before a dock or a push, or a removal can race them.
 Whatever can write a task's state (the runner role, a submitter) can make the queue list it: `.trash` keeps that
 recoverable for a week.
 

@@ -9,7 +9,7 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 |---|---|---|
 | Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
 | Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`) |
-| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer for `pool1` |
+| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer and msi, one per slot |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
 | Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
 | Power windows and placement facts | `sam.fleet.hosts.*` | `modules/core/fleet.nix` |
@@ -110,8 +110,8 @@ JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a C
 
 ## Runner (#652)
 
-`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1`, and
-on msi for its slot against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1` and `pool2`, and
+on msi for its slots against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
 (its agents and capabilities; with a poweroff timer only while the claim's hold ends before it), `start`, then
 `systemctl start exec-pool-exec@<slot>`, then `checkpoint` and the settle or park, the result recorded
 (`Store::record_result`: outcome, exit code, up to 16 KiB of output, the branch), then `dev-env-reset@<slot>`. The lease
@@ -168,7 +168,7 @@ absent on main, its module directory was deleted in #210 (`git show 5a40362 --st
 declares long-lived, named instances (`sam.workers.instances`, a `worker-herdr-<name>` unit per agent), each a Nix
 deploy. The pool keeps those untouched and adds dynamic work on top of declared slots. `scripts/test-workers-eval.py`
 pins it: `sam.workers.executionPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
-worker unit, container or toplevel on msi, and its instances (`m1`, `m2`, `t1`) and their Herdr units are pinned by name.
+worker unit, container or toplevel on msi, and its instances (`m1`, `m2`) and their Herdr units are pinned by name.
 
 ## Submitting
 
@@ -209,12 +209,14 @@ Each park also writes a `turns` row (migration 0010): the tokens and cost Claude
 the runner can tell). The textfile's `exec_pool_session*` series count sessions by state and waiting reason, turns by
 park reason, turn and wake latency, closed sessions' turns and age, parked sessions by idle age, host changes between
 turns and the reported tokens and cost; the Agent harnesses dashboard's Sessions row draws them. `session_gc` decides
-which session trees may be removed, never a file's age: final for 7 days, or waiting 14 days untouched with no unread
-row and its last turn `handed_back`; one waiting that long without that is stale and kept, and `needs_review` is
-never eligible. `exec-pool sessions --gc` prints the eligible ones, one JSON object per line (task_id, state,
-last_change, hosts), for the remover; ExecPoolSessionStuck fires on a session in review or stale for a day.
-No producer sets `handed_back` yet (the runner reports only the branch's name), so until one does no waiting session
-is eligible and every one parked 14 days is stale and alerts. A park's own time (the agent's exit to the settle) is not
+which session trees may be removed, never a file's age: only one whose last turn is `handed_back` (its branch held the
+whole tree, migration 0012), and then final for 7 days or waiting 14 days untouched with no unread row; one waiting
+that long without that is stale and kept, a final one without it that ran a turn kept and counted
+(`exec_pool_sessions_gc_kept`, no alert), and `needs_review` is never eligible.
+`exec-pool sessions` prints every session, one JSON object per line (task_id, state, last_change, hosts, handed_back,
+eligible, stale, kept; `--gc` the eligible ones), and the remover moves only a line both eligible and handed_back; ExecPoolSessionStuck fires on a session in review or stale for a day.
+No producer sets `handed_back` yet (the runner reports only the branch's name), so until one does no session is
+eligible, the remover moves nothing, and every one parked 14 days is stale and alerts. A park's own time (the agent's exit to the settle) is not
 measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
 `due_at`.
 

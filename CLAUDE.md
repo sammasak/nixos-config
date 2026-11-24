@@ -196,15 +196,15 @@ the session gets the path with a head and tail excerpt; failed commands are unto
 - Environments: a guest does not inherit its host's value; the host adds a guest module, e.g. for one instance
   `services.devEnvironments.guestModules = [ ({ devEnvironment, ... }: { sam.claude.bulkReader.enable = devEnvironment.name == "canary"; }) ];`
 - Rollback: set it false and switch, or `SHUNT_DISABLE=1` in the environment Claude starts from (no rebuild).
-- On now: lenovo and acer's worker a1; acer's host and herman are the off side. `homelab.shuntMetrics` labels every
+- On now: lenovo and acer's worker a1; acer's host is the off side. `homelab.shuntMetrics` labels every
   series `shunt="on|off"` (and `worker` for a guest) from this option, so on and off compare; ShuntSilent guards the on side.
 - Running sessions keep the hooks they started with: settings are read at session start, so restart a session to
   pick up a change. `notifyHookGeneration` pings ntfy only when the skills store path changes (a pin bump), not
   when this option flips.
 
 **Auto-compaction** (`sam.claude.autoCompactWindow`, null by default): sets Claude Code's `autoCompactWindow`; a guest
-sets it through a guest module like the bulk reader. On now: acer's worker herman at 300000; `homelab.shuntMetrics`
-writes `claude_auto_compact_window_info{worker,variant}` so it compares with the default side (#626).
+sets it through a guest module like the bulk reader. On now: nowhere; `homelab.shuntMetrics` writes
+`claude_auto_compact_window_info{worker,variant}` so a set side compares with the default (#626).
 
 ### Codex
 
