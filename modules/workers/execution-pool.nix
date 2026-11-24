@@ -74,6 +74,12 @@ in
       example = [ "id_ed25519" ];
       description = "Which of services.devEnvironments.credentials a slot may hold; none by default.";
     };
+    github.repos = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "sammasak/nixos-config" ];
+      description = "Each slot's egress.github.repos: its git push and fetch and its gh calls to these repositories are signed by the host's proxy, so the slot holds no GitHub credential; a repository whose flake or devenv has a private input needs that input listed too.";
+    };
     agents = mkOption {
       type = types.listOf (
         types.enum [
@@ -104,6 +110,7 @@ in
       telemetry = false;
       headlessAgents = cfg.agents;
       inherit (cfg) credentials rootInGuest;
+      egress.github.repos = cfg.github.repos;
       sessionDock = true;
       # each attempt's workspace (pkgs/exec-pool/src/workspace.rs): throwaway, so its checkout never holds the reset
       scratch = [ "attempts" ];
@@ -111,12 +118,9 @@ in
       cpu.reserved = cfg.cpu.reserved;
     });
 
-    # A slot restarts its container and runs its reset once per task turn, a few seconds apart in a session: a start
-    # limit fails the slot on the fourth turn in ten minutes (container@pool1 on acer). Named workers keep theirs.
-    systemd.services = lib.genAttrs (map (n: "container@${n}") slotNames) (_: {
-      startLimitIntervalSec = lib.mkForce 0;
-    });
-    # a drop-in of the shared template's own instance: a systemd.services one would also set its PATH
+    # A slot's reset runs once per task turn, seconds apart in a session; under systemd's default limit a burst of
+    # refused resets (the runner retries each) fails the unit. A drop-in of the shared template's own instance: a
+    # systemd.services one would also set its PATH.
     systemd.units = lib.genAttrs (map (n: "dev-env-reset@${n}.service") slotNames) (_: {
       overrideStrategy = "asDropin";
       text = ''

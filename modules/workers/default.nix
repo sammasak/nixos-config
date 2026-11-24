@@ -18,6 +18,11 @@ let
   # The tokens are read at request time from the unit's credential and its private directory.
   githubToken = "${dev.paths.egress.private}/github-token";
   openaiKey = "${dev.paths.egress.private}/openai-key";
+  githubRewrite."http://127.0.0.1:${toString dev.egress.github.port}/".insteadOf = [
+    "https://github.com/"
+    "git@github.com:"
+    "ssh://git@github.com/"
+  ];
   gateway = config.sam.fleet.listeners.gateway-api;
   headless = a: i: lib.elem a i.headlessAgents;
   # the hosts.nix entries with the runtime-host role, by hostName (as ssh-known-hosts.nix reads the table)
@@ -501,16 +506,17 @@ in
           missing = "sam.workers: an instance with egress.github.repos is signed with the token in sam.workers.ghHostsFile, which this host does not set.";
           prepare = [ (lib.getExe githubTokenFromHosts) ];
           guest.env.GH_TOKEN = "held-by-the-host";
-          # mkForce: the fleet's git sends sammasak's repos to ssh, and git applies only the longest rewrite
-          guest.config.home-manager.users.${user} = {
-            programs.git.settings.url = lib.mkForce {
-              "http://127.0.0.1:${toString dev.egress.github.port}/".insteadOf = [
-                "https://github.com/"
-                "git@github.com:"
-                "ssh://git@github.com/"
-              ];
+          guest.config = {
+            # also the system's: a pool attempt's HOME holds no Home Manager files, and its push URL is ssh
+            programs.git = {
+              enable = true;
+              config.url = githubRewrite;
             };
-            xdg.configFile."gh/config.yml".text = "http_unix_socket: ${dev.egress.github.socket}\n";
+            # mkForce: the fleet's git sends sammasak's repos to ssh, and git applies only the longest rewrite
+            home-manager.users.${user} = {
+              programs.git.settings.url = lib.mkForce githubRewrite;
+              xdg.configFile."gh/config.yml".text = "http_unix_socket: ${dev.egress.github.socket}\n";
+            };
           };
         };
         openai = {

@@ -110,7 +110,7 @@ JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a C
 
 ## Runner (#652)
 
-`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1` and `pool2`, and
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1` to `pool3`, and
 on msi for its slots against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
 (its agents and capabilities; with a poweroff timer only while the claim's hold ends before it), `start`, then
 `systemctl start exec-pool-exec@<slot>`, then `checkpoint` and the settle or park, the result recorded
@@ -215,7 +215,8 @@ whole tree, migration 0012), and then final for 7 days or waiting 14 days untouc
 that long without that is stale and kept, a final one without it that ran a turn kept and counted
 (`exec_pool_sessions_gc_kept`, no alert), and `needs_review` is never eligible.
 `exec-pool sessions` prints every session, one JSON object per line (task_id, state, last_change, hosts, handed_back,
-eligible, stale, kept; `--gc` the eligible ones), and the remover moves only a line both eligible and handed_back; ExecPoolSessionStuck fires on a session in review or stale for a day.
+eligible, stale, kept, and dir, the hex of the task id its trees are named by under `.sessions` and `.sessions-store`,
+`Sessions::hex`), and the remover moves only a line both eligible and handed_back, by its dir; ExecPoolSessionStuck fires on a session in review or stale for a day.
 No producer sets `handed_back` yet (the runner reports only the branch's name), so until one does no session is
 eligible, the remover moves nothing, and every one parked 14 days is stale and alerts. A park's own time (the agent's exit to the settle) is not
 measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's

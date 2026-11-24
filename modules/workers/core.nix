@@ -1127,6 +1127,9 @@ in
           [[ -z $held ]] || { printf '%s: not reset, the guest holds work that is not pushed:\n%s\n' "$n" "$held" >&2; exit 1; }
           systemctl stop "container@$n.service"
           install -d -m 0700 ${lib.escapeShellArg cfg.stateDir}/.trash
+          # a pool slot is reset every task turn, seconds apart in a session: without this the container's start limit
+          # (startLimitBurst below) fails it on the fourth turn in ten minutes
+          systemctl reset-failed "container@$n.service"
           if ! ${resetSteps} "$n"; then
             systemctl start "container@$n.service" || true
             echo "$n: the reset failed after the stop; the container was started again on what is left" >&2

@@ -69,7 +69,8 @@ retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-
 | `enable` | `false` | off, nothing moves (pinned by `scripts/test-workers-eval.py`) |
 | `slots` | `0` | how many slots (unsigned) |
 | `memory.reserved`, `cpu.reserved` | `"2G"`, `2` | each slot's, as an instance's |
-| `credentials` | `[ ]` | which host credentials a slot may hold (acer's and msi's: `id_ed25519`) |
+| `credentials` | `[ ]` | which host credentials a slot may hold (msi's: `id_ed25519`) |
+| `github.repos` | `[ ]` | each slot's `egress.github.repos`: git and gh to these repositories through the host's GitHub proxy, no credential in the slot (acer's; [execution-pool-credentials.md](records/execution-pool-credentials.md)) |
 | `agents` | `[ ]` | agents a task may run in a slot (`claude`): each slot's `headlessAgents`, the egress route a named worker of that agent has (the anthropic proxy, no credential in the guest), while its `agent` stays `none` and no session starts |
 | `rootInGuest` | `false` | each slot's |
 
@@ -171,7 +172,8 @@ the package signed `msi-ms7758-store-1`. Evaluation is not shared: a first
 A container that never gets ready is retried 3 times in 10 minutes and then stays `failed` (start limit). Each switch
 calls `reset-failed` (clearing the limit) and restarts the active targets, `machines.target` among them, which starts
 it again with a fresh allowance; by hand, `systemctl reset-failed container@<n>` first, because a 4th start inside the
-10 minutes is refused ("repeated too quickly").
+10 minutes is refused ("repeated too quickly"). `dev-env-reset@<n>` clears it too, so a pool slot, reset every task
+turn, never reaches it.
 
 ## Alerts
 

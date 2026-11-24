@@ -944,13 +944,13 @@ def check_pool_compat():
           f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
     a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
-    # acer's pool1 holds the push key (check_runner); nothing else of the host's
+    # acer's pool1 pushes through the GitHub proxy (check_runner) and holds nothing of the host's
     leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/"))
-              and not b.endswith(("/ssh_host_ed25519_key", ".pub")) and b != "/var/lib/host-credentials/id_ed25519"]
-    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "llm-gateway-egress", "openai-egress"] and not leaked
+              and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "github-egress", "llm-gateway-egress", "openai-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
-          f"executionPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
+          f"executionPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, github, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
@@ -1009,9 +1009,11 @@ let
   msi = flake.nixosConfigurations.msi-ms7758.config;
   r = acer.systemd.services.exec-pool-runner-pool1;
   # a slot's push key: its credentials, host-credential binds beside the sshd host key and public keys every
-  # environment binds, its ~/.ssh links, and the helper's git identity
+  # environment binds, its ~/.ssh links, its GitHub proxy's repositories and rewrite, and the helper's git identity
   push = c: n: {
     inherit (c.services.devEnvironments.instances.${n}) credentials;
+    repos = c.services.devEnvironments.instances.${n}.egress.github.repos;
+    rewrite = c.containers.${n}.config.environment.etc.gitconfig.text or null;
     binds = builtins.filter (b: builtins.match "/var/lib/host-credentials/.*" b != null && builtins.match ".*(/ssh_host_ed25519_key|[.]pub)" b == null) (builtins.attrNames c.containers.${n}.bindMounts);
     links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) c.containers.${n}.config.systemd.tmpfiles.rules;
     git = c.systemd.services."exec-pool-exec@".environment;
@@ -1070,23 +1072,34 @@ def check_runner():
           and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
           and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
           f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
-    # a slot's container restarts and its reset and helper start once per task turn, seconds apart in a session: three
-    # container starts in ten minutes failed acer's pool1 with start-limit-hit
+    # a slot's reset restarts its container once per task turn, seconds apart in a session: the reset clears the
+    # container's start limit, which still ends a guest that never gets ready
+    script = got.get("reset", "")
+    cleared = script.find('systemctl reset-failed "container@$n.service"')
     for host, n in (("acer", 3), ("msi", 4)):
         lim = got.get("limits", {}).get(host, {})
-        check(lim.get("slots") == ["0"] * n and lim.get("exec") == "0" and lim.get("reset") is None
+        check(lim.get("slots") == ["600"] * n
+              and 0 <= cleared < script.find('systemctl start "container@$n.service"')
+              and lim.get("exec") == "0" and lim.get("reset") is None
               and lim.get("resets") == [{"overrideStrategy": "asDropin", "text": "[Unit]\nStartLimitIntervalSec=0\n"}] * n,
-              f"{host}: each slot's container@, exec-pool-exec@ and each slot's dev-env-reset@ have no start limit; the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
+              f"{host}: each slot's container@ keeps the core's 600 s / 3 starts, which dev-env-reset@ clears before it starts the container; exec-pool-exec@ and each slot's dev-env-reset@ have no start limit, the shared reset template keeps its own ({lim or out.stderr.strip()[-300:]})")
     check(got.get("namedLimit") == {"StartLimitIntervalSec": "600", "StartLimitBurst": "3"},
-          f"a named worker's container keeps its start limit ({got.get('namedLimit') or out.stderr.strip()[-300:]})")
+          f"a named worker's container keeps the core's start limit ({got.get('namedLimit') or out.stderr.strip()[-300:]})")
     want = [f"acer-{n}" for n in acer_slots] + [f"msi-{n}" for n in msi_slots]
     check(sorted(got.get("push", {})) == sorted(want), f"every slot of acer and msi is checked for its push key ({sorted(got.get('push', {}))})")
     for host, p in got.get("push", {}).items():
         links, git = p.get("links", []), p.get("git", {})
-        check(p.get("credentials") == ["id_ed25519"] and p.get("binds") == ["/var/lib/host-credentials/id_ed25519"]
-              and len(links) == 1 and "/.ssh/id_ed25519 " in links[0]
-              and git.get("EXEC_POOL_GIT_NAME") == "sammasak" and git.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
-              f"{host} holds the host's push key alone, linked as ~/.ssh/id_ed25519, no gh login, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
+        if host.startswith("acer"):
+            # an attempt's HOME has no Home Manager files: the system's git config sends its ssh push URL to the proxy
+            held = (p.get("credentials") == [] and p.get("binds") == [] and links == [] and "sammasak/nixos-config" in p.get("repos", [])
+                    and all(f'insteadOf = "{u}"' in (p.get("rewrite") or "") for u in ("https://github.com/", "git@github.com:", "ssh://git@github.com/")))
+            what = "holds no GitHub credential, pushes through the host's GitHub proxy for its listed repos, rewritten in the system's git config"
+        else:
+            held = (p.get("credentials") == ["id_ed25519"] and p.get("binds") == ["/var/lib/host-credentials/id_ed25519"] and p.get("repos") == []
+                    and len(links) == 1 and "/.ssh/id_ed25519 " in links[0])
+            what = "holds the host's push key alone, linked as ~/.ssh/id_ed25519, no gh login"
+        check(held and git.get("EXEC_POOL_GIT_NAME") == "sammasak" and git.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
+              f"{host} {what}, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
 
 
 def check_nested(facts):
@@ -1309,66 +1322,69 @@ def check_sessions_gc():
     text = pathlib.Path(exe.group(1)).read_text()
     with tempfile.TemporaryDirectory() as d:
         state, metrics, own, listed = (pathlib.Path(d, n) for n in ("state", "metrics", "own", "sessions"))
+        # the runner's directory name for a task id (workspace.rs Sessions::hex); t1 is a real id's
+        ids = {"t1": "cli-c86629271199d5b7", "t2": "cli-2", "t3": "cli-3", "t4": "cli-4", "o1": "cli-o1", "o2": "cli-o2"}
+        hx = lambda i: ids.get(i, i).encode().hex()
         for p in (state / ".trash", metrics, own, state / ".sessions/dock/pool1/cur/work"):
             p.mkdir(parents=True)
-        for t in ("t1/tree/work", "t3/tree/work", "o1/tree/work"):
-            (state / ".sessions" / t).mkdir(parents=True)
-        (state / ".sessions/t2").mkdir()
+        for t in ("t1", "t3", "o1"):
+            (state / ".sessions" / hx(t) / "tree/work").mkdir(parents=True)
+        (state / ".sessions" / hx("t2")).mkdir()
         for c in ("t1", "t2", "o2"):
-            (state / ".sessions-store" / c / "tree").mkdir(parents=True)
+            (state / ".sessions-store" / hx(c) / "tree").mkdir(parents=True)
         script = text.replace("/run/exec-pool-sessions-gc-list/sessions", str(listed)).replace("/var/lib/exec-pool-sessions-gc", str(own))
         script = script.replace("/var/lib/workers", str(state)).replace("/run/exec-pool-sessions-gc", str(metrics))
         pathlib.Path(d, "gc").write_text(script)
-        line = lambda i, eligible=True, handed_back=True: json.dumps({"task_id": i, "state": "cancelled", "last_change": "2026-11-01T00:00:00Z",
+        line = lambda i, eligible=True, handed_back=True, dir=None: json.dumps({"task_id": ids.get(i, i), "dir": dir or hx(i), "state": "cancelled", "last_change": "2026-11-01T00:00:00Z",
                                                                       "hosts": ["acer-swift"], "eligible": eligible, "handed_back": handed_back})
-        known = lambda i: json.dumps({"task_id": i, "eligible": False, "handed_back": None})
+        known = lambda i: json.dumps({"task_id": ids[i], "dir": hx(i), "eligible": False, "handed_back": None})
 
         # the list as `exec-pool sessions` prints it: t1 to t4 known, the given lines eligible; None: no list
         def run(eligible, listed_ok=True):
             listed.unlink(missing_ok=True)
             if listed_ok:
-                ids = {json.loads(e).get("task_id") for e in eligible if e.startswith("{")}
-                listed.write_text("".join(e + "\n" for e in eligible) + "".join(known(i) + "\n" for i in ("t1", "t2", "t3", "t4") if i not in ids))
+                given = {json.loads(e).get("task_id") for e in eligible if e.startswith("{")}
+                listed.write_text("".join(e + "\n" for e in eligible) + "".join(known(i) + "\n" for i in ("t1", "t2", "t3", "t4") if ids[i] not in given))
             return subprocess.run(["bash", str(pathlib.Path(d, "gc"))], capture_output=True, text=True)
 
         r = run([line("t1"), line("t2")])
         events = [json.loads(l) for l in r.stdout.splitlines() if l.startswith("{")]
         trash = sorted(p.name.rsplit("-", 2)[0] for p in (state / ".trash").iterdir())
-        check(r.returncode == 0 and trash == ["session-t1", "store-t1"] and not (state / ".sessions/t1").exists()
-              and (state / ".sessions/t3/tree").is_dir() and (state / ".sessions-store/t2").is_dir() and (state / ".sessions/t2").is_dir()
+        check(r.returncode == 0 and trash == [f"session-{hx('t1')}", f"store-{hx('t1')}"] and not (state / ".sessions" / hx("t1")).exists()
+              and (state / ".sessions" / hx("t3") / "tree").is_dir() and (state / ".sessions-store" / hx("t2")).is_dir() and (state / ".sessions" / hx("t2")).is_dir()
               and (state / ".sessions/dock/pool1/cur/work").is_dir()
               and [(e["event"], e.get("kind")) for e in events] == [("removed", "session"), ("removed", "store"), ("skipped", None)]
-              and all(e.get("state") == "cancelled" and e.get("hosts") == ["acer-swift"] for e in events[:2]),
-              f"an eligible parked tree and its store copy move to .trash with one JSON line each; a docked one, an ineligible one and the dock stay ({r.returncode}, {trash}, {events}, {r.stderr.strip()[-200:]})")
+              and all(e.get("state") == "cancelled" and e.get("hosts") == ["acer-swift"] and e.get("task_id") == ids["t1"] for e in events[:2]),
+              f"an eligible parked tree, named by the hex of its id cli-c86629271199d5b7, and its store copy move to .trash with one JSON line each; a docked one, an ineligible one and the dock stay ({r.returncode}, {trash}, {events}, {r.stderr.strip()[-200:]})")
         prom = (metrics / "sessions-gc.prom").read_text() if (metrics / "sessions-gc.prom").exists() else ""
         check('homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom and 'homelab_exec_pool_sessions_removed_total{kind="store"} 1' in prom
               and 'homelab_exec_pool_sessions_orphaned{kind="parked"} 1' in prom and 'homelab_exec_pool_sessions_orphaned{kind="store"} 1' in prom
-              and (state / ".sessions/o1/tree").is_dir() and (state / ".sessions-store/o2").is_dir(),
+              and (state / ".sessions" / hx("o1") / "tree").is_dir() and (state / ".sessions-store" / hx("o2")).is_dir(),
               f"the removed totals count each move, and a tree the queue does not know is counted as an orphan and stays ({prom!r})")
         (state / "outside").mkdir()
-        r = run([line("../outside"), line("t1")])
+        r = run([line("t9", dir="../outside"), line("t1")])
         prom = (metrics / "sessions-gc.prom").read_text()
         check(r.returncode != 0 and (state / "outside").is_dir() and 'homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom
               and r.stdout.count('"refused"') == 1,
-              f"an id that is not a plain name is refused and fails the run, moving nothing; the totals carry over runs ({r.returncode}, {r.stdout.strip()[-300:]})")
+              f"a dir that is not a hex name is refused and fails the run, moving nothing; the totals carry over runs ({r.returncode}, {r.stdout.strip()[-300:]})")
         r = run(["not json", line("t3")])
-        check(r.returncode != 0 and (state / ".sessions/t3/tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
+        check(r.returncode != 0 and (state / ".sessions" / hx("t3") / "tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
               f"a list that does not parse fails the run before any move ({r.returncode})")
-        (state / ".sessions/t3/tree/work/x").write_text("x")
+        (state / ".sessions" / hx("t3") / "tree/work/x").write_text("x")
         r = run([line("t3")], listed_ok=False)
-        check(r.returncode != 0 and (state / ".sessions/t3/tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
+        check(r.returncode != 0 and (state / ".sessions" / hx("t3") / "tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
               f"no list (the lister failed) fails the run with nothing moved and the textfile left as it was ({r.returncode})")
         r = run([line("t3", handed_back=False), line("t3x", eligible=False)])
-        check(r.returncode == 0 and (state / ".sessions/t3/tree/work/x").exists() and '"removed"' not in r.stdout,
+        check(r.returncode == 0 and (state / ".sessions" / hx("t3") / "tree/work/x").exists() and '"removed"' not in r.stdout,
               f"a line the queue calls eligible whose branch was not handed back whole, or one it does not call eligible, moves nothing ({r.returncode}, {r.stdout.strip()[-300:]})")
         prom = (metrics / "sessions-gc.prom").read_text()
-        (state / ".sessions/t4").symlink_to(state / ".sessions/t3")
-        (state / ".sessions-store/t4/tree").mkdir(parents=True)
+        (state / ".sessions" / hx("t4")).symlink_to(state / ".sessions" / hx("t3"))
+        (state / ".sessions-store" / hx("t4") / "tree").mkdir(parents=True)
         own.joinpath("removed-store").write_text("garbage")
-        r = run([line("dock"), line("t4")])
+        r = run([line("t8", dir="dock"), line("t4")])
         prom = (metrics / "sessions-gc.prom").read_text()
-        check(r.returncode != 0 and (state / ".sessions/dock/pool1/cur/work").is_dir() and (state / ".sessions-store/t4/tree").is_dir()
-              and (state / ".sessions/t3/tree/work/x").exists() and r.stdout.count('"refused"') == 2
+        check(r.returncode != 0 and (state / ".sessions/dock/pool1/cur/work").is_dir() and (state / ".sessions-store" / hx("t4") / "tree").is_dir()
+              and (state / ".sessions" / hx("t3") / "tree/work/x").exists() and r.stdout.count('"refused"') == 2
               and 'homelab_exec_pool_sessions_removed_total{kind="store"} 0' in prom,
               f"the id dock and a session that is a link are refused, the latter's store copy kept; a counter that is not a number restarts at 0 ({r.returncode}, {r.stdout.strip()[-300:]}, {prom!r})")
 
