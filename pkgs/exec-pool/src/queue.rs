@@ -79,6 +79,9 @@ pub enum QueueError {
     Db { code: String, message: String },
     #[error("the queue connects over a Unix socket only; give host=/path/to/socket/dir")]
     NotUnixSocket,
+    /// A remote runner's conninfo: TCP hosts alone, and no password of its own (it comes from the credential).
+    #[error("a remote queue is TCP hosts with no password in the conninfo")]
+    NotRemote,
     #[error("the database is at migration {0}, newer than this binary's {VERSION}")]
     SchemaAhead(i32),
     #[error("the database is not migrated")]
@@ -397,6 +400,31 @@ impl Store {
         {
             return Err(QueueError::NotUnixSocket);
         }
+        Ok(Self {
+            config,
+            client: None,
+        })
+    }
+
+    /// A queue on another host, for a remote slot's runner (`exec_pool_runner`, by scram over the fleet LAN): every
+    /// host in `conninfo` TCP, the password given apart, never in `conninfo`. Connecting waits for the first call.
+    ///
+    /// # Errors
+    /// [`QueueError::NotRemote`] for a socket host or a password in `conninfo`; a malformed `conninfo`.
+    pub fn open_remote(conninfo: &str, password: &[u8]) -> Result<Self, QueueError> {
+        let mut config = Config::from_str(conninfo).map_err(|e| QueueError::Db {
+            code: "conninfo".to_owned(),
+            message: e.to_string(),
+        })?;
+        let hosts = config.get_hosts();
+        if hosts.is_empty()
+            || hosts.iter().any(|h| !matches!(h, Host::Tcp(_)))
+            || config.get_password().is_some()
+            || password.is_empty()
+        {
+            return Err(QueueError::NotRemote);
+        }
+        config.password(password);
         Ok(Self {
             config,
             client: None,

@@ -229,6 +229,31 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
     })
 }
 
+/// Whether a lease taken at `now` (unix seconds) for `lease_secs` ends before the host's scheduled poweroff, from
+/// `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer: a claim the poweroff
+/// would cut short sends its attempt to review. A timer with no next elapse powers nothing off.
+///
+/// # Errors
+/// A timer that is not loaded, or output this does not read: the runner claims nothing then.
+pub fn claim_fits(now: u64, lease_secs: u32, show: &str) -> Result<bool, String> {
+    let field = |k: &str| {
+        show.lines()
+            .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+    };
+    if field("LoadState") != Some("loaded") {
+        return Err(format!("off timer not loaded: {show:?}"));
+    }
+    match field("NextElapseUSecRealtime") {
+        Some("") => Ok(true),
+        Some(next) => next
+            .strip_prefix('@')
+            .and_then(|n| n.parse::<u64>().ok())
+            .map(|off| now.saturating_add(u64::from(lease_secs)) <= off)
+            .ok_or_else(|| format!("off timer's next elapse unread: {next:?}")),
+        None => Err(format!("off timer's next elapse missing: {show:?}")),
+    }
+}
+
 /// The last [`TAIL_BYTES`] of `bytes`, lossy UTF-8.
 #[must_use]
 pub fn tail(bytes: &[u8]) -> String {
@@ -289,6 +314,30 @@ mod tests {
             &json!({ "schema_version": 1, "slot": "pool1", "attempt_id": "t1.a", "lease_epoch": 3, "task": task })
                 .to_string(),
         )
+    }
+
+    #[test]
+    fn a_claim_fits_only_a_lease_that_ends_before_the_poweroff() {
+        let show = |next: &str| format!("LoadState=loaded\nNextElapseUSecRealtime={next}\n");
+        // 20:10 and a 50-minute lease against 21:00
+        let off = 1_764_014_400;
+        assert_eq!(
+            claim_fits(off - 3000, 3000, &show(&format!("@{off}"))),
+            Ok(true)
+        );
+        assert_eq!(
+            claim_fits(off - 2999, 3000, &show(&format!("@{off}"))),
+            Ok(false)
+        );
+        assert_eq!(claim_fits(off + 60, 3000, &show("")), Ok(true));
+        for bad in [
+            "LoadState=not-found\nNextElapseUSecRealtime=\n".to_owned(),
+            show("Tue 2026-11-24 21:00:00 CET"),
+            "LoadState=loaded\n".to_owned(),
+            String::new(),
+        ] {
+            assert!(claim_fits(0, 3000, &bad).is_err(), "{bad:?}");
+        }
     }
 
     fn d(attempt: &str, epoch: u64, r: Option<&ExecResult>) -> Settle {

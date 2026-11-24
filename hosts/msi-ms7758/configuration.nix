@@ -14,6 +14,7 @@
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/shunt-metrics.nix
+    ../../modules/homelab/exec-pool-runner.nix
   ];
 
   homelab.journalCollector.enable = true;
@@ -44,9 +45,20 @@
       "research"
       "nats"
     ];
+    # one pool slot, run by a runner claiming from acer's queue (modules/homelab/exec-pool-runner.nix)
+    executionPool = {
+      enable = true;
+      slots = 1;
+      agents = [ "claude" ];
+    };
     labelPrefix = "msi";
     shutdownNotice = "Mon-Fri 20:40";
     pool.memory = "10G";
+  };
+
+  homelab.execPool.runner = {
+    enable = true;
+    queue = "exec-pool-db";
   };
 
   sam.profile = {
