@@ -857,7 +857,28 @@ POOL_CASES = [
     ("a slot's name declared in the core", "{ sam.workers.executionPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name retired", '{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.retired = [ "pool1" ]; }', "pool1 is a pool slot's name"),
     ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
+    ("codex without a codex login", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
+    ("pi on a host without the Pi key", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
 ]
+# acer (a pi host, the gateway's own) with every agent: one proxy route each, placeholders in the guest, no credential bound
+POOL_ALL = r"""
+let
+  c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.extendModules { modules = [ {
+    sam.workers.codexAuthFile = "/home/lukas/.codex/auth.json";
+    sam.workers.executionPool.agents = [ "claude" "codex" "pi" ];
+  } ]; }).config;
+  g = c.containers.pool1.config;
+in {
+  failing = map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
+  sockets = builtins.filter (s: builtins.match ".*-egress" s != null) (builtins.attrNames g.systemd.sockets);
+  binds = builtins.attrNames c.containers.pool1.bindMounts;
+  codexKey = g.environment.variables.CODEX_API_KEY;
+  codexUrl = builtins.head (builtins.split "
+" g.home-manager.users.lukas.home.file.".codex/config.toml".text);
+  pi = builtins.any (p: (p.pname or "") == "pi-coding-agent") g.home-manager.users.lukas.home.packages;
+  creds = c.systemd.services.dev-env-egress.serviceConfig.LoadCredential;
+}
+"""
 POOL_TYPED = [
     ("negative slots", "{ sam.workers.executionPool = { enable = true; slots = -1; }; }", "is not of type `unsigned integer"),
     ("a slot reserve that is no size", '{ sam.workers.executionPool = { enable = true; slots = 1; memory.reserved = "2 GB"; }; }', "is not of type `string matching the pattern"),
@@ -912,6 +933,13 @@ def check_pool_compat():
           and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "/run/egress"]
           and on.get("agents") == named and on.get("shutdown") == absent.get("shutdown"),
           f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
+    out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
+    a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
+    leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+    check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "llm-gateway-egress", "openai-egress"] and not leaked
+          and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
+          and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
+          f"executionPool.agents = [ \"claude\" \"codex\" \"pi\" ] on acer: pool1 gets the anthropic, openai and llm-gateway proxies, Codex and Pi pointed at them with placeholders, and the keys only in the proxy's credentials ({a.get('error') or {**a, 'leaked': leaked} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)

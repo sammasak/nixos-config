@@ -17,6 +17,9 @@ let
   onGithub = i: i.egress.github.repos != [ ];
   # The tokens are read at request time from the unit's credential and its private directory.
   githubToken = "${dev.paths.egress.private}/github-token";
+  openaiKey = "${dev.paths.egress.private}/openai-key";
+  gateway = config.sam.fleet.listeners.gateway-api;
+  headless = a: i: lib.elem a i.headlessAgents;
   # the hosts.nix entries with the runtime-host role, by hostName (as ssh-known-hosts.nix reads the table)
   runtimeHosts = lib.sort lib.lessThan (
     lib.mapAttrsToList (name: h: h.hostDir or name) (
@@ -47,6 +50,18 @@ let
       umask 077
       printf '%s' "$tok" > ${githubToken}
       printf 'x-access-token:%s' "$tok" | base64 -w0 > ${githubToken}.basic
+    '';
+  };
+
+  # `codex login --with-api-key` keeps the key in auth.json; a ChatGPT login's tokens refresh, so the proxy takes none.
+  openaiKeyFromAuth = pkgs.writeShellApplication {
+    name = "dev-env-egress-openai-key";
+    runtimeInputs = [ pkgs.jq ];
+    text = ''
+      key=$(jq -r '.OPENAI_API_KEY // empty' "$CREDENTIALS_DIRECTORY/codex-auth.json")
+      [[ -n $key ]] || echo "no OPENAI_API_KEY in the codex auth.json (a ChatGPT login?): OpenAI calls go unsigned" >&2
+      umask 077
+      printf '%s' "$key" > ${openaiKey}
     '';
   };
 
@@ -265,7 +280,13 @@ let
       };
     };
     options.headlessAgents = mkOption {
-      type = types.listOf (types.enum [ "claude" ]);
+      type = types.listOf (
+        types.enum [
+          "claude"
+          "codex"
+          "pi"
+        ]
+      );
       default = [ ];
       description = "Agents something other than the session surface starts in the instance, beside `agent`: each gets the egress route an instance with that `agent` does, and no session.";
     };
@@ -315,6 +336,12 @@ in
       type = types.nullOr types.externalPath;
       default = null;
       description = "The host user's gh `hosts.yml`, bound read-only; null when the host user has no gh login.";
+    };
+    codexAuthFile = mkOption {
+      type = types.nullOr types.externalPath;
+      default = null;
+      example = "/home/alice/.codex/auth.json";
+      description = "The host user's Codex `auth.json` from `codex login --with-api-key`, read by the proxy alone; null when the host user has no such login.";
     };
     ntfyUrl = mkOption {
       type = types.nullOr types.str;
@@ -381,7 +408,7 @@ in
       egressInaccessible = [ "/run/secrets.d" ]; # sops-nix: every host secret; the proxy gets its own as a credential
       egress = {
         anthropic = {
-          for = i: i.agent == "claude" || lib.elem "claude" i.headlessAgents;
+          for = i: i.agent == "claude" || headless "claude" i;
           site = _: ''
             @other not path /v1/*
             respond @other 403
@@ -485,6 +512,72 @@ in
             };
             xdg.configFile."gh/config.yml".text = "http_unix_socket: ${dev.egress.github.socket}\n";
           };
+        };
+        openai = {
+          for = headless "codex";
+          site = _: ''
+            @other not path /v1/*
+            respond @other 403
+            ${upstream "https://api.openai.com" "Bearer {file.${openaiKey}}"}
+          '';
+          port = 4103;
+          secrets."codex-auth.json" = cfg.codexAuthFile;
+          missing = "sam.workers: a codex instance's calls are signed with the API key in sam.workers.codexAuthFile, which this host does not set.";
+          prepare = [ (lib.getExe openaiKeyFromAuth) ];
+          guest.env.CODEX_API_KEY = "held-by-the-host";
+          # mkBefore: a top-level key, so ahead of the file's first table
+          guest.config.home-manager.users.${user}.home.file.".codex/config.toml".text = lib.mkBefore ''
+            openai_base_url = "http://127.0.0.1:${toString dev.egress.openai.port}/v1"
+          '';
+        };
+        # Pi's own route: the gateway holds the provider keys, the proxy the host's project key.
+        llm-gateway = {
+          for = headless "pi";
+          site = _: ''
+            @other not path /v1/*
+            respond @other 403
+            ${upstream gateway.url "Bearer {file.${dev.paths.egress.credentials}/llm_gateway_pi_key}"}
+          '';
+          port = 4104;
+          secrets.llm_gateway_pi_key =
+            if
+              config.sops.secrets ? llm_gateway_pi_key
+              && lib.elem config.networking.hostName ([ gateway.host ] ++ gateway.from)
+            then
+              config.sops.secrets.llm_gateway_pi_key.path
+            else
+              null;
+          missing = "sam.workers: a pi instance's calls are signed with the sops secret llm_gateway_pi_key (sam.profile.pi) and go to sam.fleet.listeners.gateway-api, which must admit this host.";
+          guest.env = {
+            PI_SKIP_VERSION_CHECK = "1";
+            PI_TELEMETRY = "0";
+          };
+          guest.config.home-manager.users.${user} =
+            { lib, ... }:
+            let
+              models = pkgs.writeText "pi-models.json" (
+                builtins.toJSON {
+                  providers.homelab = import ../programs/cli/pi/homelab-provider.nix {
+                    baseUrl = "http://127.0.0.1:${toString dev.egress.llm-gateway.port}/v1";
+                    apiKey = "held-by-the-host";
+                  };
+                }
+              );
+              settings = pkgs.writeText "pi-settings.json" (
+                builtins.toJSON {
+                  defaultProvider = "homelab";
+                  defaultModel = "auto";
+                }
+              );
+            in
+            {
+              home.packages = [ pkgs.pi-coding-agent ];
+              # copies, not store links: Pi rewrites its settings
+              home.activation.piGateway = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+                run install -D -m 0644 ${models} "$HOME/.pi/agent/models.json"
+                run install -D -m 0644 ${settings} "$HOME/.pi/agent/settings.json"
+              '';
+            };
         };
         # A path to the host's relay, which adds the token; the guest's Claude and Codex send to the same 127.0.0.1:4319.
         otlp = {
