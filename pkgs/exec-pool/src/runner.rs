@@ -380,7 +380,6 @@ pub fn session_checkpoint(task: &TaskSpec, epoch: u64, at: &ParkedAt) -> Checkpo
         uri: format!("{}#{}", task.source.repo, at.name),
         digest: at.commit.clone().unwrap_or_else(|| "absent".to_owned()),
         generation: epoch,
-        hosts: Vec::new(),
     }
 }
 

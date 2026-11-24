@@ -8,8 +8,8 @@ pub mod queue;
 pub mod runner;
 pub mod snapshot;
 mod state;
-pub mod sync;
 pub mod task_result;
+pub mod textfile;
 pub mod turn_log;
 pub mod wake;
 pub mod workspace;
@@ -292,9 +292,6 @@ pub struct Slot {
     pub agents: BTreeSet<Agent>,
     #[serde(default)]
     pub pins: Pins,
-    /// The host can pull a parked session's tree from the store ([`STORE`]), and pushes its own there.
-    #[serde(default)]
-    pub store: bool,
 }
 
 /// An opaque, versioned pointer to a checkpoint manifest; its contents are not part of this contract yet.
@@ -307,9 +304,6 @@ pub struct CheckpointRef {
     /// The lease epoch of the turn that wrote it; 0 in a checkpoint from before sessions.
     #[serde(default)]
     pub generation: u64,
-    /// The hosts that hold it.
-    #[serde(default)]
-    pub hosts: Vec<String>,
 }
 
 /// One external effect an attempt reports, e.g. `kind = "github_pr"`, `id = "sammasak/nixos-config#649"`.
@@ -507,20 +501,6 @@ impl CheckpointRef {
         non_empty("uri", &self.uri)?;
         non_empty("digest", &self.digest)
     }
-}
-
-/// The name in [`CheckpointRef::hosts`] of the always-on store a parked tree is pushed to.
-pub const STORE: &str = "store";
-
-/// Whether a runner on `host` may claim an attempt with `checkpoint`; a host without the tree would start afresh.
-///
-/// Any host before the first park (no checkpoint, or one that names no host, as one from before sessions); after it,
-/// a host that holds the tree, or, when `store` says `host` can pull from the store, any host while the store does.
-#[must_use]
-pub fn reachable(checkpoint: Option<&CheckpointRef>, host: &str, store: bool) -> bool {
-    checkpoint.is_none_or(|c| {
-        c.hosts.is_empty() || c.hosts.iter().any(|h| h == host || (store && h == STORE))
-    })
 }
 
 impl Receipt {

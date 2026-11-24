@@ -1266,16 +1266,12 @@ in
             printf 'homelab_dev_env_sessions_bytes{kind="%s"} %s\n' "$kind" "$b"
             printf 'homelab_dev_env_session_trees{kind="%s"} %s\n' "$kind" "$#"
           }
-          trash=("$d"/.trash/*) parked=()
-          for e in "$d"/.sessions/*/tree; do [[ $e == "$d"/.sessions/dock/tree ]] || parked+=("$e"); done
+          trash=("$d"/.trash/*)
           tb=$(total "''${trash[@]}")
           fs=$(df -B1 --output=size "$d" | tail -n 1 | tr -d ' ')
           [[ $fs =~ ^[0-9]+$ ]] || { echo "df gave no size for $d" >&2; exit 1; }
           {
-            # not .sessions/dock/tree, a slot named tree
-            emit parked "''${parked[@]}"
             emit docked "$d"/.sessions/dock/*/cur
-            emit store "$d"/.sessions-store/*
             # retired homes and removed sessions, freed a week after they were moved there
             printf 'homelab_dev_env_trash_bytes %s\n' "$tb"
             printf 'homelab_dev_env_trash_entries %s\n' "''${#trash[@]}"

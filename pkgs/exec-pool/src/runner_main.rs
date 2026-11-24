@@ -37,8 +37,8 @@ use exec_pool::runner::{
     session_checkpoint, tail, tree_check, while_unavailable,
 };
 use exec_pool::snapshot::{self, Git, Plan, Resume, listed, plan};
-use exec_pool::sync;
 use exec_pool::task_result::TaskResult;
+use exec_pool::textfile;
 use exec_pool::turn_log::{self, LOG_BYTES};
 use exec_pool::wake::{self, Wake};
 use exec_pool::workspace::{self, HomeId, SESSION_HOME, SESSION_WORK, Workspace, admit};
@@ -1218,7 +1218,7 @@ impl Guest {
 
 /// The slot's dock for a session turn, and the mark that tells the runner work is in it that is not on its remote.
 struct Dock<'a> {
-    dock: workspace::Dock,
+    on_host: workspace::Dock,
     busy: PathBuf,
     /// The runner's runtime directory, where the transcript comes from and goes to.
     runtime: PathBuf,
@@ -1244,7 +1244,7 @@ impl<'a> Dock<'a> {
             "EXEC_POOL_CAT",
         ])?;
         Ok(Self {
-            dock: workspace::Dock::new(Path::new(&sessions), slot),
+            on_host: workspace::Dock::new(Path::new(&sessions), slot),
             busy: slot_dir.join(DOCK_BUSY),
             runtime: PathBuf::from(runtime),
             slot,
@@ -1262,7 +1262,7 @@ impl<'a> Dock<'a> {
             "the work of task {}'s turn is in the dock at {}, not on its remote: {why}; push it from there or archive \
              it, then rm {} and the slot's quarantine marker",
             m.task.id,
-            self.dock.cur().display(),
+            self.on_host.cur().display(),
             self.busy.display()
         )
     }
@@ -1291,9 +1291,29 @@ impl<'a> Dock<'a> {
             format!("{}\n", self.held(m, "its turn runs in it")),
         )
         .map_err(|e| format!("{}: {e}", self.busy.display()))?;
-        self.dock
+        self.on_host
             .make((home.uid(), home.gid()), transcript.as_deref())
             .map_err(|e| e.to_string())
+    }
+
+    /// [`Dock::open`], then where the last park left the session's work, which the turn's clone goes back to; whether
+    /// the dock was made, and that.
+    fn ready(
+        &self,
+        (m, slot_home, guest): (&Manifest, &Path, &Guest),
+        tools: (&str, &str),
+        dir: (&Path, &File),
+        note: &dyn Fn(&str, &dyn std::fmt::Display),
+    ) -> (bool, Option<Resume>) {
+        if let Err(e) = self.open(m, slot_home) {
+            note("no dock", &e);
+            return (false, None);
+        }
+        let resume = guest
+            .resume(m, tools, dir)
+            .inspect_err(|e| note("not listed", e))
+            .ok();
+        (true, resume)
     }
 
     /// After a turn its agent reached: its transcript to the runner, then its work to the remote, each into `result`
@@ -1401,7 +1421,7 @@ impl<'a> Dock<'a> {
         let t = Instant::now();
         let mut pause = PARK_PUSH_PAUSE;
         loop {
-            let e = match self.push_once((m, ws, guest), tools, (dir, err)) {
+            let e = match Self::push_once((m, ws, guest), tools, (dir, err)) {
                 Ok(at) => return Ok(at),
                 Err(e) => e,
             };
@@ -1411,7 +1431,7 @@ impl<'a> Dock<'a> {
             );
             if let Some(d) = &self.counts {
                 let file = d.join(format!("exec-pool-park-{}.prom", self.slot));
-                if let Err(e) = sync::bump(&file, PARK_PUSH_FAILURES, "") {
+                if let Err(e) = textfile::bump(&file, PARK_PUSH_FAILURES, "") {
                     eprintln!("exec-pool-exec: {}: {e}", file.display());
                 }
             }
@@ -1426,7 +1446,6 @@ impl<'a> Dock<'a> {
     /// One try at the park's [`Plan`]: the snapshot commit pushed to [`snapshot::wip_ref`], or that ref removed, or
     /// nothing; where the remote then holds the turn's work.
     fn push_once(
-        &self,
         (m, ws, guest): (&Manifest, &Workspace, &Guest),
         (git, env): (&str, &str),
         dir: (&Path, &File),
@@ -1506,7 +1525,7 @@ impl<'a> Dock<'a> {
     /// removed from it; a file that is not a regular one or does not parse is dropped and noted, never failing the
     /// park.
     fn take_wake(&self, note: &dyn Fn(&str, &dyn std::fmt::Display)) -> Option<Wake> {
-        let path = self.dock.cur().join("home").join(wake::FILE);
+        let path = self.on_host.cur().join("home").join(wake::FILE);
         let read = match read_regular(&path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return None,
             read => read,
@@ -1540,7 +1559,7 @@ impl<'a> Dock<'a> {
                 .unkept
                 .clone()
                 .filter(|_| ran)
-                .map_or_else(|| self.dock.clear().map_err(|e| e.to_string()), Err)
+                .map_or_else(|| self.on_host.clear().map_err(|e| e.to_string()), Err)
         } else {
             Err("a step of the turn is still in the guest".to_owned())
         };
@@ -1643,6 +1662,16 @@ fn begin(slot: &str) -> Result<Begun, String> {
     })
 }
 
+/// What a helper notes in the run's stderr file, as `exec-pool-exec: <what>: <e>`.
+fn note_to(err: &File) -> impl Fn(&str, &dyn std::fmt::Display) + '_ {
+    move |what, e| {
+        let _ = io::Write::write_all(
+            &mut &*err,
+            format!("exec-pool-exec: {what}: {e}\n").as_bytes(),
+        );
+    }
+}
+
 fn exec(slot: &str) -> Result<(), String> {
     let Begun {
         manifest,
@@ -1666,13 +1695,7 @@ fn exec(slot: &str) -> Result<(), String> {
         "EXEC_POOL_GIT_NAME",
         "EXEC_POOL_GIT_EMAIL",
     ])?;
-    let identity = (name, email);
-    let note = |what: &str, e: &dyn std::fmt::Display| {
-        let _ = io::Write::write_all(
-            &mut &err,
-            format!("exec-pool-exec: {what}: {e}\n").as_bytes(),
-        );
-    };
+    let note = note_to(&err);
     let slot_home = PathBuf::from(var("EXEC_POOL_SLOT_HOME")?);
     // a home an earlier attempt ran in is refused before anything runs in it: the attempt goes back to the queue
     let admitted = admit_home(&slot_home, &slot_dir.join(LAST_HOME))
@@ -1684,29 +1707,22 @@ fn exec(slot: &str) -> Result<(), String> {
         Some(_) => Some(Dock::from_env(slot, &slot_dir)?),
         None => None,
     };
-    let opened = match (&dock, admitted) {
-        (Some(d), true) => d
-            .open(&manifest, &slot_home)
-            .inspect_err(|e| note("no dock", e))
-            .is_ok(),
-        _ => false,
-    };
-    // where the last park left the session's work: what the turn's clone goes back to
-    let resume = if opened {
-        guest
-            .resume(&manifest, (&git, &env), (&dir, &err))
-            .inspect_err(|e| note("not listed", e))
-            .ok()
-    } else {
-        None
+    let (opened, resume) = match (&dock, admitted) {
+        (Some(d), true) => d.ready(
+            (&manifest, &slot_home, &guest),
+            (&git, &env),
+            (&dir, &err),
+            &note,
+        ),
+        _ => (false, None),
     };
     let tools = (git.as_str(), env.as_str(), mkdir.as_str());
     let steps = match (&dock, &resume) {
-        (None, _) => manifest.steps(&ws, tools, (&identity.0, &identity.1)),
+        (None, _) => manifest.steps(&ws, tools, (&name, &email)),
         (Some(d), Some(r)) => manifest.session_steps(
             &ws,
             tools,
-            (&identity.0, &identity.1),
+            (&name, &email),
             (r, relink(&d.cp, &guest_home), &d.install),
         ),
         (Some(_), None) => Ok(Vec::new()),
@@ -1756,29 +1772,31 @@ fn exec(slot: &str) -> Result<(), String> {
     }
     if result.stage == Stage::Prepare {
         result.prepare_ms = ms(t);
-        let unready = match (admitted, &dock, opened, &resume) {
-            (false, ..) => "admit",
-            (true, Some(_), false, _) => "dock",
-            (true, Some(_), true, None) => "list",
-            _ => "manifest",
-        };
-        failed_preparing(slot, &mut result, unready);
+        let ready = (admitted, dock.is_some(), opened, resume.is_some());
+        failed_preparing(slot, &mut result, ready);
     }
     write_result(slot, &dir, result)
 }
 
-/// Names the step a run that never reached its agent failed at, `unready` when no prepare step did (refused the home,
-/// no dock made, the remote not listed, or no steps), and counts it in the slot's textfile,
+/// Names the step a run that never reached its agent failed at when no prepare step did, from `ready` (the home
+/// admitted, a session, its dock made, its remote listed): refused the home, no dock made, the remote not listed, or no
+/// steps; and counts it in the slot's textfile,
 /// `exec_pool_prepare_failures_total{step}`, if this host has one: the step is a bounded name, never the task's. A run
 /// stopped by a cancel or a drain did not fail.
-fn failed_preparing(slot: &str, result: &mut ExecResult, unready: &str) {
+fn failed_preparing(slot: &str, result: &mut ExecResult, ready: (bool, bool, bool, bool)) {
     if result.cancelled || result.drained {
         return;
     }
+    let unready = match ready {
+        (false, ..) => "admit",
+        (true, true, false, _) => "dock",
+        (true, true, true, false) => "list",
+        _ => "manifest",
+    };
     let step = result.failed_step.get_or_insert_with(|| unready.to_owned());
     if let Some(dir) = std::env::var_os("EXEC_POOL_TEXTFILE") {
         let file = PathBuf::from(dir).join(format!("exec-pool-prepare-{slot}.prom"));
-        let counted = sync::bump(&file, PREPARE_FAILURES, &format!("step=\"{step}\""));
+        let counted = textfile::bump(&file, PREPARE_FAILURES, &format!("step=\"{step}\""));
         if let Err(e) = counted {
             eprintln!("exec-pool-exec: {}: {e}", file.display());
         }

@@ -45,15 +45,10 @@ const USAGE: &str = "usage: exec-pool COMMAND
   wait ID [--timeout SECS]
                     blocks until the task settles (succeeded, failed, needs_review or cancelled) or, a session,
                     parks waiting, then prints its result
-  sessions [--gc]   one JSON object per line for each session, as the queue decides its removal: task_id, state,
-                    last_change, the hosts its tree may be on, dir (its directory's name, as the runner names it),
-                    handed_back, eligible and stale; with --gc only the eligible ones, which a remover may delete:
-                    only a session whose last turn's branch held its whole tree (handed_back) is (a stale one is
-                    kept: its tree may hold unpushed work)
   cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
                     seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
 /// Flags that take no value.
-const SWITCHES: [&str; 2] = ["gc", "follow"];
+const SWITCHES: [&str; 1] = ["follow"];
 /// How often `logs -f` reads the queue.
 const FOLLOW_POLL: Duration = Duration::from_secs(2);
 /// How often `wait` reads the queue, and how long it waits after the settle for the runner to record the result.
@@ -322,13 +317,6 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
                 }
             };
             println!("{}", json!({ "attempt": attempt, "status": status }));
-        }
-        "sessions" => {
-            args.only("sessions", &["gc"], 0)?;
-            store
-                .sessions(args.opt("gc").is_some())?
-                .iter()
-                .for_each(|s| println!("{s}"));
         }
         "cancel" => {
             args.only("cancel", &[], 1)?;

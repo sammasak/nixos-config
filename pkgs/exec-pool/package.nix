@@ -7,7 +7,6 @@
   clippy,
   rustfmt,
   postgresql,
-  rsync,
   git,
 }:
 let
@@ -34,7 +33,6 @@ rustPlatform.buildRustPackage {
   ];
   nativeCheckInputs = [
     postgresql
-    rsync
     git
   ];
   postCheck = ''

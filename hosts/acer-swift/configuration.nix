@@ -11,7 +11,6 @@
     ../../modules/homelab/llm-gateway.nix
     ../../modules/homelab/authentik.nix
     ../../modules/homelab/exec-pool.nix
-    ../../modules/homelab/exec-pool-store.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
     ../../modules/homelab/shunt-metrics.nix
@@ -62,9 +61,7 @@
   };
   homelab.execPool.runner = {
     enable = true;
-    store = "acer-swift";
   };
-  homelab.execPool.sessionGc.enable = true;
   # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
   homelab.execPool.remoteRunners = true;
   # the #494 usage spike: the workers' cgroup counters every minute (scripts/guest-records.py --usage)

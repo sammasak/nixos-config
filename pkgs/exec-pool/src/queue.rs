@@ -17,7 +17,7 @@ use crate::task_result::TaskResult;
 use crate::wake::Wake;
 use crate::{
     Attempt, CheckpointRef, Error, Event, Kind, ParkReason, Placement, Receipt, Resolution,
-    RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, reachable, transition,
+    RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, transition,
 };
 
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
@@ -401,8 +401,6 @@ const fn reason(kind: &Kind, to: Status) -> &'static str {
 /// attempt has waited queued, so a low priority is not starved; then the oldest.
 const CLAIM_ORDER: &str =
     "t.priority + floor(extract(epoch FROM now() - a.changed_at) / 600) DESC, a.changed_at, a.id";
-const RAN_ON: &str = "CASE WHEN t.session THEN (SELECT e.host FROM events e WHERE e.attempt_id = a.id \
-    AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1) END";
 
 /// The columns an attempt row is read with, under `a` (attempts) and `t` (tasks).
 const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a.host, a.slot, a.pins, \
@@ -830,10 +828,9 @@ impl Store {
         })
     }
 
-    /// Leases the queued attempt that fits `slot` for `lease_secs` and whose checkpoint is [`reachable`] from its host (a
-    /// session that ran but never parked: only where it ran) with the highest priority, its task's plus one for every
-    /// 10 minutes it has waited, the oldest among equals, skipping rows another claimer holds. A live one is never
-    /// stopped for it.
+    /// Leases the queued attempt that fits `slot` for `lease_secs` with the highest priority, its task's plus one for
+    /// every 10 minutes it has waited, the oldest among equals, skipping rows another claimer holds. A live one is never
+    /// stopped for it. Any host may take a session's turn: its work is on its remote and its transcript here.
     ///
     /// # Errors
     /// What [`Slot::validate`] rejects, or what the database reports (a slot with a live lease already included).
@@ -851,10 +848,10 @@ impl Store {
                 &[&slot.host, &slot.id, &agents],
             )?;
             // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips; a
-            // session's checkpoint, and the host its last try ran on, as they were read
+            // session's checkpoint as it was read
             let candidates = tx.query(
                 &format!(
-                    "SELECT a.id, t.spec, a.checkpoint, {RAN_ON} FROM attempts a JOIN tasks t ON t.id = a.task_id \
+                    "SELECT a.id, t.spec, a.checkpoint FROM attempts a JOIN tasks t ON t.id = a.task_id \
                      WHERE a.status = 'queued' ORDER BY {CLAIM_ORDER}"
                 ),
                 &[],
@@ -862,7 +859,6 @@ impl Store {
             for candidate in &candidates {
                 let task: TaskSpec = serde_json::from_value(candidate.try_get(1)?)?;
                 let raw: Option<Value> = candidate.try_get(2)?;
-                let ran_on: Option<&str> = candidate.try_get(3)?;
                 // one this runner cannot read is not its to take, and does not stop it taking another
                 let Ok(checkpoint) = raw
                     .clone()
@@ -871,12 +867,7 @@ impl Store {
                 else {
                     continue;
                 };
-                // a session that ran but never parked has its tree, if any, where it ran
-                let placed = match (&checkpoint, ran_on) {
-                    (None, Some(h)) => h == slot.host,
-                    (c, _) => reachable(c.as_ref(), &slot.host, slot.store),
-                };
-                if task.fits(slot).is_err() || !placed {
+                if task.fits(slot).is_err() {
                     continue;
                 }
                 let id: &str = candidate.try_get(0)?;
@@ -884,9 +875,9 @@ impl Store {
                     &format!(
                         "SELECT {ATTEMPT_COLS} FROM attempts a JOIN tasks t ON t.id = a.task_id \
                          WHERE a.id = $1 AND a.status = 'queued' AND a.checkpoint IS NOT DISTINCT FROM $2 \
-                         AND {RAN_ON} IS NOT DISTINCT FROM $3 FOR UPDATE OF a SKIP LOCKED"
+                         FOR UPDATE OF a SKIP LOCKED"
                     ),
-                    &[&id, &raw, &ran_on],
+                    &[&id, &raw],
                 )?;
                 let Some(row) = rows.first() else { continue };
                 let row = locked(row)?;
@@ -1362,34 +1353,6 @@ impl Store {
                 &[&id],
             )?;
             rows.first().map(|r| r.try_get(0)).transpose().map_err(Into::into)
-        })
-    }
-
-    /// Every session as `session_gc` decides its garbage collection (its task, state, last change, hosts, and whether
-    /// it is eligible or stale) and its directory's name (`dir`, [`Sessions::hex`]), oldest change first; only the
-    /// eligible ones with `eligible_only`.
-    ///
-    /// # Errors
-    /// What the database reports.
-    pub fn sessions(&mut self, eligible_only: bool) -> Result<Vec<Value>, QueueError> {
-        self.tx(|tx| {
-            tx.query(
-                "SELECT jsonb_build_object('task_id', task, 'state', state, 'last_change', changed_at, 'hosts', hosts, \
-                 'handed_back', handed_back, 'eligible', eligible, 'stale', stale, 'kept', kept) \
-                 FROM session_gc WHERE eligible OR NOT $1 ORDER BY changed_at, task",
-                &[&eligible_only],
-            )?
-            .iter()
-            .map(|r| {
-                let mut v: Value = r.try_get(0)?;
-                // the name of its directory under .sessions and .sessions-store, as the runner names it
-                let dir = v.get("task_id").and_then(Value::as_str).map(hex);
-                if let (Value::Object(m), Some(dir)) = (&mut v, dir) {
-                    m.insert("dir".to_owned(), Value::String(dir));
-                }
-                Ok(v)
-            })
-            .collect()
         })
     }
 
@@ -1870,8 +1833,8 @@ const PARKED: &str = "e.to_status = 'waiting' AND e.from_status IN ('running', '
     AND e.reason IN ('turn_end', 'waiting_until', 'preempted', 'host_draining', 'turn_error', 'turn_timeout')";
 
 /// The sessions' series: by state, turns by park reason and their durations, wake latency by source, closed sessions'
-/// turns and age, how long parked ones sit idle, host changes between turns, the tokens and cost turns report, and
-/// what `session_gc` would remove or keeps as stale. A session's host is the one its attempt last ran on.
+/// turns and age, how long parked ones sit idle, host changes between turns and the tokens and cost turns report. A
+/// session's host is the one its attempt last ran on.
 fn sessions(
     tx: &mut Transaction<'_>,
     out: &mut String,
@@ -2029,8 +1992,7 @@ fn session_durations(
     Ok(())
 }
 
-/// The oldest parked session, host changes, what `session_gc` would remove or keeps, and the usage turns reported, by
-/// the host the turn ran on.
+/// The oldest parked session, host changes and the usage turns reported, by the host the turn ran on.
 fn session_totals(
     tx: &mut Transaction<'_>,
     out: &mut String,
@@ -2038,31 +2000,18 @@ fn session_totals(
 ) -> Result<(), QueueError> {
     let waiting =
         "FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE t.session AND a.status = 'waiting'";
-    let row = tx.query_one(
-        &format!(
-            "SELECT coalesce(max(extract(epoch FROM now() - a.changed_at)), 0)::float8, \
-             (SELECT count(*) FILTER (WHERE eligible) FROM session_gc), \
-             (SELECT count(*) FILTER (WHERE stale) FROM session_gc), \
-             (SELECT count(*) FILTER (WHERE kept) FROM session_gc) {waiting}"
-        ),
-        &[],
-    )?;
-    let (oldest, eligible, stale, kept): (f64, i64, i64, i64) = (
-        row.try_get(0)?,
-        row.try_get(1)?,
-        row.try_get(2)?,
-        row.try_get(3)?,
-    );
+    let oldest: f64 = tx
+        .query_one(
+            &format!(
+                "SELECT coalesce(max(extract(epoch FROM now() - a.changed_at)), 0)::float8 {waiting}"
+            ),
+            &[],
+        )?
+        .try_get(0)?;
     let _ = write!(
         out,
         "# HELP exec_pool_sessions_parked_oldest_seconds How long the longest-unchanged waiting session has sat (0 with none).\n\
          # TYPE exec_pool_sessions_parked_oldest_seconds gauge\nexec_pool_sessions_parked_oldest_seconds {oldest}\n\
-         # HELP exec_pool_sessions_gc_eligible Sessions session_gc lets the remover delete.\n\
-         # TYPE exec_pool_sessions_gc_eligible gauge\nexec_pool_sessions_gc_eligible {eligible}\n\
-         # HELP exec_pool_sessions_stale Sessions waiting unchanged for 14 days that session_gc keeps: their tree may hold unpushed work.\n\
-         # TYPE exec_pool_sessions_stale gauge\nexec_pool_sessions_stale {stale}\n\
-         # HELP exec_pool_sessions_gc_kept Sessions final for 7 days that ran a turn and session_gc keeps: their tree was not handed back whole.\n\
-         # TYPE exec_pool_sessions_gc_kept gauge\nexec_pool_sessions_gc_kept {kept}\n\
          # HELP exec_pool_session_host_changes_total Session turns started on another host than the turn before, by the host it started on.\n\
          # TYPE exec_pool_session_host_changes_total counter\n"
     );
@@ -2205,12 +2154,4 @@ fn leases(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Resul
         let _ = writeln!(out, "exec_pool_slots_declared{{host=\"{host}\"}} {n}");
     }
     Ok(())
-}
-
-/// A task id as its session tree's directory was named: two lowercase hex digits per byte.
-fn hex(task_id: &str) -> String {
-    task_id.bytes().fold(String::new(), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
 }

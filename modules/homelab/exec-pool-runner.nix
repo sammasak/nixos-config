@@ -35,8 +35,8 @@ let
   # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
   # running attempt to review this long after its last renewal
   leaseSecs = 300;
-  # this long before a poweroff the runner stops the running attempt (a session's turn parks and is pushed to the
-  # store, a one-shot run goes back to the queue): the step's 60 s stop, the detach, the push, the park and the reset
+  # this long before a poweroff the runner stops the running attempt (a session's turn parks and pushes its work, a
+  # one-shot run goes back to the queue): the step's 60 s stop, the park's push and the reset
   drainSecs = 600;
   # a claim no longer has to finish before the poweroff, only to start its run ahead of the drain
   claimSecs = drainSecs + 300;
@@ -49,32 +49,7 @@ let
       state = "idle";
       inherit (cfg) capabilities;
       agents = [ "none" ] ++ pool.agents;
-      store = cfg.store != null;
     };
-  # the session store (exec-pool-store.nix): this host's own directory, or another's through its sync login
-  localStore = cfg.store == config.networking.hostName;
-  storeEnv =
-    if cfg.store == null then
-      { }
-    else
-      {
-        EXEC_POOL_RSYNC = lib.getExe pkgs.rsync;
-        EXEC_POOL_CHOWN = "${pkgs.coreutils}/bin/chown";
-      }
-      // (
-        if localStore then
-          {
-            EXEC_POOL_STORE_DIR = "${dev.stateDir}/.sessions-store";
-            EXEC_POOL_STORE_OWNER = "exec-pool-sync:exec-pool-sync";
-          }
-        else
-          {
-            EXEC_POOL_STORE_SSH = "exec-pool-sync@${config.sam.fleet.hosts.${cfg.store}.address}";
-            # the host key is the login: the store admits it from this address alone, to rrsync alone; only the pinned fleet
-            # keys (ssh-known-hosts.nix) vouch for the store, never root's own ssh config
-            EXEC_POOL_SSH = "${lib.getExe config.programs.ssh.package} -i /etc/ssh/ssh_host_ed25519_key -F /dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/etc/ssh/ssh_known_hosts -o ConnectTimeout=10 -o ServerAliveInterval=15";
-          }
-      );
   # a queue on another host, by scram over its sam.fleet listener; null: this host's own, by peer
   remote = cfg.queue != null;
   listener = config.sam.fleet.listeners.${cfg.queue};
@@ -135,8 +110,6 @@ let
   };
 in
 {
-  # the removal of this runner's session trees, by its queue's list
-  imports = [ ./exec-pool-sessions-gc.nix ];
 
   options.homelab.execPool.runner = {
     enable = lib.mkEnableOption "the execution pool's runner, one per sam.workers.executionPool slot";
@@ -151,18 +124,12 @@ in
       example = "exec-pool-db";
       description = "The sam.fleet listener of the queue's PostgreSQL on another host, reached as exec_pool_runner with the sops password; null: this host's own queue (exec-pool.nix), by peer.";
     };
-    store = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = "acer-swift";
-      description = "The fleet host whose session store (modules/homelab/exec-pool-store.nix) a parked session's tree is pushed to and pulled from, so any such host can wake it; this host's own name for a local one; null: trees stay where they parked.";
-    };
     conninfo = lib.mkOption {
       type = lib.types.str;
       readOnly = true;
       internal = true;
       default = db;
-      description = "The queue the runner claims from, as its EXEC_POOL_DB; exec-pool-sessions-gc.nix lists by it.";
+      description = "The queue the runner claims from, as its EXEC_POOL_DB.";
     };
     capabilities = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -194,7 +161,7 @@ in
           EXEC_POOL_FIND = "${pkgs.findutils}/bin/find";
           EXEC_POOL_INSTALL = "${pkgs.coreutils}/bin/install";
           EXEC_POOL_CAT = "${pkgs.coreutils}/bin/cat";
-          # a session task's trees and each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
+          # each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
           EXEC_POOL_SESSIONS = "${dev.stateDir}/.sessions";
           EXEC_POOL_GUEST_HOME = guestHome;
           # the host side of the guest home, whose identity admits an attempt only after a reset
@@ -203,10 +170,9 @@ in
           # the attempt's commits, in its checkout's own config: the agent runs with the workspace's HOME
           EXEC_POOL_GIT_NAME = config.sam.userConfig.git.userName;
           EXEC_POOL_GIT_EMAIL = config.sam.userConfig.git.email;
-          # node-exporter's (monitoring/node-exporter.nix): the store transfers' counts, one file per slot
+          # node-exporter's (monitoring/node-exporter.nix): the failed prepares' and park pushes' counts, one file per slot
           EXEC_POOL_TEXTFILE = "/run/node-exporter-textfile";
-        }
-        // storeEnv;
+        };
         serviceConfig = {
           Type = "oneshot";
           ExecStart = "${exe} exec %i";
@@ -316,14 +282,6 @@ in
             && lib.elem config.networking.hostName listener.from
           );
         message = "homelab.execPool.runner.queue: ${toString cfg.queue} must be a sam.fleet listener on another host whose `from` names ${config.networking.hostName}.";
-      }
-      {
-        assertion =
-          cfg.store == null
-          || (
-            if localStore then config.users.users ? exec-pool-sync else config.sam.fleet.hosts ? ${cfg.store}
-          );
-        message = "homelab.execPool.runner.store: ${toString cfg.store} must be this host with modules/homelab/exec-pool-store.nix imported, or a sam.fleet host.";
       }
     ];
   };

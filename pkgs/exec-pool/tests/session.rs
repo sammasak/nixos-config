@@ -30,7 +30,7 @@ fn run(argv: &[String]) -> String {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let mut argv = vec![
+    let mut cmd = vec![
         "env".to_owned(),
         "GIT_CONFIG_GLOBAL=/dev/null".to_owned(),
         "GIT_CONFIG_NOSYSTEM=1".to_owned(),
@@ -38,8 +38,8 @@ fn git(dir: &Path, args: &[&str]) -> String {
         "-C".to_owned(),
         dir.display().to_string(),
     ];
-    argv.extend(args.iter().map(|&a| a.to_owned()));
-    run(&argv)
+    cmd.extend(args.iter().map(|&a| a.to_owned()));
+    run(&cmd)
 }
 
 fn write(path: &Path, bytes: &str) {

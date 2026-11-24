@@ -169,28 +169,26 @@ tests:
         alertname: ExecPoolQueuedWithIdleSlot
         exp_alerts: []
 
-  # one failed pull is quiet; msi's pulls fail every 10 minutes from 10m: firing once two fall in the hour
+  # one failed push is quiet; msi's fail every 10 minutes from 10m: firing once two fall in the hour
   - interval: 1m
     input_series:
-      - series: 'exec_pool_store_transfers_total{job="node-exporter",node="acer-swift",op="pull",result="failed"}'
+      - series: 'exec_pool_park_push_failures_total{job="node-exporter",node="acer-swift"}'
         values: '0x5 1x80'
-      - series: 'exec_pool_store_transfers_total{job="node-exporter",node="msi-ms7758",op="pull",result="failed"}'
+      - series: 'exec_pool_park_push_failures_total{job="node-exporter",node="msi-ms7758"}'
         values: '0x10 1x9 2x10 3x10 4x50'
-      - series: 'exec_pool_store_transfers_total{job="node-exporter",node="msi-ms7758",op="push",result="ok"}'
-        values: '0+1x90'
     alert_rule_test:
       - eval_time: 25m
-        alertname: ExecPoolStoreTransferFailing
+        alertname: ExecPoolParkPushFailing
         exp_alerts: []
       - eval_time: 40m
-        alertname: ExecPoolStoreTransferFailing
+        alertname: ExecPoolParkPushFailing
         exp_alerts:
           - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
             exp_annotations:
-              summary: "Session tree transfers with the store fail on msi-ms7758"
-              description: "3 session tree push(es) or pull(s) between msi-ms7758 and the session store failed in the last hour. Read the exec helper's journal there for the rsync error and check the store login (runbook)."
-              query: 'increase(exec_pool_store_transfers_total{job="node-exporter",node="msi-ms7758",result="failed"}[1h])'
-              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolstoretransferfailing"
+              summary: "Parked session turns on msi-ms7758 cannot push their work"
+              description: "3 tries to push a parked session turn's work (its snapshot ref) from msi-ms7758 failed in the last hour. Read the exec helper's journal there for the git error and check the GitHub sidecar (runbook)."
+              query: 'increase(exec_pool_park_push_failures_total{job="node-exporter",node="msi-ms7758"}[1h])'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolparkpushfailing"
 
   # clones fail on acer three times between 10m and 30m: firing; two checkouts on msi never do
   - interval: 1m
@@ -213,18 +211,14 @@ tests:
               query: 'increase(exec_pool_prepare_failures_total{job="node-exporter",node="acer-swift"}[1h])'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolpreparefailing"
 
-  # session trees at 60% of the state filesystem never fire; at 75% from 10m, firing 30m later
+  # docks at 60% of the state filesystem never fire; at 75% from 10m, firing 30m later
   - interval: 1m
     input_series:
-      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758",kind="parked"}'
-        values: '400x10 500x60'
       - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758",kind="docked"}'
-        values: '100x70'
-      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758",kind="store"}'
-        values: '100x10 150x60'
+        values: '600x10 750x60'
       - series: 'homelab_dev_env_sessions_filesystem_bytes{job="node-exporter",node="msi-ms7758"}'
         values: '1000x70'
-      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="acer-swift",kind="store"}'
+      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="acer-swift",kind="docked"}'
         values: '600x70'
       - series: 'homelab_dev_env_sessions_filesystem_bytes{job="node-exporter",node="acer-swift"}'
         values: '1000x70'
@@ -237,28 +231,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
             exp_annotations:
-              summary: "Session trees on msi-ms7758 fill most of the workers' state filesystem"
-              description: "The parked, docked and stored session trees on msi-ms7758 have held over 70% of the workers' state filesystem (75%) for 30 minutes; the queue has not made enough of them eligible for removal, or orphans pile up. Read homelab_dev_env_session_trees and homelab_exec_pool_sessions_orphaned there, then run du -sh /var/lib/workers/.sessions/* /var/lib/workers/.sessions-store/* as root (runbook)."
+              summary: "Session docks on msi-ms7758 fill most of the workers' state filesystem"
+              description: "The slots' session docks on msi-ms7758 have held over 70% of the workers' state filesystem (75%) for 30 minutes: running turns' build outputs, or docks kept after a failed park push. Run du -sh /var/lib/workers/.sessions/dock/* as root (runbook)."
               query: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionslarge"
-
-  # a session goes stale at 1h and stays: quiet for a day, firing after; one in review is ExecPoolNeedsReview's
-  - interval: 1m
-    input_series:
-      - series: 'exec_pool_sessions{job="node-exporter",node="acer-swift",host="msi-ms7758",state="needs_review"}'
-        values: '1x2200'
-      - series: 'exec_pool_sessions_stale{job="node-exporter",node="acer-swift"}'
-        values: '0x60 1x2140'
-    alert_rule_test:
-      - eval_time: 20h
-        alertname: ExecPoolSessionStuck
-        exp_alerts: []
-      - eval_time: 26h
-        alertname: ExecPoolSessionStuck
-        exp_alerts:
-          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
-            exp_annotations:
-              summary: "Execution pool sessions in the queue on acer-swift are stale"
-              description: "1 session(s) in the queue on acer-swift have waited 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and each keeps its tree on disk. List them with exec-pool sessions, then send or cancel each (runbook)."
-              query: 'exec_pool_sessions_stale{job="node-exporter",node="acer-swift"} > 0'
-              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"

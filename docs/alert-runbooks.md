@@ -322,16 +322,18 @@ which hosts are idle. A session pinned to a sleeping or drained host waits for i
 Do not: lower the task's requirements in the database; resubmit it instead.
 Rollback: none; the alert clears once the task is claimed or cancelled.
 
-## ExecPoolStoreTransferFailing
+## ExecPoolParkPushFailing
 
-Fires: at least two session tree pushes or pulls between `node` and the session store
-(`modules/homelab/exec-pool-store.nix`) failed within an hour, for 5 minutes (`exec_pool_store_transfers_total`, each
-slot's exec helper's textfile). A failed push leaves the parked tree on this host only; a failed pull fails its turn's
-attach, so the session cannot move hosts.
-First: on `node`, `journalctl -u 'exec-pool-exec@*' --since -1h | grep -i rsync` for the error; for a remote store,
-check the sync login (its host key and rrsync) and that the store host is up and has disk.
-Do not: copy trees into the store by hand; the generation file would not match.
-Rollback: none; the counter's increase ages out of the hour once transfers succeed.
+Fires: at least two tries to push a parked session turn's work from `node` failed within an hour, for 5 minutes
+(`exec_pool_park_push_failures_total`, each slot's exec helper's textfile). The helper keeps trying for 30 minutes; a
+park that never got its push through goes to `needs_review`, and its uncommitted work stays in the slot's dock
+(`/var/lib/workers/.sessions/dock/<slot>/cur/work`), marked, with the slot quarantined.
+First: on `node`, `journalctl -u 'exec-pool-exec@*' --since -1h | grep -i 'park push'` for the git error; check the
+GitHub sidecar (`dev-env-egress` on acer, its token) and that the repository is still listed for the slots.
+Do not: `exec-pool send` the session before its dock's work is pushed: its next turn clones the remote on any host and
+would not see it.
+Rollback: none; push the dock's work by hand (or archive it), remove the dock's `dock-busy` mark and the slot's
+quarantine marker, then send the session.
 
 ## ExecPoolPrepareFailing
 
@@ -348,30 +350,15 @@ Rollback: none; the increase ages out of the hour once prepares succeed.
 
 ## ExecPoolSessionsLarge
 
-Fires: on a pool host (acer, msi), the session trees, parked (`/var/lib/workers/.sessions/<id>/tree`), docked in a
-slot (`.sessions/dock/<slot>/cur`) and, on acer, the pushed copies (`.sessions-store/<id>`), have held over 70% of the
-workers' state filesystem for 30 minutes. `dev-env-sessions-metrics` (`modules/workers/core.nix`) writes the bytes and
-counts every 15 minutes, by kind and with no ids, and `.trash`'s share as `homelab_dev_env_trash_bytes`. Removal is the
-queue's call: `exec-pool-sessions-gc` (`modules/homelab/exec-pool-sessions-gc.nix`, acer and msi, daily) moves what
-the queue lists as eligible into `.trash`, which frees it a week later.
-First: `homelab_dev_env_sessions_bytes` and `homelab_dev_env_session_trees` on the node say which kind grew,
-`homelab_exec_pool_sessions_orphaned` how many trees the queue does not know; on the host,
-`sudo du -sh /var/lib/workers/.sessions/*/tree /var/lib/workers/.sessions-store/* | sort -h | tail` names the largest.
-A large `.trash` is space already on its way out.
-Do not: delete a docked tree (`.sessions/dock/*/cur`) or a session whose `tree` is missing (it is docked); a turn is
-using it. Delete a parked tree by hand only once the queue has its task final and its work pushed.
-Rollback: none; the alert clears when the trees fall under 70%.
-
-## ExecPoolSessionStuck
-
-Fires: for a day, a session in the pool host's queue has been stale: waiting 14 days untouched with no unread message,
-and its last turn's branch not known to hold its tree, so `session_gc` keeps it and the tree stays on disk. A session in
-`needs_review` is ExecPoolNeedsReview's.
-First: `exec-pool sessions` (one JSON line each: state, last change, hosts, eligible, stale) and `exec-pool status ID`
-for its events. On each of its hosts, look at the tree for unpushed work; push it and send the session a message, or
-`exec-pool cancel ID`, which makes it eligible 7 days later.
-Do not: delete a stale session's tree by its age; it is kept because the queue cannot tell it holds nothing unpushed.
-Rollback: none; the alert clears when no session is left stale.
+Fires: on a pool host (acer, msi), the slots' session docks (`/var/lib/workers/.sessions/dock/<slot>/cur`, one session
+turn's checkout and home each, made afresh every turn) have held over 70% of the workers' state filesystem for 30
+minutes. `dev-env-sessions-metrics` (`modules/workers/core.nix`) writes the bytes every 15 minutes, with no ids. A dock
+is removed at its park once the work is on the remote; one kept after a failed park push stays (ExecPoolParkPushFailing).
+First: `sudo du -sh /var/lib/workers/.sessions/dock/*` names the largest; a running turn's build outputs shrink at its
+park.
+Do not: delete a dock whose slot has `dock-busy` beside its run directories (`/var/lib/exec-pool-exec/<slot>/`): it
+holds a running turn or unpushed work.
+Rollback: none; the alert clears when the docks fall under 70%.
 
 ## ShuntDelegationFailing
 
