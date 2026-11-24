@@ -177,7 +177,10 @@ one). The time limit counts the agent's work since it was last idle, so a pause 
 helper's unit has no start timeout of its own; a drain in the pause parks the turn as ended. A prompt that never reached the agent (no new
 transcript line), a pane that did not open or Herdr not running parks the session as `turn_error` (failed step `prompt`,
 `turn` or `herdr`), its tree kept, and its next message wakes it: a retry would fail the same way until the session's
-attempts ran out and it ended `failed`. Every workspace the turn opened is closed by id after it, whatever happened.
+attempts ran out and it ended `failed`. The park marks the turn's input read, so the helper keeps it in the tree
+(`~/.exec-pool-undelivered`, `runner::UNDELIVERED`) and the next turn delivers it before its own; a turn whose agent
+ran removes it. Mail is prompted only into an agent Herdr calls settled, and marked read only once Herdr took it; a
+prompt Herdr refused (a blocked agent) fails the step rather than press Enter into a dialog. Every workspace the turn opened is closed by id after it, whatever happened.
 A runner with `sessionSurface = "headless"` (no `EXEC_POOL_HERDR`) runs the turn in Claude's print mode instead, with
 no pane and no pause, as before the pane. Before the agent starts the helper writes the startup
 dialogs a named worker's home has accepted into the session's `~/.claude.json`. The helper marks the dock busy (`/var/lib/exec-pool-exec/<slot>/dock-busy`) before the attach and clears

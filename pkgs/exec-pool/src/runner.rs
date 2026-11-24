@@ -370,6 +370,33 @@ pub fn session_checkpoint(task_id: &str, host: &str, epoch: u64, stored: bool) -
 /// that never reached the agent.
 pub const PANE_STEPS: [&str; 3] = ["herdr", "turn", "prompt"];
 
+/// Whether the session turn `r` parks as `turn_error` with its input undelivered.
+///
+/// It failed at one of [`PANE_STEPS`] before its agent ran, not stopped by a cancel or a drain. Its park marks that input read, so the
+/// helper keeps it in the tree ([`UNDELIVERED`]) for the next turn to [`carry`].
+#[must_use]
+pub fn parks_undelivered(r: &ExecResult) -> bool {
+    r.stage == Stage::Prepare
+        && !r.cancelled
+        && !r.drained
+        && r.failed_step
+            .as_deref()
+            .is_some_and(|s| PANE_STEPS.contains(&s))
+}
+
+/// Where in the session's HOME a turn that [`parks_undelivered`] keeps its input.
+pub const UNDELIVERED: &str = "/session/cur/home/.exec-pool-undelivered";
+
+/// A turn's input: what an earlier turn could not deliver, then this turn's own.
+#[must_use]
+pub fn carry(undelivered: Option<&str>, input: &str) -> String {
+    match undelivered.map(str::trim_end) {
+        Some(u) if !u.is_empty() && !input.is_empty() => format!("{u}\n\n{input}"),
+        Some(u) if !u.is_empty() => u.to_owned(),
+        _ => input.to_owned(),
+    }
+}
+
 /// Where a session turn goes: parked to wait for its next message, or settled as a one-shot run would be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnSettle {
@@ -405,10 +432,7 @@ pub fn decide_turn(
         if r.drained {
             return TurnSettle::Settle(Settle::Drained);
         }
-        if r.failed_step
-            .as_deref()
-            .is_some_and(|s| PANE_STEPS.contains(&s))
-        {
+        if parks_undelivered(r) {
             return TurnSettle::Park(ParkReason::TurnError);
         }
         return TurnSettle::Settle(Settle::Queued);
@@ -1223,6 +1247,10 @@ mod tests {
             turn(Some(&result(Stage::Prepare, Some(1))), ""),
             TurnSettle::Settle(Settle::Queued)
         );
+        assert_eq!(carry(None, "go"), "go");
+        assert_eq!(carry(Some("the task\n"), "go"), "the task\n\ngo");
+        assert_eq!(carry(Some("the task"), ""), "the task");
+        assert_eq!(carry(Some(""), "go"), "go");
         for step in PANE_STEPS {
             let failed = ExecResult {
                 failed_step: Some(step.to_owned()),
@@ -1232,6 +1260,15 @@ mod tests {
                 turn(Some(&failed), ""),
                 TurnSettle::Park(ParkReason::TurnError),
                 "a failed {step} step parks the session, never spends its attempts"
+            );
+            assert!(parks_undelivered(&failed));
+            let drained = ExecResult {
+                drained: true,
+                ..failed
+            };
+            assert!(
+                !parks_undelivered(&drained),
+                "a drained turn is queued unread"
             );
         }
         let cancelled = ExecResult {

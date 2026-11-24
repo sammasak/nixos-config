@@ -31,9 +31,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use exec_pool::queue::{Change, Claim, Park, QueueError, Store};
 use exec_pool::runner::{
     CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, Manifest, PREPARE_FAILURES, QUICK_SECS,
-    Session, Stage, Step, TurnHint, TurnSettle, claim_fits, decide, decide_turn, drain_holds,
-    guest_exit, handed_back, holds_tree, read_regular, read_regular_up_to, receipt, relink,
-    remote_head, session_checkpoint, tail, tree_check, while_unavailable,
+    Session, Stage, Step, TurnHint, TurnSettle, UNDELIVERED, carry, claim_fits, decide,
+    decide_turn, drain_holds, guest_exit, handed_back, holds_tree, parks_undelivered, read_regular,
+    read_regular_up_to, receipt, relink, remote_head, session_checkpoint, tail, tree_check,
+    while_unavailable,
 };
 use exec_pool::sync::{self, Depot};
 use exec_pool::task_result::TaskResult;
@@ -1321,6 +1322,36 @@ impl Herdr {
         let _ = self.call(&["workspace", "close", workspace], Duration::ZERO);
     }
 
+    /// Prompts `text` into the agent in `pane`; an Enter it dropped is sent again. A prompt Herdr refused (a blocked
+    /// agent, none in the pane) is an error: no Enter answers a dialog.
+    fn prompt(&self, pane: &str, text: &str) -> Result<(), String> {
+        let sent = self.call(
+            &[
+                "agent",
+                "prompt",
+                pane,
+                text,
+                "--wait",
+                "--until",
+                "working",
+                "--until",
+                "done",
+                "--timeout",
+                "15000",
+            ],
+            Duration::from_secs(15),
+        );
+        match sent {
+            // submitted, but Herdr saw no work start in time
+            Err(e) if e.contains(r#""code":"timeout""#) || e.contains("agent_prompt_stalled") => {
+                let _ = self.call(&["agent", "send-keys", pane, "Enter"], Duration::ZERO);
+                Ok(())
+            }
+            Err(e) => Err(e),
+            Ok(_) => Ok(()),
+        }
+    }
+
     /// What Herdr sees of the agent in `pane`; `None`: no agent there.
     fn seen(&self, pane: &str) -> Result<Option<pane::Seen>, String> {
         self.call(&["agent", "list"], Duration::ZERO)
@@ -1536,6 +1567,10 @@ impl<'a> PaneTurn<'a> {
             Err(e) => return note("turn hint", &e),
         };
         self.grace_secs = hint.grace_secs;
+        // a working or blocked agent is not prompted, as the coordinator never prompted one: the mail waits for it
+        if !seen.is_some_and(|s| s.settled) {
+            return;
+        }
         let Some((text, upto)) = pane::mail(&hint.mail, self.upto) else {
             return;
         };
@@ -1546,7 +1581,7 @@ impl<'a> PaneTurn<'a> {
         self.watch = Some(pane::TurnWatch::new(seen.map_or(0, |s| s.seq)));
     }
 
-    /// Prompts `input` into the pane (a long one through [`pane::INPUT_FILE`]); an Enter it dropped is sent again.
+    /// Prompts `input` into the pane ([`Herdr::prompt`]), a long one through [`pane::INPUT_FILE`].
     fn send(&self, p: &str, input: &str) -> Result<(), String> {
         let (long, text) = pane::prompt(input);
         if let Some(long) = long {
@@ -1556,28 +1591,7 @@ impl<'a> PaneTurn<'a> {
                 owner(self.home)?,
             )?;
         }
-        let sent = self.herdr.call(
-            &[
-                "agent",
-                "prompt",
-                p,
-                &text,
-                "--wait",
-                "--until",
-                "working",
-                "--until",
-                "done",
-                "--timeout",
-                "15000",
-            ],
-            Duration::from_secs(15),
-        );
-        if sent.is_err() {
-            let _ = self
-                .herdr
-                .call(&["agent", "send-keys", p, "Enter"], Duration::ZERO);
-        }
-        Ok(())
+        self.herdr.prompt(p, &text)
     }
 
     /// Prompts the turn's input once the agent draws its prompt box and Herdr calls it idle, as the named workers'
@@ -1905,6 +1919,48 @@ impl<'a> Dock<'a> {
             note("no turn", &"a one-shot manifest has no turn");
             return;
         };
+        let home = self.sessions.docked(self.slot).join("home");
+        let kept = home_file(&home, UNDELIVERED);
+        let carried = match read_regular(&kept) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            read => read.inspect_err(|e| note("undelivered", e)).ok(),
+        };
+        let m = &Manifest {
+            session: Some(Session {
+                input: carry(carried.as_deref(), &session.input),
+                ..session.clone()
+            }),
+            ..m.clone()
+        };
+        self.agent_turn((m, ws, guest), env, (bounds, dir, out, err), result, &note);
+        let input = m.session.as_ref().map_or("", |s| s.input.as_str());
+        let kept_result = if result.stage == Stage::Run {
+            fs::remove_file(&kept).or_else(|e| match e.kind() {
+                io::ErrorKind::NotFound => Ok(()),
+                _ => Err(format!("{}: {e}", kept.display())),
+            })
+        } else if parks_undelivered(result) {
+            owner(&home).and_then(|o| write_home(&kept, input.as_bytes(), o))
+        } else {
+            Ok(())
+        };
+        if let Err(e) = kept_result {
+            note("undelivered", &e);
+        }
+    }
+
+    /// The turn's agent step and its pane; `m`'s input is all the turn has to deliver.
+    fn agent_turn(
+        &self,
+        (m, ws, guest): (&Manifest, &Workspace, &Guest),
+        env: &str,
+        (bounds, dir, out, err): ((Duration, Instant), &Path, &File, &File),
+        result: &mut ExecResult,
+        note: &dyn Fn(&str, &dyn std::fmt::Display),
+    ) {
+        let Some(session) = &m.session else {
+            return;
+        };
         let Some(herdr) = &self.herdr else {
             match guest.turn(m, ws, (None, env, &self.find), (dir, err)) {
                 Ok((run, _)) => {
@@ -1944,7 +2000,7 @@ impl<'a> Dock<'a> {
         let hint = guest.cancel.0.with_file_name(TURN_HINT);
         let mut pane = PaneTurn::new(herdr, (m, hint), &home, &session.uuid, &input);
         guest.steps(vec![run], bounds, (out, err), result, &mut || {
-            pane.poll(&note)
+            pane.poll(note)
         });
         for w in &pane.opened {
             herdr.close(w);
@@ -2332,6 +2388,11 @@ mod tests {
     /// A herdr that answers as Herdr 0.9.5 does: one JSON object for `workspace` and `agent list`, nothing at all
     /// for `pane run` and `pane send-keys`, an error as JSON on stderr with exit 1; each call's argv logged.
     fn fake(name: &str, pane_run_fails: bool) -> (Herdr, PathBuf) {
+        fake_with(name, pane_run_fails, ":")
+    }
+
+    /// [`fake`], `agent prompt` answering with the shell snippet `prompt`.
+    fn fake_with(name: &str, pane_run_fails: bool, prompt: &str) -> (Herdr, PathBuf) {
         let log =
             std::env::temp_dir().join(format!("exec-pool-herdr-{name}-{}", std::process::id()));
         let _ = fs::remove_file(&log);
@@ -2348,6 +2409,8 @@ case "$1 $2" in
 "workspace close") printf '%s' '{{"id":"cli:workspace:close","result":{{"type":"ok"}}}}' ;;
 "agent list") printf '%s' '{{"id":"cli:agent:list","result":{{"agents":[],"type":"agent_list"}}}}' ;;
 "pane run") {fail} ;;
+"agent prompt") {prompt} ;;
+"agent send-keys") printf '%s' '{{"id":"cli:agent:send-keys","result":{{"type":"ok"}}}}' ;;
 esac"#,
             log.display()
         );
@@ -2398,5 +2461,31 @@ esac"#,
         let e = herdr.open("pool9 k").unwrap_err();
         assert!(e.contains("pane_not_found"), "{e}");
         assert_eq!(calls(&log).last().unwrap(), "workspace close w1");
+    }
+
+    #[test]
+    fn a_refused_prompt_is_an_error_and_a_slow_one_gets_its_enter_again() {
+        let err = |code: &str| {
+            format!(
+                r#"printf '%s' '{{"error":{{"code":"{code}","message":"m"}},"id":"cli:agent:prompt"}}' >&2; exit 1"#
+            )
+        };
+        let (herdr, log) = fake_with("blocked", false, &err("agent_blocked"));
+        assert!(herdr.prompt("w1:p1", "go").is_err());
+        assert!(
+            !calls(&log).iter().any(|c| c.starts_with("agent send-keys")),
+            "no Enter into a dialog"
+        );
+        for code in ["timeout", "agent_prompt_stalled"] {
+            let (herdr, log) = fake_with(code, false, &err(code));
+            assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
+            assert_eq!(calls(&log).last().unwrap(), "agent send-keys w1:p1 Enter");
+        }
+        let (herdr, _) = fake_with(
+            "prompted",
+            false,
+            r#"printf '%s' '{"id":"cli:agent:prompt","result":{"type":"ok"}}'"#,
+        );
+        assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
     }
 }
