@@ -1,5 +1,6 @@
 # The execution pool's queue (pkgs/exec-pool, docs/records/execution-pool-contract.md) on this host: its own database
-# and role in the host's PostgreSQL (postgresql.nix), reached by peer over the socket alone; the schema is the CLI's `migrate` at start,
+# and role in the host's PostgreSQL (postgresql.nix), reached by peer over the socket and, with remoteRunners, by msi's
+# runner over TCP as exec_pool_runner; the schema is the CLI's `migrate` at start,
 # its metrics a minutely textfile and its backup a nightly dump; the runner, off by default, is exec-pool-runner.nix.
 {
   config,
@@ -73,14 +74,13 @@ in
     database = "exec_pool";
     users = [ "lukas" ];
   };
-  homelab.postgresql.remoteClients = lib.mkIf config.homelab.execPool.remoteRunners {
-    exec_pool_runner = {
-      database = "exec_pool";
-      listener = "exec-pool-db";
-    };
+  # declared off too: migration 0004 grants to the role
+  homelab.postgresql.remoteClients.exec_pool_runner = {
+    enable = config.homelab.execPool.remoteRunners;
+    database = "exec_pool";
+    listener = "exec-pool-db";
   };
 
-  homelab.secrets.enable = lib.mkIf config.homelab.execPool.remoteRunners true;
   sops.secrets.exec_pool_runner_password = lib.mkIf config.homelab.execPool.remoteRunners {
     sopsFile = ../../secrets/homelab/exec-pool-runner.yaml;
     mode = "0400";
@@ -107,8 +107,11 @@ in
       TimeoutStartSec = 60;
     };
     script = ''
+      # an empty password would clear the role's, and the unit pass
+      test -s "$CREDENTIALS_DIRECTORY/password"
       psql -h /run/postgresql -d postgres -v ON_ERROR_STOP=1 -q <<'EOF'
       SET log_statement = 'none';
+      SET log_min_duration_statement = -1;
       SET log_min_error_statement = 'panic';
       \set pw `cat "$CREDENTIALS_DIRECTORY/password"`
       ALTER ROLE exec_pool_runner WITH LOGIN PASSWORD :'pw';
