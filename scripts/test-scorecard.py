@@ -252,13 +252,13 @@ def lock_input(tree: pathlib.Path) -> None:
         lock["nodes"]["root"]["inputs"].update({"new-app": "new-app"})))(tree)
 
 
-check(registry_apps() == ("1/3; not in the registry: herman, llm-gateway", "fail"),
-      f"registry-apps today: alert-bridge in, herman and llm-gateway named as not yet ({registry_apps()})")
-check(registry_apps(register("llm-gateway")) == ("2/3; not in the registry: herman", "fail"),
-      f"one more registry entry moves the count ({registry_apps(register('llm-gateway'))})")
-check(registry_apps(register("llm-gateway", "herman")) == ("3/3", "pass"), "every app in the registry passes")
+check(registry_apps() == ("0/2; not in the registry: herman, llm-gateway", "fail"),
+      f"registry-apps today: herman and llm-gateway named as not yet ({registry_apps()})")
+check(registry_apps(register("llm-gateway")) == ("1/2; not in the registry: herman", "fail"),
+      f"one registry entry moves the count ({registry_apps(register('llm-gateway'))})")
+check(registry_apps(register("llm-gateway", "herman")) == ("2/2", "pass"), "every app in the registry passes")
 grown = registry_apps(lambda t: (new_app("src = inputs.new-app;")(t), lock_input(t)))
-check(grown == ("1/4; not in the registry: herman, llm-gateway, new-app", "fail"),
+check(grown == ("0/3; not in the registry: herman, llm-gateway, new-app", "fail"),
       f"an app a new modules/homelab module runs is counted by the rule, no list to update ({grown})")
 odd = registry_apps(new_app("src = fetchFromGitHub { owner = \"x\"; repo = \"y\"; };"))
 check(odd[1].startswith("unknown: flake-modules/overlays.nix: newApp runs under modules/homelab, its src neither"),
@@ -280,9 +280,11 @@ def one_line(tree: pathlib.Path) -> None:
 
 # shapes the text rule cannot read: each fails closed, never a count without the app
 H = "unknown: modules/homelab/outside.nix: "
+# one_line adds one call to the overlay's own, which its entries read
+CALLS = (ROOT / "flake-modules/overlays.nix").read_text().count("callPackage") + 1
 for name, edit, want in [
         ("a callPackage the reader does not read as an entry (one line)", one_line,
-         "unknown: flake-modules/overlays.nix: 6 callPackage calls, 5 read as a package entry"),
+         f"unknown: flake-modules/overlays.nix: {CALLS} callPackage calls, {CALLS - 1} read as a package entry"),
         ("an overlay attr used under modules/homelab other than pkgs.<attr> ((with pkgs; newApp))",
          lambda t: (new_app("src = inputs.new-app;", "(with pkgs; newApp)")(t), lock_input(t)),
          "unknown: modules/homelab/new-app.nix: newApp is mentioned in a form other than pkgs.newApp"),
@@ -304,7 +306,7 @@ rc, out, rows = run(ROOT / "metrics/targets.json", url, url)
 verdicts = {m["id"]: rows.get(m["id"], [None])[-1] for m in real["metrics"]}
 check(rc == 0 and all(v for v in verdicts.values()), f"the real targets: every metric printed (rc {rc}, missing "
       f"{[k for k, v in verdicts.items() if not v]})")
-check(verdicts.get("registry-apps") == "fail" and rows["registry-apps"][0].startswith("1/3"),
+check(verdicts.get("registry-apps") == "fail" and rows["registry-apps"][0].startswith("0/2"),
       f"the real targets: registry-apps read from this checkout ({rows.get('registry-apps')})")
 check(all(v.split(":")[0] in ("unknown", "stale") for k, v in verdicts.items() if v and k != "registry-apps"),
       f"no answer, no pass: every metric unknown or stale ({sorted({v.split(':')[0] for v in verdicts.values() if v})})"

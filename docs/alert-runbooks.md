@@ -1,20 +1,21 @@
 # Alert runbooks
 
-One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`; each alert's `runbook_url` points at its
-heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
+One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modules/homelab/monitoring/rules/shunt.yaml`
+and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
+each alert's `runbook_url` points at its heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
 
-Every homelab and shipping alert carries the same annotations, held by the `monitoring-alert-annotations` check
+Every homelab, Shunt, shipping and Loki-ruler alert carries the same annotations, held by the `monitoring-alert-annotations` check
 (`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
 
 | annotation | holds |
 |---|---|
 | `summary` | one line: the symptom and the component |
 | `description` | the observed condition, its threshold and duration, the affected host or service, the first safe step |
-| `query` | the first diagnostic PromQL, runnable as is in Prometheus on black-pi (`{{ $labels.* }}` are filled in by Prometheus); the `grafana-dashboards` check parses it and holds its metric names and jobs |
+| `query` | the first diagnostic PromQL, runnable as is in Prometheus on black-pi (`{{ $labels.* }}` are filled in by Prometheus); the `grafana-dashboards` check parses it and holds its metric names and jobs. A Loki-ruler alert's is LogQL, for Grafana's Explore on the Loki data source, and that check does not read it |
 | `runbook_url` | a heading in a tracked doc of this repo, on `main` |
 
-alert-bridge puts `summary` and `description` in the ntfy page; `query` and `runbook_url` show in Alertmanager and
-Prometheus's alert view. Run the query at `http://192.168.10.137:9090/graph`.
+The ntfy page (Alertmanager's webhook payload, `modules/homelab/monitoring/alertmanager.nix`) carries `summary`,
+`description` and `Query: <query>`, and a tap opens `runbook_url`; all four also show in Prometheus's alert view. Run a PromQL query at `http://192.168.10.137:9090/graph`.
 
 ## HostExpectedOff
 
@@ -38,6 +39,15 @@ First: on the host, `systemctl status prometheus-nvidia-gpu-exporter` and `nvidi
 Fires: `node_vmstat_oom_kill` increased in the last 15 minutes.
 First: on the host, `journalctl -k --since -1h | grep -i 'killed process'` names the process and its cgroup.
 Do not: raise a `MemoryMax` before the journal shows which unit hit it.
+
+## UnitOOMKilled
+
+Fires: systemd logged "A process of this unit has been killed by the OOM killer" for a system unit in the last 15
+minutes (Loki's ruler on black-pi; `run-*`, `session-*` and `systemd-coredump@*` fold as the journal collector folds them). It
+names the unit that NodeOOMKill only counts, so one kill pages both. Its `query` is LogQL, for Grafana's Explore.
+Not matched: kills by systemd-oomd, and user units (their journal is not shipped).
+First: on the host, `journalctl -u <unit> -b` and `systemctl show <unit> -p MemoryMax -p MemoryPeak`.
+Do not: raise the unit's `MemoryMax` before its journal shows what grew.
 
 ## NodeSystemdUnitFailed
 
@@ -83,6 +93,64 @@ Fires: Loki on black-pi exports no ingester metric, or its scrape target is down
 persisted.
 First: on black-pi, `systemctl status loki` and `journalctl -u loki -b`.
 
+## JournalEntriesDropped
+
+Fires: `homelab_journal_writer_dropped_entries_total` rose in the last 15 minutes on a host whose node-exporter
+answers, for 5 minutes. Those journal lines are not in Loki. `reason` is Alloy's own (`rate_limited`,
+`queue_is_full`, `ingester_error`, `line_too_long`, `stream_limited`, else `other`).
+First: on the host, `journalctl -u alloy --since -30m`; on black-pi, `journalctl -u loki --since -30m` for the
+rejection's side of a `rate_limited` or `ingester_error`.
+Do not: raise Loki's limits before the journal shows which stream hit them.
+
+## JournalMetricsStale
+
+Fires: the host's last journal-metrics collection failed (`homelab_journal_metrics_collection_success` 0), is over
+180 seconds old, or the host is up with no `journal.prom` at all, for 10 minutes, so JournalEntriesDropped is blind
+there. A host that is off has no series and does not fire.
+First: on the host, `systemctl status journal-metrics.timer journal-metrics alloy` and `journalctl -u journal-metrics -n 20`.
+
+## BackupStale
+
+Fires: `time() - homelab_backup_last_success_timestamp_seconds` is over 36 hours for 10 minutes. Every job is a daily
+timer, so one run has failed, been skipped or not run. The timestamp exists only after a recorded success, and
+`backup.prom` is on tmpfs: a backup with no record is BackupNeverRecorded, a stale or missing collector
+BackupCollectorStale.
+First: on the host, `systemctl list-timers <backup>`, `systemctl status <backup>` and `journalctl -u <backup> -n 50`.
+Do not: start a production backup by hand only to clear the alert; let the timer run once the cause is fixed.
+
+## BackupNeverRecorded
+
+Fires: `homelab_backup_metadata_available` is 0 for 36 hours: the collector finds no valid `success.json` for that
+backup. The job has not completed since it was instrumented, or its post-success record step (an `ExecStartPost` whose
+failure systemd ignores) did not write.
+First: on the host, `journalctl -u <backup> -n 50` for the run and the `backup-metrics record` line after it;
+`ls -l /var/lib/backup-metrics/<backup>/`.
+Do not: write `success.json` by hand.
+
+## BackupCollectorStale
+
+Fires: the backup-metrics collector's last completed scan is over 900 seconds old, or acer or lenovo is up with no
+`backup.prom` at all (it is on tmpfs, so a collector that never ran since boot leaves nothing), for 15 minutes.
+First: on the host, `systemctl status backup-metrics.timer backup-metrics` and `journalctl -u backup-metrics -n 20`.
+
+## OtlpWritesRejected
+
+Fires: acer's alloy-otlp receiver (`otelcol.receiver.otlp.native`, behind `otlp.sammasak.dev`) answered OTLP POSTs
+with a 4xx or 5xx in each 5-minute window for 10 minutes, per status. The writes are lost though every scrape is green.
+The counter is otelhttp's `http.server.request.duration_seconds_count`, as Prometheus stores it (Alloy is scraped with
+`allow-utf-8`, so names and labels keep their dots: `"http.response.status_code"`, `"http.request.method"`). The
+receiver's own `otelcol_receiver_refused_*`/`_failed_*` counters stay 0 on a 401 or an oversized 400. The sender is not
+in the series.
+Read the status of a POST: 401 is a bearer token that does not match acer's (a relay's `native_otlp_auth`), 400 an
+oversized (over 1 MiB) or malformed body, 429 or 503 Alloy's memory limiter or full sending queue. The blackbox probe's
+GET of `/v1/logs` carries no token and is answered 401 about twice a minute all day: expected, and excluded by the
+`"http.request.method"="POST"` matcher; the token reading applies to POSTs only.
+Blind spot: a host relay (`native-otel-relay`) refusing a post itself (413 over `client_max_body_size 1m`, 429 from
+`limit_req`) never reaches acer and has no metric; only that host's nginx line in its journal shows it.
+First: on acer, `journalctl -u alloy-otlp --since -30m`; for a 401 or 413, on the sending hosts,
+`journalctl -u native-otel-relay --since -30m`.
+Do not: raise `max_request_body_size` or the relay's body limit before the journal names the sender.
+
 ## EdgeSocketDown
 
 Fires: nothing listens on Caddy's upstream socket on acer, or the edge check stopped writing, for 2 minutes. Signed-in
@@ -110,3 +178,44 @@ First: `http://192.168.10.137:9090/targets`; whether the down targets share a ho
 
 Fires: `homelab:health:score` is below 70 for 15 minutes.
 First: the query lists each `homelab:health:*` KPI; follow the one that fails its threshold in the score's rule.
+
+## ShuntCollectorStale
+
+Fires: on a host that enables `homelab.shuntMetrics` (lenovo, acer), `shunt-metrics.service` has not read the hook
+log successfully for over 45 minutes, its runs kept failing for 20 minutes, or its unit exists but has never written
+`/var/lib/shunt-metrics/shunt.prom`; with a worker label, the same for that guest's
+`shunt-metrics-guest-<worker>.service`. A sleeping or disabled host never fires: the alert reads the collector's own
+series and unit. The Shunt panels on Agent harnesses and ShuntDelegationFailing are blind while it fires.
+First: on the host, `systemctl status shunt-metrics.timer shunt-metrics.service` and `journalctl -u shunt-metrics.service`
+(for a worker, `shunt-metrics-guest-<worker>`);
+the script names a failed scan's exception type there. `ls -l ~/.local/state/claude-hooks/` shows whether the hook log exists.
+Do not: delete the textfile to silence it; a missing file fires as well.
+Rollback: `homelab.shuntMetrics.enable = false` in the host's configuration and deploy; Shunt itself keeps working.
+
+## ShuntDelegationFailing
+
+Fires: over a quarter of the bulk-read delegations in the collector's 24 h window failed with auth, rate_limited,
+model_unavailable, timeout or error, with at least 10 attempts, for 30 minutes. Refusals by policy (private, secret,
+sensitive, invalid) count as attempts, not failures. Sessions still get the fallback: they read the file themselves,
+so the cost is context, not correctness. The window is 24 h, so it resolves only once the failures age out of it or
+the share drops.
+First: on the host, the outcomes without any content:
+`jq -c 'select(.hook == "bulk-read") | {ts, result, files, bytes, exit_status, claude_exit, model}' ~/.local/state/claude-hooks/$(date -u +%F).jsonl`.
+auth: the OAuth token (`/run/secrets/claude_oauth_token`); rate_limited or model_unavailable: the model's quota or
+availability; timeout: the `files` and `bytes` the timed-out calls delegated.
+Rollback: `SHUNT_DISABLE=1` in the environment the sessions start from, or `sam.claude.bulkReader.enable = false`.
+
+## ShuntSilent
+
+Fires: on a host or worker whose series say `shunt="on"` (its declared `sam.claude.bulkReader.enable`: lenovo, acer's
+a1), the agent made a Bash call in the last hour (validate-bash logged it) but no Shunt hook has logged for 2 h, for an
+hour; or a Shunt hook logged `error` (shunt-spill could not save an output) or `nostate` (shunt-read/shunt-bash could
+not keep its state) in the collector's 24 h window. An off worker never fires, so the on/off comparison it guards is
+the one between `shunt="on"` and `shunt="off"` series.
+First: in the home it reads (the owner's on the host; a worker's is `/var/lib/workers/<worker>/home` on the host,
+as root), `jq -r '.hooks.PreToolUse[].hooks[].command' .claude/settings.json | grep shunt` (no line: the hooks are
+not registered, e.g. a skills pin without them), then the results without any content:
+`jq -c 'select(.hook | startswith("shunt-")) | {ts, hook, result}' .local/state/claude-hooks/$(date -u +%F).jsonl | tail`.
+`SHUNT_DISABLE=1` in the session's environment also silences them, and a session started before the switch keeps
+the hooks it started with: restart it.
+Rollback: `sam.claude.bulkReader.enable = false` for that host or worker (acer: the guest module in its configuration).

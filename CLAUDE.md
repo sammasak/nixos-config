@@ -12,7 +12,7 @@ A NixOS + Home Manager configuration repository using **flake-parts**. Manages L
 # ── Verification: devenv tasks, also run by the git hooks. nixos:qa runs every gate; most
 #    gates also have their own nixos:* task, listed with descriptions in devenv.nix `tasks`. ──
 devenv tasks run nixos:qa           # every gate (= just check): lints, secrets-verify, the probe, flake check, then the tests; on asus the flake check and the four slowest tests run side by side
-devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process: evaluates every output and builds every x86 check (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them) except one that would compile against CUDA off its own node, which is deferred to that node's gate and listed; evaluates the Pis (= just verify)
+devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks, one output per nix process (a node's two deploy checks share one; a host's toplevel is evaluated inside its deploy-activate check): evaluates every output and builds every x86 check (incl. the QEMU tests; it, and so `just verify`, refuses on lenovo, which must not boot them) except one that would compile against CUDA off its own node, which is deferred to that node's gate and listed; evaluates the Pis (= just verify)
 # Hooks: the shims in .githooks/ (core.hooksPath) run prek on the checkout's .pre-commit-config.yaml,
 # which entering the devenv generates (.envrc does it on cd); without one, the main checkout's:
 #   pre-commit: lint-comments + lint-shell; commit-msg: subject <= 72 chars, a body needs a `Why:` line;
@@ -21,6 +21,9 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               plus the tests whose scripts/test-* names a changed file; also lints only for a tree
 #               already green here under the same gate and system generation, or it plus such docs;
 #               deleting nixos-qa-green in the common git dir forces the full gate.
+#               From 21:00 to 08:30 host local time (night_from/night_until in qaPush) a push that would run the
+#               full gate runs the lints and secrets-verify only, prints `night mode: full QA not run for <sha>,
+#               owed` and records `gate … result=owed mode=night`: never a pass, no green tree; `just qa-owed` lists them.
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
 #               A manual nixos:qa that passes on a clean checkout, unchanged through the run, records its tree the
 #               same way (scripts/qa-green.sh), so pushing that commit afterwards runs the lints only; with any
@@ -28,6 +31,8 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               Tracked files only: what .gitignore hides is not compared.
 #               nixos:qa takes /run/work-locks/heavy-work.lock itself (pkgs/heavy-lock); an ancestor that
 #               holds it (`flock -o`) counts, and a launcher holding it across systemd-run sets NIXOS_QA_LOCKED=1.
+#               "Is a heavy job running on this host?" is `just heavy-busy` (the lock, and its holder; exit 0 busy,
+#               1 free), not pgrep: the gate's process is nixos-qa, and a `flock -o` job has any name.
 #               A check deferred to its own host is printed as `nixos-qa: deferred-checks head=<sha>
 #               checkout=clean|dirty <owner>:<check>…` and in the gate record (head=, checkout=, deferred_checks=);
 #               the flake check records every check it builds, an owner's own deploy checks included, as
@@ -185,9 +190,15 @@ the session gets the path with a head and tail excerpt; failed commands are unto
 - Environments: a guest does not inherit its host's value; the host adds a guest module, e.g. for one instance
   `services.devEnvironments.guestModules = [ ({ devEnvironment, ... }: { sam.claude.bulkReader.enable = devEnvironment.name == "canary"; }) ];`
 - Rollback: set it false and switch, or `SHUNT_DISABLE=1` in the environment Claude starts from (no rebuild).
+- On now: lenovo and acer's worker a1; acer's host and herman are the off side. `homelab.shuntMetrics` labels every
+  series `shunt="on|off"` (and `worker` for a guest) from this option, so on and off compare; ShuntSilent guards the on side.
 - Running sessions keep the hooks they started with: settings are read at session start, so restart a session to
   pick up a change. `notifyHookGeneration` pings ntfy only when the skills store path changes (a pin bump), not
   when this option flips.
+
+**Auto-compaction** (`sam.claude.autoCompactWindow`, null by default): sets Claude Code's `autoCompactWindow`; a guest
+sets it through a guest module like the bulk reader. On now: acer's worker herman at 300000; `homelab.shuntMetrics`
+writes `claude_auto_compact_window_info{worker,variant}` so it compares with the default side (#626).
 
 ### Codex
 
@@ -223,7 +234,7 @@ runbook above — never rotate the authkey while an auth URL is pending.
 ### Key Inputs
 
 See `flake.nix`. factum, nix-audit, llm-gateway, rf-proto and herman are pinned by `?rev=` in their URL, so `nix flake update`
-does not move them: edit the rev. alert-bridge is no flake input: its rev and narHash are in `apps/registry.json`
+does not move them: edit the rev. An app can instead be pinned in `apps/registry.json` (none is today), by rev and narHash
 (checked and fetched by `lib/app-manifest/pins.nix`), which `scripts/app-bump.py APP` moves to the app's newest green
 main and opens the PR for (on acer, in `devenv shell`; it refuses lenovo).
 

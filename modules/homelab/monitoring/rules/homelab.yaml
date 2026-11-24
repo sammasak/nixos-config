@@ -195,6 +195,107 @@ groups:
           query: 'up{job="loki"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#lokiingesterdown"
 
+      # A host's own textfile series: an off host has none, so these carry node for HostExpectedOff's inhibit and need
+      # no planned_off clause. A range vector still holds the samples from before a power-off, hence the up guard.
+      - alert: JournalEntriesDropped
+        expr: |
+          increase(homelab_journal_writer_dropped_entries_total{job="node-exporter"}[15m]) > 0
+          and on (node) max by (node) (up{job="node-exporter"} == 1)
+        for: 5m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Alloy on {{ $labels.node }} dropped journal entries ({{ $labels.reason }})"
+          description: "Alloy's Loki writer on {{ $labels.node }} discarded {{ $value | humanize }} journal entries in the last 15 minutes with reason {{ $labels.reason }}: those lines never reach Loki. Run journalctl -u alloy --since -30m there."
+          query: 'increase(homelab_journal_writer_dropped_entries_total{job="node-exporter",node="{{ $labels.node }}"}[1h])'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#journalentriesdropped"
+
+      # 180 s: docs/journal-delivery-metrics.md's freshness bound for a minutely collector; for: outlasts a boot's
+      # OnBootSec and the power-off, where Alloy stops before node-exporter
+      - alert: JournalMetricsStale
+        expr: |
+          max by (node) (
+            homelab_journal_metrics_collection_success{job="node-exporter"} == 0
+            or time() - homelab_journal_metrics_collection_timestamp_seconds{job="node-exporter"} > 180
+          )
+          or (max by (node) (up{job="node-exporter"} == 1)
+            unless on (node) homelab_journal_metrics_collection_timestamp_seconds{job="node-exporter"})
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Journal delivery counters on {{ $labels.node }} are failing or stale"
+          description: "journal-metrics on {{ $labels.node }} has had no successful collection from Alloy within 3 minutes, or no journal.prom at all, for 10 minutes, so JournalEntriesDropped cannot see that host's journal loss. Run systemctl status journal-metrics alloy there."
+          query: '{__name__=~"homelab_journal_metrics_collection_.+",job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#journalmetricsstale"
+
+      # 36 h: every job runs daily (OnCalendar, Persistent), so this is one missed run, read the afternoon after it.
+      # The timestamp exists only after a recorded success, and backup.prom is on tmpfs: the two alerts below cover a
+      # backup with no recorded success and a collector that is stale or, after a reboot, never wrote.
+      - alert: BackupStale
+        expr: time() - homelab_backup_last_success_timestamp_seconds{job="node-exporter"} > 36 * 3600
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Backup {{ $labels.backup }} on {{ $labels.node }} has not succeeded for {{ $value | humanizeDuration }}"
+          description: "The last recorded success of {{ $labels.backup }} ({{ $labels.validation }}) on {{ $labels.node }} is {{ $value | humanizeDuration }} old, over 36 hours for a daily job. Run systemctl list-timers {{ $labels.backup }} and journalctl -u {{ $labels.backup }} -n 50 there."
+          query: 'time() - homelab_backup_last_success_timestamp_seconds{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupstale"
+
+      # 0 also before a job's first instrumented run, at most a day: 36 h is a daily job that never recorded a success
+      - alert: BackupNeverRecorded
+        expr: homelab_backup_metadata_available{job="node-exporter"} == 0
+        for: 36h
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Backup {{ $labels.backup }} on {{ $labels.node }} has no recorded success"
+          description: "backup-metrics on {{ $labels.node }} has found no valid success record for {{ $labels.backup }} ({{ $labels.validation }}) for 36 hours: the daily job has not completed, or its post-success record step failed. Run journalctl -u {{ $labels.backup }} -n 50 there."
+          query: 'homelab_backup_metadata_available{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupneverrecorded"
+
+      # the hosts that register backup-metrics jobs (authentik, llm-gateway and open-webui on acer, authentik-offhost
+      # on lenovo): a host with no backup.prom says nothing per backup, so its absence is matched by name
+      - alert: BackupCollectorStale
+        expr: |
+          max by (node) (time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter"} > 900)
+          or (max by (node) (up{job="node-exporter",node=~"acer-swift|lenovo-21CB001PMX"} == 1)
+            unless on (node) homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter"})
+        for: 15m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "The backup-metrics collector on {{ $labels.node }} is stale or missing"
+          description: "backup-metrics on {{ $labels.node }} has not completed a scan in 15 minutes, or has written no backup.prom since boot, for 15 minutes: BackupStale and BackupNeverRecorded cannot see that host's backups. Run systemctl status backup-metrics.timer backup-metrics there."
+          query: 'time() - homelab_backup_collector_last_success_timestamp_seconds{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#backupcollectorstale"
+
+      # alloy-otlp's otelhttp request counter, by the status it answered: the receiver's refused and failed counters
+      # stay 0 on a 401 or an oversized 400. A host relay's own 413 or 429 never reaches acer and has no metric.
+      # Prometheus scrapes Alloy with allow-utf-8, so the OTel names keep their dots. POST only: the blackbox probe's
+      # GET of /v1/logs is answered 401 all day.
+      # 5m window under a 10m for: a single burst (a sender cut off mid-post at its power-off) cannot fire it
+      - alert: OtlpWritesRejected
+        expr: |
+          sum by ("http.response.status_code") (
+            increase({__name__="http.server.request.duration_seconds_count",job="alloy-otlp",component_id="otelcol.receiver.otlp.native","http.request.method"="POST","http.response.status_code"=~"[45].."}[5m])
+          ) > 0
+        for: 10m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: 'alloy-otlp on acer-swift is answering OTLP posts with {{ index $labels "http.response.status_code" }}'
+          description: 'The OTLP receiver on acer answered {{ $value | humanize }} POSTs (metrics and logs from the host relays) with HTTP {{ index $labels "http.response.status_code" }} in the last 5 minutes, and has kept doing so for 10 minutes: those writes are lost while every scrape stays green. Run journalctl -u alloy-otlp --since -30m on acer.'
+          query: 'sum by ("http.response.status_code") (increase({__name__="http.server.request.duration_seconds_count",job="alloy-otlp",component_id="otelcol.receiver.otlp.native","http.request.method"="POST"}[1h]))'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#otlpwritesrejected"
+
       # Caddy's unix upstreams on acer (open-webui.nix's edge check): the probe above sees only forward auth's 302
       - alert: EdgeSocketDown
         # absent: a check that never ran (timer dead, the directory missing after a reboot) writes no series at all

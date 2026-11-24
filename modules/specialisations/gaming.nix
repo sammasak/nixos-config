@@ -1,0 +1,140 @@
+# Boot entry for gaming: the desktop session with no inference, and Sunshine for Moonlight clients where the host streams.
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+let
+  inherit (import ../../lib/firewall.nix lib) mkDualBackendFirewall;
+  inherit (config.sam.fleet) lanCidr public;
+  inherit (config.sam.gaming) streaming;
+  host = config.networking.hostName;
+  # this host's LAN-scoped public entries (modules/core/fleet.nix), rendered as network.nix expects them
+  stream = lib.filter (p: p.host == host && p.lan && p.port != null) public;
+  # https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2configuration.html#port
+  # The web UI (base + 1) is left out: it sets the password and pairs clients, reach it through an SSH tunnel.
+  base = config.services.sunshine.settings.port;
+  offsets =
+    proto:
+    map (o: {
+      inherit proto;
+      port = base + o;
+    });
+  expected =
+    if streaming then
+      offsets "tcp" [
+        (-5)
+        0
+        21
+      ]
+      ++ offsets "udp" [
+        9
+        10
+        11
+        13
+        21
+      ]
+    else
+      [ ];
+  listed = map (p: { inherit (p) proto port; }) stream;
+in
+{
+  imports = [ ./desktop.nix ];
+
+  # No default: a host importing the entry without choosing fails evaluation.
+  options.sam.gaming.streaming = lib.mkOption {
+    type = lib.types.bool;
+    description = "Run Sunshine for Moonlight clients on the LAN; its stream ports must then be this host's lan public entries in sam.fleet, and without it the host may have none.";
+  };
+
+  config = lib.mkMerge [
+    {
+      # the boot menu title `grub-reboot` takes: "NixOS - gaming", not one that carries a date and version
+      boot.loader.grub.configurationName = "gaming";
+
+      # mkForce: the desktop's idle lock would interrupt a game, or end a stream at a password prompt nobody can type into
+      home-manager.users.${config.sam.profile.username}.services.hypridle.enable = lib.mkForce false;
+
+      # mkForce: games get the GPU, CPU and RAM Ollama holds. The units stay startable by hand, and the default
+      # boot runs them as before.
+      systemd.services =
+        lib.genAttrs
+          (
+            [
+              "ollama"
+              "ollama-model-loader"
+            ]
+            ++ lib.optional (config.homelab.ollama.gpuPowerLimit != null) "nvidia-power-limit"
+          )
+          (_: {
+            wantedBy = lib.mkForce [ ];
+          });
+
+      programs.steam.enable = true;
+      programs.gamemode.enable = true;
+
+      # An evening's game outlasts the power window's poweroff. Only the timer is masked: sam.powerSchedule.poweroff
+      # also arms Wake-on-LAN, which the next scheduled wake needs after a manual poweroff.
+      systemd.timers = lib.mkIf config.sam.powerSchedule.poweroff.enable {
+        "${lib.head (lib.splitString "-" host)}-scheduled-shutdown".enable = lib.mkForce false;
+      };
+      # it would announce that poweroff
+      sam.workers.shutdownNotice = lib.mkForce null;
+
+      assertions = [
+        {
+          assertion = lib.all (e: lib.elem e listed) expected && lib.all (l: lib.elem l expected) listed;
+          message = "modules/specialisations/gaming.nix: ${host}'s lan public entries in modules/core/fleet.nix (${builtins.toJSON listed}) are not ${
+            if streaming then
+              "Sunshine's stream ports for base port ${toString base}"
+            else
+              "empty, as sam.gaming.streaming = false needs"
+          } (${builtins.toJSON expected}).";
+        }
+      ];
+    }
+
+    (lib.mkIf streaming {
+      services.sunshine = {
+        enable = true;
+        # nixpkgs' cached build has no CUDA, which Sunshine's NVENC path needs with KMS capture
+        package = pkgs.sunshine.override { cudaSupport = true; };
+        # KMS capture: niri has no wlr-export-dmabuf, which Sunshine's wlroots capture needs
+        capSysAdmin = true;
+        # without a list Sunshine also offers Low Res Desktop, which needs xrandr and does not work here
+        applications.apps = [
+          { name = "Desktop"; }
+          {
+            name = "Steam Big Picture";
+            detached = [
+              "${lib.getExe' pkgs.util-linux "setsid"} ${lib.getExe config.programs.steam.package} steam://open/bigpicture"
+            ];
+          }
+        ];
+      };
+      # mDNS would open 5353/udp to any source; Moonlight takes the host's address instead
+      services.avahi.enable = false;
+
+      # No screen, keyboard or greeter to log in at: the session Sunshine captures has to start by itself.
+      services.displayManager.autoLogin = {
+        enable = true;
+        user = config.sam.profile.username;
+      };
+
+      networking.firewall = lib.mkMerge (
+        map (
+          p:
+          lib.getAttrs [ "extraInputRules" "extraCommands" ] (mkDualBackendFirewall {
+            nftComment = "public ${toString p.port}";
+            sources = [ lanCidr ];
+            ports = [ p.port ];
+            inherit (p) proto;
+            interfaces = [ ];
+            inherit (config.networking.firewall) backend;
+          })
+        ) stream
+      );
+    })
+  ];
+}

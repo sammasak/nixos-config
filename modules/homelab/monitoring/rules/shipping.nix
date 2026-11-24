@@ -28,7 +28,7 @@ let
       annotations = {
         inherit summary;
         description = "${summary} The threshold is in modules/homelab/monitoring/shipping-policy.json (alerts.${name}); change it by a PR that quotes the Shipping dashboard (docs/shipping.md).";
-        # the alert's own expression: run, it shows the value the threshold is held against
+        # the alert's own expression: run, it returns each series past its threshold, with its value
         query = expr;
         runbook_url = "https://github.com/sammasak/nixos-config/blob/main/docs/shipping.md#alerts";
       };

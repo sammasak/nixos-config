@@ -41,21 +41,30 @@ in
     ../../modules/homelab/ollama-host.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
+    ../../modules/homelab/shunt-metrics.nix
   ];
 
   homelab.journalCollector.enable = true;
+
+  # Picked in the boot menu for an evening of game streaming; the default boot stays the headless inference host.
+  specialisation.gaming.configuration = {
+    imports = [ ../../modules/specialisations/gaming.nix ];
+    sam.gaming.streaming = true;
+  };
+  # grub-reboot: the only way into that entry on a host with no keyboard
+  environment.systemPackages = [ pkgs.grub2_efi ];
 
   # 32 GB RAM, the host's own use not yet measured (msi's 2.8G assumed): a 20G pool reserves 2G each for at most 10,
   # 4 recommended (docs/nspawn-workers.md, Sizing). No ghHostsFile until lukas has a gh login here.
   sam.workers = {
     labelPrefix = "asus";
     pool.memory = "20G";
-    # One per issue, briefed through Herdr; they push over the SSH key, and lenovo opens the PRs (no gh here).
-    instances = {
-      a624 = { };
-      s138 = { };
-      s130 = { };
-    };
+    # Agent work goes to acer and msi first: this host carries ollama and the heavier loads.
+    retired = [
+      "a624"
+      "s138"
+      "s130"
+    ];
   };
 
   sam.profile = {

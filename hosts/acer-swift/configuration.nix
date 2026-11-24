@@ -12,11 +12,24 @@
     ../../modules/homelab/authentik.nix
     ../../modules/homelab/monitoring/node-exporter.nix
     ../../modules/homelab/nav-metrics.nix
+    ../../modules/homelab/shunt-metrics.nix
     ../../modules/homelab/monitoring/alloy-otlp.nix
     ../../modules/homelab/journal-collector.nix
   ];
 
   homelab.journalCollector.enable = true;
+  homelab.shuntMetrics.enable = true;
+  # Shunt on for worker a1 alone; herman and the host stay off, so the collector compares on and off (#625).
+  # Compaction at 300K for herman alone, its Shunt-off peer the host, so the two comparisons stay apart (#626).
+  services.devEnvironments.guestModules = [
+    (
+      { devEnvironment, lib, ... }:
+      {
+        sam.claude.bulkReader.enable = devEnvironment.name == "a1";
+        sam.claude.autoCompactWindow = lib.mkIf (devEnvironment.name == "herman") 300000;
+      }
+    )
+  ];
 
   sam.profile = {
     username = "lukas";

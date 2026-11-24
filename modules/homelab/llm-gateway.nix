@@ -7,18 +7,25 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
 let
   fw = config.networking.firewall;
   state = "/var/lib/llm-gateway";
-  # the Ollama backends' addresses from sam.fleet (modules/core/fleet.nix), into llm-gateway.toml's @msi@ and @acer@
+  asusAddress = config.sam.fleet.hosts.asus-b460m.address;
+  asusText = lib.replaceStrings [ "@asus@" ] [ asusAddress ] (
+    builtins.readFile ./llm-gateway-asus.toml
+  );
+  # the Ollama backends' addresses from sam.fleet (modules/core/fleet.nix), into llm-gateway.toml's @msi@ and @acer@;
+  # without asus the text is the base file's alone, so the deployed config does not move
   configText =
     lib.replaceStrings
       [ "@msi@" "@acer@" ]
       [ config.sam.fleet.hosts.msi-ms7758.address config.sam.fleet.hosts.acer-swift.address ]
-      (builtins.readFile ./llm-gateway.toml);
+      (builtins.readFile ./llm-gateway.toml)
+    + lib.optionalString config.homelab.llmGateway.asus.enable asusText;
   configFile = pkgs.writeText "llm-gateway.toml" configText;
   # every key file the config names, so a provider added there needs its key in the sops file to build: the gateway
   # reads each one at startup, enabled or not
@@ -80,7 +87,13 @@ let
   );
 in
 {
-  imports = [ ./backup-metrics.nix ];
+  imports = [
+    ./backup-metrics.nix
+    {
+      options.homelab.llmGateway.asus.enable =
+        lib.mkEnableOption "asus's Ollama as a tier-3 provider beside msi, a floor that may be off (llm-gateway-asus.toml)";
+    }
+  ];
   homelab.backupMetrics.jobs.llm-gateway-backup = "scratch_restore";
 
   # a static user: the sops secrets need an owner at activation, before the unit runs
@@ -195,5 +208,13 @@ in
         toString (map (m: "${m.provider or "?"}/${m.id or "?"}") badModels)
       } need provider (a declared one), id, tier, cost_class (free, prepaid-capped, trial-credit, paid or unknown), enabled and context_window; an enabled one must be free, or prepaid-capped on a provider with billing.";
     }
-  ];
+  ]
+  ++ import ./llm-gateway-asus.nix { inherit lib; } {
+    base = builtins.readFile ./llm-gateway.toml;
+    fragment = asusText;
+    address = asusAddress;
+    inherit (config.sam.fleet.listeners.ollama-asus) port;
+    enabledByDefault = options.homelab.llmGateway.asus.enable.default;
+    unit = config.systemd.services.llm-gateway;
+  };
 }

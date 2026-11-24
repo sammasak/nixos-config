@@ -113,7 +113,7 @@ for host, fw in sorted(FW.items()):
     trusted = [i for i in fw["trustedInterfaces"] if i != "lo" and not any(p["port"] is None and p["interface"] == i for p in mine(host))]
     check(stray == [] and trusted == [], f"{host} opens and trusts only public entries ({opened}, {fw['trustedInterfaces']})")
 
-# Each serving module takes its port from its listener (or asserts it: alert-bridge, store-cache, loki, the gateway's
+# Each serving module takes its port from its listener (or asserts it: store-cache, loki, the gateway's
 # toml), so a new listener is one edit in modules/core/fleet.nix. scripts/gate-probe.nix `bound` reads the ports it
 # can as a drift check: an override off the listener's port (mkForce) fails here; a listener it does not read is fine.
 def drift(bound, listeners):
