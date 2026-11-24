@@ -18,11 +18,11 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use exec_pool::queue::{METRICS_UNAVAILABLE, QueueError, Store, Submitted};
+use exec_pool::queue::{METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, Turn};
 use exec_pool::task_result::TaskResult;
 use exec_pool::{
-    Agent, Error, Event, Kind, Pins, Receipt, Resolution, SchemaVersion, Settle, Slot, SlotState,
-    Status, TaskSpec,
+    Agent, CheckpointRef, Error, Event, Kind, Outcome, ParkReason, Pins, Receipt, Resolution,
+    SchemaVersion, Settle, Slot, SlotState, Status, TaskSpec,
 };
 use postgres::{Client, NoTls};
 use serde_json::json;
@@ -235,12 +235,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (9, 8)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (10, 9)",
             &[],
         )
         .unwrap();
@@ -248,17 +248,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (10)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (11)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(10))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(11))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 10 WHERE version = 10",
+            "UPDATE schema_migrations SET floor = 11 WHERE version = 11",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(10))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(10))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(11))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(11))));
 }
 
 #[test]
@@ -284,7 +284,7 @@ fn a_database_that_took_0008_before_0007_takes_0007_and_its_floor() {
         .map(|r| (r.get(0), r.get(1)))
         .collect();
     assert_eq!(
-        floors.last(),
+        floors.iter().find(|f| f.0 == 8),
         Some(&(8, None)),
         "0008 names no floor: it counts as 8"
     );
@@ -1642,4 +1642,471 @@ fn the_cli_logs_one_line_per_change_and_exits_75_without_a_database() {
         ),
         (Some(2), METRICS_UNAVAILABLE)
     );
+}
+
+/// A store as `exec_pool_submit`, and the session it started through `start_session`.
+fn session(pg: &Pg) -> (Store, String) {
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_submit ");
+    let mut s = Store::open(&conninfo).unwrap();
+    let task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    assert!(
+        matches!(s.start_session(&task), Err(QueueError::Db { code, .. }) if code == "22023"),
+        "0008's check: no slot seen offers claude"
+    );
+    assert!(pg.store().claim(&claude_slot(), 60).unwrap().is_none());
+    let (id, duplicate) = s.start_session(&task).unwrap();
+    assert!(!duplicate);
+    (s, id)
+}
+
+/// Claims the next turn on the claude slot and starts it: its attempt, epoch and turn.
+fn started(owner: &mut Store) -> (String, u64, Turn) {
+    let claim = owner.claim(&claude_slot(), 60).unwrap().unwrap();
+    let (a, epoch) = (claim.attempt.id, claim.attempt.lease_epoch);
+    owner.apply(&a, &ev(epoch, Kind::Start), None).unwrap();
+    (
+        a,
+        epoch,
+        claim.turn.expect("a session's claim hands over its turn"),
+    )
+}
+
+fn park(reason: ParkReason, upto: i64) -> Park {
+    Park {
+        reason,
+        checkpoint: Some(CheckpointRef {
+            schema_version: SchemaVersion::CURRENT,
+            uri: "checkpoint://s/1".to_owned(),
+            digest: "sha256-x".to_owned(),
+            generation: 0,
+            hosts: vec!["msi-ms7758".to_owned()],
+        }),
+        result: TaskResult::new(Some(Outcome::Succeeded), Some(0), "the turn's answer"),
+        upto,
+    }
+}
+
+fn moves(changes: &[exec_pool::queue::Change]) -> Vec<(Status, &'static str)> {
+    changes.iter().map(|c| (c.to, c.reason)).collect()
+}
+
+#[test]
+fn a_message_sent_while_a_turn_runs_is_delivered_after_its_park() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, first) = started(&mut owner);
+    assert!(first.first);
+    assert_eq!((first.input.as_str(), first.upto), (ARGV_MARKER, 0));
+    assert_eq!(
+        s.send(&id, "and then this").unwrap(),
+        (a.clone(), Status::Running)
+    );
+    let (parked, changes) = owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, first.upto))
+        .unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "turn_end"), (Status::Queued, "wake")],
+        "the unread message queues the next turn in the same transaction"
+    );
+    assert_eq!(
+        (parked.status, parked.tries, parked.placement),
+        (Status::Queued, 0, None)
+    );
+    let row = pg
+        .sql()
+        .query_one("SELECT checkpoint FROM attempts WHERE id = $1", &[&a])
+        .unwrap();
+    let checkpoint: serde_json::Value = row.get(0);
+    assert_eq!(checkpoint["generation"], epoch);
+    assert_eq!(
+        s.result(&id).unwrap().unwrap()["result"]["output"],
+        "the turn's answer"
+    );
+
+    let (a, epoch, second) = started(&mut owner);
+    assert!(!second.first);
+    assert_eq!(second.session_uuid, first.session_uuid);
+    assert_eq!(second.input, "and then this");
+    assert!(second.upto > 0);
+    let (parked, changes) = owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, second.upto))
+        .unwrap();
+    assert_eq!(moves(&changes), [(Status::Waiting, "turn_end")]);
+    assert_eq!((parked.status, parked.tries), (Status::Waiting, 0));
+    let shown = s.task(&id).unwrap().unwrap();
+    assert_eq!(
+        (&shown["session"], &shown["parked"]),
+        (&json!(true), &json!("turn_end"))
+    );
+    let metrics = owner.metrics(None).unwrap();
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l == "exec_pool_waiting{reason=\"turn_end\"} 1"),
+        "{metrics}"
+    );
+    assert!(
+        metrics
+            .lines()
+            .any(|l| l == "exec_pool_waiting{reason=\"preempted\"} 0")
+    );
+    assert!(
+        metrics.contains("reason=\"turn_end\"} 2"),
+        "both parks count in exec_pool_transitions_total"
+    );
+}
+
+#[test]
+fn a_send_queues_a_waiting_session_and_two_sends_arrive_once_in_order() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "waiting");
+    assert!(
+        owner.claim(&claude_slot(), 60).unwrap().is_none(),
+        "waiting is not claimed"
+    );
+    assert_eq!(s.send(&id, "one").unwrap(), (a.clone(), Status::Queued));
+    assert_eq!(
+        s.send(&a, "two").unwrap(),
+        (a.clone(), Status::Queued),
+        "by its attempt id too"
+    );
+    let (_, epoch, turn) = started(&mut owner);
+    assert_eq!(turn.input, "one\n\ntwo");
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(
+        status(&pg, &a).0,
+        "waiting",
+        "both were read: nothing wakes it"
+    );
+    s.send(&id, "three").unwrap();
+    let (_, _, turn) = started(&mut owner);
+    assert_eq!(turn.input, "three");
+}
+
+#[test]
+fn a_turn_that_never_parks_is_handed_its_messages_again() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+        .unwrap();
+    s.send(&id, "one").unwrap();
+    // the turn that was handed it dies before its park: its lease expires to review, the row still unread
+    let (_, _, turn) = started(&mut owner);
+    assert_eq!(turn.input, "one");
+    overdue(&pg, &a);
+    assert_eq!(owner.reconcile().unwrap().len(), 1);
+    s.send(&id, "two").unwrap();
+    let (_, _, turn) = started(&mut owner);
+    assert_eq!(turn.input, "one\n\ntwo");
+}
+
+#[test]
+fn a_preempted_turn_continues_at_once() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, _id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    let (_, changes) = owner
+        .park(&a, epoch, &park(ParkReason::Preempted, 0))
+        .unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "preempted"), (Status::Queued, "wake")]
+    );
+    let (a, epoch, turn) = started(&mut owner);
+    assert!(
+        turn.input.contains("Continue where you left off"),
+        "{}",
+        turn.input
+    );
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "waiting");
+}
+
+#[test]
+fn a_park_at_a_stale_epoch_or_of_a_one_shot_task_is_refused() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, _id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    assert!(matches!(
+        owner.park(&a, epoch - 1, &park(ParkReason::TurnEnd, 0)),
+        Err(QueueError::Contract(Error::StaleEpoch { .. }))
+    ));
+    overdue(&pg, &a);
+    assert!(matches!(
+        owner.park(&a, epoch, &park(ParkReason::TurnEnd, 0)),
+        Err(QueueError::NotLive(_))
+    ));
+    owner.reconcile().unwrap();
+    assert!(matches!(
+        owner.park(&a, epoch, &park(ParkReason::TurnEnd, 0)),
+        Err(QueueError::Contract(Error::StaleEpoch { .. }))
+    ));
+    assert_eq!(
+        status(&pg, &a),
+        ("needs_review".to_owned(), i64::try_from(epoch).unwrap() + 1)
+    );
+
+    let b = submit(&mut owner, &task("t-1", 2));
+    let claim = owner.claim(&slot("s0"), 60).unwrap().unwrap();
+    assert_eq!(claim.turn, None, "a one-shot task has no turn");
+    owner.apply(&b, &ev(1, Kind::Start), None).unwrap();
+    assert!(matches!(
+        owner.park(&b, 1, &park(ParkReason::TurnEnd, 0)),
+        Err(QueueError::NotSession(_))
+    ));
+    assert_eq!(status(&pg, &b), ("running".to_owned(), 1));
+}
+
+#[test]
+fn needs_review_is_left_only_by_a_send_or_a_resolve() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, _, _) = started(&mut owner);
+    overdue(&pg, &a);
+    owner.reconcile().unwrap();
+    let (_, epoch) = status(&pg, &a);
+    let epoch = u64::try_from(epoch).unwrap();
+    assert!(owner.claim(&claude_slot(), 60).unwrap().is_none());
+    assert!(owner.apply(&a, &ev(epoch, Kind::Wake), None).is_err());
+    assert!(
+        owner
+            .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+            .is_err()
+    );
+    assert_eq!(status(&pg, &a).0, "needs_review");
+    // the owner's message resumes it with the try given back, though max_attempts is 1
+    assert_eq!(s.send(&id, "go on").unwrap(), (a.clone(), Status::Queued));
+    let (a, epoch, turn) = started(&mut owner);
+    assert!(!turn.first, "its first turn had started");
+    assert_eq!(turn.input, "go on");
+    overdue(&pg, &a);
+    owner.reconcile().unwrap();
+    let (resumed, change) = owner
+        .apply(&a, &ev(epoch + 1, Kind::Resolve(Resolution::Resume)), None)
+        .unwrap();
+    assert_eq!(
+        (resumed.status, resumed.tries, change.reason),
+        (Status::Queued, 0, "operator")
+    );
+}
+
+#[test]
+fn a_one_shot_or_settled_task_takes_no_message() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = submitter(&pg);
+    assert!(matches!(
+        s.send(&id, "hello"),
+        Err(QueueError::Db { code, .. }) if code == "22023"
+    ));
+    let theirs = submit(&mut owner, &task("t-1", 1));
+    assert!(matches!(
+        s.send(&theirs, "hello"),
+        Err(QueueError::NotFound(_))
+    ));
+    let mut codex: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    codex.command.agent = Agent::Codex;
+    codex.idempotency_key = "cli:codex".to_owned();
+    assert!(s.start_session(&codex).is_err(), "a session is claude only");
+    let one_shot: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    assert!(
+        matches!(s.start_session(&one_shot), Err(QueueError::Db { code, .. }) if code == "23505"),
+        "its key names the one-shot task"
+    );
+    let mut later: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    later.idempotency_key = "cli:2".to_owned();
+    let (sid, _) = s.start_session(&later).unwrap();
+    assert_eq!(s.start_session(&later).unwrap(), (sid.clone(), true));
+    s.cancel(&sid).unwrap();
+    assert!(matches!(
+        s.send(&sid, "hello"),
+        Err(QueueError::Db { code, .. }) if code == "55000"
+    ));
+    assert!(matches!(s.send(&id, ""), Err(QueueError::Db { .. })));
+    let unread: i64 = pg
+        .sql()
+        .query_one("SELECT count(*) FROM inbox", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(unread, 0);
+}
+
+#[test]
+fn the_submitter_cli_starts_a_session_messages_it_and_waits_for_its_park() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let submitter = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
+            .args(args)
+            .env(
+                "EXEC_POOL_DB",
+                pg.conninfo()
+                    .replace("user=exec_pool ", "user=exec_pool_submit "),
+            )
+            .stderr(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8(out.stdout).unwrap())
+    };
+    assert!(owner.claim(&claude_slot(), 60).unwrap().is_none());
+    let (code, id) = submitter(&[
+        "start",
+        "--agent",
+        "claude",
+        "--repo",
+        "https://example.org/r.git",
+        "--rev",
+        "abc",
+        "--workdir",
+        "w",
+        "--prompt",
+        "p",
+    ]);
+    assert_eq!(code, Some(0));
+    let id = id.trim();
+    let (a, epoch, _) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+        .unwrap();
+    let (code, out) = submitter(&["wait", id, "--timeout", "5"]);
+    assert_eq!(code, Some(0), "wait returns on a park");
+    let shown: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        (&shown["status"], &shown["parked"]),
+        (&json!("waiting"), &json!("turn_end"))
+    );
+    assert_eq!(shown["result"]["output"], "the turn's answer");
+    let (code, out) = submitter(&["send", id, "--prompt", "next"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains(r#""status":"queued""#), "{out}");
+    assert_eq!(started(&mut owner).2.input, "next");
+}
+
+#[test]
+fn the_runner_runs_a_turn_and_neither_role_writes_or_reads_what_it_may_not() {
+    let pg = Pg::new();
+    let _owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_runner ");
+    let mut runner = Store::open(&conninfo).unwrap();
+    let (a, epoch, _) = started(&mut runner);
+    let (_, changes) = runner
+        .park(&a, epoch, &park(ParkReason::HostDraining, 0))
+        .unwrap();
+    assert_eq!(changes.len(), 2, "its continue row wakes it");
+    let (_, epoch, turn) = started(&mut runner);
+    assert!(turn.upto > 0);
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "waiting");
+    s.send(&id, "next").unwrap();
+
+    let refused = |conninfo: &str, sqls: &[String]| {
+        let mut c = Client::connect(conninfo, NoTls).unwrap();
+        for sql in sqls {
+            let e = c.batch_execute(sql).unwrap_err();
+            assert_eq!(
+                e.code().map(postgres::error::SqlState::code),
+                Some("42501"),
+                "{sql}: {e}"
+            );
+        }
+    };
+    refused(
+        &conninfo,
+        &[
+            format!("SELECT send_message('{id}', 'x')"),
+            format!("SELECT start_session('{}')", agent_task()),
+            "DELETE FROM inbox".to_owned(),
+            "UPDATE inbox SET body = 'x'".to_owned(),
+            format!("INSERT INTO inbox (task_id, kind, body) VALUES ('{id}', 'message', 'x')"),
+        ],
+    );
+    refused(
+        &pg.conninfo()
+            .replace("user=exec_pool ", "user=exec_pool_submit "),
+        &[
+            "SELECT body FROM inbox".to_owned(),
+            "SELECT * FROM inbox".to_owned(),
+            format!("INSERT INTO inbox (task_id, kind) VALUES ('{id}', 'continue')"),
+            "UPDATE tasks SET session = true".to_owned(),
+        ],
+    );
+}
+
+#[test]
+fn a_park_goes_only_through_park_and_a_cancelled_review_stays_cancelled() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    assert!(matches!(
+        owner.apply(&a, &ev(epoch, Kind::Park(ParkReason::TurnEnd)), None),
+        Err(QueueError::Contract(Error::IllegalTransition { .. }))
+    ));
+    assert_eq!(s.cancel(&id).unwrap(), (a.clone(), Status::Running));
+    overdue(&pg, &a);
+    owner.reconcile().unwrap();
+    assert_eq!(status(&pg, &a).0, "needs_review");
+    assert_eq!(
+        s.send(&id, "go on").unwrap(),
+        (a.clone(), Status::Cancelled)
+    );
+    assert!(owner.claim(&claude_slot(), 60).unwrap().is_none());
+}
+
+#[test]
+fn a_park_marks_read_only_what_was_due_at_its_claim() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+        .unwrap();
+    pg.sql()
+        .execute(
+            "INSERT INTO inbox (task_id, kind, body, due_at) VALUES ($1, 'timer', 'later', now() + interval '1 hour')",
+            &[&id],
+        )
+        .unwrap();
+    s.send(&id, "now").unwrap();
+    let (_, epoch, turn) = started(&mut owner);
+    assert_eq!(turn.input, "now");
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "waiting", "the timer is not due");
+    let unread: i64 = pg
+        .sql()
+        .query_one(
+            "SELECT count(*) FROM inbox WHERE consumed_epoch IS NULL AND kind = 'timer'",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(unread, 1, "the row not handed over stays unread");
 }

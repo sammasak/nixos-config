@@ -147,6 +147,20 @@ creates the role. From lenovo, the coordinator's host, `exec-pool` is a wrapper
 the same user, each argument single-quoted and the prompt on stdin (`--prompt-file -`), so the database stays
 socket-only and lenovo holds no credential for it; skills `coordinator.poolCommand` names the wrapper.
 
+## Sessions
+
+`exec-pool start` (submit's flags, claude only) queues a session through `start_session` (migration 0009): a task
+whose every lease is one turn. A turn ends in `Store::park`, one transaction fenced on its epoch, to `waiting` with
+the try given back, so turns spend no `max_attempts` (a prepare failure still does); the park records the checkpoint
+and the turn's result, marks the inbox rows the turn was handed read, and queues the next turn at once if an unread
+row is due. `exec-pool send ID --prompt TEXT` puts a message in the session's inbox through `send_message`: a waiting
+session is queued for it, one in `needs_review` is queued with its try given back (the owner's decision; besides an
+operator's resolve the only way out of review), a queued or live one reads it at its next turn. There is no pause or
+resume verb. A claim hands the turn the session's uuid, the prompt on its first turn or else the unread rows as one
+text, and the highest row id it holds; rows are marked read at the park, so a turn that never ran is handed them
+again. `wait` returns on `waiting` too, `status` and `list` show `session` and, while waiting, the park reason, and
+`exec_pool_waiting{reason}` counts waiting sessions by it.
+
 ## Phase gates (detail in #646)
 
 - **v0.1 local reuse:** one opt-in host, N declared slots (#650), a durable queue (#651), a runner (#652) and
