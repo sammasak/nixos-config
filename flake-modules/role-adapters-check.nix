@@ -10,9 +10,9 @@
 }:
 let
   # The adapters as modules/programs/cli/claude-code/skills.nix writes them for a system, read from that module
-  # without Home Manager: its home.file pulls in stylix, which imports from a derivation the flake check refuses.
-  # Its homes are those fleetHome (flake-modules/nixos-configurations.nix) gives it to: the system's and each
-  # worker guest's, when that system has devTools.
+  # without Home Manager: even home.file's names pull in stylix, which imports from a derivation the flake check
+  # refuses. An adapter another module writes is not seen. Its homes are the ones fleetHome
+  # (flake-modules/nixos-configurations.nix) gives skills.nix to, on devTools: keep the two in step.
   adaptersOf =
     os:
     lib.optionals os.sam.profile.devTools (
