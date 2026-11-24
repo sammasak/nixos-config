@@ -28,13 +28,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use exec_pool::agent;
 use exec_pool::queue::{Change, Claim, Park, QueueError, Store};
 use exec_pool::runner::{
     CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, Manifest, PREPARE_FAILURES, QUICK_SECS,
-    Session, Stage, Step, TurnSettle, claim_fits, decide, decide_turn, drain_holds, guest_exit,
-    handed_back, holds_tree, read_regular, receipt, relink, remote_head, session_checkpoint, tail,
-    tree_check, while_unavailable,
+    Session, Stage, Step, TurnHint, TurnSettle, UNDELIVERED, carry, claim_fits, decide,
+    decide_turn, drain_holds, guest_exit, handed_back, holds_tree, parks_undelivered, read_regular,
+    read_regular_up_to, receipt, relink, remote_head, session_checkpoint, tail, tree_check,
+    while_unavailable,
 };
 use exec_pool::sync::{self, Depot};
 use exec_pool::task_result::TaskResult;
@@ -42,6 +42,7 @@ use exec_pool::turn_log::{self, LOG_BYTES};
 use exec_pool::wake::{self, Wake};
 use exec_pool::workspace::{self, HomeId, SESSION_HOME, SESSION_WORK, Sessions, Workspace, admit};
 use exec_pool::{Agent, Event, Kind, ParkReason, Receipt, STORE, SchemaVersion, Slot};
+use exec_pool::{agent, pane};
 use serde_json::{Value, json};
 
 const USAGE: &str =
@@ -50,6 +51,10 @@ const MANIFEST: &str = "manifest.json";
 const RESULT: &str = "result.json";
 /// Beside the manifest: the attempt the helper is to stop, as [`Manifest::cancel_token`].
 const CANCEL: &str = "cancel";
+/// Beside the manifest: a live session turn's [`TurnHint`], renewed every heartbeat.
+const TURN_HINT: &str = "turn.json";
+/// The idle grace before the first hint arrives: `homelab.execPool.runner.idleGraceSecs`'s default.
+const GRACE_SECS: u64 = 600;
 /// Why the runner stops a run whose host powers off before it could end; it writes [`Manifest::drain_token`].
 const HOST_DRAINING: &str = "host_draining";
 /// The slot home the last admitted attempt ran in, beside the slot's run directories.
@@ -150,6 +155,8 @@ struct Runner {
     /// The host's scheduled poweroff timer, how long before it claims stop, and how long before it a running attempt
     /// is drained.
     off_timer: Option<(String, u32, u32)>,
+    /// How long an idle session agent stays in its pane, and how long while work waits for a slot.
+    grace_secs: (u64, u64),
 }
 
 impl Runner {
@@ -180,6 +187,14 @@ impl Runner {
                 }
                 Err(_) => None,
             },
+            grace_secs: (
+                var("EXEC_POOL_IDLE_GRACE_SECS")?
+                    .parse()
+                    .map_err(|_| "EXEC_POOL_IDLE_GRACE_SECS must be a number".to_owned())?,
+                var("EXEC_POOL_IDLE_GRACE_BUSY_SECS")?
+                    .parse()
+                    .map_err(|_| "EXEC_POOL_IDLE_GRACE_BUSY_SECS must be a number".to_owned())?,
+            ),
             slot,
         })
     }
@@ -417,6 +432,9 @@ impl Runner {
                 None
             }
         };
+        if m.session.is_some() {
+            self.hint(store, m);
+        }
         if stopping.is_some() || why.is_none() {
             return stopping;
         }
@@ -460,6 +478,33 @@ impl Runner {
         match store.put_log(&m.attempt_id, m.lease_epoch, start, &log) {
             Ok(()) => *logged = Some((start, log.len())),
             Err(e) => self.error("put_log", &e),
+        }
+    }
+
+    /// Tells the helper of the session turn `m` its idle grace and the messages sent to it since its claim
+    /// ([`TurnHint`]); a queue that does not answer leaves the last hint in place.
+    fn hint(&self, store: &mut Store, m: &Manifest) {
+        let upto = m.session.as_ref().map_or(0, |s| s.upto);
+        let (mail, busy) = match store.during_turn(&m.task.id, upto) {
+            Ok(r) => r,
+            Err(e) => return self.error("turn_hint", &e),
+        };
+        let hint = TurnHint {
+            schema_version: SchemaVersion::CURRENT,
+            grace_secs: if busy {
+                self.grace_secs.1
+            } else {
+                self.grace_secs.0
+            },
+            mail,
+        };
+        let tmp = self.runtime.join(format!("{TURN_HINT}.tmp"));
+        let written = serde_json::to_string(&hint)
+            .map_err(io::Error::other)
+            .and_then(|json| fs::write(&tmp, json))
+            .and_then(|()| fs::rename(&tmp, self.runtime.join(TURN_HINT)));
+        if let Err(e) = written {
+            self.error("turn_hint", &e);
         }
     }
 
@@ -510,7 +555,14 @@ impl Runner {
                 park(
                     store,
                     (id, epoch, &task.id, &self.slot.host),
-                    (reason, manifest.session.as_ref().map_or(0, |s| s.upto)),
+                    (
+                        reason,
+                        manifest
+                            .session
+                            .as_ref()
+                            .map_or(0, |s| s.upto)
+                            .max(result.and_then(|r| r.upto).unwrap_or(0)),
+                    ),
                     (
                         result.is_some_and(|r| r.stored),
                         result.and_then(|r| r.wake.clone()),
@@ -547,16 +599,19 @@ impl Runner {
             task: claim.task.clone(),
             session: session_of(claim),
         };
-        let marker = self.runtime.join(CANCEL);
-        let written = match fs::remove_file(&marker) {
+        // the last attempt's cancel marker and turn hint are not this one's
+        let gone = |name: &str| match fs::remove_file(self.runtime.join(name)) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-            _ => serde_json::to_string(&manifest).map_err(io::Error::other),
-        }
-        .and_then(|json| {
-            let tmp = self.runtime.join(format!("{MANIFEST}.tmp"));
-            fs::write(&tmp, json)?;
-            fs::rename(&tmp, self.runtime.join(MANIFEST))
-        });
+            _ => Ok(()),
+        };
+        let written = gone(CANCEL)
+            .and_then(|()| gone(TURN_HINT))
+            .and_then(|()| serde_json::to_string(&manifest).map_err(io::Error::other))
+            .and_then(|json| {
+                let tmp = self.runtime.join(format!("{MANIFEST}.tmp"));
+                fs::write(&tmp, json)?;
+                fs::rename(&tmp, self.runtime.join(MANIFEST))
+            });
         if let Err(e) = written {
             self.error("manifest", &e);
             return false;
@@ -769,11 +824,24 @@ impl Guest {
     /// `cancellable`: the runner's cancel marker stops it.
     fn step(
         &self,
-        (unit, cancellable): (&str, bool),
+        unit: (&str, bool),
         argv: &[String],
         timeout: Duration,
         (out, err): (&File, &File),
         log: Option<&Arc<turn_log::Writer>>,
+    ) -> io::Result<StepEnd> {
+        self.step_watched(unit, argv, (timeout, out, err), log, &mut never)
+    }
+
+    /// [`Guest::step`], asking `watch` on every poll whether to stop it, which is neither a timeout nor a cancel, and
+    /// whether its agent is idle, which restarts its time limit.
+    fn step_watched(
+        &self,
+        (unit, cancellable): (&str, bool),
+        argv: &[String],
+        (timeout, out, err): (Duration, &File, &File),
+        log: Option<&Arc<turn_log::Writer>>,
+        watch: &mut dyn FnMut() -> Watch,
     ) -> io::Result<StepEnd> {
         let mut child: Child = Command::new("systemd-run")
             .args([
@@ -819,18 +887,27 @@ impl Guest {
                 .map(|s| Self::capture(s, err, log.cloned()))
                 .transpose()?,
         ];
-        let t = Instant::now();
+        let mut t = Instant::now();
         let mut stopped = false;
         let (mut timed_out, mut cancelled) = (false, false);
         let status = loop {
             if let Some(status) = child.try_wait()? {
                 break status;
             }
+            let watched = if stopped || timed_out || cancelled {
+                Watch::Busy
+            } else {
+                watch()
+            };
+            // the time limit counts the agent's work since it was last idle, not its pause
+            if watched == Watch::Idle {
+                t = Instant::now();
+            }
             if !timed_out && !cancelled {
                 timed_out = t.elapsed() > timeout;
                 cancelled = !timed_out && cancellable && self.cancelled();
             }
-            if (timed_out || cancelled) && !stopped {
+            if !stopped && (timed_out || cancelled || watched == Watch::Stop) {
                 stopped = true;
                 let _ = Command::new("systemctl")
                     .args(["-M", &self.slot, "stop", unit])
@@ -945,13 +1022,15 @@ impl Guest {
     }
 
     /// Runs `steps` in order until one fails or times out, recording in `result` where it stopped; `t` is when the
-    /// run's preparing began. Whether every step ran to exit 0.
+    /// run's preparing began; `watch` as [`Guest::step_watched`]'s, for the run's step. Whether every step ran to
+    /// exit 0.
     fn steps(
         &self,
         steps: Vec<Step>,
         (timeout, t): (Duration, Instant),
         (out, err): (&File, &File),
         result: &mut ExecResult,
+        watch: &mut dyn FnMut() -> Watch,
     ) -> bool {
         for Step {
             stage,
@@ -975,15 +1054,12 @@ impl Guest {
                 (Stage::Run, None) => timeout,
             };
             let started = Instant::now();
-            let end = self
-                .step(
-                    (unit, true),
-                    &argv,
-                    limit,
-                    (out, err),
-                    self.log.as_ref().filter(|_| stage == Stage::Run),
-                )
-                .map_err(|e| format!("{unit}: {e}"));
+            let log = self.log.as_ref().filter(|_| stage == Stage::Run);
+            let end = match stage {
+                Stage::Run => self.step_watched((unit, true), &argv, (limit, out, err), log, watch),
+                Stage::Prepare => self.step((unit, true), &argv, limit, (out, err), log),
+            }
+            .map_err(|e| format!("{unit}: {e}"));
             let end = end.unwrap_or_else(|e| {
                 let _ =
                     io::Write::write_all(&mut &*err, format!("exec-pool-exec: {e}\n").as_bytes());
@@ -1014,14 +1090,15 @@ impl Guest {
         !(result.cancelled || result.drained)
     }
 
-    /// The session turn's agent step: a resume once the transcript probe finds the session, its start before.
+    /// The session turn's agent step: a resume once the transcript probe finds the session, its start before; and
+    /// which.
     fn turn(
         &self,
         m: &Manifest,
         ws: &Workspace,
-        (env, find): (&str, &str),
+        (dtach, env, find): (Option<&str>, &str, &str),
         (dir, err): (&Path, &File),
-    ) -> Result<Step, String> {
+    ) -> Result<(Step, agent::Turn), String> {
         let session = m
             .session
             .as_ref()
@@ -1031,7 +1108,9 @@ impl Guest {
         } else {
             agent::Turn::Start
         };
-        m.turn(ws, env, turn).map_err(|e| format!("manifest: {e}"))
+        m.turn(ws, (dtach, env), turn)
+            .map(|step| (step, turn))
+            .map_err(|e| format!("manifest: {e}"))
     }
 
     /// Whether the session's transcript exists in its attached tree, by [`agent::transcript_probe`]: found, none
@@ -1093,14 +1172,547 @@ impl Guest {
     }
 }
 
+/// The largest transcript a turn's verdict reads.
+const TRANSCRIPT_LIMIT: u64 = 256 << 20;
+/// How long one Herdr call may take beyond the wait it is told.
+const HERDR_CALL: Duration = Duration::from_secs(30);
+/// How often the turn's pane is read.
+const PANE_POLL: Duration = Duration::from_secs(2);
+/// How long the agent's terminal may take to appear, and Herdr to see the agent in the pane once it did.
+const AGENT_START: Duration = Duration::from_secs(60);
+const AGENT_SEEN: Duration = Duration::from_secs(180);
+/// How long a closed agent may take to exit before its unit is stopped.
+const AGENT_CLOSE: Duration = Duration::from_secs(30);
+/// How long Herdr may see no agent in the pane (closed, or Herdr restarted) before the pane is opened again.
+const PANE_LOST: Duration = Duration::from_secs(30);
+
+/// The host user's Herdr, where a slot's pane is (`EXEC_POOL_HERDR`: the argv up to and with `herdr`, run as that
+/// user), and the command the pane runs to attach to the turn's agent in the guest (`EXEC_POOL_ATTACH`).
+struct Herdr {
+    argv: Vec<String>,
+    attach: String,
+    slot: String,
+}
+
+impl Herdr {
+    fn from_env(slot: &str) -> Result<Option<Self>, String> {
+        let Ok(argv) = std::env::var("EXEC_POOL_HERDR") else {
+            return Ok(None);
+        };
+        let argv: Vec<String> =
+            serde_json::from_str(&argv).map_err(|e| format!("EXEC_POOL_HERDR: {e}"))?;
+        if argv.is_empty() {
+            return Err("EXEC_POOL_HERDR is empty".to_owned());
+        }
+        Ok(Some(Self {
+            argv,
+            attach: var("EXEC_POOL_ATTACH")?,
+            slot: slot.to_owned(),
+        }))
+    }
+
+    /// One call's JSON answer, `Null` for a command that prints nothing on success (`pane run`, `pane send-keys`);
+    /// one that does not end within `wait` and [`HERDR_CALL`] is killed.
+    fn call(&self, args: &[&str], wait: Duration) -> Result<Value, String> {
+        let what = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
+        let (cmd, rest) = self.argv.split_first().ok_or("no herdr")?;
+        let mut child = Command::new(cmd)
+            .args(rest)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("herdr {what}: {e}"))?;
+        let (out, err) = (
+            child.stdout.take().map(drain),
+            child.stderr.take().map(drain),
+        );
+        let limit = wait.saturating_add(HERDR_CALL);
+        let t = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if t.elapsed() > limit => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(format!(
+                        "herdr {what} did not answer in {} s",
+                        limit.as_secs()
+                    ));
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(50)),
+                Err(e) => break Err(format!("herdr {what}: {e}")),
+            }
+        };
+        let join = |h: Option<thread::JoinHandle<Vec<u8>>>| {
+            h.and_then(|h| h.join().ok()).unwrap_or_default()
+        };
+        let (out, err) = (join(out), join(err));
+        if !status?.success() {
+            return Err(format!("herdr {what}: {}", tail(&err).trim()));
+        }
+        if out.trim_ascii().is_empty() {
+            return Ok(Value::Null);
+        }
+        serde_json::from_slice(&out).map_err(|e| format!("herdr {what}: {e}"))
+    }
+
+    /// Whether the host user's Herdr server is up.
+    fn running(&self) -> Result<(), String> {
+        let status = self.call(&["status", "--json"], Duration::ZERO)?;
+        if status.pointer("/server/running") == Some(&Value::Bool(true)) {
+            Ok(())
+        } else {
+            Err("the host user's Herdr server is not running".to_owned())
+        }
+    }
+
+    /// Closes every workspace of this slot's, so an idle slot shows none.
+    fn close_slots(&self) {
+        let Ok(list) = self.call(&["workspace", "list"], Duration::ZERO) else {
+            return;
+        };
+        let ids = list
+            .pointer("/result/workspaces")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|w| {
+                w.get("label")
+                    .and_then(Value::as_str)
+                    .is_some_and(|l| pane::is_slots(l, &self.slot))
+            })
+            .filter_map(|w| w.get("workspace_id").and_then(Value::as_str));
+        for id in ids {
+            self.close(id);
+        }
+    }
+
+    /// A new workspace labelled `label` whose pane attaches to the turn's agent: its id and its pane's. One whose pane
+    /// could not attach is closed again.
+    fn open(&self, label: &str) -> Result<(String, String), String> {
+        self.close_slots();
+        let created = self.call(
+            &["workspace", "create", "--label", label, "--no-focus"],
+            Duration::ZERO,
+        )?;
+        let id = |at: &str| {
+            created
+                .pointer(at)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        let (Some(workspace), Some(pane)) = (
+            id("/result/workspace/workspace_id"),
+            id("/result/root_pane/pane_id"),
+        ) else {
+            return Err(format!(
+                "herdr workspace create named no workspace and pane: {created}"
+            ));
+        };
+        if let Err(e) = self.call(&["pane", "run", &pane, &self.attach], Duration::ZERO) {
+            self.close(&workspace);
+            return Err(e);
+        }
+        Ok((workspace, pane))
+    }
+
+    fn close(&self, workspace: &str) {
+        let _ = self.call(&["workspace", "close", workspace], Duration::ZERO);
+    }
+
+    /// Prompts `text` into the agent in `pane`; an Enter it dropped is sent again. A prompt Herdr refused (a blocked
+    /// agent, none in the pane) is an error: no Enter answers a dialog.
+    fn prompt(&self, pane: &str, text: &str) -> Result<(), String> {
+        let sent = self.call(
+            &[
+                "agent",
+                "prompt",
+                pane,
+                text,
+                "--wait",
+                "--until",
+                "working",
+                "--until",
+                "done",
+                "--timeout",
+                "15000",
+            ],
+            Duration::from_secs(15),
+        );
+        match sent {
+            // submitted, but Herdr saw no work start in time
+            Err(e) if e.contains(r#""code":"timeout""#) || e.contains("agent_prompt_stalled") => {
+                let _ = self.call(&["agent", "send-keys", pane, "Enter"], Duration::ZERO);
+                Ok(())
+            }
+            Err(e) => Err(e),
+            Ok(_) => Ok(()),
+        }
+    }
+
+    /// What Herdr sees of the agent in `pane`; `None`: no agent there.
+    fn seen(&self, pane: &str) -> Result<Option<pane::Seen>, String> {
+        self.call(&["agent", "list"], Duration::ZERO)
+            .map(|list| pane::seen(&list, pane))
+    }
+}
+
+/// What a step's watch tells it on a poll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Watch {
+    Busy,
+    /// Its agent waits for input: its time limit starts again.
+    Idle,
+    Stop,
+}
+
+/// The watch of a step that only its time limit and the runner's marker stop.
+const fn never() -> Watch {
+    Watch::Busy
+}
+
+/// Everything `s` gives, read in a thread of its own.
+fn drain<R: io::Read + Send + 'static>(mut s: R) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = s.read_to_end(&mut b);
+        b
+    })
+}
+
+/// Where the turn's pane is.
+enum Phase {
+    /// Waiting for the agent's terminal, then opening the pane.
+    Open,
+    /// The pane is open; waiting for Herdr to see the agent in it.
+    Detect(String, Instant),
+    /// The agent has its prompt: working, or idle in its pause.
+    Watch(String),
+    /// The pause's grace ran out and the agent was closed; waiting for it to exit.
+    Close(Instant),
+}
+
+/// The turn's agent in the slot's Herdr pane: opened, named, prompted as the coordinator prompted a named worker,
+/// and watched ([`pane::TurnWatch`]). Idle, it pauses in the pane for the runner's grace ([`TurnHint`]), in which
+/// the owner may type to it and a message sent to the session is prompted into it, each making it work on in the same
+/// turn; then (at once when it asked for a timer) it is closed as a person would (ctrl+c twice), so Claude writes
+/// its transcript's end. `poll` tells the agent's step whether it is idle and when to stop it.
+struct PaneTurn<'a> {
+    herdr: &'a Herdr,
+    label: String,
+    name: String,
+    home: &'a Path,
+    uuid: &'a str,
+    input: &'a str,
+    /// The runner's hint for this turn.
+    hint: PathBuf,
+    grace_secs: u64,
+    phase: Phase,
+    started: Instant,
+    polled: Option<Instant>,
+    last: Watch,
+    lost: Option<Instant>,
+    watch: Option<pane::TurnWatch>,
+    /// The transcript's lines before the first prompt; `None` until it was prompted.
+    from: Option<usize>,
+    /// The last inbox message prompted: the claim's, then a hint's.
+    upto: i64,
+    /// The agent was idle at the last poll.
+    idle: bool,
+    /// The agent was closed idle, its turn ended.
+    ended: bool,
+    /// Every workspace the turn opened, closed by id once it ends whatever its label shows by then.
+    opened: Vec<String>,
+}
+
+impl<'a> PaneTurn<'a> {
+    fn new(
+        herdr: &'a Herdr,
+        (m, hint): (&Manifest, PathBuf),
+        home: &'a Path,
+        uuid: &'a str,
+        input: &'a str,
+    ) -> Self {
+        Self {
+            herdr,
+            label: pane::label(&m.slot, &m.task.idempotency_key),
+            name: pane::agent_name(&m.task.id),
+            home,
+            uuid,
+            input,
+            hint,
+            grace_secs: GRACE_SECS,
+            phase: Phase::Open,
+            started: Instant::now(),
+            polled: None,
+            last: Watch::Busy,
+            lost: None,
+            watch: None,
+            from: None,
+            upto: m.session.as_ref().map_or(0, |s| s.upto),
+            idle: false,
+            ended: false,
+            opened: Vec::new(),
+        }
+    }
+
+    /// Moves the pane on at most every [`PANE_POLL`], and between polls tells what the last one found.
+    fn poll(&mut self, note: &dyn Fn(&str, &dyn std::fmt::Display)) -> Watch {
+        if self.polled.is_some_and(|t| t.elapsed() < PANE_POLL) {
+            return self.last;
+        }
+        self.polled = Some(Instant::now());
+        self.last = self.step(note);
+        self.last
+    }
+
+    fn step(&mut self, note: &dyn Fn(&str, &dyn std::fmt::Display)) -> Watch {
+        let fail = |e: &dyn std::fmt::Display| {
+            note("pane", e);
+            Watch::Stop
+        };
+        match &self.phase {
+            Phase::Open => {
+                if home_file(self.home, agent::AGENT_SOCKET)
+                    .symlink_metadata()
+                    .is_ok()
+                {
+                    match self.herdr.open(&self.label) {
+                        Ok((w, p)) => {
+                            self.opened.push(w);
+                            self.phase = Phase::Detect(p, Instant::now());
+                        }
+                        Err(e) => return fail(&e),
+                    }
+                } else if self.started.elapsed() > AGENT_START {
+                    return fail(&"the agent's terminal never appeared");
+                }
+                Watch::Busy
+            }
+            Phase::Detect(p, since) => {
+                let p = p.clone();
+                match self.herdr.seen(&p) {
+                    Ok(Some(_)) => {
+                        if let Err(e) = self
+                            .herdr
+                            .call(&["agent", "rename", &p, &self.name], Duration::ZERO)
+                        {
+                            note("pane name", &e);
+                        }
+                        if self.watch.is_none()
+                            && let Err(e) = self.first_prompt(&p)
+                        {
+                            return fail(&e);
+                        }
+                        self.phase = Phase::Watch(p);
+                        Watch::Busy
+                    }
+                    _ if since.elapsed() > AGENT_SEEN => fail(&"Herdr saw no agent in the pane"),
+                    _ => Watch::Busy,
+                }
+            }
+            Phase::Watch(p) => {
+                let p = p.clone();
+                let seen = self.herdr.seen(&p).ok().flatten();
+                if seen.is_none() {
+                    if self.lost.get_or_insert_with(Instant::now).elapsed() > PANE_LOST {
+                        note("pane", &"no agent in the pane: opening it again");
+                        self.lost = None;
+                        self.phase = Phase::Open;
+                    }
+                    return Watch::Busy;
+                }
+                self.lost = None;
+                self.take_hint(&p, seen, note);
+                let now = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                let idle = self.watch.as_mut().and_then(|w| w.idle_ms(seen, now));
+                self.idle = idle.is_some();
+                let waiting = self.home.join(wake::FILE).symlink_metadata().is_ok();
+                if pane::parks(idle, self.grace_secs, waiting) {
+                    self.ended = true;
+                    let _ = self
+                        .herdr
+                        .call(&["agent", "send-keys", &p, "ctrl+c"], Duration::ZERO);
+                    thread::sleep(Duration::from_millis(500));
+                    let _ = self
+                        .herdr
+                        .call(&["agent", "send-keys", &p, "ctrl+c"], Duration::ZERO);
+                    self.phase = Phase::Close(Instant::now());
+                }
+                if self.idle { Watch::Idle } else { Watch::Busy }
+            }
+            Phase::Close(since) if since.elapsed() > AGENT_CLOSE => Watch::Stop,
+            Phase::Close(_) => Watch::Idle,
+        }
+    }
+
+    /// Reads the runner's hint: its grace, and the messages sent to the session since the last one prompted, which
+    /// are prompted into the pane now, the agent then watched from the state it was in.
+    fn take_hint(
+        &mut self,
+        p: &str,
+        seen: Option<pane::Seen>,
+        note: &dyn Fn(&str, &dyn std::fmt::Display),
+    ) {
+        let hint = match read_regular(&self.hint) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return,
+            read => read
+                .map_err(|e| e.to_string())
+                .and_then(|s| TurnHint::parse(&s).map_err(|e| e.to_string())),
+        };
+        let hint = match hint {
+            Ok(h) => h,
+            Err(e) => return note("turn hint", &e),
+        };
+        self.grace_secs = hint.grace_secs;
+        // a working or blocked agent is not prompted, as the coordinator never prompted one: the mail waits for it
+        if !seen.is_some_and(|s| s.settled) {
+            return;
+        }
+        let Some((text, upto)) = pane::mail(&hint.mail, self.upto) else {
+            return;
+        };
+        if let Err(e) = self.send(p, &text) {
+            return note("mail", &e);
+        }
+        self.upto = upto;
+        self.watch = Some(pane::TurnWatch::new(seen.map_or(0, |s| s.seq)));
+    }
+
+    /// Prompts `input` into the pane ([`Herdr::prompt`]), a long one through [`pane::INPUT_FILE`].
+    fn send(&self, p: &str, input: &str) -> Result<(), String> {
+        let (long, text) = pane::prompt(input);
+        if let Some(long) = long {
+            write_home(
+                &home_file(self.home, pane::INPUT_FILE),
+                long.as_bytes(),
+                owner(self.home)?,
+            )?;
+        }
+        self.herdr.prompt(p, &text)
+    }
+
+    /// Prompts the turn's input once the agent draws its prompt box and Herdr calls it idle, as the named workers'
+    /// first prompt was sent.
+    fn first_prompt(&mut self, p: &str) -> Result<(), String> {
+        self.herdr.call(
+            &[
+                "pane",
+                "wait-output",
+                p,
+                "--match",
+                pane::READY_TEXT,
+                "--source",
+                "visible",
+                "--timeout",
+                "120000",
+            ],
+            Duration::from_secs(120),
+        )?;
+        self.herdr.call(
+            &["agent", "wait", p, "--until", "idle", "--timeout", "30000"],
+            Duration::from_secs(30),
+        )?;
+        let before = self.herdr.seen(p)?.map_or(0, |s| s.seq);
+        self.from = Some(
+            transcript_of(self.home, self.uuid)
+                .map(|t| read_regular_up_to(&t, TRANSCRIPT_LIMIT).map(|s| pane::count(&s)))
+                .transpose()
+                .map_err(|e| format!("transcript: {e}"))?
+                .unwrap_or(0),
+        );
+        self.send(p, self.input)?;
+        self.watch = Some(pane::TurnWatch::new(before));
+        Ok(())
+    }
+}
+
+/// The uid and gid that own the docked tree's `home`.
+fn owner(home: &Path) -> Result<(u32, u32), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    home.symlink_metadata()
+        .map(|m| (m.uid(), m.gid()))
+        .map_err(|e| format!("{}: {e}", home.display()))
+}
+
+/// The host path of a file the guest names under the session's HOME, `home` being the docked tree's.
+fn home_file(home: &Path, guest_path: &str) -> PathBuf {
+    home.join(
+        guest_path
+            .strip_prefix(SESSION_HOME)
+            .unwrap_or(guest_path)
+            .trim_start_matches('/'),
+    )
+}
+
+/// The session's transcript in the docked tree's `home`, if Claude has written one.
+fn transcript_of(home: &Path, uuid: &str) -> Option<PathBuf> {
+    fs::read_dir(home.join(".claude").join("projects"))
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|d| d.path().join(format!("{uuid}.jsonl")))
+        .find(|p| p.symlink_metadata().is_ok_and(|m| m.is_file()))
+}
+
+/// Readies the docked tree's `home` for the turn's interactive agent: no stale terminal socket, and the startup
+/// dialogs a named worker's home has accepted ([`pane::accept_dialogs`]).
+fn prepare_home(home: &Path) -> Result<(), String> {
+    let owner = owner(home)?;
+    let socket = home_file(home, agent::AGENT_SOCKET);
+    match fs::remove_file(&socket) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => {
+            return Err(format!("{}: {e}", socket.display()));
+        }
+        _ => {}
+    }
+    let state = home.join(".claude.json");
+    let current = match read_regular(&state) {
+        Ok(s) => Some(Some(s)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Some(None),
+        // not a regular file, or too big: left as it is
+        Err(_) => None,
+    };
+    if let Some(seeded) = current.and_then(|c| pane::accept_dialogs(c.as_deref())) {
+        write_home(&state, seeded.as_bytes(), owner)?;
+    }
+    Ok(())
+}
+
+/// Writes `bytes` to `path` in a directory the guest user owns, as root: a new file beside it (created, never
+/// opened through a link), owned by `owner` and 0600, renamed over it, so no link the agent left is followed.
+fn write_home(path: &Path, bytes: &[u8], (uid, gid): (u32, u32)) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let err = |e: io::Error| format!("{}: {e}", path.display());
+    let tmp = path.with_extension("exec-pool");
+    match fs::remove_file(&tmp) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(err(e)),
+        _ => {}
+    }
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(err)?;
+    io::Write::write_all(&mut f, bytes).map_err(err)?;
+    std::os::unix::fs::fchown(&f, Some(uid), Some(gid)).map_err(err)?;
+    fs::rename(&tmp, path).map_err(err)
+}
+
 /// The slot's dock for a session turn, and the mark that tells the runner a tree is stuck in it.
 struct Dock<'a> {
     sessions: Sessions,
     busy: PathBuf,
     slot: &'a str,
-    /// `cp` and `find`, the store paths of the relink and the transcript probe.
+    /// `cp` and `find`, the store paths of the relink and the transcript probe; `dtach`, the agent's terminal.
     cp: String,
     find: String,
+    dtach: String,
+    /// The host user's Herdr the turn's pane is opened in; `None` (the runner's `sessionSurface = "headless"`): the
+    /// turn runs in Claude's print mode, with no pane.
+    herdr: Option<Herdr>,
     /// The store a parked tree goes to and comes from, with `rsync` and `chown`; `None` keeps trees on this host.
     depot: Option<(Depot, String, String)>,
     /// The node-exporter textfile the store's transfers are counted in.
@@ -1116,6 +1728,8 @@ impl<'a> Dock<'a> {
             slot,
             cp: var("EXEC_POOL_CP")?,
             find: var("EXEC_POOL_FIND")?,
+            dtach: var("EXEC_POOL_DTACH")?,
+            herdr: Herdr::from_env(slot)?,
             depot: depot()?,
             counts: std::env::var_os("EXEC_POOL_TEXTFILE").map(PathBuf::from),
         })
@@ -1280,8 +1894,10 @@ impl<'a> Dock<'a> {
         }
     }
 
-    /// The turn after its preparing: the first turn's prepared mark, then its agent step. A turn with no agent step
-    /// stays in preparing, so it goes back to the queue.
+    /// The turn after its preparing: the first turn's prepared mark, then its agent step in the slot's Herdr pane
+    /// ([`PaneTurn`]), and the verdict from its transcript as Claude's result line on the run's stdout. A turn with no
+    /// agent step, no Herdr, or whose prompt never reached the agent, stays in preparing, so it goes back to the queue
+    /// with its input unread.
     fn turn(
         &self,
         (m, ws, guest): (&Manifest, &Workspace, &Guest),
@@ -1298,14 +1914,126 @@ impl<'a> Dock<'a> {
         if created && let Err(e) = fs::write(self.sessions.prepared(&m.task.id), "") {
             note("prepared mark", &e);
         }
-        match guest.turn(m, ws, (env, &self.find), (dir, err)) {
-            Ok(run) => {
-                guest.steps(vec![run], bounds, (out, err), result);
+        let Some(session) = &m.session else {
+            result.failed_step = Some("turn".to_owned());
+            note("no turn", &"a one-shot manifest has no turn");
+            return;
+        };
+        let home = self.sessions.docked(self.slot).join("home");
+        let kept = home_file(&home, UNDELIVERED);
+        let carried = match read_regular(&kept) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            read => read.inspect_err(|e| note("undelivered", e)).ok(),
+        };
+        let m = &Manifest {
+            session: Some(Session {
+                input: carry(carried.as_deref(), &session.input),
+                ..session.clone()
+            }),
+            ..m.clone()
+        };
+        self.agent_turn((m, ws, guest), env, (bounds, dir, out, err), result, &note);
+        let input = m.session.as_ref().map_or("", |s| s.input.as_str());
+        let kept_result = if result.stage == Stage::Run {
+            fs::remove_file(&kept).or_else(|e| match e.kind() {
+                io::ErrorKind::NotFound => Ok(()),
+                _ => Err(format!("{}: {e}", kept.display())),
+            })
+        } else if parks_undelivered(result) {
+            owner(&home).and_then(|o| write_home(&kept, input.as_bytes(), o))
+        } else {
+            Ok(())
+        };
+        if let Err(e) = kept_result {
+            note("undelivered", &e);
+        }
+    }
+
+    /// The turn's agent step and its pane; `m`'s input is all the turn has to deliver.
+    fn agent_turn(
+        &self,
+        (m, ws, guest): (&Manifest, &Workspace, &Guest),
+        env: &str,
+        (bounds, dir, out, err): ((Duration, Instant), &Path, &File, &File),
+        result: &mut ExecResult,
+        note: &dyn Fn(&str, &dyn std::fmt::Display),
+    ) {
+        let Some(session) = &m.session else {
+            return;
+        };
+        let Some(herdr) = &self.herdr else {
+            match guest.turn(m, ws, (None, env, &self.find), (dir, err)) {
+                Ok((run, _)) => {
+                    guest.steps(vec![run], bounds, (out, err), result, &mut never);
+                }
+                Err(e) => {
+                    result.failed_step = Some("turn".to_owned());
+                    note("no turn", &e);
+                }
             }
+            return;
+        };
+        if let Err(e) = herdr.running() {
+            result.failed_step = Some("herdr".to_owned());
+            note("herdr", &e);
+            return;
+        }
+        let home = self.sessions.docked(self.slot).join("home");
+        let input = agent::turn_input(&m.task, &session.input, agent::Turn::Start);
+        let run = guest.turn(m, ws, (Some(&self.dtach), env, &self.find), (dir, err));
+        let prepared = run.and_then(|(run, turn)| {
+            let input = match turn {
+                agent::Turn::Start => input.map_err(|e| e.to_string())?,
+                agent::Turn::Resume => session.input.clone(),
+            };
+            prepare_home(&home)?;
+            Ok((run, input))
+        });
+        let (run, input) = match prepared {
+            Ok(p) => p,
             Err(e) => {
                 result.failed_step = Some("turn".to_owned());
                 note("no turn", &e);
+                return;
             }
+        };
+        let hint = guest.cancel.0.with_file_name(TURN_HINT);
+        let mut pane = PaneTurn::new(herdr, (m, hint), &home, &session.uuid, &input);
+        guest.steps(vec![run], bounds, (out, err), result, &mut || {
+            pane.poll(note)
+        });
+        for w in &pane.opened {
+            herdr.close(w);
+        }
+        herdr.close_slots();
+        if pane.idle && result.drained && !result.timed_out {
+            // drained in its pause, the agent had ended its turn: nothing of it to continue
+            result.drained = false;
+            pane.ended = true;
+        }
+        result.upto = Some(pane.upto);
+        let stopped = result.timed_out || result.cancelled || result.drained;
+        if pane.ended && !stopped {
+            // the agent was waiting for input and was closed: the turn ended, whatever its close's exit
+            result.exit_code = Some(0);
+        }
+        let transcript = transcript_of(&home, &session.uuid)
+            .map(|p| read_regular_up_to(&p, TRANSCRIPT_LIMIT))
+            .transpose()
+            .inspect_err(|e| note("transcript", e))
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let (line, ran) = pane::verdict(&transcript, pane.from.unwrap_or(usize::MAX), pane.ended);
+        if pane.from.is_none() || (!ran && !stopped) {
+            // nothing of the turn's input reached the agent: nothing it could have done
+            result.stage = Stage::Prepare;
+            result.failed_step = Some("prompt".to_owned());
+            note("prompt", &"the turn's input never reached the agent");
+            return;
+        }
+        if let Err(e) = io::Write::write_all(&mut &*out, format!("\n{line}\n").as_bytes()) {
+            note("verdict", &e);
         }
     }
 
@@ -1554,7 +2282,7 @@ fn exec(slot: &str) -> Result<(), String> {
         Listed::Unknown
     };
     if let (true, Some(steps)) = (runs, steps) {
-        let prepared = guest.steps(steps, (timeout, t), (&out, &err), &mut result);
+        let prepared = guest.steps(steps, (timeout, t), (&out, &err), &mut result, &mut never);
         if let (Some(d), true) = (&dock, prepared) {
             d.turn(
                 (&manifest, &ws, &guest),
@@ -1650,5 +2378,114 @@ fn main() -> ExitCode {
             eprintln!("exec-pool-runner: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A herdr that answers as Herdr 0.9.5 does: one JSON object for `workspace` and `agent list`, nothing at all
+    /// for `pane run` and `pane send-keys`, an error as JSON on stderr with exit 1; each call's argv logged.
+    fn fake(name: &str, pane_run_fails: bool) -> (Herdr, PathBuf) {
+        fake_with(name, pane_run_fails, ":")
+    }
+
+    /// [`fake`], `agent prompt` answering with the shell snippet `prompt`.
+    fn fake_with(name: &str, pane_run_fails: bool, prompt: &str) -> (Herdr, PathBuf) {
+        let log =
+            std::env::temp_dir().join(format!("exec-pool-herdr-{name}-{}", std::process::id()));
+        let _ = fs::remove_file(&log);
+        let fail = if pane_run_fails {
+            r#"printf '%s' '{"error":{"code":"pane_not_found","message":"pane w1:p1 not found"},"id":"cli:pane:run"}' >&2; exit 1"#
+        } else {
+            ":"
+        };
+        let script = format!(
+            r#"printf '%s\n' "$*" >> '{}'
+case "$1 $2" in
+"workspace create") printf '%s' '{{"id":"cli:workspace:create","result":{{"root_pane":{{"pane_id":"w1:p1","workspace_id":"w1"}},"type":"workspace_created","workspace":{{"label":"pool9 k","workspace_id":"w1"}}}}}}' ;;
+"workspace list") printf '%s' '{{"id":"cli:workspace:list","result":{{"type":"workspace_list","workspaces":[{{"label":"pool9 k","workspace_id":"w7"}},{{"label":"pool10 k","workspace_id":"w8"}}]}}}}' ;;
+"workspace close") printf '%s' '{{"id":"cli:workspace:close","result":{{"type":"ok"}}}}' ;;
+"agent list") printf '%s' '{{"id":"cli:agent:list","result":{{"agents":[],"type":"agent_list"}}}}' ;;
+"pane run") {fail} ;;
+"agent prompt") {prompt} ;;
+"agent send-keys") printf '%s' '{{"id":"cli:agent:send-keys","result":{{"type":"ok"}}}}' ;;
+esac"#,
+            log.display()
+        );
+        let herdr = Herdr {
+            argv: vec!["/bin/sh".into(), "-c".into(), script, "herdr".into()],
+            attach: "/run/current-system/sw/bin/pool-pool9 turn".to_owned(),
+            slot: "pool9".to_owned(),
+        };
+        (herdr, log)
+    }
+
+    fn calls(log: &Path) -> Vec<String> {
+        fs::read_to_string(log)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn a_pane_run_that_prints_nothing_opens_the_pane() {
+        let (herdr, log) = fake("open", false);
+        assert_eq!(
+            herdr.open("pool9 k").unwrap(),
+            ("w1".to_owned(), "w1:p1".to_owned())
+        );
+        assert_eq!(
+            herdr.call(&["pane", "send-keys", "w1:p1", "ctrl+c"], Duration::ZERO),
+            Ok(Value::Null)
+        );
+        assert_eq!(herdr.seen("w1:p1"), Ok(None));
+        assert_eq!(
+            calls(&log),
+            [
+                "workspace list",
+                "workspace close w7",
+                "workspace create --label pool9 k --no-focus",
+                "pane run w1:p1 /run/current-system/sw/bin/pool-pool9 turn",
+                "pane send-keys w1:p1 ctrl+c",
+                "agent list",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_workspace_whose_pane_could_not_attach_is_closed_again() {
+        let (herdr, log) = fake("fail", true);
+        let e = herdr.open("pool9 k").unwrap_err();
+        assert!(e.contains("pane_not_found"), "{e}");
+        assert_eq!(calls(&log).last().unwrap(), "workspace close w1");
+    }
+
+    #[test]
+    fn a_refused_prompt_is_an_error_and_a_slow_one_gets_its_enter_again() {
+        let err = |code: &str| {
+            format!(
+                r#"printf '%s' '{{"error":{{"code":"{code}","message":"m"}},"id":"cli:agent:prompt"}}' >&2; exit 1"#
+            )
+        };
+        let (herdr, log) = fake_with("blocked", false, &err("agent_blocked"));
+        assert!(herdr.prompt("w1:p1", "go").is_err());
+        assert!(
+            !calls(&log).iter().any(|c| c.starts_with("agent send-keys")),
+            "no Enter into a dialog"
+        );
+        for code in ["timeout", "agent_prompt_stalled"] {
+            let (herdr, log) = fake_with(code, false, &err(code));
+            assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
+            assert_eq!(calls(&log).last().unwrap(), "agent send-keys w1:p1 Enter");
+        }
+        let (herdr, _) = fake_with(
+            "prompted",
+            false,
+            r#"printf '%s' '{"id":"cli:agent:prompt","result":{"type":"ok"}}'"#,
+        );
+        assert_eq!(herdr.prompt("w1:p1", "go"), Ok(()));
     }
 }

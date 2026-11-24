@@ -1817,6 +1817,40 @@ fn a_message_sent_while_a_turn_runs_is_delivered_after_its_park() {
 }
 
 #[test]
+fn a_message_sent_while_a_turn_runs_reaches_its_pane_and_is_read_at_its_park() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, first) = started(&mut owner);
+    let mut runner = runner(&pg);
+    assert_eq!(
+        runner.during_turn(&id, first.upto).unwrap(),
+        (vec![], false)
+    );
+    s.send(&id, "review: fix the test").unwrap();
+    s.send(&id, "and rebase").unwrap();
+    let (mail, busy) = runner.during_turn(&id, first.upto).unwrap();
+    assert_eq!(
+        mail.iter().map(|(_, b)| b.as_str()).collect::<Vec<_>>(),
+        ["review: fix the test", "and rebase"]
+    );
+    assert!(!busy, "nothing waits for a slot");
+    let upto = mail.iter().map(|(i, _)| *i).max().unwrap();
+    assert_eq!(runner.during_turn(&id, upto).unwrap().0, vec![]);
+    // queued work and the one slot busy: an idle agent's grace is the short one
+    submit(&mut owner, &task("queued-behind", 1));
+    assert!(runner.during_turn(&id, upto).unwrap().1);
+    let (_, changes) = owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, upto))
+        .unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "turn_end")],
+        "what the pane was given is read: no turn for it again"
+    );
+}
+
+#[test]
 fn a_send_queues_a_waiting_session_and_two_sends_arrive_once_in_order() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
@@ -3024,4 +3058,39 @@ fn the_submitter_sets_a_priority_once_and_within_its_bound() {
     other.idempotency_key = "cli:session".to_owned();
     let (session, _) = s.start_session(&other, -100).unwrap();
     assert_eq!(priority(&session), -100);
+}
+
+#[test]
+fn a_session_whose_pane_or_prompt_keeps_failing_parks_and_a_send_wakes_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    // max_attempts is 1: a failed turn that went back to the queue would end the session `failed` at once
+    for (n, step) in exec_pool::runner::PANE_STEPS
+        .iter()
+        .cycle()
+        .take(4)
+        .enumerate()
+    {
+        let (a, epoch, turn) = started(&mut owner);
+        let result: exec_pool::runner::ExecResult = serde_json::from_value(json!({
+            "schema_version": 1, "attempt_id": a, "lease_epoch": epoch, "stage": "prepare",
+            "exit_code": 1, "timed_out": false, "cancelled": false, "failed_step": step,
+            "container_active": true, "stdout_tail": "", "stderr_tail": "", "prepare_ms": 5000, "run_ms": 0
+        }))
+        .unwrap();
+        let to = exec_pool::runner::decide_turn(&a, epoch, Some(&result), "");
+        assert_eq!(
+            to,
+            exec_pool::runner::TurnSettle::Park(ParkReason::TurnError)
+        );
+        owner
+            .park(&a, epoch, &park(ParkReason::TurnError, turn.upto))
+            .unwrap();
+        assert_eq!(status(&pg, &a).0, "waiting", "turn {n}, failed at {step}");
+        assert_eq!(
+            s.send(&id, &format!("try {n}")).unwrap(),
+            (a.clone(), Status::Queued)
+        );
+    }
 }
