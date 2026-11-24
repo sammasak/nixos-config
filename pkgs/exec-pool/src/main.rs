@@ -172,13 +172,8 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
             changes.iter().for_each(log);
             result(&json!({ "expired": changes.len() }));
         }
-        "metrics" => match declared_slots().and_then(|n| Ok(store.metrics(n)?)) {
-            Ok(text) => print!("{text}"),
-            Err(e) => {
-                print!("{METRICS_UNAVAILABLE}");
-                return Err(e);
-            }
-        },
+        // main prints METRICS_UNAVAILABLE on any failure, opening the store included
+        "metrics" => print!("{}", store.metrics(declared_slots()?)?),
         other => return Err(Fail::Usage(format!("unknown command {other:?}"))),
     }
     Ok(())
@@ -205,6 +200,9 @@ fn main() -> ExitCode {
             .map_err(|_| Fail::Usage("EXEC_POOL_DB is not set".to_owned()))?;
         run(cmd, &args, &mut Store::open(&conninfo)?)
     })();
+    if outcome.is_err() && cli.first().map(String::as_str) == Some("metrics") {
+        print!("{METRICS_UNAVAILABLE}");
+    }
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(Fail::Usage(m)) => {
