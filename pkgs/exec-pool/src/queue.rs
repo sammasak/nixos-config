@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::task_result::TaskResult;
 use crate::{
     Attempt, CheckpointRef, Error, Event, Kind, ParkReason, Placement, Receipt, Resolution,
-    RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, transition,
+    RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, reachable, transition,
 };
 
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
@@ -212,6 +212,8 @@ pub struct Turn {
     pub upto: i64,
     /// No turn of the session has started before this one: the agent's session does not exist yet.
     pub first: bool,
+    /// Where the last park left the session's tree; `None` before its first park.
+    pub checkpoint: Option<CheckpointRef>,
 }
 
 /// How a session's turn ends, for [`Store::park`].
@@ -693,7 +695,8 @@ impl Store {
         })
     }
 
-    /// Leases the oldest queued attempt that fits `slot` for `lease_secs`, skipping rows another claimer holds.
+    /// Leases the oldest queued attempt that fits `slot` for `lease_secs` and whose checkpoint is [`reachable`] from its
+    /// host, skipping rows another claimer holds.
     ///
     /// # Errors
     /// What [`Slot::validate`] rejects, or what the database reports (a slot with a live lease already included).
@@ -712,22 +715,27 @@ impl Store {
             )?;
             // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips
             let candidates = tx.query(
-                "SELECT a.id, t.spec FROM attempts a JOIN tasks t ON t.id = a.task_id \
+                "SELECT a.id, t.spec, a.checkpoint FROM attempts a JOIN tasks t ON t.id = a.task_id \
                  WHERE a.status = 'queued' ORDER BY a.changed_at, a.id",
                 &[],
             )?;
             for candidate in &candidates {
                 let task: TaskSpec = serde_json::from_value(candidate.try_get(1)?)?;
-                if task.fits(slot).is_err() {
+                let raw: Option<Value> = candidate.try_get(2)?;
+                let checkpoint: Option<CheckpointRef> =
+                    raw.clone().map(serde_json::from_value).transpose()?;
+                if task.fits(slot).is_err() || !reachable(checkpoint.as_ref(), &slot.host, false) {
                     continue;
                 }
                 let id: &str = candidate.try_get(0)?;
+                // the checkpoint as read: one parked again since, maybe elsewhere, is skipped unlocked
                 let rows = tx.query(
                     &format!(
                         "SELECT {ATTEMPT_COLS} FROM attempts a JOIN tasks t ON t.id = a.task_id \
-                         WHERE a.id = $1 AND a.status = 'queued' FOR UPDATE OF a SKIP LOCKED"
+                         WHERE a.id = $1 AND a.status = 'queued' AND a.checkpoint IS NOT DISTINCT FROM $2 \
+                         FOR UPDATE OF a SKIP LOCKED"
                     ),
-                    &[&id],
+                    &[&id, &raw],
                 )?;
                 let Some(row) = rows.first() else { continue };
                 let row = locked(row)?;
@@ -739,7 +747,7 @@ impl Store {
                     }),
                 };
                 let (attempt, change) = write(tx, row, &event, None, None, lease_secs)?;
-                let turn = turn(tx, &task, &attempt.id)?;
+                let turn = turn(tx, &task, &attempt.id, checkpoint)?;
                 return Ok(Some(Claim {
                     task,
                     attempt,
@@ -1232,6 +1240,7 @@ fn turn(
     tx: &mut Transaction<'_>,
     task: &TaskSpec,
     attempt: &str,
+    checkpoint: Option<CheckpointRef>,
 ) -> Result<Option<Turn>, QueueError> {
     let row = tx.query_one(
         "SELECT session, session_uuid::text, NOT EXISTS (SELECT FROM events e \
@@ -1249,6 +1258,7 @@ fn turn(
             input: task.command.argv.first().cloned().unwrap_or_default(),
             upto: 0,
             first,
+            checkpoint,
         }));
     }
     let mut input = String::new();
@@ -1274,6 +1284,7 @@ fn turn(
         input,
         upto,
         first,
+        checkpoint,
     }))
 }
 

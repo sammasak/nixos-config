@@ -1796,6 +1796,44 @@ fn a_send_queues_a_waiting_session_and_two_sends_arrive_once_in_order() {
 }
 
 #[test]
+fn a_parked_session_is_claimed_only_on_a_host_that_holds_its_tree() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut acer = claude_slot();
+    acer.host = "acer-swift".to_owned();
+    let (a, epoch, first) = started(&mut owner);
+    assert_eq!(first.checkpoint, None);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+        .unwrap();
+    s.send(&id, "one").unwrap();
+    assert!(
+        owner.claim(&acer, 60).unwrap().is_none(),
+        "the tree is on msi alone"
+    );
+    let (_, _, turn) = started(&mut owner);
+    let checkpoint = turn
+        .checkpoint
+        .expect("a later turn carries its checkpoint");
+    assert_eq!(
+        (checkpoint.generation, checkpoint.hosts),
+        (epoch, vec!["msi-ms7758".to_owned()])
+    );
+}
+
+#[test]
+fn a_first_turn_is_claimed_on_any_host() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, _id) = session(&pg);
+    let mut acer = claude_slot();
+    acer.host = "acer-swift".to_owned();
+    let claim = owner.claim(&acer, 60).unwrap().unwrap();
+    assert!(claim.turn.unwrap().first);
+}
+
+#[test]
 fn a_turn_that_never_parks_is_handed_its_messages_again() {
     let pg = Pg::new();
     let mut owner = pg.migrated();

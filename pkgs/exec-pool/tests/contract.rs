@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use exec_pool::{
     Agent, Attempt, CheckpointRef, Error, Event, Kind, Pins, Placement, Receipt, RelPath,
-    Resolution, RetryPolicy, SchemaVersion, Settle, Slot, SlotState, Status, Submission, TaskSpec,
-    submit, transition,
+    Resolution, RetryPolicy, STORE, SchemaVersion, Settle, Slot, SlotState, Status, Submission,
+    TaskSpec, reachable, submit, transition,
 };
 use serde_json::{Value, json};
 
@@ -199,6 +199,40 @@ fn empty_fields_are_rejected() {
         ..receipt
     };
     assert_eq!(receipt.validate(), Err(Error::Empty("digest")));
+}
+
+#[test]
+fn a_parked_session_is_reachable_only_where_its_tree_is() {
+    let at = |hosts: &[&str]| CheckpointRef {
+        schema_version: SchemaVersion::CURRENT,
+        uri: "session-tree://acer-swift/t-1".to_owned(),
+        digest: "unhashed".to_owned(),
+        generation: 3,
+        hosts: hosts.iter().map(|&h| h.to_owned()).collect(),
+    };
+    assert!(
+        reachable(None, "msi-ms7758", false),
+        "a first turn runs anywhere"
+    );
+    assert!(
+        reachable(Some(&at(&[])), "msi-ms7758", false),
+        "a checkpoint from before sessions names no host"
+    );
+    assert!(reachable(Some(&at(&["acer-swift"])), "acer-swift", false));
+    assert!(!reachable(Some(&at(&["acer-swift"])), "msi-ms7758", false));
+    assert!(
+        !reachable(Some(&at(&["acer-swift"])), "msi-ms7758", true),
+        "the store does not hold it"
+    );
+    assert!(reachable(
+        Some(&at(&["acer-swift", STORE])),
+        "msi-ms7758",
+        true
+    ));
+    assert!(
+        !reachable(Some(&at(&["acer-swift", STORE])), "msi-ms7758", false),
+        "a host that cannot pull from the store"
+    );
 }
 
 #[test]
