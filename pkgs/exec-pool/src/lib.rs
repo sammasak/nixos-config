@@ -3,6 +3,7 @@
 //! Every record carries `schema_version`, rejects unknown fields (so a token or secret field cannot ride along) and is
 //! checked by `validate()` before anything acts on it. A version or path that is wrong does not deserialise at all.
 
+pub mod agent;
 pub mod queue;
 mod state;
 
