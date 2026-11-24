@@ -27,7 +27,8 @@ disagrees with its status (required while leased, running or checkpointing, abse
 record rejects unknown fields, so no token, secret or credential can ride along: a task names a `credential_class`
 the host resolves. `TaskSpec::fits` admits a slot only when it is idle, offers the task's agent and capabilities and equals
 every pin the task sets (`runner_version`, `nix_closure_digest`, `agent_version`, `skill_revision`, reserved for #657).
-`CheckpointRef` names where a session's tree is: its generation (the lease epoch that parked it) and hosts.
+`CheckpointRef` names where a parked session's work is on its remote: `uri` the repository and full ref name, `digest`
+the commit (`absent` before anything was pushed) and `generation` the lease epoch that parked it. It names no host.
 
 States (`pkgs/exec-pool/src/state.rs`, snake_case on the wire):
 
@@ -70,8 +71,7 @@ since the first parks with no `continue` row and stays in `waiting` until a mess
 agent's own `pool-wait`) at its `due_at`. It queues the session again, and the next claim carries the turn's input (the task's prompt on the
 first turn, the messages since on a later one) and `upto`, the last message it holds, which the park hands back. A
 turn with no result, or whose lease was lost, goes to `needs_review` as any run does. The park records the result and
-a `CheckpointRef` (`generation` the lease epoch, `hosts` the host that holds the session's tree), so a send wakes it
-where its tree is. One-shot tasks keep the lifecycle above unchanged.
+a `CheckpointRef`; any host that fits may claim the next turn. One-shot tasks keep the lifecycle above unchanged.
 
 ## Queue (#651)
 
@@ -100,8 +100,8 @@ histograms `exec_pool_queue_wait_seconds{host,agent}` and `exec_pool_run_seconds
 `reason="lease_expired"`. The queue renders every host's series on acer, so `host` is the slot's host from the queue's
 rows (an attempt's or session's last lease, a turn's own lease; `none` before any), not the scrape's `node`. Ids, slots
 and prompts stay in the log line, never in a label. Each slot's exec helper counts, in its own host's textfile,
-`exec_pool_store_transfers_total{op,result}` and `exec_pool_prepare_failures_total{step}` (a run that failed before
-its agent: the step's unit, or `admit`, `attach`, `manifest`, `turn`), split by `node`; such a run's result output is
+`exec_pool_park_push_failures_total` (a park's push that failed, each try) and `exec_pool_prepare_failures_total{step}`
+(a run that failed before its agent: the step's unit, or `admit`, `dock`, `list`, `manifest`, `turn`), split by `node`; such a run's result output is
 `prepare failed at <step> (exit N):` and its stderr tail, so `exec-pool result` shows why. When the render fails for any reason it prints only `exec_pool_queue_up 0`
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
 zero traffic or as the last good counts.
@@ -147,23 +147,55 @@ segments, at most 256 KiB together); the runner puts that tail in the queue's `t
 heartbeat and once more before the settle or park, so `exec-pool logs ID [-f] [--turn N]` reads a turn, running or
 not, from any host, at most 10 s behind. It holds only what the agent printed, which its transcript holds too.
 
-A session turn runs in the task's **tree**, `${stateDir}/.sessions/<hex task id>/tree/{home,work}` on the host, root's
-only. The helper attaches it for the turn by renaming it to the slot's dock `${stateDir}/.sessions/dock/<slot>/cur`,
-which the guest sees at `/session/cur` (the tree's root root-owned 0711, its `home` and `work` the guest user's),
-the same path in every slot on every host: HOME `/session/cur/home`, cwd
-`/session/cur/work/<workdir>`, TMPDIR in the slot home's workspace as for a one-shot run. A dock that still holds a
-tree refuses the attach. The first turn creates the tree (owned as the slot home is) and clones and checks out into it;
-until that finished, a later turn makes it afresh. Every turn links the guest user's current Home Manager files into
-the session's HOME (they dangle after a deploy), probes for Claude's transcript `$HOME/.claude/projects/*/<uuid>.jsonl`
-and runs `claude -p --output-format json` with `--resume <uuid>` when it exists and `--session-id <uuid>` (and the
-hand-back rules) when it does not, the turn's input as the prompt; a probe that does not finish fails the turn's
-preparing. The helper marks the dock busy (`/var/lib/exec-pool-exec/<slot>/dock-busy`) before the attach and clears
-the mark only after the detach, so whatever stops it in between (an error, its timeout, a kill) leaves the runner to
-quarantine the slot rather than reset and reuse it. Once the turn's units are gone from the guest (or the guest is
-down) it detaches the tree; one it could not detach stays in the dock, marked. A prepared tree missing, or one with
-other ids than the slot's, sends the turn to `needs_review` rather than spending its attempts. Known limits: a guest
-process outside the step units (none is started: slots run no agent session and no cron) would keep the tree's inode
-after the detach; nothing yet removes the trees of sessions that ended. Codex and Pi run no sessions yet.
+### Session state: the branch, the snapshot, the transcript
+
+A session's durable state is two things, and nothing else of a turn survives its park: its branch `pool/<task id>` and
+snapshot ref on the task's remote, and the agent's transcript in the queue. No tree is copied between hosts.
+
+A turn runs in the slot's **dock** `${stateDir}/.sessions/dock/<slot>/cur`, which the guest sees at `/session/cur`
+(root-owned 0711, its `home` and `work` the guest user's), the same path in every slot on every host: HOME
+`/session/cur/home`, cwd `/session/cur/work/<workdir>`, TMPDIR in the slot home's workspace as for a one-shot run. The
+helper makes it afresh each turn (`workspace::Dock`), with the transcript the runner put beside the manifest at
+`/session/cur/transcript.jsonl` (0640, the guest's group).
+
+**Resume** (every turn, any host): the guest lists the branch and the snapshot ref on the remote (`git ls-remote`
+through the slot's GitHub sidecar), clones the repository into the empty checkout and, by what the listing shows
+(`snapshot::Resume`): nothing pushed yet, a new branch at the task's rev; the branch alone, the branch at its commit;
+a snapshot, the snapshot fetched, the branch at its parent and the snapshot's tree restored into the working tree only
+(`git restore --worktree --no-overlay`), so it reads as uncommitted changes, untracked files included. The remote is
+not changed. Then the guest user's current Home Manager files are linked into the empty HOME, the transcript copied to
+`$HOME/.claude/projects/<project>/<uuid>.jsonl`, and the agent runs `claude -p --output-format json` with `--resume
+<uuid>` when the probe finds it, `--session-id <uuid>` (and the hand-back rules) when not.
+
+**Park** (turn end, timeout, drain, cancel of the turn): after the agent's step, the agent having been told on its
+first turn and after every later turn's input to commit and push before it stops or waits (`agent::SESSION_PARK`):
+1. the transcript is copied out by the guest as its user into the runner's runtime directory (at most 32 MiB);
+2. the helper makes a snapshot tree with git plumbing in a scratch index (`read-tree HEAD`, `add --all`,
+   `write-tree`): tracked and untracked files, not ignored ones;
+3. by `snapshot::plan`: when HEAD is the remote branch's commit and the tree is HEAD's, nothing is left and the
+   snapshot ref, if one is there, is deleted; otherwise a snapshot commit on HEAD (`commit-tree`) is pushed to
+   `refs/pool-wip/<task id>`, replacing the last park's (`+<commit>:refs/pool-wip/<task id>`). An unpushed commit
+   is in the snapshot's history, so it comes back too;
+4. the push is tried again with a growing pause for up to 30 minutes (each failure counted,
+   `exec_pool_park_push_failures_total`), stopped early by a cancel, not by a drain;
+5. the runner parks with the result, the `CheckpointRef` of where the work is, and the transcript (`transcripts`,
+   migration 0017: one row per session, lz4 compressed, at most 32 MiB, never older than the stored epoch, removed when
+   the session is final). It is never pushed to GitHub: it can hold tool output.
+
+A park whose push did not get through is not a clean park: the turn goes to `needs_review`, its dock stays with its
+work and is marked (`/var/lib/exec-pool-exec/<slot>/dock-busy`, which names it), and the runner quarantines the slot
+(ExecPoolParkPushFailing, ExecPoolSlotQuarantined). The dock is removed and its mark cleared only once the work is on
+the remote, or the turn's agent never ran. A transcript over the bound also sends the turn to review.
+
+The snapshot ref is outside `refs/heads`: it is no branch, so it opens no pull request, starts no CI and is never
+merged; a later turn restores it as uncommitted work, which reaches a branch only through the agent's own commit and
+push under the repository's hooks. Its push skips the checkout's hooks (`core.hooksPath=/dev/null`): they gate code
+bound for a branch. It is the one ref the pool overwrites (`+`), and only that session's. The sidecar passes git's
+receive-pack for a listed repository whole, so it limits no ref. The helper marks the dock busy before making it, so
+whatever stops it before the close leaves the runner to quarantine the slot rather than reset and reuse it. Known
+limits: a guest process outside the step units would keep running in the dock past the turn (none is started);
+Codex and Pi run no sessions yet; a needs_review session sent a message before its kept dock was pushed resumes
+without that work.
 
 Settling a one-shot run (`runner::decide`): a cancel is `cancelled`; a clone or checkout that fails never started the
 task's argv, so the attempt goes back to `queued`. A timeout, a guest that went away, or a missing result (or one for
@@ -173,7 +205,7 @@ included. The command runs as a oneshot unit, so only exit 0 is clean, and syste
 counts as no exit code. A helper that finds its attempt's run directory already there refuses to run it again. An
 event the queue refuses, or one whose commit is unknown, is never re-sent: the lease expires and `reconcile` decides.
 The runner resets the slot at startup (its state then is unknown) and after every run. A reset that fails three times,
-or a dock left holding a tree, writes `/var/lib/exec-pool-runner/<slot>.quarantined` and a row in the queue's
+or a dock left marked (work not on its remote), writes `/var/lib/exec-pool-runner/<slot>.quarantined` and a row in the queue's
 `quarantined_slots` (ExecPoolSlotQuarantined), and that slot is not claimed for again until an operator removes the
 marker. Every state change is one JSON line with its ids, and the `run` line carries exit code, output tails,
 `claim_to_exec_ms`, `exec_ms`, `prepare_ms` and `run_ms`. `slot_reset` carries `sanitize_ms`. There are no metric
@@ -181,8 +213,7 @@ labels but states, agents, reasons and hosts.
 
 A deploy never needs an idle pool: `just deploy` drains a pool host first (`exec-pool-drain on`, the request every
 runner reads at `/run/exec-pool-runner/drain`, held until cleared or 2 h pass), so its runners stop claiming and park
-a running session turn as `host_draining` with a `continue` row, which wakes it at once on another host with the store
-or on this one after the deploy; a one-shot run is not stopped, and a runner restarted under it adopts it. The recipe
+a running session turn as `host_draining` with a `continue` row, which wakes it at once on any other host; a one-shot run is not stopped, and a runner restarted under it adopts it. The recipe
 waits up to 15 minutes for the host's helpers, deploys, and clears the request whatever deploy-rs returned. A settle
 or park the queue cannot take because it is restarting (its own host deployed) is retried while the lease lasts.
 
@@ -232,26 +263,20 @@ due at that time (HH:MM the next one, local time); it changes no state, and `Sto
 each loop, queues a waiting session once a row is due (one in `needs_review` stays there). In a slot,
 `pool-wait --until HH:MM|RFC3339 [--note TEXT]` (no queue credential) writes one line
 `{"due_at": "<RFC 3339 with offset>", "note": "<1 to 4096 bytes>" | null}` to `/session/cur/home/.pool-wait`, the
-last call in a turn winning; the helper takes it from the detached tree (a regular file only, removed whatever it
+last call in a turn winning; the helper takes it from the dock once the turn's steps are gone (a regular file only, removed whatever it
 held, one that does not parse dropped and noted), and the park puts it in through `wake_at` (the runner writes no
 message), its note the turn's input and a `turn_end` parked as `waiting_until`. A message before the timer wakes the
 session at once, and the timer row stays unread until it is due. `wait` returns on `waiting` too, `status` and `list` show `session` and, while waiting, the park reason, and
 `exec_pool_waiting{reason}` counts waiting sessions by it.
 
 Each park also writes a `turns` row (migration 0010): the tokens and cost Claude's result JSON reported, and
-`handed_back`, whether the branch holds everything its tree had (`TaskResult::handed_back`): after a turn its agent
+`handed_back`, whether the branch holds everything the checkout had (`TaskResult::handed_back`): after a turn its agent
 reached, the helper lists `pool/<task id>` and runs `git status --porcelain=v2` in the checkout, true only when the
-branch's commit is HEAD and nothing is uncommitted or untracked (`runner::holds_tree`), false otherwise, a failed
-listing or status included. The textfile's `exec_pool_session*` series count sessions by state and waiting reason, turns by
-park reason, turn and wake latency, closed sessions' turns and age, parked sessions by idle age, host changes between
-turns and the reported tokens and cost, each by host; the Agent harnesses dashboard's Sessions row draws them. `session_gc` decides
-which session trees may be removed, never a file's age: only one whose last turn is `handed_back` (its branch held the
-whole tree, migration 0012), and then final for 7 days or waiting 14 days untouched with no unread row; one waiting
-that long without that is stale and kept, a final one without it that ran a turn kept and counted
-(`exec_pool_sessions_gc_kept`, no alert), and `needs_review` is never eligible.
-`exec-pool sessions` prints every session, one JSON object per line (task_id, state, last_change, hosts, handed_back,
-eligible, stale, kept, and dir, the hex of the task id its trees are named by under `.sessions` and `.sessions-store`,
-`Sessions::hex`), and the remover moves only a line both eligible and handed_back, by its dir; ExecPoolSessionStuck fires on a session in review or stale for a day.
+branch's commit is HEAD and nothing is uncommitted or untracked (`runner::holds_tree`). The textfile's
+`exec_pool_session*` series count sessions by state and waiting reason, turns by park reason, turn and wake latency,
+closed sessions' turns and age, parked sessions by idle age, host changes between turns and the reported tokens and
+cost, each by host; the Agent harnesses dashboard's Sessions row draws them. There is nothing on a host to remove once a
+session ends; its snapshot ref stays on the remote until a later park of it deletes it.
 A park's own time (the agent's exit to the settle) is not
 measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
 `due_at`.
@@ -265,7 +290,7 @@ wrapper above (`start`, `send`, `submit`, `wait`, `status`, `result`).
 - An issue gets one session: `pool:start` under the key `coord:OWNER/REPO#N`, the issue text and rules as the first
   prompt. Its branch is `pool/<task id>`.
 - Follow-up work on it (review findings, a merge conflict, "merge main and push") is `pool:send` to that same session,
-  never a new one: the turn resumes the same transcript and tree.
+  never a new one: the turn resumes the same transcript, branch and snapshot.
 - `waiting` means the turn ended and the slot is free for other work; it needs nothing until there is a message to
   send. No session has to stay up for it.
 - `needs_review` is the one state that wants a look: read `pool:result`, then `pool:send` the next step (that resumes
