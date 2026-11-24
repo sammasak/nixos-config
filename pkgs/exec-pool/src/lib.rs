@@ -304,6 +304,19 @@ pub struct CheckpointRef {
     /// The lease epoch of the turn that wrote it; 0 in a checkpoint from before sessions.
     #[serde(default)]
     pub generation: u64,
+    /// The hosts a binary before migration 17 named, read and dropped so its parks still parse; never written.
+    #[serde(default, rename = "hosts", skip_serializing)]
+    pub legacy_hosts: Ignored,
+}
+
+/// A field read as anything and kept as nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Ignored;
+
+impl<'de> Deserialize<'de> for Ignored {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(d).map(|_| Self)
+    }
 }
 
 /// One external effect an attempt reports, e.g. `kind = "github_pr"`, `id = "sammasak/nixos-config#649"`.

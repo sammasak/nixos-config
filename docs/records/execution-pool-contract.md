@@ -200,7 +200,10 @@ Codex and Pi run no sessions yet; a needs_review session sent a message before i
 without that work, and nothing retries a kept dock's push after the park's 30 minutes (an operator pushes it); a
 session whose transcript outgrows 32 MiB goes to review at every park; a branch pushed by someone else after the park
 is not merged in at the resume (the checkout is the park's, so the agent's next push is refused until it merges); an
-untracked nested repository is kept as a gitlink, its files lost, and a file over GitHub's 100 MB limit fails the push.
+untracked nested repository is kept as a gitlink, its files lost, and a file over GitHub's 100 MB limit fails the push. Migration 0017 keeps
+floor 9: until every runner host runs this binary, an older runner that claims a session turn finds no tree for its
+checkpoint and sends the turn to review (no work lost, nothing replayed); this binary reads an older one's checkpoints
+and drops their `hosts`.
 
 Settling a one-shot run (`runner::decide`): a cancel is `cancelled`; a clone or checkout that fails never started the
 task's argv, so the attempt goes back to `queued`. A timeout, a guest that went away, or a missing result (or one for

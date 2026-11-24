@@ -183,6 +183,7 @@ fn empty_fields_are_rejected() {
         uri: uri.to_owned(),
         digest: digest.to_owned(),
         generation: 0,
+        legacy_hosts: exec_pool::Ignored,
     };
     assert_eq!(cp("", "d").validate(), Err(Error::Empty("uri")));
     assert_eq!(cp("u", "").validate(), Err(Error::Empty("digest")));
@@ -202,11 +203,15 @@ fn empty_fields_are_rejected() {
 
 #[test]
 fn a_checkpoint_names_no_host_and_a_slot_no_store() {
-    let refused = serde_json::from_value::<CheckpointRef>(json!({
+    // an older binary's park still parses, its hosts dropped: the work is on the remote, on no host
+    let old: CheckpointRef = serde_json::from_value(json!({
         "schema_version": 1, "uri": "https://example.org/r.git#refs/pool-wip/t-1", "digest": "s1",
         "generation": 3, "hosts": ["acer-swift"]
-    }));
-    assert!(refused.is_err(), "the work is on the remote, on no host");
+    }))
+    .unwrap();
+    assert!(serde_json::to_value(&old).unwrap().get("hosts").is_none());
+    let stray = json!({ "schema_version": 1, "uri": "u", "digest": "d", "token": "x" });
+    assert!(serde_json::from_value::<CheckpointRef>(stray).is_err());
     let mut slot = serde_json::to_value(slot()).unwrap();
     slot["store"] = json!(true);
     assert!(serde_json::from_value::<Slot>(slot).is_err());

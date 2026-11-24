@@ -25,5 +25,6 @@ CREATE TRIGGER transcripts_drop_final AFTER UPDATE OF status ON attempts
   FOR EACH ROW WHEN (NEW.status IN ('succeeded', 'failed', 'cancelled'))
   EXECUTE FUNCTION transcripts_drop_final();
 
--- additive, but a binary before 17 reads a park's checkpoint as a tree on no host and writes one this one refuses
-INSERT INTO schema_migrations (version, floor) VALUES (17, 17);
+-- additive: a binary at 9 to 16 reads a park's checkpoint as a tree on no host and sends that turn to review; this
+-- one reads its checkpoints, their hosts dropped
+INSERT INTO schema_migrations (version, floor) VALUES (17, 9);

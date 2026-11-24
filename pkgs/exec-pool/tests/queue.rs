@@ -1736,6 +1736,7 @@ fn park(reason: ParkReason, upto: i64) -> Park {
             uri: "checkpoint://s/1".to_owned(),
             digest: "sha256-x".to_owned(),
             generation: 0,
+            legacy_hosts: exec_pool::Ignored,
         }),
         result: TaskResult::new(Some(Outcome::Succeeded), Some(0), "the turn's answer"),
         upto,

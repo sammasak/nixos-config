@@ -381,6 +381,7 @@ pub fn relink(cp: &str, guest_home: &str) -> Vec<String> {
 #[must_use]
 pub fn session_checkpoint(task: &TaskSpec, epoch: u64, at: &ParkedAt) -> CheckpointRef {
     CheckpointRef {
+        legacy_hosts: crate::Ignored,
         schema_version: SchemaVersion::CURRENT,
         uri: format!("{}#{}", task.source.repo, at.name),
         digest: at.commit.clone().unwrap_or_else(|| "absent".to_owned()),
