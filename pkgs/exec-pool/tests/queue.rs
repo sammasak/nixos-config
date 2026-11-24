@@ -332,6 +332,12 @@ fn the_runner_claims_and_settles_and_writes_nothing_else() {
     let b = submit(&mut owner, &task("t-2", 3));
     let claim = runner.claim(&slot("s0"), 60).unwrap().unwrap();
     assert!(!claim.task.command.argv.is_empty());
+    assert!(
+        runner
+            .live_on(&slot("s0"))
+            .unwrap()
+            .is_some_and(|l| l.id == a)
+    );
     runner.apply(&a, &ev(1, Kind::Start), None).unwrap();
     runner.heartbeat(&a, 1, 60).unwrap();
     runner.apply(&a, &ev(1, Kind::Checkpoint), None).unwrap();
