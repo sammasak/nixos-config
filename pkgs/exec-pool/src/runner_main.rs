@@ -8,7 +8,9 @@
 //! reports, or a lease it finds lost, writes the cancel marker the helper stops at. A runner that dies renews nothing,
 //! and the lease expires. A reset that fails quarantines the slot, in the queue too, until an operator removes the
 //! marker. With `EXEC_POOL_OFF_TIMER` it claims only while `EXEC_POOL_CLAIM_SECS` from now ends before that timer
-//! powers the host off, and `EXEC_POOL_DRAIN_SECS` before it stops the running attempt (the drain); with a credentials
+//! powers the host off, and `EXEC_POOL_DRAIN_SECS` before it stops the running attempt (the drain). A host's drain
+//! request ([`DRAIN_REQUEST`], a deploy's) stops claims too and parks a running session turn the same way, while a
+//! one-shot run goes on: the deploy rides it through, its restarted runner adopting it. With a credentials
 //! directory it is a remote slot's runner, reaching the queue over TCP with the
 //! `db-password` credential. Each state change is one JSON line on stdout.
 //!
@@ -29,9 +31,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use exec_pool::agent;
 use exec_pool::queue::{Change, Claim, Park, QueueError, Store};
 use exec_pool::runner::{
-    CAPTURE_BYTES, ExecResult, Listed, Manifest, PREPARE_FAILURES, QUICK_SECS, Session, Stage,
-    Step, TurnSettle, claim_fits, decide, decide_turn, guest_exit, handed_back, holds_tree,
-    read_regular, receipt, relink, remote_head, session_checkpoint, tail, tree_check,
+    CAPTURE_BYTES, DRAIN_REQUEST, ExecResult, Listed, Manifest, PREPARE_FAILURES, QUICK_SECS,
+    Session, Stage, Step, TurnSettle, claim_fits, decide, decide_turn, drain_holds, guest_exit,
+    handed_back, holds_tree, read_regular, receipt, relink, remote_head, session_checkpoint, tail,
+    tree_check, while_unavailable,
 };
 use exec_pool::sync::{self, Depot};
 use exec_pool::task_result::TaskResult;
@@ -276,14 +279,17 @@ impl Runner {
         Err(last)
     }
 
-    /// Whether to claim now: always without an off timer, else only for a lease that ends before it fires. Logs a
-    /// change, not every poll.
+    /// Whether to claim now: not while the host's drain request holds; then always without an off timer, else only
+    /// for a lease that ends before it fires. Logs a change, not every poll.
     fn claims_open(&self, paused: &mut bool) -> bool {
-        let Some((timer, hold, _)) = &self.off_timer else {
-            return true;
+        let (open, why, error) = if self.drain_requested() {
+            (false, "drain_requested", None)
+        } else if let Some((timer, hold, _)) = &self.off_timer {
+            let fits = fits(timer, *hold);
+            (fits.as_ref().is_ok_and(|f| *f), "off_timer", fits.err())
+        } else {
+            (true, "", None)
         };
-        let fits = fits(timer, *hold);
-        let open = fits.as_ref().is_ok_and(|f| *f);
         if open == *paused {
             *paused = !open;
             let msg = if open {
@@ -291,11 +297,20 @@ impl Runner {
             } else {
                 "claims_paused"
             };
-            line(
-                &json!({ "msg": msg, "slot": self.slot.id, "off_timer": timer, "error": fits.err() }),
-            );
+            line(&json!({ "msg": msg, "slot": self.slot.id, "reason": why, "error": error }));
         }
         open
+    }
+
+    /// Whether the host's drain request, beside every slot's runtime directory, holds now.
+    fn drain_requested(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        self.runtime
+            .parent()
+            .and_then(|d| read_regular(&d.join(DRAIN_REQUEST)).ok())
+            .is_some_and(|m| drain_holds(&m, now))
     }
 
     /// Whether the host powers off within the drain lead; a timer it cannot read is no reason to stop a run.
@@ -378,8 +393,8 @@ impl Runner {
         }
     }
 
-    /// Renews the attempt's lease; once a cancel is asked for, the lease is lost or the host's poweroff is within the
-    /// drain lead, writes the marker that stops the helper (the drain's own token for the last), and returns why. `stopping` is why it already did, if it did.
+    /// Renews the attempt's lease; once a cancel is asked for, the lease is lost, the host's poweroff is within the
+    /// drain lead or, for a session turn, its drain request holds, writes the marker that stops the helper (the drain's own token for the last), and returns why. `stopping` is why it already did, if it did.
     fn beat(
         &self,
         store: &mut Store,
@@ -387,7 +402,9 @@ impl Runner {
         stopping: Option<&'static str>,
     ) -> Option<&'static str> {
         let why = match store.heartbeat(&m.attempt_id, m.lease_epoch, self.lease_secs) {
-            Ok(false) if self.draining() => Some(HOST_DRAINING),
+            Ok(false) if self.draining() || (m.session.is_some() && self.drain_requested()) => {
+                Some(HOST_DRAINING)
+            }
             Ok(false) => None,
             Ok(true) => Some("cancel_requested"),
             Err(e @ (QueueError::NotLive(_) | QueueError::Fenced(_))) => {
@@ -476,30 +493,40 @@ impl Runner {
             None => TurnSettle::Settle(decide(id, epoch, task.command.agent, result, stdout)),
             Some(_) => decide_turn(id, epoch, result, stdout),
         };
+        // a queue restarting (its host deployed) is waited out while the lease lasts; no heartbeat renews it here
+        let patience = Duration::from_secs(self.lease_secs.into());
         let settled = match to {
-            TurnSettle::Settle(to) => Self::event(store, id, epoch, Kind::Checkpoint, None)
-                .and_then(|()| {
-                    let r = receipt(&task.id, id, epoch, to);
+            TurnSettle::Settle(to) => while_unavailable(patience, POLL, || {
+                Self::event(store, id, epoch, Kind::Checkpoint, None)
+            })
+            .and_then(|()| {
+                let r = receipt(&task.id, id, epoch, to);
+                while_unavailable(patience, POLL, || {
                     Self::event(store, id, epoch, Kind::Settle(to), r.as_ref())
                 })
-                .map(|()| true),
-            TurnSettle::Park(reason) => park(
-                store,
-                (id, epoch, &task.id, &self.slot.host),
-                (reason, manifest.session.as_ref().map_or(0, |s| s.upto)),
-                (
-                    result.is_some_and(|r| r.stored),
-                    result.and_then(|r| r.wake.clone()),
-                ),
-                &task_result,
-            )
+            })
+            .map(|()| true),
+            TurnSettle::Park(reason) => while_unavailable(patience, POLL, || {
+                park(
+                    store,
+                    (id, epoch, &task.id, &self.slot.host),
+                    (reason, manifest.session.as_ref().map_or(0, |s| s.upto)),
+                    (
+                        result.is_some_and(|r| r.stored),
+                        result.and_then(|r| r.wake.clone()),
+                    ),
+                    &task_result,
+                )
+            })
             .map(|()| false),
         };
         match &settled {
             Err(e) => self.error("settle", e),
             // a park records its result itself
             Ok(true) => {
-                if let Err(e) = store.record_result(id, epoch, &task_result) {
+                if let Err(e) = while_unavailable(patience, POLL, || {
+                    store.record_result(id, epoch, &task_result)
+                }) {
                     self.error("record_result", &e);
                 }
             }

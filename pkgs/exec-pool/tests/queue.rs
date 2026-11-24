@@ -1975,6 +1975,70 @@ fn a_turn_that_never_parks_is_handed_its_messages_again() {
 }
 
 #[test]
+fn a_turn_rides_through_the_queue_restarting_under_its_lease() {
+    // a deploy of the queue's host restarts PostgreSQL under another host's running turn
+    let mut pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (_s, _id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    pg.stop();
+    assert!(matches!(
+        owner.heartbeat(&a, epoch, 60),
+        Err(QueueError::Unavailable(_))
+    ));
+    assert!(matches!(
+        owner.park(&a, epoch, &park(ParkReason::HostDraining, 0)),
+        Err(QueueError::Unavailable(_))
+    ));
+    pg.start();
+    // the lease taken before the outage still holds: the same store renews it and parks the turn once
+    assert!(!owner.heartbeat(&a, epoch, 60).unwrap());
+    let (_, changes) = owner
+        .park(&a, epoch, &park(ParkReason::HostDraining, 0))
+        .unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "host_draining"), (Status::Queued, "wake")]
+    );
+}
+
+#[test]
+fn every_migration_since_sessions_keeps_the_floor_an_older_runner_serves() {
+    // a remote runner never migrates: a deploy of the queue's host applies a migration under msi's runner, which runs
+    // the binary its own host was last deployed with, so a migration raising the floor breaks it until that deploy
+    const RUNNER_FLOOR: i32 = 9;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        let Some(version) = name
+            .strip_suffix(".up.sql")
+            .and_then(|n| n.split('_').next())
+            .and_then(|v| v.parse::<i32>().ok())
+            .filter(|v| *v >= RUNNER_FLOOR)
+        else {
+            continue;
+        };
+        let sql = std::fs::read_to_string(&path).unwrap();
+        let recorded =
+            format!("INSERT INTO schema_migrations (version, floor) VALUES ({version}, ");
+        let floor: i32 = sql
+            .split(&recorded)
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .and_then(|f| f.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{name} records no floor"));
+        assert!(
+            floor <= RUNNER_FLOOR,
+            "{name} raises the floor to {floor}: deploy every runner host first, then raise RUNNER_FLOOR here"
+        );
+        seen += 1;
+    }
+    assert!(seen >= 8, "{seen} migrations read");
+}
+
+#[test]
 fn a_turn_stopped_for_a_poweroff_continues_and_is_told_to_check_its_last_action() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
@@ -1990,8 +2054,9 @@ fn a_turn_stopped_for_a_poweroff_continues_and_is_told_to_check_its_last_action(
     );
     let (a, epoch, turn) = started(&mut owner);
     assert!(
-        turn.input
-            .starts_with("You were paused mid-turn by the pool (its host was powering off)."),
+        turn.input.starts_with(
+            "You were paused mid-turn by the pool (its host was powering off or being deployed)."
+        ),
         "{}",
         turn.input
     );

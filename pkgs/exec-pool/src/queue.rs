@@ -259,9 +259,9 @@ const CONTINUE: &str =
     "Your previous turn was stopped before it ended. Continue where you left off.";
 /// A timer row's text when it carries no note.
 const TIMER: &str = "The time you asked to be woken at has come.";
-/// A `continue` row's text after a park for a host powering off: the turn was stopped mid-action.
-const DRAINED: &str = "You were paused mid-turn by the pool (its host was powering off). Check the state of your \
-    last action before continuing.";
+/// A `continue` row's text after a park for a host draining, for a poweroff or a deploy: the turn was stopped mid-action.
+const DRAINED: &str = "You were paused mid-turn by the pool (its host was powering off or being deployed). Check \
+    the state of your last action before continuing.";
 
 /// A `continue` row's text after a park for a turn stopped at its time limit.
 const TIMED_OUT: &str = "Your last turn hit the time limit. Check your last action, then continue.";
