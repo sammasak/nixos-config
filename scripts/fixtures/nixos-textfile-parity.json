@@ -1,0 +1,65 @@
+{
+ "deploy-rs-current": {
+  "files": [
+   "nixos.prom"
+  ],
+  "prom": "homelab_nixos_info{version=\"26.11pre-git\",toplevel=\"aaaa1111\"} 1\nhomelab_nixos_generation 27\n",
+  "rc": 0
+ },
+ "empty-profiles": {
+  "files": [
+   "nixos.prom"
+  ],
+  "prom": "homelab_nixos_info{version=\"26.11pre-git\",toplevel=\"aaaa1111\"} 1\n",
+  "rc": 0
+ },
+ "newest-of-two": {
+  "files": [
+   "nixos.prom"
+  ],
+  "prom": "homelab_nixos_info{version=\"26.11pre-git\",toplevel=\"aaaa1111\"} 1\nhomelab_nixos_generation 10\n",
+  "rc": 0
+ },
+ "no-generation": {
+  "files": [
+   "nixos.prom"
+  ],
+  "prom": "homelab_nixos_info{version=\"26.11 \"quoted\"\",toplevel=\"cccc3333\"} 1\n",
+  "rc": 0
+ },
+ "no-nixos-version": {
+  "files": [
+   "nixos.prom"
+  ],
+  "prom": "homelab_nixos_info{version=\"\",toplevel=\"dddd4444\"} 1\n",
+  "rc": 0
+ },
+ "no-toplevel": {
+  "files": [
+   "nixos.prom"
+  ],
+  "prom": "homelab_nixos_generation 1\n",
+  "rc": 1
+ },
+ "odd-link-name": {
+  "files": [
+   "nixos.prom"
+  ],
+  "prom": "homelab_nixos_info{version=\"26.11pre-git\",toplevel=\"aaaa1111\"} 1\nhomelab_nixos_generation x\n",
+  "rc": 0
+ },
+ "rebuild-booted-older": {
+  "files": [
+   "nixos.prom"
+  ],
+  "prom": "homelab_nixos_info{version=\"26.11pre-git\",toplevel=\"aaaa1111\"} 1\nhomelab_nixos_generation 3\n",
+  "rc": 0
+ },
+ "system-through-link": {
+  "files": [
+   "nixos.prom"
+  ],
+  "prom": "homelab_nixos_info{version=\"26.11pre-git\",toplevel=\"aaaa1111\"} 1\nhomelab_nixos_generation 2\n",
+  "rc": 0
+ }
+}

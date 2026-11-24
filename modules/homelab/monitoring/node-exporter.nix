@@ -32,9 +32,12 @@ in
   };
   systemd.tmpfiles.rules = [ "d ${textfiles} 0755 root root -" ];
 
-  # `|| true`: a failed write must not fail the activation, and so a deploy
+  # At every activation, boot included (a unit would rerun only when its own file changed). `|| true`: a failed write
+  # must not fail the activation, and so a deploy; the writer says so itself, as homelab_nixos_textfile_failed
   system.activationScripts.nixosTextfile.text = ''
-    ${pkgs.bash}/bin/bash ${../../../scripts/nixos-textfile.sh} ${textfiles} "$systemConfig" /nix/var/nix/profiles || true
+    ${
+      lib.getExe (pkgs.callPackage ../../../pkgs/nixos-textfile/package.nix { })
+    } ${textfiles} "$systemConfig" /nix/var/nix/profiles || true
   '';
 
   # DHCP: the address can appear after the unit, so it waits for the network and retries below the start limit

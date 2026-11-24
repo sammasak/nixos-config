@@ -33,7 +33,7 @@ power limits and thermal flags and checks their emitted values. Source checks
 do not replace driver/scrape acceptance after the exporter is activated.
 
 What a host writes into node-exporter's textfile directory (`/run/node-exporter-textfile`):
-- every fleet host: `nixos.prom`, the activated generation, NixOS version and toplevel (`scripts/nixos-textfile.sh`, at
+- every fleet host: `nixos.prom`, the activated generation, NixOS version and toplevel (`pkgs/nixos-textfile`, at
   activation)
 - acer: `open-webui-edge.prom`, the chat upstream socket (`open-webui.nix`)
 - lenovo: `adguard.prom`, AdGuard's status and query counts, read from its loopback API every minute

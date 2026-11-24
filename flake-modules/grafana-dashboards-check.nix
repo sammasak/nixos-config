@@ -356,6 +356,7 @@ in
           echo 26.11 > $out/nixos-version
         '';
       fakeSystem = toplevel "nixos-system-fake";
+      textfileWriter = lib.getExe (pkgs.callPackage ../pkgs/nixos-textfile/package.nix { });
       otherSystem = toplevel "nixos-system-other";
       # as deploy-rs's lib.activate.custom wraps a toplevel for its profile
       activatable =
@@ -474,13 +475,13 @@ in
             ln -s ${activatable fakeSystem} profiles/system-27-link
             ln -s ${activatable otherSystem} profiles/system-26-link
             ln -s system-27-link profiles/system
-            bash ${../scripts/nixos-textfile.sh} textfile ${fakeSystem} profiles
+            ${textfileWriter} textfile ${fakeSystem} profiles
             # nixos-rebuild's profile holds the toplevel; booted into 3 while the profile is at 4
             mkdir -p rebuild booted
             ln -s ${fakeSystem} rebuild/system-3-link
             ln -s ${otherSystem} rebuild/system-4-link
             ln -s system-4-link rebuild/system
-            bash ${../scripts/nixos-textfile.sh} booted ${fakeSystem} rebuild
+            ${textfileWriter} booted ${fakeSystem} rebuild
             grep -qx 'homelab_nixos_generation 3' booted/nixos.prom || {
               cat booted/nixos.prom
               echo "grafana-dashboards: booted into generation 3, the writer did not say so" >&2
