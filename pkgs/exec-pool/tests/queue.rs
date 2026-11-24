@@ -19,7 +19,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exec_pool::queue::{
-    Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, Turn, TurnLog,
+    Logs, METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, TRANSCRIPT_BYTES, Transcript,
+    Turn, TurnLog,
 };
 use exec_pool::task_result::{TaskResult, Usage};
 use exec_pool::wake::Wake;
@@ -239,12 +240,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (17, 16)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (18, 17)",
             &[],
         )
         .unwrap();
@@ -252,17 +253,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (18)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (19)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(18))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(19))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 18 WHERE version = 18",
+            "UPDATE schema_migrations SET floor = 19 WHERE version = 19",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(18))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(18))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(19))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(19))));
 }
 
 #[test]
@@ -1741,6 +1742,7 @@ fn park(reason: ParkReason, upto: i64) -> Park {
         result: TaskResult::new(Some(Outcome::Succeeded), Some(0), "the turn's answer"),
         upto,
         wake: None,
+        transcript: None,
     }
 }
 
@@ -2870,7 +2872,7 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     assert_eq!(lines[0]["task_id"], json!(gone));
     assert_eq!(lines[0]["state"], "cancelled");
     // the remover's path, the runner's name for it
-    let dir = exec_pool::workspace::Sessions::hex(&gone);
+    let dir: String = gone.bytes().map(|b| format!("{b:02x}")).collect();
     assert_eq!(lines[0]["dir"], json!(dir));
     assert_eq!(
         (&lines[0]["eligible"], &lines[0]["handed_back"]),
@@ -3024,4 +3026,85 @@ fn the_submitter_sets_a_priority_once_and_within_its_bound() {
     other.idempotency_key = "cli:session".to_owned();
     let (session, _) = s.start_session(&other, -100).unwrap();
     assert_eq!(priority(&session), -100);
+}
+
+#[test]
+fn a_parked_transcript_is_bounded_kept_compressed_handed_to_the_next_turn_and_dropped_once_final() {
+    let pg = Pg::new();
+    let _owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut runner = runner(&pg);
+    let (a, epoch, first) = started(&mut runner);
+    assert_eq!(
+        first.transcript, None,
+        "nothing to resume on the first turn"
+    );
+    // as compressible as a transcript's JSON lines
+    let body = "{\"type\":\"assistant\",\"message\":{\"content\":\"the same line again\"}}\n"
+        .repeat(20_000)
+        .into_bytes();
+    let t = Transcript {
+        project: "-session-cur-work".to_owned(),
+        body: body.clone(),
+    };
+    let with = |t: Transcript, upto| Park {
+        transcript: Some(t),
+        ..park(ParkReason::TurnEnd, upto)
+    };
+    let over = Transcript {
+        body: vec![b'x'; TRANSCRIPT_BYTES + 1],
+        ..t.clone()
+    };
+    assert!(matches!(
+        runner.park(&a, epoch, &with(over, first.upto)),
+        Err(QueueError::Range("transcript"))
+    ));
+    let outside = Transcript {
+        project: "..".to_owned(),
+        ..t.clone()
+    };
+    assert!(matches!(
+        runner.park(&a, epoch, &with(outside, first.upto)),
+        Err(QueueError::Range("transcript project"))
+    ));
+    runner
+        .park(&a, epoch, &with(t.clone(), first.upto))
+        .expect("a refused transcript left the turn live");
+    let (raw, stored): (i32, i32) = pg
+        .sql()
+        .query_one(
+            "SELECT octet_length(body), pg_column_size(body) FROM transcripts",
+            &[],
+        )
+        .map(|r| (r.get(0), r.get(1)))
+        .unwrap();
+    assert_eq!(usize::try_from(raw).unwrap(), body.len());
+    assert!(
+        stored < raw / 10,
+        "kept compressed: {stored} of {raw} bytes"
+    );
+
+    s.send(&id, "next").unwrap();
+    let (a, epoch, second) = started(&mut runner);
+    assert_eq!(second.transcript.as_ref(), Some(&t), "on any host's claim");
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnError, second.upto))
+        .unwrap();
+    s.send(&id, "again").unwrap();
+    let (a, epoch, third) = started(&mut runner);
+    assert_eq!(
+        third.transcript.map(|t| t.body),
+        Some(body),
+        "a park with no transcript keeps the last one"
+    );
+    runner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, third.upto))
+        .unwrap();
+    s.cancel(&id).unwrap();
+    let left: i64 = pg
+        .sql()
+        .query_one("SELECT count(*) FROM transcripts", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(left, 0, "a final session is never resumed");
 }

@@ -15,7 +15,6 @@ use serde_json::Value;
 
 use crate::task_result::TaskResult;
 use crate::wake::Wake;
-use crate::workspace::Sessions;
 use crate::{
     Attempt, CheckpointRef, Error, Event, Kind, ParkReason, Placement, Receipt, Resolution,
     RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, reachable, transition,
@@ -27,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 16] = [
+const STEPS: [(i32, &str); 17] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -50,6 +49,7 @@ const STEPS: [(i32, &str); 16] = [
     (14, include_str!("../migrations/0014_timer.up.sql")),
     (15, include_str!("../migrations/0015_turn_log.up.sql")),
     (16, include_str!("../migrations/0016_priority.up.sql")),
+    (17, include_str!("../migrations/0017_transcript.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -63,7 +63,8 @@ const DOWN_DRAIN_REASON: &str = include_str!("../migrations/0013_drain_reason.do
 const DOWN_TIMER: &str = include_str!("../migrations/0014_timer.down.sql");
 const DOWN_TURN_LOG: &str = include_str!("../migrations/0015_turn_log.down.sql");
 const DOWN_PRIORITY: &str = include_str!("../migrations/0016_priority.down.sql");
-const VERSION: i32 = 16;
+const DOWN_TRANSCRIPT: &str = include_str!("../migrations/0017_transcript.down.sql");
+const VERSION: i32 = 17;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -236,6 +237,31 @@ pub struct Turn {
     pub first: bool,
     /// Where the last park left the session's tree; `None` before its first park.
     pub checkpoint: Option<CheckpointRef>,
+    /// The agent's transcript as the last park that had one left it; `None` on the first turn.
+    pub transcript: Option<Transcript>,
+}
+
+/// The largest transcript the queue keeps for a session, as `transcripts.body` bounds it.
+pub const TRANSCRIPT_BYTES: usize = 32 << 20;
+
+/// A session's agent transcript: what `--resume` reads, kept in the queue alone (it holds tool output).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transcript {
+    /// The directory under `~/.claude/projects` it was found in, one path component.
+    pub project: String,
+    pub body: Vec<u8>,
+}
+
+impl Transcript {
+    /// Whether `project` names one directory, as the queue's check does.
+    #[must_use]
+    pub fn valid_project(project: &str) -> bool {
+        (1..=255).contains(&project.len())
+            && !matches!(project, "." | "..")
+            && project
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    }
 }
 
 /// How a session's turn ends, for [`Store::park`].
@@ -252,6 +278,9 @@ pub struct Park {
     /// The time the turn asked to be woken at (`pool-wait`), put in the inbox as a timer row.
     #[serde(default)]
     pub wake: Option<Wake>,
+    /// The agent's transcript after the turn, replacing the session's; `None` keeps the one it has.
+    #[serde(skip)]
+    pub transcript: Option<Transcript>,
 }
 
 /// What a `continue` row reads as in a turn's input: a turn stopped before it ended.
@@ -696,7 +725,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_TRANSCRIPT}{DOWN_PRIORITY}{DOWN_TURN_LOG}{DOWN_TIMER}{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -986,6 +1015,9 @@ impl Store {
             let mut changes = vec![change];
             let epoch = i64_of("epoch", epoch)?;
             insert_result(tx, attempt, epoch, &park.result)?;
+            if let Some(t) = &park.transcript {
+                put_transcript(tx, &task, epoch, t)?;
+            }
             let usage = park.result.usage;
             let tokens = |f: fn(&crate::task_result::Usage) -> u64| {
                 usage.as_ref().map(|u| i64_of("tokens", f(u))).transpose()
@@ -1353,7 +1385,7 @@ impl Store {
             .map(|r| {
                 let mut v: Value = r.try_get(0)?;
                 // the name of its directory under .sessions and .sessions-store, as the runner names it
-                let dir = v.get("task_id").and_then(Value::as_str).map(Sessions::hex);
+                let dir = v.get("task_id").and_then(Value::as_str).map(hex);
                 if let (Value::Object(m), Some(dir)) = (&mut v, dir) {
                     m.insert("dir".to_owned(), Value::String(dir));
                 }
@@ -1556,6 +1588,7 @@ fn turn(
             upto: 0,
             first,
             checkpoint,
+            transcript: None,
         }));
     }
     let parked: Option<String> = tx
@@ -1571,6 +1604,18 @@ fn turn(
         Some("turn_timeout") => TIMED_OUT,
         _ => CONTINUE,
     };
+    let transcript = tx
+        .query_opt(
+            "SELECT project, body FROM transcripts WHERE task_id = $1",
+            &[&task.id],
+        )?
+        .map(|r| {
+            Ok::<_, QueueError>(Transcript {
+                project: r.try_get(0)?,
+                body: r.try_get(1)?,
+            })
+        })
+        .transpose()?;
     let mut input = String::new();
     let mut upto = 0;
     // a stopped turn's continue goes first, though what that turn was told is older than it
@@ -1597,7 +1642,30 @@ fn turn(
         upto,
         first,
         checkpoint,
+        transcript,
     }))
+}
+
+/// Replaces `task`'s transcript with `t`, the one its turn at `epoch` left.
+fn put_transcript(
+    tx: &mut Transaction<'_>,
+    task: &str,
+    epoch: i64,
+    t: &Transcript,
+) -> Result<(), QueueError> {
+    if t.body.len() > TRANSCRIPT_BYTES {
+        return Err(QueueError::Range("transcript"));
+    }
+    if !Transcript::valid_project(&t.project) {
+        return Err(QueueError::Range("transcript project"));
+    }
+    tx.execute(
+        "INSERT INTO transcripts (task_id, lease_epoch, project, body) VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (task_id) DO UPDATE SET lease_epoch = EXCLUDED.lease_epoch, project = EXCLUDED.project, \
+         body = EXCLUDED.body, updated_at = now() WHERE transcripts.lease_epoch <= EXCLUDED.lease_epoch",
+        &[&task, &epoch, &t.project, &t.body],
+    )?;
+    Ok(())
 }
 
 /// Upper bounds of the duration histograms, in seconds: ten seconds to four hours.
@@ -2136,4 +2204,12 @@ fn leases(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Resul
         let _ = writeln!(out, "exec_pool_slots_declared{{host=\"{host}\"}} {n}");
     }
     Ok(())
+}
+
+/// A task id as its session tree's directory was named: two lowercase hex digits per byte.
+fn hex(task_id: &str) -> String {
+    task_id.bytes().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }

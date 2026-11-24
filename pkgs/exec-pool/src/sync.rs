@@ -324,7 +324,11 @@ pub fn count(file: &Path, op: &str, ok: bool) -> std::io::Result<()> {
 /// # Errors
 /// What writing it reports.
 pub fn bump(file: &Path, (name, help): (&str, &str), labels: &str) -> std::io::Result<()> {
-    let key = format!("{name}{{{labels}}}");
+    let key = if labels.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{name}{{{labels}}}")
+    };
     let mut counts: std::collections::BTreeMap<String, u64> = fs::read_to_string(file)
         .unwrap_or_default()
         .lines()

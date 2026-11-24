@@ -6,6 +6,7 @@
 pub mod agent;
 pub mod queue;
 pub mod runner;
+pub mod snapshot;
 mod state;
 pub mod sync;
 pub mod task_result;

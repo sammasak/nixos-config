@@ -182,7 +182,10 @@ fn a_session_turn_starts_its_session_with_the_prefix_then_resumes_it() {
             PREFIX.replace("{branch}", "pool/t-655").replace(
                 "The task:",
                 "To wait for an outside event, run `pool-wait --until HH:MM|RFC3339 [--note TEXT]`: the session is \
-                 woken then, told the note. End your turn right after calling it. The task:"
+                 woken then, told the note. End your turn right after calling it. Before you end a turn or wait, \
+                 commit your work and push your branch as above: the next turn may run on another host from a fresh \
+                 clone of it. The pool keeps what is left uncommitted as a snapshot and the session's transcript, \
+                 nothing else of the checkout or home: no ignored files, build outputs or running processes. The task:"
             )
         )
     );

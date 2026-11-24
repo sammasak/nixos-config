@@ -4,8 +4,9 @@
 //! [`Manifest`] and starts `exec-pool-exec@<slot>`; that helper (root, no queue access) runs the task in the slot's
 //! guest as its user and writes an [`ExecResult`]; the runner settles the attempt from it with [`decide`] and releases
 //! the slot with `dev-env-reset@<slot>`. Each attempt runs in its own [`Workspace`], which that reset removes with the
-//! home. A session task's lease is one turn ([`Session`]): its HOME and checkout are its tree, attached to the slot for
-//! the turn, and the turn ends in a park ([`decide_turn`]), not a settle.
+//! home. A session task's lease is one turn ([`Session`]): its HOME and checkout are made afresh in the slot's dock,
+//! the checkout cloned back to where the last park left it (`crate::snapshot`), and the turn ends in a park
+//! ([`decide_turn`]), not a settle.
 
 use std::fmt::Write as _;
 use std::fs::File;
@@ -17,12 +18,13 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::queue::QueueError;
+use crate::queue::{QueueError, Transcript};
+use crate::snapshot::{Git, Resume};
 use crate::wake::Wake;
-use crate::workspace::{self, SESSION_HOME, SESSION_WORK, Workspace};
+use crate::workspace::{self, DOCK_TRANSCRIPT, SESSION_HOME, SESSION_WORK, Workspace};
 use crate::{
-    Agent, CheckpointRef, Error, Outcome, ParkReason, Receipt, STORE, SchemaVersion, Settle,
-    TaskSpec, agent, parse_versioned,
+    Agent, CheckpointRef, Error, Outcome, ParkReason, Receipt, SchemaVersion, Settle, TaskSpec,
+    agent, parse_versioned,
 };
 
 /// How much of each output stream the result carries; the host keeps up to [`CAPTURE_BYTES`] of it.
@@ -60,9 +62,10 @@ pub struct Session {
     pub input: String,
     /// The last inbox message the input holds, handed back with the park.
     pub upto: i64,
-    /// Where the last park left the tree; with one, the tree must exist, as the agent's session is in it.
+    /// The directory under `~/.claude/projects` of the transcript the last park left, which the runner put beside the
+    /// manifest; `None` before there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checkpoint: Option<CheckpointRef>,
+    pub transcript: Option<String>,
 }
 
 /// One guest command of a run, under its transient unit's name; `limit_secs` bounds a quick one tighter than its
@@ -99,6 +102,13 @@ impl Manifest {
         if let Some(s) = &m.session {
             agent::session_argv(&m.task, &s.uuid, &s.input, agent::Turn::Start)
                 .map_err(|e| Error::Json(e.to_string()))?;
+            if let Some(p) = s
+                .transcript
+                .as_deref()
+                .filter(|p| !Transcript::valid_project(p))
+            {
+                return Err(Error::Json(format!("transcript project {p:?}")));
+            }
         }
         if m.task.source.rev.starts_with('-') {
             return Err(Error::Json(format!(
@@ -161,7 +171,7 @@ impl Manifest {
         let t = &self.task;
         let run = ws.run(env, &t.command.workdir, &agent::argv(t)?)?;
         let [root, dirs] = ws.create(mkdir);
-        let [clone, checkout] = self.clone(&ws.checkout(), tools, identity)?;
+        let [clone, checkout] = self.clone_argv(&ws.checkout(), tools, identity)?;
         Ok(vec![
             step(Stage::Prepare, "exec-pool-root", root),
             step(Stage::Prepare, "exec-pool-workspace", dirs),
@@ -171,38 +181,62 @@ impl Manifest {
         ])
     }
 
-    /// A session turn's preparing guest commands: the workspace's `tmp` and `out` in the slot home, on the turn that
-    /// created the tree the clone into it and the checkout of the task's branch, then on every turn `relink`, which
-    /// links the guest user's current Home Manager files into the session's HOME (they dangle after a deploy). The
-    /// agent's own step follows the transcript probe: [`Manifest::turn`].
+    /// A session turn's preparing guest commands: the workspace's `tmp` and `out` in the slot home; the clone into the
+    /// dock's empty checkout and its way back to where the last park left it (`resume`, from the remote as the turn
+    /// listed it); `relink`, which links the guest user's current Home Manager files into the session's empty HOME;
+    /// and with a transcript its copy by `install` from the dock to where the agent reads it. The agent's own step
+    /// follows the transcript probe: [`Manifest::turn`].
     ///
     /// # Errors
-    /// What [`agent::branch`] rejects.
+    /// What [`agent::branch`] or [`crate::snapshot::wip_ref`] rejects.
     pub fn session_steps(
         &self,
         ws: &Workspace,
         tools: (&str, &str, &str),
         identity: (&str, &str),
-        (created, relink): (bool, Vec<String>),
+        (resume, relink, install): (&Resume, Vec<String>, &str),
     ) -> Result<Vec<Step>, StepsError> {
         let [root, dirs] = ws.create_scratch(tools.2);
+        let [clone, _] = self.clone_argv(SESSION_WORK, tools, identity)?;
         let mut steps = vec![
             step(Stage::Prepare, "exec-pool-root", root),
             step(Stage::Prepare, "exec-pool-workspace", dirs),
+            step(Stage::Prepare, "exec-pool-clone", clone),
         ];
-        if created {
-            let [clone, checkout] = self.clone(SESSION_WORK, tools, identity)?;
-            steps.push(step(Stage::Prepare, "exec-pool-clone", clone));
-            steps.push(step(Stage::Prepare, "exec-pool-checkout", checkout));
+        let g = Git {
+            env: tools.1,
+            git: tools.0,
+            checkout: SESSION_WORK,
+        };
+        let names = (
+            agent::branch(&self.task)?,
+            crate::snapshot::wip_ref(&self.task)?,
+        );
+        for (unit, argv) in resume.steps(&g, (&names.0, &self.task.source.rev, &names.1)) {
+            steps.push(step(Stage::Prepare, unit, argv));
         }
         steps.push(Step {
             limit_secs: Some(QUICK_SECS),
             ..step(Stage::Prepare, "exec-pool-relink", relink)
         });
+        if let Some(s) = &self.session
+            && let Some(project) = &s.transcript
+        {
+            let to = format!("{SESSION_HOME}/.claude/projects/{project}/{}.jsonl", s.uuid);
+            let argv = [install, "-D", "-m", "0600", "--", DOCK_TRANSCRIPT, &to];
+            steps.push(Step {
+                limit_secs: Some(QUICK_SECS),
+                ..step(
+                    Stage::Prepare,
+                    "exec-pool-transcript",
+                    argv.map(str::to_owned).to_vec(),
+                )
+            });
+        }
         Ok(steps)
     }
 
-    /// The session turn's agent step, in its tree: [`agent::session_argv`] of the turn's input.
+    /// The session turn's agent step, in the dock: [`agent::session_argv`] of the turn's input.
     ///
     /// # Errors
     /// [`agent::Error::NoSession`] for a one-shot manifest, what [`agent::session_argv`] or
@@ -222,7 +256,7 @@ impl Manifest {
 
     /// The clone into `checkout` and the checkout of the rev there, by `git` with no global config: the guest's
     /// system config alone, which sends GitHub to the slot's proxy (a private repository clones too).
-    fn clone(
+    fn clone_argv(
         &self,
         checkout: &str,
         (git, env, _): (&str, &str, &str),
@@ -337,23 +371,27 @@ pub fn relink(cp: &str, guest_home: &str) -> Vec<String> {
     .to_vec()
 }
 
-/// The checkpoint a parked turn leaves: the session's tree as its turn at `epoch` left it.
-///
-/// It is on `host`, and in the store when it was `stored` there. A live tree has no content hash, so the generation
-/// and the hosts say which it is.
+/// The checkpoint a parked turn at `epoch` leaves: where its work is on the task's remote, `at` (a full ref name and
+/// its commit, `absent` when there is none yet).
 #[must_use]
-pub fn session_checkpoint(task_id: &str, host: &str, epoch: u64, stored: bool) -> CheckpointRef {
-    let mut hosts = vec![host.to_owned()];
-    if stored {
-        hosts.push(STORE.to_owned());
-    }
+pub fn session_checkpoint(task: &TaskSpec, epoch: u64, at: &ParkedAt) -> CheckpointRef {
     CheckpointRef {
         schema_version: SchemaVersion::CURRENT,
-        uri: format!("session-tree://{host}/{task_id}"),
-        digest: "unhashed".to_owned(),
+        uri: format!("{}#{}", task.source.repo, at.name),
+        digest: at.commit.clone().unwrap_or_else(|| "absent".to_owned()),
         generation: epoch,
-        hosts,
+        hosts: Vec::new(),
     }
+}
+
+/// Where a park left a session's work on its remote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParkedAt {
+    /// The snapshot ref, or `refs/heads/<branch>` when nothing was left uncommitted.
+    pub name: String,
+    /// Its commit; `None`: the remote holds neither (nothing committed, nothing changed).
+    pub commit: Option<String>,
 }
 
 /// Where a session turn goes: parked to wait for its next message, or settled as a one-shot run would be.
@@ -365,8 +403,9 @@ pub enum TurnSettle {
 
 /// Where the session turn `attempt` at `epoch` goes after its run.
 ///
-/// No result (or someone else's), a guest that went away, or a tree it could not find, is `needs_review`, its tree
-/// left where it is; a cancel is `cancelled`; a turn that never reached the agent goes back to `queued`. Every end of the agent's
+/// No result (or someone else's), a guest that went away, or a turn whose work the park could not keep (its push
+/// failed, its transcript is too large), is `needs_review`, the unpushed work left in the slot's dock; a cancel is
+/// `cancelled`; a turn that never reached the agent goes back to `queued`. Every end of the agent's
 /// call parks the session: `turn_timeout` for a call stopped at the time limit, `turn_end` for Claude's verdict of
 /// success, `turn_error` otherwise. A failed turn never fails the session.
 #[must_use]
@@ -376,9 +415,7 @@ pub fn decide_turn(
     result: Option<&ExecResult>,
     stdout: &str,
 ) -> TurnSettle {
-    let Some(r) = result
-        .filter(|r| r.attempt_id == attempt && r.lease_epoch == epoch && r.tree_lost.is_none())
-    else {
+    let Some(r) = result.filter(|r| r.attempt_id == attempt && r.lease_epoch == epoch) else {
         return TurnSettle::Settle(Settle::NeedsReview);
     };
     if r.cancelled {
@@ -392,7 +429,7 @@ pub fn decide_turn(
             Settle::Queued
         });
     }
-    if !r.container_active {
+    if !r.container_active || r.unkept.is_some() {
         return TurnSettle::Settle(Settle::NeedsReview);
     }
     if r.drained {
@@ -507,17 +544,20 @@ pub struct ExecResult {
     /// The task's branch, `pool/<task id>`, when the repository shows it after the run.
     #[serde(default)]
     pub branch: Option<String>,
-    /// Why a session task's tree, prepared on an earlier turn, could not be attached here (none to attach, or one
-    /// this slot may not take): its session is not lost to a retry, it goes to review.
-    #[serde(default)]
-    pub tree_lost: Option<String>,
     /// Where a run that never reached its agent failed: a prepare step's unit, or `admit`, `attach`, `manifest` or
     /// `turn` outside one; `None` once its agent started, or for a run stopped by a cancel or a drain.
     #[serde(default)]
     pub failed_step: Option<String>,
-    /// The turn's tree reached the store after its detach, at this turn's generation.
+    /// Where the park left a session turn's work on the remote, once its agent ran and the work got there.
     #[serde(default)]
-    pub stored: bool,
+    pub parked_at: Option<ParkedAt>,
+    /// Why the park could not keep a session turn's work (its push, or its transcript over the queue's bound): the
+    /// work stays in the slot's dock, and the turn goes to review.
+    #[serde(default)]
+    pub unkept: Option<String>,
+    /// The directory under `~/.claude/projects` of the transcript the helper put beside the manifest for the park.
+    #[serde(default)]
+    pub transcript: Option<String>,
     /// [`holds_tree`] once the run's agent ran: the branch's head is the checkout's HEAD and nothing is uncommitted.
     #[serde(default)]
     pub handed_back: Option<bool>,
@@ -545,9 +585,10 @@ impl ExecResult {
             timed_out: false,
             cancelled: false,
             branch: None,
-            tree_lost: None,
             failed_step: None,
-            stored: false,
+            parked_at: None,
+            unkept: None,
+            transcript: None,
             handed_back: None,
             wake: None,
             drained: false,
@@ -708,6 +749,15 @@ pub fn tail(bytes: &[u8]) -> String {
 /// # Errors
 /// Anything else, or a file larger than the read limit.
 pub fn read_regular(path: &Path) -> io::Result<String> {
+    let limit = usize::try_from(READ_LIMIT).unwrap_or(usize::MAX);
+    String::from_utf8(read_bytes(path, limit)?).map_err(io::Error::other)
+}
+
+/// [`read_regular`]'s bytes, up to `limit` of them.
+///
+/// # Errors
+/// As [`read_regular`].
+pub fn read_bytes(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
     let before = std::fs::symlink_metadata(path)?;
     if !before.file_type().is_file() {
         return Err(io::Error::other(format!(
@@ -723,16 +773,16 @@ pub fn read_regular(path: &Path) -> io::Result<String> {
             path.display()
         )));
     }
-    let mut s = String::new();
-    file.take(READ_LIMIT.saturating_add(1))
-        .read_to_string(&mut s)?;
-    if u64::try_from(s.len()).map_or(true, |n| n > READ_LIMIT) {
+    let mut buf = Vec::new();
+    file.take(u64::try_from(limit).map_or(u64::MAX, |n| n.saturating_add(1)))
+        .read_to_end(&mut buf)?;
+    if buf.len() > limit {
         return Err(io::Error::other(format!(
-            "{} is over {READ_LIMIT} bytes",
+            "{} is over {limit} bytes",
             path.display()
         )));
     }
-    Ok(s)
+    Ok(buf)
 }
 
 #[cfg(test)]
@@ -829,9 +879,10 @@ mod tests {
             timed_out: false,
             cancelled: false,
             branch: None,
-            tree_lost: None,
             failed_step: None,
-            stored: false,
+            parked_at: None,
+            unkept: None,
+            transcript: None,
             handed_back: None,
             wake: None,
             drained: false,
@@ -902,22 +953,22 @@ mod tests {
         .unwrap()
     }
 
-    fn session_steps(m: &Manifest, created: bool) -> Vec<Step> {
+    fn session_steps(m: &Manifest, resume: &Resume) -> Vec<Step> {
         let ws = m.workspace("/home/u").unwrap();
         m.session_steps(
             &ws,
             ("/git", "/env", "/mkdir"),
             ("Pool", "pool@example.org"),
-            (created, relink("/cp", "/home/u")),
+            (resume, relink("/cp", "/home/u"), "/install"),
         )
         .unwrap()
     }
 
     #[test]
-    fn a_first_turn_clones_into_its_tree_and_a_later_one_only_relinks() {
+    fn every_turn_clones_into_the_empty_dock_and_returns_to_its_last_park() {
         let m = session("fix it");
         let units = |steps: &[Step]| steps.iter().map(|s| s.unit).collect::<Vec<_>>();
-        let first = session_steps(&m, true);
+        let first = session_steps(&m, &Resume::Rev);
         assert_eq!(
             units(&first),
             [
@@ -929,7 +980,7 @@ mod tests {
             ]
         );
         assert!(first.iter().all(|s| s.stage == Stage::Prepare));
-        // the scratch in the slot home, the checkout in the tree, on the task's branch
+        // the scratch in the slot home, the checkout in the dock, on the task's branch
         let dir = "/home/u/attempts/74312e61-3";
         assert_eq!(
             first[1].argv,
@@ -964,11 +1015,51 @@ mod tests {
                 SESSION_HOME
             ]
         );
-        let later = session_steps(&m, false);
+        let mut later = m.clone();
+        if let Some(s) = later.session.as_mut() {
+            s.transcript = Some("-session-cur-work-crates-x".to_owned());
+        }
+        let resumed = session_steps(&later, &Resume::Snapshot("s1".to_owned()));
         assert_eq!(
-            units(&later),
-            ["exec-pool-root", "exec-pool-workspace", "exec-pool-relink"]
+            units(&resumed),
+            [
+                "exec-pool-root",
+                "exec-pool-workspace",
+                "exec-pool-clone",
+                "exec-pool-fetch",
+                "exec-pool-checkout",
+                "exec-pool-restore",
+                "exec-pool-relink",
+                "exec-pool-transcript"
+            ]
         );
+        assert!(
+            resumed[3]
+                .argv
+                .ends_with(&["origin".into(), "refs/pool-wip/t1".into()])
+        );
+        assert!(
+            resumed[4]
+                .argv
+                .ends_with(&["-B".into(), "pool/t1".into(), "s1^".into()])
+        );
+        assert_eq!(
+            resumed[7].argv,
+            [
+                "/install",
+                "-D",
+                "-m",
+                "0600",
+                "--",
+                "/session/cur/transcript.jsonl",
+                &format!("{SESSION_HOME}/.claude/projects/-session-cur-work-crates-x/{UUID}.jsonl")
+            ]
+        );
+        let mut outside = later;
+        if let Some(s) = outside.session.as_mut() {
+            s.transcript = Some("..".to_owned());
+        }
+        assert!(Manifest::parse(&serde_json::to_string(&outside).unwrap()).is_err());
     }
 
     #[test]
@@ -1005,19 +1096,23 @@ mod tests {
     }
 
     #[test]
-    fn a_parked_turn_names_its_tree_on_this_host() {
-        let c = session_checkpoint("t1", "msi-ms7758", 4, false);
+    fn a_parked_turn_names_where_its_work_is_on_the_remote() {
+        let m = session("x");
+        let at = ParkedAt {
+            name: "refs/pool-wip/t1".to_owned(),
+            commit: Some("s1".to_owned()),
+        };
+        let c = session_checkpoint(&m.task, 4, &at);
         assert_eq!(c.validate(), Ok(()), "what Store::park validates");
         assert_eq!(
-            (c.uri.as_str(), c.generation, c.hosts.as_slice()),
-            (
-                "session-tree://msi-ms7758/t1",
-                4,
-                &["msi-ms7758".to_owned()][..]
-            )
+            (c.uri.as_str(), c.digest.as_str(), c.generation),
+            ("https://example.org/r.git#refs/pool-wip/t1", "s1", 4)
         );
-        let stored = session_checkpoint("t1", "msi-ms7758", 4, true);
-        assert_eq!(stored.hosts, ["msi-ms7758", STORE]);
+        let none = ParkedAt {
+            name: "refs/heads/pool/t1".to_owned(),
+            commit: None,
+        };
+        assert_eq!(session_checkpoint(&m.task, 4, &none).digest, "absent");
     }
 
     #[test]
@@ -1084,14 +1179,14 @@ mod tests {
             TurnSettle::Park(ParkReason::TurnTimeout)
         );
         assert_eq!(turn(None, ""), TurnSettle::Settle(Settle::NeedsReview));
-        let lost = ExecResult {
-            tree_lost: Some("no session tree at /x".to_owned()),
-            ..result(Stage::Prepare, None)
+        let unkept = ExecResult {
+            unkept: Some("push: the remote hung up".to_owned()),
+            ..ok.clone()
         };
         assert_eq!(
-            turn(Some(&lost), ""),
+            turn(Some(&unkept), "{\"is_error\":false}"),
             TurnSettle::Settle(Settle::NeedsReview),
-            "a prepared tree it could not find is not retried away"
+            "work the park could not push is never parked as kept"
         );
         assert_eq!(
             decide_turn("t1.a", 2, Some(&ok), ""),

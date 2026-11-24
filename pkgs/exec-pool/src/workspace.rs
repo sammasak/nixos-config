@@ -8,10 +8,9 @@
 //! can delete its own files but cannot replace its home's mount point, so the host-side [`HomeId`] proves a reset where
 //! a marker in the home would not.
 //!
-//! A session task's HOME and checkout are its own tree instead, kept on the host across turns by [`Sessions`]: each
-//! turn the root helper attaches it to the slot's dock (bound into the guest at [`DOCK`]) and detaches it once the
-//! turn's steps are gone, so the agent finds them at the same guest paths in every slot, [`SESSION_HOME`] and
-//! [`SESSION_WORK`].
+//! A session task's turn runs in its slot's [`Dock`] instead, bound into the guest at [`DOCK`]: an empty HOME and
+//! checkout every turn, at the same guest paths in every slot, [`SESSION_HOME`] and [`SESSION_WORK`]. What outlives
+//! the turn is on the session's remote and in the queue (`crate::snapshot`), never in the dock.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -36,14 +35,6 @@ pub enum Error {
     Command(String),
     #[error("the slot's home is the one its last attempt ran in: it was not reset")]
     NotReset,
-    #[error("the dock {0} is not empty: a tree is still attached")]
-    DockBusy(String),
-    #[error("no session tree at {0}")]
-    NoTree(String),
-    #[error("a session tree is already at {0}")]
-    TreeExists(String),
-    #[error("the tree at {path} belongs to uid {tree}, the slot's home to {slot}")]
-    Owner { path: String, tree: u32, slot: u32 },
     #[error("{0}")]
     Io(String),
 }
@@ -54,144 +45,80 @@ pub const DOCK: &str = "/session";
 pub const SESSION_HOME: &str = "/session/cur/home";
 /// Its checkout, the agent's working directory under it.
 pub const SESSION_WORK: &str = "/session/cur/work";
+/// The transcript the turn resumes, beside them, for the guest to copy into its HOME.
+pub const DOCK_TRANSCRIPT: &str = "/session/cur/transcript.jsonl";
 
 fn io_err(path: &Path) -> impl Fn(io::Error) -> Error + '_ {
     move |e| Error::Io(format!("{}: {e}", path.display()))
 }
 
-/// The host side of session trees: `<root>/<hex of the task id>/tree/{home,work}` and each slot's dock.
+/// A slot's dock on the host, `<root>/dock/<slot>`: `cur` holds one session turn's HOME and checkout.
 ///
-/// The dock is `<root>/dock/<slot>`, all on one filesystem so attach and detach are each one rename. Root's only: a
-/// guest sees a tree only while it is attached to its dock.
+/// All of it is root's but `home` and `work`, so the guest cannot replace what the helper removes. The helper makes
+/// `cur` afresh for a turn and removes it once the turn's work is on its remote.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sessions {
-    root: PathBuf,
+pub struct Dock {
+    dir: PathBuf,
 }
 
-impl Sessions {
+impl Dock {
     #[must_use]
-    pub const fn new(root: PathBuf) -> Self {
-        Self { root }
-    }
-
-    /// The task's id as its directory is named, here and in the store: two lowercase hex digits per byte. The
-    /// remover reads it from `exec-pool sessions` (`dir`), never derives it.
-    #[must_use]
-    pub fn hex(task_id: &str) -> String {
-        let mut dir = String::new();
-        for b in task_id.bytes() {
-            let _ = write!(dir, "{b:02x}");
+    pub fn new(root: &Path, slot: &str) -> Self {
+        Self {
+            dir: root.join("dock").join(slot),
         }
-        dir
     }
 
-    /// The task's directory: its tree and the marks beside it.
+    /// What the guest sees at `/session/cur`.
     #[must_use]
-    pub fn dir(&self, task_id: &str) -> PathBuf {
-        self.root.join(Self::hex(task_id))
+    pub fn cur(&self) -> PathBuf {
+        self.dir.join("cur")
     }
 
-    /// The task's tree while detached.
-    #[must_use]
-    pub fn tree(&self, task_id: &str) -> PathBuf {
-        self.dir(task_id).join("tree")
-    }
-
-    /// Beside the tree, the helper's mark that its first turn's clone and checkout finished: until it exists, a turn
-    /// makes the tree afresh, as nothing ran in it yet.
-    #[must_use]
-    pub fn prepared(&self, task_id: &str) -> PathBuf {
-        self.tree(task_id).with_file_name("prepared")
-    }
-
-    /// Where a tree is while attached to `slot`'s dock.
-    #[must_use]
-    pub fn docked(&self, slot: &str) -> PathBuf {
-        self.root.join("dock").join(slot).join("cur")
-    }
-
-    /// Whether `slot`'s dock holds a tree.
-    #[must_use]
-    pub fn dock_busy(&self, slot: &str) -> bool {
-        self.docked(slot).symlink_metadata().is_ok()
-    }
-
-    /// A first turn's empty tree, its `home` and `work` owned by `owner` (the slot home's uid and gid), mode 0700, in
-    /// a root-owned 0711 directory the guest user can enter but not change; a tree a turn left unprepared is removed
-    /// first, without following a link in it.
+    /// Removes `cur` and all in it, links removed, never followed.
     ///
     /// # Errors
-    /// [`Error::TreeExists`] for a prepared one, or what creating it reports.
-    pub fn create(&self, task_id: &str, (uid, gid): (u32, u32)) -> Result<(), Error> {
-        let tree = self.tree(task_id);
-        if self.prepared(task_id).symlink_metadata().is_ok() {
-            return Err(Error::TreeExists(tree.display().to_string()));
+    /// What the removal reports.
+    pub fn clear(&self) -> Result<(), Error> {
+        let cur = self.cur();
+        match cur.symlink_metadata() {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(io_err(&cur)(e)),
+            Ok(m) if m.is_dir() => fs::remove_dir_all(&cur).map_err(io_err(&cur)),
+            Ok(_) => fs::remove_file(&cur).map_err(io_err(&cur)),
         }
-        if tree.symlink_metadata().is_ok() {
-            fs::remove_dir_all(&tree).map_err(io_err(&tree))?;
-        }
-        let parent = tree.parent().unwrap_or(&self.root);
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(parent)
-            .map_err(io_err(parent))?;
+    }
+
+    /// A turn's `cur`, after [`Dock::clear`]: root's 0711, its `home` and `work` empty and owned by `owner` (the slot
+    /// home's uid and gid) 0700, and `transcript` beside them as [`DOCK_TRANSCRIPT`], root's and the owner's group's,
+    /// 0640.
+    ///
+    /// # Errors
+    /// What the removal or creating it reports.
+    pub fn make(&self, (uid, gid): (u32, u32), transcript: Option<&[u8]>) -> Result<(), Error> {
+        self.clear()?;
+        let cur = self.cur();
         fs::DirBuilder::new()
             .mode(0o711)
-            .create(&tree)
-            .map_err(io_err(&tree))?;
+            .create(&cur)
+            .map_err(io_err(&cur))?;
         // DirBuilder's mode is masked by the umask
-        fs::set_permissions(&tree, fs::Permissions::from_mode(0o711)).map_err(io_err(&tree))?;
+        fs::set_permissions(&cur, fs::Permissions::from_mode(0o711)).map_err(io_err(&cur))?;
         for sub in ["home", "work"] {
-            let d = tree.join(sub);
+            let d = cur.join(sub);
             fs::DirBuilder::new()
                 .mode(0o700)
                 .create(&d)
                 .map_err(io_err(&d))?;
             std::os::unix::fs::lchown(&d, Some(uid), Some(gid)).map_err(io_err(&d))?;
         }
+        if let Some(bytes) = transcript {
+            let path = cur.join("transcript.jsonl");
+            fs::write(&path, bytes).map_err(io_err(&path))?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).map_err(io_err(&path))?;
+            std::os::unix::fs::lchown(&path, None, Some(gid)).map_err(io_err(&path))?;
+        }
         Ok(())
-    }
-
-    /// Moves the task's tree into `slot`'s dock, refused when the dock holds one, the task has none, or its home is
-    /// not the slot home's owner's (`uid`), as on a slot with other ids.
-    ///
-    /// # Errors
-    /// [`Error::DockBusy`], [`Error::NoTree`], [`Error::Owner`], or what the rename reports.
-    pub fn attach(&self, task_id: &str, slot: &str, uid: u32) -> Result<(), Error> {
-        let (tree, docked) = (self.tree(task_id), self.docked(slot));
-        if self.dock_busy(slot) {
-            return Err(Error::DockBusy(docked.display().to_string()));
-        }
-        let home = tree.join("home");
-        let owner = home
-            .symlink_metadata()
-            .map_err(|_| Error::NoTree(tree.display().to_string()))?
-            .uid();
-        if owner != uid {
-            return Err(Error::Owner {
-                path: home.display().to_string(),
-                tree: owner,
-                slot: uid,
-            });
-        }
-        fs::rename(&tree, &docked).map_err(io_err(&docked))
-    }
-
-    /// Moves the tree in `slot`'s dock back to the task, once nothing of the turn runs in it.
-    ///
-    /// # Errors
-    /// [`Error::NoTree`] with none in the dock, [`Error::TreeExists`] when the task has one already, or what the
-    /// rename reports.
-    pub fn detach(&self, task_id: &str, slot: &str) -> Result<(), Error> {
-        let (tree, docked) = (self.tree(task_id), self.docked(slot));
-        if !self.dock_busy(slot) {
-            return Err(Error::NoTree(docked.display().to_string()));
-        }
-        if tree.symlink_metadata().is_ok() {
-            return Err(Error::TreeExists(tree.display().to_string()));
-        }
-        fs::rename(&docked, &tree).map_err(io_err(&tree))
     }
 }
 
@@ -389,14 +316,29 @@ mod tests {
     }
 
     #[test]
-    fn a_session_tree_is_named_by_its_task_ids_hex() {
-        let s = Sessions::new(PathBuf::from("/var/lib/workers/.sessions"));
-        let hex = "636c692d63383636323932373131393964356237";
-        assert_eq!(Sessions::hex("cli-c86629271199d5b7"), hex);
-        assert_eq!(
-            s.tree("cli-c86629271199d5b7"),
-            PathBuf::from(format!("/var/lib/workers/.sessions/{hex}/tree"))
-        );
+    fn a_turns_dock_is_made_empty_and_its_transcript_kept_from_the_guests_others()
+    -> Result<(), Error> {
+        let root = std::env::temp_dir().join(format!("exec-pool-dock-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let d = Dock::new(&root, "pool1");
+        fs::create_dir_all(root.join("dock/pool1")).map_err(io_err(&root))?;
+        let me = fs::metadata(&root).map_err(io_err(&root))?;
+        d.make((me.uid(), me.gid()), Some(b"{}\n"))?;
+        fs::write(d.cur().join("work/left"), "x").map_err(io_err(&root))?;
+        let mode = |p: &Path| {
+            fs::metadata(p)
+                .map(|m| m.permissions().mode() & 0o7777)
+                .ok()
+        };
+        assert_eq!(mode(&d.cur()), Some(0o711));
+        assert_eq!(mode(&d.cur().join("home")), Some(0o700));
+        assert_eq!(mode(&d.cur().join("transcript.jsonl")), Some(0o640));
+        d.make((me.uid(), me.gid()), None)?;
+        assert!(!d.cur().join("work/left").exists() && !d.cur().join("transcript.jsonl").exists());
+        d.clear()?;
+        d.clear()?;
+        assert!(!d.cur().exists());
+        fs::remove_dir_all(&root).map_err(io_err(&root))
     }
 
     #[test]
