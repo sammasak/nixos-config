@@ -531,17 +531,25 @@ let
         }
       ) (egressOf w)
     );
-    systemd.services = lib.listToAttrs (
-      map (
-        s:
-        lib.nameValuePair "${s.name}-egress" {
-          serviceConfig = {
-            User = user;
-            ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${s.socket}";
-          };
-        }
-      ) (egressOf w)
-    );
+    systemd.services =
+      lib.listToAttrs (
+        map (
+          s:
+          lib.nameValuePair "${s.name}-egress" {
+            serviceConfig = {
+              User = user;
+              ExecStart = "${config.systemd.package}/lib/systemd/systemd-socket-proxyd ${s.socket}";
+            };
+          }
+        ) (egressOf w)
+      )
+      # At the pool limit the kernel kills the largest process in the whole slice: a gate's builds run as many
+      # mid-sized ones, an agent as one big one. Every build forks from the daemon and inherits this, so it goes before
+      # a session (0) unless the session outgrows it by half the pool. Not 1000: a runaway in a session would then
+      # take every neighbour's builds first.
+      // {
+        nix-daemon.serviceConfig.OOMScoreAdjust = 500;
+      };
 
     # the guest's cgroup files read max: the host's limits, read from the units that set them. Shell key=value,
     # so a job sources it (`. /etc/dev-environment`) or greps it without a parser; sizes in bytes.
