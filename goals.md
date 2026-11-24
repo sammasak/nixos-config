@@ -2,7 +2,7 @@
 
 Outcome: a working metrics → alerts → investigation → fix → verification loop, and the specialist agent roles
 that run it. Small PRs, shipped by execution pool sessions, each merged batch deployed to the hosts it touches. Updated when
-PRs merge.
+PRs merge. The direction this queue serves: [vision.md](vision.md).
 
 ## How we work (owner, 23 Nov)
 
@@ -104,6 +104,18 @@ lost when the queue restarts (#773), no claim priority (#772).
 10. Cost: about 45 USD of session cost on 24 Nov; track cost per merged PR.
 11. Store follow-ups in #754; credential slices 3 and 4.
 
+### Paddock SSD-backed MoE expert streaming
+
+Same priority as the pool platform. One dedicated pool session drives it end to end from draft
+[paddock#2](https://github.com/sammasak/paddock/pull/2) (packaging: paddock#1; integration: #508; feasibility and
+benchmark requirements: #776; epic: #491).
+
+- Paddock before Strata.
+- Isolated behind a narrow abstraction, the existing fast path kept, fork maintenance kept small.
+- Decisions, progress, acceptance criteria and follow-ups live in those issues and PRs.
+- Small reviewed changes with measured results on asus (asus is off 21:00 to 08:30).
+- Aim: a polished upstream contribution.
+
 ### Waiting, in pick-up order
 
 | # | Topic | Pain now | Next small change |
@@ -132,6 +144,7 @@ lost when the queue restarts (#773), no claim priority (#772).
 | P1 | [skills#136](https://github.com/sammasak/skills/issues/136) | Dynamic handoffs pilot | closed 24 Nov: live named-role spawn and tests green |
 | P2 | skills [#132](https://github.com/sammasak/skills/issues/132), [#134](https://github.com/sammasak/skills/issues/134), [#135](https://github.com/sammasak/skills/issues/135) | Remaining specialists | all merged: skills#153, #154, #155 |
 | P1 | [#646](https://github.com/sammasak/nixos-config/issues/646) | Execution pool, v0.1 | split below; never ahead of a P0 item |
+| P1 | [paddock#2](https://github.com/sammasak/paddock/pull/2) | Paddock SSD-backed MoE expert streaming | one dedicated pool session; see the queue above |
 | P2 | [#626](https://github.com/sammasak/nixos-config/issues/626) | Auto-compaction benchmarks | matrix doc when idle; benchmark is token spend |
 
 ## Work items
