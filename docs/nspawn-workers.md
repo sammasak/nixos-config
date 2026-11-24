@@ -80,7 +80,14 @@ units: `slot`, `state`, `sub`, `closure`, `memory.min`/`.low`, `cpu.weight`, `sl
 
 Every slot has `sessionDock` (an instance option, off for named workers): `/session` is bound read-write from
 `<stateDir>/.sessions/dock/<slot>`, root's 0755 under `.sessions/dock` (0755) and `.sessions` (0711), so a session's home and work tree, kept
-outside every slot home, are renamed in for one turn; reset, retire, the trash sweep, gcroots and records never touch `.sessions`. Not with `rootInGuest`.
+outside every slot home, are renamed in for one turn; reset, retire, the trash sweep and records never touch `.sessions`, and gcroots
+only reads it. Not with `rootInGuest`. On acer, with `homelab.execPool.sessionGc.enable` (off until the CLI has
+`exec-pool sessions` and `sessions --gc`), `exec-pool-sessions-gc` moves the parked trees and store copies the queue
+lists as eligible into `.trash` daily, one JSON line each in its journal, never a session whose tree is docked; a tree
+the queue does not know is counted (`homelab_exec_pool_sessions_orphaned`), not removed. msi's parked trees have no
+remover yet. No lock is shared with the runner yet: it must take one before a dock or a push, or a removal can race them.
+Whatever can write a task's state (the runner role, a submitter) can make the queue list it: `.trash` keeps that
+recoverable for a week.
 
 ## Sizing
 
@@ -132,6 +139,9 @@ The host's weekly/monthly collection would not see an environment's devenv
 roots (the daemon records them under the guest's path), so
 `dev-environments-gcroots` roots them from each home right before `nix-gc`
 (it searches the whole home, pruning `node_modules`, `target` and `.git`).
+It also roots each session's work tree, parked (`.sessions/<id>/tree/work`) or docked in a slot
+(`.sessions/dock/<slot>/cur/work`), under `/nix/var/nix/gcroots/dev-env-sessions/parked/<id>` or `dock/<slot>`; a key no
+longer found keeps its roots for an hour, since a dock or park moves the tree between two keys.
 A timer also runs it at boot and every 15 minutes, because the daemon collects
 by itself once `min-free` is set; a path a guest built within the last interval
 is the remaining exposure.
