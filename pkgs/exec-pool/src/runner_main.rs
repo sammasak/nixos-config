@@ -7,8 +7,9 @@
 //! and `reconcile` decides. While the helper runs it renews the lease every [`HEARTBEAT`]; a cancel the heartbeat
 //! reports, or a lease it finds lost, writes the cancel marker the helper stops at. A runner that dies renews nothing,
 //! and the lease expires. A reset that fails quarantines the slot, in the queue too, until an operator removes the
-//! marker. With `EXEC_POOL_OFF_TIMER` it claims only while a claim, held up to `EXEC_POOL_CLAIM_SECS`, ends before that
-//! timer powers the host off; with a credentials directory it is a remote slot's runner, reaching the queue over TCP with the
+//! marker. With `EXEC_POOL_OFF_TIMER` it claims only while `EXEC_POOL_CLAIM_SECS` from now ends before that timer
+//! powers the host off, and `EXEC_POOL_DRAIN_SECS` before it stops the running attempt (the drain); with a credentials
+//! directory it is a remote slot's runner, reaching the queue over TCP with the
 //! `db-password` credential. Each state change is one JSON line on stdout.
 //!
 //! `exec SLOT` (root, from `exec-pool-exec@<slot>.service`) reads the manifest, admits the attempt only to a slot home
@@ -140,10 +141,8 @@ struct Runner {
     runtime: PathBuf,
     exec_dir: PathBuf,
     quarantine: PathBuf,
-    /// The host's scheduled poweroff timer: a lease must end before it fires.
-    /// and the longest a claim holds the slot: its run's bound, then the settle and reset
-    /// The off timer, how long a claim may hold the slot before it fires, and how long before it a running attempt is
-    /// drained.
+    /// The host's scheduled poweroff timer, how long before it claims stop, and how long before it a running attempt
+    /// is drained.
     off_timer: Option<(String, u32, u32)>,
 }
 
@@ -185,22 +184,26 @@ impl Runner {
 
     /// Whether the slot's helper is still running, as after a runner restarted mid-run: the slot is not reset under it.
     fn helper_running(&self) -> bool {
-        // a oneshot is `activating` while it runs, which is-active does not count
+        // a oneshot is `activating` while it runs, which is-active does not count; a state systemd did not give (a
+        // switch, a timeout) counts as running, so the slot is not reset nor a followed run settled under it
         Command::new("systemctl")
             .args(["show", "-p", "ActiveState", "--value"])
             .arg(format!("exec-pool-exec@{}.service", self.slot.id))
             .stdin(Stdio::null())
             .output()
-            .is_ok_and(|o| {
-                matches!(
+            .ok()
+            .filter(|o| o.status.success())
+            .is_none_or(|o| {
+                !matches!(
                     String::from_utf8_lossy(&o.stdout).trim(),
-                    "active" | "activating" | "deactivating" | "reloading"
+                    "inactive" | "failed"
                 )
             })
     }
 
     /// The manifest of the run a helper still runs for this slot, when the queue still holds its lease live: a
-    /// restarted runner takes it over rather than let it expire.
+    /// restarted runner takes it over rather than let it expire. A lease already past its deadline is adopted too: its
+    /// first beat finds it lost and stops the helper, and the reconcile sends it to review.
     fn adoptable(&self, store: &mut Store) -> Option<Manifest> {
         let m = read_regular(&self.runtime.join(MANIFEST))
             .ok()
@@ -644,6 +647,8 @@ struct StepEnd {
     exit_code: Option<i32>,
     timed_out: bool,
     cancelled: bool,
+    /// The helper stopped it for the runner's marker, whatever its exit.
+    stopped: bool,
 }
 
 impl Guest {
@@ -652,9 +657,14 @@ impl Guest {
         read_regular(&self.cancel.0).is_ok_and(|s| s == self.cancel.1 || s == self.cancel.2)
     }
 
+    /// The marker names this attempt for a drain.
+    fn draining(&self) -> bool {
+        read_regular(&self.cancel.0).is_ok_and(|s| s == self.cancel.2)
+    }
+
     /// Records in `result` why the marker stopped the attempt.
     fn stopped(&self, result: &mut ExecResult) {
-        if read_regular(&self.cancel.0).is_ok_and(|s| s == self.cancel.2) {
+        if self.draining() {
             result.drained = true;
         } else {
             result.cancelled = true;
@@ -758,6 +768,7 @@ impl Guest {
             timed_out,
             // a command that exited 0 before the stop reached it finished: its run is not cancelled
             cancelled: cancelled && exit_code != Some(0),
+            stopped: cancelled,
         })
     }
 
@@ -819,14 +830,15 @@ impl Guest {
             limit_secs,
         } in steps
         {
-            if stage == Stage::Run {
-                result.prepare_ms = ms(t);
-            }
-            result.stage = stage;
+            // a stop before a step leaves the stage as it was: a turn stopped before its agent ran is still preparing
             if self.cancelled() {
                 self.stopped(result);
                 break;
             }
+            if stage == Stage::Run {
+                result.prepare_ms = ms(t);
+            }
+            result.stage = stage;
             let limit = match (stage, limit_secs) {
                 (_, Some(secs)) => Duration::from_secs(secs),
                 (Stage::Prepare, None) => PREPARE_TIMEOUT,
@@ -843,6 +855,7 @@ impl Guest {
                     exit_code: None,
                     timed_out: false,
                     cancelled: false,
+                    stopped: false,
                 }
             });
             if stage == Stage::Run {
@@ -850,7 +863,8 @@ impl Guest {
             }
             result.exit_code = end.exit_code;
             result.timed_out = end.timed_out;
-            if end.cancelled {
+            // a drained agent that ends its turn on the SIGTERM and exits 0 was still stopped mid-turn
+            if end.cancelled || (end.stopped && self.draining()) {
                 self.stopped(result);
                 return false;
             }

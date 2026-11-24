@@ -25,7 +25,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 12] = [
+const STEPS: [(i32, &str); 13] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -44,6 +44,7 @@ const STEPS: [(i32, &str); 12] = [
         12,
         include_str!("../migrations/0012_session_gc_handed_back.up.sql"),
     ),
+    (13, include_str!("../migrations/0013_drain_reason.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -53,7 +54,8 @@ const DOWN_SLOTS: &str = include_str!("../migrations/0008_slots.down.sql");
 const DOWN_SESSION: &str = include_str!("../migrations/0009_session.down.sql");
 const DOWN_SESSION_METRICS: &str = include_str!("../migrations/0010_session_metrics.down.sql");
 const DOWN_CLAIM_HOST: &str = include_str!("../migrations/0011_claim_host.down.sql");
-const VERSION: i32 = 12;
+const DOWN_DRAIN_REASON: &str = include_str!("../migrations/0013_drain_reason.down.sql");
+const VERSION: i32 = 13;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -284,6 +286,7 @@ fn u64_of(field: &'static str, v: i64) -> Result<u64, QueueError> {
 const fn reason(kind: &Kind, to: Status) -> &'static str {
     match (kind, to) {
         (Kind::Settle(Settle::Failed) | Kind::Resolve(Resolution::Failed), _) => "failed",
+        (Kind::Settle(Settle::Drained), Status::Queued) => "host_draining",
         (_, Status::Cancelled) => "cancelled",
         (_, Status::Failed) => "attempts_exhausted",
         (Kind::Lease(_), _) => "lease",
@@ -620,7 +623,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -1343,6 +1346,7 @@ fn turn(
         .unwrap_or(false);
     let mut input = String::new();
     let mut upto = 0;
+    // a stopped turn's continue goes first, though what that turn was told is older than it
     for r in tx.query(
         "SELECT id, kind, body FROM inbox WHERE task_id = $1 AND consumed_epoch IS NULL \
          AND (due_at IS NULL OR due_at <= now()) ORDER BY kind <> 'continue', id",
@@ -1358,7 +1362,6 @@ fn turn(
             ("continue", None) => CONTINUE,
             (_, b) => b.unwrap_or_default(),
         });
-        // a stopped turn's continue goes first, as what the turn was told before is older than it
         upto = upto.max(id);
     }
     Ok(Some(Turn {

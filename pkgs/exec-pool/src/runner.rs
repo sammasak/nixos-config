@@ -346,7 +346,12 @@ pub fn decide_turn(
         return TurnSettle::Settle(Settle::Cancelled);
     }
     if r.stage == Stage::Prepare {
-        return TurnSettle::Settle(Settle::Queued);
+        // before its agent ran, a drained turn's tree was neither changed nor pushed: it runs again where it may
+        return TurnSettle::Settle(if r.drained {
+            Settle::Drained
+        } else {
+            Settle::Queued
+        });
     }
     if !r.container_active {
         return TurnSettle::Settle(Settle::NeedsReview);
@@ -508,8 +513,10 @@ impl ExecResult {
 
 /// Where the attempt `attempt` at `epoch` settles after its run.
 ///
-/// A run the helper stopped for a cancel is `cancelled`, whatever stage it reached. Otherwise only a run that never
-/// started the task's argv goes back to `queued`. No result (or someone else's), a timeout or
+/// A run the helper stopped for a cancel is `cancelled`, whatever stage it reached; one it stopped because the host
+/// powers off is `drained`, run again elsewhere with its try given back, though what it did before the stop (a push,
+/// a pull request) is then done twice. Otherwise only a run that never started the task's argv goes back to
+/// `queued`. No result (or someone else's), a timeout or
 /// a guest that went away is `needs_review`, never replayed; otherwise [`agent::outcome`] of the exit and `stdout`
 /// (the task's whole captured stdout: Claude's verdict is its last line) decides.
 #[must_use]
@@ -526,8 +533,11 @@ pub fn decide(
     if r.cancelled {
         return Settle::Cancelled;
     }
-    // a drained run starts again elsewhere
-    if r.stage == Stage::Prepare || r.drained {
+    // a drained run starts again elsewhere, its try given back: the host, not the task, ended it
+    if r.drained {
+        return Settle::Drained;
+    }
+    if r.stage == Stage::Prepare {
         return Settle::Queued;
     }
     if r.timed_out || !r.container_active {
@@ -548,7 +558,7 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
         Settle::Succeeded => Outcome::Succeeded,
         Settle::Failed => Outcome::Failed,
         Settle::NeedsReview => Outcome::NeedsReview,
-        Settle::Waiting | Settle::Queued | Settle::Cancelled => return None,
+        Settle::Waiting | Settle::Queued | Settle::Cancelled | Settle::Drained => return None,
     };
     Some(Receipt {
         schema_version: SchemaVersion::CURRENT,
@@ -561,10 +571,10 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
     })
 }
 
-/// Whether a claim at `now` (unix seconds) that holds the slot up to `hold_secs` ends before the host's poweroff.
+/// Whether `hold_secs` from `now` (unix seconds) ends before the host's poweroff: for a claim, that its run starts
+/// well ahead of the drain; for a running attempt, that the drain has not begun.
 ///
-/// `show` is `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer: a claim the
-/// poweroff would cut short sends its attempt to review. A timer with no next elapse is stopped, as a switch restarting
+/// `show` is `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer. A timer with no next elapse is stopped, as a switch restarting
 /// it leaves it for a moment: that claims nothing either.
 ///
 /// # Errors
@@ -886,8 +896,17 @@ mod tests {
         );
         assert_eq!(
             decide("t1.a", 3, Agent::Claude, Some(&drained), ""),
-            Settle::Queued,
+            Settle::Drained,
             "a one-shot run starts again elsewhere"
+        );
+        let preparing = ExecResult {
+            stage: Stage::Prepare,
+            ..drained
+        };
+        assert_eq!(
+            decide_turn("t1.a", 3, Some(&preparing), ""),
+            TurnSettle::Settle(Settle::Drained),
+            "a turn its agent never reached runs again, its tree as it was"
         );
         let m = manifest(&task()).unwrap();
         assert_ne!(m.drain_token(), m.cancel_token());

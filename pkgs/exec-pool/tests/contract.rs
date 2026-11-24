@@ -558,6 +558,16 @@ fn max_attempts_stop_retries() {
         .unwrap();
     let retried = transition(&at, &once, &ev(1, Kind::Settle(Settle::Queued))).unwrap();
     assert_eq!(retried.status, Status::Failed);
+    // but a run its host's poweroff stopped gives its try back and runs again
+    let drained = transition(&at, &once, &ev(1, Kind::Settle(Settle::Drained))).unwrap();
+    assert_eq!(
+        (drained.status, drained.tries, drained.placement.is_none()),
+        (Status::Queued, 0, true)
+    );
+    assert_eq!(
+        transition(&drained, &once, &lease(1)).unwrap().status,
+        Status::Leased
+    );
     // and a record claiming a lease left is still refused one past the limit
     let mut spent = queued();
     spent.tries = 1;

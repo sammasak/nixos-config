@@ -2,7 +2,7 @@
 # no host rule and no password unit, but the role migration 0004 grants to; on, the role's password from sops by
 # LoadCredential, one scram rule for msi's address and the exec_pool_runner role, bound to acer's fleet address at the
 # exec-pool-db listener's port, which acer's firewall admits from msi alone; each wrong remote role fails its assertion.
-# msi's runner logs in there with the same password and claims no lease that would outlive its 21:00 poweroff.
+# msi's runner logs in there with the same password, and drains its running attempt before its 21:00 poweroff.
 { config, lib, ... }:
 let
   acer = config.flake.nixosConfigurations.acer-swift;
@@ -140,7 +140,11 @@ in
             "exec-pool-db-check: msi's runner does not drain 10 minutes and stop claiming 15 minutes before its 21:00 poweroff";
           assert lib.assertMsg (
             acerRunner.environment.EXEC_POOL_DB == "host=/run/postgresql dbname=exec_pool user=exec_pool"
-            && !(acerRunner.environment ? EXEC_POOL_OFF_TIMER || acerRunner.environment ? EXEC_POOL_CLAIM_SECS)
+            && !(
+              acerRunner.environment ? EXEC_POOL_OFF_TIMER
+              || acerRunner.environment ? EXEC_POOL_CLAIM_SECS
+              || acerRunner.environment ? EXEC_POOL_DRAIN_SECS
+            )
             && !(acerRunner.serviceConfig ? LoadCredential)
             && acerRunner.serviceConfig.PrivateNetwork
           ) "exec-pool-db-check: acer's own runner is not the queue's peer role with no network";
