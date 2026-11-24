@@ -75,3 +75,19 @@ groups:
           description: "The parked, docked and stored session trees on {{ $labels.node }} have held over 70% of the workers' state filesystem ({{ $value | humanizePercentage }}) for 30 minutes; the queue has not made enough of them eligible for removal, or orphans pile up. Read homelab_dev_env_session_trees and homelab_exec_pool_sessions_orphaned there, then run du -sh /var/lib/workers/.sessions/* /var/lib/workers/.sessions-store/* as root (runbook)."
           query: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="{{ $labels.node }}"}'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionslarge"
+
+      - alert: ExecPoolSessionStuck
+        # a session nobody will move on its own: in review (only its owner's send or a resolve), or parked 14 days with
+        # a tree the queue cannot prove was handed back, so session_gc keeps it and its disk
+        expr: |
+          sum by (node) (exec_pool_sessions{job="node-exporter",state="needs_review"}) > 0
+          or sum by (node) (exec_pool_sessions_stale{job="node-exporter"}) > 0
+        for: 1d
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Execution pool sessions on {{ $labels.node }} are stuck in review or stale"
+          description: "{{ $value }} session(s) in the queue on {{ $labels.node }} have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
+          query: 'exec_pool_sessions{job="node-exporter",node="{{ $labels.node }}",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="{{ $labels.node }}"} > 0'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"

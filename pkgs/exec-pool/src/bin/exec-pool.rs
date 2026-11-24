@@ -34,8 +34,13 @@ const USAGE: &str = "usage: exec-pool COMMAND
   wait ID [--timeout SECS]
                     blocks until the task settles (succeeded, failed, needs_review or cancelled) or, a session,
                     parks waiting, then prints its result
+  sessions [--gc]   one JSON object per line for each session, as the queue decides its removal: task_id, state,
+                    last_change, the hosts its tree may be on, eligible and stale; with --gc only the eligible ones,
+                    which a remover may delete (a stale one is kept: its tree may hold unpushed work)
   cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
                     seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
+/// Flags that take no value.
+const SWITCHES: [&str; 1] = ["gc"];
 /// How often `wait` reads the queue, and how long it waits after the settle for the runner to record the result.
 const POLL: Duration = Duration::from_secs(5);
 const RECORD_GRACE: Duration = Duration::from_secs(30);
@@ -77,9 +82,12 @@ impl Args {
                 args.positional.push(arg.clone());
                 continue;
             };
-            let value = it
-                .next()
-                .ok_or_else(|| Fail::Usage(format!("--{key} needs a value")))?;
+            let value = if SWITCHES.contains(&key) {
+                &String::new()
+            } else {
+                it.next()
+                    .ok_or_else(|| Fail::Usage(format!("--{key} needs a value")))?
+            };
             if args.flags.insert(key.to_owned(), value.clone()).is_some() {
                 return Err(Fail::Usage(format!("--{key} given twice")));
             }
@@ -272,6 +280,13 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
             args.only("send", &["prompt", "prompt-file"], 1)?;
             let (attempt, status) = store.send(id(args)?, &prompt(args)?)?;
             println!("{}", json!({ "attempt": attempt, "status": status }));
+        }
+        "sessions" => {
+            args.only("sessions", &["gc"], 0)?;
+            store
+                .sessions(args.opt("gc").is_some())?
+                .iter()
+                .for_each(|s| println!("{s}"));
         }
         "cancel" => {
             args.only("cancel", &[], 1)?;

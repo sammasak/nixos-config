@@ -19,7 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use exec_pool::queue::{METRICS_UNAVAILABLE, Park, QueueError, Store, Submitted, Turn};
-use exec_pool::task_result::TaskResult;
+use exec_pool::task_result::{TaskResult, Usage};
 use exec_pool::{
     Agent, CheckpointRef, Error, Event, Kind, Outcome, ParkReason, Pins, Receipt, Resolution,
     SchemaVersion, Settle, Slot, SlotState, Status, TaskSpec,
@@ -235,12 +235,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (10, 9)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (11, 10)",
             &[],
         )
         .unwrap();
@@ -248,17 +248,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (11)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (12)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(11))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(12))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 11 WHERE version = 11",
+            "UPDATE schema_migrations SET floor = 12 WHERE version = 12",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(11))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(11))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(12))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(12))));
 }
 
 #[test]
@@ -2053,6 +2053,7 @@ fn the_runner_runs_a_turn_and_neither_role_writes_or_reads_what_it_may_not() {
             "SELECT * FROM inbox".to_owned(),
             format!("INSERT INTO inbox (task_id, kind) VALUES ('{id}', 'continue')"),
             "UPDATE tasks SET session = true".to_owned(),
+            "SELECT * FROM turns".to_owned(),
         ],
     );
 }
@@ -2109,4 +2110,194 @@ fn a_park_marks_read_only_what_was_due_at_its_claim() {
         .unwrap()
         .get(0);
     assert_eq!(unread, 1, "the row not handed over stays unread");
+}
+
+/// Moves a session's last change `days` into the past, as the clock would: past the fence, which refuses any write to a
+/// final attempt.
+fn aged(pg: &Pg, attempt: &str, days: i32) {
+    let mut c = pg.sql();
+    c.batch_execute("SET session_replication_role = replica")
+        .unwrap();
+    c.execute(
+            "UPDATE attempts SET changed_at = now() - make_interval(days => $2), fence = lease_epoch WHERE id = $1",
+            &[&attempt, &days],
+        )
+        .unwrap();
+}
+
+#[test]
+fn session_metrics_count_turns_wakes_and_tokens() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    let mut reported = park(ParkReason::TurnEnd, 0);
+    reported.result.usage = Some(Usage {
+        input_tokens: 10,
+        output_tokens: 200,
+        cache_read_tokens: 3000,
+        cache_creation_tokens: 400,
+        cost_usd: Some(0.5),
+    });
+    owner.park(&a, epoch, &reported).unwrap();
+    s.send(&id, "next").unwrap();
+    // the next turn on another host
+    let mut elsewhere = claude_slot();
+    elsewhere.host = "asus-b460m".to_owned();
+    let claim = owner.claim(&elsewhere, 60).unwrap().unwrap();
+    let epoch = claim.attempt.lease_epoch;
+    owner.apply(&a, &ev(epoch, Kind::Start), None).unwrap();
+    owner
+        .park(
+            &a,
+            epoch,
+            &park(ParkReason::Preempted, claim.turn.unwrap().upto),
+        )
+        .unwrap();
+    let (_, epoch, turn) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+
+    let m = owner.metrics(None).unwrap();
+    let has = |line: &str| assert!(m.lines().any(|l| l == line), "{line}\n{m}");
+    has("exec_pool_sessions{state=\"waiting\"} 1");
+    has("exec_pool_sessions{state=\"closed\"} 0");
+    has("exec_pool_sessions_waiting{reason=\"turn_end\"} 1");
+    has("exec_pool_session_turns_total{reason=\"turn_end\"} 2");
+    has("exec_pool_session_turns_total{reason=\"preempted\"} 1");
+    has("exec_pool_session_turn_seconds_count{agent=\"claude\"} 3");
+    has("exec_pool_session_wake_seconds_count{source=\"message\"} 1");
+    has("exec_pool_session_wake_seconds_count{source=\"continue\"} 1");
+    has("exec_pool_session_wake_seconds_count{source=\"timer\"} 0");
+    has("exec_pool_session_host_changes_total 2");
+    has("exec_pool_session_turns_reported_total{agent=\"claude\"} 1");
+    has("exec_pool_session_cache_read_tokens_total{agent=\"claude\"} 3000");
+    has("exec_pool_session_cost_usd_total{agent=\"claude\"} 0.5");
+    has("exec_pool_sessions_parked_seconds_bucket{agent=\"claude\",le=\"86400\"} 1");
+    has("exec_pool_sessions_gc_eligible 0");
+    has("exec_pool_sessions_stale 0");
+    assert!(!m.contains(&id), "no id in a label");
+}
+
+/// `exec-pool sessions --gc` as the submitter: one JSON object per line.
+fn gc_cli(pg: &Pg) -> Vec<serde_json::Value> {
+    let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
+        .args(["sessions", "--gc"])
+        .env(
+            "EXEC_POOL_DB",
+            pg.conninfo()
+                .replace("user=exec_pool ", "user=exec_pool_submit "),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let lines: Vec<serde_json::Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    lines
+}
+
+#[test]
+fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, 0))
+        .unwrap();
+    // fourteen days untouched with no word on its tree: stale, kept
+    aged(&pg, &a, 15);
+    let shown = s.sessions(false).unwrap();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(
+        (
+            &shown[0]["eligible"],
+            &shown[0]["stale"],
+            &shown[0]["hosts"]
+        ),
+        (&json!(false), &json!(true), &json!(["msi-ms7758"]))
+    );
+    assert!(s.sessions(true).unwrap().is_empty());
+    let m = owner.metrics(None).unwrap();
+    assert!(m.lines().any(|l| l == "exec_pool_sessions_stale 1"));
+    assert!(m.lines().any(
+        |l| l == "exec_pool_sessions_parked_seconds_bucket{agent=\"claude\",le=\"1209600\"} 0"
+    ));
+    // its last turn's branch held its tree: eligible
+    pg.sql()
+        .execute("UPDATE turns SET handed_back = true", &[])
+        .unwrap();
+    assert_eq!(s.sessions(true).unwrap()[0]["task_id"], json!(id));
+    // a later turn that left it waiting without its own row (a settle, an older runner) is not known: kept
+    let row_epoch: i64 = pg
+        .sql()
+        .query_one("SELECT lease_epoch FROM attempts WHERE id = $1", &[&a])
+        .unwrap()
+        .get(0);
+    pg.sql()
+        .execute(
+            "UPDATE turns SET lease_epoch = lease_epoch - 1 WHERE attempt_id = $1",
+            &[&a],
+        )
+        .unwrap();
+    assert!(s.sessions(true).unwrap().is_empty());
+    assert_eq!(s.sessions(false).unwrap()[0]["stale"], json!(true));
+    pg.sql()
+        .execute(
+            "UPDATE turns SET lease_epoch = $2 WHERE attempt_id = $1",
+            &[&a, &row_epoch],
+        )
+        .unwrap();
+    assert_eq!(s.sessions(true).unwrap()[0]["task_id"], json!(id));
+    // an unread message keeps it
+    pg.sql()
+        .execute(
+            "INSERT INTO inbox (task_id, kind, body, due_at) VALUES ($1, 'timer', 'later', now() + interval '1 day')",
+            &[&id],
+        )
+        .unwrap();
+    assert!(s.sessions(true).unwrap().is_empty());
+
+    // needs_review is never eligible, however old; a final session is after 7 days
+    let mut other: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    other.idempotency_key = "cli:2".to_owned();
+    let (review, _) = s.start_session(&other).unwrap();
+    let (b, _, _) = started(&mut owner);
+    overdue(&pg, &b);
+    owner.reconcile().unwrap();
+    aged(&pg, &b, 400);
+    other.idempotency_key = "cli:3".to_owned();
+    let (gone, _) = s.start_session(&other).unwrap();
+    s.cancel(&gone).unwrap();
+    aged(&pg, &format!("{gone}.a"), 8);
+    let eligible: Vec<_> = s
+        .sessions(true)
+        .unwrap()
+        .iter()
+        .map(|v| v["task_id"].clone())
+        .collect();
+    assert_eq!(eligible, [json!(gone)]);
+    assert!(!eligible.contains(&json!(review)));
+    let m = owner.metrics(None).unwrap();
+    assert!(
+        m.lines()
+            .any(|l| l == "exec_pool_sessions{state=\"needs_review\"} 1")
+    );
+    assert!(
+        m.lines()
+            .any(|l| l == "exec_pool_session_age_seconds_count{agent=\"claude\"} 1")
+    );
+    assert!(
+        m.lines()
+            .any(|l| l == "exec_pool_session_turns_bucket{agent=\"claude\",le=\"1\"} 1")
+    );
+
+    let lines = gc_cli(&pg);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["task_id"], json!(gone));
+    assert_eq!(lines[0]["state"], "cancelled");
 }
