@@ -333,6 +333,14 @@ in
       unitPrefix = "worker";
       stateDir = "/var/lib/workers";
       guestModules = [ fleetGuest ];
+      # the LAN's resolver, sam.fleet.public's DNS entry: msi's own resolv.conf can hold only an IPv6 RA server
+      nameservers = [
+        config.sam.fleet.hosts.${
+          (lib.findFirst (
+            p: p.port == 53 && p.host != null
+          ) (throw "sam.workers: no DNS host in sam.fleet.public") config.sam.fleet.public).host
+        }.address
+      ];
       credentials = {
         # the host user's own key is also the environment's, for `git push`
         id_ed25519 = dev.paths.clientKey;
