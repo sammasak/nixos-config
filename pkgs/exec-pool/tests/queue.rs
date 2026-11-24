@@ -2051,11 +2051,11 @@ fn a_timed_out_turn_continues_and_the_third_in_a_row_waits() {
         (&json!("waiting"), &json!("turn_timeout"))
     );
     assert!(runner.claim(&claude_slot(), 60).unwrap().is_none());
-    let metrics = owner.metrics(None).unwrap();
+    let metrics = owner.metrics().unwrap();
     assert!(
         metrics
             .lines()
-            .any(|l| l == "exec_pool_waiting{reason=\"turn_timeout\"} 1"),
+            .any(|l| l == "exec_pool_waiting{host=\"msi-ms7758\",reason=\"turn_timeout\"} 1"),
         "{metrics}"
     );
     assert!(
