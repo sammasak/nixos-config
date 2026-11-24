@@ -10,7 +10,7 @@ refused. A 64 MiB day file stays under 3/4 of the unit's MemoryMax. A guest (--w
 shunt, a link on its log path is refused, bad argv exits 2; with Shunt off it still exports its Bash calls and zero sums.
 The wiring, from the probe: imported on the devTools hosts with node-exporter, enabled on lenovo and acer; on lenovo the
 unit reads the hook log read-only with --shunt on and node-exporter the dir; on acer the host says off and each guest's
-unit passes its own declared switch, on for a1 alone (its Read hook registered), off for herman; enabled off devTools, it
+unit passes its own declared switch, on for a1 alone (its Read hook registered), off for the pool slots; enabled off devTools, it
 fails evaluation.
 
 Usage: test-shunt-metrics.py [SCRIPT] (a mutated copy for a seed)."""
@@ -391,7 +391,7 @@ acer = p["acer"]
 guests = acer["guests"]
 check("--shunt off " in (acer["service"] or {}).get("ExecStart", "") and acer["failing"] == [],
       f"acer's own collector says off, and acer evaluates clean {acer['failing']}")
-check({n: (g["declared"], g["readHook"]) for n, g in guests.items()} == {"a1": (True, True), "herman": (False, False)},
+check({n: (g["declared"], g["readHook"]) for n, g in guests.items()} == {"a1": (True, True), "pool1": (False, False), "pool2": (False, False)},
       f"Shunt is declared on, and its Read hook registered, for a1 alone {guests}")
 for n, g in guests.items():
     want = f"--out /var/lib/shunt-metrics-guests/shunt-guest-{n}.prom --shunt {'on' if g['declared'] else 'off'} " \

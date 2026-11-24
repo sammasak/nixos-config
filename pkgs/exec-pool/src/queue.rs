@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::task_result::TaskResult;
 use crate::{
     Attempt, CheckpointRef, Error, Event, Kind, ParkReason, Placement, Receipt, Resolution,
-    RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, transition,
+    RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, reachable, transition,
 };
 
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
@@ -25,7 +25,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 11] = [
+const STEPS: [(i32, &str); 12] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -39,9 +39,10 @@ const STEPS: [(i32, &str); 11] = [
         10,
         include_str!("../migrations/0010_session_metrics.up.sql"),
     ),
+    (11, include_str!("../migrations/0011_claim_host.up.sql")),
     (
-        11,
-        include_str!("../migrations/0011_session_gc_handed_back.up.sql"),
+        12,
+        include_str!("../migrations/0012_session_gc_handed_back.up.sql"),
     ),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
@@ -51,7 +52,8 @@ const DOWN_QUARANTINE: &str = include_str!("../migrations/0007_quarantine.down.s
 const DOWN_SLOTS: &str = include_str!("../migrations/0008_slots.down.sql");
 const DOWN_SESSION: &str = include_str!("../migrations/0009_session.down.sql");
 const DOWN_SESSION_METRICS: &str = include_str!("../migrations/0010_session_metrics.down.sql");
-const VERSION: i32 = 11;
+const DOWN_CLAIM_HOST: &str = include_str!("../migrations/0011_claim_host.down.sql");
+const VERSION: i32 = 12;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -221,6 +223,8 @@ pub struct Turn {
     pub upto: i64,
     /// No turn of the session has started before this one: the agent's session does not exist yet.
     pub first: bool,
+    /// Where the last park left the session's tree; `None` before its first park.
+    pub checkpoint: Option<CheckpointRef>,
 }
 
 /// How a session's turn ends, for [`Store::park`].
@@ -288,6 +292,10 @@ const fn reason(kind: &Kind, to: Status) -> &'static str {
         (Kind::Resolve(_), _) => "operator",
     }
 }
+
+/// For a session task, the host its attempt last ran on (`running`), under `a` and `t`; null for a one-shot task.
+const RAN_ON: &str = "CASE WHEN t.session THEN (SELECT e.host FROM events e WHERE e.attempt_id = a.id \
+    AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1) END";
 
 /// The columns an attempt row is read with, under `a` (attempts) and `t` (tasks).
 const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a.host, a.slot, a.pins, \
@@ -608,7 +616,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -702,7 +710,8 @@ impl Store {
         })
     }
 
-    /// Leases the oldest queued attempt that fits `slot` for `lease_secs`, skipping rows another claimer holds.
+    /// Leases the oldest queued attempt that fits `slot` for `lease_secs` and whose checkpoint is [`reachable`] from its
+    /// host (a session that ran but never parked: only where it ran), skipping rows another claimer holds.
     ///
     /// # Errors
     /// What [`Slot::validate`] rejects, or what the database reports (a slot with a live lease already included).
@@ -719,24 +728,43 @@ impl Store {
                  ON CONFLICT (host, id) DO UPDATE SET agents = excluded.agents, seen_at = now()",
                 &[&slot.host, &slot.id, &agents],
             )?;
-            // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips
+            // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips; a
+            // session's checkpoint, and the host its last try ran on, as they were read
             let candidates = tx.query(
-                "SELECT a.id, t.spec FROM attempts a JOIN tasks t ON t.id = a.task_id \
-                 WHERE a.status = 'queued' ORDER BY a.changed_at, a.id",
+                &format!(
+                    "SELECT a.id, t.spec, a.checkpoint, {RAN_ON} FROM attempts a JOIN tasks t ON t.id = a.task_id \
+                     WHERE a.status = 'queued' ORDER BY a.changed_at, a.id"
+                ),
                 &[],
             )?;
             for candidate in &candidates {
                 let task: TaskSpec = serde_json::from_value(candidate.try_get(1)?)?;
-                if task.fits(slot).is_err() {
+                let raw: Option<Value> = candidate.try_get(2)?;
+                let ran_on: Option<&str> = candidate.try_get(3)?;
+                // one this runner cannot read is not its to take, and does not stop it taking another
+                let Ok(checkpoint) = raw
+                    .clone()
+                    .map(serde_json::from_value::<CheckpointRef>)
+                    .transpose()
+                else {
+                    continue;
+                };
+                // a session that ran but never parked has its tree, if any, where it ran
+                let placed = match (&checkpoint, ran_on) {
+                    (None, Some(h)) => h == slot.host,
+                    (c, _) => reachable(c.as_ref(), &slot.host, false),
+                };
+                if task.fits(slot).is_err() || !placed {
                     continue;
                 }
                 let id: &str = candidate.try_get(0)?;
                 let rows = tx.query(
                     &format!(
                         "SELECT {ATTEMPT_COLS} FROM attempts a JOIN tasks t ON t.id = a.task_id \
-                         WHERE a.id = $1 AND a.status = 'queued' FOR UPDATE OF a SKIP LOCKED"
+                         WHERE a.id = $1 AND a.status = 'queued' AND a.checkpoint IS NOT DISTINCT FROM $2 \
+                         AND {RAN_ON} IS NOT DISTINCT FROM $3 FOR UPDATE OF a SKIP LOCKED"
                     ),
-                    &[&id],
+                    &[&id, &raw, &ran_on],
                 )?;
                 let Some(row) = rows.first() else { continue };
                 let row = locked(row)?;
@@ -748,7 +776,7 @@ impl Store {
                     }),
                 };
                 let (attempt, change) = write(tx, row, &event, None, None, lease_secs)?;
-                let turn = turn(tx, &task, &attempt.id)?;
+                let turn = turn(tx, &task, &attempt.id, checkpoint)?;
                 return Ok(Some(Claim {
                     task,
                     attempt,
@@ -1279,6 +1307,7 @@ fn turn(
     tx: &mut Transaction<'_>,
     task: &TaskSpec,
     attempt: &str,
+    checkpoint: Option<CheckpointRef>,
 ) -> Result<Option<Turn>, QueueError> {
     let row = tx.query_one(
         "SELECT session, session_uuid::text, NOT EXISTS (SELECT FROM events e \
@@ -1296,6 +1325,7 @@ fn turn(
             input: task.command.argv.first().cloned().unwrap_or_default(),
             upto: 0,
             first,
+            checkpoint,
         }));
     }
     let mut input = String::new();
@@ -1321,6 +1351,7 @@ fn turn(
         input,
         upto,
         first,
+        checkpoint,
     }))
 }
 

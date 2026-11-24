@@ -72,7 +72,7 @@ in
       type = types.listOf types.str;
       default = [ ];
       example = [ "id_ed25519" ];
-      description = "Which of services.devEnvironments.credentials a slot may hold; none by default, as msi's t1.";
+      description = "Which of services.devEnvironments.credentials a slot may hold; none by default.";
     };
     agents = mkOption {
       type = types.listOf (

@@ -51,6 +51,9 @@ pub struct Session {
     pub input: String,
     /// The last inbox message the input holds, handed back with the park.
     pub upto: i64,
+    /// Where the last park left the tree; with one, the tree must exist, as the agent's session is in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<CheckpointRef>,
 }
 
 /// One guest command of a run, under its transient unit's name; `limit_secs` bounds a quick one tighter than its

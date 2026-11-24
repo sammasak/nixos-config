@@ -500,6 +500,20 @@ impl CheckpointRef {
     }
 }
 
+/// The name in [`CheckpointRef::hosts`] of the always-on store a parked tree is pushed to.
+pub const STORE: &str = "store";
+
+/// Whether a runner on `host` may claim an attempt with `checkpoint`; a host without the tree would start afresh.
+///
+/// Any host before the first park (no checkpoint, or one that names no host, as one from before sessions); after it,
+/// a host that holds the tree, or, when `store` says `host` can pull from the store, any host while the store does.
+#[must_use]
+pub fn reachable(checkpoint: Option<&CheckpointRef>, host: &str, store: bool) -> bool {
+    checkpoint.is_none_or(|c| {
+        c.hosts.is_empty() || c.hosts.iter().any(|h| h == host || (store && h == STORE))
+    })
+}
+
 impl Receipt {
     /// # Errors
     /// What [`parse_versioned`] or [`Receipt::validate`] rejects.

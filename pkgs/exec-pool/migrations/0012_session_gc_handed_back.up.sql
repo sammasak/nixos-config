@@ -21,5 +21,5 @@ CREATE OR REPLACE VIEW session_gc AS
   ) s;
 GRANT SELECT ON session_gc TO exec_pool_runner;
 
--- narrows what 0010 lists: a binary at 9 or 10 reads it as before
-INSERT INTO schema_migrations (version, floor) VALUES (11, 9);
+-- narrows what 0010 lists: a binary at 9 to 11 reads it as before
+INSERT INTO schema_migrations (version, floor) VALUES (12, 9);
