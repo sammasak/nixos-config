@@ -9,4 +9,4 @@ GRANT UPDATE (status, lease_epoch, tries, host, slot, fence, lease_deadline, che
 GRANT INSERT ON events, receipts TO exec_pool_runner;
 GRANT USAGE ON SEQUENCE events_id_seq TO exec_pool_runner;
 
-INSERT INTO schema_migrations (version) VALUES (3);
+INSERT INTO schema_migrations (version) VALUES (4);
