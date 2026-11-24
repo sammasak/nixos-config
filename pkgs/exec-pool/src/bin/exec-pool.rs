@@ -15,9 +15,10 @@ use serde_json::{Value, json};
 
 const DB: &str = "host=/run/postgresql dbname=exec_pool user=exec_pool_submit";
 const USAGE: &str = "usage: exec-pool COMMAND
-  submit --agent claude|codex|pi --repo URL --rev REV --workdir PATH --prompt TEXT [--model M] [--key K]
+  submit --agent claude|codex|pi --repo URL --rev REV --workdir PATH --prompt TEXT|--prompt-file FILE [--model M]
+        [--key K]
         prints the task id. The checkout of REV at URL is cloned into the slot and the agent runs in PATH, relative
-        to it. K is the idempotency key, by default derived from the rest: the same submission again is the same
+        to it. FILE - reads the prompt from stdin, which no shell re-splits (an ssh command line). K is the idempotency key, by default derived from the rest: the same submission again is the same
         task, so give a new --key to run it once more.
   status [ID]       the task (or attempt) ID with its events, or the number of attempts in each status
   list [--limit N]  the newest N tasks (20), newest first
@@ -108,7 +109,16 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
     args.only(
         "submit",
-        &["agent", "repo", "rev", "workdir", "prompt", "model", "key"],
+        &[
+            "agent",
+            "repo",
+            "rev",
+            "workdir",
+            "prompt",
+            "prompt-file",
+            "model",
+            "key",
+        ],
         0,
     )?;
     let agent_name = args.get("agent")?;
@@ -120,12 +130,16 @@ fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
         }
         Ok(a) => a,
     };
-    let (repo, rev, workdir, prompt) = (
-        args.get("repo")?,
-        args.get("rev")?,
-        args.get("workdir")?,
-        args.get("prompt")?,
-    );
+    let (repo, rev, workdir) = (args.get("repo")?, args.get("rev")?, args.get("workdir")?);
+    let prompt = &match (args.opt("prompt"), args.opt("prompt-file")) {
+        (Some(p), None) => p.to_owned(),
+        (None, Some(f)) => read_prompt(f)?,
+        _ => {
+            return Err(Fail::Usage(
+                "one of --prompt or --prompt-file is required".to_owned(),
+            ));
+        }
+    };
     let model = args.opt("model");
     let key = args.opt("key").map_or_else(
         || {
@@ -144,7 +158,7 @@ fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
         },
         command: Command {
             agent,
-            argv: std::iter::once(prompt)
+            argv: std::iter::once(prompt.as_str())
                 .chain(model)
                 .map(str::to_owned)
                 .collect(),
@@ -162,6 +176,15 @@ fn task_spec(args: &Args) -> Result<TaskSpec, Fail> {
         .map_err(|e| Fail::Usage(e.to_string()))?;
     exec_pool::agent::argv(&task).map_err(|e| Fail::Usage(e.to_string()))?;
     Ok(task)
+}
+
+fn read_prompt(file: &str) -> Result<String, Fail> {
+    let read = if file == "-" {
+        std::io::read_to_string(std::io::stdin())
+    } else {
+        std::fs::read_to_string(file)
+    };
+    read.map_err(|e| Fail::Usage(format!("--prompt-file {file}: {e}")))
 }
 
 fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
@@ -376,6 +399,24 @@ mod tests {
             spec(&with(&["--key", "run-2"])).unwrap().idempotency_key,
             "run-2"
         );
+    }
+
+    #[test]
+    fn the_prompt_file_is_the_prompt_flag() {
+        let file = std::env::temp_dir().join(format!("exec-pool-prompt-{}", std::process::id()));
+        std::fs::write(&file, "fix the test").unwrap();
+        let mut a: Vec<String> = BASE[..8].iter().map(|s| (*s).to_owned()).collect();
+        a.extend(["--prompt-file".to_owned(), file.display().to_string()]);
+        let got = task_spec(&Args::parse(&a).unwrap_or_else(|_| panic!("parse"))).ok();
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(got, Some(spec(&BASE).unwrap()));
+        for (a, want) in [
+            (with(&["--prompt-file", "-"]), "one of --prompt"),
+            (BASE[..8].to_vec(), "one of --prompt"),
+        ] {
+            let got = spec(&a).unwrap_err();
+            assert!(got.contains(want), "{a:?}: {got}");
+        }
     }
 
     #[test]
