@@ -22,6 +22,7 @@ use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -34,6 +35,7 @@ use exec_pool::runner::{
 };
 use exec_pool::sync::{self, Depot};
 use exec_pool::task_result::TaskResult;
+use exec_pool::turn_log::{self, LOG_BYTES};
 use exec_pool::wake::{self, Wake};
 use exec_pool::workspace::{self, HomeId, SESSION_HOME, SESSION_WORK, Sessions, Workspace, admit};
 use exec_pool::{Agent, Event, Kind, ParkReason, Receipt, STORE, SchemaVersion, Slot};
@@ -424,6 +426,26 @@ impl Runner {
         }
     }
 
+    /// Hands the queue the run's log tail in `dir` if it moved since `logged`, the tail it last took.
+    fn put_log(
+        &self,
+        store: &mut Store,
+        m: &Manifest,
+        dir: &Path,
+        logged: &mut Option<(u64, usize)>,
+    ) {
+        let Ok(Some((start, log))) = turn_log::read(dir) else {
+            return;
+        };
+        if *logged == Some((start, log.len())) {
+            return;
+        }
+        match store.put_log(&m.attempt_id, m.lease_epoch, start, &log) {
+            Ok(()) => *logged = Some((start, log.len())),
+            Err(e) => self.error("put_log", &e),
+        }
+    }
+
     fn event(
         store: &mut Store,
         attempt: &str,
@@ -532,6 +554,8 @@ impl Runner {
         let exec = Instant::now();
         // a cancel asked for while leased: the helper sees the marker before its first step
         let mut stopping = self.beat(store, manifest, None);
+        let dir = self.exec_dir.join(manifest.run_dir());
+        let mut logged = None;
         let unit = format!("exec-pool-exec@{}.service", self.slot.id);
         let started = if adopted {
             Ok(None)
@@ -551,6 +575,7 @@ impl Runner {
                     if beat.elapsed() >= HEARTBEAT {
                         beat = Instant::now();
                         stopping = self.beat(store, manifest, stopping);
+                        self.put_log(store, manifest, &dir, &mut logged);
                     }
                     thread::sleep(Duration::from_secs(1));
                 };
@@ -565,7 +590,8 @@ impl Runner {
             Err(e) => self.error("exec", &e),
         }
         let exec_ms = ms(exec);
-        let dir = self.exec_dir.join(manifest.run_dir());
+        // before the park or settle, so a reader that sees the turn end reads its whole log
+        self.put_log(store, manifest, &dir, &mut logged);
         let result = read_regular(&dir.join(RESULT))
             .map_err(|e| e.to_string())
             .and_then(|s| ExecResult::parse(&s).map_err(|e| e.to_string()))
@@ -648,6 +674,8 @@ struct Guest {
     cancel: (PathBuf, String, String),
     /// `K=V` for each step: the slot's agent route and a PATH that finds the agent.
     env: Vec<String>,
+    /// Where the agent step's streams go as well, as they come; none if the run's log could not be started.
+    log: Option<Arc<turn_log::Writer>>,
 }
 
 struct StepEnd {
@@ -678,17 +706,35 @@ impl Guest {
         }
     }
 
-    /// Copies at most [`CAPTURE_BYTES`] of `from` into `to` and drains the rest, so a chatty task cannot fill the host.
+    /// Copies at most [`CAPTURE_BYTES`] of `from` into `to` and drains the rest, so a chatty task cannot fill the host;
+    /// all of it into `log` as it comes, which keeps the tail.
     fn capture(
         from: impl io::Read + Send + 'static,
         to: &File,
+        log: Option<Arc<turn_log::Writer>>,
     ) -> io::Result<thread::JoinHandle<io::Result<()>>> {
         let mut to = to.try_clone()?;
         Ok(thread::spawn(move || {
             let mut from = from;
-            io::copy(&mut (&mut from).take(CAPTURE_BYTES), &mut to)?;
-            io::copy(&mut from, &mut io::sink())?;
-            Ok(())
+            let (mut buf, mut left) = ([0; 8192], CAPTURE_BYTES);
+            loop {
+                let n = match from.read(&mut buf) {
+                    Ok(0) => return Ok(()),
+                    Ok(n) => n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e),
+                };
+                let got = buf.get(..n).unwrap_or_default();
+                let kept = got
+                    .get(..usize::try_from(left).unwrap_or(usize::MAX).min(n))
+                    .unwrap_or_default();
+                io::Write::write_all(&mut to, kept)?;
+                left = left.saturating_sub(u64::try_from(kept.len()).unwrap_or(u64::MAX));
+                // the log is for watching: a full disk there does not fail the run
+                if let Some(log) = &log {
+                    let _ = log.write(got);
+                }
+            }
         }))
     }
 
@@ -699,8 +745,8 @@ impl Guest {
         (unit, cancellable): (&str, bool),
         argv: &[String],
         timeout: Duration,
-        out: &File,
-        err: &File,
+        (out, err): (&File, &File),
+        log: Option<&Arc<turn_log::Writer>>,
     ) -> io::Result<StepEnd> {
         let mut child: Child = Command::new("systemd-run")
             .args([
@@ -738,12 +784,12 @@ impl Guest {
             child
                 .stdout
                 .take()
-                .map(|s| Self::capture(s, out))
+                .map(|s| Self::capture(s, out, log.cloned()))
                 .transpose()?,
             child
                 .stderr
                 .take()
-                .map(|s| Self::capture(s, err))
+                .map(|s| Self::capture(s, err, log.cloned()))
                 .transpose()?,
         ];
         let t = Instant::now();
@@ -803,9 +849,15 @@ impl Guest {
             return Listed::Unknown;
         };
         let path = dir.join(name);
-        match File::create(&path)
-            .and_then(|f| self.step(("exec-pool-pushed", false), &argv, PUSHED_TIMEOUT, &f, err))
-        {
+        match File::create(&path).and_then(|f| {
+            self.step(
+                ("exec-pool-pushed", false),
+                &argv,
+                PUSHED_TIMEOUT,
+                (&f, err),
+                None,
+            )
+        }) {
             Ok(end) if end.exit_code == Some(0) => {
                 remote_head(&String::from_utf8_lossy(&read_capture(&path)), &branch)
                     .map_or(Listed::Absent, Listed::At)
@@ -842,9 +894,15 @@ impl Guest {
         };
         let path = dir.join("tree");
         let argv = tree_check(git, env, &checkout);
-        let status = match File::create(&path)
-            .and_then(|f| self.step(("exec-pool-tree", false), &argv, PUSHED_TIMEOUT, &f, err))
-        {
+        let status = match File::create(&path).and_then(|f| {
+            self.step(
+                ("exec-pool-tree", false),
+                &argv,
+                PUSHED_TIMEOUT,
+                (&f, err),
+                None,
+            )
+        }) {
             Ok(end) if end.exit_code == Some(0) => {
                 Some(String::from_utf8_lossy(&read_capture(&path)).into_owned())
             }
@@ -891,7 +949,13 @@ impl Guest {
             };
             let started = Instant::now();
             let end = self
-                .step((unit, true), &argv, limit, out, err)
+                .step(
+                    (unit, true),
+                    &argv,
+                    limit,
+                    (out, err),
+                    self.log.as_ref().filter(|_| stage == Stage::Run),
+                )
                 .map_err(|e| format!("{unit}: {e}"));
             let end = end.unwrap_or_else(|e| {
                 let _ =
@@ -956,7 +1020,7 @@ impl Guest {
         let argv = agent::transcript_probe(find, SESSION_HOME, &session.uuid);
         let limit = Duration::from_secs(QUICK_SECS);
         let end = File::create(&path)
-            .and_then(|f| self.step(("exec-pool-probe", false), &argv, limit, &f, err))
+            .and_then(|f| self.step(("exec-pool-probe", false), &argv, limit, (&f, err), None))
             .map_err(|e| format!("exec-pool-probe: {e}"))?;
         match end.exit_code {
             Some(0) => Ok(!read_capture(&path).is_empty()),
@@ -1349,6 +1413,10 @@ fn begin(slot: &str) -> Result<Begun, String> {
             manifest.drain_token(),
         ),
         env: env.iter().map(|(k, v)| format!("{k}={v}")).collect(),
+        log: turn_log::Writer::create(&dir, LOG_BYTES)
+            .inspect_err(|e| eprintln!("exec-pool-exec: turn log: {e}"))
+            .ok()
+            .map(Arc::new),
     };
     Ok(Begun {
         manifest,
