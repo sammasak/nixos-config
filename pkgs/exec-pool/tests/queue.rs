@@ -299,9 +299,11 @@ fn a_quarantined_slot_shows_in_the_metrics_until_its_runner_clears_it() {
     let pg = Pg::new();
     let mut owner = pg.migrated();
     let has = |text: &str, line: &str| text.lines().any(|l| l == line);
+    // an empty claim registers the slot's host, whose series are then present at zero
+    assert!(owner.claim(&slot("s0"), 60).unwrap().is_none());
     assert!(has(
-        &owner.metrics(None).unwrap(),
-        "exec_pool_slots{state=\"quarantined\"} 0"
+        &owner.metrics().unwrap(),
+        "exec_pool_slots{host=\"msi-ms7758\",state=\"quarantined\"} 0"
     ));
     // the remote slot's role writes it, and a second refusal only updates the reason
     let conninfo = pg
@@ -318,8 +320,8 @@ fn a_quarantined_slot_shows_in_the_metrics_until_its_runner_clears_it() {
         .quarantine(&slot("s1"), "an agent is running")
         .unwrap();
     assert!(has(
-        &owner.metrics(None).unwrap(),
-        "exec_pool_slots{state=\"quarantined\"} 2"
+        &owner.metrics().unwrap(),
+        "exec_pool_slots{host=\"msi-ms7758\",state=\"quarantined\"} 2"
     ));
     let reason: String = pg
         .sql()
@@ -334,8 +336,8 @@ fn a_quarantined_slot_shows_in_the_metrics_until_its_runner_clears_it() {
     runner.clear_quarantine(&slot("s0")).unwrap();
     runner.clear_quarantine(&slot("s0")).unwrap();
     assert!(has(
-        &owner.metrics(None).unwrap(),
-        "exec_pool_slots{state=\"quarantined\"} 1"
+        &owner.metrics().unwrap(),
+        "exec_pool_slots{host=\"msi-ms7758\",state=\"quarantined\"} 1"
     ));
 }
 
@@ -1025,7 +1027,7 @@ fn the_queue_survives_a_restart_and_says_when_the_database_is_down() {
         s.claim(&slot("s1"), 60).map(|_| ()),
         s.apply(&a, &ev(1, Kind::Start), None).map(|_| ()),
         s.reconcile().map(|_| ()),
-        s.metrics(None).map(|_| ()),
+        s.metrics().map(|_| ()),
     ] {
         assert!(
             matches!(result, Err(QueueError::Unavailable(_))),
@@ -1051,7 +1053,7 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
     let mut s = pg.migrated();
     // no traffic: every state is present at zero, unlike the unavailable rendering
     let has = |text: &str, line: &str| text.lines().any(|l| l == line);
-    let idle = s.metrics(None).unwrap();
+    let idle = s.metrics().unwrap();
     assert!(has(&idle, "exec_pool_queue_up 1"));
     let agents = ["none", "claude", "codex", "pi"];
     let states = [
@@ -1070,7 +1072,9 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
             assert!(
                 has(
                     &idle,
-                    &format!("exec_pool_attempts{{state=\"{state}\",agent=\"{agent}\"}} 0")
+                    &format!(
+                        "exec_pool_attempts{{host=\"none\",state=\"{state}\",agent=\"{agent}\"}} 0"
+                    )
                 ),
                 "{state} {agent}"
             );
@@ -1110,25 +1114,27 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
     assert!(line["durations"]["in_state_ms"].as_i64().unwrap() >= 0);
     assert!(line["durations"]["since_submit_ms"].as_i64().unwrap() >= 0);
 
-    let text = s.metrics(None).unwrap();
+    let text = s.metrics().unwrap();
     assert!(has(
         &text,
-        "exec_pool_attempts{state=\"leased\",agent=\"none\"} 1"
+        "exec_pool_attempts{host=\"msi-ms7758\",state=\"leased\",agent=\"none\"} 1"
     ));
     assert!(has(
         &text,
-        "exec_pool_attempts{state=\"queued\",agent=\"none\"} 0"
+        "exec_pool_attempts{host=\"none\",state=\"queued\",agent=\"none\"} 0"
     ));
-    assert_eq!(series(&text), states.len() * agents.len());
+    // the claiming host's series beside the hostless ones
+    assert_eq!(series(&text), 2 * states.len() * agents.len());
     assert!(has(
         &text,
-        "exec_pool_transitions_total{from=\"queued\",to=\"leased\",reason=\"lease\"} 1"
+        "exec_pool_transitions_total{host=\"msi-ms7758\",from=\"queued\",to=\"leased\",reason=\"lease\"} 1"
     ));
     assert!(has(
         &text,
-        "exec_pool_transitions_total{from=\"none\",to=\"queued\",reason=\"submit\"} 1"
+        "exec_pool_transitions_total{host=\"none\",from=\"none\",to=\"queued\",reason=\"submit\"} 1"
     ));
-    for id in ["t-1", a.as_str(), "s0", "msi-ms7758", ARGV_MARKER] {
+    // the host is a label; the slot, the task and the attempt are not
+    for id in ["t-1", a.as_str(), "\"s0\"", ARGV_MARKER] {
         assert!(!text.contains(id), "{id} in the metrics");
     }
     // the history holds ids and states, never the prompt or the workdir
@@ -1150,28 +1156,28 @@ fn state_changes_and_metrics_keep_ids_and_prompts_where_they_belong() {
 fn an_idle_queue_renders_slots_leases_and_durations_at_zero() {
     let pg = Pg::new();
     let mut s = pg.migrated();
-    let idle = s.metrics(None).unwrap();
+    assert!(
+        !s.metrics().unwrap().contains("exec_pool_slots{"),
+        "no host has claimed: nothing to split by"
+    );
+    assert!(s.claim(&slot("s0"), 60).unwrap().is_none());
+    let idle = s.metrics().unwrap();
     let has = |line: &str| idle.lines().any(|l| l == line);
-    assert!(has("exec_pool_slots{state=\"busy\"} 0"));
+    assert!(has("exec_pool_slots{host=\"msi-ms7758\",state=\"busy\"} 0"));
+    assert!(has("exec_pool_slots{host=\"msi-ms7758\",state=\"idle\"} 1"));
+    assert!(has("exec_pool_slots_declared{host=\"msi-ms7758\"} 1"));
+    assert!(has("exec_pool_queued_claimable_oldest_seconds 0"));
     for state in ["leased", "running", "checkpointing"] {
         assert!(has(&format!(
-            "exec_pool_lease_overdue{{state=\"{state}\"}} 0"
+            "exec_pool_lease_overdue{{host=\"msi-ms7758\",state=\"{state}\"}} 0"
         )));
     }
-    assert!(
-        !idle.contains("exec_pool_slots_declared"),
-        "no declared count when the caller gives none"
-    );
     for agent in ["none", "claude", "codex", "pi"] {
         for h in ["exec_pool_queue_wait_seconds", "exec_pool_run_seconds"] {
-            assert!(
-                has(&format!("{h}_count{{agent=\"{agent}\"}} 0")),
-                "{h} {agent}"
-            );
-            assert!(has(&format!(
-                "{h}_bucket{{agent=\"{agent}\",le=\"+Inf\"}} 0"
-            )));
-            assert!(has(&format!("{h}_bucket{{agent=\"{agent}\",le=\"10\"}} 0")));
+            let at = format!("host=\"msi-ms7758\",agent=\"{agent}\"");
+            assert!(has(&format!("{h}_count{{{at}}} 0")), "{h} {agent}");
+            assert!(has(&format!("{h}_bucket{{{at},le=\"+Inf\"}} 0")));
+            assert!(has(&format!("{h}_bucket{{{at},le=\"10\"}} 0")));
         }
     }
 }
@@ -1183,23 +1189,36 @@ fn a_wait_a_run_and_an_overdue_lease_show_in_the_metrics() {
     let has = |text: &str, line: &str| text.lines().any(|l| l == line);
     let a = submit(&mut s, &task("t-1", 2));
     s.claim(&slot("s0"), 60).unwrap().unwrap();
-    let text = s.metrics(Some(2)).unwrap();
-    assert!(has(&text, "exec_pool_slots{state=\"busy\"} 1"));
-    assert!(has(&text, "exec_pool_slots_declared 2"));
+    let text = s.metrics().unwrap();
+    assert!(has(
+        &text,
+        "exec_pool_slots{host=\"msi-ms7758\",state=\"busy\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_slots{host=\"msi-ms7758\",state=\"idle\"} 0"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_slots_declared{host=\"msi-ms7758\"} 1"
+    ));
     // the wait was well under ten seconds: in every bucket, and counted once
     assert!(has(
         &text,
-        "exec_pool_queue_wait_seconds_bucket{agent=\"none\",le=\"10\"} 1"
+        "exec_pool_queue_wait_seconds_bucket{host=\"msi-ms7758\",agent=\"none\",le=\"10\"} 1"
     ));
     assert!(has(
         &text,
-        "exec_pool_queue_wait_seconds_count{agent=\"none\"} 1"
+        "exec_pool_queue_wait_seconds_count{host=\"msi-ms7758\",agent=\"none\"} 1"
     ));
     assert!(has(
         &text,
-        "exec_pool_queue_wait_seconds_count{agent=\"claude\"} 0"
+        "exec_pool_queue_wait_seconds_count{host=\"msi-ms7758\",agent=\"claude\"} 0"
     ));
-    assert!(has(&text, "exec_pool_lease_overdue{state=\"leased\"} 0"));
+    assert!(has(
+        &text,
+        "exec_pool_lease_overdue{host=\"msi-ms7758\",state=\"leased\"} 0"
+    ));
     // a two-minute wait: above le=60, inside le=300
     pg.sql()
         .execute(
@@ -1207,50 +1226,59 @@ fn a_wait_a_run_and_an_overdue_lease_show_in_the_metrics() {
             &[],
         )
         .unwrap();
-    let text = s.metrics(None).unwrap();
+    let text = s.metrics().unwrap();
     for line in [
-        "exec_pool_queue_wait_seconds_bucket{agent=\"none\",le=\"60\"} 0",
-        "exec_pool_queue_wait_seconds_bucket{agent=\"none\",le=\"300\"} 1",
-        "exec_pool_queue_wait_seconds_sum{agent=\"none\"} 120",
+        "exec_pool_queue_wait_seconds_bucket{host=\"msi-ms7758\",agent=\"none\",le=\"60\"} 0",
+        "exec_pool_queue_wait_seconds_bucket{host=\"msi-ms7758\",agent=\"none\",le=\"300\"} 1",
+        "exec_pool_queue_wait_seconds_sum{host=\"msi-ms7758\",agent=\"none\"} 120",
     ] {
         assert!(has(&text, line), "{line}");
     }
     s.apply(&a, &ev(1, Kind::Start), None).unwrap();
     s.apply(&a, &ev(1, Kind::Checkpoint), None).unwrap();
-    let text = s.metrics(None).unwrap();
-    assert!(has(&text, "exec_pool_run_seconds_count{agent=\"none\"} 1"));
+    let text = s.metrics().unwrap();
     assert!(has(
         &text,
-        "exec_pool_run_seconds_bucket{agent=\"none\",le=\"10\"} 1"
+        "exec_pool_run_seconds_count{host=\"msi-ms7758\",agent=\"none\"} 1"
     ));
     assert!(has(
         &text,
-        "exec_pool_lease_overdue{state=\"checkpointing\"} 0"
+        "exec_pool_run_seconds_bucket{host=\"msi-ms7758\",agent=\"none\",le=\"10\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_lease_overdue{host=\"msi-ms7758\",state=\"checkpointing\"} 0"
     ));
 
     // a dead runner: the lease is past its deadline and nothing has reconciled it yet
     overdue(&pg, &a);
-    let text = s.metrics(None).unwrap();
+    let text = s.metrics().unwrap();
     assert!(has(
         &text,
-        "exec_pool_lease_overdue{state=\"checkpointing\"} 1"
+        "exec_pool_lease_overdue{host=\"msi-ms7758\",state=\"checkpointing\"} 1"
     ));
-    assert!(has(&text, "exec_pool_slots{state=\"busy\"} 1"));
+    assert!(has(
+        &text,
+        "exec_pool_slots{host=\"msi-ms7758\",state=\"busy\"} 1"
+    ));
 
     assert_eq!(s.reconcile().unwrap().len(), 1);
-    let text = s.metrics(None).unwrap();
+    let text = s.metrics().unwrap();
     assert!(has(
         &text,
-        "exec_pool_lease_overdue{state=\"checkpointing\"} 0"
-    ));
-    assert!(has(&text, "exec_pool_slots{state=\"busy\"} 0"));
-    assert!(has(
-        &text,
-        "exec_pool_attempts{state=\"needs_review\",agent=\"none\"} 1"
+        "exec_pool_lease_overdue{host=\"msi-ms7758\",state=\"checkpointing\"} 0"
     ));
     assert!(has(
         &text,
-        "exec_pool_transitions_total{from=\"checkpointing\",to=\"needs_review\",reason=\"lease_expired\"} 1"
+        "exec_pool_slots{host=\"msi-ms7758\",state=\"busy\"} 0"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_attempts{host=\"msi-ms7758\",state=\"needs_review\",agent=\"none\"} 1"
+    ));
+    assert!(has(
+        &text,
+        "exec_pool_transitions_total{host=\"msi-ms7758\",from=\"checkpointing\",to=\"needs_review\",reason=\"lease_expired\"} 1"
     ));
 }
 
@@ -1767,17 +1795,17 @@ fn a_message_sent_while_a_turn_runs_is_delivered_after_its_park() {
         (&shown["session"], &shown["parked"]),
         (&json!(true), &json!("turn_end"))
     );
-    let metrics = owner.metrics(None).unwrap();
+    let metrics = owner.metrics().unwrap();
     assert!(
         metrics
             .lines()
-            .any(|l| l == "exec_pool_waiting{reason=\"turn_end\"} 1"),
+            .any(|l| l == "exec_pool_waiting{host=\"msi-ms7758\",reason=\"turn_end\"} 1"),
         "{metrics}"
     );
     assert!(
         metrics
             .lines()
-            .any(|l| l == "exec_pool_waiting{reason=\"preempted\"} 0")
+            .any(|l| l == "exec_pool_waiting{host=\"msi-ms7758\",reason=\"preempted\"} 0")
     );
     assert!(
         metrics.contains("reason=\"turn_end\"} 2"),
@@ -2421,9 +2449,11 @@ fn a_timer_wakes_its_session_once_due_and_a_message_before_it_does_not_spend_it(
         (status(&pg, &a).0.as_str(), unread_timers(&pg)),
         ("waiting", 0)
     );
-    let metrics = owner.metrics(None).unwrap();
+    let metrics = owner.metrics().unwrap();
     assert!(
-        metrics.contains("exec_pool_session_wake_seconds_count{source=\"timer\"} 1"),
+        metrics.contains(
+            "exec_pool_session_wake_seconds_count{host=\"msi-ms7758\",source=\"timer\"} 1"
+        ),
         "{metrics}"
     );
 }
@@ -2513,22 +2543,28 @@ fn session_metrics_count_turns_wakes_and_tokens() {
         .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
         .unwrap();
 
-    let m = owner.metrics(None).unwrap();
+    let m = owner.metrics().unwrap();
     let has = |line: &str| assert!(m.lines().any(|l| l == line), "{line}\n{m}");
-    has("exec_pool_sessions{state=\"waiting\"} 1");
-    has("exec_pool_sessions{state=\"closed\"} 0");
-    has("exec_pool_sessions_waiting{reason=\"turn_end\"} 1");
-    has("exec_pool_session_turns_total{reason=\"turn_end\"} 2");
-    has("exec_pool_session_turns_total{reason=\"preempted\"} 1");
-    has("exec_pool_session_turn_seconds_count{agent=\"claude\"} 3");
-    has("exec_pool_session_wake_seconds_count{source=\"message\"} 1");
-    has("exec_pool_session_wake_seconds_count{source=\"continue\"} 1");
-    has("exec_pool_session_wake_seconds_count{source=\"timer\"} 0");
-    has("exec_pool_session_host_changes_total 2");
-    has("exec_pool_session_turns_reported_total{agent=\"claude\"} 1");
-    has("exec_pool_session_cache_read_tokens_total{agent=\"claude\"} 3000");
-    has("exec_pool_session_cost_usd_total{agent=\"claude\"} 0.5");
-    has("exec_pool_sessions_parked_seconds_bucket{agent=\"claude\",le=\"86400\"} 1");
+    // each turn counts on the host its lease ran on, a waiting session on the one it last ran on
+    has("exec_pool_sessions{host=\"msi-ms7758\",state=\"waiting\"} 1");
+    has("exec_pool_sessions{host=\"msi-ms7758\",state=\"closed\"} 0");
+    has("exec_pool_sessions_waiting{host=\"msi-ms7758\",reason=\"turn_end\"} 1");
+    has("exec_pool_session_turns_total{host=\"msi-ms7758\",reason=\"turn_end\"} 2");
+    has("exec_pool_session_turns_total{host=\"asus-b460m\",reason=\"preempted\"} 1");
+    has("exec_pool_session_turn_seconds_count{host=\"msi-ms7758\",agent=\"claude\"} 2");
+    has("exec_pool_session_turn_seconds_count{host=\"asus-b460m\",agent=\"claude\"} 1");
+    has("exec_pool_session_wake_seconds_count{host=\"asus-b460m\",source=\"message\"} 1");
+    has("exec_pool_session_wake_seconds_count{host=\"msi-ms7758\",source=\"continue\"} 1");
+    has("exec_pool_session_wake_seconds_count{host=\"msi-ms7758\",source=\"timer\"} 0");
+    has("exec_pool_session_host_changes_total{host=\"asus-b460m\"} 1");
+    has("exec_pool_session_host_changes_total{host=\"msi-ms7758\"} 1");
+    has("exec_pool_session_turns_reported_total{host=\"msi-ms7758\",agent=\"claude\"} 1");
+    has("exec_pool_session_cache_read_tokens_total{host=\"msi-ms7758\",agent=\"claude\"} 3000");
+    has("exec_pool_session_cost_usd_total{host=\"msi-ms7758\",agent=\"claude\"} 0.5");
+    has("exec_pool_session_cost_usd_total{host=\"asus-b460m\",agent=\"claude\"} 0");
+    has(
+        "exec_pool_sessions_parked_seconds_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"86400\"} 1",
+    );
     has("exec_pool_sessions_gc_eligible 0");
     has("exec_pool_sessions_stale 0");
     has("exec_pool_sessions_gc_kept 0");
@@ -2596,10 +2632,10 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
         (&json!(false), &json!(true), &json!(["msi-ms7758"]))
     );
     assert!(s.sessions(true).unwrap().is_empty());
-    let m = owner.metrics(None).unwrap();
+    let m = owner.metrics().unwrap();
     assert!(m.lines().any(|l| l == "exec_pool_sessions_stale 1"));
     assert!(m.lines().any(
-        |l| l == "exec_pool_sessions_parked_seconds_bucket{agent=\"claude\",le=\"1209600\"} 0"
+        |l| l == "exec_pool_sessions_parked_seconds_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"1209600\"} 0"
     ));
     // its last turn's branch held its tree: eligible
     pg.sql()
@@ -2662,13 +2698,16 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     for kept in [&review, &unpushed, &unknown, &unrun] {
         assert!(!eligible.contains(&json!(kept)));
     }
-    let m = owner.metrics(None).unwrap();
+    let m = owner.metrics().unwrap();
     // unpushed and unknown ran a turn; unrun has no tree to keep
     for want in [
         "exec_pool_sessions_gc_kept 2",
-        "exec_pool_sessions{state=\"needs_review\"} 1",
-        "exec_pool_session_age_seconds_count{agent=\"claude\"} 4",
-        "exec_pool_session_turns_bucket{agent=\"claude\",le=\"1\"} 4",
+        "exec_pool_sessions{host=\"msi-ms7758\",state=\"needs_review\"} 1",
+        // the one that never ran has no host
+        "exec_pool_session_age_seconds_count{host=\"msi-ms7758\",agent=\"claude\"} 3",
+        "exec_pool_session_age_seconds_count{host=\"none\",agent=\"claude\"} 1",
+        "exec_pool_session_turns_bucket{host=\"msi-ms7758\",agent=\"claude\",le=\"1\"} 3",
+        "exec_pool_session_turns_bucket{host=\"none\",agent=\"claude\",le=\"1\"} 1",
     ] {
         assert!(m.lines().any(|l| l == want), "{want}");
     }

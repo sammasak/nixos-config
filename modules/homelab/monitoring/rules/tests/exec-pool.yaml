@@ -73,12 +73,12 @@ tests:
         alertname: ExecPoolQueueDown
         exp_alerts: []
 
-  # a lease goes overdue at 10m and is reconciled at 40m: firing from 20m, gone after
+  # a lease on msi's slot goes overdue at 10m and is reconciled at 40m: firing from 20m, gone after; acer's never is
   - interval: 1m
     input_series:
-      - series: 'exec_pool_lease_overdue{job="node-exporter",node="acer-swift",state="running"}'
+      - series: 'exec_pool_lease_overdue{job="node-exporter",node="acer-swift",host="msi-ms7758",state="running"}'
         values: '0x10 1x30 0x20'
-      - series: 'exec_pool_lease_overdue{job="node-exporter",node="acer-swift",state="leased"}'
+      - series: 'exec_pool_lease_overdue{job="node-exporter",node="acer-swift",host="acer-swift",state="running"}'
         values: '0x60'
     alert_rule_test:
       - eval_time: 15m
@@ -87,45 +87,48 @@ tests:
       - eval_time: 21m
         alertname: ExecPoolLeaseOverdue
         exp_alerts:
-          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+          - exp_labels: {severity: warning, team: homelab, host: msi-ms7758}
             exp_annotations:
-              summary: "An execution pool task on acer-swift is stuck past its lease deadline"
-              description: "1 attempt(s) in the queue on acer-swift have been leased, running or checkpointing past their lease deadline for 10 minutes without a reconcile expiring them, so nothing runs or requeues them. Once no runner holds it, run exec-pool-queue reconcile there as the exec_pool user (runbook)."
-              query: 'exec_pool_lease_overdue{job="node-exporter",node="acer-swift"} > 0'
+              summary: "An execution pool task on msi-ms7758 is stuck past its lease deadline"
+              description: "1 attempt(s) on msi-ms7758's slots have been leased, running or checkpointing past their lease deadline for 10 minutes without a reconcile expiring them, so nothing runs or requeues them. Once no runner holds it, run exec-pool-queue reconcile on the queue's host as the exec_pool user (runbook)."
+              query: 'exec_pool_lease_overdue{job="node-exporter",host="msi-ms7758"} > 0'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolleaseoverdue"
       - eval_time: 45m
         alertname: ExecPoolLeaseOverdue
         exp_alerts: []
 
-  # one attempt needs review from 10m: quiet at 69m, firing at 71m; an idle queue never fires
+  # one attempt last run on msi needs review from 10m: quiet at 39m, firing at 41m; an idle queue never fires
   - interval: 1m
     input_series:
-      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="needs_review",agent="claude"}'
+      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",host="msi-ms7758",state="needs_review",agent="claude"}'
         values: '0x10 1x80'
-      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="needs_review",agent="none"}'
+      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",host="acer-swift",state="needs_review",agent="claude"}'
         values: '0x90'
-      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="queued",agent="claude"}'
+      - series: 'exec_pool_attempts{job="node-exporter",node="acer-swift",host="none",state="queued",agent="claude"}'
         values: '3x90'
     alert_rule_test:
-      - eval_time: 69m
+      - eval_time: 39m
         alertname: ExecPoolNeedsReview
         exp_alerts: []
-      - eval_time: 71m
+      - eval_time: 41m
         alertname: ExecPoolNeedsReview
         exp_alerts:
-          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+          - exp_labels: {severity: warning, team: homelab, host: msi-ms7758}
             exp_annotations:
-              summary: "Execution pool tasks on acer-swift wait for an operator's review"
-              description: "1 attempt(s) in the queue on acer-swift have been in needs_review for an hour: a started attempt lost its lease or settled as such, and its effects are unknown. List it with psql as the exec_pool user, check its effects, then resolve it (runbook)."
-              query: 'exec_pool_attempts{job="node-exporter",node="acer-swift",state="needs_review"} > 0'
+              summary: "Execution pool tasks last run on msi-ms7758 wait for an operator's review"
+              description: "1 attempt(s) or session(s) last run on msi-ms7758 have been in needs_review for 30 minutes: a started attempt lost its lease or settled as such, and its effects are unknown. List it with psql as the exec_pool user, check its effects, then resolve it, or send a session on (runbook)."
+              query: 'exec_pool_attempts{job="node-exporter",host="msi-ms7758",state="needs_review"} > 0'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolneedsreview"
 
-  # msi's slot is quarantined from 10m: quiet at 14m, firing at 16m, clear once its reset succeeds at 30m
+  # msi's slot is quarantined from 10m: quiet at 14m, firing at 16m with msi as its host though acer renders it, clear
+  # once its reset succeeds at 30m
   - interval: 1m
     input_series:
-      - series: 'exec_pool_slots{job="node-exporter",node="acer-swift",state="quarantined"}'
+      - series: 'exec_pool_slots{job="node-exporter",node="acer-swift",host="msi-ms7758",state="quarantined"}'
         values: '0x10 1x20 0x20'
-      - series: 'exec_pool_slots{job="node-exporter",node="acer-swift",state="busy"}'
+      - series: 'exec_pool_slots{job="node-exporter",node="acer-swift",host="acer-swift",state="quarantined"}'
+        values: '0x50'
+      - series: 'exec_pool_slots{job="node-exporter",node="acer-swift",host="acer-swift",state="busy"}'
         values: '1x50'
     alert_rule_test:
       - eval_time: 14m
@@ -134,15 +137,81 @@ tests:
       - eval_time: 16m
         alertname: ExecPoolSlotQuarantined
         exp_alerts:
-          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+          - exp_labels: {severity: warning, team: homelab, host: msi-ms7758}
             exp_annotations:
-              summary: "An execution pool slot in the queue on acer-swift is quarantined"
-              description: "1 slot(s) in the queue on acer-swift failed their reset for 5 minutes, so their runner claims nothing for them. List them with psql as the exec_pool user, clear the cause on the slot's host, then remove the runner's marker and restart it (runbook)."
-              query: 'exec_pool_slots{job="node-exporter",node="acer-swift",state="quarantined"} > 0'
+              summary: "An execution pool slot on msi-ms7758 is quarantined"
+              description: "1 slot(s) on msi-ms7758 failed their reset for 5 minutes, so their runner claims nothing for them. List them with psql as the exec_pool user on the queue's host, clear the cause on msi-ms7758, then remove the runner's marker (runbook)."
+              query: 'exec_pool_slots{job="node-exporter",host="msi-ms7758",state="quarantined"} > 0'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolslotquarantined"
       - eval_time: 35m
         alertname: ExecPoolSlotQuarantined
         exp_alerts: []
+
+  # a task claimable by an idle slot ages past 15 minutes at 16m: firing 5m later, clear once claimed at 30m
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_queued_claimable_oldest_seconds{job="node-exporter",node="acer-swift"}'
+        values: '0+60x30 0x20'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: ExecPoolQueuedWithIdleSlot
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: ExecPoolQueuedWithIdleSlot
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "An execution pool task in the queue on acer-swift waits beside an idle slot"
+              description: "The oldest queued attempt in the queue on acer-swift has waited 22m 0s while a slot that offers its agent polls idle, so its claim keeps skipping it (its capabilities, a session pinned to another host, or a claim error). Read the idle slots' runner journals and the task's spec (runbook)."
+              query: 'exec_pool_queued_claimable_oldest_seconds{job="node-exporter",node="acer-swift"} > 900'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolqueuedwithidleslot"
+      - eval_time: 35m
+        alertname: ExecPoolQueuedWithIdleSlot
+        exp_alerts: []
+
+  # one failed pull is quiet; msi's pulls fail every 10 minutes from 10m: firing once two fall in the hour
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_store_transfers_total{job="node-exporter",node="acer-swift",op="pull",result="failed"}'
+        values: '0x5 1x80'
+      - series: 'exec_pool_store_transfers_total{job="node-exporter",node="msi-ms7758",op="pull",result="failed"}'
+        values: '0x10 1x9 2x10 3x10 4x50'
+      - series: 'exec_pool_store_transfers_total{job="node-exporter",node="msi-ms7758",op="push",result="ok"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ExecPoolStoreTransferFailing
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: ExecPoolStoreTransferFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "Session tree transfers with the store fail on msi-ms7758"
+              description: "3 session tree push(es) or pull(s) between msi-ms7758 and the session store failed in the last hour. Read the exec helper's journal there for the rsync error and check the store login (runbook)."
+              query: 'increase(exec_pool_store_transfers_total{job="node-exporter",node="msi-ms7758",result="failed"}[1h])'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolstoretransferfailing"
+
+  # clones fail on acer three times between 10m and 30m: firing; two checkouts on msi never do
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_prepare_failures_total{job="node-exporter",node="acer-swift",step="exec-pool-clone"}'
+        values: '0x10 1x10 2x10 3x60'
+      - series: 'exec_pool_prepare_failures_total{job="node-exporter",node="msi-ms7758",step="exec-pool-checkout"}'
+        values: '0x10 2x80'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ExecPoolPrepareFailing
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: ExecPoolPrepareFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift, step: exec-pool-clone}
+            exp_annotations:
+              summary: "Execution pool runs on acer-swift keep failing at exec-pool-clone"
+              description: "3 run(s) on acer-swift failed at exec-pool-clone before their agent started in the last hour; each requeues its task and spends a try. exec-pool result ID shows the step and its stderr (runbook)."
+              query: 'increase(exec_pool_prepare_failures_total{job="node-exporter",node="acer-swift"}[1h])'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolpreparefailing"
 
   # session trees at 60% of the state filesystem never fire; at 75% from 10m, firing 30m later
   - interval: 1m
@@ -173,11 +242,11 @@ tests:
               query: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758"}'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionslarge"
 
-  # a session goes stale at 1h and stays: quiet for a day, firing after; one in review alone fires the same way
+  # a session goes stale at 1h and stays: quiet for a day, firing after; one in review is ExecPoolNeedsReview's
   - interval: 1m
     input_series:
-      - series: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"}'
-        values: '0x2200'
+      - series: 'exec_pool_sessions{job="node-exporter",node="acer-swift",host="msi-ms7758",state="needs_review"}'
+        values: '1x2200'
       - series: 'exec_pool_sessions_stale{job="node-exporter",node="acer-swift"}'
         values: '0x60 1x2140'
     alert_rule_test:
@@ -189,25 +258,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning, team: homelab, node: acer-swift}
             exp_annotations:
-              summary: "Execution pool sessions on acer-swift are stuck in review or stale"
-              description: "1 session(s) in the queue on acer-swift have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
-              query: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="acer-swift"} > 0'
+              summary: "Execution pool sessions in the queue on acer-swift are stale"
+              description: "1 session(s) in the queue on acer-swift have waited 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and each keeps its tree on disk. List them with exec-pool sessions, then send or cancel each (runbook)."
+              query: 'exec_pool_sessions_stale{job="node-exporter",node="acer-swift"} > 0'
               runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"
-  # one in review alone, with no stale series rendered: fires the same way, clears when it leaves review
-  - interval: 1m
-    input_series:
-      - series: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"}'
-        values: '1x1800 0x400'
-    alert_rule_test:
-      - eval_time: 26h
-        alertname: ExecPoolSessionStuck
-        exp_alerts:
-          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
-            exp_annotations:
-              summary: "Execution pool sessions on acer-swift are stuck in review or stale"
-              description: "1 session(s) in the queue on acer-swift have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
-              query: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="acer-swift"} > 0'
-              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"
-      - eval_time: 36h
-        alertname: ExecPoolSessionStuck
-        exp_alerts: []

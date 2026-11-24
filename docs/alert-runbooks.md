@@ -265,7 +265,7 @@ dropped by hand.
 
 ## ExecPoolLeaseOverdue
 
-Fires: on the pool host (acer), `exec_pool_lease_overdue` has been above zero for 10 minutes: an attempt is leased,
+Fires: for a slot host (`host`, though acer's queue renders it), `exec_pool_lease_overdue` has been above zero for 10 minutes: an attempt is leased,
 running or checkpointing past its lease deadline and no `reconcile` has expired it. Its runner died or stopped
 heartbeating, or no runner reconciles at all yet (nothing runs `reconcile` on a timer on main), so the task neither
 runs nor goes back to the queue; its slot counts as busy.
@@ -280,20 +280,21 @@ Rollback: stop the runner; the queue keeps the attempt for the reconcile.
 
 ## ExecPoolNeedsReview
 
-Fires: an attempt has been in `needs_review` for an hour on the pool host: it started and then lost its lease, or
-settled there, so whether its effects (a push, a PR, a comment) happened is unknown. Nothing resolves it automatically.
+Fires: an attempt (a session's included) last run on `host` has been in `needs_review` for 30 minutes in the pool
+host's queue: it started and then lost its lease, or settled there, so whether its effects (a push, a PR, a comment)
+happened is unknown. Nothing resolves it automatically.
 First: its id and epoch: `sudo -u exec_pool psql -h /run/postgresql exec_pool -c "SELECT id, task_id, lease_epoch,
 slot FROM attempts WHERE status = 'needs_review'"` (where a runner is deployed, its `state_change` lines in
 `journalctl -u 'exec-pool-runner*'` say how it got there). Check its effects in the task's repository, then
 `sudo -u exec_pool env EXEC_POOL_DB='host=/run/postgresql dbname=exec_pool user=exec_pool' exec-pool-queue resolve --attempt ID --epoch N --to succeeded|failed|queued` (queued only if the effects did not
-happen).
+happen). A session goes on with `exec-pool send ID --prompt TEXT` once its last turn's effects are checked.
 Do not: resolve to queued without checking the effects; a replay can push or comment twice.
 Rollback: none; the alert clears when no attempt is left in needs_review.
 
 ## ExecPoolSlotQuarantined
 
-Fires: a slot in the pool host's queue (acer's, for acer's and msi's slots) has been in `quarantined_slots` for 5
-minutes: its runner's `dev-env-reset@<slot>` refused three times (an agent running in the guest, or unpushed work
+Fires: a slot on `host` has been in the pool host's `quarantined_slots` for 5 minutes (acer's queue holds acer's and
+msi's slots; `host` is the slot's, not the scrape's `node`): its runner's `dev-env-reset@<slot>` refused three times (an agent running in the guest, or unpushed work
 outside `~/attempts`), so the runner wrote `/var/lib/exec-pool-runner/<slot>.quarantined`, cleared the reset unit's
 failed state, and keeps running without claiming for that slot. Its other slots and the queue are unaffected.
 First: which slot and why: `sudo -u exec_pool psql -h /run/postgresql exec_pool -c "SELECT host, slot, reason, since
@@ -308,6 +309,42 @@ Do not: delete the row alone while the slot exists; the runner rewrites it while
 declared (fewer slots, a renamed host) has no runner to clear it: delete its row with
 `DELETE FROM quarantined_slots WHERE host = '<host>' AND slot = '<slot>'` as `exec_pool`.
 Rollback: none; a slot that resets clears itself.
+
+## ExecPoolQueuedWithIdleSlot
+
+Fires: the oldest queued attempt whose agent an idle slot offers (`exec_pool_queued_claimable_oldest_seconds`: a slot
+that claimed in the last two minutes, holds no lease and is not quarantined) has waited over 15 minutes, for 5 minutes.
+An idle slot claims every ten seconds, so its claim keeps passing this task over: capabilities or a resource class no
+idle slot has, a session pinned to the host it last ran on (a turn that never parked), or a claim that errors.
+First: `exec-pool list` and `exec-pool status ID` for the task; on the idle slots' hosts,
+`journalctl -u 'exec-pool-runner-*' --since -30min` for claim errors; `exec_pool_slots{state="idle"}` by `host` says
+which hosts are idle. A session pinned to a sleeping or drained host waits for it by design: wake the host or cancel.
+Do not: lower the task's requirements in the database; resubmit it instead.
+Rollback: none; the alert clears once the task is claimed or cancelled.
+
+## ExecPoolStoreTransferFailing
+
+Fires: at least two session tree pushes or pulls between `node` and the session store
+(`modules/homelab/exec-pool-store.nix`) failed within an hour, for 5 minutes (`exec_pool_store_transfers_total`, each
+slot's exec helper's textfile). A failed push leaves the parked tree on this host only; a failed pull fails its turn's
+attach, so the session cannot move hosts.
+First: on `node`, `journalctl -u 'exec-pool-exec@*' --since -1h | grep -i rsync` for the error; for a remote store,
+check the sync login (its host key and rrsync) and that the store host is up and has disk.
+Do not: copy trees into the store by hand; the generation file would not match.
+Rollback: none; the counter's increase ages out of the hour once transfers succeed.
+
+## ExecPoolPrepareFailing
+
+Fires: three or more runs on `node` failed before their agent started at the same `step` within an hour, for 5
+minutes (`exec_pool_prepare_failures_total{step}`: a prepare step's unit, such as `exec-pool-clone` or
+`exec-pool-checkout`, or `admit`, `attach`, `manifest`, `turn` outside one). Each requeues its task and spends a try,
+so repeated ones end as `attempts_exhausted` with nothing run. The first failure of a step after a host boots creates
+the series, so it counts from the second.
+First: `exec-pool result ID` for one of them: its output reads `prepare failed at <step> (exit N):` and the step's
+stderr tail (git exit 128 is usually the repository URL, the credential proxy or a missing rev). On `node`,
+`journalctl -u 'exec-pool-runner-*'` has each run's `failed_step` and `stderr_tail`.
+Do not: raise the task's max attempts to get past it; the cause repeats.
+Rollback: none; the increase ages out of the hour once prepares succeed.
 
 ## ExecPoolSessionsLarge
 
@@ -327,15 +364,14 @@ Rollback: none; the alert clears when the trees fall under 70%.
 
 ## ExecPoolSessionStuck
 
-Fires: for a day, a session in the pool host's queue has been in `needs_review` (a turn lost its lease; only its
-owner's `send` or an operator's resolve moves it), or stale: waiting 14 days untouched with no unread message, and its
-last turn's branch not known to hold its tree, so `session_gc` keeps it and the tree stays on disk.
+Fires: for a day, a session in the pool host's queue has been stale: waiting 14 days untouched with no unread message,
+and its last turn's branch not known to hold its tree, so `session_gc` keeps it and the tree stays on disk. A session in
+`needs_review` is ExecPoolNeedsReview's.
 First: `exec-pool sessions` (one JSON line each: state, last change, hosts, eligible, stale) and `exec-pool status ID`
-for its events. In review: check the last turn's effects, then `exec-pool send ID --prompt TEXT` to go on, or resolve
-it as in ExecPoolNeedsReview. Stale: on each of its hosts, look at the tree for unpushed work; push it and send the
-session a message, or `exec-pool cancel ID`, which makes it eligible 7 days later.
+for its events. On each of its hosts, look at the tree for unpushed work; push it and send the session a message, or
+`exec-pool cancel ID`, which makes it eligible 7 days later.
 Do not: delete a stale session's tree by its age; it is kept because the queue cannot tell it holds nothing unpushed.
-Rollback: none; the alert clears when no session is left in review or stale.
+Rollback: none; the alert clears when no session is left stale.
 
 ## ShuntDelegationFailing
 

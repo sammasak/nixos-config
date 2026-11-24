@@ -85,11 +85,18 @@ holds ids, states and reason codes.
 
 Instrumentation (#658's first slice): every change is one JSON line on stdout, `{"msg":"state_change","change":{
 task_id, attempt, lease_epoch, host, slot, from, to, reason, durations: {in_state_ms, since_submit_ms}}}`, and
-`exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{state,agent}`,
-`exec_pool_queued_oldest_seconds`, `exec_pool_lease_overdue{state}`, `exec_pool_slots{state="busy"}`,
-`exec_pool_slots_declared` (from `EXEC_POOL_SLOTS`), the histograms `exec_pool_queue_wait_seconds{agent}` and
-`exec_pool_run_seconds{agent}` and `exec_pool_transitions_total{from,to,reason}` for a textfile collector; lease
-expiries are the transitions with `reason="lease_expired"`. Ids stay in the log line, never in a label. When the render fails for any reason it prints only `exec_pool_queue_up 0`
+`exec-pool-queue metrics` renders `exec_pool_queue_up`, `exec_pool_attempts{host,state,agent}`,
+`exec_pool_queued_oldest_seconds`, `exec_pool_queued_claimable_oldest_seconds` (the oldest queued attempt whose agent an
+idle slot offers), `exec_pool_lease_overdue{host,state}`, `exec_pool_slots{host,state}` (busy, quarantined, idle: polled
+in the last two minutes with no lease), `exec_pool_slots_declared{host}` (slots claimed for in the last week), the
+histograms `exec_pool_queue_wait_seconds{host,agent}` and `exec_pool_run_seconds{host,agent}` and
+`exec_pool_transitions_total{host,from,to,reason}` for a textfile collector; lease expiries are the transitions with
+`reason="lease_expired"`. The queue renders every host's series on acer, so `host` is the slot's host from the queue's
+rows (an attempt's or session's last lease, a turn's own lease; `none` before any), not the scrape's `node`. Ids, slots
+and prompts stay in the log line, never in a label. Each slot's exec helper counts, in its own host's textfile,
+`exec_pool_store_transfers_total{op,result}` and `exec_pool_prepare_failures_total{step}` (a run that failed before
+its agent: the step's unit, or `admit`, `attach`, `manifest`, `turn`), split by `node`; such a run's result output is
+`prepare failed at <step> (exit N):` and its stderr tail, so `exec-pool result` shows why. When the render fails for any reason it prints only `exec_pool_queue_up 0`
 and exits non-zero; the collector installs stdout whatever the exit code, so a missing source reads as absent, not as
 zero traffic or as the last good counts.
 
@@ -220,7 +227,7 @@ reached, the helper lists `pool/<task id>` and runs `git status --porcelain=v2` 
 branch's commit is HEAD and nothing is uncommitted or untracked (`runner::holds_tree`), false otherwise, a failed
 listing or status included. The textfile's `exec_pool_session*` series count sessions by state and waiting reason, turns by
 park reason, turn and wake latency, closed sessions' turns and age, parked sessions by idle age, host changes between
-turns and the reported tokens and cost; the Agent harnesses dashboard's Sessions row draws them. `session_gc` decides
+turns and the reported tokens and cost, each by host; the Agent harnesses dashboard's Sessions row draws them. `session_gc` decides
 which session trees may be removed, never a file's age: only one whose last turn is `handed_back` (its branch held the
 whole tree, migration 0012), and then final for 7 days or waiting 14 days untouched with no unread row; one waiting
 that long without that is stale and kept, a final one without it that ran a turn kept and counted

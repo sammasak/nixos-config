@@ -101,13 +101,23 @@ impl TaskResult {
                 cost_usd: c.total_cost_usd,
             })
         });
+        // a run that failed preparing printed nothing to stdout worth handing back: its step and stderr say why
+        let failed = result.and_then(|r| r.failed_step.as_deref().map(|step| (step, r)));
+        let output = match (failed, claude) {
+            (Some((step, r)), _) => end(&format!(
+                "prepare failed at {step} (exit {}):\n{}",
+                r.exit_code
+                    .map_or_else(|| "none".to_owned(), |c| c.to_string()),
+                r.stderr_tail
+            )
+            .replace('\0', "")),
+            (None, Some(c)) => start(&c.result.replace('\0', "")),
+            (None, None) => end(&stdout.replace('\0', "")),
+        };
         Self {
             outcome: ran.map(|r| agent::outcome(agent, r.exit_code, stdout)),
             exit_code,
-            output: claude.map_or_else(
-                || end(&stdout.replace('\0', "")),
-                |c| start(&c.result.replace('\0', "")),
-            ),
+            output,
             branch: result.and_then(|r| r.branch.clone()),
             usage,
             handed_back: result.and_then(|r| r.handed_back),
@@ -148,6 +158,7 @@ mod tests {
             cancelled: false,
             branch: None,
             tree_lost: None,
+            failed_step: None,
             stored: false,
             handed_back: None,
             wake: None,
@@ -214,6 +225,21 @@ mod tests {
         };
         let r = TaskResult::of(Agent::None, Some(&stopped), "out");
         assert_eq!((r.outcome, r.exit_code), (None, Some(0)));
+    }
+
+    #[test]
+    fn a_failed_prepare_hands_back_its_step_and_stderr() {
+        let failed = ExecResult {
+            failed_step: Some("exec-pool-clone".to_owned()),
+            stderr_tail: "fatal: could not read Username\n".to_owned(),
+            ..exec(Stage::Prepare, Some(128))
+        };
+        let r = TaskResult::of(Agent::Claude, Some(&failed), "");
+        assert_eq!(r.outcome, None);
+        assert_eq!(
+            r.output(),
+            "prepare failed at exec-pool-clone (exit 128):\nfatal: could not read Username\n"
+        );
     }
 
     #[test]

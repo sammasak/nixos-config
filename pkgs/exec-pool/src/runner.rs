@@ -24,6 +24,11 @@ use crate::{
 
 /// How much of each output stream the result carries; the host keeps up to [`CAPTURE_BYTES`] of it.
 pub const TAIL_BYTES: usize = 2048;
+/// The counter of runs that failed before their agent started, by step, and its help text.
+pub const PREPARE_FAILURES: (&str, &str) = (
+    "exec_pool_prepare_failures_total",
+    "Runs that failed before their agent started, by the step they failed at.",
+);
 pub const CAPTURE_BYTES: u64 = 1 << 20;
 /// The largest manifest or result read: both are a few KiB.
 const READ_LIMIT: u64 = 1 << 20;
@@ -500,6 +505,10 @@ pub struct ExecResult {
     /// this slot may not take): its session is not lost to a retry, it goes to review.
     #[serde(default)]
     pub tree_lost: Option<String>,
+    /// Where a run that never reached its agent failed: a prepare step's unit, or `admit`, `attach`, `manifest` or
+    /// `turn` outside one; `None` once its agent started, or for a run stopped by a cancel or a drain.
+    #[serde(default)]
+    pub failed_step: Option<String>,
     /// The turn's tree reached the store after its detach, at this turn's generation.
     #[serde(default)]
     pub stored: bool,
@@ -531,6 +540,7 @@ impl ExecResult {
             cancelled: false,
             branch: None,
             tree_lost: None,
+            failed_step: None,
             stored: false,
             handed_back: None,
             wake: None,
@@ -740,6 +750,7 @@ mod tests {
             cancelled: false,
             branch: None,
             tree_lost: None,
+            failed_step: None,
             stored: false,
             handed_back: None,
             wake: None,

@@ -301,29 +301,40 @@ pub fn pull(
     Ok(got)
 }
 
-/// Adds one transfer to the counter `exec_pool_store_transfers_total{op, result}` in the textfile `file`, which holds
-/// nothing else, rewritten whole.
+/// Adds one transfer to the counter `exec_pool_store_transfers_total{op, result}` in the textfile `file`.
 ///
 /// # Errors
 /// What writing it reports.
 pub fn count(file: &Path, op: &str, ok: bool) -> std::io::Result<()> {
-    const NAME: &str = "exec_pool_store_transfers_total";
-    let key = format!(
-        "{NAME}{{op=\"{op}\",result=\"{}\"}}",
-        if ok { "ok" } else { "failed" }
-    );
+    bump(
+        file,
+        (
+            "exec_pool_store_transfers_total",
+            "Session tree transfers with the store, by direction and result.",
+        ),
+        &format!(
+            "op=\"{op}\",result=\"{}\"",
+            if ok { "ok" } else { "failed" }
+        ),
+    )
+}
+
+/// Adds one to the counter `name{labels}` in the textfile `file`, which holds that counter alone, rewritten whole.
+///
+/// # Errors
+/// What writing it reports.
+pub fn bump(file: &Path, (name, help): (&str, &str), labels: &str) -> std::io::Result<()> {
+    let key = format!("{name}{{{labels}}}");
     let mut counts: std::collections::BTreeMap<String, u64> = fs::read_to_string(file)
         .unwrap_or_default()
         .lines()
         .filter_map(|l| l.rsplit_once(' '))
-        .filter(|(k, _)| k.starts_with(NAME))
+        .filter(|(k, _)| k.starts_with(name))
         .filter_map(|(k, v)| Some((k.to_owned(), v.parse().ok()?)))
         .collect();
     let n = counts.entry(key).or_default();
     *n = n.saturating_add(1);
-    let mut text = format!(
-        "# HELP {NAME} Session tree transfers with the store, by direction and result.\n# TYPE {NAME} counter\n"
-    );
+    let mut text = format!("# HELP {name} {help}\n# TYPE {name} counter\n");
     for (k, v) in &counts {
         let _ = writeln!(text, "{k} {v}");
     }
@@ -442,6 +453,22 @@ mod tests {
             text.contains("exec_pool_store_transfers_total{op=\"pull\",result=\"failed\"} 1\n")
         );
         assert!(text.contains("# TYPE exec_pool_store_transfers_total counter\n"));
+        fs::remove_dir_all(&dir)
+    }
+
+    #[test]
+    fn prepare_failures_are_counted_by_step() -> std::io::Result<()> {
+        let dir = std::env::temp_dir().join(format!("exec-pool-bump-{}", std::process::id()));
+        fs::create_dir_all(&dir)?;
+        let file = dir.join("p.prom");
+        let step = "step=\"exec-pool-clone\"";
+        bump(&file, crate::runner::PREPARE_FAILURES, step)?;
+        bump(&file, crate::runner::PREPARE_FAILURES, step)?;
+        bump(&file, crate::runner::PREPARE_FAILURES, "step=\"admit\"")?;
+        let text = fs::read_to_string(&file)?;
+        assert!(text.contains("exec_pool_prepare_failures_total{step=\"exec-pool-clone\"} 2\n"));
+        assert!(text.contains("exec_pool_prepare_failures_total{step=\"admit\"} 1\n"));
+        assert!(text.contains("# TYPE exec_pool_prepare_failures_total counter\n"));
         fs::remove_dir_all(&dir)
     }
 }

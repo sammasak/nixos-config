@@ -1248,93 +1248,92 @@ impl Store {
         })
     }
 
-    /// The queue's counters in the Prometheus text format, for a textfile collector. Labels are states, agent kinds
-    /// and reason codes only. `declared_slots` is the host's configured slot count, when the caller knows it. When it
-    /// fails for any reason, render [`METRICS_UNAVAILABLE`] instead.
+    /// The queue's counters in the Prometheus text format, for a textfile collector. Labels are hosts, states, agent
+    /// kinds and reason codes only. `host` is a slot's host from the queue's own rows (`none` for an attempt before
+    /// its first lease, or an event no host wrote), so one host renders every host's series. When it fails for any
+    /// reason, render [`METRICS_UNAVAILABLE`] instead.
     ///
     /// # Errors
     /// What the database reports.
-    pub fn metrics(&mut self, declared_slots: Option<u32>) -> Result<String, QueueError> {
+    pub fn metrics(&mut self) -> Result<String, QueueError> {
         self.tx(|tx| {
             // one snapshot, so busy slots, counts and histograms agree within a scrape
             tx.batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")?;
+            let hosts = slot_hosts(tx)?;
             let mut out = String::from(
                 concat!(
                     up_help!(),
                     "exec_pool_queue_up 1\n\
-                     # HELP exec_pool_attempts Attempts by state and agent kind (one per task).\n\
+                     # HELP exec_pool_attempts Attempts by state, agent kind and the host each holds or last ran on (one per task).\n\
                      # TYPE exec_pool_attempts gauge\n",
                 ),
             );
             let counts = tx.query(
-                "SELECT a.status, t.spec->'command'->>'agent', count(*) FROM attempts a \
-                 JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2",
+                &format!(
+                    "SELECT coalesce({LAST_HOST}, 'none'), a.status, t.spec->'command'->>'agent', count(*) \
+                     FROM attempts a JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2, 3"
+                ),
                 &[],
             )?;
-            for s in STATUSES {
-                let state = status_str(s);
-                for agent in AGENTS {
-                    let mut n = 0_i64;
-                    for r in &counts {
-                        if r.try_get::<_, &str>(0)? == state
-                            && r.try_get::<_, Option<&str>>(1)? == Some(agent)
-                        {
-                            n = r.try_get(2)?;
+            for host in with_none(&hosts) {
+                for s in STATUSES {
+                    let state = status_str(s);
+                    for agent in AGENTS {
+                        let mut n = 0_i64;
+                        for r in &counts {
+                            if r.try_get::<_, &str>(0)? == host
+                                && r.try_get::<_, &str>(1)? == state
+                                && r.try_get::<_, Option<&str>>(2)? == Some(agent)
+                            {
+                                n = r.try_get(3)?;
+                            }
                         }
+                        let _ = writeln!(
+                            out,
+                            "exec_pool_attempts{{host=\"{host}\",state=\"{state}\",agent=\"{agent}\"}} {n}"
+                        );
                     }
-                    let _ = writeln!(
-                        out,
-                        "exec_pool_attempts{{state=\"{state}\",agent=\"{agent}\"}} {n}"
-                    );
                 }
             }
-            let oldest: f64 = tx
-                .query_one(
-                    "SELECT coalesce(extract(epoch FROM now() - min(changed_at)), 0)::float8 \
-                     FROM attempts WHERE status = 'queued'",
-                    &[],
-                )?
-                .try_get(0)?;
+            let row = tx.query_one(
+                &format!(
+                    "SELECT coalesce(extract(epoch FROM now() - min(a.changed_at)), 0)::float8, \
+                     coalesce(extract(epoch FROM now() - min(a.changed_at) FILTER (WHERE EXISTS ( \
+                     SELECT FROM ({IDLE_SLOTS}) s WHERE s.agents ? (t.spec->'command'->>'agent')))), 0)::float8 \
+                     FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE a.status = 'queued'"
+                ),
+                &[],
+            )?;
+            let (oldest, claimable): (f64, f64) = (row.try_get(0)?, row.try_get(1)?);
             let _ = write!(
                 out,
                 "# HELP exec_pool_queued_oldest_seconds Age of the oldest queued attempt (0 with none).\n\
-                 # TYPE exec_pool_queued_oldest_seconds gauge\nexec_pool_queued_oldest_seconds {oldest}\n"
+                 # TYPE exec_pool_queued_oldest_seconds gauge\nexec_pool_queued_oldest_seconds {oldest}\n\
+                 # HELP exec_pool_queued_claimable_oldest_seconds Age of the oldest queued attempt whose agent an idle slot offers (0 with none).\n\
+                 # TYPE exec_pool_queued_claimable_oldest_seconds gauge\nexec_pool_queued_claimable_oldest_seconds {claimable}\n"
             );
-            waiting(tx, &mut out)?;
-            sessions(tx, &mut out)?;
-            leases(tx, &mut out, declared_slots)?;
+            waiting(tx, &mut out, &hosts)?;
+            sessions(tx, &mut out, &hosts)?;
+            leases(tx, &mut out, &hosts)?;
             histogram(
                 tx,
                 &mut out,
                 "exec_pool_queue_wait_seconds",
-                "# HELP exec_pool_queue_wait_seconds Time from queued to leased, by agent kind.\n\
+                "# HELP exec_pool_queue_wait_seconds Time from queued to leased, by host and agent kind.\n\
                  # TYPE exec_pool_queue_wait_seconds histogram\n",
                 ("queued", "leased"),
+                &hosts,
             )?;
             histogram(
                 tx,
                 &mut out,
                 "exec_pool_run_seconds",
-                "# HELP exec_pool_run_seconds Time running until a checkpoint, by agent kind; an expiry is not a run.\n\
+                "# HELP exec_pool_run_seconds Time running until a checkpoint, by host and agent kind; an expiry is not a run.\n\
                  # TYPE exec_pool_run_seconds histogram\n",
                 ("running", "checkpointing"),
+                &hosts,
             )?;
-            out.push_str(
-                "# HELP exec_pool_transitions_total State changes by from, to and reason.\n\
-                 # TYPE exec_pool_transitions_total counter\n",
-            );
-            for r in tx.query(
-                "SELECT coalesce(from_status, 'none'), to_status, reason, count(*) FROM events \
-                 GROUP BY 1, 2, 3 ORDER BY 1, 2, 3",
-                &[],
-            )? {
-                let (from, to, why, n): (&str, &str, &str, i64) =
-                    (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
-                let _ = writeln!(
-                    out,
-                    "exec_pool_transitions_total{{from=\"{from}\",to=\"{to}\",reason=\"{why}\"}} {n}"
-                );
-            }
+            transitions(tx, &mut out)?;
             Ok(out)
         })
     }
@@ -1451,93 +1450,138 @@ fn turn(
 /// Upper bounds of the duration histograms, in seconds: ten seconds to four hours.
 const BUCKETS: [u32; 8] = [10, 60, 300, 900, 1800, 3600, 7200, 14400];
 
-/// A histogram, per agent kind and every kind present at zero, of the time attempts spent in `from` before moving to `to`.
-/// `head` is its HELP and TYPE lines, literal so the dashboard check finds the name.
+/// State changes by host, from, to and reason.
+fn transitions(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), QueueError> {
+    out.push_str(
+        "# HELP exec_pool_transitions_total State changes by host, from, to and reason.\n\
+         # TYPE exec_pool_transitions_total counter\n",
+    );
+    for r in tx.query(
+        &format!(
+            "SELECT coalesce({EPOCH_HOST}, 'none'), coalesce(e.from_status, 'none'), e.to_status, e.reason, \
+             count(*) FROM events e GROUP BY 1, 2, 3, 4 ORDER BY 1, 2, 3, 4"
+        ),
+        &[],
+    )? {
+        let (host, from, to, why, n): (&str, &str, &str, &str, i64) = (
+            r.try_get(0)?,
+            r.try_get(1)?,
+            r.try_get(2)?,
+            r.try_get(3)?,
+            r.try_get(4)?,
+        );
+        let _ = writeln!(
+            out,
+            "exec_pool_transitions_total{{host=\"{host}\",from=\"{from}\",to=\"{to}\",reason=\"{why}\"}} {n}"
+        );
+    }
+    Ok(())
+}
+
+/// Every host a runner has claimed for: each per-host series is present for these at zero with nothing there.
+fn slot_hosts(tx: &mut Transaction<'_>) -> Result<Vec<String>, QueueError> {
+    tx.query("SELECT DISTINCT host FROM slots ORDER BY 1", &[])?
+        .iter()
+        .map(|r| r.try_get(0).map_err(Into::into))
+        .collect()
+}
+
+/// `hosts` and `none`, for a series whose rows may carry no host.
+fn with_none(hosts: &[String]) -> Vec<String> {
+    let mut all = hosts.to_vec();
+    all.push("none".to_owned());
+    all
+}
+
+/// The host an attempt under `a` holds, or else the one its last lease ran on: a park or a settle takes it off its slot.
+const LAST_HOST: &str = "coalesce(a.host, (SELECT h.host FROM events h WHERE h.attempt_id = a.id \
+    AND h.host IS NOT NULL ORDER BY h.id DESC LIMIT 1))";
+/// The host of an event under `e`, or else the one its lease ran on at that epoch: a park leaves the slot.
+const EPOCH_HOST: &str = "coalesce(e.host, (SELECT h.host FROM events h WHERE h.attempt_id = e.attempt_id \
+    AND h.lease_epoch = e.lease_epoch AND h.host IS NOT NULL ORDER BY h.id DESC LIMIT 1))";
+
+/// Slots whose runner claimed in the last two minutes (an idle one polls every ten seconds) and that hold no live
+/// lease and no quarantine: free for a queued attempt they offer the agent of.
+const IDLE_SLOTS: &str = "SELECT s.host, s.agents FROM slots s WHERE s.seen_at > now() - interval '2 minutes' \
+    AND NOT EXISTS (SELECT FROM attempts l WHERE l.host = s.host AND l.slot = s.id \
+    AND l.status IN ('leased', 'running', 'checkpointing')) \
+    AND NOT EXISTS (SELECT FROM quarantined_slots q WHERE q.host = s.host AND q.slot = s.id)";
+
+/// A histogram, per host and agent kind, each of `hosts` and kinds present at zero, of the time attempts spent in
+/// `from` before moving to `to`. `head` is its HELP and TYPE lines, literal so the dashboard check finds the name.
 fn histogram(
     tx: &mut Transaction<'_>,
     out: &mut String,
     name: &str,
     head: &str,
     (from, to): (&str, &str),
+    hosts: &[String],
 ) -> Result<(), QueueError> {
-    let filters: Vec<String> = BUCKETS
-        .iter()
-        .map(|b| format!("count(*) FILTER (WHERE e.in_state_ms <= {b} * 1000)"))
-        .collect();
-    let rows = tx.query(
+    distribution(
+        tx,
+        out,
+        (name, head),
+        ("agent", &AGENTS),
+        &BUCKETS.map(u64::from),
         &format!(
-            "SELECT t.spec->'command'->>'agent', count(*), \
-             (coalesce(sum(e.in_state_ms), 0) / 1000.0)::float8, ARRAY[{}] \
-             FROM events e JOIN tasks t ON t.id = e.task_id WHERE e.from_status = $1 AND e.to_status = $2 GROUP BY 1",
-            filters.join(", ")
+            "SELECT {EPOCH_HOST}, t.spec->'command'->>'agent', e.in_state_ms / 1000.0 FROM events e \
+             JOIN tasks t ON t.id = e.task_id WHERE e.from_status = '{from}' AND e.to_status = '{to}'"
         ),
-        &[&from, &to],
-    )?;
-    out.push_str(head);
-    for agent in AGENTS {
-        let row = rows
-            .iter()
-            .find(|r| r.try_get::<_, Option<&str>>(0).ok().flatten() == Some(agent));
-        let (count, sum, buckets): (i64, f64, Vec<i64>) = match row {
-            Some(r) => (r.try_get(1)?, r.try_get(2)?, r.try_get(3)?),
-            None => (0, 0.0, vec![0; BUCKETS.len()]),
-        };
-        for (b, n) in BUCKETS.iter().zip(buckets) {
-            let _ = writeln!(out, "{name}_bucket{{agent=\"{agent}\",le=\"{b}\"}} {n}");
-        }
-        let _ = write!(
+        hosts,
+    )
+}
+
+/// Waiting attempts by host and the reason they last went there: each park reason, at zero with none, and any other.
+fn waiting(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
+    out.push_str(
+        "# HELP exec_pool_waiting Waiting attempts by host and why they wait: a session's park reason, or settle.\n\
+         # TYPE exec_pool_waiting gauge\n",
+    );
+    for (host, why, n) in counted(
+        tx,
+        &format!(
+            "SELECT {LAST_HOST}, coalesce((SELECT e.reason FROM events e WHERE e.attempt_id = a.id \
+             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1), 'none'), count(*) FROM attempts a \
+             WHERE a.status = 'waiting' GROUP BY 1, 2"
+        ),
+        hosts,
+        &ParkReason::ALL.map(ParkReason::as_str),
+    )? {
+        let _ = writeln!(
             out,
-            "{name}_bucket{{agent=\"{agent}\",le=\"+Inf\"}} {count}\n\
-             {name}_sum{{agent=\"{agent}\"}} {sum}\n{name}_count{{agent=\"{agent}\"}} {count}\n"
+            "exec_pool_waiting{{host=\"{host}\",reason=\"{why}\"}} {n}"
         );
     }
     Ok(())
 }
 
-/// Waiting attempts by the reason they last went there: each park reason, at zero with none, and any other.
-fn waiting(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), QueueError> {
-    out.push_str(
-        "# HELP exec_pool_waiting Waiting attempts by why they wait: a session's park reason, or settle.\n\
-         # TYPE exec_pool_waiting gauge\n",
-    );
-    let rows = tx.query(
-        "SELECT coalesce((SELECT e.reason FROM events e WHERE e.attempt_id = a.id AND e.to_status = 'waiting' \
-         ORDER BY e.id DESC LIMIT 1), 'none'), count(*) FROM attempts a WHERE a.status = 'waiting' GROUP BY 1 ORDER BY 1",
-        &[],
-    )?;
-    let mut reasons: Vec<(&str, i64)> = ParkReason::ALL.map(|r| (r.as_str(), 0)).to_vec();
-    for r in &rows {
-        let (why, n): (&str, i64) = (r.try_get(0)?, r.try_get(1)?);
-        match reasons.iter_mut().find(|(known, _)| *known == why) {
-            Some(slot) => slot.1 = n,
-            None => reasons.push((why, n)),
-        }
-    }
-    for (why, n) in reasons {
-        let _ = writeln!(out, "exec_pool_waiting{{reason=\"{why}\"}} {n}");
-    }
-    Ok(())
-}
-
-/// Counts by a bounded code: each of `known` (at zero with none), then any other the query returns.
+/// Counts by host and a bounded code, from `sql`'s (host, code, count) rows, a null host as `none`: each of `hosts`
+/// with each of `known` (at zero with none), then any other pair the query returns.
 fn counted(
     tx: &mut Transaction<'_>,
     sql: &str,
-    known: &[&'static str],
-) -> Result<Vec<(String, i64)>, QueueError> {
-    let mut out: Vec<(String, i64)> = known.iter().map(|k| ((*k).to_owned(), 0)).collect();
+    hosts: &[String],
+    known: &[&str],
+) -> Result<Vec<(String, String, i64)>, QueueError> {
+    let mut out: Vec<(String, String, i64)> = hosts
+        .iter()
+        .flat_map(|h| known.iter().map(move |k| (h.clone(), (*k).to_owned(), 0)))
+        .collect();
     for r in tx.query(sql, &[])? {
-        let (code, n): (String, i64) = (r.try_get(0)?, r.try_get(1)?);
-        match out.iter_mut().find(|(k, _)| *k == code) {
-            Some(slot) => slot.1 = n,
-            None => out.push((code, n)),
+        let (host, code, n): (Option<String>, String, i64) =
+            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+        let host = host.unwrap_or_else(|| "none".to_owned());
+        match out.iter_mut().find(|(h, k, _)| *h == host && *k == code) {
+            Some(slot) => slot.2 = n,
+            None => out.push((host, code, n)),
         }
     }
     Ok(out)
 }
 
-/// A histogram, per value of `label` (each of `values` present at zero), of the values `sql` returns as (label text,
-/// value float8), against `buckets`. `head` is its HELP and TYPE lines, literal so the dashboard check finds the name.
+/// A histogram, per host and value of `label` (each of `hosts` with each of `values` present at zero, and any other
+/// host the rows name), of the values `sql` returns as (host text, label text, value float8), against `buckets`.
+/// `head` is its HELP and TYPE lines, literal so the dashboard check finds the name.
 fn distribution(
     tx: &mut Transaction<'_>,
     out: &mut String,
@@ -1545,6 +1589,7 @@ fn distribution(
     (label, values): (&str, &[&str]),
     buckets: &[u64],
     sql: &str,
+    hosts: &[String],
 ) -> Result<(), QueueError> {
     let filters: Vec<String> = buckets
         .iter()
@@ -1552,28 +1597,40 @@ fn distribution(
         .collect();
     let rows = tx.query(
         &format!(
-            "SELECT x.l, count(*), coalesce(sum(x.v), 0)::float8, ARRAY[{}] FROM ({sql}) x (l, v) GROUP BY 1",
+            "SELECT coalesce(x.h, 'none'), x.l, count(*), coalesce(sum(x.v), 0)::float8, ARRAY[{}] \
+             FROM ({sql}) x (h, l, v) GROUP BY 1, 2",
             filters.join(", ")
         ),
         &[],
     )?;
-    out.push_str(head);
-    for value in values {
-        let row = rows
-            .iter()
-            .find(|r| r.try_get::<_, Option<&str>>(0).ok().flatten() == Some(*value));
-        let (count, sum, counts): (i64, f64, Vec<i64>) = match row {
-            Some(r) => (r.try_get(1)?, r.try_get(2)?, r.try_get(3)?),
-            None => (0, 0.0, vec![0; buckets.len()]),
-        };
-        for (b, n) in buckets.iter().zip(counts) {
-            let _ = writeln!(out, "{name}_bucket{{{label}=\"{value}\",le=\"{b}\"}} {n}");
+    let mut all = hosts.to_vec();
+    for r in &rows {
+        let h: String = r.try_get(0)?;
+        if !all.contains(&h) {
+            all.push(h);
         }
-        let _ = write!(
-            out,
-            "{name}_bucket{{{label}=\"{value}\",le=\"+Inf\"}} {count}\n\
-             {name}_sum{{{label}=\"{value}\"}} {sum}\n{name}_count{{{label}=\"{value}\"}} {count}\n"
-        );
+    }
+    out.push_str(head);
+    for host in &all {
+        for value in values {
+            let row = rows.iter().find(|r| {
+                r.try_get::<_, &str>(0).ok() == Some(host.as_str())
+                    && r.try_get::<_, Option<&str>>(1).ok().flatten() == Some(*value)
+            });
+            let (count, sum, counts): (i64, f64, Vec<i64>) = match row {
+                Some(r) => (r.try_get(2)?, r.try_get(3)?, r.try_get(4)?),
+                None => (0, 0.0, vec![0; buckets.len()]),
+            };
+            let at = format!("host=\"{host}\",{label}=\"{value}\"");
+            for (b, n) in buckets.iter().zip(counts) {
+                let _ = writeln!(out, "{name}_bucket{{{at},le=\"{b}\"}} {n}");
+            }
+            let _ = write!(
+                out,
+                "{name}_bucket{{{at},le=\"+Inf\"}} {count}\n\
+                 {name}_sum{{{at}}} {sum}\n{name}_count{{{at}}} {count}\n"
+            );
+        }
     }
     Ok(())
 }
@@ -1592,84 +1649,110 @@ const PARKED: &str = "e.to_status = 'waiting' AND e.from_status IN ('running', '
 
 /// The sessions' series: by state, turns by park reason and their durations, wake latency by source, closed sessions'
 /// turns and age, how long parked ones sit idle, host changes between turns, the tokens and cost turns report, and
-/// what `session_gc` would remove or keeps as stale.
-fn sessions(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), QueueError> {
+/// what `session_gc` would remove or keeps as stale. A session's host is the one its attempt last ran on.
+fn sessions(
+    tx: &mut Transaction<'_>,
+    out: &mut String,
+    hosts: &[String],
+) -> Result<(), QueueError> {
     out.push_str(
-        "# HELP exec_pool_sessions Sessions by state: running is leased, running or checkpointing; closed is final.\n\
+        "# HELP exec_pool_sessions Sessions by host and state: running is leased, running or checkpointing; closed is final.\n\
          # TYPE exec_pool_sessions gauge\n",
     );
-    for (state, n) in counted(
+    for (host, state, n) in counted(
         tx,
-        "SELECT CASE WHEN a.status IN ('leased', 'running', 'checkpointing') THEN 'running' \
-         WHEN a.status IN ('succeeded', 'failed', 'cancelled') THEN 'closed' ELSE a.status END, count(*) \
-         FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE t.session GROUP BY 1",
+        &format!(
+            "SELECT {LAST_HOST}, CASE WHEN a.status IN ('leased', 'running', 'checkpointing') THEN 'running' \
+             WHEN a.status IN ('succeeded', 'failed', 'cancelled') THEN 'closed' ELSE a.status END, count(*) \
+             FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE t.session GROUP BY 1, 2"
+        ),
+        hosts,
         &["running", "queued", "waiting", "needs_review", "closed"],
     )? {
-        let _ = writeln!(out, "exec_pool_sessions{{state=\"{state}\"}} {n}");
+        let _ = writeln!(
+            out,
+            "exec_pool_sessions{{host=\"{host}\",state=\"{state}\"}} {n}"
+        );
     }
     let reasons = ParkReason::ALL.map(ParkReason::as_str);
     out.push_str(
-        "# HELP exec_pool_sessions_waiting Waiting sessions by the reason their last turn parked.\n\
+        "# HELP exec_pool_sessions_waiting Waiting sessions by host and the reason their last turn parked.\n\
          # TYPE exec_pool_sessions_waiting gauge\n",
     );
-    for (why, n) in counted(
-        tx,
-        "SELECT coalesce((SELECT e.reason FROM events e WHERE e.attempt_id = a.id AND e.to_status = 'waiting' \
-         ORDER BY e.id DESC LIMIT 1), 'none'), count(*) FROM attempts a JOIN tasks t ON t.id = a.task_id \
-         WHERE t.session AND a.status = 'waiting' GROUP BY 1",
-        &reasons,
-    )? {
-        let _ = writeln!(out, "exec_pool_sessions_waiting{{reason=\"{why}\"}} {n}");
-    }
-    out.push_str(
-        "# HELP exec_pool_session_turns_total Session turns parked, by park reason.\n\
-         # TYPE exec_pool_session_turns_total counter\n",
-    );
-    for (why, n) in counted(
+    for (host, why, n) in counted(
         tx,
         &format!(
-            "SELECT e.reason, count(*) FROM events e JOIN tasks t ON t.id = e.task_id \
-             WHERE t.session AND {PARKED} GROUP BY 1"
+            "SELECT {LAST_HOST}, coalesce((SELECT e.reason FROM events e WHERE e.attempt_id = a.id \
+             AND e.to_status = 'waiting' ORDER BY e.id DESC LIMIT 1), 'none'), count(*) FROM attempts a \
+             JOIN tasks t ON t.id = a.task_id WHERE t.session AND a.status = 'waiting' GROUP BY 1, 2"
         ),
+        hosts,
         &reasons,
     )? {
-        let _ = writeln!(out, "exec_pool_session_turns_total{{reason=\"{why}\"}} {n}");
+        let _ = writeln!(
+            out,
+            "exec_pool_sessions_waiting{{host=\"{host}\",reason=\"{why}\"}} {n}"
+        );
     }
-    session_durations(tx, out)?;
-    session_totals(tx, out)
+    out.push_str(
+        "# HELP exec_pool_session_turns_total Session turns parked, by host and park reason.\n\
+         # TYPE exec_pool_session_turns_total counter\n",
+    );
+    for (host, why, n) in counted(
+        tx,
+        &format!(
+            "SELECT {EPOCH_HOST}, e.reason, count(*) FROM events e JOIN tasks t ON t.id = e.task_id \
+             WHERE t.session AND {PARKED} GROUP BY 1, 2"
+        ),
+        hosts,
+        &reasons,
+    )? {
+        let _ = writeln!(
+            out,
+            "exec_pool_session_turns_total{{host=\"{host}\",reason=\"{why}\"}} {n}"
+        );
+    }
+    session_durations(tx, out, hosts)?;
+    session_totals(tx, out, hosts)
 }
 
 /// Turn time, wake latency, closed sessions' turns and age, and how long parked ones sit idle.
-fn session_durations(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), QueueError> {
+fn session_durations(
+    tx: &mut Transaction<'_>,
+    out: &mut String,
+    hosts: &[String],
+) -> Result<(), QueueError> {
     distribution(
         tx,
         out,
         (
             "exec_pool_session_turn_seconds",
-            "# HELP exec_pool_session_turn_seconds A session turn's time from start to park, by agent kind.\n\
+            "# HELP exec_pool_session_turn_seconds A session turn's time from start to park, by host and agent kind.\n\
              # TYPE exec_pool_session_turn_seconds histogram\n",
         ),
         ("agent", &AGENTS),
         &BUCKETS.map(u64::from),
         &format!(
-            "SELECT t.spec->'command'->>'agent', extract(epoch FROM e.at - s.at)::float8 FROM events e \
+            "SELECT s.host, t.spec->'command'->>'agent', extract(epoch FROM e.at - s.at)::float8 FROM events e \
              JOIN events s ON s.attempt_id = e.attempt_id AND s.lease_epoch = e.lease_epoch AND s.to_status = 'running' \
              JOIN tasks t ON t.id = e.task_id WHERE t.session AND {PARKED}"
         ),
+        hosts,
     )?;
     distribution(
         tx,
         out,
         (
             "exec_pool_session_wake_seconds",
-            "# HELP exec_pool_session_wake_seconds From an inbox row due (sent, or a timer's due_at) to the start of the turn it was handed to, by source.\n\
+            "# HELP exec_pool_session_wake_seconds From an inbox row due (sent, or a timer's due_at) to the start of the turn it was handed to, by host and source.\n\
              # TYPE exec_pool_session_wake_seconds histogram\n",
         ),
         ("source", &SOURCES),
         &BUCKETS.map(u64::from),
-        "SELECT i.kind, extract(epoch FROM s.at - greatest(i.created_at, coalesce(i.due_at, i.created_at)))::float8 \
+        "SELECT s.host, i.kind, extract(epoch FROM s.at - greatest(i.created_at, coalesce(i.due_at, i.created_at)))::float8 \
          FROM inbox i JOIN attempts a ON a.task_id = i.task_id JOIN events s ON s.attempt_id = a.id \
          AND s.lease_epoch = i.consumed_epoch AND s.to_status = 'running'",
+        hosts,
     )?;
     let closed = "FROM attempts a JOIN tasks t ON t.id = a.task_id \
          WHERE t.session AND a.status IN ('succeeded', 'failed', 'cancelled')";
@@ -1678,29 +1761,31 @@ fn session_durations(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), Q
         out,
         (
             "exec_pool_session_turns",
-            "# HELP exec_pool_session_turns Turns started per closed session, by agent kind.\n\
+            "# HELP exec_pool_session_turns Turns started per closed session, by host and agent kind.\n\
              # TYPE exec_pool_session_turns histogram\n",
         ),
         ("agent", &AGENTS),
         &TURN_COUNTS,
         &format!(
-            "SELECT t.spec->'command'->>'agent', (SELECT count(*) FROM events e \
+            "SELECT {LAST_HOST}, t.spec->'command'->>'agent', (SELECT count(*) FROM events e \
              WHERE e.attempt_id = a.id AND e.to_status = 'running')::float8 {closed}"
         ),
+        hosts,
     )?;
     distribution(
         tx,
         out,
         (
             "exec_pool_session_age_seconds",
-            "# HELP exec_pool_session_age_seconds A closed session's time from start to its final state, by agent kind.\n\
+            "# HELP exec_pool_session_age_seconds A closed session's time from start to its final state, by host and agent kind.\n\
              # TYPE exec_pool_session_age_seconds histogram\n",
         ),
         ("agent", &AGENTS),
         &AGES,
         &format!(
-            "SELECT t.spec->'command'->>'agent', extract(epoch FROM a.changed_at - t.submitted_at)::float8 {closed}"
+            "SELECT {LAST_HOST}, t.spec->'command'->>'agent', extract(epoch FROM a.changed_at - t.submitted_at)::float8 {closed}"
         ),
+        hosts,
     )?;
     let waiting =
         "FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE t.session AND a.status = 'waiting'";
@@ -1709,153 +1794,193 @@ fn session_durations(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), Q
         out,
         (
             "exec_pool_sessions_parked_seconds",
-            "# HELP exec_pool_sessions_parked_seconds Waiting sessions by how long they have sat unchanged, by agent kind.\n\
+            "# HELP exec_pool_sessions_parked_seconds Waiting sessions by how long they have sat unchanged, by host and agent kind.\n\
              # TYPE exec_pool_sessions_parked_seconds histogram\n",
         ),
         ("agent", &AGENTS),
         &IDLE,
         &format!(
-            "SELECT t.spec->'command'->>'agent', extract(epoch FROM now() - a.changed_at)::float8 {waiting}"
+            "SELECT {LAST_HOST}, t.spec->'command'->>'agent', extract(epoch FROM now() - a.changed_at)::float8 {waiting}"
         ),
+        hosts,
     )?;
     Ok(())
 }
 
-/// The oldest parked session, host changes, what `session_gc` would remove or keeps, and the usage turns reported.
-fn session_totals(tx: &mut Transaction<'_>, out: &mut String) -> Result<(), QueueError> {
+/// The oldest parked session, host changes, what `session_gc` would remove or keeps, and the usage turns reported, by
+/// the host the turn ran on.
+fn session_totals(
+    tx: &mut Transaction<'_>,
+    out: &mut String,
+    hosts: &[String],
+) -> Result<(), QueueError> {
     let waiting =
         "FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE t.session AND a.status = 'waiting'";
     let row = tx.query_one(
         &format!(
             "SELECT coalesce(max(extract(epoch FROM now() - a.changed_at)), 0)::float8, \
-             (SELECT count(*) FROM (SELECT e.host, lag(e.host) OVER (PARTITION BY e.attempt_id ORDER BY e.id) \
-             FROM events e JOIN tasks t ON t.id = e.task_id WHERE t.session AND e.to_status = 'running') l (host, prev) \
-             WHERE l.prev IS NOT NULL AND l.host IS DISTINCT FROM l.prev), \
              (SELECT count(*) FILTER (WHERE eligible) FROM session_gc), \
              (SELECT count(*) FILTER (WHERE stale) FROM session_gc), \
              (SELECT count(*) FILTER (WHERE kept) FROM session_gc) {waiting}"
         ),
         &[],
     )?;
-    let (oldest, moved, eligible, stale, kept): (f64, i64, i64, i64, i64) = (
+    let (oldest, eligible, stale, kept): (f64, i64, i64, i64) = (
         row.try_get(0)?,
         row.try_get(1)?,
         row.try_get(2)?,
         row.try_get(3)?,
-        row.try_get(4)?,
     );
     let _ = write!(
         out,
         "# HELP exec_pool_sessions_parked_oldest_seconds How long the longest-unchanged waiting session has sat (0 with none).\n\
          # TYPE exec_pool_sessions_parked_oldest_seconds gauge\nexec_pool_sessions_parked_oldest_seconds {oldest}\n\
-         # HELP exec_pool_session_host_changes_total Session turns started on another host than the turn before.\n\
-         # TYPE exec_pool_session_host_changes_total counter\nexec_pool_session_host_changes_total {moved}\n\
          # HELP exec_pool_sessions_gc_eligible Sessions session_gc lets the remover delete.\n\
          # TYPE exec_pool_sessions_gc_eligible gauge\nexec_pool_sessions_gc_eligible {eligible}\n\
          # HELP exec_pool_sessions_stale Sessions waiting unchanged for 14 days that session_gc keeps: their tree may hold unpushed work.\n\
          # TYPE exec_pool_sessions_stale gauge\nexec_pool_sessions_stale {stale}\n\
          # HELP exec_pool_sessions_gc_kept Sessions final for 7 days that ran a turn and session_gc keeps: their tree was not handed back whole.\n\
-         # TYPE exec_pool_sessions_gc_kept gauge\nexec_pool_sessions_gc_kept {kept}\n"
+         # TYPE exec_pool_sessions_gc_kept gauge\nexec_pool_sessions_gc_kept {kept}\n\
+         # HELP exec_pool_session_host_changes_total Session turns started on another host than the turn before, by the host it started on.\n\
+         # TYPE exec_pool_session_host_changes_total counter\n"
     );
+    for (host, _, n) in counted(
+        tx,
+        "SELECT l.host, '', count(*) FROM (SELECT e.host, lag(e.host) OVER (PARTITION BY e.attempt_id ORDER BY e.id) \
+         FROM events e JOIN tasks t ON t.id = e.task_id WHERE t.session AND e.to_status = 'running') l (host, prev) \
+         WHERE l.prev IS NOT NULL AND l.host IS DISTINCT FROM l.prev GROUP BY 1",
+        hosts,
+        &[""],
+    )? {
+        let _ = writeln!(
+            out,
+            "exec_pool_session_host_changes_total{{host=\"{host}\"}} {n}"
+        );
+    }
+    usage(tx, out, hosts)
+}
+
+/// The tokens and cost session turns reported, by the host each turn ran on and agent kind.
+fn usage(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
+    // a turn's host is where its lease ran: the running event at the turn's epoch
     let rows = tx.query(
-        "SELECT t.spec->'command'->>'agent', count(u.input_tokens), coalesce(sum(u.input_tokens), 0)::bigint, \
+        "SELECT coalesce((SELECT e.host FROM events e WHERE e.attempt_id = u.attempt_id \
+         AND e.lease_epoch = u.lease_epoch AND e.to_status = 'running' ORDER BY e.id DESC LIMIT 1), 'none'), \
+         t.spec->'command'->>'agent', count(u.input_tokens), coalesce(sum(u.input_tokens), 0)::bigint, \
          coalesce(sum(u.output_tokens), 0)::bigint, coalesce(sum(u.cache_read_tokens), 0)::bigint, \
          coalesce(sum(u.cache_creation_tokens), 0)::bigint, coalesce(sum(u.cost_usd), 0)::float8 \
-         FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1",
+         FROM turns u JOIN attempts a ON a.id = u.attempt_id JOIN tasks t ON t.id = a.task_id GROUP BY 1, 2",
         &[],
     )?;
+    let mut all = hosts.to_vec();
+    for r in &rows {
+        let h: String = r.try_get(0)?;
+        if !all.contains(&h) {
+            all.push(h);
+        }
+    }
     let heads = [
-        "# HELP exec_pool_session_turns_reported_total Session turns that reported their usage, by agent kind.\n\
+        "# HELP exec_pool_session_turns_reported_total Session turns that reported their usage, by host and agent kind.\n\
          # TYPE exec_pool_session_turns_reported_total counter\n",
-        "# HELP exec_pool_session_input_tokens_total Uncached input tokens session turns reported, by agent kind.\n\
+        "# HELP exec_pool_session_input_tokens_total Uncached input tokens session turns reported, by host and agent kind.\n\
          # TYPE exec_pool_session_input_tokens_total counter\n",
-        "# HELP exec_pool_session_output_tokens_total Output tokens session turns reported, by agent kind.\n\
+        "# HELP exec_pool_session_output_tokens_total Output tokens session turns reported, by host and agent kind.\n\
          # TYPE exec_pool_session_output_tokens_total counter\n",
-        "# HELP exec_pool_session_cache_read_tokens_total Input tokens read from the prompt cache, by agent kind.\n\
+        "# HELP exec_pool_session_cache_read_tokens_total Input tokens read from the prompt cache, by host and agent kind.\n\
          # TYPE exec_pool_session_cache_read_tokens_total counter\n",
-        "# HELP exec_pool_session_cache_creation_tokens_total Input tokens written to the prompt cache, by agent kind.\n\
+        "# HELP exec_pool_session_cache_creation_tokens_total Input tokens written to the prompt cache, by host and agent kind.\n\
          # TYPE exec_pool_session_cache_creation_tokens_total counter\n",
     ];
+    let row_of = |host: &str, agent: &str| {
+        rows.iter().find(|r| {
+            r.try_get::<_, &str>(0).ok() == Some(host)
+                && r.try_get::<_, Option<&str>>(1).ok().flatten() == Some(agent)
+        })
+    };
     for (i, head) in heads.iter().enumerate() {
         out.push_str(head);
         let name = head.split_whitespace().nth(2).unwrap_or_default();
-        for agent in AGENTS {
-            let mut n = 0_i64;
-            for r in &rows {
-                if r.try_get::<_, Option<&str>>(0)? == Some(agent) {
-                    n = r.try_get(i.saturating_add(1))?;
-                }
+        for host in &all {
+            for agent in AGENTS {
+                let n: i64 = row_of(host, agent)
+                    .map(|r| r.try_get(i.saturating_add(2)))
+                    .transpose()?
+                    .unwrap_or(0);
+                let _ = writeln!(out, "{name}{{host=\"{host}\",agent=\"{agent}\"}} {n}");
             }
-            let _ = writeln!(out, "{name}{{agent=\"{agent}\"}} {n}");
         }
     }
     out.push_str(
-        "# HELP exec_pool_session_cost_usd_total The cost session turns reported, in US dollars, by agent kind.\n\
+        "# HELP exec_pool_session_cost_usd_total The cost session turns reported, in US dollars, by host and agent kind.\n\
          # TYPE exec_pool_session_cost_usd_total counter\n",
     );
-    for agent in AGENTS {
-        let mut cost = 0.0_f64;
-        for r in &rows {
-            if r.try_get::<_, Option<&str>>(0)? == Some(agent) {
-                cost = r.try_get(6)?;
-            }
+    for host in &all {
+        for agent in AGENTS {
+            let cost: f64 = row_of(host, agent)
+                .map(|r| r.try_get(7))
+                .transpose()?
+                .unwrap_or(0.0);
+            let _ = writeln!(
+                out,
+                "exec_pool_session_cost_usd_total{{host=\"{host}\",agent=\"{agent}\"}} {cost}"
+            );
         }
-        let _ = writeln!(
-            out,
-            "exec_pool_session_cost_usd_total{{agent=\"{agent}\"}} {cost}"
-        );
     }
     Ok(())
 }
 
-/// Live leases past their deadline by state, and the slots they hold.
-fn leases(
-    tx: &mut Transaction<'_>,
-    out: &mut String,
-    declared_slots: Option<u32>,
-) -> Result<(), QueueError> {
+/// Live leases past their deadline by host and state, and each host's slots: those its runners claimed for in the
+/// last week, and by state.
+fn leases(tx: &mut Transaction<'_>, out: &mut String, hosts: &[String]) -> Result<(), QueueError> {
     out.push_str(
-        "# HELP exec_pool_lease_overdue Live attempts past their lease deadline that no reconcile has expired.\n\
+        "# HELP exec_pool_lease_overdue Live attempts past their lease deadline that no reconcile has expired, by host and state.\n\
          # TYPE exec_pool_lease_overdue gauge\n",
     );
-    let overdue = tx.query(
+    for (host, state, n) in counted(
+        tx,
         &format!(
-            "SELECT status, count(*) FROM attempts \
-             WHERE status IN {LIVE} AND lease_deadline <= now() GROUP BY status"
+            "SELECT host, status, count(*) FROM attempts \
+             WHERE status IN {LIVE} AND lease_deadline <= now() GROUP BY 1, 2"
         ),
-        &[],
-    )?;
-    for state in ["leased", "running", "checkpointing"] {
-        let mut n = 0_i64;
-        for r in &overdue {
-            if r.try_get::<_, &str>(0)? == state {
-                n = r.try_get(1)?;
-            }
-        }
-        let _ = writeln!(out, "exec_pool_lease_overdue{{state=\"{state}\"}} {n}");
+        hosts,
+        &["leased", "running", "checkpointing"],
+    )? {
+        let _ = writeln!(
+            out,
+            "exec_pool_lease_overdue{{host=\"{host}\",state=\"{state}\"}} {n}"
+        );
     }
     // one live attempt per slot (attempts_slot_live), so live attempts are busy slots
-    let busy: i64 = tx
-        .query_one(
-            &format!("SELECT count(*) FROM attempts WHERE status IN {LIVE}"),
-            &[],
-        )?
-        .try_get(0)?;
-    let quarantined: i64 = tx
-        .query_one("SELECT count(*) FROM quarantined_slots", &[])?
-        .try_get(0)?;
-    let _ = write!(
-        out,
-        "# HELP exec_pool_slots Slots by state: busy holds a live lease, quarantined failed its reset.\n\
-         # TYPE exec_pool_slots gauge\nexec_pool_slots{{state=\"busy\"}} {busy}\n\
-         exec_pool_slots{{state=\"quarantined\"}} {quarantined}\n"
+    out.push_str(
+        "# HELP exec_pool_slots Slots by host and state: busy holds a live lease, quarantined failed its reset, idle polls for work.\n\
+         # TYPE exec_pool_slots gauge\n",
     );
-    if let Some(n) = declared_slots {
-        let _ = write!(
+    for (host, state, n) in counted(
+        tx,
+        &format!(
+            "SELECT host, 'busy', count(*) FROM attempts WHERE status IN {LIVE} GROUP BY 1 \
+             UNION ALL SELECT host, 'quarantined', count(*) FROM quarantined_slots GROUP BY 1 \
+             UNION ALL SELECT host, 'idle', count(*) FROM ({IDLE_SLOTS}) s GROUP BY 1"
+        ),
+        hosts,
+        &["busy", "quarantined", "idle"],
+    )? {
+        let _ = writeln!(
             out,
-            "# HELP exec_pool_slots_declared Slots this host's configuration declares.\n\
-             # TYPE exec_pool_slots_declared gauge\nexec_pool_slots_declared {n}\n"
+            "exec_pool_slots{{host=\"{host}\",state=\"{state}\"}} {n}"
         );
+    }
+    out.push_str(
+        "# HELP exec_pool_slots_declared Slots each host's runners claimed for in the last week.\n\
+         # TYPE exec_pool_slots_declared gauge\n",
+    );
+    for (host, _, n) in counted(
+        tx,
+        "SELECT host, '', count(*) FROM slots WHERE seen_at > now() - interval '7 days' GROUP BY 1",
+        hosts,
+        &[""],
+    )? {
+        let _ = writeln!(out, "exec_pool_slots_declared{{host=\"{host}\"}} {n}");
     }
     Ok(())
 }
