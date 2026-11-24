@@ -258,14 +258,12 @@ pub fn claim_fits(now: u64, hold_secs: u32, show: &str) -> Result<bool, String> 
     if field("LoadState") != Some("loaded") {
         return Err(format!("off timer not loaded: {show:?}"));
     }
-    match field("NextElapseUSecRealtime") {
-        Some(next) => next
-            .strip_prefix('@')
-            .and_then(|n| n.parse::<u64>().ok())
-            .map(|off| now.saturating_add(u64::from(hold_secs)) <= off)
-            .ok_or_else(|| format!("off timer's next elapse unread: {next:?}")),
-        None => Err(format!("off timer's next elapse missing: {show:?}")),
-    }
+    let next = field("NextElapseUSecRealtime")
+        .ok_or_else(|| format!("off timer's next elapse missing: {show:?}"))?;
+    next.strip_prefix('@')
+        .and_then(|n| n.parse::<u64>().ok())
+        .map(|off| now.saturating_add(u64::from(hold_secs)) <= off)
+        .ok_or_else(|| format!("off timer's next elapse unread: {next:?}"))
 }
 
 /// The last [`TAIL_BYTES`] of `bytes`, lossy UTF-8.
