@@ -1,6 +1,7 @@
--- floor: the oldest binary (its migration VERSION) that may serve a database with this migration applied. A binary
--- older than the schema serves it while every applied migration's floor is at most its own version, so a rollback
--- across an additive migration keeps the queue up. NULL, as before this, is the migration's own version: refused.
+-- floor: the oldest binary (its migration VERSION) whose reads and writes stay correct on a database with this
+-- migration applied, for itself and for the newer binaries that come back after it. A binary older than the schema
+-- serves it while every applied migration's floor is at most its own version, so a rollback across an additive
+-- migration keeps the queue up. NULL, as before this, is the migration's own version: refused.
 ALTER TABLE schema_migrations ADD COLUMN floor integer;
 
 -- A slot its runner could not reset (dev-env-reset@ refused: an agent running, or unpushed work): the runner claims
@@ -15,4 +16,5 @@ CREATE TABLE quarantined_slots (
 );
 GRANT SELECT, INSERT, UPDATE, DELETE ON quarantined_slots TO exec_pool_runner;
 
-INSERT INTO schema_migrations (version, floor) VALUES (6, 6);
+-- additive: the previous binary neither reads the floor nor touches the table
+INSERT INTO schema_migrations (version, floor) VALUES (6, 5);

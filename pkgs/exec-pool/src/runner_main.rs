@@ -166,28 +166,32 @@ impl Runner {
         let t = Instant::now();
         let unit = format!("dev-env-reset@{}.service", self.slot.id);
         let mut last = String::new();
-        for _ in 0..RESET_TRIES {
+        for try_ in 1..=RESET_TRIES {
             match systemctl("start", &unit) {
                 Ok(()) => {
                     line(
                         &json!({ "msg": "slot_reset", "slot": self.slot.id, "sanitize_ms": ms(t) }),
                     );
-                    if let Err(e) = store.clear_quarantine(&self.slot) {
-                        self.error("clear_quarantine", &e);
-                    }
                     return true;
                 }
                 Err(e) => last = e,
             }
-            thread::sleep(BACKOFF);
+            if try_ < RESET_TRIES {
+                thread::sleep(BACKOFF);
+            }
         }
         if let Err(e) = systemctl("reset-failed", &unit) {
             self.error("reset_failed", &e);
         }
-        let _ = fs::write(&self.quarantine, format!("{last}\n"));
+        if let Err(e) = fs::write(&self.quarantine, format!("{last}\n")) {
+            self.error("quarantine_marker", &e);
+        }
+        if let Err(e) = store.quarantine(&self.slot, &last) {
+            self.error("quarantine", &e);
+        }
         line(
             &json!({ "msg": "slot_quarantined", "slot": self.slot.id, "reason": last,
-                      "release": format!("rm {} and restart the runner", self.quarantine.display()) }),
+                      "release": format!("rm {}", self.quarantine.display()) }),
         );
         false
     }
@@ -230,6 +234,8 @@ impl Runner {
         // the slot's state at startup is unknown: a runner that died mid-run left it as it was
         let mut dirty = true;
         let mut paused = false;
+        // whether the queue may still hold a quarantine row for the slot: unknown at startup, so cleared once
+        let mut listed = true;
         loop {
             // a guest down or restarting (a switch restarts it) is waited for, not a reset that fails
             // a helper a dead runner started runs on with no one renewing its lease: expire it, reset nothing under it
@@ -242,6 +248,7 @@ impl Runner {
             }
             // the queue's row is rewritten while the marker stands: a write the database missed is not lost
             if let Ok(reason) = fs::read_to_string(&self.quarantine) {
+                listed = true;
                 if let Err(e) = store.quarantine(&self.slot, reason.trim_end()) {
                     self.error("quarantine", &e);
                 }
@@ -249,8 +256,16 @@ impl Runner {
                 continue;
             }
             if dirty && (!self.guest_up() || !self.release(store)) {
+                listed = true;
                 thread::sleep(BACKOFF);
                 continue;
+            }
+            // a clear the database missed is retried each pass until it lands
+            if listed {
+                match store.clear_quarantine(&self.slot) {
+                    Ok(()) => listed = false,
+                    Err(e) => self.error("clear_quarantine", &e),
+                }
             }
             dirty = false;
             match store.reconcile() {

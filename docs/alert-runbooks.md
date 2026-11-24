@@ -299,9 +299,11 @@ failed state, and keeps running without claiming for that slot. Its other slots 
 First: which slot and why: `sudo -u exec_pool psql -h /run/postgresql exec_pool -c "SELECT host, slot, reason, since
 FROM quarantined_slots"`; on that host, `journalctl -u exec-pool-runner-<slot> -u dev-env-reset@<slot>` has the
 refusal. Stop the agent or push (or deliberately discard) the work in the guest, then on that host
-`sudo rm /var/lib/exec-pool-runner/<slot>.quarantined && sudo systemctl restart exec-pool-runner-<slot>`: its reset at
-start then deletes the row and the alert clears.
-Do not: delete the row alone; the runner rewrites it while its marker stands.
+`sudo rm /var/lib/exec-pool-runner/<slot>.quarantined`: the runner's next pass resets the slot and deletes the row, and
+the alert clears.
+Do not: delete the row alone while the slot exists; the runner rewrites it while its marker stands. A slot no longer
+declared (fewer slots, a renamed host) has no runner to clear it: delete its row with
+`DELETE FROM quarantined_slots WHERE host = '<host>' AND slot = '<slot>'` as `exec_pool`.
 Rollback: none; a slot that resets clears itself.
 
 ## ShuntDelegationFailing

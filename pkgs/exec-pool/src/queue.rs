@@ -22,8 +22,9 @@ use crate::{
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// Each migration, ascending, by the version it records; `migrate` applies every one the database has not recorded.
-/// From 6 each records its floor, the oldest VERSION that may serve it: an additive one keeps the previous floor, so a
-/// binary rolled back across it still serves; one an older binary would misread records its own version.
+/// From 6 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
+/// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
+/// its writes records its own version.
 const STEPS: [(i32, &str); 6] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
