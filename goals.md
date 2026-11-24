@@ -51,7 +51,6 @@ proxy (#764), a timed-out turn continues up to three times (#765, merged, not de
 Live proofs: a timer woke a parked session at 17:59:02; a session ran turn 1 on acer and turn 2 on msi with its
 state, and pushed from msi through acer's sidecar to the private skills repo; state is pushed to the acer store at
 every park.
-Live: acer and msi at #764; lenovo, asus and black-pi behind.
 
 Live findings, 19:00: acer `pool1` sat quarantined 15:11 to 17:27 with no alert (only `ExecPoolQueueDown` is loaded
 in Prometheus); a failed prepare leaves an empty result; slot metrics exist for acer only; the first msi deploy at
@@ -65,24 +64,56 @@ dir, is docked into a slot at `/session` for one turn, and is pushed to acer at 
 it. The named workers are pool slots now: herman and t1 retired for pool2 by #748; a1, m1 and m2 retired for acer's
 pool3 and msi's pool3 and pool4 by #759. Brief 656 (explicit pause and resume) is replaced by 1c.
 
-Current batch, 19:00: pool metrics and alerts (in flight), the skills pin to 811b2d6 and #765, then one deploy of acer
-and msi plus lenovo for the pin; asus and black-pi follow.
+Current batch, 20:32: pool metrics and alerts (#768), turn timeout (#765, #770), Shunt alerts (#771), priority and
+logs (#772) and deploy drain (#773) are merged and deployed; lenovo deployed #774 at 20:32. Only asus is behind.
 
-Waiting, in pick-up order:
+### Pool platform: how we iterate
+
+Owner, 24 Nov 20:40: "ensure that we iterate on this platform so that we can improve this". The list lives on
+[#646](https://github.com/sammasak/nixos-config/issues/646) and here.
+
+How we iterate: every coordinator check-in reads the live signals below, adds what it finds to this list, and starts a
+pool session for the top open finding. A finding is closed by a merged PR that is deployed and seen in the signal, not
+by a test.
+
+**Signals (Prometheus, all by `host`)**: `exec_pool_slots{state}` (busy, idle, quarantined),
+`exec_pool_transitions_total{reason}` (turn_timeout, turn_error, host_draining, needs_review), queue wait and wake
+latency histograms, `exec_pool_session_turn_seconds`, turns per session, `exec_pool_session_cost_usd_total` and tokens,
+store transfers, `shipping_deploy_lag_hours`. Alerts: the nine `ExecPool*` rules, `HostBehindMain`, `DeployRolledBack`.
+
+**Found live on 24 Nov and fixed**: silent quarantine with no alert loaded (#768 plus the black-pi deploy), slot
+metrics for acer only (#768), a turn cut at 30 minutes left its session waiting for ever (#765), a slot reset racing a
+deploy's activation (#768), stale Shunt alerts for retired workers (#771), deploys waiting for an idle pool and a turn
+lost when the queue restarts (#773), no claim priority (#772).
+
+**Open, in pick-up order**
+
+1. Session turns are headless; the owner wants the same interactive Herdr panes the named workers had, with an idle
+   grace period, park, resume into a pane and `attach` (session in flight).
+2. Two PRs that each built alone broke main together (#765 with #768). Build the merge result of a pool crate PR
+   before merging it: `just pool-merge-check BRANCH` on acer, before each pool crate merge.
+3. Three sessions lost a turn to the 30 minute limit today. Re-check the limit once turns are interactive and park on
+   idle.
+4. Not yet seen live: a drain started by `just deploy`, claim order by priority, the prepare failure counter,
+   `coord:brief` against the real CLI.
+5. The drain starts before the build, so a long build keeps a host from claiming.
+6. Slots run without a user namespace and `lukas` is in `wheel` in the guest.
+7. `status` and `list` do not show priority.
+8. `HostBehindMain` needs 24 h; black-pi lacked new alert rules for some hours unseen.
+9. lenovo cannot push nixos-config (stale devenv gate) or fetch a new private skills pin as a user.
+10. Cost: about 45 USD of session cost on 24 Nov; track cost per merged PR.
+11. Store follow-ups in #754; credential slices 3 and 4.
+
+### Waiting, in pick-up order
 
 | # | Topic | Pain now | Next small change |
 |---|-------|----------|-------------------|
-| 1 | Pool metrics | a quarantined slot raised no alert; msi has no slot metrics | per-host labels, prepare failures, dashboard row, five actionable alerts, load the unloaded rules, reset during deploy (session `cli-62d78022bdb9581d`, in flight) |
-| 2 | Coordinator | the pinned skills predate pool-only dispatch | skills pin to 811b2d6, then a lenovo deploy (this session) |
-| 3 | Deploy | #765 merged, not live | #765 to acer and msi with the next batch; lenovo, asus, black-pi behind |
-| 4 | Isolation | slots run without a user namespace, `lukas` is in wheel in the guest | user namespaces, no wheel in slots |
-| 5 | Sessions | no logs or priority per session | logs per session, priority at claim |
-| 6 | Sessions | a running turn cannot be displaced or watched | preemption and attach |
-| 7 | Credentials | a slot can push any branch, tokens are long-lived | slice 3 (a slot may push only `pool/<task id>`), slice 4 (short-lived GitHub App tokens); store follow-ups in #754 |
-| 8 | Alerts | #624's unfinished alert work sits outside the pool | a1's patch at `/var/lib/worker-archive/a1` on acer |
-| 9 | Gates | first scheduled gate red on `shunt-metrics-test` only, fixed since | read the next scheduled gate result |
-| 10 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
-| 11 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
+| 1 | Pool platform | the open findings above | a pool session for the top open finding |
+| 2 | Deploy | asus behind main | asus in its power window |
+| 3 | Alerts | #624's unfinished alert work sits outside the pool | a1's patch at `/var/lib/worker-archive/a1` on acer |
+| 4 | Gates | first scheduled gate red on `shunt-metrics-test` only, fixed since | read the next scheduled gate result |
+| 5 | Live comparison | `ShuntCollectorStale` fires since the on side moved | read a day of Shunt on and off on 25 Nov, now on acer `pool1` |
+| 6 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
 
 ## Priorities
 
