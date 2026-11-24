@@ -263,6 +263,28 @@ is no task to rescue.
 Rollback: drop the `exec-pool.nix` import from acer's configuration and deploy; the `exec_pool` database stays until
 dropped by hand.
 
+## ExecPoolLeaseOverdue
+
+Fires: on the pool host (acer), `exec_pool_lease_overdue` has been above zero for 10 minutes: an attempt is leased,
+running or checkpointing past its lease deadline and no `reconcile` has expired it. Its runner died or stopped
+heartbeating, so the task neither runs nor goes back to the queue; its slot counts as busy.
+First: on the host, `journalctl -u 'exec-pool-runner*'` for its last `state_change` line and why the runner stopped.
+Once no runner is working that attempt, `sudo -u exec_pool EXEC_POOL_DB='host=/run/postgresql dbname=exec_pool
+user=exec_pool' exec-pool-queue reconcile`: a lease that never started goes back to queued, a started one to
+`needs_review` (ExecPoolNeedsReview).
+Do not: edit `lease_deadline` or `status` in the database; the fence refuses a stale writer only if the epochs move.
+Rollback: stop the runner; the queue keeps the attempt for the reconcile.
+
+## ExecPoolNeedsReview
+
+Fires: an attempt has been in `needs_review` for an hour on the pool host: it started and then lost its lease, or
+settled there, so whether its effects (a push, a PR, a comment) happened is unknown. Nothing resolves it automatically.
+First: the attempt's `state_change` lines in the runner's journal (`journalctl -u 'exec-pool-runner*' | grep
+needs_review`) give its id and epoch; check its effects in the task's repository, then `exec-pool-queue resolve
+--attempt ID --epoch N --to succeeded|failed|queued` (queued only if the effects did not happen).
+Do not: resolve to queued without checking the effects; a replay can push or comment twice.
+Rollback: none; the alert clears when no attempt is left in needs_review.
+
 ## ShuntDelegationFailing
 
 Fires: over a quarter of the bulk-read delegations in the collector's 24 h window failed with auth, rate_limited,
