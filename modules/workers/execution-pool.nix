@@ -34,7 +34,8 @@ let
       config.systemd.package
     ];
     text = ''
-      for n in ${lib.concatStringsSep " " slotNames}; do
+      slots=(${lib.escapeShellArgs slotNames})
+      for n in "''${slots[@]}"; do
         u=container@$n.service
         jq -cn --arg slot "$n" \
           --arg state "$(systemctl show -P ActiveState "$u")" \
