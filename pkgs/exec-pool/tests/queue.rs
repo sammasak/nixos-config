@@ -235,13 +235,75 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
     submit(&mut s, &task("t-1", 1));
+    // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (6)", &[])
+        .execute(
+            "INSERT INTO schema_migrations (version, floor) VALUES (7, 6)",
+            &[],
+        )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(6))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(6))));
+    s.migrate().unwrap();
+    assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
+    // one this binary would misread, or one that names no floor, is refused
+    pg.sql()
+        .execute("INSERT INTO schema_migrations (version) VALUES (8)", &[])
+        .unwrap();
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(8))));
+    pg.sql()
+        .execute(
+            "UPDATE schema_migrations SET floor = 8 WHERE version = 8",
+            &[],
+        )
+        .unwrap();
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(8))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(8))));
+}
+
+#[test]
+fn a_quarantined_slot_shows_in_the_metrics_until_its_runner_clears_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let has = |text: &str, line: &str| text.lines().any(|l| l == line);
+    assert!(has(
+        &owner.metrics(None).unwrap(),
+        "exec_pool_slots{state=\"quarantined\"} 0"
+    ));
+    // the remote slot's role writes it, and a second refusal only updates the reason
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_runner ");
+    let mut runner = Store::open(&conninfo).unwrap();
+    runner
+        .quarantine(&slot("s0"), "an agent is running")
+        .unwrap();
+    runner
+        .quarantine(&slot("s0"), &"unpushed work ".repeat(200))
+        .unwrap();
+    runner
+        .quarantine(&slot("s1"), "an agent is running")
+        .unwrap();
+    assert!(has(
+        &owner.metrics(None).unwrap(),
+        "exec_pool_slots{state=\"quarantined\"} 2"
+    ));
+    let reason: String = pg
+        .sql()
+        .query_one(
+            "SELECT reason FROM quarantined_slots WHERE slot = 's0'",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(reason.chars().count(), 1024);
+    assert!(reason.starts_with("unpushed work"));
+    runner.clear_quarantine(&slot("s0")).unwrap();
+    runner.clear_quarantine(&slot("s0")).unwrap();
+    assert!(has(
+        &owner.metrics(None).unwrap(),
+        "exec_pool_slots{state=\"quarantined\"} 1"
+    ));
 }
 
 /// The one shape `submit_task` takes: what `exec-pool submit` builds.

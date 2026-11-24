@@ -22,17 +22,21 @@ use crate::{
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// Each migration, ascending, by the version it records; `migrate` applies every one the database has not recorded.
-const STEPS: [(i32, &str); 5] = [
+/// From 6 each records its floor, the oldest VERSION that may serve it: an additive one keeps the previous floor, so a
+/// binary rolled back across it still serves; one an older binary would misread records its own version.
+const STEPS: [(i32, &str); 6] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
     (4, include_str!("../migrations/0004_runner.up.sql")),
     (5, include_str!("../migrations/0005_cancel.up.sql")),
+    (6, include_str!("../migrations/0006_quarantine.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
 const DOWN_CANCEL: &str = include_str!("../migrations/0005_cancel.down.sql");
-const VERSION: i32 = 5;
+const DOWN_QUARANTINE: &str = include_str!("../migrations/0006_quarantine.down.sql");
+const VERSION: i32 = 6;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -85,7 +89,9 @@ pub enum QueueError {
     /// A remote runner's conninfo: TCP hosts alone, and no password of its own (it comes from the credential).
     #[error("a remote queue is TCP hosts with no password in the conninfo")]
     NotRemote,
-    #[error("the database is at migration {0}, newer than this binary's {VERSION}")]
+    #[error(
+        "the database is at migration {0}, which needs a binary newer than this one's {VERSION}"
+    )]
     SchemaAhead(i32),
     #[error("the database is not migrated")]
     NotMigrated,
@@ -495,7 +501,7 @@ impl Store {
         )
     }
 
-    /// Applies the migrations the database lacks; refuses a database a newer binary migrated.
+    /// Applies the migrations the database lacks; refuses a database a newer binary migrated past this one's floor.
     ///
     /// # Errors
     /// [`QueueError::SchemaAhead`], or what the database reports.
@@ -504,7 +510,16 @@ impl Store {
             // two first migrations at once would both see no schema
             tx.execute("SELECT pg_advisory_xact_lock(651)", &[])?;
             let done = Self::version(tx)?.unwrap_or(0);
-            if done > VERSION {
+            // ahead of VERSION, the database has 0006's floor column
+            if done > VERSION
+                && tx
+                    .query_one(
+                        "SELECT max(coalesce(floor, version)) FROM schema_migrations",
+                        &[],
+                    )?
+                    .try_get::<_, i32>(0)?
+                    > VERSION
+            {
                 return Err(QueueError::SchemaAhead(done));
             }
             let applied = if done == 0 {
@@ -530,9 +545,9 @@ impl Store {
         self.tx(|tx| match Self::version(tx)? {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
-            Some(_) => {
-                Ok(tx.batch_execute(&format!("{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"))?)
-            }
+            Some(_) => Ok(tx.batch_execute(&format!(
+                "{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+            ))?),
         })
     }
 
@@ -841,6 +856,35 @@ impl Store {
         })
     }
 
+    /// Records `slot` as quarantined for `reason` (its first 1024 characters), or updates the reason it already has.
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn quarantine(&mut self, slot: &Slot, reason: &str) -> Result<(), QueueError> {
+        self.tx(|tx| {
+            tx.execute(
+                "INSERT INTO quarantined_slots (host, slot, reason) VALUES ($1, $2, left($3, 1024)) \
+                 ON CONFLICT (host, slot) DO UPDATE SET reason = EXCLUDED.reason",
+                &[&slot.host, &slot.id, &reason],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Clears `slot`'s quarantine, once a reset succeeded; none is no change.
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn clear_quarantine(&mut self, slot: &Slot) -> Result<(), QueueError> {
+        self.tx(|tx| {
+            tx.execute(
+                "DELETE FROM quarantined_slots WHERE host = $1 AND slot = $2",
+                &[&slot.host, &slot.id],
+            )?;
+            Ok(())
+        })
+    }
+
     /// The task `id` names, as [`Store::tasks`] shows it, with the `result` recorded at its attempt's current epoch
     /// (`null` before one);
     /// no prompt. `None` when no task has that id.
@@ -1067,10 +1111,14 @@ fn leases(
             &[],
         )?
         .try_get(0)?;
+    let quarantined: i64 = tx
+        .query_one("SELECT count(*) FROM quarantined_slots", &[])?
+        .try_get(0)?;
     let _ = write!(
         out,
-        "# HELP exec_pool_slots Slots by state: busy holds a live lease.\n\
-         # TYPE exec_pool_slots gauge\nexec_pool_slots{{state=\"busy\"}} {busy}\n"
+        "# HELP exec_pool_slots Slots by state: busy holds a live lease, quarantined failed its reset.\n\
+         # TYPE exec_pool_slots gauge\nexec_pool_slots{{state=\"busy\"}} {busy}\n\
+         exec_pool_slots{{state=\"quarantined\"}} {quarantined}\n"
     );
     if let Some(n) = declared_slots {
         let _ = write!(
