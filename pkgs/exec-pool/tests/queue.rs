@@ -160,6 +160,7 @@ fn slot(id: &str) -> Slot {
         capabilities: BTreeSet::from(["read_only".to_owned()]),
         agents: BTreeSet::from([Agent::None]),
         pins: Pins::default(),
+        store: false,
     }
 }
 
@@ -1841,6 +1842,36 @@ fn a_parked_session_is_claimed_only_on_a_host_that_holds_its_tree() {
     assert_eq!(
         (checkpoint.generation, checkpoint.hosts),
         (epoch, vec!["msi-ms7758".to_owned()])
+    );
+}
+
+#[test]
+fn a_session_in_the_store_is_claimed_by_any_host_that_reaches_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let mut acer = claude_slot();
+    acer.host = "acer-swift".to_owned();
+    let (a, epoch, _) = started(&mut owner);
+    let mut stored = park(ParkReason::TurnEnd, 0);
+    if let Some(c) = &mut stored.checkpoint {
+        c.hosts.push(exec_pool::STORE.to_owned());
+    }
+    owner.park(&a, epoch, &stored).unwrap();
+    s.send(&id, "one").unwrap();
+    assert!(
+        owner.claim(&acer, 60).unwrap().is_none(),
+        "a host that cannot pull from the store"
+    );
+    acer.store = true;
+    let claim = owner.claim(&acer, 60).unwrap().unwrap();
+    let checkpoint = claim.turn.unwrap().checkpoint.unwrap();
+    assert_eq!(
+        (checkpoint.generation, checkpoint.hosts),
+        (
+            epoch,
+            vec!["msi-ms7758".to_owned(), exec_pool::STORE.to_owned()]
+        )
     );
 }
 

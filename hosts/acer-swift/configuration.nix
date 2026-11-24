@@ -61,7 +61,10 @@
       credentials = [ "id_ed25519" ];
     };
   };
-  homelab.execPool.runner.enable = true;
+  homelab.execPool.runner = {
+    enable = true;
+    store = "acer-swift";
+  };
   homelab.execPool.sessionGc.enable = true;
   # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
   homelab.execPool.remoteRunners = true;

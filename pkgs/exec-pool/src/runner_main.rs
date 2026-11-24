@@ -31,9 +31,10 @@ use exec_pool::runner::{
     claim_fits, decide, decide_turn, guest_exit, handed_back, read_regular, receipt, relink,
     remote_head, session_checkpoint, tail,
 };
+use exec_pool::sync::{self, Depot};
 use exec_pool::task_result::TaskResult;
 use exec_pool::workspace::{self, HomeId, SESSION_HOME, Sessions, Workspace, admit};
-use exec_pool::{Agent, Event, Kind, ParkReason, Receipt, SchemaVersion, Slot};
+use exec_pool::{Agent, Event, Kind, ParkReason, Receipt, STORE, SchemaVersion, Slot};
 use serde_json::{Value, json};
 
 const USAGE: &str =
@@ -404,6 +405,7 @@ impl Runner {
                 store,
                 (id, epoch, &claim.task.id, &self.slot.host),
                 (reason, manifest.session.as_ref().map_or(0, |s| s.upto)),
+                result.is_some_and(|r| r.stored),
                 &task_result,
             )
             .map(|()| false),
@@ -514,14 +516,15 @@ fn session_of(claim: &Claim) -> Option<Session> {
 }
 
 /// Parks the session turn `attempt` at `epoch` with its result, the inbox read up to `upto`, and the checkpoint that
-/// names the session's tree on `host`, so a message wakes it there.
+/// names the session's tree on `host`, and in the store once the helper `stored` it there, so a message wakes it there.
 fn park(
     store: &mut Store,
     (attempt, epoch, task, host): (&str, u64, &str, &str),
     (reason, upto): (ParkReason, i64),
+    stored: bool,
     result: &TaskResult,
 ) -> Result<(), QueueError> {
-    let checkpoint = session_checkpoint(task, host, epoch);
+    let checkpoint = session_checkpoint(task, host, epoch, stored);
     let (_, changes) = store.park(
         attempt,
         epoch,
@@ -851,9 +854,26 @@ struct Dock<'a> {
     /// `cp` and `find`, the store paths of the relink and the transcript probe.
     cp: String,
     find: String,
+    /// The store a parked tree goes to and comes from, with `rsync` and `chown`; `None` keeps trees on this host.
+    depot: Option<(Depot, String, String)>,
+    /// The node-exporter textfile the store's transfers are counted in.
+    counts: Option<PathBuf>,
 }
 
-impl Dock<'_> {
+impl<'a> Dock<'a> {
+    /// The dock of `slot`, whose run directories are in `slot_dir`, as the helper's unit configures it.
+    fn from_env(slot: &'a str, slot_dir: &Path) -> Result<Self, String> {
+        Ok(Self {
+            sessions: Sessions::new(PathBuf::from(var("EXEC_POOL_SESSIONS")?)),
+            busy: slot_dir.join(DOCK_BUSY),
+            slot,
+            cp: var("EXEC_POOL_CP")?,
+            find: var("EXEC_POOL_FIND")?,
+            depot: depot()?,
+            counts: std::env::var_os("EXEC_POOL_TEXTFILE").map(PathBuf::from),
+        })
+    }
+
     /// Attaches the task's tree, creating it until a first turn prepared it, owned as the slot home is; whether it
     /// was created. The dock is marked busy before the rename and stays marked until a detach, so the runner
     /// quarantines the slot whatever stops this helper in between; a dock a dead helper left a tree in is marked too.
@@ -875,6 +895,7 @@ impl Dock<'_> {
             let _ = mark(&why);
             return Err((false, why));
         }
+        self.fetch(m, (home.uid(), home.gid()))?;
         let created = self
             .sessions
             .prepared(&m.task.id)
@@ -917,6 +938,87 @@ impl Dock<'_> {
                     e.to_string(),
                 )
             })
+    }
+
+    /// Brings the tree of a session that parked on another host, or later than this host's copy, from the store,
+    /// owned by `owner` (the slot home's); the error's flag as [`Dock::attach`]'s: a pull that fails is the slot's
+    /// to retry, a tree that is neither here nor in the store is lost.
+    fn fetch(&self, m: &Manifest, owner: (u32, u32)) -> Result<(), (bool, String)> {
+        let Some(c) = m.session.as_ref().and_then(|s| s.checkpoint.as_ref()) else {
+            return Ok(());
+        };
+        let (task, dir) = (&m.task.id, self.sessions.dir(&m.task.id));
+        let here = self.sessions.prepared(task).symlink_metadata().is_ok()
+            && self.sessions.tree(task).symlink_metadata().is_ok();
+        // a checkpoint naming this host alone is its tree by construction, a mark that failed to move included; a tree
+        // parked before the marks has none, and is the one its checkpoint names
+        let host = fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default();
+        let alone = c.hosts.iter().any(|h| h == host.trim()) && !c.hosts.iter().any(|h| h == STORE);
+        if here && (alone || sync::generation(&dir).is_none_or(|g| g >= c.generation)) {
+            return Ok(());
+        }
+        let Some((depot, rsync, _)) = self
+            .depot
+            .as_ref()
+            .filter(|_| c.hosts.iter().any(|h| h == STORE))
+        else {
+            return Err((
+                true,
+                format!(
+                    "task {task} parked at generation {} on {:?}: its tree is not here at that generation, nor in \
+                     a store this host reaches",
+                    c.generation, c.hosts
+                ),
+            ));
+        };
+        let pulled = sync::pull(
+            rsync,
+            depot,
+            (&dir, &Sessions::hex(task)),
+            c.generation,
+            owner,
+        )
+        .map(|_| ());
+        self.count("pull", pulled.is_ok());
+        pulled.map_err(|e| (false, format!("pull from the store: {e}")))?;
+        fs::write(self.sessions.prepared(task), "")
+            .map_err(|e| (false, format!("prepared mark: {e}")))
+    }
+
+    /// After a turn that reached its agent, once its tree is back from the dock: the tree's generation mark at the
+    /// turn's epoch, then the tree to the store; whether it got there. A push that fails parks the turn here alone.
+    fn keep(&self, m: &Manifest, note: &dyn Fn(&str, &dyn std::fmt::Display)) -> bool {
+        let dir = self.sessions.dir(&m.task.id);
+        if let Err(e) = fs::write(dir.join(sync::GENERATION), m.lease_epoch.to_string()) {
+            note("generation mark", &e);
+            return false;
+        }
+        let Some((depot, rsync, chown)) = &self.depot else {
+            return false;
+        };
+        let pushed = sync::push(
+            (rsync, chown),
+            depot,
+            (&dir, &Sessions::hex(&m.task.id)),
+            m.lease_epoch,
+        );
+        self.count("push", pushed.is_ok());
+        pushed
+            .inspect_err(|e| {
+                eprintln!("exec-pool-exec: push to the store: {e}");
+                note("push to the store", e);
+            })
+            .is_ok()
+    }
+
+    /// Counts one transfer with the store in the slot's textfile, if this host has one.
+    fn count(&self, op: &str, ok: bool) {
+        if let Some(dir) = &self.counts {
+            let file = dir.join(format!("exec-pool-store-{}.prom", self.slot));
+            if let Err(e) = sync::count(&file, op, ok) {
+                eprintln!("exec-pool-exec: {}: {e}", file.display());
+            }
+        }
     }
 
     /// The turn after its preparing: the first turn's prepared mark, then its agent step. A turn with no agent step
@@ -1067,6 +1169,31 @@ fn begin(slot: &str) -> Result<Begun, String> {
     })
 }
 
+/// The session store as the helper's unit names it: a directory on this host (`EXEC_POOL_STORE_DIR`, handed to
+/// `EXEC_POOL_STORE_OWNER`) or a login on another (`EXEC_POOL_STORE_SSH` through `EXEC_POOL_SSH`); neither: none.
+fn depot() -> Result<Option<(Depot, String, String)>, String> {
+    let opt = |name: &str| std::env::var(name).ok();
+    let depot = match (opt("EXEC_POOL_STORE_DIR"), opt("EXEC_POOL_STORE_SSH")) {
+        (None, None) => return Ok(None),
+        (Some(root), None) => Depot::Local {
+            root: PathBuf::from(root),
+            owner: var("EXEC_POOL_STORE_OWNER")?,
+        },
+        (None, Some(dest)) => Depot::Remote {
+            dest,
+            ssh: var("EXEC_POOL_SSH")?,
+        },
+        (Some(_), Some(_)) => {
+            return Err("EXEC_POOL_STORE_DIR and EXEC_POOL_STORE_SSH are both set".to_owned());
+        }
+    };
+    Ok(Some((
+        depot,
+        var("EXEC_POOL_RSYNC")?,
+        var("EXEC_POOL_CHOWN")?,
+    )))
+}
+
 fn exec(slot: &str) -> Result<(), String> {
     let Begun {
         manifest,
@@ -1105,13 +1232,7 @@ fn exec(slot: &str) -> Result<(), String> {
     // a session turn runs in its tree, attached to the slot's dock for the turn; all it reads is read before the
     // attach, and nothing between the attach and the detach returns early
     let dock = match &manifest.session {
-        Some(_) => Some(Dock {
-            sessions: Sessions::new(PathBuf::from(var("EXEC_POOL_SESSIONS")?)),
-            busy: slot_dir.join(DOCK_BUSY),
-            slot,
-            cp: var("EXEC_POOL_CP")?,
-            find: var("EXEC_POOL_FIND")?,
-        }),
+        Some(_) => Some(Dock::from_env(slot, &slot_dir)?),
         None => None,
     };
     let attached = match (&dock, admitted) {
@@ -1164,8 +1285,11 @@ fn exec(slot: &str) -> Result<(), String> {
         }
     }
     if let (Some(d), Some(_)) = (&dock, attached) {
-        d.detach(&manifest, &guest)
-            .unwrap_or_else(|e| note("not detached", &e));
+        match d.detach(&manifest, &guest) {
+            Ok(()) if result.stage == Stage::Run => result.stored = d.keep(&manifest, &note),
+            Ok(()) => {}
+            Err(e) => note("not detached", &e),
+        }
     }
     if result.stage == Stage::Prepare {
         result.prepare_ms = ms(t);
