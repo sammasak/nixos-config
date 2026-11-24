@@ -143,3 +143,32 @@ tests:
       - eval_time: 35m
         alertname: ExecPoolSlotQuarantined
         exp_alerts: []
+
+  # session trees at 60% of the state filesystem never fire; at 75% from 10m, firing 30m later
+  - interval: 1m
+    input_series:
+      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758",kind="parked"}'
+        values: '400x10 500x60'
+      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758",kind="docked"}'
+        values: '100x70'
+      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758",kind="store"}'
+        values: '100x10 150x60'
+      - series: 'homelab_dev_env_sessions_filesystem_bytes{job="node-exporter",node="msi-ms7758"}'
+        values: '1000x70'
+      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="acer-swift",kind="store"}'
+        values: '600x70'
+      - series: 'homelab_dev_env_sessions_filesystem_bytes{job="node-exporter",node="acer-swift"}'
+        values: '1000x70'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ExecPoolSessionsLarge
+        exp_alerts: []
+      - eval_time: 41m
+        alertname: ExecPoolSessionsLarge
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "Session trees on msi-ms7758 fill most of the workers' state filesystem"
+              description: "The parked, docked and stored session trees on msi-ms7758 have held over 70% of the workers' state filesystem (75%) for 30 minutes; the queue has not made enough of them eligible for removal, or orphans pile up. Read homelab_dev_env_session_trees and homelab_exec_pool_sessions_orphaned there, then run du -sh /var/lib/workers/.sessions/* /var/lib/workers/.sessions-store/* as root (runbook)."
+              query: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionslarge"

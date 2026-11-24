@@ -23,6 +23,9 @@ let
   # shipper subverted by a guest's bytes could add .prom files the host's scrape then reads; it could not before
   recordsMetrics = "/run/dev-env-records-metrics";
   workLocks = "/run/work-locks";
+  # a parked or docked session's devenv roots: it is no instance, so it has no per-container dir
+  sessionRoots = "/nix/var/nix/gcroots/dev-env-sessions";
+  sessionMetrics = "/run/dev-env-sessions-metrics";
 
   multipliers = {
     "" = 1;
@@ -1149,15 +1152,13 @@ in
         enableStrictShellChecks = true;
         script = ''
           rc=0
-          for home in ${lib.escapeShellArg cfg.stateDir}/*/home; do
-            n=''${home%/home}; n=''${n##*/}
-            roots=/nix/var/nix/gcroots/per-container/$n
-            [[ -d $roots ]] || continue
-            ok=1
+          # refresh <tree> <roots>: a root in <roots> for each devenv link under <tree>
+          refresh() {
+            local home=$1 roots=$2 ok=1 found l t name r
             rm -f "$roots"/.home-*
             found=$(find "$home" -ignore_readdir_race \( -name node_modules -o -name target -o -name .git \) -prune \
               -o -path '*/.devenv/gc/*' -type l -print) || { ok=0; rc=1; }
-            declare -A keep=()
+            local -A keep=()
             while IFS= read -r l; do
               t=$(readlink "$l") || continue
               [[ $t == /nix/store/* && $t != *..* && -e $t ]] || continue
@@ -1168,12 +1169,105 @@ in
             # only a complete scan may drop a root; a failed one keeps what it had and fails the unit, and with it nix-gc
             if (( ok )); then
               for r in "$roots"/home-*; do
-                [[ -L $r && -z ''${keep[''${r##*/}]-} ]] && rm -f "$r"
+                if [[ -L $r && -z ''${keep[''${r##*/}]-} ]]; then rm -f "$r"; fi
               done
             fi
-            unset keep
+          }
+          for home in ${lib.escapeShellArg cfg.stateDir}/*/home; do
+            n=''${home%/home}; n=''${n##*/}
+            roots=/nix/var/nix/gcroots/per-container/$n
+            [[ -d $roots ]] || continue
+            refresh "$home" "$roots"
           done
+          # A session's work tree, parked (.sessions/<id>/tree) or docked in a slot (.sessions/dock/<slot>/cur), each
+          # under its own roots dir, parked/<id> or dock/<slot>. A dock or park moves the tree between two keys, possibly in the middle of this
+          # run, so a key no longer found keeps its roots for an hour (each refresh rewrites a live key's dir).
+          s=${lib.escapeShellArg cfg.stateDir}/.sessions
+          if [[ -d $s ]]; then
+            install -d -m 0755 ${sessionRoots}
+            declare -A live=()
+            for home in "$s"/*/tree/work "$s"/dock/*/cur/work; do
+              [[ -d $home && ! -L $home ]] || continue
+              case $home in
+                "$s"/dock/*) k=''${home#"$s"/dock/} k=dock/''${k%/cur/work} ;;
+                *) k=''${home#"$s"/} k=parked/''${k%/tree/work} ;;
+              esac
+              install -d -m 0755 "${sessionRoots}/''${k%/*}" "${sessionRoots}/$k"
+              refresh "$home" "${sessionRoots}/$k"
+              live[$k]=1
+            done
+            for r in ${sessionRoots}/{parked,dock}/*; do
+              if [[ -d $r && ! -L $r && -z ''${live[''${r#${sessionRoots}/}]-} && -n $(find "$r" -maxdepth 0 -mmin +60) ]]; then rm -rf "$r"; fi
+            done
+          fi
           exit $rc
+        '';
+      };
+
+      # Disk bytes and counts of the session trees, parked, docked and in the store (ExecPoolSessionsLarge), and of
+      # .trash; no ids
+      services.prometheus.exporters.node.extraFlags = [
+        "--collector.textfile.directory=${sessionMetrics}"
+      ];
+      systemd.tmpfiles.rules = [ "d ${sessionMetrics} 0755 root root -" ];
+      systemd.timers.dev-env-sessions-metrics = {
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnBootSec = "5min";
+          OnUnitActiveSec = "15min";
+        };
+      };
+      systemd.services.dev-env-sessions-metrics = {
+        description = "Size the developer environments' session trees and session store, for node-exporter";
+        path = [ pkgs.coreutils ];
+        enableStrictShellChecks = true;
+        # root that only reads past the guests' modes and writes its own textfile
+        serviceConfig = {
+          Type = "oneshot";
+          CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
+          NoNewPrivileges = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          PrivateTmp = true;
+          PrivateNetwork = true;
+          ReadWritePaths = [ sessionMetrics ];
+          Nice = 19;
+          IOSchedulingClass = "idle";
+        };
+        script = ''
+          d=${lib.escapeShellArg cfg.stateDir}
+          shopt -s nullglob
+          # total <path>...: their disk bytes; a file a turn deletes mid-walk fails du, the total still counts the rest
+          total() {
+            local b=0
+            (( $# == 0 )) || b=$({ du -scxB1 -- "$@" 2>/dev/null || true; } | tail -n 1 | cut -f1)
+            [[ $b =~ ^[0-9]+$ ]] || { echo "du gave no total for $*" >&2; return 1; }
+            echo "$b"
+          }
+          # emit <kind> <tree>...
+          emit() {
+            local kind=$1 b
+            shift
+            b=$(total "$@")
+            printf 'homelab_dev_env_sessions_bytes{kind="%s"} %s\n' "$kind" "$b"
+            printf 'homelab_dev_env_session_trees{kind="%s"} %s\n' "$kind" "$#"
+          }
+          trash=("$d"/.trash/*) parked=()
+          for e in "$d"/.sessions/*/tree; do [[ $e == "$d"/.sessions/dock/tree ]] || parked+=("$e"); done
+          tb=$(total "''${trash[@]}")
+          fs=$(df -B1 --output=size "$d" | tail -n 1 | tr -d ' ')
+          [[ $fs =~ ^[0-9]+$ ]] || { echo "df gave no size for $d" >&2; exit 1; }
+          {
+            # not .sessions/dock/tree, a slot named tree
+            emit parked "''${parked[@]}"
+            emit docked "$d"/.sessions/dock/*/cur
+            emit store "$d"/.sessions-store/*
+            # retired homes and removed sessions, freed a week after they were moved there
+            printf 'homelab_dev_env_trash_bytes %s\n' "$tb"
+            printf 'homelab_dev_env_trash_entries %s\n' "''${#trash[@]}"
+            printf 'homelab_dev_env_sessions_filesystem_bytes %s\n' "$fs"
+          } > ${sessionMetrics}/sessions.prom.tmp
+          mv ${sessionMetrics}/sessions.prom.tmp ${sessionMetrics}/sessions.prom
         '';
       };
     })
