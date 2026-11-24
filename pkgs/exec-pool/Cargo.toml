@@ -1,15 +1,19 @@
 [package]
 name = "exec-pool"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "The execution pool: its versioned task, attempt and slot contract, attempt state machine and PostgreSQL queue"
+description = "The execution pool: its versioned task, attempt and slot contract, attempt state machine, PostgreSQL queue and slot runner"
 license = "MIT OR Apache-2.0"
 publish = false
 
 [[bin]]
 name = "exec-pool-queue"
 path = "src/main.rs"
+
+[[bin]]
+name = "exec-pool-runner"
+path = "src/runner_main.rs"
 
 [dependencies]
 postgres = { version = "0.19", default-features = false, features = ["with-serde_json-1"] }

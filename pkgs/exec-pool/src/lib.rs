@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod queue;
+pub mod runner;
 mod state;
 pub mod workspace;
 

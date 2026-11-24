@@ -8,8 +8,8 @@ and the owners; it adds no daemon, database, socket, port, Nix option or host ch
 | Concern | Owner | Where |
 |---|---|---|
 | Static slot capacity (how many reusable nspawn slots a host declares, their closure, cgroups, egress) | NixOS `services.devEnvironments`, changed only by a reviewed deploy | `modules/workers/core.nix`, `modules/workers/default.nix`, `modules/workers/execution-pool.nix` |
-| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`), nothing claims yet |
-| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local dispatcher (#652) | not built |
+| Task and attempt state (queued to terminal, leases, epochs, idempotency keys) | the queue (#651, PostgreSQL) | `pkgs/exec-pool/src/queue.rs`, CLI `exec-pool-queue`; on acer (`modules/homelab/exec-pool.nix`) |
+| Slot assignment on a host (claim, start, stop, sanitise, resource accounting) | a host-local runner (#652) | `pkgs/exec-pool/src/runner.rs`, `exec-pool-runner`; `modules/homelab/exec-pool-runner.nix`, on acer for `pool1` |
 | The inner tool loop | the native Claude, Codex and Pi CLIs, unchanged | `docs/herdr.md` |
 | Viewing sessions | Herdr, observe only: never the source of queue truth | `docs/herdr.md` |
 | Power windows and placement facts | `sam.fleet.hosts.*` | `modules/core/fleet.nix` |
@@ -91,6 +91,30 @@ agent task, whose argv is `[prompt]` or `[prompt, model]`, the agent's non-inter
 slot's own credentials and egress. `agent::outcome(agent, exit, stdout)` maps the exit to the settle: Claude's final
 JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a Claude run with no result, is
 `needs_review`. Neither `failed` nor `needs_review` requeues, so no ambiguous external effect is replayed.
+
+## Runner (#652, first slice)
+
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`, off by default; on acer
+for its one slot `pool1`) runs as `exec_pool`, the queue's peer role, and loops: `reconcile`, `claim` for its slot
+(agent `none`, the configured capabilities), `start`, then `systemctl start exec-pool-exec@<slot>`, then `checkpoint`
+and `settle`, then `dev-env-reset@<slot>`. A polkit rule lets `exec_pool` start those two units of its own slots and
+nothing else. The helper `exec-pool-exec@<slot>` runs as root and has no queue access. It reads the versioned manifest
+(`runner::Manifest`: slot, attempt, epoch, task) from `/run/exec-pool-runner/<slot>/`, refusing a symlink. In the guest,
+as its user and through `systemd-run -M`, it clones `source.repo` into `~/task`, checks out `source.rev` and runs
+`agent::argv(&task)` in `command.workdir`. All three are argv, never a shell string, and the task is stopped at `timeoutSecs`.
+Up to 1 MiB of each stream and the result go to `/var/lib/exec-pool-exec/<slot>/<hex attempt>-<epoch>/`, kept 30 days.
+
+Settling (`runner::decide`): a clone or checkout that fails never started the task's argv, so the attempt goes back to
+`queued`. A timeout, a guest that went away, or a missing result (or one for another attempt or epoch) goes to
+`needs_review`. Otherwise `agent::outcome` decides from the exit code and the captured stdout. The command runs as a
+oneshot unit, so only exit 0 is clean, and systemd-run's 255 (killed by a signal) counts as no exit code. A helper
+that finds its attempt's run directory already there refuses to run it again. The receipt reports no effect. An event
+the queue refuses, or one whose commit is unknown, is never re-sent: the lease (`timeoutSecs` + 1200 s) expires and
+`reconcile` decides. Work never begins before `start` is accepted. The runner resets the slot at startup (its state
+then is unknown) and after every run. A reset that fails three times writes `/var/lib/exec-pool-runner/<slot>.quarantined`,
+and that slot is not claimed for again until an operator removes the marker and restarts the runner. Every state change
+is one JSON line with its ids, and the `run` line carries exit code, output tails, `claim_to_exec_ms`, `exec_ms`,
+`prepare_ms` and `run_ms`. `slot_reset` carries `sanitize_ms`. There are no metric labels.
 
 ## Not `sam.agentRuntime`
 
