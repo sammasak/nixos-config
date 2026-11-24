@@ -209,12 +209,13 @@ Each park also writes a `turns` row (migration 0010): the tokens and cost Claude
 the runner can tell). The textfile's `exec_pool_session*` series count sessions by state and waiting reason, turns by
 park reason, turn and wake latency, closed sessions' turns and age, parked sessions by idle age, host changes between
 turns and the reported tokens and cost; the Agent harnesses dashboard's Sessions row draws them. `session_gc` decides
-which session trees may be removed, never a file's age: final for 7 days, or waiting 14 days untouched with no unread
-row and its last turn `handed_back`; one waiting that long without that is stale and kept, and `needs_review` is
-never eligible. `exec-pool sessions --gc` prints the eligible ones, one JSON object per line (task_id, state,
-last_change, hosts), for the remover; ExecPoolSessionStuck fires on a session in review or stale for a day.
-No producer sets `handed_back` yet (the runner reports only the branch's name), so until one does no waiting session
-is eligible and every one parked 14 days is stale and alerts. A park's own time (the agent's exit to the settle) is not
+which session trees may be removed, never a file's age: only one whose last turn is `handed_back` (its branch held the
+whole tree, migration 0011), and then final for 7 days or waiting 14 days untouched with no unread row; one waiting
+that long without that is stale and kept, a final one without it kept uncounted, and `needs_review` is never eligible.
+`exec-pool sessions` prints every session, one JSON object per line (task_id, state, last_change, hosts, handed_back,
+eligible, stale; `--gc` the eligible ones), and the remover moves only a line both eligible and handed_back; ExecPoolSessionStuck fires on a session in review or stale for a day.
+No producer sets `handed_back` yet (the runner reports only the branch's name), so until one does no session is
+eligible, the remover moves nothing, and every one parked 14 days is stale and alerts. A park's own time (the agent's exit to the settle) is not
 measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
 `due_at`.
 

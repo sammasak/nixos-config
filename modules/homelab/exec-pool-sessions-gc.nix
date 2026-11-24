@@ -1,7 +1,8 @@
 # Removes the sessions the queue calls eligible (`exec-pool sessions --gc`: final for 7 days, or waiting, idle 14 days
 # and fully pushed) from this host's .sessions and .sessions-store into .trash, which frees them a week later; a tree on
-# disk the queue does not know (`exec-pool sessions`) is counted, never removed. This host's own trees only: msi's
-# parked trees wait for a remover there. Off until the CLI has both commands.
+# disk the queue does not know (`exec-pool sessions`) is counted, never removed. This host's own trees only, each host
+# its runner's queue: acer's own by peer, msi's acer's as exec_pool_runner with its runner's password. The list is read
+# as exec_pool (ExecStartPre); root, which reaches no queue, makes only the moves.
 {
   config,
   lib,
@@ -10,27 +11,36 @@
 }:
 let
   cfg = config.homelab.execPool.sessionGc;
+  runner = config.homelab.execPool.runner;
+  remote = runner.queue != null;
   pkg = pkgs.callPackage ../../pkgs/exec-pool/package.nix { };
   # root's own textfile directory: in exec_pool's exec-pool-metrics a link it planted would turn root's write onto any
   # file under the state dir
   dir = "/run/exec-pool-sessions-gc";
+  # root's too, not a StateDirectory: under User=exec_pool that would be the queue role's, a link in it root's write
+  state = "/var/lib/exec-pool-sessions-gc";
+  # every session, one JSON line each, as exec_pool reads it from the queue
+  list = "/run/exec-pool-sessions-gc-list/sessions";
+  lister = pkgs.writeShellApplication {
+    name = "exec-pool-sessions-list";
+    text = "${pkg}/bin/exec-pool sessions > ${list}";
+  };
   remover = pkgs.writeShellApplication {
     name = "exec-pool-sessions-gc";
     runtimeInputs = [
       pkgs.coreutils
       pkgs.jq
-      pkgs.util-linux
     ];
     text = ''
       d=${lib.escapeShellArg config.services.devEnvironments.stateDir}
-      state=$STATE_DIRECTORY
-      # the CLI as the queue's own role, by peer; root keeps only the moves
-      cli() { setpriv --reuid=exec_pool --regid=exec_pool --clear-groups -- ${lib.getExe pkg} sessions "$@"; }
+      state=${state}
       # an id becomes a path under .sessions: anything but a plain name is refused, and dock is the slots' own dir
       valid() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ && $1 != dock ]]; }
       [[ -d $d/.trash && ! -L $d/.trash ]] || { echo "exec-pool-sessions-gc: no $d/.trash; nothing removed" >&2; exit 1; }
-      eligible=$(cli --gc)
-      known=$(cli | jq -r .task_id)
+      all=$(cat ${list})
+      # the queue's eligible, and only with its branch known to hold the tree: a line short of either is not removed
+      eligible=$(jq -c 'select(.eligible == true and .handed_back == true)' <<<"$all")
+      known=$(jq -r .task_id <<<"$all")
       rc=0 stamp=$(date +%Y%m%d-%H%M%S)
       # a counter file that does not read as a number restarts at 0, which Prometheus reads as a reset
       count() {
@@ -108,39 +118,57 @@ in
     lib.mkEnableOption "the daily removal of the sessions `exec-pool sessions --gc` lists, into .trash";
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = runner.enable;
+        message = "homelab.execPool.sessionGc: it removes the trees of this host's runner, which needs homelab.execPool.runner.";
+      }
+    ];
     services.prometheus.exporters.node.extraFlags = [ "--collector.textfile.directory=${dir}" ];
     # before the first run: node-exporter counts a missing directory as a textfile scrape error
-    systemd.tmpfiles.rules = [ "d ${dir} 0755 root root -" ];
+    systemd.tmpfiles.rules = [
+      "d ${dir} 0755 root root -"
+      "d ${state} 0700 root root -"
+    ];
     systemd.services.exec-pool-sessions-gc = {
       description = "Move the sessions the queue calls eligible into .trash";
-      after = [
-        "postgresql.target"
-        "exec-pool-migrate.service"
-      ];
-      requires = [ "exec-pool-migrate.service" ];
-      environment.EXEC_POOL_DB = "host=/run/postgresql dbname=exec_pool user=exec_pool";
+      wants = lib.optional remote "network-online.target";
+      after =
+        if remote then
+          [ "network-online.target" ]
+        else
+          [
+            "postgresql.target"
+            "exec-pool-migrate.service"
+          ];
+      requires = lib.optional (!remote) "exec-pool-migrate.service";
+      environment.EXEC_POOL_DB = runner.conninfo;
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = lib.getExe remover;
-        StateDirectory = "exec-pool-sessions-gc";
-        StateDirectoryMode = "0700";
+        User = "exec_pool";
+        Group = "exec_pool";
+        ExecStartPre = lib.getExe lister;
+        # "!": root for the moves, in the same sandbox
+        ExecStart = "!${lib.getExe remover}";
+        RuntimeDirectory = "exec-pool-sessions-gc-list";
+        RuntimeDirectoryMode = "0700";
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
-        PrivateNetwork = true;
-        RestrictAddressFamilies = [ "AF_UNIX" ];
-        # the renames out of exec-pool-sync's 0700 store and into root's 0700 .trash, and setpriv's drop to exec_pool
-        CapabilityBoundingSet = [
-          "CAP_DAC_OVERRIDE"
-          "CAP_SETUID"
-          "CAP_SETGID"
-        ];
+        PrivateNetwork = !remote;
+        RestrictAddressFamilies = [ "AF_UNIX" ] ++ lib.optional remote "AF_INET";
+        # the renames out of exec-pool-sync's 0700 store and into root's 0700 .trash
+        CapabilityBoundingSet = [ "CAP_DAC_OVERRIDE" ];
         # "-": a host without the state dir reaches the script's own .trash check, not a namespace failure
         ReadWritePaths = [
           "-${config.services.devEnvironments.stateDir}"
           dir
+          state
         ];
         TimeoutStartSec = 600;
+      }
+      // lib.optionalAttrs remote {
+        LoadCredential = [ "db-password:${config.sops.secrets.exec_pool_runner_password.path}" ];
       };
     };
     systemd.timers.exec-pool-sessions-gc = {

@@ -66,6 +66,7 @@
     };
   };
   homelab.execPool.runner.enable = true;
+  homelab.execPool.sessionGc.enable = true;
   # msi's runner claims from this queue over the fleet LAN (exec-pool-db listener)
   homelab.execPool.remoteRunners = true;
   # the #494 usage spike: herman's cgroup counters every minute (scripts/guest-records.py --usage)

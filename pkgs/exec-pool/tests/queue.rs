@@ -235,12 +235,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (11, 10)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (12, 11)",
             &[],
         )
         .unwrap();
@@ -248,17 +248,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (12)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (13)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(12))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(13))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 12 WHERE version = 12",
+            "UPDATE schema_migrations SET floor = 13 WHERE version = 13",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(12))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(12))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(13))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(13))));
 }
 
 #[test]
@@ -545,6 +545,28 @@ fn a_tcp_address_is_refused() {
             "{conninfo}"
         );
     }
+}
+
+#[test]
+fn the_cli_reaches_a_remote_queue_by_its_units_password_credential() {
+    let dir = std::env::temp_dir().join(format!("exec-pool-cred-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cli = |conninfo: &str| {
+        Command::new(env!("CARGO_BIN_EXE_exec-pool"))
+            .arg("sessions")
+            .env("EXEC_POOL_DB", conninfo)
+            .env("CREDENTIALS_DIRECTORY", &dir)
+            .output()
+            .unwrap()
+    };
+    let out = cli("host=192.168.10.110 port=5432 dbname=exec_pool user=exec_pool_runner");
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("db-password credential"));
+    // with the password, a socket conninfo is refused as open_remote refuses it, before any connection
+    std::fs::write(dir.join("db-password"), "pw\n").unwrap();
+    let out = cli("host=/run/postgresql dbname=exec_pool user=exec_pool_runner");
+    assert_eq!(out.status.code(), Some(1));
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -2200,6 +2222,25 @@ fn gc_cli(pg: &Pg) -> Vec<serde_json::Value> {
     lines
 }
 
+/// A session `key` whose one turn parked with `handed_back`, then was cancelled 8 days ago.
+fn finished(
+    pg: &Pg,
+    (s, owner): (&mut Store, &mut Store),
+    key: &str,
+    handed_back: Option<bool>,
+) -> String {
+    let mut spec: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    key.clone_into(&mut spec.idempotency_key);
+    let (id, _) = s.start_session(&spec).unwrap();
+    let (attempt, epoch, _) = started(owner);
+    let mut parked = park(ParkReason::TurnEnd, 0);
+    parked.result.handed_back = handed_back;
+    owner.park(&attempt, epoch, &parked).unwrap();
+    s.cancel(&id).unwrap();
+    aged(pg, &attempt, 8);
+    id
+}
+
 #[test]
 fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     let pg = Pg::new();
@@ -2262,7 +2303,7 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
         .unwrap();
     assert!(s.sessions(true).unwrap().is_empty());
 
-    // needs_review is never eligible, however old; a final session is after 7 days
+    // needs_review is never eligible, however old; a final session is after 7 days, only if its branch held its tree
     let mut other: TaskSpec = serde_json::from_value(agent_task()).unwrap();
     other.idempotency_key = "cli:2".to_owned();
     let (review, _) = s.start_session(&other).unwrap();
@@ -2270,10 +2311,14 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     overdue(&pg, &b);
     owner.reconcile().unwrap();
     aged(&pg, &b, 400);
-    other.idempotency_key = "cli:3".to_owned();
-    let (gone, _) = s.start_session(&other).unwrap();
-    s.cancel(&gone).unwrap();
-    aged(&pg, &format!("{gone}.a"), 8);
+    let gone = finished(&pg, (&mut s, &mut owner), "cli:3", Some(true));
+    let unpushed = finished(&pg, (&mut s, &mut owner), "cli:4", Some(false));
+    let unknown = finished(&pg, (&mut s, &mut owner), "cli:5", None);
+    // never ran a turn: no tree, and nothing known of one
+    other.idempotency_key = "cli:6".to_owned();
+    let (unrun, _) = s.start_session(&other).unwrap();
+    s.cancel(&unrun).unwrap();
+    aged(&pg, &format!("{unrun}.a"), 8);
     let eligible: Vec<_> = s
         .sessions(true)
         .unwrap()
@@ -2281,7 +2326,9 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
         .map(|v| v["task_id"].clone())
         .collect();
     assert_eq!(eligible, [json!(gone)]);
-    assert!(!eligible.contains(&json!(review)));
+    for kept in [&review, &unpushed, &unknown, &unrun] {
+        assert!(!eligible.contains(&json!(kept)));
+    }
     let m = owner.metrics(None).unwrap();
     assert!(
         m.lines()
@@ -2289,15 +2336,19 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     );
     assert!(
         m.lines()
-            .any(|l| l == "exec_pool_session_age_seconds_count{agent=\"claude\"} 1")
+            .any(|l| l == "exec_pool_session_age_seconds_count{agent=\"claude\"} 4")
     );
     assert!(
         m.lines()
-            .any(|l| l == "exec_pool_session_turns_bucket{agent=\"claude\",le=\"1\"} 1")
+            .any(|l| l == "exec_pool_session_turns_bucket{agent=\"claude\",le=\"1\"} 4")
     );
 
     let lines = gc_cli(&pg);
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0]["task_id"], json!(gone));
     assert_eq!(lines[0]["state"], "cancelled");
+    assert_eq!(
+        (&lines[0]["eligible"], &lines[0]["handed_back"]),
+        (&json!(true), &json!(true))
+    );
 }
