@@ -1116,6 +1116,36 @@ BLOCKED_WHAT = "sys.config.networking.firewall.extraCommands"
 BLOCKED = (("", True), ("networking.enableIPv6 = false;", False))
 
 
+# modules/homelab/postgresql.nix's clients on acer: lukas reaches exec_pool as exec_pool_submit through its peer map
+# alone, the role owns no database, no other rule admits anyone, and the migration that grants to it waits for its role.
+SUBMITTER = r"""
+let
+  acer = (builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.config;
+  pg = acer.services.postgresql;
+in {
+  hba = builtins.filter (l: l != "") (builtins.split "\n" pg.authentication);
+  ident = builtins.filter (l: l != "") (builtins.split "\n" pg.identMap);
+  users = map (u: { inherit (u) name; own = u.ensureDBOwnership; }) pg.ensureUsers;
+  failed = map (a: a.message) (builtins.filter (a: !a.assertion) acer.assertions);
+  cli = builtins.any (p: p.pname or "" == "exec-pool") acer.environment.systemPackages;
+  migrate = acer.systemd.services.exec-pool-migrate.after;
+}
+"""
+
+
+def check_submitter():
+    out = run_eval(SUBMITTER % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    hba = [l for l in got.get("hba", []) if isinstance(l, str)]
+    ident = [l for l in got.get("ident", []) if isinstance(l, str)]
+    check(hba == ["local all postgres peer", "local exec_pool exec_pool peer", "local authentik authentik peer",
+                  "local exec_pool exec_pool_submit peer map=exec_pool_submit"]
+          and "postgresql-setup.service" in got.get("migrate", [])
+          and ident == ["exec_pool_submit lukas exec_pool_submit"]
+          and {"name": "exec_pool_submit", "own": False} in got.get("users", []) and got.get("failed") == [] and got.get("cli") is True,
+          f"acer admits lukas to exec_pool as exec_pool_submit by peer map only, the role owns nothing, and exec-pool is installed ({ {k: got.get(k) for k in ('ident', 'users', 'failed', 'cli', 'migrate')} if got else out.stderr.strip()[-300:]}, {hba})")
+
+
 def main():
     # every evaluation below that is not expected to throw, in chunks of PREFETCH_CHUNK per process instead of one process
     # each: the order of the checks, and so of their lines, is unchanged. The TYPED cases must throw, so each stays its own.
@@ -1175,6 +1205,7 @@ def main():
     check(ok.get("privateUsers") == "no" and not ok.get("extraFlags") and ok.get("binds") and not any(":" in b["dst"] for b in ok["binds"]) and ok.get("sudoPassword") is True,
           f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
     check_host_network()
+    check_submitter()
     out = nix_eval("{ }", NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("allowed") == ["*"] and got.get("mounts") == want_mounts,

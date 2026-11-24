@@ -20,7 +20,10 @@ use crate::{
 
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
-const VERSION: i32 = 1;
+/// Migration `n` is `STEPS[n - 1]`; each records its own version.
+const STEPS: [&str; 2] = [UP, include_str!("../migrations/0002_submitter.up.sql")];
+const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
+const VERSION: i32 = 2;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -219,6 +222,12 @@ const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a
     t.max_attempts, (a.lease_deadline <= clock_timestamp()) AS expired, \
     (extract(epoch FROM now() - a.changed_at) * 1000)::bigint AS in_state_ms, \
     (extract(epoch FROM now() - t.submitted_at) * 1000)::bigint AS since_submit_ms";
+
+/// One task and its attempt as `status` and `list` show them, under `a` (attempts) and `t` (`task_summaries`).
+const SUMMARY: &str = "jsonb_build_object('task', t.id, 'attempt', a.id, 'status', a.status, \
+    'agent', t.agent, 'repo', t.repo, 'rev', t.rev, \
+    'workdir', t.workdir, 'lease_epoch', a.lease_epoch, 'tries', a.tries, 'host', a.host, \
+    'slot', a.slot, 'submitted_at', t.submitted_at, 'changed_at', a.changed_at)";
 
 struct Locked {
     attempt: Attempt,
@@ -431,7 +440,7 @@ impl Store {
         )
     }
 
-    /// Applies the schema if the database has none; refuses a database a newer binary migrated.
+    /// Applies the migrations the database lacks; refuses a database a newer binary migrated.
     ///
     /// # Errors
     /// [`QueueError::SchemaAhead`], or what the database reports.
@@ -439,11 +448,15 @@ impl Store {
         self.tx(|tx| {
             // two first migrations at once would both see no schema
             tx.execute("SELECT pg_advisory_xact_lock(651)", &[])?;
-            match Self::version(tx)? {
-                None => Ok(tx.batch_execute(UP)?),
-                Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
-                Some(_) => Ok(()),
+            let done = Self::version(tx)?.unwrap_or(0);
+            if done > VERSION {
+                return Err(QueueError::SchemaAhead(done));
             }
+            let done = usize::try_from(done).map_err(|_| QueueError::Range("schema version"))?;
+            STEPS
+                .iter()
+                .skip(done)
+                .try_for_each(|step| Ok(tx.batch_execute(step)?))
         })
     }
 
@@ -455,7 +468,23 @@ impl Store {
         self.tx(|tx| match Self::version(tx)? {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
-            Some(_) => Ok(tx.batch_execute(DOWN)?),
+            Some(_) => Ok(tx.batch_execute(&format!("{DOWN_SUBMITTER}{DOWN}"))?),
+        })
+    }
+
+    /// Queues `task` through `submit_task`, as `exec_pool_submit` may: the queue assigns its id from its key and refuses
+    /// any task but the shape `exec-pool submit` builds. The queued task's id and whether it was already queued.
+    ///
+    /// # Errors
+    /// What `submit_task` or the database reports, an idempotency conflict included.
+    pub fn submit_task(&mut self, task: &TaskSpec) -> Result<(String, bool), QueueError> {
+        let mut spec = serde_json::to_value(task)?;
+        if let Value::Object(m) = &mut spec {
+            m.remove("id");
+        }
+        self.tx(|tx| {
+            let row = tx.query_one("SELECT o_task, o_duplicate FROM submit_task($1)", &[&spec])?;
+            Ok((row.try_get(0)?, row.try_get(1)?))
         })
     }
 
@@ -664,6 +693,62 @@ impl Store {
                     write(tx, row, &event, None, 0).map(|(_, c)| c)
                 })
                 .collect()
+        })
+    }
+
+    /// The task `id` names (its own id or its attempt's), its attempt's state and its events oldest first; no
+    /// prompt. `None` when no task has that id.
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn task(&mut self, id: &str) -> Result<Option<Value>, QueueError> {
+        self.tx(|tx| {
+            let rows = tx.query(
+                &format!(
+                    "SELECT {SUMMARY} || jsonb_build_object('events', (SELECT coalesce(jsonb_agg(jsonb_build_object( \
+                     'at', e.at, 'from', e.from_status, 'to', e.to_status, 'reason', e.reason, \
+                     'lease_epoch', e.lease_epoch, 'host', e.host, 'slot', e.slot) ORDER BY e.id), '[]') \
+                     FROM events e WHERE e.attempt_id = a.id)) \
+                     FROM task_summaries t JOIN attempts a ON a.task_id = t.id WHERE t.id = $1 OR a.id = $1"
+                ),
+                &[&id],
+            )?;
+            rows.first().map(|r| r.try_get(0)).transpose().map_err(Into::into)
+        })
+    }
+
+    /// The newest `limit` tasks, newest first, as [`Store::task`] shows them without their events.
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn tasks(&mut self, limit: i64) -> Result<Vec<Value>, QueueError> {
+        self.tx(|tx| {
+            tx.query(
+                &format!(
+                    "SELECT {SUMMARY} FROM task_summaries t JOIN attempts a ON a.task_id = t.id \
+                     ORDER BY t.submitted_at DESC, t.id LIMIT $1"
+                ),
+                &[&limit],
+            )?
+            .iter()
+            .map(|r| Ok(r.try_get(0)?))
+            .collect()
+        })
+    }
+
+    /// How many attempts are in each status, statuses with none left out.
+    ///
+    /// # Errors
+    /// What the database reports.
+    pub fn counts(&mut self) -> Result<Value, QueueError> {
+        self.tx(|tx| {
+            Ok(tx
+                .query_one(
+                    "SELECT coalesce(jsonb_object_agg(status, n), '{}') \
+                     FROM (SELECT status, count(*) AS n FROM attempts GROUP BY status) s",
+                    &[],
+                )?
+                .try_get(0)?)
         })
     }
 

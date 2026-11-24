@@ -65,11 +65,24 @@ in
       }
     ];
   };
+  # `exec-pool submit | status | list` for these users; a worker guest's user is added here
+  homelab.postgresql.clients.exec_pool_submit = {
+    database = "exec_pool";
+    users = [ "lukas" ];
+  };
 
   systemd.services.exec-pool-migrate = lib.recursiveUpdate unit {
     description = "Apply the execution pool queue's schema";
-    # the target: postgresql.service is up before its ensureUsers setup has run
-    requires = [ "postgresql.target" ];
+    # the target: postgresql.service is up before its ensureUsers setup has run. postgresql-setup too: a switch
+    # restarts it with no job on the target, and migration 0002 grants to the role it creates.
+    after = [
+      "postgresql.target"
+      "postgresql-setup.service"
+    ];
+    requires = [
+      "postgresql.target"
+      "postgresql-setup.service"
+    ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       RemainAfterExit = true;

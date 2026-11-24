@@ -58,6 +58,10 @@ impl Pg {
         assert!(ok, "initdb failed");
         let mut pg = Self { root, server: None };
         pg.start();
+        // what homelab.postgresql.clients creates before migrate grants to it
+        pg.sql()
+            .batch_execute("CREATE ROLE exec_pool_submit LOGIN")
+            .unwrap();
         pg
     }
 
@@ -222,13 +226,97 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert_eq!(tables(&mut pg.sql()), 4);
     s.migrate_down().unwrap();
     assert_eq!(tables(&mut pg.sql()), 0);
+    // a database at migration 1 takes the rest
+    pg.sql().batch_execute(exec_pool::queue::UP).unwrap();
     s.migrate().unwrap();
+    let version: i32 = pg
+        .sql()
+        .query_one("SELECT max(version) FROM schema_migrations", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(version, 2);
     submit(&mut s, &task("t-1", 1));
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (2)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (3)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(2))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(2))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(3))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(3))));
+}
+
+/// The one shape `submit_task` takes: what `exec-pool submit` builds.
+fn agent_task() -> serde_json::Value {
+    json!({
+        "schema_version": 1, "id": "ignored", "idempotency_key": "cli:1",
+        "source": { "repo": "https://github.com/sammasak/nixos-config.git", "rev": "6266701" },
+        "command": { "agent": "claude", "argv": [ARGV_MARKER, "opus"], "workdir": "pkgs/exec-pool" },
+        "capabilities": [], "resource_class": "small", "credential_class": "slot",
+        "retry": { "max_attempts": 1 }
+    })
+}
+
+#[test]
+fn the_submitter_queues_through_submit_task_and_reads_no_prompt() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_submit ");
+    let mut s = Store::open(&conninfo).unwrap();
+    let task: TaskSpec = serde_json::from_value(agent_task()).unwrap();
+    let (id, duplicate) = s.submit_task(&task).unwrap();
+    assert!(id.starts_with("cli-") && !duplicate, "{id}");
+    assert_eq!(s.submit_task(&task).unwrap(), (id.clone(), true));
+    let mut other = task.clone();
+    other.command.argv.pop();
+    assert!(s.submit_task(&other).is_err(), "a key names one task");
+    let shown = s.task(&id).unwrap().unwrap();
+    assert_eq!(shown["status"], "queued");
+    assert!(!shown.to_string().contains(ARGV_MARKER), "{shown}");
+    assert_eq!(s.tasks(5).unwrap().len(), 1);
+    // what it queued is a task the owner's claim decodes
+    let mut claude = slot("pool1");
+    claude.agents = BTreeSet::from([Agent::Claude]);
+    let claim = owner.claim(&claude, 60).unwrap().unwrap();
+    assert_eq!(claim.task.id, id);
+
+    let mut c = Client::connect(&conninfo, NoTls).unwrap();
+    let refused = |c: &mut Client, sql: &str, code: &str| {
+        let e = c.batch_execute(sql).unwrap_err();
+        assert_eq!(
+            e.code().map(postgres::error::SqlState::code),
+            Some(code),
+            "{sql}: {e}"
+        );
+    };
+    for sql in [
+        "INSERT INTO events (task_id, attempt_id, lease_epoch, to_status, reason, in_state_ms, since_submit_ms) \
+         SELECT task_id, id, 0, 'failed', 'x', 0, 0 FROM attempts",
+        "INSERT INTO tasks (id, idempotency_key, spec, max_attempts) VALUES ('x', 'x', '{}', 9)",
+        "UPDATE attempts SET status = 'succeeded'",
+        "SELECT spec FROM tasks",
+        "SELECT * FROM receipts",
+    ] {
+        refused(&mut c, sql, "42501");
+    }
+    let bad: [(&str, serde_json::Value); 8] = [
+        ("/capabilities", json!(["read_only"])),
+        ("/credential_class", json!("root")),
+        ("/retry", json!({ "max_attempts": 9 })),
+        ("/command/agent", json!("none")),
+        ("/command/workdir", json!("a/../../x")),
+        ("/source/rev", json!("--upload-pack=x")),
+        ("/source/repo", json!("file:///etc")),
+        ("/command/argv", json!(["p", "-m"])),
+    ];
+    for (at, v) in bad {
+        let mut t = agent_task();
+        *t.pointer_mut(at).unwrap() = v;
+        refused(&mut c, &format!("SELECT submit_task('{t}')"), "22023");
+    }
+    let mut extra = agent_task();
+    extra["command"]["env"] = json!({});
+    refused(&mut c, &format!("SELECT submit_task('{extra}')"), "22023");
+    refused(&mut c, "SELECT submit_task('[]')", "22023");
 }
 
 #[test]
