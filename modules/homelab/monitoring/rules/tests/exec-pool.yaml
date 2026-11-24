@@ -143,3 +143,71 @@ tests:
       - eval_time: 35m
         alertname: ExecPoolSlotQuarantined
         exp_alerts: []
+
+  # session trees at 60% of the state filesystem never fire; at 75% from 10m, firing 30m later
+  - interval: 1m
+    input_series:
+      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758",kind="parked"}'
+        values: '400x10 500x60'
+      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758",kind="docked"}'
+        values: '100x70'
+      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758",kind="store"}'
+        values: '100x10 150x60'
+      - series: 'homelab_dev_env_sessions_filesystem_bytes{job="node-exporter",node="msi-ms7758"}'
+        values: '1000x70'
+      - series: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="acer-swift",kind="store"}'
+        values: '600x70'
+      - series: 'homelab_dev_env_sessions_filesystem_bytes{job="node-exporter",node="acer-swift"}'
+        values: '1000x70'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: ExecPoolSessionsLarge
+        exp_alerts: []
+      - eval_time: 41m
+        alertname: ExecPoolSessionsLarge
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: msi-ms7758}
+            exp_annotations:
+              summary: "Session trees on msi-ms7758 fill most of the workers' state filesystem"
+              description: "The parked, docked and stored session trees on msi-ms7758 have held over 70% of the workers' state filesystem (75%) for 30 minutes; the queue has not made enough of them eligible for removal, or orphans pile up. Read homelab_dev_env_session_trees and homelab_exec_pool_sessions_orphaned there, then run du -sh /var/lib/workers/.sessions/* /var/lib/workers/.sessions-store/* as root (runbook)."
+              query: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="msi-ms7758"}'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionslarge"
+
+  # a session goes stale at 1h and stays: quiet for a day, firing after; one in review alone fires the same way
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"}'
+        values: '0x2200'
+      - series: 'exec_pool_sessions_stale{job="node-exporter",node="acer-swift"}'
+        values: '0x60 1x2140'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: ExecPoolSessionStuck
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: ExecPoolSessionStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "Execution pool sessions on acer-swift are stuck in review or stale"
+              description: "1 session(s) in the queue on acer-swift have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
+              query: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="acer-swift"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"
+  # one in review alone, with no stale series rendered: fires the same way, clears when it leaves review
+  - interval: 1m
+    input_series:
+      - series: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"}'
+        values: '1x1800 0x400'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: ExecPoolSessionStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, team: homelab, node: acer-swift}
+            exp_annotations:
+              summary: "Execution pool sessions on acer-swift are stuck in review or stale"
+              description: "1 session(s) in the queue on acer-swift have been in needs_review, or waiting 14 days untouched with a tree not known to be handed back, for a day: nothing moves them, and a stale one keeps its tree on disk. List them with exec-pool sessions and exec-pool list, then send, resolve or cancel each (runbook)."
+              query: 'exec_pool_sessions{job="node-exporter",node="acer-swift",state="needs_review"} > 0 or exec_pool_sessions_stale{job="node-exporter",node="acer-swift"} > 0'
+              runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionstuck"
+      - eval_time: 36h
+        alertname: ExecPoolSessionStuck
+        exp_alerts: []

@@ -309,6 +309,34 @@ declared (fewer slots, a renamed host) has no runner to clear it: delete its row
 `DELETE FROM quarantined_slots WHERE host = '<host>' AND slot = '<slot>'` as `exec_pool`.
 Rollback: none; a slot that resets clears itself.
 
+## ExecPoolSessionsLarge
+
+Fires: on a pool host (acer, msi), the session trees, parked (`/var/lib/workers/.sessions/<id>/tree`), docked in a
+slot (`.sessions/dock/<slot>/cur`) and, on acer, the pushed copies (`.sessions-store/<id>`), have held over 70% of the
+workers' state filesystem for 30 minutes. `dev-env-sessions-metrics` (`modules/workers/core.nix`) writes the bytes and
+counts every 15 minutes, by kind and with no ids, and `.trash`'s share as `homelab_dev_env_trash_bytes`. Removal is the
+queue's call: `exec-pool-sessions-gc` (`modules/homelab/exec-pool-sessions-gc.nix`, acer, off until the CLI has
+`sessions --gc`) moves what the queue lists as eligible into `.trash`, which frees it a week later.
+First: `homelab_dev_env_sessions_bytes` and `homelab_dev_env_session_trees` on the node say which kind grew,
+`homelab_exec_pool_sessions_orphaned` how many trees the queue does not know; on the host,
+`sudo du -sh /var/lib/workers/.sessions/*/tree /var/lib/workers/.sessions-store/* | sort -h | tail` names the largest.
+A large `.trash` is space already on its way out.
+Do not: delete a docked tree (`.sessions/dock/*/cur`) or a session whose `tree` is missing (it is docked); a turn is
+using it. Delete a parked tree by hand only once the queue has its task final and its work pushed.
+Rollback: none; the alert clears when the trees fall under 70%.
+
+## ExecPoolSessionStuck
+
+Fires: for a day, a session in the pool host's queue has been in `needs_review` (a turn lost its lease; only its
+owner's `send` or an operator's resolve moves it), or stale: waiting 14 days untouched with no unread message, and its
+last turn's branch not known to hold its tree, so `session_gc` keeps it and the tree stays on disk.
+First: `exec-pool sessions` (one JSON line each: state, last change, hosts, eligible, stale) and `exec-pool status ID`
+for its events. In review: check the last turn's effects, then `exec-pool send ID --prompt TEXT` to go on, or resolve
+it as in ExecPoolNeedsReview. Stale: on each of its hosts, look at the tree for unpushed work; push it and send the
+session a message, or `exec-pool cancel ID`, which makes it eligible 7 days later.
+Do not: delete a stale session's tree by its age; it is kept because the queue cannot tell it holds nothing unpushed.
+Rollback: none; the alert clears when no session is left in review or stale.
+
 ## ShuntDelegationFailing
 
 Fires: over a quarter of the bulk-read delegations in the collector's 24 h window failed with auth, rate_limited,

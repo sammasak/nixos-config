@@ -535,7 +535,9 @@ def check_gcroots(facts):
         return
     with tempfile.TemporaryDirectory() as d:
         state, roots = pathlib.Path(d, "state"), pathlib.Path(d, "roots")
-        script = facts["gcroots"].replace(facts["stateDir"], str(state)).replace("/nix/var/nix/gcroots/per-container", str(roots))
+        sroots = pathlib.Path(d, "sroots")
+        script = (facts["gcroots"].replace(facts["stateDir"], str(state)).replace("/nix/var/nix/gcroots/per-container", str(roots))
+                  .replace("/nix/var/nix/gcroots/dev-env-sessions", str(sroots)))
         gc = state / "n" / "home" / "proj" / ".devenv" / "gc"
         gc.mkdir(parents=True)
         (gc / "shell").symlink_to(store)
@@ -547,7 +549,7 @@ def check_gcroots(facts):
         (roots / "n" / "home-stale").symlink_to(store)
 
         def refresh(path=os.environ["PATH"]):
-            return subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True, env={**os.environ, "PATH": path})
+            return subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True, env={**os.environ, "PATH": path})
 
         run = refresh()
         names = sorted(p.name for p in (roots / "n").iterdir())
@@ -559,6 +561,22 @@ def check_gcroots(facts):
         check(run.returncode != 0 and (roots / "n" / "home-stale").is_symlink(),
               f"a scan that fails fails the refresh, and with it the garbage collection, and drops no root ({run.returncode})")
         check("find \"$home\" -ignore_readdir_race" in facts["gcroots"], "the scan ignores a directory a running guest deletes under it")
+
+        # a parked session and a docked one each get their own roots; a key gone for over an hour loses its roots, one
+        # gone for less keeps them (a dock or park may have moved the tree past this run)
+        for tree in ("t1/tree/work", "dock/pool1/cur/work"):
+            g = state / ".sessions" / tree / "proj" / ".devenv" / "gc"
+            g.mkdir(parents=True)
+            (g / "shell").symlink_to(store)
+        for key, age in (("parked/gone-old", 7200), ("dock/gone-new", 0)):
+            (sroots / key).mkdir(parents=True)
+            (sroots / key / "home-x").symlink_to(store)
+            os.utime(sroots / key, (time.time() - age, time.time() - age))
+        run = refresh()
+        got = {str(k.relative_to(sroots)): sorted(p.name for p in k.iterdir()) for k in sroots.glob("*/*")} if sroots.is_dir() else {}
+        check(run.returncode == 0 and sorted(got) == ["dock/gone-new", "dock/pool1", "parked/t1"]
+              and all(len(got[k]) == 1 and (sroots / k / got[k][0]).resolve() == store.resolve() for k in ("parked/t1", "dock/pool1")),
+              f"a parked and a docked session tree each root their devenv link, and only a key gone for an hour is dropped ({run.returncode}, {got}, {run.stderr.strip()[-200:]})")
 
 
 ALERT_ON = '{ services.devEnvironments.alert = "/alert"; }'
@@ -1257,6 +1275,81 @@ def check_submitter():
           f"acer admits lukas to exec_pool as exec_pool_submit by peer map only, the role owns nothing, and exec-pool is installed ({ {k: got.get(k) for k in ('ident', 'users', 'failed', 'cli', 'migrate')} if got else out.stderr.strip()[-300:]}, {hba})")
 
 
+
+SESSIONS_GC = r"""
+((builtins.getFlake (toString %(root)s)).nixosConfigurations.acer-swift.extendModules {
+  modules = [ { homelab.execPool.sessionGc.enable = true; } ];
+}).config.systemd.units."exec-pool-sessions-gc.service".unit
+"""
+
+
+def check_sessions_gc():
+    """Runs acer's session remover, built with the option on, against a scratch state dir and a fake `sessions` CLI."""
+    out = subprocess.run(["nix", "build", "--no-link", "--print-out-paths", "--impure", "--expr", SESSIONS_GC % {"root": json.dumps(ROOT)}],
+                         capture_output=True, text=True)
+    unit = pathlib.Path(out.stdout.strip(), "exec-pool-sessions-gc.service") if out.returncode == 0 else None
+    exe = re.search(r"^ExecStart=(\S+)", unit.read_text(), re.M) if unit else None
+    if not exe:
+        check(False, f"the session remover builds with the option on ({out.stderr.strip()[-300:]})")
+        return
+    text = pathlib.Path(exe.group(1)).read_text()
+    with tempfile.TemporaryDirectory() as d:
+        state, metrics, own, fake = (pathlib.Path(d, n) for n in ("state", "metrics", "own", "cli"))
+        for p in (state / ".trash", metrics, own, state / ".sessions/dock/pool1/cur/work"):
+            p.mkdir(parents=True)
+        for t in ("t1/tree/work", "t3/tree/work", "o1/tree/work"):
+            (state / ".sessions" / t).mkdir(parents=True)
+        (state / ".sessions/t2").mkdir()
+        for c in ("t1", "t2", "o2"):
+            (state / ".sessions-store" / c / "tree").mkdir(parents=True)
+        script = re.sub(r"cli\(\) \{.*\}", 'cli() { "$FAKE_CLI" "$@"; }', text)
+        script = script.replace("/var/lib/workers", str(state)).replace("/run/exec-pool-sessions-gc", str(metrics))
+        pathlib.Path(d, "gc").write_text(script)
+        line = lambda i: json.dumps({"task_id": i, "state": "final", "last_change": "2026-11-01T00:00:00Z", "hosts": ["acer-swift"]})
+
+        def run(eligible, fail=False):
+            fake.write_text("#!/bin/sh\n" + ("exit 75\n" if fail else "") + "if [ \"$1\" = --gc ]; then cat " + str(pathlib.Path(d, "eligible"))
+                            + "; else printf '%s\\n' " + " ".join(json.dumps(json.dumps({"task_id": i})) for i in ("t1", "t2", "t3", "t4")) + "; fi\n")
+            fake.chmod(0o755)
+            pathlib.Path(d, "eligible").write_text("".join(e + "\n" for e in eligible))
+            return subprocess.run(["bash", str(pathlib.Path(d, "gc"))], capture_output=True, text=True,
+                                  env={**os.environ, "STATE_DIRECTORY": str(own), "FAKE_CLI": str(fake)})
+
+        r = run([line("t1"), line("t2")])
+        events = [json.loads(l) for l in r.stdout.splitlines() if l.startswith("{")]
+        trash = sorted(p.name.rsplit("-", 2)[0] for p in (state / ".trash").iterdir())
+        check(r.returncode == 0 and trash == ["session-t1", "store-t1"] and not (state / ".sessions/t1").exists()
+              and (state / ".sessions/t3/tree").is_dir() and (state / ".sessions-store/t2").is_dir() and (state / ".sessions/t2").is_dir()
+              and (state / ".sessions/dock/pool1/cur/work").is_dir()
+              and [(e["event"], e.get("kind")) for e in events] == [("removed", "session"), ("removed", "store"), ("skipped", None)]
+              and all(e.get("state") == "final" and e.get("hosts") == ["acer-swift"] for e in events[:2]),
+              f"an eligible parked tree and its store copy move to .trash with one JSON line each; a docked one, an ineligible one and the dock stay ({r.returncode}, {trash}, {events}, {r.stderr.strip()[-200:]})")
+        prom = (metrics / "sessions-gc.prom").read_text() if (metrics / "sessions-gc.prom").exists() else ""
+        check('homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom and 'homelab_exec_pool_sessions_removed_total{kind="store"} 1' in prom
+              and 'homelab_exec_pool_sessions_orphaned{kind="parked"} 1' in prom and 'homelab_exec_pool_sessions_orphaned{kind="store"} 1' in prom
+              and (state / ".sessions/o1/tree").is_dir() and (state / ".sessions-store/o2").is_dir(),
+              f"the removed totals count each move, and a tree the queue does not know is counted as an orphan and stays ({prom!r})")
+        (state / "outside").mkdir()
+        r = run([json.dumps({"task_id": "../outside"}), "not json", line("t1")])
+        prom = (metrics / "sessions-gc.prom").read_text()
+        check(r.returncode != 0 and (state / "outside").is_dir() and 'homelab_exec_pool_sessions_removed_total{kind="session"} 1' in prom
+              and r.stdout.count('"refused"') == 2,
+              f"an id that is not a plain name is refused and fails the run, moving nothing; the totals carry over runs ({r.returncode}, {r.stdout.strip()[-300:]})")
+        (state / ".sessions/t3/tree/work/x").write_text("x")
+        r = run([line("t3")], fail=True)
+        check(r.returncode != 0 and (state / ".sessions/t3/tree").is_dir() and (metrics / "sessions-gc.prom").read_text() == prom,
+              f"a CLI that fails fails the run with nothing moved and the textfile left as it was ({r.returncode})")
+        (state / ".sessions/t4").symlink_to(state / ".sessions/t3")
+        (state / ".sessions-store/t4/tree").mkdir(parents=True)
+        own.joinpath("removed-store").write_text("garbage")
+        r = run([json.dumps({"task_id": "dock"}), line("t4")])
+        prom = (metrics / "sessions-gc.prom").read_text()
+        check(r.returncode != 0 and (state / ".sessions/dock/pool1/cur/work").is_dir() and (state / ".sessions-store/t4/tree").is_dir()
+              and (state / ".sessions/t3/tree/work/x").exists() and r.stdout.count('"refused"') == 2
+              and 'homelab_exec_pool_sessions_removed_total{kind="store"} 0' in prom,
+              f"the id dock and a session that is a link are refused, the latter's store copy kept; a counter that is not a number restarts at 0 ({r.returncode}, {r.stdout.strip()[-300:]}, {prom!r})")
+
+
 def main():
     # every evaluation below that is not expected to throw, in chunks of PREFETCH_CHUNK per process instead of one process
     # each: the order of the checks, and so of their lines, is unchanged. The TYPED cases must throw, so each stays its own.
@@ -1317,6 +1410,7 @@ def main():
           f"an instance without rootInGuest is unchanged: host uids, plain binds, sudo with a password ({ok})")
     check_host_network()
     check_submitter()
+    check_sessions_gc()
     out = nix_eval("{ }", NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("allowed") == ["*"] and got.get("mounts") == want_mounts,
