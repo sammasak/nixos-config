@@ -38,15 +38,20 @@ def pool_check(pool):
     r = run(*args)
     seen = json.loads(r.stdout)
     want = ["/run/current-system/sw/bin/exec-pool", *args[:11], "--prompt-file", "-", "--model", "opus"]
-    check(r.returncode == 75 and seen["argv"][:4] == ["-T", "-o", "BatchMode=yes", "acer-swift"] and seen["stdin"] == prompt,
+    check(r.returncode == 75 and seen["argv"][:6] == ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "acer-swift"] and seen["stdin"] == prompt,
           f"exec-pool submit runs over ssh to acer in batch mode, exits as the remote did, the prompt byte for byte on stdin (got {r.returncode}, {seen})")
-    line = " ".join(seen["argv"][4:])
+    line = " ".join(seen["argv"][6:])
     for shell in ("fish", "bash"):
         split = subprocess.run([shell, "-c", "printf '%s\\0' " + line], capture_output=True, text=True, check=True).stdout.split("\0")[:-1]
         check(split == want, f"{shell} splits the remote command back into the arguments, --prompt as --prompt-file - (got {split})")
     r = run("status", "cli-0123456789abcdef")
-    check(json.loads(r.stdout)["argv"][4:] == ["/run/current-system/sw/bin/exec-pool", "'status'", "'cli-0123456789abcdef'"],
-          "a read passes its id quoted")
+    check(json.loads(r.stdout)["argv"][6:] == ["/run/current-system/sw/bin/exec-pool", "'status'", "'cli-0123456789abcdef'"]
+          and json.loads(r.stdout)["stdin"] == "" and r.returncode == 75,
+          "a read passes its id quoted, the caller's stdin not forwarded, and exits as the remote did")
+    (fake / "prompt.md").write_text(prompt + "\n")
+    r = subprocess.run([pool, *args[:11], "--prompt-file", str(fake / "prompt.md")], env=env, capture_output=True, text=True)
+    check(json.loads(r.stdout)["stdin"] == prompt + "\n" and json.loads(r.stdout)["argv"][-2:] == ["'--prompt-file'", "'-'"],
+          "--prompt-file PATH is read on this host and sent as stdin, never resolved on the queue's host")
     for bad in ("a'b", "a\\b"):
         r = run("status", bad)
         check(r.returncode == 2 and r.stdout == "", f"an argument holding ' or \\ ({bad!r}) is refused before ssh")

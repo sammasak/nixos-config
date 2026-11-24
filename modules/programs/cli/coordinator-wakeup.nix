@@ -64,7 +64,7 @@ let
     name = "exec-pool";
     text = ''
       remote=(/run/current-system/sw/bin/exec-pool)
-      prompt=""; piped=false
+      prompt=""; piped=false; from=/dev/null
       quote() {
         case "$1" in *\'* | *\\*) echo "exec-pool: an argument holding ' or \\ cannot pass over ssh: $1" >&2; exit 2 ;; esac
         remote+=("'$1'")
@@ -72,16 +72,20 @@ let
       while [ "$#" -gt 0 ]; do
         if [ "$1" = --prompt ] && [ "$#" -ge 2 ]; then
           prompt=$2; piped=true; remote+=("'--prompt-file'" "'-'"); shift 2
+        elif [ "$1" = --prompt-file ] && [ "$#" -ge 2 ]; then
+          # a path is read here, not on the queue's host
+          from=$2; [ "$from" = - ] && from=/dev/stdin; remote+=("'--prompt-file'" "'-'"); shift 2
         elif [[ "$1" == --* ]] && [ "$#" -ge 2 ]; then
           quote "$1"; quote "$2"; shift 2
         else
           quote "$1"; shift
         fi
       done
+      ssh=(ssh -T -o BatchMode=yes -o ConnectTimeout=10 ${lib.escapeShellArg wk.poolHost})
       if $piped; then
-        printf '%s' "$prompt" | ssh -T -o BatchMode=yes ${lib.escapeShellArg wk.poolHost} "''${remote[@]}"
+        printf '%s' "$prompt" | "''${ssh[@]}" "''${remote[@]}"
       else
-        exec ssh -T -o BatchMode=yes ${lib.escapeShellArg wk.poolHost} "''${remote[@]}"
+        exec "''${ssh[@]}" "''${remote[@]}" < "$from"
       fi
     '';
   };
