@@ -125,9 +125,9 @@ in
                 limit = toString (a.ScheduledGateOverdue.hours.value * 3600);
                 s = m: ''max by (node) (${m}{job="node-exporter"})'';
               in
-              "time() - ${s "homelab_scheduled_gate_finished_timestamp_seconds"} > ${limit} and on (node) (${s "homelab_scheduled_gate_main_behind"} == 1 or time() - ${s "homelab_scheduled_gate_checked_timestamp_seconds"} > ${limit})"
+              "time() - ${s "homelab_scheduled_gate_behind_since_timestamp_seconds"} > ${limit} and on (node) ${s "homelab_scheduled_gate_behind_since_timestamp_seconds"} > 0 or time() - ${s "homelab_scheduled_gate_checked_timestamp_seconds"} > ${limit}"
             )
-            "Main has moved and no scheduled full gate has finished on {{ $labels.node }} for {{ $value | humanizeDuration }}, over ${toString a.ScheduledGateOverdue.hours.value} h, or the scheduler has not read main for that long."
+            "Main moved {{ $value | humanizeDuration }} ago and no scheduled full gate on {{ $labels.node }} has finished since, over ${toString a.ScheduledGateOverdue.hours.value} h, or the scheduler has not read main for that long."
             { }
           )
           {

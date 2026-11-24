@@ -26,6 +26,8 @@ METRICS: dict[str, str] = {
     "homelab_scheduled_gate_checked_timestamp_seconds": "When the scheduled gate last read origin/main.",
     "homelab_scheduled_gate_finished_timestamp_seconds": "When the last scheduled full gate finished, 0 if none has.",
     "homelab_scheduled_gate_main_behind": "1 while origin/main is not the commit the last finished full gate ran on.",
+    "homelab_scheduled_gate_behind_since_timestamp_seconds": "When a check first saw main move past the last finished "
+    "gate, 0 while it has not.",
     "homelab_scheduled_gate_seconds": "How long the last finished scheduled full gate took, its lock wait included.",
     "homelab_scheduled_gate_red": "1 when the last finished scheduled full gate failed: its head, first failed step "
     "and the last green head.",
@@ -42,6 +44,7 @@ class State:
     seconds: float = 0.0
     step: str = ""
     green: str = ""
+    behind_since: float = 0.0
 
 
 def say(text: str) -> None:
@@ -76,6 +79,7 @@ def write_metrics(path: pathlib.Path, st: State, checked: float, main: str) -> N
         "homelab_scheduled_gate_checked_timestamp_seconds": [("", checked)],
         "homelab_scheduled_gate_finished_timestamp_seconds": [("", st.finished)],
         "homelab_scheduled_gate_main_behind": [("", float(main != st.head))],
+        "homelab_scheduled_gate_behind_since_timestamp_seconds": [("", st.behind_since if main != st.head else 0.0)],
         "homelab_scheduled_gate_seconds": [("", st.seconds)],
         "homelab_scheduled_gate_red": [],
     }
@@ -126,6 +130,9 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
     git("fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main", cwd=clone)
     main = git("rev-parse", "refs/remotes/origin/main", cwd=clone)
     st = load(state_file)
+    if main != st.head and not st.behind_since:
+        st.behind_since = time.time()
+        save(state_file, st)
     write_metrics(metrics, st, time.time(), main)
     if main == st.head:
         say(f"origin/main is {main[:12]}, gated already ({st.result}): nothing to run")
@@ -149,6 +156,7 @@ def run(repo: str, state_dir: pathlib.Path, metrics: pathlib.Path) -> int:
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=clone, check=False)
     st.head, st.finished, st.seconds = main, time.time(), round(time.monotonic() - start)
+    st.behind_since = 0.0
     if rc == 0:
         st.result, st.step, st.green = "pass", "", main
     else:
