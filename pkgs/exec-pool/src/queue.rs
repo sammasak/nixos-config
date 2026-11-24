@@ -25,7 +25,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 7] = [
+const STEPS: [(i32, &str); 8] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -33,12 +33,14 @@ const STEPS: [(i32, &str); 7] = [
     (5, include_str!("../migrations/0005_cancel.up.sql")),
     (6, include_str!("../migrations/0006_branch.up.sql")),
     (7, include_str!("../migrations/0007_quarantine.up.sql")),
+    (8, include_str!("../migrations/0008_slots.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
 const DOWN_CANCEL: &str = include_str!("../migrations/0005_cancel.down.sql");
 const DOWN_QUARANTINE: &str = include_str!("../migrations/0007_quarantine.down.sql");
-const VERSION: i32 = 7;
+const DOWN_SLOTS: &str = include_str!("../migrations/0008_slots.down.sql");
+const VERSION: i32 = 8;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -548,7 +550,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -631,7 +633,14 @@ impl Store {
         if lease_secs == 0 {
             return Err(QueueError::Range("lease_secs"));
         }
+        let agents = serde_json::to_value(&slot.agents)?;
         self.tx(|tx| {
+            // the agents submit_task checks a task against (0008_slots.up.sql)
+            tx.execute(
+                "INSERT INTO slots (host, id, agents) VALUES ($1, $2, $3) \
+                 ON CONFLICT (host, id) DO UPDATE SET agents = excluded.agents, seen_at = now()",
+                &[&slot.host, &slot.id, &agents],
+            )?;
             // read every queued task unlocked, then lock only the one taken, so a claimer holds no row it skips
             let candidates = tx.query(
                 "SELECT a.id, t.spec FROM attempts a JOIN tasks t ON t.id = a.task_id \

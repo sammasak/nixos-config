@@ -138,7 +138,9 @@ SECURITY DEFINER function that takes the one shape `submit` builds (agent claude
 that is not an option, a workdir inside the checkout, a prompt and maybe a model; no capability, one attempt,
 credential class `slot`) and assigns the task's id from its key, and it reads attempts, events and `task_summaries`,
 which leaves out the prompt. So a submitter chooses no policy, forges no event and queues nothing a claim cannot
-decode. `submit` prints the task id; the idempotency key is `--key`, or else derived from the flags, so the same
+decode. Migration 0008 puts an agent check in front of it: every claim records its slot's agents in `slots`, and
+`submit_task` refuses an agent no slot seen in the last day offers, naming the ones on offer, instead of queuing a task
+nothing would claim. `submit` prints the task id; the idempotency key is `--key`, or else derived from the flags, so the same
 submission again returns the same task. `exec-pool-migrate` is ordered after `postgresql-setup.service`, which
 creates the role. From lenovo, the coordinator's host, `exec-pool` is a wrapper
 (`sam.herdr.coordinatorWakeup.poolHost`, `modules/programs/cli/coordinator-wakeup.nix`) that runs acer's over ssh as

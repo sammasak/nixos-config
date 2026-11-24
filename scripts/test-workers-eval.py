@@ -1007,7 +1007,7 @@ def check_runner():
     rule = '["exec-pool-exec@pool1.service","dev-env-reset@pool1.service"]'
     check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", "exec-pool-runner-pool1"]
           and got.get("msi") == ["exec-pool-exec@", "exec-pool-runner-pool1"] and got.get("user") == "exec_pool"
-          and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude"]
+          and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude", "pi"]
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
           f"acer runs exec-pool-runner-pool1 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same two ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'exec')} or out.stderr.strip()[-300:]})")
     polkit = got.get("polkit", "")
