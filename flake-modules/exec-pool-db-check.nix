@@ -2,6 +2,7 @@
 # no host rule and no password unit, but the role migration 0004 grants to; on, the role's password from sops by
 # LoadCredential, one scram rule for msi's address and the exec_pool_runner role, bound to acer's fleet address at the
 # exec-pool-db listener's port, which acer's firewall admits from msi alone; each wrong remote role fails its assertion.
+# msi's runner logs in there with the same password and claims no lease that would outlive its 21:00 poweroff.
 { config, lib, ... }:
 let
   acer = config.flake.nixosConfigurations.acer-swift;
@@ -25,6 +26,9 @@ let
   off = bare { };
   on = acer.config;
   pw = on.systemd.services.exec-pool-runner-password;
+  msi = config.flake.nixosConfigurations.msi-ms7758.config;
+  msiRunner = msi.systemd.services.exec-pool-runner-pool1;
+  acerRunner = on.systemd.services.exec-pool-runner-pool1;
   remote = role: listener: {
     homelab.postgresql.remoteClients.${role} = {
       database = "exec_pool";
@@ -111,6 +115,31 @@ in
             on.boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" == 1
             && !(off.boot.kernel.sysctl ? "net.ipv4.ip_nonlocal_bind")
           ) "exec-pool-db-check: Postgres's fleet-address bind does not survive a boot before the address";
+          assert lib.assertMsg
+            (
+              msiRunner.environment.EXEC_POOL_DB
+              == "host=${hosts.acer-swift.address} port=${toString l.port} dbname=exec_pool user=exec_pool_runner"
+              &&
+                msiRunner.serviceConfig.LoadCredential == [
+                  "db-password:${msi.sops.secrets.exec_pool_runner_password.path}"
+                ]
+              &&
+                baseNameOf (toString msi.sops.secrets.exec_pool_runner_password.sopsFile) == "exec-pool-runner.yaml"
+              && !msi.services.postgresql.enable
+            )
+            "exec-pool-db-check: msi's runner does not reach acer's queue as exec_pool_runner with the sops password";
+          # a claim after 20:10 could outlive the 21:00 poweroff
+          assert lib.assertMsg (
+            msiRunner.environment.EXEC_POOL_OFF_TIMER == "msi-scheduled-shutdown.timer"
+            && msi.systemd.timers.msi-scheduled-shutdown.timerConfig.OnCalendar == "Mon-Fri 21:00"
+            && msiRunner.environment.EXEC_POOL_CLAIM_SECS == toString (50 * 60)
+          ) "exec-pool-db-check: msi's runner does not stop claiming 50 minutes before its 21:00 poweroff";
+          assert lib.assertMsg (
+            acerRunner.environment.EXEC_POOL_DB == "host=/run/postgresql dbname=exec_pool user=exec_pool"
+            && !(acerRunner.environment ? EXEC_POOL_OFF_TIMER || acerRunner.environment ? EXEC_POOL_CLAIM_SECS)
+            && !(acerRunner.serviceConfig ? LoadCredential)
+            && acerRunner.serviceConfig.PrivateNetwork
+          ) "exec-pool-db-check: acer's own runner is not the queue's peer role with no network";
           "${toString (hostRules on)}"
         );
       };

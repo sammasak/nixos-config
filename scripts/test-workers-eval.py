@@ -820,9 +820,10 @@ def check_bounded():
           f"container@ stops restarting after {got.get('burst')} starts of {start} s (stop {stop} s) each within {got.get('interval')} s ({got or out.stderr.strip()[-300:]})")
 
 
-# modules/workers/execution-pool.nix on msi: off (unset, or enable = false with a count) it moves no worker unit, no
-# container and no toplevel, and msi's named workers and their Herdr units stay pinned by name (a change to msi's
-# instances edits this list in the same PR); on, its 0/1/2 slots are shells beside them that leave their units alone.
+# modules/workers/execution-pool.nix on msi without its own slot (without_msi_pool): off (unset, or enable = false
+# with a count) it moves no worker unit, no container and no toplevel, and msi's named workers and their Herdr units
+# stay pinned by name (a change to msi's instances edits this list in the same PR); on, its 0/1/2 slots are shells
+# beside them that leave their units alone.
 POOL_COMPAT = r"""
 let
   flake = builtins.getFlake (toString %(root)s);
@@ -850,8 +851,18 @@ in {
 }
 """
 POOL_ON = "{ sam.workers.executionPool = { enable = true; slots = %d; }; }"
+
+
+def without_msi_pool(case):
+    """`case` on msi without its own pool slot and runner (hosts/msi-ms7758/exec-pool.nix): the host these cases
+    were written against, so each states its whole pool."""
+    return ('{ disabledModules = [ "${(builtins.getFlake (toString %s)).outPath}/hosts/msi-ms7758/exec-pool.nix" ]; '
+            'imports = [ (%s) ]; }' % (json.dumps(ROOT), case))
+
+
+
 # (name, module, expected message substring) on msi with the pool on; each must fail an assertion
-POOL_CASES = [
+POOL_CASES = [(name, without_msi_pool(case), want) for name, case, want in [
     ("slots above the pool", "{ sam.workers.executionPool = { enable = true; slots = 3; }; }", "their memory.reserved adds up to 12288M, more than pool.memory 10240M"),
     ("a slot's name declared by hand", "{ sam.workers.executionPool = { enable = true; slots = 1; }; sam.workers.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
     ("a slot's name declared in the core", "{ sam.workers.executionPool = { enable = true; slots = 1; }; services.devEnvironments.instances.pool1 = { }; }", "pool1 is a pool slot's name"),
@@ -859,7 +870,7 @@ POOL_CASES = [
     ("a credential the host has not", '{ sam.workers.executionPool = { enable = true; slots = 1; credentials = [ "nope" ]; }; }', "pool1.credentials names one that"),
     ("codex without a codex login", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "codex" ]; }; }', "signed with the API key in sam.workers.codexAuthFile"),
     ("pi on a host without the Pi key", '{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "pi" ]; }; }', "signed with the sops secret llm_gateway_pi_key"),
-]
+]]
 # acer (a pi host, the gateway's own) with every agent: one proxy route each, placeholders in the guest, no credential bound
 POOL_ALL = r"""
 let
@@ -879,10 +890,10 @@ in {
   creds = c.systemd.services.dev-env-egress.serviceConfig.LoadCredential;
 }
 """
-POOL_TYPED = [
+POOL_TYPED = [(name, without_msi_pool(case), want) for name, case, want in [
     ("negative slots", "{ sam.workers.executionPool = { enable = true; slots = -1; }; }", "is not of type `unsigned integer"),
     ("a slot reserve that is no size", '{ sam.workers.executionPool = { enable = true; slots = 1; memory.reserved = "2 GB"; }; }', "is not of type `string matching the pattern"),
-]
+]]
 POOL_THROW = r"""
 let c = ((builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.extendModules { modules = [ ({ lib, ... }: %(case)s) ]; }).config;
 in c.system.build.toplevel.drvPath
@@ -890,7 +901,7 @@ in c.system.build.toplevel.drvPath
 
 
 def pool_eval(case, toplevel=False):
-    out = run_eval(POOL_COMPAT % {"root": json.dumps(ROOT), "case": case, "toplevel": "c.system.build.toplevel.drvPath" if toplevel else "null"})
+    out = run_eval(POOL_COMPAT % {"root": json.dumps(ROOT), "case": without_msi_pool(case), "toplevel": "c.system.build.toplevel.drvPath" if toplevel else "null"})
     return json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
 
 
@@ -954,7 +965,8 @@ def check_pool_compat():
 
 
 # modules/homelab/exec-pool-runner.nix: on acer one runner per slot as the queue's role, its root helper, and a
-# polkit rule that lets that role start exactly the helper and the reset of its own slot; off, msi has none of them.
+# polkit rule that lets that role start exactly the helper and the reset of its own slot; msi's one slot alike, its
+# runner on acer's queue (exec-pool-db-acer-swift checks how it connects).
 # The slot claims for its pool agents, the helper hands a step the agent's route, and the reset never waits on an
 # attempt's workspace.
 RUNNER = r"""
@@ -962,7 +974,16 @@ let
   flake = builtins.getFlake (toString %(root)s);
   units = c: builtins.filter (n: builtins.match "exec-pool-(runner|exec).*" n != null) (builtins.attrNames c.systemd.services);
   acer = flake.nixosConfigurations.acer-swift.config;
+  msi = flake.nixosConfigurations.msi-ms7758.config;
   r = acer.systemd.services.exec-pool-runner-pool1;
+  # a slot's push key: its credentials, host-credential binds beside the sshd host key and public keys every
+  # environment binds, its ~/.ssh links, and the helper's git identity
+  push = c: {
+    inherit (c.services.devEnvironments.instances.pool1) credentials;
+    binds = builtins.filter (b: builtins.match "/var/lib/host-credentials/.*" b != null && builtins.match ".*(/ssh_host_ed25519_key|[.]pub)" b == null) (builtins.attrNames c.containers.pool1.bindMounts);
+    links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) c.containers.pool1.config.systemd.tmpfiles.rules;
+    git = c.systemd.services."exec-pool-exec@".environment;
+  };
 in {
   acer = units acer;
   msi = units flake.nixosConfigurations.msi-ms7758.config;
@@ -975,12 +996,7 @@ in {
   scratch = acer.services.devEnvironments.instances.pool1.scratch;
   reset = acer.systemd.services."dev-env-reset@".script;
   polkit = acer.security.polkit.extraConfig;
-  pool1 = {
-    inherit (acer.services.devEnvironments.instances.pool1) credentials;
-    # beside the sshd host key and public keys every environment binds
-    binds = builtins.filter (b: builtins.match "/var/lib/host-credentials/.*" b != null && builtins.match ".*(/ssh_host_ed25519_key|[.]pub)" b == null) (builtins.attrNames acer.containers.pool1.bindMounts);
-    links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) acer.containers.pool1.config.systemd.tmpfiles.rules;
-  };
+  push = { acer = push acer; msi = push msi; };
 }
 """
 
@@ -989,22 +1005,23 @@ def check_runner():
     out = run_eval(RUNNER % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     rule = '["exec-pool-exec@pool1.service","dev-env-reset@pool1.service"]'
-    check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", "exec-pool-runner-pool1"] and got.get("msi") == [] and got.get("user") == "exec_pool"
+    check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", "exec-pool-runner-pool1"]
+          and got.get("msi") == ["exec-pool-exec@", "exec-pool-runner-pool1"] and got.get("user") == "exec_pool"
           and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude"]
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
-          f"acer runs exec-pool-runner-pool1 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; msi has no runner ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'exec')} or out.stderr.strip()[-300:]})")
+          f"acer runs exec-pool-runner-pool1 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; acer also sets the role's password, msi runs the same two ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'exec')} or out.stderr.strip()[-300:]})")
     env, agent = got.get("env", {}), got.get("agentEnv", {})
     check(agent.get("ANTHROPIC_BASE_URL") == "http://127.0.0.1:4100" and agent.get("CLAUDE_CODE_OAUTH_TOKEN") == "held-by-the-host"
           and "/etc/profiles/per-user/" in agent.get("PATH", "") and not {"EDITOR", "XDG_CONFIG_HOME"} & set(agent)
           and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
           and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
           f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
-    pool1 = got.get("pool1", {})
-    links = pool1.get("links", [])
-    check(pool1.get("credentials") == ["id_ed25519"] and pool1.get("binds") == ["/var/lib/host-credentials/id_ed25519"]
-          and len(links) == 1 and "/.ssh/id_ed25519 " in links[0]
-          and env.get("EXEC_POOL_GIT_NAME") == "sammasak" and env.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
-          f"acer's pool1 holds the host's push key alone, linked as ~/.ssh/id_ed25519, no gh login, and the helper commits as the owner's git identity ({pool1}, { {k: v for k, v in env.items() if 'GIT_' in k} })")
+    for host, p in got.get("push", {"acer": {}, "msi": {}}).items():
+        links, git = p.get("links", []), p.get("git", {})
+        check(p.get("credentials") == ["id_ed25519"] and p.get("binds") == ["/var/lib/host-credentials/id_ed25519"]
+              and len(links) == 1 and "/.ssh/id_ed25519 " in links[0]
+              and git.get("EXEC_POOL_GIT_NAME") == "sammasak" and git.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
+              f"{host}'s pool1 holds the host's push key alone, linked as ~/.ssh/id_ed25519, no gh login, and its helper commits as the owner's git identity ({ {k: v for k, v in p.items() if k != 'git'} }, { {k: v for k, v in git.items() if 'GIT_' in k} })")
 
 
 def check_slot():
@@ -1192,10 +1209,10 @@ def check_submitter():
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     hba = [l for l in got.get("hba", []) if isinstance(l, str)]
     ident = [l for l in got.get("ident", []) if isinstance(l, str)]
-    check(hba == ["local all postgres peer", "local exec_pool exec_pool peer", "local authentik authentik peer",
-                  "local exec_pool exec_pool_submit peer map=exec_pool_submit",
-                  # remoteRunners on acer: msi's runner, by scram from its address alone
-                  "host exec_pool exec_pool_runner 192.168.10.235/32 scram-sha-256"]
+    # its one TCP rule is msi's runner's, held by exec-pool-db-check
+    check([l for l in hba if not l.startswith("host ")] == ["local all postgres peer", "local exec_pool exec_pool peer", "local authentik authentik peer",
+                  "local exec_pool exec_pool_submit peer map=exec_pool_submit"]
+          and [l.split()[2] for l in hba if l.startswith("host ")] == ["exec_pool_runner"]
           and "postgresql-setup.service" in got.get("migrate", [])
           and ident == ["exec_pool_submit lukas exec_pool_submit"]
           and {"name": "exec_pool_submit", "own": False} in got.get("users", []) and got.get("failed") == [] and got.get("cli") is True,

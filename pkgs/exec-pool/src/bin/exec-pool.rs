@@ -1,6 +1,6 @@
 //! `exec-pool`: submit an agent task to the queue and watch it, for a user `homelab.postgresql.clients` lets log in
-//! as `exec_pool_submit`, whose grants (migration 0002) allow queueing a task through `submit_task` and reading the
-//! queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`]. Exit codes are
+//! as `exec_pool_submit`, whose grants (migrations 0002 and 0005) allow queueing a task through `submit_task`,
+//! cancelling one it queued through `cancel_task` and reading the queue without its prompts, nothing else. It reaches the queue over the Unix socket in `EXEC_POOL_DB`, by default [`DB`]. Exit codes are
 //! `exec-pool-queue`'s: 0 done, 1 refused, 2 usage, 3 outcome unknown (run `status` before submitting again), 75
 //! database unavailable; `wait` adds 124, not settled by its timeout.
 
@@ -24,11 +24,14 @@ const USAGE: &str = "usage: exec-pool COMMAND
   result ID         the task's state and, once the runner recorded it, its result: the agent's outcome, the exit
                     code and up to 16 KiB of output (Claude's result text, or the end of stdout)
   wait ID [--timeout SECS]
-                    blocks until the task settles (succeeded, failed or needs_review), then prints its result";
+                    blocks until the task settles (succeeded, failed, needs_review or cancelled), then prints its
+                    result
+  cancel ID         cancels a task you submitted: a queued one at once; a running one is stopped by its runner within
+                    seconds and settles cancelled (follow it with wait). Prints the attempt and its status after";
 /// How often `wait` reads the queue, and how long it waits after the settle for the runner to record the result.
 const POLL: Duration = Duration::from_secs(5);
 const RECORD_GRACE: Duration = Duration::from_secs(30);
-const SETTLED: [&str; 3] = ["succeeded", "failed", "needs_review"];
+const SETTLED: [&str; 4] = ["succeeded", "failed", "needs_review", "cancelled"];
 
 enum Fail {
     Usage(String),
@@ -207,6 +210,11 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
                 })
                 .transpose()?;
             println!("{}", wait(store, id(args)?, timeout)?);
+        }
+        "cancel" => {
+            args.only("cancel", &[], 1)?;
+            let (attempt, status) = store.cancel(id(args)?)?;
+            println!("{}", json!({ "attempt": attempt, "status": status }));
         }
         other => return Err(Fail::Usage(format!("unknown command {other:?}"))),
     }

@@ -397,6 +397,33 @@ fn a_tcp_address_is_refused() {
 }
 
 #[test]
+fn a_remote_queue_is_tcp_with_the_password_apart() {
+    let tcp = "host=192.168.10.110 port=5432 dbname=exec_pool user=exec_pool_runner";
+    assert!(Store::open_remote(tcp, b"pw").is_ok());
+    for (conninfo, password) in [
+        (tcp, &b""[..]),
+        ("host=/run/postgresql dbname=exec_pool", b"pw"),
+        (
+            "host=/run/postgresql,192.168.10.110 dbname=exec_pool",
+            b"pw",
+        ),
+        (
+            "host=192.168.10.110 password=inline dbname=exec_pool",
+            b"pw",
+        ),
+        ("dbname=exec_pool", b"pw"),
+    ] {
+        assert!(
+            matches!(
+                Store::open_remote(conninfo, password),
+                Err(QueueError::NotRemote)
+            ),
+            "{conninfo}"
+        );
+    }
+}
+
+#[test]
 fn a_claimer_skips_the_row_another_holds() {
     let pg = Pg::new();
     let mut s = pg.migrated();
@@ -1296,6 +1323,53 @@ fn cli(pg: &Pg, args: &[&str], stdin: &str) -> (Option<i32>, String) {
         .unwrap();
     let out = child.wait_with_output().unwrap();
     (out.status.code(), String::from_utf8(out.stdout).unwrap())
+}
+
+#[test]
+fn the_submitter_cli_cancels_its_task_and_wait_returns_on_it() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let theirs = submit(&mut owner, &task("t-1", 1));
+    let submitter = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_exec-pool"))
+            .args(args)
+            .env(
+                "EXEC_POOL_DB",
+                pg.conninfo()
+                    .replace("user=exec_pool ", "user=exec_pool_submit "),
+            )
+            .stderr(Stdio::null())
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8(out.stdout).unwrap())
+    };
+    let (code, id) = submitter(&[
+        "submit",
+        "--agent",
+        "claude",
+        "--repo",
+        "https://example.org/r.git",
+        "--rev",
+        "abc",
+        "--workdir",
+        "w",
+        "--prompt",
+        "p",
+    ]);
+    assert_eq!(code, Some(0));
+    let id = id.trim();
+    let (code, out) = submitter(&["cancel", id]);
+    assert_eq!(code, Some(0));
+    let shown: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        shown,
+        json!({ "attempt": format!("{id}.a"), "status": "cancelled" })
+    );
+    let (code, out) = submitter(&["wait", id, "--timeout", "5"]);
+    assert_eq!(code, Some(0), "wait returns on a cancelled task");
+    assert!(out.contains(r#""status":"cancelled""#), "{out}");
+    assert_eq!(submitter(&["cancel", &theirs]).0, Some(1), "not its own");
+    assert_eq!(submitter(&["cancel"]).0, Some(2));
 }
 
 #[test]
