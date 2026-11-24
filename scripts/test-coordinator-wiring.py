@@ -53,14 +53,14 @@ def pool_check(pool):
     check(json.loads(r.stdout)["stdin"] == prompt + "\n" and json.loads(r.stdout)["argv"][-2:] == ["'--prompt-file'", "'-'"],
           "--prompt-file PATH is read on this host and sent as stdin, never resolved on the queue's host")
     # every verb the skills pool:* tasks call goes through unchanged: start and send with the prompt on stdin, wait with
-    # its timeout, and the sessions listing
+    # its timeout, the sessions listing and work:status's one list call
     for verb in (["start", *args[1:11]], ["send", "cli-0123456789abcdef"]):
         r = run(*verb, "--prompt", prompt)
         seen = json.loads(r.stdout)
         check(r.returncode == 75 and seen["stdin"] == prompt
               and seen["argv"][6:] == ["/run/current-system/sw/bin/exec-pool", *(f"'{a}'" for a in verb), "'--prompt-file'", "'-'"],
               f"exec-pool {verb[0]} reaches acer's CLI with its arguments quoted and the prompt on stdin (got {seen})")
-    for verb in (["wait", "cli-0123456789abcdef", "--timeout", "60"], ["sessions"], ["sessions", "--gc"]):
+    for verb in (["wait", "cli-0123456789abcdef", "--timeout", "60"], ["sessions"], ["sessions", "--gc"], ["list", "--limit", "200"]):
         seen = json.loads(run(*verb).stdout)
         check(seen["argv"][6:] == ["/run/current-system/sw/bin/exec-pool", *(f"'{a}'" for a in verb)] and seen["stdin"] == "",
               f"exec-pool {' '.join(verb)} reaches acer's CLI as given, no stdin forwarded (got {seen})")
@@ -90,6 +90,8 @@ def main():
           "the pinned skills input declares coordinator.poolCommand (nullable string, skills#150), the type lenovo's flag uses")
     check(all(f'"{t}" = {{' in pool_module for t in ("pool:start", "pool:send", "pool:wait")),
           "the pinned skills input has the session tasks the wake prompt dispatches with (pool:start, pool:send, pool:wait; skills#162)")
+    check("poolCommand} list --limit" in (skills / "agents/coordinator/tasks.nix").read_text(),
+          "the pinned skills work:status reads session states with one exec-pool list call, the verb the wrapper test covers")
     pools = set(re.findall(r"--option coordinator\.poolCommand:string (/nix/store/[a-z0-9]+-exec-pool/bin/exec-pool)", P["script"] or ""))
     check(len(pools) == 1, f"lenovo passes one exec-pool wrapper as coordinator.poolCommand (got {pools})")
     pool = pools.pop()
@@ -249,7 +251,7 @@ def main():
     wrapper_dirs = re.findall(r"/nix/store/[a-z0-9]+-coordinator-read/bin", script)
     check(wrapper_dirs != [], "coordinator-read is on the wake-up script's PATH")
     wrapper = pathlib.Path(wrapper_dirs[0], "coordinator-read").read_text()
-    check("coord:brief|coord:changed|gh:work|gh:repos|git:recent|harness:session-summary|pool:status|pool:result|pool:wait) ;;" in wrapper
+    check("coord:brief|coord:changed|gh:work|gh:repos|git:recent|harness:session-summary|work:status|pool:status|pool:result|pool:wait) ;;" in wrapper
           and commands(wrapper).count("--option") == 2 * OPTS.count("--option") and wrapper.count(OPTS) == 2 and '[ "$#" -le 2 ]' in wrapper
           and "input=$(jq -c '. + {consume:false}'" in wrapper and "consume:true" not in wrapper,
           "coordinator-read takes only one of the role's read tasks and an input object, never consumes with coord:changed, and the only --option flags are the host's fixed ones (both devenv calls)")
@@ -361,7 +363,7 @@ def behaviour_checks(script_path, read_path, act_path, pool):
         r = read("pool:start")
         check(r.returncode == 3 and "coordinator-act pool:start" in r.stderr, "coordinator-read refuses an act task and names coordinator-act")
         before = (tmp / "state" / "devenv.log").read_text()
-        check(all(read(t).returncode == 3 for t in ("herdr:inventory", "herdr:await", "work:status", "coord:capacity"))
+        check(all(read(t).returncode == 3 for t in ("herdr:inventory", "herdr:await", "coord:capacity"))
               and (tmp / "state" / "devenv.log").read_text() == before,
               "coordinator-read refuses the Herdr worker reads without touching devenv")
 

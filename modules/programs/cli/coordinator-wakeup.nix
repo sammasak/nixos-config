@@ -119,7 +119,7 @@ let
   '';
   # the wake prompt's delegation paragraph, only while the owner's delegation is configured
   delegation = lib.optionalString wk.mayApprove "The owner delegated approval (coordinator.mayApprove, decision ${wk.approvalDecision}): an open issue in the owner repositories that a worker can finish (never a PR, never one carrying needs-live, blocked or needs-decision) may get the approved label through coordinator-act gh:label, one issue per call, in priority order; both audit lines cite the decision and the pool gate accepts that label on that basis, so approve, then pool:start it. ";
-  # ROLE.md's read tasks minus the Herdr worker ones (capacity, work:status, herdr:*): dispatch is pool sessions only
+  # ROLE.md's read tasks minus the Herdr ones (herdr:*): dispatch is pool sessions only; work:status is per session
   readTasks = [
     "coord:brief"
     "coord:changed"
@@ -127,6 +127,7 @@ let
     "gh:repos"
     "git:recent"
     "harness:session-summary"
+    "work:status"
     "pool:status"
     "pool:result"
     "pool:wait"
