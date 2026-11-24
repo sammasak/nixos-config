@@ -22,8 +22,10 @@ devenv tasks run nixos:flake-check  # what nix flake check --all-systems checks,
 #               already green here under the same gate and system generation, or it plus such docs;
 #               deleting nixos-qa-green in the common git dir forces the full gate.
 #               From 21:00 to 08:30 host local time (night_from/night_until in qaPush) a push that would run the
-#               full gate runs the lints and secrets-verify only, prints `night mode: full QA not run for <sha>,
-#               owed` and records `gate … result=owed mode=night`: never a pass, no green tree; `just qa-owed` lists them.
+#               full gate runs the lints, secrets-verify and nixos-night-eval only (the flake check's
+#               `nix flake show --all-systems`, import-from-derivation off, ~90 s: no check's derivation, no build;
+#               its own gate-step record), prints `night mode: full QA not run for <sha>, owed` and records
+#               `gate … result=owed mode=night`: never a pass, no green tree; `just qa-owed` lists them.
 #               nixos:qa runs scripts/test-qa-push.py on the hook's own text, without Nix).
 #               A manual nixos:qa that passes on a clean checkout, unchanged through the run, records its tree the
 #               same way (scripts/qa-green.sh), so pushing that commit afterwards runs the lints only; with any

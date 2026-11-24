@@ -845,6 +845,12 @@ let
   ];
   # the pre-push hook's night mode: no nix fmt (it evaluates the flake and may build the formatter)
   nightLints = lints ++ [ secretsVerify ];
+  # and the flake check's nix flake show (import-from-derivation off, so #691's check failed there): every output's
+  # names and types on all systems, about 90 s and 3.9 GiB on acer. No check's derivation is evaluated (each host's
+  # needs stylix's IFD) and nothing is built: a check that fails only when built (#693) waits for the day gate.
+  nightEval = gate "nixos-night-eval" [ pkgs.nix ] ''
+    GC_FREE_SPACE_DIVISOR=16 nix flake show --json --all-systems --no-write-lock-file >/dev/null
+  '';
   heavyLock = pkgs.callPackage ./pkgs/heavy-lock/package.nix { };
   qaGreen = gate "qa-green" (with pkgs; [
     git
@@ -1184,6 +1190,11 @@ let
         if ((10#$now >= 10#$night_from || 10#$now < 10#$night_until)); then
           t=$SECONDS
           ${run nightLints}
+          e=$SECONDS
+          if ${lib.getExe nightEval}; then r=pass; else r=fail; fi
+          echo "nixos-qa: ${nightEval.name} took $((SECONDS - e)) s" | tee -a "$gitdir/nixos-qa-times"
+          ${lib.getExe record} gate-step gate=nixos-qa-push step=${nightEval.name} seconds=$((SECONDS - e)) result=$r sha="$(git rev-parse --short HEAD)"
+          [ "$r" = pass ]
           echo "nixos-qa: night mode: full QA not run for $(git rev-parse HEAD), owed" | tee -a "$gitdir/nixos-qa-times"
           PLATFORM_RECORD_STRICT=1 ${lib.getExe record} gate gate=nixos-qa-push seconds=$((SECONDS - t)) result=owed sha="$(git rev-parse --short HEAD)" mode=night head="$(git rev-parse HEAD)" checkout=clean
           exit
