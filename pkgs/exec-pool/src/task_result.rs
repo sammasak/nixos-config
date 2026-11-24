@@ -45,7 +45,8 @@ impl TaskResult {
     /// The result of a run from the helper's `result` and the attempt's captured `stdout`.
     #[must_use]
     pub fn of(agent: Agent, result: Option<&ExecResult>, stdout: &str) -> Self {
-        let ran = result.filter(|r| r.stage == Stage::Run);
+        // a run stopped for a cancel has no verdict, whatever its exit
+        let ran = result.filter(|r| r.stage == Stage::Run && !r.cancelled);
         let exit_code = result.and_then(|r| r.exit_code);
         let claude = (agent == Agent::Claude)
             .then(|| stdout.lines().rev().find(|l| !l.trim().is_empty()))
@@ -132,6 +133,16 @@ mod tests {
         let nul = TaskResult::new(None, Some(0), &format!("a\0b{long}"));
         assert_eq!(nul.output(), r.output, "bounded");
         assert_eq!(TaskResult::new(None, None, "a\0b").output(), "ab");
+    }
+
+    #[test]
+    fn a_cancelled_run_has_no_verdict() {
+        let stopped = ExecResult {
+            cancelled: true,
+            ..exec(Stage::Run, Some(0))
+        };
+        let r = TaskResult::of(Agent::None, Some(&stopped), "out");
+        assert_eq!((r.outcome, r.exit_code), (None, Some(0)));
     }
 
     #[test]

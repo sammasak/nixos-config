@@ -21,8 +21,8 @@ use crate::{
 
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
-/// Each migration, ascending, by the version it records. 4 is fleet dispatch's, on its own branch: a database
-/// migrated to 5 without it would never apply it, so 4 must be listed here before a build with 5 is deployed.
+/// Each migration, ascending, by the version it records; `migrate` applies every one the database has not recorded,
+/// so 4 (fleet dispatch's, on its own branch) still applies to a database already at 5.
 const STEPS: [(i32, &str); 4] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
@@ -217,7 +217,7 @@ fn u64_of(field: &'static str, v: i64) -> Result<u64, QueueError> {
 const fn reason(kind: &Kind, to: Status) -> &'static str {
     match (kind, to) {
         (Kind::Settle(Settle::Failed) | Kind::Resolve(Resolution::Failed), _) => "failed",
-        (Kind::Settle(Settle::Cancelled), _) => "cancelled",
+        (_, Status::Cancelled) => "cancelled",
         (_, Status::Failed) => "attempts_exhausted",
         (Kind::Lease(_), _) => "lease",
         (Kind::Start, _) => "start",
@@ -231,7 +231,7 @@ const fn reason(kind: &Kind, to: Status) -> &'static str {
 
 /// The columns an attempt row is read with, under `a` (attempts) and `t` (tasks).
 const ATTEMPT_COLS: &str = "a.id, a.task_id, a.lease_epoch, a.tries, a.status, a.host, a.slot, a.pins, \
-    t.max_attempts, (a.lease_deadline <= clock_timestamp()) AS expired, \
+    a.cancel_requested, t.max_attempts, (a.lease_deadline <= clock_timestamp()) AS expired, \
     (extract(epoch FROM now() - a.changed_at) * 1000)::bigint AS in_state_ms, \
     (extract(epoch FROM now() - t.submitted_at) * 1000)::bigint AS since_submit_ms";
 
@@ -243,6 +243,7 @@ const SUMMARY: &str = "jsonb_build_object('task', t.id, 'attempt', a.id, 'status
 
 struct Locked {
     attempt: Attempt,
+    cancel_requested: bool,
     retry: RetryPolicy,
     expired: bool,
     durations: Durations,
@@ -265,6 +266,7 @@ fn locked(row: &Row) -> Result<Locked, QueueError> {
     };
     Ok(Locked {
         attempt,
+        cancel_requested: row.try_get("cancel_requested")?,
         retry: RetryPolicy {
             max_attempts: u32::try_from(max_attempts)
                 .map_err(|_| QueueError::Range("max_attempts"))?,
@@ -285,7 +287,20 @@ fn write(
     receipt: Option<&Receipt>,
     lease_secs: u32,
 ) -> Result<(Attempt, Change), QueueError> {
-    let next = transition(&row.attempt, &row.retry, event)?;
+    let mut next = transition(&row.attempt, &row.retry, event)?;
+    // a cancel asked of a live attempt that goes back to the queue (an expiry, a prepare that failed, a pause, an
+    // operator's requeue), or would but has no attempt left, takes effect there instead of at the next claim
+    let requeued = match next.status {
+        Status::Queued | Status::Waiting => true,
+        Status::Failed => !matches!(
+            event.kind,
+            Kind::Settle(Settle::Failed) | Kind::Resolve(Resolution::Failed)
+        ),
+        _ => false,
+    };
+    if row.cancel_requested && requeued {
+        next.status = Status::Cancelled;
+    }
     // the settle the holder asked for: a retry that exhaustion turns into a failure has no receipt
     let terminal = matches!(
         event.kind,
@@ -464,9 +479,17 @@ impl Store {
             if done > VERSION {
                 return Err(QueueError::SchemaAhead(done));
             }
+            let applied = if done == 0 {
+                Vec::new()
+            } else {
+                tx.query("SELECT version FROM schema_migrations", &[])?
+                    .iter()
+                    .map(|r| r.try_get::<_, i32>(0))
+                    .collect::<Result<Vec<_>, _>>()?
+            };
             STEPS
                 .iter()
-                .filter(|(v, _)| *v > done)
+                .filter(|(v, _)| !applied.contains(v))
                 .try_for_each(|(_, step)| Ok(tx.batch_execute(step)?))
         })
     }

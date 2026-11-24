@@ -119,6 +119,18 @@ impl Runner {
         line(&json!({ "msg": "error", "slot": self.slot.id, "at": at, "error": e.to_string() }));
     }
 
+    /// Whether the slot's helper is still running, as after a runner restarted mid-run: the slot is not reset under it.
+    fn helper_running(&self) -> bool {
+        Command::new("systemctl")
+            .args([
+                "is-active",
+                "--quiet",
+                &format!("exec-pool-exec@{}.service", self.slot.id),
+            ])
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
     fn guest_up(&self) -> bool {
         Command::new("systemctl")
             .args([
@@ -161,6 +173,14 @@ impl Runner {
         let mut dirty = true;
         loop {
             // a guest down or restarting (a switch restarts it) is waited for, not a reset that fails
+            // a helper a dead runner started runs on with no one renewing its lease: expire it, reset nothing under it
+            if dirty && self.helper_running() {
+                if let Ok(changes) = store.reconcile() {
+                    changes.iter().for_each(log_change);
+                }
+                thread::sleep(BACKOFF);
+                continue;
+            }
             if self.quarantine.exists() || (dirty && (!self.guest_up() || !self.release())) {
                 thread::sleep(BACKOFF);
                 continue;
@@ -454,10 +474,12 @@ impl Guest {
             r.join()
                 .map_err(|_| io::Error::other("a capture thread panicked"))??;
         }
+        let exit_code = guest_exit(status.code());
         Ok(StepEnd {
-            exit_code: guest_exit(status.code()),
+            exit_code,
             timed_out,
-            cancelled,
+            // a command that exited 0 before the stop reached it finished: its run is not cancelled
+            cancelled: cancelled && exit_code != Some(0),
         })
     }
 

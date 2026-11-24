@@ -1126,6 +1126,38 @@ fn a_running_task_is_cancelled_by_its_runner_at_the_next_heartbeat() {
 }
 
 #[test]
+fn a_marked_attempt_that_goes_back_to_the_queue_is_cancelled_there() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = submitter(&pg);
+    // leased, never started: the expiry that would queue it again cancels it
+    let a = owner.claim(&claude_slot(), 60).unwrap().unwrap().attempt.id;
+    assert_eq!(s.cancel(&id).unwrap(), (a.clone(), Status::Leased));
+    overdue(&pg, &a);
+    let changes = owner.reconcile().unwrap();
+    assert_eq!(
+        changes.iter().map(|c| (c.to, c.reason)).collect::<Vec<_>>(),
+        [(Status::Cancelled, "cancelled")]
+    );
+    assert_eq!(status(&pg, &a), ("cancelled".to_owned(), 2));
+    // a prepare that failed settles to queued: cancelled instead
+    let b = submit(&mut owner, &task("t-2", 2));
+    owner.claim(&slot("s0"), 60).unwrap().unwrap();
+    owner.apply(&b, &ev(1, Kind::Start), None).unwrap();
+    pg.sql()
+        .execute(
+            "UPDATE attempts SET cancel_requested = true, fence = lease_epoch WHERE id = $1",
+            &[&b],
+        )
+        .unwrap();
+    owner.apply(&b, &ev(1, Kind::Checkpoint), None).unwrap();
+    let (settled, _) = owner
+        .apply(&b, &ev(1, Kind::Settle(Settle::Queued)), None)
+        .unwrap();
+    assert_eq!(settled.status, Status::Cancelled);
+}
+
+#[test]
 fn a_cancel_asked_of_a_dead_runner_still_expires_to_review() {
     let pg = Pg::new();
     let mut owner = pg.migrated();

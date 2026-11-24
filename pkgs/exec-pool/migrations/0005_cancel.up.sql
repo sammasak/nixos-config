@@ -1,7 +1,8 @@
 -- Cancel (#652). A task records the role that queued it, and cancel_task lets that role, the submitter included, call
 -- off its own: a queued or waiting attempt becomes cancelled at once; a live one is marked, and its runner, which
 -- reads the mark with every heartbeat, stops the run and settles it as cancelled. A needs_review or settled attempt is
--- left as it is. A runner that died stops heartbeating, so its lease still expires to needs_review.
+-- left as it is; a marked attempt that goes back to the queue is cancelled there (queue.rs `write`). A runner that
+-- died stops heartbeating, so its lease still expires to needs_review.
 ALTER TABLE attempts DROP CONSTRAINT attempts_status_check, ADD CONSTRAINT attempts_status_check CHECK (status IN
   ('queued', 'leased', 'running', 'checkpointing', 'waiting', 'succeeded', 'failed', 'needs_review', 'cancelled'));
 ALTER TABLE attempts ADD COLUMN cancel_requested boolean NOT NULL DEFAULT false;
@@ -42,7 +43,8 @@ DECLARE
   submitted timestamptz;
 BEGIN
   SELECT x.* INTO a FROM attempts x JOIN tasks t ON t.id = x.task_id
-    WHERE (t.id = p_id OR x.id = p_id) AND t.submitter = session_user FOR UPDATE OF x;
+    WHERE (t.id = p_id OR x.id = p_id) AND t.submitter = session_user ORDER BY t.id = p_id DESC LIMIT 1
+    FOR UPDATE OF x;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'cancel_task: no task % of yours', p_id USING ERRCODE = 'P0002';
   END IF;
