@@ -4,9 +4,10 @@
 //! checkout. The agent gets the prompt behind [`PREFIX`]'s rules for handing code back on its [`branch`]. It runs with
 //! the slot's own credentials and egress; nothing here adds any.
 //!
-//! A session task runs one turn per lease in its own tree, under the session id the queue gave it: [`session_argv`]
-//! starts that session on the turn that finds no transcript of it ([`transcript_probe`]), and resumes it on every
-//! other, so a turn that died before its first write starts it again rather than resuming nothing.
+//! A session task runs one turn per lease in its own tree, under the session id the queue gave it, as interactive
+//! Claude in the slot's Herdr pane: [`session_argv`] starts that session on the turn that finds no transcript of it
+//! ([`transcript_probe`]), and resumes it on every other, so a turn that died before its first write starts it again
+//! rather than resuming nothing.
 
 use serde::Deserialize;
 
@@ -93,17 +94,26 @@ pub enum Turn {
     Resume,
 }
 
-/// A session turn's agent call: Claude's print mode with `--session-id` or `--resume` of `session` (the queue's
-/// UUID) and the turn's `input` as its prompt, the task's model kept.
+/// The socket of a session turn's agent terminal, in its HOME: the slot's Herdr pane attaches to it.
+pub const AGENT_SOCKET: &str = "/session/cur/home/.exec-pool-agent.sock";
+
+/// A session turn's agent: interactive Claude in a terminal the slot's Herdr pane attaches to.
+///
+/// It runs under `dtach -N` [`AGENT_SOCKET`], with `--session-id` or `--resume` of `session` (the queue's UUID) and
+/// the task's model.
+/// Claude is called as the named workers called it, through the login shell's `claude` function (Herdr's launcher,
+/// which adds the worker settings) with `--dangerously-skip-permissions`; Herdr's auto-attach is off, as the guest
+/// runs no Herdr. `dtach` and `env` are store paths. The turn's input is no argument: it is prompted in the pane
+/// ([`turn_input`]).
 ///
 /// # Errors
-/// What [`argv`] rejects of the task, [`Error::NoSession`] for any agent but Claude, [`Error::SessionId`] for an id
-/// that is not a UUID, or [`Error::Input`] for an empty input.
+/// What [`argv`] rejects of the task, [`Error::NoSession`] for any agent but Claude, or [`Error::SessionId`] for an
+/// id that is not a UUID.
 pub fn session_argv(
     task: &TaskSpec,
     session: &str,
-    input: &str,
     turn: Turn,
+    (dtach, env): (&str, &str),
 ) -> Result<Vec<String>, Error> {
     if task.command.agent != Agent::Claude {
         return Err(Error::NoSession(task.command.agent));
@@ -111,16 +121,45 @@ pub fn session_argv(
     if !is_uuid(session) {
         return Err(Error::SessionId(session.to_owned()));
     }
+    let (call, _) = call(task)?;
+    let mut out: Vec<String> = [
+        dtach,
+        "-N",
+        AGENT_SOCKET,
+        env,
+        "TERM=xterm-256color",
+        "HERDR_AUTOATTACH_DISABLED=1",
+        "fish",
+        "-c",
+        "claude $argv",
+        "--",
+        "--dangerously-skip-permissions",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    // the base call's model, without its print-mode flags
+    out.extend(call.into_iter().skip_while(|a| a != "--model"));
+    let flag = match turn {
+        Turn::Start => "--session-id",
+        Turn::Resume => "--resume",
+    };
+    out.extend([flag.to_owned(), session.to_owned()]);
+    Ok(out)
+}
+
+/// What a session turn tells its agent: [`PREFIX`] (with [`SESSION_WAIT`]) before `input` when it starts the
+/// session, `input` alone when it resumes it.
+///
+/// # Errors
+/// [`Error::Input`] for an empty input, or what [`branch`] rejects.
+pub fn turn_input(task: &TaskSpec, input: &str, turn: Turn) -> Result<String, Error> {
     if input.is_empty() {
         return Err(Error::Input);
     }
-    let (mut out, _) = call(task)?;
-    let (flag, prompt) = match turn {
-        Turn::Start => ("--session-id", format!("{}{input}", session_prefix(task)?)),
-        Turn::Resume => ("--resume", input.to_owned()),
-    };
-    out.extend([flag.to_owned(), session.to_owned(), "--".to_owned(), prompt]);
-    Ok(out)
+    Ok(match turn {
+        Turn::Start => format!("{}{input}", session_prefix(task)?),
+        Turn::Resume => input.to_owned(),
+    })
 }
 
 /// The guest command whose output names the session's transcript under `home` if Claude has written one.
