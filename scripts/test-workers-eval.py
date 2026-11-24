@@ -943,6 +943,7 @@ in {
   env = acer.systemd.services."exec-pool-exec@".environment;
   agentEnv = builtins.fromJSON acer.systemd.services."exec-pool-exec@".environment.EXEC_POOL_AGENT_ENV;
   scratch = acer.services.devEnvironments.instances.pool1.scratch;
+  reset = acer.systemd.services."dev-env-reset@".script;
   polkit = acer.security.polkit.extraConfig;
 }
 """
@@ -960,8 +961,8 @@ def check_runner():
     check(agent.get("ANTHROPIC_BASE_URL") == "http://127.0.0.1:4100" and agent.get("CLAUDE_CODE_OAUTH_TOKEN") == "held-by-the-host"
           and "/etc/profiles/per-user/" in agent.get("PATH", "") and not {"EDITOR", "XDG_CONFIG_HOME"} & set(agent)
           and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
-          and got.get("scratch") == ["attempts"],
-          f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
+          and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
+          f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
 
 
 def check_slot():

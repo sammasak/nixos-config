@@ -1089,7 +1089,8 @@ in
           # Run by the guest's own systemd as its user, inside the container's limits: git acts on the clones' config
           # (hooks, fsmonitor, filters), which must not run on the host.
           # shellcheck disable=SC2016 # the script expands inside the guest
-          held=$(systemd-run -M "$n" --uid=${user} --wait --pipe --quiet -- ${pkgs.bash}/bin/bash -c '
+          # --expand-environment=no: systemd would otherwise substitute each ''${...} in the script before bash sees it
+          held=$(systemd-run -M "$n" --uid=${user} --expand-environment=no --wait --pipe --quiet -- ${pkgs.bash}/bin/bash -c '
             cd "$HOME" || { echo "the home cannot be entered"; exit 0; }
             skip=(); for s in "$@"; do skip+=(-path "./$s" -prune -o); done
             errs=$(${pkgs.findutils}/bin/find . -maxdepth 5 "''${skip[@]}" -name .git -prune -print 2>&1 >/dev/null)
