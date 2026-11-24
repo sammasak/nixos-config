@@ -135,9 +135,11 @@ let
         drv() {
           local t=$SECONDS
           echo "nixos-flake-check: $1" >&2
-          nix eval --raw --no-write-lock-file ".#$1.drvPath" >/dev/null
+          got=$(nix eval --raw --no-write-lock-file ".#$1.drvPath")
           took "eval $1" "$t"
         }
+        # each host's toplevel drvPath, "host drv" per line: seventh-host-test takes them as its unseeded baselines
+        toplevels=''${NIXOS_QA_TOPLEVELS:-/dev/null}
         # Every output is evaluated, as before; only a build is ever left out. A check whose build would compile against
         # CUDA or the NVIDIA driver is built only on the host it deploys to (deploy-activate-<node>, deploy-schema-<node>,
         # both of which pull the node's closure) and deferred to that host's gate elsewhere: the dry-run that found it
@@ -231,7 +233,10 @@ let
         held=()
         for h in $hosts; do
           c=$(covered "$h" "''${all[@]}")
-          if [ -n "$c" ]; then held+=("$h:$c"); else drv "nixosConfigurations.$h.config.system.build.toplevel"; fi
+          if [ -n "$c" ]; then held+=("$h:$c"); else
+            drv "nixosConfigurations.$h.config.system.build.toplevel"
+            echo "$h $got" >>"$toplevels"
+          fi
         done
         for s in $(names formatter); do drv "formatter.$s"; done
         for p in "''${all[@]}"; do
@@ -304,9 +309,18 @@ let
           if [ "$k" -gt 0 ]; then
             echo "nixos-flake-check: eval nixosConfigurations.$h.config.system.build.toplevel: inside $c, whose derivation holds a NixOS system" \
               | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
+            # the toplevel is the system deploy-rs's activatable-<system> wraps (its activate-rs and activate-path are not)
+            a=$(nix-store -q --references "''${pre[$c]}" | grep -e '-activatable-') || a=""
+            n=-''${a#*-activatable-}
+            if [ -z "$a" ] || ! nix-store -q --references "$a" \
+              | awk -v h="$h" -v n="$n" 'substr($0, length($0) - length(n) + 1) == n { print h, $0; c++ } END { exit c != 1 }' >>"$toplevels"; then
+              echo "nixos-flake-check: no one system inside $c's activatable: seventh-host-test evaluates $h's toplevel again" \
+                | tee -a "''${NIXOS_QA_TIMES:-/dev/null}" >&2
+            fi
           else
             echo "nixos-flake-check: $c holds no NixOS system: nixosConfigurations.$h evaluated on its own" >&2
             drv "nixosConfigurations.$h.config.system.build.toplevel"
+            echo "$h $got" >>"$toplevels"
           fi
         done
         if [ ''${#deferred[@]} -gt 0 ]; then
@@ -991,9 +1005,13 @@ let
         # checks nixos-flake-check left to their own host's gate: in the summary and the gate's record, never silent
         NIXOS_QA_DEFERRED=$(mktemp)
         export NIXOS_QA_DEFERRED
+        # the flake check's host toplevels, the tests' unseeded baselines (seventh-host-test): this run's own
+        NIXOS_QA_TOPLEVELS=$(mktemp)
+        export NIXOS_QA_TOPLEVELS
         on_exit() {
           local rc=$? result=fail n
           [ "$rc" != 0 ] || result=pass
+          rm -f "$NIXOS_QA_TOPLEVELS"
           n=$(grep -c . "$NIXOS_QA_DEFERRED" || true)
           deferred=$(paste -sd, "$NIXOS_QA_DEFERRED")
           if [ "$n" -gt 0 ]; then

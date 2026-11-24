@@ -1,6 +1,7 @@
 """Loki's ruler as black-pi renders it (homelab.loki.ruler), on loopback: synthetic compaction events and systemd OOM
 lines pushed to Loki must reach a real Prometheus by remote write as the per-host, per-worker recording and a stub
-Alertmanager as UnitOOMKilled, with no other label. The rules are evaluated as Loki parses them, not imitated.
+Alertmanager as UnitOOMKilled, with no other label, whose query annotation runs on that Loki. The rules are evaluated
+as Loki parses them, not imitated.
 Usage: test-loki-ruler.py LOKI PROMETHEUS CONFIG_JSON WORKDIR"""
 import http.server
 import json
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -98,6 +100,8 @@ try:
                                f'run-u123.service: {oom}', f'session-3.scope: {oom}']),
         # a unit's own line quoting the text is no OOM kill
         journal('quoting.service', [f'quoted.service: {oom}']),
+        # what UnitOOMKilled's query annotation names besides init.scope: the unit's own stream
+        journal('nav-metrics.service', ['fatal error: runtime: out of memory']),
     ])
     # a second batch a minute boundary later: counted once, in its own window
     time.sleep(75)
@@ -130,8 +134,18 @@ try:
     recorded, fired = read()
     assert recorded == want_recorded, f'later recorded {recorded}, want {want_recorded}'
     assert fired == want_alerts, f'later fired {fired}, want {want_alerts}'
-    print('PASS: the ruler remote-writes auto compactions once per host and worker and sends UnitOOMKilled per unit',
-          flush=True)
+    # each alert's query annotation as the ruler rendered it is LogQL this Loki runs (a parse error is a 400) and finds
+    # the OOM lines with; an unfolded unit's own stream among them, so a misrendered oom_unit shows
+    for unit, q in {(a['labels']['oom_unit'], a['annotations']['query']) for a in alerts}:
+        try:
+            found = json.loads(get(f"http://127.0.0.1:{LOKI}/loki/api/v1/query_range?{urllib.parse.urlencode({'query': q})}"))
+        except urllib.error.HTTPError as e:
+            raise SystemExit(f'the query annotation {q!r} does not run: {e.read().decode()}')
+        streams = {r['stream']['unit']: [v[1] for v in r['values']] for r in found['data']['result']}
+        assert any(oom in l for l in streams.get('init.scope', [])), f'the query annotation {q!r} finds no OOM line ({streams})'
+        assert unit in ('transient', 'session') or unit in streams, f"the query annotation {q!r} misses {unit}'s stream ({streams})"
+    print('PASS: the ruler remote-writes auto compactions once per host and worker and sends UnitOOMKilled per unit, '
+          'whose query annotation runs', flush=True)
 except BaseException:
     sys.stderr.write((root / 'loki.log').read_text()[-4000:])
     raise

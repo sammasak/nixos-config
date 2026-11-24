@@ -129,6 +129,8 @@ dryruns = {
     "ownerdry": "these 2 derivations will be built:\\n  /nix/store/a-ollama-0.40.3.drv\\n  /nix/store/b-etc.drv",
     "pair": "",
     "pairfail": "",
+    # deploy-rs no longer naming its wrapper activatable-<system>: the toplevel is left out, and the flake check says so
+    "pairbare": "",
 }
 for mode, dryrun in dryruns.items():
     with tempfile.TemporaryDirectory() as t:
@@ -148,9 +150,14 @@ for mode, dryrun in dryruns.items():
                                + ("elif '--dry-run' in a and 'asus' in a[-1]: print('error: path is not valid', file=sys.stderr); sys.exit(1)\n" if dryrun is None else
                                   f"elif '--dry-run' in a and 'asus' in a[-1]: print({dryrun!r}.replace('\\\\n', '\\n'), file=sys.stderr)\n"))
         # this guest's own system has no CUDA (-qR /run/current-system); the to-build derivations' inputs do
+        # deploy-rs's chain: the check references activatable-<system>, which references the system and its activate-rs
         (t / "nix-store").write_text('#!/usr/bin/env bash\ncase "$1 $2" in "-qR "*deploy-activate-pi*) exit 0 ;; "-qR "*deploy-activate*)\n'
                                      '  echo /nix/store/y-nixos-system-acer-swift-26.11.drv; exit 0 ;; esac\n'
-                                     '[ "$2" = -qR ] && exit 0\necho /nix/store/c-cuda13.4-cuda_cudart-13.4.drv\n')
+                                     + ('' if mode == "pairbare" else 'case "$1 $2 $3" in "-q --references "*deploy-activate-acer*)\n'
+                                     '  echo /nix/store/a-activatable-nixos-system-acer-swift-26.11.drv; exit 0 ;;\n'
+                                     '"-q --references "*-activatable-*) echo /nix/store/y-nixos-system-acer-swift-26.11-activate-rs.drv\n'
+                                     '  echo /nix/store/y-nixos-system-acer-swift-26.11.drv; exit 0 ;; esac\n')
+                                     + '[ "$2" = -qR ] && exit 0\necho /nix/store/c-cuda13.4-cuda_cudart-13.4.drv\n')
         (t / "uname").write_text(f"#!/usr/bin/env bash\necho {'asus-b460m' if mode.startswith('owner') else 'acer-swift'}\n")
         (t / "record").write_text(f'#!/usr/bin/env bash\necho "$*" >> "{rec}"\n')
         for f in ("nix", "nix-store", "uname", "record"):
@@ -159,7 +166,7 @@ for mode, dryrun in dryruns.items():
         body = body.replace("${lib.getExe record}", str(t / "record")).replace("${gateHeavy}", gate_heavy.group(1)).replace("''$", "$")
         r = subprocess.run(["bash", "-euo", "pipefail", "-c", body], capture_output=True, text=True, cwd=t,
                            env={**os.environ, "PATH": f"{t}:{os.environ['PATH']}", "NIXOS_QA_DEFERRED": str(deferred),
-                                "NIXOS_QA_HEAD": "0123abc", **({"NIXOS_FLAKE_CHECK_DRY": "1"} if mode == "ownerdry" else {})})
+                                "NIXOS_QA_TOPLEVELS": str(t / "toplevels"), "NIXOS_QA_HEAD": "0123abc", **({"NIXOS_FLAKE_CHECK_DRY": "1"} if mode == "ownerdry" else {})})
         built = [c for c in calls.read_text().splitlines() if c.startswith("build ") and "--dry-run" not in c]
         check(not any("--max-jobs" in c for c in calls.read_text().splitlines()), f"{mode}: no substitute attempt with --max-jobs 0")
         if mode in ("defer", "single"):
@@ -195,6 +202,11 @@ for mode, dryrun in dryruns.items():
                   f"a host whose deploy-activate check holds a NixOS system is not evaluated alone again; one without a node is ({alone})")
             check("nixosConfigurations.acer-swift.config.system.build.toplevel: inside checks.x86_64-linux.deploy-activate-acer-swift, whose derivation holds a NixOS system" in r.stderr,
                   f"the toplevel left to its deploy check says so ({r.stderr[-600:]!r})")
+            tops = (t / "toplevels").read_text().splitlines()
+            check(sorted(tops) == ["acer-swift /nix/store/y-nixos-system-acer-swift-26.11.drv",
+                                   "lone /nix/store/x-nixosConfigurations.lone.config.system.build.toplevel.drv",
+                                   "pi /nix/store/x-nixosConfigurations.pi.config.system.build.toplevel.drv"],
+                  f"every host's toplevel reaches NIXOS_QA_TOPLEVELS, acer's the system its activatable wraps ({tops})")
             check(any("nixosConfigurations.pi.config.system.build.toplevel" in l for l in alone)
                   and "checks.aarch64-linux.deploy-activate-pi holds no NixOS system: nixosConfigurations.pi evaluated on its own" in r.stderr,
                   f"seeded: a deploy-activate check whose closure holds no NixOS system leaves its host evaluated on its own ({alone})")
@@ -206,6 +218,11 @@ for mode, dryrun in dryruns.items():
                   and any("check=checks.x86_64-linux.deploy-schema-acer-swift " in l and "eval_seconds=0 eval_with=checks.x86_64-linux.deploy-activate-acer-swift " in l for l in recs)
                   and any("check=checks.x86_64-linux.plain " in l and "eval_with= " in l for l in recs),
                   f"each record of the pair names the other in eval_with, the second's eval_seconds 0; a lone check names none ({recs})")
+        elif mode == "pairbare":
+            tops = (t / "toplevels").read_text().splitlines()
+            check(r.returncode == 0 and not any(l.startswith("acer-swift ") for l in tops)
+                  and "no one system inside checks.x86_64-linux.deploy-activate-acer-swift's activatable: seventh-host-test evaluates acer-swift's toplevel again" in r.stderr,
+                  f"seeded: a deploy check with no activatable leaves its host out of NIXOS_QA_TOPLEVELS, said ({r.returncode}, {tops}, {r.stderr[-400:]!r})")
         elif mode == "pairfail":
             built = [c for c in built if "deploy-" in c]
             check(r.returncode != 0 and not built and "error: seeded" in r.stderr,
