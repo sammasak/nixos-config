@@ -221,6 +221,23 @@ eligible, the remover moves nothing, and every one parked 14 days is stale and a
 measured: no exit time reaches the queue. Wake latency starts when a row is due: when it was sent, or a timer's
 `due_at`.
 
+## How work is dispatched
+
+The Coordinator hands out work only as pool sessions; there are no Herdr worker panes to hand to. On lenovo the
+wake-up session's `coordinator-act` and `coordinator-read` reach the skills `pool:*` tasks, which call the `exec-pool`
+wrapper above (`start`, `send`, `submit`, `wait`, `status`, `result`).
+
+- An issue gets one session: `pool:start` under the key `coord:OWNER/REPO#N`, the issue text and rules as the first
+  prompt. Its branch is `pool/<task id>`.
+- Follow-up work on it (review findings, a merge conflict, "merge main and push") is `pool:send` to that same session,
+  never a new one: the turn resumes the same transcript and tree.
+- `waiting` means the turn ended and the slot is free for other work; it needs nothing until there is a message to
+  send. No session has to stay up for it.
+- `needs_review` is the one state that wants a look: read `pool:result`, then `pool:send` the next step (that resumes
+  it) or ask the owner on the issue.
+- A review of an unreviewed PR head is a one-shot `pool:submit` at that head. A pool task cannot merge; a head graded
+  9 or more waits for the owner.
+
 ## Phase gates (detail in #646)
 
 - **v0.1 local reuse:** one opt-in host, N declared slots (#650), a durable queue (#651), a runner (#652) and

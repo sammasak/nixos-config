@@ -106,7 +106,7 @@ in
         type = types.nullOr types.str;
         default = null;
         example = "acer-swift";
-        description = "The ssh host whose `exec-pool` CLI (modules/homelab/exec-pool.nix) holds the queue: this host gets an `exec-pool` that runs it there as the same user, and skills `coordinator.poolCommand` names it; null passes nothing (the pool:* tasks refuse, pool_not_offered).";
+        description = "The ssh host whose `exec-pool` CLI (modules/homelab/exec-pool.nix) holds the queue: this host gets an `exec-pool` that runs it there as the same user, and skills `coordinator.poolCommand` names it. Required with `enable`: the Coordinator dispatches only as pool sessions.";
       };
     };
 
