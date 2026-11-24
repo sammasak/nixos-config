@@ -58,14 +58,21 @@ in
           "--collector.textfile.directory=${dir}"
         ]
         ++ lib.optional (guests != [ ]) "--collector.textfile.directory=${guestDir}";
-        # node-exporter counts a missing directory as a textfile scrape error until the first run creates it; a removed
-        # instance's file ages out by its mtime
+        # node-exporter counts a missing directory as a textfile scrape error until the first run creates it
         systemd.tmpfiles.rules = [
           "d ${dir} 0755 ${user} - -"
           # its mtime is the store's epoch: no textfile freshness rule may match it
           "L+ ${dir}/claude-compaction.prom - - - - ${compactionInfo}"
         ]
         ++ lib.optional (guests != [ ]) "d ${guestDir} 0755 root root m:2d";
+        # a retired guest's file would otherwise stay frozen and fire ShuntCollectorStale until tmpfiles ages it out
+        system.activationScripts.shuntMetricsRetired = ''
+          for f in ${guestDir}/shunt-guest-*.prom; do
+            [[ -e $f ]] || continue
+            n=''${f##*/shunt-guest-}
+            case " ${lib.concatStringsSep " " guests} " in *" ''${n%.prom} "*) ;; *) rm -f "$f" ;; esac
+          done
+        '';
 
         systemd.services.shunt-metrics = {
           description = "Shunt metrics from the owner's Claude Code hook log, for node-exporter";
