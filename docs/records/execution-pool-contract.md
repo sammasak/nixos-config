@@ -101,6 +101,18 @@ deploy. The pool keeps those untouched and adds dynamic work on top of declared 
 pins it: `sam.workers.executionPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
 worker unit, container or toplevel on msi, and its instances (`m1`, `m2`, `t1`) and their Herdr units are pinned by name.
 
+## Submitting
+
+`exec-pool submit | status | list` (`pkgs/exec-pool/src/bin/exec-pool.rs`, installed beside `exec-pool-queue` on acer)
+is how a user without root queues an agent task and watches it. It logs in as `exec_pool_submit`, a role with no
+database of its own: `homelab.postgresql.clients` in `modules/homelab/exec-pool.nix` lets the listed system users
+(`lukas`; a worker guest's user goes beside it) reach `exec_pool` as that role through a pg_ident peer map, still over
+the socket alone, with no password. Migration 0002 grants it SELECT on tasks, attempts and events and INSERT on them
+(an attempt's id and task alone, so it starts queued and unplaced); it updates and deletes nothing and reads no
+receipt. `submit` takes the agent, repo, rev, workdir, prompt and an optional model and prints the task id; the
+idempotency key is `--key`, or else derived from the rest, so the same submission again returns the same task. Its
+tasks ask for no capability and take one attempt.
+
 ## Phase gates (detail in #646)
 
 - **v0.1 local reuse:** one opt-in host, N declared slots (#650), a durable queue (#651), a runner (#652) and

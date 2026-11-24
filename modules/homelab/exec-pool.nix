@@ -64,6 +64,11 @@ in
       }
     ];
   };
+  # `exec-pool submit | status | list` for these users; a worker guest's user is added here
+  homelab.postgresql.clients.exec_pool_submit = {
+    database = "exec_pool";
+    users = [ "lukas" ];
+  };
 
   systemd.services.exec-pool-migrate = lib.recursiveUpdate unit {
     description = "Apply the execution pool queue's schema";

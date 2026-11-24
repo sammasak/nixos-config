@@ -58,6 +58,10 @@ impl Pg {
         assert!(ok, "initdb failed");
         let mut pg = Self { root, server: None };
         pg.start();
+        // what homelab.postgresql.clients creates before migrate grants to it
+        pg.sql()
+            .batch_execute("CREATE ROLE exec_pool_submit LOGIN")
+            .unwrap();
         pg
     }
 
@@ -222,13 +226,49 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert_eq!(tables(&mut pg.sql()), 4);
     s.migrate_down().unwrap();
     assert_eq!(tables(&mut pg.sql()), 0);
+    // a database at migration 1 takes the rest
+    pg.sql().batch_execute(exec_pool::queue::UP).unwrap();
     s.migrate().unwrap();
+    let version: i32 = pg
+        .sql()
+        .query_one("SELECT max(version) FROM schema_migrations", &[])
+        .unwrap()
+        .get(0);
+    assert_eq!(version, 2);
     submit(&mut s, &task("t-1", 1));
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (2)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (3)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(2))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(2))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(3))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(3))));
+}
+
+#[test]
+fn the_submitter_queues_and_reads_but_changes_nothing() {
+    let pg = Pg::new();
+    pg.migrated();
+    let conninfo = pg
+        .conninfo()
+        .replace("user=exec_pool ", "user=exec_pool_submit ");
+    let mut s = Store::open(&conninfo).unwrap();
+    let attempt = submit(&mut s, &task("t-1", 1));
+    assert_eq!(s.task("t-1").unwrap().unwrap()["status"], "queued");
+    assert_eq!(s.tasks(5).unwrap().len(), 1);
+    let mut c = Client::connect(&conninfo, NoTls).unwrap();
+    for sql in [
+        format!("UPDATE attempts SET status = 'succeeded' WHERE id = '{attempt}'"),
+        format!("DELETE FROM events WHERE attempt_id = '{attempt}'"),
+        "INSERT INTO attempts (id, task_id, status) VALUES ('x', 't-1', 'running')".to_owned(),
+        "SELECT * FROM receipts".to_owned(),
+        "CREATE TABLE x (y int)".to_owned(),
+    ] {
+        let e = c.batch_execute(&sql).unwrap_err();
+        assert_eq!(
+            e.code().map(postgres::error::SqlState::code),
+            Some("42501"),
+            "{sql}: {e}"
+        );
+    }
 }
 
 #[test]
