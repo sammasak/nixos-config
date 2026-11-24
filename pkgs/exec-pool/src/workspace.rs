@@ -7,11 +7,17 @@
 //! what does that. It trashes the whole home, and with it anything an attempt left outside its workspace. The guest
 //! can delete its own files but cannot replace its home's mount point, so the host-side [`HomeId`] proves a reset where
 //! a marker in the home would not.
+//!
+//! A session task's HOME and checkout are its own tree instead, kept on the host across turns by [`Sessions`]: each
+//! turn the root helper attaches it to the slot's dock (bound into the guest at [`DOCK`]) and detaches it once the
+//! turn's steps are gone, so the agent finds them at the same guest paths in every slot, [`SESSION_HOME`] and
+//! [`SESSION_WORK`].
 
 use std::fmt::Write as _;
+use std::fs;
 use std::io;
-use std::os::unix::fs::MetadataExt as _;
-use std::path::Path;
+use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +36,147 @@ pub enum Error {
     Command(String),
     #[error("the slot's home is the one its last attempt ran in: it was not reset")]
     NotReset,
+    #[error("the dock {0} is not empty: a tree is still attached")]
+    DockBusy(String),
+    #[error("no session tree at {0}")]
+    NoTree(String),
+    #[error("a session tree is already at {0}")]
+    TreeExists(String),
+    #[error("the tree at {path} belongs to uid {tree}, the slot's home to {slot}")]
+    Owner { path: String, tree: u32, slot: u32 },
+    #[error("{0}")]
+    Io(String),
+}
+
+/// Where a slot's dock appears in its guest.
+pub const DOCK: &str = "/session";
+/// A session's HOME in the guest while attached: the same in every slot on every host.
+pub const SESSION_HOME: &str = "/session/cur/home";
+/// Its checkout, the agent's working directory under it.
+pub const SESSION_WORK: &str = "/session/cur/work";
+
+fn io_err(path: &Path) -> impl Fn(io::Error) -> Error + '_ {
+    move |e| Error::Io(format!("{}: {e}", path.display()))
+}
+
+/// The host side of session trees: `<root>/<hex of the task id>/tree/{home,work}` and each slot's dock.
+///
+/// The dock is `<root>/dock/<slot>`, all on one filesystem so attach and detach are each one rename. Root's only: a
+/// guest sees a tree only while it is attached to its dock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sessions {
+    root: PathBuf,
+}
+
+impl Sessions {
+    #[must_use]
+    pub const fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    /// The task's tree while detached.
+    #[must_use]
+    pub fn tree(&self, task_id: &str) -> PathBuf {
+        let mut dir = String::new();
+        for b in task_id.bytes() {
+            let _ = write!(dir, "{b:02x}");
+        }
+        self.root.join(dir).join("tree")
+    }
+
+    /// Beside the tree, the helper's mark that its first turn's clone and checkout finished: until it exists, a turn
+    /// makes the tree afresh, as nothing ran in it yet.
+    #[must_use]
+    pub fn prepared(&self, task_id: &str) -> PathBuf {
+        self.tree(task_id).with_file_name("prepared")
+    }
+
+    /// Where a tree is while attached to `slot`'s dock.
+    #[must_use]
+    pub fn docked(&self, slot: &str) -> PathBuf {
+        self.root.join("dock").join(slot).join("cur")
+    }
+
+    /// Whether `slot`'s dock holds a tree.
+    #[must_use]
+    pub fn dock_busy(&self, slot: &str) -> bool {
+        self.docked(slot).symlink_metadata().is_ok()
+    }
+
+    /// A first turn's empty tree, its `home` and `work` owned by `owner` (the slot home's uid and gid), mode 0700; a
+    /// tree a turn left unprepared is removed first, without following a link in it.
+    ///
+    /// # Errors
+    /// [`Error::TreeExists`] for a prepared one, or what creating it reports.
+    pub fn create(&self, task_id: &str, (uid, gid): (u32, u32)) -> Result<(), Error> {
+        let tree = self.tree(task_id);
+        if self.prepared(task_id).symlink_metadata().is_ok() {
+            return Err(Error::TreeExists(tree.display().to_string()));
+        }
+        if tree.symlink_metadata().is_ok() {
+            fs::remove_dir_all(&tree).map_err(io_err(&tree))?;
+        }
+        let parent = tree.parent().unwrap_or(&self.root);
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .map_err(io_err(parent))?;
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&tree)
+            .map_err(io_err(&tree))?;
+        for sub in ["home", "work"] {
+            let d = tree.join(sub);
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&d)
+                .map_err(io_err(&d))?;
+            std::os::unix::fs::lchown(&d, Some(uid), Some(gid)).map_err(io_err(&d))?;
+        }
+        Ok(())
+    }
+
+    /// Moves the task's tree into `slot`'s dock, refused when the dock holds one, the task has none, or its home is
+    /// not the slot home's owner's (`uid`), as on a slot with other ids.
+    ///
+    /// # Errors
+    /// [`Error::DockBusy`], [`Error::NoTree`], [`Error::Owner`], or what the rename reports.
+    pub fn attach(&self, task_id: &str, slot: &str, uid: u32) -> Result<(), Error> {
+        let (tree, docked) = (self.tree(task_id), self.docked(slot));
+        if self.dock_busy(slot) {
+            return Err(Error::DockBusy(docked.display().to_string()));
+        }
+        let home = tree.join("home");
+        let owner = home
+            .symlink_metadata()
+            .map_err(|_| Error::NoTree(tree.display().to_string()))?
+            .uid();
+        if owner != uid {
+            return Err(Error::Owner {
+                path: home.display().to_string(),
+                tree: owner,
+                slot: uid,
+            });
+        }
+        fs::rename(&tree, &docked).map_err(io_err(&docked))
+    }
+
+    /// Moves the tree in `slot`'s dock back to the task, once nothing of the turn runs in it.
+    ///
+    /// # Errors
+    /// [`Error::NoTree`] with none in the dock, [`Error::TreeExists`] when the task has one already, or what the
+    /// rename reports.
+    pub fn detach(&self, task_id: &str, slot: &str) -> Result<(), Error> {
+        let (tree, docked) = (self.tree(task_id), self.docked(slot));
+        if !self.dock_busy(slot) {
+            return Err(Error::NoTree(docked.display().to_string()));
+        }
+        if tree.symlink_metadata().is_ok() {
+            return Err(Error::TreeExists(tree.display().to_string()));
+        }
+        fs::rename(&docked, &tree).map_err(io_err(&tree))
+    }
 }
 
 /// The host's slot home directory by device and inode; a reset makes a new directory, while the old one stays
@@ -125,6 +272,52 @@ impl Workspace {
     #[must_use]
     pub fn out(&self) -> String {
         format!("{}/out", self.dir)
+    }
+
+    /// A session turn's guest commands that create the workspace's `tmp` and `out` only: its HOME and checkout are the
+    /// attached tree's. The first fails when [`ROOT`] exists, as [`Workspace::create`]'s does.
+    #[must_use]
+    pub fn create_scratch(&self, mkdir: &str) -> [Vec<String>; 2] {
+        let s = |v: &[&str]| v.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
+        [
+            s(&[mkdir, "-m", "0700", "--", &self.root]),
+            s(&[
+                mkdir,
+                "-m",
+                "0700",
+                "--",
+                &self.dir,
+                &self.tmp(),
+                &self.out(),
+            ]),
+        ]
+    }
+
+    /// `argv` run in a session turn: in `workdir` under [`SESSION_WORK`] with HOME [`SESSION_HOME`] and this
+    /// workspace's TMPDIR, through `env`.
+    ///
+    /// # Errors
+    /// An empty argv, or a command holding `=`.
+    pub fn run_session(
+        &self,
+        env: &str,
+        workdir: &RelPath,
+        argv: &[String],
+    ) -> Result<Vec<String>, Error> {
+        let cmd = argv.first().ok_or_else(|| Error::Command(String::new()))?;
+        if cmd.contains('=') {
+            return Err(Error::Command(cmd.clone()));
+        }
+        let mut out = vec![
+            env.to_owned(),
+            "-C".to_owned(),
+            format!("{SESSION_WORK}/{}", workdir.as_str()),
+            "--".to_owned(),
+            format!("HOME={SESSION_HOME}"),
+            format!("TMPDIR={}", self.tmp()),
+        ];
+        out.extend(argv.iter().cloned());
+        Ok(out)
     }
 
     /// The guest commands that create the workspace, run in order, stopping at the first that fails. The first fails

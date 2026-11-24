@@ -27,16 +27,17 @@ disagrees with its status (required while leased, running or checkpointing, abse
 record rejects unknown fields, so no token, secret or credential can ride along: a task names a `credential_class`
 the host resolves. `TaskSpec::fits` admits a slot only when it is idle, offers the task's agent and capabilities and equals
 every pin the task sets (`runner_version`, `nix_closure_digest`, `agent_version`, `skill_revision`, reserved for #657).
-`CheckpointRef` is an opaque versioned pointer (uri, digest) until #656 defines the manifest.
+`CheckpointRef` names where a session's tree is: its generation (the lease epoch that parked it) and hosts.
 
 States (`pkgs/exec-pool/src/state.rs`, snake_case on the wire):
 
 ```text
-queued -> leased -> running -> checkpointing -> waiting | queued | succeeded | failed | needs_review
-waiting -> queued            (explicit wake)
+queued -> leased -> running -> checkpointing -> waiting | queued | succeeded | failed | needs_review | cancelled
+waiting -> queued            (a wake: for a session task, a message in its inbox)
 leased  -> queued            (lease expired before its start was accepted)
 running | checkpointing -> needs_review   (lease expired: effects unknown, never replayed blindly)
 needs_review -> succeeded | failed | queued   (resolve: an operator's explicit decision, never automatic)
+queued | waiting -> cancelled                 (cancel_task; a live attempt is marked and its runner stops it)
 any return to queued with no attempt left -> failed
 ```
 
@@ -50,9 +51,21 @@ review. Delivery is **at-least-once**: a resubmission under the same idempotency
 a different task under that key is refused, and no external effect (a GitHub mutation included) is claimed
 exactly-once. A `Receipt` lists the effects an attempt reports, for reconciliation; it counts only with the `settle`
 accepted at its lease epoch: `Receipt::settles` checks the task, attempt, epoch and outcome against the attempt the
-settle left, and only a settle to succeeded, failed or needs_review takes one (and must). Every lease but one that settles to
-`waiting` (a planned pause) counts against `retry.max_attempts` (at least 1), so an expiring lease cannot loop. `TaskSpec`, `Attempt`, `Slot` and `Receipt` each
-have a `parse()` that reads the version before any other field.
+settle left, and only a settle to succeeded, failed or needs_review takes one (and must). Every lease but one that
+parks in `waiting` counts against `retry.max_attempts` (at least 1), so an expiring lease cannot loop. `TaskSpec`,
+`Attempt`, `Slot` and `Receipt` each have a `parse()` that reads the version before any other field.
+
+### Sessions, turns, park and wake (#656)
+
+A task with `tasks.session` is a session: one agent session (its id the queue's `session_uuid`) that lives across
+leases. Each lease is one **turn**, and a turn ends in a **park** to `waiting`, never in a settle: `turn_end` when the
+agent finished its turn, `turn_error` when its call failed, left no verdict or timed out (later also `host_draining`,
+`preempted`, `waiting_until`). A failed turn never fails the session. A **wake** is a message in the task's inbox
+(`exec-pool send`): it queues the session again, and the next claim carries the turn's input (the task's prompt on the
+first turn, the messages since on a later one) and `upto`, the last message it holds, which the park hands back. A
+turn with no result, or whose lease was lost, goes to `needs_review` as any run does. The park records the result and
+a `CheckpointRef` (`generation` the lease epoch, `hosts` the host that holds the session's tree), so a send wakes it
+where its tree is. One-shot tasks keep the lifecycle above unchanged.
 
 ## Queue (#651)
 
@@ -94,29 +107,52 @@ slot's own credentials and egress. `agent::outcome(agent, exit, stdout)` maps th
 JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a Claude run with no result, is
 `needs_review`. Neither `failed` nor `needs_review` requeues, so no ambiguous external effect is replayed.
 
-## Runner (#652, first slice)
+## Runner (#652)
 
-`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`, off by default; on acer
-for its one slot `pool1`) runs as `exec_pool`, the queue's peer role, and loops: `reconcile`, `claim` for its slot
-(agent `none`, the configured capabilities), `start`, then `systemctl start exec-pool-exec@<slot>`, then `checkpoint`
-and `settle`, then `dev-env-reset@<slot>`. A polkit rule lets `exec_pool` start those two units of its own slots and
-nothing else. The helper `exec-pool-exec@<slot>` runs as root and has no queue access. It reads the versioned manifest
-(`runner::Manifest`: slot, attempt, epoch, task) from `/run/exec-pool-runner/<slot>/`, refusing a symlink. In the guest,
-as its user and through `systemd-run -M`, it clones `source.repo` into `~/task`, checks out `source.rev` and runs
-`agent::argv(&task)` in `command.workdir`. All three are argv, never a shell string, and the task is stopped at `timeoutSecs`.
-Up to 1 MiB of each stream and the result go to `/var/lib/exec-pool-exec/<slot>/<hex attempt>-<epoch>/`, kept 30 days.
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1`, and
+on msi for its slot against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
+(its agents and capabilities; with a poweroff timer only while the claim's hold ends before it), `start`, then
+`systemctl start exec-pool-exec@<slot>`, then `checkpoint` and the settle or park, the result recorded
+(`Store::record_result`: outcome, exit code, up to 16 KiB of output, the branch), then `dev-env-reset@<slot>`. The lease
+is 300 s and the runner renews it every 10 s while the helper runs; each heartbeat reads a cancel its submitter asked
+for, and a cancel, or a lease found lost, writes the marker the helper stops the run at. A polkit rule lets `exec_pool`
+start those two units of its own slots, and clear the failed state of its reset, and nothing else.
 
-Settling (`runner::decide`): a clone or checkout that fails never started the task's argv, so the attempt goes back to
-`queued`. A timeout, a guest that went away, or a missing result (or one for another attempt or epoch) goes to
-`needs_review`. Otherwise `agent::outcome` decides from the exit code and the captured stdout. The command runs as a
-oneshot unit, so only exit 0 is clean, and systemd-run's 255 (killed by a signal) counts as no exit code. A helper
-that finds its attempt's run directory already there refuses to run it again. The receipt reports no effect. An event
-the queue refuses, or one whose commit is unknown, is never re-sent: the lease (`timeoutSecs` + 1200 s) expires and
-`reconcile` decides. Work never begins before `start` is accepted. The runner resets the slot at startup (its state
-then is unknown) and after every run. A reset that fails three times writes `/var/lib/exec-pool-runner/<slot>.quarantined`,
-and that slot is not claimed for again until an operator removes the marker and restarts the runner. Every state change
-is one JSON line with its ids, and the `run` line carries exit code, output tails, `claim_to_exec_ms`, `exec_ms`,
-`prepare_ms` and `run_ms`. `slot_reset` carries `sanitize_ms`. There are no metric labels.
+The helper `exec-pool-exec@<slot>` runs as root and has no queue access. It reads the versioned manifest
+(`runner::Manifest`: slot, attempt, epoch, task, and a session turn's `session { uuid, input, upto }`) from
+`/run/exec-pool-runner/<slot>/`, refusing a symlink, and admits it only to a slot home `dev-env-reset@` replaced since
+the last run (`workspace::admit`). In the guest, as its user and through `systemd-run -M`, every step an argv and never
+a shell string: a one-shot run makes its workspace `~/attempts/<hex attempt>-<epoch>/{home,work,tmp,out}`, clones
+`source.repo` into `work`, checks out `source.rev` (an agent task on `-b pool/<task id>`, with the hand-back rules
+before its prompt) and runs `agent::argv(&task)` in `command.workdir` with that HOME and TMPDIR, stopped at
+`timeoutSecs`. Before and after, `git ls-remote` of the task's branch tells whether the run handed code back. Up to
+1 MiB of each stream and the result go to `/var/lib/exec-pool-exec/<slot>/<hex attempt>-<epoch>/`, kept 30 days.
+
+A session turn runs in the task's **tree**, `${stateDir}/.sessions/<hex task id>/tree/{home,work}` on the host, root's
+only. The helper attaches it for the turn by renaming it to the slot's dock `${stateDir}/.sessions/dock/<slot>/cur`,
+which the guest sees at `/session/cur`, the same path in every slot on every host: HOME `/session/cur/home`, cwd
+`/session/cur/work/<workdir>`, TMPDIR in the slot home's workspace as for a one-shot run. A dock that still holds a
+tree refuses the attach. The first turn creates the tree (owned as the slot home is) and clones and checks out into it;
+until that finished, a later turn makes it afresh. Every turn links the guest user's current Home Manager files into
+the session's HOME (they dangle after a deploy), probes for Claude's transcript `$HOME/.claude/projects/*/<uuid>.jsonl`
+and runs `claude -p --output-format json` with `--resume <uuid>` when it exists and `--session-id <uuid>` (and the
+hand-back rules) when it does not, the turn's input as the prompt. Once the turn's units are gone from the guest it
+detaches the tree; one it could not detach stays in the dock, and the runner quarantines the slot. Codex and Pi run no
+sessions yet.
+
+Settling a one-shot run (`runner::decide`): a cancel is `cancelled`; a clone or checkout that fails never started the
+task's argv, so the attempt goes back to `queued`. A timeout, a guest that went away, or a missing result (or one for
+another attempt or epoch) goes to `needs_review`. Otherwise `agent::outcome` decides from the exit code and the
+captured stdout. A session turn (`runner::decide_turn`) parks instead on every end of the agent's call, a timeout
+included. The command runs as a oneshot unit, so only exit 0 is clean, and systemd-run's 255 (killed by a signal)
+counts as no exit code. A helper that finds its attempt's run directory already there refuses to run it again. An
+event the queue refuses, or one whose commit is unknown, is never re-sent: the lease expires and `reconcile` decides.
+The runner resets the slot at startup (its state then is unknown) and after every run. A reset that fails three times,
+or a dock left holding a tree, writes `/var/lib/exec-pool-runner/<slot>.quarantined` and a row in the queue's
+`quarantined_slots` (ExecPoolSlotQuarantined), and that slot is not claimed for again until an operator removes the
+marker. Every state change is one JSON line with its ids, and the `run` line carries exit code, output tails,
+`claim_to_exec_ms`, `exec_ms`, `prepare_ms` and `run_ms`. `slot_reset` carries `sanitize_ms`. There are no metric
+labels but states, agents, reasons and hosts.
 
 ## Not `sam.agentRuntime`
 

@@ -4,7 +4,8 @@
 //! [`Manifest`] and starts `exec-pool-exec@<slot>`; that helper (root, no queue access) runs the task in the slot's
 //! guest as its user and writes an [`ExecResult`]; the runner settles the attempt from it with [`decide`] and releases
 //! the slot with `dev-env-reset@<slot>`. Each attempt runs in its own [`Workspace`], which that reset removes with the
-//! home.
+//! home. A session task's lease is one turn ([`Session`]): its HOME and checkout are its tree, attached to the slot for
+//! the turn, and the turn ends in a park ([`decide_turn`]), not a settle.
 
 use std::fmt::Write as _;
 use std::fs::File;
@@ -14,7 +15,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::workspace::{self, Workspace};
+use crate::workspace::{self, SESSION_HOME, SESSION_WORK, Workspace};
 use crate::{
     Agent, Error, Outcome, Receipt, SchemaVersion, Settle, TaskSpec, agent, parse_versioned,
 };
@@ -34,16 +35,48 @@ pub struct Manifest {
     pub attempt_id: String,
     pub lease_epoch: u64,
     pub task: TaskSpec,
+    /// A session task's turn; `None` for a one-shot task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<Session>,
+}
+
+/// One turn of a session task, as its claim carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Session {
+    /// The agent's session id, the queue's.
+    pub uuid: String,
+    /// What the turn tells the agent: the task's prompt on its first turn, the messages sent since on a later one.
+    pub input: String,
+    /// The last inbox message the input holds, handed back with the park.
+    pub upto: i64,
+}
+
+/// One guest command of a run, under its transient unit's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Step {
+    pub stage: Stage,
+    pub unit: &'static str,
+    pub argv: Vec<String>,
+}
+
+const fn step(stage: Stage, unit: &'static str, argv: Vec<String>) -> Step {
+    Step { stage, unit, argv }
 }
 
 impl Manifest {
     /// # Errors
     /// What [`parse_versioned`] or [`TaskSpec::validate`] (against the task's own capabilities: the queue checked
-    /// the grant at submit) or [`agent::argv`] rejects, and a `rev` that would read as an option.
+    /// the grant at submit) or [`agent::argv`] (and for a session [`agent::session_argv`]) rejects, and a `rev` that
+    /// would read as an option.
     pub fn parse(json: &str) -> Result<Self, Error> {
         let m: Self = parse_versioned(json)?;
         m.task.validate(&m.task.capabilities)?;
         agent::argv(&m.task).map_err(|e| Error::Json(e.to_string()))?;
+        if let Some(s) = &m.session {
+            agent::session_argv(&m.task, &s.uuid, &s.input, agent::Turn::Start)
+                .map_err(|e| Error::Json(e.to_string()))?;
+        }
         if m.task.source.rev.starts_with('-') {
             return Err(Error::Json(format!(
                 "source.rev {:?} starts with '-'",
@@ -91,9 +124,76 @@ impl Manifest {
     pub fn steps(
         &self,
         ws: &Workspace,
-        (git, env, mkdir): (&str, &str, &str),
+        tools: (&str, &str, &str),
         identity: (&str, &str),
-    ) -> Result<[(Stage, Vec<String>); 5], StepsError> {
+    ) -> Result<Vec<Step>, StepsError> {
+        let (_, env, mkdir) = tools;
+        let t = &self.task;
+        let run = ws.run(env, &t.command.workdir, &agent::argv(t)?)?;
+        let [root, dirs] = ws.create(mkdir);
+        let [clone, checkout] = self.clone(&ws.checkout(), tools, identity)?;
+        Ok(vec![
+            step(Stage::Prepare, "exec-pool-root", root),
+            step(Stage::Prepare, "exec-pool-workspace", dirs),
+            step(Stage::Prepare, "exec-pool-clone", clone),
+            step(Stage::Prepare, "exec-pool-checkout", checkout),
+            step(Stage::Run, "exec-pool-task", run),
+        ])
+    }
+
+    /// A session turn's preparing guest commands: the workspace's `tmp` and `out` in the slot home, on the turn that
+    /// created the tree the clone into it and the checkout of the task's branch, then on every turn `relink`, which
+    /// links the guest user's current Home Manager files into the session's HOME (they dangle after a deploy). The
+    /// agent's own step follows the transcript probe: [`Manifest::turn`].
+    ///
+    /// # Errors
+    /// What [`agent::branch`] rejects.
+    pub fn session_steps(
+        &self,
+        ws: &Workspace,
+        tools: (&str, &str, &str),
+        identity: (&str, &str),
+        (created, relink): (bool, Vec<String>),
+    ) -> Result<Vec<Step>, StepsError> {
+        let [root, dirs] = ws.create_scratch(tools.2);
+        let mut steps = vec![
+            step(Stage::Prepare, "exec-pool-root", root),
+            step(Stage::Prepare, "exec-pool-workspace", dirs),
+        ];
+        if created {
+            let [clone, checkout] = self.clone(SESSION_WORK, tools, identity)?;
+            steps.push(step(Stage::Prepare, "exec-pool-clone", clone));
+            steps.push(step(Stage::Prepare, "exec-pool-checkout", checkout));
+        }
+        steps.push(step(Stage::Prepare, "exec-pool-relink", relink));
+        Ok(steps)
+    }
+
+    /// The session turn's agent step, in its tree: [`agent::session_argv`] of the turn's input.
+    ///
+    /// # Errors
+    /// [`agent::Error::NoSession`] for a one-shot manifest, what [`agent::session_argv`] or
+    /// [`Workspace::run_session`] rejects.
+    pub fn turn(&self, ws: &Workspace, env: &str, turn: agent::Turn) -> Result<Step, StepsError> {
+        let s = self
+            .session
+            .as_ref()
+            .ok_or(agent::Error::NoSession(self.task.command.agent))?;
+        let argv = agent::session_argv(&self.task, &s.uuid, &s.input, turn)?;
+        Ok(step(
+            Stage::Run,
+            "exec-pool-task",
+            ws.run_session(env, &self.task.command.workdir, &argv)?,
+        ))
+    }
+
+    /// The clone into `checkout` and the checkout of the rev there, by `git` with no global or system config.
+    fn clone(
+        &self,
+        checkout: &str,
+        (git, env, _): (&str, &str, &str),
+        identity: (&str, &str),
+    ) -> Result<[Vec<String>; 2], StepsError> {
         let s = |v: &[&str]| v.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
         let git = |args: &[&str]| {
             let mut v = s(&[
@@ -106,14 +206,12 @@ impl Manifest {
             v
         };
         let t = &self.task;
-        let checkout = ws.checkout();
-        let run = ws.run(env, &t.command.workdir, &agent::argv(t)?)?;
         // a none task is told nothing of a branch: its rev detached
         let on = match t.command.agent {
             Agent::None => vec!["--detach".to_owned()],
             _ => vec!["-b".to_owned(), agent::branch(t)?],
         };
-        let mut checkout_args = s(&["-C", &checkout, "checkout", "--quiet"]);
+        let mut checkout_args = s(&["-C", checkout, "checkout", "--quiet"]);
         checkout_args.extend(on);
         checkout_args.push(t.source.rev.clone());
         let checkout_args: Vec<&str> = checkout_args.iter().map(String::as_str).collect();
@@ -128,16 +226,9 @@ impl Manifest {
         if let Some(url) = github_push_url(&t.source.repo) {
             clone.extend(["-c".to_owned(), format!("remote.origin.pushurl={url}")]);
         }
-        clone.extend(s(&["--", &t.source.repo, &checkout]));
+        clone.extend(s(&["--", &t.source.repo, checkout]));
         let clone: Vec<&str> = clone.iter().map(String::as_str).collect();
-        let [root, dirs] = ws.create(mkdir);
-        Ok([
-            (Stage::Prepare, root),
-            (Stage::Prepare, dirs),
-            (Stage::Prepare, git(&clone)),
-            (Stage::Prepare, git(&checkout_args)),
-            (Stage::Run, run),
-        ])
+        Ok([git(&clone), git(&checkout_args)])
     }
 
     /// The guest command that lists the task's branch on its repository once the run is over, anonymously like the
@@ -161,6 +252,81 @@ impl Manifest {
         ]
         .map(str::to_owned)
         .to_vec())
+    }
+}
+
+/// The guest command that links the guest user's current Home Manager files into the session's HOME.
+///
+/// Every file of the generation under `guest_home` is linked, replacing what is there, and directories are made
+/// writable ones, so the agent can write beside the links.
+#[must_use]
+pub fn relink(cp: &str, guest_home: &str) -> Vec<String> {
+    [
+        cp,
+        "-rsT",
+        "--no-preserve=mode",
+        "--remove-destination",
+        &format!("{guest_home}/.local/state/home-manager/gcroots/current-home/home-files"),
+        SESSION_HOME,
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
+/// Why a session turn parked, as the queue records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnEnd {
+    /// The agent finished its turn.
+    End,
+    /// The agent's call failed, left no verdict or ran out of time; the session waits for the next message.
+    Error,
+}
+
+impl TurnEnd {
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::End => "turn_end",
+            Self::Error => "turn_error",
+        }
+    }
+}
+
+/// Where a session turn goes: parked to wait for its next message, or settled as a one-shot run would be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnSettle {
+    Park(TurnEnd),
+    Settle(Settle),
+}
+
+/// Where the session turn `attempt` at `epoch` goes after its run.
+///
+/// No result (or someone else's), or a guest that went away, is `needs_review` as for any run, its tree left where it
+/// is; a cancel is `cancelled`; a turn that never reached the agent goes back to `queued`. Every end of the agent's
+/// call, a timeout included, parks the session: `turn_end` for Claude's verdict of success, `turn_error` otherwise. A
+/// failed turn never fails the session.
+#[must_use]
+pub fn decide_turn(
+    attempt: &str,
+    epoch: u64,
+    result: Option<&ExecResult>,
+    stdout: &str,
+) -> TurnSettle {
+    let Some(r) = result.filter(|r| r.attempt_id == attempt && r.lease_epoch == epoch) else {
+        return TurnSettle::Settle(Settle::NeedsReview);
+    };
+    if r.cancelled {
+        return TurnSettle::Settle(Settle::Cancelled);
+    }
+    if r.stage == Stage::Prepare {
+        return TurnSettle::Settle(Settle::Queued);
+    }
+    if !r.container_active {
+        return TurnSettle::Settle(Settle::NeedsReview);
+    }
+    match agent::outcome(Agent::Claude, r.exit_code, stdout) {
+        Outcome::Succeeded if !r.timed_out => TurnSettle::Park(TurnEnd::End),
+        _ => TurnSettle::Park(TurnEnd::Error),
     }
 }
 
@@ -266,6 +432,26 @@ pub struct ExecResult {
 }
 
 impl ExecResult {
+    /// The result of `m`'s run before its first step: in preparing, nothing exited yet.
+    #[must_use]
+    pub fn begun(m: &Manifest) -> Self {
+        Self {
+            schema_version: SchemaVersion::CURRENT,
+            attempt_id: m.attempt_id.clone(),
+            lease_epoch: m.lease_epoch,
+            stage: Stage::Prepare,
+            exit_code: None,
+            timed_out: false,
+            cancelled: false,
+            branch: None,
+            container_active: true,
+            stdout_tail: String::new(),
+            stderr_tail: String::new(),
+            prepare_ms: 0,
+            run_ms: 0,
+        }
+    }
+
     /// # Errors
     /// What [`parse_versioned`] rejects.
     pub fn parse(json: &str) -> Result<Self, Error> {
@@ -491,12 +677,189 @@ mod tests {
 
     fn steps(m: &Manifest) -> [(Stage, Vec<String>); 5] {
         let ws = m.workspace("/home/u").unwrap();
-        m.steps(
+        let all: Vec<(Stage, Vec<String>)> = m
+            .steps(
+                &ws,
+                ("/git", "/env", "/mkdir"),
+                ("Pool", "pool@example.org"),
+            )
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.stage, s.argv))
+            .collect();
+        all.try_into().unwrap()
+    }
+
+    const UUID: &str = "a3a7c578-9125-8a32-a933-73a095d4a27b";
+
+    fn session(input: &str) -> Manifest {
+        let mut t = task();
+        t["command"] =
+            json!({ "agent": "claude", "argv": ["fix it", "opus"], "workdir": "crates/x" });
+        Manifest::parse(
+            &json!({ "schema_version": 1, "slot": "pool1", "attempt_id": "t1.a", "lease_epoch": 3, "task": t,
+                     "session": { "uuid": UUID, "input": input, "upto": 7 } })
+            .to_string(),
+        )
+        .unwrap()
+    }
+
+    fn session_steps(m: &Manifest, created: bool) -> Vec<Step> {
+        let ws = m.workspace("/home/u").unwrap();
+        m.session_steps(
             &ws,
             ("/git", "/env", "/mkdir"),
             ("Pool", "pool@example.org"),
+            (created, relink("/cp", "/home/u")),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_first_turn_clones_into_its_tree_and_a_later_one_only_relinks() {
+        let m = session("fix it");
+        let units = |steps: &[Step]| steps.iter().map(|s| s.unit).collect::<Vec<_>>();
+        let first = session_steps(&m, true);
+        assert_eq!(
+            units(&first),
+            [
+                "exec-pool-root",
+                "exec-pool-workspace",
+                "exec-pool-clone",
+                "exec-pool-checkout",
+                "exec-pool-relink"
+            ]
+        );
+        assert!(first.iter().all(|s| s.stage == Stage::Prepare));
+        // the scratch in the slot home, the checkout in the tree, on the task's branch
+        let dir = "/home/u/attempts/74312e61-3";
+        assert_eq!(
+            first[1].argv,
+            [
+                "/mkdir",
+                "-m",
+                "0700",
+                "--",
+                dir,
+                &format!("{dir}/tmp"),
+                &format!("{dir}/out")
+            ]
+        );
+        assert!(first[2].argv.ends_with(&[
+            "--".into(),
+            "https://example.org/r.git".into(),
+            SESSION_WORK.into()
+        ]));
+        assert!(
+            first[3]
+                .argv
+                .ends_with(&["-b".into(), "pool/t1".into(), "abc123".into()])
+        );
+        assert_eq!(
+            first[4].argv,
+            [
+                "/cp",
+                "-rsT",
+                "--no-preserve=mode",
+                "--remove-destination",
+                "/home/u/.local/state/home-manager/gcroots/current-home/home-files",
+                SESSION_HOME
+            ]
+        );
+        let later = session_steps(&m, false);
+        assert_eq!(
+            units(&later),
+            ["exec-pool-root", "exec-pool-workspace", "exec-pool-relink"]
+        );
+    }
+
+    #[test]
+    fn a_turn_starts_its_session_until_a_transcript_exists_then_resumes_it() {
+        let m = session("now add a test");
+        let ws = m.workspace("/home/u").unwrap();
+        let start = m.turn(&ws, "/env", agent::Turn::Start).unwrap();
+        assert_eq!(start.stage, Stage::Run);
+        assert_eq!(
+            start.argv[..6],
+            [
+                "/env",
+                "-C",
+                &format!("{SESSION_WORK}/crates/x"),
+                "--",
+                &format!("HOME={SESSION_HOME}"),
+                "TMPDIR=/home/u/attempts/74312e61-3/tmp"
+            ]
+        );
+        let tail = |s: &Step| s.argv[s.argv.len() - 6..].to_vec();
+        let started = tail(&start);
+        assert_eq!(started[..4], ["--model", "opus", "--session-id", UUID]);
+        assert!(
+            started[5].starts_with("You run as an execution pool task")
+                && started[5].ends_with("now add a test")
+        );
+        let resumed = tail(&m.turn(&ws, "/env", agent::Turn::Resume).unwrap());
+        assert_eq!(
+            resumed,
+            ["--model", "opus", "--resume", UUID, "--", "now add a test"]
+        );
+        let one_shot = manifest(&task()).unwrap();
+        assert!(one_shot.turn(&ws, "/env", agent::Turn::Start).is_err());
+    }
+
+    #[test]
+    fn every_end_of_a_turn_parks_the_session_and_an_unknown_one_goes_to_review() {
+        let turn = |r: Option<&ExecResult>, stdout: &str| decide_turn("t1.a", 3, r, stdout);
+        let ok = result(Stage::Run, Some(0));
+        assert_eq!(
+            turn(Some(&ok), "{\"is_error\":false}"),
+            TurnSettle::Park(TurnEnd::End)
+        );
+        for (r, stdout) in [
+            (result(Stage::Run, Some(0)), "{\"is_error\":true}"),
+            (result(Stage::Run, Some(1)), ""),
+            (result(Stage::Run, None), ""),
+            (
+                ExecResult {
+                    timed_out: true,
+                    ..result(Stage::Run, None)
+                },
+                "{\"is_error\":false}",
+            ),
+        ] {
+            assert_eq!(
+                turn(Some(&r), stdout),
+                TurnSettle::Park(TurnEnd::Error),
+                "{r:?}"
+            );
+        }
+        assert_eq!(turn(None, ""), TurnSettle::Settle(Settle::NeedsReview));
+        assert_eq!(
+            decide_turn("t1.a", 2, Some(&ok), ""),
+            TurnSettle::Settle(Settle::NeedsReview),
+            "another epoch's result"
+        );
+        let gone = ExecResult {
+            container_active: false,
+            ..ok.clone()
+        };
+        assert_eq!(
+            turn(Some(&gone), ""),
+            TurnSettle::Settle(Settle::NeedsReview)
+        );
+        assert_eq!(
+            turn(Some(&result(Stage::Prepare, Some(1))), ""),
+            TurnSettle::Settle(Settle::Queued)
+        );
+        let cancelled = ExecResult {
+            cancelled: true,
+            ..ok
+        };
+        assert_eq!(
+            turn(Some(&cancelled), ""),
+            TurnSettle::Settle(Settle::Cancelled)
+        );
+        assert_eq!(TurnEnd::End.reason(), "turn_end");
+        assert_eq!(TurnEnd::Error.reason(), "turn_error");
     }
 
     #[test]

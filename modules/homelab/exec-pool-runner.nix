@@ -101,6 +101,10 @@ in
           EXEC_POOL_GIT = lib.getExe pkgs.git;
           EXEC_POOL_ENV = "${pkgs.coreutils}/bin/env";
           EXEC_POOL_MKDIR = "${pkgs.coreutils}/bin/mkdir";
+          EXEC_POOL_CP = "${pkgs.coreutils}/bin/cp";
+          EXEC_POOL_FIND = "${pkgs.findutils}/bin/find";
+          # a session task's trees and each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
+          EXEC_POOL_SESSIONS = "${dev.stateDir}/.sessions";
           EXEC_POOL_GUEST_HOME = guestHome;
           # the host side of the guest home, whose identity admits an attempt only after a reset
           EXEC_POOL_SLOT_HOME = "${dev.stateDir}/%i/home";
