@@ -308,15 +308,7 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
         }
         "wait" => {
             args.only("wait", &["timeout"], 1)?;
-            let timeout = args
-                .opt("timeout")
-                .map(|n| {
-                    n.parse().map(Duration::from_secs).map_err(|_| {
-                        Fail::Usage("--timeout must be a number of seconds".to_owned())
-                    })
-                })
-                .transpose()?;
-            println!("{}", wait(store, id(args)?, timeout)?);
+            println!("{}", wait(store, id(args)?, timeout(args)?)?);
         }
         "send" => {
             args.only("send", &["prompt", "prompt-file", "at"], 1)?;
@@ -332,11 +324,7 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
         }
         "attach" => {
             args.only("attach", &["timeout"], 1)?;
-            let timeout = args.opt("timeout").map_or(Ok(ATTACH_TIMEOUT), |n| {
-                n.parse()
-                    .map(Duration::from_secs)
-                    .map_err(|_| Fail::Usage("--timeout must be a number of seconds".to_owned()))
-            })?;
+            let timeout = timeout(args)?.unwrap_or(ATTACH_TIMEOUT);
             store.send(id(args)?, ATTACH_PROMPT)?;
             println!("{}", attached(store, id(args)?, timeout)?);
         }
@@ -355,6 +343,16 @@ fn run(cmd: &str, args: &Args, store: &mut Store) -> Result<(), Fail> {
         other => return Err(Fail::Usage(format!("unknown command {other:?}"))),
     }
     Ok(())
+}
+
+fn timeout(args: &Args) -> Result<Option<Duration>, Fail> {
+    args.opt("timeout")
+        .map(|n| {
+            n.parse()
+                .map(Duration::from_secs)
+                .map_err(|_| Fail::Usage("--timeout must be a number of seconds".to_owned()))
+        })
+        .transpose()
 }
 
 fn id(args: &Args) -> Result<&str, Fail> {
