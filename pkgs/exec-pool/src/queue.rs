@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::task_result::TaskResult;
+use crate::workspace::Sessions;
 use crate::{
     Attempt, CheckpointRef, Error, Event, Kind, ParkReason, Placement, Receipt, Resolution,
     RetryPolicy, SchemaVersion, Settle, Slot, Status, TaskSpec, reachable, transition,
@@ -1114,7 +1115,8 @@ impl Store {
     }
 
     /// Every session as `session_gc` decides its garbage collection (its task, state, last change, hosts, and whether
-    /// it is eligible or stale), oldest change first; only the eligible ones with `eligible_only`.
+    /// it is eligible or stale) and its directory's name (`dir`, [`Sessions::hex`]), oldest change first; only the
+    /// eligible ones with `eligible_only`.
     ///
     /// # Errors
     /// What the database reports.
@@ -1127,7 +1129,15 @@ impl Store {
                 &[&eligible_only],
             )?
             .iter()
-            .map(|r| Ok(r.try_get(0)?))
+            .map(|r| {
+                let mut v: Value = r.try_get(0)?;
+                // the name of its directory under .sessions and .sessions-store, as the runner names it
+                let dir = v.get("task_id").and_then(Value::as_str).map(Sessions::hex);
+                if let (Value::Object(m), Some(dir)) = (&mut v, dir) {
+                    m.insert("dir".to_owned(), Value::String(dir));
+                }
+                Ok(v)
+            })
             .collect()
         })
     }
