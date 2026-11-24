@@ -28,9 +28,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use exec_pool::agent;
 use exec_pool::queue::{Change, Claim, Park, QueueError, Store};
 use exec_pool::runner::{
-    CAPTURE_BYTES, ExecResult, Listed, Manifest, QUICK_SECS, Session, Stage, Step, TurnSettle,
-    claim_fits, decide, decide_turn, guest_exit, handed_back, holds_tree, read_regular, receipt,
-    relink, remote_head, session_checkpoint, tail, tree_check,
+    CAPTURE_BYTES, ExecResult, Listed, Manifest, PREPARE_FAILURES, QUICK_SECS, Session, Stage,
+    Step, TurnSettle, claim_fits, decide, decide_turn, guest_exit, handed_back, holds_tree,
+    read_regular, receipt, relink, remote_head, session_checkpoint, tail, tree_check,
 };
 use exec_pool::sync::{self, Depot};
 use exec_pool::task_result::TaskResult;
@@ -579,6 +579,7 @@ impl Runner {
             "stopped_for": stopping,
             "exit_code": result.as_ref().and_then(|r| r.exit_code),
             "timed_out": result.as_ref().map(|r| r.timed_out),
+            "failed_step": result.as_ref().and_then(|r| r.failed_step.as_deref()),
             "stdout_tail": result.as_ref().map(|r| r.stdout_tail.as_str()),
             "stderr_tail": result.as_ref().map(|r| r.stderr_tail.as_str()),
             "claim_to_exec_ms": claim_to_exec_ms, "exec_ms": exec_ms,
@@ -913,6 +914,9 @@ impl Guest {
                 return false;
             }
             if end.exit_code != Some(0) || end.timed_out {
+                if stage == Stage::Prepare {
+                    result.failed_step = Some(unit.to_owned());
+                }
                 return false;
             }
         }
@@ -1207,7 +1211,10 @@ impl<'a> Dock<'a> {
             Ok(run) => {
                 guest.steps(vec![run], bounds, (out, err), result);
             }
-            Err(e) => note("no turn", &e),
+            Err(e) => {
+                result.failed_step = Some("turn".to_owned());
+                note("no turn", &e);
+            }
         }
     }
 
@@ -1481,8 +1488,34 @@ fn exec(slot: &str) -> Result<(), String> {
     }
     if result.stage == Stage::Prepare {
         result.prepare_ms = ms(t);
+        let unattached = dock.is_some() && attached.is_none();
+        failed_preparing(slot, &mut result, (admitted, unattached));
     }
     write_result(slot, &dir, result)
+}
+
+/// Names the step a run that never reached its agent failed at, when no prepare step did (refused the home, its tree
+/// not attached, or no steps), and counts it in the slot's textfile, `exec_pool_prepare_failures_total{step}`, if this
+/// host has one: the step is a bounded name, never the task's. A run stopped by a cancel or a drain did not fail.
+fn failed_preparing(slot: &str, result: &mut ExecResult, (admitted, unattached): (bool, bool)) {
+    if result.cancelled || result.drained {
+        return;
+    }
+    let step = result.failed_step.get_or_insert_with(|| {
+        match (admitted, unattached) {
+            (false, _) => "admit",
+            (true, true) => "attach",
+            (true, false) => "manifest",
+        }
+        .to_owned()
+    });
+    if let Some(dir) = std::env::var_os("EXEC_POOL_TEXTFILE") {
+        let file = PathBuf::from(dir).join(format!("exec-pool-prepare-{slot}.prom"));
+        let counted = sync::bump(&file, PREPARE_FAILURES, &format!("step=\"{step}\""));
+        if let Err(e) = counted {
+            eprintln!("exec-pool-exec: {}: {e}", file.display());
+        }
+    }
 }
 
 /// Completes `result` with whether the slot's guest is still up and the ends of the run's output, and writes it for

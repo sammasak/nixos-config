@@ -145,8 +145,6 @@ in
   systemd.tmpfiles.rules = [ "d ${dir} 0755 exec_pool exec_pool -" ];
   systemd.services.exec-pool-metrics = lib.recursiveUpdate unit {
     description = "Execution pool queue metrics, for node-exporter";
-    # exec_pool_slots_declared, beside the busy count the queue knows
-    environment.EXEC_POOL_SLOTS = toString config.sam.workers.executionPool.slots;
     # a run before the schema exists would fail; a failed migrate leaves the textfile to go stale
     after = [
       "postgresql.target"
