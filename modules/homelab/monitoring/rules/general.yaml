@@ -1,5 +1,6 @@
 # kube-prometheus-stack 85.0.3's general.rules; TargetDown's description names only the job
-# (no namespace or service label off Kubernetes). Watchdog is what the lenovo watchdog
+# (no namespace or service label off Kubernetes). Each alert adds a query and points runbook_url at
+# docs/alert-runbooks.md, as the monitoring-alert-annotations check requires. Watchdog is what the lenovo watchdog
 # reads from Alertmanager (modules/homelab/cluster-watchdog.nix).
 groups:
   - name: general.rules
@@ -7,7 +8,8 @@ groups:
       - alert: TargetDown
         annotations:
           description: '{{ printf "%.4g" $value }}% of the {{ $labels.job }} targets are down.'
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/general/targetdown
+          query: 'up == 0'
+          runbook_url: https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#targetdown
           summary: One or more targets are unreachable.
         expr: 100 * (count(up == 0) BY (cluster, job, namespace, service) / count(up) BY (cluster, job, namespace, service)) > 10
         for: 10m
@@ -26,7 +28,8 @@ groups:
             "DeadMansSnitch" integration in PagerDuty.
 
 '
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/general/watchdog
+          query: 'ALERTS{alertname="Watchdog"}'
+          runbook_url: https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#watchdog
           summary: An alert that should always be firing to certify that Alertmanager is working properly.
         expr: vector(1)
         labels:
@@ -46,7 +49,8 @@ groups:
             This alert should be routed to a null receiver and configured to inhibit alerts with severity="info".
 
 '
-          runbook_url: https://runbooks.prometheus-operator.dev/runbooks/general/infoinhibitor
+          query: 'ALERTS{severity="info",alertstate="firing"}'
+          runbook_url: https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#infoinhibitor
           summary: Info-level alert inhibition.
         expr: group by (namespace) (ALERTS{severity = "info"} == 1) unless on (namespace) group by (namespace) (ALERTS{alertname != "InfoInhibitor", alertstate = "firing", severity =~ "warning|critical"} == 1)
         labels:

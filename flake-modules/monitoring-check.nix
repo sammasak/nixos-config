@@ -273,7 +273,7 @@ in
             { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.pyyaml ])) ]; }
             ''
               check() { python3 -I ${../scripts/check-alert-annotations.py} ${../docs} "$@"; }
-              check ${homelabRules.file} ${shippingRules} ${../modules/homelab/monitoring/rules/shunt.yaml} ${../modules/homelab/monitoring/rules/exec-pool.yaml} ${../modules/homelab/monitoring/loki-rules/fake/homelab.yaml}
+              check ${homelabRules.file} ${shippingRules} ${../modules/homelab/monitoring/rules/shunt.yaml} ${../modules/homelab/monitoring/rules/exec-pool.yaml} ${../modules/homelab/monitoring/rules/general.yaml} ${../modules/homelab/monitoring/rules/llm-gateway.yaml} ${../modules/homelab/monitoring/loki-rules/fake/homelab.yaml}
               ${lib.concatStrings (
                 lib.mapAttrsToList (name: s: ''
                   if check ${

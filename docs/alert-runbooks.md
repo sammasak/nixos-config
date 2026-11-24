@@ -1,10 +1,10 @@
 # Alert runbooks
 
 One section per alert in `modules/homelab/monitoring/rules/homelab.yaml`, `modules/homelab/monitoring/rules/shunt.yaml`,
-`modules/homelab/monitoring/rules/exec-pool.yaml` and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
+`modules/homelab/monitoring/rules/exec-pool.yaml`, `general.yaml` and `llm-gateway.yaml` beside them, and Loki's ruler rules, `modules/homelab/monitoring/loki-rules/fake/homelab.yaml`;
 each alert's `runbook_url` points at its heading here. The shipping alerts point at [shipping.md](shipping.md#alerts).
 
-Every homelab, Shunt, execution pool, shipping and Loki-ruler alert carries the same annotations, held by the `monitoring-alert-annotations` check
+Every homelab, Shunt, execution pool, general, llm-gateway, shipping and Loki-ruler alert carries the same annotations, held by the `monitoring-alert-annotations` check
 (`flake-modules/monitoring-check.nix`, `scripts/check-alert-annotations.py`):
 
 | annotation | holds |
@@ -199,6 +199,23 @@ LAN; on acer, `journalctl -u caddy --since -10m`.
 Fires: the certificate a public name serves expires in under 14 days, for an hour.
 First: on acer, `journalctl -u caddy | grep -i acme` for the renewal's error.
 
+## TargetDown
+
+Fires: over 10 % of one job's scrape targets are down for 10 minutes. Inhibited for a host inside its planned
+power-off (HostExpectedOff), so a sleeping host's node-exporter and nvidia-gpu targets stay quiet.
+First: the query lists every down target; `http://192.168.10.137:9090/targets?search=<job>` for the scrape error.
+
+## Watchdog
+
+Fires: always, to prove the rule-to-Alertmanager path works. Null route, never notifies; lenovo's watchdog
+(`modules/homelab/cluster-watchdog.nix`) alerts when it is missing from Alertmanager.
+First: nothing to do while it fires. If the query is empty, Prometheus's rule evaluation is broken.
+
+## InfoInhibitor
+
+Fires: an info alert is firing with no warning or critical alert beside it. Null route; it only inhibits.
+First: nothing to do; the query lists the info alerts it covers.
+
 ## PrometheusTargetsMostlyDown
 
 Fires: under 70 % of scrape targets are up for 10 minutes: the monitoring signal itself is suspect.
@@ -263,3 +280,23 @@ not registered, e.g. a skills pin without them), then the results without any co
 `SHUNT_DISABLE=1` in the session's environment also silences them, and a session started before the switch keeps
 the hooks it started with: restart it.
 Rollback: `sam.claude.bulkReader.enable = false` for that host or worker (acer: the guest module in its configuration).
+
+## LLMGatewayFreeFloorLow
+
+Fires: every tier-2 (free floor) quota group has under 10 % of its daily allowance left, for 10 minutes; it resets at
+00:00 UTC. Requests fall to msi or get 429s.
+First: the query shows each group's ratio; the gateway's `/status` `quota_groups`. Runbook:
+[llm-gateway.md](https://github.com/sammasak/homelab-gitops/blob/main/docs/runbooks/llm-gateway.md#provider-exhausted-clients-get-429-with-retry-after).
+
+## LLMGatewayBatchHittingReserve
+
+Fires: llm-gateway refused a batch project's request because only the interactive reserve of the free quota is left.
+First: the query shows that project's refusals by reason; `/status` `projects` and `quota_groups`. Same runbook as
+[LLMGatewayFreeFloorLow](#llmgatewayfreefloorlow).
+
+## LLMGatewayDown
+
+Fires: Prometheus on black-pi cannot scrape llm-gateway's admin port on acer for 5 minutes: Pi, Open WebUI and factum
+have no LLM path.
+First: on acer, `systemctl status llm-gateway` and `journalctl -u llm-gateway --since -15m`. Runbook:
+[llm-gateway.md](https://github.com/sammasak/homelab-gitops/blob/main/docs/runbooks/llm-gateway.md#gateway-down-unit-not-running-clients-get-connection-refused--502).
