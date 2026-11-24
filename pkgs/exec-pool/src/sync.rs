@@ -25,6 +25,8 @@ pub const GENERATION: &str = "generation";
 
 /// The I/O timeout of one transfer, in seconds.
 const IO_SECS: u32 = 120;
+/// The longest one transfer may take, in minutes: a drain has ten before the poweroff.
+const STOP_AFTER_MINS: u32 = 5;
 
 impl Depot {
     /// `<hex>/<rel>` in the store, as rsync names it.
@@ -43,6 +45,7 @@ impl Depot {
             "--delete",
             "--mkpath",
             &format!("--timeout={IO_SECS}"),
+            &format!("--stop-after={STOP_AFTER_MINS}"),
         ]
         .map(str::to_owned)
         .into();
@@ -340,6 +343,7 @@ mod tests {
                 "--delete",
                 "--mkpath",
                 "--timeout=120",
+                "--stop-after=5",
                 "-M--fake-super",
                 "--exclude=/home/.ssh/",
                 "/s/74/tree/",
@@ -348,7 +352,7 @@ mod tests {
         );
         let argv = remote().push_argv("rsync", Path::new("/s/74/generation"), "74", GENERATION);
         assert_eq!(
-            argv.get(6..).unwrap_or_default(),
+            argv.get(7..).unwrap_or_default(),
             [
                 "-e",
                 "/bin/ssh -i /etc/ssh/ssh_host_ed25519_key",
@@ -368,7 +372,7 @@ mod tests {
     fn a_pull_restores_the_modes_and_gives_the_tree_to_the_slot_owner() {
         let argv = remote().pull_argv("rsync", "74", Path::new("/s/74/incoming"), (1000, 100));
         assert_eq!(
-            argv.get(8..).unwrap_or_default(),
+            argv.get(9..).unwrap_or_default(),
             [
                 "-M--fake-super",
                 "--chown=1000:100",
@@ -383,7 +387,7 @@ mod tests {
         assert_eq!(
             local
                 .pull_argv("rsync", "74", Path::new("/s/74/incoming"), (1, 2))
-                .get(6..)
+                .get(7..)
                 .unwrap_or_default(),
             [
                 "--fake-super",

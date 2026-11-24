@@ -236,12 +236,12 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
         .query_one("SELECT max(version) FROM schema_migrations", &[])
         .unwrap()
         .get(0);
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     submit(&mut s, &task("t-1", 1));
     // a newer binary's additive migration keeps the floor: this one still serves the database, as after a rollback
     pg.sql()
         .execute(
-            "INSERT INTO schema_migrations (version, floor) VALUES (13, 12)",
+            "INSERT INTO schema_migrations (version, floor) VALUES (14, 13)",
             &[],
         )
         .unwrap();
@@ -249,17 +249,17 @@ fn migration_goes_up_down_and_up_and_refuses_a_newer_schema() {
     assert!(s.claim(&slot("s0"), 60).unwrap().is_some());
     // one this binary would misread, or one that names no floor, is refused
     pg.sql()
-        .execute("INSERT INTO schema_migrations (version) VALUES (14)", &[])
+        .execute("INSERT INTO schema_migrations (version) VALUES (15)", &[])
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(14))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(15))));
     pg.sql()
         .execute(
-            "UPDATE schema_migrations SET floor = 14 WHERE version = 14",
+            "UPDATE schema_migrations SET floor = 15 WHERE version = 15",
             &[],
         )
         .unwrap();
-    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(14))));
-    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(14))));
+    assert!(matches!(s.migrate(), Err(QueueError::SchemaAhead(15))));
+    assert!(matches!(s.migrate_down(), Err(QueueError::SchemaAhead(15))));
 }
 
 #[test]
@@ -1939,6 +1939,97 @@ fn a_turn_that_never_parks_is_handed_its_messages_again() {
     s.send(&id, "two").unwrap();
     let (_, _, turn) = started(&mut owner);
     assert_eq!(turn.input, "one\n\ntwo");
+}
+
+#[test]
+fn a_turn_stopped_for_a_poweroff_continues_and_is_told_to_check_its_last_action() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let (mut s, id) = session(&pg);
+    let (a, epoch, _) = started(&mut owner);
+    s.send(&id, "and then this").unwrap();
+    let (_, changes) = owner
+        .park(&a, epoch, &park(ParkReason::HostDraining, 0))
+        .unwrap();
+    assert_eq!(
+        moves(&changes),
+        [(Status::Waiting, "host_draining"), (Status::Queued, "wake")]
+    );
+    let (a, epoch, turn) = started(&mut owner);
+    assert!(
+        turn.input
+            .starts_with("You were paused mid-turn by the pool (its host was powering off)."),
+        "{}",
+        turn.input
+    );
+    assert!(turn.input.ends_with("\n\nand then this"), "{}", turn.input);
+    // its park reads both, the continue and the older message under it
+    owner
+        .park(&a, epoch, &park(ParkReason::TurnEnd, turn.upto))
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "waiting");
+    s.send(&id, "later").unwrap();
+    let (_, _, turn) = started(&mut owner);
+    assert_eq!(turn.input, "later", "after a turn that ended, no note");
+}
+
+#[test]
+fn a_one_shot_run_drained_while_preparing_runs_again_one_drained_mid_run_goes_to_review() {
+    let pg = Pg::new();
+    let mut owner = pg.migrated();
+    let tries = |a: &str| -> i32 {
+        pg.sql()
+            .query_one("SELECT tries FROM attempts WHERE id = $1", &[&a])
+            .unwrap()
+            .get(0)
+    };
+    let last_reason = |a: &str| -> String {
+        pg.sql()
+            .query_one(
+                "SELECT reason FROM events WHERE attempt_id = $1 ORDER BY id DESC LIMIT 1",
+                &[&a],
+            )
+            .unwrap()
+            .get(0)
+    };
+    // drained before its agent started: back to the queue with its one try
+    let a = submit(&mut owner, &task("t-1", 1));
+    let epoch = owner
+        .claim(&slot("s0"), 60)
+        .unwrap()
+        .unwrap()
+        .attempt
+        .lease_epoch;
+    for kind in [Kind::Start, Kind::Checkpoint, Kind::Settle(Settle::Drained)] {
+        owner.apply(&a, &ev(epoch, kind), None).unwrap();
+    }
+    assert_eq!((status(&pg, &a).0.as_str(), tries(&a)), ("queued", 0));
+    assert_eq!(last_reason(&a), "host_draining");
+    let epoch = owner
+        .claim(&slot("s1"), 60)
+        .unwrap()
+        .unwrap()
+        .attempt
+        .lease_epoch;
+    // drained after it: what it pushed is unknown, so it goes to review with its receipt, never queued again
+    for kind in [Kind::Start, Kind::Checkpoint] {
+        owner.apply(&a, &ev(epoch, kind), None).unwrap();
+    }
+    let interrupted = ev(epoch, Kind::Settle(Settle::Interrupted));
+    assert!(
+        owner.apply(&a, &interrupted, None).is_err(),
+        "a review takes a receipt"
+    );
+    owner
+        .apply(
+            &a,
+            &interrupted,
+            Some(&receipt(&a, "t-1", epoch, "needs_review")),
+        )
+        .unwrap();
+    assert_eq!(status(&pg, &a).0, "needs_review");
+    assert_eq!(last_reason(&a), "host_draining");
+    assert!(owner.claim(&slot("s2"), 60).unwrap().is_none());
 }
 
 #[test]

@@ -26,7 +26,7 @@ pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
 /// From 7 each records its floor, the oldest VERSION whose reads and writes stay correct on it: an additive one keeps
 /// the previous floor, so a binary rolled back across it still serves; one an older binary would misread or break by
 /// its writes records its own version.
-const STEPS: [(i32, &str); 12] = [
+const STEPS: [(i32, &str); 13] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
@@ -45,6 +45,7 @@ const STEPS: [(i32, &str); 12] = [
         12,
         include_str!("../migrations/0012_session_gc_handed_back.up.sql"),
     ),
+    (13, include_str!("../migrations/0013_drain_reason.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");
 const DOWN_RESULT: &str = include_str!("../migrations/0003_result.down.sql");
@@ -54,7 +55,8 @@ const DOWN_SLOTS: &str = include_str!("../migrations/0008_slots.down.sql");
 const DOWN_SESSION: &str = include_str!("../migrations/0009_session.down.sql");
 const DOWN_SESSION_METRICS: &str = include_str!("../migrations/0010_session_metrics.down.sql");
 const DOWN_CLAIM_HOST: &str = include_str!("../migrations/0011_claim_host.down.sql");
-const VERSION: i32 = 12;
+const DOWN_DRAIN_REASON: &str = include_str!("../migrations/0013_drain_reason.down.sql");
+const VERSION: i32 = 13;
 /// The fence's SQLSTATE, raised by `attempts_fence`.
 const FENCED: &str = "XP409";
 const LIVE: &str = "('leased', 'running', 'checkpointing')";
@@ -217,7 +219,8 @@ pub struct Claim {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Turn {
     pub session_uuid: String,
-    /// The task's prompt on the first turn; after it, the unread inbox rows oldest first, each a paragraph.
+    /// The task's prompt on the first turn; after it, the unread inbox rows, a `continue` first, then oldest first,
+    /// each a paragraph.
     pub input: String,
     /// The highest inbox id in `input`, 0 for none: the rows the turn's [`Park`] marks read. A turn that never parks
     /// marks none, so the next is handed them again.
@@ -244,6 +247,9 @@ pub struct Park {
 /// What a `continue` row reads as in a turn's input: a turn stopped before it ended.
 const CONTINUE: &str =
     "Your previous turn was stopped before it ended. Continue where you left off.";
+/// A `continue` row's text after a park for a host powering off: the turn was stopped mid-action.
+const DRAINED: &str = "You were paused mid-turn by the pool (its host was powering off). Check the state of your \
+    last action before continuing.";
 
 /// A connection that reconnects on the next call after the database went away.
 pub struct Store {
@@ -281,6 +287,8 @@ fn u64_of(field: &'static str, v: i64) -> Result<u64, QueueError> {
 const fn reason(kind: &Kind, to: Status) -> &'static str {
     match (kind, to) {
         (Kind::Settle(Settle::Failed) | Kind::Resolve(Resolution::Failed), _) => "failed",
+        (Kind::Settle(Settle::Drained), Status::Queued)
+        | (Kind::Settle(Settle::Interrupted), Status::NeedsReview) => "host_draining",
         (_, Status::Cancelled) => "cancelled",
         (_, Status::Failed) => "attempts_exhausted",
         (Kind::Lease(_), _) => "lease",
@@ -376,7 +384,9 @@ fn write(
     // the settle the holder asked for: a retry that exhaustion turns into a failure has no receipt
     let terminal = matches!(
         event.kind,
-        Kind::Settle(Settle::Succeeded | Settle::Failed | Settle::NeedsReview)
+        Kind::Settle(
+            Settle::Succeeded | Settle::Failed | Settle::NeedsReview | Settle::Interrupted
+        )
     );
     if terminal != receipt.is_some() {
         return Err(QueueError::Receipt(next.status));
@@ -617,7 +627,7 @@ impl Store {
             None => Err(QueueError::NotMigrated),
             Some(v) if v > VERSION => Err(QueueError::SchemaAhead(v)),
             Some(_) => Ok(tx.batch_execute(&format!(
-                "{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
+                "{DOWN_DRAIN_REASON}{DOWN_CLAIM_HOST}{DOWN_SESSION_METRICS}{DOWN_SESSION}{DOWN_SLOTS}{DOWN_QUARANTINE}{DOWN_CANCEL}{DOWN_RESULT}{DOWN_SUBMITTER}{DOWN}"
             ))?),
         })
     }
@@ -1338,11 +1348,21 @@ fn turn(
             checkpoint,
         }));
     }
+    let drained = tx
+        .query_opt(
+            "SELECT reason = 'host_draining' FROM events WHERE attempt_id = $1 AND to_status = 'waiting' \
+             ORDER BY id DESC LIMIT 1",
+            &[&attempt],
+        )?
+        .map(|r| r.try_get::<_, bool>(0))
+        .transpose()?
+        .unwrap_or(false);
     let mut input = String::new();
     let mut upto = 0;
+    // a stopped turn's continue goes first, though what that turn was told is older than it
     for r in tx.query(
         "SELECT id, kind, body FROM inbox WHERE task_id = $1 AND consumed_epoch IS NULL \
-         AND (due_at IS NULL OR due_at <= now()) ORDER BY id",
+         AND (due_at IS NULL OR due_at <= now()) ORDER BY kind <> 'continue', id",
         &[&task.id],
     )? {
         let (id, kind, body): (i64, &str, Option<&str>) =
@@ -1351,10 +1371,11 @@ fn turn(
             input.push_str("\n\n");
         }
         input.push_str(match (kind, body) {
+            ("continue", None) if drained => DRAINED,
             ("continue", None) => CONTINUE,
             (_, b) => b.unwrap_or_default(),
         });
-        upto = id;
+        upto = upto.max(id);
     }
     Ok(Some(Turn {
         session_uuid,

@@ -118,6 +118,13 @@ impl Manifest {
         format!("{} {}\n", self.attempt_id, self.lease_epoch)
     }
 
+    /// What the runner writes to the same marker to have the helper stop this attempt because the host powers off:
+    /// a session's turn parks to continue elsewhere, a one-shot run goes back to the queue.
+    #[must_use]
+    pub fn drain_token(&self) -> String {
+        format!("{} {} host_draining\n", self.attempt_id, self.lease_epoch)
+    }
+
     /// The attempt's workspace under the guest user's home.
     ///
     /// # Errors
@@ -339,10 +346,18 @@ pub fn decide_turn(
         return TurnSettle::Settle(Settle::Cancelled);
     }
     if r.stage == Stage::Prepare {
-        return TurnSettle::Settle(Settle::Queued);
+        // before its agent ran, a drained turn's tree was neither changed nor pushed: it runs again where it may
+        return TurnSettle::Settle(if r.drained {
+            Settle::Drained
+        } else {
+            Settle::Queued
+        });
     }
     if !r.container_active {
         return TurnSettle::Settle(Settle::NeedsReview);
+    }
+    if r.drained {
+        return TurnSettle::Park(ParkReason::HostDraining);
     }
     match agent::outcome(Agent::Claude, r.exit_code, stdout) {
         Outcome::Succeeded if !r.timed_out => TurnSettle::Park(ParkReason::TurnEnd),
@@ -444,6 +459,9 @@ pub struct ExecResult {
     /// The helper stopped the attempt, before or during a step, for the runner's cancel marker.
     #[serde(default)]
     pub cancelled: bool,
+    /// The helper stopped the attempt, before or during a step, for the runner's drain marker: the host powers off.
+    #[serde(default)]
+    pub drained: bool,
     /// The task's branch, `pool/<task id>`, when the repository shows it after the run.
     #[serde(default)]
     pub branch: Option<String>,
@@ -477,6 +495,7 @@ impl ExecResult {
             branch: None,
             tree_lost: None,
             stored: false,
+            drained: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -494,8 +513,10 @@ impl ExecResult {
 
 /// Where the attempt `attempt` at `epoch` settles after its run.
 ///
-/// A run the helper stopped for a cancel is `cancelled`, whatever stage it reached. Otherwise only a run that never
-/// started the task's argv goes back to `queued`. No result (or someone else's), a timeout or
+/// A run the helper stopped for a cancel is `cancelled`, whatever stage it reached. One it stopped because the host
+/// powers off is `drained` (run again elsewhere, its try given back) while it was preparing, and `interrupted` (to
+/// review, as an ambiguous external mutation is never replayed) once its agent started. Otherwise only a run that never started the task's argv goes back to
+/// `queued`. No result (or someone else's), a timeout or
 /// a guest that went away is `needs_review`, never replayed; otherwise [`agent::outcome`] of the exit and `stdout`
 /// (the task's whole captured stdout: Claude's verdict is its last line) decides.
 #[must_use]
@@ -511,6 +532,15 @@ pub fn decide(
     };
     if r.cancelled {
         return Settle::Cancelled;
+    }
+    // drained before its agent started, a run starts again elsewhere, its try given back; after, what it did is
+    // unknown, and it is not replayed
+    if r.drained {
+        return if r.stage == Stage::Prepare {
+            Settle::Drained
+        } else {
+            Settle::Interrupted
+        };
     }
     if r.stage == Stage::Prepare {
         return Settle::Queued;
@@ -532,8 +562,8 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
     let outcome = match to {
         Settle::Succeeded => Outcome::Succeeded,
         Settle::Failed => Outcome::Failed,
-        Settle::NeedsReview => Outcome::NeedsReview,
-        Settle::Waiting | Settle::Queued | Settle::Cancelled => return None,
+        Settle::NeedsReview | Settle::Interrupted => Outcome::NeedsReview,
+        Settle::Waiting | Settle::Queued | Settle::Cancelled | Settle::Drained => return None,
     };
     Some(Receipt {
         schema_version: SchemaVersion::CURRENT,
@@ -546,10 +576,10 @@ pub fn receipt(task_id: &str, attempt_id: &str, lease_epoch: u64, to: Settle) ->
     })
 }
 
-/// Whether a claim at `now` (unix seconds) that holds the slot up to `hold_secs` ends before the host's poweroff.
+/// Whether `hold_secs` from `now` (unix seconds) ends before the host's poweroff: for a claim, that its run starts
+/// well ahead of the drain; for a running attempt, that the drain has not begun.
 ///
-/// `show` is `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer: a claim the
-/// poweroff would cut short sends its attempt to review. A timer with no next elapse is stopped, as a switch restarting
+/// `show` is `systemctl show -p LoadState -p NextElapseUSecRealtime --timestamp=unix` of its off timer. A timer with no next elapse is stopped, as a switch restarting
 /// it leaves it for a moment: that claims nothing either.
 ///
 /// # Errors
@@ -672,6 +702,7 @@ mod tests {
             branch: None,
             tree_lost: None,
             stored: false,
+            drained: false,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -855,6 +886,42 @@ mod tests {
         );
         let stored = session_checkpoint("t1", "msi-ms7758", 4, true);
         assert_eq!(stored.hosts, ["msi-ms7758", STORE]);
+    }
+
+    #[test]
+    fn a_run_stopped_for_a_poweroff_parks_its_turn_or_goes_back_to_the_queue() {
+        let drained = ExecResult {
+            drained: true,
+            exit_code: None,
+            ..result(Stage::Run, Some(0))
+        };
+        assert_eq!(
+            decide_turn("t1.a", 3, Some(&drained), ""),
+            TurnSettle::Park(ParkReason::HostDraining)
+        );
+        assert_eq!(
+            decide("t1.a", 3, Agent::Claude, Some(&drained), ""),
+            Settle::Interrupted,
+            "a one-shot run its agent began may have pushed: review, never a replay"
+        );
+        assert!(receipt("t1", "t1.a", 3, Settle::Interrupted).is_some());
+        let preparing = ExecResult {
+            stage: Stage::Prepare,
+            ..drained
+        };
+        assert_eq!(
+            decide("t1.a", 3, Agent::Claude, Some(&preparing), ""),
+            Settle::Drained,
+            "one its agent never reached starts again elsewhere"
+        );
+        assert_eq!(
+            decide_turn("t1.a", 3, Some(&preparing), ""),
+            TurnSettle::Settle(Settle::Drained),
+            "a turn its agent never reached runs again, its tree as it was"
+        );
+        let m = manifest(&task()).unwrap();
+        assert_ne!(m.drain_token(), m.cancel_token());
+        assert!(m.drain_token().starts_with(m.cancel_token().trim_end()));
     }
 
     #[test]
