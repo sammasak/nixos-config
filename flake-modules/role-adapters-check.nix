@@ -1,7 +1,7 @@
 # Every installed Claude agent adapter, on each host of the system and each of its worker guests, may name its contract
 # and jq files only in its own store closure: a `~/` checkout or a relative `agents/...` path is absent in a guest or at
 # another revision on a host. The unpinned adapters and one naming a store path without its context are the seeded
-# failures. Its `cd ~/claude-code-skills && devenv tasks run` command form is not checked: devenv needs a checkout.
+# failures. Its `cd <skills checkout> && devenv tasks run` command form is not checked: devenv needs a checkout.
 {
   config,
   lib,
