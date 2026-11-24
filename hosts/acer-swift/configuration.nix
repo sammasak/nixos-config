@@ -42,7 +42,7 @@
     pi = true;
     nativeOtel = true;
   };
-  # A 7G pool reserves 2G each for at most 3, 2 recommended (docs/nspawn-workers.md, Sizing).
+  # A 7G pool reserves 2G each for at most 3: herman, a1 and pool1 (docs/nspawn-workers.md, Sizing).
   sam.workers = {
     labelPrefix = "acer";
     pool.memory = "7G";
@@ -55,6 +55,7 @@
     executionPool = {
       enable = true;
       slots = 1;
+      agents = [ "claude" ];
     };
   };
   homelab.execPool.runner.enable = true;

@@ -336,6 +336,19 @@ ROOT_IN_GUEST = ('{ allowed = sys.config.nix.settings.allowed-users; trusted = s
                  'binds = map (b: { src = b.hostPath; dst = b.mountPoint; ro = b.isReadOnly; }) (builtins.attrValues c.bindMounts); '
                  'sudoPassword = c.config.security.sudo.wheelNeedsPassword; sub = c.config.users.users.alice.subUidRanges; }; in { r = f "r"; s = f "s"; ok = f "ok"; })')
 NONE_DECLARED = "{ services.devEnvironments.instances = lib.mkForce { }; }"
+# the guest's resolver: by default the stock copy of the host's resolv.conf, waited for; with nameservers, its own static
+RESOLVER = ('{ ns = sys.config.containers.ok.config.networking.nameservers; '
+            'host = sys.config.containers.ok.config.networking.useHostResolvConf; '
+            'local = sys.config.containers.ok.config.networking.localCommands; '
+            'pre = map toString sys.config.systemd.services."container@ok".serviceConfig.ExecStartPre; }')
+RESOLVER_SET = '{ services.devEnvironments.nameservers = [ "192.0.2.53" ]; }'
+# msi's guests as committed: the fleet's DNS host from fleet.nix, never the host's resolv.conf (an IPv6 RA server)
+FLEET_RESOLVER = r"""
+let
+  c = (builtins.getFlake (toString %(root)s)).nixosConfigurations.msi-ms7758.config;
+  dns = (builtins.head (builtins.filter (p: p.port == 53 && p.host != null) c.sam.fleet.public)).host;
+in { want = c.sam.fleet.hosts.${dns}.address; got = builtins.mapAttrs (_: g: { ns = g.config.networking.nameservers; host = g.config.networking.useHostResolvConf; }) c.containers; }
+"""
 NO_ROOT = ('{ allowed = sys.config.nix.settings.allowed-users; '
            'mounts = builtins.mapAttrs (_: f: f.options) (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); '
            'nosuid = builtins.attrNames (flake.inputs.nixpkgs.lib.filterAttrs (_: f: builtins.elem "nosuid" f.options) sys.config.fileSystems); }')
@@ -826,7 +839,8 @@ in {
   agents = builtins.attrNames (lib.filterAttrs (_: i: i.agent != "none") dev.instances);
   herdr = builtins.filter (lib.hasPrefix "worker-herdr-") (builtins.attrNames c.systemd.services);
   slots = lib.mapAttrs (n: i: {
-    inherit (i) agent prompt model credentials telemetry;
+    inherit (i) agent prompt model credentials telemetry headlessAgents;
+    baseUrl = c.containers.${n}.config.environment.variables.ANTHROPIC_BASE_URL or null;
     reserved = i.memory.reserved;
     sockets = builtins.attrNames c.containers.${n}.config.systemd.sockets;
     binds = builtins.attrNames c.containers.${n}.bindMounts;
@@ -890,6 +904,14 @@ def check_pool_compat():
         check(moved <= shared and units.keys() - mine == absent.get("units", {}).keys() and len(mine) == 3 * n
               and {k: v for k, v in on.get("containers", {}).items() if k not in names} == absent.get("containers") and on.get("inventory") == (n > 0),
               f"slots = {n}: a container@, worker- and worker-herdr- unit per slot, the named workers' units and containers unchanged, worker-pool-inventory {'installed' if n else 'absent'} ({sorted(mine)}, moved {sorted(moved)})")
+    # agents = [ "claude" ]: the slot gets a named Claude worker's route, the anthropic proxy, and nothing more
+    on = pool_eval('{ sam.workers.executionPool = { enable = true; slots = 1; agents = [ "claude" ]; }; }')
+    s = on.get("slots", {}).get("pool1", {})
+    extra = [x for x in s.get("sockets", []) if x.endswith("-egress")] + [b for b in s.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/run/egress", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+    check(on.get("failing") == [] and s.get("agent") == "none" and s.get("credentials") == [] and s.get("headlessAgents") == ["claude"]
+          and s.get("baseUrl") == "http://127.0.0.1:4100" and extra == ["anthropic-egress", "/run/egress"]
+          and on.get("agents") == named and on.get("shutdown") == absent.get("shutdown"),
+          f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     # POOL_CASES were prefetched; a whole msi per type error, one at a time
     outs = [run_eval(fleet(c[1])) for c in POOL_CASES]
     typed = [subprocess.run(["nix", "eval", "--impure", "--json", "--expr", POOL_THROW % {"root": json.dumps(ROOT), "case": c[1]}], capture_output=True, text=True)
@@ -1160,6 +1182,20 @@ def main():
     out = nix_eval(NONE_DECLARED, NO_ROOT)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     check(got.get("nosuid") == [], f"a host that declares no instance and no retired name gets no mount ({got or out.stderr.strip()[-300:]})")
+    for case, custom in (("{ }", False), (RESOLVER_SET, True)):
+        out = nix_eval(case, RESOLVER)
+        got = json.loads(out.stdout) if out.returncode == 0 else {}
+        waits = any("worker-wait-resolv-conf" in x for x in got.get("pre", []))
+        if custom:
+            check(got.get("ns") == ["192.0.2.53"] and got.get("host") is False and "nameserver 192.0.2.53" in got.get("local", "") and not waits,
+                  f"with nameservers the guest writes its own resolv.conf from them, not the host's copy ({got or out.stderr.strip()[-300:]})")
+        else:
+            check(got.get("ns") == [] and got.get("host") is True and waits,
+                  f"without nameservers the guest keeps the host's resolv.conf copy and waits for it ({got or out.stderr.strip()[-300:]})")
+    out = run_eval(FLEET_RESOLVER % {"root": json.dumps(ROOT)})
+    got = json.loads(out.stdout) if out.returncode == 0 else {}
+    check(got.get("got") and all(g == {"ns": [got["want"]], "host": False} for g in got["got"].values()),
+          f"msi's guests resolve through the fleet's DNS host, not the host's resolv.conf ({got or out.stderr.strip()[-300:]})")
     out = nix_eval("{ }", LIMITS)
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     want = {"memory_reserved": str(2 << 30), "pool_memory": str(8 << 30), "pool_swap": str(got.get("swap")), "cpu_weight": "200",

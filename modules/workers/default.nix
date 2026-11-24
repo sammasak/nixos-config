@@ -264,6 +264,11 @@ let
         description = "Also pass GitHub's GraphQL API, which no repository list can bound; most gh pr and issue commands need it.";
       };
     };
+    options.headlessAgents = mkOption {
+      type = types.listOf (types.enum [ "claude" ]);
+      default = [ ];
+      description = "Agents something other than the session surface starts in the instance, beside `agent`: each gets the egress route an instance with that `agent` does, and no session.";
+    };
     options.telemetry = mkOption {
       type = types.bool;
       default = profile.nativeOtel;
@@ -333,6 +338,14 @@ in
       unitPrefix = "worker";
       stateDir = "/var/lib/workers";
       guestModules = [ fleetGuest ];
+      # the LAN's resolver, sam.fleet.public's DNS entry: msi's own resolv.conf can hold only an IPv6 RA server
+      nameservers = [
+        config.sam.fleet.hosts.${
+          (lib.findFirst (
+            p: p.port == 53 && p.host != null
+          ) (throw "sam.workers: no DNS host in sam.fleet.public") config.sam.fleet.public).host
+        }.address
+      ];
       credentials = {
         # the host user's own key is also the environment's, for `git push`
         id_ed25519 = dev.paths.clientKey;
@@ -368,7 +381,7 @@ in
       egressInaccessible = [ "/run/secrets.d" ]; # sops-nix: every host secret; the proxy gets its own as a credential
       egress = {
         anthropic = {
-          for = i: i.agent == "claude";
+          for = i: i.agent == "claude" || lib.elem "claude" i.headlessAgents;
           site = _: ''
             @other not path /v1/*
             respond @other 403
