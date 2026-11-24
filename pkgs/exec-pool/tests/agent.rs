@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use exec_pool::agent::{Error, argv, outcome};
+use exec_pool::agent::{Error, PREFIX, argv, branch, outcome};
 use exec_pool::{Agent, Outcome, TaskSpec};
 use serde_json::json;
 
@@ -19,6 +19,47 @@ fn task(agent: &str, args: &[&str]) -> TaskSpec {
     TaskSpec::parse(&v.to_string(), &BTreeSet::new()).unwrap_or_else(|e| unreachable!("{e}"))
 }
 
+/// The prompt an agent gets for task `t-655`'s `prompt`.
+fn told(prompt: &str) -> String {
+    format!("{}{prompt}", PREFIX.replace("{branch}", "pool/t-655"))
+}
+
+#[test]
+fn every_agent_is_told_to_push_its_own_branch_alone() {
+    let t = task("claude", &["go"]);
+    assert_eq!(branch(&t).unwrap(), "pool/t-655");
+    let prompt = argv(&t).unwrap().pop().unwrap();
+    assert!(prompt.ends_with("The task:\n\ngo"), "{prompt}");
+    for rule in [
+        "on branch pool/t-655",
+        "`Why:` line",
+        "git push origin pool/t-655",
+        "devenv shell -- git push",
+        "Never push main",
+        "never force-push",
+        "no --no-verify",
+    ] {
+        assert!(prompt.contains(rule), "{rule}: {prompt}");
+    }
+    assert!(!prompt.contains("{branch}"));
+    let long = "x".repeat(101);
+    for id in ["-x", "a/b", "a..b", "a b", "ä", &long] {
+        let mut bad = t.clone();
+        bad.id = id.to_owned();
+        assert_eq!(argv(&bad), Err(Error::Branch(id.to_owned())), "{id}");
+        assert_eq!(
+            bad.validate(&BTreeSet::new()),
+            Err(exec_pool::Error::BranchId(id.to_owned())),
+            "refused at submit: {id}"
+        );
+    }
+    assert_eq!(
+        argv(&task("none", &["true"])).unwrap(),
+        ["true"],
+        "a none task gets no prompt"
+    );
+}
+
 #[test]
 fn claude_runs_print_mode_with_the_prompt_after_the_options() {
     assert_eq!(
@@ -30,7 +71,7 @@ fn claude_runs_print_mode_with_the_prompt_after_the_options() {
             "json".into(),
             "--dangerously-skip-permissions".into(),
             "--".into(),
-            "-fix the lint".into(),
+            told("-fix the lint"),
         ])
     );
 }
@@ -45,7 +86,7 @@ fn a_named_model_goes_before_the_prompt() {
                 "--model".to_owned(),
                 "opus".to_owned(),
                 "--".to_owned(),
-                "Read BRIEF.md and do it".to_owned()
+                told("Read BRIEF.md and do it")
             ][..]
         )
     );
@@ -58,10 +99,10 @@ fn codex_and_pi_take_the_same_shape() {
         codex.get(..2),
         Some(&["codex".to_owned(), "exec".to_owned()][..])
     );
-    assert!(codex.ends_with(&["--model".into(), "gpt-5".into(), "--".into(), "go".into()]));
+    assert!(codex.ends_with(&["--model".into(), "gpt-5".into(), "--".into(), told("go")]));
     assert_eq!(
         argv(&task("pi", &["go"])),
-        Ok(vec!["pi".into(), "-p".into(), "--".into(), "go".into()])
+        Ok(vec!["pi".into(), "-p".into(), "--".into(), told("go")])
     );
 }
 

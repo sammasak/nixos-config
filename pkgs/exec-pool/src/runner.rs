@@ -79,19 +79,20 @@ impl Manifest {
         Workspace::new(guest_home, &self.attempt_id, self.lease_epoch)
     }
 
-    /// The guest commands in order: create the workspace, clone into it, check out, then [`agent::argv`] in the task's
-    /// workdir with the workspace's HOME. Each is an argv, never a shell string; `git`, `env` and `mkdir` are store
-    /// paths the guest shares. Git reads no global or system config: the guest user's rewrites https GitHub URLs to
-    /// ssh, and a slot holds no key, so the clone is anonymous https.
+    /// The guest commands in order: create the workspace, clone into it, check out the rev (an agent task on its
+    /// [`agent::branch`]), then
+    /// [`agent::argv`] in the task's workdir with the workspace's HOME. Each is an argv, never a shell string; `git`,
+    /// `env` and `mkdir` are store paths the guest shares. Git reads no global or system config, so the clone is
+    /// anonymous https; the checkout's own config holds `identity` (name, email) for the agent's commits and, for a
+    /// GitHub repository, an ssh push URL, which the slot's key (if it holds one) pushes with.
     ///
     /// # Errors
     /// What [`agent::argv`] or [`Workspace::run`] rejects.
     pub fn steps(
         &self,
         ws: &Workspace,
-        git: &str,
-        env: &str,
-        mkdir: &str,
+        (git, env, mkdir): (&str, &str, &str),
+        identity: (&str, &str),
     ) -> Result<[(Stage, Vec<String>); 5], StepsError> {
         let s = |v: &[&str]| v.iter().map(|&x| x.to_owned()).collect::<Vec<_>>();
         let git = |args: &[&str]| {
@@ -107,28 +108,109 @@ impl Manifest {
         let t = &self.task;
         let checkout = ws.checkout();
         let run = ws.run(env, &t.command.workdir, &agent::argv(t)?)?;
+        // a none task is told nothing of a branch: its rev detached
+        let on = match t.command.agent {
+            Agent::None => vec!["--detach".to_owned()],
+            _ => vec!["-b".to_owned(), agent::branch(t)?],
+        };
+        let mut checkout_args = s(&["-C", &checkout, "checkout", "--quiet"]);
+        checkout_args.extend(on);
+        checkout_args.push(t.source.rev.clone());
+        let checkout_args: Vec<&str> = checkout_args.iter().map(String::as_str).collect();
+        let mut clone = s(&[
+            "clone",
+            "--quiet",
+            "-c",
+            &format!("user.name={}", identity.0),
+            "-c",
+            &format!("user.email={}", identity.1),
+        ]);
+        if let Some(url) = github_push_url(&t.source.repo) {
+            clone.extend(["-c".to_owned(), format!("remote.origin.pushurl={url}")]);
+        }
+        clone.extend(s(&["--", &t.source.repo, &checkout]));
+        let clone: Vec<&str> = clone.iter().map(String::as_str).collect();
         let [root, dirs] = ws.create(mkdir);
         Ok([
             (Stage::Prepare, root),
             (Stage::Prepare, dirs),
-            (
-                Stage::Prepare,
-                git(&["clone", "--quiet", "--", &t.source.repo, &checkout]),
-            ),
-            (
-                Stage::Prepare,
-                git(&[
-                    "-C",
-                    &checkout,
-                    "checkout",
-                    "--quiet",
-                    "--detach",
-                    &t.source.rev,
-                ]),
-            ),
+            (Stage::Prepare, git(&clone)),
+            (Stage::Prepare, git(&checkout_args)),
             (Stage::Run, run),
         ])
     }
+
+    /// The guest command that lists the task's branch on its repository once the run is over, anonymously like the
+    /// clone; [`pushed`] reads its output.
+    ///
+    /// # Errors
+    /// What [`agent::branch`] rejects.
+    pub fn pushed_check(&self, git: &str, env: &str) -> Result<Vec<String>, agent::Error> {
+        let branch = agent::branch(&self.task)?;
+        Ok([
+            env,
+            "GIT_CONFIG_GLOBAL=/dev/null",
+            "GIT_CONFIG_NOSYSTEM=1",
+            "GIT_TERMINAL_PROMPT=0",
+            git,
+            "ls-remote",
+            "--heads",
+            "--",
+            &self.task.source.repo,
+            &format!("refs/heads/{branch}"),
+        ]
+        .map(str::to_owned)
+        .to_vec())
+    }
+}
+
+/// The ssh URL a push to an `https://github.com/<owner>/<repo>[.git]` repository goes to; `None` for any other.
+#[must_use]
+pub fn github_push_url(repo: &str) -> Option<String> {
+    let path = repo.strip_prefix("https://github.com/")?;
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, name) = path.split_once('/')?;
+    let part = |p: &str| {
+        !p.is_empty()
+            && !p.starts_with(['-', '.'])
+            && p.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+    };
+    (part(owner) && part(name)).then(|| format!("git@github.com:{owner}/{name}.git"))
+}
+
+/// The commit `ls_remote`, the output of [`Manifest::pushed_check`], shows for `branch`; `None` when it shows none.
+#[must_use]
+pub fn remote_head(ls_remote: &str, branch: &str) -> Option<String> {
+    let want = format!("refs/heads/{branch}");
+    ls_remote
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .find(|(_, r)| *r == want)
+        .map(|(sha, _)| sha.to_owned())
+}
+
+/// `branch` if this run handed code back on it.
+///
+/// That is: the repository shows it after the run (`after`) at another commit than before (`before`), so neither an
+/// earlier run's branch nor one left as it was counts, and a listing that failed tells nothing.
+#[must_use]
+pub fn handed_back(before: &Listed, after: &Listed, branch: &str) -> Option<String> {
+    match (before, after) {
+        (Listed::Absent, Listed::At(_)) => Some(branch.to_owned()),
+        (Listed::At(b), Listed::At(a)) if a != b => Some(branch.to_owned()),
+        _ => None,
+    }
+}
+
+/// What a listing of the task's branch showed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Listed {
+    /// The listing failed.
+    Unknown,
+    Absent,
+    /// The branch, at this commit.
+    At(String),
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -172,6 +254,9 @@ pub struct ExecResult {
     /// The helper stopped the attempt, before or during a step, for the runner's cancel marker.
     #[serde(default)]
     pub cancelled: bool,
+    /// The task's branch, `pool/<task id>`, when the repository shows it after the run.
+    #[serde(default)]
+    pub branch: Option<String>,
     /// `container@<slot>` was active when the command ended; a guest that went away leaves the outcome unknown.
     pub container_active: bool,
     pub stdout_tail: String,
@@ -317,6 +402,7 @@ mod tests {
             exit_code,
             timed_out: false,
             cancelled: false,
+            branch: None,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),
@@ -357,7 +443,12 @@ mod tests {
 
     fn steps(m: &Manifest) -> [(Stage, Vec<String>); 5] {
         let ws = m.workspace("/home/u").unwrap();
-        m.steps(&ws, "/git", "/env", "/mkdir").unwrap()
+        m.steps(
+            &ws,
+            ("/git", "/env", "/mkdir"),
+            ("Pool", "pool@example.org"),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -389,6 +480,10 @@ mod tests {
             [
                 "clone",
                 "--quiet",
+                "-c",
+                "user.name=Pool",
+                "-c",
+                "user.email=pool@example.org",
                 "--",
                 "https://example.org/r.git",
                 &format!("{dir}/work")
@@ -419,6 +514,77 @@ mod tests {
                 "--offline"
             ]
         );
+    }
+
+    #[test]
+    fn a_github_checkout_pushes_over_ssh_and_its_branch_is_read_back() {
+        let mut t = task();
+        t["source"]["repo"] = json!("https://github.com/sammasak/nixos-config.git");
+        t["command"] = json!({ "agent": "claude", "argv": ["go"], "workdir": "." });
+        let m = manifest(&t).unwrap();
+        let [_, _, (_, clone), (_, checkout), _] = steps(&m);
+        assert_eq!(checkout[8..], ["-b", "pool/t1", "abc123"]);
+        let at = clone.iter().position(|a| a == "--").unwrap();
+        assert_eq!(
+            clone[at - 2..at],
+            [
+                "-c",
+                "remote.origin.pushurl=git@github.com:sammasak/nixos-config.git"
+            ]
+        );
+        for (repo, want) in [
+            ("https://github.com/o/r", Some("git@github.com:o/r.git")),
+            (
+                "https://github.com/o/r.x.git",
+                Some("git@github.com:o/r.x.git"),
+            ),
+            ("https://github.com/o/r/extra", None),
+            ("https://github.com/-o/r", None),
+            ("https://github.com/o/", None),
+            ("https://gitlab.com/o/r", None),
+            ("http://github.com/o/r", None),
+        ] {
+            assert_eq!(github_push_url(repo).as_deref(), want, "{repo}");
+        }
+        assert_eq!(
+            m.pushed_check("/git", "/env").unwrap()[5..],
+            [
+                "ls-remote",
+                "--heads",
+                "--",
+                "https://github.com/sammasak/nixos-config.git",
+                "refs/heads/pool/t1"
+            ]
+        );
+        let shown = "1f2e\trefs/heads/pool/t1\n";
+        assert_eq!(remote_head(shown, "pool/t1").as_deref(), Some("1f2e"));
+        assert_eq!(remote_head("1f2e\trefs/heads/pool/t10\n", "pool/t1"), None);
+        assert_eq!(remote_head("", "pool/t1"), None);
+        let at = |sha: &str| Listed::At(sha.to_owned());
+        let b = "pool/t1";
+        let (absent, unknown) = (Listed::Absent, Listed::Unknown);
+        assert_eq!(
+            handed_back(&absent, &at("1f2e"), b).as_deref(),
+            Some(b),
+            "new"
+        );
+        assert_eq!(
+            handed_back(&at("0a0a"), &at("1f2e"), b).as_deref(),
+            Some(b),
+            "moved"
+        );
+        assert_eq!(
+            handed_back(&at("1f2e"), &at("1f2e"), b),
+            None,
+            "an earlier run's, as it was"
+        );
+        assert_eq!(handed_back(&absent, &absent, b), None, "none pushed");
+        assert_eq!(
+            handed_back(&unknown, &at("1f2e"), b),
+            None,
+            "unknown before"
+        );
+        assert_eq!(handed_back(&absent, &unknown, b), None, "unknown after");
     }
 
     #[test]

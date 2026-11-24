@@ -21,13 +21,15 @@ use std::process::{Child, Command, ExitCode, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use exec_pool::agent;
 use exec_pool::queue::{Change, Claim, QueueError, Store};
 use exec_pool::runner::{
-    CAPTURE_BYTES, ExecResult, Manifest, Stage, decide, guest_exit, read_regular, receipt, tail,
+    CAPTURE_BYTES, ExecResult, Listed, Manifest, Stage, decide, guest_exit, handed_back,
+    read_regular, receipt, remote_head, tail,
 };
 use exec_pool::task_result::TaskResult;
 use exec_pool::workspace::{HomeId, admit};
-use exec_pool::{Event, Kind, Receipt, SchemaVersion, Slot};
+use exec_pool::{Agent, Event, Kind, Receipt, SchemaVersion, Slot};
 use serde_json::{Value, json};
 
 const USAGE: &str =
@@ -43,6 +45,7 @@ const POLL: Duration = Duration::from_secs(10);
 const HEARTBEAT: Duration = POLL;
 const BACKOFF: Duration = Duration::from_secs(30);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(300);
+const PUSHED_TIMEOUT: Duration = Duration::from_secs(60);
 const RESET_TRIES: u32 = 3;
 
 fn var(name: &str) -> Result<String, String> {
@@ -404,9 +407,10 @@ impl Guest {
     }
 
     /// One command in the guest as its user, in its home, as a transient unit the helper stops at `timeout`.
+    /// `cancellable`: the runner's cancel marker stops it.
     fn step(
         &self,
-        unit: &str,
+        (unit, cancellable): (&str, bool),
         argv: &[String],
         timeout: Duration,
         out: &File,
@@ -460,7 +464,7 @@ impl Guest {
             }
             if !timed_out && !cancelled {
                 timed_out = t.elapsed() > timeout;
-                cancelled = !timed_out && self.cancelled();
+                cancelled = !timed_out && cancellable && self.cancelled();
             }
             if (timed_out || cancelled) && !stopped {
                 stopped = true;
@@ -481,6 +485,48 @@ impl Guest {
             // a command that exited 0 before the stop reached it finished: its run is not cancelled
             cancelled: cancelled && exit_code != Some(0),
         })
+    }
+
+    /// The task's branch as its repository shows it, listed into the run directory's file `name`; why a listing failed
+    /// goes to `err`. A cancel does not stop it, so a cancelled run's push is still found.
+    fn remote_head(
+        &self,
+        m: &Manifest,
+        (git, env): (&str, &str),
+        (dir, name): (&Path, &str),
+        err: &File,
+    ) -> Listed {
+        let note = |e: &dyn std::fmt::Display| {
+            let _ = io::Write::write_all(
+                &mut &*err,
+                format!("exec-pool-exec: {name}: {e}\n").as_bytes(),
+            );
+        };
+        let Some((argv, branch)) = m
+            .pushed_check(git, env)
+            .and_then(|argv| agent::branch(&m.task).map(|b| (argv, b)))
+            .inspect_err(|e| note(e))
+            .ok()
+        else {
+            return Listed::Unknown;
+        };
+        let path = dir.join(name);
+        match File::create(&path)
+            .and_then(|f| self.step(("exec-pool-pushed", false), &argv, PUSHED_TIMEOUT, &f, err))
+        {
+            Ok(end) if end.exit_code == Some(0) => {
+                remote_head(&String::from_utf8_lossy(&read_capture(&path)), &branch)
+                    .map_or(Listed::Absent, Listed::At)
+            }
+            Ok(end) => {
+                note(&format!("git ls-remote exited {:?}", end.exit_code));
+                Listed::Unknown
+            }
+            Err(e) => {
+                note(&e);
+                Listed::Unknown
+            }
+        }
     }
 
     /// Runs `steps` in order until one fails or times out, recording in `result` where it stopped.
@@ -514,7 +560,7 @@ impl Guest {
             };
             let started = Instant::now();
             let end = self
-                .step(unit, &argv, limit, out, err)
+                .step((unit, true), &argv, limit, out, err)
                 .map_err(|e| format!("{unit}: {e}"));
             let end = end.unwrap_or_else(|e| {
                 let _ =
@@ -602,6 +648,7 @@ fn exec(slot: &str) -> Result<(), String> {
         exit_code: None,
         timed_out: false,
         cancelled: false,
+        branch: None,
         container_active: true,
         stdout_tail: String::new(),
         stderr_tail: String::new(),
@@ -612,12 +659,12 @@ fn exec(slot: &str) -> Result<(), String> {
     let ws = manifest
         .workspace(&var("EXEC_POOL_GUEST_HOME")?)
         .map_err(|e| format!("manifest: {e}"))?;
+    let (git, env) = (var("EXEC_POOL_GIT")?, var("EXEC_POOL_ENV")?);
     let steps = manifest
         .steps(
             &ws,
-            &var("EXEC_POOL_GIT")?,
-            &var("EXEC_POOL_ENV")?,
-            &var("EXEC_POOL_MKDIR")?,
+            (&git, &env, &var("EXEC_POOL_MKDIR")?),
+            (&var("EXEC_POOL_GIT_NAME")?, &var("EXEC_POOL_GIT_EMAIL")?),
         )
         .map_err(|e| format!("manifest: {e}"))?;
     // a home an earlier attempt ran in is refused before anything runs in it: the attempt goes back to the queue
@@ -632,8 +679,22 @@ fn exec(slot: &str) -> Result<(), String> {
         );
     })
     .is_ok();
+    // an agent task's branch as it was, so an earlier run's push is not taken for this one's
+    let agentic = manifest.task.command.agent != Agent::None;
+    let before = if admitted && agentic {
+        guest.remote_head(&manifest, (&git, &env), (&dir, "pushed-before"), &err)
+    } else {
+        Listed::Unknown
+    };
     if admitted {
         guest.steps(steps, timeout, (&out, &err), &mut result);
+        // whatever the run's end: a push may have landed before it failed
+        if result.stage == Stage::Run && agentic {
+            let after = guest.remote_head(&manifest, (&git, &env), (&dir, "pushed"), &err);
+            result.branch = agent::branch(&manifest.task)
+                .ok()
+                .and_then(|b| handed_back(&before, &after, &b));
+        }
     }
     if result.stage == Stage::Prepare {
         result.prepare_ms = ms(t);

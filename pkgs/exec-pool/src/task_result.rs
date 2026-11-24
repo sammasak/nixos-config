@@ -19,6 +19,8 @@ pub struct TaskResult {
     /// Claude's `result` text, from its start; for any other agent, or a Claude run with none, the end of stdout
     /// (of its first `CAPTURE_BYTES`: the runner keeps the head of the capture). No NUL, which `text` cannot hold.
     output: String,
+    /// The task's branch, `pool/<task id>`, when its repository showed it after the run: the code it handed back.
+    pub branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -34,6 +36,7 @@ impl TaskResult {
             outcome,
             exit_code,
             output: end(&output.replace('\0', "")),
+            branch: None,
         }
     }
 
@@ -59,6 +62,7 @@ impl TaskResult {
                 || end(&stdout.replace('\0', "")),
                 |c| start(&c.result.replace('\0', "")),
             ),
+            branch: result.and_then(|r| r.branch.clone()),
         }
     }
 }
@@ -94,6 +98,7 @@ mod tests {
             exit_code,
             timed_out: false,
             cancelled: false,
+            branch: None,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),

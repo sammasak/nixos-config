@@ -935,7 +935,9 @@ def check_pool_compat():
           f"executionPool.agents = [ \"claude\" ]: pool1 stays agent none with no credential, gets only the anthropic egress and its ANTHROPIC_BASE_URL, and starts no session ({on.get('error') or on.get('failing') or {**s, 'extra': extra} })")
     out = run_eval(POOL_ALL % {"root": json.dumps(ROOT)})
     a = json.loads(out.stdout) if out.returncode == 0 else {"error": out.stderr.strip()[-600:]}
-    leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/")) and not b.endswith(("/ssh_host_ed25519_key", ".pub"))]
+    # acer's pool1 holds the push key (check_runner); nothing else of the host's
+    leaked = [b for b in a.get("binds", []) if b.startswith(("/run/secrets", "/run/user", "/run/credentials", "/var/lib/host-credentials/"))
+              and not b.endswith(("/ssh_host_ed25519_key", ".pub")) and b != "/var/lib/host-credentials/id_ed25519"]
     check(a.get("failing") == [] and a.get("sockets") == ["anthropic-egress", "llm-gateway-egress", "openai-egress"] and not leaked
           and a.get("codexKey") == "held-by-the-host" and a.get("codexUrl") == 'openai_base_url = "http://127.0.0.1:4103/v1"' and a.get("pi") is True
           and {"llm_gateway_pi_key:/run/secrets/llm_gateway_pi_key", "codex-auth.json:/home/lukas/.codex/auth.json"} <= set(a.get("creds", [])),
@@ -973,6 +975,12 @@ in {
   scratch = acer.services.devEnvironments.instances.pool1.scratch;
   reset = acer.systemd.services."dev-env-reset@".script;
   polkit = acer.security.polkit.extraConfig;
+  pool1 = {
+    inherit (acer.services.devEnvironments.instances.pool1) credentials;
+    # beside the sshd host key and public keys every environment binds
+    binds = builtins.filter (b: builtins.match "/var/lib/host-credentials/.*" b != null && builtins.match ".*(/ssh_host_ed25519_key|[.]pub)" b == null) (builtins.attrNames acer.containers.pool1.bindMounts);
+    links = builtins.filter (r: builtins.match ".*(id_ed25519|gh-hosts).*" r != null) acer.containers.pool1.config.systemd.tmpfiles.rules;
+  };
 }
 """
 
@@ -981,7 +989,7 @@ def check_runner():
     out = run_eval(RUNNER % {"root": json.dumps(ROOT)})
     got = json.loads(out.stdout) if out.returncode == 0 else {}
     rule = '["exec-pool-exec@pool1.service","dev-env-reset@pool1.service"]'
-    check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-pool1"] and got.get("msi") == [] and got.get("user") == "exec_pool"
+    check(got.get("acer") == ["exec-pool-exec@", "exec-pool-runner-password", "exec-pool-runner-pool1"] and got.get("msi") == [] and got.get("user") == "exec_pool"
           and got.get("wanted") == ["multi-user.target"] and got.get("slot", {}).get("id") == "pool1" and got.get("slot", {}).get("agents") == ["none", "claude"]
           and got.get("exec", "").endswith("/bin/exec-pool-runner exec %i") and rule in got.get("polkit", "") and 'subject.user == "exec_pool"' in got.get("polkit", ""),
           f"acer runs exec-pool-runner-pool1 as exec_pool with its root helper exec-pool-exec@, and polkit lets exec_pool start only {rule}; msi has no runner ({ {k: got.get(k) for k in ('acer', 'msi', 'user', 'slot', 'exec')} or out.stderr.strip()[-300:]})")
@@ -991,6 +999,12 @@ def check_runner():
           and env.get("EXEC_POOL_SLOT_HOME") == "/var/lib/workers/%i/home" and env.get("EXEC_POOL_GUEST_HOME", "").startswith("/home/")
           and got.get("scratch") == ["attempts"] and "--expand-environment=no --wait" in got.get("reset", ""),
           f"the helper hands a step only the slot's egress variables and a PATH to the agent, admits by the host side of the slot home, and the reset trashes ~/attempts unchecked, its guest scan not expanded by systemd ({agent}, { {k: v for k, v in env.items() if 'HOME' in k} }, {got.get('scratch')})")
+    pool1 = got.get("pool1", {})
+    links = pool1.get("links", [])
+    check(pool1.get("credentials") == ["id_ed25519"] and pool1.get("binds") == ["/var/lib/host-credentials/id_ed25519"]
+          and len(links) == 1 and "/.ssh/id_ed25519 " in links[0]
+          and env.get("EXEC_POOL_GIT_NAME") == "sammasak" and env.get("EXEC_POOL_GIT_EMAIL", "").endswith("@users.noreply.github.com"),
+          f"acer's pool1 holds the host's push key alone, linked as ~/.ssh/id_ed25519, no gh login, and the helper commits as the owner's git identity ({pool1}, { {k: v for k, v in env.items() if 'GIT_' in k} })")
 
 
 def check_slot():
@@ -1179,7 +1193,9 @@ def check_submitter():
     hba = [l for l in got.get("hba", []) if isinstance(l, str)]
     ident = [l for l in got.get("ident", []) if isinstance(l, str)]
     check(hba == ["local all postgres peer", "local exec_pool exec_pool peer", "local authentik authentik peer",
-                  "local exec_pool exec_pool_submit peer map=exec_pool_submit"]
+                  "local exec_pool exec_pool_submit peer map=exec_pool_submit",
+                  # remoteRunners on acer: msi's runner, by scram from its address alone
+                  "host exec_pool exec_pool_runner 192.168.10.235/32 scram-sha-256"]
           and "postgresql-setup.service" in got.get("migrate", [])
           and ident == ["exec_pool_submit lukas exec_pool_submit"]
           and {"name": "exec_pool_submit", "own": False} in got.get("users", []) and got.get("failed") == [] and got.get("cli") is True,
