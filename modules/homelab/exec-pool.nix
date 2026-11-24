@@ -1,5 +1,6 @@
 # The execution pool's queue (pkgs/exec-pool, docs/records/execution-pool-contract.md) on this host: its own database
-# and role in the host's PostgreSQL (postgresql.nix), reached by peer over the socket alone; the schema is the CLI's `migrate` at start,
+# and role in the host's PostgreSQL (postgresql.nix), reached by peer over the socket and, with remoteRunners, by msi's
+# runner over TCP as exec_pool_runner; the schema is the CLI's `migrate` at start,
 # its metrics a minutely textfile and its backup a nightly dump; the runner, off by default, is exec-pool-runner.nix.
 {
   config,
@@ -73,11 +74,49 @@ in
     database = "exec_pool";
     users = [ "lukas" ];
   };
-  homelab.postgresql.remoteClients = lib.mkIf config.homelab.execPool.remoteRunners {
-    exec_pool_runner = {
-      database = "exec_pool";
-      listener = "exec-pool-db";
+  # declared off too: migration 0004 grants to the role
+  homelab.postgresql.remoteClients.exec_pool_runner = {
+    enable = config.homelab.execPool.remoteRunners;
+    database = "exec_pool";
+    listener = "exec-pool-db";
+  };
+
+  sops.secrets.exec_pool_runner_password = lib.mkIf config.homelab.execPool.remoteRunners {
+    sopsFile = ../../secrets/homelab/exec-pool-runner.yaml;
+    mode = "0400";
+    restartUnits = [ "exec-pool-runner-password.service" ];
+  };
+  # The role's scram verifier from the sops password. psql reads the value from the credential, so it is on no
+  # command line, and the session logs no statement: a failed ALTER would otherwise print it in the server log.
+  systemd.services.exec-pool-runner-password = lib.mkIf config.homelab.execPool.remoteRunners {
+    description = "Set the exec_pool_runner role's password";
+    after = [ "postgresql-setup.service" ];
+    requires = [ "postgresql-setup.service" ];
+    wantedBy = [ "multi-user.target" ];
+    path = [ postgres ];
+    environment.PGPORT = toString config.services.postgresql.settings.port;
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      User = "postgres";
+      Group = "postgres";
+      LoadCredential = [ "password:${config.sops.secrets.exec_pool_runner_password.path}" ];
+      PrivateNetwork = true;
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+      NoNewPrivileges = true;
+      TimeoutStartSec = 60;
     };
+    script = ''
+      # an empty password would clear the role's, and the unit pass
+      test -s "$CREDENTIALS_DIRECTORY/password"
+      psql -h /run/postgresql -d postgres -v ON_ERROR_STOP=1 -q <<'EOF'
+      SET log_statement = 'none';
+      SET log_min_duration_statement = -1;
+      SET log_min_error_statement = 'panic';
+      \set pw `cat "$CREDENTIALS_DIRECTORY/password"`
+      ALTER ROLE exec_pool_runner WITH LOGIN PASSWORD :'pw';
+      EOF
+    '';
   };
 
   systemd.services.exec-pool-migrate = lib.recursiveUpdate unit {

@@ -21,12 +21,12 @@ use crate::{
 
 pub const UP: &str = include_str!("../migrations/0001_queue.up.sql");
 pub const DOWN: &str = include_str!("../migrations/0001_queue.down.sql");
-/// Each migration, ascending, by the version it records; `migrate` applies every one the database has not recorded,
-/// so 4 (fleet dispatch's, on its own branch) still applies to a database already at 5.
-const STEPS: [(i32, &str); 4] = [
+/// Each migration, ascending, by the version it records; `migrate` applies every one the database has not recorded.
+const STEPS: [(i32, &str); 5] = [
     (1, UP),
     (2, include_str!("../migrations/0002_submitter.up.sql")),
     (3, include_str!("../migrations/0003_result.up.sql")),
+    (4, include_str!("../migrations/0004_runner.up.sql")),
     (5, include_str!("../migrations/0005_cancel.up.sql")),
 ];
 const DOWN_SUBMITTER: &str = include_str!("../migrations/0002_submitter.down.sql");

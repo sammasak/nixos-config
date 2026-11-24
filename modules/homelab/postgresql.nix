@@ -12,7 +12,9 @@
 let
   pg = config.services.postgresql;
   clients = config.homelab.postgresql.clients;
-  remote = config.homelab.postgresql.remoteClients;
+  declared = config.homelab.postgresql.remoteClients;
+  # an off role exists, for its database's grants, with no listener or rule to log in by
+  remote = lib.filterAttrs (_: c: c.enable) declared;
   inherit (config.sam.fleet) hosts listeners;
   host = config.networking.hostName;
   # one server, one port: every remote role names the same listener
@@ -41,7 +43,7 @@ let
     lib.mapAttrsToList (role: c: map (user: "${role} ${user} ${role}") c.users) clients
   );
   owners = map (u: u.name) (lib.filter (u: u.ensureDBOwnership) pg.ensureUsers);
-  roles = lib.filter (n: n != "postgres" && !(lib.hasAttr n clients) && !(lib.hasAttr n remote)) (
+  roles = lib.filter (n: n != "postgres" && !(lib.hasAttr n clients) && !(lib.hasAttr n declared)) (
     map (u: u.name) pg.ensureUsers
   );
 in
@@ -68,6 +70,11 @@ in
     type = lib.types.attrsOf (
       lib.types.submodule {
         options = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = "Whether its listener's hosts may log in as the role; off, the role still exists, so its database's migrations can grant to it, but has no TCP listener or rule.";
+          };
           database = lib.mkOption {
             type = lib.types.str;
             description = "The one database the role may log in to.";
@@ -95,7 +102,7 @@ in
     authentication = lib.mkForce (lib.concatMapStrings (l: l + "\n") rules);
     # mkForce: upstream maps postgres to itself, which no rule above uses
     identMap = lib.mkForce (lib.concatMapStrings (l: l + "\n") ident);
-    ensureUsers = lib.mapAttrsToList (name: _: { inherit name; }) (clients // remote);
+    ensureUsers = lib.mapAttrsToList (name: _: { inherit name; }) (clients // declared);
   };
   # acer's fleet address is Wi-Fi: without it a boot that binds before NetworkManager has it stops Postgres, socket too
   config.boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" = lib.mkIf tcp 1;
