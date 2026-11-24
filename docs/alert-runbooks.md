@@ -301,10 +301,29 @@ FROM quarantined_slots"`; on that host, `journalctl -u exec-pool-runner-<slot> -
 refusal. Stop the agent or push (or deliberately discard) the work in the guest, then on that host
 `sudo rm /var/lib/exec-pool-runner/<slot>.quarantined`: the runner's next pass resets the slot and deletes the row, and
 the alert clears.
+A slot quarantined for a session tree left in its dock (the reason names `dock-busy`): once nothing of the turn runs,
+move `<stateDir>/.sessions/dock/<slot>/cur` back to its task's `<stateDir>/.sessions/<hex task id>/tree` (or archive
+it), then remove `/var/lib/exec-pool-exec/<slot>/dock-busy` and the quarantine marker; the reason names both paths.
 Do not: delete the row alone while the slot exists; the runner rewrites it while its marker stands. A slot no longer
 declared (fewer slots, a renamed host) has no runner to clear it: delete its row with
 `DELETE FROM quarantined_slots WHERE host = '<host>' AND slot = '<slot>'` as `exec_pool`.
 Rollback: none; a slot that resets clears itself.
+
+## ExecPoolSessionsLarge
+
+Fires: on a pool host (acer, msi), the session trees, parked (`/var/lib/workers/.sessions/<id>/tree`), docked in a
+slot (`.sessions/dock/<slot>/cur`) and, on acer, the pushed copies (`.sessions-store/<id>`), have held over 70% of the
+workers' state filesystem for 30 minutes. `dev-env-sessions-metrics` (`modules/workers/core.nix`) writes the bytes and
+counts every 15 minutes, by kind and with no ids, and `.trash`'s share as `homelab_dev_env_trash_bytes`. Removal is the
+queue's call: `exec-pool-sessions-gc` (`modules/homelab/exec-pool-sessions-gc.nix`, acer, off until the CLI has
+`sessions --gc`) moves what the queue lists as eligible into `.trash`, which frees it a week later.
+First: `homelab_dev_env_sessions_bytes` and `homelab_dev_env_session_trees` on the node say which kind grew,
+`homelab_exec_pool_sessions_orphaned` how many trees the queue does not know; on the host,
+`sudo du -sh /var/lib/workers/.sessions/*/tree /var/lib/workers/.sessions-store/* | sort -h | tail` names the largest.
+A large `.trash` is space already on its way out.
+Do not: delete a docked tree (`.sessions/dock/*/cur`) or a session whose `tree` is missing (it is docked); a turn is
+using it. Delete a parked tree by hand only once the queue has its task final and its work pushed.
+Rollback: none; the alert clears when the trees fall under 70%.
 
 ## ExecPoolSessionStuck
 

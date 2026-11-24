@@ -147,6 +147,7 @@ mod tests {
             timed_out: false,
             cancelled: false,
             branch: None,
+            tree_lost: None,
             container_active: true,
             stdout_tail: String::new(),
             stderr_tail: String::new(),

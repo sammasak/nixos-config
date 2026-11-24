@@ -29,7 +29,8 @@ let
   slotNames = map (n: "pool${toString n}") (lib.range 1 pool.slots);
   execDir = "/var/lib/exec-pool-exec";
   # the helper stops the task at timeoutSecs; above it, four prepare steps of up to 300 s, the branch listed before and
-  # after the run (60 s each) and the stop's own wait
+  # after the run (60 s each) and the stop's own wait; a session turn adds a 30 s relink, a 30 s probe and 15 s for
+  # its units to leave before the detach
   execTimeout = cfg.timeoutSecs + 1500;
   # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
   # running attempt to review this long after its last renewal
@@ -101,6 +102,10 @@ in
           EXEC_POOL_GIT = lib.getExe pkgs.git;
           EXEC_POOL_ENV = "${pkgs.coreutils}/bin/env";
           EXEC_POOL_MKDIR = "${pkgs.coreutils}/bin/mkdir";
+          EXEC_POOL_CP = "${pkgs.coreutils}/bin/cp";
+          EXEC_POOL_FIND = "${pkgs.findutils}/bin/find";
+          # a session task's trees and each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
+          EXEC_POOL_SESSIONS = "${dev.stateDir}/.sessions";
           EXEC_POOL_GUEST_HOME = guestHome;
           # the host side of the guest home, whose identity admits an attempt only after a reset
           EXEC_POOL_SLOT_HOME = "${dev.stateDir}/%i/home";

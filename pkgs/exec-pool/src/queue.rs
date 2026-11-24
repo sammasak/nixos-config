@@ -1089,7 +1089,7 @@ impl Store {
     pub fn sessions(&mut self, eligible_only: bool) -> Result<Vec<Value>, QueueError> {
         self.tx(|tx| {
             tx.query(
-                "SELECT jsonb_build_object('task', task, 'state', state, 'changed_at', changed_at, 'hosts', hosts, \
+                "SELECT jsonb_build_object('task_id', task, 'state', state, 'last_change', changed_at, 'hosts', hosts, \
                  'handed_back', handed_back, 'eligible', eligible, 'stale', stale) \
                  FROM session_gc WHERE eligible OR NOT $1 ORDER BY changed_at, task",
                 &[&eligible_only],

@@ -25,14 +25,15 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use exec_pool::agent;
-use exec_pool::queue::{Change, Claim, QueueError, Store};
+use exec_pool::queue::{Change, Claim, Park, QueueError, Store};
 use exec_pool::runner::{
-    CAPTURE_BYTES, ExecResult, Listed, Manifest, Stage, claim_fits, decide, guest_exit,
-    handed_back, read_regular, receipt, remote_head, tail,
+    CAPTURE_BYTES, ExecResult, Listed, Manifest, QUICK_SECS, Session, Stage, Step, TurnSettle,
+    claim_fits, decide, decide_turn, guest_exit, handed_back, read_regular, receipt, relink,
+    remote_head, session_checkpoint, tail,
 };
 use exec_pool::task_result::TaskResult;
-use exec_pool::workspace::{HomeId, admit};
-use exec_pool::{Agent, Event, Kind, Receipt, SchemaVersion, Slot};
+use exec_pool::workspace::{self, HomeId, SESSION_HOME, Sessions, Workspace, admit};
+use exec_pool::{Agent, Event, Kind, ParkReason, Receipt, SchemaVersion, Slot};
 use serde_json::{Value, json};
 
 const USAGE: &str =
@@ -49,10 +50,24 @@ const HEARTBEAT: Duration = POLL;
 const BACKOFF: Duration = Duration::from_secs(30);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(300);
 const PUSHED_TIMEOUT: Duration = Duration::from_secs(60);
+/// Beside the slot's run directories: why a session tree is still in the slot's dock, while one is.
+const DOCK_BUSY: &str = "dock-busy";
+/// How long a turn's steps may take to leave the guest after the last one returned, before its tree is detached.
+const DETACH_WAIT: Duration = Duration::from_secs(15);
 const RESET_TRIES: u32 = 3;
 
 fn var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is not set"))
+}
+
+/// Each of `names` from the environment, or the first one missing.
+fn vars<const N: usize>(names: [&str; N]) -> Result<[String; N], String> {
+    let mut out = Vec::with_capacity(N);
+    for name in names {
+        out.push(var(name)?);
+    }
+    out.try_into()
+        .map_err(|_| "a variable went missing".to_owned())
 }
 
 fn line(v: &Value) {
@@ -162,29 +177,26 @@ impl Runner {
     }
 
     /// The slot back to a fresh home, or quarantined: a reset refuses a running agent or unpushed work, and a slot
-    /// it could not reset is not offered again. The refused unit's failed state is cleared, so the host is not left
-    /// degraded; the marker, the queue's row and `ExecPoolSlotQuarantined` carry it instead.
+    /// it could not reset is not offered again, nor one whose dock still holds a session tree (its detach failed).
+    /// The refused unit's failed state is cleared, so the host is not left degraded; the marker, the queue's row and
+    /// `ExecPoolSlotQuarantined` carry it instead.
     fn release(&self, store: &mut Store) -> bool {
         let t = Instant::now();
         let unit = format!("dev-env-reset@{}.service", self.slot.id);
-        let mut last = String::new();
-        for try_ in 1..=RESET_TRIES {
-            match systemctl("start", &unit) {
-                Ok(()) => {
-                    line(
-                        &json!({ "msg": "slot_reset", "slot": self.slot.id, "sanitize_ms": ms(t) }),
-                    );
-                    return true;
+        let stuck = fs::read_to_string(self.exec_dir.join(DOCK_BUSY));
+        let last = match Self::reset(&unit) {
+            Ok(()) if stuck.is_err() => {
+                line(&json!({ "msg": "slot_reset", "slot": self.slot.id, "sanitize_ms": ms(t) }));
+                return true;
+            }
+            Ok(()) => stuck.unwrap_or_default().trim_end().to_owned(),
+            Err(e) => {
+                if let Err(e) = systemctl("reset-failed", &unit) {
+                    self.error("reset_failed", &e);
                 }
-                Err(e) => last = e,
+                e
             }
-            if try_ < RESET_TRIES {
-                thread::sleep(BACKOFF);
-            }
-        }
-        if let Err(e) = systemctl("reset-failed", &unit) {
-            self.error("reset_failed", &e);
-        }
+        };
         if let Err(e) = fs::write(&self.quarantine, format!("{last}\n")) {
             self.error("quarantine_marker", &e);
         }
@@ -196,6 +208,21 @@ impl Runner {
                       "release": format!("rm {}", self.quarantine.display()) }),
         );
         false
+    }
+
+    /// `dev-env-reset@<slot>`, tried [`RESET_TRIES`] times; the last refusal.
+    fn reset(unit: &str) -> Result<(), String> {
+        let mut last = String::new();
+        for try_ in 1..=RESET_TRIES {
+            match systemctl("start", unit) {
+                Ok(()) => return Ok(()),
+                Err(e) => last = e,
+            }
+            if try_ < RESET_TRIES {
+                thread::sleep(BACKOFF);
+            }
+        }
+        Err(last)
     }
 
     /// Whether to claim now: always without an off timer, else only for a lease that ends before it fires. Logs a
@@ -351,6 +378,49 @@ impl Runner {
         Ok(())
     }
 
+    /// Settles the attempt from its run, or parks its session turn; where it went and whether that landed.
+    fn finish(
+        &self,
+        store: &mut Store,
+        claim: &Claim,
+        manifest: &Manifest,
+        result: Option<&ExecResult>,
+        stdout: &str,
+    ) -> (TurnSettle, bool) {
+        let (id, epoch) = (claim.attempt.id.as_str(), claim.attempt.lease_epoch);
+        let task_result = TaskResult::of(claim.task.command.agent, result, stdout);
+        let to = match &manifest.session {
+            None => TurnSettle::Settle(decide(id, epoch, claim.task.command.agent, result, stdout)),
+            Some(_) => decide_turn(id, epoch, result, stdout),
+        };
+        let settled = match to {
+            TurnSettle::Settle(to) => Self::event(store, id, epoch, Kind::Checkpoint, None)
+                .and_then(|()| {
+                    let r = receipt(&claim.task.id, id, epoch, to);
+                    Self::event(store, id, epoch, Kind::Settle(to), r.as_ref())
+                })
+                .map(|()| true),
+            TurnSettle::Park(reason) => park(
+                store,
+                (id, epoch, &claim.task.id, &self.slot.host),
+                (reason, manifest.session.as_ref().map_or(0, |s| s.upto)),
+                &task_result,
+            )
+            .map(|()| false),
+        };
+        match &settled {
+            Err(e) => self.error("settle", e),
+            // a park records its result itself
+            Ok(true) => {
+                if let Err(e) = store.record_result(id, epoch, &task_result) {
+                    self.error("record_result", &e);
+                }
+            }
+            Ok(false) => {}
+        }
+        (to, settled.is_ok())
+    }
+
     /// One claimed attempt; whether the slot ran anything and needs a reset.
     fn attempt(&self, store: &mut Store, claim: &Claim) -> bool {
         let claimed = Instant::now();
@@ -361,6 +431,7 @@ impl Runner {
             attempt_id: id.to_owned(),
             lease_epoch: epoch,
             task: claim.task.clone(),
+            session: session_of(claim),
         };
         let marker = self.runtime.join(CANCEL);
         let written = match fs::remove_file(&marker) {
@@ -416,29 +487,10 @@ impl Runner {
             .inspect_err(|e| self.error("result", e))
             .ok();
         let stdout = String::from_utf8_lossy(&read_capture(&dir.join("stdout"))).into_owned();
-        let to = decide(
-            id,
-            epoch,
-            claim.task.command.agent,
-            result.as_ref(),
-            &stdout,
-        );
-        let settled = Self::event(store, id, epoch, Kind::Checkpoint, None).and_then(|()| {
-            let r = receipt(&claim.task.id, id, epoch, to);
-            Self::event(store, id, epoch, Kind::Settle(to), r.as_ref())
-        });
-        if let Err(e) = &settled {
-            self.error("settle", e);
-        }
-        if settled.is_ok() {
-            let r = TaskResult::of(claim.task.command.agent, result.as_ref(), &stdout);
-            if let Err(e) = store.record_result(id, epoch, &r) {
-                self.error("record_result", &e);
-            }
-        }
+        let (to, settled) = self.finish(store, claim, &manifest, result.as_ref(), &stdout);
         line(&json!({
             "msg": "run", "task_id": claim.task.id, "attempt": id, "lease_epoch": epoch, "slot": self.slot.id,
-            "settle": format!("{to:?}"), "settled": settled.is_ok(), "output": dir,
+            "settle": format!("{to:?}"), "settled": settled, "output": dir,
             "stopped_for": stopping,
             "exit_code": result.as_ref().and_then(|r| r.exit_code),
             "timed_out": result.as_ref().map(|r| r.timed_out),
@@ -449,6 +501,38 @@ impl Runner {
         }));
         true
     }
+}
+
+/// A session task's turn, as its claim hands it over.
+fn session_of(claim: &Claim) -> Option<Session> {
+    claim.turn.as_ref().map(|t| Session {
+        uuid: t.session_uuid.clone(),
+        input: t.input.clone(),
+        upto: t.upto,
+    })
+}
+
+/// Parks the session turn `attempt` at `epoch` with its result, the inbox read up to `upto`, and the checkpoint that
+/// names the session's tree on `host`, so a message wakes it there.
+fn park(
+    store: &mut Store,
+    (attempt, epoch, task, host): (&str, u64, &str, &str),
+    (reason, upto): (ParkReason, i64),
+    result: &TaskResult,
+) -> Result<(), QueueError> {
+    let checkpoint = session_checkpoint(task, host, epoch);
+    let (_, changes) = store.park(
+        attempt,
+        epoch,
+        &Park {
+            reason,
+            checkpoint: Some(checkpoint),
+            result: result.clone(),
+            upto,
+        },
+    )?;
+    changes.iter().for_each(log_change);
+    Ok(())
 }
 
 fn run() -> Result<(), String> {
@@ -624,23 +708,22 @@ impl Guest {
         }
     }
 
-    /// Runs `steps` in order until one fails or times out, recording in `result` where it stopped.
+    /// Runs `steps` in order until one fails or times out, recording in `result` where it stopped; `t` is when the
+    /// run's preparing began. Whether every step ran to exit 0.
     fn steps(
         &self,
-        steps: [(Stage, Vec<String>); 5],
-        timeout: Duration,
+        steps: Vec<Step>,
+        (timeout, t): (Duration, Instant),
         (out, err): (&File, &File),
         result: &mut ExecResult,
-    ) {
-        let t = Instant::now();
-        let units = [
-            "exec-pool-root",
-            "exec-pool-workspace",
-            "exec-pool-clone",
-            "exec-pool-checkout",
-            "exec-pool-task",
-        ];
-        for ((stage, argv), unit) in steps.into_iter().zip(units) {
+    ) -> bool {
+        for Step {
+            stage,
+            unit,
+            argv,
+            limit_secs,
+        } in steps
+        {
             if stage == Stage::Run {
                 result.prepare_ms = ms(t);
             }
@@ -649,9 +732,10 @@ impl Guest {
                 result.cancelled = true;
                 break;
             }
-            let limit = match stage {
-                Stage::Prepare => PREPARE_TIMEOUT,
-                Stage::Run => timeout,
+            let limit = match (stage, limit_secs) {
+                (_, Some(secs)) => Duration::from_secs(secs),
+                (Stage::Prepare, None) => PREPARE_TIMEOUT,
+                (Stage::Run, None) => timeout,
             };
             let started = Instant::now();
             let end = self
@@ -673,7 +757,219 @@ impl Guest {
             result.timed_out = end.timed_out;
             result.cancelled = end.cancelled;
             if end.exit_code != Some(0) || end.timed_out || end.cancelled {
-                break;
+                return false;
+            }
+        }
+        !result.cancelled
+    }
+
+    /// The session turn's agent step: a resume once the transcript probe finds the session, its start before.
+    fn turn(
+        &self,
+        m: &Manifest,
+        ws: &Workspace,
+        (env, find): (&str, &str),
+        (dir, err): (&Path, &File),
+    ) -> Result<Step, String> {
+        let session = m
+            .session
+            .as_ref()
+            .ok_or("a one-shot manifest has no turn")?;
+        let turn = if self.transcript(find, session, (dir, err))? {
+            agent::Turn::Resume
+        } else {
+            agent::Turn::Start
+        };
+        m.turn(ws, env, turn).map_err(|e| format!("manifest: {e}"))
+    }
+
+    /// Whether the session's transcript exists in its attached tree, by [`agent::transcript_probe`]: found, none
+    /// (also when Claude has written no project yet, find's exit 1), or a probe that did not finish, which fails the
+    /// turn's preparing rather than start a session that may exist.
+    fn transcript(
+        &self,
+        find: &str,
+        session: &Session,
+        (dir, err): (&Path, &File),
+    ) -> Result<bool, String> {
+        let path = dir.join("transcript");
+        let argv = agent::transcript_probe(find, SESSION_HOME, &session.uuid);
+        let limit = Duration::from_secs(QUICK_SECS);
+        let end = File::create(&path)
+            .and_then(|f| self.step(("exec-pool-probe", false), &argv, limit, &f, err))
+            .map_err(|e| format!("exec-pool-probe: {e}"))?;
+        match end.exit_code {
+            Some(0) => Ok(!read_capture(&path).is_empty()),
+            Some(1) => Ok(false),
+            other => Err(format!("exec-pool-probe ended with {other:?}")),
+        }
+    }
+
+    /// Whether the turn's steps are all gone from the guest, waiting up to [`DETACH_WAIT`]: a step's process left
+    /// running would follow its tree out of the dock.
+    fn steps_gone(&self) -> bool {
+        let t = Instant::now();
+        loop {
+            // a guest that is not running holds no process
+            let up = Command::new("systemctl")
+                .args([
+                    "is-active",
+                    "--quiet",
+                    &format!("container@{}.service", self.slot),
+                ])
+                .status()
+                .is_ok_and(|s| s.success());
+            if !up {
+                return true;
+            }
+            let running = Command::new("systemctl")
+                .args([
+                    "-M",
+                    &self.slot,
+                    "list-units",
+                    "--no-legend",
+                    "--plain",
+                    "exec-pool-*",
+                ])
+                .output()
+                .map(|o| !o.stdout.is_empty() || !o.status.success());
+            match running {
+                Ok(false) => return true,
+                _ if t.elapsed() > DETACH_WAIT => return false,
+                _ => thread::sleep(Duration::from_secs(1)),
+            }
+        }
+    }
+}
+
+/// The slot's dock for a session turn, and the mark that tells the runner a tree is stuck in it.
+struct Dock<'a> {
+    sessions: Sessions,
+    busy: PathBuf,
+    slot: &'a str,
+    /// `cp` and `find`, the store paths of the relink and the transcript probe.
+    cp: String,
+    find: String,
+}
+
+impl Dock<'_> {
+    /// Attaches the task's tree, creating it until a first turn prepared it, owned as the slot home is; whether it
+    /// was created. The dock is marked busy before the rename and stays marked until a detach, so the runner
+    /// quarantines the slot whatever stops this helper in between; a dock a dead helper left a tree in is marked too.
+    /// The error's flag: the task's tree is lost to this slot (a prepared one missing, or one with other ids), not the
+    /// slot's to retry.
+    fn attach(&self, m: &Manifest, slot_home: &Path) -> Result<bool, (bool, String)> {
+        use std::os::unix::fs::MetadataExt as _;
+        let mark = |why: &str| fs::write(&self.busy, format!("{why}\n"));
+        let home = slot_home
+            .symlink_metadata()
+            .map_err(|e| (false, format!("{}: {e}", slot_home.display())))?;
+        let docked = self.sessions.docked(self.slot);
+        if self.sessions.dock_busy(self.slot) {
+            let why = format!(
+                "a session tree was left in the dock at {}; {}",
+                docked.display(),
+                self.release_hint(None)
+            );
+            let _ = mark(&why);
+            return Err((false, why));
+        }
+        let created = self
+            .sessions
+            .prepared(&m.task.id)
+            .symlink_metadata()
+            .is_err();
+        if created {
+            self.sessions
+                .create(&m.task.id, (home.uid(), home.gid()))
+                .map_err(|e| (false, e.to_string()))?;
+        }
+        mark(&format!(
+            "the session tree of task {} is attached to the dock at {}; {}",
+            m.task.id,
+            docked.display(),
+            self.release_hint(Some(&m.task.id))
+        ))
+        .map_err(|e| (false, format!("{}: {e}", self.busy.display())))?;
+        self.sessions
+            .attach(&m.task.id, self.slot, home.uid())
+            .map(|()| created)
+            .map_err(|e| {
+                let _ = fs::remove_file(&self.busy);
+                (
+                    matches!(
+                        e,
+                        workspace::Error::NoTree(_) | workspace::Error::Owner { .. }
+                    ),
+                    e.to_string(),
+                )
+            })
+    }
+
+    /// The turn after its preparing: the first turn's prepared mark, then its agent step. A turn with no agent step
+    /// stays in preparing, so it goes back to the queue.
+    fn turn(
+        &self,
+        (m, ws, guest): (&Manifest, &Workspace, &Guest),
+        (created, env): (bool, &str),
+        (bounds, dir, out, err): ((Duration, Instant), &Path, &File, &File),
+        result: &mut ExecResult,
+    ) {
+        let note = |what: &str, e: &dyn std::fmt::Display| {
+            let _ = io::Write::write_all(
+                &mut &*err,
+                format!("exec-pool-exec: {what}: {e}\n").as_bytes(),
+            );
+        };
+        if created && let Err(e) = fs::write(self.sessions.prepared(&m.task.id), "") {
+            note("prepared mark", &e);
+        }
+        match guest.turn(m, ws, (env, &self.find), (dir, err)) {
+            Ok(run) => {
+                guest.steps(vec![run], bounds, (out, err), result);
+            }
+            Err(e) => note("no turn", &e),
+        }
+    }
+
+    /// What an operator does to free the slot once nothing of the turn runs: the tree back to its task (or archived),
+    /// then this mark and the slot's quarantine marker removed.
+    fn release_hint(&self, task: Option<&str>) -> String {
+        let to = task.map_or_else(
+            || "its task's tree (or archive it)".to_owned(),
+            |t| format!("{} (or archive it)", self.sessions.tree(t).display()),
+        );
+        format!(
+            "move {} back to {to}, then rm {} and the slot's quarantine marker",
+            self.sessions.docked(self.slot).display(),
+            self.busy.display()
+        )
+    }
+
+    /// Detaches the tree once the turn's steps are gone from the guest; one that lingers is left in the dock and
+    /// marked, so the runner quarantines the slot rather than reuse it.
+    fn detach(&self, m: &Manifest, guest: &Guest) -> Result<(), String> {
+        let detached = if guest.steps_gone() {
+            self.sessions
+                .detach(&m.task.id, self.slot)
+                .map_err(|e| e.to_string())
+        } else {
+            Err("a step of the turn is still in the guest".to_owned())
+        };
+        match detached {
+            Ok(()) => {
+                let _ = fs::remove_file(&self.busy);
+                Ok(())
+            }
+            Err(e) => {
+                let why = format!(
+                    "the session tree of task {} is still in the dock at {}: {e}; {}",
+                    m.task.id,
+                    self.sessions.docked(self.slot).display(),
+                    self.release_hint(Some(&m.task.id))
+                );
+                let _ = fs::write(&self.busy, format!("{why}\n"));
+                Err(why)
             }
         }
     }
@@ -703,7 +999,19 @@ fn admit_home(home: &Path, seen: &Path) -> Result<(), String> {
         .map_err(|e| format!("{LAST_HOME}: {e}"))
 }
 
-fn exec(slot: &str) -> Result<(), String> {
+/// What the helper starts a run with: its manifest, bound, run directory and output files, and the slot's guest.
+struct Begun {
+    manifest: Manifest,
+    timeout: Duration,
+    slot_dir: PathBuf,
+    dir: PathBuf,
+    out: File,
+    err: File,
+    guest: Guest,
+}
+
+/// Reads the slot's manifest and makes the run's directory, which must not exist yet.
+fn begin(slot: &str) -> Result<Begun, String> {
     let runtime = PathBuf::from(var("EXEC_POOL_RUNTIME")?);
     let path = runtime.join(MANIFEST);
     let manifest = read_regular(&path)
@@ -735,54 +1043,105 @@ fn exec(slot: &str) -> Result<(), String> {
         cancel: (runtime.join(CANCEL), manifest.cancel_token()),
         env: env.iter().map(|(k, v)| format!("{k}={v}")).collect(),
     };
-    let mut result = ExecResult {
-        schema_version: SchemaVersion::CURRENT,
-        attempt_id: manifest.attempt_id.clone(),
-        lease_epoch: manifest.lease_epoch,
-        stage: Stage::Prepare,
-        exit_code: None,
-        timed_out: false,
-        cancelled: false,
-        branch: None,
-        container_active: true,
-        stdout_tail: String::new(),
-        stderr_tail: String::new(),
-        prepare_ms: 0,
-        run_ms: 0,
-    };
+    Ok(Begun {
+        manifest,
+        timeout,
+        slot_dir,
+        dir,
+        out,
+        err,
+        guest,
+    })
+}
+
+fn exec(slot: &str) -> Result<(), String> {
+    let Begun {
+        manifest,
+        timeout,
+        slot_dir,
+        dir,
+        out,
+        err,
+        guest,
+    } = begin(slot)?;
+    let mut result = ExecResult::begun(&manifest);
     let t = Instant::now();
+    let guest_home = var("EXEC_POOL_GUEST_HOME")?;
     let ws = manifest
-        .workspace(&var("EXEC_POOL_GUEST_HOME")?)
+        .workspace(&guest_home)
         .map_err(|e| format!("manifest: {e}"))?;
-    let (git, env) = (var("EXEC_POOL_GIT")?, var("EXEC_POOL_ENV")?);
-    let steps = manifest
-        .steps(
-            &ws,
-            (&git, &env, &var("EXEC_POOL_MKDIR")?),
-            (&var("EXEC_POOL_GIT_NAME")?, &var("EXEC_POOL_GIT_EMAIL")?),
-        )
-        .map_err(|e| format!("manifest: {e}"))?;
-    // a home an earlier attempt ran in is refused before anything runs in it: the attempt goes back to the queue
-    let admitted = admit_home(
-        &PathBuf::from(var("EXEC_POOL_SLOT_HOME")?),
-        &slot_dir.join(LAST_HOME),
-    )
-    .inspect_err(|e| {
+    let [git, env, mkdir, name, email] = vars([
+        "EXEC_POOL_GIT",
+        "EXEC_POOL_ENV",
+        "EXEC_POOL_MKDIR",
+        "EXEC_POOL_GIT_NAME",
+        "EXEC_POOL_GIT_EMAIL",
+    ])?;
+    let identity = (name, email);
+    let note = |what: &str, e: &dyn std::fmt::Display| {
         let _ = io::Write::write_all(
             &mut &err,
-            format!("exec-pool-exec: not admitted: {e}\n").as_bytes(),
+            format!("exec-pool-exec: {what}: {e}\n").as_bytes(),
         );
-    })
-    .is_ok();
+    };
+    let slot_home = PathBuf::from(var("EXEC_POOL_SLOT_HOME")?);
+    // a home an earlier attempt ran in is refused before anything runs in it: the attempt goes back to the queue
+    let admitted = admit_home(&slot_home, &slot_dir.join(LAST_HOME))
+        .inspect_err(|e| note("not admitted", e))
+        .is_ok();
+    // a session turn runs in its tree, attached to the slot's dock for the turn; all it reads is read before the
+    // attach, and nothing between the attach and the detach returns early
+    let dock = match &manifest.session {
+        Some(_) => Some(Dock {
+            sessions: Sessions::new(PathBuf::from(var("EXEC_POOL_SESSIONS")?)),
+            busy: slot_dir.join(DOCK_BUSY),
+            slot,
+            cp: var("EXEC_POOL_CP")?,
+            find: var("EXEC_POOL_FIND")?,
+        }),
+        None => None,
+    };
+    let attached = match (&dock, admitted) {
+        (Some(d), true) => d
+            .attach(&manifest, &slot_home)
+            .inspect_err(|(lost, e)| {
+                if *lost {
+                    result.tree_lost = Some(e.clone());
+                }
+                note("not attached", e);
+            })
+            .ok(),
+        _ => None,
+    };
+    let steps = match (&dock, attached) {
+        (Some(d), Some(created)) => manifest.session_steps(
+            &ws,
+            (&git, &env, &mkdir),
+            (&identity.0, &identity.1),
+            (created, relink(&d.cp, &guest_home)),
+        ),
+        _ => manifest.steps(&ws, (&git, &env, &mkdir), (&identity.0, &identity.1)),
+    }
+    .inspect_err(|e| note("manifest", e))
+    .ok();
+    let runs = admitted && (manifest.session.is_none() || attached.is_some());
     // an agent task's branch as it was, so an earlier run's push is not taken for this one's
     let agentic = manifest.task.command.agent != Agent::None;
-    let before = if admitted && agentic {
+    let before = if runs && agentic {
         guest.remote_head(&manifest, (&git, &env), (&dir, "pushed-before"), &err)
     } else {
         Listed::Unknown
     };
-    if admitted {
-        guest.steps(steps, timeout, (&out, &err), &mut result);
+    if let (true, Some(steps)) = (runs, steps) {
+        let prepared = guest.steps(steps, (timeout, t), (&out, &err), &mut result);
+        if let (Some(d), true) = (&dock, prepared) {
+            d.turn(
+                (&manifest, &ws, &guest),
+                (attached == Some(true), &env),
+                ((timeout, t), &dir, &out, &err),
+                &mut result,
+            );
+        }
         // whatever the run's end: a push may have landed before it failed
         if result.stage == Stage::Run && agentic {
             let after = guest.remote_head(&manifest, (&git, &env), (&dir, "pushed"), &err);
@@ -791,9 +1150,19 @@ fn exec(slot: &str) -> Result<(), String> {
                 .and_then(|b| handed_back(&before, &after, &b));
         }
     }
+    if let (Some(d), Some(_)) = (&dock, attached) {
+        d.detach(&manifest, &guest)
+            .unwrap_or_else(|e| note("not detached", &e));
+    }
     if result.stage == Stage::Prepare {
         result.prepare_ms = ms(t);
     }
+    write_result(slot, &dir, result)
+}
+
+/// Completes `result` with whether the slot's guest is still up and the ends of the run's output, and writes it for
+/// the runner.
+fn write_result(slot: &str, dir: &Path, mut result: ExecResult) -> Result<(), String> {
     result.container_active = Command::new("systemctl")
         .args(["is-active", "--quiet", &format!("container@{slot}.service")])
         .status()

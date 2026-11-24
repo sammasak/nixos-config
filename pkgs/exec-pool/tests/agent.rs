@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use exec_pool::agent::{Error, PREFIX, argv, branch, outcome};
+use exec_pool::agent::{
+    Error, PREFIX, Turn, argv, branch, outcome, session_argv, transcript_probe,
+};
 use exec_pool::{Agent, Outcome, TaskSpec};
 use serde_json::json;
 
@@ -162,4 +164,77 @@ fn other_agents_follow_the_exit_code() {
     assert_eq!(outcome(Agent::Codex, Some(0), ""), Outcome::Succeeded);
     assert_eq!(outcome(Agent::Pi, Some(1), ""), Outcome::Failed);
     assert_eq!(outcome(Agent::None, Some(127), ""), Outcome::Failed);
+}
+
+const UUID: &str = "a3a7c578-9125-8a32-a933-73a095d4a27b";
+
+#[test]
+fn a_session_turn_starts_its_session_with_the_prefix_then_resumes_it() {
+    let t = task("claude", &["fix the lint", "opus"]);
+    let start = session_argv(&t, UUID, "fix the lint", Turn::Start).unwrap();
+    assert_eq!(start.get(..5), argv(&t).unwrap().get(..5));
+    let tail = &start[start.len() - 6..];
+    assert_eq!(tail[..5], ["--model", "opus", "--session-id", UUID, "--"]);
+    assert_eq!(
+        tail[5],
+        format!("{}fix the lint", PREFIX.replace("{branch}", "pool/t-655"))
+    );
+    let resume = session_argv(&t, UUID, "and the test", Turn::Resume).unwrap();
+    assert!(resume.ends_with(&[
+        "--model".into(),
+        "opus".into(),
+        "--resume".into(),
+        UUID.into(),
+        "--".into(),
+        "and the test".into()
+    ]));
+    assert!(
+        resume.contains(&"json".to_owned()),
+        "output stays --output-format json"
+    );
+}
+
+#[test]
+fn a_session_is_claude_only_with_a_uuid_and_some_input() {
+    let t = task("claude", &["go"]);
+    for agent in ["codex", "pi", "none"] {
+        let other = task(agent, if agent == "none" { &["true"] } else { &["go"] });
+        assert!(matches!(
+            session_argv(&other, UUID, "go", Turn::Start),
+            Err(Error::NoSession(_))
+        ));
+    }
+    for bad in [
+        "",
+        "not-a-uuid",
+        "a3a7c578-9125-8a32-a933-73a095d4a27",
+        "--resume",
+    ] {
+        assert_eq!(
+            session_argv(&t, bad, "go", Turn::Start),
+            Err(Error::SessionId(bad.to_owned()))
+        );
+    }
+    assert_eq!(session_argv(&t, UUID, "", Turn::Resume), Err(Error::Input));
+}
+
+#[test]
+fn the_probe_looks_for_the_transcript_by_the_session_id_only() {
+    assert_eq!(
+        transcript_probe("/find", "/session/cur/home", UUID),
+        [
+            "/find",
+            "/session/cur/home/.claude/projects",
+            "-mindepth",
+            "2",
+            "-maxdepth",
+            "2",
+            "-type",
+            "f",
+            "-name",
+            &format!("{UUID}.jsonl"),
+            "-print",
+            "-quit"
+        ]
+    );
 }

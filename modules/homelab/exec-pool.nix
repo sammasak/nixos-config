@@ -48,6 +48,7 @@ in
     ./monitoring/node-exporter.nix
     ./backup-metrics.nix
     ./exec-pool-runner.nix
+    ./exec-pool-sessions-gc.nix
     {
       options.homelab.execPool.remoteRunners = lib.mkEnableOption "the exec_pool_runner role for the sam.fleet exec-pool-db listener's hosts, over TCP by scram (postgresql.nix); off, Postgres keeps no TCP listener";
     }

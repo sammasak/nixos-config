@@ -2231,7 +2231,7 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
     pg.sql()
         .execute("UPDATE turns SET handed_back = true", &[])
         .unwrap();
-    assert_eq!(s.sessions(true).unwrap()[0]["task"], json!(id));
+    assert_eq!(s.sessions(true).unwrap()[0]["task_id"], json!(id));
     // a later turn that left it waiting without its own row (a settle, an older runner) is not known: kept
     let row_epoch: i64 = pg
         .sql()
@@ -2252,7 +2252,7 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
             &[&a, &row_epoch],
         )
         .unwrap();
-    assert_eq!(s.sessions(true).unwrap()[0]["task"], json!(id));
+    assert_eq!(s.sessions(true).unwrap()[0]["task_id"], json!(id));
     // an unread message keeps it
     pg.sql()
         .execute(
@@ -2278,7 +2278,7 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
         .sessions(true)
         .unwrap()
         .iter()
-        .map(|v| v["task"].clone())
+        .map(|v| v["task_id"].clone())
         .collect();
     assert_eq!(eligible, [json!(gone)]);
     assert!(!eligible.contains(&json!(review)));
@@ -2298,6 +2298,6 @@ fn session_gc_lists_only_what_the_queue_knows_is_safe_to_remove() {
 
     let lines = gc_cli(&pg);
     assert_eq!(lines.len(), 1);
-    assert_eq!(lines[0]["task"], json!(gone));
+    assert_eq!(lines[0]["task_id"], json!(gone));
     assert_eq!(lines[0]["state"], "cancelled");
 }

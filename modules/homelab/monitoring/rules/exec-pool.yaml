@@ -61,6 +61,21 @@ groups:
           query: 'exec_pool_slots{job="node-exporter",node="{{ $labels.node }}",state="quarantined"} > 0'
           runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolslotquarantined"
 
+      - alert: ExecPoolSessionsLarge
+        # parked, docked and stored session trees together (modules/workers/core.nix's dev-env-sessions-metrics)
+        expr: |
+          sum by (node) (homelab_dev_env_sessions_bytes{job="node-exporter"})
+            / max by (node) (homelab_dev_env_sessions_filesystem_bytes{job="node-exporter"}) > 0.7
+        for: 30m
+        labels:
+          severity: warning
+          team: homelab
+        annotations:
+          summary: "Session trees on {{ $labels.node }} fill most of the workers' state filesystem"
+          description: "The parked, docked and stored session trees on {{ $labels.node }} have held over 70% of the workers' state filesystem ({{ $value | humanizePercentage }}) for 30 minutes; the queue has not made enough of them eligible for removal, or orphans pile up. Read homelab_dev_env_session_trees and homelab_exec_pool_sessions_orphaned there, then run du -sh /var/lib/workers/.sessions/* /var/lib/workers/.sessions-store/* as root (runbook)."
+          query: 'homelab_dev_env_sessions_bytes{job="node-exporter",node="{{ $labels.node }}"}'
+          runbook_url: "https://github.com/sammasak/nixos-config/blob/main/docs/alert-runbooks.md#execpoolsessionslarge"
+
       - alert: ExecPoolSessionStuck
         # a session nobody will move on its own: in review (only its owner's send or a resolve), or parked 14 days with
         # a tree the queue cannot prove was handed back, so session_gc keeps it and its disk
