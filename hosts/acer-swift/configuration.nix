@@ -57,8 +57,19 @@
         "claude"
         "pi"
       ];
-      # the key a1 pushes with: a task hands its code back on its own branch, pool/<task id>
-      credentials = [ "id_ed25519" ];
+      # a task hands its code back on its own branch, pool/<task id>, through the host's GitHub proxy; nixos-config's
+      # private flake and devenv inputs are listed for its fetch (docs/records/execution-pool-credentials.md)
+      github.repos = map (r: "sammasak/${r}") [
+        "nixos-config"
+        "skills"
+        "alert-bridge"
+        "factum"
+        "nix-audit"
+        "llm-gateway"
+        "rf-proto"
+        "herman"
+        "devenv-platform"
+      ];
     };
   };
   homelab.execPool.runner = {

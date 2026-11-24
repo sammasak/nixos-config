@@ -74,6 +74,12 @@ in
       example = [ "id_ed25519" ];
       description = "Which of services.devEnvironments.credentials a slot may hold; none by default.";
     };
+    github.repos = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "sammasak/nixos-config" ];
+      description = "Each slot's egress.github.repos: its git push and fetch and its gh calls to these repositories are signed by the host's proxy, so the slot holds no GitHub credential; a repository whose flake or devenv has a private input needs that input listed too.";
+    };
     agents = mkOption {
       type = types.listOf (
         types.enum [
@@ -104,6 +110,7 @@ in
       telemetry = false;
       headlessAgents = cfg.agents;
       inherit (cfg) credentials rootInGuest;
+      egress.github.repos = cfg.github.repos;
       sessionDock = true;
       # each attempt's workspace (pkgs/exec-pool/src/workspace.rs): throwaway, so its checkout never holds the reset
       scratch = [ "attempts" ];

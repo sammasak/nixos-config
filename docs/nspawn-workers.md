@@ -69,7 +69,8 @@ retire. Changing `slots` is a reviewed deploy; a task is released with `dev-env-
 | `enable` | `false` | off, nothing moves (pinned by `scripts/test-workers-eval.py`) |
 | `slots` | `0` | how many slots (unsigned) |
 | `memory.reserved`, `cpu.reserved` | `"2G"`, `2` | each slot's, as an instance's |
-| `credentials` | `[ ]` | which host credentials a slot may hold (acer's and msi's: `id_ed25519`) |
+| `credentials` | `[ ]` | which host credentials a slot may hold (msi's: `id_ed25519`) |
+| `github.repos` | `[ ]` | each slot's `egress.github.repos`: git and gh to these repositories through the host's GitHub proxy, no credential in the slot (acer's; [execution-pool-credentials.md](records/execution-pool-credentials.md)) |
 | `agents` | `[ ]` | agents a task may run in a slot (`claude`): each slot's `headlessAgents`, the egress route a named worker of that agent has (the anthropic proxy, no credential in the guest), while its `agent` stays `none` and no session starts |
 | `rootInGuest` | `false` | each slot's |
 
