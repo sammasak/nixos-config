@@ -19,7 +19,8 @@ let
   creds = "/var/lib/host-credentials";
   clientKey = "${home}/.ssh/id_ed25519";
   slice = "environments";
-  # the dynamic shipper's textfile: node-exporter cannot traverse /run/private, so a fixed group writes here
+  # the dynamic shipper's textfile: node-exporter cannot traverse /run/private, so a fixed group writes here. A
+  # shipper subverted by a guest's bytes could add .prom files the host's scrape then reads; it could not before
   recordsMetrics = "/run/dev-env-records-metrics";
   workLocks = "/run/work-locks";
 
@@ -122,7 +123,7 @@ let
     '';
   };
   # A dynamic user with CAP_DAC_READ_SEARCH alone: it reads every home whoever owns it, writes only its
-  # StateDirectory and reaches only Loki. The timer's unit and the per-instance one share the user, so the state.
+  # StateDirectory (and the timer's unit recordsMetrics) and reaches only Loki. The timer's unit and the per-instance one share the user, so the state.
   recordsUnit = names: timeout: {
     Type = "oneshot";
     ExecStart = lib.escapeShellArgs (

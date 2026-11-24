@@ -250,7 +250,7 @@ def shipped_at(name, args):
 
 
 def write_metrics(path, waiting, args):
-    """Every instance shipped or tried this run; one refused (a link, a FIFO) has no series and fails the unit."""
+    """Every instance shipped or tried this run; one refused (a link, a FIFO) or failing has no series and fails the unit."""
     values = {"homelab_guest_records_waiting_lines": waiting,
               "homelab_guest_records_shipped_timestamp_seconds": {n: shipped_at(n, args) for n in waiting}}
     body = []
@@ -344,19 +344,22 @@ def main():
     fleet = frozenset(h.lower() for h in args.fleet.split(",") if h)
     base = os.open(args.state_dir, DIR)
     ok, waiting = True, {}
-    for name in args.names:
-        if not NAME.fullmatch(name):
-            print(f"{name!r}: not an environment name", file=sys.stderr)
-            ok = False
-            continue
-        try:
-            shipped, waiting[name] = ship(base, name, args, kinds, fleet)
-            ok = shipped and ok
-        except Refused as e:
-            print(f"{name}: not shipped, {e}", file=sys.stderr)
-            ok = False
-    if args.metrics:
-        write_metrics(args.metrics, waiting, args)
+    # finally: a run that dies on one instance still replaces the last run's file, so no stale 0 hides a backlog
+    try:
+        for name in args.names:
+            if not NAME.fullmatch(name):
+                print(f"{name!r}: not an environment name", file=sys.stderr)
+                ok = False
+                continue
+            try:
+                shipped, waiting[name] = ship(base, name, args, kinds, fleet)
+                ok = shipped and ok
+            except Refused as e:
+                print(f"{name}: not shipped, {e}", file=sys.stderr)
+                ok = False
+    finally:
+        if args.metrics:
+            write_metrics(args.metrics, waiting, args)
     return 0 if ok else 1
 
 

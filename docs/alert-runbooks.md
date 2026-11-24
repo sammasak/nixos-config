@@ -117,7 +117,8 @@ Fires: a worker's guest has platform record lines waiting (`homelab_guest_record
 minutes and a run that ships its 500 lines counts, so a large backlog draining does not fire. Those lines are in the
 guest's spool, not in Loki, so that worker's gate and coverage records are missing there. The textfile
 is `/run/dev-env-records-metrics/guest-records.prom` on the host; a worker refused for a link or FIFO on its spool
-has no series and fails the unit instead (NodeSystemdUnitFailed).
+has no series and fails the unit instead (NodeSystemdUnitFailed). A run killed at its 2 minute timeout writes
+nothing: the last file stays, and its timestamp keeps ageing.
 First: on the host, `journalctl -u dev-env-records -n 20`: `Loki unreachable` or `Loki answered 5xx` is Loki's
 side (black-pi, `systemctl status loki`); a timeout is a slow run.
 Do not: delete the worker's spool or its progress under `/var/lib/private/dev-env-records`; the next run that
