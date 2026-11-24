@@ -28,10 +28,10 @@ let
   exe = "${pkg}/bin/exec-pool-runner";
   slotNames = map (n: "pool${toString n}") (lib.range 1 pool.slots);
   execDir = "/var/lib/exec-pool-exec";
-  # the helper stops the task at timeoutSecs; above it, four prepare steps of up to 300 s, the branch listed before and
-  # after the run (60 s each) and the stop's own wait; a session turn adds a 30 s relink, a 30 s probe and 15 s for
-  # its units to leave before the detach, and the tree's pull from and push to the store
-  execTimeout = cfg.timeoutSecs + 1800;
+  # none: the helper bounds every step itself, and a session turn has no bound of its own, as the owner may work in its
+  # pane for hours (each stretch of the agent's work at most timeoutSecs, each pause at most idleGraceSecs); a stop
+  # here would kill the helper with the session's tree in the dock and quarantine the slot
+  execTimeout = "infinity";
   # the runner renews it every 10 s while the helper runs, so a run may outlast it; a runner that dies sends its
   # running attempt to review this long after its last renewal
   leaseSecs = 300;
@@ -143,7 +143,17 @@ in
     timeoutSecs = lib.mkOption {
       type = lib.types.ints.positive;
       default = 1800;
-      description = "How long a task's command, or one turn of a session, may run in its slot before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
+      description = "How long a task's command, or a session's agent since it was last idle, may run in its slot before it is stopped: a one-shot attempt then goes to needs_review, a session's turn parks as turn_timeout and continues in a new turn, up to three in a row with no message between.";
+    };
+    idleGraceSecs = lib.mkOption {
+      type = lib.types.ints.unsigned;
+      default = 600;
+      description = "How long a session's agent, idle and waiting for input, stays in its slot's Herdr pane, where the owner's typing or a message sent to the session answers it in the same turn, before the session parks and frees the slot.";
+    };
+    idleGraceBusySecs = lib.mkOption {
+      type = lib.types.ints.unsigned;
+      default = 60;
+      description = "idleGraceSecs while a task is queued and no slot is idle on any host.";
     };
     queue = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -192,6 +202,22 @@ in
           EXEC_POOL_MKDIR = "${pkgs.coreutils}/bin/mkdir";
           EXEC_POOL_CP = "${pkgs.coreutils}/bin/cp";
           EXEC_POOL_FIND = "${pkgs.findutils}/bin/find";
+          # a session turn's agent runs in this terminal in the guest, and its pane is in the host user's Herdr,
+          # attached to it by the slot's entry point (modules/workers/core.nix, `turn`)
+          EXEC_POOL_DTACH = "${pkgs.dtach}/bin/dtach";
+          EXEC_POOL_HERDR = builtins.toJSON [
+            "${pkgs.util-linux}/bin/setpriv"
+            "--reuid=${dev.user}"
+            "--regid=${config.users.users.${dev.user}.group}"
+            "--init-groups"
+            "--"
+            "${pkgs.coreutils}/bin/env"
+            "-i"
+            "HOME=${guestHome}"
+            "XDG_RUNTIME_DIR=/run/user/${toString dev.uid}"
+            (lib.getExe pkgs.herdr)
+          ];
+          EXEC_POOL_ATTACH = "/run/current-system/sw/bin/${dev.unitPrefix}-%i turn";
           # a session task's trees and each slot's dock, which the guest sees at /session (pkgs/exec-pool/src/workspace.rs)
           EXEC_POOL_SESSIONS = "${dev.stateDir}/.sessions";
           EXEC_POOL_GUEST_HOME = guestHome;
@@ -239,6 +265,8 @@ in
             EXEC_POOL_DB = cfg.conninfo;
             EXEC_POOL_SLOT = slot n;
             EXEC_POOL_LEASE_SECS = toString leaseSecs;
+            EXEC_POOL_IDLE_GRACE_SECS = toString cfg.idleGraceSecs;
+            EXEC_POOL_IDLE_GRACE_BUSY_SECS = toString cfg.idleGraceBusySecs;
             EXEC_POOL_RUNTIME = "/run/exec-pool-runner/${n}";
             EXEC_POOL_EXEC_DIR = execDir;
             EXEC_POOL_STATE = "/var/lib/exec-pool-runner";

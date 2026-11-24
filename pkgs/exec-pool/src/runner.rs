@@ -97,7 +97,8 @@ impl Manifest {
         m.task.validate(&m.task.capabilities)?;
         agent::argv(&m.task).map_err(|e| Error::Json(e.to_string()))?;
         if let Some(s) = &m.session {
-            agent::session_argv(&m.task, &s.uuid, &s.input, agent::Turn::Start)
+            agent::session_argv(&m.task, &s.uuid, agent::Turn::Start, ("dtach", "env"))
+                .and_then(|_| agent::turn_input(&m.task, &s.input, agent::Turn::Start))
                 .map_err(|e| Error::Json(e.to_string()))?;
         }
         if m.task.source.rev.starts_with('-') {
@@ -202,17 +203,23 @@ impl Manifest {
         Ok(steps)
     }
 
-    /// The session turn's agent step, in its tree: [`agent::session_argv`] of the turn's input.
+    /// The session turn's agent step, in its tree: [`agent::session_argv`], `dtach` and `env` store paths; its input
+    /// is prompted in the pane.
     ///
     /// # Errors
     /// [`agent::Error::NoSession`] for a one-shot manifest, what [`agent::session_argv`] or
     /// [`Workspace::run_session`] rejects.
-    pub fn turn(&self, ws: &Workspace, env: &str, turn: agent::Turn) -> Result<Step, StepsError> {
+    pub fn turn(
+        &self,
+        ws: &Workspace,
+        (dtach, env): (&str, &str),
+        turn: agent::Turn,
+    ) -> Result<Step, StepsError> {
         let s = self
             .session
             .as_ref()
             .ok_or(agent::Error::NoSession(self.task.command.agent))?;
-        let argv = agent::session_argv(&self.task, &s.uuid, &s.input, turn)?;
+        let argv = agent::session_argv(&self.task, &s.uuid, turn, (dtach, env))?;
         Ok(step(
             Stage::Run,
             "exec-pool-task",
@@ -511,7 +518,7 @@ pub struct ExecResult {
     /// this slot may not take): its session is not lost to a retry, it goes to review.
     #[serde(default)]
     pub tree_lost: Option<String>,
-    /// Where a run that never reached its agent failed: a prepare step's unit, or `admit`, `attach`, `manifest` or
+    /// Where a run that never reached its agent failed: a prepare step's unit, or `admit`, `attach`, `manifest`, `herdr`, `prompt` or
     /// `turn` outside one; `None` once its agent started, or for a run stopped by a cancel or a drain.
     #[serde(default)]
     pub failed_step: Option<String>,
@@ -524,6 +531,10 @@ pub struct ExecResult {
     /// What the session turn's agent asked with `pool-wait`, taken from its tree after the detach.
     #[serde(default)]
     pub wake: Option<Wake>,
+    /// The last inbox message prompted into the session turn's pane while it ran ([`TurnHint::mail`]), which the
+    /// park marks read with what the claim handed over.
+    #[serde(default)]
+    pub upto: Option<i64>,
     /// `container@<slot>` was active when the command ended; a guest that went away leaves the outcome unknown.
     pub container_active: bool,
     pub stdout_tail: String,
@@ -550,6 +561,7 @@ impl ExecResult {
             stored: false,
             handed_back: None,
             wake: None,
+            upto: None,
             drained: false,
             container_active: true,
             stdout_tail: String::new(),
@@ -559,6 +571,25 @@ impl ExecResult {
         }
     }
 
+    /// # Errors
+    /// What [`parse_versioned`] rejects.
+    pub fn parse(json: &str) -> Result<Self, Error> {
+        parse_versioned(json)
+    }
+}
+
+/// What the runner tells the helper of a live session turn, on every heartbeat, beside the manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TurnHint {
+    pub schema_version: SchemaVersion,
+    /// How long an idle agent stays in its pane before its session parks: shorter while work waits for a slot.
+    pub grace_secs: u64,
+    /// The session's unread messages sent since its claim, by inbox id: the helper prompts each once.
+    pub mail: Vec<(i64, String)>,
+}
+
+impl TurnHint {
     /// # Errors
     /// What [`parse_versioned`] rejects.
     pub fn parse(json: &str) -> Result<Self, Error> {
@@ -708,6 +739,14 @@ pub fn tail(bytes: &[u8]) -> String {
 /// # Errors
 /// Anything else, or a file larger than the read limit.
 pub fn read_regular(path: &Path) -> io::Result<String> {
+    read_regular_up_to(path, READ_LIMIT)
+}
+
+/// [`read_regular`] with its own bound of `limit` bytes.
+///
+/// # Errors
+/// As [`read_regular`].
+pub fn read_regular_up_to(path: &Path, limit: u64) -> io::Result<String> {
     let before = std::fs::symlink_metadata(path)?;
     if !before.file_type().is_file() {
         return Err(io::Error::other(format!(
@@ -724,11 +763,10 @@ pub fn read_regular(path: &Path) -> io::Result<String> {
         )));
     }
     let mut s = String::new();
-    file.take(READ_LIMIT.saturating_add(1))
-        .read_to_string(&mut s)?;
-    if u64::try_from(s.len()).map_or(true, |n| n > READ_LIMIT) {
+    file.take(limit.saturating_add(1)).read_to_string(&mut s)?;
+    if u64::try_from(s.len()).map_or(true, |n| n > limit) {
         return Err(io::Error::other(format!(
-            "{} is over {READ_LIMIT} bytes",
+            "{} is over {limit} bytes",
             path.display()
         )));
     }
@@ -834,6 +872,7 @@ mod tests {
             stored: false,
             handed_back: None,
             wake: None,
+            upto: None,
             drained: false,
             container_active: true,
             stdout_tail: String::new(),
@@ -975,7 +1014,8 @@ mod tests {
     fn a_turn_starts_its_session_until_a_transcript_exists_then_resumes_it() {
         let m = session("now add a test");
         let ws = m.workspace("/home/u").unwrap();
-        let start = m.turn(&ws, "/env", agent::Turn::Start).unwrap();
+        let tools = ("/dtach", "/env");
+        let start = m.turn(&ws, tools, agent::Turn::Start).unwrap();
         assert_eq!(start.stage, Stage::Run);
         assert_eq!(
             start.argv[..6],
@@ -988,20 +1028,53 @@ mod tests {
                 "TMPDIR=/home/u/attempts/74312e61-3/tmp"
             ]
         );
-        let tail = |s: &Step| s.argv[s.argv.len() - 6..].to_vec();
-        let started = tail(&start);
-        assert_eq!(started[..4], ["--model", "opus", "--session-id", UUID]);
-        assert!(
-            started[5].starts_with("You run as an execution pool task")
-                && started[5].ends_with("now add a test")
-        );
-        let resumed = tail(&m.turn(&ws, "/env", agent::Turn::Resume).unwrap());
+        // interactive Claude as a named worker ran it, in a terminal the slot's pane attaches to: no print mode
         assert_eq!(
-            resumed,
-            ["--model", "opus", "--resume", UUID, "--", "now add a test"]
+            start.argv[6..],
+            [
+                "/dtach",
+                "-N",
+                agent::AGENT_SOCKET,
+                "/env",
+                "TERM=xterm-256color",
+                "HERDR_AUTOATTACH_DISABLED=1",
+                "fish",
+                "-c",
+                "claude $argv",
+                "--",
+                "--dangerously-skip-permissions",
+                "--model",
+                "opus",
+                "--session-id",
+                UUID
+            ]
+        );
+        let resumed = m.turn(&ws, tools, agent::Turn::Resume).unwrap();
+        assert_eq!(resumed.argv[resumed.argv.len() - 2..], ["--resume", UUID]);
+        assert!(
+            !start
+                .argv
+                .iter()
+                .any(|a| a == "-p" || a.contains("now add a test"))
         );
         let one_shot = manifest(&task()).unwrap();
-        assert!(one_shot.turn(&ws, "/env", agent::Turn::Start).is_err());
+        assert!(one_shot.turn(&ws, tools, agent::Turn::Start).is_err());
+    }
+
+    #[test]
+    fn a_turn_is_told_the_rules_when_it_starts_its_session_and_only_its_input_after() {
+        let m = session("now add a test");
+        let start = agent::turn_input(&m.task, "now add a test", agent::Turn::Start).unwrap();
+        assert!(
+            start.starts_with("You run as an execution pool task")
+                && start.contains("pool-wait")
+                && start.ends_with("now add a test")
+        );
+        assert_eq!(
+            agent::turn_input(&m.task, "now add a test", agent::Turn::Resume).unwrap(),
+            "now add a test"
+        );
+        assert!(agent::turn_input(&m.task, "", agent::Turn::Resume).is_err());
     }
 
     #[test]
