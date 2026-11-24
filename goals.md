@@ -56,7 +56,7 @@ Waiting, in pick-up order:
 | 8 | Sessions | a running turn cannot be displaced or watched | preemption and attach |
 | 9 | Pool | any submitter reads every task's output | restrict to own tasks when a second submitter appears |
 | 10 | Gates | flake check took 1263 s after #683; msi checkouts still carried the old full push hook | read the per-step times of the 15:20 scheduled gate |
-| 11 | Live comparison | first numbers only | read a day of Shunt on/off and herman against default on 25 Nov |
+| 11 | Live comparison | first numbers only | read a day of Shunt on/off on 25 Nov; the herman 300K side ends when its retirement deploys |
 | 12 | Leftovers | one draft open | #616 (needs a physical reboot of black-pi) |
 
 ## Priorities
@@ -128,9 +128,10 @@ Placement order: acer, then msi, asus last (it carries ollama and the heavier lo
 | Host | Worker | Item |
 |------|--------|------|
 | acer-swift | `a1` | slice 1c session turn in a slot |
-| acer-swift | `herman` | dashboards lane (#525, #523), not this week's list |
+| acer-swift | `pool1`, `pool2` | pool slots; `herman` retired |
 | msi-ms7758 | `m1` | slice 1b dock bind |
 | msi-ms7758 | `m2` | slice 1a queue and inbox |
+| msi-ms7758 | `pool1`, `pool2` | pool slots; `t1` retired |
 | asus-b460m | none | `a624`, `s138`, `s130` retired |
 
 msi and asus have no `gh` login: workers push branches over SSH and the lenovo session opens and merges the PRs.

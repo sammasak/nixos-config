@@ -110,8 +110,8 @@ JSON `is_error` decides for Claude, the exit code for the rest; a signal, or a C
 
 ## Runner (#652)
 
-`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1`, and
-on msi for its slot against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
+`exec-pool-runner-<slot>` (`modules/homelab/exec-pool-runner.nix`, `homelab.execPool.runner`; on acer for `pool1` and `pool2`, and
+on msi for its slots against acer's queue as `exec_pool_runner` over TCP) loops: `reconcile`, `claim` for its slot
 (its agents and capabilities; with a poweroff timer only while the claim's hold ends before it), `start`, then
 `systemctl start exec-pool-exec@<slot>`, then `checkpoint` and the settle or park, the result recorded
 (`Store::record_result`: outcome, exit code, up to 16 KiB of output, the branch), then `dev-env-reset@<slot>`. The lease
@@ -168,7 +168,7 @@ absent on main, its module directory was deleted in #210 (`git show 5a40362 --st
 declares long-lived, named instances (`sam.workers.instances`, a `worker-herdr-<name>` unit per agent), each a Nix
 deploy. The pool keeps those untouched and adds dynamic work on top of declared slots. `scripts/test-workers-eval.py`
 pins it: `sam.workers.executionPool` (#650, `docs/nspawn-workers.md`, Execution pool) unset or off moves no
-worker unit, container or toplevel on msi, and its instances (`m1`, `m2`, `t1`) and their Herdr units are pinned by name.
+worker unit, container or toplevel on msi, and its instances (`m1`, `m2`) and their Herdr units are pinned by name.
 
 ## Submitting
 

@@ -204,7 +204,7 @@ First: in Grafana's Explore on Loki, the events of that worker by session (ids a
 `sum by (attributes_session_id) (count_over_time({observer="harness", service_name="claude-code", event_name="compaction", host_name="<host>"} | json | attributes_trigger="auto" | attributes_worker="<worker>" [1h]))`.
 For an empty worker, filter `attributes_worker=""`. One session with most of them is the loop: stop it there. Many sessions each compacting a few times is load, not a
 loop.
-Rollback: for herman on acer, remove `sam.claude.autoCompactWindow` from `hosts/acer-swift/configuration.nix` (an
+Rollback: for a worker with `sam.claude.autoCompactWindow` set, remove it from its host's guest module (an
 approved deploy); a session keeps the window it started with until restarted.
 Do not: raise the threshold before the events show which session it was.
 
